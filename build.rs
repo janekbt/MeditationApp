@@ -36,7 +36,7 @@ fn main() {
     // Compile GResource bundle and embed it in the binary
     // glib-build-tools searches out_dir for the compiled .ui files
     glib_build_tools::compile_resources(
-        &[&out_dir, "data"],
+        &[out_dir.as_str(), "data"],
         "data/io.github.janekbt.Meditate.gresource.xml",
         "compiled.gresource",
     );
