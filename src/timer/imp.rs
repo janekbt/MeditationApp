@@ -5,7 +5,7 @@ use gtk::{glib, CompositeTemplate};
 use glib::subclass::Signal;
 use std::sync::OnceLock;
 
-use crate::db::{SessionData, SessionMode};
+use crate::db::{Label, SessionData, SessionMode};
 
 // ── Per-mode independent state ────────────────────────────────────────────────
 
@@ -74,7 +74,10 @@ pub struct TimerView {
     /// Weak ref to the running-page time label for live updates.
     running_label: RefCell<Option<gtk::Label>>,
     /// Labels fetched from DB when entering Done state.
-    db_labels: RefCell<Vec<crate::db::Label>>,
+    db_labels: RefCell<Vec<Label>>,
+    /// True while show_done/repopulate_label_combo is rebuilding the model,
+    /// to suppress the notify::selected handler from opening the new-label dialog.
+    populating_labels: Cell<bool>,
 }
 
 #[glib::object_subclass]
@@ -167,6 +170,21 @@ impl TimerView {
             #[weak(rename_to = this)] obj,
             move |_| this.imp().on_discard()
         ));
+
+        // "＋ New label" is index 0; show creation dialog when selected.
+        self.label_row.connect_notify_local(
+            Some("selected"),
+            glib::clone!(
+                #[weak(rename_to = this)] obj,
+                move |_, _| {
+                    let imp = this.imp();
+                    if imp.populating_labels.get() { return; }
+                    if imp.label_row.selected() == 0 {
+                        imp.show_new_label_dialog();
+                    }
+                }
+            ),
+        );
     }
 }
 
@@ -318,22 +336,8 @@ impl TimerView {
 
     fn show_done(&self, elapsed_secs: u64) {
         self.done_duration_label.set_label(&format_time(elapsed_secs));
-
-        // Populate label combo from DB
-        let mut labels = Vec::new();
-        if let Some(app) = self.get_app() {
-            if let Some(fetched) = app.with_db(|db| db.list_labels()) {
-                labels = fetched.unwrap_or_default();
-            }
-        }
-        let names: Vec<&str> = std::iter::once("None")
-            .chain(labels.iter().map(|l| l.name.as_str()))
-            .collect();
-        self.label_row.set_model(Some(&gtk::StringList::new(&names)));
-        self.label_row.set_selected(0);
-        *self.db_labels.borrow_mut() = labels;
         self.note_row.set_text("");
-
+        self.repopulate_label_combo(None);
         self.view_stack.set_visible_child_name("done");
     }
 
@@ -363,11 +367,11 @@ impl TimerView {
             let t = self.note_row.text();
             if t.is_empty() { None } else { Some(t.to_string()) }
         };
+        // Index 0 = "+ New label" (shouldn't reach Save), 1 = "None", 2+ = labels
         let selected = self.label_row.selected() as usize;
-        let label_id = if selected == 0 {
-            None
-        } else {
-            self.db_labels.borrow().get(selected - 1).map(|l| l.id)
+        let label_id = match selected {
+            0 | 1 => None,
+            n => self.db_labels.borrow().get(n - 2).map(|l| l.id),
         };
 
         let data = SessionData {
@@ -506,6 +510,87 @@ impl TimerView {
                 n => format!("{n}-day streak"),
             };
             self.streak_label.set_label(&text);
+        }
+    }
+
+    /// Rebuild the label combo from the DB.
+    /// `select_id`: if Some, auto-selects that label; otherwise selects "None" (index 1).
+    fn repopulate_label_combo(&self, select_id: Option<i64>) {
+        let mut labels = Vec::new();
+        if let Some(app) = self.get_app() {
+            if let Some(fetched) = app.with_db(|db| db.list_labels()) {
+                labels = fetched.unwrap_or_default();
+            }
+        }
+
+        let select_idx = select_id
+            .and_then(|id| labels.iter().position(|l| l.id == id))
+            .map(|pos| (pos + 2) as u32) // +2 for "+ New label" and "None"
+            .unwrap_or(1);              // default = "None"
+
+        let names: Vec<String> = std::iter::once("+ New label".to_string())
+            .chain(std::iter::once("None".to_string()))
+            .chain(labels.iter().map(|l| l.name.clone()))
+            .collect();
+        let name_refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
+
+        *self.db_labels.borrow_mut() = labels;
+
+        self.populating_labels.set(true);
+        self.label_row.set_model(Some(&gtk::StringList::new(&name_refs)));
+        self.label_row.set_selected(select_idx);
+        self.populating_labels.set(false);
+    }
+
+    /// Show a dialog to create a new label, then select it in the combo.
+    fn show_new_label_dialog(&self) {
+        let entry = gtk::Entry::builder()
+            .placeholder_text("Label name")
+            .activates_default(true)
+            .build();
+
+        let dialog = adw::AlertDialog::builder()
+            .heading("New Label")
+            .close_response("cancel")
+            .default_response("create")
+            .build();
+        dialog.add_response("cancel", "Cancel");
+        dialog.add_response("create", "Create");
+        dialog.set_response_appearance("create", adw::ResponseAppearance::Suggested);
+        dialog.set_response_enabled("create", false);
+        dialog.set_extra_child(Some(&entry));
+
+        // Enable "Create" only when the entry is non-empty
+        entry.connect_changed(glib::clone!(
+            #[weak] dialog,
+            move |e| dialog.set_response_enabled("create", !e.text().trim().is_empty())
+        ));
+
+        let obj = self.obj().clone();
+        dialog.connect_response(None, {
+            let entry = entry.clone();
+            move |_, response| {
+                let imp = obj.imp();
+                if response != "create" {
+                    imp.label_row.set_selected(1); // revert to "None"
+                    return;
+                }
+                let name = entry.text().trim().to_string();
+                if name.is_empty() {
+                    imp.label_row.set_selected(1);
+                    return;
+                }
+                let new_label = imp.get_app()
+                    .and_then(|app| app.with_db(|db| db.create_label(&name)))
+                    .and_then(|r| r.ok());
+                imp.repopulate_label_combo(new_label.map(|l| l.id));
+            }
+        });
+
+        if let Some(win) = self.obj().root()
+            .and_then(|r| r.downcast::<gtk::Window>().ok())
+        {
+            dialog.present(Some(&win));
         }
     }
 
