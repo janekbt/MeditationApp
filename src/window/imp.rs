@@ -153,8 +153,8 @@ impl MeditateWindow {
                     imp.log_add_btn.set_visible(is_log);
                     imp.log_filter_btn.set_visible(is_log);
                     if is_log {
-                        imp.log_view.refresh_filter_labels(&imp.filter_label_row);
                         imp.log_view.refresh();
+                        imp.log_view.refresh_filter_labels(&imp.filter_label_row);
                     }
                 }
             ),
