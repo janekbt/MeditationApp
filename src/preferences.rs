@@ -1,3 +1,6 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use adw::prelude::*;
 use gtk::glib;
 
@@ -116,32 +119,80 @@ fn make_label_row(
     group: &adw::PreferencesGroup,
     app: &MeditateApplication,
 ) -> adw::EntryRow {
-    let row = adw::EntryRow::builder()
-        .show_apply_button(true)
-        .build();
+    // Tracks the last saved name so we know when there are pending changes.
+    let committed: Rc<RefCell<String>> = Rc::new(RefCell::new(name.to_string()));
+
+    let row = adw::EntryRow::builder().build();
     row.set_text(name);
 
+    // ── Suffix buttons: [discard] [apply] [delete] ────────────────────────────
+
+    let discard_btn = gtk::Button::builder()
+        .icon_name("edit-undo-symbolic")
+        .valign(gtk::Align::Center)
+        .tooltip_text("Discard changes")
+        .css_classes(["flat"])
+        .visible(false)
+        .build();
+    let apply_btn = gtk::Button::builder()
+        .icon_name("emblem-ok-symbolic")
+        .valign(gtk::Align::Center)
+        .tooltip_text("Save")
+        .css_classes(["flat"])
+        .visible(false)
+        .build();
     let delete_btn = gtk::Button::builder()
         .icon_name("user-trash-symbolic")
         .valign(gtk::Align::Center)
         .tooltip_text("Delete label")
         .css_classes(["flat"])
         .build();
+
+    row.add_suffix(&discard_btn);
+    row.add_suffix(&apply_btn);
     row.add_suffix(&delete_btn);
 
-    // Save rename on Enter or ✓ button
-    row.connect_apply(glib::clone!(
+    // Show/hide apply+discard whenever the text changes.
+    row.connect_changed(glib::clone!(
+        #[weak] row,
+        #[weak] apply_btn,
+        #[weak] discard_btn,
+        #[strong] committed,
+        move |_| {
+            let pending = row.text().as_str() != committed.borrow().as_str();
+            apply_btn.set_visible(pending);
+            discard_btn.set_visible(pending);
+        }
+    ));
+
+    // Apply: save new name to DB and clear pending state.
+    apply_btn.connect_clicked(glib::clone!(
         #[weak] app,
         #[weak] row,
+        #[weak] apply_btn,
+        #[weak] discard_btn,
+        #[strong] committed,
         move |_| {
             let new_name = row.text().to_string();
             if !new_name.is_empty() {
                 app.with_db(|db| db.update_label(id, &new_name));
+                *committed.borrow_mut() = new_name;
             }
+            apply_btn.set_visible(false);
+            discard_btn.set_visible(false);
         }
     ));
 
-    // Delete with undo toast (routed to main window at click-time)
+    // Discard: restore committed text (triggers connect_changed, which hides the buttons).
+    discard_btn.connect_clicked(glib::clone!(
+        #[weak] row,
+        #[strong] committed,
+        move |_| {
+            row.set_text(&committed.borrow());
+        }
+    ));
+
+    // Delete with 5-second undo toast on the main window.
     delete_btn.connect_clicked(glib::clone!(
         #[weak] row,
         #[weak] group,
