@@ -51,16 +51,6 @@ impl ObjectImpl for LogView {
             move |_| this.imp().show_add_dialog()
         ));
 
-        // Row activation → edit dialog
-        self.list_box.connect_row_activated(glib::clone!(
-            #[weak(rename_to = this)] obj,
-            move |_, row| {
-                let session_id = row.widget_name().parse::<i64>().unwrap_or(-1);
-                if session_id >= 0 {
-                    this.imp().show_edit_dialog(session_id);
-                }
-            }
-        ));
     }
 
     fn dispose(&self) {
@@ -168,6 +158,13 @@ impl LogView {
             row.set_subtitle(&subtitle);
         }
 
+        // Edit on row activation
+        let session_id = session.id;
+        let obj = self.obj().clone();
+        row.connect_activated(move |_| {
+            obj.imp().show_edit_dialog(session_id);
+        });
+
         // Delete button
         let delete_btn = gtk::Button::builder()
             .icon_name("user-trash-symbolic")
@@ -176,10 +173,10 @@ impl LogView {
             .css_classes(["flat"])
             .build();
 
-        let session_id = session.id;
-        let obj = self.obj().clone();
-        delete_btn.connect_clicked(move |btn| {
-            obj.imp().on_delete_clicked(session_id, btn);
+        let row_ref = row.clone();
+        let obj2 = self.obj().clone();
+        delete_btn.connect_clicked(move |_| {
+            obj2.imp().on_delete_clicked(session_id, &row_ref);
         });
 
         row.add_suffix(&delete_btn);
@@ -190,15 +187,8 @@ impl LogView {
 // ── Delete with undo toast ────────────────────────────────────────────────────
 
 impl LogView {
-    fn on_delete_clicked(&self, session_id: i64, delete_btn: &gtk::Button) {
-        // The button's parent is the ActionRow (which IS a ListBoxRow).
-        let action_row = delete_btn
-            .parent()
-            .and_downcast::<gtk::Widget>();
-
-        if let Some(ref w) = action_row {
-            w.set_visible(false);
-        }
+    fn on_delete_clicked(&self, session_id: i64, row: &adw::ActionRow) {
+        row.set_visible(false);
 
         let toast = adw::Toast::builder()
             .title("Session deleted")
@@ -207,23 +197,16 @@ impl LogView {
             .build();
 
         // Undo: restore the row and don't delete from DB
-        let widget_ref = action_row.clone();
+        let row_undo = row.clone();
         toast.connect_button_clicked(move |_| {
-            if let Some(ref w) = widget_ref {
-                w.set_visible(true);
-            }
+            row_undo.set_visible(true);
         });
 
         // When toast is dismissed without undo → actually delete from DB
         let obj = self.obj().clone();
+        let row_ref = row.clone();
         toast.connect_dismissed(move |_| {
-            // Check if the row is still hidden (= undo was NOT pressed)
-            let still_deleted = action_row
-                .as_ref()
-                .map(|w| !w.is_visible())
-                .unwrap_or(true);
-
-            if still_deleted {
+            if !row_ref.is_visible() {
                 if let Some(app) = obj.imp().get_app() {
                     app.with_db(|db| db.delete_session(session_id));
                 }
@@ -251,20 +234,36 @@ impl LogView {
         let labels = self.labels.borrow().clone();
         let session_id = session.map(|s| s.id);
 
-        // ── Duration rows ──────────────────────────────────────────────
-        let hours_row = adw::SpinRow::builder()
-            .title("Hours")
-            .adjustment(&gtk::Adjustment::new(0.0, 0.0, 23.0, 1.0, 5.0, 0.0))
-            .build();
-        let minutes_row = adw::SpinRow::builder()
-            .title("Minutes")
-            .adjustment(&gtk::Adjustment::new(0.0, 0.0, 59.0, 1.0, 5.0, 0.0))
-            .build();
+        // ── Duration row ───────────────────────────────────────────────
+        let hours_spin = gtk::SpinButton::with_range(0.0, 23.0, 1.0);
+        hours_spin.set_valign(gtk::Align::Center);
+        hours_spin.set_width_chars(3);
+        let minutes_spin = gtk::SpinButton::with_range(0.0, 59.0, 1.0);
+        minutes_spin.set_valign(gtk::Align::Center);
+        minutes_spin.set_width_chars(3);
 
         if let Some(s) = session {
-            hours_row.set_value((s.duration_secs / 3600) as f64);
-            minutes_row.set_value(((s.duration_secs % 3600) / 60) as f64);
+            hours_spin.set_value((s.duration_secs / 3600) as f64);
+            minutes_spin.set_value(((s.duration_secs % 3600) / 60) as f64);
         }
+
+        let h_label = gtk::Label::builder().label("h").margin_start(4).margin_end(8).build();
+        let m_label = gtk::Label::builder().label("min").margin_start(4).build();
+        let spin_box = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .spacing(0)
+            .valign(gtk::Align::Center)
+            .build();
+        spin_box.append(&hours_spin);
+        spin_box.append(&h_label);
+        spin_box.append(&minutes_spin);
+        spin_box.append(&m_label);
+
+        let duration_row = adw::ActionRow::builder()
+            .title("Duration")
+            .activatable_widget(&hours_spin)
+            .build();
+        duration_row.add_suffix(&spin_box);
 
         // ── Date row ───────────────────────────────────────────────────
         let date_row = adw::EntryRow::builder()
@@ -303,8 +302,7 @@ impl LogView {
 
         // ── Assemble dialog ────────────────────────────────────────────
         let group = adw::PreferencesGroup::new();
-        group.add(&hours_row);
-        group.add(&minutes_row);
+        group.add(&duration_row);
         group.add(&date_row);
         group.add(&label_row);
         group.add(&note_row);
@@ -346,15 +344,15 @@ impl LogView {
         let obj = self.obj().clone();
         save_btn.connect_clicked(glib::clone!(
             #[weak] dialog,
-            #[weak] hours_row,
-            #[weak] minutes_row,
+            #[weak] hours_spin,
+            #[weak] minutes_spin,
             #[weak] date_row,
             #[weak] label_row,
             #[weak] note_row,
             move |_| {
                 let imp = obj.imp();
-                let duration = hours_row.value() as i64 * 3600
-                    + minutes_row.value() as i64 * 60;
+                let duration = hours_spin.value() as i64 * 3600
+                    + minutes_spin.value() as i64 * 60;
                 let start_time = parse_date_iso(&date_row.text())
                     .unwrap_or_else(unix_now);
                 let selected = label_row.selected() as usize;

@@ -166,27 +166,34 @@ impl MeditateWindow {
             move |_| obj.imp().log_view.show_add_dialog()
         ));
 
-        // Filter: re-apply when popover closes
-        self.log_filter_btn.connect_notify_local(
+        // Filter: apply instantly when toggle or label selection changes
+        self.filter_notes_row.connect_notify_local(
             Some("active"),
             glib::clone!(
                 #[weak] obj,
-                move |btn, _| {
-                    if !btn.is_active() {
-                        // Popover just closed — apply filter
-                        let imp = obj.imp();
-                        imp.log_view.set_filter_notes_only(imp.filter_notes_row.is_active());
-                        let selected = imp.filter_label_row.selected() as usize;
-                        let label_id = if selected == 0 {
-                            None
-                        } else {
-                            // labels list in log_view: index 0 = "All labels", 1+ = actual labels
-                            let labels = imp.log_view.imp().labels.borrow();
-                            labels.get(selected - 1).map(|l| l.id)
-                        };
-                        imp.log_view.set_filter_label_id(label_id);
-                        imp.log_view.refresh();
-                    }
+                move |row, _| {
+                    let imp = obj.imp();
+                    imp.log_view.set_filter_notes_only(row.is_active());
+                    imp.log_view.refresh();
+                }
+            ),
+        );
+
+        self.filter_label_row.connect_notify_local(
+            Some("selected"),
+            glib::clone!(
+                #[weak] obj,
+                move |row, _| {
+                    let imp = obj.imp();
+                    let selected = row.selected() as usize;
+                    let label_id = if selected == 0 {
+                        None
+                    } else {
+                        let labels = imp.log_view.imp().labels.borrow();
+                        labels.get(selected - 1).map(|l| l.id)
+                    };
+                    imp.log_view.set_filter_label_id(label_id);
+                    imp.log_view.refresh();
                 }
             ),
         );

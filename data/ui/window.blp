@@ -35,6 +35,15 @@ template $MeditateWindow : Adw.ApplicationWindow {
               }
             };
 
+            // Primary menu — always rightmost
+            [end]
+            MenuButton {
+              icon-name: "open-menu-symbolic";
+              tooltip-text: _("Main Menu");
+              menu-model: primary_menu;
+              primary: true;
+            }
+
             // Log-specific buttons (hidden when not on log tab)
             [end]
             MenuButton log_filter_btn {
@@ -69,14 +78,6 @@ template $MeditateWindow : Adw.ApplicationWindow {
               icon-name: "list-add-symbolic";
               tooltip-text: _("Add Session");
               visible: false;
-            }
-
-            [end]
-            MenuButton {
-              icon-name: "open-menu-symbolic";
-              tooltip-text: _("Main Menu");
-              menu-model: primary_menu;
-              primary: true;
             }
           }
 
