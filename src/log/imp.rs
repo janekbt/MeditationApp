@@ -267,6 +267,10 @@ impl LogView {
 
         // ── Date row with calendar picker ──────────────────────────────
         let init_time = session.map(|s| s.start_time).unwrap_or_else(unix_now);
+        let init_dt = glib::DateTime::from_unix_local(init_time).ok();
+        let init_hour   = init_dt.as_ref().map(|d| d.hour()).unwrap_or(0);
+        let init_minute = init_dt.as_ref().map(|d| d.minute()).unwrap_or(0);
+
         let date_row = adw::ActionRow::builder()
             .title("Date")
             .subtitle(&format_date(init_time))
@@ -307,6 +311,34 @@ impl LogView {
                 cal_popover.popdown();
             }
         ));
+
+        // ── Time row ───────────────────────────────────────────────────
+        let time_hours_spin = gtk::SpinButton::with_range(0.0, 23.0, 1.0);
+        time_hours_spin.set_valign(gtk::Align::Center);
+        time_hours_spin.set_width_chars(3);
+        time_hours_spin.set_value(init_hour as f64);
+        let time_minutes_spin = gtk::SpinButton::with_range(0.0, 59.0, 1.0);
+        time_minutes_spin.set_valign(gtk::Align::Center);
+        time_minutes_spin.set_width_chars(3);
+        time_minutes_spin.set_value(init_minute as f64);
+
+        let th_label = gtk::Label::builder().label("h").margin_start(4).margin_end(8).build();
+        let tm_label = gtk::Label::builder().label("min").margin_start(4).build();
+        let time_spin_box = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .spacing(0)
+            .valign(gtk::Align::Center)
+            .build();
+        time_spin_box.append(&time_hours_spin);
+        time_spin_box.append(&th_label);
+        time_spin_box.append(&time_minutes_spin);
+        time_spin_box.append(&tm_label);
+
+        let time_row = adw::ActionRow::builder()
+            .title("Time")
+            .activatable_widget(&time_hours_spin)
+            .build();
+        time_row.add_suffix(&time_spin_box);
 
         // ── Label row ──────────────────────────────────────────────────
         let label_names: Vec<&str> = std::iter::once("None")
@@ -363,6 +395,7 @@ impl LogView {
         let group = adw::PreferencesGroup::new();
         group.add(&duration_row);
         group.add(&date_row);
+        group.add(&time_row);
         group.add(&label_row);
 
         let content_box = gtk::Box::builder()
@@ -412,6 +445,8 @@ impl LogView {
             #[weak] dialog,
             #[weak] hours_spin,
             #[weak] minutes_spin,
+            #[weak] time_hours_spin,
+            #[weak] time_minutes_spin,
             #[weak] calendar,
             #[weak] label_row,
             #[weak] note_buffer,
@@ -423,7 +458,9 @@ impl LogView {
                 let start_time = glib::DateTime::new(
                     &glib::TimeZone::local(),
                     cal_date.year(), cal_date.month(), cal_date.day_of_month(),
-                    0, 0, 0.0,
+                    time_hours_spin.value() as i32,
+                    time_minutes_spin.value() as i32,
+                    0.0,
                 ).ok().map(|d| d.to_unix()).unwrap_or_else(unix_now);
                 let selected = label_row.selected() as usize;
                 let label_id = if selected == 0 {
