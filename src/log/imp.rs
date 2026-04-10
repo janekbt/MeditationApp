@@ -309,6 +309,7 @@ impl LogView {
 
         let scrolled = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
+            .propagate_natural_height(true)
             .child(&group)
             .build();
 
