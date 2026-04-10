@@ -401,6 +401,10 @@ impl LogView {
         let content_box = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .spacing(18)
+            .margin_start(12)
+            .margin_end(12)
+            .margin_top(12)
+            .margin_bottom(12)
             .build();
         content_box.append(&group);
         content_box.append(&note_box);
