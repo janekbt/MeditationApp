@@ -54,7 +54,7 @@ impl ObjectImpl for StatsView {
     fn constructed(&self) {
         self.parent_constructed();
 
-        let now = glib::DateTime::now_local();
+        let now = glib::DateTime::now_local().unwrap();
         self.cal_year.set(now.year());
         self.cal_month.set(now.month() as u32);
 
@@ -207,7 +207,7 @@ impl StatsView {
 
         let dim = days_in_month(year, month);
 
-        let today = glib::DateTime::now_local();
+        let today = glib::DateTime::now_local().unwrap();
         let (ty, tm, td) = (
             today.year(),
             today.month() as u32,
@@ -303,6 +303,9 @@ impl StatsView {
 // ── Bar chart ─────────────────────────────────────────────────────────────────
 
 impl StatsView {
+    // style_context()/lookup_color() are deprecated since GTK 4.10 but remain
+    // the only practical way to read CSS named colors inside a Cairo draw func.
+    #[allow(deprecated)]
     fn draw_chart(
         &self,
         widget: &gtk::DrawingArea,
