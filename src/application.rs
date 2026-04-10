@@ -75,8 +75,7 @@ mod imp {
                 #[weak]
                 app,
                 move |_, _| {
-                    // TODO Phase 6
-                    let _ = app;
+                    crate::preferences::show_preferences(&app);
                 }
             ));
             app.add_action(&preferences_action);

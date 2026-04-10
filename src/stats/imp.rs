@@ -402,7 +402,12 @@ impl StatsView {
     pub fn reload_text_stats(&self) {
         let Some(app) = self.get_app() else { return; };
 
-        let avg = app.with_db(|db| db.get_running_average_secs(30))
+        let avg_days = app
+            .with_db(|db| db.get_setting("running_avg_days", "7"))
+            .and_then(|r| r.ok())
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(7);
+        let avg = app.with_db(|db| db.get_running_average_secs(avg_days))
             .and_then(|r| r.ok())
             .unwrap_or(0.0) as i64;
         self.stat_avg_value.set_label(&format_hm(avg));

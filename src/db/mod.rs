@@ -115,6 +115,11 @@ impl Database {
 
             CREATE INDEX IF NOT EXISTS idx_sessions_start_time
                 ON sessions (start_time);
+
+            CREATE TABLE IF NOT EXISTS settings (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
         ")?;
         Ok(())
     }
@@ -235,6 +240,29 @@ impl Database {
 
     pub fn delete_session(&self, id: i64) -> Result<()> {
         self.conn.execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    // ── Settings ──────────────────────────────────────────────────────────────
+
+    pub fn get_setting(&self, key: &str, default: &str) -> Result<String> {
+        match self.conn.query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            params![key],
+            |row| row.get::<_, String>(0),
+        ) {
+            Ok(val) => Ok(val),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(default.to_owned()),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )?;
         Ok(())
     }
 

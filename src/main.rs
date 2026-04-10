@@ -2,6 +2,7 @@ mod application;
 mod config;
 pub mod db;
 pub mod log;
+mod preferences;
 pub mod stats;
 pub mod timer;
 mod window;
