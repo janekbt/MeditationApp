@@ -277,23 +277,20 @@ impl LogView {
             calendar.select_day(&dt);
         }
 
-        let cal_btn = gtk::Button::builder()
+        let cal_popover = gtk::Popover::builder()
+            .child(&calendar)
+            .build();
+
+        // MenuButton manages the popover lifecycle correctly (no manual set_parent/unparent).
+        let cal_btn = gtk::MenuButton::builder()
             .icon_name("office-calendar-symbolic")
             .valign(gtk::Align::Center)
             .tooltip_text("Pick a date")
             .css_classes(["flat"])
+            .popover(&cal_popover)
+            .always_show_arrow(false)
             .build();
         date_row.add_suffix(&cal_btn);
-
-        let cal_popover = gtk::Popover::builder()
-            .child(&calendar)
-            .build();
-        cal_popover.set_parent(&cal_btn);
-
-        cal_btn.connect_clicked(glib::clone!(
-            #[weak] cal_popover,
-            move |_| cal_popover.popup()
-        ));
 
         calendar.connect_day_selected(glib::clone!(
             #[weak] date_row,
