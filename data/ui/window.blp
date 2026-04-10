@@ -95,11 +95,7 @@ template $MeditateWindow : Adw.ApplicationWindow {
               title: _("Stats");
               icon-name: "office-chart-bar-symbolic";
 
-              child: Adw.StatusPage {
-                icon-name: "office-chart-bar-symbolic";
-                title: _("Stats");
-                description: _("Stats view coming in Phase 5");
-              };
+              child: $StatsView stats_view {};
             }
 
             Adw.ViewStackPage {

@@ -3,6 +3,7 @@ use adw::subclass::prelude::*;
 use gtk::{glib, CompositeTemplate};
 
 use crate::log::LogView;
+use crate::stats::StatsView;
 use crate::timer::{format_time, TimerView};
 
 #[derive(Debug, Default, CompositeTemplate)]
@@ -14,6 +15,7 @@ pub struct MeditateWindow {
     #[template_child] pub toast_overlay:    TemplateChild<adw::ToastOverlay>,
     #[template_child] pub timer_view:       TemplateChild<TimerView>,
     #[template_child] pub log_view:         TemplateChild<LogView>,
+    #[template_child] pub stats_view:       TemplateChild<StatsView>,
     #[template_child] pub log_add_btn:      TemplateChild<gtk::Button>,
     #[template_child] pub log_filter_btn:   TemplateChild<gtk::MenuButton>,
     #[template_child] pub filter_notes_row: TemplateChild<adw::SwitchRow>,
@@ -29,6 +31,7 @@ impl ObjectSubclass for MeditateWindow {
     fn class_init(klass: &mut Self::Class) {
         TimerView::ensure_type();
         LogView::ensure_type();
+        StatsView::ensure_type();
         klass.bind_template();
     }
 
@@ -42,6 +45,7 @@ impl ObjectImpl for MeditateWindow {
         self.parent_constructed();
         self.wire_timer_signals();
         self.wire_log_signals();
+        self.wire_stats_signals();
         self.timer_view.refresh_streak();
     }
 }
@@ -211,5 +215,24 @@ impl MeditateWindow {
 
     pub fn add_toast(&self, toast: adw::Toast) {
         self.toast_overlay.add_toast(toast);
+    }
+}
+
+// ── Stats ─────────────────────────────────────────────────────────────────────
+
+impl MeditateWindow {
+    fn wire_stats_signals(&self) {
+        let obj = self.obj();
+        self.view_stack.connect_notify_local(
+            Some("visible-child"),
+            glib::clone!(
+                #[weak] obj,
+                move |stack, _| {
+                    if stack.visible_child_name().as_deref() == Some("stats") {
+                        obj.imp().stats_view.refresh();
+                    }
+                }
+            ),
+        );
     }
 }

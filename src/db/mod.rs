@@ -273,6 +273,34 @@ impl Database {
         Ok(streak)
     }
 
+    /// Longest consecutive-day streak ever recorded.
+    pub fn get_best_streak(&self) -> Result<u32> {
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT CAST(start_time / 86400 AS INTEGER) AS day
+             FROM sessions
+             ORDER BY day ASC"
+        )?;
+        let days: Vec<i64> = stmt
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<_>>()?;
+
+        if days.is_empty() {
+            return Ok(0);
+        }
+
+        let mut best = 1u32;
+        let mut current = 1u32;
+        for w in days.windows(2) {
+            if w[1] - w[0] == 1 {
+                current += 1;
+                if current > best { best = current; }
+            } else {
+                current = 1;
+            }
+        }
+        Ok(best)
+    }
+
     /// Total meditation time across all sessions, in seconds.
     pub fn get_total_duration_secs(&self) -> Result<i64> {
         self.conn.query_row(
