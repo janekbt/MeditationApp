@@ -2,11 +2,12 @@ use adw::prelude::*;
 use gtk::glib;
 
 use crate::application::MeditateApplication;
+use crate::window::MeditateWindow;
 
 pub fn show_preferences(app: &MeditateApplication) {
     let app = app.clone();
 
-    let win = adw::PreferencesWindow::builder()
+    let dialog = adw::PreferencesDialog::builder()
         .title("Preferences")
         .search_enabled(false)
         .build();
@@ -54,7 +55,7 @@ pub fn show_preferences(app: &MeditateApplication) {
 
     stats_group.add(&avg_row);
     general_page.add(&stats_group);
-    win.add(&general_page);
+    dialog.add(&general_page);
 
     // ── Labels page ───────────────────────────────────────────────────────────
 
@@ -82,20 +83,19 @@ pub fn show_preferences(app: &MeditateApplication) {
         .unwrap_or_default();
 
     for label in &labels {
-        let row = make_label_row(label.id, &label.name, &labels_group, &win, &app);
+        let row = make_label_row(label.id, &label.name, &labels_group, &app);
         labels_group.add(&row);
     }
 
     add_btn.connect_clicked(glib::clone!(
         #[weak] app,
         #[weak] labels_group,
-        #[weak] win,
         move |_| {
             if let Some(label) = app
                 .with_db(|db| db.create_label("New label"))
                 .and_then(|r| r.ok())
             {
-                let row = make_label_row(label.id, &label.name, &labels_group, &win, &app);
+                let row = make_label_row(label.id, &label.name, &labels_group, &app);
                 labels_group.add(&row);
                 row.grab_focus();
             }
@@ -103,19 +103,16 @@ pub fn show_preferences(app: &MeditateApplication) {
     ));
 
     labels_page.add(&labels_group);
-    win.add(&labels_page);
+    dialog.add(&labels_page);
 
-    if let Some(parent) = app.active_window() {
-        win.set_transient_for(Some(&parent));
-    }
-    win.present();
+    let parent = app.active_window();
+    dialog.present(parent.as_ref());
 }
 
 fn make_label_row(
     id: i64,
     name: &str,
     group: &adw::PreferencesGroup,
-    win: &adw::PreferencesWindow,
     app: &MeditateApplication,
 ) -> adw::EntryRow {
     let row = adw::EntryRow::builder()
@@ -143,11 +140,10 @@ fn make_label_row(
         }
     ));
 
-    // Delete with undo toast
+    // Delete with undo toast (routed to main window at click-time)
     delete_btn.connect_clicked(glib::clone!(
         #[weak] row,
         #[weak] group,
-        #[weak] win,
         #[weak] app,
         move |_| {
             row.set_visible(false);
@@ -175,7 +171,12 @@ fn make_label_row(
                 }
             ));
 
-            win.add_toast(toast);
+            if let Some(win) = app
+                .active_window()
+                .and_then(|w| w.downcast::<MeditateWindow>().ok())
+            {
+                win.add_toast(toast);
+            }
         }
     ));
 
