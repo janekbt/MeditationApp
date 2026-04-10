@@ -197,7 +197,8 @@ impl Database {
             "SELECT id, start_time, duration_secs, mode, label_id, note
              FROM sessions
              {where_clause}
-             ORDER BY start_time DESC"
+             ORDER BY strftime('%Y-%m-%d', start_time, 'unixepoch', 'localtime') DESC,
+                      start_time DESC"
         );
 
         let mut stmt = self.conn.prepare(&sql)?;
