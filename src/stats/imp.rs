@@ -90,6 +90,7 @@ impl StatsView {
                 let num = gtk::Label::builder()
                     .width_chars(2)
                     .xalign(0.5)
+                    .valign(gtk::Align::Center)
                     .build();
                 // halign::Fill lets the background extend edge-to-edge so
                 // consecutive active days form an unbroken coloured strip.
