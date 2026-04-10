@@ -265,15 +265,51 @@ impl LogView {
             .build();
         duration_row.add_suffix(&spin_box);
 
-        // ── Date row ───────────────────────────────────────────────────
-        let date_row = adw::EntryRow::builder()
-            .title("Date (YYYY-MM-DD)")
+        // ── Date row with calendar picker ──────────────────────────────
+        let init_time = session.map(|s| s.start_time).unwrap_or_else(unix_now);
+        let date_row = adw::ActionRow::builder()
+            .title("Date")
+            .subtitle(&format_date(init_time))
             .build();
-        if let Some(s) = session {
-            date_row.set_text(&format_date_iso(s.start_time));
-        } else {
-            date_row.set_text(&format_date_iso(unix_now()));
+
+        let calendar = gtk::Calendar::new();
+        if let Ok(dt) = glib::DateTime::from_unix_local(init_time) {
+            calendar.select_day(&dt);
         }
+
+        let cal_btn = gtk::Button::builder()
+            .icon_name("office-calendar-symbolic")
+            .valign(gtk::Align::Center)
+            .tooltip_text("Pick a date")
+            .css_classes(["flat"])
+            .build();
+        date_row.add_suffix(&cal_btn);
+
+        let cal_popover = gtk::Popover::builder()
+            .child(&calendar)
+            .build();
+        cal_popover.set_parent(&cal_btn);
+
+        cal_btn.connect_clicked(glib::clone!(
+            #[weak] cal_popover,
+            move |_| cal_popover.popup()
+        ));
+
+        calendar.connect_day_selected(glib::clone!(
+            #[weak] date_row,
+            #[weak] cal_popover,
+            move |cal| {
+                let dt = cal.date();
+                if let Ok(local) = glib::DateTime::new(
+                    &glib::TimeZone::local(),
+                    dt.year(), dt.month(), dt.day_of_month(),
+                    0, 0, 0.0,
+                ) {
+                    date_row.set_subtitle(&format_date(local.to_unix()));
+                }
+                cal_popover.popdown();
+            }
+        ));
 
         // ── Label row ──────────────────────────────────────────────────
         let label_names: Vec<&str> = std::iter::once("None")
@@ -292,25 +328,57 @@ impl LogView {
             label_row.set_selected(idx);
         }
 
-        // ── Note row ───────────────────────────────────────────────────
-        let note_row = adw::EntryRow::builder()
-            .title("Note (optional)")
-            .build();
+        // ── Note (multiline) ───────────────────────────────────────────
+        let note_buffer = gtk::TextBuffer::new(None);
         if let Some(s) = session {
-            note_row.set_text(s.note.as_deref().unwrap_or(""));
+            note_buffer.set_text(s.note.as_deref().unwrap_or(""));
         }
+        let note_view = gtk::TextView::builder()
+            .buffer(&note_buffer)
+            .wrap_mode(gtk::WrapMode::WordChar)
+            .top_margin(8)
+            .bottom_margin(8)
+            .left_margin(12)
+            .right_margin(12)
+            .build();
+        let note_scroll = gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .min_content_height(80)
+            .max_content_height(160)
+            .propagate_natural_height(true)
+            .child(&note_view)
+            .css_classes(["card"])
+            .build();
+        let note_caption = gtk::Label::builder()
+            .label("Note (optional)")
+            .halign(gtk::Align::Start)
+            .margin_start(12)
+            .css_classes(["caption", "dim-label"])
+            .build();
+        let note_box = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(6)
+            .build();
+        note_box.append(&note_caption);
+        note_box.append(&note_scroll);
 
         // ── Assemble dialog ────────────────────────────────────────────
         let group = adw::PreferencesGroup::new();
         group.add(&duration_row);
         group.add(&date_row);
         group.add(&label_row);
-        group.add(&note_row);
+
+        let content_box = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(18)
+            .build();
+        content_box.append(&group);
+        content_box.append(&note_box);
 
         let scrolled = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
             .propagate_natural_height(true)
-            .child(&group)
+            .child(&content_box)
             .build();
 
         let cancel_btn = gtk::Button::builder()
@@ -347,22 +415,30 @@ impl LogView {
             #[weak] dialog,
             #[weak] hours_spin,
             #[weak] minutes_spin,
-            #[weak] date_row,
+            #[weak] calendar,
             #[weak] label_row,
-            #[weak] note_row,
+            #[weak] note_buffer,
             move |_| {
                 let imp = obj.imp();
                 let duration = hours_spin.value() as i64 * 3600
                     + minutes_spin.value() as i64 * 60;
-                let start_time = parse_date_iso(&date_row.text())
-                    .unwrap_or_else(unix_now);
+                let cal_date = calendar.date();
+                let start_time = glib::DateTime::new(
+                    &glib::TimeZone::local(),
+                    cal_date.year(), cal_date.month(), cal_date.day_of_month(),
+                    0, 0, 0.0,
+                ).ok().map(|d| d.to_unix()).unwrap_or_else(unix_now);
                 let selected = label_row.selected() as usize;
                 let label_id = if selected == 0 {
                     None
                 } else {
                     imp.labels.borrow().get(selected - 1).map(|l| l.id)
                 };
-                let note_text = note_row.text();
+                let note_text = note_buffer.text(
+                    &note_buffer.start_iter(),
+                    &note_buffer.end_iter(),
+                    false,
+                );
                 let note = if note_text.is_empty() { None } else { Some(note_text.to_string()) };
 
                 let data = SessionData {
@@ -437,27 +513,6 @@ fn format_date(unix_secs: i64) -> String {
         .unwrap_or_default()
 }
 
-fn format_date_iso(unix_secs: i64) -> String {
-    glib::DateTime::from_unix_local(unix_secs)
-        .ok()
-        .and_then(|dt| dt.format("%Y-%m-%d").ok())
-        .map(|gs| gs.to_string())
-        .unwrap_or_default()
-}
-
-/// Parse "YYYY-MM-DD" into a unix timestamp (midnight local time).
-fn parse_date_iso(s: &str) -> Option<i64> {
-    let parts: Vec<&str> = s.trim().split('-').collect();
-    if parts.len() != 3 {
-        return None;
-    }
-    let y: i32 = parts[0].parse().ok()?;
-    let m: i32 = parts[1].parse().ok()?;
-    let d: i32 = parts[2].parse().ok()?;
-    glib::DateTime::new(&glib::TimeZone::local(), y, m, d, 0, 0, 0.0)
-        .ok()
-        .map(|dt| dt.to_unix())
-}
 
 fn unix_now() -> i64 {
     std::time::SystemTime::now()
