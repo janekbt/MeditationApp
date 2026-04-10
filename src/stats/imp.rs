@@ -283,8 +283,19 @@ impl StatsView {
             })
             .collect();
 
-        // Aggregate into weekly buckets for longer periods
-        let data: Vec<(String, i64)> = if days >= 90 {
+        // Aggregate: monthly for 1 year (12 bars), weekly for 3 months (~13 bars)
+        let data: Vec<(String, i64)> = if days >= 365 {
+            let mut months: Vec<(String, i64)> = Vec::new();
+            for (date_str, dur) in &daily {
+                let same = months.last().map(|(k, _)| k[..7] == date_str[..7]).unwrap_or(false);
+                if same {
+                    months.last_mut().unwrap().1 += dur;
+                } else {
+                    months.push((date_str.clone(), *dur));
+                }
+            }
+            months
+        } else if days >= 90 {
             daily.chunks(7)
                 .map(|c| (c[0].0.clone(), c.iter().map(|(_, d)| d).sum()))
                 .collect()
