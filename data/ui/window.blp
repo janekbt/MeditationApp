@@ -1,0 +1,88 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $MeditateWindow : Adw.ApplicationWindow {
+  default-width: 360;
+  default-height: 700;
+
+  content: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      title-widget: Adw.ViewSwitcherTitle view_switcher_title {
+        stack: view_stack;
+        title: _("Meditate");
+      };
+
+      [end]
+      MenuButton {
+        icon-name: "open-menu-symbolic";
+        tooltip-text: _("Main Menu");
+        menu-model: primary_menu;
+        primary: true;
+      }
+    }
+
+    content: Adw.ViewStack view_stack {
+      Adw.ViewStackPage {
+        name: "timer";
+        title: _("Timer");
+        icon-name: "alarm-symbolic";
+
+        child: Adw.StatusPage {
+          icon-name: "alarm-symbolic";
+          title: _("Timer");
+          description: _("Timer view coming in Phase 3");
+        };
+      }
+
+      Adw.ViewStackPage {
+        name: "stats";
+        title: _("Stats");
+        icon-name: "office-chart-bar-symbolic";
+
+        child: Adw.StatusPage {
+          icon-name: "office-chart-bar-symbolic";
+          title: _("Stats");
+          description: _("Stats view coming in Phase 5");
+        };
+      }
+
+      Adw.ViewStackPage {
+        name: "log";
+        title: _("Log");
+        icon-name: "view-list-symbolic";
+
+        child: Adw.StatusPage {
+          icon-name: "view-list-symbolic";
+          title: _("Log");
+          description: _("Log view coming in Phase 4");
+        };
+      }
+    };
+
+    [bottom]
+    Adw.ViewSwitcherBar switcher_bar {
+      stack: view_stack;
+      reveal: bind view_switcher_title.title-visible;
+    }
+  };
+}
+
+menu primary_menu {
+  section {
+    item {
+      label: _("_Preferences");
+      action: "app.preferences";
+    }
+
+    item {
+      label: _("_Keyboard Shortcuts");
+      action: "win.show-help-overlay";
+    }
+
+    item {
+      label: _("_About Meditate");
+      action: "app.about";
+    }
+  }
+}

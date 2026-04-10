@@ -1,0 +1,55 @@
+{
+  "app-id": "io.github.janekbt.Meditate",
+  "runtime": "org.gnome.Platform",
+  "runtime-version": "50",
+  "sdk": "org.gnome.Sdk",
+  "sdk-extensions": [
+    "org.freedesktop.Sdk.Extension.rust-stable"
+  ],
+  "command": "meditate",
+  "finish-args": [
+    "--share=ipc",
+    "--socket=fallback-x11",
+    "--socket=wayland",
+    "--device=dri",
+    "--socket=pulseaudio",
+    "--talk-name=org.freedesktop.Notifications",
+    "--filesystem=xdg-data/meditate:create"
+  ],
+  "build-options": {
+    "append-path": "/usr/lib/sdk/rust-stable/bin",
+    "env": {
+      "CARGO_HOME": "/run/build/meditate/cargo",
+      "CARGO_REGISTRIES_CRATES_IO_PROTOCOL": "sparse",
+      "APP_ID": "io.github.janekbt.Meditate",
+      "PKGDATADIR": "/app/share/meditate"
+    }
+  },
+  "modules": [
+    {
+      "name": "blueprint-compiler",
+      "buildsystem": "meson",
+      "sources": [
+        {
+          "type": "git",
+          "url": "https://gitlab.gnome.org/jwestman/blueprint-compiler.git",
+          "tag": "v0.14.0"
+        }
+      ]
+    },
+    {
+      "name": "meditate",
+      "buildsystem": "meson",
+      "config-opts": [
+        "--buildtype=release"
+      ],
+      "sources": [
+        {
+          "type": "dir",
+          "path": ".."
+        },
+        "cargo-sources.json"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+# Cargo build output
+/target/
+/cargo-home/
+
+# Meson build directories
+/_build/
+/builddir/
+
+# Generated config
+src/config.rs.gen
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo

@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.janekbt.Meditate</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+
+  <name>Meditate</name>
+  <summary>A simple meditation timer and log</summary>
+
+  <description>
+    <p>
+      Meditate is a simple meditation companion for GNOME. It provides a
+      countdown and stopwatch timer, a session log, and statistics to help
+      you build a consistent practice.
+    </p>
+    <ul>
+      <li>Countdown and stopwatch timer modes</li>
+      <li>Label your sessions (sitting, walking, chanting, …)</li>
+      <li>Add notes to each session</li>
+      <li>View your history and statistics</li>
+      <li>Track your streak and stay consistent</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">io.github.janekbt.Meditate.desktop</launchable>
+
+  <url type="homepage">https://github.com/janekbt/MeditationApp</url>
+  <url type="bugtracker">https://github.com/janekbt/MeditationApp/issues</url>
+
+  <developer id="io.github.janekbt">
+    <name>janekbt</name>
+  </developer>
+
+  <branding>
+    <color type="primary" scheme_preference="light">#99c1f1</color>
+    <color type="primary" scheme_preference="dark">#1a5fb4</color>
+  </branding>
+
+  <content_rating type="oars-1.1" />
+
+  <releases>
+    <release version="0.1.0" date="2026-04-10">
+      <description>
+        <p>Initial release.</p>
+      </description>
+    </release>
+  </releases>
+
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+    <control>touch</control>
+  </supports>
+
+  <requires>
+    <display_length compare="ge">360</display_length>
+  </requires>
+</component>
