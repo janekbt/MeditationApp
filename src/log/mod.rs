@@ -1,7 +1,6 @@
 mod imp;
 
 use gtk::glib;
-use gtk::glib::prelude::*;
 use gtk::glib::subclass::prelude::ObjectSubclassIsExt;
 
 glib::wrapper! {

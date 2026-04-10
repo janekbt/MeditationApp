@@ -16,7 +16,7 @@ pub struct LogView {
 
     // Cached DB data
     sessions:        RefCell<Vec<Session>>,
-    labels:          RefCell<Vec<Label>>,
+    pub labels:      RefCell<Vec<Label>>,
 
     // Filter state
     pub filter_notes_only: Cell<bool>,
@@ -43,15 +43,17 @@ impl ObjectImpl for LogView {
     fn constructed(&self) {
         self.parent_constructed();
 
+        let obj = self.obj();
+
         // "Add Session" button in the empty state
         self.add_first_btn.connect_clicked(glib::clone!(
-            #[weak(rename_to = this)] obj = self.obj(),
+            #[weak(rename_to = this)] obj,
             move |_| this.imp().show_add_dialog()
         ));
 
         // Row activation → edit dialog
         self.list_box.connect_row_activated(glib::clone!(
-            #[weak(rename_to = this)] obj = self.obj(),
+            #[weak(rename_to = this)] obj,
             move |_, row| {
                 let session_id = row.widget_name().parse::<i64>().unwrap_or(-1);
                 if session_id >= 0 {
@@ -189,13 +191,7 @@ impl LogView {
 
 impl LogView {
     fn on_delete_clicked(&self, session_id: i64, delete_btn: &gtk::Button) {
-        // Find and hide the row immediately (optimistic update)
-        let row = delete_btn
-            .parent()  // ActionRow
-            .and_then(|r| r.parent()); // ListBoxRow wrapper (ActionRow IS a ListBoxRow)
-
-        // ActionRow extends ListBoxRow, so the parent of the button is the ActionRow
-        // which is itself a ListBoxRow — no extra wrapper needed.
+        // The button's parent is the ActionRow (which IS a ListBoxRow).
         let action_row = delete_btn
             .parent()
             .and_downcast::<gtk::Widget>();
@@ -343,7 +339,7 @@ impl LogView {
         // Cancel
         cancel_btn.connect_clicked(glib::clone!(
             #[weak] dialog,
-            move |_| dialog.close()
+            move |_| { dialog.close(); }
         ));
 
         // Save
@@ -459,7 +455,7 @@ fn parse_date_iso(s: &str) -> Option<i64> {
     let y: i32 = parts[0].parse().ok()?;
     let m: i32 = parts[1].parse().ok()?;
     let d: i32 = parts[2].parse().ok()?;
-    glib::DateTime::new_local(y, m, d, 0, 0, 0.0)
+    glib::DateTime::new(&glib::TimeZone::local(), y, m, d, 0, 0, 0.0)
         .ok()
         .map(|dt| dt.to_unix())
 }
