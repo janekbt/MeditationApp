@@ -46,7 +46,14 @@ impl ObjectImpl for MeditateWindow {
         self.wire_timer_signals();
         self.wire_log_signals();
         self.wire_stats_signals();
-        self.timer_view.refresh_streak();
+
+        // Refresh streak once the window is fully realized (get_app() is
+        // not guaranteed to succeed earlier, during GObject construction).
+        let obj = self.obj();
+        obj.connect_map(glib::clone!(
+            #[weak] obj,
+            move |_| { obj.imp().timer_view.refresh_streak(); }
+        ));
     }
 }
 
@@ -60,6 +67,18 @@ impl AdwApplicationWindowImpl for MeditateWindow {}
 impl MeditateWindow {
     fn wire_timer_signals(&self) {
         let obj = self.obj();
+
+        self.view_stack.connect_notify_local(
+            Some("visible-child"),
+            glib::clone!(
+                #[weak] obj,
+                move |stack, _| {
+                    if stack.visible_child_name().as_deref() == Some("timer") {
+                        obj.imp().timer_view.refresh_streak();
+                    }
+                }
+            ),
+        );
 
         self.timer_view.connect_timer_started(glib::clone!(
             #[weak] obj,
