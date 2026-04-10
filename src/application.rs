@@ -88,9 +88,7 @@ mod imp {
     }
 }
 
-use adw::subclass::prelude::*;
 use gtk::glib;
-use gtk::prelude::*;
 
 glib::wrapper! {
     pub struct MeditateApplication(ObjectSubclass<imp::MeditateApplication>)

@@ -1,6 +1,5 @@
 mod imp;
 
-use adw::subclass::prelude::*;
 use glib::prelude::IsA;
 use gtk::{gio, glib};
 
