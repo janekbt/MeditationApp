@@ -345,7 +345,7 @@ impl StatsView {
             .spacing(2)
             .build();
 
-        for (i, (date_str, dur)) in data.iter().enumerate() {
+        for (i, (_date_str, dur)) in data.iter().enumerate() {
             // Bar column
             let col = gtk::Box::builder()
                 .orientation(gtk::Orientation::Vertical)
