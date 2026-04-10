@@ -31,6 +31,9 @@ pub struct TimerView {
     #[template_child] pub inputs_stack:        TemplateChild<gtk::Stack>,
     #[template_child] pub hours_spin:          TemplateChild<gtk::SpinButton>,
     #[template_child] pub minutes_spin:        TemplateChild<gtk::SpinButton>,
+    #[template_child] pub hm_box:             TemplateChild<gtk::Box>,
+    #[template_child] pub presets_box:        TemplateChild<gtk::Box>,
+    #[template_child] pub stopwatch_idle_label: TemplateChild<gtk::Label>,
     #[template_child] pub preset_5:            TemplateChild<gtk::Button>,
     #[template_child] pub preset_10:           TemplateChild<gtk::Button>,
     #[template_child] pub preset_15:           TemplateChild<gtk::Button>,
@@ -131,19 +134,16 @@ impl TimerView {
             ));
         }
 
-        // Mode toggle: hide inputs in stopwatch mode
+        // Mode toggle: swap H:M inputs / presets for "00:00" in stopwatch mode
         self.stopwatch_btn.connect_toggled(glib::clone!(
             #[weak(rename_to = this)]
             obj,
             move |btn| {
                 let imp = this.imp();
                 let is_stopwatch = btn.is_active();
-                imp.hours_spin.set_visible(!is_stopwatch);
-                imp.minutes_spin.set_visible(!is_stopwatch);
-                // Hide preset box parent (the linked Gtk.Box)
-                if let Some(presets_box) = imp.preset_5.parent() {
-                    presets_box.set_visible(!is_stopwatch);
-                }
+                imp.hm_box.set_visible(!is_stopwatch);
+                imp.presets_box.set_visible(!is_stopwatch);
+                imp.stopwatch_idle_label.set_visible(is_stopwatch);
             }
         ));
 
