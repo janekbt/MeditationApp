@@ -356,17 +356,18 @@ impl Database {
 
     /// Returns the set of days (as Unix timestamps, midnight UTC) in the given
     /// year/month that had at least one session. Used to render the calendar.
-    pub fn get_active_days_in_month(&self, year: i32, month: u32) -> Result<Vec<i64>> {
+    pub fn get_active_days_in_month(&self, year: i32, month: u32) -> Result<Vec<u32>> {
         let mut stmt = self.conn.prepare(
-            "SELECT DISTINCT CAST(start_time / 86400 AS INTEGER) * 86400
+            "SELECT DISTINCT
+                 CAST(strftime('%d', start_time, 'unixepoch', 'localtime') AS INTEGER)
              FROM sessions
-             WHERE strftime('%Y', start_time, 'unixepoch') = ?1
-               AND strftime('%m', start_time, 'unixepoch') = ?2
+             WHERE strftime('%Y', start_time, 'unixepoch', 'localtime') = ?1
+               AND strftime('%m', start_time, 'unixepoch', 'localtime') = ?2
              ORDER BY 1"
         )?;
         let year_str = format!("{year:04}");
         let month_str = format!("{month:02}");
-        let rows = stmt.query_map(params![year_str, month_str], |row| row.get(0))?;
+        let rows = stmt.query_map(params![year_str, month_str], |row| row.get::<_, u32>(0))?;
         rows.collect()
     }
 }

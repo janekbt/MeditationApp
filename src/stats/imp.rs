@@ -172,18 +172,13 @@ impl StatsView {
             .unwrap_or_default();
         self.cal_month_label.set_label(&month_str);
 
-        // Days that had at least one session (local day-of-month)
+        // Days that had at least one session (local day-of-month numbers)
         let active: std::collections::HashSet<u32> = self
             .get_app()
             .and_then(|app| app.with_db(|db| db.get_active_days_in_month(year, month)))
             .and_then(|r| r.ok())
             .unwrap_or_default()
             .into_iter()
-            .filter_map(|ts| {
-                glib::DateTime::from_unix_utc(ts).ok()
-                    .and_then(|dt| dt.to_local().ok())
-                    .map(|dt| dt.day_of_month() as u32)
-            })
             .collect();
 
         // First weekday of the month (1=Mon … 7=Sun → offset 0–6)
