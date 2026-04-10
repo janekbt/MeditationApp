@@ -95,7 +95,8 @@ template $StatsView : Gtk.Widget {
             }
           }
 
-          Gtk.DrawingArea chart_area {
+          Gtk.Box chart_container {
+            orientation: horizontal;
             height-request: 160;
             hexpand: true;
           }

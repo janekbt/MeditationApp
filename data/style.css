@@ -1,0 +1,5 @@
+.chart-bar {
+    background-color: @accent_bg_color;
+    border-radius: 2px 2px 0 0;
+    min-width: 2px;
+}

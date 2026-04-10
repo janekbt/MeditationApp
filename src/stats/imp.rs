@@ -1,7 +1,7 @@
 use std::cell::{Cell, RefCell};
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use gtk::{glib, gdk, CompositeTemplate};
+use gtk::{glib, CompositeTemplate};
 
 // ── GObject impl ──────────────────────────────────────────────────────────────
 
@@ -20,7 +20,7 @@ pub struct StatsView {
     #[template_child] pub period_3m_btn:     TemplateChild<gtk::ToggleButton>,
     #[template_child] pub period_1y_btn:     TemplateChild<gtk::ToggleButton>,
     // Chart
-    #[template_child] pub chart_area:        TemplateChild<gtk::DrawingArea>,
+    #[template_child] pub chart_container:   TemplateChild<gtk::Box>,
     // Text stats
     #[template_child] pub stat_avg_value:    TemplateChild<gtk::Label>,
     #[template_child] pub stat_streak_value: TemplateChild<gtk::Label>,
@@ -29,7 +29,6 @@ pub struct StatsView {
     // State
     pub cal_year:   Cell<i32>,
     pub cal_month:  Cell<u32>,
-    pub chart_data: RefCell<Vec<(i64, i64)>>,
     /// 42 calendar cells (day-number label, dot label), row-major order.
     pub cal_cells:  RefCell<Vec<(gtk::Label, gtk::Label)>>,
 }
@@ -151,14 +150,6 @@ impl StatsView {
                 }
             ));
         }
-
-        // Use a weak ref to avoid a retain cycle (DrawingArea → closure → StatsView).
-        let weak_obj = obj.downgrade();
-        self.chart_area.set_draw_func(move |widget, cr, w, h| {
-            if let Some(o) = weak_obj.upgrade() {
-                o.imp().draw_chart(widget, cr, w, h);
-            }
-        });
     }
 }
 
@@ -267,8 +258,72 @@ impl StatsView {
             daily
         };
 
-        *self.chart_data.borrow_mut() = data;
-        self.chart_area.queue_draw();
+        // Clear previous chart content
+        while let Some(child) = self.chart_container.first_child() {
+            self.chart_container.remove(&child);
+        }
+
+        if data.iter().all(|(_, d)| *d == 0) {
+            return;
+        }
+
+        let chart_h = 148.0_f64;
+        let max_val = data.iter().map(|(_, d)| *d).max().unwrap_or(1).max(1);
+
+        // Y-axis: top label, equal spacers around the mid label
+        let y_axis = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .width_request(46)
+            .vexpand(true)
+            .build();
+        y_axis.append(
+            &gtk::Label::builder()
+                .label(&format_hm(max_val))
+                .css_classes(["caption", "dim-label"])
+                .halign(gtk::Align::Start)
+                .build(),
+        );
+        y_axis.append(&gtk::Box::builder().vexpand(true).build());
+        y_axis.append(
+            &gtk::Label::builder()
+                .label(&format_hm(max_val / 2))
+                .css_classes(["caption", "dim-label"])
+                .halign(gtk::Align::Start)
+                .build(),
+        );
+        y_axis.append(&gtk::Box::builder().vexpand(true).build());
+
+        // Bars: one column per data point
+        let bars_box = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .hexpand(true)
+            .vexpand(true)
+            .spacing(2)
+            .build();
+
+        for (_, dur) in &data {
+            let col = gtk::Box::builder()
+                .orientation(gtk::Orientation::Vertical)
+                .hexpand(true)
+                .vexpand(true)
+                .build();
+            // Spacer pushes the bar to the bottom
+            col.append(&gtk::Box::builder().vexpand(true).build());
+            if *dur > 0 {
+                let bar_h = ((*dur as f64 / max_val as f64) * chart_h) as i32;
+                col.append(
+                    &gtk::Box::builder()
+                        .height_request(bar_h.max(2))
+                        .hexpand(true)
+                        .css_classes(["chart-bar"])
+                        .build(),
+                );
+            }
+            bars_box.append(&col);
+        }
+
+        self.chart_container.append(&y_axis);
+        self.chart_container.append(&bars_box);
     }
 
     pub fn reload_text_stats(&self) {
@@ -297,77 +352,6 @@ impl StatsView {
         if self.period_3m_btn.is_active() { return 90;  }
         if self.period_1y_btn.is_active() { return 365; }
         7
-    }
-}
-
-// ── Bar chart ─────────────────────────────────────────────────────────────────
-
-impl StatsView {
-    // style_context()/lookup_color() are deprecated since GTK 4.10 but remain
-    // the only practical way to read CSS named colors inside a Cairo draw func.
-    #[allow(deprecated)]
-    fn draw_chart(
-        &self,
-        widget: &gtk::DrawingArea,
-        cr: &gtk::cairo::Context,
-        width: i32,
-        height: i32,
-    ) {
-        let data = self.chart_data.borrow();
-        if data.iter().all(|(_, d)| *d == 0) {
-            return;
-        }
-
-        let w = width as f64;
-        let h = height as f64;
-
-        let style = widget.style_context();
-        let accent = style
-            .lookup_color("accent_bg_color")
-            .unwrap_or_else(|| gdk::RGBA::new(0.35, 0.55, 1.0, 1.0));
-        let fg = style
-            .lookup_color("window_fg_color")
-            .unwrap_or_else(|| gdk::RGBA::new(0.5, 0.5, 0.5, 1.0));
-
-        let max_val = data.iter().map(|(_, d)| *d).max().unwrap_or(1).max(1);
-        let n = data.len();
-
-        let left_margin = 46.0_f64;
-        let bottom_margin = 4.0_f64;
-        let chart_w = w - left_margin;
-        let chart_h = h - bottom_margin;
-        let gap = 2.0_f64;
-        let bar_w = ((chart_w / n as f64) - gap).max(1.0);
-
-        // Bars
-        cr.set_source_rgba(
-            accent.red() as f64, accent.green() as f64,
-            accent.blue() as f64, accent.alpha() as f64,
-        );
-        for (i, (_, dur)) in data.iter().enumerate() {
-            if *dur == 0 { continue; }
-            let bar_h = (*dur as f64 / max_val as f64) * chart_h;
-            let x = left_margin + i as f64 * (bar_w + gap);
-            cr.rectangle(x, chart_h - bar_h, bar_w, bar_h);
-            cr.fill().ok();
-        }
-
-        // Y-axis labels (top and midpoint)
-        cr.set_source_rgba(
-            fg.red() as f64, fg.green() as f64,
-            fg.blue() as f64, fg.alpha() as f64 * 0.7,
-        );
-        cr.set_font_size(10.0);
-
-        cr.move_to(0.0, 10.0);
-        cr.show_text(&format_hm(max_val)).ok();
-
-        let mid = max_val / 2;
-        if mid > 0 {
-            let mid_y = chart_h - (mid as f64 / max_val as f64) * chart_h;
-            cr.move_to(0.0, mid_y);
-            cr.show_text(&format_hm(mid)).ok();
-        }
     }
 }
 

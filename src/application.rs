@@ -1,7 +1,7 @@
 mod imp {
     use adw::prelude::*;
     use adw::subclass::prelude::*;
-    use gtk::{gio, glib};
+    use gtk::{gdk, gio, glib};
     use std::cell::RefCell;
 
     use crate::config;
@@ -46,6 +46,16 @@ mod imp {
                 Ok(db) => *self.db.borrow_mut() = Some(db),
                 Err(e) => eprintln!("Failed to open database: {e}"),
             }
+
+            // Load application CSS (chart bar styles, etc.)
+            let provider = gtk::CssProvider::new();
+            provider.load_from_resource("/io/github/janekbt/Meditate/style.css");
+            #[allow(deprecated)]
+            gtk::style_context_add_provider_for_display(
+                &gdk::Display::default().expect("No display"),
+                &provider,
+                gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+            );
 
             self.setup_actions();
             self.setup_accels();
