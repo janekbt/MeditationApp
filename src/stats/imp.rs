@@ -29,8 +29,8 @@ pub struct StatsView {
     // State
     pub cal_year:   Cell<i32>,
     pub cal_month:  Cell<u32>,
-    /// 42 calendar cells (day-number label, dot label), row-major order.
-    pub cal_cells:  RefCell<Vec<(gtk::Label, gtk::Label)>>,
+    /// 42 calendar cells (cell box, day-number label), row-major order.
+    pub cal_cells:  RefCell<Vec<(gtk::Box, gtk::Label)>>,
 }
 
 #[glib::object_subclass]
@@ -91,21 +91,17 @@ impl StatsView {
                     .width_chars(2)
                     .xalign(0.5)
                     .build();
-                let dot = gtk::Label::builder()
-                    .label("●")
-                    .css_classes(["accent"])
-                    .visible(false)
-                    .build();
+                // halign::Fill lets the background extend edge-to-edge so
+                // consecutive active days form an unbroken coloured strip.
                 let cell = gtk::Box::builder()
                     .orientation(gtk::Orientation::Vertical)
-                    .halign(gtk::Align::Center)
+                    .halign(gtk::Align::Fill)
                     .valign(gtk::Align::Center)
-                    .spacing(1)
+                    .height_request(30)
                     .build();
                 cell.append(&num);
-                cell.append(&dot);
                 self.cal_grid.attach(&cell, col, row, 1, 1);
-                cells.push((num, dot));
+                cells.push((cell, num));
             }
         }
     }
@@ -206,15 +202,44 @@ impl StatsView {
         );
 
         let cells = self.cal_cells.borrow();
-        for (i, (num_lbl, dot_lbl)) in cells.iter().enumerate() {
+        for (i, (cell, num_lbl)) in cells.iter().enumerate() {
             let day = i as i32 - offset as i32 + 1;
+            let col = i % 7;
+
             if day < 1 || day as u32 > dim {
                 num_lbl.set_label("");
-                dot_lbl.set_visible(false);
+                cell.remove_css_class("cal-day-active");
+                cell.remove_css_class("cal-streak-prev");
+                cell.remove_css_class("cal-streak-next");
+                num_lbl.remove_css_class("cal-day-active-label");
                 num_lbl.remove_css_class("heading");
             } else {
                 num_lbl.set_label(&day.to_string());
-                dot_lbl.set_visible(active.contains(&(day as u32)));
+
+                let is_active = active.contains(&(day as u32));
+                // Only connect within the same week row, and only within this month.
+                let prev_active = is_active && col > 0 && day > 1
+                    && active.contains(&((day - 1) as u32));
+                let next_active = is_active && col < 6 && (day as u32) < dim
+                    && active.contains(&((day + 1) as u32));
+
+                if is_active {
+                    cell.add_css_class("cal-day-active");
+                    num_lbl.add_css_class("cal-day-active-label");
+                } else {
+                    cell.remove_css_class("cal-day-active");
+                    num_lbl.remove_css_class("cal-day-active-label");
+                }
+                if prev_active {
+                    cell.add_css_class("cal-streak-prev");
+                } else {
+                    cell.remove_css_class("cal-streak-prev");
+                }
+                if next_active {
+                    cell.add_css_class("cal-streak-next");
+                } else {
+                    cell.remove_css_class("cal-streak-next");
+                }
 
                 if year == ty && month == tm && day as u32 == td {
                     num_lbl.add_css_class("heading");
