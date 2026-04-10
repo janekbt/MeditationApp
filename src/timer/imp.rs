@@ -7,7 +7,7 @@ use std::sync::OnceLock;
 
 use crate::db::{SessionData, SessionMode};
 
-// ── State ─────────────────────────────────────────────────────────────────────
+// ── Per-mode independent state ────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TimerState {
@@ -18,51 +18,63 @@ pub enum TimerState {
     Done,
 }
 
+/// All state that belongs to one timer mode (countdown or stopwatch).
+#[derive(Debug, Clone, Default)]
+struct ModeState {
+    timer_state: TimerState,
+    /// Seconds remaining (countdown) or elapsed (stopwatch).
+    display_secs: u64,
+    /// Original target in seconds — countdown only.
+    target_secs: u64,
+    /// Unix timestamp when this mode's current session started.
+    session_start_time: i64,
+}
+
 // ── GObject impl ──────────────────────────────────────────────────────────────
 
 #[derive(Debug, Default, CompositeTemplate)]
 #[template(resource = "/io/github/janekbt/Meditate/ui/timer_view.ui")]
 pub struct TimerView {
     // Template children
-    #[template_child] pub view_stack:          TemplateChild<gtk::Stack>,
-    #[template_child] pub streak_label:        TemplateChild<gtk::Label>,
-    #[template_child] pub countdown_btn:       TemplateChild<gtk::ToggleButton>,
-    #[template_child] pub stopwatch_btn:       TemplateChild<gtk::ToggleButton>,
-    #[template_child] pub inputs_stack:        TemplateChild<gtk::Stack>,
-    #[template_child] pub hours_spin:          TemplateChild<gtk::SpinButton>,
-    #[template_child] pub minutes_spin:        TemplateChild<gtk::SpinButton>,
-    #[template_child] pub hm_box:             TemplateChild<gtk::Box>,
-    #[template_child] pub presets_box:        TemplateChild<gtk::Box>,
-    #[template_child] pub stopwatch_idle_label: TemplateChild<gtk::Label>,
-    #[template_child] pub preset_5:            TemplateChild<gtk::Button>,
-    #[template_child] pub preset_10:           TemplateChild<gtk::Button>,
-    #[template_child] pub preset_15:           TemplateChild<gtk::Button>,
-    #[template_child] pub preset_20:           TemplateChild<gtk::Button>,
-    #[template_child] pub preset_30:           TemplateChild<gtk::Button>,
-    #[template_child] pub paused_time_label:   TemplateChild<gtk::Label>,
-    #[template_child] pub start_btn:           TemplateChild<gtk::Button>,
-    #[template_child] pub resume_btn:          TemplateChild<gtk::Button>,
-    #[template_child] pub stop_from_pause_btn: TemplateChild<gtk::Button>,
-    #[template_child] pub done_duration_label: TemplateChild<gtk::Label>,
-    #[template_child] pub note_row:            TemplateChild<adw::EntryRow>,
-    #[template_child] pub label_row:           TemplateChild<adw::ComboRow>,
-    #[template_child] pub discard_btn:         TemplateChild<gtk::Button>,
-    #[template_child] pub save_btn:            TemplateChild<gtk::Button>,
+    #[template_child] pub view_stack:            TemplateChild<gtk::Stack>,
+    #[template_child] pub streak_label:          TemplateChild<gtk::Label>,
+    #[template_child] pub countdown_btn:         TemplateChild<gtk::ToggleButton>,
+    #[template_child] pub stopwatch_btn:         TemplateChild<gtk::ToggleButton>,
+    #[template_child] pub inputs_stack:          TemplateChild<gtk::Stack>,
+    #[template_child] pub hours_spin:            TemplateChild<gtk::SpinButton>,
+    #[template_child] pub minutes_spin:          TemplateChild<gtk::SpinButton>,
+    #[template_child] pub hm_box:                TemplateChild<gtk::Box>,
+    #[template_child] pub presets_box:           TemplateChild<gtk::Box>,
+    #[template_child] pub stopwatch_idle_label:  TemplateChild<gtk::Label>,
+    #[template_child] pub preset_5:              TemplateChild<gtk::Button>,
+    #[template_child] pub preset_10:             TemplateChild<gtk::Button>,
+    #[template_child] pub preset_15:             TemplateChild<gtk::Button>,
+    #[template_child] pub preset_20:             TemplateChild<gtk::Button>,
+    #[template_child] pub preset_30:             TemplateChild<gtk::Button>,
+    #[template_child] pub paused_time_label:     TemplateChild<gtk::Label>,
+    #[template_child] pub start_btn:             TemplateChild<gtk::Button>,
+    #[template_child] pub resume_btn:            TemplateChild<gtk::Button>,
+    #[template_child] pub stop_from_pause_btn:   TemplateChild<gtk::Button>,
+    #[template_child] pub done_duration_label:   TemplateChild<gtk::Label>,
+    #[template_child] pub note_row:              TemplateChild<adw::EntryRow>,
+    #[template_child] pub label_row:             TemplateChild<adw::ComboRow>,
+    #[template_child] pub discard_btn:           TemplateChild<gtk::Button>,
+    #[template_child] pub save_btn:              TemplateChild<gtk::Button>,
 
-    // Timer state
-    pub state:              Cell<TimerState>,
-    /// Seconds remaining (countdown) or elapsed (stopwatch) — updated each tick.
-    pub display_secs:       Cell<u64>,
-    /// Target duration in seconds (countdown mode only).
-    pub target_secs:        Cell<u64>,
-    /// Unix timestamp when the session started.
-    pub session_start_time: Cell<i64>,
-    /// Active glib timeout handle.
-    pub tick_source:        RefCell<Option<glib::SourceId>>,
+    // ── Per-mode state (fully independent) ───────────────────────────
+    countdown_mode: RefCell<ModeState>,
+    stopwatch_mode: RefCell<ModeState>,
+
+    /// Whether the active tick belongs to the stopwatch mode.
+    /// Only meaningful while tick_source is Some.
+    tick_is_stopwatch: Cell<bool>,
+
+    /// Active glib timeout handle (at most one mode runs at a time).
+    tick_source: RefCell<Option<glib::SourceId>>,
     /// Weak ref to the running-page time label for live updates.
-    pub running_label:      RefCell<Option<gtk::Label>>,
+    running_label: RefCell<Option<gtk::Label>>,
     /// Labels fetched from DB when entering Done state.
-    pub db_labels:          RefCell<Vec<crate::db::Label>>,
+    db_labels: RefCell<Vec<crate::db::Label>>,
 }
 
 #[glib::object_subclass]
@@ -86,11 +98,8 @@ impl ObjectImpl for TimerView {
         static SIGNALS: OnceLock<Vec<Signal>> = OnceLock::new();
         SIGNALS.get_or_init(|| {
             vec![
-                // Emitted when the user presses Start or Resume.
                 Signal::builder("timer-started").build(),
-                // Emitted when pause() is called (window pops running page).
                 Signal::builder("timer-paused").build(),
-                // Emitted when stop() is called (window pops running page).
                 Signal::builder("timer-stopped").build(),
             ]
         })
@@ -109,13 +118,13 @@ impl ObjectImpl for TimerView {
 
 impl WidgetImpl for TimerView {}
 
-// ── Internal helpers ──────────────────────────────────────────────────────────
+// ── Button wiring ─────────────────────────────────────────────────────────────
 
 impl TimerView {
     fn setup_buttons(&self) {
         let obj = self.obj();
 
-        // Preset buttons set minutes_spin
+        // Preset buttons set H:M spin values
         for (btn, mins) in [
             (&*self.preset_5, 5u64),
             (&*self.preset_10, 10),
@@ -124,114 +133,187 @@ impl TimerView {
             (&*self.preset_30, 30),
         ] {
             btn.connect_clicked(glib::clone!(
-                #[weak(rename_to = this)]
-                obj,
+                #[weak(rename_to = this)] obj,
                 move |_| {
-                    let imp = this.imp();
-                    imp.hours_spin.set_value(0.0);
-                    imp.minutes_spin.set_value(mins as f64);
+                    this.imp().hours_spin.set_value(0.0);
+                    this.imp().minutes_spin.set_value(mins as f64);
                 }
             ));
         }
 
-        // Mode toggle: swap H:M inputs / presets for "00:00" in stopwatch mode
+        // Mode toggle — update UI to reflect the destination mode's state
         self.stopwatch_btn.connect_toggled(glib::clone!(
-            #[weak(rename_to = this)]
-            obj,
-            move |btn| {
-                let imp = this.imp();
-                let is_stopwatch = btn.is_active();
-                imp.hm_box.set_visible(!is_stopwatch);
-                imp.presets_box.set_visible(!is_stopwatch);
-                imp.stopwatch_idle_label.set_visible(is_stopwatch);
-            }
+            #[weak(rename_to = this)] obj,
+            move |btn| this.imp().on_mode_switched(btn.is_active())
         ));
 
-        // Start button
         self.start_btn.connect_clicked(glib::clone!(
-            #[weak(rename_to = this)]
-            obj,
+            #[weak(rename_to = this)] obj,
             move |_| this.imp().on_start()
         ));
-
-        // Resume button
         self.resume_btn.connect_clicked(glib::clone!(
-            #[weak(rename_to = this)]
-            obj,
+            #[weak(rename_to = this)] obj,
             move |_| this.imp().on_resume()
         ));
-
-        // Stop from paused state
         self.stop_from_pause_btn.connect_clicked(glib::clone!(
-            #[weak(rename_to = this)]
-            obj,
+            #[weak(rename_to = this)] obj,
             move |_| this.imp().on_stop()
         ));
-
-        // Save session
         self.save_btn.connect_clicked(glib::clone!(
-            #[weak(rename_to = this)]
-            obj,
+            #[weak(rename_to = this)] obj,
             move |_| this.imp().on_save()
         ));
-
-        // Discard
         self.discard_btn.connect_clicked(glib::clone!(
-            #[weak(rename_to = this)]
-            obj,
+            #[weak(rename_to = this)] obj,
             move |_| this.imp().on_discard()
         ));
     }
+}
 
+// ── Mode switching ────────────────────────────────────────────────────────────
+
+impl TimerView {
+    /// Called whenever the mode toggle fires. `to_stopwatch` is true when the
+    /// user switched TO stopwatch (false = switched to countdown).
+    fn on_mode_switched(&self, to_stopwatch: bool) {
+        // Show / hide the countdown-specific input widgets
+        self.hm_box.set_visible(!to_stopwatch);
+        self.presets_box.set_visible(!to_stopwatch);
+        self.stopwatch_idle_label.set_visible(to_stopwatch);
+
+        let (timer_state, display_secs) = {
+            let mode = if to_stopwatch {
+                self.stopwatch_mode.borrow()
+            } else {
+                self.countdown_mode.borrow()
+            };
+            (mode.timer_state, mode.display_secs)
+        };
+
+        match timer_state {
+            TimerState::Idle => self.show_idle_ui(),
+            TimerState::Paused => {
+                self.paused_time_label.set_label(&format_time(display_secs));
+                self.show_paused_ui();
+            }
+            TimerState::Done => {
+                // Done panel is already populated; just make sure it's showing.
+                self.view_stack.set_visible_child_name("done");
+            }
+            TimerState::Running => {
+                // Can't normally reach here (running nav page blocks the toggle).
+                self.show_idle_ui();
+            }
+        }
+    }
+
+    fn show_idle_ui(&self) {
+        self.inputs_stack.set_visible_child_name("inputs");
+        self.start_btn.set_visible(true);
+        self.resume_btn.set_visible(false);
+        self.stop_from_pause_btn.set_visible(false);
+        self.view_stack.set_visible_child_name("setup");
+    }
+
+    fn show_paused_ui(&self) {
+        self.inputs_stack.set_visible_child_name("paused");
+        self.start_btn.set_visible(false);
+        self.resume_btn.set_visible(true);
+        self.stop_from_pause_btn.set_visible(true);
+        self.view_stack.set_visible_child_name("setup");
+    }
+}
+
+// ── Timer state machine ───────────────────────────────────────────────────────
+
+impl TimerView {
     fn on_start(&self) {
-        let h = self.hours_spin.value() as u64;
-        let m = self.minutes_spin.value() as u64;
-
         let is_stopwatch = self.stopwatch_btn.is_active();
 
-        if !is_stopwatch && h == 0 && m == 0 {
-            // Nothing to count down — shake the spin row?
-            return;
+        if is_stopwatch {
+            let mut m = self.stopwatch_mode.borrow_mut();
+            m.timer_state = TimerState::Running;
+            m.display_secs = 0;
+            m.session_start_time = unix_now();
+        } else {
+            let h = self.hours_spin.value() as u64;
+            let m_val = self.minutes_spin.value() as u64;
+            if h == 0 && m_val == 0 {
+                return;
+            }
+            let target = h * 3600 + m_val * 60;
+            let mut m = self.countdown_mode.borrow_mut();
+            m.timer_state = TimerState::Running;
+            m.target_secs = target;
+            m.display_secs = target;
+            m.session_start_time = unix_now();
         }
 
-        let target = if is_stopwatch { 0 } else { h * 3600 + m * 60 };
-        self.target_secs.set(target);
-        self.display_secs.set(target);
-        self.state.set(TimerState::Running);
-        self.session_start_time.set(unix_now());
+        self.tick_is_stopwatch.set(is_stopwatch);
         self.start_tick();
         self.obj().emit_by_name::<()>("timer-started", &[]);
     }
 
     fn on_resume(&self) {
-        self.state.set(TimerState::Running);
+        let is_stopwatch = self.stopwatch_btn.is_active();
+
+        {
+            let mut m = if is_stopwatch {
+                self.stopwatch_mode.borrow_mut()
+            } else {
+                self.countdown_mode.borrow_mut()
+            };
+            m.timer_state = TimerState::Running;
+        }
+
+        self.tick_is_stopwatch.set(is_stopwatch);
         self.start_tick();
-        // Switch back to inputs_stack "inputs" page isn't needed here —
-        // the window will push the running nav page on timer-started.
         self.obj().emit_by_name::<()>("timer-started", &[]);
     }
 
-    pub fn on_stop(&self) {
-        self.cancel_tick();
-        let elapsed = if self.countdown_btn.is_active() {
-            self.target_secs.get().saturating_sub(self.display_secs.get())
-        } else {
-            self.display_secs.get()
-        };
-        self.state.set(TimerState::Done);
-        self.obj().emit_by_name::<()>("timer-stopped", &[]);
-        self.show_done(elapsed);
-    }
-
+    /// Called by the window when the running page's Pause button is pressed.
     pub fn on_pause(&self) {
         self.cancel_tick();
-        self.state.set(TimerState::Paused);
-        self.paused_time_label.set_label(&format_time(self.display_secs.get()));
-        self.inputs_stack.set_visible_child_name("paused");
-        self.start_btn.set_visible(false);
-        self.resume_btn.set_visible(true);
-        self.stop_from_pause_btn.set_visible(true);
+
+        let is_stopwatch = self.tick_is_stopwatch.get();
+        let display_secs = {
+            let mut m = if is_stopwatch {
+                self.stopwatch_mode.borrow_mut()
+            } else {
+                self.countdown_mode.borrow_mut()
+            };
+            m.timer_state = TimerState::Paused;
+            m.display_secs
+        };
+
+        self.paused_time_label.set_label(&format_time(display_secs));
+        self.show_paused_ui();
         self.obj().emit_by_name::<()>("timer-paused", &[]);
+    }
+
+    /// Called by the window when Stop is pressed (from running page or paused state).
+    pub fn on_stop(&self) {
+        self.cancel_tick();
+
+        // If the tick was running, use tick_is_stopwatch; otherwise use the toggle.
+        let is_stopwatch = self.stopwatch_btn.is_active();
+
+        let elapsed = {
+            let mut m = if is_stopwatch {
+                self.stopwatch_mode.borrow_mut()
+            } else {
+                self.countdown_mode.borrow_mut()
+            };
+            m.timer_state = TimerState::Done;
+            if is_stopwatch {
+                m.display_secs
+            } else {
+                m.target_secs.saturating_sub(m.display_secs)
+            }
+        };
+
+        self.obj().emit_by_name::<()>("timer-stopped", &[]);
+        self.show_done(elapsed);
     }
 
     fn show_done(&self, elapsed_secs: u64) {
@@ -247,26 +329,33 @@ impl TimerView {
         let names: Vec<&str> = std::iter::once("None")
             .chain(labels.iter().map(|l| l.name.as_str()))
             .collect();
-        let model = gtk::StringList::new(&names);
-        self.label_row.set_model(Some(&model));
+        self.label_row.set_model(Some(&gtk::StringList::new(&names)));
         self.label_row.set_selected(0);
         *self.db_labels.borrow_mut() = labels;
-
-        // Clear note
         self.note_row.set_text("");
 
         self.view_stack.set_visible_child_name("done");
     }
 
     fn on_save(&self) {
-        let elapsed = if self.countdown_btn.is_active() {
-            self.target_secs.get().saturating_sub(self.display_secs.get())
-        } else {
-            self.display_secs.get()
+        let is_stopwatch = self.stopwatch_btn.is_active();
+
+        let (elapsed, start_time) = {
+            let m = if is_stopwatch {
+                self.stopwatch_mode.borrow()
+            } else {
+                self.countdown_mode.borrow()
+            };
+            let elapsed = if is_stopwatch {
+                m.display_secs
+            } else {
+                m.target_secs.saturating_sub(m.display_secs)
+            };
+            (elapsed, m.session_start_time)
         };
 
         if elapsed == 0 {
-            self.reset();
+            self.reset_mode(is_stopwatch);
             return;
         }
 
@@ -274,7 +363,6 @@ impl TimerView {
             let t = self.note_row.text();
             if t.is_empty() { None } else { Some(t.to_string()) }
         };
-
         let selected = self.label_row.selected() as usize;
         let label_id = if selected == 0 {
             None
@@ -282,45 +370,24 @@ impl TimerView {
             self.db_labels.borrow().get(selected - 1).map(|l| l.id)
         };
 
-        let mode = if self.stopwatch_btn.is_active() {
-            SessionMode::Stopwatch
-        } else {
-            SessionMode::Countdown
-        };
-
         let data = SessionData {
-            start_time:    self.session_start_time.get(),
+            start_time:    start_time,
             duration_secs: elapsed as i64,
-            mode,
+            mode:          if is_stopwatch { SessionMode::Stopwatch } else { SessionMode::Countdown },
             label_id,
             note,
         };
 
         if let Some(app) = self.get_app() {
             app.with_db(|db| db.create_session(&data));
-
-            // Show a toast on the window
-            if let Some(win) = self.obj().root()
-                .and_then(|r| r.downcast::<adw::ApplicationWindow>().ok())
-            {
-                let toast = adw::Toast::builder()
-                    .title(&format!("Session saved — {}", format_time(elapsed)))
-                    .timeout(3)
-                    .build();
-                // AdwApplicationWindow doesn't have add_toast directly;
-                // we need AdwToastOverlay. Use the window's overlay if accessible.
-                // For now just print — wired up when we add the toast overlay.
-                let _ = (win, toast);
-            }
         }
 
-        self.reset();
+        self.reset_mode(is_stopwatch);
     }
 
     fn on_discard(&self) {
         let note = self.note_row.text();
         if !note.is_empty() {
-            // Confirm discard if note was typed
             let dialog = adw::AlertDialog::builder()
                 .heading(tr("Discard session?"))
                 .body(tr("Your note will be lost."))
@@ -332,9 +399,10 @@ impl TimerView {
             dialog.set_response_appearance("discard", adw::ResponseAppearance::Destructive);
 
             let obj = self.obj().clone();
+            let is_stopwatch = self.stopwatch_btn.is_active();
             dialog.connect_response(None, move |_, id| {
                 if id == "discard" {
-                    obj.imp().reset();
+                    obj.imp().reset_mode(is_stopwatch);
                 }
             });
 
@@ -344,58 +412,73 @@ impl TimerView {
                 dialog.present(Some(&win));
             }
         } else {
-            self.reset();
+            self.reset_mode(self.stopwatch_btn.is_active());
         }
     }
 
-    fn reset(&self) {
-        self.cancel_tick();
-        self.state.set(TimerState::Idle);
-        self.display_secs.set(0);
-        self.inputs_stack.set_visible_child_name("inputs");
-        self.start_btn.set_visible(true);
-        self.resume_btn.set_visible(false);
-        self.stop_from_pause_btn.set_visible(false);
-        self.view_stack.set_visible_child_name("setup");
-        self.note_row.set_text("");
-        self.refresh_streak();
+    /// Reset a single mode back to Idle and update the UI if it's currently shown.
+    fn reset_mode(&self, is_stopwatch: bool) {
+        {
+            let mut m = if is_stopwatch {
+                self.stopwatch_mode.borrow_mut()
+            } else {
+                self.countdown_mode.borrow_mut()
+            };
+            *m = ModeState::default();
+        }
+
+        // Only update the visible UI if this mode is the one currently shown.
+        if is_stopwatch == self.stopwatch_btn.is_active() {
+            self.show_idle_ui();
+            self.refresh_streak();
+        }
     }
 
     fn start_tick(&self) {
         self.cancel_tick();
         let obj = self.obj().clone();
+        let is_stopwatch = self.tick_is_stopwatch.get();
+
         let source_id = glib::timeout_add_local(
             std::time::Duration::from_secs(1),
             move || {
                 let imp = obj.imp();
-                if imp.state.get() != TimerState::Running {
+
+                // Read + update the correct mode state
+                let (new_secs, done) = {
+                    let mut m = if is_stopwatch {
+                        imp.stopwatch_mode.borrow_mut()
+                    } else {
+                        imp.countdown_mode.borrow_mut()
+                    };
+
+                    if m.timer_state != TimerState::Running {
+                        return glib::ControlFlow::Break;
+                    }
+
+                    if is_stopwatch {
+                        m.display_secs += 1;
+                        (m.display_secs, false)
+                    } else {
+                        if m.display_secs == 0 {
+                            m.timer_state = TimerState::Done;
+                            let elapsed = m.target_secs;
+                            (elapsed, true)
+                        } else {
+                            m.display_secs -= 1;
+                            (m.display_secs, false)
+                        }
+                    }
+                };
+
+                if done {
+                    obj.emit_by_name::<()>("timer-stopped", &[]);
+                    imp.show_done(new_secs); // new_secs == target here
                     return glib::ControlFlow::Break;
                 }
 
-                let is_countdown = imp.countdown_btn.is_active();
-                let current = imp.display_secs.get();
-
-                if is_countdown {
-                    if current == 0 {
-                        // Timer finished
-                        imp.cancel_tick();
-                        imp.state.set(TimerState::Done);
-                        obj.emit_by_name::<()>("timer-stopped", &[]);
-                        let elapsed = imp.target_secs.get();
-                        imp.show_done(elapsed);
-                        return glib::ControlFlow::Break;
-                    }
-                    let new_secs = current - 1;
-                    imp.display_secs.set(new_secs);
-                    if let Some(label) = imp.running_label.borrow().as_ref() {
-                        label.set_label(&format_time(new_secs));
-                    }
-                } else {
-                    let new_secs = current + 1;
-                    imp.display_secs.set(new_secs);
-                    if let Some(label) = imp.running_label.borrow().as_ref() {
-                        label.set_label(&format_time(new_secs));
-                    }
+                if let Some(label) = imp.running_label.borrow().as_ref() {
+                    label.set_label(&format_time(new_secs));
                 }
 
                 glib::ControlFlow::Continue
@@ -427,7 +510,6 @@ impl TimerView {
     }
 
     fn get_app(&self) -> Option<crate::application::MeditateApplication> {
-        use gtk::prelude::*;
         self.obj()
             .root()
             .and_then(|r| r.downcast::<gtk::Window>().ok())
@@ -436,7 +518,13 @@ impl TimerView {
     }
 
     pub fn current_display_secs(&self) -> u64 {
-        self.display_secs.get()
+        // Return the display value for whichever mode is about to go running.
+        let is_stopwatch = self.tick_is_stopwatch.get();
+        if is_stopwatch {
+            self.stopwatch_mode.borrow().display_secs
+        } else {
+            self.countdown_mode.borrow().display_secs
+        }
     }
 
     pub fn set_running_label(&self, label: gtk::Label) {
@@ -464,5 +552,4 @@ fn unix_now() -> i64 {
         .as_secs() as i64
 }
 
-// Tiny gettext stub — real i18n wired up later via gettextrs.
 fn tr(s: &'static str) -> &'static str { s }
