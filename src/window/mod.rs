@@ -12,7 +12,7 @@ glib::wrapper! {
 }
 
 impl MeditateWindow {
-    pub fn new(app: &impl glib::IsA<adw::Application>) -> Self {
+    pub fn new(app: &impl IsA<adw::Application>) -> Self {
         glib::Object::builder()
             .property("application", app)
             .build()
