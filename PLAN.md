@@ -71,19 +71,19 @@ Navigation: `AdwViewSwitcher` in header bar (desktop) + `AdwViewSwitcherBar` at 
 
 ## Phase 5 — Stats View
 
-- [ ] **5.1** Monthly calendar widget (`GtkGrid`, 7×6): colored dot per day with at least one session; uses `@accent_color`; month nav < Month Year >
-- [ ] **5.2** Month browsing: previous/next navigation with DB query per month
-- [ ] **5.3** Bar chart widget (`GtkDrawingArea` + Cairo): bars use `@accent_color`; Y-axis = total duration; dark mode safe
-- [ ] **5.4** Daily/Weekly/Monthly/Yearly toggle above chart; chart reloads on change
-- [ ] **5.5** Text stats row: running average · longest streak · total time formatted as `Xh Ym`
+- [x] **5.1** Monthly calendar widget (`GtkGrid`, 7×6): colored dot per day with at least one session; uses `@accent_color`; month nav < Month Year >
+- [x] **5.2** Month browsing: previous/next navigation with DB query per month
+- [x] **5.3** Bar chart widget (`GtkDrawingArea` + Cairo): bars use `@accent_color`; Y-axis = total duration; dark mode safe
+- [x] **5.4** Daily/Weekly/Monthly/Yearly toggle above chart; chart reloads on change
+- [x] **5.5** Text stats row: running average · longest streak · total time formatted as `Xh Ym`
 
 ## Phase 6 — Preferences
 
-- [ ] **6.1** `AdwPreferencesWindow` skeleton: two pages — General and Labels
+- [x] **6.1** `AdwPreferencesDialog` skeleton: two pages — General and Labels
 - [ ] **6.2** General page: `AdwComboRow` for bundled sounds (Singing Bowl, Bell, Gong) + `AdwActionRow` "Choose custom file…"
 - [ ] **6.3** Sound preview: play button next to picker; `libcanberra` for bundled sounds; GStreamer for custom files
-- [ ] **6.4** Running average period: `AdwComboRow` with 7 days / 14 days options
-- [ ] **6.5** Labels page: `AdwListBox` with `AdwEntryRow` per label (inline rename); swipe-to-delete with `AdwToast` undo; + Add Label row at bottom
+- [x] **6.4** Running average period: `AdwComboRow` with 7 / 14 / 30 days options; persisted in `settings` DB table
+- [x] **6.5** Labels page: `AdwEntryRow` per label with inline rename (manual apply/discard buttons); `AdwToast` undo on delete; new labels appear at top
 
 ## Phase 7 — Polish & Accessibility
 
