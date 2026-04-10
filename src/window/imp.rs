@@ -1,5 +1,4 @@
 use adw::subclass::prelude::*;
-use gtk::subclass::prelude::*;
 use gtk::{glib, CompositeTemplate};
 
 #[derive(Debug, Default, CompositeTemplate)]
@@ -9,8 +8,6 @@ pub struct MeditateWindow {
     pub view_stack: TemplateChild<adw::ViewStack>,
     #[template_child]
     pub switcher_bar: TemplateChild<adw::ViewSwitcherBar>,
-    #[template_child]
-    pub view_switcher_title: TemplateChild<adw::ViewSwitcherTitle>,
 }
 
 #[glib::object_subclass]

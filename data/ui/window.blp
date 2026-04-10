@@ -5,12 +5,28 @@ template $MeditateWindow : Adw.ApplicationWindow {
   default-width: 360;
   default-height: 700;
 
+  Adw.Breakpoint {
+    condition ("max-width: 550sp")
+    setters {
+      header_switcher.visible: false;
+      window_title.visible: true;
+      switcher_bar.reveal: true;
+    }
+  }
+
   content: Adw.ToolbarView {
     [top]
     Adw.HeaderBar {
-      title-widget: Adw.ViewSwitcherTitle view_switcher_title {
-        stack: view_stack;
-        title: _("Meditate");
+      title-widget: Box {
+        Adw.ViewSwitcher header_switcher {
+          stack: view_stack;
+          policy: wide;
+        }
+
+        Adw.WindowTitle window_title {
+          title: _("Meditate");
+          visible: false;
+        }
       };
 
       [end]
@@ -63,7 +79,7 @@ template $MeditateWindow : Adw.ApplicationWindow {
     [bottom]
     Adw.ViewSwitcherBar switcher_bar {
       stack: view_stack;
-      reveal: bind view_switcher_title.title-visible;
+      reveal: false;
     }
   };
 }

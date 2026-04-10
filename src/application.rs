@@ -1,6 +1,6 @@
 mod imp {
+    use adw::prelude::*;
     use adw::subclass::prelude::*;
-    use gtk::prelude::*;
     use gtk::{gio, glib};
 
     use crate::config;
@@ -45,7 +45,7 @@ mod imp {
         fn setup_actions(&self) {
             let app = self.obj();
 
-            // app.preferences — opens AdwPreferencesWindow (implemented in Phase 6)
+            // app.preferences — opens AdwPreferencesWindow (Phase 6)
             let preferences_action = gio::SimpleAction::new("preferences", None);
             preferences_action.connect_activate(glib::clone!(
                 #[weak]
@@ -90,6 +90,7 @@ mod imp {
 
 use adw::subclass::prelude::*;
 use gtk::glib;
+use gtk::prelude::*;
 
 glib::wrapper! {
     pub struct MeditateApplication(ObjectSubclass<imp::MeditateApplication>)
