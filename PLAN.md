@@ -61,13 +61,13 @@ Navigation: `AdwViewSwitcher` in header bar (desktop) + `AdwViewSwitcherBar` at 
 
 ## Phase 4 — Log View
 
-- [ ] **4.1** Blueprint: `AdwListBox` in `GtkScrolledWindow`; + button in header bar with tooltip
-- [ ] **4.2** Log row widget: duration · date · label chip · note preview (truncated)
-- [ ] **4.3** Empty-state `AdwStatusPage`: illustration icon, "No Sessions Yet" heading, description, suggested "Add Session" button
-- [ ] **4.4** Swipe-to-delete + `AdwToast` with Undo (5-second window before actual DB delete)
-- [ ] **4.5** Edit session dialog (`AdwDialog`): rows for date, duration, label, note — all editable
-- [ ] **4.6** Add-manually dialog: same form as edit, blank
-- [ ] **4.7** Filter popover (filter button in header): `AdwSwitchRow` "Only with notes" + `AdwComboRow` "Label"
+- [x] **4.1** Blueprint: `AdwListBox` in `GtkScrolledWindow`; + button in header bar with tooltip
+- [x] **4.2** Log row widget: duration · date · label chip · note preview (truncated)
+- [x] **4.3** Empty-state `AdwStatusPage`: illustration icon, "No Sessions Yet" heading, description, suggested "Add Session" button
+- [x] **4.4** Swipe-to-delete + `AdwToast` with Undo (5-second window before actual DB delete)
+- [x] **4.5** Edit session dialog (`AdwDialog`): rows for date, duration, label, note — all editable
+- [x] **4.6** Add-manually dialog: same form as edit, blank
+- [x] **4.7** Filter popover (filter button in header): `AdwSwitchRow` "Only with notes" + `AdwComboRow` "Label"
 
 ## Phase 5 — Stats View
 

@@ -2,15 +2,22 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{glib, CompositeTemplate};
 
+use crate::log::LogView;
 use crate::timer::{format_time, TimerView};
 
 #[derive(Debug, Default, CompositeTemplate)]
 #[template(resource = "/io/github/janekbt/Meditate/ui/window.ui")]
 pub struct MeditateWindow {
-    #[template_child] pub view_stack:  TemplateChild<adw::ViewStack>,
-    #[template_child] pub switcher_bar: TemplateChild<adw::ViewSwitcherBar>,
-    #[template_child] pub nav_view:    TemplateChild<adw::NavigationView>,
-    #[template_child] pub timer_view:  TemplateChild<TimerView>,
+    #[template_child] pub view_stack:       TemplateChild<adw::ViewStack>,
+    #[template_child] pub switcher_bar:     TemplateChild<adw::ViewSwitcherBar>,
+    #[template_child] pub nav_view:         TemplateChild<adw::NavigationView>,
+    #[template_child] pub toast_overlay:    TemplateChild<adw::ToastOverlay>,
+    #[template_child] pub timer_view:       TemplateChild<TimerView>,
+    #[template_child] pub log_view:         TemplateChild<LogView>,
+    #[template_child] pub log_add_btn:      TemplateChild<gtk::Button>,
+    #[template_child] pub log_filter_btn:   TemplateChild<gtk::MenuButton>,
+    #[template_child] pub filter_notes_row: TemplateChild<adw::SwitchRow>,
+    #[template_child] pub filter_label_row: TemplateChild<adw::ComboRow>,
 }
 
 #[glib::object_subclass]
@@ -20,8 +27,8 @@ impl ObjectSubclass for MeditateWindow {
     type ParentType = adw::ApplicationWindow;
 
     fn class_init(klass: &mut Self::Class) {
-        // Ensure TimerView type is registered before we bind the template.
         TimerView::ensure_type();
+        LogView::ensure_type();
         klass.bind_template();
     }
 
@@ -34,6 +41,7 @@ impl ObjectImpl for MeditateWindow {
     fn constructed(&self) {
         self.parent_constructed();
         self.wire_timer_signals();
+        self.wire_log_signals();
         self.timer_view.refresh_streak();
     }
 }
@@ -43,31 +51,23 @@ impl WindowImpl for MeditateWindow {}
 impl ApplicationWindowImpl for MeditateWindow {}
 impl AdwApplicationWindowImpl for MeditateWindow {}
 
-// ── Timer signal wiring ───────────────────────────────────────────────────────
+// ── Timer ─────────────────────────────────────────────────────────────────────
 
 impl MeditateWindow {
     fn wire_timer_signals(&self) {
         let obj = self.obj();
 
         self.timer_view.connect_timer_started(glib::clone!(
-            #[weak]
-            obj,
+            #[weak] obj,
             move |_| obj.imp().push_running_page()
         ));
-
         self.timer_view.connect_timer_paused(glib::clone!(
-            #[weak]
-            obj,
-            move |_| {
-                obj.imp().nav_view.pop();
-            }
+            #[weak] obj,
+            move |_| { obj.imp().nav_view.pop(); }
         ));
-
         self.timer_view.connect_timer_stopped(glib::clone!(
-            #[weak]
-            obj,
+            #[weak] obj,
             move |_| {
-                // Pop the running page if it's still on the stack.
                 if obj.imp().nav_view.find_page("running").is_some() {
                     obj.imp().nav_view.pop();
                 }
@@ -76,30 +76,22 @@ impl MeditateWindow {
     }
 
     pub fn push_running_page(&self) {
-        // Don't double-push.
         if self.nav_view.find_page("running").is_some() {
             return;
         }
 
-        let initial_secs = self.timer_view.current_display_secs();
-
-        // ── Time label ────────────────────────────────────────────────
         let time_label = gtk::Label::builder()
-            .label(&format_time(initial_secs))
+            .label(&format_time(self.timer_view.current_display_secs()))
             .css_classes(["large-title"])
             .halign(gtk::Align::Center)
             .build();
-
-        // Give the timer view a weak ref to this label for live updates.
         self.timer_view.set_running_label(time_label.clone());
 
-        // ── Buttons ───────────────────────────────────────────────────
         let pause_btn = gtk::Button::builder()
             .label("Pause")
             .css_classes(["suggested-action", "pill"])
             .tooltip_text("Pause the timer")
             .build();
-
         let stop_btn = gtk::Button::builder()
             .label("Stop")
             .css_classes(["pill"])
@@ -114,51 +106,93 @@ impl MeditateWindow {
         btn_box.append(&pause_btn);
         btn_box.append(&stop_btn);
 
-        // ── Layout ────────────────────────────────────────────────────
         let content = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .spacing(32)
             .valign(gtk::Align::Center)
             .vexpand(true)
-            .margin_top(24)
-            .margin_bottom(24)
-            .margin_start(18)
-            .margin_end(18)
+            .margin_top(24).margin_bottom(24)
+            .margin_start(18).margin_end(18)
             .build();
         content.append(&time_label);
         content.append(&btn_box);
 
-        let header = adw::HeaderBar::builder()
-            .show_back_button(false)
-            .build();
-
+        let header = adw::HeaderBar::builder().show_back_button(false).build();
         let toolbar_view = adw::ToolbarView::new();
         toolbar_view.add_top_bar(&header);
         toolbar_view.set_content(Some(&content));
 
         let page = adw::NavigationPage::builder()
-            .tag("running")
-            .title("Meditating")
+            .tag("running").title("Meditating")
             .child(&toolbar_view)
             .build();
 
-        // ── Button callbacks ──────────────────────────────────────────
         let obj = self.obj().clone();
-        pause_btn.connect_clicked(move |_| obj.imp().on_running_pause());
-
+        pause_btn.connect_clicked(move |_| obj.imp().timer_view.pause());
         let obj2 = self.obj().clone();
-        stop_btn.connect_clicked(move |_| obj2.imp().on_running_stop());
+        stop_btn.connect_clicked(move |_| obj2.imp().timer_view.stop());
 
         self.nav_view.push(&page);
     }
+}
 
-    fn on_running_pause(&self) {
-        self.timer_view.pause();
-        // Signal handler pops the nav page.
+// ── Log ───────────────────────────────────────────────────────────────────────
+
+impl MeditateWindow {
+    fn wire_log_signals(&self) {
+        let obj = self.obj();
+
+        // Show/hide log header buttons based on active view
+        self.view_stack.connect_notify_local(
+            Some("visible-child"),
+            glib::clone!(
+                #[weak] obj,
+                move |stack, _| {
+                    let is_log = stack.visible_child_name().as_deref() == Some("log");
+                    let imp = obj.imp();
+                    imp.log_add_btn.set_visible(is_log);
+                    imp.log_filter_btn.set_visible(is_log);
+                    if is_log {
+                        imp.log_view.refresh_filter_labels(&imp.filter_label_row);
+                        imp.log_view.refresh();
+                    }
+                }
+            ),
+        );
+
+        // + Add button
+        self.log_add_btn.connect_clicked(glib::clone!(
+            #[weak] obj,
+            move |_| obj.imp().log_view.show_add_dialog()
+        ));
+
+        // Filter: re-apply when popover closes
+        self.log_filter_btn.connect_notify_local(
+            Some("active"),
+            glib::clone!(
+                #[weak] obj,
+                move |btn, _| {
+                    if !btn.is_active() {
+                        // Popover just closed — apply filter
+                        let imp = obj.imp();
+                        imp.log_view.set_filter_notes_only(imp.filter_notes_row.is_active());
+                        let selected = imp.filter_label_row.selected() as usize;
+                        let label_id = if selected == 0 {
+                            None
+                        } else {
+                            // labels list in log_view: index 0 = "All labels", 1+ = actual labels
+                            let labels = imp.log_view.imp().labels.borrow();
+                            labels.get(selected - 1).map(|l| l.id)
+                        };
+                        imp.log_view.set_filter_label_id(label_id);
+                        imp.log_view.refresh();
+                    }
+                }
+            ),
+        );
     }
 
-    fn on_running_stop(&self) {
-        self.timer_view.stop();
-        // Signal handler pops the nav page.
+    pub fn add_toast(&self, toast: adw::Toast) {
+        self.toast_overlay.add_toast(toast);
     }
 }

@@ -1,0 +1,57 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $LogView : Gtk.Widget {
+  Gtk.Stack view_stack {
+    vexpand: true;
+    transition-type: crossfade;
+
+    // ── Empty state ───────────────────────────────────────────────────
+    Gtk.StackPage {
+      name: "empty";
+      child: Adw.StatusPage {
+        icon-name: "view-list-symbolic";
+        title: _("No Sessions Yet");
+        description: _("Start meditating to see your sessions here, or add one manually.");
+
+        child: Gtk.Button add_first_btn {
+          label: _("Add Session");
+          css-classes: ["suggested-action", "pill"];
+          halign: center;
+        };
+      };
+    }
+
+    // ── Filtered empty state ──────────────────────────────────────────
+    Gtk.StackPage {
+      name: "filtered-empty";
+      child: Adw.StatusPage {
+        icon-name: "edit-find-symbolic";
+        title: _("No Matching Sessions");
+        description: _("Try changing your filters.");
+      };
+    }
+
+    // ── Session list ──────────────────────────────────────────────────
+    Gtk.StackPage {
+      name: "list";
+      child: Gtk.ScrolledWindow {
+        hscrollbar-policy: never;
+        vexpand: true;
+
+        child: Adw.Clamp {
+          maximum-size: 600;
+          margin-top: 12;
+          margin-bottom: 12;
+          margin-start: 12;
+          margin-end: 12;
+
+          Gtk.ListBox list_box {
+            css-classes: ["boxed-list"];
+            selection-mode: none;
+          }
+        };
+      };
+    }
+  }
+}

@@ -16,4 +16,9 @@ impl MeditateWindow {
             .property("application", app)
             .build()
     }
+
+    pub fn add_toast(&self, toast: adw::Toast) {
+        use glib::subclass::prelude::ObjectSubclassIsExt;
+        self.imp().add_toast(toast);
+    }
 }

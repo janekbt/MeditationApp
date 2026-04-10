@@ -3,5 +3,6 @@
   <gresource prefix="/io/github/janekbt/Meditate">
     <file preprocess="xml-stripblanks" alias="ui/window.ui">ui/window.ui</file>
     <file preprocess="xml-stripblanks" alias="ui/timer_view.ui">ui/timer_view.ui</file>
+    <file preprocess="xml-stripblanks" alias="ui/log_view.ui">ui/log_view.ui</file>
   </gresource>
 </gresources>

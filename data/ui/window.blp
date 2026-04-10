@@ -19,69 +19,103 @@ template $MeditateWindow : Adw.ApplicationWindow {
       tag: "main";
       title: _("Meditate");
 
-      child: Adw.ToolbarView {
-        [top]
-        Adw.HeaderBar {
-          title-widget: Box {
-            Adw.ViewSwitcher header_switcher {
-              stack: view_stack;
-              policy: wide;
+      child: Adw.ToastOverlay toast_overlay {
+        child: Adw.ToolbarView {
+          [top]
+          Adw.HeaderBar {
+            title-widget: Box {
+              Adw.ViewSwitcher header_switcher {
+                stack: view_stack;
+                policy: wide;
+              }
+
+              Adw.WindowTitle window_title {
+                title: _("Meditate");
+                visible: false;
+              }
+            };
+
+            // Log-specific buttons (hidden when not on log tab)
+            [end]
+            MenuButton log_filter_btn {
+              icon-name: "funnel-symbolic";
+              tooltip-text: _("Filter Sessions");
+              visible: false;
+
+              popover: Popover {
+                Box {
+                  orientation: vertical;
+                  spacing: 0;
+                  margin-top: 6;
+                  margin-bottom: 6;
+                  margin-start: 6;
+                  margin-end: 6;
+
+                  Adw.PreferencesGroup {
+                    Adw.SwitchRow filter_notes_row {
+                      title: _("Only with notes");
+                    }
+
+                    Adw.ComboRow filter_label_row {
+                      title: _("Label");
+                    }
+                  }
+                }
+              };
             }
 
-            Adw.WindowTitle window_title {
-              title: _("Meditate");
+            [end]
+            Button log_add_btn {
+              icon-name: "list-add-symbolic";
+              tooltip-text: _("Add Session");
               visible: false;
+            }
+
+            [end]
+            MenuButton {
+              icon-name: "open-menu-symbolic";
+              tooltip-text: _("Main Menu");
+              menu-model: primary_menu;
+              primary: true;
+            }
+          }
+
+          content: Adw.ViewStack view_stack {
+            Adw.ViewStackPage {
+              name: "timer";
+              title: _("Timer");
+              icon-name: "alarm-symbolic";
+
+              child: $TimerView timer_view {};
+            }
+
+            Adw.ViewStackPage {
+              name: "stats";
+              title: _("Stats");
+              icon-name: "office-chart-bar-symbolic";
+
+              child: Adw.StatusPage {
+                icon-name: "office-chart-bar-symbolic";
+                title: _("Stats");
+                description: _("Stats view coming in Phase 5");
+              };
+            }
+
+            Adw.ViewStackPage {
+              name: "log";
+              title: _("Log");
+              icon-name: "view-list-symbolic";
+
+              child: $LogView log_view {};
             }
           };
 
-          [end]
-          MenuButton {
-            icon-name: "open-menu-symbolic";
-            tooltip-text: _("Main Menu");
-            menu-model: primary_menu;
-            primary: true;
-          }
-        }
-
-        content: Adw.ViewStack view_stack {
-          Adw.ViewStackPage {
-            name: "timer";
-            title: _("Timer");
-            icon-name: "alarm-symbolic";
-
-            child: $TimerView timer_view {};
-          }
-
-          Adw.ViewStackPage {
-            name: "stats";
-            title: _("Stats");
-            icon-name: "office-chart-bar-symbolic";
-
-            child: Adw.StatusPage {
-              icon-name: "office-chart-bar-symbolic";
-              title: _("Stats");
-              description: _("Stats view coming in Phase 5");
-            };
-          }
-
-          Adw.ViewStackPage {
-            name: "log";
-            title: _("Log");
-            icon-name: "view-list-symbolic";
-
-            child: Adw.StatusPage {
-              icon-name: "view-list-symbolic";
-              title: _("Log");
-              description: _("Log view coming in Phase 4");
-            };
+          [bottom]
+          Adw.ViewSwitcherBar switcher_bar {
+            stack: view_stack;
+            reveal: false;
           }
         };
-
-        [bottom]
-        Adw.ViewSwitcherBar switcher_bar {
-          stack: view_stack;
-          reveal: false;
-        }
       };
     }
   };
