@@ -242,29 +242,31 @@ impl Database {
     /// Current streak: number of consecutive calendar days (ending today or
     /// yesterday) on which at least one session was completed.
     pub fn get_streak(&self) -> Result<u32> {
-        // Fetch distinct dates (as Unix day numbers) in descending order.
+        let today: String = self.conn.query_row(
+            "SELECT strftime('%Y-%m-%d', 'now', 'localtime')", [], |r| r.get(0))?;
+        let yesterday: String = self.conn.query_row(
+            "SELECT strftime('%Y-%m-%d', 'now', '-1 day', 'localtime')", [], |r| r.get(0))?;
+
         let mut stmt = self.conn.prepare(
-            "SELECT DISTINCT CAST(start_time / 86400 AS INTEGER) AS day
+            "SELECT DISTINCT strftime('%Y-%m-%d', start_time, 'unixepoch', 'localtime') AS day
              FROM sessions
              ORDER BY day DESC"
         )?;
-        let days: Vec<i64> = stmt
+        let days: Vec<String> = stmt
             .query_map([], |row| row.get(0))?
             .collect::<Result<_>>()?;
 
         if days.is_empty() {
             return Ok(0);
         }
-
-        let today = today_unix_day();
-        // Streak must end today or yesterday (allow for not having meditated yet today).
-        if days[0] < today - 1 {
+        // Streak must end today or yesterday.
+        if days[0] != today && days[0] != yesterday {
             return Ok(0);
         }
 
         let mut streak = 1u32;
-        for window in days.windows(2) {
-            if window[0] - window[1] == 1 {
+        for w in days.windows(2) {
+            if date_str_to_ordinal(&w[0]) - date_str_to_ordinal(&w[1]) == 1 {
                 streak += 1;
             } else {
                 break;
@@ -276,11 +278,11 @@ impl Database {
     /// Longest consecutive-day streak ever recorded.
     pub fn get_best_streak(&self) -> Result<u32> {
         let mut stmt = self.conn.prepare(
-            "SELECT DISTINCT CAST(start_time / 86400 AS INTEGER) AS day
+            "SELECT DISTINCT strftime('%Y-%m-%d', start_time, 'unixepoch', 'localtime') AS day
              FROM sessions
              ORDER BY day ASC"
         )?;
-        let days: Vec<i64> = stmt
+        let days: Vec<String> = stmt
             .query_map([], |row| row.get(0))?
             .collect::<Result<_>>()?;
 
@@ -291,7 +293,7 @@ impl Database {
         let mut best = 1u32;
         let mut current = 1u32;
         for w in days.windows(2) {
-            if w[1] - w[0] == 1 {
+            if date_str_to_ordinal(&w[1]) - date_str_to_ordinal(&w[0]) == 1 {
                 current += 1;
                 if current > best { best = current; }
             } else {
@@ -313,11 +315,17 @@ impl Database {
     /// Average daily meditation time (in seconds) over the last `days` days.
     /// Days with no sessions count as zero.
     pub fn get_running_average_secs(&self, days: u32) -> Result<f64> {
-        let since = (today_unix_day() - days as i64) * 86400;
+        // Compute the since-date in local time via SQLite so the boundary is
+        // local midnight, not UTC midnight.
+        let since: String = self.conn.query_row(
+            "SELECT strftime('%Y-%m-%d', 'now', ?1, 'localtime')",
+            params![format!("-{} days", days - 1)],
+            |r| r.get(0),
+        )?;
         let total: i64 = self.conn.query_row(
             "SELECT COALESCE(SUM(duration_secs), 0)
              FROM sessions
-             WHERE start_time >= ?1",
+             WHERE strftime('%Y-%m-%d', start_time, 'unixepoch', 'localtime') >= ?1",
             params![since],
             |row| row.get(0),
         )?;
@@ -375,11 +383,15 @@ impl Database {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/// Current date as a Unix day number (seconds since epoch / 86400, floored).
-fn today_unix_day() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64
-        / 86400
+/// Convert a "YYYY-MM-DD" local date string to a Julian Day Number so that
+/// two consecutive calendar days always differ by exactly 1, regardless of
+/// DST or UTC offset.  Pure integer arithmetic — no external crate needed.
+fn date_str_to_ordinal(s: &str) -> i64 {
+    let y: i64 = s[0..4].parse().unwrap_or(0);
+    let m: i64 = s[5..7].parse().unwrap_or(0);
+    let d: i64 = s[8..10].parse().unwrap_or(0);
+    let a = (14 - m) / 12;
+    let yy = y + 4800 - a;
+    let mm = m + 12 * a - 3;
+    d + (153 * mm + 2) / 5 + 365 * yy + yy / 4 - yy / 100 + yy / 400 - 32045
 }
