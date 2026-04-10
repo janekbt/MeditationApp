@@ -4,6 +4,7 @@ pub use imp::format_time;
 
 use gtk::glib;
 use gtk::glib::prelude::*;
+use gtk::glib::subclass::prelude::ObjectSubclassIsExt;
 
 glib::wrapper! {
     pub struct TimerView(ObjectSubclass<imp::TimerView>)

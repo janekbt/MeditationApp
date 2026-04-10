@@ -1,4 +1,5 @@
 use std::cell::{Cell, RefCell};
+use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{glib, CompositeTemplate};
 use glib::subclass::Signal;
@@ -321,13 +322,13 @@ impl TimerView {
         if !note.is_empty() {
             // Confirm discard if note was typed
             let dialog = adw::AlertDialog::builder()
-                .heading(_("Discard session?"))
-                .body(_("Your note will be lost."))
+                .heading(tr("Discard session?"))
+                .body(tr("Your note will be lost."))
                 .close_response("cancel")
                 .default_response("discard")
                 .build();
-            dialog.add_response("cancel", _("Cancel"));
-            dialog.add_response("discard", _("Discard"));
+            dialog.add_response("cancel", tr("Cancel"));
+            dialog.add_response("discard", tr("Discard"));
             dialog.set_response_appearance("discard", adw::ResponseAppearance::Destructive);
 
             let obj = self.obj().clone();
@@ -464,4 +465,4 @@ fn unix_now() -> i64 {
 }
 
 // Tiny gettext stub — real i18n wired up later via gettextrs.
-fn _(s: &str) -> &str { s }
+fn tr(s: &'static str) -> &'static str { s }
