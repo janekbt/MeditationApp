@@ -326,17 +326,18 @@ impl Database {
 
     /// Returns (day_unix_timestamp, total_duration_secs) for each day in the
     /// last `days` days that had at least one session. Used by the bar chart.
-    pub fn get_daily_totals(&self, days: u32) -> Result<Vec<(i64, i64)>> {
-        let since = (today_unix_day() - days as i64) * 86400;
+    /// Returns `(local-date-string "YYYY-MM-DD", total_secs)` for each day
+    /// on or after `since_date` that had at least one session.
+    pub fn get_daily_totals(&self, since_date: &str) -> Result<Vec<(String, i64)>> {
         let mut stmt = self.conn.prepare(
-            "SELECT CAST(start_time / 86400 AS INTEGER) * 86400 AS day,
+            "SELECT strftime('%Y-%m-%d', start_time, 'unixepoch', 'localtime') AS day,
                     SUM(duration_secs) AS total
              FROM sessions
-             WHERE start_time >= ?1
+             WHERE strftime('%Y-%m-%d', start_time, 'unixepoch', 'localtime') >= ?1
              GROUP BY day
              ORDER BY day ASC"
         )?;
-        let rows = stmt.query_map(params![since], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        let rows = stmt.query_map(params![since_date], |row| Ok((row.get(0)?, row.get(1)?)))?;
         rows.collect()
     }
 

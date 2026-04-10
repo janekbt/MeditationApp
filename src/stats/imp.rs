@@ -252,28 +252,41 @@ impl StatsView {
     pub fn reload_chart(&self) {
         let days = self.current_chart_days();
 
+        // Use glib for the since-date so the boundary is local midnight,
+        // not UTC midnight (avoids ±1 day shift for UTC± timezones).
+        let today = glib::DateTime::now_local().unwrap();
+        let since = today
+            .add_days(-(days as i32 - 1))
+            .unwrap()
+            .format("%Y-%m-%d")
+            .unwrap()
+            .to_string();
+
         let sparse = self
             .get_app()
-            .and_then(|app| app.with_db(|db| db.get_daily_totals(days)))
+            .and_then(|app| app.with_db(|db| db.get_daily_totals(&since)))
             .and_then(|r| r.ok())
             .unwrap_or_default();
 
-        let today_ts = today_unix_day() * 86400;
-        let daily: Vec<(i64, i64)> = (0..days as i64)
+        // Dense list of (local-date-string, secs) for every day in the period
+        let daily: Vec<(String, i64)> = (0..days as i64)
             .map(|i| {
-                let ts = today_ts - (days as i64 - 1 - i) * 86400;
+                let dt = today
+                    .add_days(-(days as i32 - 1) + i as i32)
+                    .unwrap();
+                let date_str = dt.format("%Y-%m-%d").unwrap().to_string();
                 let dur = sparse.iter()
-                    .find(|(t, _)| *t == ts)
+                    .find(|(d, _)| d == &date_str)
                     .map(|(_, d)| *d)
                     .unwrap_or(0);
-                (ts, dur)
+                (date_str, dur)
             })
             .collect();
 
         // Aggregate into weekly buckets for longer periods
-        let data: Vec<(i64, i64)> = if days >= 90 {
+        let data: Vec<(String, i64)> = if days >= 90 {
             daily.chunks(7)
-                .map(|c| (c[0].0, c.iter().map(|(_, d)| d).sum()))
+                .map(|c| (c[0].0.clone(), c.iter().map(|(_, d)| d).sum()))
                 .collect()
         } else {
             daily
@@ -288,14 +301,17 @@ impl StatsView {
             return;
         }
 
-        let chart_h = 148.0_f64;
+        let bars_h = 148i32;
+        let chart_h = bars_h as f64;
         let max_val = data.iter().map(|(_, d)| *d).max().unwrap_or(1).max(1);
 
-        // Y-axis: top label, equal spacers around the mid label
+        // Y-axis — fixed to the bars height and top-aligned so labels sit
+        // within the bars area only, not over the x-axis label row.
         let y_axis = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .width_request(46)
-            .vexpand(true)
+            .height_request(bars_h)
+            .valign(gtk::Align::Start)
             .build();
         y_axis.append(
             &gtk::Label::builder()
@@ -314,21 +330,28 @@ impl StatsView {
         );
         y_axis.append(&gtk::Box::builder().vexpand(true).build());
 
-        // Bars: one column per data point
+        // Bars row — fixed height so vexpand spacers inside columns work
         let bars_box = gtk::Box::builder()
             .orientation(gtk::Orientation::Horizontal)
             .hexpand(true)
-            .vexpand(true)
+            .height_request(bars_h)
             .spacing(2)
             .build();
 
-        for (_, dur) in &data {
+        // X-axis labels row — same spacing so columns stay aligned with bars
+        let xlabels_box = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .hexpand(true)
+            .spacing(2)
+            .build();
+
+        for (i, (date_str, dur)) in data.iter().enumerate() {
+            // Bar column
             let col = gtk::Box::builder()
                 .orientation(gtk::Orientation::Vertical)
                 .hexpand(true)
                 .vexpand(true)
                 .build();
-            // Spacer pushes the bar to the bottom
             col.append(&gtk::Box::builder().vexpand(true).build());
             if *dur > 0 {
                 let bar_h = ((*dur as f64 / max_val as f64) * chart_h) as i32;
@@ -341,10 +364,28 @@ impl StatsView {
                 );
             }
             bars_box.append(&col);
+
+            // X-axis label — empty string keeps the column as an invisible spacer
+            xlabels_box.append(
+                &gtk::Label::builder()
+                    .label(&x_label_text(&data, i, days))
+                    .css_classes(["caption", "dim-label"])
+                    .halign(gtk::Align::Center)
+                    .hexpand(true)
+                    .build(),
+            );
         }
 
+        let right_area = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .hexpand(true)
+            .spacing(4)
+            .build();
+        right_area.append(&bars_box);
+        right_area.append(&xlabels_box);
+
         self.chart_container.append(&y_axis);
-        self.chart_container.append(&bars_box);
+        self.chart_container.append(&right_area);
     }
 
     pub fn reload_text_stats(&self) {
@@ -397,12 +438,58 @@ fn days_in_month(year: i32, month: u32) -> u32 {
         .unwrap_or(30)
 }
 
-fn today_unix_day() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64
-        / 86400
+/// Returns the x-axis label text for bar `i`.  Empty string = no label.
+fn x_label_text(data: &[(String, i64)], i: usize, days: u32) -> String {
+    let date_str = &data[i].0;
+    let month: u32 = date_str[5..7].parse().unwrap_or(0);
+    let day_num: u32 = date_str[8..10].parse().unwrap_or(0);
+
+    match days {
+        // 7 days: abbreviated weekday under every bar
+        7 => weekday_for(date_str).to_string(),
+        // 4 weeks: one date label per week (every 7th bar)
+        28 => {
+            if i % 7 == 0 {
+                format!("{} {}", month_abbr(month), day_num)
+            } else {
+                String::new()
+            }
+        }
+        // 3 months / 1 year (weekly buckets): month name at first bar of each month
+        _ => {
+            let prev_month: u32 = if i == 0 {
+                0
+            } else {
+                data[i - 1].0[5..7].parse().unwrap_or(0)
+            };
+            if month != prev_month {
+                month_abbr(month).to_string()
+            } else {
+                String::new()
+            }
+        }
+    }
+}
+
+fn weekday_for(date_str: &str) -> &'static str {
+    let y: i32 = date_str[0..4].parse().unwrap_or(2000);
+    let m: i32 = date_str[5..7].parse().unwrap_or(1);
+    let d: i32 = date_str[8..10].parse().unwrap_or(1);
+    glib::DateTime::new(&glib::TimeZone::local(), y, m, d, 0, 0, 0.0)
+        .ok()
+        .map(|dt| match dt.day_of_week() {
+            1 => "Mo", 2 => "Tu", 3 => "We", 4 => "Th",
+            5 => "Fr", 6 => "Sa", _ => "Su",
+        })
+        .unwrap_or("")
+}
+
+fn month_abbr(month: u32) -> &'static str {
+    match month {
+        1 => "Jan", 2 => "Feb", 3 => "Mar", 4 => "Apr",
+        5 => "May", 6 => "Jun", 7 => "Jul", 8 => "Aug",
+        9 => "Sep", 10 => "Oct", 11 => "Nov", _ => "Dec",
+    }
 }
 
 fn format_hm(secs: i64) -> String {
