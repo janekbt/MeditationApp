@@ -4,7 +4,7 @@
   "runtime-version": "50",
   "sdk": "org.gnome.Sdk",
   "sdk-extensions": [
-    "org.freedesktop.Sdk.Extension.rust-stable"
+    "org.freedesktop.Sdk.Extension.rust-stable//25.08"
   ],
   "command": "meditate",
   "finish-args": [
@@ -26,17 +26,6 @@
     }
   },
   "modules": [
-    {
-      "name": "blueprint-compiler",
-      "buildsystem": "meson",
-      "sources": [
-        {
-          "type": "git",
-          "url": "https://gitlab.gnome.org/jwestman/blueprint-compiler.git",
-          "tag": "v0.14.0"
-        }
-      ]
-    },
     {
       "name": "meditate",
       "buildsystem": "meson",
