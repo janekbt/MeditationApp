@@ -166,13 +166,18 @@ impl MeditateWindow {
             move |_| obj.imp().log_view.show_add_dialog()
         ));
 
-        // Filter: apply instantly when toggle or label selection changes
+        // Filter: apply instantly, but only while the popover is open.
+        // Guards against set_model() firing notify::selected during
+        // programmatic initialization, which would cause a BorrowMutError.
         self.filter_notes_row.connect_notify_local(
             Some("active"),
             glib::clone!(
                 #[weak] obj,
                 move |row, _| {
                     let imp = obj.imp();
+                    if !imp.log_filter_btn.is_active() {
+                        return;
+                    }
                     imp.log_view.set_filter_notes_only(row.is_active());
                     imp.log_view.refresh();
                 }
@@ -185,6 +190,9 @@ impl MeditateWindow {
                 #[weak] obj,
                 move |row, _| {
                     let imp = obj.imp();
+                    if !imp.log_filter_btn.is_active() {
+                        return;
+                    }
                     let selected = row.selected() as usize;
                     let label_id = if selected == 0 {
                         None
