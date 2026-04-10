@@ -10,6 +10,7 @@ pub fn show_preferences(app: &MeditateApplication) {
     let dialog = adw::PreferencesDialog::builder()
         .title("Preferences")
         .search_enabled(false)
+        .content_height(480)
         .build();
 
     // ── General page ──────────────────────────────────────────────────────────
