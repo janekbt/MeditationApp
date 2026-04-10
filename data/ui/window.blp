@@ -14,72 +14,75 @@ template $MeditateWindow : Adw.ApplicationWindow {
     }
   }
 
-  content: Adw.ToolbarView {
-    [top]
-    Adw.HeaderBar {
-      title-widget: Box {
-        Adw.ViewSwitcher header_switcher {
-          stack: view_stack;
-          policy: wide;
+  content: Adw.NavigationView nav_view {
+    Adw.NavigationPage {
+      tag: "main";
+      title: _("Meditate");
+
+      child: Adw.ToolbarView {
+        [top]
+        Adw.HeaderBar {
+          title-widget: Box {
+            Adw.ViewSwitcher header_switcher {
+              stack: view_stack;
+              policy: wide;
+            }
+
+            Adw.WindowTitle window_title {
+              title: _("Meditate");
+              visible: false;
+            }
+          };
+
+          [end]
+          MenuButton {
+            icon-name: "open-menu-symbolic";
+            tooltip-text: _("Main Menu");
+            menu-model: primary_menu;
+            primary: true;
+          }
         }
 
-        Adw.WindowTitle window_title {
-          title: _("Meditate");
-          visible: false;
+        content: Adw.ViewStack view_stack {
+          Adw.ViewStackPage {
+            name: "timer";
+            title: _("Timer");
+            icon-name: "alarm-symbolic";
+
+            child: $TimerView timer_view {};
+          }
+
+          Adw.ViewStackPage {
+            name: "stats";
+            title: _("Stats");
+            icon-name: "office-chart-bar-symbolic";
+
+            child: Adw.StatusPage {
+              icon-name: "office-chart-bar-symbolic";
+              title: _("Stats");
+              description: _("Stats view coming in Phase 5");
+            };
+          }
+
+          Adw.ViewStackPage {
+            name: "log";
+            title: _("Log");
+            icon-name: "view-list-symbolic";
+
+            child: Adw.StatusPage {
+              icon-name: "view-list-symbolic";
+              title: _("Log");
+              description: _("Log view coming in Phase 4");
+            };
+          }
+        };
+
+        [bottom]
+        Adw.ViewSwitcherBar switcher_bar {
+          stack: view_stack;
+          reveal: false;
         }
       };
-
-      [end]
-      MenuButton {
-        icon-name: "open-menu-symbolic";
-        tooltip-text: _("Main Menu");
-        menu-model: primary_menu;
-        primary: true;
-      }
-    }
-
-    content: Adw.ViewStack view_stack {
-      Adw.ViewStackPage {
-        name: "timer";
-        title: _("Timer");
-        icon-name: "alarm-symbolic";
-
-        child: Adw.StatusPage {
-          icon-name: "alarm-symbolic";
-          title: _("Timer");
-          description: _("Timer view coming in Phase 3");
-        };
-      }
-
-      Adw.ViewStackPage {
-        name: "stats";
-        title: _("Stats");
-        icon-name: "office-chart-bar-symbolic";
-
-        child: Adw.StatusPage {
-          icon-name: "office-chart-bar-symbolic";
-          title: _("Stats");
-          description: _("Stats view coming in Phase 5");
-        };
-      }
-
-      Adw.ViewStackPage {
-        name: "log";
-        title: _("Log");
-        icon-name: "view-list-symbolic";
-
-        child: Adw.StatusPage {
-          icon-name: "view-list-symbolic";
-          title: _("Log");
-          description: _("Log view coming in Phase 4");
-        };
-      }
-    };
-
-    [bottom]
-    Adw.ViewSwitcherBar switcher_bar {
-      stack: view_stack;
-      reveal: false;
     }
   };
 }

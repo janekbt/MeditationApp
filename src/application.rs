@@ -2,12 +2,16 @@ mod imp {
     use adw::prelude::*;
     use adw::subclass::prelude::*;
     use gtk::{gio, glib};
+    use std::cell::RefCell;
 
     use crate::config;
+    use crate::db::Database;
     use crate::window::MeditateWindow;
 
     #[derive(Debug, Default)]
-    pub struct MeditateApplication {}
+    pub struct MeditateApplication {
+        pub db: RefCell<Option<Database>>,
+    }
 
     #[glib::object_subclass]
     impl ObjectSubclass for MeditateApplication {
@@ -33,6 +37,16 @@ mod imp {
 
         fn startup(&self) {
             self.parent_startup();
+
+            // Open (or create) the SQLite database in the user data directory.
+            let db_path = glib::user_data_dir()
+                .join("meditate")
+                .join("meditate.db");
+            match Database::open(&db_path) {
+                Ok(db) => *self.db.borrow_mut() = Some(db),
+                Err(e) => eprintln!("Failed to open database: {e}"),
+            }
+
             self.setup_actions();
             self.setup_accels();
         }
@@ -108,5 +122,18 @@ impl MeditateApplication {
 impl Default for MeditateApplication {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl MeditateApplication {
+    /// Run a closure with a reference to the open database.
+    /// Returns `None` if the database failed to open at startup.
+    pub fn with_db<F, R>(&self, f: F) -> Option<R>
+    where
+        F: FnOnce(&crate::db::Database) -> R,
+    {
+        use glib::subclass::prelude::ObjectSubclassIsExt;
+        let borrow = self.imp().db.borrow();
+        borrow.as_ref().map(f)
     }
 }

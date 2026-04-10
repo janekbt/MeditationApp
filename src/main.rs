@@ -1,5 +1,7 @@
 mod application;
 mod config;
+pub mod db;
+pub mod timer;
 mod window;
 
 use gtk::gio;

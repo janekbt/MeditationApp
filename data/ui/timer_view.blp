@@ -1,0 +1,212 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $TimerView : Gtk.Widget {
+
+  Gtk.Stack view_stack {
+    transition-type: crossfade;
+    vexpand: true;
+
+    // ── Setup / Paused page ───────────────────────────────────────────
+    Gtk.StackPage {
+      name: "setup";
+      child: Gtk.ScrolledWindow {
+        hscrollbar-policy: never;
+        vexpand: true;
+
+        child: Gtk.Box {
+          orientation: vertical;
+          spacing: 20;
+          valign: center;
+          vexpand: true;
+          margin-top: 24;
+          margin-bottom: 24;
+          margin-start: 18;
+          margin-end: 18;
+
+          // Streak
+          Gtk.Label streak_label {
+            css-classes: ["title-4"];
+            halign: center;
+            label: "";
+          }
+
+          // Mode toggle
+          Gtk.Box {
+            css-classes: ["linked"];
+            halign: center;
+
+            Gtk.ToggleButton countdown_btn {
+              label: _("Countdown");
+              active: true;
+            }
+
+            Gtk.ToggleButton stopwatch_btn {
+              label: _("Stopwatch");
+              group: countdown_btn;
+            }
+          }
+
+          // Inputs stack: "inputs" (idle) or "paused" (paused)
+          Gtk.Stack inputs_stack {
+            transition-type: crossfade;
+
+            Gtk.StackPage {
+              name: "inputs";
+              child: Gtk.Box {
+                orientation: vertical;
+                spacing: 14;
+
+                // H : M spin buttons
+                Gtk.Box {
+                  orientation: horizontal;
+                  spacing: 6;
+                  halign: center;
+
+                  Gtk.SpinButton hours_spin {
+                    orientation: vertical;
+                    numeric: true;
+                    width-chars: 2;
+                    adjustment: Gtk.Adjustment {
+                      lower: 0;
+                      upper: 23;
+                      step-increment: 1;
+                      page-increment: 1;
+                    };
+                  }
+
+                  Gtk.Label {
+                    label: ":";
+                    css-classes: ["title-2"];
+                    valign: center;
+                  }
+
+                  Gtk.SpinButton minutes_spin {
+                    orientation: vertical;
+                    numeric: true;
+                    width-chars: 2;
+                    adjustment: Gtk.Adjustment {
+                      lower: 0;
+                      upper: 59;
+                      step-increment: 1;
+                      page-increment: 5;
+                      value: 10;
+                    };
+                  }
+                }
+
+                // Quick presets (linked pill row)
+                Gtk.Box {
+                  css-classes: ["linked"];
+                  halign: center;
+
+                  Gtk.Button preset_5  { label: "5"; }
+                  Gtk.Button preset_10 { label: "10"; }
+                  Gtk.Button preset_15 { label: "15"; }
+                  Gtk.Button preset_20 { label: "20"; }
+                  Gtk.Button preset_30 { label: "30"; }
+                }
+              };
+            }
+
+            Gtk.StackPage {
+              name: "paused";
+              child: Gtk.Box {
+                orientation: vertical;
+                spacing: 6;
+                halign: center;
+
+                Gtk.Label paused_time_label {
+                  css-classes: ["title-1"];
+                  halign: center;
+                  label: "00:00:00";
+                }
+
+                Gtk.Label {
+                  label: _("Paused");
+                  css-classes: ["dim-label"];
+                  halign: center;
+                }
+              };
+            }
+          }
+
+          // Idle / paused action buttons
+          Gtk.Box setup_buttons {
+            orientation: horizontal;
+            spacing: 12;
+            halign: center;
+
+            Gtk.Button start_btn {
+              label: _("Start");
+              css-classes: ["suggested-action", "pill"];
+            }
+
+            Gtk.Button resume_btn {
+              label: _("Resume");
+              css-classes: ["suggested-action", "pill"];
+              visible: false;
+            }
+
+            Gtk.Button stop_from_pause_btn {
+              label: _("Stop");
+              css-classes: ["pill"];
+              visible: false;
+            }
+          }
+        };
+      };
+    }
+
+    // ── Done page ─────────────────────────────────────────────────────
+    Gtk.StackPage {
+      name: "done";
+      child: Gtk.ScrolledWindow {
+        hscrollbar-policy: never;
+        vexpand: true;
+
+        child: Gtk.Box {
+          orientation: vertical;
+          spacing: 18;
+          valign: center;
+          vexpand: true;
+          margin-top: 24;
+          margin-bottom: 24;
+          margin-start: 18;
+          margin-end: 18;
+
+          Gtk.Label done_duration_label {
+            css-classes: ["title-2"];
+            halign: center;
+          }
+
+          Adw.PreferencesGroup {
+            Adw.EntryRow note_row {
+              title: _("Note (optional)");
+            }
+
+            Adw.ComboRow label_row {
+              title: _("Label");
+            }
+          }
+
+          Gtk.Box {
+            orientation: horizontal;
+            spacing: 12;
+            halign: end;
+
+            Gtk.Button discard_btn {
+              label: _("Discard");
+              css-classes: ["pill"];
+            }
+
+            Gtk.Button save_btn {
+              label: _("Save");
+              css-classes: ["suggested-action", "pill"];
+            }
+          }
+        };
+      };
+    }
+  }
+}

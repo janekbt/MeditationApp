@@ -37,27 +37,27 @@ Navigation: `AdwViewSwitcher` in header bar (desktop) + `AdwViewSwitcherBar` at 
 
 ## Phase 1 — Project Scaffold
 
-- [ ] **1.1** Create Meson project skeleton (`meson.build`, `src/`, `data/`, `build-aux/`)
-- [ ] **1.2** Set up `Cargo.toml` with all dependencies (`gtk4`, `libadwaita`, `rusqlite`, `glib`, `gio`)
-- [ ] **1.3** Minimal `main.rs` + `AdwApplicationWindow` that compiles and opens a blank window
-- [ ] **1.4** `AdwViewStack` + `AdwViewSwitcher`/`AdwViewSwitcherBar` with three empty placeholder views + tooltips on all header buttons
-- [ ] **1.5** Flatpak manifest (`io.github.janekbt.Meditate.json`) + `.desktop` file + AppStream metainfo
+- [x] **1.1** Create Meson project skeleton (`meson.build`, `src/`, `data/`, `build-aux/`)
+- [x] **1.2** Set up `Cargo.toml` with all dependencies (`gtk4`, `libadwaita`, `rusqlite`, `glib`, `gio`)
+- [x] **1.3** Minimal `main.rs` + `AdwApplicationWindow` that compiles and opens a blank window
+- [x] **1.4** `AdwViewStack` + `AdwViewSwitcher`/`AdwViewSwitcherBar` with three empty placeholder views + tooltips on all header buttons
+- [x] **1.5** Flatpak manifest (`io.github.janekbt.Meditate.json`) + `.desktop` file + AppStream metainfo
 
 ## Phase 2 — Data Layer
 
-- [ ] **2.1** SQLite schema: `sessions` (id, start_time, duration_secs, mode, label_id, note) + `labels` (id, name)
-- [ ] **2.2** `db` module: connection init, schema migrations, full CRUD for sessions and labels
-- [ ] **2.3** Thread-safe DB wrapper accessible across the app (via `gio::Application` data or a `RefCell` singleton)
+- [x] **2.1** SQLite schema: `sessions` (id, start_time, duration_secs, mode, label_id, note) + `labels` (id, name)
+- [x] **2.2** `db` module: connection init, schema migrations, full CRUD for sessions and labels
+- [x] **2.3** Thread-safe DB wrapper accessible across the app (via `gio::Application` data or a `RefCell` singleton)
 
 ## Phase 3 — Timer View
 
-- [ ] **3.1** Blueprint: mode toggle (Countdown/Stopwatch segmented button), `AdwSpinRow` H:M, quick-preset pill buttons (5/10/15/20/30 min)
-- [ ] **3.2** Streak display: `title-4` label with streak count shown above the time display
-- [ ] **3.3** Timer state machine (`Idle → Running → Paused → Stopped`) driven by `glib::timeout_add_local`
-- [ ] **3.4** Large time display using `large-title` CSS class; hide/disable duration inputs while running
-- [ ] **3.5** Navigation lock: push a full-screen `AdwNavigationView` page on Start; pop on Pause (tab bar becomes visible again)
-- [ ] **3.6** Post-stop panel: `AdwEntryRow` for note + `AdwComboRow` for label + Save (suggested) / Discard (destructive)
-- [ ] **3.7** Wire Save → DB insert; Discard → `AdwAlertDialog` confirmation if a note was typed
+- [x] **3.1** Blueprint: mode toggle (Countdown/Stopwatch segmented button), `AdwSpinRow` H:M, quick-preset pill buttons (5/10/15/20/30 min)
+- [x] **3.2** Streak display: `title-4` label with streak count shown above the time display
+- [x] **3.3** Timer state machine (`Idle → Running → Paused → Stopped`) driven by `glib::timeout_add_local`
+- [x] **3.4** Large time display using `large-title` CSS class; hide/disable duration inputs while running
+- [x] **3.5** Navigation lock: push a full-screen `AdwNavigationView` page on Start; pop on Pause (tab bar becomes visible again)
+- [x] **3.6** Post-stop panel: `AdwEntryRow` for note + `AdwComboRow` for label + Save (suggested) / Discard (destructive)
+- [x] **3.7** Wire Save → DB insert; Discard → `AdwAlertDialog` confirmation if a note was typed
 
 ## Phase 4 — Log View
 
