@@ -180,6 +180,7 @@ impl MeditateWindow {
                     }
                     imp.log_view.set_filter_notes_only(row.is_active());
                     imp.log_view.refresh();
+                    if let Some(p) = imp.log_filter_btn.popover() { p.popdown(); }
                 }
             ),
         );
@@ -202,6 +203,7 @@ impl MeditateWindow {
                     };
                     imp.log_view.set_filter_label_id(label_id);
                     imp.log_view.refresh();
+                    if let Some(p) = imp.log_filter_btn.popover() { p.popdown(); }
                 }
             ),
         );
