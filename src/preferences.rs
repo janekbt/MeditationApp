@@ -190,7 +190,7 @@ fn make_label_row(
         }
     ));
 
-    // Apply: save to DB, update committed baseline, clear focus.
+    // Apply: save to DB, update committed baseline, then defer focus clear.
     apply_btn.connect_clicked(glib::clone!(
         #[weak] app,
         #[weak] row,
@@ -205,22 +205,36 @@ fn make_label_row(
             }
             apply_btn.set_visible(false);
             discard_btn.set_visible(false);
-            if let Some(root) = row.root() {
-                root.set_focus(None::<&gtk::Widget>);
-            }
+            // Defer focus clear: hiding the buttons makes GTK search for a new
+            // focus target (it lands back on the text input). Running on the
+            // next idle cycle clears it after GTK finishes that restoration.
+            let row_weak = row.downgrade();
+            glib::idle_add_local(move || {
+                if let Some(row) = row_weak.upgrade() {
+                    if let Some(root) = row.root() {
+                        root.set_focus(None::<&gtk::Widget>);
+                    }
+                }
+                glib::ControlFlow::Break
+            });
         }
     ));
 
-    // Discard: restore committed text (triggers connect_changed → hides buttons),
-    // then clear focus.
+    // Discard: restore committed text, then defer focus clear.
     discard_btn.connect_clicked(glib::clone!(
         #[weak] row,
         #[strong] committed,
         move |_| {
             row.set_text(&committed.borrow());
-            if let Some(root) = row.root() {
-                root.set_focus(None::<&gtk::Widget>);
-            }
+            let row_weak = row.downgrade();
+            glib::idle_add_local(move || {
+                if let Some(row) = row_weak.upgrade() {
+                    if let Some(root) = row.root() {
+                        root.set_focus(None::<&gtk::Widget>);
+                    }
+                }
+                glib::ControlFlow::Break
+            });
         }
     ));
 
