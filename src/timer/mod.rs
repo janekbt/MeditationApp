@@ -18,6 +18,11 @@ impl TimerView {
         self.imp().refresh_streak();
     }
 
+    /// Rebuild the preset buttons from the database.
+    pub fn refresh_presets(&self) {
+        self.imp().refresh_presets();
+    }
+
     /// Returns the current display time in seconds.
     pub fn current_display_secs(&self) -> u64 {
         self.imp().current_display_secs()
