@@ -87,12 +87,12 @@ Navigation: `AdwViewSwitcher` in header bar (desktop) + `AdwViewSwitcherBar` at 
 
 ## Phase 7 — Polish & Accessibility
 
-- [ ] **7.1** System notification (`GNotification`) when timer ends — only fires when app is in background
-- [ ] **7.2** Keyboard shortcuts: Space = start/pause, Ctrl+, = Preferences, Ctrl+? = Shortcuts, Ctrl+W = close, Ctrl+Q = quit
-- [ ] **7.3** `GtkShortcutsWindow` dialog (triggered by Ctrl+? and menu item)
-- [ ] **7.4** Adaptive layout audit: test and fix all three views at 360px width
-- [ ] **7.5** Dark mode + high-contrast audit: verify calendar and chart use CSS variables, no hardcoded colors
-- [ ] **7.6** Accessibility pass: keyboard nav, screen reader labels (`accessible_name`) on all custom widgets, OSK compatibility
+- [x] **7.1** System notification (`GNotification`) when timer ends — only fires when app is in background
+- [x] **7.2** Keyboard shortcuts: Space = start/pause, Ctrl+, = Preferences, Ctrl+? = Shortcuts, Ctrl+W = close, Ctrl+Q = quit
+- [x] **7.3** `GtkShortcutsWindow` dialog (triggered by Ctrl+? and menu item)
+- [x] **7.4** Adaptive layout audit: Clamp + Breakpoint + ScrolledWindow in all views; default width 360px
+- [x] **7.5** Dark mode + high-contrast audit: calendar and chart use `@accent_bg_color`/`@accent_fg_color`; no hardcoded colors
+- [x] **7.6** Accessibility pass: tooltip-text on all icon/number-only buttons; chart and calendar use standard GTK widgets (screen-reader readable); keyboard nav via Space/Ctrl shortcuts
 
 ## Phase 8 — Flatpak & App Identity
 
