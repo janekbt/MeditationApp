@@ -95,16 +95,10 @@ template $TimerView : Gtk.Widget {
                   }
                 }
 
-                // Quick presets (linked pill row, hidden in stopwatch mode)
+                // Quick presets — populated dynamically from DB
                 Gtk.Box presets_box {
                   css-classes: ["linked"];
                   halign: center;
-
-                  Gtk.Button preset_5  { label: "5";  tooltip-text: _("5 minutes");  }
-                  Gtk.Button preset_10 { label: "10"; tooltip-text: _("10 minutes"); }
-                  Gtk.Button preset_15 { label: "15"; tooltip-text: _("15 minutes"); }
-                  Gtk.Button preset_20 { label: "20"; tooltip-text: _("20 minutes"); }
-                  Gtk.Button preset_30 { label: "30"; tooltip-text: _("30 minutes"); }
                 }
 
                 // Shown only in stopwatch idle mode

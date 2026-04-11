@@ -46,11 +46,6 @@ pub struct TimerView {
     #[template_child] pub hm_box:                TemplateChild<gtk::Box>,
     #[template_child] pub presets_box:           TemplateChild<gtk::Box>,
     #[template_child] pub stopwatch_idle_label:  TemplateChild<gtk::Label>,
-    #[template_child] pub preset_5:              TemplateChild<gtk::Button>,
-    #[template_child] pub preset_10:             TemplateChild<gtk::Button>,
-    #[template_child] pub preset_15:             TemplateChild<gtk::Button>,
-    #[template_child] pub preset_20:             TemplateChild<gtk::Button>,
-    #[template_child] pub preset_30:             TemplateChild<gtk::Button>,
     #[template_child] pub paused_time_label:     TemplateChild<gtk::Label>,
     #[template_child] pub start_btn:             TemplateChild<gtk::Button>,
     #[template_child] pub resume_btn:            TemplateChild<gtk::Button>,
@@ -131,23 +126,6 @@ impl WidgetImpl for TimerView {}
 impl TimerView {
     fn setup_buttons(&self) {
         let obj = self.obj();
-
-        // Preset buttons set H:M spin values
-        for (btn, mins) in [
-            (&*self.preset_5, 5u64),
-            (&*self.preset_10, 10),
-            (&*self.preset_15, 15),
-            (&*self.preset_20, 20),
-            (&*self.preset_30, 30),
-        ] {
-            btn.connect_clicked(glib::clone!(
-                #[weak(rename_to = this)] obj,
-                move |_| {
-                    this.imp().hours_spin.set_value(0.0);
-                    this.imp().minutes_spin.set_value(mins as f64);
-                }
-            ));
-        }
 
         // Mode toggle — update UI to reflect the destination mode's state
         self.stopwatch_btn.connect_toggled(glib::clone!(
@@ -545,8 +523,42 @@ impl TimerView {
             };
             self.streak_label.set_label(&text);
         }
+        self.refresh_presets();
         // Keep the pre-start label list fresh (preserve current selection).
         self.refresh_setup_labels(self.setup_selected_label_id());
+    }
+
+    pub fn refresh_presets(&self) {
+        while let Some(child) = self.presets_box.first_child() {
+            self.presets_box.remove(&child);
+        }
+        let presets = self.get_app()
+            .and_then(|app| app.with_db(|db| db.get_presets()))
+            .and_then(|r| r.ok())
+            .unwrap_or_else(|| vec![5, 10, 15, 20, 30]);
+
+        let obj = self.obj();
+        for mins in presets {
+            let tooltip = if mins < 60 {
+                format!("{mins} minutes")
+            } else {
+                let h = mins / 60;
+                let m = mins % 60;
+                if m == 0 { format!("{h}h") } else { format!("{h}h {m}min") }
+            };
+            let btn = gtk::Button::builder()
+                .label(&mins.to_string())
+                .tooltip_text(&tooltip)
+                .build();
+            btn.connect_clicked(glib::clone!(
+                #[weak(rename_to = this)] obj,
+                move |_| {
+                    this.imp().hours_spin.set_value((mins / 60) as f64);
+                    this.imp().minutes_spin.set_value((mins % 60) as f64);
+                }
+            ));
+            self.presets_box.append(&btn);
+        }
     }
 
     /// Rebuild the label combo from the DB.

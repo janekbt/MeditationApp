@@ -241,6 +241,129 @@ pub fn show_preferences(app: &MeditateApplication) {
 
     stats_group.add(&avg_row);
     general_page.add(&stats_group);
+
+    // ── Presets group ─────────────────────────────────────────────────────────
+
+    let presets_group = adw::PreferencesGroup::builder()
+        .title("Timer Presets")
+        .description("Quick-select buttons shown in the countdown timer (1–5 presets, in minutes)")
+        .build();
+
+    let add_preset_btn = gtk::Button::builder()
+        .icon_name("list-add-symbolic")
+        .tooltip_text("Add preset")
+        .valign(gtk::Align::Center)
+        .css_classes(["flat"])
+        .build();
+    presets_group.set_header_suffix(Some(&add_preset_btn));
+
+    let current_presets = app
+        .with_db(|db| db.get_presets())
+        .and_then(|r| r.ok())
+        .unwrap_or_else(|| vec![5, 10, 15, 20, 30]);
+
+    // Track (SpinRow, delete_button) so we can update visibility and save.
+    let preset_rows: Rc<RefCell<Vec<(adw::SpinRow, gtk::Button)>>> =
+        Rc::new(RefCell::new(Vec::new()));
+
+    // Save all current preset values to DB.
+    let save_presets = Rc::new(glib::clone!(
+        #[weak] app,
+        #[strong] preset_rows,
+        move || {
+            let vals: Vec<u32> = preset_rows
+                .borrow()
+                .iter()
+                .map(|(r, _)| r.value() as u32)
+                .collect();
+            app.with_db(|db| db.set_presets(&vals));
+        }
+    ));
+
+    // Refresh add/delete button visibility based on current row count.
+    let refresh_preset_btns = Rc::new(glib::clone!(
+        #[weak] add_preset_btn,
+        #[strong] preset_rows,
+        move || {
+            let count = preset_rows.borrow().len();
+            add_preset_btn.set_visible(count < 5);
+            for (_, del_btn) in preset_rows.borrow().iter() {
+                del_btn.set_visible(count > 1);
+            }
+        }
+    ));
+
+    // Build one SpinRow for an existing or new preset value.
+    let make_preset_row = {
+        let preset_rows = preset_rows.clone();
+        let save_presets = save_presets.clone();
+        let refresh_preset_btns = refresh_preset_btns.clone();
+        let presets_group = presets_group.clone();
+        move |val: u32| -> (adw::SpinRow, gtk::Button) {
+            let adj = gtk::Adjustment::new(val as f64, 1.0, 999.0, 1.0, 5.0, 0.0);
+            let spin_row = adw::SpinRow::builder()
+                .title("Minutes")
+                .adjustment(&adj)
+                .build();
+
+            let del_btn = gtk::Button::builder()
+                .icon_name("user-trash-symbolic")
+                .valign(gtk::Align::Center)
+                .tooltip_text("Remove preset")
+                .css_classes(["flat"])
+                .build();
+            spin_row.add_suffix(&del_btn);
+            presets_group.add(&spin_row);
+
+            // Save on value change.
+            spin_row.connect_notify_local(
+                Some("value"),
+                glib::clone!(#[strong] save_presets, move |_, _| save_presets()),
+            );
+
+            // Delete: remove row from group and vec, save, refresh buttons.
+            del_btn.connect_clicked(glib::clone!(
+                #[weak] spin_row,
+                #[weak] presets_group,
+                #[strong] preset_rows,
+                #[strong] save_presets,
+                #[strong] refresh_preset_btns,
+                move |_| {
+                    presets_group.remove(&spin_row);
+                    preset_rows.borrow_mut().retain(|(r, _)| r != &spin_row);
+                    save_presets();
+                    refresh_preset_btns();
+                }
+            ));
+
+            (spin_row, del_btn)
+        }
+    };
+
+    for &val in &current_presets {
+        let pair = make_preset_row(val);
+        preset_rows.borrow_mut().push(pair);
+    }
+    refresh_preset_btns();
+
+    add_preset_btn.connect_clicked(glib::clone!(
+        #[strong] preset_rows,
+        #[strong] save_presets,
+        #[strong] refresh_preset_btns,
+        move |_| {
+            let next_val = preset_rows
+                .borrow()
+                .last()
+                .map(|(r, _)| (r.value() as u32).saturating_add(5).min(999))
+                .unwrap_or(5);
+            let pair = make_preset_row(next_val);
+            preset_rows.borrow_mut().push(pair);
+            save_presets();
+            refresh_preset_btns();
+        }
+    ));
+
+    general_page.add(&presets_group);
     dialog.add(&general_page);
 
     // ── Labels page ───────────────────────────────────────────────────────────
