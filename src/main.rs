@@ -3,6 +3,7 @@ mod config;
 pub mod db;
 pub mod log;
 mod preferences;
+pub mod sound;
 pub mod stats;
 pub mod timer;
 mod window;

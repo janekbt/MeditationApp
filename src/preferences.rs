@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use adw::prelude::*;
-use gtk::glib;
+use gtk::{gio, glib};
 
 use crate::application::MeditateApplication;
 use crate::window::MeditateWindow;
@@ -22,6 +22,152 @@ pub fn show_preferences(app: &MeditateApplication) {
         .title("General")
         .icon_name("preferences-system-symbolic")
         .build();
+
+    // ── Sound group ───────────────────────────────────────────────────────────
+
+    let sound_group = adw::PreferencesGroup::builder()
+        .title("Sound")
+        .build();
+
+    let sound_row = adw::ComboRow::builder()
+        .title("End sound")
+        .model(&gtk::StringList::new(&["None", "Singing Bowl", "Bell", "Gong", "Custom file…"]))
+        .build();
+
+    let preview_btn = gtk::Button::builder()
+        .icon_name("media-playback-start-symbolic")
+        .valign(gtk::Align::Center)
+        .tooltip_text("Preview sound")
+        .css_classes(["flat"])
+        .build();
+    sound_row.add_suffix(&preview_btn);
+
+    let current_sound = app
+        .with_db(|db| db.get_setting("end_sound", "none"))
+        .and_then(|r| r.ok())
+        .unwrap_or_else(|| "none".to_string());
+    sound_row.set_selected(match current_sound.as_str() {
+        "bowl"   => 1,
+        "bell"   => 2,
+        "gong"   => 3,
+        "custom" => 4,
+        _        => 0,
+    });
+    preview_btn.set_sensitive(current_sound != "none");
+
+    // Custom file row — only visible when "Custom file…" is selected.
+    let custom_sound_path: Rc<RefCell<String>> = Rc::new(RefCell::new(
+        app.with_db(|db| db.get_setting("end_sound_path", ""))
+            .and_then(|r| r.ok())
+            .unwrap_or_default(),
+    ));
+
+    let custom_row = adw::ActionRow::builder()
+        .title("Sound file")
+        .visible(current_sound == "custom")
+        .build();
+    custom_row.set_subtitle(path_subtitle(&custom_sound_path.borrow()));
+
+    let choose_btn = gtk::Button::builder()
+        .label("Choose…")
+        .valign(gtk::Align::Center)
+        .css_classes(["flat"])
+        .build();
+    custom_row.add_suffix(&choose_btn);
+
+    // Save selection + show/hide custom row whenever the combo changes.
+    sound_row.connect_notify_local(
+        Some("selected"),
+        glib::clone!(
+            #[weak] app,
+            #[weak] custom_row,
+            #[weak] preview_btn,
+            move |row, _| {
+                let key = match row.selected() {
+                    1 => "bowl",
+                    2 => "bell",
+                    3 => "gong",
+                    4 => "custom",
+                    _ => "none",
+                };
+                app.with_db(|db| db.set_setting("end_sound", key));
+                custom_row.set_visible(key == "custom");
+                preview_btn.set_sensitive(key != "none");
+            }
+        ),
+    );
+
+    // Preview the currently-selected sound without saving.
+    preview_btn.connect_clicked(glib::clone!(
+        #[weak] sound_row,
+        #[strong] custom_sound_path,
+        move |_| {
+            let uri = match sound_row.selected() {
+                1 => Some(crate::sound::bundled_uri("bowl")),
+                2 => Some(crate::sound::bundled_uri("bell")),
+                3 => Some(crate::sound::bundled_uri("gong")),
+                4 => {
+                    let p = custom_sound_path.borrow().clone();
+                    if p.is_empty() { None } else { Some(format!("file://{p}")) }
+                }
+                _ => None,
+            };
+            if let Some(uri) = uri {
+                crate::sound::play_uri(&uri);
+            }
+        }
+    ));
+
+    // Open a file chooser to select a custom sound.
+    choose_btn.connect_clicked(glib::clone!(
+        #[weak] app,
+        #[weak] custom_row,
+        #[strong] custom_sound_path,
+        move |_| {
+            let file_dialog = gtk::FileDialog::builder()
+                .title("Choose Sound File")
+                .build();
+
+            let filter = gtk::FileFilter::new();
+            filter.set_name(Some("Audio files"));
+            for ext in ["ogg", "wav", "flac", "mp3", "opus"] {
+                filter.add_suffix(ext);
+            }
+            file_dialog.set_default_filter(Some(&filter));
+
+            let path = custom_sound_path.borrow().clone();
+            if !path.is_empty() {
+                file_dialog.set_initial_file(Some(&gio::File::for_path(&path)));
+            }
+
+            let parent = app.active_window().and_downcast::<gtk::Window>();
+            file_dialog.open(
+                parent.as_ref(),
+                None::<&gio::Cancellable>,
+                glib::clone!(
+                    #[weak] app,
+                    #[weak] custom_row,
+                    #[strong] custom_sound_path,
+                    move |result| {
+                        if let Ok(file) = result {
+                            if let Some(p) = file.path() {
+                                let path_str = p.to_string_lossy().to_string();
+                                custom_row.set_subtitle(path_subtitle(&path_str));
+                                *custom_sound_path.borrow_mut() = path_str.clone();
+                                app.with_db(|db| db.set_setting("end_sound_path", &path_str));
+                            }
+                        }
+                    }
+                ),
+            );
+        }
+    ));
+
+    sound_group.add(&sound_row);
+    sound_group.add(&custom_row);
+    general_page.add(&sound_group);
+
+    // ── Statistics group ──────────────────────────────────────────────────────
 
     let stats_group = adw::PreferencesGroup::builder()
         .title("Statistics")
@@ -281,4 +427,18 @@ fn make_label_row(
     ));
 
     row
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Subtitle text for the custom sound row: show just the filename, or a
+/// placeholder when no file has been selected yet.
+fn path_subtitle(path: &str) -> &str {
+    if path.is_empty() {
+        return "No file selected";
+    }
+    std::path::Path::new(path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(path)
 }

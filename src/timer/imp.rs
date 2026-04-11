@@ -478,6 +478,9 @@ impl TimerView {
                 if done {
                     obj.emit_by_name::<()>("timer-stopped", &[]);
                     imp.show_done(new_secs); // new_secs == target here
+                    if let Some(app) = imp.get_app() {
+                        crate::sound::play_end_sound(&app);
+                    }
                     return glib::ControlFlow::Break;
                 }
 

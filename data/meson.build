@@ -26,3 +26,11 @@ appstream_util = find_program('appstream-util', required: false)
 if appstream_util.found()
   test('Validate metainfo', appstream_util, args: ['validate', appstream_file])
 endif
+
+# Bundled sounds
+install_data(
+  'sounds/bowl.wav',
+  'sounds/bell.wav',
+  'sounds/gong.wav',
+  install_dir: get_option('prefix') / get_option('datadir') / meson.project_name() / 'sounds',
+)
