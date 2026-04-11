@@ -248,7 +248,7 @@ pub fn show_preferences(app: &MeditateApplication) {
 
     let labels_page = adw::PreferencesPage::builder()
         .title("Labels")
-        .icon_name("tag-symbolic")
+        .icon_name("user-bookmarks-symbolic")
         .build();
 
     let labels_group = adw::PreferencesGroup::builder()

@@ -47,7 +47,7 @@ template $MeditateWindow : Adw.ApplicationWindow {
             // Log-specific buttons (hidden when not on log tab)
             [end]
             MenuButton log_filter_btn {
-              icon-name: "funnel-symbolic";
+              icon-name: "edit-find-symbolic";
               tooltip-text: _("Filter Sessions");
               visible: false;
 
@@ -93,7 +93,7 @@ template $MeditateWindow : Adw.ApplicationWindow {
             Adw.ViewStackPage {
               name: "stats";
               title: _("Stats");
-              icon-name: "office-chart-bar-symbolic";
+              icon-name: "view-column-chart-symbolic";
 
               child: $StatsView stats_view {};
             }

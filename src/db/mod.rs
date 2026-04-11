@@ -94,6 +94,9 @@ impl Database {
     // ── Migrations ────────────────────────────────────────────────────────────
 
     fn migrate(&self) -> Result<()> {
+        // Base schema — idempotent, runs on every startup.
+        // labels.name has NO UNIQUE constraint; uniqueness at the DB level
+        // was too restrictive (silent failures on "Add label" after renaming).
         self.conn.execute_batch("
             CREATE TABLE IF NOT EXISTS schema_migrations (
                 version INTEGER PRIMARY KEY
@@ -101,7 +104,7 @@ impl Database {
 
             CREATE TABLE IF NOT EXISTS labels (
                 id   INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL UNIQUE
+                name TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS sessions (
@@ -121,15 +124,61 @@ impl Database {
                 value TEXT NOT NULL
             );
         ")?;
+
+        // Migration 1: drop the UNIQUE constraint on labels.name that the
+        // initial schema included.  SQLite requires recreating the table.
+        let already_done: bool = self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = 1)",
+            [],
+            |row| row.get(0),
+        )?;
+        if !already_done {
+            self.conn.execute_batch("
+                BEGIN;
+                CREATE TABLE labels_new (
+                    id   INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL
+                );
+                INSERT INTO labels_new SELECT id, name FROM labels;
+                DROP TABLE labels;
+                ALTER TABLE labels_new RENAME TO labels;
+                INSERT INTO schema_migrations (version) VALUES (1);
+                COMMIT;
+            ")?;
+        }
+
         Ok(())
     }
 
     // ── Labels ────────────────────────────────────────────────────────────────
 
-    pub fn create_label(&self, name: &str) -> Result<Label> {
+    pub fn create_label(&self, base_name: &str) -> Result<Label> {
+        // Find a name that isn't already in use: "New label", "New label 2", …
+        let name = self.unique_label_name(base_name)?;
         self.conn.execute("INSERT INTO labels (name) VALUES (?1)", params![name])?;
         let id = self.conn.last_insert_rowid();
-        Ok(Label { id, name: name.to_owned() })
+        Ok(Label { id, name })
+    }
+
+    fn unique_label_name(&self, base: &str) -> Result<String> {
+        let exists = |n: &str| -> Result<bool> {
+            self.conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM labels WHERE name = ?1)",
+                params![n],
+                |row| row.get(0),
+            )
+        };
+        if !exists(base)? {
+            return Ok(base.to_owned());
+        }
+        let mut i = 2u32;
+        loop {
+            let candidate = format!("{base} {i}");
+            if !exists(&candidate)? {
+                return Ok(candidate);
+            }
+            i += 1;
+        }
     }
 
     pub fn list_labels(&self) -> Result<Vec<Label>> {
