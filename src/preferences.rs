@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use adw::prelude::*;
@@ -55,6 +55,9 @@ pub fn show_preferences(app: &MeditateApplication) {
     });
     preview_btn.set_sensitive(current_sound != "none");
 
+    // Tracks whether a preview is currently playing so the button toggles.
+    let preview_playing: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+
     // Custom file row — only visible when "Custom file…" is selected.
     let custom_sound_path: Rc<RefCell<String>> = Rc::new(RefCell::new(
         app.with_db(|db| db.get_setting("end_sound_path", ""))
@@ -82,6 +85,7 @@ pub fn show_preferences(app: &MeditateApplication) {
             #[weak] app,
             #[weak] custom_row,
             #[weak] preview_btn,
+            #[strong] preview_playing,
             move |row, _| {
                 let key = match row.selected() {
                     1 => "bowl",
@@ -93,27 +97,60 @@ pub fn show_preferences(app: &MeditateApplication) {
                 app.with_db(|db| db.set_setting("end_sound", key));
                 custom_row.set_visible(key == "custom");
                 preview_btn.set_sensitive(key != "none");
+                // Stop any in-progress preview when the selection changes.
+                if preview_playing.get() {
+                    preview_playing.set(false);
+                    preview_btn.set_icon_name("media-playback-start-symbolic");
+                    crate::sound::stop_current();
+                }
             }
         ),
     );
 
-    // Preview the currently-selected sound without saving.
+    // Toggle play/stop on the preview button.
     preview_btn.connect_clicked(glib::clone!(
         #[weak] sound_row,
+        #[weak] preview_btn,
         #[strong] custom_sound_path,
+        #[strong] preview_playing,
         move |_| {
-            let uri = match sound_row.selected() {
-                1 => Some(crate::sound::bundled_uri("bowl")),
-                2 => Some(crate::sound::bundled_uri("bell")),
-                3 => Some(crate::sound::bundled_uri("gong")),
+            if preview_playing.get() {
+                // Stop
+                preview_playing.set(false);
+                preview_btn.set_icon_name("media-playback-start-symbolic");
+                crate::sound::stop_current();
+                return;
+            }
+
+            // Start
+            let media = match sound_row.selected() {
+                1 => Some(crate::sound::play_bundled("bowl")),
+                2 => Some(crate::sound::play_bundled("bell")),
+                3 => Some(crate::sound::play_bundled("gong")),
                 4 => {
                     let p = custom_sound_path.borrow().clone();
-                    if p.is_empty() { None } else { Some(format!("file://{p}")) }
+                    if p.is_empty() { None } else { Some(crate::sound::play_uri(&format!("file://{p}"))) }
                 }
                 _ => None,
             };
-            if let Some(uri) = uri {
-                crate::sound::play_uri(&uri);
+            if let Some(media) = media {
+                preview_playing.set(true);
+                preview_btn.set_icon_name("media-playback-stop-symbolic");
+
+                // Reset the button icon when playback ends naturally.
+                media.connect_notify_local(
+                    Some("playing"),
+                    glib::clone!(
+                        #[strong] preview_playing,
+                        #[weak] preview_btn,
+                        move |m, _| {
+                            if !m.is_playing() && preview_playing.get() {
+                                preview_playing.set(false);
+                                preview_btn.set_icon_name("media-playback-start-symbolic");
+                            }
+                        }
+                    ),
+                );
             }
         }
     ));

@@ -6,5 +6,8 @@
     <file preprocess="xml-stripblanks" alias="ui/log_view.ui">ui/log_view.ui</file>
     <file preprocess="xml-stripblanks" alias="ui/stats_view.ui">ui/stats_view.ui</file>
     <file alias="style.css">style.css</file>
+    <file alias="sounds/bowl.wav">sounds/bowl.wav</file>
+    <file alias="sounds/bell.wav">sounds/bell.wav</file>
+    <file alias="sounds/gong.wav">sounds/gong.wav</file>
   </gresource>
 </gresources>
