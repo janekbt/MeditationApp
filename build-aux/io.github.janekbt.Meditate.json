@@ -1,7 +1,7 @@
 {
   "app-id": "io.github.janekbt.Meditate",
   "runtime": "org.gnome.Platform",
-  "runtime-version": "50",
+  "runtime-version": "48",
   "sdk": "org.gnome.Sdk",
   "sdk-extensions": [
     "org.freedesktop.Sdk.Extension.rust-stable"
@@ -16,8 +16,7 @@
     "--talk-name=org.freedesktop.Notifications",
     "--talk-name=org.gtk.Notifications",
     "--filesystem=xdg-music:ro",
-    "--filesystem=xdg-download:ro",
-    "--talk-name=org.freedesktop.portal.FileChooser"
+    "--filesystem=xdg-download:ro"
   ],
   "build-options": {
     "append-path": "/usr/lib/sdk/rust-stable/bin",

@@ -1,0 +1,24 @@
+name: Flatpak CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  flatpak:
+    name: Flatpak Build
+    runs-on: ubuntu-latest
+    container:
+      image: bilelmoussaoui/flatpak-github-actions:gnome-48
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Flatpak
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: meditate.flatpak
+          manifest-path: build-aux/io.github.janekbt.Meditate.json
+          cache-key: flatpak-builder-${{ github.sha }}
