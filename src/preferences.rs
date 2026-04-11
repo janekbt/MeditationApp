@@ -2,6 +2,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use adw::prelude::*;
+use adw::subclass::prelude::ObjectSubclassIsExt;
 use gtk::{gio, glib};
 
 use crate::application::MeditateApplication;
