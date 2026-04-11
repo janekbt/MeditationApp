@@ -84,7 +84,8 @@ impl Database {
         let conn = Connection::open(path)?;
 
         // Enable WAL mode for better concurrent read performance.
-        conn.execute_batch("PRAGMA journal_mode=WAL;")?;
+        // Enable foreign key enforcement so ON DELETE SET NULL cascades work.
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
 
         let db = Self { conn };
         db.migrate()?;
