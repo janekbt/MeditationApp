@@ -488,6 +488,14 @@ impl TimerView {
                     imp.show_done(new_secs);
                     if let Some(app) = imp.get_app() {
                         crate::sound::play_end_sound(&app);
+                        let window_active = app.active_window()
+                            .map(|w| w.is_active())
+                            .unwrap_or(false);
+                        if !window_active {
+                            let n = gtk::gio::Notification::new("Meditation complete");
+                            n.set_body(Some(&format!("Session: {}", format_time(new_secs))));
+                            app.send_notification(Some("timer-done"), &n);
+                        }
                     }
                     return glib::ControlFlow::Break;
                 }
@@ -625,6 +633,24 @@ impl TimerView {
 
     pub fn set_running_label(&self, label: gtk::Label) {
         *self.running_label.borrow_mut() = Some(label);
+    }
+
+    pub fn toggle_playback(&self) {
+        let is_stopwatch = self.stopwatch_btn.is_active();
+        let state = {
+            let m = if is_stopwatch {
+                self.stopwatch_mode.borrow()
+            } else {
+                self.countdown_mode.borrow()
+            };
+            m.timer_state
+        };
+        match state {
+            TimerState::Idle    => self.on_start(),
+            TimerState::Running => self.on_pause(),
+            TimerState::Paused  => self.on_resume(),
+            TimerState::Done    => {}
+        }
     }
 }
 

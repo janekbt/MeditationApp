@@ -38,6 +38,11 @@ impl TimerView {
         self.imp().on_stop();
     }
 
+    /// Toggle playback: Idle→start, Running→pause, Paused→resume, Done→noop.
+    pub fn toggle_playback(&self) {
+        self.imp().toggle_playback();
+    }
+
     /// Connect to the "timer-started" signal (emitted on Start and Resume).
     pub fn connect_timer_started<F: Fn(&Self) + 'static>(&self, f: F) -> glib::SignalHandlerId {
         self.connect_local("timer-started", false, move |values| {

@@ -106,7 +106,8 @@ mod imp {
             let app = self.obj();
             app.set_accels_for_action("app.preferences", &["<Control>comma"]);
             app.set_accels_for_action("win.show-help-overlay", &["<Control>question"]);
-            app.set_accels_for_action("app.quit", &["<Control>q"]);
+            app.set_accels_for_action("app.quit", &["<Control>q", "<Control>w"]);
+            app.set_accels_for_action("win.timer-toggle", &["space"]);
         }
     }
 }

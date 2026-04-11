@@ -46,6 +46,8 @@ impl ObjectImpl for MeditateWindow {
         self.wire_timer_signals();
         self.wire_log_signals();
         self.wire_stats_signals();
+        self.setup_help_overlay();
+        self.setup_window_actions();
 
         // Refresh streak once the window is fully realized (get_app() is
         // not guaranteed to succeed earlier, during GObject construction).
@@ -234,6 +236,31 @@ impl MeditateWindow {
 
     pub fn add_toast(&self, toast: adw::Toast) {
         self.toast_overlay.add_toast(toast);
+    }
+}
+
+// ── Help overlay & window actions ────────────────────────────────────────────
+
+impl MeditateWindow {
+    fn setup_help_overlay(&self) {
+        let builder = gtk::Builder::from_resource(
+            "/io/github/janekbt/Meditate/ui/shortcuts.ui",
+        );
+        if let Some(overlay) = builder.object::<gtk::ShortcutsWindow>("help_overlay") {
+            self.obj().set_help_overlay(Some(&overlay));
+        }
+    }
+
+    fn setup_window_actions(&self) {
+        let obj = self.obj();
+        let action = gtk::gio::SimpleAction::new("timer-toggle", None);
+        action.connect_activate(glib::clone!(
+            #[weak] obj,
+            move |_, _| {
+                obj.imp().timer_view.toggle_playback();
+            }
+        ));
+        obj.add_action(&action);
     }
 }
 
