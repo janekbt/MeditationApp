@@ -55,6 +55,7 @@ pub struct TimerView {
     #[template_child] pub start_btn:             TemplateChild<gtk::Button>,
     #[template_child] pub resume_btn:            TemplateChild<gtk::Button>,
     #[template_child] pub stop_from_pause_btn:   TemplateChild<gtk::Button>,
+    #[template_child] pub setup_label_row:        TemplateChild<adw::ComboRow>,
     #[template_child] pub done_duration_label:   TemplateChild<gtk::Label>,
     #[template_child] pub note_row:              TemplateChild<adw::EntryRow>,
     #[template_child] pub label_row:             TemplateChild<adw::ComboRow>,
@@ -73,6 +74,10 @@ pub struct TimerView {
     tick_source: RefCell<Option<glib::SourceId>>,
     /// Weak ref to the running-page time label for live updates.
     running_label: RefCell<Option<gtk::Label>>,
+    /// Labels fetched from DB for the setup-page combo.
+    setup_db_labels: RefCell<Vec<Label>>,
+    /// True while refresh_setup_labels is rebuilding the setup combo model.
+    setup_populating: Cell<bool>,
     /// Labels fetched from DB when entering Done state.
     db_labels: RefCell<Vec<Label>>,
     /// True while show_done/repopulate_label_combo is rebuilding the model,
@@ -181,6 +186,21 @@ impl TimerView {
                     if imp.populating_labels.get() { return; }
                     if imp.label_row.selected() == 0 {
                         imp.show_new_label_dialog();
+                    }
+                }
+            ),
+        );
+
+        // Same for the pre-start label selector.
+        self.setup_label_row.connect_notify_local(
+            Some("selected"),
+            glib::clone!(
+                #[weak(rename_to = this)] obj,
+                move |_, _| {
+                    let imp = this.imp();
+                    if imp.setup_populating.get() { return; }
+                    if imp.setup_label_row.selected() == 0 {
+                        imp.show_new_label_dialog_for_setup();
                     }
                 }
             ),
@@ -337,7 +357,7 @@ impl TimerView {
     fn show_done(&self, elapsed_secs: u64) {
         self.done_duration_label.set_label(&format_time(elapsed_secs));
         self.note_row.set_text("");
-        self.repopulate_label_combo(None);
+        self.repopulate_label_combo(self.setup_selected_label_id());
         self.view_stack.set_visible_child_name("done");
     }
 
@@ -525,6 +545,8 @@ impl TimerView {
             };
             self.streak_label.set_label(&text);
         }
+        // Keep the pre-start label list fresh (preserve current selection).
+        self.refresh_setup_labels(self.setup_selected_label_id());
     }
 
     /// Rebuild the label combo from the DB.
@@ -556,30 +578,69 @@ impl TimerView {
         self.populating_labels.set(false);
     }
 
-    /// Show a dialog to create a new label, then select it in the combo.
+    /// Populate the pre-start label combo from the DB.
+    /// `select_id`: if Some, keeps that label selected; otherwise selects "None".
+    fn refresh_setup_labels(&self, select_id: Option<i64>) {
+        let labels = self.get_app()
+            .and_then(|app| app.with_db(|db| db.list_labels()))
+            .and_then(|r| r.ok())
+            .unwrap_or_default();
+
+        let select_idx = select_id
+            .and_then(|id| labels.iter().position(|l| l.id == id))
+            .map(|pos| (pos + 2) as u32)
+            .unwrap_or(1); // default: "None"
+
+        let names: Vec<String> = std::iter::once("+ New label".to_string())
+            .chain(std::iter::once("None".to_string()))
+            .chain(labels.iter().map(|l| l.name.clone()))
+            .collect();
+        let name_refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
+
+        *self.setup_db_labels.borrow_mut() = labels;
+        self.setup_populating.set(true);
+        self.setup_label_row.set_model(Some(&gtk::StringList::new(&name_refs)));
+        self.setup_label_row.set_selected(select_idx);
+        self.setup_populating.set(false);
+    }
+
+    /// Returns the label ID currently selected in the pre-start combo, if any.
+    fn setup_selected_label_id(&self) -> Option<i64> {
+        let selected = self.setup_label_row.selected() as usize;
+        match selected {
+            0 | 1 => None,
+            n => self.setup_db_labels.borrow().get(n - 2).map(|l| l.id),
+        }
+    }
+
+    /// Show the new-label dialog, selecting the result in the pre-start combo.
+    fn show_new_label_dialog_for_setup(&self) {
+        let (entry, dialog) = build_new_label_dialog();
+        let obj = self.obj().clone();
+        dialog.connect_response(None, {
+            let entry = entry.clone();
+            move |_, response| {
+                let imp = obj.imp();
+                if response != "create" {
+                    imp.setup_label_row.set_selected(1); // revert to "None"
+                    return;
+                }
+                let name = entry.text().trim().to_string();
+                if name.is_empty() { imp.setup_label_row.set_selected(1); return; }
+                let new_label = imp.get_app()
+                    .and_then(|app| app.with_db(|db| db.create_label(&name)))
+                    .and_then(|r| r.ok());
+                imp.refresh_setup_labels(new_label.map(|l| l.id));
+            }
+        });
+        if let Some(win) = self.obj().root().and_then(|r| r.downcast::<gtk::Window>().ok()) {
+            dialog.present(Some(&win));
+        }
+    }
+
+    /// Show a dialog to create a new label, then select it in the done-page combo.
     fn show_new_label_dialog(&self) {
-        let entry = gtk::Entry::builder()
-            .placeholder_text("Label name")
-            .activates_default(true)
-            .build();
-
-        let dialog = adw::AlertDialog::builder()
-            .heading("New Label")
-            .close_response("cancel")
-            .default_response("create")
-            .build();
-        dialog.add_response("cancel", "Cancel");
-        dialog.add_response("create", "Create");
-        dialog.set_response_appearance("create", adw::ResponseAppearance::Suggested);
-        dialog.set_response_enabled("create", false);
-        dialog.set_extra_child(Some(&entry));
-
-        // Enable "Create" only when the entry is non-empty
-        entry.connect_changed(glib::clone!(
-            #[weak] dialog,
-            move |e| dialog.set_response_enabled("create", !e.text().trim().is_empty())
-        ));
-
+        let (entry, dialog) = build_new_label_dialog();
         let obj = self.obj().clone();
         dialog.connect_response(None, {
             let entry = entry.clone();
@@ -590,20 +651,14 @@ impl TimerView {
                     return;
                 }
                 let name = entry.text().trim().to_string();
-                if name.is_empty() {
-                    imp.label_row.set_selected(1);
-                    return;
-                }
+                if name.is_empty() { imp.label_row.set_selected(1); return; }
                 let new_label = imp.get_app()
                     .and_then(|app| app.with_db(|db| db.create_label(&name)))
                     .and_then(|r| r.ok());
                 imp.repopulate_label_combo(new_label.map(|l| l.id));
             }
         });
-
-        if let Some(win) = self.obj().root()
-            .and_then(|r| r.downcast::<gtk::Window>().ok())
-        {
+        if let Some(win) = self.obj().root().and_then(|r| r.downcast::<gtk::Window>().ok()) {
             dialog.present(Some(&win));
         }
     }
@@ -667,6 +722,29 @@ fn unix_now() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64
+}
+
+/// Build the shared "New Label" alert dialog + text entry.
+fn build_new_label_dialog() -> (gtk::Entry, adw::AlertDialog) {
+    let entry = gtk::Entry::builder()
+        .placeholder_text("Label name")
+        .activates_default(true)
+        .build();
+    let dialog = adw::AlertDialog::builder()
+        .heading("New Label")
+        .close_response("cancel")
+        .default_response("create")
+        .build();
+    dialog.add_response("cancel", "Cancel");
+    dialog.add_response("create", "Create");
+    dialog.set_response_appearance("create", adw::ResponseAppearance::Suggested);
+    dialog.set_response_enabled("create", false);
+    dialog.set_extra_child(Some(&entry));
+    entry.connect_changed(glib::clone!(
+        #[weak] dialog,
+        move |e| dialog.set_response_enabled("create", !e.text().trim().is_empty())
+    ));
+    (entry, dialog)
 }
 
 fn tr(s: &'static str) -> &'static str { s }

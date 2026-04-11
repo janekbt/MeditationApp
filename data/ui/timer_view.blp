@@ -139,6 +139,13 @@ template $TimerView : Gtk.Widget {
             }
           }
 
+          // Pre-start label selector
+          Adw.PreferencesGroup {
+            Adw.ComboRow setup_label_row {
+              title: _("Label");
+            }
+          }
+
           // Idle / paused action buttons
           Gtk.Box setup_buttons {
             orientation: horizontal;
