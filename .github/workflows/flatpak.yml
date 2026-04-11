@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  # x86_64: uses the pre-built gnome-47 container (fast, everything pre-cached)
+  # x86_64: job-level container runs as root — the action works out of the box.
   flatpak-x86_64:
     name: Flatpak (x86_64)
     runs-on: ubuntu-latest
@@ -22,29 +22,46 @@ jobs:
           manifest-path: build-aux/io.github.janekbt.Meditate.json
           cache-key: flatpak-builder-x86_64-${{ github.sha }}
 
-  # aarch64: registers QEMU binfmt on the host first (required for cross-compilation),
-  # then installs flatpak-builder directly on the runner.
+  # aarch64: QEMU binfmt must be registered on the host *before* the container
+  # that needs it starts.  Job-level containers prevent running host steps first,
+  # so we (1) register binfmt via a plain `docker run`, then (2) start the
+  # gnome-47 container ourselves — it runs as root so runtime installs succeed.
   flatpak-aarch64:
     name: Flatpak (aarch64)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up QEMU binfmt
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
+      - name: Register QEMU binfmt for aarch64
+        run: docker run --privileged --rm tonistiigi/binfmt --install aarch64
 
-      - name: Install flatpak-builder
+      - name: Build aarch64 Flatpak
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -y flatpak flatpak-builder xvfb
-          sudo flatpak remote-add --if-not-exists flathub \
-            https://dl.flathub.org/repo/flathub.flatpakrepo
+          docker run --privileged --rm \
+            --volume "$GITHUB_WORKSPACE:/workspace" \
+            --workdir /workspace \
+            bilelmoussaoui/flatpak-github-actions:gnome-47 \
+            bash -c '
+              set -e
+              flatpak remote-add --if-not-exists flathub \
+                https://dl.flathub.org/repo/flathub.flatpakrepo
+              xvfb-run flatpak-builder \
+                --repo=repo \
+                --disable-rofiles-fuse \
+                --install-deps-from=flathub \
+                --force-clean \
+                --arch=aarch64 \
+                flatpak_app \
+                build-aux/io.github.janekbt.Meditate.json
+              flatpak build-bundle \
+                --arch=aarch64 \
+                repo \
+                meditate-aarch64.flatpak \
+                io.github.janekbt.Meditate
+            '
 
-      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
-          bundle: meditate-aarch64.flatpak
-          manifest-path: build-aux/io.github.janekbt.Meditate.json
-          arch: aarch64
-          cache-key: flatpak-builder-aarch64-${{ github.sha }}
+          name: meditate-aarch64.flatpak
+          path: meditate-aarch64.flatpak
