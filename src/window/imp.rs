@@ -51,7 +51,7 @@ impl ObjectImpl for MeditateWindow {
 
         // Blueprint may silently drop icon-name on AdwViewStackPage in some
         // compiler versions.  Set it explicitly here so we bypass that.
-        self.view_stack.page(&*self.stats_view).set_icon_name(Some("stats-symbolic"));
+        self.view_stack.page(&*self.stats_view).set_icon_name(Some("format-justify-fill-symbolic"));
 
         // Refresh streak once the window is fully realized (get_app() is
         // not guaranteed to succeed earlier, during GObject construction).
