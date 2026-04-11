@@ -9,6 +9,7 @@
     <file alias="icons/hicolor/scalable/apps/io.github.janekbt.Meditate.svg">icons/hicolor/scalable/apps/io.github.janekbt.Meditate.svg</file>
     <file alias="icons/hicolor/symbolic/apps/io.github.janekbt.Meditate-symbolic.svg">icons/hicolor/symbolic/apps/io.github.janekbt.Meditate-symbolic.svg</file>
     <file alias="icons/hicolor/scalable/actions/stats-symbolic.svg">icons/hicolor/scalable/actions/stats-symbolic.svg</file>
+    <file alias="icons/hicolor/symbolic/actions/stats-symbolic.svg">icons/hicolor/symbolic/actions/stats-symbolic.svg</file>
     <file preprocess="xml-stripblanks" alias="ui/shortcuts.ui">ui/shortcuts.ui</file>
     <file alias="sounds/bowl.wav">sounds/bowl.wav</file>
     <file alias="sounds/bell.wav">sounds/bell.wav</file>

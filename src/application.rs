@@ -50,8 +50,11 @@ mod imp {
             // Register the bundled icon so the About dialog and GNOME Shell
             // can find it in development builds (installed builds use the
             // hicolor theme path; GResource acts as a fallback).
-            gtk::IconTheme::for_display(&gdk::Display::default().expect("No display"))
-                .add_resource_path("/io/github/janekbt/Meditate/icons");
+            let theme = gtk::IconTheme::for_display(&gdk::Display::default().expect("No display"));
+            theme.add_resource_path("/io/github/janekbt/Meditate/icons");
+            eprintln!("[icon-debug] resource_paths = {:?}", theme.resource_path());
+            eprintln!("[icon-debug] has stats-symbolic = {}", theme.has_icon("stats-symbolic"));
+            eprintln!("[icon-debug] has alarm-symbolic = {}", theme.has_icon("alarm-symbolic"));
 
             // Load application CSS (chart bar styles, etc.)
             let provider = gtk::CssProvider::new();
