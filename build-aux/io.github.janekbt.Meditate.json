@@ -14,7 +14,10 @@
     "--device=dri",
     "--socket=pulseaudio",
     "--talk-name=org.freedesktop.Notifications",
-    "--talk-name=org.gtk.Notifications"
+    "--talk-name=org.gtk.Notifications",
+    "--filesystem=xdg-music:ro",
+    "--filesystem=xdg-download:ro",
+    "--talk-name=org.freedesktop.portal.FileChooser"
   ],
   "build-options": {
     "append-path": "/usr/lib/sdk/rust-stable/bin",
