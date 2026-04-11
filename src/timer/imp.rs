@@ -488,14 +488,9 @@ impl TimerView {
                     imp.show_done(new_secs);
                     if let Some(app) = imp.get_app() {
                         crate::sound::play_end_sound(&app);
-                        let window_active = app.active_window()
-                            .map(|w| w.is_active())
-                            .unwrap_or(false);
-                        if !window_active {
-                            let n = gtk::gio::Notification::new("Meditation complete");
-                            n.set_body(Some(&format!("Session: {}", format_time(new_secs))));
-                            app.send_notification(Some("timer-done"), &n);
-                        }
+                        let n = gtk::gio::Notification::new("Meditation complete");
+                        n.set_body(Some(&format!("Session: {}", format_time(new_secs))));
+                        app.send_notification(Some("timer-done"), &n);
                     }
                     return glib::ControlFlow::Break;
                 }
