@@ -47,6 +47,12 @@ mod imp {
                 Err(e) => eprintln!("Failed to open database: {e}"),
             }
 
+            // Register the bundled icon so the About dialog and GNOME Shell
+            // can find it in development builds (installed builds use the
+            // hicolor theme path; GResource acts as a fallback).
+            gtk::IconTheme::for_display(&gdk::Display::default().expect("No display"))
+                .add_resource_path("/io/github/janekbt/Meditate/icons");
+
             // Load application CSS (chart bar styles, etc.)
             let provider = gtk::CssProvider::new();
             provider.load_from_resource("/io/github/janekbt/Meditate/style.css");
