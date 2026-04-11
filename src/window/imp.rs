@@ -49,6 +49,13 @@ impl ObjectImpl for MeditateWindow {
         self.setup_help_overlay();
         self.setup_window_actions();
 
+        // Blueprint may silently drop icon-name on AdwViewStackPage in some
+        // compiler versions.  Set it explicitly here so we bypass that.
+        if let Some(page) = self.view_stack.page(&*self.stats_view) {
+            eprintln!("[debug] stats page icon from Blueprint: {:?}", page.icon_name());
+            page.set_icon_name(Some("view-columns-symbolic"));
+        }
+
         // Refresh streak once the window is fully realized (get_app() is
         // not guaranteed to succeed earlier, during GObject construction).
         let obj = self.obj();
