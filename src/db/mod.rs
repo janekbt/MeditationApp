@@ -265,42 +265,51 @@ impl Database {
     }
 
     pub fn list_sessions(&self, filter: &SessionFilter) -> Result<Vec<Session>> {
-        // Build the WHERE clause dynamically from the filter.
-        let mut conditions = Vec::new();
-        if filter.only_with_notes {
-            conditions.push("note IS NOT NULL AND note != ''");
+        // Four fixed SQL variants (notes×label) so every statement is a static
+        // string that prepare_cached can cache permanently, and label_id is
+        // always a bound parameter rather than interpolated into the SQL.
+        // ORDER BY start_time DESC uses the idx_sessions_start_time index.
+        macro_rules! map_row {
+            ($row:expr) => {
+                Session {
+                    id:            $row.get(0)?,
+                    start_time:    $row.get(1)?,
+                    duration_secs: $row.get(2)?,
+                    mode:          SessionMode::from_str(&$row.get::<_, String>(3)?),
+                    label_id:      $row.get(4)?,
+                    note:          $row.get(5)?,
+                }
+            };
         }
-        let label_clause;
-        if filter.label_id.is_some() {
-            label_clause = format!("label_id = {}", filter.label_id.unwrap());
-            conditions.push(&label_clause);
+        match (filter.only_with_notes, filter.label_id) {
+            (false, None) => {
+                let mut s = self.conn.prepare_cached(
+                    "SELECT id, start_time, duration_secs, mode, label_id, note
+                     FROM sessions ORDER BY start_time DESC")?;
+                s.query_map([], |r| Ok(map_row!(r)))?.collect()
+            }
+            (true, None) => {
+                let mut s = self.conn.prepare_cached(
+                    "SELECT id, start_time, duration_secs, mode, label_id, note
+                     FROM sessions WHERE note IS NOT NULL AND note != ''
+                     ORDER BY start_time DESC")?;
+                s.query_map([], |r| Ok(map_row!(r)))?.collect()
+            }
+            (false, Some(lid)) => {
+                let mut s = self.conn.prepare_cached(
+                    "SELECT id, start_time, duration_secs, mode, label_id, note
+                     FROM sessions WHERE label_id = ?1
+                     ORDER BY start_time DESC")?;
+                s.query_map(params![lid], |r| Ok(map_row!(r)))?.collect()
+            }
+            (true, Some(lid)) => {
+                let mut s = self.conn.prepare_cached(
+                    "SELECT id, start_time, duration_secs, mode, label_id, note
+                     FROM sessions WHERE label_id = ?1 AND note IS NOT NULL AND note != ''
+                     ORDER BY start_time DESC")?;
+                s.query_map(params![lid], |r| Ok(map_row!(r)))?.collect()
+            }
         }
-        let where_clause = if conditions.is_empty() {
-            String::new()
-        } else {
-            format!("WHERE {}", conditions.join(" AND "))
-        };
-
-        let sql = format!(
-            "SELECT id, start_time, duration_secs, mode, label_id, note
-             FROM sessions
-             {where_clause}
-             ORDER BY strftime('%Y-%m-%d', start_time, 'unixepoch', 'localtime') DESC,
-                      start_time DESC"
-        );
-
-        let mut stmt = self.conn.prepare_cached(&sql)?;
-        let rows = stmt.query_map([], |row| {
-            Ok(Session {
-                id:            row.get(0)?,
-                start_time:    row.get(1)?,
-                duration_secs: row.get(2)?,
-                mode:          SessionMode::from_str(&row.get::<_, String>(3)?),
-                label_id:      row.get(4)?,
-                note:          row.get(5)?,
-            })
-        })?;
-        rows.collect()
     }
 
     pub fn update_session(&self, id: i64, data: &SessionData) -> Result<()> {
