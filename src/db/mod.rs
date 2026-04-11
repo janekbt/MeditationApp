@@ -183,7 +183,7 @@ impl Database {
     }
 
     pub fn list_labels(&self) -> Result<Vec<Label>> {
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare_cached(
             "SELECT id, name FROM labels ORDER BY name COLLATE NOCASE"
         )?;
         let rows = stmt.query_map([], |row| {
@@ -273,7 +273,7 @@ impl Database {
                       start_time DESC"
         );
 
-        let mut stmt = self.conn.prepare(&sql)?;
+        let mut stmt = self.conn.prepare_cached(&sql)?;
         let rows = stmt.query_map([], |row| {
             Ok(Session {
                 id:            row.get(0)?,
@@ -357,7 +357,7 @@ impl Database {
         let yesterday: String = self.conn.query_row(
             "SELECT strftime('%Y-%m-%d', 'now', '-1 day', 'localtime')", [], |r| r.get(0))?;
 
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare_cached(
             "SELECT DISTINCT strftime('%Y-%m-%d', start_time, 'unixepoch', 'localtime') AS day
              FROM sessions
              ORDER BY day DESC"
@@ -387,7 +387,7 @@ impl Database {
 
     /// Longest consecutive-day streak ever recorded.
     pub fn get_best_streak(&self) -> Result<u32> {
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare_cached(
             "SELECT DISTINCT strftime('%Y-%m-%d', start_time, 'unixepoch', 'localtime') AS day
              FROM sessions
              ORDER BY day ASC"
@@ -447,7 +447,7 @@ impl Database {
     /// Returns `(local-date-string "YYYY-MM-DD", total_secs)` for each day
     /// on or after `since_date` that had at least one session.
     pub fn get_daily_totals(&self, since_date: &str) -> Result<Vec<(String, i64)>> {
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare_cached(
             "SELECT strftime('%Y-%m-%d', start_time, 'unixepoch', 'localtime') AS day,
                     SUM(duration_secs) AS total
              FROM sessions
@@ -462,7 +462,7 @@ impl Database {
     /// Returns distinct (year, month) pairs that have at least one session,
     /// in descending order. Used to populate the calendar month picker.
     pub fn get_active_months(&self) -> Result<Vec<(i32, u32)>> {
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare_cached(
             "SELECT DISTINCT
                  CAST(strftime('%Y', start_time, 'unixepoch') AS INTEGER),
                  CAST(strftime('%m', start_time, 'unixepoch') AS INTEGER)
@@ -476,7 +476,7 @@ impl Database {
     /// Returns the set of days (as Unix timestamps, midnight UTC) in the given
     /// year/month that had at least one session. Used to render the calendar.
     pub fn get_active_days_in_month(&self, year: i32, month: u32) -> Result<Vec<u32>> {
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare_cached(
             "SELECT DISTINCT
                  CAST(strftime('%d', start_time, 'unixepoch', 'localtime') AS INTEGER)
              FROM sessions
