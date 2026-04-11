@@ -11,7 +11,10 @@ endif
 cargo_env = {
   'APP_ID': application_id,
   'PKGDATADIR': get_option('prefix') / get_option('datadir') / meson.project_name(),
-  'CARGO_HOME': meson.project_build_root() / 'cargo-home',
+  # CARGO_HOME is intentionally absent here. In Flatpak builds the
+  # build-options.env in the manifest sets it to the vendored-crates
+  # directory populated by cargo-sources.json. In dev builds,
+  # cargo-build.py falls back to <build_root>/cargo-home.
 }
 
 cargo_build = custom_target(
