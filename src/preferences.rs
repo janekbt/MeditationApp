@@ -5,7 +5,6 @@ use adw::prelude::*;
 use gtk::{gio, glib};
 
 use crate::application::MeditateApplication;
-use crate::window::MeditateWindow;
 
 pub fn show_preferences(app: &MeditateApplication) {
     let app = app.clone();
@@ -273,7 +272,7 @@ pub fn show_preferences(app: &MeditateApplication) {
         .unwrap_or_default();
 
     for label in &labels {
-        let row = make_label_row(label.id, &label.name, &labels_group, &app);
+        let row = make_label_row(label.id, &label.name, &labels_group, &app, &dialog);
         labels_group.add(&row);
         rows.borrow_mut().push(row);
     }
@@ -281,6 +280,7 @@ pub fn show_preferences(app: &MeditateApplication) {
     add_btn.connect_clicked(glib::clone!(
         #[weak] app,
         #[weak] labels_group,
+        #[weak] dialog,
         #[strong] rows,
         move |_| {
             let Some(label) = app
@@ -290,7 +290,7 @@ pub fn show_preferences(app: &MeditateApplication) {
                 return;
             };
 
-            let new_row = make_label_row(label.id, &label.name, &labels_group, &app);
+            let new_row = make_label_row(label.id, &label.name, &labels_group, &app, &dialog);
 
             // Rows still attached to the group (excludes rows whose delete was
             // committed via a toast — those have already been removed).
@@ -343,7 +343,13 @@ fn make_label_row(
     name: &str,
     group: &adw::PreferencesGroup,
     app: &MeditateApplication,
+    dialog: &adw::PreferencesDialog,
 ) -> adw::EntryRow {
+    use std::cell::Cell;
+
+    // Wrapped so the undo handler can update it after recreating the label.
+    let label_id: Rc<Cell<i64>> = Rc::new(Cell::new(id));
+
     let committed: Rc<RefCell<String>> = Rc::new(RefCell::new(name.to_string()));
 
     let row = adw::EntryRow::builder().build();
@@ -396,32 +402,29 @@ fn make_label_row(
         #[weak] row,
         #[weak] apply_btn,
         #[weak] discard_btn,
+        #[weak] dialog,
         #[strong] committed,
+        #[strong] label_id,
         move |_| {
             let new_name = row.text().to_string();
             if new_name.is_empty() {
                 return;
             }
             let taken = app
-                .with_db(|db| db.is_label_name_taken(&new_name, id))
+                .with_db(|db| db.is_label_name_taken(&new_name, label_id.get()))
                 .and_then(|r| r.ok())
                 .unwrap_or(false);
             if taken {
                 row.add_css_class("error");
-                if let Some(win) = app
-                    .active_window()
-                    .and_then(|w| w.downcast::<crate::window::MeditateWindow>().ok())
-                {
-                    win.add_toast(
-                        adw::Toast::builder()
-                            .title("A label with that name already exists")
-                            .timeout(3)
-                            .build(),
-                    );
-                }
+                dialog.add_toast(
+                    adw::Toast::builder()
+                        .title("A label with that name already exists")
+                        .timeout(3)
+                        .build(),
+                );
                 return;
             }
-            app.with_db(|db| db.update_label(id, &new_name));
+            app.with_db(|db| db.update_label(label_id.get(), &new_name));
             *committed.borrow_mut() = new_name;
             apply_btn.set_visible(false);
             discard_btn.set_visible(false);
@@ -458,13 +461,21 @@ fn make_label_row(
         }
     ));
 
-    // Delete: hide row, show undo toast on the main window.
+    // Delete: remove from DB immediately, hide row, offer undo via dialog toast.
+    // Immediate deletion fixes the "reappears on reopen" bug that occurred when
+    // deletion was deferred to connect_dismissed and the dialog was closed first.
     delete_btn.connect_clicked(glib::clone!(
         #[weak] row,
         #[weak] group,
         #[weak] app,
+        #[weak] dialog,
+        #[strong] committed,
+        #[strong] label_id,
         move |_| {
+            app.with_db(|db| db.delete_label(label_id.get()));
             row.set_visible(false);
+
+            let deleted_name = committed.borrow().clone();
 
             let toast = adw::Toast::builder()
                 .title("Label deleted")
@@ -472,18 +483,28 @@ fn make_label_row(
                 .timeout(5)
                 .build();
 
+            // Undo: recreate the label in DB and restore the row.
             toast.connect_button_clicked(glib::clone!(
                 #[weak] row,
-                move |_| { row.set_visible(true); }
+                #[weak] app,
+                #[strong] label_id,
+                move |_| {
+                    if let Some(label) = app
+                        .with_db(|db| db.create_label(&deleted_name))
+                        .and_then(|r| r.ok())
+                    {
+                        label_id.set(label.id);
+                        row.set_visible(true);
+                    }
+                }
             ));
 
+            // Dismissed without undo: just clean up the hidden row from the UI.
             toast.connect_dismissed(glib::clone!(
                 #[weak] row,
                 #[weak] group,
-                #[weak] app,
                 move |_| {
                     if !row.is_visible() {
-                        app.with_db(|db| db.delete_label(id));
                         if row.parent().is_some() {
                             group.remove(&row);
                         }
@@ -491,12 +512,7 @@ fn make_label_row(
                 }
             ));
 
-            if let Some(win) = app
-                .active_window()
-                .and_then(|w| w.downcast::<MeditateWindow>().ok())
-            {
-                win.add_toast(toast);
-            }
+            dialog.add_toast(toast);
         }
     ));
 
