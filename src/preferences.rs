@@ -453,9 +453,18 @@ pub fn show_preferences(app: &MeditateApplication) {
             crate::sound::stop_current();
         }
     ));
-    dialog.connect_closed(|_| {
-        crate::sound::stop_current();
-    });
+    dialog.connect_closed(glib::clone!(
+        #[weak] app,
+        move |_| {
+            crate::sound::stop_current();
+            if let Some(win) = app
+                .active_window()
+                .and_then(|w| w.downcast::<crate::window::MeditateWindow>().ok())
+            {
+                win.imp().timer_view.refresh_presets();
+            }
+        }
+    ));
 
     let parent = app.active_window();
     dialog.present(parent.as_ref());
