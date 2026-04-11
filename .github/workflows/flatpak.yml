@@ -7,23 +7,44 @@ on:
     branches: [main]
 
 jobs:
-  flatpak:
-    name: Flatpak (${{ matrix.arch }})
+  # x86_64: uses the pre-built gnome-47 container (fast, everything pre-cached)
+  flatpak-x86_64:
+    name: Flatpak (x86_64)
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        arch: [x86_64, aarch64]
-      fail-fast: false
     container:
       image: bilelmoussaoui/flatpak-github-actions:gnome-47
       options: --privileged
     steps:
       - uses: actions/checkout@v4
-
-      - name: Build Flatpak
-        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
-          bundle: meditate-${{ matrix.arch }}.flatpak
+          bundle: meditate-x86_64.flatpak
           manifest-path: build-aux/io.github.janekbt.Meditate.json
-          arch: ${{ matrix.arch }}
-          cache-key: flatpak-builder-${{ matrix.arch }}-${{ github.sha }}
+          cache-key: flatpak-builder-x86_64-${{ github.sha }}
+
+  # aarch64: registers QEMU binfmt on the host first (required for cross-compilation),
+  # then installs flatpak-builder directly on the runner.
+  flatpak-aarch64:
+    name: Flatpak (aarch64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU binfmt
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Install flatpak-builder
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y flatpak flatpak-builder xvfb
+          sudo flatpak remote-add --if-not-exists flathub \
+            https://dl.flathub.org/repo/flathub.flatpakrepo
+
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: meditate-aarch64.flatpak
+          manifest-path: build-aux/io.github.janekbt.Meditate.json
+          arch: aarch64
+          cache-key: flatpak-builder-aarch64-${{ github.sha }}
