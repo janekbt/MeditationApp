@@ -80,8 +80,8 @@ Navigation: `AdwViewSwitcher` in header bar (desktop) + `AdwViewSwitcherBar` at 
 ## Phase 6 — Preferences
 
 - [x] **6.1** `AdwPreferencesDialog` skeleton: two pages — General and Labels
-- [ ] **6.2** General page: `AdwComboRow` for bundled sounds (Singing Bowl, Bell, Gong) + `AdwActionRow` "Choose custom file…"
-- [ ] **6.3** Sound preview: play button next to picker; `libcanberra` for bundled sounds; GStreamer for custom files
+- [x] **6.2** General page: `AdwComboRow` for bundled sounds (Singing Bowl, Bell, Gong) + `AdwActionRow` "Choose custom file…"
+- [x] **6.3** Sound preview: play button next to picker; `gtk::MediaFile` / GStreamer for all sounds
 - [x] **6.4** Running average period: `AdwComboRow` with 7 / 14 / 30 days options; persisted in `settings` DB table
 - [x] **6.5** Labels page: `AdwEntryRow` per label with inline rename (manual apply/discard buttons); `AdwToast` undo on delete; new labels appear at top
 
