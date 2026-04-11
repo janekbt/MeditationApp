@@ -342,6 +342,7 @@ impl TimerView {
     }
 
     fn on_save(&self) {
+        crate::sound::stop_current();
         let is_stopwatch = self.stopwatch_btn.is_active();
 
         let (elapsed, start_time) = {
@@ -390,6 +391,7 @@ impl TimerView {
     }
 
     fn on_discard(&self) {
+        crate::sound::stop_current();
         let note = self.note_row.text();
         if !note.is_empty() {
             let dialog = adw::AlertDialog::builder()
@@ -476,8 +478,14 @@ impl TimerView {
                 };
 
                 if done {
+                    // Clear the SourceId before GLib removes it. If we leave it
+                    // set, cancel_tick() in dispose() will call src.remove() on
+                    // an already-removed source and panic.
+                    *imp.tick_source.borrow_mut() = None;
+                    *imp.running_label.borrow_mut() = None;
+
                     obj.emit_by_name::<()>("timer-stopped", &[]);
-                    imp.show_done(new_secs); // new_secs == target here
+                    imp.show_done(new_secs);
                     if let Some(app) = imp.get_app() {
                         crate::sound::play_end_sound(&app);
                     }

@@ -318,6 +318,22 @@ pub fn show_preferences(app: &MeditateApplication) {
     labels_page.add(&labels_group);
     dialog.add(&labels_page);
 
+    // Stop preview when the user switches away from General or closes the dialog.
+    general_page.connect_unmap(glib::clone!(
+        #[strong] preview_playing,
+        #[weak] preview_btn,
+        move |_| {
+            if preview_playing.get() {
+                preview_playing.set(false);
+                preview_btn.set_icon_name("media-playback-start-symbolic");
+            }
+            crate::sound::stop_current();
+        }
+    ));
+    dialog.connect_closed(|_| {
+        crate::sound::stop_current();
+    });
+
     let parent = app.active_window();
     dialog.present(parent.as_ref());
 }
