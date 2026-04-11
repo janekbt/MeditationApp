@@ -51,10 +51,11 @@ mod imp {
             // can find it in development builds (installed builds use the
             // hicolor theme path; GResource acts as a fallback).
             let theme = gtk::IconTheme::for_display(&gdk::Display::default().expect("No display"));
+            // add_resource_path() depends on GResource enumeration which is
+            // unreliable across GLib versions.  Write the icon to the cache
+            // directory and add a filesystem search path instead.
+            Self::install_bundled_icon(&theme);
             theme.add_resource_path("/io/github/janekbt/Meditate/icons");
-            eprintln!("[icon-debug] resource_paths = {:?}", theme.resource_path());
-            eprintln!("[icon-debug] has stats-symbolic = {}", theme.has_icon("stats-symbolic"));
-            eprintln!("[icon-debug] has alarm-symbolic = {}", theme.has_icon("alarm-symbolic"));
 
             // Load application CSS (chart bar styles, etc.)
             let provider = gtk::CssProvider::new();
@@ -75,6 +76,28 @@ mod imp {
     impl AdwApplicationImpl for MeditateApplication {}
 
     impl MeditateApplication {
+        /// Write `stats-symbolic.svg` from GResource to the XDG cache dir and
+        /// register that dir as an icon-theme search path.  This is more
+        /// reliable than `add_resource_path`, which depends on GResource
+        /// enumeration support that varies by GLib version.
+        fn install_bundled_icon(theme: &gtk::IconTheme) {
+            use gtk::gio;
+
+            let Ok(data) = gio::resources_lookup_data(
+                "/io/github/janekbt/Meditate/icons/hicolor/scalable/actions/stats-symbolic.svg",
+                gio::ResourceLookupFlags::NONE,
+            ) else {
+                return;
+            };
+
+            let icon_base = glib::user_cache_dir().join("icons");
+            let actions_dir = icon_base.join("hicolor").join("scalable").join("actions");
+            if std::fs::create_dir_all(&actions_dir).is_ok() {
+                let _ = std::fs::write(actions_dir.join("stats-symbolic.svg"), data.as_ref());
+                theme.add_search_path(icon_base.to_str().unwrap_or(""));
+            }
+        }
+
         fn setup_actions(&self) {
             let app = self.obj();
 
