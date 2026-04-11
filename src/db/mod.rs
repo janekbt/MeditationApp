@@ -148,6 +148,22 @@ impl Database {
             ")?;
         }
 
+        // Migration 2: index on sessions.label_id for filtered log queries.
+        let already_done: bool = self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = 2)",
+            [],
+            |row| row.get(0),
+        )?;
+        if !already_done {
+            self.conn.execute_batch("
+                BEGIN;
+                CREATE INDEX IF NOT EXISTS idx_sessions_label_id
+                    ON sessions (label_id);
+                INSERT INTO schema_migrations (version) VALUES (2);
+                COMMIT;
+            ")?;
+        }
+
         Ok(())
     }
 
