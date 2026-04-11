@@ -386,6 +386,7 @@ fn make_label_row(
             let pending = row.text().as_str() != committed.borrow().as_str();
             apply_btn.set_visible(pending);
             discard_btn.set_visible(pending);
+            row.remove_css_class("error");
         }
     ));
 
@@ -398,10 +399,30 @@ fn make_label_row(
         #[strong] committed,
         move |_| {
             let new_name = row.text().to_string();
-            if !new_name.is_empty() {
-                app.with_db(|db| db.update_label(id, &new_name));
-                *committed.borrow_mut() = new_name;
+            if new_name.is_empty() {
+                return;
             }
+            let taken = app
+                .with_db(|db| db.is_label_name_taken(&new_name, id))
+                .and_then(|r| r.ok())
+                .unwrap_or(false);
+            if taken {
+                row.add_css_class("error");
+                if let Some(win) = app
+                    .active_window()
+                    .and_then(|w| w.downcast::<crate::window::MeditateWindow>().ok())
+                {
+                    win.add_toast(
+                        adw::Toast::builder()
+                            .title("A label with that name already exists")
+                            .timeout(3)
+                            .build(),
+                    );
+                }
+                return;
+            }
+            app.with_db(|db| db.update_label(id, &new_name));
+            *committed.borrow_mut() = new_name;
             apply_btn.set_visible(false);
             discard_btn.set_visible(false);
             // Defer focus clear: hiding the buttons makes GTK search for a new

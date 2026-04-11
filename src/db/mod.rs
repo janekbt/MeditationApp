@@ -191,6 +191,15 @@ impl Database {
         rows.collect()
     }
 
+    /// Returns true if any label other than `except_id` already uses `name`.
+    pub fn is_label_name_taken(&self, name: &str, except_id: i64) -> Result<bool> {
+        self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM labels WHERE name = ?1 AND id != ?2)",
+            params![name, except_id],
+            |row| row.get(0),
+        )
+    }
+
     pub fn update_label(&self, id: i64, name: &str) -> Result<()> {
         self.conn.execute(
             "UPDATE labels SET name = ?1 WHERE id = ?2",
