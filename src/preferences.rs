@@ -359,7 +359,7 @@ fn make_label_row(
         .visible(false)
         .build();
     let apply_btn = gtk::Button::builder()
-        .icon_name("emblem-ok-symbolic")
+        .icon_name("object-select-symbolic")
         .valign(gtk::Align::Center)
         .tooltip_text("Save")
         .css_classes(["flat"])
