@@ -338,6 +338,53 @@ pub fn show_preferences(app: &MeditateApplication) {
     dialog.present(parent.as_ref());
 }
 
+fn do_delete(
+    row: &adw::EntryRow,
+    group: &adw::PreferencesGroup,
+    app: &MeditateApplication,
+    dialog: &adw::PreferencesDialog,
+    committed: &Rc<RefCell<String>>,
+    label_id: &Rc<std::cell::Cell<i64>>,
+) {
+    app.with_db(|db| db.delete_label(label_id.get()));
+    row.set_visible(false);
+
+    let deleted_name = committed.borrow().clone();
+
+    let toast = adw::Toast::builder()
+        .title("Label deleted")
+        .button_label("Undo")
+        .timeout(5)
+        .build();
+
+    toast.connect_button_clicked(glib::clone!(
+        #[weak] row,
+        #[weak] app,
+        #[strong] label_id,
+        move |_| {
+            if let Some(label) = app
+                .with_db(|db| db.create_label(&deleted_name))
+                .and_then(|r| r.ok())
+            {
+                label_id.set(label.id);
+                row.set_visible(true);
+            }
+        }
+    ));
+
+    toast.connect_dismissed(glib::clone!(
+        #[weak] row,
+        #[weak] group,
+        move |_| {
+            if !row.is_visible() && row.parent().is_some() {
+                group.remove(&row);
+            }
+        }
+    ));
+
+    dialog.add_toast(toast);
+}
+
 fn make_label_row(
     id: i64,
     name: &str,
@@ -461,9 +508,7 @@ fn make_label_row(
         }
     ));
 
-    // Delete: remove from DB immediately, hide row, offer undo via dialog toast.
-    // Immediate deletion fixes the "reappears on reopen" bug that occurred when
-    // deletion was deferred to connect_dismissed and the dialog was closed first.
+    // Delete: if the label has been used in sessions, ask for confirmation first.
     delete_btn.connect_clicked(glib::clone!(
         #[weak] row,
         #[weak] group,
@@ -472,47 +517,42 @@ fn make_label_row(
         #[strong] committed,
         #[strong] label_id,
         move |_| {
-            app.with_db(|db| db.delete_label(label_id.get()));
-            row.set_visible(false);
+            let session_count = app
+                .with_db(|db| db.label_session_count(label_id.get()))
+                .and_then(|r| r.ok())
+                .unwrap_or(0);
 
-            let deleted_name = committed.borrow().clone();
-
-            let toast = adw::Toast::builder()
-                .title("Label deleted")
-                .button_label("Undo")
-                .timeout(5)
-                .build();
-
-            // Undo: recreate the label in DB and restore the row.
-            toast.connect_button_clicked(glib::clone!(
-                #[weak] row,
-                #[weak] app,
-                #[strong] label_id,
-                move |_| {
-                    if let Some(label) = app
-                        .with_db(|db| db.create_label(&deleted_name))
-                        .and_then(|r| r.ok())
-                    {
-                        label_id.set(label.id);
-                        row.set_visible(true);
-                    }
-                }
-            ));
-
-            // Dismissed without undo: just clean up the hidden row from the UI.
-            toast.connect_dismissed(glib::clone!(
-                #[weak] row,
-                #[weak] group,
-                move |_| {
-                    if !row.is_visible() {
-                        if row.parent().is_some() {
-                            group.remove(&row);
-                        }
-                    }
-                }
-            ));
-
-            dialog.add_toast(toast);
+            if session_count > 0 {
+                let body = if session_count == 1 {
+                    "1 session uses this label and will become unlabeled.".to_string()
+                } else {
+                    format!("{session_count} sessions use this label and will become unlabeled.")
+                };
+                let alert = adw::AlertDialog::builder()
+                    .heading("Delete label?")
+                    .body(body)
+                    .default_response("cancel")
+                    .close_response("cancel")
+                    .build();
+                alert.add_response("cancel", "Cancel");
+                alert.add_response("delete", "Delete");
+                alert.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+                alert.connect_response(
+                    Some("delete"),
+                    glib::clone!(
+                        #[weak] row,
+                        #[weak] group,
+                        #[weak] app,
+                        #[weak] dialog,
+                        #[strong] committed,
+                        #[strong] label_id,
+                        move |_, _| do_delete(&row, &group, &app, &dialog, &committed, &label_id)
+                    ),
+                );
+                alert.present(Some(&dialog));
+            } else {
+                do_delete(&row, &group, &app, &dialog, &committed, &label_id);
+            }
         }
     ));
 

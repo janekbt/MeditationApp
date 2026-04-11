@@ -209,6 +209,14 @@ impl Database {
         Ok(())
     }
 
+    pub fn label_session_count(&self, id: i64) -> Result<i64> {
+        self.conn.query_row(
+            "SELECT COUNT(*) FROM sessions WHERE label_id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
+    }
+
     pub fn delete_label(&self, id: i64) -> Result<()> {
         // Sessions referencing this label will have label_id set to NULL (ON DELETE SET NULL).
         self.conn.execute("DELETE FROM labels WHERE id = ?1", params![id])?;
