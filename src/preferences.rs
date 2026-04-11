@@ -345,32 +345,37 @@ fn do_delete(
     dialog: &adw::PreferencesDialog,
     committed: &Rc<RefCell<String>>,
     label_id: &Rc<std::cell::Cell<i64>>,
+    allow_undo: bool,
 ) {
     app.with_db(|db| db.delete_label(label_id.get()));
     row.set_visible(false);
 
-    let deleted_name = committed.borrow().clone();
+    // When sessions were affected the user already confirmed via AlertDialog,
+    // so undo would be misleading: the label would be recreated but the
+    // sessions would stay unlabeled.  Only offer undo for unused labels.
+    let mut builder = adw::Toast::builder().title("Label deleted").timeout(5);
+    if allow_undo {
+        builder = builder.button_label("Undo");
+    }
+    let toast = builder.build();
 
-    let toast = adw::Toast::builder()
-        .title("Label deleted")
-        .button_label("Undo")
-        .timeout(5)
-        .build();
-
-    toast.connect_button_clicked(glib::clone!(
-        #[weak] row,
-        #[weak] app,
-        #[strong] label_id,
-        move |_| {
-            if let Some(label) = app
-                .with_db(|db| db.create_label(&deleted_name))
-                .and_then(|r| r.ok())
-            {
-                label_id.set(label.id);
-                row.set_visible(true);
+    if allow_undo {
+        let deleted_name = committed.borrow().clone();
+        toast.connect_button_clicked(glib::clone!(
+            #[weak] row,
+            #[weak] app,
+            #[strong] label_id,
+            move |_| {
+                if let Some(label) = app
+                    .with_db(|db| db.create_label(&deleted_name))
+                    .and_then(|r| r.ok())
+                {
+                    label_id.set(label.id);
+                    row.set_visible(true);
+                }
             }
-        }
-    ));
+        ));
+    }
 
     toast.connect_dismissed(glib::clone!(
         #[weak] row,
@@ -546,12 +551,12 @@ fn make_label_row(
                         #[weak] dialog,
                         #[strong] committed,
                         #[strong] label_id,
-                        move |_, _| do_delete(&row, &group, &app, &dialog, &committed, &label_id)
+                        move |_, _| do_delete(&row, &group, &app, &dialog, &committed, &label_id, false)
                     ),
                 );
                 alert.present(Some(&dialog));
             } else {
-                do_delete(&row, &group, &app, &dialog, &committed, &label_id);
+                do_delete(&row, &group, &app, &dialog, &committed, &label_id, true);
             }
         }
     ));
