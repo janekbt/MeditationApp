@@ -498,20 +498,25 @@ impl Database {
         rows.collect()
     }
 
-    /// Returns the set of days (as Unix timestamps, midnight UTC) in the given
-    /// year/month that had at least one session. Used to render the calendar.
+    /// Returns the set of day-of-month numbers in the given year/month that had
+    /// at least one session. Uses `start_time BETWEEN` so the index is used.
     pub fn get_active_days_in_month(&self, year: i32, month: u32) -> Result<Vec<u32>> {
+        // Compute the local-midnight boundaries as date strings; the 'utc'
+        // modifier in SQLite converts them to the correct UTC epoch so the
+        // idx_sessions_start_time index is usable.
+        let start_str = format!("{year:04}-{month:02}-01");
+        let (next_year, next_month) = if month == 12 { (year + 1, 1) } else { (year, month + 1) };
+        let end_str = format!("{next_year:04}-{next_month:02}-01");
+
         let mut stmt = self.conn.prepare_cached(
             "SELECT DISTINCT
                  CAST(strftime('%d', start_time, 'unixepoch', 'localtime') AS INTEGER)
              FROM sessions
-             WHERE strftime('%Y', start_time, 'unixepoch', 'localtime') = ?1
-               AND strftime('%m', start_time, 'unixepoch', 'localtime') = ?2
+             WHERE start_time >= strftime('%s', ?1, 'utc')
+               AND start_time <  strftime('%s', ?2, 'utc')
              ORDER BY 1"
         )?;
-        let year_str = format!("{year:04}");
-        let month_str = format!("{month:02}");
-        let rows = stmt.query_map(params![year_str, month_str], |row| row.get::<_, u32>(0))?;
+        let rows = stmt.query_map(params![start_str, end_str], |row| row.get::<_, u32>(0))?;
         rows.collect()
     }
 }
