@@ -4,7 +4,7 @@
   "runtime-version": "50",
   "sdk": "org.gnome.Sdk",
   "sdk-extensions": [
-    "org.freedesktop.Sdk.Extension.rust-stable//25.08"
+    "org.freedesktop.Sdk.Extension.rust-stable"
   ],
   "command": "meditate",
   "finish-args": [
