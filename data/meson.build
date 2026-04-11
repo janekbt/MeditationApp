@@ -26,3 +26,13 @@ appstream_util = find_program('appstream-util', required: false)
 if appstream_util.found()
   test('Validate metainfo', appstream_util, args: ['validate', appstream_file])
 endif
+
+# Icons
+install_data(
+  'icons/hicolor/scalable/apps/io.github.janekbt.Meditate.svg',
+  install_dir: get_option('datadir') / 'icons' / 'hicolor' / 'scalable' / 'apps',
+)
+install_data(
+  'icons/hicolor/symbolic/apps/io.github.janekbt.Meditate-symbolic.svg',
+  install_dir: get_option('datadir') / 'icons' / 'hicolor' / 'symbolic' / 'apps',
+)

@@ -23,6 +23,7 @@
   </description>
 
   <launchable type="desktop-id">io.github.janekbt.Meditate.desktop</launchable>
+  <icon type="stock">io.github.janekbt.Meditate</icon>
 
   <url type="homepage">https://github.com/janekbt/MeditationApp</url>
   <url type="bugtracker">https://github.com/janekbt/MeditationApp/issues</url>

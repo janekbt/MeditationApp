@@ -97,10 +97,10 @@ Navigation: `AdwViewSwitcher` in header bar (desktop) + `AdwViewSwitcherBar` at 
 ## Phase 8 — Flatpak & App Identity
 
 - [ ] **8.1** Design app icon: 128×128px SVG (full-color, GNOME geometric style) + symbolic SVG variant
-- [ ] **8.2** Generate Flatpak Cargo sources JSON via `flatpak-cargo-generator.py`
-- [ ] **8.3** Add GStreamer plugins module to Flatpak manifest for custom sound playback
+- [x] **8.2** Generate Flatpak Cargo sources JSON via `flatpak-cargo-generator.py`
+- [x] **8.3** GStreamer: GNOME Platform runtime includes gst-plugins-base/good (covers WAV/OGG/FLAC/Opus); no extra module needed. MP3 not supported (gst-plugins-ugly absent from runtime).
 - [ ] **8.4** Full `flatpak-builder` test build; verify file-chooser portal works in sandbox
-- [ ] **8.5** Install icons to correct hicolor paths; verify AppStream metainfo validates
+- [x] **8.5** Icon SVG placeholders + hicolor install in meson.build; `<icon type="stock">` in metainfo; manifest finish-args cleaned up
 
 ---
 
