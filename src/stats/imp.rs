@@ -402,26 +402,26 @@ impl StatsView {
     pub fn reload_text_stats(&self) {
         let Some(app) = self.get_app() else { return; };
 
-        let avg_days = app
-            .with_db(|db| db.get_setting("running_avg_days", "7"))
-            .and_then(|r| r.ok())
-            .and_then(|s| s.parse::<u32>().ok())
-            .unwrap_or(7);
-        let avg = app.with_db(|db| db.get_running_average_secs(avg_days))
-            .and_then(|r| r.ok())
-            .unwrap_or(0.0) as i64;
-        self.stat_avg_value.set_label(&format_hm(avg));
+        // Batch all four DB reads into a single with_db() call to avoid
+        // acquiring and releasing the database lock four times.
+        let (avg, best, total) = app
+            .with_db(|db| {
+                let avg_days = db
+                    .get_setting("running_avg_days", "7")
+                    .ok()
+                    .and_then(|s| s.parse::<u32>().ok())
+                    .unwrap_or(7);
+                let avg   = db.get_running_average_secs(avg_days).unwrap_or(0.0) as i64;
+                let best  = db.get_best_streak().unwrap_or(0);
+                let total = db.get_total_duration_secs().unwrap_or(0);
+                (avg, best, total)
+            })
+            .unwrap_or((0, 0, 0));
 
-        let best = app.with_db(|db| db.get_best_streak())
-            .and_then(|r| r.ok())
-            .unwrap_or(0);
+        self.stat_avg_value.set_label(&format_hm(avg));
         self.stat_streak_value.set_label(
             &if best == 0 { "–".to_string() } else { format!("{best}d") }
         );
-
-        let total = app.with_db(|db| db.get_total_duration_secs())
-            .and_then(|r| r.ok())
-            .unwrap_or(0);
         self.stat_total_value.set_label(&format_hm(total));
     }
 
