@@ -22,6 +22,21 @@
     </ul>
   </description>
 
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/janekbt/MeditationApp/main/data/screenshots/screenshot-timer.png</image>
+      <caption>Countdown timer with quick presets and streak display</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/janekbt/MeditationApp/main/data/screenshots/screenshot-stats.png</image>
+      <caption>Statistics with monthly calendar and bar chart</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/janekbt/MeditationApp/main/data/screenshots/screenshot-log.png</image>
+      <caption>Session log with labels and notes</caption>
+    </screenshot>
+  </screenshots>
+
   <launchable type="desktop-id">io.github.janekbt.Meditate.desktop</launchable>
   <icon type="stock">io.github.janekbt.Meditate</icon>
 
