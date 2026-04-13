@@ -100,6 +100,16 @@ mod imp {
                         .website("https://github.com/janekbt/MeditationApp")
                         .issue_url("https://github.com/janekbt/MeditationApp/issues")
                         .license_type(gtk::License::Gpl30)
+                        .release_notes_version(config::VERSION)
+                        .release_notes("\
+                            <p>Initial release.</p>\
+                            <ul>\
+                              <li>Countdown and stopwatch timer</li>\
+                              <li>Session log with labels and notes</li>\
+                              <li>Statistics: calendar, bar chart, streaks</li>\
+                              <li>Completion sounds (bowl, bell, gong, or custom file)</li>\
+                              <li>Adaptive layout for desktop and phone</li>\
+                            </ul>")
                         .build();
 
                     dialog.present(app.active_window().as_ref());

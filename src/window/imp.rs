@@ -51,7 +51,7 @@ impl ObjectImpl for MeditateWindow {
 
         // Blueprint may silently drop icon-name on AdwViewStackPage in some
         // compiler versions.  Set it explicitly here so we bypass that.
-        self.view_stack.page(&*self.stats_view).set_icon_name(Some("format-justify-fill-symbolic"));
+        self.view_stack.page(&*self.stats_view).set_icon_name(Some("chart-bar-symbolic"));
 
         // Refresh streak and pre-warm audio once the window is mapped.
         // Deferred to an idle callback so GTK can commit the first frame to

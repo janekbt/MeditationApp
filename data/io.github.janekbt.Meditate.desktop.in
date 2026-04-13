@@ -5,6 +5,6 @@ Exec=meditate
 Icon=io.github.janekbt.Meditate
 Terminal=false
 Type=Application
-Categories=Utility;
+Categories=GNOME;GTK;Utility;
 Keywords=meditation;timer;mindfulness;
 StartupWMClass=io.github.janekbt.Meditate

@@ -486,9 +486,14 @@ impl TimerView {
                     imp.show_done(new_secs);
                     if let Some(app) = imp.get_app() {
                         crate::sound::play_end_sound(&app);
-                        let n = gtk::gio::Notification::new("Meditation complete");
-                        n.set_body(Some(&format!("Session: {}", format_time(new_secs))));
-                        app.send_notification(Some("timer-done"), &n);
+                        // Only send a system notification when the app is not
+                        // the focused window — the done screen is already shown
+                        // in-app, so a notification would be redundant noise.
+                        if !app.active_window().map(|w| w.is_active()).unwrap_or(false) {
+                            let n = gtk::gio::Notification::new("Meditation Complete");
+                            n.set_body(Some(&format!("Session: {}", format_time(new_secs))));
+                            app.send_notification(Some("timer-done"), &n);
+                        }
                     }
                     return glib::ControlFlow::Break;
                 }

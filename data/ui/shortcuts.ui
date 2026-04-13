@@ -33,6 +33,12 @@
             </child>
             <child>
               <object class="GtkShortcutsShortcut">
+                <property name="title" translatable="yes">Close Window</property>
+                <property name="accelerator">&lt;primary&gt;w</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
                 <property name="title" translatable="yes">Quit</property>
                 <property name="accelerator">&lt;primary&gt;q</property>
               </object>

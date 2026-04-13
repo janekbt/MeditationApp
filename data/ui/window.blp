@@ -47,7 +47,7 @@ template $MeditateWindow : Adw.ApplicationWindow {
             // Log-specific buttons (hidden when not on log tab)
             [end]
             MenuButton log_filter_btn {
-              icon-name: "edit-find-symbolic";
+              icon-name: "funnel-symbolic";
               tooltip-text: _("Filter Sessions");
               visible: false;
 
@@ -62,7 +62,7 @@ template $MeditateWindow : Adw.ApplicationWindow {
 
                   Adw.PreferencesGroup {
                     Adw.SwitchRow filter_notes_row {
-                      title: _("Only with notes");
+                      title: _("Has Notes");
                     }
 
                     Adw.ComboRow filter_label_row {
@@ -93,7 +93,7 @@ template $MeditateWindow : Adw.ApplicationWindow {
             Adw.ViewStackPage {
               name: "stats";
               title: _("Stats");
-              icon-name: "format-justify-fill-symbolic";
+              icon-name: "chart-bar-symbolic";
 
               child: $StatsView stats_view {};
             }
