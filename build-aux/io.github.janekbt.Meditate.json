@@ -24,7 +24,7 @@
       "CARGO_HOME": "/run/build/meditate/cargo",
       "CARGO_REGISTRIES_CRATES_IO_PROTOCOL": "sparse",
       "APP_ID": "io.github.janekbt.Meditate",
-      "APP_VERSION": "26.04.1",
+      "APP_VERSION": "26.4.1",
       "PKGDATADIR": "/app/share/meditate"
     }
   },

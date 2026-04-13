@@ -55,7 +55,7 @@
   <content_rating type="oars-1.1" />
 
   <releases>
-    <release version="26.04.1" date="2026-04-13">
+    <release version="26.4.1" date="2026-04-13">
       <description>
         <p>Initial release.</p>
       </description>
