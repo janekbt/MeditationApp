@@ -64,7 +64,16 @@ impl ObjectImpl for MeditateWindow {
                 glib::idle_add_local_once(glib::clone!(
                     #[weak] obj,
                     move || {
-                        obj.imp().timer_view.refresh_streak();
+                        let imp = obj.imp();
+                        imp.timer_view.refresh_streak();
+                        // Pre-build stats calendar grid and pre-load log rows
+                        // so that the first tab switch to either view has no
+                        // lazy widget construction to do — prevents the burst
+                        // of AdwNavigationView minimum-width warnings that
+                        // occur when many widgets are attached during a live
+                        // layout pass.
+                        imp.stats_view.refresh();
+                        imp.log_view.refresh();
                         // Pre-warm the audio pipeline so the end-of-session
                         // sound plays instantly rather than after a cold-start.
                         if let Some(app) = obj.application()
