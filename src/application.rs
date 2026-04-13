@@ -96,7 +96,7 @@ mod imp {
                         .application_name("Meditate")
                         .application_icon(config::APP_ID)
                         .version(config::VERSION)
-                        .developer_name("janekbt")
+                        .developer_name("Janek")
                         .website("https://github.com/janekbt/MeditationApp")
                         .issue_url("https://github.com/janekbt/MeditationApp/issues")
                         .license_type(gtk::License::Gpl30)
