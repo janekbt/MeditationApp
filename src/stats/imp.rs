@@ -31,6 +31,10 @@ pub struct StatsView {
     pub cal_month:  Cell<u32>,
     /// 42 calendar cells (cell box, day-number label), row-major order.
     pub cal_cells:  RefCell<Vec<(gtk::Box, gtk::Label)>>,
+    /// True once build_dow_header + build_calendar_cells have run.
+    /// Deferred from constructed() to the first reload_calendar() call so
+    /// the 84 GTK widget allocations don't happen at startup.
+    cal_built:      Cell<bool>,
 }
 
 #[glib::object_subclass]
@@ -57,8 +61,8 @@ impl ObjectImpl for StatsView {
         self.cal_year.set(now.year());
         self.cal_month.set(now.month() as u32);
 
-        self.build_dow_header();
-        self.build_calendar_cells();
+        // build_dow_header + build_calendar_cells are deferred to the first
+        // reload_calendar() call (lazy).  Only wire signals here.
         self.wire_signals();
     }
 
@@ -160,6 +164,14 @@ impl StatsView {
     }
 
     pub fn reload_calendar(&self) {
+        // Build the 84-widget calendar grid on first use rather than at
+        // construction time, so startup doesn't pay this cost.
+        if !self.cal_built.get() {
+            self.build_dow_header();
+            self.build_calendar_cells();
+            self.cal_built.set(true);
+        }
+
         let year  = self.cal_year.get();
         let month = self.cal_month.get();
 

@@ -511,21 +511,75 @@ impl TimerView {
     }
 
     pub fn refresh_streak(&self) {
-        if let Some(app) = self.get_app() {
-            let streak = app
-                .with_db(|db| db.get_streak())
-                .and_then(|r| r.ok())
-                .unwrap_or(0);
-            let text = match streak {
-                0 => String::from("Start your streak today"),
-                1 => String::from("1-day streak"),
-                n => format!("{n}-day streak"),
-            };
-            self.streak_label.set_label(&text);
+        let Some(app) = self.get_app() else {
+            // No app yet (shouldn't happen in practice) — use defaults.
+            self.refresh_presets();
+            self.refresh_setup_labels(self.setup_selected_label_id());
+            return;
+        };
+
+        // Batch all three DB reads into a single borrow: one get_app() walk,
+        // one RefCell lock, three SQL queries instead of three separate calls.
+        let (streak, presets, labels) = app
+            .with_db(|db| {
+                let streak  = db.get_streak().unwrap_or(0);
+                let presets = db.get_presets().unwrap_or_else(|_| vec![5, 10, 15, 20, 30]);
+                let labels  = db.list_labels().unwrap_or_default();
+                (streak, presets, labels)
+            })
+            .unwrap_or_else(|| (0, vec![5, 10, 15, 20, 30], vec![]));
+
+        // Update streak label
+        let text = match streak {
+            0 => String::from("Start your streak today"),
+            1 => String::from("1-day streak"),
+            n => format!("{n}-day streak"),
+        };
+        self.streak_label.set_label(&text);
+
+        // Rebuild preset buttons with the data we already fetched
+        while let Some(child) = self.presets_box.first_child() {
+            self.presets_box.remove(&child);
         }
-        self.refresh_presets();
-        // Keep the pre-start label list fresh (preserve current selection).
-        self.refresh_setup_labels(self.setup_selected_label_id());
+        let obj = self.obj();
+        for mins in presets {
+            let tooltip = if mins < 60 {
+                format!("{mins} minutes")
+            } else {
+                let h = mins / 60;
+                let m = mins % 60;
+                if m == 0 { format!("{h}h") } else { format!("{h}h {m}min") }
+            };
+            let btn = gtk::Button::builder()
+                .label(&mins.to_string())
+                .tooltip_text(&tooltip)
+                .build();
+            btn.connect_clicked(glib::clone!(
+                #[weak(rename_to = this)] obj,
+                move |_| {
+                    this.imp().hours_spin.set_value((mins / 60) as f64);
+                    this.imp().minutes_spin.set_value((mins % 60) as f64);
+                }
+            ));
+            self.presets_box.append(&btn);
+        }
+
+        // Rebuild setup label combo with the data we already fetched
+        let select_id = self.setup_selected_label_id();
+        let select_idx = select_id
+            .and_then(|id| labels.iter().position(|l| l.id == id))
+            .map(|pos| (pos + 2) as u32)
+            .unwrap_or(1);
+        let names: Vec<String> = std::iter::once("+ New label".to_string())
+            .chain(std::iter::once("None".to_string()))
+            .chain(labels.iter().map(|l| l.name.clone()))
+            .collect();
+        let name_refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
+        *self.setup_db_labels.borrow_mut() = labels;
+        self.setup_populating.set(true);
+        self.setup_label_row.set_model(Some(&gtk::StringList::new(&name_refs)));
+        self.setup_label_row.set_selected(select_idx);
+        self.setup_populating.set(false);
     }
 
     pub fn refresh_presets(&self) {

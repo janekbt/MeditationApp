@@ -53,20 +53,27 @@ impl ObjectImpl for MeditateWindow {
         // compiler versions.  Set it explicitly here so we bypass that.
         self.view_stack.page(&*self.stats_view).set_icon_name(Some("format-justify-fill-symbolic"));
 
-        // Refresh streak once the window is fully realized (get_app() is
-        // not guaranteed to succeed earlier, during GObject construction).
+        // Refresh streak and pre-warm audio once the window is mapped.
+        // Deferred to an idle callback so GTK can commit the first frame to
+        // the compositor before the DB queries and GStreamer init run — this
+        // makes the window appear and become interactive immediately.
         let obj = self.obj();
         obj.connect_map(glib::clone!(
             #[weak] obj,
             move |_| {
-                obj.imp().timer_view.refresh_streak();
-                // Pre-warm the audio pipeline so the end-of-session sound plays
-                // instantly rather than after a 2-3 s cold-start delay.
-                if let Some(app) = obj.application()
-                    .and_then(|a| a.downcast::<crate::application::MeditateApplication>().ok())
-                {
-                    crate::sound::preload_end_sound(&app);
-                }
+                glib::idle_add_local_once(glib::clone!(
+                    #[weak] obj,
+                    move || {
+                        obj.imp().timer_view.refresh_streak();
+                        // Pre-warm the audio pipeline so the end-of-session
+                        // sound plays instantly rather than after a cold-start.
+                        if let Some(app) = obj.application()
+                            .and_then(|a| a.downcast::<crate::application::MeditateApplication>().ok())
+                        {
+                            crate::sound::preload_end_sound(&app);
+                        }
+                    }
+                ));
             }
         ));
     }
