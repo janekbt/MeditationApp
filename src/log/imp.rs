@@ -103,8 +103,11 @@ impl LogView {
         }
 
         let labels_ref = self.labels.borrow();
+        // Build a map for O(1) label lookup per row instead of O(labels) scan.
+        let label_map: std::collections::HashMap<i64, &str> =
+            labels_ref.iter().map(|l| (l.id, l.name.as_str())).collect();
         for session in &sessions {
-            let row = self.build_row(session, &labels_ref);
+            let row = self.build_row(session, &label_map);
             self.list_box.append(&row);
         }
 
@@ -130,10 +133,9 @@ impl LogView {
 // ── Row building ──────────────────────────────────────────────────────────────
 
 impl LogView {
-    fn build_row(&self, session: &Session, labels: &[Label]) -> adw::ActionRow {
+    fn build_row(&self, session: &Session, label_map: &std::collections::HashMap<i64, &str>) -> adw::ActionRow {
         let label_name = session.label_id
-            .and_then(|id| labels.iter().find(|l| l.id == id))
-            .map(|l| l.name.as_str())
+            .and_then(|id| label_map.get(&id).copied())
             .unwrap_or("");
 
         let duration = format_duration(session.duration_secs as u64);
