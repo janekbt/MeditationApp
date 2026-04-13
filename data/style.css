@@ -11,6 +11,12 @@
     min-width: 2px;
 }
 
+/* Empty calendar cell — explicit background so the cell fully repaints
+   when a day number is removed, preventing stale render-node residue. */
+.cal-day-empty {
+    background-color: @window_bg_color;
+}
+
 /* Calendar active-day highlight */
 .cal-day-active {
     background-color: @accent_bg_color;

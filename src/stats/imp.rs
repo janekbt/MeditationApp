@@ -216,6 +216,7 @@ impl StatsView {
 
             if day < 1 || day as u32 > dim {
                 num_lbl.set_label("");
+                cell.add_css_class("cal-day-empty");
                 cell.remove_css_class("cal-day-active");
                 cell.remove_css_class("cal-streak-prev");
                 cell.remove_css_class("cal-streak-next");
@@ -223,6 +224,7 @@ impl StatsView {
                 num_lbl.remove_css_class("heading");
             } else {
                 num_lbl.set_label(&day.to_string());
+                cell.remove_css_class("cal-day-empty");
 
                 let is_active = active.contains(&(day as u32));
                 // Only connect within the same week row, and only within this month.
