@@ -103,6 +103,7 @@ impl StatsView {
                     .halign(gtk::Align::Fill)
                     .valign(gtk::Align::Center)
                     .height_request(30)
+                    .overflow(gtk::Overflow::Hidden)
                     .build();
                 cell.append(&num);
                 self.cal_grid.attach(&cell, col, row, 1, 1);
@@ -259,6 +260,10 @@ impl StatsView {
 
         // Disable next-month button when already showing the current month
         self.cal_next_btn.set_sensitive(!(year == ty && month == tm));
+
+        // Force a clean repaint of the entire grid so no stale pixels from
+        // the previous month persist in the row-spacing gaps.
+        self.cal_grid.queue_draw();
     }
 
     pub fn reload_chart(&self) {
