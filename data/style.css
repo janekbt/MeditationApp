@@ -1,3 +1,10 @@
+/* Large, light time readout on the timer setup page */
+.timer-setup-display {
+    font-size: 4.5rem;
+    font-weight: 300;
+    letter-spacing: -1px;
+}
+
 .chart-bar {
     background-color: @accent_bg_color;
     border-radius: 2px 2px 0 0;
