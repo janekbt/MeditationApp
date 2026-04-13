@@ -72,26 +72,30 @@ template $StatsView : Gtk.Widget {
 
           Gtk.Box {
             css-classes: ["linked"];
-            halign: center;
+            hexpand: true;
 
             Gtk.ToggleButton period_7d_btn {
               label: _("7 Days");
               active: true;
+              hexpand: true;
             }
 
             Gtk.ToggleButton period_4w_btn {
               label: _("4 Weeks");
               group: period_7d_btn;
+              hexpand: true;
             }
 
             Gtk.ToggleButton period_3m_btn {
               label: _("3 Months");
               group: period_7d_btn;
+              hexpand: true;
             }
 
             Gtk.ToggleButton period_1y_btn {
               label: _("1 Year");
               group: period_7d_btn;
+              hexpand: true;
             }
           }
 
