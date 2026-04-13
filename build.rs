@@ -49,4 +49,11 @@ fn main() {
     if std::env::var("PKGDATADIR").is_err() {
         println!("cargo:rustc-env=PKGDATADIR=./data");
     }
+    // APP_VERSION is the user-visible version string (e.g. "26.04.1").
+    // Cargo.toml uses "26.4.1" because semver forbids leading zeros in numeric
+    // identifiers, but we want the zero-padded month in the About dialog.
+    // Meson and Flatpak builds override this via the APP_VERSION env var.
+    if std::env::var("APP_VERSION").is_err() {
+        println!("cargo:rustc-env=APP_VERSION=26.04.1");
+    }
 }

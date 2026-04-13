@@ -45,7 +45,7 @@ Meditate provides a countdown and stopwatch timer, a browsable session log, and 
 
 ### Flatpak (recommended)
 
-Pre-built Flatpak bundles for **x86_64** and **aarch64** are attached to every CI run on the [Actions](../../actions) page.
+Pre-built Flatpak bundles for **x86_64** and **aarch64** are attached to every CI run on the [Actions](../../actions) page (and as release assets once the app is on Flathub, install from there instead).
 
 1. Download `meditate-<arch>.flatpak` from the latest passing run.
 2. Install and run:
@@ -59,8 +59,8 @@ flatpak run io.github.janekbt.Meditate
 
 **Dependencies**
 
-- GNOME Platform / SDK 47 (GTK 4, libadwaita 1.5, GStreamer)
-- [blueprint-compiler](https://gitlab.gnome.org/GNOME/blueprint-compiler) ≥ 0.16
+- GNOME Platform / SDK 50 (GTK 4, libadwaita 1.6, GStreamer)
+- [blueprint-compiler](https://gitlab.gnome.org/GNOME/blueprint-compiler) ≥ 0.20
 - Rust (stable toolchain) + Cargo
 - Meson ≥ 0.62
 
