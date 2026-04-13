@@ -57,6 +57,13 @@ template $TimerView : Gtk.Widget {
                 orientation: vertical;
                 spacing: 14;
 
+                // Large time readout — updated reactively from the spin buttons
+                Gtk.Label big_time_label {
+                  label: "0:10";
+                  css-classes: ["display"];
+                  halign: center;
+                }
+
                 // H : M spin buttons (hidden in stopwatch mode)
                 Gtk.Box hm_box {
                   orientation: horizontal;

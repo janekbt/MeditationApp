@@ -43,6 +43,7 @@ pub struct TimerView {
     #[template_child] pub inputs_stack:          TemplateChild<gtk::Stack>,
     #[template_child] pub hours_spin:            TemplateChild<gtk::SpinButton>,
     #[template_child] pub minutes_spin:          TemplateChild<gtk::SpinButton>,
+    #[template_child] pub big_time_label:         TemplateChild<gtk::Label>,
     #[template_child] pub hm_box:                TemplateChild<gtk::Box>,
     #[template_child] pub presets_box:           TemplateChild<gtk::Box>,
     #[template_child] pub stopwatch_idle_label:  TemplateChild<gtk::Label>,
@@ -154,6 +155,19 @@ impl TimerView {
             move |_| this.imp().on_discard()
         ));
 
+        // Keep the large time display in sync with the spin buttons.
+        let update_big_label = glib::clone!(
+            #[weak(rename_to = this)] obj,
+            move |_: &gtk::SpinButton, _: &glib::ParamSpec| {
+                let imp = this.imp();
+                let h = imp.hours_spin.value() as u64;
+                let m = imp.minutes_spin.value() as u64;
+                imp.big_time_label.set_label(&format!("{}:{:02}", h, m));
+            }
+        );
+        self.hours_spin.connect_notify_local(Some("value"), update_big_label.clone());
+        self.minutes_spin.connect_notify_local(Some("value"), update_big_label);
+
         // "＋ New label" is index 0; show creation dialog when selected.
         self.label_row.connect_notify_local(
             Some("selected"),
@@ -193,6 +207,7 @@ impl TimerView {
     /// user switched TO stopwatch (false = switched to countdown).
     fn on_mode_switched(&self, to_stopwatch: bool) {
         // Show / hide the countdown-specific input widgets
+        self.big_time_label.set_visible(!to_stopwatch);
         self.hm_box.set_visible(!to_stopwatch);
         self.presets_box.set_visible(!to_stopwatch);
         self.stopwatch_idle_label.set_visible(to_stopwatch);
@@ -548,15 +563,19 @@ impl TimerView {
         }
         let obj = self.obj();
         for mins in presets {
-            let tooltip = if mins < 60 {
-                format!("{mins} minutes")
+            let (label, tooltip) = if mins < 60 {
+                (format!("{mins}m"), format!("{mins} minutes"))
             } else {
                 let h = mins / 60;
                 let m = mins % 60;
-                if m == 0 { format!("{h}h") } else { format!("{h}h {m}min") }
+                if m == 0 {
+                    (format!("{h}h"), format!("{h} hour{}", if h == 1 { "" } else { "s" }))
+                } else {
+                    (format!("{h}h {m}m"), format!("{h}h {m}min"))
+                }
             };
             let btn = gtk::Button::builder()
-                .label(&mins.to_string())
+                .label(&label)
                 .tooltip_text(&tooltip)
                 .build();
             btn.connect_clicked(glib::clone!(
@@ -598,15 +617,19 @@ impl TimerView {
 
         let obj = self.obj();
         for mins in presets {
-            let tooltip = if mins < 60 {
-                format!("{mins} minutes")
+            let (label, tooltip) = if mins < 60 {
+                (format!("{mins}m"), format!("{mins} minutes"))
             } else {
                 let h = mins / 60;
                 let m = mins % 60;
-                if m == 0 { format!("{h}h") } else { format!("{h}h {m}min") }
+                if m == 0 {
+                    (format!("{h}h"), format!("{h} hour{}", if h == 1 { "" } else { "s" }))
+                } else {
+                    (format!("{h}h {m}m"), format!("{h}h {m}min"))
+                }
             };
             let btn = gtk::Button::builder()
-                .label(&mins.to_string())
+                .label(&label)
                 .tooltip_text(&tooltip)
                 .build();
             btn.connect_clicked(glib::clone!(
