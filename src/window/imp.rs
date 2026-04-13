@@ -65,6 +65,19 @@ impl ObjectImpl for MeditateWindow {
                     #[weak] obj,
                     move || {
                         let imp = obj.imp();
+
+                        // ── Temporary minimum-width diagnostics ──────────
+                        let measure_w = |w: &gtk::Widget| {
+                            w.measure(gtk::Orientation::Horizontal, -1).0
+                        };
+                        eprintln!("=== min-width diagnostics ===");
+                        eprintln!("  view_stack  : {}px", measure_w(imp.view_stack.upcast_ref()));
+                        eprintln!("  timer_view  : {}px", measure_w(imp.timer_view.upcast_ref()));
+                        eprintln!("  stats_view  : {}px", measure_w(imp.stats_view.upcast_ref()));
+                        eprintln!("  log_view    : {}px", measure_w(imp.log_view.upcast_ref()));
+                        eprintln!("  switcher_bar: {}px", measure_w(imp.switcher_bar.upcast_ref()));
+                        // ── End diagnostics ──────────────────────────────
+
                         imp.timer_view.refresh_streak();
                         // Pre-build stats calendar grid and pre-load log rows
                         // so that the first tab switch to either view has no
