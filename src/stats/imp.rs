@@ -268,6 +268,10 @@ impl StatsView {
             .and_then(|r| r.ok())
             .unwrap_or_default();
 
+        // Index sparse results for O(1) lookup instead of O(n) per day.
+        let sparse_map: std::collections::HashMap<String, i64> =
+            sparse.into_iter().collect();
+
         // Dense list of (local-date-string, secs) for every day in the period
         let daily: Vec<(String, i64)> = (0..days as i64)
             .map(|i| {
@@ -275,10 +279,7 @@ impl StatsView {
                     .add_days(-(days as i32 - 1) + i as i32)
                     .unwrap();
                 let date_str = dt.format("%Y-%m-%d").unwrap().to_string();
-                let dur = sparse.iter()
-                    .find(|(d, _)| d == &date_str)
-                    .map(|(_, d)| *d)
-                    .unwrap_or(0);
+                let dur = sparse_map.get(&date_str).copied().unwrap_or(0);
                 (date_str, dur)
             })
             .collect();
