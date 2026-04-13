@@ -66,25 +66,6 @@ impl ObjectImpl for MeditateWindow {
                     move || {
                         let imp = obj.imp();
 
-                        // ── Temporary minimum-width diagnostics ──────────
-                        let measure_w = |w: &gtk::Widget| {
-                            w.measure(gtk::Orientation::Horizontal, -1).0
-                        };
-                        let sv = imp.stats_view.imp();
-                        eprintln!("=== stats_view children min-widths ===");
-                        eprintln!("  cal_month_label : {}px", measure_w(sv.cal_month_label.upcast_ref()));
-                        eprintln!("  cal_dow_box     : {}px", measure_w(sv.cal_dow_box.upcast_ref()));
-                        eprintln!("  cal_grid        : {}px", measure_w(sv.cal_grid.upcast_ref()));
-                        eprintln!("  period_7d_btn   : {}px", measure_w(sv.period_7d_btn.upcast_ref()));
-                        eprintln!("  period_4w_btn   : {}px", measure_w(sv.period_4w_btn.upcast_ref()));
-                        eprintln!("  period_3m_btn   : {}px", measure_w(sv.period_3m_btn.upcast_ref()));
-                        eprintln!("  period_1y_btn   : {}px", measure_w(sv.period_1y_btn.upcast_ref()));
-                        eprintln!("  stat_avg_value  : {}px", measure_w(sv.stat_avg_value.upcast_ref()));
-                        eprintln!("  stat_streak_val : {}px", measure_w(sv.stat_streak_value.upcast_ref()));
-                        eprintln!("  stat_total_val  : {}px", measure_w(sv.stat_total_value.upcast_ref()));
-                        eprintln!("  chart_container : {}px", measure_w(sv.chart_container.upcast_ref()));
-                        // ── End diagnostics ──────────────────────────────
-
                         imp.timer_view.refresh_streak();
                         // Pre-build stats calendar grid and pre-load log rows
                         // so that the first tab switch to either view has no
