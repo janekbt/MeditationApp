@@ -286,28 +286,32 @@ impl Database {
                 let mut s = self.conn.prepare_cached(
                     "SELECT id, start_time, duration_secs, mode, label_id, note
                      FROM sessions ORDER BY start_time DESC")?;
-                s.query_map([], |r| Ok(map_row!(r)))?.collect()
+                let rows: Result<Vec<_>> = s.query_map([], |r| Ok(map_row!(r)))?.collect();
+                rows
             }
             (true, None) => {
                 let mut s = self.conn.prepare_cached(
                     "SELECT id, start_time, duration_secs, mode, label_id, note
                      FROM sessions WHERE note IS NOT NULL AND note != ''
                      ORDER BY start_time DESC")?;
-                s.query_map([], |r| Ok(map_row!(r)))?.collect()
+                let rows: Result<Vec<_>> = s.query_map([], |r| Ok(map_row!(r)))?.collect();
+                rows
             }
             (false, Some(lid)) => {
                 let mut s = self.conn.prepare_cached(
                     "SELECT id, start_time, duration_secs, mode, label_id, note
                      FROM sessions WHERE label_id = ?1
                      ORDER BY start_time DESC")?;
-                s.query_map(params![lid], |r| Ok(map_row!(r)))?.collect()
+                let rows: Result<Vec<_>> = s.query_map(params![lid], |r| Ok(map_row!(r)))?.collect();
+                rows
             }
             (true, Some(lid)) => {
                 let mut s = self.conn.prepare_cached(
                     "SELECT id, start_time, duration_secs, mode, label_id, note
                      FROM sessions WHERE label_id = ?1 AND note IS NOT NULL AND note != ''
                      ORDER BY start_time DESC")?;
-                s.query_map(params![lid], |r| Ok(map_row!(r)))?.collect()
+                let rows: Result<Vec<_>> = s.query_map(params![lid], |r| Ok(map_row!(r)))?.collect();
+                rows
             }
         }
     }
