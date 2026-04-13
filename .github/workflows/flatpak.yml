@@ -15,7 +15,7 @@ jobs:
     name: Flatpak (x86_64)
     runs-on: ubuntu-latest
     container:
-      image: bilelmoussaoui/flatpak-github-actions:gnome-47
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
       options: --privileged
     steps:
       - uses: actions/checkout@v4
@@ -28,7 +28,7 @@ jobs:
   # aarch64: QEMU binfmt must be registered on the host *before* the container
   # that needs it starts.  Job-level containers prevent running host steps first,
   # so we (1) register binfmt via a plain `docker run`, then (2) start the
-  # gnome-47 container ourselves — it runs as root so runtime installs succeed.
+  # gnome-50 container ourselves — it runs as root so runtime installs succeed.
   flatpak-aarch64:
     name: Flatpak (aarch64)
     runs-on: ubuntu-latest
@@ -43,7 +43,7 @@ jobs:
           docker run --privileged --rm \
             --volume "$GITHUB_WORKSPACE:/workspace" \
             --workdir /workspace \
-            bilelmoussaoui/flatpak-github-actions:gnome-47 \
+            ghcr.io/flathub-infra/flatpak-github-actions:gnome-50 \
             bash -c '
               set -e
               flatpak remote-add --if-not-exists flathub \
