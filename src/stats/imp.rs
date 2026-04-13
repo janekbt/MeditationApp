@@ -215,13 +215,15 @@ impl StatsView {
             let col = i % 7;
 
             if day < 1 || day as u32 > dim {
-                num_lbl.set_label("");
+                // Hide the label rather than setting it to "" — on some GPU
+                // drivers set_label("") doesn't repaint the old text pixels,
+                // leaving a residue until something else fills the cell.
+                num_lbl.set_visible(false);
                 cell.remove_css_class("cal-day-active");
                 cell.remove_css_class("cal-streak-prev");
                 cell.remove_css_class("cal-streak-next");
-                num_lbl.remove_css_class("cal-day-active-label");
-                num_lbl.remove_css_class("heading");
             } else {
+                num_lbl.set_visible(true);
                 num_lbl.set_label(&day.to_string());
 
                 let is_active = active.contains(&(day as u32));
