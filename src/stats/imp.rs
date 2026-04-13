@@ -1,4 +1,4 @@
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{glib, CompositeTemplate};
@@ -29,11 +29,7 @@ pub struct StatsView {
     // State
     pub cal_year:   Cell<i32>,
     pub cal_month:  Cell<u32>,
-    /// 42 calendar cells (cell box, day-number label), row-major order.
-    pub cal_cells:  RefCell<Vec<(gtk::Box, gtk::Label)>>,
-    /// True once build_dow_header + build_calendar_cells have run.
-    /// Deferred from constructed() to the first reload_calendar() call so
-    /// the 84 GTK widget allocations don't happen at startup.
+    /// True once build_dow_header has run (cells are rebuilt every reload).
     cal_built:      Cell<bool>,
 }
 
@@ -84,30 +80,6 @@ impl StatsView {
                 .css_classes(["caption", "dim-label"])
                 .build();
             self.cal_dow_box.append(&label);
-        }
-    }
-
-    fn build_calendar_cells(&self) {
-        let mut cells = self.cal_cells.borrow_mut();
-        for row in 0..6i32 {
-            for col in 0..7i32 {
-                let num = gtk::Label::builder()
-                    .width_chars(2)
-                    .xalign(0.5)
-                    .vexpand(true)
-                    .build();
-                // halign::Fill lets the background extend edge-to-edge so
-                // consecutive active days form an unbroken coloured strip.
-                let cell = gtk::Box::builder()
-                    .orientation(gtk::Orientation::Vertical)
-                    .halign(gtk::Align::Fill)
-                    .valign(gtk::Align::Center)
-                    .height_request(30)
-                    .build();
-                cell.append(&num);
-                self.cal_grid.attach(&cell, col, row, 1, 1);
-                cells.push((cell, num));
-            }
         }
     }
 
@@ -164,12 +136,17 @@ impl StatsView {
     }
 
     pub fn reload_calendar(&self) {
-        // Build the 84-widget calendar grid on first use rather than at
-        // construction time, so startup doesn't pay this cost.
+        // Build the DoW header once; rebuild the day cells every call so
+        // GTK creates fresh render nodes — this avoids GPU-level texture
+        // cache residue left by the previous month on some drivers.
         if !self.cal_built.get() {
             self.build_dow_header();
-            self.build_calendar_cells();
             self.cal_built.set(true);
+        }
+
+        // Tear down all existing day cells.
+        while let Some(child) = self.cal_grid.first_child() {
+            self.cal_grid.remove(&child);
         }
 
         let year  = self.cal_year.get();
@@ -209,51 +186,49 @@ impl StatsView {
             today.day_of_month() as u32,
         );
 
-        let cells = self.cal_cells.borrow();
-        for (i, (cell, num_lbl)) in cells.iter().enumerate() {
-            let day = i as i32 - offset as i32 + 1;
-            let col = i % 7;
+        for row in 0..6i32 {
+            for col in 0..7i32 {
+                let i = (row * 7 + col) as usize;
+                let day = i as i32 - offset as i32 + 1;
 
-            if day < 1 || day as u32 > dim {
-                num_lbl.set_label("");
-                cell.remove_css_class("cal-day-active");
-                cell.remove_css_class("cal-streak-prev");
-                cell.remove_css_class("cal-streak-next");
-                num_lbl.remove_css_class("cal-day-active-label");
-                num_lbl.remove_css_class("heading");
-            } else {
-                num_lbl.set_label(&day.to_string());
+                let num_lbl = gtk::Label::builder()
+                    .width_chars(2)
+                    .xalign(0.5)
+                    .vexpand(true)
+                    .build();
+                // halign::Fill lets the background extend edge-to-edge so
+                // consecutive active days form an unbroken coloured strip.
+                let cell = gtk::Box::builder()
+                    .orientation(gtk::Orientation::Vertical)
+                    .halign(gtk::Align::Fill)
+                    .valign(gtk::Align::Center)
+                    .height_request(30)
+                    .build();
+                cell.append(&num_lbl);
 
-                let is_active = active.contains(&(day as u32));
-                // Only connect within the same week row, and only within this month.
-                let prev_active = is_active && col > 0 && day > 1
-                    && active.contains(&((day - 1) as u32));
-                let next_active = is_active && col < 6 && (day as u32) < dim
-                    && active.contains(&((day + 1) as u32));
+                if day >= 1 && day as u32 <= dim {
+                    num_lbl.set_label(&day.to_string());
 
-                if is_active {
-                    cell.add_css_class("cal-day-active");
-                    num_lbl.add_css_class("cal-day-active-label");
-                } else {
-                    cell.remove_css_class("cal-day-active");
-                    num_lbl.remove_css_class("cal-day-active-label");
-                }
-                if prev_active {
-                    cell.add_css_class("cal-streak-prev");
-                } else {
-                    cell.remove_css_class("cal-streak-prev");
-                }
-                if next_active {
-                    cell.add_css_class("cal-streak-next");
-                } else {
-                    cell.remove_css_class("cal-streak-next");
-                }
+                    let is_active = active.contains(&(day as u32));
+                    let prev_active = is_active && col > 0 && day > 1
+                        && active.contains(&((day - 1) as u32));
+                    let next_active = is_active && col < 6 && (day as u32) < dim
+                        && active.contains(&((day + 1) as u32));
 
-                if year == ty && month == tm && day as u32 == td {
-                    num_lbl.add_css_class("heading");
-                } else {
-                    num_lbl.remove_css_class("heading");
+                    if is_active {
+                        cell.add_css_class("cal-day-active");
+                        num_lbl.add_css_class("cal-day-active-label");
+                    }
+                    if prev_active { cell.add_css_class("cal-streak-prev"); }
+                    if next_active { cell.add_css_class("cal-streak-next"); }
+                    if year == ty && month == tm && day as u32 == td {
+                        num_lbl.add_css_class("heading");
+                    }
                 }
+                // Out-of-range cells: leave label text empty — the fresh
+                // widget has no prior rendered content to leave residue.
+
+                self.cal_grid.attach(&cell, col, row, 1, 1);
             }
         }
 
