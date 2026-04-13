@@ -157,7 +157,7 @@ impl MeditateWindow {
             .valign(gtk::Align::Center)
             .vexpand(true)
             .margin_top(24).margin_bottom(24)
-            .margin_start(18).margin_end(18)
+            .margin_start(12).margin_end(12)
             .build();
         content.append(&time_label);
         content.append(&btn_box);
