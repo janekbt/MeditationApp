@@ -58,7 +58,16 @@ impl ObjectImpl for MeditateWindow {
         let obj = self.obj();
         obj.connect_map(glib::clone!(
             #[weak] obj,
-            move |_| { obj.imp().timer_view.refresh_streak(); }
+            move |_| {
+                obj.imp().timer_view.refresh_streak();
+                // Pre-warm the audio pipeline so the end-of-session sound plays
+                // instantly rather than after a 2-3 s cold-start delay.
+                if let Some(app) = obj.application()
+                    .and_then(|a| a.downcast::<crate::application::MeditateApplication>().ok())
+                {
+                    crate::sound::preload_end_sound(&app);
+                }
+            }
         ));
     }
 }

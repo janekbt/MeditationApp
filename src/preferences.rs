@@ -95,6 +95,7 @@ pub fn show_preferences(app: &MeditateApplication) {
                     _ => "none",
                 };
                 app.with_db(|db| db.set_setting("end_sound", key));
+                crate::sound::preload_end_sound(&app);
                 custom_row.set_visible(key == "custom");
                 preview_btn.set_sensitive(key != "none");
                 // Stop any in-progress preview when the selection changes.
@@ -192,6 +193,7 @@ pub fn show_preferences(app: &MeditateApplication) {
                                 custom_row.set_subtitle(path_subtitle(&path_str));
                                 *custom_sound_path.borrow_mut() = path_str.clone();
                                 app.with_db(|db| db.set_setting("end_sound_path", &path_str));
+                                crate::sound::preload_end_sound(&app);
                             }
                         }
                     }
