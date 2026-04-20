@@ -1,0 +1,226 @@
+# French translation for Meditate.
+# Copyright (C) 2026 Janek Teders
+# This file is distributed under the same license as the meditate package.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: meditate\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-04-20 18:03+0200\n"
+"PO-Revision-Date: 2026-04-20 18:20+0200\n"
+"Last-Translator: Janek Teders\n"
+"Language-Team: French\n"
+"Language: fr\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+msgid "min"
+msgstr "min"
+
+msgid "No note added"
+msgstr "Aucune note"
+
+msgid "Delete Session"
+msgstr "Supprimer la séance"
+
+msgid "Session deleted"
+msgstr "Séance supprimée"
+
+msgid "Hours"
+msgstr "Heures"
+
+msgid "Minutes"
+msgstr "Minutes"
+
+msgid "Date"
+msgstr "Date"
+
+msgid "Pick a Date"
+msgstr "Choisir une date"
+
+msgid "Hour"
+msgstr "Heure"
+
+msgid "Minute"
+msgstr "Minute"
+
+msgid "Label"
+msgstr "Étiquette"
+
+msgid "Note (optional)"
+msgstr "Note (facultative)"
+
+msgid "Duration"
+msgstr "Durée"
+
+msgid "Start time"
+msgstr "Heure de début"
+
+msgid "_Cancel"
+msgstr "A_nnuler"
+
+msgid "_Save"
+msgstr "_Enregistrer"
+
+msgid "_Add"
+msgstr "_Ajouter"
+
+msgid "Edit Session"
+msgstr "Modifier la séance"
+
+msgid "Add Session"
+msgstr "Ajouter une séance"
+
+msgid "Paused"
+msgstr "En pause"
+
+msgid "Hours · Minutes"
+msgstr "Heures · Minutes"
+
+msgid "Discard Session?"
+msgstr "Abandonner la séance ?"
+
+msgid "Your note will be lost."
+msgstr "Votre note sera perdue."
+
+msgid "Cancel"
+msgstr "Annuler"
+
+msgid "Discard"
+msgstr "Abandonner"
+
+msgid "Custom…"
+msgstr "Personnalisé…"
+
+msgid "Set a Custom Time"
+msgstr "Définir un temps personnalisé"
+
+msgid "Custom Time"
+msgstr "Temps personnalisé"
+
+msgid "Hours : Minutes"
+msgstr "Heures : Minutes"
+
+msgid "Set"
+msgstr "Définir"
+
+msgid "No Sessions Yet"
+msgstr "Aucune séance pour l’instant"
+
+msgid "Start meditating to see your sessions here, or add one manually."
+msgstr ""
+"Commencez à méditer pour voir vos séances ici, ou ajoutez-en une "
+"manuellement."
+
+msgid "No Matching Sessions"
+msgstr "Aucune séance correspondante"
+
+msgid "Try changing your filters."
+msgstr "Essayez de modifier vos filtres."
+
+msgid "Load more"
+msgstr "Charger plus"
+
+msgid "Weekly goal"
+msgstr "Objectif hebdomadaire"
+
+msgid "Last 13 weeks"
+msgstr "13 dernières semaines"
+
+msgid "Less"
+msgstr "Moins"
+
+msgid "More"
+msgstr "Plus"
+
+msgid "Insights"
+msgstr "Analyses"
+
+msgid "Week"
+msgstr "Semaine"
+
+msgid "Month"
+msgstr "Mois"
+
+msgid "3 Months"
+msgstr "3 mois"
+
+msgid "Year"
+msgstr "Année"
+
+msgid "Minutes / Day"
+msgstr "Minutes / jour"
+
+msgid "Bars"
+msgstr "Barres"
+
+msgid "Line"
+msgstr "Ligne"
+
+msgid "Streak"
+msgstr "Série"
+
+msgid "Total"
+msgstr "Total"
+
+msgid "Sessions"
+msgstr "Séances"
+
+msgid "Countdown"
+msgstr "Compte à rebours"
+
+msgid "Stopwatch"
+msgstr "Chronomètre"
+
+msgid "Quick Presets"
+msgstr "Préréglages"
+
+msgid "Session"
+msgstr "Séance"
+
+msgid "Completion sound"
+msgstr "Son de fin"
+
+msgid "Start Session"
+msgstr "Démarrer la séance"
+
+msgid "Resume"
+msgstr "Reprendre"
+
+msgid "Stop"
+msgstr "Arrêter"
+
+msgid "Save"
+msgstr "Enregistrer"
+
+msgid "Meditate"
+msgstr "Meditate"
+
+msgid "Main Menu"
+msgstr "Menu principal"
+
+msgid "Filter Sessions"
+msgstr "Filtrer les séances"
+
+msgid "Has Notes"
+msgstr "Avec notes"
+
+msgid "Timer"
+msgstr "Minuteur"
+
+msgid "Stats"
+msgstr "Statistiques"
+
+msgid "Log"
+msgstr "Journal"
+
+msgid "_Preferences"
+msgstr "_Préférences"
+
+msgid "_Keyboard Shortcuts"
+msgstr "Raccourcis _clavier"
+
+msgid "_About Meditate"
+msgstr "À _propos de Meditate"
