@@ -41,11 +41,8 @@ pub struct TimerView {
     #[template_child] pub countdown_btn:         TemplateChild<gtk::ToggleButton>,
     #[template_child] pub stopwatch_btn:         TemplateChild<gtk::ToggleButton>,
     #[template_child] pub inputs_stack:          TemplateChild<gtk::Stack>,
-    #[template_child] pub hours_spin:            TemplateChild<gtk::SpinButton>,
-    #[template_child] pub minutes_spin:          TemplateChild<gtk::SpinButton>,
     #[template_child] pub big_time_label:         TemplateChild<gtk::Label>,
     #[template_child] pub countdown_inputs:       TemplateChild<gtk::Box>,
-    #[template_child] pub hm_box:                TemplateChild<gtk::Box>,
     #[template_child] pub presets_box:           TemplateChild<gtk::FlowBox>,
     #[template_child] pub stopwatch_idle_label:  TemplateChild<gtk::Label>,
     #[template_child] pub paused_time_label:     TemplateChild<gtk::Label>,
@@ -84,6 +81,10 @@ pub struct TimerView {
     populating_labels: Cell<bool>,
     /// True while refresh_streak is populating the setup sound combo.
     sound_populating: Cell<bool>,
+    /// Currently-selected countdown duration in seconds, set by preset
+    /// chips or the "Custom" dialog. Default 10 min; used as the target
+    /// when the user taps Start.
+    countdown_target_secs: Cell<u64>,
 }
 
 #[glib::object_subclass]
@@ -116,6 +117,9 @@ impl ObjectImpl for TimerView {
 
     fn constructed(&self) {
         self.parent_constructed();
+        // Default countdown target: 10 min — matches the hero label that's
+        // set to "00:10" in the blueprint.
+        self.countdown_target_secs.set(10 * 60);
         self.setup_buttons();
     }
 
@@ -159,19 +163,6 @@ impl TimerView {
             #[weak(rename_to = this)] obj,
             move |_| this.imp().on_discard()
         ));
-
-        // Keep the large time display in sync with the spin buttons.
-        let update_big_label = glib::clone!(
-            #[weak(rename_to = this)] obj,
-            move |_: &gtk::SpinButton, _: &glib::ParamSpec| {
-                let imp = this.imp();
-                let h = imp.hours_spin.value() as u64;
-                let m = imp.minutes_spin.value() as u64;
-                imp.big_time_label.set_label(&format!("{:02}:{:02}", h, m));
-            }
-        );
-        self.hours_spin.connect_notify_local(Some("value"), update_big_label.clone());
-        self.minutes_spin.connect_notify_local(Some("value"), update_big_label);
 
         // "＋ New label" is index 0; show creation dialog when selected.
         self.label_row.connect_notify_local(
@@ -295,12 +286,10 @@ impl TimerView {
             m.display_secs = 0;
             m.session_start_time = unix_now();
         } else {
-            let h = self.hours_spin.value() as u64;
-            let m_val = self.minutes_spin.value() as u64;
-            if h == 0 && m_val == 0 {
+            let target = self.countdown_target_secs.get();
+            if target == 0 {
                 return;
             }
-            let target = h * 3600 + m_val * 60;
             let mut m = self.countdown_mode.borrow_mut();
             m.timer_state = TimerState::Running;
             m.target_secs = target;
@@ -586,36 +575,7 @@ impl TimerView {
         self.streak_label.set_label(&text);
 
         // Rebuild preset buttons with the data we already fetched
-        while let Some(child) = self.presets_box.first_child() {
-            self.presets_box.remove(&child);
-        }
-        let obj = self.obj();
-        for mins in presets {
-            let (label, tooltip) = if mins < 60 {
-                (format!("{mins}m"), format!("{mins} minutes"))
-            } else {
-                let h = mins / 60;
-                let m = mins % 60;
-                if m == 0 {
-                    (format!("{h}h"), format!("{h} hour{}", if h == 1 { "" } else { "s" }))
-                } else {
-                    (format!("{h}h {m}m"), format!("{h}h {m}min"))
-                }
-            };
-            let btn = gtk::Button::builder()
-                .label(&label)
-                .tooltip_text(&tooltip)
-                .css_classes(["preset-chip"])
-                .build();
-            btn.connect_clicked(glib::clone!(
-                #[weak(rename_to = this)] obj,
-                move |_| {
-                    this.imp().hours_spin.set_value((mins / 60) as f64);
-                    this.imp().minutes_spin.set_value((mins % 60) as f64);
-                }
-            ));
-            self.presets_box.append(&btn);
-        }
+        self.rebuild_preset_chips(&presets);
 
         // Populate setup page sound row from DB setting
         let current_sound = app
@@ -651,16 +611,22 @@ impl TimerView {
     }
 
     pub fn refresh_presets(&self) {
-        while let Some(child) = self.presets_box.first_child() {
-            self.presets_box.remove(&child);
-        }
         let presets = self.get_app()
             .and_then(|app| app.with_db(|db| db.get_presets()))
             .and_then(|r| r.ok())
             .unwrap_or_else(|| vec![5, 10, 15, 20, 30]);
+        self.rebuild_preset_chips(&presets);
+    }
 
+    /// Rebuild the preset FlowBox: one pill per DB preset (each tapping
+    /// it selects that duration), plus a trailing "Custom" pill that
+    /// opens a dialog to pick an arbitrary H:M value.
+    fn rebuild_preset_chips(&self, presets: &[u32]) {
+        while let Some(child) = self.presets_box.first_child() {
+            self.presets_box.remove(&child);
+        }
         let obj = self.obj();
-        for mins in presets {
+        for &mins in presets {
             let (label, tooltip) = if mins < 60 {
                 (format!("{mins}m"), format!("{mins} minutes"))
             } else {
@@ -680,11 +646,92 @@ impl TimerView {
             btn.connect_clicked(glib::clone!(
                 #[weak(rename_to = this)] obj,
                 move |_| {
-                    this.imp().hours_spin.set_value((mins / 60) as f64);
-                    this.imp().minutes_spin.set_value((mins % 60) as f64);
+                    this.imp().set_countdown_target((mins as u64) * 60);
                 }
             ));
             self.presets_box.append(&btn);
+        }
+
+        // Trailing "Custom" pill — opens a dialog to pick an H:M value.
+        let custom_btn = gtk::Button::builder()
+            .label("Custom")
+            .tooltip_text("Set a custom time")
+            .css_classes(["preset-chip"])
+            .build();
+        custom_btn.connect_clicked(glib::clone!(
+            #[weak(rename_to = this)] obj,
+            move |_| this.imp().show_custom_time_dialog()
+        ));
+        self.presets_box.append(&custom_btn);
+    }
+
+    /// Update the countdown target + hero label together.
+    fn set_countdown_target(&self, secs: u64) {
+        self.countdown_target_secs.set(secs);
+        let h = secs / 3600;
+        let m = (secs % 3600) / 60;
+        self.big_time_label.set_label(&format!("{h:02}:{m:02}"));
+    }
+
+    /// Show a dialog with H:M spin buttons; apply result to the countdown
+    /// target on "Set".
+    fn show_custom_time_dialog(&self) {
+        let current = self.countdown_target_secs.get();
+        let cur_h = (current / 3600) as f64;
+        let cur_m = ((current % 3600) / 60) as f64;
+
+        let hours_spin = gtk::SpinButton::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .numeric(true)
+            .width_chars(2)
+            .adjustment(&gtk::Adjustment::new(cur_h, 0.0, 23.0, 1.0, 1.0, 0.0))
+            .build();
+        let minutes_spin = gtk::SpinButton::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .numeric(true)
+            .width_chars(2)
+            .adjustment(&gtk::Adjustment::new(cur_m, 0.0, 59.0, 1.0, 5.0, 0.0))
+            .build();
+
+        let colon = gtk::Label::builder()
+            .label(":")
+            .css_classes(["title-2"])
+            .valign(gtk::Align::Center)
+            .build();
+        let row = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .spacing(6)
+            .halign(gtk::Align::Center)
+            .margin_top(6)
+            .margin_bottom(6)
+            .build();
+        row.append(&hours_spin);
+        row.append(&colon);
+        row.append(&minutes_spin);
+
+        let dialog = adw::AlertDialog::builder()
+            .heading(tr("Custom Time"))
+            .body(tr("Hours : Minutes"))
+            .close_response("cancel")
+            .default_response("set")
+            .extra_child(&row)
+            .build();
+        dialog.add_response("cancel", tr("Cancel"));
+        dialog.add_response("set", tr("Set"));
+        dialog.set_response_appearance("set", adw::ResponseAppearance::Suggested);
+
+        let obj = self.obj().clone();
+        dialog.connect_response(None, move |_, response| {
+            if response != "set" { return; }
+            let h = hours_spin.value() as u64;
+            let m = minutes_spin.value() as u64;
+            let total = h * 3600 + m * 60;
+            if total == 0 { return; }
+            obj.imp().set_countdown_target(total);
+        });
+
+        if let Some(win) = self.obj().root().and_then(|r| r.downcast::<gtk::Window>().ok()) {
+            dialog.present(Some(&win));
         }
     }
 

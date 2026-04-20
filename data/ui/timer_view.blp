@@ -94,48 +94,11 @@ template $TimerView : Gtk.Widget {
                 orientation: vertical;
                 spacing: 12;
 
-                // Countdown-only inputs: H:M spinners + presets card
+                // Countdown-only inputs: presets card (time is chosen
+                // via a preset pill or the "Custom" pill's dialog)
                 Gtk.Box countdown_inputs {
                   orientation: vertical;
                   spacing: 12;
-
-                  // H : M spin buttons
-                  Gtk.Box hm_box {
-                    orientation: horizontal;
-                    spacing: 6;
-                    halign: center;
-
-                    Gtk.SpinButton hours_spin {
-                      orientation: vertical;
-                      numeric: true;
-                      width-chars: 2;
-                      adjustment: Gtk.Adjustment {
-                        lower: 0;
-                        upper: 23;
-                        step-increment: 1;
-                        page-increment: 1;
-                      };
-                    }
-
-                    Gtk.Label {
-                      label: ":";
-                      css-classes: ["title-2"];
-                      valign: center;
-                    }
-
-                    Gtk.SpinButton minutes_spin {
-                      orientation: vertical;
-                      numeric: true;
-                      width-chars: 2;
-                      adjustment: Gtk.Adjustment {
-                        lower: 0;
-                        upper: 59;
-                        step-increment: 1;
-                        page-increment: 5;
-                        value: 10;
-                      };
-                    }
-                  }
 
                   // Quick Presets section
                   Gtk.Box {
