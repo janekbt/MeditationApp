@@ -1,40 +1,46 @@
 use std::cell::{Cell, RefCell};
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use gtk::{glib, CompositeTemplate};
+use gtk::{glib, cairo, CompositeTemplate};
+
+/// Minutes-per-week the weekly-goal ring is normalised against.
+/// Hardcoded for now — a preference will expose this later.
+const WEEKLY_GOAL_MINS: i64 = 150;
 
 // ── GObject impl ──────────────────────────────────────────────────────────────
 
 #[derive(Debug, Default, CompositeTemplate)]
 #[template(resource = "/io/github/janekbt/Meditate/ui/stats_view.ui")]
 pub struct StatsView {
-    // Calendar
-    #[template_child] pub cal_prev_btn:      TemplateChild<gtk::Button>,
-    #[template_child] pub cal_next_btn:      TemplateChild<gtk::Button>,
-    #[template_child] pub cal_month_label:   TemplateChild<gtk::Label>,
-    #[template_child] pub cal_dow_box:       TemplateChild<gtk::Box>,
-    #[template_child] pub cal_grid:          TemplateChild<gtk::Grid>,
-    // Period toggle
-    #[template_child] pub period_7d_btn:     TemplateChild<gtk::ToggleButton>,
-    #[template_child] pub period_4w_btn:     TemplateChild<gtk::ToggleButton>,
-    #[template_child] pub period_3m_btn:     TemplateChild<gtk::ToggleButton>,
-    #[template_child] pub period_1y_btn:     TemplateChild<gtk::ToggleButton>,
+    // Hero goal
+    #[template_child] pub goal_ring:            TemplateChild<gtk::DrawingArea>,
+    #[template_child] pub goal_progress_label:  TemplateChild<gtk::Label>,
+    #[template_child] pub goal_sub_label:       TemplateChild<gtk::Label>,
+    // Contribution grid
+    #[template_child] pub contrib_range_label:  TemplateChild<gtk::Label>,
+    #[template_child] pub contrib_grid:         TemplateChild<gtk::Grid>,
+    #[template_child] pub contrib_legend_box:   TemplateChild<gtk::Box>,
+    // Insights
+    #[template_child] pub insights_list:        TemplateChild<gtk::ListBox>,
     // Chart
-    #[template_child] pub chart_container:   TemplateChild<gtk::Box>,
-    // Text stats
-    #[template_child] pub stat_avg_value:    TemplateChild<gtk::Label>,
-    #[template_child] pub stat_streak_value: TemplateChild<gtk::Label>,
-    #[template_child] pub stat_total_value:  TemplateChild<gtk::Label>,
+    #[template_child] pub period_7d_btn:        TemplateChild<gtk::ToggleButton>,
+    #[template_child] pub period_4w_btn:        TemplateChild<gtk::ToggleButton>,
+    #[template_child] pub period_3m_btn:        TemplateChild<gtk::ToggleButton>,
+    #[template_child] pub period_1y_btn:        TemplateChild<gtk::ToggleButton>,
+    #[template_child] pub chart_container:      TemplateChild<gtk::Box>,
+    // Mini-stats
+    #[template_child] pub mini_streak_value:    TemplateChild<gtk::Label>,
+    #[template_child] pub mini_total_value:     TemplateChild<gtk::Label>,
+    #[template_child] pub mini_sessions_value:  TemplateChild<gtk::Label>,
 
     // State
-    pub cal_year:   Cell<i32>,
-    pub cal_month:  Cell<u32>,
-    /// 42 calendar cells (cell box, day-number label), row-major order.
-    pub cal_cells:  RefCell<Vec<(gtk::Box, gtk::Label)>>,
-    /// True once build_dow_header + build_calendar_cells have run.
-    /// Deferred from constructed() to the first reload_calendar() call so
-    /// the 84 GTK widget allocations don't happen at startup.
-    cal_built:      Cell<bool>,
+    /// 91 contribution cells in row-major order (col-major actually, since
+    /// grid attach uses col × row). Stored as (column × 7 + row).
+    pub contrib_cells:  RefCell<Vec<gtk::Box>>,
+    /// Current weekly-goal progress ratio (0.0..=1.0) — redrawn each refresh.
+    pub goal_pct:       Cell<f64>,
+    /// True once the 91 contribution cells + legend swatches have been built.
+    cells_built:        Cell<bool>,
 }
 
 #[glib::object_subclass]
@@ -56,14 +62,8 @@ impl ObjectSubclass for StatsView {
 impl ObjectImpl for StatsView {
     fn constructed(&self) {
         self.parent_constructed();
-
-        let now = glib::DateTime::now_local().unwrap();
-        self.cal_year.set(now.year());
-        self.cal_month.set(now.month() as u32);
-
-        // build_dow_header + build_calendar_cells are deferred to the first
-        // reload_calendar() call (lazy).  Only wire signals here.
         self.wire_signals();
+        self.install_ring_draw();
     }
 
     fn dispose(&self) {
@@ -76,204 +76,250 @@ impl WidgetImpl for StatsView {}
 // ── One-time setup ────────────────────────────────────────────────────────────
 
 impl StatsView {
-    fn build_dow_header(&self) {
-        for name in ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"] {
-            let label = gtk::Label::builder()
-                .label(name)
-                .halign(gtk::Align::Center)
-                .css_classes(["caption", "dim-label"])
-                .build();
-            self.cal_dow_box.append(&label);
-        }
-    }
-
-    fn build_calendar_cells(&self) {
-        let mut cells = self.cal_cells.borrow_mut();
-        for row in 0..6i32 {
-            for col in 0..7i32 {
-                let num = gtk::Label::builder()
-                    .width_chars(2)
-                    .xalign(0.5)
-                    .vexpand(true)
-                    .build();
-                // halign::Fill lets the background extend edge-to-edge so
-                // consecutive active days form an unbroken coloured strip.
-                let cell = gtk::Box::builder()
-                    .orientation(gtk::Orientation::Vertical)
-                    .halign(gtk::Align::Fill)
-                    .valign(gtk::Align::Center)
-                    .height_request(30)
-                    .build();
-                cell.append(&num);
-                self.cal_grid.attach(&cell, col, row, 1, 1);
-                cells.push((cell, num));
-            }
-        }
-    }
-
     fn wire_signals(&self) {
         let obj = self.obj();
-
-        self.cal_prev_btn.connect_clicked(glib::clone!(
-            #[weak(rename_to = this)] obj,
-            move |_| {
-                let imp = this.imp();
-                let (y, m) = (imp.cal_year.get(), imp.cal_month.get());
-                let (ny, nm) = if m == 1 { (y - 1, 12) } else { (y, m - 1) };
-                imp.cal_year.set(ny);
-                imp.cal_month.set(nm);
-                imp.reload_calendar();
-            }
-        ));
-
-        self.cal_next_btn.connect_clicked(glib::clone!(
-            #[weak(rename_to = this)] obj,
-            move |_| {
-                let imp = this.imp();
-                let (y, m) = (imp.cal_year.get(), imp.cal_month.get());
-                let (ny, nm) = if m == 12 { (y + 1, 1) } else { (y, m + 1) };
-                imp.cal_year.set(ny);
-                imp.cal_month.set(nm);
-                imp.reload_calendar();
-            }
-        ));
-
         for btn in [
             &*self.period_7d_btn, &*self.period_4w_btn,
             &*self.period_3m_btn, &*self.period_1y_btn,
         ] {
             btn.connect_toggled(glib::clone!(
                 #[weak(rename_to = this)] obj,
-                move |b| {
-                    if b.is_active() {
-                        this.imp().reload_chart();
-                    }
-                }
+                move |b| if b.is_active() { this.imp().reload_chart(); }
             ));
+        }
+    }
+
+    fn install_ring_draw(&self) {
+        // Draw function reads the current pct from the Cell each redraw so
+        // reloading progress just needs queue_draw(), not a new closure.
+        let obj = self.obj();
+        self.goal_ring.set_draw_func(glib::clone!(
+            #[weak(rename_to = this)] obj,
+            move |area, cr, w, h| {
+                let pct = this.imp().goal_pct.get().clamp(0.0, 1.0);
+                draw_goal_ring(area, cr, w, h, pct);
+            }
+        ));
+    }
+
+    fn build_contrib_cells_and_legend(&self) {
+        // 13 columns × 7 rows — column-major fills week-by-week
+        let mut cells = self.contrib_cells.borrow_mut();
+        for col in 0..13i32 {
+            for row in 0..7i32 {
+                let cell = gtk::Box::builder()
+                    .css_classes(["contrib-cell"])
+                    .height_request(14)
+                    .width_request(14)
+                    .hexpand(true)
+                    .vexpand(true)
+                    .build();
+                self.contrib_grid.attach(&cell, col, row, 1, 1);
+                cells.push(cell);
+            }
+        }
+        // Legend swatches — 5 levels from 0 (empty) to 4 (max)
+        for level in 0..=4 {
+            let sw = gtk::Box::builder()
+                .css_classes(["contrib-swatch", &format!("level-{level}")])
+                .height_request(10)
+                .width_request(10)
+                .build();
+            self.contrib_legend_box.append(&sw);
         }
     }
 }
 
-// ── Reload ────────────────────────────────────────────────────────────────────
+// ── Reload entry points ───────────────────────────────────────────────────────
 
 impl StatsView {
     pub fn reload_all(&self) {
-        self.reload_calendar();
+        if !self.cells_built.get() {
+            self.build_contrib_cells_and_legend();
+            self.cells_built.set(true);
+        }
+        self.reload_goal_ring();
+        self.reload_contrib_grid();
+        self.reload_insights();
         self.reload_chart();
-        self.reload_text_stats();
+        self.reload_mini_stats();
     }
 
-    pub fn reload_calendar(&self) {
-        // Build the 84-widget calendar grid on first use rather than at
-        // construction time, so startup doesn't pay this cost.
-        if !self.cal_built.get() {
-            self.build_dow_header();
-            self.build_calendar_cells();
-            self.cal_built.set(true);
-        }
-
-        let year  = self.cal_year.get();
-        let month = self.cal_month.get();
-
-        // Month / year header label
-        let month_str = glib::DateTime::new(
-            &glib::TimeZone::local(), year, month as i32, 1, 0, 0, 0.0,
-        ).ok()
-            .and_then(|dt| dt.format("%B %Y").ok())
-            .map(|s| s.to_string())
-            .unwrap_or_default();
-        self.cal_month_label.set_label(&month_str);
-
-        // Days that had at least one session (local day-of-month numbers)
-        let active: std::collections::HashSet<u32> = self
-            .get_app()
-            .and_then(|app| app.with_db(|db| db.get_active_days_in_month(year, month)))
+    fn reload_goal_ring(&self) {
+        // Progress = last 7 days' total minutes / WEEKLY_GOAL_MINS
+        let avg_secs = self.get_app()
+            .and_then(|app| app.with_db(|db| db.get_running_average_secs(7)))
             .and_then(|r| r.ok())
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
+            .unwrap_or(0.0);
+        let week_mins = (avg_secs * 7.0 / 60.0) as i64;
+        let pct = week_mins as f64 / WEEKLY_GOAL_MINS as f64;
+        self.goal_pct.set(pct);
+        self.goal_ring.queue_draw();
 
-        // First weekday of the month (1=Mon … 7=Sun → offset 0–6)
-        let offset = glib::DateTime::new(
-            &glib::TimeZone::local(), year, month as i32, 1, 0, 0, 0.0,
-        ).ok()
-            .map(|dt| (dt.day_of_week() as usize).saturating_sub(1))
-            .unwrap_or(0);
+        // "1h 48m / 2h 30m"
+        self.goal_progress_label.set_markup(&format!(
+            "{} <span alpha=\"60%\" size=\"60%\">/ {}</span>",
+            format_hm_mins(week_mins),
+            format_hm_mins(WEEKLY_GOAL_MINS),
+        ));
+        let remain = (WEEKLY_GOAL_MINS - week_mins).max(0);
+        let sub = if remain == 0 {
+            format!("Goal reached ✓ · {} this week", format_hm_mins(week_mins))
+        } else {
+            format!("{} to go this week", format_hm_mins(remain))
+        };
+        self.goal_sub_label.set_label(&sub);
+    }
 
-        let dim = days_in_month(year, month);
+    fn reload_contrib_grid(&self) {
+        let now = glib::DateTime::now_local().unwrap();
+        // day_of_week: Mon = 1 … Sun = 7. We want row 0 = Mon, row 6 = Sun.
+        let today_dow_idx = (now.day_of_week() - 1) as i32;
+        let cur_monday = now.add_days(-today_dow_idx).unwrap();
 
-        let today = glib::DateTime::now_local().unwrap();
-        let (ty, tm, td) = (
-            today.year(),
-            today.month() as u32,
-            today.day_of_month() as u32,
-        );
+        // Fetch 91 days of totals (12 weeks ago Monday through today)
+        let since_dt = cur_monday.add_days(-12 * 7).unwrap();
+        let since = since_dt.format("%Y-%m-%d").unwrap().to_string();
+        let totals: std::collections::HashMap<String, i64> = self
+            .get_app()
+            .and_then(|app| app.with_db(|db| db.get_daily_totals(&since)))
+            .and_then(|r| r.ok())
+            .map(|v| v.into_iter().collect())
+            .unwrap_or_default();
 
-        let cells = self.cal_cells.borrow();
-        for (i, (cell, num_lbl)) in cells.iter().enumerate() {
-            let day = i as i32 - offset as i32 + 1;
-            let col = i % 7;
+        let cells = self.contrib_cells.borrow();
+        let today_unix = now.to_unix();
+        for col in 0..13i32 {
+            let weeks_ago = 12 - col;
+            let week_monday = cur_monday.add_days(-weeks_ago * 7).unwrap();
+            for row in 0..7i32 {
+                let date = week_monday.add_days(row).unwrap();
+                let idx = (col * 7 + row) as usize;
+                let cell = &cells[idx];
 
-            if day < 1 || day as u32 > dim {
-                num_lbl.set_label("");
-                cell.add_css_class("cal-day-empty");
-                cell.remove_css_class("cal-day-active");
-                cell.remove_css_class("cal-streak-prev");
-                cell.remove_css_class("cal-streak-next");
-                num_lbl.remove_css_class("cal-day-active-label");
-                num_lbl.remove_css_class("heading");
-            } else {
-                num_lbl.set_label(&day.to_string());
-                cell.remove_css_class("cal-day-empty");
+                // Clear prior level and today classes
+                for l in 0..=4 { cell.remove_css_class(&format!("level-{l}")); }
+                cell.remove_css_class("today");
 
-                let is_active = active.contains(&(day as u32));
-                // Only connect within the same week row, and only within this month.
-                let prev_active = is_active && col > 0 && day > 1
-                    && active.contains(&((day - 1) as u32));
-                let next_active = is_active && col < 6 && (day as u32) < dim
-                    && active.contains(&((day + 1) as u32));
-
-                if is_active {
-                    cell.add_css_class("cal-day-active");
-                    num_lbl.add_css_class("cal-day-active-label");
-                } else {
-                    cell.remove_css_class("cal-day-active");
-                    num_lbl.remove_css_class("cal-day-active-label");
+                if date.to_unix() > today_unix + 60 {
+                    // Future day — show as empty level-0 with reduced opacity
+                    cell.add_css_class("level-0");
+                    cell.set_opacity(0.3);
+                    continue;
                 }
-                if prev_active {
-                    cell.add_css_class("cal-streak-prev");
-                } else {
-                    cell.remove_css_class("cal-streak-prev");
-                }
-                if next_active {
-                    cell.add_css_class("cal-streak-next");
-                } else {
-                    cell.remove_css_class("cal-streak-next");
-                }
+                cell.set_opacity(1.0);
 
-                if year == ty && month == tm && day as u32 == td {
-                    num_lbl.add_css_class("heading");
-                } else {
-                    num_lbl.remove_css_class("heading");
+                let date_str = date.format("%Y-%m-%d").unwrap();
+                let mins = totals.get(date_str.as_str()).copied().unwrap_or(0) / 60;
+                let level = minutes_to_level(mins);
+                cell.add_css_class(&format!("level-{level}"));
+                if date.year() == now.year()
+                    && date.day_of_year() == now.day_of_year()
+                {
+                    cell.add_css_class("today");
                 }
             }
         }
 
-        // Disable next-month button when already showing the current month
-        self.cal_next_btn.set_sensitive(!(year == ty && month == tm));
+        // Date-range caption: "<since month> – <current month>"
+        let range = format!("{} – {}",
+            month_short(since_dt.month() as u32),
+            month_short(now.month() as u32),
+        );
+        self.contrib_range_label.set_label(&range);
     }
 
-    pub fn reload_chart(&self) {
+    fn reload_insights(&self) {
+        // Clear previous rows
+        while let Some(c) = self.insights_list.first_child() {
+            self.insights_list.remove(&c);
+        }
+
+        let Some(app) = self.get_app() else { return; };
+        let (this_month, last_month, longest, avg_secs) = app
+            .with_db(|db| {
+                let now = glib::DateTime::now_local().unwrap();
+                let (ty, tm) = (now.year(), now.month() as u32);
+                let (ly, lm) = if tm == 1 { (ty - 1, 12) } else { (ty, tm - 1) };
+                let tm_total = db.get_month_total_secs(ty, tm).unwrap_or(0);
+                let lm_total = db.get_month_total_secs(ly, lm).unwrap_or(0);
+                let longest = db.get_longest_session().unwrap_or(None);
+                let avg = db.get_running_average_secs(7).unwrap_or(0.0) as i64;
+                (tm_total, lm_total, longest, avg)
+            })
+            .unwrap_or((0, 0, None, 0));
+
+        // Trend (needs last month > 0 to compute a percentage)
+        if last_month > 0 {
+            let pct = ((this_month - last_month) as f64 / last_month as f64 * 100.0)
+                .round() as i32;
+            let (icon, title) = if pct >= 0 {
+                ("↗", "You're meditating more")
+            } else {
+                ("↘", "You're meditating less")
+            };
+            self.append_insight(icon, title, &format!(
+                "{pct:+}% vs last month ({} vs {})",
+                format_hm_secs(this_month),
+                format_hm_secs(last_month),
+            ), false);
+        }
+
+        // Longest session ever
+        if let Some((dur, start)) = longest {
+            let when = glib::DateTime::from_unix_local(start).ok()
+                .and_then(|d| d.format("%b %-d").ok())
+                .map(|s| s.to_string());
+            let body = match when {
+                Some(d) => format!("{} on {d}", format_hm_secs(dur)),
+                None => format_hm_secs(dur),
+            };
+            self.append_insight("◆", "Longest session", &body, true);
+        }
+
+        // Daily rhythm (average over last 7 days)
+        if avg_secs > 0 {
+            self.append_insight("◷", "Daily rhythm steady", &format!(
+                "{} average over last 7 days",
+                format_hm_secs(avg_secs),
+            ), false);
+        }
+
+        // Fallback when there's no data at all
+        if self.insights_list.first_child().is_none() {
+            self.append_insight("✦", "No sessions yet",
+                "Complete a meditation to start seeing insights here.", false);
+        }
+    }
+
+    fn append_insight(&self, icon: &str, title: &str, body: &str, accent: bool) {
+        let row = adw::ActionRow::builder()
+            .title(title)
+            .subtitle(body)
+            .activatable(false)
+            .build();
+        let mut classes = vec!["insight-icon"];
+        if accent { classes.push("accent"); }
+        let bubble = gtk::Label::builder()
+            .label(icon)
+            .css_classes(classes)
+            .width_request(28)
+            .height_request(28)
+            .halign(gtk::Align::Center)
+            .valign(gtk::Align::Center)
+            .build();
+        row.add_prefix(&bubble);
+        self.insights_list.append(&row);
+    }
+
+    fn reload_chart(&self) {
         let days = self.current_chart_days();
 
-        // Use glib for the since-date so the boundary is local midnight,
-        // not UTC midnight (avoids ±1 day shift for UTC± timezones).
         let today = glib::DateTime::now_local().unwrap();
         let since = today
             .add_days(-(days as i32 - 1))
             .unwrap()
-            .format("%Y-%m-%d")
-            .unwrap()
+            .format("%Y-%m-%d").unwrap()
             .to_string();
 
         let sparse = self
@@ -281,24 +327,19 @@ impl StatsView {
             .and_then(|app| app.with_db(|db| db.get_daily_totals(&since)))
             .and_then(|r| r.ok())
             .unwrap_or_default();
-
-        // Index sparse results for O(1) lookup instead of O(n) per day.
         let sparse_map: std::collections::HashMap<String, i64> =
             sparse.into_iter().collect();
 
-        // Dense list of (local-date-string, secs) for every day in the period
         let daily: Vec<(String, i64)> = (0..days as i64)
             .map(|i| {
-                let dt = today
-                    .add_days(-(days as i32 - 1) + i as i32)
-                    .unwrap();
+                let dt = today.add_days(-(days as i32 - 1) + i as i32).unwrap();
                 let date_str = dt.format("%Y-%m-%d").unwrap().to_string();
                 let dur = sparse_map.get(&date_str).copied().unwrap_or(0);
                 (date_str, dur)
             })
             .collect();
 
-        // Aggregate: monthly for 1 year (12 bars), weekly for 3 months (~13 bars)
+        // Aggregate: monthly for 1 year, weekly for 3 months
         let data: Vec<(String, i64)> = if days >= 365 {
             let mut months: Vec<(String, i64)> = Vec::new();
             for (date_str, dur) in &daily {
@@ -318,53 +359,32 @@ impl StatsView {
             daily
         };
 
-        // Clear previous chart content
         while let Some(child) = self.chart_container.first_child() {
             self.chart_container.remove(&child);
         }
 
-        if data.iter().all(|(_, d)| *d == 0) {
-            return;
-        }
-
-        let bars_h = 148i32;
+        let bars_h = 120i32;
         let chart_h = bars_h as f64;
-        let max_val = data.iter().map(|(_, d)| *d).max().unwrap_or(1).max(1);
+        let max_val = data.iter().map(|(_, d)| *d).max().unwrap_or(0).max(1);
 
-        // Y-axis — fixed to the bars height and top-aligned so labels sit
-        // within the bars area only, not over the x-axis label row.
+        // Y-axis with max and midpoint labels
         let y_axis = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .width_request(46)
             .height_request(bars_h)
             .valign(gtk::Align::Start)
             .build();
-        y_axis.append(
-            &gtk::Label::builder()
-                .label(format_hm(max_val))
-                .css_classes(["caption", "dim-label"])
-                .halign(gtk::Align::Start)
-                .build(),
-        );
+        y_axis.append(&axis_label(format_hm_secs(max_val)));
         y_axis.append(&gtk::Box::builder().vexpand(true).build());
-        y_axis.append(
-            &gtk::Label::builder()
-                .label(format_hm(max_val / 2))
-                .css_classes(["caption", "dim-label"])
-                .halign(gtk::Align::Start)
-                .build(),
-        );
+        y_axis.append(&axis_label(format_hm_secs(max_val / 2)));
         y_axis.append(&gtk::Box::builder().vexpand(true).build());
 
-        // Bars row — fixed height so vexpand spacers inside columns work
         let bars_box = gtk::Box::builder()
             .orientation(gtk::Orientation::Horizontal)
             .hexpand(true)
             .height_request(bars_h)
             .spacing(2)
             .build();
-
-        // X-axis labels row — same spacing so columns stay aligned with bars
         let xlabels_box = gtk::Box::builder()
             .orientation(gtk::Orientation::Horizontal)
             .hexpand(true)
@@ -372,7 +392,6 @@ impl StatsView {
             .build();
 
         for (i, (_date_str, dur)) in data.iter().enumerate() {
-            // Bar column
             let col = gtk::Box::builder()
                 .orientation(gtk::Orientation::Vertical)
                 .hexpand(true)
@@ -383,7 +402,7 @@ impl StatsView {
                 let bar_h = ((*dur as f64 / max_val as f64) * chart_h) as i32;
                 col.append(
                     &gtk::Box::builder()
-                        .height_request(bar_h.max(2))
+                        .height_request(bar_h.max(3))
                         .hexpand(true)
                         .css_classes(["chart-bar"])
                         .build(),
@@ -391,7 +410,6 @@ impl StatsView {
             }
             bars_box.append(&col);
 
-            // X-axis label — empty string keeps the column as an invisible spacer
             xlabels_box.append(
                 &gtk::Label::builder()
                     .label(x_label_text(&data, i, days))
@@ -414,30 +432,24 @@ impl StatsView {
         self.chart_container.append(&right_area);
     }
 
-    pub fn reload_text_stats(&self) {
+    fn reload_mini_stats(&self) {
         let Some(app) = self.get_app() else { return; };
-
-        // Batch all four DB reads into a single with_db() call to avoid
-        // acquiring and releasing the database lock four times.
-        let (avg, best, total) = app
+        let (streak, total, sessions) = app
             .with_db(|db| {
-                let avg_days = db
-                    .get_setting("running_avg_days", "7")
-                    .ok()
-                    .and_then(|s| s.parse::<u32>().ok())
-                    .unwrap_or(7);
-                let avg   = db.get_running_average_secs(avg_days).unwrap_or(0.0) as i64;
-                let best  = db.get_best_streak().unwrap_or(0);
-                let total = db.get_total_duration_secs().unwrap_or(0);
-                (avg, best, total)
+                let streak = db.get_best_streak().unwrap_or(0);
+                let total  = db.get_total_duration_secs().unwrap_or(0);
+                let count  = db.get_session_count().unwrap_or(0);
+                (streak, total, count)
             })
             .unwrap_or((0, 0, 0));
 
-        self.stat_avg_value.set_label(&format_hm(avg));
-        self.stat_streak_value.set_label(
-            &if best == 0 { "–".to_string() } else { format!("{best}d") }
+        self.mini_streak_value.set_label(
+            &if streak == 0 { "–".to_string() } else { format!("{streak}d") }
         );
-        self.stat_total_value.set_label(&format_hm(total));
+        self.mini_total_value.set_label(&format_hm_secs(total));
+        self.mini_sessions_value.set_label(
+            &if sessions == 0 { "–".to_string() } else { sessions.to_string() }
+        );
     }
 
     fn current_chart_days(&self) -> u32 {
@@ -460,45 +472,79 @@ impl StatsView {
     }
 }
 
-fn days_in_month(year: i32, month: u32) -> u32 {
-    let (ny, nm) = if month == 12 { (year + 1, 1u32) } else { (year, month + 1) };
-    glib::DateTime::new(&glib::TimeZone::local(), ny, nm as i32, 1, 0, 0, 0.0)
-        .ok()
-        .and_then(|dt| dt.add_days(-1).ok())
-        .map(|dt| dt.day_of_month() as u32)
-        .unwrap_or(30)
+fn axis_label(text: String) -> gtk::Label {
+    gtk::Label::builder()
+        .label(text)
+        .css_classes(["caption", "dim-label"])
+        .halign(gtk::Align::Start)
+        .build()
 }
 
-/// Returns the x-axis label text for bar `i`.  Empty string = no label.
+fn minutes_to_level(mins: i64) -> u8 {
+    match mins {
+        0       => 0,
+        1..=9   => 1,
+        10..=19 => 2,
+        20..=39 => 3,
+        _       => 4,
+    }
+}
+
+fn draw_goal_ring(area: &gtk::DrawingArea, cr: &cairo::Context, w: i32, h: i32, pct: f64) {
+    use std::f64::consts::PI;
+    let stroke = 8.0f64;
+    let size = w.min(h) as f64;
+    let r = (size - stroke) / 2.0;
+    let cx = w as f64 / 2.0;
+    let cy = h as f64 / 2.0;
+
+    // Resolve accent color (falls back to GNOME default blue).
+    let accent = WidgetExt::color(area);
+    let fg = (
+        accent.red()   as f64,
+        accent.green() as f64,
+        accent.blue()  as f64,
+    );
+    // Background track: same hue, 12% alpha
+    cr.set_source_rgba(fg.0, fg.1, fg.2, 0.12);
+    cr.set_line_width(stroke);
+    cr.set_line_cap(cairo::LineCap::Round);
+    cr.arc(cx, cy, r, 0.0, 2.0 * PI);
+    let _ = cr.stroke();
+
+    if pct > 0.0 {
+        cr.set_source_rgba(fg.0, fg.1, fg.2, 1.0);
+        cr.set_line_width(stroke);
+        cr.set_line_cap(cairo::LineCap::Round);
+        let start = -PI / 2.0;
+        let end   = start + 2.0 * PI * pct.min(1.0);
+        cr.arc(cx, cy, r, start, end);
+        let _ = cr.stroke();
+    }
+}
+
+/// Returns the x-axis label text for bar `i`.
 fn x_label_text(data: &[(String, i64)], i: usize, days: u32) -> String {
     let date_str = &data[i].0;
     let month: u32 = date_str[5..7].parse().unwrap_or(0);
     let day_num: u32 = date_str[8..10].parse().unwrap_or(0);
-
     match days {
-        // 7 days: abbreviated weekday under every bar
         7 => weekday_for(date_str).to_string(),
-        // 4 weeks: one date label per week (every 7th bar)
-        28 => {
-            if i % 7 == 0 {
-                format!("{} {}", month_abbr(month), day_num)
-            } else {
-                String::new()
-            }
-        }
-        // 3 months / 1 year (weekly buckets): month name at first bar of each month
+        28 => if i % 7 == 0 { format!("{} {}", month_short(month), day_num) } else { String::new() },
+        // 3-month and 1-year views: single-letter month when it changes,
+        // otherwise the 12 monthly labels in 1Y won't fit at 360 px.
         _ => {
-            let prev_month: u32 = if i == 0 {
-                0
-            } else {
-                data[i - 1].0[5..7].parse().unwrap_or(0)
-            };
-            if month != prev_month {
-                month_abbr(month).to_string()
-            } else {
-                String::new()
-            }
+            let prev_month: u32 = if i == 0 { 0 } else { data[i - 1].0[5..7].parse().unwrap_or(0) };
+            if month != prev_month { month_letter(month).to_string() } else { String::new() }
         }
+    }
+}
+
+fn month_letter(month: u32) -> &'static str {
+    match month {
+        1 => "J", 2 => "F", 3 => "M", 4 => "A",
+        5 => "M", 6 => "J", 7 => "J", 8 => "A",
+        9 => "S", 10 => "O", 11 => "N", _ => "D",
     }
 }
 
@@ -515,7 +561,7 @@ fn weekday_for(date_str: &str) -> &'static str {
         .unwrap_or("")
 }
 
-fn month_abbr(month: u32) -> &'static str {
+fn month_short(month: u32) -> &'static str {
     match month {
         1 => "Jan", 2 => "Feb", 3 => "Mar", 4 => "Apr",
         5 => "May", 6 => "Jun", 7 => "Jul", 8 => "Aug",
@@ -523,10 +569,21 @@ fn month_abbr(month: u32) -> &'static str {
     }
 }
 
-fn format_hm(secs: i64) -> String {
+fn format_hm_secs(secs: i64) -> String {
     if secs <= 0 { return "–".to_string(); }
     let h = secs / 3600;
     let m = (secs % 3600) / 60;
+    match (h, m) {
+        (0, m) => format!("{m}m"),
+        (h, 0) => format!("{h}h"),
+        (h, m) => format!("{h}h {m}m"),
+    }
+}
+
+fn format_hm_mins(mins: i64) -> String {
+    if mins <= 0 { return "0m".to_string(); }
+    let h = mins / 60;
+    let m = mins % 60;
     match (h, m) {
         (0, m) => format!("{m}m"),
         (h, 0) => format!("{h}h"),

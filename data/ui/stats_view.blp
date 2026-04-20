@@ -13,166 +13,235 @@ template $StatsView : Gtk.Widget {
 
       child: Gtk.Box {
         orientation: vertical;
-        spacing: 24;
+        spacing: 22;
         margin-top: 18;
         margin-bottom: 24;
-        margin-start: 12;
-        margin-end: 12;
+        margin-start: 14;
+        margin-end: 14;
 
-        // ── Calendar ─────────────────────────────────────────────────
+        // ── Weekly goal hero ─────────────────────────────────────────
         Gtk.Box {
-          orientation: vertical;
-          spacing: 8;
+          orientation: horizontal;
+          spacing: 16;
 
-          // Month navigation header
+          Gtk.DrawingArea goal_ring {
+            content-width: 72;
+            content-height: 72;
+            valign: center;
+          }
+
           Gtk.Box {
-            orientation: horizontal;
-            halign: center;
-            spacing: 8;
-
-            Gtk.Button cal_prev_btn {
-              icon-name: "go-previous-symbolic";
-              tooltip-text: _("Previous month");
-              css-classes: ["flat", "circular"];
-            }
-
-            Gtk.Label cal_month_label {
-              css-classes: ["title-4"];
-              width-chars: 14;
-              xalign: 0.5;
-            }
-
-            Gtk.Button cal_next_btn {
-              icon-name: "go-next-symbolic";
-              tooltip-text: _("Next month");
-              css-classes: ["flat", "circular"];
-            }
-          }
-
-          // Day-of-week header row (populated in code)
-          Gtk.Box cal_dow_box {
-            orientation: horizontal;
-            homogeneous: true;
-          }
-
-          // 7×6 day grid (cells populated in code)
-          Gtk.Grid cal_grid {
-            column-homogeneous: true;
-            row-homogeneous: true;
-            column-spacing: 0;
-            row-spacing: 4;
+            orientation: vertical;
+            spacing: 2;
             hexpand: true;
+            valign: center;
+
+            Gtk.Label {
+              label: _("Weekly goal");
+              css-classes: ["stats-eyebrow"];
+              halign: start;
+            }
+
+            Gtk.Label goal_progress_label {
+              css-classes: ["title-2"];
+              halign: start;
+              use-markup: true;
+              label: "–";
+            }
+
+            Gtk.Label goal_sub_label {
+              css-classes: ["caption", "dim-label"];
+              halign: start;
+              label: "";
+            }
           }
         }
 
-        // ── Period toggle + bar chart ─────────────────────────────────
+        // ── 13-week contribution strip ───────────────────────────────
         Gtk.Box {
           orientation: vertical;
           spacing: 8;
 
           Gtk.Box {
-            css-classes: ["linked"];
+            orientation: horizontal;
+
+            Gtk.Label {
+              label: _("Last 13 weeks");
+              css-classes: ["heading"];
+              halign: start;
+              hexpand: true;
+            }
+
+            Gtk.Label contrib_range_label {
+              css-classes: ["caption", "dim-label"];
+              halign: end;
+              label: "";
+            }
+          }
+
+          Gtk.Grid contrib_grid {
+            column-homogeneous: true;
+            row-homogeneous: true;
+            column-spacing: 3;
+            row-spacing: 3;
             hexpand: true;
+          }
 
-            Gtk.ToggleButton period_7d_btn {
-              label: _("7 Days");
-              active: true;
+          // Legend row
+          Gtk.Box {
+            orientation: horizontal;
+            spacing: 4;
+            halign: end;
+            margin-top: 4;
+
+            Gtk.Label {
+              label: _("Less");
+              css-classes: ["caption", "dim-label"];
+            }
+
+            Gtk.Box contrib_legend_box {
+              orientation: horizontal;
+              spacing: 3;
+            }
+
+            Gtk.Label {
+              label: _("More");
+              css-classes: ["caption", "dim-label"];
+            }
+          }
+        }
+
+        // ── Insights boxed list ──────────────────────────────────────
+        Gtk.Box {
+          orientation: vertical;
+          spacing: 8;
+
+          Gtk.Label {
+            label: _("Insights");
+            css-classes: ["stats-eyebrow"];
+            halign: start;
+            margin-start: 6;
+          }
+
+          Gtk.ListBox insights_list {
+            css-classes: ["boxed-list"];
+            selection-mode: none;
+          }
+        }
+
+        // ── Bar chart card ────────────────────────────────────────────
+        Gtk.Box chart_card {
+          orientation: vertical;
+          spacing: 10;
+          css-classes: ["card"];
+          margin-top: 0;
+
+          Gtk.Box {
+            orientation: horizontal;
+            margin-top: 12;
+            margin-start: 12;
+            margin-end: 12;
+
+            Gtk.Label {
+              label: _("Minutes / Day");
+              css-classes: ["stats-eyebrow"];
+              halign: start;
               hexpand: true;
             }
 
-            Gtk.ToggleButton period_4w_btn {
-              label: _("4 Wks");
-              group: period_7d_btn;
-              hexpand: true;
-            }
+            Gtk.Box {
+              css-classes: ["linked"];
+              halign: end;
 
-            Gtk.ToggleButton period_3m_btn {
-              label: _("3 Mo");
-              group: period_7d_btn;
-              hexpand: true;
-            }
-
-            Gtk.ToggleButton period_1y_btn {
-              label: _("1 Year");
-              group: period_7d_btn;
-              hexpand: true;
+              Gtk.ToggleButton period_7d_btn {
+                label: _("7D");
+                active: true;
+              }
+              Gtk.ToggleButton period_4w_btn {
+                label: _("4W");
+                group: period_7d_btn;
+              }
+              Gtk.ToggleButton period_3m_btn {
+                label: _("3M");
+                group: period_7d_btn;
+              }
+              Gtk.ToggleButton period_1y_btn {
+                label: _("1Y");
+                group: period_7d_btn;
+              }
             }
           }
 
           Gtk.Box chart_container {
             orientation: horizontal;
             hexpand: true;
+            margin-start: 10;
+            margin-end: 12;
+            margin-bottom: 10;
           }
         }
 
-        // ── Text stats card ───────────────────────────────────────────
+        // ── Mini-stats row ───────────────────────────────────────────
         Gtk.Box {
           orientation: horizontal;
-          css-classes: ["card"];
+          spacing: 10;
+          homogeneous: true;
 
           Gtk.Box {
             orientation: vertical;
-            spacing: 4;
-            hexpand: true;
-            margin-top: 16;
-            margin-bottom: 16;
+            spacing: 2;
+            css-classes: ["mini-stat"];
+            margin-top: 10;
+            margin-bottom: 10;
 
-            Gtk.Label stat_avg_value {
-              css-classes: ["title-3"];
+            Gtk.Label mini_streak_value {
+              css-classes: ["title-2", "accent"];
               halign: center;
               label: "–";
             }
 
             Gtk.Label {
-              label: _("Daily avg");
+              label: _("Streak");
               css-classes: ["caption", "dim-label"];
               halign: center;
             }
           }
 
-          Gtk.Separator {
-            orientation: vertical;
-          }
-
           Gtk.Box {
             orientation: vertical;
-            spacing: 4;
-            hexpand: true;
-            margin-top: 16;
-            margin-bottom: 16;
+            spacing: 2;
+            css-classes: ["mini-stat"];
+            margin-top: 10;
+            margin-bottom: 10;
 
-            Gtk.Label stat_streak_value {
-              css-classes: ["title-3"];
+            Gtk.Label mini_total_value {
+              css-classes: ["title-2"];
               halign: center;
               label: "–";
             }
 
             Gtk.Label {
-              label: _("Best streak");
+              label: _("Total");
               css-classes: ["caption", "dim-label"];
               halign: center;
             }
           }
 
-          Gtk.Separator {
-            orientation: vertical;
-          }
-
           Gtk.Box {
             orientation: vertical;
-            spacing: 4;
-            hexpand: true;
-            margin-top: 16;
-            margin-bottom: 16;
+            spacing: 2;
+            css-classes: ["mini-stat"];
+            margin-top: 10;
+            margin-bottom: 10;
 
-            Gtk.Label stat_total_value {
-              css-classes: ["title-3"];
+            Gtk.Label mini_sessions_value {
+              css-classes: ["title-2"];
               halign: center;
               label: "–";
             }
 
             Gtk.Label {
-              label: _("Total time");
+              label: _("Sessions");
               css-classes: ["caption", "dim-label"];
               halign: center;
             }

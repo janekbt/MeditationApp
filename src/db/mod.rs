@@ -514,5 +514,39 @@ impl Database {
         let rows = stmt.query_map(params![start_str, end_str], |row| row.get::<_, u32>(0))?;
         rows.collect()
     }
+
+    /// Total number of sessions ever recorded.
+    pub fn get_session_count(&self) -> Result<i64> {
+        self.conn.query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))
+    }
+
+    /// Longest single session, as (duration_secs, start_time_unix). None if
+    /// the database is empty.
+    pub fn get_longest_session(&self) -> Result<Option<(i64, i64)>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT duration_secs, start_time FROM sessions
+             ORDER BY duration_secs DESC LIMIT 1"
+        )?;
+        let mut rows = stmt.query([])?;
+        match rows.next()? {
+            Some(row) => Ok(Some((row.get(0)?, row.get(1)?))),
+            None => Ok(None),
+        }
+    }
+
+    /// Sum of session durations (seconds) in a given local-time calendar month.
+    pub fn get_month_total_secs(&self, year: i32, month: u32) -> Result<i64> {
+        let start_str = format!("{year:04}-{month:02}-01");
+        let (next_year, next_month) = if month == 12 { (year + 1, 1) } else { (year, month + 1) };
+        let end_str = format!("{next_year:04}-{next_month:02}-01");
+        self.conn.query_row(
+            "SELECT COALESCE(SUM(duration_secs), 0)
+             FROM sessions
+             WHERE start_time >= strftime('%s', ?1, 'utc')
+               AND start_time <  strftime('%s', ?2, 'utc')",
+            params![start_str, end_str],
+            |row| row.get(0),
+        )
+    }
 }
 

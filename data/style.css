@@ -33,6 +33,65 @@ button.preset-chip {
     min-width: 2px;
 }
 
+/* Uppercase section eyebrow label used for "Weekly goal", "Insights",
+   "Minutes / Day" etc. on the stats page. */
+.stats-eyebrow {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    opacity: 0.65;
+    text-transform: uppercase;
+}
+
+/* ── Contribution strip cells (13 weeks × 7 days) ────────────────── */
+.contrib-cell {
+    border-radius: 3px;
+    background-color: alpha(@accent_color, 0.05);
+}
+.contrib-cell.level-1 { background-color: alpha(@accent_color, 0.25); }
+.contrib-cell.level-2 { background-color: alpha(@accent_color, 0.45); }
+.contrib-cell.level-3 { background-color: alpha(@accent_color, 0.70); }
+.contrib-cell.level-4 { background-color: @accent_color; }
+.contrib-cell.today {
+    outline: 1.5px solid @accent_color;
+    outline-offset: -1.5px;
+}
+
+/* Tiny legend swatches mirror the cell levels. */
+.contrib-swatch {
+    border-radius: 2px;
+    min-width: 10px;
+    min-height: 10px;
+}
+.contrib-swatch.level-0 { background-color: alpha(@accent_color, 0.05); }
+.contrib-swatch.level-1 { background-color: alpha(@accent_color, 0.25); }
+.contrib-swatch.level-2 { background-color: alpha(@accent_color, 0.45); }
+.contrib-swatch.level-3 { background-color: alpha(@accent_color, 0.70); }
+.contrib-swatch.level-4 { background-color: @accent_color; }
+
+/* ── Insight rows ────────────────────────────────────────────────── */
+.insight-icon {
+    min-width: 28px;
+    min-height: 28px;
+    border-radius: 8px;
+    background-color: alpha(@accent_color, 0.12);
+    color: @accent_color;
+    font-weight: 700;
+}
+.insight-icon.accent {
+    background-color: @accent_color;
+    color: @accent_fg_color;
+}
+
+/* ── Bottom mini-stat cards ──────────────────────────────────────── */
+.mini-stat {
+    padding: 10px 8px;
+    border-radius: 10px;
+    background-color: @card_bg_color;
+    border: 1px solid alpha(@card_fg_color, 0.08);
+}
+.title-2.accent { color: @accent_color; }
+
 /* Empty calendar cell — explicit background so the cell fully repaints
    when a day number is removed, preventing stale render-node residue. */
 .cal-day-empty {
