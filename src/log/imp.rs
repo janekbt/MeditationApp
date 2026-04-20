@@ -502,7 +502,7 @@ fn date_group_display(unix_secs: i64) -> String {
     let Some(dt) = glib::DateTime::from_unix_local(unix_secs).ok() else {
         return String::new();
     };
-    let now = glib::DateTime::now_local().unwrap();
+    let now = crate::time::now_local();
     let same_day = now.year() == dt.year() && now.day_of_year() == dt.day_of_year();
     if same_day { return "Today".to_string(); }
     if let Ok(yest) = now.add_days(-1) {

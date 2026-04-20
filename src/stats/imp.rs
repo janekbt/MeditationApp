@@ -157,7 +157,7 @@ impl StatsView {
     fn reload_goal_ring(&self) {
         // Total time logged since the locale's current-week start. A fresh
         // Monday (in a Monday-start locale) resets the ring to 0.
-        let now = glib::DateTime::now_local().unwrap();
+        let now = crate::time::now_local();
         let week_start = now.add_days(-days_since_week_start(&now)).unwrap();
         let since = week_start.format("%Y-%m-%d").unwrap().to_string();
         let (week_secs, goal_mins) = self.get_app()
@@ -192,10 +192,20 @@ impl StatsView {
             format!("{} to go this week", format_hm_mins(remain))
         };
         self.goal_sub_label.set_label(&sub);
+
+        // Accessible name for the Cairo-drawn ring — no intrinsic text for
+        // screen readers to fall back on.
+        let ring_name = format!(
+            "Weekly goal: {}% — {} of {}",
+            (pct.clamp(0.0, 9.99) * 100.0).round() as i32,
+            format_hm_mins(week_mins),
+            format_hm_mins(goal_mins),
+        );
+        self.goal_ring.update_property(&[gtk::accessible::Property::Label(&ring_name)]);
     }
 
     fn reload_contrib_grid(&self) {
-        let now = glib::DateTime::now_local().unwrap();
+        let now = crate::time::now_local();
         // Row 0 = locale's first day of week (Monday, or Sunday on en_US etc.)
         let cur_week_start = now.add_days(-days_since_week_start(&now)).unwrap();
 
@@ -256,6 +266,20 @@ impl StatsView {
                 {
                     cell.add_css_class("today");
                 }
+
+                // Accessible name — without this the ★ reads as "black star"
+                // and empty cells announce nothing useful.
+                let readable = date.format("%A, %B %e")
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|_| date_str.to_string());
+                let name = if level == 4 {
+                    format!("{readable} — goal exceeded, {mins} minutes")
+                } else if mins > 0 {
+                    format!("{readable} — {mins} minutes")
+                } else {
+                    format!("{readable} — no sessions")
+                };
+                cell.update_property(&[gtk::accessible::Property::Label(&name)]);
             }
         }
 
@@ -273,7 +297,7 @@ impl StatsView {
         }
 
         let Some(app) = self.get_app() else { return; };
-        let now = glib::DateTime::now_local().unwrap();
+        let now = crate::time::now_local();
 
         // Batch every insight-driving query into a single DB borrow.
         let data = app.with_db(|db| {
@@ -433,7 +457,7 @@ impl StatsView {
     fn reload_chart(&self) {
         let days = self.current_chart_days();
 
-        let today = glib::DateTime::now_local().unwrap();
+        let today = crate::time::now_local();
         let since = today
             .add_days(-(days as i32 - 1))
             .unwrap()
@@ -639,22 +663,24 @@ fn days_since_week_start(now: &glib::DateTime) -> i32 {
     (today - start + 7) % 7
 }
 
-/// Returns (seconds in the current rolling 7-day window,
-/// seconds in the previous 7-day window). `daily_totals` is the sparse
-/// list of (`YYYY-MM-DD`, secs) we already fetched for the last 14 days.
+/// Returns (seconds this calendar week so far, seconds in the same
+/// portion of last week). Weeks start on the locale's first weekday,
+/// matching the goal ring and heatmap. The comparison is apples-to-
+/// apples: if it's Wednesday, we compare Mon–Wed to Mon–Wed of the
+/// prior week, not a partial week against a full one.
 fn week_over_week(daily_totals: &[(String, i64)], now: &glib::DateTime) -> (i64, i64) {
     use std::collections::HashMap;
     let map: HashMap<&str, i64> =
         daily_totals.iter().map(|(k, v)| (k.as_str(), *v)).collect();
-    let mut this_week = 0i64;
-    let mut last_week = 0i64;
-    for i in 0..14 {
-        let Ok(dt) = now.add_days(-i) else { continue; };
-        let Ok(s) = dt.format("%Y-%m-%d") else { continue; };
-        let secs = map.get(s.as_str()).copied().unwrap_or(0);
-        if i < 7 { this_week += secs; } else { last_week += secs; }
-    }
-    (this_week, last_week)
+    let days_elapsed = days_since_week_start(now) + 1;   // 1..=7
+    let sum_range = |start_offset: i32| -> i64 {
+        (0..days_elapsed).filter_map(|i| {
+            let dt = now.add_days(start_offset - i).ok()?;
+            let key = dt.format("%Y-%m-%d").ok()?;
+            Some(map.get(key.as_str()).copied().unwrap_or(0))
+        }).sum()
+    };
+    (sum_range(0), sum_range(-7))
 }
 
 /// Next round-number session count above `current`. None once past 5000.

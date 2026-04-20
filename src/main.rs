@@ -7,6 +7,7 @@ pub mod log;
 mod preferences;
 pub mod sound;
 pub mod stats;
+pub mod time;
 pub mod timer;
 mod window;
 
