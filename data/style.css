@@ -1,6 +1,9 @@
-/* Accent-tinted streak chip above the hero time */
+/* Accent-tinted streak chip above the hero time. Background is an alpha
+   tint of @accent_bg_color (the fill pair) while the text uses
+   @accent_color (the standalone/text pair) — this is the HIG pattern
+   for tinted surfaces with accent foreground. */
 .streak-chip {
-    background-color: alpha(@accent_color, 0.15);
+    background-color: alpha(@accent_bg_color, 0.15);
     color: @accent_color;
     border-radius: 100px;
     padding: 4px 12px;
@@ -91,12 +94,6 @@ button.period-pill:checked:hover {
     font-weight: 600;
 }
 
-.chart-bar {
-    background-color: @accent_bg_color;
-    border-radius: 2px 2px 0 0;
-    min-width: 2px;
-}
-
 /* Percentage text rendered inside the goal ring on the Stats tab. */
 .goal-pct {
     font-size: 0.95rem;
@@ -116,16 +113,18 @@ button.period-pill:checked:hover {
 }
 
 /* ── Contribution strip cells (13 weeks × 7 days) ────────────────── */
+/* All levels are filled surfaces, so they alpha-tint @accent_bg_color —
+   the ramp ends at the same hue as level-4's solid fill. */
 .contrib-cell {
     border-radius: 3px;
-    background-color: alpha(@accent_color, 0.05);
+    background-color: alpha(@accent_bg_color, 0.05);
     color: @accent_fg_color;
     font-size: 0.7rem;
     font-weight: 800;
 }
-.contrib-cell.level-1 { background-color: alpha(@accent_color, 0.25); }
-.contrib-cell.level-2 { background-color: alpha(@accent_color, 0.45); }
-.contrib-cell.level-3 { background-color: alpha(@accent_color, 0.70); }
+.contrib-cell.level-1 { background-color: alpha(@accent_bg_color, 0.25); }
+.contrib-cell.level-2 { background-color: alpha(@accent_bg_color, 0.45); }
+.contrib-cell.level-3 { background-color: alpha(@accent_bg_color, 0.70); }
 .contrib-cell.level-4 { background-color: @accent_bg_color; }
 .contrib-cell.today {
     outline: 1.5px solid @accent_color;
@@ -138,10 +137,10 @@ button.period-pill:checked:hover {
     min-width: 10px;
     min-height: 10px;
 }
-.contrib-swatch.level-0 { background-color: alpha(@accent_color, 0.05); }
-.contrib-swatch.level-1 { background-color: alpha(@accent_color, 0.25); }
-.contrib-swatch.level-2 { background-color: alpha(@accent_color, 0.45); }
-.contrib-swatch.level-3 { background-color: alpha(@accent_color, 0.70); }
+.contrib-swatch.level-0 { background-color: alpha(@accent_bg_color, 0.05); }
+.contrib-swatch.level-1 { background-color: alpha(@accent_bg_color, 0.25); }
+.contrib-swatch.level-2 { background-color: alpha(@accent_bg_color, 0.45); }
+.contrib-swatch.level-3 { background-color: alpha(@accent_bg_color, 0.70); }
 .contrib-swatch.level-4 { background-color: @accent_bg_color; }
 
 /* ── Insight rows ────────────────────────────────────────────────── */
@@ -149,7 +148,9 @@ button.period-pill:checked:hover {
     min-width: 28px;
     min-height: 28px;
     border-radius: 8px;
-    background-color: alpha(@accent_color, 0.12);
+    /* Tinted surface uses alpha(@accent_bg_color, …) so it keeps the
+       same hue as the fully-filled .accent variant below. */
+    background-color: alpha(@accent_bg_color, 0.12);
     color: @accent_color;
     font-weight: 700;
 }
@@ -206,6 +207,9 @@ button.period-pill:checked:hover {
     letter-spacing: 0.08em;
     opacity: 0.6;
     margin-top: 2px;
+    /* HIG forbids all-caps in source text; render sentence-case "min"
+       as an uppercase eyebrow via CSS instead. */
+    text-transform: uppercase;
 }
 .log-time {
     font-size: 0.72rem;
@@ -223,8 +227,9 @@ button.period-pill:checked:hover {
     border-radius: 9999px;
     background-color: alpha(@card_fg_color, 0.35);
 }
+/* Note block — HIG forbids italics for emphasis. The left bar +
+   slightly reduced opacity already reads as a quote / subdued text. */
 .log-note {
-    font-style: italic;
     font-size: 0.85rem;
     opacity: 0.82;
     padding-left: 8px;
@@ -232,7 +237,6 @@ button.period-pill:checked:hover {
     line-height: 1.45;
 }
 .log-note-placeholder {
-    font-style: italic;
     font-size: 0.78rem;
     opacity: 0.45;
 }

@@ -324,9 +324,9 @@ impl StatsView {
             let pct = ((data.this_month - data.last_month) as f64
                 / data.last_month as f64 * 100.0).round() as i32;
             let (icon, title) = if pct >= 0 {
-                ("↗", "You're meditating more")
+                ("↗", "Pace up vs last month")
             } else {
-                ("↘", "You're meditating less")
+                ("↘", "Pace down vs last month")
             };
             self.append_insight(icon, title, &format!(
                 "{pct:+}% vs last month ({} vs {})",
@@ -398,7 +398,7 @@ impl StatsView {
         // Fallback when there's no data at all.
         if self.insights_list.first_child().is_none() {
             self.append_insight("✦", "No sessions yet",
-                "Complete a meditation to start seeing insights here.", false);
+                "Complete a meditation to start seeing insights here", false);
         }
     }
 
@@ -519,7 +519,7 @@ impl StatsView {
             xlabels_box.append(
                 &gtk::Label::builder()
                     .label(x_label_text(&data, i, days))
-                    .css_classes(["caption", "dim-label"])
+                    .css_classes(["caption", "dimmed"])
                     .halign(gtk::Align::Center)
                     .hexpand(true)
                     .build(),
@@ -622,7 +622,7 @@ fn next_session_milestone(current: i64) -> Option<(i64, i64)> {
 fn axis_label(text: String) -> gtk::Label {
     gtk::Label::builder()
         .label(text)
-        .css_classes(["caption", "dim-label"])
+        .css_classes(["caption", "dimmed"])
         .halign(gtk::Align::Start)
         .build()
 }

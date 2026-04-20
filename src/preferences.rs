@@ -34,7 +34,7 @@ pub fn show_preferences(app: &MeditateApplication) {
 
     let sound_row = adw::ComboRow::builder()
         .title("End sound")
-        .model(&gtk::StringList::new(&["None", "Singing Bowl", "Bell", "Gong", "Custom file…"]))
+        .model(&gtk::StringList::new(&["None", "Singing bowl", "Bell", "Gong", "Custom file…"]))
         .build();
 
     let preview_btn = gtk::Button::builder()
@@ -283,7 +283,7 @@ pub fn show_preferences(app: &MeditateApplication) {
 
     let add_preset_btn = gtk::Button::builder()
         .icon_name("list-add-symbolic")
-        .tooltip_text("Add preset")
+        .tooltip_text("Add Preset")
         .valign(gtk::Align::Center)
         .css_classes(["flat"])
         .build();
@@ -341,7 +341,7 @@ pub fn show_preferences(app: &MeditateApplication) {
             let del_btn = gtk::Button::builder()
                 .icon_name("user-trash-symbolic")
                 .valign(gtk::Align::Center)
-                .tooltip_text("Remove preset")
+                .tooltip_text("Remove Preset")
                 .css_classes(["flat"])
                 .build();
             spin_row.add_suffix(&del_btn);
@@ -507,7 +507,7 @@ pub fn show_preferences(app: &MeditateApplication) {
 
     let add_btn = gtk::Button::builder()
         .icon_name("list-add-symbolic")
-        .tooltip_text("Add label")
+        .tooltip_text("Add Label")
         .valign(gtk::Align::Center)
         .css_classes(["flat"])
         .build();
@@ -676,7 +676,7 @@ fn make_label_row(
     let discard_btn = gtk::Button::builder()
         .icon_name("edit-undo-symbolic")
         .valign(gtk::Align::Center)
-        .tooltip_text("Discard changes")
+        .tooltip_text("Discard Changes")
         .css_classes(["flat"])
         .visible(false)
         .build();
@@ -690,7 +690,7 @@ fn make_label_row(
     let delete_btn = gtk::Button::builder()
         .icon_name("user-trash-symbolic")
         .valign(gtk::Align::Center)
-        .tooltip_text("Delete label")
+        .tooltip_text("Delete Label")
         .css_classes(["flat"])
         .build();
 
@@ -798,7 +798,7 @@ fn make_label_row(
                     format!("{session_count} sessions use this label and will become unlabeled.")
                 };
                 let alert = adw::AlertDialog::builder()
-                    .heading("Delete label?")
+                    .heading("Delete Label?")
                     .body(body)
                     .default_response("cancel")
                     .close_response("cancel")
@@ -904,7 +904,7 @@ fn wire_data_actions(
         #[weak] dialog,
         move |_| {
             let alert = adw::AlertDialog::builder()
-                .heading("Delete every session?")
+                .heading("Delete Every Session?")
                 .body("This permanently removes every session in your log. Export a backup first if you want to keep any history.")
                 .default_response("cancel")
                 .close_response("cancel")

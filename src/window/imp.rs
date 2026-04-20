@@ -142,15 +142,20 @@ impl MeditateWindow {
             .build();
         self.timer_view.set_running_label(time_label.clone());
 
+        // Pause is a regular action (toggle-ish, non-destructive); don't
+        // accent-tint it or it visually outranks Stop. Stop, per HIG, is
+        // the consequential action in this view — but not destructive
+        // enough for .destructive-action either, so leave it as a plain
+        // .pill button.
         let pause_btn = gtk::Button::builder()
             .label("Pause")
-            .css_classes(["suggested-action", "pill"])
-            .tooltip_text("Pause the timer")
+            .css_classes(["pill"])
+            .tooltip_text("Pause Timer")
             .build();
         let stop_btn = gtk::Button::builder()
             .label("Stop")
             .css_classes(["pill"])
-            .tooltip_text("Stop and save the session")
+            .tooltip_text("Stop and Save Session")
             .build();
 
         let btn_box = gtk::Box::builder()

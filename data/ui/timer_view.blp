@@ -45,7 +45,7 @@ template $TimerView : Gtk.Widget {
             // Subtitle shown only in countdown mode
             Gtk.Label time_unit_label {
               label: _("Hours · Minutes");
-              css-classes: ["caption", "dim-label"];
+              css-classes: ["caption", "dimmed"];
               halign: center;
             }
           }
@@ -144,9 +144,10 @@ template $TimerView : Gtk.Widget {
               }
 
               Adw.ComboRow setup_sound_row {
-                title: _("Completion Sound");
+                title: _("Completion sound");
                 model: Gtk.StringList {
-                  strings ["None", "Singing Bowl", "Bell", "Gong", "Custom file…"]
+                  // Sentence case for drop-down items, per HIG.
+                  strings ["None", "Singing bowl", "Bell", "Gong", "Custom file…"]
                 };
               }
             };

@@ -261,7 +261,7 @@ fn build_section_frame(unix_secs: i64) -> (gtk::Box, gtk::Label, gtk::Box) {
         .build();
     let caption = gtk::Label::builder()
         .label("")
-        .css_classes(["caption", "dim-label"])
+        .css_classes(["caption", "dimmed"])
         .halign(gtk::Align::Start)
         .build();
     header.append(&date_label);
@@ -308,7 +308,9 @@ fn build_card(session: &Session, label_map: &std::collections::HashMap<i64, &str
         .halign(gtk::Align::Start)
         .build();
     let unit_label = gtk::Label::builder()
-        .label("MIN")
+        // Lowercase in source; the .log-unit CSS class renders it uppercase
+        // (HIG forbids all-caps in source text).
+        .label(tr("min"))
         .css_classes(["log-unit"])
         .halign(gtk::Align::Start)
         .build();
@@ -339,7 +341,7 @@ fn build_card(session: &Session, label_map: &std::collections::HashMap<i64, &str
     let note_text = session.note.as_deref().unwrap_or("").trim();
     if note_text.is_empty() {
         let placeholder = gtk::Label::builder()
-            .label("No note added")
+            .label(tr("No note added"))
             .css_classes(["log-note-placeholder"])
             .halign(gtk::Align::Start)
             .xalign(0.0)
@@ -381,7 +383,7 @@ fn build_card(session: &Session, label_map: &std::collections::HashMap<i64, &str
         .css_classes(["flat", "circular"])
         .valign(gtk::Align::Center)
         .margin_end(8)
-        .tooltip_text("Delete session")
+        .tooltip_text(tr("Delete Session"))
         // Not Tab-focusable: AdwDialog's auto-focus-restore on close
         // would otherwise land on whichever trash button was last
         // hovered and the ScrolledWindow would scroll to it.
@@ -396,16 +398,18 @@ fn build_card(session: &Session, label_map: &std::collections::HashMap<i64, &str
         }
     });
 
+    // Card is focusable so it's reachable via Tab — Enter opens the edit
+    // dialog, Delete triggers the same undo-toast flow as the trash button.
     let card = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
         .css_classes(["log-card"])
+        .focusable(true)
         .build();
     card.append(&stripe);
     card.append(&content);
     card.append(&delete_btn);
 
-    // Tap anywhere on the card to open the edit dialog; per-card
-    // delete sits as a small flat button in the top-right of the right col.
+    // Tap / click anywhere on the card → edit.
     let click = gtk::GestureClick::new();
     let session_id = session.id;
     click.connect_released(glib::clone!(
@@ -417,6 +421,31 @@ fn build_card(session: &Session, label_map: &std::collections::HashMap<i64, &str
         }
     ));
     card.add_controller(click);
+
+    // Keyboard: Enter / Space opens edit, Delete starts the undo-toast flow.
+    let key = gtk::EventControllerKey::new();
+    key.connect_key_pressed(glib::clone!(
+        #[weak] card,
+        #[upgrade_or] glib::Propagation::Proceed,
+        move |_, keyval, _, _| {
+            let Some(win) = card.root()
+                .and_then(|r| r.downcast::<crate::window::MeditateWindow>().ok())
+            else { return glib::Propagation::Proceed; };
+            let imp = win.imp().log_view.imp();
+            match keyval {
+                gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter | gtk::gdk::Key::space => {
+                    imp.show_edit_dialog(session_id);
+                    glib::Propagation::Stop
+                }
+                gtk::gdk::Key::Delete | gtk::gdk::Key::KP_Delete => {
+                    imp.on_delete_clicked(session_id);
+                    glib::Propagation::Stop
+                }
+                _ => glib::Propagation::Proceed,
+            }
+        }
+    ));
+    card.add_controller(key);
 
     card
 }
@@ -521,7 +550,7 @@ impl LogView {
         card.set_visible(false);
 
         let toast = adw::Toast::builder()
-            .title("Session deleted")
+            .title(tr("Session deleted"))
             .button_label("Undo")
             .timeout(5)
             .build();
@@ -615,12 +644,12 @@ impl LogView {
 
         // ── Duration (hours + minutes as AdwSpinRows) ─────────────────
         let hours_spin = adw::SpinRow::builder()
-            .title("Hours")
+            .title(tr("Hours"))
             .adjustment(&gtk::Adjustment::new(0.0, 0.0, 23.0, 1.0, 5.0, 0.0))
             .digits(0)
             .build();
         let minutes_spin = adw::SpinRow::builder()
-            .title("Minutes")
+            .title(tr("Minutes"))
             .adjustment(&gtk::Adjustment::new(0.0, 0.0, 59.0, 1.0, 5.0, 0.0))
             .digits(0)
             .build();
@@ -637,7 +666,7 @@ impl LogView {
         let init_minute = init_dt.as_ref().map(|d| d.minute()).unwrap_or(0);
 
         let date_row = adw::ActionRow::builder()
-            .title("Date")
+            .title(tr("Date"))
             .subtitle(format_date(init_time))
             .build();
 
@@ -654,7 +683,7 @@ impl LogView {
         let cal_btn = gtk::MenuButton::builder()
             .icon_name("office-calendar-symbolic")
             .valign(gtk::Align::Center)
-            .tooltip_text("Pick a date")
+            .tooltip_text(tr("Pick a Date"))
             .css_classes(["flat"])
             .popover(&cal_popover)
             .always_show_arrow(false)
@@ -679,12 +708,12 @@ impl LogView {
 
         // ── Start time (hour + minute as AdwSpinRows) ─────────────────
         let time_hours_spin = adw::SpinRow::builder()
-            .title("Hour")
+            .title(tr("Hour"))
             .adjustment(&gtk::Adjustment::new(init_hour as f64, 0.0, 23.0, 1.0, 5.0, 0.0))
             .digits(0)
             .build();
         let time_minutes_spin = adw::SpinRow::builder()
-            .title("Minute")
+            .title(tr("Minute"))
             .adjustment(&gtk::Adjustment::new(init_minute as f64, 0.0, 59.0, 1.0, 5.0, 0.0))
             .digits(0)
             .build();
@@ -694,7 +723,7 @@ impl LogView {
             .chain(labels.iter().map(|l| l.name.as_str()))
             .collect();
         let label_row = adw::ComboRow::builder()
-            .title("Label")
+            .title(tr("Label"))
             .model(&gtk::StringList::new(&label_names))
             .build();
 
@@ -730,10 +759,10 @@ impl LogView {
             .css_classes(["log-note-editor"])
             .build();
         let note_caption = gtk::Label::builder()
-            .label("Note (optional)")
+            .label(tr("Note (optional)"))
             .halign(gtk::Align::Start)
             .margin_start(12)
-            .css_classes(["caption", "dim-label"])
+            .css_classes(["caption", "dimmed"])
             .build();
         let note_box = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
@@ -744,13 +773,13 @@ impl LogView {
 
         // ── Assemble dialog ────────────────────────────────────────────
         let duration_group = adw::PreferencesGroup::builder()
-            .title("Duration")
+            .title(tr("Duration"))
             .build();
         duration_group.add(&hours_spin);
         duration_group.add(&minutes_spin);
 
         let time_group = adw::PreferencesGroup::builder()
-            .title("Start time")
+            .title(tr("Start time"))
             .build();
         time_group.add(&date_row);
         time_group.add(&time_hours_spin);
@@ -779,10 +808,10 @@ impl LogView {
             .build();
 
         let cancel_btn = gtk::Button::builder()
-            .label("Cancel")
+            .label(tr("Cancel"))
             .build();
         let save_btn = gtk::Button::builder()
-            .label(if is_edit { "Save" } else { "Add" })
+            .label(if is_edit { tr("Save") } else { tr("Add") })
             .css_classes(["suggested-action"])
             .build();
 
@@ -795,7 +824,7 @@ impl LogView {
         toolbar_view.set_content(Some(&scrolled));
 
         let dialog = adw::Dialog::builder()
-            .title(if is_edit { "Edit Session" } else { "Add Session" })
+            .title(if is_edit { tr("Edit Session") } else { tr("Add Session") })
             .content_width(360)
             .child(&toolbar_view)
             .build();
@@ -904,3 +933,7 @@ fn unix_now() -> i64 {
         .unwrap_or_default()
         .as_secs() as i64
 }
+
+/// Marker helper for translatable strings — returns the input unchanged,
+/// but gives xgettext a predictable function name to extract from.
+fn tr(s: &'static str) -> &'static str { s }

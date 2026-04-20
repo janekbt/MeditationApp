@@ -449,7 +449,7 @@ impl TimerView {
         let note = self.note_row.text();
         if !note.is_empty() {
             let dialog = adw::AlertDialog::builder()
-                .heading(tr("Discard session?"))
+                .heading(tr("Discard Session?"))
                 .body(tr("Your note will be lost."))
                 .close_response("cancel")
                 .default_response("discard")
@@ -623,7 +623,7 @@ impl TimerView {
             .and_then(|id| labels.iter().position(|l| l.id == id))
             .map(|pos| (pos + 2) as u32)
             .unwrap_or(1);
-        let names: Vec<String> = std::iter::once("+ New label".to_string())
+        let names: Vec<String> = std::iter::once("+ New Label…".to_string())
             .chain(std::iter::once("None".to_string()))
             .chain(labels.iter().map(|l| l.name.clone()))
             .collect();
@@ -681,8 +681,8 @@ impl TimerView {
 
         // Trailing "Custom" pill — opens a dialog to pick an H:M value.
         let custom_btn = gtk::Button::builder()
-            .label("Custom")
-            .tooltip_text("Set a custom time")
+            .label(tr("Custom…"))
+            .tooltip_text(tr("Set a Custom Time"))
             .css_classes(["preset-chip"])
             .build();
         custom_btn.connect_clicked(glib::clone!(
@@ -736,17 +736,21 @@ impl TimerView {
         let cur_h = (current / 3600) as f64;
         let cur_m = ((current % 3600) / 60) as f64;
 
+        // Tooltips double as accessible names — without them screen
+        // readers only announce the raw numeric value.
         let hours_spin = gtk::SpinButton::builder()
             .orientation(gtk::Orientation::Vertical)
             .numeric(true)
             .width_chars(2)
             .adjustment(&gtk::Adjustment::new(cur_h, 0.0, 23.0, 1.0, 1.0, 0.0))
+            .tooltip_text(tr("Hours"))
             .build();
         let minutes_spin = gtk::SpinButton::builder()
             .orientation(gtk::Orientation::Vertical)
             .numeric(true)
             .width_chars(2)
             .adjustment(&gtk::Adjustment::new(cur_m, 0.0, 59.0, 1.0, 5.0, 0.0))
+            .tooltip_text(tr("Minutes"))
             .build();
 
         let colon = gtk::Label::builder()
@@ -806,7 +810,7 @@ impl TimerView {
             .map(|pos| (pos + 2) as u32) // +2 for "+ New label" and "None"
             .unwrap_or(1);              // default = "None"
 
-        let names: Vec<String> = std::iter::once("+ New label".to_string())
+        let names: Vec<String> = std::iter::once("+ New Label…".to_string())
             .chain(std::iter::once("None".to_string()))
             .chain(labels.iter().map(|l| l.name.clone()))
             .collect();
@@ -833,7 +837,7 @@ impl TimerView {
             .map(|pos| (pos + 2) as u32)
             .unwrap_or(1); // default: "None"
 
-        let names: Vec<String> = std::iter::once("+ New label".to_string())
+        let names: Vec<String> = std::iter::once("+ New Label…".to_string())
             .chain(std::iter::once("None".to_string()))
             .chain(labels.iter().map(|l| l.name.clone()))
             .collect();
