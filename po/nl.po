@@ -1,0 +1,225 @@
+# Dutch translation for Meditate.
+# Copyright (C) 2026 Janek Teders
+# This file is distributed under the same license as the meditate package.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: meditate\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-04-20 18:03+0200\n"
+"PO-Revision-Date: 2026-04-20 18:26+0200\n"
+"Last-Translator: Janek Teders\n"
+"Language-Team: Dutch\n"
+"Language: nl\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgid "min"
+msgstr "min"
+
+msgid "No note added"
+msgstr "Geen notitie"
+
+msgid "Delete Session"
+msgstr "Sessie verwijderen"
+
+msgid "Session deleted"
+msgstr "Sessie verwijderd"
+
+msgid "Hours"
+msgstr "Uren"
+
+msgid "Minutes"
+msgstr "Minuten"
+
+msgid "Date"
+msgstr "Datum"
+
+msgid "Pick a Date"
+msgstr "Datum kiezen"
+
+msgid "Hour"
+msgstr "Uur"
+
+msgid "Minute"
+msgstr "Minuut"
+
+msgid "Label"
+msgstr "Label"
+
+msgid "Note (optional)"
+msgstr "Notitie (optioneel)"
+
+msgid "Duration"
+msgstr "Duur"
+
+msgid "Start time"
+msgstr "Starttijd"
+
+msgid "_Cancel"
+msgstr "_Annuleren"
+
+msgid "_Save"
+msgstr "Op_slaan"
+
+msgid "_Add"
+msgstr "_Toevoegen"
+
+msgid "Edit Session"
+msgstr "Sessie bewerken"
+
+msgid "Add Session"
+msgstr "Sessie toevoegen"
+
+msgid "Paused"
+msgstr "Gepauzeerd"
+
+msgid "Hours · Minutes"
+msgstr "Uren · Minuten"
+
+msgid "Discard Session?"
+msgstr "Sessie verwijderen?"
+
+msgid "Your note will be lost."
+msgstr "Je notitie gaat verloren."
+
+msgid "Cancel"
+msgstr "Annuleren"
+
+msgid "Discard"
+msgstr "Verwijderen"
+
+msgid "Custom…"
+msgstr "Aangepast…"
+
+msgid "Set a Custom Time"
+msgstr "Aangepaste tijd instellen"
+
+msgid "Custom Time"
+msgstr "Aangepaste tijd"
+
+msgid "Hours : Minutes"
+msgstr "Uren : Minuten"
+
+msgid "Set"
+msgstr "Instellen"
+
+msgid "No Sessions Yet"
+msgstr "Nog geen sessies"
+
+msgid "Start meditating to see your sessions here, or add one manually."
+msgstr ""
+"Begin met mediteren om je sessies hier te zien, of voeg er handmatig een toe."
+
+msgid "No Matching Sessions"
+msgstr "Geen overeenkomende sessies"
+
+msgid "Try changing your filters."
+msgstr "Probeer je filters te wijzigen."
+
+msgid "Load more"
+msgstr "Meer laden"
+
+msgid "Weekly goal"
+msgstr "Wekelijks doel"
+
+msgid "Last 13 weeks"
+msgstr "Laatste 13 weken"
+
+msgid "Less"
+msgstr "Minder"
+
+msgid "More"
+msgstr "Meer"
+
+msgid "Insights"
+msgstr "Inzichten"
+
+msgid "Week"
+msgstr "Week"
+
+msgid "Month"
+msgstr "Maand"
+
+msgid "3 Months"
+msgstr "3 maanden"
+
+msgid "Year"
+msgstr "Jaar"
+
+msgid "Minutes / Day"
+msgstr "Minuten / dag"
+
+msgid "Bars"
+msgstr "Balken"
+
+msgid "Line"
+msgstr "Lijn"
+
+msgid "Streak"
+msgstr "Reeks"
+
+msgid "Total"
+msgstr "Totaal"
+
+msgid "Sessions"
+msgstr "Sessies"
+
+msgid "Countdown"
+msgstr "Aftellen"
+
+msgid "Stopwatch"
+msgstr "Stopwatch"
+
+msgid "Quick Presets"
+msgstr "Snelle instellingen"
+
+msgid "Session"
+msgstr "Sessie"
+
+msgid "Completion sound"
+msgstr "Eindgeluid"
+
+msgid "Start Session"
+msgstr "Sessie starten"
+
+msgid "Resume"
+msgstr "Hervatten"
+
+msgid "Stop"
+msgstr "Stoppen"
+
+msgid "Save"
+msgstr "Opslaan"
+
+msgid "Meditate"
+msgstr "Meditate"
+
+msgid "Main Menu"
+msgstr "Hoofdmenu"
+
+msgid "Filter Sessions"
+msgstr "Sessies filteren"
+
+msgid "Has Notes"
+msgstr "Met notities"
+
+msgid "Timer"
+msgstr "Timer"
+
+msgid "Stats"
+msgstr "Statistieken"
+
+msgid "Log"
+msgstr "Logboek"
+
+msgid "_Preferences"
+msgstr "_Voorkeuren"
+
+msgid "_Keyboard Shortcuts"
+msgstr "_Sneltoetsen"
+
+msgid "_About Meditate"
+msgstr "_Over Meditate"
