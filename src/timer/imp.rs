@@ -44,7 +44,6 @@ pub struct TimerView {
     #[template_child] pub hours_spin:            TemplateChild<gtk::SpinButton>,
     #[template_child] pub minutes_spin:          TemplateChild<gtk::SpinButton>,
     #[template_child] pub big_time_label:         TemplateChild<gtk::Label>,
-    #[template_child] pub countdown_inputs:       TemplateChild<gtk::Box>,
     #[template_child] pub hm_box:                TemplateChild<gtk::Box>,
     #[template_child] pub presets_box:           TemplateChild<gtk::Box>,
     #[template_child] pub stopwatch_idle_label:  TemplateChild<gtk::Label>,
@@ -53,8 +52,6 @@ pub struct TimerView {
     #[template_child] pub resume_btn:            TemplateChild<gtk::Button>,
     #[template_child] pub stop_from_pause_btn:   TemplateChild<gtk::Button>,
     #[template_child] pub setup_label_row:        TemplateChild<adw::ComboRow>,
-    #[template_child] pub setup_sound_row:        TemplateChild<adw::ComboRow>,
-    #[template_child] pub time_unit_label:        TemplateChild<gtk::Label>,
     #[template_child] pub done_duration_label:   TemplateChild<gtk::Label>,
     #[template_child] pub note_row:              TemplateChild<adw::EntryRow>,
     #[template_child] pub label_row:             TemplateChild<adw::ComboRow>,
@@ -82,8 +79,6 @@ pub struct TimerView {
     /// True while show_done/repopulate_label_combo is rebuilding the model,
     /// to suppress the notify::selected handler from opening the new-label dialog.
     populating_labels: Cell<bool>,
-    /// True while refresh_streak is populating the setup sound combo.
-    sound_populating: Cell<bool>,
 }
 
 #[glib::object_subclass]
@@ -167,7 +162,7 @@ impl TimerView {
                 let imp = this.imp();
                 let h = imp.hours_spin.value() as u64;
                 let m = imp.minutes_spin.value() as u64;
-                imp.big_time_label.set_label(&format!("{:02}:{:02}", h, m));
+                imp.big_time_label.set_label(&format!("{}:{:02}", h, m));
             }
         );
         self.hours_spin.connect_notify_local(Some("value"), update_big_label.clone());
@@ -183,29 +178,6 @@ impl TimerView {
                     if imp.populating_labels.get() { return; }
                     if imp.label_row.selected() == 0 {
                         imp.show_new_label_dialog();
-                    }
-                }
-            ),
-        );
-
-        // Completion Sound row on the setup page — mirrors the Preferences sound setting.
-        self.setup_sound_row.connect_notify_local(
-            Some("selected"),
-            glib::clone!(
-                #[weak(rename_to = this)] obj,
-                move |row, _| {
-                    let imp = this.imp();
-                    if imp.sound_populating.get() { return; }
-                    let key = match row.selected() {
-                        1 => "bowl",
-                        2 => "bell",
-                        3 => "gong",
-                        4 => "custom",
-                        _ => "none",
-                    };
-                    if let Some(app) = imp.get_app() {
-                        app.with_db(|db| db.set_setting("end_sound", key));
-                        crate::sound::preload_end_sound(&app);
                     }
                 }
             ),
@@ -236,8 +208,8 @@ impl TimerView {
     fn on_mode_switched(&self, to_stopwatch: bool) {
         // Show / hide the countdown-specific input widgets
         self.big_time_label.set_visible(!to_stopwatch);
-        self.time_unit_label.set_visible(!to_stopwatch);
-        self.countdown_inputs.set_visible(!to_stopwatch);
+        self.hm_box.set_visible(!to_stopwatch);
+        self.presets_box.set_visible(!to_stopwatch);
         self.stopwatch_idle_label.set_visible(to_stopwatch);
 
         let (timer_state, display_secs) = {
@@ -580,8 +552,8 @@ impl TimerView {
         // Update streak label
         let text = match streak {
             0 => String::from("Start your streak today"),
-            1 => String::from("🔥 1 day"),
-            n => format!("🔥 {n} days"),
+            1 => String::from("1-day streak"),
+            n => format!("{n}-day streak"),
         };
         self.streak_label.set_label(&text);
 
@@ -605,7 +577,6 @@ impl TimerView {
             let btn = gtk::Button::builder()
                 .label(&label)
                 .tooltip_text(&tooltip)
-                .css_classes(["pill"])
                 .build();
             btn.connect_clicked(glib::clone!(
                 #[weak(rename_to = this)] obj,
@@ -616,21 +587,6 @@ impl TimerView {
             ));
             self.presets_box.append(&btn);
         }
-
-        // Populate setup page sound row from DB setting
-        let current_sound = app
-            .with_db(|db| db.get_setting("end_sound", "none"))
-            .and_then(|r| r.ok())
-            .unwrap_or_else(|| "none".to_string());
-        self.sound_populating.set(true);
-        self.setup_sound_row.set_selected(match current_sound.as_str() {
-            "bowl"   => 1,
-            "bell"   => 2,
-            "gong"   => 3,
-            "custom" => 4,
-            _        => 0,
-        });
-        self.sound_populating.set(false);
 
         // Rebuild setup label combo with the data we already fetched
         let select_id = self.setup_selected_label_id();
@@ -675,7 +631,6 @@ impl TimerView {
             let btn = gtk::Button::builder()
                 .label(&label)
                 .tooltip_text(&tooltip)
-                .css_classes(["pill"])
                 .build();
             btn.connect_clicked(glib::clone!(
                 #[weak(rename_to = this)] obj,

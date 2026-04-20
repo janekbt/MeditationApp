@@ -16,7 +16,7 @@ template $TimerView : Gtk.Widget {
 
         child: Gtk.Box {
           orientation: vertical;
-          spacing: 14;
+          spacing: 20;
           valign: center;
           vexpand: true;
           margin-top: 24;
@@ -24,67 +24,30 @@ template $TimerView : Gtk.Widget {
           margin-start: 12;
           margin-end: 12;
 
-          // ── Hero area ─────────────────────────────────────────────
+          // Streak
+          Gtk.Label streak_label {
+            css-classes: ["title-4"];
+            halign: center;
+            label: "";
+          }
+
+          // Mode toggle
           Gtk.Box {
-            orientation: vertical;
-            spacing: 4;
+            css-classes: ["linked"];
+            halign: center;
 
-            // Streak chip
-            Gtk.Label streak_label {
-              css-classes: ["streak-chip"];
-              halign: center;
-              label: "";
+            Gtk.ToggleButton countdown_btn {
+              label: _("Countdown");
+              active: true;
             }
 
-            // Large time readout — updated reactively from the spin buttons
-            Gtk.Label big_time_label {
-              label: "00:10";
-              css-classes: ["timer-setup-display"];
-              halign: center;
-            }
-
-            // Subtitle shown only in countdown mode
-            Gtk.Label time_unit_label {
-              label: _("Hours · Minutes");
-              css-classes: ["caption", "dim-label"];
-              halign: center;
+            Gtk.ToggleButton stopwatch_btn {
+              label: _("Stopwatch");
+              group: countdown_btn;
             }
           }
 
-          // ── Mode toggle card ───────────────────────────────────────
-          Adw.Clamp {
-            maximum-size: 360;
-
-            child: Gtk.ListBox {
-              css-classes: ["boxed-list"];
-              selection-mode: none;
-
-              Gtk.ListBoxRow {
-                activatable: false;
-
-                child: Gtk.Box {
-                  margin-top: 8;
-                  margin-bottom: 8;
-                  halign: center;
-                  css-classes: ["linked"];
-
-                  Gtk.ToggleButton countdown_btn {
-                    label: _("Countdown");
-                    hexpand: true;
-                    active: true;
-                  }
-
-                  Gtk.ToggleButton stopwatch_btn {
-                    label: _("Stopwatch");
-                    hexpand: true;
-                    group: countdown_btn;
-                  }
-                };
-              }
-            };
-          }
-
-          // ── Inputs stack: "inputs" (idle) or "paused" (paused) ────
+          // Inputs stack: "inputs" (idle) or "paused" (paused)
           Gtk.Stack inputs_stack {
             transition-type: crossfade;
 
@@ -92,85 +55,57 @@ template $TimerView : Gtk.Widget {
               name: "inputs";
               child: Gtk.Box {
                 orientation: vertical;
-                spacing: 12;
+                spacing: 14;
 
-                // Countdown-only inputs: H:M spinners + presets card
-                Gtk.Box countdown_inputs {
-                  orientation: vertical;
-                  spacing: 12;
+                // Large time readout — updated reactively from the spin buttons
+                Gtk.Label big_time_label {
+                  label: "0:10";
+                  css-classes: ["timer-setup-display"];
+                  halign: center;
+                }
 
-                  // H : M spin buttons
-                  Gtk.Box hm_box {
-                    orientation: horizontal;
-                    spacing: 6;
-                    halign: center;
+                // H : M spin buttons (hidden in stopwatch mode)
+                Gtk.Box hm_box {
+                  orientation: horizontal;
+                  spacing: 6;
+                  halign: center;
 
-                    Gtk.SpinButton hours_spin {
-                      orientation: vertical;
-                      numeric: true;
-                      width-chars: 2;
-                      adjustment: Gtk.Adjustment {
-                        lower: 0;
-                        upper: 23;
-                        step-increment: 1;
-                        page-increment: 1;
-                      };
-                    }
-
-                    Gtk.Label {
-                      label: ":";
-                      css-classes: ["title-2"];
-                      valign: center;
-                    }
-
-                    Gtk.SpinButton minutes_spin {
-                      orientation: vertical;
-                      numeric: true;
-                      width-chars: 2;
-                      adjustment: Gtk.Adjustment {
-                        lower: 0;
-                        upper: 59;
-                        step-increment: 1;
-                        page-increment: 5;
-                        value: 10;
-                      };
-                    }
-                  }
-
-                  // Quick Presets section
-                  Gtk.Box {
+                  Gtk.SpinButton hours_spin {
                     orientation: vertical;
-                    spacing: 6;
-
-                    Gtk.Label {
-                      label: _("Quick Presets");
-                      css-classes: ["heading"];
-                      halign: start;
-                      margin-start: 6;
-                    }
-
-                    Adw.Clamp {
-                      maximum-size: 360;
-
-                      child: Gtk.ListBox {
-                        css-classes: ["boxed-list"];
-                        selection-mode: none;
-
-                        Gtk.ListBoxRow {
-                          activatable: false;
-
-                          child: Gtk.Box presets_box {
-                            spacing: 6;
-                            halign: center;
-                            margin-top: 10;
-                            margin-bottom: 10;
-                            margin-start: 12;
-                            margin-end: 12;
-                          };
-                        }
-                      };
-                    }
+                    numeric: true;
+                    width-chars: 2;
+                    adjustment: Gtk.Adjustment {
+                      lower: 0;
+                      upper: 23;
+                      step-increment: 1;
+                      page-increment: 1;
+                    };
                   }
+
+                  Gtk.Label {
+                    label: ":";
+                    css-classes: ["title-2"];
+                    valign: center;
+                  }
+
+                  Gtk.SpinButton minutes_spin {
+                    orientation: vertical;
+                    numeric: true;
+                    width-chars: 2;
+                    adjustment: Gtk.Adjustment {
+                      lower: 0;
+                      upper: 59;
+                      step-increment: 1;
+                      page-increment: 5;
+                      value: 10;
+                    };
+                  }
+                }
+
+                // Quick presets — populated dynamically from DB
+                Gtk.Box presets_box {
+                  css-classes: ["linked"];
+                  halign: center;
                 }
 
                 // Shown only in stopwatch idle mode
@@ -205,57 +140,39 @@ template $TimerView : Gtk.Widget {
             }
           }
 
-          // ── Session group ──────────────────────────────────────────
+          // Pre-start label selector
           Adw.Clamp {
             maximum-size: 360;
 
             child: Adw.PreferencesGroup {
-              title: _("Session");
-
               Adw.ComboRow setup_label_row {
                 title: _("Label");
-              }
-
-              Adw.ComboRow setup_sound_row {
-                title: _("Completion Sound");
-                model: Gtk.StringList {
-                  strings ["None", "Singing Bowl", "Bell", "Gong", "Custom file…"]
-                };
               }
             };
           }
 
-          // ── Buttons ────────────────────────────────────────────────
-          Adw.Clamp {
-            maximum-size: 360;
+          // Idle / paused action buttons
+          Gtk.Box setup_buttons {
+            orientation: horizontal;
+            spacing: 12;
+            halign: center;
 
-            child: Gtk.Box {
-              orientation: vertical;
-              spacing: 8;
+            Gtk.Button start_btn {
+              label: _("Start");
+              css-classes: ["suggested-action", "pill"];
+            }
 
-              Gtk.Button start_btn {
-                label: _("Start Session");
-                css-classes: ["suggested-action", "pill"];
-              }
+            Gtk.Button resume_btn {
+              label: _("Resume");
+              css-classes: ["suggested-action", "pill"];
+              visible: false;
+            }
 
-              Gtk.Box {
-                orientation: horizontal;
-                spacing: 12;
-                halign: center;
-
-                Gtk.Button resume_btn {
-                  label: _("Resume");
-                  css-classes: ["suggested-action", "pill"];
-                  visible: false;
-                }
-
-                Gtk.Button stop_from_pause_btn {
-                  label: _("Stop");
-                  css-classes: ["pill"];
-                  visible: false;
-                }
-              }
-            };
+            Gtk.Button stop_from_pause_btn {
+              label: _("Stop");
+              css-classes: ["pill"];
+              visible: false;
+            }
           }
         };
       };
