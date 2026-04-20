@@ -57,6 +57,25 @@ button.preset-chip.preset-chip-active:hover {
     color: @accent_fg_color;
 }
 
+/* Period-toggle pills above the bar chart. Like .preset-chip but rely on
+   the :checked pseudo-class rather than a Rust-toggled modifier class. */
+button.period-pill {
+    border-radius: 9999px;
+    padding: 5px 14px;
+    min-height: 0;
+    font-size: 1rem;
+    background: alpha(currentColor, 0.06);
+}
+button.period-pill:hover {
+    background: alpha(currentColor, 0.1);
+}
+button.period-pill:checked,
+button.period-pill:checked:hover {
+    background: @accent_bg_color;
+    color: @accent_fg_color;
+    font-weight: 600;
+}
+
 .chart-bar {
     background-color: @accent_bg_color;
     border-radius: 2px 2px 0 0;

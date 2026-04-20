@@ -140,47 +140,47 @@ template $StatsView : Gtk.Widget {
           }
         }
 
+        // ── Period toggle row (outside the chart card, pill style) ───
+        Gtk.Box {
+          orientation: horizontal;
+          spacing: 6;
+          halign: start;
+
+          Gtk.ToggleButton period_7d_btn {
+            label: _("Week");
+            active: true;
+            css-classes: ["period-pill"];
+          }
+          Gtk.ToggleButton period_4w_btn {
+            label: _("Month");
+            group: period_7d_btn;
+            css-classes: ["period-pill"];
+          }
+          Gtk.ToggleButton period_3m_btn {
+            label: _("3 Months");
+            group: period_7d_btn;
+            css-classes: ["period-pill"];
+          }
+          Gtk.ToggleButton period_1y_btn {
+            label: _("Year");
+            group: period_7d_btn;
+            css-classes: ["period-pill"];
+          }
+        }
+
         // ── Bar chart card ────────────────────────────────────────────
         Gtk.Box chart_card {
           orientation: vertical;
           spacing: 10;
           css-classes: ["card"];
-          margin-top: 0;
 
-          Gtk.Box {
-            orientation: horizontal;
+          Gtk.Label {
+            label: _("Minutes / Day");
+            css-classes: ["stats-eyebrow"];
+            halign: start;
             margin-top: 12;
             margin-start: 12;
             margin-end: 12;
-
-            Gtk.Label {
-              label: _("Minutes / Day");
-              css-classes: ["stats-eyebrow"];
-              halign: start;
-              hexpand: true;
-            }
-
-            Gtk.Box {
-              css-classes: ["linked"];
-              halign: end;
-
-              Gtk.ToggleButton period_7d_btn {
-                label: _("7D");
-                active: true;
-              }
-              Gtk.ToggleButton period_4w_btn {
-                label: _("4W");
-                group: period_7d_btn;
-              }
-              Gtk.ToggleButton period_3m_btn {
-                label: _("3M");
-                group: period_7d_btn;
-              }
-              Gtk.ToggleButton period_1y_btn {
-                label: _("1Y");
-                group: period_7d_btn;
-              }
-            }
           }
 
           Gtk.Box chart_container {
