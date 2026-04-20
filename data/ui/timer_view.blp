@@ -50,39 +50,30 @@ template $TimerView : Gtk.Widget {
             }
           }
 
-          // ── Mode toggle card ───────────────────────────────────────
+          // ── Mode toggle ────────────────────────────────────────────
+          // Two-option segmented toggle — plain .linked Gtk.Box instead
+          // of a one-row Gtk.ListBox.boxed-list wrapper, which is the
+          // HIG-idiomatic pattern for a small exclusive toggle group.
           Adw.Clamp {
             maximum-size: 360;
             tightening-threshold: 300;
 
-            child: Gtk.ListBox {
-              css-classes: ["boxed-list"];
-              selection-mode: none;
+            child: Gtk.Box {
+              css-classes: ["linked"];
+              spacing: 0;
 
-              Gtk.ListBoxRow {
-                activatable: false;
+              Gtk.ToggleButton countdown_btn {
+                label: _("Countdown");
+                hexpand: true;
+                active: true;
+                css-classes: ["mode-toggle-btn"];
+              }
 
-                child: Gtk.Box {
-                  margin-top: 6;
-                  margin-bottom: 6;
-                  margin-start: 6;
-                  margin-end: 6;
-                  spacing: 6;
-
-                  Gtk.ToggleButton countdown_btn {
-                    label: _("Countdown");
-                    hexpand: true;
-                    active: true;
-                    css-classes: ["mode-toggle-btn"];
-                  }
-
-                  Gtk.ToggleButton stopwatch_btn {
-                    label: _("Stopwatch");
-                    hexpand: true;
-                    group: countdown_btn;
-                    css-classes: ["mode-toggle-btn"];
-                  }
-                };
+              Gtk.ToggleButton stopwatch_btn {
+                label: _("Stopwatch");
+                hexpand: true;
+                group: countdown_btn;
+                css-classes: ["mode-toggle-btn"];
               }
             };
           }
@@ -105,30 +96,20 @@ template $TimerView : Gtk.Widget {
                 margin-start: 6;
               }
 
+              // Presets FlowBox directly in a Clamp — no more
+              // activatable-false ListBoxRow wrapper, since a flow of
+              // chips isn't really a boxed list.
               Adw.Clamp {
                 maximum-size: 360;
-            tightening-threshold: 300;
+                tightening-threshold: 300;
 
-                child: Gtk.ListBox {
-                  css-classes: ["boxed-list"];
+                child: Gtk.FlowBox presets_box {
                   selection-mode: none;
-
-                  Gtk.ListBoxRow {
-                    activatable: false;
-
-                    child: Gtk.FlowBox presets_box {
-                      selection-mode: none;
-                      max-children-per-line: 5;
-                      min-children-per-line: 1;
-                      homogeneous: true;
-                      column-spacing: 6;
-                      row-spacing: 6;
-                      margin-top: 10;
-                      margin-bottom: 10;
-                      margin-start: 12;
-                      margin-end: 12;
-                    };
-                  }
+                  max-children-per-line: 5;
+                  min-children-per-line: 1;
+                  homogeneous: true;
+                  column-spacing: 6;
+                  row-spacing: 6;
                 };
               }
             }
