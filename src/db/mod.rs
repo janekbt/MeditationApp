@@ -58,6 +58,10 @@ pub struct SessionFilter {
     pub label_id: Option<i64>,
     /// If true, only return sessions that have a non-empty note.
     pub only_with_notes: bool,
+    /// Pagination — fetch at most this many rows (None = no limit).
+    pub limit: Option<u32>,
+    /// Pagination — skip this many rows (None = start at 0).
+    pub offset: Option<u32>,
 }
 
 // ── Database ──────────────────────────────────────────────────────────────────
@@ -358,36 +362,49 @@ impl Database {
                 }
             };
         }
+        // LIMIT -1 means "no limit" in SQLite; OFFSET 0 means "no offset".
+        // That lets us keep one static query per variant even when the caller
+        // hasn't paginated.
+        let limit_val: i64 = filter.limit.map(|n| n as i64).unwrap_or(-1);
+        let offset_val: i64 = filter.offset.map(|n| n as i64).unwrap_or(0);
         match (filter.only_with_notes, filter.label_id) {
             (false, None) => {
                 let mut s = self.conn.prepare_cached(
                     "SELECT id, start_time, duration_secs, mode, label_id, note
-                     FROM sessions ORDER BY start_time DESC")?;
-                let rows: Result<Vec<_>> = s.query_map([], |r| Ok(map_row!(r)))?.collect();
+                     FROM sessions ORDER BY start_time DESC
+                     LIMIT ?1 OFFSET ?2")?;
+                let rows: Result<Vec<_>> =
+                    s.query_map(params![limit_val, offset_val], |r| Ok(map_row!(r)))?.collect();
                 rows
             }
             (true, None) => {
                 let mut s = self.conn.prepare_cached(
                     "SELECT id, start_time, duration_secs, mode, label_id, note
                      FROM sessions WHERE note IS NOT NULL AND note != ''
-                     ORDER BY start_time DESC")?;
-                let rows: Result<Vec<_>> = s.query_map([], |r| Ok(map_row!(r)))?.collect();
+                     ORDER BY start_time DESC
+                     LIMIT ?1 OFFSET ?2")?;
+                let rows: Result<Vec<_>> =
+                    s.query_map(params![limit_val, offset_val], |r| Ok(map_row!(r)))?.collect();
                 rows
             }
             (false, Some(lid)) => {
                 let mut s = self.conn.prepare_cached(
                     "SELECT id, start_time, duration_secs, mode, label_id, note
                      FROM sessions WHERE label_id = ?1
-                     ORDER BY start_time DESC")?;
-                let rows: Result<Vec<_>> = s.query_map(params![lid], |r| Ok(map_row!(r)))?.collect();
+                     ORDER BY start_time DESC
+                     LIMIT ?2 OFFSET ?3")?;
+                let rows: Result<Vec<_>> =
+                    s.query_map(params![lid, limit_val, offset_val], |r| Ok(map_row!(r)))?.collect();
                 rows
             }
             (true, Some(lid)) => {
                 let mut s = self.conn.prepare_cached(
                     "SELECT id, start_time, duration_secs, mode, label_id, note
                      FROM sessions WHERE label_id = ?1 AND note IS NOT NULL AND note != ''
-                     ORDER BY start_time DESC")?;
-                let rows: Result<Vec<_>> = s.query_map(params![lid], |r| Ok(map_row!(r)))?.collect();
+                     ORDER BY start_time DESC
+                     LIMIT ?2 OFFSET ?3")?;
+                let rows: Result<Vec<_>> =
+                    s.query_map(params![lid, limit_val, offset_val], |r| Ok(map_row!(r)))?.collect();
                 rows
             }
         }

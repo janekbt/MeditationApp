@@ -46,10 +46,22 @@ template $LogView : Gtk.Widget {
           margin-start: 12;
           margin-end: 12;
 
-          Gtk.ListBox list_box {
-            css-classes: ["boxed-list"];
-            selection-mode: none;
-          }
+          child: Gtk.Box {
+            orientation: vertical;
+            spacing: 12;
+
+            Gtk.ListBox list_box {
+              css-classes: ["boxed-list"];
+              selection-mode: none;
+            }
+
+            Gtk.Button load_more_btn {
+              label: _("Load more");
+              halign: center;
+              css-classes: ["pill"];
+              visible: false;
+            }
+          };
         };
       };
     }

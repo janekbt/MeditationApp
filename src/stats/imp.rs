@@ -552,7 +552,7 @@ impl StatsView {
         self.mini_streak_value.set_label(
             &if streak == 0 { "–".to_string() } else { format!("{streak}d") }
         );
-        self.mini_total_value.set_label(&format_hm_secs(total));
+        self.mini_total_value.set_label(&format_hm_compact(total));
         self.mini_sessions_value.set_label(
             &if sessions == 0 { "–".to_string() } else { sessions.to_string() }
         );
@@ -803,6 +803,21 @@ fn month_short(month: u32) -> &'static str {
         1 => "Jan", 2 => "Feb", 3 => "Mar", 4 => "Apr",
         5 => "May", 6 => "Jun", 7 => "Jul", 8 => "Aug",
         9 => "Sep", 10 => "Oct", 11 => "Nov", _ => "Dec",
+    }
+}
+
+/// Compact H/M format for large totals. Drops minutes past 100 h because
+/// they're visual noise at that scale and the extra characters force the
+/// mini-stat card over the 360 px viewport.
+fn format_hm_compact(secs: i64) -> String {
+    if secs <= 0 { return "–".to_string(); }
+    let h = secs / 3600;
+    if h >= 100 { return format!("{h}h"); }
+    let m = (secs % 3600) / 60;
+    match (h, m) {
+        (0, m) => format!("{m}m"),
+        (h, 0) => format!("{h}h"),
+        (h, m) => format!("{h}h {m}m"),
     }
 }
 

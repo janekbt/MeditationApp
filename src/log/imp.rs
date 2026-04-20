@@ -10,9 +10,10 @@ use crate::db::{Label, Session, SessionData, SessionFilter, SessionMode};
 #[derive(Debug, Default, CompositeTemplate)]
 #[template(resource = "/io/github/janekbt/Meditate/ui/log_view.ui")]
 pub struct LogView {
-    #[template_child] pub view_stack:   TemplateChild<gtk::Stack>,
-    #[template_child] pub list_box:     TemplateChild<gtk::ListBox>,
-    #[template_child] pub add_first_btn: TemplateChild<gtk::Button>,
+    #[template_child] pub view_stack:     TemplateChild<gtk::Stack>,
+    #[template_child] pub list_box:       TemplateChild<gtk::ListBox>,
+    #[template_child] pub load_more_btn:  TemplateChild<gtk::Button>,
+    #[template_child] pub add_first_btn:  TemplateChild<gtk::Button>,
 
     // Cached DB data
     sessions:        RefCell<Vec<Session>>,
@@ -21,6 +22,11 @@ pub struct LogView {
     // Filter state
     pub filter_notes_only: Cell<bool>,
     pub filter_label_id:   Cell<Option<i64>>,
+
+    // Pagination: how many rows are currently in the list_box. Rebuilding
+    // 2000+ AdwActionRow widgets upfront makes the whole app sluggish, so
+    // we load in pages and append more on demand.
+    loaded_count: Cell<usize>,
 }
 
 #[glib::object_subclass]
@@ -51,6 +57,11 @@ impl ObjectImpl for LogView {
             move |_| this.imp().show_add_dialog()
         ));
 
+        // "Load more" appends the next page of rows.
+        self.load_more_btn.connect_clicked(glib::clone!(
+            #[weak(rename_to = this)] obj,
+            move |_| this.imp().load_more()
+        ));
     }
 
     fn dispose(&self) {
@@ -63,12 +74,10 @@ impl WidgetImpl for LogView {}
 // ── Public API ────────────────────────────────────────────────────────────────
 
 impl LogView {
-    /// Reload sessions from the database and rebuild the list.
+    /// Reload sessions from the database and rebuild the list from scratch.
+    /// Loads just the first page; additional pages come via `load_more`.
     pub fn refresh(&self) {
-        let app = match self.get_app() {
-            Some(a) => a,
-            None => return,
-        };
+        let Some(app) = self.get_app() else { return; };
 
         // Fetch labels first (needed for row display)
         let labels = app
@@ -77,42 +86,72 @@ impl LogView {
             .unwrap_or_default();
         *self.labels.borrow_mut() = labels;
 
-        // Fetch sessions with current filter
-        let filter = SessionFilter {
-            label_id: self.filter_label_id.get(),
-            only_with_notes: self.filter_notes_only.get(),
-        };
-        let sessions = app
-            .with_db(|db| db.list_sessions(&filter))
-            .and_then(|r| r.ok())
-            .unwrap_or_default();
-
-        let has_filter = self.filter_notes_only.get() || self.filter_label_id.get().is_some();
-
-        if sessions.is_empty() {
-            self.view_stack.set_visible_child_name(
-                if has_filter { "filtered-empty" } else { "empty" },
-            );
-            self.sessions.borrow_mut().clear();
-            return;
-        }
-
-        // Rebuild the list
+        // Reset pagination + the list_box DOM.
+        self.loaded_count.set(0);
+        self.sessions.borrow_mut().clear();
         while let Some(child) = self.list_box.first_child() {
             self.list_box.remove(&child);
         }
 
+        // Load the first page. If the DB has ≤ PAGE_SIZE matching rows we'll
+        // know immediately (`has_more` stays false) and never show the button.
+        let loaded = self.load_page(&app);
+
+        let has_filter = self.filter_notes_only.get() || self.filter_label_id.get().is_some();
+        if loaded == 0 {
+            self.view_stack.set_visible_child_name(
+                if has_filter { "filtered-empty" } else { "empty" },
+            );
+            self.load_more_btn.set_visible(false);
+            return;
+        }
+        self.view_stack.set_visible_child_name("list");
+    }
+
+    /// Append the next page to the existing list without rebuilding anything.
+    pub fn load_more(&self) {
+        let Some(app) = self.get_app() else { return; };
+        self.load_page(&app);
+    }
+
+    /// Query the next page of sessions and append them. Returns how many rows
+    /// were appended; also toggles `load_more_btn` visibility based on whether
+    /// the query returned a full page (meaning there may be more to fetch).
+    fn load_page(&self, app: &crate::application::MeditateApplication) -> usize {
+        const PAGE_SIZE: u32 = 200;
+
+        let filter = SessionFilter {
+            label_id:        self.filter_label_id.get(),
+            only_with_notes: self.filter_notes_only.get(),
+            limit:           Some(PAGE_SIZE),
+            offset:          Some(self.loaded_count.get() as u32),
+        };
+        let page = app
+            .with_db(|db| db.list_sessions(&filter))
+            .and_then(|r| r.ok())
+            .unwrap_or_default();
+
+        let n = page.len();
+        if n == 0 {
+            self.load_more_btn.set_visible(false);
+            return 0;
+        }
+
         let labels_ref = self.labels.borrow();
-        // Build a map for O(1) label lookup per row instead of O(labels) scan.
         let label_map: std::collections::HashMap<i64, &str> =
             labels_ref.iter().map(|l| (l.id, l.name.as_str())).collect();
-        for session in &sessions {
+        for session in &page {
             let row = self.build_row(session, &label_map);
             self.list_box.append(&row);
         }
+        drop(labels_ref);
 
-        *self.sessions.borrow_mut() = sessions;
-        self.view_stack.set_visible_child_name("list");
+        self.loaded_count.set(self.loaded_count.get() + n);
+        self.sessions.borrow_mut().extend(page);
+
+        // If we got a full page there may be more rows behind it.
+        self.load_more_btn.set_visible(n == PAGE_SIZE as usize);
+        n
     }
 
     /// Populate the label combo in the filter popover.
