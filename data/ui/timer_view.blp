@@ -52,36 +52,30 @@ template $TimerView : Gtk.Widget {
           }
 
           // ── Mode toggle card ───────────────────────────────────────
-          Adw.Clamp {
-            maximum-size: 360;
+          Gtk.ListBox {
+            css-classes: ["boxed-list"];
+            selection-mode: none;
 
-            child: Gtk.ListBox {
-              css-classes: ["boxed-list"];
-              selection-mode: none;
+            Gtk.ListBoxRow {
+              activatable: false;
 
-              Gtk.ListBoxRow {
-                activatable: false;
+              child: Gtk.Box {
+                margin-top: 8;
+                margin-bottom: 8;
+                halign: center;
+                css-classes: ["linked"];
 
-                child: Gtk.Box {
-                  margin-top: 8;
-                  margin-bottom: 8;
-                  halign: center;
-                  css-classes: ["linked"];
+                Gtk.ToggleButton countdown_btn {
+                  label: _("Countdown");
+                  active: true;
+                }
 
-                  Gtk.ToggleButton countdown_btn {
-                    label: _("Countdown");
-                    hexpand: true;
-                    active: true;
-                  }
-
-                  Gtk.ToggleButton stopwatch_btn {
-                    label: _("Stopwatch");
-                    hexpand: true;
-                    group: countdown_btn;
-                  }
-                };
-              }
-            };
+                Gtk.ToggleButton stopwatch_btn {
+                  label: _("Stopwatch");
+                  group: countdown_btn;
+                }
+              };
+            }
           }
 
           // ── Inputs stack: "inputs" (idle) or "paused" (paused) ────
@@ -149,26 +143,22 @@ template $TimerView : Gtk.Widget {
                       margin-start: 6;
                     }
 
-                    Adw.Clamp {
-                      maximum-size: 360;
+                    Gtk.ListBox {
+                      css-classes: ["boxed-list"];
+                      selection-mode: none;
 
-                      child: Gtk.ListBox {
-                        css-classes: ["boxed-list"];
-                        selection-mode: none;
+                      Gtk.ListBoxRow {
+                        activatable: false;
 
-                        Gtk.ListBoxRow {
-                          activatable: false;
-
-                          child: Gtk.Box presets_box {
-                            spacing: 6;
-                            halign: center;
-                            margin-top: 10;
-                            margin-bottom: 10;
-                            margin-start: 12;
-                            margin-end: 12;
-                          };
-                        }
-                      };
+                        child: Gtk.Box presets_box {
+                          spacing: 6;
+                          halign: center;
+                          margin-top: 10;
+                          margin-bottom: 10;
+                          margin-start: 12;
+                          margin-end: 12;
+                        };
+                      }
                     }
                   }
                 }
@@ -226,36 +216,27 @@ template $TimerView : Gtk.Widget {
           }
 
           // ── Buttons ────────────────────────────────────────────────
-          Adw.Clamp {
-            maximum-size: 360;
+          Gtk.Button start_btn {
+            label: _("Start Session");
+            css-classes: ["suggested-action", "pill"];
+          }
 
-            child: Gtk.Box {
-              orientation: vertical;
-              spacing: 8;
+          Gtk.Box {
+            orientation: horizontal;
+            spacing: 12;
+            halign: center;
 
-              Gtk.Button start_btn {
-                label: _("Start Session");
-                css-classes: ["suggested-action", "pill"];
-              }
+            Gtk.Button resume_btn {
+              label: _("Resume");
+              css-classes: ["suggested-action", "pill"];
+              visible: false;
+            }
 
-              Gtk.Box {
-                orientation: horizontal;
-                spacing: 12;
-                halign: center;
-
-                Gtk.Button resume_btn {
-                  label: _("Resume");
-                  css-classes: ["suggested-action", "pill"];
-                  visible: false;
-                }
-
-                Gtk.Button stop_from_pause_btn {
-                  label: _("Stop");
-                  css-classes: ["pill"];
-                  visible: false;
-                }
-              }
-            };
+            Gtk.Button stop_from_pause_btn {
+              label: _("Stop");
+              css-classes: ["pill"];
+              visible: false;
+            }
           }
         };
       };
