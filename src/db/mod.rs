@@ -534,6 +534,37 @@ impl Database {
         }
     }
 
+    /// Median session duration (seconds). Returns the lower median on even
+    /// counts. None if the database is empty.
+    pub fn get_median_duration_secs(&self) -> Result<Option<i64>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT duration_secs FROM sessions
+             ORDER BY duration_secs
+             LIMIT 1 OFFSET (SELECT MAX(0, (COUNT(*) - 1) / 2) FROM sessions)"
+        )?;
+        let mut rows = stmt.query([])?;
+        match rows.next()? {
+            Some(row) => Ok(Some(row.get(0)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Session counts bucketed by local time-of-day:
+    /// (morning <12, afternoon 12–17, evening ≥18).
+    pub fn get_hour_buckets(&self) -> Result<(i64, i64, i64)> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT
+               COALESCE(SUM(CASE WHEN h < 12 THEN 1 ELSE 0 END), 0),
+               COALESCE(SUM(CASE WHEN h >= 12 AND h < 18 THEN 1 ELSE 0 END), 0),
+               COALESCE(SUM(CASE WHEN h >= 18 THEN 1 ELSE 0 END), 0)
+             FROM (
+               SELECT CAST(strftime('%H', start_time, 'unixepoch', 'localtime') AS INTEGER) AS h
+               FROM sessions
+             )"
+        )?;
+        stmt.query_row([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+    }
+
     /// Sum of session durations (seconds) in a given local-time calendar month.
     pub fn get_month_total_secs(&self, year: i32, month: u32) -> Result<i64> {
         let start_str = format!("{year:04}-{month:02}-01");

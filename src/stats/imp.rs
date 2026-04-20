@@ -262,29 +262,64 @@ impl StatsView {
     }
 
     fn reload_insights(&self) {
-        // Clear previous rows
         while let Some(c) = self.insights_list.first_child() {
             self.insights_list.remove(&c);
         }
 
         let Some(app) = self.get_app() else { return; };
-        let (this_month, last_month, longest, avg_secs) = app
-            .with_db(|db| {
-                let now = glib::DateTime::now_local().unwrap();
-                let (ty, tm) = (now.year(), now.month() as u32);
-                let (ly, lm) = if tm == 1 { (ty - 1, 12) } else { (ty, tm - 1) };
-                let tm_total = db.get_month_total_secs(ty, tm).unwrap_or(0);
-                let lm_total = db.get_month_total_secs(ly, lm).unwrap_or(0);
-                let longest = db.get_longest_session().unwrap_or(None);
-                let avg = db.get_running_average_secs(7).unwrap_or(0.0) as i64;
-                (tm_total, lm_total, longest, avg)
-            })
-            .unwrap_or((0, 0, None, 0));
+        let now = glib::DateTime::now_local().unwrap();
 
-        // Trend (needs last month > 0 to compute a percentage)
-        if last_month > 0 {
-            let pct = ((this_month - last_month) as f64 / last_month as f64 * 100.0)
-                .round() as i32;
+        // Batch every insight-driving query into a single DB borrow.
+        let data = app.with_db(|db| {
+            let (ty, tm) = (now.year(), now.month() as u32);
+            let (ly, lm) = if tm == 1 { (ty - 1, 12) } else { (ty, tm - 1) };
+            let fourteen_since = now.add_days(-13).unwrap()
+                .format("%Y-%m-%d").unwrap().to_string();
+            InsightData {
+                current_streak: db.get_streak().unwrap_or(0),
+                best_streak:    db.get_best_streak().unwrap_or(0),
+                this_month:     db.get_month_total_secs(ty, tm).unwrap_or(0),
+                last_month:     db.get_month_total_secs(ly, lm).unwrap_or(0),
+                daily_totals:   db.get_daily_totals(&fourteen_since).unwrap_or_default(),
+                longest:        db.get_longest_session().unwrap_or(None),
+                typical:        db.get_median_duration_secs().unwrap_or(None).unwrap_or(0),
+                avg_secs:       db.get_running_average_secs(7).unwrap_or(0.0) as i64,
+                hour_buckets:   db.get_hour_buckets().unwrap_or((0, 0, 0)),
+                session_count:  db.get_session_count().unwrap_or(0),
+            }
+        }).unwrap_or_default();
+
+        // 1. Current streak — complements the lifetime best shown in mini-stats.
+        if data.current_streak > 0 {
+            let body = if data.current_streak >= data.best_streak && data.current_streak > 1 {
+                format!("{} days — new record", data.current_streak)
+            } else if data.best_streak > data.current_streak {
+                format!("{} days · best was {}", data.current_streak, data.best_streak)
+            } else {
+                "1 day · keep going".to_string()
+            };
+            let peak = data.current_streak >= data.best_streak && data.current_streak > 1;
+            self.append_insight("●", "Current streak", &body, peak);
+        }
+
+        // 2. This week vs previous 7 days — short-horizon trend.
+        let (this_week_secs, last_week_secs) = week_over_week(&data.daily_totals, &now);
+        if last_week_secs > 0 {
+            let delta = this_week_secs - last_week_secs;
+            let pct = (delta as f64 / last_week_secs as f64 * 100.0).round() as i32;
+            let (icon, dir) = if pct >= 0 { ("↗", "up") } else { ("↘", "down") };
+            self.append_insight(icon, "This week's pace", &format!(
+                "{}% {dir} vs last week ({} vs {})",
+                pct.abs(),
+                format_hm_secs(this_week_secs),
+                format_hm_secs(last_week_secs),
+            ), false);
+        }
+
+        // 3. Trend vs last month.
+        if data.last_month > 0 {
+            let pct = ((data.this_month - data.last_month) as f64
+                / data.last_month as f64 * 100.0).round() as i32;
             let (icon, title) = if pct >= 0 {
                 ("↗", "You're meditating more")
             } else {
@@ -292,13 +327,39 @@ impl StatsView {
             };
             self.append_insight(icon, title, &format!(
                 "{pct:+}% vs last month ({} vs {})",
-                format_hm_secs(this_month),
-                format_hm_secs(last_month),
+                format_hm_secs(data.this_month),
+                format_hm_secs(data.last_month),
             ), false);
         }
 
-        // Longest session ever
-        if let Some((dur, start)) = longest {
+        // 4. Preferred time of day — only once there's enough data to be
+        //    meaningful (≥10 sessions).
+        let (morn, afte, even) = data.hour_buckets;
+        let bucket_total = morn + afte + even;
+        if bucket_total >= 10 {
+            let (label, count) = if morn >= afte && morn >= even {
+                ("the morning", morn)
+            } else if even >= afte {
+                ("the evening", even)
+            } else {
+                ("the afternoon", afte)
+            };
+            let pct = (count as f64 / bucket_total as f64 * 100.0).round() as i32;
+            self.append_insight("◔", "Preferred time", &format!(
+                "{pct}% of sessions are in {label}"
+            ), false);
+        }
+
+        // 5. Typical session length (median) — only after 5+ sessions so it
+        //    stops being dominated by the first few outliers.
+        if data.session_count >= 5 && data.typical > 0 {
+            self.append_insight("≈", "Typical session", &format!(
+                "About {}", format_hm_secs(data.typical),
+            ), false);
+        }
+
+        // 6. Longest session ever.
+        if let Some((dur, start)) = data.longest {
             let when = glib::DateTime::from_unix_local(start).ok()
                 .and_then(|d| d.format("%b %-d").ok())
                 .map(|s| s.to_string());
@@ -309,15 +370,29 @@ impl StatsView {
             self.append_insight("◆", "Longest session", &body, true);
         }
 
-        // Daily rhythm (average over last 7 days)
-        if avg_secs > 0 {
-            self.append_insight("◷", "Daily rhythm steady", &format!(
+        // 7. Next milestone — only if the user has a few sessions under
+        //    their belt (otherwise "12 until your 5th" feels patronising).
+        if data.session_count >= 5 {
+            if let Some((target, remaining)) = next_session_milestone(data.session_count) {
+                let body = if remaining == 1 {
+                    format!("1 session to your {target}th")
+                } else {
+                    format!("{remaining} sessions to your {target}th")
+                };
+                self.append_insight("⚑", "Next milestone", &body, false);
+            }
+        }
+
+        // 8. Daily rhythm (average over last 7 days) — complements typical
+        //    session by including zero-days.
+        if data.avg_secs > 0 {
+            self.append_insight("◷", "Daily rhythm", &format!(
                 "{} average over last 7 days",
-                format_hm_secs(avg_secs),
+                format_hm_secs(data.avg_secs),
             ), false);
         }
 
-        // Fallback when there's no data at all
+        // Fallback when there's no data at all.
         if self.insights_list.first_child().is_none() {
             self.append_insight("✦", "No sessions yet",
                 "Complete a meditation to start seeing insights here.", false);
@@ -332,6 +407,9 @@ impl StatsView {
             .build();
         let mut classes = vec!["insight-icon"];
         if accent { classes.push("accent"); }
+        // xalign / yalign position the glyph *inside* the label's box;
+        // halign / valign only position the label inside its parent. We
+        // need both for a visibly centred glyph.
         let bubble = gtk::Label::builder()
             .label(icon)
             .css_classes(classes)
@@ -339,6 +417,8 @@ impl StatsView {
             .height_request(28)
             .halign(gtk::Align::Center)
             .valign(gtk::Align::Center)
+            .xalign(0.5)
+            .yalign(0.5)
             .build();
         row.add_prefix(&bubble);
         self.insights_list.append(&row);
@@ -502,6 +582,47 @@ impl StatsView {
             .and_then(|w| w.application())
             .and_then(|a| a.downcast::<crate::application::MeditateApplication>().ok())
     }
+}
+
+#[derive(Default)]
+struct InsightData {
+    current_streak: u32,
+    best_streak:    u32,
+    this_month:     i64,
+    last_month:     i64,
+    daily_totals:   Vec<(String, i64)>,
+    longest:        Option<(i64, i64)>,
+    typical:        i64,
+    avg_secs:       i64,
+    hour_buckets:   (i64, i64, i64),
+    session_count:  i64,
+}
+
+/// Returns (seconds in the current rolling 7-day window,
+/// seconds in the previous 7-day window). `daily_totals` is the sparse
+/// list of (`YYYY-MM-DD`, secs) we already fetched for the last 14 days.
+fn week_over_week(daily_totals: &[(String, i64)], now: &glib::DateTime) -> (i64, i64) {
+    use std::collections::HashMap;
+    let map: HashMap<&str, i64> =
+        daily_totals.iter().map(|(k, v)| (k.as_str(), *v)).collect();
+    let mut this_week = 0i64;
+    let mut last_week = 0i64;
+    for i in 0..14 {
+        let Ok(dt) = now.add_days(-i) else { continue; };
+        let Ok(s) = dt.format("%Y-%m-%d") else { continue; };
+        let secs = map.get(s.as_str()).copied().unwrap_or(0);
+        if i < 7 { this_week += secs; } else { last_week += secs; }
+    }
+    (this_week, last_week)
+}
+
+/// Next round-number session count above `current`. None once past 5000.
+fn next_session_milestone(current: i64) -> Option<(i64, i64)> {
+    const TARGETS: &[i64] = &[10, 25, 50, 100, 250, 500, 1000, 2500, 5000];
+    TARGETS.iter()
+        .copied()
+        .find(|&t| t > current)
+        .map(|t| (t, t - current))
 }
 
 fn axis_label(text: String) -> gtk::Label {
