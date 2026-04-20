@@ -1,3 +1,14 @@
+/* Accent-tinted streak chip above the hero time */
+.streak-chip {
+    background-color: alpha(@accent_color, 0.15);
+    color: @accent_color;
+    border-radius: 100px;
+    padding: 4px 10px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+}
+
 /* Large, light time readout on the timer setup page */
 .timer-setup-display {
     font-size: 4.5rem;
