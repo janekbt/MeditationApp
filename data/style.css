@@ -55,6 +55,9 @@ button.preset-chip {
 .contrib-cell {
     border-radius: 3px;
     background-color: alpha(@accent_color, 0.05);
+    color: @accent_fg_color;
+    font-size: 0.7rem;
+    font-weight: 800;
 }
 .contrib-cell.level-1 { background-color: alpha(@accent_color, 0.25); }
 .contrib-cell.level-2 { background-color: alpha(@accent_color, 0.45); }

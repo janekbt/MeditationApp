@@ -36,9 +36,10 @@ pub struct StatsView {
     #[template_child] pub mini_sessions_value:  TemplateChild<gtk::Label>,
 
     // State
-    /// 91 contribution cells in row-major order (col-major actually, since
-    /// grid attach uses col × row). Stored as (column × 7 + row).
-    pub contrib_cells:  RefCell<Vec<gtk::Box>>,
+    /// 91 contribution cells, column-major (col × 7 + row). Each cell is a
+    /// Gtk.Label: the background colour comes from .contrib-cell.level-*
+    /// and the text holds the optional achievement glyph (✔ / ★).
+    pub contrib_cells:  RefCell<Vec<gtk::Label>>,
     /// Current weekly-goal progress ratio (0.0..=1.0) — redrawn each refresh.
     pub goal_pct:       Cell<f64>,
     /// True once the 91 contribution cells + legend swatches have been built.
@@ -109,12 +110,15 @@ impl StatsView {
         let mut cells = self.contrib_cells.borrow_mut();
         for col in 0..13i32 {
             for row in 0..7i32 {
-                let cell = gtk::Box::builder()
+                let cell = gtk::Label::builder()
                     .css_classes(["contrib-cell"])
-                    .height_request(14)
-                    .width_request(14)
+                    .label("")
+                    .xalign(0.5)
+                    .yalign(0.5)
                     .hexpand(true)
                     .vexpand(true)
+                    .width_request(14)
+                    .height_request(14)
                     .build();
                 self.contrib_grid.attach(&cell, col, row, 1, 1);
                 cells.push(cell);
@@ -220,9 +224,10 @@ impl StatsView {
                 let idx = (col * 7 + row) as usize;
                 let cell = &cells[idx];
 
-                // Clear prior level and today classes
+                // Clear prior level / today classes and any glyph text
                 for l in 0..=4 { cell.remove_css_class(&format!("level-{l}")); }
                 cell.remove_css_class("today");
+                cell.set_label("");
 
                 if date.to_unix() > today_unix + 60 {
                     // Future day — show as empty level-0 with reduced opacity
@@ -236,6 +241,10 @@ impl StatsView {
                 let mins = totals.get(date_str.as_str()).copied().unwrap_or(0) / 60;
                 let level = minutes_to_level(mins, daily_expected_mins);
                 cell.add_css_class(&format!("level-{level}"));
+                // ★ only for days that exceed the daily goal by 20 % or more.
+                // On-target days rely on colour intensity alone — a wall of
+                // glyphs in a 13×7 grid blurs together and dilutes the signal.
+                if level == 4 { cell.set_label("★"); }
                 if date.year() == now.year()
                     && date.day_of_year() == now.day_of_year()
                 {
