@@ -124,7 +124,7 @@ impl ObjectImpl for TimerView {
 
     fn dispose(&self) {
         self.cancel_tick();
-        self.obj().first_child().map(|w| w.unparent());
+        if let Some(w) = self.obj().first_child() { w.unparent() }
     }
 }
 
@@ -413,7 +413,7 @@ impl TimerView {
         };
 
         let data = SessionData {
-            start_time:    start_time,
+            start_time,
             duration_secs: elapsed as i64,
             mode:          if is_stopwatch { SessionMode::Stopwatch } else { SessionMode::Countdown },
             label_id,

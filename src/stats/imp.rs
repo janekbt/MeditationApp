@@ -67,7 +67,7 @@ impl ObjectImpl for StatsView {
     }
 
     fn dispose(&self) {
-        self.obj().first_child().map(|w| w.unparent());
+        if let Some(w) = self.obj().first_child() { w.unparent() }
     }
 }
 
@@ -341,7 +341,7 @@ impl StatsView {
             .build();
         y_axis.append(
             &gtk::Label::builder()
-                .label(&format_hm(max_val))
+                .label(format_hm(max_val))
                 .css_classes(["caption", "dim-label"])
                 .halign(gtk::Align::Start)
                 .build(),
@@ -349,7 +349,7 @@ impl StatsView {
         y_axis.append(&gtk::Box::builder().vexpand(true).build());
         y_axis.append(
             &gtk::Label::builder()
-                .label(&format_hm(max_val / 2))
+                .label(format_hm(max_val / 2))
                 .css_classes(["caption", "dim-label"])
                 .halign(gtk::Align::Start)
                 .build(),
@@ -394,7 +394,7 @@ impl StatsView {
             // X-axis label — empty string keeps the column as an invisible spacer
             xlabels_box.append(
                 &gtk::Label::builder()
-                    .label(&x_label_text(&data, i, days))
+                    .label(x_label_text(&data, i, days))
                     .css_classes(["caption", "dim-label"])
                     .halign(gtk::Align::Center)
                     .hexpand(true)

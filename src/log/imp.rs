@@ -54,7 +54,7 @@ impl ObjectImpl for LogView {
     }
 
     fn dispose(&self) {
-        self.obj().first_child().map(|w| w.unparent());
+        if let Some(w) = self.obj().first_child() { w.unparent() }
     }
 }
 
@@ -153,7 +153,7 @@ impl LogView {
             .title(&title)
             .activatable(true)
             // Store session id in widget name so row_activated can retrieve it.
-            .name(&session.id.to_string())
+            .name(session.id.to_string())
             .build();
 
         if !subtitle.is_empty() {
@@ -275,7 +275,7 @@ impl LogView {
 
         let date_row = adw::ActionRow::builder()
             .title("Date")
-            .subtitle(&format_date(init_time))
+            .subtitle(format_date(init_time))
             .build();
 
         let calendar = gtk::Calendar::new();

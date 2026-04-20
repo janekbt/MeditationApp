@@ -5,7 +5,7 @@ const RESOURCE_BASE: &str = "/io/github/janekbt/Meditate/sounds";
 
 thread_local! {
     /// Keeps the currently-playing (or pre-warmed) MediaFile alive.
-    static CURRENT_MEDIA: RefCell<Option<gtk::MediaFile>> = RefCell::new(None);
+    static CURRENT_MEDIA: RefCell<Option<gtk::MediaFile>> = const { RefCell::new(None) };
 }
 
 /// Stop whatever is currently playing (no-op if nothing is).

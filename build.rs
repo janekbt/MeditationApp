@@ -11,7 +11,7 @@ fn main() {
     if blueprint_dir.exists() {
         for entry in std::fs::read_dir(blueprint_dir).unwrap() {
             let path = entry.unwrap().path();
-            if path.extension().map_or(false, |e| e == "blp") {
+            if path.extension().is_some_and(|e| e == "blp") {
                 let stem = path.file_stem().unwrap().to_str().unwrap();
                 let output = format!("{ui_out_dir}/{stem}.ui");
 
