@@ -1,45 +1,39 @@
 # Meditate
 
-A simple meditation timer and session log for GNOME.
+A meditation timer and session log for GNOME.
 
-Meditate provides a countdown and stopwatch timer, a browsable session log, and statistics to help you build a consistent practice. It is designed to work on both desktop and mobile (360 px minimum width).
+Countdown and stopwatch, a browsable log, and weekly-goal stats to help you build a consistent practice. Adaptive for desktop and Linux phones.
 
 ## Features
 
 ### Timer
-- **Countdown** and **Stopwatch** modes
-- Hours and minutes spin buttons for precise durations
-- Configurable quick-preset buttons (1–5 presets, default: 5 / 10 / 15 / 20 / 30 min)
-- Label selection before starting
-- Daily streak display
-- Full-screen running view with large time display
-- Pause, Resume, and Stop controls
-- Post-session form: optional note, label confirmation, Save or Discard
-- Completion sound: Singing Bowl, Bell, Gong, custom audio file, or none
-- System notification when the timer ends (only fired when the app is in the background)
+- Countdown and stopwatch modes
+- Quick presets plus custom durations
+- Labels and optional post-session notes
+- Pause, resume, discard
+- Completion sound — built-in bowls/bell/gong, your own audio, or none
+- Daily streak and a system notification when you're away from the app
 
 ### Log
-- Scrollable session history
-- Each row shows duration, date, label, and a note preview
-- Swipe to delete with undo toast
-- Add or edit sessions manually
-- Filter by label or "only sessions with notes"
+- Date-grouped card feed of every session
+- Filter by label, or sessions with notes
+- Add, edit, or swipe to delete — with undo
+- Import from Insight Timer, and CSV import/export for backups
 
 ### Stats
-- Monthly calendar — one dot per day with at least one session
-- Bar chart with Daily / Weekly / Monthly / Yearly toggle
-- Text stats: running average, longest streak, total meditation time
+- 13-week contribution heatmap, with stars for days that cleared your weekly goal
+- Weekly-goal ring showing this week's progress
+- Bar or line chart across week / month / 3 months / year
+- Streak, total time, and session count at a glance
 
 ### Preferences
-- Completion sound picker with live preview
-- Running-average period (7, 14, or 30 days)
-- Label management — create, rename, delete
-- Timer preset editor — set 1–5 custom durations
+- Weekly goal, completion sound, running-average period
+- Manage your labels and timer presets
 
 ### General
-- Adaptive layout — works at 360 px (Linux phones) and scales to desktop
-- Dark mode and high-contrast safe (uses `@accent_color` throughout)
-- Keyboard shortcuts: `Space` start/pause/resume, `Ctrl+,` preferences, `Ctrl+?` shortcuts, `Ctrl+Q` quit
+- Translated into 10 languages (English, German, Spanish, French, Italian, Dutch, Polish, Brazilian Portuguese, Russian, Simplified Chinese)
+- Keyboard shortcuts for the common actions
+- Dark-mode and high-contrast safe; follows your system accent colour
 
 ## Installation
 
@@ -90,7 +84,7 @@ flatpak run io.github.janekbt.Meditate
 
 ## Data
 
-Sessions and settings are stored in a SQLite database at  
+Sessions and settings are stored in a SQLite database at
 `~/.local/share/meditate/meditate.db` (or the Flatpak equivalent inside the sandbox).
 
 ## License
