@@ -1,0 +1,226 @@
+# Russian translation for Meditate.
+# Copyright (C) 2026 Janek Teders
+# This file is distributed under the same license as the meditate package.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: meditate\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-04-20 18:03+0200\n"
+"PO-Revision-Date: 2026-04-20 18:28+0200\n"
+"Last-Translator: Janek Teders\n"
+"Language-Team: Russian\n"
+"Language: ru\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && n"
+"%10<=4 && (n%100<12 || n%100>14) ? 1 : 2);\n"
+
+msgid "min"
+msgstr "мин"
+
+msgid "No note added"
+msgstr "Без заметки"
+
+msgid "Delete Session"
+msgstr "Удалить сессию"
+
+msgid "Session deleted"
+msgstr "Сессия удалена"
+
+msgid "Hours"
+msgstr "Часы"
+
+msgid "Minutes"
+msgstr "Минуты"
+
+msgid "Date"
+msgstr "Дата"
+
+msgid "Pick a Date"
+msgstr "Выбрать дату"
+
+msgid "Hour"
+msgstr "Час"
+
+msgid "Minute"
+msgstr "Минута"
+
+msgid "Label"
+msgstr "Метка"
+
+msgid "Note (optional)"
+msgstr "Заметка (необязательно)"
+
+msgid "Duration"
+msgstr "Длительность"
+
+msgid "Start time"
+msgstr "Время начала"
+
+msgid "_Cancel"
+msgstr "_Отмена"
+
+msgid "_Save"
+msgstr "_Сохранить"
+
+msgid "_Add"
+msgstr "_Добавить"
+
+msgid "Edit Session"
+msgstr "Изменить сессию"
+
+msgid "Add Session"
+msgstr "Добавить сессию"
+
+msgid "Paused"
+msgstr "Пауза"
+
+msgid "Hours · Minutes"
+msgstr "Часы · Минуты"
+
+msgid "Discard Session?"
+msgstr "Отменить сессию?"
+
+msgid "Your note will be lost."
+msgstr "Заметка будет потеряна."
+
+msgid "Cancel"
+msgstr "Отмена"
+
+msgid "Discard"
+msgstr "Отменить"
+
+msgid "Custom…"
+msgstr "Другое время…"
+
+msgid "Set a Custom Time"
+msgstr "Задать своё время"
+
+msgid "Custom Time"
+msgstr "Своё время"
+
+msgid "Hours : Minutes"
+msgstr "Часы : Минуты"
+
+msgid "Set"
+msgstr "Задать"
+
+msgid "No Sessions Yet"
+msgstr "Пока нет сессий"
+
+msgid "Start meditating to see your sessions here, or add one manually."
+msgstr ""
+"Начните медитировать, чтобы увидеть сессии здесь, или добавьте их вручную."
+
+msgid "No Matching Sessions"
+msgstr "Нет подходящих сессий"
+
+msgid "Try changing your filters."
+msgstr "Попробуйте изменить фильтры."
+
+msgid "Load more"
+msgstr "Показать ещё"
+
+msgid "Weekly goal"
+msgstr "Недельная цель"
+
+msgid "Last 13 weeks"
+msgstr "Последние 13 недель"
+
+msgid "Less"
+msgstr "Меньше"
+
+msgid "More"
+msgstr "Больше"
+
+msgid "Insights"
+msgstr "Аналитика"
+
+msgid "Week"
+msgstr "Неделя"
+
+msgid "Month"
+msgstr "Месяц"
+
+msgid "3 Months"
+msgstr "3 месяца"
+
+msgid "Year"
+msgstr "Год"
+
+msgid "Minutes / Day"
+msgstr "Минут в день"
+
+msgid "Bars"
+msgstr "Столбцы"
+
+msgid "Line"
+msgstr "Линия"
+
+msgid "Streak"
+msgstr "Серия"
+
+msgid "Total"
+msgstr "Всего"
+
+msgid "Sessions"
+msgstr "Сессии"
+
+msgid "Countdown"
+msgstr "Обратный отсчёт"
+
+msgid "Stopwatch"
+msgstr "Секундомер"
+
+msgid "Quick Presets"
+msgstr "Быстрый выбор"
+
+msgid "Session"
+msgstr "Сессия"
+
+msgid "Completion sound"
+msgstr "Звук окончания"
+
+msgid "Start Session"
+msgstr "Начать сессию"
+
+msgid "Resume"
+msgstr "Продолжить"
+
+msgid "Stop"
+msgstr "Остановить"
+
+msgid "Save"
+msgstr "Сохранить"
+
+msgid "Meditate"
+msgstr "Meditate"
+
+msgid "Main Menu"
+msgstr "Главное меню"
+
+msgid "Filter Sessions"
+msgstr "Фильтр сессий"
+
+msgid "Has Notes"
+msgstr "С заметками"
+
+msgid "Timer"
+msgstr "Таймер"
+
+msgid "Stats"
+msgstr "Статистика"
+
+msgid "Log"
+msgstr "Журнал"
+
+msgid "_Preferences"
+msgstr "_Параметры"
+
+msgid "_Keyboard Shortcuts"
+msgstr "_Комбинации клавиш"
+
+msgid "_About Meditate"
+msgstr "_О приложении Meditate"
