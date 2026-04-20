@@ -28,28 +28,35 @@ pub struct LogView {
     // append more on demand.
     loaded_count: Cell<usize>,
 
-    /// The date section currently being filled. Persists across load_more
-    /// calls so a single calendar day never gets split into two headers
-    /// just because it straddled a page boundary.
-    current_section: RefCell<Option<DateSection>>,
+    /// Key (`YYYY-MM-DD`) of the section currently being filled — lets
+    /// load_more extend the last-loaded day across a page boundary
+    /// instead of starting a new header.
+    current_section_key: RefCell<Option<String>>,
 
-    /// session_id → card widget. Lets edits update a single card in place
-    /// instead of rebuilding the whole feed (which resets the scroll
-    /// position — closing the edit dialog used to jump to the bottom).
+    /// All visible sections, keyed by their local-date string. Lets the
+    /// delete-undo flow find the right section when a card is removed.
+    sections_by_key: RefCell<std::collections::HashMap<String, DateSection>>,
+
+    /// session_id → card widget. Needed for both in-place edit and
+    /// in-place delete so neither has to rebuild the whole feed (which
+    /// resets the scroll position).
     cards_by_id: RefCell<std::collections::HashMap<i64, gtk::Box>>,
 }
 
 /// One "Today" / "Yesterday" / "Apr 17" group in the feed.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct DateSection {
-    /// Sort key — YYYY-MM-DD local date. Same key means same section.
-    key: String,
+    /// Outer section Gtk.Box — used to remove the whole group when the
+    /// last card in it gets deleted.
+    outer: gtk::Box,
     /// Subtitle under the date header: "3 sessions · 1h 04m".
     caption: gtk::Label,
     /// Vertical Gtk.Box that holds the cards.
     cards_box: gtk::Box,
-    count: u32,
-    total_secs: i64,
+    /// Number of cards currently in the section. Interior mutability so
+    /// the HashMap can store the section by value without &mut dances.
+    count: Cell<u32>,
+    total_secs: Cell<i64>,
 }
 
 #[glib::object_subclass]
@@ -113,7 +120,8 @@ impl LogView {
         self.loaded_count.set(0);
         self.sessions.borrow_mut().clear();
         self.cards_by_id.borrow_mut().clear();
-        *self.current_section.borrow_mut() = None;
+        self.sections_by_key.borrow_mut().clear();
+        *self.current_section_key.borrow_mut() = None;
         while let Some(child) = self.feed_box.first_child() {
             self.feed_box.remove(&child);
         }
@@ -184,63 +192,35 @@ impl LogView {
         label_map: &std::collections::HashMap<i64, &str>,
     ) {
         let key = date_group_key(session.start_time);
-        let mut current = self.current_section.borrow_mut();
 
-        // Do we need a new section?
-        let need_new = !matches!(current.as_ref(), Some(sec) if sec.key == key);
+        // Create a new section if this date just rolled over.
+        let need_new = self.current_section_key.borrow().as_deref() != Some(&key);
         if need_new {
             let (section_box, caption_label, cards_box) = build_section_frame(session.start_time);
             self.feed_box.append(&section_box);
-            *current = Some(DateSection {
-                key: key.clone(),
-                caption: caption_label,
+            let section = DateSection {
+                outer:      section_box,
+                caption:    caption_label,
                 cards_box,
-                count: 0,
-                total_secs: 0,
-            });
+                count:      Cell::new(0),
+                total_secs: Cell::new(0),
+            };
+            self.sections_by_key.borrow_mut().insert(key.clone(), section);
+            *self.current_section_key.borrow_mut() = Some(key.clone());
         }
 
-        // Append the card into the current section and update its counter.
-        let sec = current.as_mut().expect("current_section populated above");
+        // Append the card into the (possibly just-created) section and
+        // bump its counters.
+        let sections = self.sections_by_key.borrow();
+        let sec = sections.get(&key).expect("section populated above");
         let card = build_card(session, label_map);
         sec.cards_box.append(&card);
         self.cards_by_id.borrow_mut().insert(session.id, card);
-        sec.count       += 1;
-        sec.total_secs  += session.duration_secs;
-        sec.caption.set_label(&section_caption_text(sec.count, sec.total_secs));
-    }
-
-    /// Replace the card for `session_id` with a freshly-built one, keeping
-    /// the same slot in its date section. Avoids the full refresh() that
-    /// would reset the scroll position on dialog close.
-    pub fn replace_card_in_place(&self, session: &Session) {
-        let old_card = self.cards_by_id.borrow().get(&session.id).cloned();
-        let Some(old) = old_card else { return; };
-        let Some(parent) = old.parent().and_then(|p| p.downcast::<gtk::Box>().ok()) else {
-            return;
-        };
-
-        // Build the replacement card before we touch the DOM so the rest
-        // of the update is a simple remove + insert.
-        let labels_ref = self.labels.borrow();
-        let label_map: std::collections::HashMap<i64, &str> =
-            labels_ref.iter().map(|l| (l.id, l.name.as_str())).collect();
-        let new_card = build_card(session, &label_map);
-
-        // `insert_child_after` with the previous sibling keeps the card at
-        // its existing index in the cards_box. `prev_sibling` = None means
-        // the card was first, and GTK interprets that as prepend.
-        let prev = old.prev_sibling();
-        parent.remove(&old);
-        parent.insert_child_after(&new_card, prev.as_ref());
-
-        self.cards_by_id.borrow_mut().insert(session.id, new_card);
-
-        // Keep the cached Vec<Session> consistent so future pagination /
-        // edit dialog lookups see the updated values too.
-        if let Some(s) = self.sessions.borrow_mut().iter_mut().find(|s| s.id == session.id) {
-            *s = session.clone();
-        }
+        sec.count.set(sec.count.get() + 1);
+        sec.total_secs.set(sec.total_secs.get() + session.duration_secs);
+        sec.caption.set_label(
+            &section_caption_text(sec.count.get(), sec.total_secs.get()),
+        );
     }
 
     /// Populate the label combo in the filter popover.
@@ -310,9 +290,13 @@ fn build_card(session: &Session, label_map: &std::collections::HashMap<i64, &str
         label_color_class(label_name)
     };
 
-    // Colored left stripe — 3 px wide, full card height.
+    // Colored left stripe — 3 px wide, inset from the top + bottom so
+    // the card's rounded corners stay free, matching the mockup.
     let stripe = gtk::Box::builder()
         .width_request(3)
+        .margin_top(10)
+        .margin_bottom(10)
+        .margin_start(6)
         .css_classes(["log-stripe", color_cls])
         .build();
 
@@ -341,7 +325,7 @@ fn build_card(session: &Session, label_map: &std::collections::HashMap<i64, &str
     left_col.append(&unit_label);
     left_col.append(&time_label);
 
-    // Right column: label chip + (note or placeholder).
+    // Right column: label chip + note/placeholder.
     let right_col = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(7)
@@ -380,11 +364,37 @@ fn build_card(session: &Session, label_map: &std::collections::HashMap<i64, &str
         .spacing(12)
         .margin_top(12)
         .margin_bottom(12)
-        .margin_start(10)
-        .margin_end(12)
+        // Less leading margin here because the stripe already carries
+        // its own margin-start (the gap between the card edge and the
+        // accent strip) + 3 px of actual stripe width.
+        .margin_start(6)
+        .margin_end(4)
         .build();
     content.append(&left_col);
     content.append(&right_col);
+
+    // Delete button — sits as a direct child of the card so we can
+    // vertically centre it against the whole card height, not just the
+    // right column's content.
+    let delete_btn = gtk::Button::builder()
+        .icon_name("user-trash-symbolic")
+        .css_classes(["flat", "circular"])
+        .valign(gtk::Align::Center)
+        .margin_end(8)
+        .tooltip_text("Delete session")
+        // Not Tab-focusable: AdwDialog's auto-focus-restore on close
+        // would otherwise land on whichever trash button was last
+        // hovered and the ScrolledWindow would scroll to it.
+        .focusable(false)
+        .build();
+    let session_id = session.id;
+    delete_btn.connect_clicked(move |btn| {
+        if let Some(win) = btn.root()
+            .and_then(|r| r.downcast::<crate::window::MeditateWindow>().ok())
+        {
+            win.imp().log_view.imp().on_delete_clicked(session_id);
+        }
+    });
 
     let card = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
@@ -392,6 +402,7 @@ fn build_card(session: &Session, label_map: &std::collections::HashMap<i64, &str
         .build();
     card.append(&stripe);
     card.append(&content);
+    card.append(&delete_btn);
 
     // Tap anywhere on the card to open the edit dialog; per-card
     // delete sits as a small flat button in the top-right of the right col.
@@ -493,6 +504,97 @@ fn format_total(secs: i64) -> String {
     let h = secs / 3600;
     let m = (secs % 3600) / 60;
     if h > 0 { format!("{h}h {m:02}m") } else { format!("{m}m") }
+}
+
+// ── Delete with undo toast ────────────────────────────────────────────────────
+
+impl LogView {
+    /// Hide the card for `session_id` and show a "Session deleted · Undo"
+    /// toast. The DB row only actually goes away when the toast is
+    /// dismissed without pressing Undo. Keeps the feed's scroll position
+    /// — no refresh() involved.
+    pub fn on_delete_clicked(&self, session_id: i64) {
+        let Some(card) = self.cards_by_id.borrow().get(&session_id).cloned() else { return; };
+        let sess = self.sessions.borrow().iter().find(|s| s.id == session_id).cloned();
+        let Some(session) = sess else { return; };
+
+        card.set_visible(false);
+
+        let toast = adw::Toast::builder()
+            .title("Session deleted")
+            .button_label("Undo")
+            .timeout(5)
+            .build();
+
+        // Undo: just restore the card — nothing changed in the DB yet.
+        let card_undo = card.clone();
+        toast.connect_button_clicked(move |_| {
+            card_undo.set_visible(true);
+        });
+
+        // Dismissed: commit the delete unless the user hit Undo.
+        let obj = self.obj().clone();
+        let card_commit = card.clone();
+        toast.connect_dismissed(move |_| {
+            if card_commit.is_visible() { return; }  // Undo was pressed.
+            let imp = obj.imp();
+            if let Some(app) = imp.get_app() {
+                app.with_db(|db| db.delete_session(session_id));
+            }
+            imp.commit_delete_in_place(session_id, &session);
+        });
+
+        if let Some(win) = self.get_window() {
+            win.add_toast(toast);
+        }
+    }
+
+    /// Actually remove the already-hidden card from its section, update
+    /// the section caption, and drop the section entirely if it's now
+    /// empty. Called only after the user lets the undo toast expire.
+    fn commit_delete_in_place(&self, session_id: i64, session: &Session) {
+        let key = date_group_key(session.start_time);
+
+        // Remove widget from its section + update the section's counter.
+        // Cloned out of the borrow so we can mutate the map below.
+        let section = self.sections_by_key.borrow().get(&key).cloned();
+        let section_empty = if let Some(sec) = section.as_ref() {
+            if let Some(card) = self.cards_by_id.borrow().get(&session_id).cloned() {
+                sec.cards_box.remove(&card);
+            }
+            sec.count.set(sec.count.get().saturating_sub(1));
+            sec.total_secs.set((sec.total_secs.get() - session.duration_secs).max(0));
+            sec.caption.set_label(
+                &section_caption_text(sec.count.get(), sec.total_secs.get()),
+            );
+            sec.cards_box.first_child().is_none()
+        } else {
+            false
+        };
+
+        if let Some(sec) = section {
+            if section_empty {
+                self.feed_box.remove(&sec.outer);
+                self.sections_by_key.borrow_mut().remove(&key);
+                if self.current_section_key.borrow().as_deref() == Some(&key) {
+                    *self.current_section_key.borrow_mut() = None;
+                }
+            }
+        }
+
+        self.cards_by_id.borrow_mut().remove(&session_id);
+        self.sessions.borrow_mut().retain(|s| s.id != session_id);
+        self.loaded_count.set(self.loaded_count.get().saturating_sub(1));
+
+        // If the feed became entirely empty, flip to the empty state.
+        if self.feed_box.first_child().is_none() {
+            let has_filter = self.filter_notes_only.get()
+                || self.filter_label_id.get().is_some();
+            self.view_stack.set_visible_child_name(
+                if has_filter { "filtered-empty" } else { "empty" },
+            );
+        }
+    }
 }
 
 // ── Add / Edit dialog ─────────────────────────────────────────────────────────
