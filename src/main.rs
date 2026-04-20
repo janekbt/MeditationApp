@@ -1,5 +1,6 @@
 mod application;
 mod config;
+mod data_io;
 pub mod db;
 pub mod log;
 mod preferences;

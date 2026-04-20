@@ -1,4 +1,4 @@
-use rusqlite::{Connection, Result, params};
+use rusqlite::{Connection, OptionalExtension, Result, params};
 use std::path::Path;
 
 // ── Models ────────────────────────────────────────────────────────────────────
@@ -10,7 +10,7 @@ pub enum SessionMode {
 }
 
 impl SessionMode {
-    fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             SessionMode::Countdown => "countdown",
             SessionMode::Stopwatch => "stopwatch",
@@ -262,6 +262,83 @@ impl Database {
             label_id:      data.label_id,
             note:          data.note.clone(),
         })
+    }
+
+    /// Insert many sessions inside a single transaction — orders of magnitude
+    /// faster than calling `create_session` in a loop. Returns the number of
+    /// rows inserted. Transaction is rolled back on error.
+    ///
+    /// Uses `unchecked_transaction` so the caller can hold a shared `&Database`
+    /// (matching `with_db`'s closure signature); safe here because the app is
+    /// single-threaded and we don't nest transactions.
+    pub fn bulk_insert_sessions(&self, sessions: &[SessionData]) -> Result<usize> {
+        let tx = self.conn.unchecked_transaction()?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO sessions (start_time, duration_secs, mode, label_id, note)
+                 VALUES (?1, ?2, ?3, ?4, ?5)"
+            )?;
+            for data in sessions {
+                stmt.execute(params![
+                    data.start_time,
+                    data.duration_secs,
+                    data.mode.as_str(),
+                    data.label_id,
+                    data.note,
+                ])?;
+            }
+        }
+        tx.commit()?;
+        Ok(sessions.len())
+    }
+
+    /// Delete every row from `sessions`. Returns the number of rows deleted.
+    pub fn delete_all_sessions(&self) -> Result<usize> {
+        let n = self.conn.execute("DELETE FROM sessions", [])?;
+        Ok(n)
+    }
+
+    /// Stream every session row in a stable order (start_time ASC) — used
+    /// for CSV export. Calls `row_cb` once per session; the callback may
+    /// return Err to abort.
+    pub fn for_each_session<F: FnMut(&Session) -> Result<()>>(&self, mut row_cb: F) -> Result<()> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, start_time, duration_secs, mode, label_id, note
+             FROM sessions ORDER BY start_time ASC"
+        )?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let mode_str: String = row.get(3)?;
+            let mode = match mode_str.as_str() {
+                "stopwatch" => SessionMode::Stopwatch,
+                _ => SessionMode::Countdown,
+            };
+            let sess = Session {
+                id:            row.get(0)?,
+                start_time:    row.get(1)?,
+                duration_secs: row.get(2)?,
+                mode,
+                label_id:      row.get(4)?,
+                note:          row.get(5)?,
+            };
+            row_cb(&sess)?;
+        }
+        Ok(())
+    }
+
+    /// Return a label id by case-sensitive name, creating it if missing.
+    /// Used by CSV importers that carry label names rather than ids.
+    pub fn find_or_create_label(&self, name: &str) -> Result<i64> {
+        if let Some(id) = self.conn.query_row(
+            "SELECT id FROM labels WHERE name = ?1",
+            params![name],
+            |r| r.get::<_, i64>(0),
+        ).optional()? {
+            return Ok(id);
+        }
+        // `create_label` auto-suffixes on collision, so reuse that path when
+        // the simple lookup missed (race-safe enough for a single-user app).
+        Ok(self.create_label(name)?.id)
     }
 
     pub fn list_sessions(&self, filter: &SessionFilter) -> Result<Vec<Session>> {

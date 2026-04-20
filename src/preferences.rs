@@ -398,6 +398,101 @@ pub fn show_preferences(app: &MeditateApplication) {
     general_page.add(&presets_group);
     dialog.add(&general_page);
 
+    // ── Data page ─────────────────────────────────────────────────────────────
+
+    let data_page = adw::PreferencesPage::builder()
+        .title("Data")
+        .icon_name("drive-harddisk-symbolic")
+        .build();
+
+    let backup_group = adw::PreferencesGroup::builder()
+        .title("Backup")
+        .description("Export your session log to a CSV file, or restore from one.")
+        .build();
+
+    let export_row = adw::ActionRow::builder()
+        .title("Export session log")
+        .subtitle("Save every session to a CSV file")
+        .activatable(true)
+        .build();
+    let export_btn = gtk::Button::builder()
+        .icon_name("document-save-symbolic")
+        .valign(gtk::Align::Center)
+        .tooltip_text("Export")
+        .css_classes(["flat"])
+        .build();
+    export_row.add_suffix(&export_btn);
+    export_row.set_activatable_widget(Some(&export_btn));
+    backup_group.add(&export_row);
+
+    let import_row = adw::ActionRow::builder()
+        .title("Import from Meditate CSV")
+        .subtitle("Restore sessions from a file exported above")
+        .activatable(true)
+        .build();
+    let import_btn = gtk::Button::builder()
+        .icon_name("document-open-symbolic")
+        .valign(gtk::Align::Center)
+        .tooltip_text("Import")
+        .css_classes(["flat"])
+        .build();
+    import_row.add_suffix(&import_btn);
+    import_row.set_activatable_widget(Some(&import_btn));
+    backup_group.add(&import_row);
+
+    data_page.add(&backup_group);
+
+    let migrate_group = adw::PreferencesGroup::builder()
+        .title("Migrate")
+        .description("Import sessions from another meditation app.")
+        .build();
+
+    let it_row = adw::ActionRow::builder()
+        .title("Import from Insight Timer")
+        .subtitle("Upload an Insight Timer CSV export")
+        .activatable(true)
+        .build();
+    let it_btn = gtk::Button::builder()
+        .icon_name("document-open-symbolic")
+        .valign(gtk::Align::Center)
+        .tooltip_text("Import Insight Timer CSV")
+        .css_classes(["flat"])
+        .build();
+    it_row.add_suffix(&it_btn);
+    it_row.set_activatable_widget(Some(&it_btn));
+    migrate_group.add(&it_row);
+
+    data_page.add(&migrate_group);
+
+    let danger_group = adw::PreferencesGroup::builder()
+        .title("Danger Zone")
+        .description("These actions cannot be undone.")
+        .build();
+
+    let delete_row = adw::ActionRow::builder()
+        .title("Delete all sessions")
+        .subtitle("Permanently remove every logged session")
+        .activatable(true)
+        .build();
+    let delete_btn = gtk::Button::builder()
+        .label("Delete All")
+        .valign(gtk::Align::Center)
+        .css_classes(["destructive-action"])
+        .build();
+    delete_row.add_suffix(&delete_btn);
+    delete_row.set_activatable_widget(Some(&delete_btn));
+    danger_group.add(&delete_row);
+
+    data_page.add(&danger_group);
+
+    dialog.add(&data_page);
+
+    // Wire the data-page actions.
+    wire_data_actions(
+        &app, &dialog,
+        &export_btn, &import_btn, &it_btn, &delete_btn,
+    );
+
     // ── Labels page ───────────────────────────────────────────────────────────
 
     let labels_page = adw::PreferencesPage::builder()
@@ -731,6 +826,167 @@ fn make_label_row(
     ));
 
     row
+}
+
+// ── Data page actions ─────────────────────────────────────────────────────────
+
+fn wire_data_actions(
+    app: &MeditateApplication,
+    dialog: &adw::PreferencesDialog,
+    export_btn: &gtk::Button,
+    import_btn: &gtk::Button,
+    it_btn: &gtk::Button,
+    delete_btn: &gtk::Button,
+) {
+    use crate::data_io;
+
+    // ── Export to CSV ────────────────────────────────────────────────────
+    export_btn.connect_clicked(glib::clone!(
+        #[weak] app,
+        #[weak] dialog,
+        move |_| {
+            let file_dialog = gtk::FileDialog::builder()
+                .title("Export Session Log")
+                .initial_name(data_io::suggested_export_filename())
+                .build();
+            let filter = gtk::FileFilter::new();
+            filter.set_name(Some("CSV files"));
+            filter.add_suffix("csv");
+            file_dialog.set_default_filter(Some(&filter));
+
+            let parent = app.active_window().and_downcast::<gtk::Window>();
+            file_dialog.save(
+                parent.as_ref(),
+                None::<&gio::Cancellable>,
+                glib::clone!(
+                    #[weak] app,
+                    #[weak] dialog,
+                    move |result| {
+                        let Ok(file) = result else { return; };
+                        let Some(path) = file.path() else { return; };
+                        match data_io::export_csv(&app, &path) {
+                            Ok(n) => data_toast(&dialog, &format!(
+                                "Exported {n} session{}", if n == 1 { "" } else { "s" }
+                            )),
+                            Err(e) => data_toast(&dialog, &format!("Export failed: {e}")),
+                        }
+                    }
+                ),
+            );
+        }
+    ));
+
+    // ── Import from Meditate CSV ─────────────────────────────────────────
+    import_btn.connect_clicked(glib::clone!(
+        #[weak] app,
+        #[weak] dialog,
+        move |_| {
+            open_import_dialog(&app, &dialog, "Import Session Log", |app, path| {
+                data_io::import_csv(app, path)
+            });
+        }
+    ));
+
+    // ── Import from Insight Timer ────────────────────────────────────────
+    it_btn.connect_clicked(glib::clone!(
+        #[weak] app,
+        #[weak] dialog,
+        move |_| {
+            open_import_dialog(&app, &dialog, "Import from Insight Timer", |app, path| {
+                data_io::import_insighttimer(app, path)
+            });
+        }
+    ));
+
+    // ── Delete all (with confirmation) ───────────────────────────────────
+    delete_btn.connect_clicked(glib::clone!(
+        #[weak] app,
+        #[weak] dialog,
+        move |_| {
+            let alert = adw::AlertDialog::builder()
+                .heading("Delete every session?")
+                .body("This permanently removes every session in your log. Export a backup first if you want to keep any history.")
+                .default_response("cancel")
+                .close_response("cancel")
+                .build();
+            alert.add_response("cancel", "Cancel");
+            alert.add_response("delete", "Delete All");
+            alert.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+            alert.connect_response(
+                Some("delete"),
+                glib::clone!(
+                    #[weak] app,
+                    #[weak] dialog,
+                    move |_, _| {
+                        match data_io::delete_all(&app) {
+                            Ok(n) => {
+                                data_toast(&dialog, &format!(
+                                    "Deleted {n} session{}", if n == 1 { "" } else { "s" }
+                                ));
+                                refresh_main_window(&app);
+                            }
+                            Err(e) => data_toast(&dialog, &format!("Delete failed: {e}")),
+                        }
+                    }
+                ),
+            );
+            alert.present(Some(&dialog));
+        }
+    ));
+}
+
+fn open_import_dialog<F>(
+    app: &MeditateApplication,
+    dialog: &adw::PreferencesDialog,
+    title: &str,
+    importer: F,
+)
+where F: FnOnce(&MeditateApplication, &std::path::Path) -> Result<usize, crate::data_io::DataIoError>
+    + 'static,
+{
+    let file_dialog = gtk::FileDialog::builder()
+        .title(title)
+        .build();
+    let filter = gtk::FileFilter::new();
+    filter.set_name(Some("CSV files"));
+    filter.add_suffix("csv");
+    file_dialog.set_default_filter(Some(&filter));
+
+    let parent = app.active_window().and_downcast::<gtk::Window>();
+    let app = app.clone();
+    let dialog = dialog.clone();
+    file_dialog.open(
+        parent.as_ref(),
+        None::<&gio::Cancellable>,
+        move |result| {
+            let Ok(file) = result else { return; };
+            let Some(path) = file.path() else { return; };
+            match importer(&app, &path) {
+                Ok(n) => {
+                    data_toast(&dialog, &format!(
+                        "Imported {n} session{}", if n == 1 { "" } else { "s" }
+                    ));
+                    refresh_main_window(&app);
+                }
+                Err(e) => data_toast(&dialog, &format!("Import failed: {e}")),
+            }
+        },
+    );
+}
+
+fn data_toast(dialog: &adw::PreferencesDialog, title: &str) {
+    let toast = adw::Toast::builder().title(title).timeout(4).build();
+    dialog.add_toast(toast);
+}
+
+fn refresh_main_window(app: &MeditateApplication) {
+    if let Some(win) = app.active_window()
+        .and_then(|w| w.downcast::<crate::window::MeditateWindow>().ok())
+    {
+        win.imp().timer_view.refresh_streak();
+        win.imp().stats_view.refresh();
+        win.imp().log_view.refresh();
+    }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
