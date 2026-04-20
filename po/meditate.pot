@@ -522,15 +522,15 @@ msgid "{pct}% down vs last week ({this} vs {last})"
 msgstr ""
 
 #: src/stats/imp.rs:362
-msgid "This week's pace"
+msgid "This week's practice"
 msgstr ""
 
 #: src/stats/imp.rs:370
-msgid "Pace up vs last month"
+msgid "Practising more"
 msgstr ""
 
 #: src/stats/imp.rs:372
-msgid "Pace down vs last month"
+msgid "Practising less"
 msgstr ""
 
 #: src/stats/imp.rs:374

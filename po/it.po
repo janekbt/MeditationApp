@@ -524,16 +524,16 @@ msgid "{pct}% down vs last week ({this} vs {last})"
 msgstr "-{pct} % rispetto alla scorsa settimana ({this} contro {last})"
 
 #: src/stats/imp.rs:362
-msgid "This week's pace"
-msgstr "Ritmo di questa settimana"
+msgid "This week's practice"
+msgstr "Pratica di questa settimana"
 
 #: src/stats/imp.rs:370
-msgid "Pace up vs last month"
-msgstr "Ritmo in aumento rispetto al mese scorso"
+msgid "Practising more"
+msgstr "Più pratica"
 
 #: src/stats/imp.rs:372
-msgid "Pace down vs last month"
-msgstr "Ritmo in calo rispetto al mese scorso"
+msgid "Practising less"
+msgstr "Meno pratica"
 
 #: src/stats/imp.rs:374
 msgid "{pct}% vs last month ({this} vs {last})"

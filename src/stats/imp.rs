@@ -359,7 +359,7 @@ impl StatsView {
                 .replace("{pct}", &pct.abs().to_string())
                 .replace("{this}", &format_hm_secs(this_week_secs))
                 .replace("{last}", &format_hm_secs(last_week_secs));
-            self.append_insight(icon, &gettext("This week's pace"), &body, false);
+            self.append_insight(icon, &gettext("This week's practice"), &body, false);
         }
 
         // 3. Trend vs last month.
@@ -367,9 +367,9 @@ impl StatsView {
             let pct = ((data.this_month - data.last_month) as f64
                 / data.last_month as f64 * 100.0).round() as i32;
             let (icon, title) = if pct >= 0 {
-                ("↗", gettext("Pace up vs last month"))
+                ("↗", gettext("Practising more"))
             } else {
-                ("↘", gettext("Pace down vs last month"))
+                ("↘", gettext("Practising less"))
             };
             let body = gettext("{pct}% vs last month ({this} vs {last})")
                 .replace("{pct}", &format!("{pct:+}"))

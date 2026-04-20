@@ -521,16 +521,16 @@ msgid "{pct}% down vs last week ({this} vs {last})"
 msgstr "较上周减少 {pct}%（{this} vs {last}）"
 
 #: src/stats/imp.rs:362
-msgid "This week's pace"
-msgstr "本周节奏"
+msgid "This week's practice"
+msgstr "本周练习"
 
 #: src/stats/imp.rs:370
-msgid "Pace up vs last month"
-msgstr "节奏较上月加快"
+msgid "Practising more"
+msgstr "练习增多"
 
 #: src/stats/imp.rs:372
-msgid "Pace down vs last month"
-msgstr "节奏较上月放缓"
+msgid "Practising less"
+msgstr "练习减少"
 
 #: src/stats/imp.rs:374
 msgid "{pct}% vs last month ({this} vs {last})"

@@ -523,16 +523,16 @@ msgid "{pct}% down vs last week ({this} vs {last})"
 msgstr "{pct} % minder dan vorige week ({this} t.o.v. {last})"
 
 #: src/stats/imp.rs:362
-msgid "This week's pace"
-msgstr "Tempo deze week"
+msgid "This week's practice"
+msgstr "Praktijk deze week"
 
 #: src/stats/imp.rs:370
-msgid "Pace up vs last month"
-msgstr "Tempo hoger dan vorige maand"
+msgid "Practising more"
+msgstr "Meer oefening"
 
 #: src/stats/imp.rs:372
-msgid "Pace down vs last month"
-msgstr "Tempo lager dan vorige maand"
+msgid "Practising less"
+msgstr "Minder oefening"
 
 #: src/stats/imp.rs:374
 msgid "{pct}% vs last month ({this} vs {last})"
