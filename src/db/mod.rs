@@ -330,11 +330,12 @@ impl Database {
         Ok(())
     }
 
-    /// Return a label id by case-sensitive name, creating it if missing.
-    /// Used by CSV importers that carry label names rather than ids.
+    /// Return a label id by name, creating it if missing. Matches
+    /// case-insensitively so an import of "Meditation" finds an existing
+    /// "meditation" instead of producing a duplicate row.
     pub fn find_or_create_label(&self, name: &str) -> Result<i64> {
         if let Some(id) = self.conn.query_row(
-            "SELECT id FROM labels WHERE name = ?1",
+            "SELECT id FROM labels WHERE name = ?1 COLLATE NOCASE",
             params![name],
             |r| r.get::<_, i64>(0),
         ).optional()? {
@@ -540,7 +541,10 @@ impl Database {
     /// Days with no sessions count as zero.
     pub fn get_running_average_secs(&self, days: u32) -> Result<f64> {
         // Compute the since-date in local time via SQLite so the boundary is
-        // local midnight, not UTC midnight.
+        // local midnight, not UTC midnight. We then hand the string to
+        // strftime('%s', …, 'utc') inside the SUM query to turn it into a
+        // unix timestamp, which makes the WHERE sargable against
+        // idx_sessions_start_time.
         let since: String = self.conn.query_row(
             "SELECT strftime('%Y-%m-%d', 'now', ?1, 'localtime')",
             params![format!("-{} days", days - 1)],
@@ -549,23 +553,23 @@ impl Database {
         let total: i64 = self.conn.query_row(
             "SELECT COALESCE(SUM(duration_secs), 0)
              FROM sessions
-             WHERE strftime('%Y-%m-%d', start_time, 'unixepoch', 'localtime') >= ?1",
+             WHERE start_time >= strftime('%s', ?1, 'utc')",
             params![since],
             |row| row.get(0),
         )?;
         Ok(total as f64 / days as f64)
     }
 
-    /// Returns (day_unix_timestamp, total_duration_secs) for each day in the
-    /// last `days` days that had at least one session. Used by the bar chart.
     /// Returns `(local-date-string "YYYY-MM-DD", total_secs)` for each day
-    /// on or after `since_date` that had at least one session.
+    /// on or after `since_date` that had at least one session. WHERE uses
+    /// the unix boundary so the index drives the scan; only the narrowed
+    /// subset pays for the strftime that produces the GROUP key.
     pub fn get_daily_totals(&self, since_date: &str) -> Result<Vec<(String, i64)>> {
         let mut stmt = self.conn.prepare_cached(
             "SELECT strftime('%Y-%m-%d', start_time, 'unixepoch', 'localtime') AS day,
                     SUM(duration_secs) AS total
              FROM sessions
-             WHERE strftime('%Y-%m-%d', start_time, 'unixepoch', 'localtime') >= ?1
+             WHERE start_time >= strftime('%s', ?1, 'utc')
              GROUP BY day
              ORDER BY day ASC"
         )?;
@@ -580,7 +584,7 @@ impl Database {
         let total: i64 = self.conn.query_row(
             "SELECT COALESCE(SUM(duration_secs), 0)
              FROM sessions
-             WHERE strftime('%Y-%m-%d', start_time, 'unixepoch', 'localtime') >= ?1",
+             WHERE start_time >= strftime('%s', ?1, 'utc')",
             params![since_date],
             |row| row.get(0),
         )?;

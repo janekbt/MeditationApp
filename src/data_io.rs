@@ -63,7 +63,7 @@ impl From<rusqlite::Error> for DataIoError {
 
 /// Suggested filename for an export, e.g. `meditate-backup-2026-04-20_142030.csv`.
 pub fn suggested_export_filename() -> String {
-    let now = gtk::glib::DateTime::now_local().unwrap();
+    let now = crate::time::now_local();
     let ts  = now.format("%Y-%m-%d_%H%M%S")
         .map(|s| s.to_string())
         .unwrap_or_else(|_| "unknown".to_string());
@@ -146,10 +146,13 @@ pub fn import_csv(app: &MeditateApplication, path: &Path) -> Result<usize, DataI
         let note = if note_txt.is_empty() { None } else { Some(note_txt) };
 
         // Resolve labels to ids in a second pass once we know the full set.
+        // Match case-insensitively so the CSV can't split one logical label
+        // into two DB rows.
         let label_idx = if label_txt.is_empty() {
             usize::MAX
         } else {
-            label_names.iter().position(|n| n == &label_txt).unwrap_or_else(|| {
+            let lower = label_txt.to_lowercase();
+            label_names.iter().position(|n| n.to_lowercase() == lower).unwrap_or_else(|| {
                 label_names.push(label_txt.clone());
                 label_names.len() - 1
             })
@@ -192,7 +195,8 @@ pub fn import_insighttimer(app: &MeditateApplication, path: &Path) -> Result<usi
         let label_idx = if activity.is_empty() {
             usize::MAX
         } else {
-            label_names.iter().position(|n| n == &activity).unwrap_or_else(|| {
+            let lower = activity.to_lowercase();
+            label_names.iter().position(|n| n.to_lowercase() == lower).unwrap_or_else(|| {
                 label_names.push(activity.clone());
                 label_names.len() - 1
             })
