@@ -224,3 +224,12 @@ msgstr "_Tastenkürzel"
 
 msgid "_About Meditate"
 msgstr "_Über Meditate"
+
+msgid "Label name"
+msgstr "Kategoriename"
+
+msgid "New Label"
+msgstr "Neue Kategorie"
+
+msgid "Create"
+msgstr "Erstellen"

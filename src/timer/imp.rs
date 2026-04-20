@@ -988,16 +988,16 @@ fn unix_now() -> i64 {
 /// Build the shared "New Label" alert dialog + text entry.
 fn build_new_label_dialog() -> (gtk::Entry, adw::AlertDialog) {
     let entry = gtk::Entry::builder()
-        .placeholder_text("Label name")
+        .placeholder_text(crate::i18n::gettext("Label name"))
         .activates_default(true)
         .build();
     let dialog = adw::AlertDialog::builder()
-        .heading("New Label")
+        .heading(crate::i18n::gettext("New Label"))
         .close_response("cancel")
         .default_response("create")
         .build();
-    dialog.add_response("cancel", "Cancel");
-    dialog.add_response("create", "Create");
+    dialog.add_response("cancel", &crate::i18n::gettext("Cancel"));
+    dialog.add_response("create", &crate::i18n::gettext("Create"));
     dialog.set_response_appearance("create", adw::ResponseAppearance::Suggested);
     dialog.set_response_enabled("create", false);
     dialog.set_extra_child(Some(&entry));

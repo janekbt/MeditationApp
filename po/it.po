@@ -224,3 +224,12 @@ msgstr "Scorciatoie da _tastiera"
 
 msgid "_About Meditate"
 msgstr "_Informazioni su Meditate"
+
+msgid "Label name"
+msgstr "Nome dell'etichetta"
+
+msgid "New Label"
+msgstr "Nuova etichetta"
+
+msgid "Create"
+msgstr "Crea"

@@ -300,3 +300,12 @@ msgstr ""
 #: data/ui/window.blp:134
 msgid "_About Meditate"
 msgstr ""
+
+msgid "Label name"
+msgstr ""
+
+msgid "New Label"
+msgstr ""
+
+msgid "Create"
+msgstr ""

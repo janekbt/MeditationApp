@@ -223,3 +223,12 @@ msgstr "_Sneltoetsen"
 
 msgid "_About Meditate"
 msgstr "_Over Meditate"
+
+msgid "Label name"
+msgstr "Labelnaam"
+
+msgid "New Label"
+msgstr "Nieuw label"
+
+msgid "Create"
+msgstr "Aanmaken"

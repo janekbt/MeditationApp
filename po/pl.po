@@ -224,3 +224,12 @@ msgstr "_Skróty klawiszowe"
 
 msgid "_About Meditate"
 msgstr "_O programie Meditate"
+
+msgid "Label name"
+msgstr "Nazwa etykiety"
+
+msgid "New Label"
+msgstr "Nowa etykieta"
+
+msgid "Create"
+msgstr "Utwórz"

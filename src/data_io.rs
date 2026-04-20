@@ -133,6 +133,10 @@ pub fn import_csv(app: &MeditateApplication, path: &Path) -> Result<usize, DataI
         let duration_secs: i64 = rec.get(1)
             .and_then(|s| s.trim().parse().ok())
             .ok_or_else(|| DataIoError::Parse(format!("line {line}: bad duration_secs")))?;
+        if duration_secs <= 0 {
+            return Err(DataIoError::Parse(
+                format!("line {line}: duration_secs must be positive, got {duration_secs}")));
+        }
         let mode = match rec.get(2).map(|s| s.trim()) {
             Some("stopwatch") => SessionMode::Stopwatch,
             _                 => SessionMode::Countdown,
@@ -178,6 +182,10 @@ pub fn import_insighttimer(app: &MeditateApplication, path: &Path) -> Result<usi
         let duration_secs = parse_hms_duration(duration_raw)
             .ok_or_else(|| DataIoError::Parse(
                 format!("line {line}: can't parse 'Duration' {duration_raw:?}")))?;
+        if duration_secs <= 0 {
+            return Err(DataIoError::Parse(
+                format!("line {line}: duration must be positive, got {duration_raw:?}")));
+        }
 
         // Insight Timer doesn't record countdown-vs-stopwatch — treat
         // everything as countdown (the closer match: they picked a time).

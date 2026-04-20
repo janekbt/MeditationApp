@@ -224,3 +224,12 @@ msgstr "_Комбинации клавиш"
 
 msgid "_About Meditate"
 msgstr "_О приложении Meditate"
+
+msgid "Label name"
+msgstr "Имя метки"
+
+msgid "New Label"
+msgstr "Новая метка"
+
+msgid "Create"
+msgstr "Создать"

@@ -224,3 +224,12 @@ msgstr "Raccourcis _clavier"
 
 msgid "_About Meditate"
 msgstr "À _propos de Meditate"
+
+msgid "Label name"
+msgstr "Nom de l'étiquette"
+
+msgid "New Label"
+msgstr "Nouvelle étiquette"
+
+msgid "Create"
+msgstr "Créer"

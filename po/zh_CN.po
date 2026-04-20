@@ -222,3 +222,12 @@ msgstr "键盘快捷键(_K)"
 
 msgid "_About Meditate"
 msgstr "关于 Meditate(_A)"
+
+msgid "Label name"
+msgstr "标签名称"
+
+msgid "New Label"
+msgstr "新建标签"
+
+msgid "Create"
+msgstr "创建"

@@ -223,3 +223,12 @@ msgstr "Atalhos de _teclado"
 
 msgid "_About Meditate"
 msgstr "_Sobre o Meditate"
+
+msgid "Label name"
+msgstr "Nome do rótulo"
+
+msgid "New Label"
+msgstr "Novo rótulo"
+
+msgid "Create"
+msgstr "Criar"
