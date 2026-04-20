@@ -88,6 +88,23 @@
   </content_rating>
 
   <releases>
+    <release version="26.4.2" date="2026-04-21">
+      <description>
+        <p>Major polish release ahead of Flathub submission — every tab redesigned, new data features, and translations in nine languages.</p>
+        <ul>
+          <li>Timer, Stats, and Log tabs fully redesigned around the GNOME HIG</li>
+          <li>Stats now shows a weekly-goal ring, a 13-week contribution heatmap, and an insights panel</li>
+          <li>Log is a date-grouped card feed with swipe-to-delete and undo</li>
+          <li>CSV import and export, plus one-click migration from Insight Timer</li>
+          <li>Real CC0 recordings replace the three built-in end sounds, with Singing bowl as the new default</li>
+          <li>Post-session note field is now multi-line</li>
+          <li>Weekly goal resets on the locale's first day of the week</li>
+          <li>New "Vibrate on session end" toggle for Linux phones</li>
+          <li>Full translation coverage across English, German, Spanish, French, Italian, Dutch, Polish, Brazilian Portuguese, Russian, and Simplified Chinese</li>
+          <li>Adaptive layout down to 360 px; HIG-compliant accent colours and accessibility</li>
+        </ul>
+      </description>
+    </release>
     <release version="26.4.1" date="2026-04-13">
       <description>
         <p>Initial release.</p>
