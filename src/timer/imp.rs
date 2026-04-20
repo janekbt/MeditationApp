@@ -44,7 +44,6 @@ pub struct TimerView {
     #[template_child] pub big_time_label:         TemplateChild<gtk::Label>,
     #[template_child] pub countdown_inputs:       TemplateChild<gtk::Box>,
     #[template_child] pub presets_box:           TemplateChild<gtk::FlowBox>,
-    #[template_child] pub stopwatch_idle_label:  TemplateChild<gtk::Label>,
     #[template_child] pub paused_time_label:     TemplateChild<gtk::Label>,
     #[template_child] pub start_btn:             TemplateChild<gtk::Button>,
     #[template_child] pub resume_btn:            TemplateChild<gtk::Button>,
@@ -225,11 +224,19 @@ impl TimerView {
     /// Called whenever the mode toggle fires. `to_stopwatch` is true when the
     /// user switched TO stopwatch (false = switched to countdown).
     fn on_mode_switched(&self, to_stopwatch: bool) {
-        // Show / hide the countdown-specific input widgets
-        self.big_time_label.set_visible(!to_stopwatch);
-        self.time_unit_label.set_visible(!to_stopwatch);
+        // Hero stays visible in both modes; just update its contents.
+        // Stopwatch has no presets card, so we hide countdown_inputs.
+        if to_stopwatch {
+            self.big_time_label.set_label("00:00");
+            self.time_unit_label.set_visible(false);
+        } else {
+            let secs = self.countdown_target_secs.get();
+            let h = secs / 3600;
+            let m = (secs % 3600) / 60;
+            self.big_time_label.set_label(&format!("{h:02}:{m:02}"));
+            self.time_unit_label.set_visible(true);
+        }
         self.countdown_inputs.set_visible(!to_stopwatch);
-        self.stopwatch_idle_label.set_visible(to_stopwatch);
 
         let (timer_state, display_secs) = {
             let mode = if to_stopwatch {

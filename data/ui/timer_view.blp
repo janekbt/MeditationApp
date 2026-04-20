@@ -17,8 +17,7 @@ template $TimerView : Gtk.Widget {
         child: Gtk.Box {
           orientation: vertical;
           spacing: 14;
-          valign: center;
-          vexpand: true;
+          valign: start;
           margin-top: 24;
           margin-bottom: 24;
           margin-start: 12;
@@ -138,14 +137,6 @@ template $TimerView : Gtk.Widget {
                       };
                     }
                   }
-                }
-
-                // Shown only in stopwatch idle mode
-                Gtk.Label stopwatch_idle_label {
-                  label: "00:00";
-                  css-classes: ["title-1"];
-                  halign: center;
-                  visible: false;
                 }
               };
             }
