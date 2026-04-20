@@ -616,6 +616,7 @@ dependencies = [
  "glib-build-tools",
  "gtk4",
  "libadwaita",
+ "libc",
  "rusqlite",
 ]
 

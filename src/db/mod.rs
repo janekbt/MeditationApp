@@ -573,13 +573,30 @@ impl Database {
         rows.collect()
     }
 
+    /// Sum of `duration_secs` for every session whose local-time start date
+    /// is on or after `since_date` (YYYY-MM-DD). Used for the weekly-goal
+    /// ring, where `since_date` is the locale's current-week start.
+    pub fn get_total_secs_since(&self, since_date: &str) -> Result<i64> {
+        let total: i64 = self.conn.query_row(
+            "SELECT COALESCE(SUM(duration_secs), 0)
+             FROM sessions
+             WHERE strftime('%Y-%m-%d', start_time, 'unixepoch', 'localtime') >= ?1",
+            params![since_date],
+            |row| row.get(0),
+        )?;
+        Ok(total)
+    }
+
     /// Returns distinct (year, month) pairs that have at least one session,
     /// in descending order. Used to populate the calendar month picker.
     pub fn get_active_months(&self) -> Result<Vec<(i32, u32)>> {
+        // 'localtime' matches every other date bucket in the DB layer; without
+        // it, sessions started just before local midnight file into the wrong
+        // month in the picker.
         let mut stmt = self.conn.prepare_cached(
             "SELECT DISTINCT
-                 CAST(strftime('%Y', start_time, 'unixepoch') AS INTEGER),
-                 CAST(strftime('%m', start_time, 'unixepoch') AS INTEGER)
+                 CAST(strftime('%Y', start_time, 'unixepoch', 'localtime') AS INTEGER),
+                 CAST(strftime('%m', start_time, 'unixepoch', 'localtime') AS INTEGER)
              FROM sessions
              ORDER BY 1 DESC, 2 DESC"
         )?;
