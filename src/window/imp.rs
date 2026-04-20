@@ -298,6 +298,16 @@ impl MeditateWindow {
             }
         ));
         obj.add_action(&action);
+
+        // HIG-standard `win.close` shortcut (Ctrl+W). Different from
+        // `app.quit` (Ctrl+Q) which exits the whole process — a
+        // distinction AccelMap previously collapsed to a single no-op.
+        let close_action = gtk::gio::SimpleAction::new("close", None);
+        close_action.connect_activate(glib::clone!(
+            #[weak] obj,
+            move |_, _| obj.close()
+        ));
+        obj.add_action(&close_action);
     }
 }
 

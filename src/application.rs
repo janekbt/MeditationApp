@@ -116,13 +116,25 @@ mod imp {
                 }
             ));
             app.add_action(&about_action);
+
+            // app.quit — HIG-standard Ctrl+Q action. Without this the
+            // accel below mapped to a non-existent action (silent no-op).
+            let quit_action = gio::SimpleAction::new("quit", None);
+            quit_action.connect_activate(glib::clone!(
+                #[weak] app,
+                move |_, _| app.quit()
+            ));
+            app.add_action(&quit_action);
         }
 
         fn setup_accels(&self) {
             let app = self.obj();
             app.set_accels_for_action("app.preferences", &["<Control>comma"]);
             app.set_accels_for_action("win.show-help-overlay", &["<Control>question"]);
-            app.set_accels_for_action("app.quit", &["<Control>q", "<Control>w"]);
+            // Per HIG these are two distinct actions: Ctrl+W closes the
+            // current window, Ctrl+Q quits the whole application.
+            app.set_accels_for_action("app.quit", &["<Control>q"]);
+            app.set_accels_for_action("win.close", &["<Control>w"]);
             app.set_accels_for_action("win.timer-toggle", &["space"]);
         }
     }
