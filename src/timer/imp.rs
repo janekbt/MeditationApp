@@ -40,11 +40,9 @@ pub struct TimerView {
     #[template_child] pub streak_label:          TemplateChild<gtk::Label>,
     #[template_child] pub countdown_btn:         TemplateChild<gtk::ToggleButton>,
     #[template_child] pub stopwatch_btn:         TemplateChild<gtk::ToggleButton>,
-    #[template_child] pub inputs_stack:          TemplateChild<gtk::Stack>,
     #[template_child] pub big_time_label:         TemplateChild<gtk::Label>,
     #[template_child] pub countdown_inputs:       TemplateChild<gtk::Box>,
     #[template_child] pub presets_box:           TemplateChild<gtk::FlowBox>,
-    #[template_child] pub paused_time_label:     TemplateChild<gtk::Label>,
     #[template_child] pub start_btn:             TemplateChild<gtk::Button>,
     #[template_child] pub resume_btn:            TemplateChild<gtk::Button>,
     #[template_child] pub stop_from_pause_btn:   TemplateChild<gtk::Button>,
@@ -224,18 +222,6 @@ impl TimerView {
     /// Called whenever the mode toggle fires. `to_stopwatch` is true when the
     /// user switched TO stopwatch (false = switched to countdown).
     fn on_mode_switched(&self, to_stopwatch: bool) {
-        // Hero stays visible in both modes; just update its contents.
-        // Stopwatch has no presets card, so we hide countdown_inputs.
-        if to_stopwatch {
-            self.big_time_label.set_label("00:00");
-            self.time_unit_label.set_visible(false);
-        } else {
-            let secs = self.countdown_target_secs.get();
-            let h = secs / 3600;
-            let m = (secs % 3600) / 60;
-            self.big_time_label.set_label(&format!("{h:02}:{m:02}"));
-            self.time_unit_label.set_visible(true);
-        }
         self.countdown_inputs.set_visible(!to_stopwatch);
 
         let (timer_state, display_secs) = {
@@ -248,36 +234,57 @@ impl TimerView {
         };
 
         match timer_state {
-            TimerState::Idle => self.show_idle_ui(),
-            TimerState::Paused => {
-                self.paused_time_label.set_label(&format_time(display_secs));
-                self.show_paused_ui();
-            }
-            TimerState::Done => {
-                // Done panel is already populated; just make sure it's showing.
-                self.view_stack.set_visible_child_name("done");
-            }
-            TimerState::Running => {
-                // Can't normally reach here (running nav page blocks the toggle).
-                self.show_idle_ui();
-            }
+            TimerState::Idle    => self.show_idle_ui(),
+            TimerState::Paused  => self.show_paused_ui(display_secs),
+            TimerState::Done    => self.view_stack.set_visible_child_name("done"),
+            // Running normally can't reach here (the nav page blocks the toggle);
+            // fall back to idle UI as a safety net.
+            TimerState::Running => self.show_idle_ui(),
         }
     }
 
     fn show_idle_ui(&self) {
-        self.inputs_stack.set_visible_child_name("inputs");
         self.start_btn.set_visible(true);
         self.resume_btn.set_visible(false);
         self.stop_from_pause_btn.set_visible(false);
         self.view_stack.set_visible_child_name("setup");
+        self.countdown_inputs.set_sensitive(true);
+        self.countdown_btn.set_sensitive(true);
+        self.stopwatch_btn.set_sensitive(true);
+        self.refresh_hero_for_idle();
     }
 
-    fn show_paused_ui(&self) {
-        self.inputs_stack.set_visible_child_name("paused");
+    /// Paused state: same layout as idle, but the hero shows the live time,
+    /// the subtitle says "Paused", and every interactive input is dimmed
+    /// so the user can't change mode / presets until they Resume or Stop.
+    fn show_paused_ui(&self, display_secs: u64) {
         self.start_btn.set_visible(false);
         self.resume_btn.set_visible(true);
         self.stop_from_pause_btn.set_visible(true);
         self.view_stack.set_visible_child_name("setup");
+        self.countdown_inputs.set_sensitive(false);
+        self.countdown_btn.set_sensitive(false);
+        self.stopwatch_btn.set_sensitive(false);
+        self.big_time_label.set_label(&format_time(display_secs));
+        self.time_unit_label.set_label(tr("Paused"));
+        self.time_unit_label.set_visible(true);
+    }
+
+    /// Set the hero time display + subtitle to their idle-state values for
+    /// whichever mode is currently active.
+    fn refresh_hero_for_idle(&self) {
+        let to_stopwatch = self.stopwatch_btn.is_active();
+        if to_stopwatch {
+            self.big_time_label.set_label("00:00");
+            self.time_unit_label.set_visible(false);
+        } else {
+            let secs = self.countdown_target_secs.get();
+            let h = secs / 3600;
+            let m = (secs % 3600) / 60;
+            self.big_time_label.set_label(&format!("{h:02}:{m:02}"));
+            self.time_unit_label.set_label(tr("Hours · Minutes"));
+            self.time_unit_label.set_visible(true);
+        }
     }
 }
 
@@ -341,8 +348,7 @@ impl TimerView {
             m.display_secs
         };
 
-        self.paused_time_label.set_label(&format_time(display_secs));
-        self.show_paused_ui();
+        self.show_paused_ui(display_secs);
         self.obj().emit_by_name::<()>("timer-paused", &[]);
     }
 

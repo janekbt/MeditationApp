@@ -83,83 +83,49 @@ template $TimerView : Gtk.Widget {
             };
           }
 
-          // ── Inputs stack: "inputs" (idle) or "paused" (paused) ────
-          Gtk.Stack inputs_stack {
-            transition-type: crossfade;
+          // ── Countdown-only inputs (presets card) ───────────────────
+          // Stays visible while paused so the page doesn't collapse — just
+          // made insensitive from Rust to grey it out.
+          Gtk.Box countdown_inputs {
+            orientation: vertical;
+            spacing: 12;
 
-            Gtk.StackPage {
-              name: "inputs";
-              child: Gtk.Box {
-                orientation: vertical;
-                spacing: 12;
+            Gtk.Box {
+              orientation: vertical;
+              spacing: 6;
 
-                // Countdown-only inputs: presets card (time is chosen
-                // via a preset pill or the "Custom" pill's dialog)
-                Gtk.Box countdown_inputs {
-                  orientation: vertical;
-                  spacing: 12;
+              Gtk.Label {
+                label: _("Quick Presets");
+                css-classes: ["heading"];
+                halign: start;
+                margin-start: 6;
+              }
 
-                  // Quick Presets section
-                  Gtk.Box {
-                    orientation: vertical;
-                    spacing: 6;
+              Adw.Clamp {
+                maximum-size: 360;
 
-                    Gtk.Label {
-                      label: _("Quick Presets");
-                      css-classes: ["heading"];
-                      halign: start;
-                      margin-start: 6;
-                    }
+                child: Gtk.ListBox {
+                  css-classes: ["boxed-list"];
+                  selection-mode: none;
 
-                    Adw.Clamp {
-                      maximum-size: 360;
+                  Gtk.ListBoxRow {
+                    activatable: false;
 
-                      child: Gtk.ListBox {
-                        css-classes: ["boxed-list"];
-                        selection-mode: none;
-
-                        Gtk.ListBoxRow {
-                          activatable: false;
-
-                          child: Gtk.FlowBox presets_box {
-                            selection-mode: none;
-                            max-children-per-line: 5;
-                            min-children-per-line: 1;
-                            homogeneous: true;
-                            column-spacing: 6;
-                            row-spacing: 6;
-                            margin-top: 10;
-                            margin-bottom: 10;
-                            margin-start: 12;
-                            margin-end: 12;
-                          };
-                        }
-                      };
-                    }
+                    child: Gtk.FlowBox presets_box {
+                      selection-mode: none;
+                      max-children-per-line: 5;
+                      min-children-per-line: 1;
+                      homogeneous: true;
+                      column-spacing: 6;
+                      row-spacing: 6;
+                      margin-top: 10;
+                      margin-bottom: 10;
+                      margin-start: 12;
+                      margin-end: 12;
+                    };
                   }
-                }
-              };
-            }
-
-            Gtk.StackPage {
-              name: "paused";
-              child: Gtk.Box {
-                orientation: vertical;
-                spacing: 6;
-                halign: center;
-
-                Gtk.Label paused_time_label {
-                  css-classes: ["title-1"];
-                  halign: center;
-                  label: "00:00:00";
-                }
-
-                Gtk.Label {
-                  label: _("Paused");
-                  css-classes: ["dim-label"];
-                  halign: center;
-                }
-              };
+                };
+              }
             }
           }
 
