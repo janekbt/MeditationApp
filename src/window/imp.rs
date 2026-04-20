@@ -2,6 +2,8 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{glib, CompositeTemplate};
 
+use gtk::gio;
+
 use crate::log::LogView;
 use crate::stats::StatsView;
 use crate::timer::{format_time, TimerView};
@@ -48,6 +50,7 @@ impl ObjectImpl for MeditateWindow {
         self.wire_stats_signals();
         self.setup_help_overlay();
         self.setup_window_actions();
+        self.bind_settings();
 
         // Blueprint may silently drop icon-name on AdwViewStackPage in some
         // compiler versions.  Set it explicitly here so we bypass that.
@@ -192,6 +195,20 @@ impl MeditateWindow {
         let obj2 = self.obj().clone();
         stop_btn.connect_clicked(move |_| obj2.imp().timer_view.stop());
 
+        // Esc on the running page pauses (not stop, not dismiss — stop
+        // would commit an unintended save, dismiss would leave the timer
+        // running off-screen). Matches common AdwNavigationPage UX.
+        let esc = gtk::EventControllerKey::new();
+        let obj3 = self.obj().clone();
+        esc.connect_key_pressed(move |_, keyval, _, _| {
+            if keyval == gtk::gdk::Key::Escape {
+                obj3.imp().timer_view.pause();
+                return glib::Propagation::Stop;
+            }
+            glib::Propagation::Proceed
+        });
+        page.add_controller(esc);
+
         self.nav_view.push(&page);
     }
 }
@@ -313,6 +330,27 @@ impl MeditateWindow {
             move |_, _| obj.close()
         ));
         obj.add_action(&close_action);
+    }
+
+    /// Bind the GSettings schema so the window size + maximised state
+    /// persist across launches. Skips silently if the schema isn't
+    /// installed (e.g. running a dev binary without
+    /// `GSETTINGS_SCHEMA_DIR=build/data` set), so the app still boots.
+    fn bind_settings(&self) {
+        let Some(src) = gio::SettingsSchemaSource::default() else { return; };
+        if src.lookup(crate::config::APP_ID, true).is_none() {
+            eprintln!(
+                "note: GSettings schema '{}' not found — window size won't persist. \
+                 Set GSETTINGS_SCHEMA_DIR=build/data for dev builds.",
+                crate::config::APP_ID,
+            );
+            return;
+        }
+        let settings = gio::Settings::new(crate::config::APP_ID);
+        let obj = self.obj();
+        settings.bind("window-width",     &*obj, "default-width").build();
+        settings.bind("window-height",    &*obj, "default-height").build();
+        settings.bind("window-maximized", &*obj, "maximized").build();
     }
 }
 

@@ -53,6 +53,7 @@ template $TimerView : Gtk.Widget {
           // ── Mode toggle card ───────────────────────────────────────
           Adw.Clamp {
             maximum-size: 360;
+            tightening-threshold: 300;
 
             child: Gtk.ListBox {
               css-classes: ["boxed-list"];
@@ -106,6 +107,7 @@ template $TimerView : Gtk.Widget {
 
               Adw.Clamp {
                 maximum-size: 360;
+            tightening-threshold: 300;
 
                 child: Gtk.ListBox {
                   css-classes: ["boxed-list"];
@@ -135,6 +137,7 @@ template $TimerView : Gtk.Widget {
           // ── Session group ──────────────────────────────────────────
           Adw.Clamp {
             maximum-size: 360;
+            tightening-threshold: 300;
 
             child: Adw.PreferencesGroup session_group {
               title: _("Session");
@@ -156,6 +159,7 @@ template $TimerView : Gtk.Widget {
           // ── Buttons ────────────────────────────────────────────────
           Adw.Clamp {
             maximum-size: 360;
+            tightening-threshold: 300;
 
             child: Gtk.Box {
               orientation: vertical;

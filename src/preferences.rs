@@ -475,7 +475,8 @@ pub fn show_preferences(app: &MeditateApplication) {
         .activatable(true)
         .build();
     let delete_btn = gtk::Button::builder()
-        .label("Delete All")
+        .label("_Delete All")
+        .use_underline(true)
         .valign(gtk::Align::Center)
         .css_classes(["destructive-action"])
         .build();
@@ -617,7 +618,7 @@ fn do_delete(
     // When sessions were affected the user already confirmed via AlertDialog,
     // so undo would be misleading: the label would be recreated but the
     // sessions would stay unlabeled.  Only offer undo for unused labels.
-    let mut builder = adw::Toast::builder().title("Label deleted").timeout(5);
+    let mut builder = adw::Toast::builder().title("Label deleted").timeout(4);
     if allow_undo {
         builder = builder.button_label("Undo");
     }
@@ -735,7 +736,7 @@ fn make_label_row(
                 dialog.add_toast(
                     adw::Toast::builder()
                         .title("A label with that name already exists")
-                        .timeout(3)
+                        .timeout(4)
                         .build(),
                 );
                 return;

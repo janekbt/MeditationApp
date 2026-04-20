@@ -454,6 +454,10 @@ impl TimerView {
                 .close_response("cancel")
                 .default_response("discard")
                 .build();
+            // libadwaita-rs 0.9 doesn't expose set_response_use_underline,
+            // so we can't mark a mnemonic letter on AdwAlertDialog buttons
+            // without the underscore rendering literally. Return and Esc
+            // still cover the common activations.
             dialog.add_response("cancel", tr("Cancel"));
             dialog.add_response("discard", tr("Discard"));
             dialog.set_response_appearance("discard", adw::ResponseAppearance::Destructive);

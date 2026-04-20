@@ -10,25 +10,25 @@
 
   <!-- Outer petals -->
   <path d="M 8 11.5 C 6.25 10.5, 6.25 7.75, 8 5.5 C 9.75 7.75, 9.75 10.5, 8 11.5 Z"
-        fill="none" stroke="currentColor" stroke-width="0.75"
+        fill="none" stroke="currentColor" stroke-width="1"
         transform="rotate(-55 8 11.5)"/>
   <path d="M 8 11.5 C 6.25 10.5, 6.25 7.75, 8 5.5 C 9.75 7.75, 9.75 10.5, 8 11.5 Z"
-        fill="none" stroke="currentColor" stroke-width="0.75"
+        fill="none" stroke="currentColor" stroke-width="1"
         transform="rotate(55 8 11.5)"/>
 
   <!-- Inner side petals -->
   <path d="M 8 11.5 C 5.75 10, 5.75 6.25, 8 3.75 C 10.25 6.25, 10.25 10, 8 11.5 Z"
-        fill="none" stroke="currentColor" stroke-width="0.75"
+        fill="none" stroke="currentColor" stroke-width="1"
         transform="rotate(-30 8 11.5)"/>
   <path d="M 8 11.5 C 5.75 10, 5.75 6.25, 8 3.75 C 10.25 6.25, 10.25 10, 8 11.5 Z"
-        fill="none" stroke="currentColor" stroke-width="0.75"
+        fill="none" stroke="currentColor" stroke-width="1"
         transform="rotate(30 8 11.5)"/>
 
   <!-- Center petal -->
   <path d="M 8 11.5 C 5.75 10, 5.75 6.25, 8 3.75 C 10.25 6.25, 10.25 10, 8 11.5 Z"
-        fill="none" stroke="currentColor" stroke-width="0.75"/>
+        fill="none" stroke="currentColor" stroke-width="1"/>
 
   <!-- Base arc -->
   <path d="M 2 11.75 Q 8 13.5 14 11.75"
-        fill="none" stroke="currentColor" stroke-width="0.75" stroke-linecap="round"/>
+        fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
 </svg>

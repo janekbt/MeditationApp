@@ -764,6 +764,12 @@ impl LogView {
             .margin_start(12)
             .css_classes(["caption", "dimmed"])
             .build();
+        // Programmatically associate the caption with the text view so
+        // screen readers announce "Note (optional) text entry" when the
+        // user tabs into the editor.
+        note_view.update_relation(&[gtk::accessible::Relation::LabelledBy(
+            &[note_caption.upcast_ref::<gtk::Accessible>()],
+        )]);
         let note_box = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .spacing(6)
@@ -808,10 +814,12 @@ impl LogView {
             .build();
 
         let cancel_btn = gtk::Button::builder()
-            .label(tr("Cancel"))
+            .label(tr("_Cancel"))
+            .use_underline(true)
             .build();
         let save_btn = gtk::Button::builder()
-            .label(if is_edit { tr("Save") } else { tr("Add") })
+            .label(if is_edit { tr("_Save") } else { tr("_Add") })
+            .use_underline(true)
             .css_classes(["suggested-action"])
             .build();
 

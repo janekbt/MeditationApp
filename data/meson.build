@@ -27,6 +27,26 @@ if appstream_util.found()
   test('Validate metainfo', appstream_util, args: ['validate', appstream_file])
 endif
 
+# GSettings schema — drives window-size persistence via Gio.Settings.
+# `compile_schemas` makes `gschemas.compiled` available in build/data so
+# dev runs can `GSETTINGS_SCHEMA_DIR=build/data ./build/src/meditate`.
+install_data(
+  'io.github.janekbt.Meditate.gschema.xml',
+  install_dir: get_option('datadir') / 'glib-2.0' / 'schemas',
+)
+
+gnome.compile_schemas(
+  build_by_default: true,
+  depend_files: 'io.github.janekbt.Meditate.gschema.xml',
+)
+
+glib_compile_schemas = find_program('glib-compile-schemas', required: false)
+if glib_compile_schemas.found()
+  test('Validate GSchema',
+    glib_compile_schemas,
+    args: ['--strict', '--dry-run', meson.current_source_dir()])
+endif
+
 # Icons
 install_data(
   'icons/hicolor/scalable/apps/io.github.janekbt.Meditate.svg',
