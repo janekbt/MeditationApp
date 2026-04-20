@@ -13,6 +13,21 @@ if desktop_utils.found()
   test('Validate desktop file', desktop_utils, args: [desktop_file])
 endif
 
+# D-Bus service file — matches DBusActivatable=true in the .desktop.
+# Without this, flatpak-builder refuses to export the app.
+service_conf = configuration_data()
+service_conf.set('APP_ID', 'io.github.janekbt.Meditate')
+service_conf.set('APP_NAME', 'meditate')
+service_conf.set('BINDIR', get_option('prefix') / get_option('bindir'))
+
+configure_file(
+  input: 'io.github.janekbt.Meditate.service.in',
+  output: 'io.github.janekbt.Meditate.service',
+  configuration: service_conf,
+  install: true,
+  install_dir: get_option('datadir') / 'dbus-1' / 'services',
+)
+
 # AppStream metainfo
 appstream_file = i18n.merge_file(
   input: 'io.github.janekbt.Meditate.metainfo.xml.in',

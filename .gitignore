@@ -5,6 +5,11 @@
 # Meson build directories
 /_build/
 /builddir/
+/build/
+
+# flatpak-builder scratch + exported repo
+/.flatpak-builder/
+/flatpak_app/
 
 # Generated config
 src/config.rs.gen
