@@ -15,6 +15,7 @@ const DEFAULT_WEEKLY_GOAL_MINS: i64 = 150;
 pub struct StatsView {
     // Hero goal
     #[template_child] pub goal_ring:            TemplateChild<gtk::DrawingArea>,
+    #[template_child] pub goal_pct_label:       TemplateChild<gtk::Label>,
     #[template_child] pub goal_progress_label:  TemplateChild<gtk::Label>,
     #[template_child] pub goal_sub_label:       TemplateChild<gtk::Label>,
     // Contribution grid
@@ -163,6 +164,9 @@ impl StatsView {
         let pct = week_mins as f64 / goal_mins as f64;
         self.goal_pct.set(pct);
         self.goal_ring.queue_draw();
+        self.goal_pct_label.set_label(
+            &format!("{}%", (pct.clamp(0.0, 9.99) * 100.0).round() as i32),
+        );
 
         // "1h 48m / 2h 30m"
         self.goal_progress_label.set_markup(&format!(
@@ -182,7 +186,7 @@ impl StatsView {
     fn reload_contrib_grid(&self) {
         let now = glib::DateTime::now_local().unwrap();
         // day_of_week: Mon = 1 … Sun = 7. We want row 0 = Mon, row 6 = Sun.
-        let today_dow_idx = (now.day_of_week() - 1) as i32;
+        let today_dow_idx = now.day_of_week() - 1;
         let cur_monday = now.add_days(-today_dow_idx).unwrap();
 
         // Fetch 91 days of totals (12 weeks ago Monday through today)
@@ -506,22 +510,25 @@ fn draw_goal_ring(area: &gtk::DrawingArea, cr: &cairo::Context, w: i32, h: i32, 
     let cx = w as f64 / 2.0;
     let cy = h as f64 / 2.0;
 
-    // Resolve accent color (falls back to GNOME default blue).
-    let accent = WidgetExt::color(area);
-    let fg = (
+    // libadwaita 1.6+ resolves the current accent color for us, honouring
+    // the system accent preference set in gnome-control-center.
+    let _ = area;
+    let accent = adw::StyleManager::default().accent_color_rgba();
+    let (fr, fg, fb) = (
         accent.red()   as f64,
         accent.green() as f64,
         accent.blue()  as f64,
     );
-    // Background track: same hue, 12% alpha
-    cr.set_source_rgba(fg.0, fg.1, fg.2, 0.12);
+
+    // Background track: same hue, 15% alpha
+    cr.set_source_rgba(fr, fg, fb, 0.15);
     cr.set_line_width(stroke);
     cr.set_line_cap(cairo::LineCap::Round);
     cr.arc(cx, cy, r, 0.0, 2.0 * PI);
     let _ = cr.stroke();
 
     if pct > 0.0 {
-        cr.set_source_rgba(fg.0, fg.1, fg.2, 1.0);
+        cr.set_source_rgba(fr, fg, fb, 1.0);
         cr.set_line_width(stroke);
         cr.set_line_cap(cairo::LineCap::Round);
         let start = -PI / 2.0;

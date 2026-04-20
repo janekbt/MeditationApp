@@ -59,7 +59,7 @@ flatpak run io.github.janekbt.Meditate
 
 **Dependencies**
 
-- GNOME Platform / SDK 50 (GTK 4, libadwaita 1.6, GStreamer)
+- GNOME Platform / SDK 50 (GTK 4.18+, libadwaita 1.7+, GStreamer)
 - [blueprint-compiler](https://gitlab.gnome.org/GNOME/blueprint-compiler) ≥ 0.20
 - Rust (stable toolchain) + Cargo
 - Meson ≥ 0.62

@@ -273,11 +273,18 @@ impl MeditateWindow {
 
 impl MeditateWindow {
     fn setup_help_overlay(&self) {
-        let builder = gtk::Builder::from_resource(
-            "/io/github/janekbt/Meditate/ui/shortcuts.ui",
-        );
-        if let Some(overlay) = builder.object::<gtk::ShortcutsWindow>("help_overlay") {
-            self.obj().set_help_overlay(Some(&overlay));
+        // GtkShortcutsWindow + AdwApplicationWindow::set_help_overlay are
+        // both deprecated since GTK 4.18 in favour of AdwShortcutsDialog
+        // (libadwaita 1.8). Debian trixie only ships libadwaita 1.7 so we
+        // can't switch yet; re-evaluate once pkg-config reports 1.8+.
+        #[allow(deprecated)]
+        {
+            let builder = gtk::Builder::from_resource(
+                "/io/github/janekbt/Meditate/ui/shortcuts.ui",
+            );
+            if let Some(overlay) = builder.object::<gtk::ShortcutsWindow>("help_overlay") {
+                self.obj().set_help_overlay(Some(&overlay));
+            }
         }
     }
 

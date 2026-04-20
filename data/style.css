@@ -33,6 +33,14 @@ button.preset-chip {
     min-width: 2px;
 }
 
+/* Percentage text rendered inside the goal ring on the Stats tab. */
+.goal-pct {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: @accent_color;
+    font-variant-numeric: tabular-nums;
+}
+
 /* Uppercase section eyebrow label used for "Weekly goal", "Insights",
    "Minutes / Day" etc. on the stats page. */
 .stats-eyebrow {

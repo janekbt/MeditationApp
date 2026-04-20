@@ -24,10 +24,21 @@ template $StatsView : Gtk.Widget {
           orientation: horizontal;
           spacing: 16;
 
-          Gtk.DrawingArea goal_ring {
-            content-width: 72;
-            content-height: 72;
+          Gtk.Overlay {
             valign: center;
+
+            child: Gtk.DrawingArea goal_ring {
+              content-width: 72;
+              content-height: 72;
+            };
+
+            [overlay]
+            Gtk.Label goal_pct_label {
+              halign: center;
+              valign: center;
+              css-classes: ["goal-pct"];
+              label: "";
+            }
           }
 
           Gtk.Box {

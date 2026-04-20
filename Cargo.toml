@@ -9,8 +9,8 @@ name = "meditate"
 path = "src/main.rs"
 
 [dependencies]
-gtk = { package = "gtk4", version = "0.11", features = ["v4_12"] }
-adw = { package = "libadwaita", version = "0.9", features = ["v1_5"] }
+gtk = { package = "gtk4", version = "0.11", features = ["v4_18"] }
+adw = { package = "libadwaita", version = "0.9", features = ["v1_7"] }
 glib = "0.22"
 gio = "0.22"
 rusqlite = { version = "0.31", features = ["bundled"] }
