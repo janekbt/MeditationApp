@@ -33,8 +33,21 @@ button.preset-chip {
     letter-spacing: -1px;
 }
 
-/* Countdown / Stopwatch toggle — accent-coloured when active, visible gap
-   between the two buttons instead of a linked segmented look. */
+/* Shared accent-fill for every "selected" state across the app's custom
+   toggles and pills. HIG pair: @accent_bg_color + @accent_fg_color. */
+button.mode-toggle-btn:checked,
+button.mode-toggle-btn:checked:hover,
+button.chart-type-btn:checked,
+button.chart-type-btn:checked:hover,
+button.period-pill:checked,
+button.period-pill:checked:hover,
+button.preset-chip.preset-chip-active,
+button.preset-chip.preset-chip-active:hover {
+    background: @accent_bg_color;
+    color: @accent_fg_color;
+}
+
+/* Countdown / Stopwatch segmented toggle. */
 button.mode-toggle-btn {
     border-radius: 8px;
     padding: 6px 12px;
@@ -43,40 +56,20 @@ button.mode-toggle-btn {
 button.mode-toggle-btn:hover {
     background: alpha(currentColor, 0.08);
 }
-button.mode-toggle-btn:checked,
-button.mode-toggle-btn:checked:hover {
-    /* Pair @accent_bg_color + @accent_fg_color so the fill matches other
-       suggested-action widgets. @accent_color is for foreground text,
-       not background fills — see libadwaita named-colors docs. */
-    background: @accent_bg_color;
-    color: @accent_fg_color;
+button.mode-toggle-btn:checked {
+    /* Soft shadow on the checked mode only — it's the most prominent
+       accent fill on the page so it earns the lift. */
     box-shadow: 0 1px 2px alpha(@accent_bg_color, 0.35);
 }
 
-/* Selected preset pill — filled accent, same pair as .suggested-action. */
-button.preset-chip.preset-chip-active,
-button.preset-chip.preset-chip-active:hover {
-    background: @accent_bg_color;
-    color: @accent_fg_color;
-}
-
-/* Bars / Line linked segmented toggle inside the chart card header.
-   No explicit border-radius — default libadwaita button styling +
-   .linked on the parent handle corner flattening so the two halves
-   visibly connect. Padding/font just scale the original look up. */
+/* Bars / Line linked segmented toggle inside the chart card header. */
 button.chart-type-btn {
     padding: 5px 14px;
     min-height: 0;
     font-size: 1rem;
 }
-button.chart-type-btn:checked,
-button.chart-type-btn:checked:hover {
-    background: @accent_bg_color;
-    color: @accent_fg_color;
-}
 
-/* Period-toggle pills above the bar chart. Rely on the :checked
-   pseudo-class rather than a Rust-toggled modifier class. */
+/* Period-toggle pills above the bar chart. */
 button.period-pill {
     border-radius: 9999px;
     padding: 5px 14px;
@@ -87,10 +80,7 @@ button.period-pill {
 button.period-pill:hover {
     background: alpha(currentColor, 0.1);
 }
-button.period-pill:checked,
-button.period-pill:checked:hover {
-    background: @accent_bg_color;
-    color: @accent_fg_color;
+button.period-pill:checked {
     font-weight: 600;
 }
 
@@ -241,35 +231,45 @@ button.period-pill:checked:hover {
     opacity: 0.45;
 }
 
-/* Per-label palette. `label_color_class` maps each label name onto one of
-   eight HIG-palette accents so cards stay visually grouped without a
-   per-label colour column in the DB. */
-.log-stripe.log-c0 { background-color: #3584e4; }
-.log-stripe.log-c1 { background-color: #9141ac; }
-.log-stripe.log-c2 { background-color: #2ec27e; }
-.log-stripe.log-c3 { background-color: #e66100; }
-.log-stripe.log-c4 { background-color: #e5a50a; }
-.log-stripe.log-c5 { background-color: #e01b24; }
-.log-stripe.log-c6 { background-color: #986a44; }
-.log-stripe.log-c7 { background-color: #1c71d8; }
+/* Per-label palette (eight HIG-palette accents, rotated through by hash of
+   the label name — see `label_color_class` in src/log/imp.rs). Colours are
+   defined once here as @log_c0..@log_c7 and referenced by stripe / chip /
+   dot rules so there's one source of truth. */
+@define-color log_c0 #3584e4;  /* blue-3 */
+@define-color log_c1 #9141ac;  /* purple-3 */
+@define-color log_c2 #2ec27e;  /* green-4 */
+@define-color log_c3 #e66100;  /* orange-4 */
+@define-color log_c4 #e5a50a;  /* yellow-5 */
+@define-color log_c5 #e01b24;  /* red-3 */
+@define-color log_c6 #986a44;  /* brown-3 */
+@define-color log_c7 #1c71d8;  /* blue-4 */
 
-.log-label-chip.log-c0 { background: alpha(#3584e4, 0.14); color: #3584e4; }
-.log-label-chip.log-c1 { background: alpha(#9141ac, 0.14); color: #9141ac; }
-.log-label-chip.log-c2 { background: alpha(#2ec27e, 0.14); color: #2ec27e; }
-.log-label-chip.log-c3 { background: alpha(#e66100, 0.14); color: #e66100; }
-.log-label-chip.log-c4 { background: alpha(#e5a50a, 0.14); color: #e5a50a; }
-.log-label-chip.log-c5 { background: alpha(#e01b24, 0.14); color: #e01b24; }
-.log-label-chip.log-c6 { background: alpha(#986a44, 0.14); color: #986a44; }
-.log-label-chip.log-c7 { background: alpha(#1c71d8, 0.14); color: #1c71d8; }
+.log-stripe.log-c0 { background-color: @log_c0; }
+.log-stripe.log-c1 { background-color: @log_c1; }
+.log-stripe.log-c2 { background-color: @log_c2; }
+.log-stripe.log-c3 { background-color: @log_c3; }
+.log-stripe.log-c4 { background-color: @log_c4; }
+.log-stripe.log-c5 { background-color: @log_c5; }
+.log-stripe.log-c6 { background-color: @log_c6; }
+.log-stripe.log-c7 { background-color: @log_c7; }
 
-.log-label-dot.log-c0 { background: #3584e4; }
-.log-label-dot.log-c1 { background: #9141ac; }
-.log-label-dot.log-c2 { background: #2ec27e; }
-.log-label-dot.log-c3 { background: #e66100; }
-.log-label-dot.log-c4 { background: #e5a50a; }
-.log-label-dot.log-c5 { background: #e01b24; }
-.log-label-dot.log-c6 { background: #986a44; }
-.log-label-dot.log-c7 { background: #1c71d8; }
+.log-label-chip.log-c0 { background: alpha(@log_c0, 0.14); color: @log_c0; }
+.log-label-chip.log-c1 { background: alpha(@log_c1, 0.14); color: @log_c1; }
+.log-label-chip.log-c2 { background: alpha(@log_c2, 0.14); color: @log_c2; }
+.log-label-chip.log-c3 { background: alpha(@log_c3, 0.14); color: @log_c3; }
+.log-label-chip.log-c4 { background: alpha(@log_c4, 0.14); color: @log_c4; }
+.log-label-chip.log-c5 { background: alpha(@log_c5, 0.14); color: @log_c5; }
+.log-label-chip.log-c6 { background: alpha(@log_c6, 0.14); color: @log_c6; }
+.log-label-chip.log-c7 { background: alpha(@log_c7, 0.14); color: @log_c7; }
+
+.log-label-dot.log-c0 { background: @log_c0; }
+.log-label-dot.log-c1 { background: @log_c1; }
+.log-label-dot.log-c2 { background: @log_c2; }
+.log-label-dot.log-c3 { background: @log_c3; }
+.log-label-dot.log-c4 { background: @log_c4; }
+.log-label-dot.log-c5 { background: @log_c5; }
+.log-label-dot.log-c6 { background: @log_c6; }
+.log-label-dot.log-c7 { background: @log_c7; }
 
 /* ── Bottom mini-stat cards ──────────────────────────────────────── */
 .mini-stat {
@@ -278,7 +278,8 @@ button.period-pill:checked:hover {
     background-color: @card_bg_color;
     border: 1px solid alpha(@card_fg_color, 0.08);
 }
-.title-2.accent { color: @accent_color; }
+/* libadwaita's built-in .accent class already colours text with
+   @accent_color — the custom .title-2.accent rule was redundant. */
 
 /* Empty calendar cell — explicit background so the cell fully repaints
    when a day number is removed, preventing stale render-node residue. */
