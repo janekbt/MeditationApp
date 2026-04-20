@@ -383,7 +383,7 @@ fn build_card(session: &Session, label_map: &std::collections::HashMap<i64, &str
         .icon_name("user-trash-symbolic")
         .css_classes(["flat", "circular"])
         .valign(gtk::Align::Center)
-        .margin_end(8)
+        .margin_end(16)
         .tooltip_text(crate::i18n::gettext("Delete Session"))
         // Not Tab-focusable: AdwDialog's auto-focus-restore on close
         // would otherwise land on whichever trash button was last
