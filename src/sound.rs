@@ -1,6 +1,5 @@
 use std::cell::RefCell;
 use gtk::prelude::*;
-use gtk::glib;
 
 const RESOURCE_BASE: &str = "/io/github/janekbt/Meditate/sounds";
 
@@ -37,12 +36,14 @@ pub fn play_bundled(name: &str) -> gtk::MediaFile {
     play_resource(&format!("{RESOURCE_BASE}/{name}.wav"))
 }
 
-/// Pre-warm the GStreamer pipeline and audio-server (PipeWire/PulseAudio)
-/// connection for the configured end sound.
+/// Construct the MediaFile for the configured end sound and cache it.
 ///
-/// Call this at startup and whenever the sound setting changes.  The
-/// pipeline is left in PAUSED state with the audio server connected, so
-/// the actual end-of-session playback starts without a cold-start delay.
+/// Called at startup and whenever the sound setting changes. We deliberately
+/// do NOT start playback here — earlier attempts to "pre-warm" the pipeline
+/// with `set_playing(true)` + idle-pause could produce an audible click on
+/// some PipeWire configurations because playback starts before the idle pause
+/// fires. The first `play_end_sound()` call pays a small cold-start delay
+/// (~200 ms), which is imperceptible at the end of a meditation session.
 pub fn preload_end_sound(app: &crate::application::MeditateApplication) {
     let sound = app
         .with_db(|db| db.get_setting("end_sound", "none"))
@@ -63,25 +64,12 @@ pub fn preload_end_sound(app: &crate::application::MeditateApplication) {
         _ => None,
     };
 
-    // Replace any previously pre-loaded media.
+    // Replace any previously cached media; stop the old one if it was playing.
     CURRENT_MEDIA.with(|cell| {
-        if let Some(old) = cell.replace(media_opt.clone()) {
+        if let Some(old) = cell.replace(media_opt) {
             old.set_playing(false);
         }
     });
-
-    if let Some(media) = media_opt {
-        // Kick the GStreamer pipeline into life (NULL → READY → PAUSED/PLAYING).
-        // The READY transition opens the audio-server connection. We queue an
-        // immediate pause via an idle callback so GStreamer settles in PAUSED
-        // with the connection open — no audio ever reaches the speaker, but
-        // subsequent set_playing(true) calls are instant.
-        media.set_playing(true);
-        let m = media.clone();
-        glib::idle_add_local_once(move || {
-            m.set_playing(false);
-        });
-    }
 }
 
 /// Play the configured end sound. Reuses the pre-warmed pipeline from
