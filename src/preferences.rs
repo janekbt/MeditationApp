@@ -13,7 +13,10 @@ pub fn show_preferences(app: &MeditateApplication) {
     let dialog = adw::PreferencesDialog::builder()
         .title("Preferences")
         .search_enabled(false)
-        .content_height(480)
+        // Large target: AdwDialog clamps to the available window height, so
+        // this effectively asks "take the whole window" without locking a
+        // hard minimum that would force scrolling inside a short window.
+        .content_height(900)
         .build();
 
     // ── General page ──────────────────────────────────────────────────────────
@@ -243,6 +246,32 @@ pub fn show_preferences(app: &MeditateApplication) {
     );
 
     stats_group.add(&avg_row);
+
+    // Weekly meditation goal — drives the ring on the Stats tab.
+    let current_goal_mins = app
+        .with_db(|db| db.get_setting("weekly_goal_mins", "150"))
+        .and_then(|r| r.ok())
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(150.0);
+    let goal_row = adw::SpinRow::builder()
+        .title("Weekly goal")
+        .subtitle("Minutes per week — drives the ring on the Stats tab")
+        .adjustment(&gtk::Adjustment::new(current_goal_mins, 30.0, 1000.0, 15.0, 60.0, 0.0))
+        .climb_rate(15.0)
+        .digits(0)
+        .build();
+    goal_row.connect_notify_local(
+        Some("value"),
+        glib::clone!(
+            #[weak] app,
+            move |row, _| {
+                let val = row.value() as i64;
+                app.with_db(|db| db.set_setting("weekly_goal_mins", &val.to_string()));
+            }
+        ),
+    );
+    stats_group.add(&goal_row);
+
     general_page.add(&stats_group);
 
     // ── Presets group ─────────────────────────────────────────────────────────
@@ -468,6 +497,8 @@ pub fn show_preferences(app: &MeditateApplication) {
                 // combo, and sound row — covers any pref change including
                 // label add/delete/rename and preset edits.
                 win.imp().timer_view.refresh_streak();
+                // Stats view picks up running-average period + weekly goal.
+                win.imp().stats_view.refresh();
             }
         }
     ));

@@ -3,9 +3,10 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{glib, cairo, CompositeTemplate};
 
-/// Minutes-per-week the weekly-goal ring is normalised against.
-/// Hardcoded for now — a preference will expose this later.
-const WEEKLY_GOAL_MINS: i64 = 150;
+/// Fallback weekly-goal target in minutes if the setting is unset or
+/// unparseable. The real value lives in the `weekly_goal_mins` DB setting,
+/// exposed in Preferences → Statistics → Weekly goal.
+const DEFAULT_WEEKLY_GOAL_MINS: i64 = 150;
 
 // ── GObject impl ──────────────────────────────────────────────────────────────
 
@@ -146,13 +147,20 @@ impl StatsView {
     }
 
     fn reload_goal_ring(&self) {
-        // Progress = last 7 days' total minutes / WEEKLY_GOAL_MINS
-        let avg_secs = self.get_app()
-            .and_then(|app| app.with_db(|db| db.get_running_average_secs(7)))
-            .and_then(|r| r.ok())
-            .unwrap_or(0.0);
+        // Batch: one with_db() call returns (avg_secs, goal_mins).
+        let (avg_secs, goal_mins) = self.get_app()
+            .and_then(|app| app.with_db(|db| {
+                let avg = db.get_running_average_secs(7).unwrap_or(0.0);
+                let goal = db.get_setting("weekly_goal_mins", "150")
+                    .ok()
+                    .and_then(|s| s.parse::<i64>().ok())
+                    .filter(|v| *v > 0)
+                    .unwrap_or(DEFAULT_WEEKLY_GOAL_MINS);
+                (avg, goal)
+            }))
+            .unwrap_or((0.0, DEFAULT_WEEKLY_GOAL_MINS));
         let week_mins = (avg_secs * 7.0 / 60.0) as i64;
-        let pct = week_mins as f64 / WEEKLY_GOAL_MINS as f64;
+        let pct = week_mins as f64 / goal_mins as f64;
         self.goal_pct.set(pct);
         self.goal_ring.queue_draw();
 
@@ -160,9 +168,9 @@ impl StatsView {
         self.goal_progress_label.set_markup(&format!(
             "{} <span alpha=\"60%\" size=\"60%\">/ {}</span>",
             format_hm_mins(week_mins),
-            format_hm_mins(WEEKLY_GOAL_MINS),
+            format_hm_mins(goal_mins),
         ));
-        let remain = (WEEKLY_GOAL_MINS - week_mins).max(0);
+        let remain = (goal_mins - week_mins).max(0);
         let sub = if remain == 0 {
             format!("Goal reached ✓ · {} this week", format_hm_mins(week_mins))
         } else {
