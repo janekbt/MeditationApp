@@ -62,21 +62,24 @@ template $TimerView : Gtk.Widget {
                 activatable: false;
 
                 child: Gtk.Box {
-                  margin-top: 8;
-                  margin-bottom: 8;
-                  halign: center;
-                  css-classes: ["linked"];
+                  margin-top: 6;
+                  margin-bottom: 6;
+                  margin-start: 6;
+                  margin-end: 6;
+                  spacing: 6;
 
                   Gtk.ToggleButton countdown_btn {
                     label: _("Countdown");
                     hexpand: true;
                     active: true;
+                    css-classes: ["mode-toggle-btn"];
                   }
 
                   Gtk.ToggleButton stopwatch_btn {
                     label: _("Stopwatch");
                     hexpand: true;
                     group: countdown_btn;
+                    css-classes: ["mode-toggle-btn"];
                   }
                 };
               }
@@ -133,7 +136,7 @@ template $TimerView : Gtk.Widget {
           Adw.Clamp {
             maximum-size: 360;
 
-            child: Adw.PreferencesGroup {
+            child: Adw.PreferencesGroup session_group {
               title: _("Session");
 
               Adw.ComboRow setup_label_row {
@@ -203,7 +206,7 @@ template $TimerView : Gtk.Widget {
           margin-end: 12;
 
           Gtk.Label done_duration_label {
-            css-classes: ["title-2"];
+            css-classes: ["timer-setup-display"];
             halign: center;
           }
 
@@ -220,7 +223,8 @@ template $TimerView : Gtk.Widget {
           Gtk.Box {
             orientation: horizontal;
             spacing: 12;
-            halign: end;
+            halign: center;
+            homogeneous: true;
 
             Gtk.Button discard_btn {
               label: _("Discard");

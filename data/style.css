@@ -3,10 +3,11 @@
     background-color: alpha(@accent_color, 0.15);
     color: @accent_color;
     border-radius: 100px;
-    padding: 4px 10px;
-    font-size: 0.75rem;
+    padding: 4px 12px;
+    font-size: 0.9rem;
     font-weight: 700;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
 }
 
 /* Rounded pill for quick-preset buttons. Tighter horizontal padding than
@@ -20,11 +21,40 @@ button.preset-chip {
     font-size: 0.95rem;
 }
 
-/* Large, light time readout on the timer setup page */
+/* Large time readout on the timer setup page. Medium weight gives enough
+   stroke that the digits stay readable even when Adwaita Sans renders at
+   a small display size (narrow windows / mobile). */
 .timer-setup-display {
     font-size: 4.5rem;
-    font-weight: 300;
+    font-weight: 500;
     letter-spacing: -1px;
+}
+
+/* Countdown / Stopwatch toggle — accent-coloured when active, visible gap
+   between the two buttons instead of a linked segmented look. */
+button.mode-toggle-btn {
+    border-radius: 8px;
+    padding: 6px 12px;
+    background: alpha(currentColor, 0.04);
+}
+button.mode-toggle-btn:hover {
+    background: alpha(currentColor, 0.08);
+}
+button.mode-toggle-btn:checked,
+button.mode-toggle-btn:checked:hover {
+    /* Pair @accent_bg_color + @accent_fg_color so the fill matches other
+       suggested-action widgets. @accent_color is for foreground text,
+       not background fills — see libadwaita named-colors docs. */
+    background: @accent_bg_color;
+    color: @accent_fg_color;
+    box-shadow: 0 1px 2px alpha(@accent_bg_color, 0.35);
+}
+
+/* Selected preset pill — filled accent, same pair as .suggested-action. */
+button.preset-chip.preset-chip-active,
+button.preset-chip.preset-chip-active:hover {
+    background: @accent_bg_color;
+    color: @accent_fg_color;
 }
 
 .chart-bar {
@@ -62,7 +92,7 @@ button.preset-chip {
 .contrib-cell.level-1 { background-color: alpha(@accent_color, 0.25); }
 .contrib-cell.level-2 { background-color: alpha(@accent_color, 0.45); }
 .contrib-cell.level-3 { background-color: alpha(@accent_color, 0.70); }
-.contrib-cell.level-4 { background-color: @accent_color; }
+.contrib-cell.level-4 { background-color: @accent_bg_color; }
 .contrib-cell.today {
     outline: 1.5px solid @accent_color;
     outline-offset: -1.5px;
@@ -78,7 +108,7 @@ button.preset-chip {
 .contrib-swatch.level-1 { background-color: alpha(@accent_color, 0.25); }
 .contrib-swatch.level-2 { background-color: alpha(@accent_color, 0.45); }
 .contrib-swatch.level-3 { background-color: alpha(@accent_color, 0.70); }
-.contrib-swatch.level-4 { background-color: @accent_color; }
+.contrib-swatch.level-4 { background-color: @accent_bg_color; }
 
 /* ── Insight rows ────────────────────────────────────────────────── */
 .insight-icon {
@@ -90,7 +120,7 @@ button.preset-chip {
     font-weight: 700;
 }
 .insight-icon.accent {
-    background-color: @accent_color;
+    background-color: @accent_bg_color;
     color: @accent_fg_color;
 }
 

@@ -137,7 +137,7 @@ impl MeditateWindow {
 
         let time_label = gtk::Label::builder()
             .label(format_time(self.timer_view.current_display_secs()))
-            .css_classes(["large-title"])
+            .css_classes(["timer-setup-display"])
             .halign(gtk::Align::Center)
             .build();
         self.timer_view.set_running_label(time_label.clone());

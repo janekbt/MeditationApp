@@ -46,6 +46,7 @@ pub struct TimerView {
     #[template_child] pub start_btn:             TemplateChild<gtk::Button>,
     #[template_child] pub resume_btn:            TemplateChild<gtk::Button>,
     #[template_child] pub stop_from_pause_btn:   TemplateChild<gtk::Button>,
+    #[template_child] pub session_group:          TemplateChild<adw::PreferencesGroup>,
     #[template_child] pub setup_label_row:        TemplateChild<adw::ComboRow>,
     #[template_child] pub setup_sound_row:        TemplateChild<adw::ComboRow>,
     #[template_child] pub time_unit_label:        TemplateChild<gtk::Label>,
@@ -82,6 +83,13 @@ pub struct TimerView {
     /// chips or the "Custom" dialog. Default 10 min; used as the target
     /// when the user taps Start.
     countdown_target_secs: Cell<u64>,
+    /// Preset pills currently attached to presets_box, paired with their
+    /// duration in minutes. Used to toggle the `.preset-chip-active` CSS
+    /// class on the button whose minutes match countdown_target_secs.
+    preset_buttons: RefCell<Vec<(gtk::Button, u32)>>,
+    /// The trailing "Custom" pill — gets `.preset-chip-active` when the
+    /// current countdown_target_secs doesn't match any preset.
+    custom_preset_btn: RefCell<Option<gtk::Button>>,
 }
 
 #[glib::object_subclass]
@@ -251,12 +259,14 @@ impl TimerView {
         self.countdown_inputs.set_sensitive(true);
         self.countdown_btn.set_sensitive(true);
         self.stopwatch_btn.set_sensitive(true);
+        self.session_group.set_sensitive(true);
         self.refresh_hero_for_idle();
     }
 
     /// Paused state: same layout as idle, but the hero shows the live time,
     /// the subtitle says "Paused", and every interactive input is dimmed
-    /// so the user can't change mode / presets until they Resume or Stop.
+    /// so the user can't change mode / presets / session settings until
+    /// they Resume or Stop.
     fn show_paused_ui(&self, display_secs: u64) {
         self.start_btn.set_visible(false);
         self.resume_btn.set_visible(true);
@@ -265,6 +275,7 @@ impl TimerView {
         self.countdown_inputs.set_sensitive(false);
         self.countdown_btn.set_sensitive(false);
         self.stopwatch_btn.set_sensitive(false);
+        self.session_group.set_sensitive(false);
         self.big_time_label.set_label(&format_time(display_secs));
         self.time_unit_label.set_label(tr("Paused"));
         self.time_unit_label.set_visible(true);
@@ -276,15 +287,15 @@ impl TimerView {
         let to_stopwatch = self.stopwatch_btn.is_active();
         if to_stopwatch {
             self.big_time_label.set_label("00:00");
-            self.time_unit_label.set_visible(false);
         } else {
             let secs = self.countdown_target_secs.get();
             let h = secs / 3600;
             let m = (secs % 3600) / 60;
             self.big_time_label.set_label(&format!("{h:02}:{m:02}"));
-            self.time_unit_label.set_label(tr("Hours · Minutes"));
-            self.time_unit_label.set_visible(true);
         }
+        // Subtitle applies equally to both modes — it labels the digits.
+        self.time_unit_label.set_label(tr("Hours · Minutes"));
+        self.time_unit_label.set_visible(true);
     }
 }
 
@@ -579,11 +590,12 @@ impl TimerView {
             })
             .unwrap_or_else(|| (0, vec![5, 10, 15, 20, 30], vec![]));
 
-        // Update streak label
+        // Update streak label. .streak-chip applies text-transform:
+        // uppercase, so we keep the source text sentence-case here.
         let text = match streak {
             0 => String::from("Start your streak today"),
-            1 => String::from("🔥 1 day"),
-            n => format!("🔥 {n} days"),
+            1 => String::from("1 day streak"),
+            n => format!("{n} days streak"),
         };
         self.streak_label.set_label(&text);
 
@@ -638,6 +650,7 @@ impl TimerView {
         while let Some(child) = self.presets_box.first_child() {
             self.presets_box.remove(&child);
         }
+        let mut tracked: Vec<(gtk::Button, u32)> = Vec::with_capacity(presets.len());
         let obj = self.obj();
         for &mins in presets {
             let (label, tooltip) = if mins < 60 {
@@ -663,6 +676,7 @@ impl TimerView {
                 }
             ));
             self.presets_box.append(&btn);
+            tracked.push((btn, mins));
         }
 
         // Trailing "Custom" pill — opens a dialog to pick an H:M value.
@@ -676,14 +690,43 @@ impl TimerView {
             move |_| this.imp().show_custom_time_dialog()
         ));
         self.presets_box.append(&custom_btn);
+
+        *self.preset_buttons.borrow_mut() = tracked;
+        *self.custom_preset_btn.borrow_mut() = Some(custom_btn);
+        // Reapply active highlight for the current target.
+        self.refresh_preset_selection();
     }
 
-    /// Update the countdown target + hero label together.
+    /// Toggle the `.preset-chip-active` class on whichever chip matches
+    /// the current countdown_target_secs (or on the Custom pill if no
+    /// preset matches). Called whenever the target changes.
+    fn refresh_preset_selection(&self) {
+        let target_mins = (self.countdown_target_secs.get() / 60) as u32;
+        let mut matched = false;
+        for (btn, mins) in self.preset_buttons.borrow().iter() {
+            if *mins == target_mins {
+                btn.add_css_class("preset-chip-active");
+                matched = true;
+            } else {
+                btn.remove_css_class("preset-chip-active");
+            }
+        }
+        if let Some(custom) = self.custom_preset_btn.borrow().as_ref() {
+            if matched {
+                custom.remove_css_class("preset-chip-active");
+            } else {
+                custom.add_css_class("preset-chip-active");
+            }
+        }
+    }
+
+    /// Update the countdown target + hero label + preset highlight together.
     fn set_countdown_target(&self, secs: u64) {
         self.countdown_target_secs.set(secs);
         let h = secs / 3600;
         let m = (secs % 3600) / 60;
         self.big_time_label.set_label(&format!("{h:02}:{m:02}"));
+        self.refresh_preset_selection();
     }
 
     /// Show a dialog with H:M spin buttons; apply result to the countdown
