@@ -12,6 +12,7 @@ cargo_env = {
   'APP_ID': application_id,
   'APP_VERSION': meson.project_version(),
   'PKGDATADIR': get_option('prefix') / get_option('datadir') / meson.project_name(),
+  'LOCALEDIR': get_option('prefix') / get_option('datadir') / 'locale',
   # CARGO_HOME is intentionally absent here. In Flatpak builds the
   # build-options.env in the manifest sets it to the vendored-crates
   # directory populated by cargo-sources.json. In dev builds,

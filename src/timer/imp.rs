@@ -277,7 +277,7 @@ impl TimerView {
         self.stopwatch_btn.set_sensitive(false);
         self.session_group.set_sensitive(false);
         self.big_time_label.set_label(&format_time(display_secs));
-        self.time_unit_label.set_label(tr("Paused"));
+        self.time_unit_label.set_label(&crate::i18n::gettext("Paused"));
         self.time_unit_label.set_visible(true);
     }
 
@@ -294,7 +294,7 @@ impl TimerView {
             self.big_time_label.set_label(&format!("{h:02}:{m:02}"));
         }
         // Subtitle applies equally to both modes — it labels the digits.
-        self.time_unit_label.set_label(tr("Hours · Minutes"));
+        self.time_unit_label.set_label(&crate::i18n::gettext("Hours · Minutes"));
         self.time_unit_label.set_visible(true);
     }
 }
@@ -449,8 +449,8 @@ impl TimerView {
         let note = self.note_row.text();
         if !note.is_empty() {
             let dialog = adw::AlertDialog::builder()
-                .heading(tr("Discard Session?"))
-                .body(tr("Your note will be lost."))
+                .heading(crate::i18n::gettext("Discard Session?"))
+                .body(crate::i18n::gettext("Your note will be lost."))
                 .close_response("cancel")
                 .default_response("discard")
                 .build();
@@ -458,8 +458,8 @@ impl TimerView {
             // so we can't mark a mnemonic letter on AdwAlertDialog buttons
             // without the underscore rendering literally. Return and Esc
             // still cover the common activations.
-            dialog.add_response("cancel", tr("Cancel"));
-            dialog.add_response("discard", tr("Discard"));
+            dialog.add_response("cancel", &crate::i18n::gettext("Cancel"));
+            dialog.add_response("discard", &crate::i18n::gettext("Discard"));
             dialog.set_response_appearance("discard", adw::ResponseAppearance::Destructive);
 
             let obj = self.obj().clone();
@@ -685,8 +685,8 @@ impl TimerView {
 
         // Trailing "Custom" pill — opens a dialog to pick an H:M value.
         let custom_btn = gtk::Button::builder()
-            .label(tr("Custom…"))
-            .tooltip_text(tr("Set a Custom Time"))
+            .label(crate::i18n::gettext("Custom…"))
+            .tooltip_text(crate::i18n::gettext("Set a Custom Time"))
             .css_classes(["preset-chip"])
             .build();
         custom_btn.connect_clicked(glib::clone!(
@@ -747,14 +747,14 @@ impl TimerView {
             .numeric(true)
             .width_chars(2)
             .adjustment(&gtk::Adjustment::new(cur_h, 0.0, 23.0, 1.0, 1.0, 0.0))
-            .tooltip_text(tr("Hours"))
+            .tooltip_text(crate::i18n::gettext("Hours"))
             .build();
         let minutes_spin = gtk::SpinButton::builder()
             .orientation(gtk::Orientation::Vertical)
             .numeric(true)
             .width_chars(2)
             .adjustment(&gtk::Adjustment::new(cur_m, 0.0, 59.0, 1.0, 5.0, 0.0))
-            .tooltip_text(tr("Minutes"))
+            .tooltip_text(crate::i18n::gettext("Minutes"))
             .build();
 
         let colon = gtk::Label::builder()
@@ -774,14 +774,14 @@ impl TimerView {
         row.append(&minutes_spin);
 
         let dialog = adw::AlertDialog::builder()
-            .heading(tr("Custom Time"))
-            .body(tr("Hours : Minutes"))
+            .heading(crate::i18n::gettext("Custom Time"))
+            .body(crate::i18n::gettext("Hours : Minutes"))
             .close_response("cancel")
             .default_response("set")
             .extra_child(&row)
             .build();
-        dialog.add_response("cancel", tr("Cancel"));
-        dialog.add_response("set", tr("Set"));
+        dialog.add_response("cancel", &crate::i18n::gettext("Cancel"));
+        dialog.add_response("set", &crate::i18n::gettext("Set"));
         dialog.set_response_appearance("set", adw::ResponseAppearance::Suggested);
 
         let obj = self.obj().clone();
@@ -996,5 +996,3 @@ fn build_new_label_dialog() -> (gtk::Entry, adw::AlertDialog) {
     ));
     (entry, dialog)
 }
-
-fn tr(s: &'static str) -> &'static str { s }

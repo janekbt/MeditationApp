@@ -1,0 +1,4 @@
+# One locale code per line. Adding a code + a matching <code>.po file
+# is all a translator has to do — meson's i18n.gettext() target picks
+# the rest up automatically.
+de

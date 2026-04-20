@@ -1,0 +1,29 @@
+# Files scanned by xgettext for translatable strings. Keep in sync when
+# source files are added / moved. The leading-comment lines are ignored.
+
+# Rust sources (every gettext(...) call site)
+src/application.rs
+src/data_io.rs
+src/db/mod.rs
+src/i18n.rs
+src/log/imp.rs
+src/log/mod.rs
+src/main.rs
+src/preferences.rs
+src/sound.rs
+src/stats/imp.rs
+src/stats/mod.rs
+src/timer/imp.rs
+src/timer/mod.rs
+src/window/imp.rs
+src/window/mod.rs
+
+# Blueprint UI definitions (every _("…") marker)
+data/ui/log_view.blp
+data/ui/stats_view.blp
+data/ui/timer_view.blp
+data/ui/window.blp
+
+# XML metadata that contains user-visible text
+data/io.github.janekbt.Meditate.desktop.in
+data/io.github.janekbt.Meditate.metainfo.xml.in

@@ -10,6 +10,7 @@ gnome = import('gnome')
 application_id = 'io.github.janekbt.Meditate'
 
 subdir('data')
+subdir('po')
 subdir('src')
 
 gnome.post_install(

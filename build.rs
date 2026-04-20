@@ -54,4 +54,10 @@ fn main() {
     if std::env::var("APP_VERSION").is_err() {
         println!("cargo:rustc-env=APP_VERSION=26.4.1");
     }
+    // Directory where gettext looks up compiled .mo translations at runtime.
+    // Dev fallback points at build/po; Meson/Flatpak set the real install
+    // path (e.g. /app/share/locale) via LOCALEDIR env var.
+    if std::env::var("LOCALEDIR").is_err() {
+        println!("cargo:rustc-env=LOCALEDIR=./build/po");
+    }
 }

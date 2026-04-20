@@ -310,7 +310,7 @@ fn build_card(session: &Session, label_map: &std::collections::HashMap<i64, &str
     let unit_label = gtk::Label::builder()
         // Lowercase in source; the .log-unit CSS class renders it uppercase
         // (HIG forbids all-caps in source text).
-        .label(tr("min"))
+        .label(crate::i18n::gettext("min"))
         .css_classes(["log-unit"])
         .halign(gtk::Align::Start)
         .build();
@@ -341,7 +341,7 @@ fn build_card(session: &Session, label_map: &std::collections::HashMap<i64, &str
     let note_text = session.note.as_deref().unwrap_or("").trim();
     if note_text.is_empty() {
         let placeholder = gtk::Label::builder()
-            .label(tr("No note added"))
+            .label(crate::i18n::gettext("No note added"))
             .css_classes(["log-note-placeholder"])
             .halign(gtk::Align::Start)
             .xalign(0.0)
@@ -383,7 +383,7 @@ fn build_card(session: &Session, label_map: &std::collections::HashMap<i64, &str
         .css_classes(["flat", "circular"])
         .valign(gtk::Align::Center)
         .margin_end(8)
-        .tooltip_text(tr("Delete Session"))
+        .tooltip_text(crate::i18n::gettext("Delete Session"))
         // Not Tab-focusable: AdwDialog's auto-focus-restore on close
         // would otherwise land on whichever trash button was last
         // hovered and the ScrolledWindow would scroll to it.
@@ -550,7 +550,7 @@ impl LogView {
         card.set_visible(false);
 
         let toast = adw::Toast::builder()
-            .title(tr("Session deleted"))
+            .title(crate::i18n::gettext("Session deleted"))
             .button_label("Undo")
             .timeout(5)
             .build();
@@ -644,12 +644,12 @@ impl LogView {
 
         // ── Duration (hours + minutes as AdwSpinRows) ─────────────────
         let hours_spin = adw::SpinRow::builder()
-            .title(tr("Hours"))
+            .title(crate::i18n::gettext("Hours"))
             .adjustment(&gtk::Adjustment::new(0.0, 0.0, 23.0, 1.0, 5.0, 0.0))
             .digits(0)
             .build();
         let minutes_spin = adw::SpinRow::builder()
-            .title(tr("Minutes"))
+            .title(crate::i18n::gettext("Minutes"))
             .adjustment(&gtk::Adjustment::new(0.0, 0.0, 59.0, 1.0, 5.0, 0.0))
             .digits(0)
             .build();
@@ -666,7 +666,7 @@ impl LogView {
         let init_minute = init_dt.as_ref().map(|d| d.minute()).unwrap_or(0);
 
         let date_row = adw::ActionRow::builder()
-            .title(tr("Date"))
+            .title(crate::i18n::gettext("Date"))
             .subtitle(format_date(init_time))
             .build();
 
@@ -683,7 +683,7 @@ impl LogView {
         let cal_btn = gtk::MenuButton::builder()
             .icon_name("office-calendar-symbolic")
             .valign(gtk::Align::Center)
-            .tooltip_text(tr("Pick a Date"))
+            .tooltip_text(crate::i18n::gettext("Pick a Date"))
             .css_classes(["flat"])
             .popover(&cal_popover)
             .always_show_arrow(false)
@@ -708,12 +708,12 @@ impl LogView {
 
         // ── Start time (hour + minute as AdwSpinRows) ─────────────────
         let time_hours_spin = adw::SpinRow::builder()
-            .title(tr("Hour"))
+            .title(crate::i18n::gettext("Hour"))
             .adjustment(&gtk::Adjustment::new(init_hour as f64, 0.0, 23.0, 1.0, 5.0, 0.0))
             .digits(0)
             .build();
         let time_minutes_spin = adw::SpinRow::builder()
-            .title(tr("Minute"))
+            .title(crate::i18n::gettext("Minute"))
             .adjustment(&gtk::Adjustment::new(init_minute as f64, 0.0, 59.0, 1.0, 5.0, 0.0))
             .digits(0)
             .build();
@@ -723,7 +723,7 @@ impl LogView {
             .chain(labels.iter().map(|l| l.name.as_str()))
             .collect();
         let label_row = adw::ComboRow::builder()
-            .title(tr("Label"))
+            .title(crate::i18n::gettext("Label"))
             .model(&gtk::StringList::new(&label_names))
             .build();
 
@@ -759,7 +759,7 @@ impl LogView {
             .css_classes(["log-note-editor"])
             .build();
         let note_caption = gtk::Label::builder()
-            .label(tr("Note (optional)"))
+            .label(crate::i18n::gettext("Note (optional)"))
             .halign(gtk::Align::Start)
             .margin_start(12)
             .css_classes(["caption", "dimmed"])
@@ -779,13 +779,13 @@ impl LogView {
 
         // ── Assemble dialog ────────────────────────────────────────────
         let duration_group = adw::PreferencesGroup::builder()
-            .title(tr("Duration"))
+            .title(crate::i18n::gettext("Duration"))
             .build();
         duration_group.add(&hours_spin);
         duration_group.add(&minutes_spin);
 
         let time_group = adw::PreferencesGroup::builder()
-            .title(tr("Start time"))
+            .title(crate::i18n::gettext("Start time"))
             .build();
         time_group.add(&date_row);
         time_group.add(&time_hours_spin);
@@ -814,11 +814,11 @@ impl LogView {
             .build();
 
         let cancel_btn = gtk::Button::builder()
-            .label(tr("_Cancel"))
+            .label(crate::i18n::gettext("_Cancel"))
             .use_underline(true)
             .build();
         let save_btn = gtk::Button::builder()
-            .label(if is_edit { tr("_Save") } else { tr("_Add") })
+            .label(if is_edit { crate::i18n::gettext("_Save") } else { crate::i18n::gettext("_Add") })
             .use_underline(true)
             .css_classes(["suggested-action"])
             .build();
@@ -832,7 +832,7 @@ impl LogView {
         toolbar_view.set_content(Some(&scrolled));
 
         let dialog = adw::Dialog::builder()
-            .title(if is_edit { tr("Edit Session") } else { tr("Add Session") })
+            .title(if is_edit { crate::i18n::gettext("Edit Session") } else { crate::i18n::gettext("Add Session") })
             .content_width(360)
             .child(&toolbar_view)
             .build();
@@ -942,6 +942,3 @@ fn unix_now() -> i64 {
         .as_secs() as i64
 }
 
-/// Marker helper for translatable strings — returns the input unchanged,
-/// but gives xgettext a predictable function name to extract from.
-fn tr(s: &'static str) -> &'static str { s }
