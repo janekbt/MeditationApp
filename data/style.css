@@ -1,3 +1,23 @@
+/* Accent-tinted streak chip above the hero time */
+.streak-chip {
+    background-color: alpha(@accent_color, 0.15);
+    color: @accent_color;
+    border-radius: 100px;
+    padding: 4px 10px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+}
+
+/* Compact pill for quick-preset buttons. Tighter padding than libadwaita's
+   .pill class (which targets hero buttons) so 5 chips fit at 360 px width. */
+button.preset-chip {
+    padding: 4px 12px;
+    min-height: 0;
+    border-radius: 9999px;
+    font-size: 0.9rem;
+}
+
 /* Large, light time readout on the timer setup page */
 .timer-setup-display {
     font-size: 4.5rem;
