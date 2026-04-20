@@ -628,12 +628,15 @@ impl TimerView {
             crate::i18n::gettext("Custom file…"),
         ];
         let sound_refs: Vec<&str> = sound_choices.iter().map(|s| s.as_str()).collect();
+        // set_model() resets `selected` to 0, which fires the notify handler
+        // — without the guard in place it'd persist "none" into the DB before
+        // we get to read the actual setting below. Raise the flag first.
+        self.sound_populating.set(true);
         self.setup_sound_row.set_model(Some(&gtk::StringList::new(&sound_refs)));
         let current_sound = app
             .with_db(|db| db.get_setting("end_sound", "bowl"))
             .and_then(|r| r.ok())
             .unwrap_or_else(|| "bowl".to_string());
-        self.sound_populating.set(true);
         self.setup_sound_row.set_selected(match current_sound.as_str() {
             "bowl"   => 1,
             "bell"   => 2,
