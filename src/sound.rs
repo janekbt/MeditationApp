@@ -46,9 +46,9 @@ pub fn play_bundled(name: &str) -> gtk::MediaFile {
 /// (~200 ms), which is imperceptible at the end of a meditation session.
 pub fn preload_end_sound(app: &crate::application::MeditateApplication) {
     let sound = app
-        .with_db(|db| db.get_setting("end_sound", "none"))
+        .with_db(|db| db.get_setting("end_sound", "bowl"))
         .and_then(|r| r.ok())
-        .unwrap_or_else(|| "none".to_string());
+        .unwrap_or_else(|| "bowl".to_string());
 
     let media_opt: Option<gtk::MediaFile> = match sound.as_str() {
         "bowl" | "bell" | "gong" => Some(
@@ -89,9 +89,9 @@ pub fn play_end_sound(app: &crate::application::MeditateApplication) {
 
     // No pre-loaded pipeline (sound is "none", or preload hasn't run yet).
     let sound = app
-        .with_db(|db| db.get_setting("end_sound", "none"))
+        .with_db(|db| db.get_setting("end_sound", "bowl"))
         .and_then(|r| r.ok())
-        .unwrap_or_else(|| "none".to_string());
+        .unwrap_or_else(|| "bowl".to_string());
     match sound.as_str() {
         "bowl" | "bell" | "gong" => { play_bundled(&sound); }
         "custom" => {

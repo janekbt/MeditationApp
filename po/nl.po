@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-21 00:48+0200\n"
+"POT-Creation-Date: 2026-04-21 01:24+0200\n"
 "PO-Revision-Date: 2026-04-20 18:26+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Dutch\n"
@@ -96,15 +96,15 @@ msgstr "{n} sessies"
 msgid "Session deleted"
 msgstr "Sessie verwijderd"
 
-#: src/log/imp.rs:560 src/preferences.rs:638
+#: src/log/imp.rs:560 src/preferences.rs:661
 msgid "Undo"
 msgstr "Ongedaan maken"
 
-#: src/log/imp.rs:653 src/timer/imp.rs:771
+#: src/log/imp.rs:653 src/timer/imp.rs:772
 msgid "Hours"
 msgstr "Uren"
 
-#: src/log/imp.rs:658 src/preferences.rs:352 src/timer/imp.rs:778
+#: src/log/imp.rs:658 src/preferences.rs:375 src/timer/imp.rs:779
 msgid "Minutes"
 msgstr "Minuten"
 
@@ -124,8 +124,8 @@ msgstr "Uur"
 msgid "Minute"
 msgstr "Minuut"
 
-#: src/log/imp.rs:728 src/preferences.rs:37 src/timer/imp.rs:623
-#: src/timer/imp.rs:652 src/timer/imp.rs:839 src/timer/imp.rs:866
+#: src/log/imp.rs:728 src/preferences.rs:37 src/timer/imp.rs:624
+#: src/timer/imp.rs:653 src/timer/imp.rs:840 src/timer/imp.rs:867
 msgid "None"
 msgstr "Geen"
 
@@ -178,19 +178,19 @@ msgstr "Algemeen"
 msgid "Sound"
 msgstr "Geluid"
 
-#: src/preferences.rs:38 src/timer/imp.rs:624
+#: src/preferences.rs:38 src/timer/imp.rs:625
 msgid "Singing bowl"
 msgstr "Klankschaal"
 
-#: src/preferences.rs:39 src/timer/imp.rs:625
+#: src/preferences.rs:39 src/timer/imp.rs:626
 msgid "Bell"
 msgstr "Bel"
 
-#: src/preferences.rs:40 src/timer/imp.rs:626
+#: src/preferences.rs:40 src/timer/imp.rs:627
 msgid "Gong"
 msgstr "Gong"
 
-#: src/preferences.rs:41 src/timer/imp.rs:627
+#: src/preferences.rs:41 src/timer/imp.rs:628
 msgid "Custom file…"
 msgstr "Eigen bestand…"
 
@@ -218,213 +218,221 @@ msgstr "Geluidsbestand kiezen"
 msgid "Audio files"
 msgstr "Audiobestanden"
 
-#: src/preferences.rs:224
+#: src/preferences.rs:229
+msgid "Vibrate on session end"
+msgstr "Trillen bij einde sessie"
+
+#: src/preferences.rs:230
+msgid "Haptic feedback when the timer finishes (mobile only)"
+msgstr "Haptische feedback als de timer afloopt (alleen mobiel)"
+
+#: src/preferences.rs:247
 msgid "Statistics"
 msgstr "Statistieken"
 
-#: src/preferences.rs:228
+#: src/preferences.rs:251
 msgid "7 days"
 msgstr "7 dagen"
 
-#: src/preferences.rs:229
+#: src/preferences.rs:252
 msgid "14 days"
 msgstr "14 dagen"
 
-#: src/preferences.rs:230
+#: src/preferences.rs:253
 msgid "30 days"
 msgstr "30 dagen"
 
-#: src/preferences.rs:234
+#: src/preferences.rs:257
 msgid "Running average period"
 msgstr "Periode voor lopend gemiddelde"
 
-#: src/preferences.rs:272 data/ui/stats_view.blp:51
+#: src/preferences.rs:295 data/ui/stats_view.blp:51
 msgid "Weekly goal"
 msgstr "Wekelijks doel"
 
-#: src/preferences.rs:273
+#: src/preferences.rs:296
 msgid "Minutes per week — drives the ring on the Stats tab"
 msgstr "Minuten per week — voedt de ring op het tabblad Statistieken"
 
-#: src/preferences.rs:295
+#: src/preferences.rs:318
 msgid "Timer Presets"
 msgstr "Voorinstellingen"
 
-#: src/preferences.rs:296
+#: src/preferences.rs:319
 msgid ""
 "Quick-select buttons shown in the countdown timer (1–5 presets, in minutes)"
 msgstr "Snelkeuzeknoppen in de aftel-timer (1–5 voorinstellingen, in minuten)"
 
-#: src/preferences.rs:301
+#: src/preferences.rs:324
 msgid "Add Preset"
 msgstr "Voorinstelling toevoegen"
 
-#: src/preferences.rs:359
+#: src/preferences.rs:382
 msgid "Remove Preset"
 msgstr "Voorinstelling verwijderen"
 
-#: src/preferences.rs:419
+#: src/preferences.rs:442
 msgid "Data"
 msgstr "Gegevens"
 
-#: src/preferences.rs:424
+#: src/preferences.rs:447
 msgid "Backup"
 msgstr "Back-up"
 
-#: src/preferences.rs:425
+#: src/preferences.rs:448
 msgid "Export your session log to a CSV file, or restore from one."
 msgstr "Exporteer je sessielogboek naar een CSV-bestand, of herstel het."
 
-#: src/preferences.rs:429
+#: src/preferences.rs:452
 msgid "Export session log"
 msgstr "Sessielogboek exporteren"
 
-#: src/preferences.rs:430
+#: src/preferences.rs:453
 msgid "Save every session to a CSV file"
 msgstr "Bewaar alle sessies in een CSV-bestand"
 
-#: src/preferences.rs:436
+#: src/preferences.rs:459
 msgid "Export"
 msgstr "Exporteren"
 
-#: src/preferences.rs:444
+#: src/preferences.rs:467
 msgid "Import from Meditate CSV"
 msgstr "Importeren uit Meditate-CSV"
 
-#: src/preferences.rs:445
+#: src/preferences.rs:468
 msgid "Restore sessions from a file exported above"
 msgstr "Herstel sessies uit een hierboven geëxporteerd bestand"
 
-#: src/preferences.rs:451
+#: src/preferences.rs:474
 msgid "Import"
 msgstr "Importeren"
 
-#: src/preferences.rs:461
+#: src/preferences.rs:484
 msgid "Migrate"
 msgstr "Migreren"
 
-#: src/preferences.rs:462
+#: src/preferences.rs:485
 msgid "Import sessions from another meditation app."
 msgstr "Importeer sessies uit een andere meditatie-app."
 
-#: src/preferences.rs:466 src/preferences.rs:915
+#: src/preferences.rs:489 src/preferences.rs:938
 msgid "Import from Insight Timer"
 msgstr "Importeren uit Insight Timer"
 
-#: src/preferences.rs:467
+#: src/preferences.rs:490
 msgid "Upload an Insight Timer CSV export"
 msgstr "Upload een Insight Timer CSV-export"
 
-#: src/preferences.rs:473
+#: src/preferences.rs:496
 msgid "Import Insight Timer CSV"
 msgstr "Insight Timer-CSV importeren"
 
-#: src/preferences.rs:483
+#: src/preferences.rs:506
 msgid "Danger Zone"
 msgstr "Gevarenzone"
 
-#: src/preferences.rs:484
+#: src/preferences.rs:507
 msgid "These actions cannot be undone."
 msgstr "Deze acties kunnen niet ongedaan worden gemaakt."
 
-#: src/preferences.rs:488
+#: src/preferences.rs:511
 msgid "Delete all sessions"
 msgstr "Alle sessies verwijderen"
 
-#: src/preferences.rs:489
+#: src/preferences.rs:512
 msgid "Permanently remove every logged session"
 msgstr "Verwijder elke opgeslagen sessie definitief"
 
-#: src/preferences.rs:493
+#: src/preferences.rs:516
 msgid "_Delete All"
 msgstr "_Alles verwijderen"
 
-#: src/preferences.rs:515 src/preferences.rs:520
+#: src/preferences.rs:538 src/preferences.rs:543
 msgid "Labels"
 msgstr "Labels"
 
-#: src/preferences.rs:521
+#: src/preferences.rs:544
 msgid "Organize sessions with custom labels"
 msgstr "Orden sessies met eigen labels"
 
-#: src/preferences.rs:526
+#: src/preferences.rs:549
 msgid "Add Label"
 msgstr "Label toevoegen"
 
-#: src/preferences.rs:553
+#: src/preferences.rs:576
 msgid "New label"
 msgstr "Nieuw label"
 
-#: src/preferences.rs:636
+#: src/preferences.rs:659
 msgid "Label deleted"
 msgstr "Label verwijderd"
 
-#: src/preferences.rs:695
+#: src/preferences.rs:718
 msgid "Discard Changes"
 msgstr "Wijzigingen negeren"
 
-#: src/preferences.rs:702 data/ui/timer_view.blp:243
+#: src/preferences.rs:725 data/ui/timer_view.blp:243
 msgid "Save"
 msgstr "Opslaan"
 
-#: src/preferences.rs:709
+#: src/preferences.rs:732
 msgid "Delete Label"
 msgstr "Label verwijderen"
 
-#: src/preferences.rs:753
+#: src/preferences.rs:776
 msgid "A label with that name already exists"
 msgstr "Er bestaat al een label met die naam"
 
-#: src/preferences.rs:812
+#: src/preferences.rs:835
 msgid "1 session uses this label and will become unlabeled."
 msgstr "1 sessie gebruikt dit label en wordt zonder label."
 
-#: src/preferences.rs:814
+#: src/preferences.rs:837
 msgid "{n} sessions use this label and will become unlabeled."
 msgstr "{n} sessies gebruiken dit label en worden zonder label."
 
-#: src/preferences.rs:818
+#: src/preferences.rs:841
 msgid "Delete Label?"
 msgstr "Label verwijderen?"
 
-#: src/preferences.rs:823 src/preferences.rs:932 src/timer/imp.rs:472
-#: src/timer/imp.rs:804 src/timer/imp.rs:1009
+#: src/preferences.rs:846 src/preferences.rs:955 src/timer/imp.rs:472
+#: src/timer/imp.rs:805 src/timer/imp.rs:1010
 msgid "Cancel"
 msgstr "Annuleren"
 
-#: src/preferences.rs:824
+#: src/preferences.rs:847
 msgid "Delete"
 msgstr "Verwijderen"
 
-#: src/preferences.rs:866
+#: src/preferences.rs:889
 msgid "Export Session Log"
 msgstr "Sessielogboek exporteren"
 
-#: src/preferences.rs:870
+#: src/preferences.rs:893
 msgid "CSV files"
 msgstr "CSV-bestanden"
 
-#: src/preferences.rs:886
+#: src/preferences.rs:909
 msgid "Exported 1 session"
 msgstr "1 sessie geëxporteerd"
 
-#: src/preferences.rs:887
+#: src/preferences.rs:910
 msgid "Exported {n} sessions"
 msgstr "{n} sessies geëxporteerd"
 
-#: src/preferences.rs:890
+#: src/preferences.rs:913
 msgid "Export failed: {error}"
 msgstr "Export mislukt: {error}"
 
-#: src/preferences.rs:904
+#: src/preferences.rs:927
 msgid "Import Session Log"
 msgstr "Sessielogboek importeren"
 
-#: src/preferences.rs:927
+#: src/preferences.rs:950
 msgid "Delete Every Session?"
 msgstr "Alle sessies verwijderen?"
 
-#: src/preferences.rs:928
+#: src/preferences.rs:951
 msgid ""
 "This permanently removes every session in your log. Export a backup first if "
 "you want to keep any history."
@@ -432,35 +440,35 @@ msgstr ""
 "Dit verwijdert elke sessie in je logboek definitief. Exporteer eerst een "
 "back-up als je iets wilt bewaren."
 
-#: src/preferences.rs:933
+#: src/preferences.rs:956
 msgid "Delete All"
 msgstr "Alles verwijderen"
 
-#: src/preferences.rs:944
+#: src/preferences.rs:967
 msgid "Deleted 1 session"
 msgstr "1 sessie verwijderd"
 
-#: src/preferences.rs:945
+#: src/preferences.rs:968
 msgid "Deleted {n} sessions"
 msgstr "{n} sessies verwijderd"
 
-#: src/preferences.rs:950
+#: src/preferences.rs:973
 msgid "Delete failed: {error}"
 msgstr "Verwijderen mislukt: {error}"
 
-#: src/preferences.rs:990
+#: src/preferences.rs:1013
 msgid "Imported 1 session"
 msgstr "1 sessie geïmporteerd"
 
-#: src/preferences.rs:991
+#: src/preferences.rs:1014
 msgid "Imported {n} sessions"
 msgstr "{n} sessies geïmporteerd"
 
-#: src/preferences.rs:996
+#: src/preferences.rs:1019
 msgid "Import failed: {error}"
 msgstr "Import mislukt: {error}"
 
-#: src/preferences.rs:1024
+#: src/preferences.rs:1047
 msgid "No file selected"
 msgstr "Geen bestand geselecteerd"
 
@@ -613,51 +621,51 @@ msgstr "Je notitie gaat verloren."
 msgid "Discard"
 msgstr "Verwijderen"
 
-#: src/timer/imp.rs:611
+#: src/timer/imp.rs:612
 msgid "Start your streak today"
 msgstr "Begin vandaag je reeks"
 
-#: src/timer/imp.rs:612
+#: src/timer/imp.rs:613
 msgid "1 day streak"
 msgstr "Reeks van 1 dag"
 
-#: src/timer/imp.rs:613
+#: src/timer/imp.rs:614
 msgid "{n} days streak"
 msgstr "Reeks van {n} dagen"
 
-#: src/timer/imp.rs:651 src/timer/imp.rs:838 src/timer/imp.rs:865
+#: src/timer/imp.rs:652 src/timer/imp.rs:839 src/timer/imp.rs:866
 msgid "+ New Label…"
 msgstr "+ Nieuw label…"
 
-#: src/timer/imp.rs:709
+#: src/timer/imp.rs:710
 msgid "Custom…"
 msgstr "Aangepast…"
 
-#: src/timer/imp.rs:710
+#: src/timer/imp.rs:711
 msgid "Set a Custom Time"
 msgstr "Aangepaste tijd instellen"
 
-#: src/timer/imp.rs:798
+#: src/timer/imp.rs:799
 msgid "Custom Time"
 msgstr "Aangepaste tijd"
 
-#: src/timer/imp.rs:799
+#: src/timer/imp.rs:800
 msgid "Hours : Minutes"
 msgstr "Uren : Minuten"
 
-#: src/timer/imp.rs:805
+#: src/timer/imp.rs:806
 msgid "Set"
 msgstr "Instellen"
 
-#: src/timer/imp.rs:1001
+#: src/timer/imp.rs:1002
 msgid "Label name"
 msgstr "Labelnaam"
 
-#: src/timer/imp.rs:1005
+#: src/timer/imp.rs:1006
 msgid "New Label"
 msgstr "Nieuw label"
 
-#: src/timer/imp.rs:1010
+#: src/timer/imp.rs:1011
 msgid "Create"
 msgstr "Aanmaken"
 

@@ -55,9 +55,9 @@ pub fn show_preferences(app: &MeditateApplication) {
     sound_row.add_suffix(&preview_btn);
 
     let current_sound = app
-        .with_db(|db| db.get_setting("end_sound", "none"))
+        .with_db(|db| db.get_setting("end_sound", "bowl"))
         .and_then(|r| r.ok())
-        .unwrap_or_else(|| "none".to_string());
+        .unwrap_or_else(|| "bowl".to_string());
     sound_row.set_selected(match current_sound.as_str() {
         "bowl"   => 1,
         "bell"   => 2,
@@ -216,6 +216,29 @@ pub fn show_preferences(app: &MeditateApplication) {
 
     sound_group.add(&sound_row);
     sound_group.add(&custom_row);
+
+    // Vibrate-on-end toggle. Routed through feedbackd on mobile; a no-op on
+    // systems without it, so desktop users with this accidentally enabled
+    // just notice nothing extra.
+    let vibrate_on = app
+        .with_db(|db| db.get_setting("vibrate_on_end", "false"))
+        .and_then(|r| r.ok())
+        .map(|s| s == "true")
+        .unwrap_or(false);
+    let vibrate_row = adw::SwitchRow::builder()
+        .title(gettext("Vibrate on session end"))
+        .subtitle(gettext("Haptic feedback when the timer finishes (mobile only)"))
+        .active(vibrate_on)
+        .build();
+    vibrate_row.connect_active_notify(glib::clone!(
+        #[weak] app,
+        move |row| {
+            let v = if row.is_active() { "true" } else { "false" };
+            app.with_db(|db| db.set_setting("vibrate_on_end", v));
+        }
+    ));
+    sound_group.add(&vibrate_row);
+
     general_page.add(&sound_group);
 
     // ── Statistics group ──────────────────────────────────────────────────────

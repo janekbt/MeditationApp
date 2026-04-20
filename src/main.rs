@@ -9,6 +9,7 @@ pub mod sound;
 pub mod stats;
 pub mod time;
 pub mod timer;
+pub mod vibration;
 mod window;
 
 use gtk::gio;

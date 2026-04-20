@@ -557,6 +557,7 @@ impl TimerView {
                     imp.show_done(new_secs);
                     if let Some(app) = imp.get_app() {
                         crate::sound::play_end_sound(&app);
+                        crate::vibration::trigger_if_enabled(&app);
                         // Only send a system notification when the app is not
                         // the focused window — the done screen is already shown
                         // in-app, so a notification would be redundant noise.
@@ -629,9 +630,9 @@ impl TimerView {
         let sound_refs: Vec<&str> = sound_choices.iter().map(|s| s.as_str()).collect();
         self.setup_sound_row.set_model(Some(&gtk::StringList::new(&sound_refs)));
         let current_sound = app
-            .with_db(|db| db.get_setting("end_sound", "none"))
+            .with_db(|db| db.get_setting("end_sound", "bowl"))
             .and_then(|r| r.ok())
-            .unwrap_or_else(|| "none".to_string());
+            .unwrap_or_else(|| "bowl".to_string());
         self.sound_populating.set(true);
         self.setup_sound_row.set_selected(match current_sound.as_str() {
             "bowl"   => 1,

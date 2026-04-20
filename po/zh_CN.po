@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-21 00:48+0200\n"
+"POT-Creation-Date: 2026-04-21 01:24+0200\n"
 "PO-Revision-Date: 2026-04-20 18:32+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Simplified Chinese\n"
@@ -96,15 +96,15 @@ msgstr "{n} 条会话"
 msgid "Session deleted"
 msgstr "会话已删除"
 
-#: src/log/imp.rs:560 src/preferences.rs:638
+#: src/log/imp.rs:560 src/preferences.rs:661
 msgid "Undo"
 msgstr "撤销"
 
-#: src/log/imp.rs:653 src/timer/imp.rs:771
+#: src/log/imp.rs:653 src/timer/imp.rs:772
 msgid "Hours"
 msgstr "小时"
 
-#: src/log/imp.rs:658 src/preferences.rs:352 src/timer/imp.rs:778
+#: src/log/imp.rs:658 src/preferences.rs:375 src/timer/imp.rs:779
 msgid "Minutes"
 msgstr "分钟"
 
@@ -124,8 +124,8 @@ msgstr "时"
 msgid "Minute"
 msgstr "分"
 
-#: src/log/imp.rs:728 src/preferences.rs:37 src/timer/imp.rs:623
-#: src/timer/imp.rs:652 src/timer/imp.rs:839 src/timer/imp.rs:866
+#: src/log/imp.rs:728 src/preferences.rs:37 src/timer/imp.rs:624
+#: src/timer/imp.rs:653 src/timer/imp.rs:840 src/timer/imp.rs:867
 msgid "None"
 msgstr "无"
 
@@ -178,19 +178,19 @@ msgstr "常规"
 msgid "Sound"
 msgstr "声音"
 
-#: src/preferences.rs:38 src/timer/imp.rs:624
+#: src/preferences.rs:38 src/timer/imp.rs:625
 msgid "Singing bowl"
 msgstr "颂钵"
 
-#: src/preferences.rs:39 src/timer/imp.rs:625
+#: src/preferences.rs:39 src/timer/imp.rs:626
 msgid "Bell"
 msgstr "铃声"
 
-#: src/preferences.rs:40 src/timer/imp.rs:626
+#: src/preferences.rs:40 src/timer/imp.rs:627
 msgid "Gong"
 msgstr "锣"
 
-#: src/preferences.rs:41 src/timer/imp.rs:627
+#: src/preferences.rs:41 src/timer/imp.rs:628
 msgid "Custom file…"
 msgstr "自定义文件…"
 
@@ -218,247 +218,255 @@ msgstr "选择声音文件"
 msgid "Audio files"
 msgstr "音频文件"
 
-#: src/preferences.rs:224
+#: src/preferences.rs:229
+msgid "Vibrate on session end"
+msgstr "会话结束时振动"
+
+#: src/preferences.rs:230
+msgid "Haptic feedback when the timer finishes (mobile only)"
+msgstr "计时结束时的震动反馈（仅限移动设备）"
+
+#: src/preferences.rs:247
 msgid "Statistics"
 msgstr "统计"
 
-#: src/preferences.rs:228
+#: src/preferences.rs:251
 msgid "7 days"
 msgstr "7 天"
 
-#: src/preferences.rs:229
+#: src/preferences.rs:252
 msgid "14 days"
 msgstr "14 天"
 
-#: src/preferences.rs:230
+#: src/preferences.rs:253
 msgid "30 days"
 msgstr "30 天"
 
-#: src/preferences.rs:234
+#: src/preferences.rs:257
 msgid "Running average period"
 msgstr "滚动平均周期"
 
-#: src/preferences.rs:272 data/ui/stats_view.blp:51
+#: src/preferences.rs:295 data/ui/stats_view.blp:51
 msgid "Weekly goal"
 msgstr "每周目标"
 
-#: src/preferences.rs:273
+#: src/preferences.rs:296
 msgid "Minutes per week — drives the ring on the Stats tab"
 msgstr "每周分钟数 — 驱动“统计”标签上的圆环"
 
-#: src/preferences.rs:295
+#: src/preferences.rs:318
 msgid "Timer Presets"
 msgstr "计时器预设"
 
-#: src/preferences.rs:296
+#: src/preferences.rs:319
 msgid ""
 "Quick-select buttons shown in the countdown timer (1–5 presets, in minutes)"
 msgstr "倒计时中的快速选择按钮（1–5 个预设，单位为分钟）"
 
-#: src/preferences.rs:301
+#: src/preferences.rs:324
 msgid "Add Preset"
 msgstr "添加预设"
 
-#: src/preferences.rs:359
+#: src/preferences.rs:382
 msgid "Remove Preset"
 msgstr "移除预设"
 
-#: src/preferences.rs:419
+#: src/preferences.rs:442
 msgid "Data"
 msgstr "数据"
 
-#: src/preferences.rs:424
+#: src/preferences.rs:447
 msgid "Backup"
 msgstr "备份"
 
-#: src/preferences.rs:425
+#: src/preferences.rs:448
 msgid "Export your session log to a CSV file, or restore from one."
 msgstr "将会话记录导出为 CSV 文件，或从中恢复。"
 
-#: src/preferences.rs:429
+#: src/preferences.rs:452
 msgid "Export session log"
 msgstr "导出会话记录"
 
-#: src/preferences.rs:430
+#: src/preferences.rs:453
 msgid "Save every session to a CSV file"
 msgstr "将所有会话保存到 CSV 文件"
 
-#: src/preferences.rs:436
+#: src/preferences.rs:459
 msgid "Export"
 msgstr "导出"
 
-#: src/preferences.rs:444
+#: src/preferences.rs:467
 msgid "Import from Meditate CSV"
 msgstr "从 Meditate CSV 导入"
 
-#: src/preferences.rs:445
+#: src/preferences.rs:468
 msgid "Restore sessions from a file exported above"
 msgstr "从上方导出的文件恢复会话"
 
-#: src/preferences.rs:451
+#: src/preferences.rs:474
 msgid "Import"
 msgstr "导入"
 
-#: src/preferences.rs:461
+#: src/preferences.rs:484
 msgid "Migrate"
 msgstr "迁移"
 
-#: src/preferences.rs:462
+#: src/preferences.rs:485
 msgid "Import sessions from another meditation app."
 msgstr "从其他冥想应用导入会话。"
 
-#: src/preferences.rs:466 src/preferences.rs:915
+#: src/preferences.rs:489 src/preferences.rs:938
 msgid "Import from Insight Timer"
 msgstr "从 Insight Timer 导入"
 
-#: src/preferences.rs:467
+#: src/preferences.rs:490
 msgid "Upload an Insight Timer CSV export"
 msgstr "上传 Insight Timer 的 CSV 导出"
 
-#: src/preferences.rs:473
+#: src/preferences.rs:496
 msgid "Import Insight Timer CSV"
 msgstr "导入 Insight Timer CSV"
 
-#: src/preferences.rs:483
+#: src/preferences.rs:506
 msgid "Danger Zone"
 msgstr "危险区域"
 
-#: src/preferences.rs:484
+#: src/preferences.rs:507
 msgid "These actions cannot be undone."
 msgstr "这些操作无法撤销。"
 
-#: src/preferences.rs:488
+#: src/preferences.rs:511
 msgid "Delete all sessions"
 msgstr "删除所有会话"
 
-#: src/preferences.rs:489
+#: src/preferences.rs:512
 msgid "Permanently remove every logged session"
 msgstr "永久删除每一条已记录的会话"
 
-#: src/preferences.rs:493
+#: src/preferences.rs:516
 msgid "_Delete All"
 msgstr "全部删除(_D)"
 
-#: src/preferences.rs:515 src/preferences.rs:520
+#: src/preferences.rs:538 src/preferences.rs:543
 msgid "Labels"
 msgstr "标签"
 
-#: src/preferences.rs:521
+#: src/preferences.rs:544
 msgid "Organize sessions with custom labels"
 msgstr "用自定义标签整理会话"
 
-#: src/preferences.rs:526
+#: src/preferences.rs:549
 msgid "Add Label"
 msgstr "添加标签"
 
-#: src/preferences.rs:553
+#: src/preferences.rs:576
 msgid "New label"
 msgstr "新建标签"
 
-#: src/preferences.rs:636
+#: src/preferences.rs:659
 msgid "Label deleted"
 msgstr "已删除标签"
 
-#: src/preferences.rs:695
+#: src/preferences.rs:718
 msgid "Discard Changes"
 msgstr "放弃更改"
 
-#: src/preferences.rs:702 data/ui/timer_view.blp:243
+#: src/preferences.rs:725 data/ui/timer_view.blp:243
 msgid "Save"
 msgstr "保存"
 
-#: src/preferences.rs:709
+#: src/preferences.rs:732
 msgid "Delete Label"
 msgstr "删除标签"
 
-#: src/preferences.rs:753
+#: src/preferences.rs:776
 msgid "A label with that name already exists"
 msgstr "已存在同名的标签"
 
-#: src/preferences.rs:812
+#: src/preferences.rs:835
 msgid "1 session uses this label and will become unlabeled."
 msgstr "有 1 条会话使用此标签，删除后该会话将失去标签。"
 
-#: src/preferences.rs:814
+#: src/preferences.rs:837
 msgid "{n} sessions use this label and will become unlabeled."
 msgstr "有 {n} 条会话使用此标签，删除后这些会话将失去标签。"
 
-#: src/preferences.rs:818
+#: src/preferences.rs:841
 msgid "Delete Label?"
 msgstr "删除标签？"
 
-#: src/preferences.rs:823 src/preferences.rs:932 src/timer/imp.rs:472
-#: src/timer/imp.rs:804 src/timer/imp.rs:1009
+#: src/preferences.rs:846 src/preferences.rs:955 src/timer/imp.rs:472
+#: src/timer/imp.rs:805 src/timer/imp.rs:1010
 msgid "Cancel"
 msgstr "取消"
 
-#: src/preferences.rs:824
+#: src/preferences.rs:847
 msgid "Delete"
 msgstr "删除"
 
-#: src/preferences.rs:866
+#: src/preferences.rs:889
 msgid "Export Session Log"
 msgstr "导出会话记录"
 
-#: src/preferences.rs:870
+#: src/preferences.rs:893
 msgid "CSV files"
 msgstr "CSV 文件"
 
-#: src/preferences.rs:886
+#: src/preferences.rs:909
 msgid "Exported 1 session"
 msgstr "已导出 1 条会话"
 
-#: src/preferences.rs:887
+#: src/preferences.rs:910
 msgid "Exported {n} sessions"
 msgstr "已导出 {n} 条会话"
 
-#: src/preferences.rs:890
+#: src/preferences.rs:913
 msgid "Export failed: {error}"
 msgstr "导出失败：{error}"
 
-#: src/preferences.rs:904
+#: src/preferences.rs:927
 msgid "Import Session Log"
 msgstr "导入会话记录"
 
-#: src/preferences.rs:927
+#: src/preferences.rs:950
 msgid "Delete Every Session?"
 msgstr "删除所有会话？"
 
-#: src/preferences.rs:928
+#: src/preferences.rs:951
 msgid ""
 "This permanently removes every session in your log. Export a backup first if "
 "you want to keep any history."
 msgstr "这将永久删除日志中的所有会话。如需保留历史，请先导出备份。"
 
-#: src/preferences.rs:933
+#: src/preferences.rs:956
 msgid "Delete All"
 msgstr "全部删除"
 
-#: src/preferences.rs:944
+#: src/preferences.rs:967
 msgid "Deleted 1 session"
 msgstr "已删除 1 条会话"
 
-#: src/preferences.rs:945
+#: src/preferences.rs:968
 msgid "Deleted {n} sessions"
 msgstr "已删除 {n} 条会话"
 
-#: src/preferences.rs:950
+#: src/preferences.rs:973
 msgid "Delete failed: {error}"
 msgstr "删除失败：{error}"
 
-#: src/preferences.rs:990
+#: src/preferences.rs:1013
 msgid "Imported 1 session"
 msgstr "已导入 1 条会话"
 
-#: src/preferences.rs:991
+#: src/preferences.rs:1014
 msgid "Imported {n} sessions"
 msgstr "已导入 {n} 条会话"
 
-#: src/preferences.rs:996
+#: src/preferences.rs:1019
 msgid "Import failed: {error}"
 msgstr "导入失败：{error}"
 
-#: src/preferences.rs:1024
+#: src/preferences.rs:1047
 msgid "No file selected"
 msgstr "未选择文件"
 
@@ -611,51 +619,51 @@ msgstr "您的笔记将会丢失。"
 msgid "Discard"
 msgstr "放弃"
 
-#: src/timer/imp.rs:611
+#: src/timer/imp.rs:612
 msgid "Start your streak today"
 msgstr "今天开始连续打卡"
 
-#: src/timer/imp.rs:612
+#: src/timer/imp.rs:613
 msgid "1 day streak"
 msgstr "连续 1 天"
 
-#: src/timer/imp.rs:613
+#: src/timer/imp.rs:614
 msgid "{n} days streak"
 msgstr "连续 {n} 天"
 
-#: src/timer/imp.rs:651 src/timer/imp.rs:838 src/timer/imp.rs:865
+#: src/timer/imp.rs:652 src/timer/imp.rs:839 src/timer/imp.rs:866
 msgid "+ New Label…"
 msgstr "+ 新建标签…"
 
-#: src/timer/imp.rs:709
+#: src/timer/imp.rs:710
 msgid "Custom…"
 msgstr "自定义…"
 
-#: src/timer/imp.rs:710
+#: src/timer/imp.rs:711
 msgid "Set a Custom Time"
 msgstr "设置自定义时间"
 
-#: src/timer/imp.rs:798
+#: src/timer/imp.rs:799
 msgid "Custom Time"
 msgstr "自定义时间"
 
-#: src/timer/imp.rs:799
+#: src/timer/imp.rs:800
 msgid "Hours : Minutes"
 msgstr "小时 : 分钟"
 
-#: src/timer/imp.rs:805
+#: src/timer/imp.rs:806
 msgid "Set"
 msgstr "设置"
 
-#: src/timer/imp.rs:1001
+#: src/timer/imp.rs:1002
 msgid "Label name"
 msgstr "标签名称"
 
-#: src/timer/imp.rs:1005
+#: src/timer/imp.rs:1006
 msgid "New Label"
 msgstr "新建标签"
 
-#: src/timer/imp.rs:1010
+#: src/timer/imp.rs:1011
 msgid "Create"
 msgstr "创建"
 
