@@ -7,6 +7,14 @@
     "org.freedesktop.Sdk.Extension.rust-stable"
   ],
   "command": "meditate",
+  "cleanup": [
+    "/include",
+    "/lib/pkgconfig",
+    "/share/doc",
+    "/share/man",
+    "*.a",
+    "*.la"
+  ],
   "finish-args": [
     "--share=ipc",
     "--socket=fallback-x11",

@@ -43,6 +43,11 @@ jobs:
           bundle: meditate-x86_64.flatpak
           manifest-path: build-aux/io.github.janekbt.Meditate.json
           cache-key: flatpak-builder-x86_64-${{ github.sha }}
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: meditate-x86_64.flatpak
+          path: meditate-x86_64.flatpak
 
   # aarch64: QEMU binfmt must be registered on the host *before* the container
   # that needs it starts.  Job-level containers prevent running host steps first,
