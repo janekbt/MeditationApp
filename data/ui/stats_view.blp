@@ -168,19 +168,41 @@ template $StatsView : Gtk.Widget {
           }
         }
 
-        // ── Bar chart card ────────────────────────────────────────────
+        // ── Chart card (bar or line) ──────────────────────────────────
         Gtk.Box chart_card {
           orientation: vertical;
           spacing: 10;
           css-classes: ["card"];
 
-          Gtk.Label {
-            label: _("Minutes / Day");
-            css-classes: ["stats-eyebrow"];
-            halign: start;
+          Gtk.Box {
+            orientation: horizontal;
             margin-top: 12;
             margin-start: 12;
             margin-end: 12;
+            spacing: 8;
+
+            Gtk.Label {
+              label: _("Minutes / Day");
+              css-classes: ["stats-eyebrow"];
+              halign: start;
+              hexpand: true;
+            }
+
+            Gtk.Box {
+              css-classes: ["linked"];
+              halign: end;
+
+              Gtk.ToggleButton chart_bars_btn {
+                label: _("Bars");
+                active: true;
+                css-classes: ["chart-type-btn"];
+              }
+              Gtk.ToggleButton chart_line_btn {
+                label: _("Line");
+                group: chart_bars_btn;
+                css-classes: ["chart-type-btn"];
+              }
+            }
           }
 
           Gtk.Box chart_container {

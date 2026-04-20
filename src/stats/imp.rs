@@ -29,6 +29,8 @@ pub struct StatsView {
     #[template_child] pub period_4w_btn:        TemplateChild<gtk::ToggleButton>,
     #[template_child] pub period_3m_btn:        TemplateChild<gtk::ToggleButton>,
     #[template_child] pub period_1y_btn:        TemplateChild<gtk::ToggleButton>,
+    #[template_child] pub chart_bars_btn:       TemplateChild<gtk::ToggleButton>,
+    #[template_child] pub chart_line_btn:       TemplateChild<gtk::ToggleButton>,
     #[template_child] pub chart_container:      TemplateChild<gtk::Box>,
     // Mini-stats
     #[template_child] pub mini_streak_value:    TemplateChild<gtk::Label>,
@@ -84,6 +86,7 @@ impl StatsView {
         for btn in [
             &*self.period_7d_btn, &*self.period_4w_btn,
             &*self.period_3m_btn, &*self.period_1y_btn,
+            &*self.chart_bars_btn, &*self.chart_line_btn,
         ] {
             btn.connect_toggled(glib::clone!(
                 #[weak(rename_to = this)] obj,
@@ -491,37 +494,28 @@ impl StatsView {
         y_axis.append(&axis_label(format_hm_secs(max_val / 2)));
         y_axis.append(&gtk::Box::builder().vexpand(true).build());
 
-        let bars_box = gtk::Box::builder()
-            .orientation(gtk::Orientation::Horizontal)
-            .hexpand(true)
+        // Plot area — one DrawingArea that can render bars or a line
+        // depending on the chart_line_btn state. We snapshot the data +
+        // max + mode into the closure so toggling triggers a full
+        // reload and a fresh closure.
+        let plot = gtk::DrawingArea::builder()
             .height_request(bars_h)
-            .spacing(2)
+            .hexpand(true)
             .build();
+        let is_line = self.chart_line_btn.is_active();
+        let values: Vec<i64> = data.iter().map(|(_, v)| *v).collect();
+        let max_snap = max_val;
+        plot.set_draw_func(move |_, cr, w, h| {
+            draw_chart_plot(cr, w, h, &values, max_snap, is_line);
+        });
+        let _ = chart_h;
+
         let xlabels_box = gtk::Box::builder()
             .orientation(gtk::Orientation::Horizontal)
             .hexpand(true)
             .spacing(2)
             .build();
-
-        for (i, (_date_str, dur)) in data.iter().enumerate() {
-            let col = gtk::Box::builder()
-                .orientation(gtk::Orientation::Vertical)
-                .hexpand(true)
-                .vexpand(true)
-                .build();
-            col.append(&gtk::Box::builder().vexpand(true).build());
-            if *dur > 0 {
-                let bar_h = ((*dur as f64 / max_val as f64) * chart_h) as i32;
-                col.append(
-                    &gtk::Box::builder()
-                        .height_request(bar_h.max(3))
-                        .hexpand(true)
-                        .css_classes(["chart-bar"])
-                        .build(),
-                );
-            }
-            bars_box.append(&col);
-
+        for (i, _) in data.iter().enumerate() {
             xlabels_box.append(
                 &gtk::Label::builder()
                     .label(x_label_text(&data, i, days))
@@ -537,7 +531,7 @@ impl StatsView {
             .hexpand(true)
             .spacing(4)
             .build();
-        right_area.append(&bars_box);
+        right_area.append(&plot);
         right_area.append(&xlabels_box);
 
         self.chart_container.append(&y_axis);
@@ -653,6 +647,80 @@ fn minutes_to_level(mins: i64, daily_expected_mins: i64) -> u8 {
         33..=79  => 2,
         80..=119 => 3,
         _        => 4,
+    }
+}
+
+/// Render the daily/weekly/monthly data either as bars or as a filled
+/// line chart. `values` has one entry per slot along the x-axis.
+fn draw_chart_plot(cr: &cairo::Context, w: i32, h: i32, values: &[i64], max_val: i64, is_line: bool) {
+    let n = values.len();
+    if n == 0 || max_val == 0 { return; }
+
+    let w_f = w as f64;
+    let h_f = h as f64;
+    let accent = adw::StyleManager::default().accent_color_rgba();
+    let (ar, ag, ab) = (
+        accent.red()   as f64,
+        accent.green() as f64,
+        accent.blue()  as f64,
+    );
+    let slot_w = w_f / n as f64;
+
+    if is_line {
+        // Points: centre x of each slot, y inverted from ratio.
+        let points: Vec<(f64, f64)> = values.iter().enumerate().map(|(i, v)| {
+            let x = slot_w * (i as f64 + 0.5);
+            let ratio = (*v as f64 / max_val as f64).min(1.0);
+            let y = h_f - ratio * h_f;
+            (x, y)
+        }).collect();
+
+        // Soft area fill under the line.
+        cr.set_source_rgba(ar, ag, ab, 0.18);
+        cr.move_to(points[0].0, h_f);
+        for (x, y) in &points { cr.line_to(*x, *y); }
+        cr.line_to(points[n - 1].0, h_f);
+        cr.close_path();
+        let _ = cr.fill();
+
+        // Stroked line on top.
+        cr.set_source_rgba(ar, ag, ab, 1.0);
+        cr.set_line_width(2.0);
+        cr.set_line_cap(cairo::LineCap::Round);
+        cr.set_line_join(cairo::LineJoin::Round);
+        cr.move_to(points[0].0, points[0].1);
+        for (x, y) in &points[1..] { cr.line_to(*x, *y); }
+        let _ = cr.stroke();
+
+        // Dots at each data point.
+        for (x, y) in &points {
+            cr.arc(*x, *y, 2.2, 0.0, std::f64::consts::PI * 2.0);
+            let _ = cr.fill();
+        }
+    } else {
+        // Bars: 70% of slot width, centred, rounded top corners.
+        let gutter = slot_w * 0.15;
+        let bar_w = (slot_w - gutter * 2.0).max(1.0);
+        let corner_r = (bar_w * 0.2).min(3.0);
+        cr.set_source_rgba(ar, ag, ab, 1.0);
+        for (i, v) in values.iter().enumerate() {
+            if *v == 0 { continue; }
+            let ratio = (*v as f64 / max_val as f64).min(1.0);
+            let bar_h = (ratio * h_f).max(3.0);
+            let x = slot_w * i as f64 + gutter;
+            let y = h_f - bar_h;
+            // Path: rounded top, square bottom.
+            cr.new_sub_path();
+            cr.arc(x + corner_r, y + corner_r, corner_r,
+                   std::f64::consts::PI, 1.5 * std::f64::consts::PI);
+            cr.line_to(x + bar_w - corner_r, y);
+            cr.arc(x + bar_w - corner_r, y + corner_r, corner_r,
+                   1.5 * std::f64::consts::PI, 2.0 * std::f64::consts::PI);
+            cr.line_to(x + bar_w, y + bar_h);
+            cr.line_to(x, y + bar_h);
+            cr.close_path();
+            let _ = cr.fill();
+        }
     }
 }
 

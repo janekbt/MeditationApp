@@ -57,8 +57,23 @@ button.preset-chip.preset-chip-active:hover {
     color: @accent_fg_color;
 }
 
-/* Period-toggle pills above the bar chart. Like .preset-chip but rely on
-   the :checked pseudo-class rather than a Rust-toggled modifier class. */
+/* Bars / Line linked segmented toggle inside the chart card header.
+   No explicit border-radius — default libadwaita button styling +
+   .linked on the parent handle corner flattening so the two halves
+   visibly connect. Padding/font just scale the original look up. */
+button.chart-type-btn {
+    padding: 5px 14px;
+    min-height: 0;
+    font-size: 1rem;
+}
+button.chart-type-btn:checked,
+button.chart-type-btn:checked:hover {
+    background: @accent_bg_color;
+    color: @accent_fg_color;
+}
+
+/* Period-toggle pills above the bar chart. Rely on the :checked
+   pseudo-class rather than a Rust-toggled modifier class. */
 button.period-pill {
     border-radius: 9999px;
     padding: 5px 14px;
