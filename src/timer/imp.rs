@@ -51,7 +51,8 @@ pub struct TimerView {
     #[template_child] pub setup_sound_row:        TemplateChild<adw::ComboRow>,
     #[template_child] pub time_unit_label:        TemplateChild<gtk::Label>,
     #[template_child] pub done_duration_label:   TemplateChild<gtk::Label>,
-    #[template_child] pub note_row:              TemplateChild<adw::EntryRow>,
+    #[template_child] pub note_view:             TemplateChild<gtk::TextView>,
+    #[template_child] pub note_caption:          TemplateChild<gtk::Label>,
     #[template_child] pub label_row:             TemplateChild<adw::ComboRow>,
     #[template_child] pub discard_btn:           TemplateChild<gtk::Button>,
     #[template_child] pub save_btn:              TemplateChild<gtk::Button>,
@@ -126,6 +127,12 @@ impl ObjectImpl for TimerView {
         // set to "00:10" in the blueprint.
         self.countdown_target_secs.set(10 * 60);
         self.setup_buttons();
+
+        // Tell screen readers that the free-text editor is labelled by
+        // its caption, matching the Log add/edit dialog.
+        self.note_view.update_relation(&[gtk::accessible::Relation::LabelledBy(
+            &[self.note_caption.upcast_ref::<gtk::Accessible>()],
+        )]);
     }
 
     fn dispose(&self) {
@@ -390,7 +397,7 @@ impl TimerView {
 
     fn show_done(&self, elapsed_secs: u64) {
         self.done_duration_label.set_label(&format_time(elapsed_secs));
-        self.note_row.set_text("");
+        self.note_view.buffer().set_text("");
         self.repopulate_label_combo(self.setup_selected_label_id());
         self.view_stack.set_visible_child_name("done");
     }
@@ -419,7 +426,9 @@ impl TimerView {
         }
 
         let note = {
-            let t = self.note_row.text();
+            let buffer = self.note_view.buffer();
+            let (start, end) = buffer.bounds();
+            let t = buffer.text(&start, &end, false);
             if t.is_empty() { None } else { Some(t.to_string()) }
         };
         // Index 0 = "+ New label" (shouldn't reach Save), 1 = "None", 2+ = labels
@@ -446,7 +455,9 @@ impl TimerView {
 
     fn on_discard(&self) {
         crate::sound::stop_current();
-        let note = self.note_row.text();
+        let buffer = self.note_view.buffer();
+        let (start, end) = buffer.bounds();
+        let note = buffer.text(&start, &end, false);
         if !note.is_empty() {
             let dialog = adw::AlertDialog::builder()
                 .heading(crate::i18n::gettext("Discard Session?"))

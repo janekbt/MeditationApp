@@ -196,11 +196,34 @@ template $TimerView : Gtk.Widget {
             halign: center;
           }
 
-          Adw.PreferencesGroup {
-            Adw.EntryRow note_row {
-              title: _("Note (optional)");
+          Gtk.Box {
+            orientation: vertical;
+            spacing: 6;
+
+            Gtk.Label note_caption {
+              label: _("Note (optional)");
+              halign: start;
+              margin-start: 12;
+              styles ["caption", "dimmed"]
             }
 
+            Gtk.ScrolledWindow {
+              hscrollbar-policy: never;
+              height-request: 180;
+              styles ["log-note-editor"]
+
+              Gtk.TextView note_view {
+                wrap-mode: word_char;
+                accepts-tab: false;
+                top-margin: 8;
+                bottom-margin: 8;
+                left-margin: 12;
+                right-margin: 12;
+              }
+            }
+          }
+
+          Adw.PreferencesGroup {
             Adw.ComboRow label_row {
               title: _("Label");
             }
