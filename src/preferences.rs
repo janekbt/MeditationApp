@@ -464,7 +464,10 @@ pub fn show_preferences(app: &MeditateApplication) {
                 .active_window()
                 .and_then(|w| w.downcast::<crate::window::MeditateWindow>().ok())
             {
-                win.imp().timer_view.refresh_presets();
+                // refresh_streak rebuilds presets, streak text, label
+                // combo, and sound row — covers any pref change including
+                // label add/delete/rename and preset edits.
+                win.imp().timer_view.refresh_streak();
             }
         }
     ));
