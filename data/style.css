@@ -158,6 +158,95 @@ button.period-pill:checked:hover {
     color: @accent_fg_color;
 }
 
+/* ── Log card feed ──────────────────────────────────────────────── */
+
+.log-card {
+    background: @card_bg_color;
+    color: @card_fg_color;
+    border: 1px solid alpha(@card_fg_color, 0.1);
+    border-radius: 12px;
+    background-clip: padding-box;
+}
+.log-card:hover {
+    background: shade(@card_bg_color, 0.97);
+}
+.log-stripe {
+    min-width: 3px;
+    background-color: alpha(@card_fg_color, 0.15);
+}
+.log-duration {
+    font-size: 1.7rem;
+    font-weight: 300;
+    letter-spacing: -0.03em;
+    line-height: 1;
+}
+.log-unit {
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    opacity: 0.6;
+    margin-top: 2px;
+}
+.log-time {
+    font-size: 0.72rem;
+    opacity: 0.55;
+    margin-top: 8px;
+}
+.log-label-chip {
+    padding: 2px 10px 2px 8px;
+    border-radius: 9999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+}
+.log-label-dot {
+    border-radius: 9999px;
+    background-color: alpha(@card_fg_color, 0.35);
+}
+.log-note {
+    font-style: italic;
+    font-size: 0.85rem;
+    opacity: 0.82;
+    padding-left: 8px;
+    border-left: 2px solid alpha(@card_fg_color, 0.15);
+    line-height: 1.45;
+}
+.log-note-placeholder {
+    font-style: italic;
+    font-size: 0.78rem;
+    opacity: 0.45;
+}
+
+/* Per-label palette. `label_color_class` maps each label name onto one of
+   eight HIG-palette accents so cards stay visually grouped without a
+   per-label colour column in the DB. */
+.log-stripe.log-c0 { background-color: #3584e4; }
+.log-stripe.log-c1 { background-color: #9141ac; }
+.log-stripe.log-c2 { background-color: #2ec27e; }
+.log-stripe.log-c3 { background-color: #e66100; }
+.log-stripe.log-c4 { background-color: #e5a50a; }
+.log-stripe.log-c5 { background-color: #e01b24; }
+.log-stripe.log-c6 { background-color: #986a44; }
+.log-stripe.log-c7 { background-color: #1c71d8; }
+
+.log-label-chip.log-c0 { background: alpha(#3584e4, 0.14); color: #3584e4; }
+.log-label-chip.log-c1 { background: alpha(#9141ac, 0.14); color: #9141ac; }
+.log-label-chip.log-c2 { background: alpha(#2ec27e, 0.14); color: #2ec27e; }
+.log-label-chip.log-c3 { background: alpha(#e66100, 0.14); color: #e66100; }
+.log-label-chip.log-c4 { background: alpha(#e5a50a, 0.14); color: #e5a50a; }
+.log-label-chip.log-c5 { background: alpha(#e01b24, 0.14); color: #e01b24; }
+.log-label-chip.log-c6 { background: alpha(#986a44, 0.14); color: #986a44; }
+.log-label-chip.log-c7 { background: alpha(#1c71d8, 0.14); color: #1c71d8; }
+
+.log-label-dot.log-c0 { background: #3584e4; }
+.log-label-dot.log-c1 { background: #9141ac; }
+.log-label-dot.log-c2 { background: #2ec27e; }
+.log-label-dot.log-c3 { background: #e66100; }
+.log-label-dot.log-c4 { background: #e5a50a; }
+.log-label-dot.log-c5 { background: #e01b24; }
+.log-label-dot.log-c6 { background: #986a44; }
+.log-label-dot.log-c7 { background: #1c71d8; }
+
 /* ── Bottom mini-stat cards ──────────────────────────────────────── */
 .mini-stat {
     padding: 10px 8px;

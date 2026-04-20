@@ -50,9 +50,12 @@ template $LogView : Gtk.Widget {
             orientation: vertical;
             spacing: 12;
 
-            Gtk.ListBox list_box {
-              css-classes: ["boxed-list"];
-              selection-mode: none;
+            // Card feed — sessions grouped by date. Sections + cards are
+            // built in Rust; the BLP only supplies the container so
+            // pagination can append into it without rebuilding.
+            Gtk.Box feed_box {
+              orientation: vertical;
+              spacing: 14;
             }
 
             Gtk.Button load_more_btn {
@@ -60,6 +63,11 @@ template $LogView : Gtk.Widget {
               halign: center;
               css-classes: ["pill"];
               visible: false;
+              // Not Tab-focusable: when an AdwDialog closes GTK restores
+              // focus to the bottom-most focusable widget in the window,
+              // and that used to be this button — making the ScrolledWindow
+              // scroll to the bottom after every edit-dialog dismissal.
+              focusable: false;
             }
           };
         };

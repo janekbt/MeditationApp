@@ -11,7 +11,7 @@ use crate::db::{Label, Session, SessionData, SessionFilter, SessionMode};
 #[template(resource = "/io/github/janekbt/Meditate/ui/log_view.ui")]
 pub struct LogView {
     #[template_child] pub view_stack:     TemplateChild<gtk::Stack>,
-    #[template_child] pub list_box:       TemplateChild<gtk::ListBox>,
+    #[template_child] pub feed_box:       TemplateChild<gtk::Box>,
     #[template_child] pub load_more_btn:  TemplateChild<gtk::Button>,
     #[template_child] pub add_first_btn:  TemplateChild<gtk::Button>,
 
@@ -23,10 +23,33 @@ pub struct LogView {
     pub filter_notes_only: Cell<bool>,
     pub filter_label_id:   Cell<Option<i64>>,
 
-    // Pagination: how many rows are currently in the list_box. Rebuilding
-    // 2000+ AdwActionRow widgets upfront makes the whole app sluggish, so
-    // we load in pages and append more on demand.
+    // Pagination: how many rows are currently rendered. Rebuilding 2000+
+    // rows upfront makes the whole app sluggish, so we load in pages and
+    // append more on demand.
     loaded_count: Cell<usize>,
+
+    /// The date section currently being filled. Persists across load_more
+    /// calls so a single calendar day never gets split into two headers
+    /// just because it straddled a page boundary.
+    current_section: RefCell<Option<DateSection>>,
+
+    /// session_id → card widget. Lets edits update a single card in place
+    /// instead of rebuilding the whole feed (which resets the scroll
+    /// position — closing the edit dialog used to jump to the bottom).
+    cards_by_id: RefCell<std::collections::HashMap<i64, gtk::Box>>,
+}
+
+/// One "Today" / "Yesterday" / "Apr 17" group in the feed.
+#[derive(Debug)]
+struct DateSection {
+    /// Sort key — YYYY-MM-DD local date. Same key means same section.
+    key: String,
+    /// Subtitle under the date header: "3 sessions · 1h 04m".
+    caption: gtk::Label,
+    /// Vertical Gtk.Box that holds the cards.
+    cards_box: gtk::Box,
+    count: u32,
+    total_secs: i64,
 }
 
 #[glib::object_subclass]
@@ -74,27 +97,27 @@ impl WidgetImpl for LogView {}
 // ── Public API ────────────────────────────────────────────────────────────────
 
 impl LogView {
-    /// Reload sessions from the database and rebuild the list from scratch.
+    /// Reload sessions from the database and rebuild the feed from scratch.
     /// Loads just the first page; additional pages come via `load_more`.
     pub fn refresh(&self) {
         let Some(app) = self.get_app() else { return; };
 
-        // Fetch labels first (needed for row display)
+        // Fetch labels first (needed for card rendering)
         let labels = app
             .with_db(|db| db.list_labels())
             .and_then(|r| r.ok())
             .unwrap_or_default();
         *self.labels.borrow_mut() = labels;
 
-        // Reset pagination + the list_box DOM.
+        // Reset pagination + DOM + section tracking.
         self.loaded_count.set(0);
         self.sessions.borrow_mut().clear();
-        while let Some(child) = self.list_box.first_child() {
-            self.list_box.remove(&child);
+        self.cards_by_id.borrow_mut().clear();
+        *self.current_section.borrow_mut() = None;
+        while let Some(child) = self.feed_box.first_child() {
+            self.feed_box.remove(&child);
         }
 
-        // Load the first page. If the DB has ≤ PAGE_SIZE matching rows we'll
-        // know immediately (`has_more` stays false) and never show the button.
         let loaded = self.load_page(&app);
 
         let has_filter = self.filter_notes_only.get() || self.filter_label_id.get().is_some();
@@ -108,15 +131,15 @@ impl LogView {
         self.view_stack.set_visible_child_name("list");
     }
 
-    /// Append the next page to the existing list without rebuilding anything.
+    /// Append the next page to the existing feed without rebuilding anything.
     pub fn load_more(&self) {
         let Some(app) = self.get_app() else { return; };
         self.load_page(&app);
     }
 
-    /// Query the next page of sessions and append them. Returns how many rows
-    /// were appended; also toggles `load_more_btn` visibility based on whether
-    /// the query returned a full page (meaning there may be more to fetch).
+    /// Query the next page of sessions and append them, grouping by date.
+    /// Returns how many rows were appended; also toggles `load_more_btn`
+    /// visibility based on whether the query returned a full page.
     fn load_page(&self, app: &crate::application::MeditateApplication) -> usize {
         const PAGE_SIZE: u32 = 200;
 
@@ -141,17 +164,83 @@ impl LogView {
         let label_map: std::collections::HashMap<i64, &str> =
             labels_ref.iter().map(|l| (l.id, l.name.as_str())).collect();
         for session in &page {
-            let row = self.build_row(session, &label_map);
-            self.list_box.append(&row);
+            self.append_session_to_feed(session, &label_map);
         }
         drop(labels_ref);
 
         self.loaded_count.set(self.loaded_count.get() + n);
         self.sessions.borrow_mut().extend(page);
 
-        // If we got a full page there may be more rows behind it.
         self.load_more_btn.set_visible(n == PAGE_SIZE as usize);
         n
+    }
+
+    /// Add a session to either the current date-section (extending its
+    /// counter + caption) or start a new section. Called once per row
+    /// from `load_page`.
+    fn append_session_to_feed(
+        &self,
+        session: &Session,
+        label_map: &std::collections::HashMap<i64, &str>,
+    ) {
+        let key = date_group_key(session.start_time);
+        let mut current = self.current_section.borrow_mut();
+
+        // Do we need a new section?
+        let need_new = !matches!(current.as_ref(), Some(sec) if sec.key == key);
+        if need_new {
+            let (section_box, caption_label, cards_box) = build_section_frame(session.start_time);
+            self.feed_box.append(&section_box);
+            *current = Some(DateSection {
+                key: key.clone(),
+                caption: caption_label,
+                cards_box,
+                count: 0,
+                total_secs: 0,
+            });
+        }
+
+        // Append the card into the current section and update its counter.
+        let sec = current.as_mut().expect("current_section populated above");
+        let card = build_card(session, label_map);
+        sec.cards_box.append(&card);
+        self.cards_by_id.borrow_mut().insert(session.id, card);
+        sec.count       += 1;
+        sec.total_secs  += session.duration_secs;
+        sec.caption.set_label(&section_caption_text(sec.count, sec.total_secs));
+    }
+
+    /// Replace the card for `session_id` with a freshly-built one, keeping
+    /// the same slot in its date section. Avoids the full refresh() that
+    /// would reset the scroll position on dialog close.
+    pub fn replace_card_in_place(&self, session: &Session) {
+        let old_card = self.cards_by_id.borrow().get(&session.id).cloned();
+        let Some(old) = old_card else { return; };
+        let Some(parent) = old.parent().and_then(|p| p.downcast::<gtk::Box>().ok()) else {
+            return;
+        };
+
+        // Build the replacement card before we touch the DOM so the rest
+        // of the update is a simple remove + insert.
+        let labels_ref = self.labels.borrow();
+        let label_map: std::collections::HashMap<i64, &str> =
+            labels_ref.iter().map(|l| (l.id, l.name.as_str())).collect();
+        let new_card = build_card(session, &label_map);
+
+        // `insert_child_after` with the previous sibling keeps the card at
+        // its existing index in the cards_box. `prev_sibling` = None means
+        // the card was first, and GTK interprets that as prepend.
+        let prev = old.prev_sibling();
+        parent.remove(&old);
+        parent.insert_child_after(&new_card, prev.as_ref());
+
+        self.cards_by_id.borrow_mut().insert(session.id, new_card);
+
+        // Keep the cached Vec<Session> consistent so future pagination /
+        // edit dialog lookups see the updated values too.
+        if let Some(s) = self.sessions.borrow_mut().iter_mut().find(|s| s.id == session.id) {
+            *s = session.clone();
+        }
     }
 
     /// Populate the label combo in the filter popover.
@@ -169,94 +258,241 @@ impl LogView {
     }
 }
 
-// ── Row building ──────────────────────────────────────────────────────────────
+// ── Pure builders (no `self`) ─────────────────────────────────────────────────
 
-impl LogView {
-    fn build_row(&self, session: &Session, label_map: &std::collections::HashMap<i64, &str>) -> adw::ActionRow {
-        let label_name = session.label_id
-            .and_then(|id| label_map.get(&id).copied())
-            .unwrap_or("");
+/// Build the date-section scaffold: a vertical Gtk.Box holding the header
+/// row (date + caption) plus an empty vertical `cards_box` for sessions
+/// to be appended into. Returns `(outer_box, caption_label, cards_box)`.
+fn build_section_frame(unix_secs: i64) -> (gtk::Box, gtk::Label, gtk::Box) {
+    let outer = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(8)
+        .build();
 
-        let duration = format_duration(session.duration_secs as u64);
-        let date = format_date(session.start_time);
-        let title = format!("{duration}  ·  {date}");
+    let header = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(8)
+        .margin_start(2)
+        .build();
+    let date_label = gtk::Label::builder()
+        .label(date_group_display(unix_secs))
+        .css_classes(["heading"])
+        .halign(gtk::Align::Start)
+        .build();
+    let caption = gtk::Label::builder()
+        .label("")
+        .css_classes(["caption", "dim-label"])
+        .halign(gtk::Align::Start)
+        .build();
+    header.append(&date_label);
+    header.append(&caption);
 
-        let subtitle = match (label_name.is_empty(), session.note.as_deref()) {
-            (false, Some(note)) if !note.is_empty() => format!("{label_name}  ·  {note}"),
-            (false, _)  => label_name.to_owned(),
-            (true, Some(note)) if !note.is_empty() => note.to_owned(),
-            _ => String::new(),
-        };
+    let cards_box = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(8)
+        .build();
 
-        let row = adw::ActionRow::builder()
-            .title(&title)
-            .activatable(true)
-            // Store session id in widget name so row_activated can retrieve it.
-            .name(session.id.to_string())
-            .build();
-
-        if !subtitle.is_empty() {
-            row.set_subtitle(&subtitle);
-        }
-
-        // Edit on row activation
-        let session_id = session.id;
-        let obj = self.obj().clone();
-        row.connect_activated(move |_| {
-            obj.imp().show_edit_dialog(session_id);
-        });
-
-        // Delete button
-        let delete_btn = gtk::Button::builder()
-            .icon_name("user-trash-symbolic")
-            .valign(gtk::Align::Center)
-            .tooltip_text("Delete session")
-            .css_classes(["flat"])
-            .build();
-
-        let row_ref = row.clone();
-        let obj2 = self.obj().clone();
-        delete_btn.connect_clicked(move |_| {
-            obj2.imp().on_delete_clicked(session_id, &row_ref);
-        });
-
-        row.add_suffix(&delete_btn);
-        row
-    }
+    outer.append(&header);
+    outer.append(&cards_box);
+    (outer, caption, cards_box)
 }
 
-// ── Delete with undo toast ────────────────────────────────────────────────────
+/// One session card. Uses bare Gtk widgets (not AdwActionRow) so we can
+/// render a colored left stripe + hero duration + label chip + quoted
+/// note in a single, cheap widget tree — critical for 2000+ session logs.
+fn build_card(session: &Session, label_map: &std::collections::HashMap<i64, &str>) -> gtk::Box {
+    let label_name = session.label_id
+        .and_then(|id| label_map.get(&id).copied())
+        .unwrap_or("");
+    let color_cls = if label_name.is_empty() {
+        "log-c-none"
+    } else {
+        label_color_class(label_name)
+    };
 
-impl LogView {
-    fn on_delete_clicked(&self, session_id: i64, row: &adw::ActionRow) {
-        row.set_visible(false);
+    // Colored left stripe — 3 px wide, full card height.
+    let stripe = gtk::Box::builder()
+        .width_request(3)
+        .css_classes(["log-stripe", color_cls])
+        .build();
 
-        let toast = adw::Toast::builder()
-            .title("Session deleted")
-            .button_label("Undo")
-            .timeout(5)
-            .build();
+    // Left column: big duration, "MIN" unit, time-of-day.
+    let mins = (session.duration_secs.max(0) as u64 + 30) / 60;
+    let dur_label = gtk::Label::builder()
+        .label(mins.max(1).to_string())
+        .css_classes(["log-duration", "numeric"])
+        .halign(gtk::Align::Start)
+        .build();
+    let unit_label = gtk::Label::builder()
+        .label("MIN")
+        .css_classes(["log-unit"])
+        .halign(gtk::Align::Start)
+        .build();
+    let time_label = gtk::Label::builder()
+        .label(format_time_of_day(session.start_time))
+        .css_classes(["log-time", "numeric"])
+        .halign(gtk::Align::Start)
+        .build();
+    let left_col = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .width_request(64)
+        .build();
+    left_col.append(&dur_label);
+    left_col.append(&unit_label);
+    left_col.append(&time_label);
 
-        // Undo: restore the row and don't delete from DB
-        let row_undo = row.clone();
-        toast.connect_button_clicked(move |_| {
-            row_undo.set_visible(true);
-        });
+    // Right column: label chip + (note or placeholder).
+    let right_col = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(7)
+        .hexpand(true)
+        .build();
 
-        // When toast is dismissed without undo → actually delete from DB
-        let obj = self.obj().clone();
-        let row_ref = row.clone();
-        toast.connect_dismissed(move |_| {
-            if !row_ref.is_visible() {
-                if let Some(app) = obj.imp().get_app() {
-                    app.with_db(|db| db.delete_session(session_id));
-                }
-                obj.imp().refresh();
-            }
-        });
-
-        self.add_toast(toast);
+    if !label_name.is_empty() {
+        right_col.append(&build_label_chip(label_name, color_cls));
     }
+
+    let note_text = session.note.as_deref().unwrap_or("").trim();
+    if note_text.is_empty() {
+        let placeholder = gtk::Label::builder()
+            .label("No note added")
+            .css_classes(["log-note-placeholder"])
+            .halign(gtk::Align::Start)
+            .xalign(0.0)
+            .build();
+        right_col.append(&placeholder);
+    } else {
+        let note_label = gtk::Label::builder()
+            .label(note_text)
+            .css_classes(["log-note"])
+            .halign(gtk::Align::Fill)
+            .xalign(0.0)
+            .wrap(true)
+            .wrap_mode(gtk::pango::WrapMode::WordChar)
+            .lines(2)
+            .ellipsize(gtk::pango::EllipsizeMode::End)
+            .build();
+        right_col.append(&note_label);
+    }
+
+    let content = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(12)
+        .margin_top(12)
+        .margin_bottom(12)
+        .margin_start(10)
+        .margin_end(12)
+        .build();
+    content.append(&left_col);
+    content.append(&right_col);
+
+    let card = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .css_classes(["log-card"])
+        .build();
+    card.append(&stripe);
+    card.append(&content);
+
+    // Tap anywhere on the card to open the edit dialog; per-card
+    // delete sits as a small flat button in the top-right of the right col.
+    let click = gtk::GestureClick::new();
+    let session_id = session.id;
+    click.connect_released(glib::clone!(
+        #[weak] card,
+        move |_, _, _, _| {
+            if let Some(win) = card.root().and_then(|r| r.downcast::<crate::window::MeditateWindow>().ok()) {
+                win.imp().log_view.imp().show_edit_dialog(session_id);
+            }
+        }
+    ));
+    card.add_controller(click);
+
+    card
+}
+
+fn build_label_chip(name: &str, color_cls: &str) -> gtk::Box {
+    let dot = gtk::Box::builder()
+        .width_request(6)
+        .height_request(6)
+        .valign(gtk::Align::Center)
+        .css_classes(["log-label-dot", color_cls])
+        .build();
+    let text = gtk::Label::builder()
+        .label(name)
+        .css_classes(["log-label-text"])
+        .build();
+    let chip = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(5)
+        .halign(gtk::Align::Start)
+        .css_classes(["log-label-chip", color_cls])
+        .build();
+    chip.append(&dot);
+    chip.append(&text);
+    chip
+}
+
+/// Stable-per-name color class. We cycle through 8 HIG palette accents
+/// (defined in CSS as `.log-c0`..`.log-c7`). A DJB-ish string hash keeps
+/// the mapping stable across restarts without needing a per-label column.
+fn label_color_class(name: &str) -> &'static str {
+    const CLASSES: &[&str] = &[
+        "log-c0", "log-c1", "log-c2", "log-c3",
+        "log-c4", "log-c5", "log-c6", "log-c7",
+    ];
+    let mut h: u32 = 5381;
+    for b in name.bytes() {
+        h = h.wrapping_mul(33).wrapping_add(b as u32);
+    }
+    CLASSES[(h as usize) % CLASSES.len()]
+}
+
+/// Local `YYYY-MM-DD` — used as a grouping key. Not shown to the user.
+fn date_group_key(unix_secs: i64) -> String {
+    glib::DateTime::from_unix_local(unix_secs)
+        .ok()
+        .and_then(|dt| dt.format("%Y-%m-%d").ok())
+        .map(|g| g.to_string())
+        .unwrap_or_default()
+}
+
+/// Human-readable section header: "Today", "Yesterday", or "Apr 17".
+/// Year is elided for dates in the current calendar year, shown otherwise.
+fn date_group_display(unix_secs: i64) -> String {
+    let Some(dt) = glib::DateTime::from_unix_local(unix_secs).ok() else {
+        return String::new();
+    };
+    let now = glib::DateTime::now_local().unwrap();
+    let same_day = now.year() == dt.year() && now.day_of_year() == dt.day_of_year();
+    if same_day { return "Today".to_string(); }
+    if let Ok(yest) = now.add_days(-1) {
+        if yest.year() == dt.year() && yest.day_of_year() == dt.day_of_year() {
+            return "Yesterday".to_string();
+        }
+    }
+    let fmt = if now.year() == dt.year() { "%b %-d" } else { "%b %-d, %Y" };
+    dt.format(fmt).map(|g| g.to_string()).unwrap_or_default()
+}
+
+fn format_time_of_day(unix_secs: i64) -> String {
+    glib::DateTime::from_unix_local(unix_secs)
+        .ok()
+        .and_then(|dt| dt.format("%H:%M").ok())
+        .map(|g| g.to_string())
+        .unwrap_or_default()
+}
+
+fn section_caption_text(count: u32, total_secs: i64) -> String {
+    let noun = if count == 1 { "session" } else { "sessions" };
+    format!("{count} {noun} · {}", format_total(total_secs))
+}
+
+/// Compact total for section header: "42m" / "1h 04m".
+fn format_total(secs: i64) -> String {
+    if secs <= 0 { return "0m".to_string(); }
+    let h = secs / 3600;
+    let m = (secs % 3600) / 60;
+    if h > 0 { format!("{h}h {m:02}m") } else { format!("{m}m") }
 }
 
 // ── Add / Edit dialog ─────────────────────────────────────────────────────────
@@ -550,12 +786,6 @@ impl LogView {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 impl LogView {
-    fn add_toast(&self, toast: adw::Toast) {
-        if let Some(win) = self.get_window() {
-            win.add_toast(toast);
-        }
-    }
-
     fn get_app(&self) -> Option<crate::application::MeditateApplication> {
         self.obj()
             .root()
@@ -572,17 +802,6 @@ impl LogView {
 }
 
 // ── Formatting ────────────────────────────────────────────────────────────────
-
-pub fn format_duration(secs: u64) -> String {
-    let h = secs / 3600;
-    let m = (secs % 3600) / 60;
-    let s = secs % 60;
-    if h > 0 {
-        format!("{h}:{m:02}:{s:02}")
-    } else {
-        format!("{m:02}:{s:02}")
-    }
-}
 
 fn format_date(unix_secs: i64) -> String {
     glib::DateTime::from_unix_local(unix_secs)
