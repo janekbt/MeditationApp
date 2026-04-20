@@ -190,14 +190,25 @@ impl StatsView {
         let cur_monday = now.add_days(-today_dow_idx).unwrap();
 
         // Fetch 91 days of totals (12 weeks ago Monday through today)
+        // and the user's weekly goal in a single DB borrow.
         let since_dt = cur_monday.add_days(-12 * 7).unwrap();
         let since = since_dt.format("%Y-%m-%d").unwrap().to_string();
-        let totals: std::collections::HashMap<String, i64> = self
-            .get_app()
-            .and_then(|app| app.with_db(|db| db.get_daily_totals(&since)))
-            .and_then(|r| r.ok())
-            .map(|v| v.into_iter().collect())
-            .unwrap_or_default();
+        let (totals_vec, goal_mins) = self.get_app()
+            .and_then(|app| app.with_db(|db| {
+                let t = db.get_daily_totals(&since).unwrap_or_default();
+                let g = db.get_setting("weekly_goal_mins", "150")
+                    .ok()
+                    .and_then(|s| s.parse::<i64>().ok())
+                    .filter(|v| *v > 0)
+                    .unwrap_or(DEFAULT_WEEKLY_GOAL_MINS);
+                (t, g)
+            }))
+            .unwrap_or_else(|| (Vec::new(), DEFAULT_WEEKLY_GOAL_MINS));
+        let totals: std::collections::HashMap<String, i64> =
+            totals_vec.into_iter().collect();
+        // Daily share of the weekly goal — drives the heatmap thresholds so a
+        // 10-hour retreat day doesn't make on-target days look washed-out.
+        let daily_expected_mins = (goal_mins as f64 / 7.0).round().max(1.0) as i64;
 
         let cells = self.contrib_cells.borrow();
         let today_unix = now.to_unix();
@@ -223,7 +234,7 @@ impl StatsView {
 
                 let date_str = date.format("%Y-%m-%d").unwrap();
                 let mins = totals.get(date_str.as_str()).copied().unwrap_or(0) / 60;
-                let level = minutes_to_level(mins);
+                let level = minutes_to_level(mins, daily_expected_mins);
                 cell.add_css_class(&format!("level-{level}"));
                 if date.year() == now.year()
                     && date.day_of_year() == now.day_of_year()
@@ -492,13 +503,26 @@ fn axis_label(text: String) -> gtk::Label {
         .build()
 }
 
-fn minutes_to_level(mins: i64) -> u8 {
-    match mins {
-        0       => 0,
-        1..=9   => 1,
-        10..=19 => 2,
-        20..=39 => 3,
-        _       => 4,
+/// Map a daily session total to a heatmap shade (0..=4) as a fraction of
+/// the user's daily share of their weekly goal.
+///
+///   0      → empty
+///   1..33  → minor    (level 1)
+///   33..80 → partial  (level 2)
+///   80..120→ on-target (level 3)
+///   ≥120   → over     (level 4)
+///
+/// Retreat days clip at level 4, so a single 10-hour Sunday doesn't dilute
+/// the colouring of the rest of the week.
+fn minutes_to_level(mins: i64, daily_expected_mins: i64) -> u8 {
+    if mins <= 0 { return 0; }
+    if daily_expected_mins <= 0 { return 4; }
+    let pct = mins.saturating_mul(100) / daily_expected_mins;
+    match pct {
+        0..=32   => 1,
+        33..=79  => 2,
+        80..=119 => 3,
+        _        => 4,
     }
 }
 
