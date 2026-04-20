@@ -6,12 +6,13 @@ use adw::subclass::prelude::ObjectSubclassIsExt;
 use gtk::{gio, glib};
 
 use crate::application::MeditateApplication;
+use crate::i18n::gettext;
 
 pub fn show_preferences(app: &MeditateApplication) {
     let app = app.clone();
 
     let dialog = adw::PreferencesDialog::builder()
-        .title("Preferences")
+        .title(gettext("Preferences"))
         .search_enabled(false)
         // Large target: AdwDialog clamps to the available window height, so
         // this effectively asks "take the whole window" without locking a
@@ -22,25 +23,33 @@ pub fn show_preferences(app: &MeditateApplication) {
     // ── General page ──────────────────────────────────────────────────────────
 
     let general_page = adw::PreferencesPage::builder()
-        .title("General")
+        .title(gettext("General"))
         .icon_name("preferences-system-symbolic")
         .build();
 
     // ── Sound group ───────────────────────────────────────────────────────────
 
     let sound_group = adw::PreferencesGroup::builder()
-        .title("Sound")
+        .title(gettext("Sound"))
         .build();
 
+    let sound_choices = [
+        gettext("None"),
+        gettext("Singing bowl"),
+        gettext("Bell"),
+        gettext("Gong"),
+        gettext("Custom file…"),
+    ];
+    let sound_choice_refs: Vec<&str> = sound_choices.iter().map(|s| s.as_str()).collect();
     let sound_row = adw::ComboRow::builder()
-        .title("End sound")
-        .model(&gtk::StringList::new(&["None", "Singing bowl", "Bell", "Gong", "Custom file…"]))
+        .title(gettext("End sound"))
+        .model(&gtk::StringList::new(&sound_choice_refs))
         .build();
 
     let preview_btn = gtk::Button::builder()
         .icon_name("media-playback-start-symbolic")
         .valign(gtk::Align::Center)
-        .tooltip_text("Preview sound")
+        .tooltip_text(gettext("Preview sound"))
         .css_classes(["flat"])
         .build();
     sound_row.add_suffix(&preview_btn);
@@ -69,13 +78,13 @@ pub fn show_preferences(app: &MeditateApplication) {
     ));
 
     let custom_row = adw::ActionRow::builder()
-        .title("Sound file")
+        .title(gettext("Sound file"))
         .visible(current_sound == "custom")
         .build();
-    custom_row.set_subtitle(path_subtitle(&custom_sound_path.borrow()));
+    custom_row.set_subtitle(&path_subtitle(&custom_sound_path.borrow()));
 
     let choose_btn = gtk::Button::builder()
-        .label("Choose…")
+        .label(gettext("Choose…"))
         .valign(gtk::Align::Center)
         .css_classes(["flat"])
         .build();
@@ -166,11 +175,11 @@ pub fn show_preferences(app: &MeditateApplication) {
         #[strong] custom_sound_path,
         move |_| {
             let file_dialog = gtk::FileDialog::builder()
-                .title("Choose Sound File")
+                .title(gettext("Choose Sound File"))
                 .build();
 
             let filter = gtk::FileFilter::new();
-            filter.set_name(Some("Audio files"));
+            filter.set_name(Some(&gettext("Audio files")));
             for ext in ["ogg", "wav", "flac", "mp3", "opus"] {
                 filter.add_suffix(ext);
             }
@@ -193,7 +202,7 @@ pub fn show_preferences(app: &MeditateApplication) {
                         if let Ok(file) = result {
                             if let Some(p) = file.path() {
                                 let path_str = p.to_string_lossy().to_string();
-                                custom_row.set_subtitle(path_subtitle(&path_str));
+                                custom_row.set_subtitle(&path_subtitle(&path_str));
                                 *custom_sound_path.borrow_mut() = path_str.clone();
                                 app.with_db(|db| db.set_setting("end_sound_path", &path_str));
                                 crate::sound::preload_end_sound(&app);
@@ -212,12 +221,18 @@ pub fn show_preferences(app: &MeditateApplication) {
     // ── Statistics group ──────────────────────────────────────────────────────
 
     let stats_group = adw::PreferencesGroup::builder()
-        .title("Statistics")
+        .title(gettext("Statistics"))
         .build();
 
+    let avg_choices = [
+        gettext("7 days"),
+        gettext("14 days"),
+        gettext("30 days"),
+    ];
+    let avg_choice_refs: Vec<&str> = avg_choices.iter().map(|s| s.as_str()).collect();
     let avg_row = adw::ComboRow::builder()
-        .title("Running average period")
-        .model(&gtk::StringList::new(&["7 days", "14 days", "30 days"]))
+        .title(gettext("Running average period"))
+        .model(&gtk::StringList::new(&avg_choice_refs))
         .build();
 
     let current_avg = app
@@ -254,8 +269,8 @@ pub fn show_preferences(app: &MeditateApplication) {
         .and_then(|s| s.parse::<f64>().ok())
         .unwrap_or(150.0);
     let goal_row = adw::SpinRow::builder()
-        .title("Weekly goal")
-        .subtitle("Minutes per week — drives the ring on the Stats tab")
+        .title(gettext("Weekly goal"))
+        .subtitle(gettext("Minutes per week — drives the ring on the Stats tab"))
         .adjustment(&gtk::Adjustment::new(current_goal_mins, 30.0, 1000.0, 15.0, 60.0, 0.0))
         .climb_rate(15.0)
         .digits(0)
@@ -277,13 +292,13 @@ pub fn show_preferences(app: &MeditateApplication) {
     // ── Presets group ─────────────────────────────────────────────────────────
 
     let presets_group = adw::PreferencesGroup::builder()
-        .title("Timer Presets")
-        .description("Quick-select buttons shown in the countdown timer (1–5 presets, in minutes)")
+        .title(gettext("Timer Presets"))
+        .description(gettext("Quick-select buttons shown in the countdown timer (1–5 presets, in minutes)"))
         .build();
 
     let add_preset_btn = gtk::Button::builder()
         .icon_name("list-add-symbolic")
-        .tooltip_text("Add Preset")
+        .tooltip_text(gettext("Add Preset"))
         .valign(gtk::Align::Center)
         .css_classes(["flat"])
         .build();
@@ -334,14 +349,14 @@ pub fn show_preferences(app: &MeditateApplication) {
         move |val: u32| -> (adw::SpinRow, gtk::Button) {
             let adj = gtk::Adjustment::new(val as f64, 1.0, 999.0, 1.0, 5.0, 0.0);
             let spin_row = adw::SpinRow::builder()
-                .title("Minutes")
+                .title(gettext("Minutes"))
                 .adjustment(&adj)
                 .build();
 
             let del_btn = gtk::Button::builder()
                 .icon_name("user-trash-symbolic")
                 .valign(gtk::Align::Center)
-                .tooltip_text("Remove Preset")
+                .tooltip_text(gettext("Remove Preset"))
                 .css_classes(["flat"])
                 .build();
             spin_row.add_suffix(&del_btn);
@@ -401,24 +416,24 @@ pub fn show_preferences(app: &MeditateApplication) {
     // ── Data page ─────────────────────────────────────────────────────────────
 
     let data_page = adw::PreferencesPage::builder()
-        .title("Data")
+        .title(gettext("Data"))
         .icon_name("drive-harddisk-symbolic")
         .build();
 
     let backup_group = adw::PreferencesGroup::builder()
-        .title("Backup")
-        .description("Export your session log to a CSV file, or restore from one.")
+        .title(gettext("Backup"))
+        .description(gettext("Export your session log to a CSV file, or restore from one."))
         .build();
 
     let export_row = adw::ActionRow::builder()
-        .title("Export session log")
-        .subtitle("Save every session to a CSV file")
+        .title(gettext("Export session log"))
+        .subtitle(gettext("Save every session to a CSV file"))
         .activatable(true)
         .build();
     let export_btn = gtk::Button::builder()
         .icon_name("document-save-symbolic")
         .valign(gtk::Align::Center)
-        .tooltip_text("Export")
+        .tooltip_text(gettext("Export"))
         .css_classes(["flat"])
         .build();
     export_row.add_suffix(&export_btn);
@@ -426,14 +441,14 @@ pub fn show_preferences(app: &MeditateApplication) {
     backup_group.add(&export_row);
 
     let import_row = adw::ActionRow::builder()
-        .title("Import from Meditate CSV")
-        .subtitle("Restore sessions from a file exported above")
+        .title(gettext("Import from Meditate CSV"))
+        .subtitle(gettext("Restore sessions from a file exported above"))
         .activatable(true)
         .build();
     let import_btn = gtk::Button::builder()
         .icon_name("document-open-symbolic")
         .valign(gtk::Align::Center)
-        .tooltip_text("Import")
+        .tooltip_text(gettext("Import"))
         .css_classes(["flat"])
         .build();
     import_row.add_suffix(&import_btn);
@@ -443,19 +458,19 @@ pub fn show_preferences(app: &MeditateApplication) {
     data_page.add(&backup_group);
 
     let migrate_group = adw::PreferencesGroup::builder()
-        .title("Migrate")
-        .description("Import sessions from another meditation app.")
+        .title(gettext("Migrate"))
+        .description(gettext("Import sessions from another meditation app."))
         .build();
 
     let it_row = adw::ActionRow::builder()
-        .title("Import from Insight Timer")
-        .subtitle("Upload an Insight Timer CSV export")
+        .title(gettext("Import from Insight Timer"))
+        .subtitle(gettext("Upload an Insight Timer CSV export"))
         .activatable(true)
         .build();
     let it_btn = gtk::Button::builder()
         .icon_name("document-open-symbolic")
         .valign(gtk::Align::Center)
-        .tooltip_text("Import Insight Timer CSV")
+        .tooltip_text(gettext("Import Insight Timer CSV"))
         .css_classes(["flat"])
         .build();
     it_row.add_suffix(&it_btn);
@@ -465,17 +480,17 @@ pub fn show_preferences(app: &MeditateApplication) {
     data_page.add(&migrate_group);
 
     let danger_group = adw::PreferencesGroup::builder()
-        .title("Danger Zone")
-        .description("These actions cannot be undone.")
+        .title(gettext("Danger Zone"))
+        .description(gettext("These actions cannot be undone."))
         .build();
 
     let delete_row = adw::ActionRow::builder()
-        .title("Delete all sessions")
-        .subtitle("Permanently remove every logged session")
+        .title(gettext("Delete all sessions"))
+        .subtitle(gettext("Permanently remove every logged session"))
         .activatable(true)
         .build();
     let delete_btn = gtk::Button::builder()
-        .label("_Delete All")
+        .label(gettext("_Delete All"))
         .use_underline(true)
         .valign(gtk::Align::Center)
         .css_classes(["destructive-action"])
@@ -497,18 +512,18 @@ pub fn show_preferences(app: &MeditateApplication) {
     // ── Labels page ───────────────────────────────────────────────────────────
 
     let labels_page = adw::PreferencesPage::builder()
-        .title("Labels")
+        .title(gettext("Labels"))
         .icon_name("user-bookmarks-symbolic")
         .build();
 
     let labels_group = adw::PreferencesGroup::builder()
-        .title("Labels")
-        .description("Organize sessions with custom labels")
+        .title(gettext("Labels"))
+        .description(gettext("Organize sessions with custom labels"))
         .build();
 
     let add_btn = gtk::Button::builder()
         .icon_name("list-add-symbolic")
-        .tooltip_text("Add Label")
+        .tooltip_text(gettext("Add Label"))
         .valign(gtk::Align::Center)
         .css_classes(["flat"])
         .build();
@@ -535,7 +550,7 @@ pub fn show_preferences(app: &MeditateApplication) {
         #[strong] rows,
         move |_| {
             let Some(label) = app
-                .with_db(|db| db.create_label("New label"))
+                .with_db(|db| db.create_label(&gettext("New label")))
                 .and_then(|r| r.ok())
             else {
                 return;
@@ -618,9 +633,9 @@ fn do_delete(
     // When sessions were affected the user already confirmed via AlertDialog,
     // so undo would be misleading: the label would be recreated but the
     // sessions would stay unlabeled.  Only offer undo for unused labels.
-    let mut builder = adw::Toast::builder().title("Label deleted").timeout(4);
+    let mut builder = adw::Toast::builder().title(gettext("Label deleted")).timeout(4);
     if allow_undo {
-        builder = builder.button_label("Undo");
+        builder = builder.button_label(gettext("Undo"));
     }
     let toast = builder.build();
 
@@ -677,21 +692,21 @@ fn make_label_row(
     let discard_btn = gtk::Button::builder()
         .icon_name("edit-undo-symbolic")
         .valign(gtk::Align::Center)
-        .tooltip_text("Discard Changes")
+        .tooltip_text(gettext("Discard Changes"))
         .css_classes(["flat"])
         .visible(false)
         .build();
     let apply_btn = gtk::Button::builder()
         .icon_name("object-select-symbolic")
         .valign(gtk::Align::Center)
-        .tooltip_text("Save")
+        .tooltip_text(gettext("Save"))
         .css_classes(["flat"])
         .visible(false)
         .build();
     let delete_btn = gtk::Button::builder()
         .icon_name("user-trash-symbolic")
         .valign(gtk::Align::Center)
-        .tooltip_text("Delete Label")
+        .tooltip_text(gettext("Delete Label"))
         .css_classes(["flat"])
         .build();
 
@@ -735,7 +750,7 @@ fn make_label_row(
                 row.add_css_class("error");
                 dialog.add_toast(
                     adw::Toast::builder()
-                        .title("A label with that name already exists")
+                        .title(gettext("A label with that name already exists"))
                         .timeout(4)
                         .build(),
                 );
@@ -794,18 +809,19 @@ fn make_label_row(
 
             if session_count > 0 {
                 let body = if session_count == 1 {
-                    "1 session uses this label and will become unlabeled.".to_string()
+                    gettext("1 session uses this label and will become unlabeled.")
                 } else {
-                    format!("{session_count} sessions use this label and will become unlabeled.")
+                    gettext("{n} sessions use this label and will become unlabeled.")
+                        .replace("{n}", &session_count.to_string())
                 };
                 let alert = adw::AlertDialog::builder()
-                    .heading("Delete Label?")
+                    .heading(gettext("Delete Label?"))
                     .body(body)
                     .default_response("cancel")
                     .close_response("cancel")
                     .build();
-                alert.add_response("cancel", "Cancel");
-                alert.add_response("delete", "Delete");
+                alert.add_response("cancel", &gettext("Cancel"));
+                alert.add_response("delete", &gettext("Delete"));
                 alert.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
                 alert.connect_response(
                     Some("delete"),
@@ -847,11 +863,11 @@ fn wire_data_actions(
         #[weak] dialog,
         move |_| {
             let file_dialog = gtk::FileDialog::builder()
-                .title("Export Session Log")
+                .title(gettext("Export Session Log"))
                 .initial_name(data_io::suggested_export_filename())
                 .build();
             let filter = gtk::FileFilter::new();
-            filter.set_name(Some("CSV files"));
+            filter.set_name(Some(&gettext("CSV files")));
             filter.add_suffix("csv");
             file_dialog.set_default_filter(Some(&filter));
 
@@ -866,10 +882,13 @@ fn wire_data_actions(
                         let Ok(file) = result else { return; };
                         let Some(path) = file.path() else { return; };
                         match data_io::export_csv(&app, &path) {
-                            Ok(n) => data_toast(&dialog, &format!(
-                                "Exported {n} session{}", if n == 1 { "" } else { "s" }
+                            Ok(n) => data_toast(&dialog, &pluralize_sessions(
+                                &gettext("Exported 1 session"),
+                                &gettext("Exported {n} sessions"),
+                                n,
                             )),
-                            Err(e) => data_toast(&dialog, &format!("Export failed: {e}")),
+                            Err(e) => data_toast(&dialog, &gettext("Export failed: {error}")
+                                .replace("{error}", &e.to_string())),
                         }
                     }
                 ),
@@ -882,7 +901,7 @@ fn wire_data_actions(
         #[weak] app,
         #[weak] dialog,
         move |_| {
-            open_import_dialog(&app, &dialog, "Import Session Log", |app, path| {
+            open_import_dialog(&app, &dialog, &gettext("Import Session Log"), |app, path| {
                 data_io::import_csv(app, path)
             });
         }
@@ -893,7 +912,7 @@ fn wire_data_actions(
         #[weak] app,
         #[weak] dialog,
         move |_| {
-            open_import_dialog(&app, &dialog, "Import from Insight Timer", |app, path| {
+            open_import_dialog(&app, &dialog, &gettext("Import from Insight Timer"), |app, path| {
                 data_io::import_insighttimer(app, path)
             });
         }
@@ -905,13 +924,13 @@ fn wire_data_actions(
         #[weak] dialog,
         move |_| {
             let alert = adw::AlertDialog::builder()
-                .heading("Delete Every Session?")
-                .body("This permanently removes every session in your log. Export a backup first if you want to keep any history.")
+                .heading(gettext("Delete Every Session?"))
+                .body(gettext("This permanently removes every session in your log. Export a backup first if you want to keep any history."))
                 .default_response("cancel")
                 .close_response("cancel")
                 .build();
-            alert.add_response("cancel", "Cancel");
-            alert.add_response("delete", "Delete All");
+            alert.add_response("cancel", &gettext("Cancel"));
+            alert.add_response("delete", &gettext("Delete All"));
             alert.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
             alert.connect_response(
                 Some("delete"),
@@ -921,12 +940,15 @@ fn wire_data_actions(
                     move |_, _| {
                         match data_io::delete_all(&app) {
                             Ok(n) => {
-                                data_toast(&dialog, &format!(
-                                    "Deleted {n} session{}", if n == 1 { "" } else { "s" }
+                                data_toast(&dialog, &pluralize_sessions(
+                                    &gettext("Deleted 1 session"),
+                                    &gettext("Deleted {n} sessions"),
+                                    n,
                                 ));
                                 refresh_main_window(&app);
                             }
-                            Err(e) => data_toast(&dialog, &format!("Delete failed: {e}")),
+                            Err(e) => data_toast(&dialog, &gettext("Delete failed: {error}")
+                                .replace("{error}", &e.to_string())),
                         }
                     }
                 ),
@@ -964,12 +986,15 @@ where F: FnOnce(&MeditateApplication, &std::path::Path) -> Result<usize, crate::
             let Some(path) = file.path() else { return; };
             match importer(&app, &path) {
                 Ok(n) => {
-                    data_toast(&dialog, &format!(
-                        "Imported {n} session{}", if n == 1 { "" } else { "s" }
+                    data_toast(&dialog, &pluralize_sessions(
+                        &gettext("Imported 1 session"),
+                        &gettext("Imported {n} sessions"),
+                        n,
                     ));
                     refresh_main_window(&app);
                 }
-                Err(e) => data_toast(&dialog, &format!("Import failed: {e}")),
+                Err(e) => data_toast(&dialog, &gettext("Import failed: {error}")
+                    .replace("{error}", &e.to_string())),
             }
         },
     );
@@ -994,12 +1019,25 @@ fn refresh_main_window(app: &MeditateApplication) {
 
 /// Subtitle text for the custom sound row: show just the filename, or a
 /// placeholder when no file has been selected yet.
-fn path_subtitle(path: &str) -> &str {
+fn path_subtitle(path: &str) -> String {
     if path.is_empty() {
-        return "No file selected";
+        return gettext("No file selected");
     }
     std::path::Path::new(path)
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or(path)
+        .to_string()
+}
+
+/// Two-form pluralization for session counts. Uses the shipped `_one` /
+/// `_other` msgids directly — we don't need full ngettext support because
+/// English plurals are trivial and the catalogs cover enough locales that
+/// a 1 / ≥2 split is a reasonable approximation.
+fn pluralize_sessions(singular: &str, plural: &str, n: usize) -> String {
+    if n == 1 {
+        singular.to_string()
+    } else {
+        plural.replace("{n}", &n.to_string())
+    }
 }

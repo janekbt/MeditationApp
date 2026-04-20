@@ -226,7 +226,8 @@ impl LogView {
     /// Populate the label combo in the filter popover.
     pub fn refresh_filter_labels(&self, combo: &adw::ComboRow) {
         let labels = self.labels.borrow();
-        let names: Vec<&str> = std::iter::once("All labels")
+        let all_label = crate::i18n::gettext("All labels");
+        let names: Vec<&str> = std::iter::once(all_label.as_str())
             .chain(labels.iter().map(|l| l.name.as_str()))
             .collect();
         combo.set_model(Some(&gtk::StringList::new(&names)));
@@ -504,12 +505,13 @@ fn date_group_display(unix_secs: i64) -> String {
     };
     let now = crate::time::now_local();
     let same_day = now.year() == dt.year() && now.day_of_year() == dt.day_of_year();
-    if same_day { return "Today".to_string(); }
+    if same_day { return crate::i18n::gettext("Today"); }
     if let Ok(yest) = now.add_days(-1) {
         if yest.year() == dt.year() && yest.day_of_year() == dt.day_of_year() {
-            return "Yesterday".to_string();
+            return crate::i18n::gettext("Yesterday");
         }
     }
+    // %b is the locale abbreviated month; no msgid needed.
     let fmt = if now.year() == dt.year() { "%b %-d" } else { "%b %-d, %Y" };
     dt.format(fmt).map(|g| g.to_string()).unwrap_or_default()
 }
@@ -523,8 +525,12 @@ fn format_time_of_day(unix_secs: i64) -> String {
 }
 
 fn section_caption_text(count: u32, total_secs: i64) -> String {
-    let noun = if count == 1 { "session" } else { "sessions" };
-    format!("{count} {noun} · {}", format_total(total_secs))
+    let base = if count == 1 {
+        crate::i18n::gettext("1 session")
+    } else {
+        crate::i18n::gettext("{n} sessions").replace("{n}", &count.to_string())
+    };
+    format!("{base} · {}", format_total(total_secs))
 }
 
 /// Compact total for section header: "42m" / "1h 04m".
@@ -551,7 +557,7 @@ impl LogView {
 
         let toast = adw::Toast::builder()
             .title(crate::i18n::gettext("Session deleted"))
-            .button_label("Undo")
+            .button_label(crate::i18n::gettext("Undo"))
             .timeout(5)
             .build();
 
@@ -719,7 +725,8 @@ impl LogView {
             .build();
 
         // ── Label row ──────────────────────────────────────────────────
-        let label_names: Vec<&str> = std::iter::once("None")
+        let none_label = crate::i18n::gettext("None");
+        let label_names: Vec<&str> = std::iter::once(none_label.as_str())
             .chain(labels.iter().map(|l| l.name.as_str()))
             .collect();
         let label_row = adw::ComboRow::builder()

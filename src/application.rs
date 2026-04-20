@@ -92,6 +92,16 @@ mod imp {
                 #[weak]
                 app,
                 move |_, _| {
+                    use crate::i18n::gettext;
+                    let notes = format!(
+                        "<p>{}</p><ul><li>{}</li><li>{}</li><li>{}</li><li>{}</li><li>{}</li></ul>",
+                        gettext("Initial release."),
+                        gettext("Countdown and stopwatch timer"),
+                        gettext("Session log with labels and notes"),
+                        gettext("Statistics: calendar, bar chart, streaks"),
+                        gettext("Completion sounds (bowl, bell, gong, or custom file)"),
+                        gettext("Adaptive layout for desktop and phone"),
+                    );
                     let dialog = adw::AboutDialog::builder()
                         .application_name("Meditate")
                         .application_icon(config::APP_ID)
@@ -101,15 +111,7 @@ mod imp {
                         .issue_url("https://github.com/janekbt/MeditationApp/issues")
                         .license_type(gtk::License::Gpl30)
                         .release_notes_version(config::VERSION)
-                        .release_notes("\
-                            <p>Initial release.</p>\
-                            <ul>\
-                              <li>Countdown and stopwatch timer</li>\
-                              <li>Session log with labels and notes</li>\
-                              <li>Statistics: calendar, bar chart, streaks</li>\
-                              <li>Completion sounds (bowl, bell, gong, or custom file)</li>\
-                              <li>Adaptive layout for desktop and phone</li>\
-                            </ul>")
+                        .release_notes(&notes)
                         .build();
 
                     dialog.present(app.active_window().as_ref());

@@ -608,16 +608,26 @@ impl TimerView {
         // Update streak label. .streak-chip applies text-transform:
         // uppercase, so we keep the source text sentence-case here.
         let text = match streak {
-            0 => String::from("Start your streak today"),
-            1 => String::from("1 day streak"),
-            n => format!("{n} days streak"),
+            0 => crate::i18n::gettext("Start your streak today"),
+            1 => crate::i18n::gettext("1 day streak"),
+            n => crate::i18n::gettext("{n} days streak").replace("{n}", &n.to_string()),
         };
         self.streak_label.set_label(&text);
 
         // Rebuild preset buttons with the data we already fetched
         self.rebuild_preset_chips(&presets);
 
-        // Populate setup page sound row from DB setting
+        // Populate setup page sound row from DB setting.
+        // Build the model here so we can route each option through gettext.
+        let sound_choices = [
+            crate::i18n::gettext("None"),
+            crate::i18n::gettext("Singing bowl"),
+            crate::i18n::gettext("Bell"),
+            crate::i18n::gettext("Gong"),
+            crate::i18n::gettext("Custom file…"),
+        ];
+        let sound_refs: Vec<&str> = sound_choices.iter().map(|s| s.as_str()).collect();
+        self.setup_sound_row.set_model(Some(&gtk::StringList::new(&sound_refs)));
         let current_sound = app
             .with_db(|db| db.get_setting("end_sound", "none"))
             .and_then(|r| r.ok())
@@ -638,8 +648,8 @@ impl TimerView {
             .and_then(|id| labels.iter().position(|l| l.id == id))
             .map(|pos| (pos + 2) as u32)
             .unwrap_or(1);
-        let names: Vec<String> = std::iter::once("+ New Label…".to_string())
-            .chain(std::iter::once("None".to_string()))
+        let names: Vec<String> = std::iter::once(crate::i18n::gettext("+ New Label…"))
+            .chain(std::iter::once(crate::i18n::gettext("None")))
             .chain(labels.iter().map(|l| l.name.clone()))
             .collect();
         let name_refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
@@ -825,8 +835,8 @@ impl TimerView {
             .map(|pos| (pos + 2) as u32) // +2 for "+ New label" and "None"
             .unwrap_or(1);              // default = "None"
 
-        let names: Vec<String> = std::iter::once("+ New Label…".to_string())
-            .chain(std::iter::once("None".to_string()))
+        let names: Vec<String> = std::iter::once(crate::i18n::gettext("+ New Label…"))
+            .chain(std::iter::once(crate::i18n::gettext("None")))
             .chain(labels.iter().map(|l| l.name.clone()))
             .collect();
         let name_refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
@@ -852,8 +862,8 @@ impl TimerView {
             .map(|pos| (pos + 2) as u32)
             .unwrap_or(1); // default: "None"
 
-        let names: Vec<String> = std::iter::once("+ New Label…".to_string())
-            .chain(std::iter::once("None".to_string()))
+        let names: Vec<String> = std::iter::once(crate::i18n::gettext("+ New Label…"))
+            .chain(std::iter::once(crate::i18n::gettext("None")))
             .chain(labels.iter().map(|l| l.name.clone()))
             .collect();
         let name_refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();

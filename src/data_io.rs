@@ -41,12 +41,13 @@ pub enum DataIoError {
 
 impl std::fmt::Display for DataIoError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use crate::i18n::gettext;
         match self {
-            DataIoError::Io(e)    => write!(f, "File error: {e}"),
-            DataIoError::Csv(e)   => write!(f, "CSV error: {e}"),
-            DataIoError::Parse(m) => write!(f, "Parse error: {m}"),
-            DataIoError::Db(m)    => write!(f, "Database error: {m}"),
-            DataIoError::NoDatabase => write!(f, "Database unavailable"),
+            DataIoError::Io(e)    => write!(f, "{}: {e}", gettext("File error")),
+            DataIoError::Csv(e)   => write!(f, "{}: {e}", gettext("CSV error")),
+            DataIoError::Parse(m) => write!(f, "{}: {m}", gettext("Parse error")),
+            DataIoError::Db(m)    => write!(f, "{}: {m}", gettext("Database error")),
+            DataIoError::NoDatabase => write!(f, "{}", gettext("Database unavailable")),
         }
     }
 }

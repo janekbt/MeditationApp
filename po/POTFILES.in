@@ -24,6 +24,9 @@ data/ui/stats_view.blp
 data/ui/timer_view.blp
 data/ui/window.blp
 
+# Shortcuts window — plain .ui with translatable="yes" properties
+data/ui/shortcuts.ui
+
 # XML metadata that contains user-visible text
 data/io.github.janekbt.Meditate.desktop.in
 data/io.github.janekbt.Meditate.metainfo.xml.in

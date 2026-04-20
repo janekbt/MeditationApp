@@ -3,10 +3,12 @@ i18n.gettext(
   preset: 'glib',
   args: [
     '--from-code=UTF-8',
-    # xgettext doesn't know .rs / .blp natively; force a C-like lexer on
-    # both so string literals parse cleanly (without this, single-quote
-    # Rust lifetimes and Blueprint braces trigger "unterminated" noise).
-    '--language=C',
+    # No --language override — xgettext needs to auto-detect so it parses
+    # shortcuts.ui as GtkBuilder (not C) and picks up `translatable="yes"`
+    # properties. Forcing --language=C here used to mute Rust-lifetime
+    # "unterminated character constant" warnings, but it also dropped the
+    # shortcuts dialog from translation. The warnings are cosmetic; POT
+    # generation still completes.
     '--keyword=_',
     '--keyword=gettext',
     '--keyword=C_:1c,2',

@@ -187,20 +187,20 @@ impl StatsView {
         ));
         let remain = (goal_mins - week_mins).max(0);
         let sub = if remain == 0 {
-            format!("Goal reached ✓ · {} this week", format_hm_mins(week_mins))
+            crate::i18n::gettext("Goal reached ✓ · {duration} this week")
+                .replace("{duration}", &format_hm_mins(week_mins))
         } else {
-            format!("{} to go this week", format_hm_mins(remain))
+            crate::i18n::gettext("{duration} to go this week")
+                .replace("{duration}", &format_hm_mins(remain))
         };
         self.goal_sub_label.set_label(&sub);
 
         // Accessible name for the Cairo-drawn ring — no intrinsic text for
         // screen readers to fall back on.
-        let ring_name = format!(
-            "Weekly goal: {}% — {} of {}",
-            (pct.clamp(0.0, 9.99) * 100.0).round() as i32,
-            format_hm_mins(week_mins),
-            format_hm_mins(goal_mins),
-        );
+        let ring_name = crate::i18n::gettext("Weekly goal: {pct}% — {done} of {goal}")
+            .replace("{pct}", &((pct.clamp(0.0, 9.99) * 100.0).round() as i32).to_string())
+            .replace("{done}", &format_hm_mins(week_mins))
+            .replace("{goal}", &format_hm_mins(goal_mins));
         self.goal_ring.update_property(&[gtk::accessible::Property::Label(&ring_name)]);
     }
 
@@ -268,25 +268,33 @@ impl StatsView {
                 }
 
                 // Accessible name — without this the ★ reads as "black star"
-                // and empty cells announce nothing useful.
+                // and empty cells announce nothing useful. %A/%B/%e render
+                // through the active locale, so translators only own the
+                // sentence framing.
                 let readable = date.format("%A, %B %e")
                     .map(|s| s.to_string())
                     .unwrap_or_else(|_| date_str.to_string());
                 let name = if level == 4 {
-                    format!("{readable} — goal exceeded, {mins} minutes")
+                    crate::i18n::gettext("{date} — goal exceeded, {mins} minutes")
+                        .replace("{date}", &readable)
+                        .replace("{mins}", &mins.to_string())
                 } else if mins > 0 {
-                    format!("{readable} — {mins} minutes")
+                    crate::i18n::gettext("{date} — {mins} minutes")
+                        .replace("{date}", &readable)
+                        .replace("{mins}", &mins.to_string())
                 } else {
-                    format!("{readable} — no sessions")
+                    crate::i18n::gettext("{date} — no sessions")
+                        .replace("{date}", &readable)
                 };
                 cell.update_property(&[gtk::accessible::Property::Label(&name)]);
             }
         }
 
-        // Date-range caption: "<since month> – <current month>"
+        // Date-range caption: "<since month> – <current month>". %b
+        // renders through the locale's LC_TIME so no msgid is needed.
         let range = format!("{} – {}",
-            month_short(since_dt.month() as u32),
-            month_short(now.month() as u32),
+            since_dt.format("%b").map(|s| s.to_string()).unwrap_or_default(),
+            now.format("%b").map(|s| s.to_string()).unwrap_or_default(),
         );
         self.contrib_range_label.set_label(&range);
     }
@@ -319,17 +327,22 @@ impl StatsView {
             }
         }).unwrap_or_default();
 
+        use crate::i18n::gettext;
+
         // 1. Current streak — complements the lifetime best shown in mini-stats.
         if data.current_streak > 0 {
             let body = if data.current_streak >= data.best_streak && data.current_streak > 1 {
-                format!("{} days — new record", data.current_streak)
+                gettext("{n} days — new record")
+                    .replace("{n}", &data.current_streak.to_string())
             } else if data.best_streak > data.current_streak {
-                format!("{} days · best was {}", data.current_streak, data.best_streak)
+                gettext("{n} days · best was {best}")
+                    .replace("{n}", &data.current_streak.to_string())
+                    .replace("{best}", &data.best_streak.to_string())
             } else {
-                "1 day · keep going".to_string()
+                gettext("1 day · keep going")
             };
             let peak = data.current_streak >= data.best_streak && data.current_streak > 1;
-            self.append_insight("●", "Current streak", &body, peak);
+            self.append_insight("●", &gettext("Current streak"), &body, peak);
         }
 
         // 2. This week vs previous 7 days — short-horizon trend.
@@ -337,13 +350,16 @@ impl StatsView {
         if last_week_secs > 0 {
             let delta = this_week_secs - last_week_secs;
             let pct = (delta as f64 / last_week_secs as f64 * 100.0).round() as i32;
-            let (icon, dir) = if pct >= 0 { ("↗", "up") } else { ("↘", "down") };
-            self.append_insight(icon, "This week's pace", &format!(
-                "{}% {dir} vs last week ({} vs {})",
-                pct.abs(),
-                format_hm_secs(this_week_secs),
-                format_hm_secs(last_week_secs),
-            ), false);
+            let (icon, template) = if pct >= 0 {
+                ("↗", gettext("{pct}% up vs last week ({this} vs {last})"))
+            } else {
+                ("↘", gettext("{pct}% down vs last week ({this} vs {last})"))
+            };
+            let body = template
+                .replace("{pct}", &pct.abs().to_string())
+                .replace("{this}", &format_hm_secs(this_week_secs))
+                .replace("{last}", &format_hm_secs(last_week_secs));
+            self.append_insight(icon, &gettext("This week's pace"), &body, false);
         }
 
         // 3. Trend vs last month.
@@ -351,15 +367,15 @@ impl StatsView {
             let pct = ((data.this_month - data.last_month) as f64
                 / data.last_month as f64 * 100.0).round() as i32;
             let (icon, title) = if pct >= 0 {
-                ("↗", "Pace up vs last month")
+                ("↗", gettext("Pace up vs last month"))
             } else {
-                ("↘", "Pace down vs last month")
+                ("↘", gettext("Pace down vs last month"))
             };
-            self.append_insight(icon, title, &format!(
-                "{pct:+}% vs last month ({} vs {})",
-                format_hm_secs(data.this_month),
-                format_hm_secs(data.last_month),
-            ), false);
+            let body = gettext("{pct}% vs last month ({this} vs {last})")
+                .replace("{pct}", &format!("{pct:+}"))
+                .replace("{this}", &format_hm_secs(data.this_month))
+                .replace("{last}", &format_hm_secs(data.last_month));
+            self.append_insight(icon, &title, &body, false);
         }
 
         // 4. Preferred time of day — only once there's enough data to be
@@ -367,25 +383,24 @@ impl StatsView {
         let (morn, afte, even) = data.hour_buckets;
         let bucket_total = morn + afte + even;
         if bucket_total >= 10 {
-            let (label, count) = if morn >= afte && morn >= even {
-                ("the morning", morn)
+            let (template, count) = if morn >= afte && morn >= even {
+                (gettext("{pct}% of sessions are in the morning"), morn)
             } else if even >= afte {
-                ("the evening", even)
+                (gettext("{pct}% of sessions are in the evening"), even)
             } else {
-                ("the afternoon", afte)
+                (gettext("{pct}% of sessions are in the afternoon"), afte)
             };
             let pct = (count as f64 / bucket_total as f64 * 100.0).round() as i32;
-            self.append_insight("◔", "Preferred time", &format!(
-                "{pct}% of sessions are in {label}"
-            ), false);
+            let body = template.replace("{pct}", &pct.to_string());
+            self.append_insight("◔", &gettext("Preferred time"), &body, false);
         }
 
         // 5. Typical session length (median) — only after 5+ sessions so it
         //    stops being dominated by the first few outliers.
         if data.session_count >= 5 && data.typical > 0 {
-            self.append_insight("≈", "Typical session", &format!(
-                "About {}", format_hm_secs(data.typical),
-            ), false);
+            let body = gettext("About {duration}")
+                .replace("{duration}", &format_hm_secs(data.typical));
+            self.append_insight("≈", &gettext("Typical session"), &body, false);
         }
 
         // 6. Longest session ever.
@@ -394,10 +409,12 @@ impl StatsView {
                 .and_then(|d| d.format("%b %-d").ok())
                 .map(|s| s.to_string());
             let body = match when {
-                Some(d) => format!("{} on {d}", format_hm_secs(dur)),
+                Some(d) => gettext("{duration} on {date}")
+                    .replace("{duration}", &format_hm_secs(dur))
+                    .replace("{date}", &d),
                 None => format_hm_secs(dur),
             };
-            self.append_insight("◆", "Longest session", &body, true);
+            self.append_insight("◆", &gettext("Longest session"), &body, true);
         }
 
         // 7. Next milestone — only if the user has a few sessions under
@@ -405,27 +422,33 @@ impl StatsView {
         if data.session_count >= 5 {
             if let Some((target, remaining)) = next_session_milestone(data.session_count) {
                 let body = if remaining == 1 {
-                    format!("1 session to your {target}th")
+                    gettext("1 session to your {target}th")
+                        .replace("{target}", &target.to_string())
                 } else {
-                    format!("{remaining} sessions to your {target}th")
+                    gettext("{n} sessions to your {target}th")
+                        .replace("{n}", &remaining.to_string())
+                        .replace("{target}", &target.to_string())
                 };
-                self.append_insight("⚑", "Next milestone", &body, false);
+                self.append_insight("⚑", &gettext("Next milestone"), &body, false);
             }
         }
 
         // 8. Daily rhythm (average over last 7 days) — complements typical
         //    session by including zero-days.
         if data.avg_secs > 0 {
-            self.append_insight("◷", "Daily rhythm", &format!(
-                "{} average over last 7 days",
-                format_hm_secs(data.avg_secs),
-            ), false);
+            let body = gettext("{duration} average over last 7 days")
+                .replace("{duration}", &format_hm_secs(data.avg_secs));
+            self.append_insight("◷", &gettext("Daily rhythm"), &body, false);
         }
 
         // Fallback when there's no data at all.
         if self.insights_list.first_child().is_none() {
-            self.append_insight("✦", "No sessions yet",
-                "Complete a meditation to start seeing insights here", false);
+            self.append_insight(
+                "✦",
+                &gettext("No sessions yet"),
+                &gettext("Complete a meditation to start seeing insights here"),
+                false,
+            );
         }
     }
 
@@ -838,8 +861,16 @@ fn x_label_text(data: &[(String, i64)], i: usize, days: u32) -> String {
     let date_str = &data[i].0;
     let month: u32 = date_str[5..7].parse().unwrap_or(0);
     let day_num: u32 = date_str[8..10].parse().unwrap_or(0);
+    // %b is the locale's abbreviated month; auto-translates via LC_TIME.
+    let month_short = |m: u32| -> String {
+        glib::DateTime::new(&glib::TimeZone::local(), 2000, m as i32, 1, 0, 0, 0.0)
+            .ok()
+            .and_then(|dt| dt.format("%b").ok())
+            .map(|s| s.to_string())
+            .unwrap_or_default()
+    };
     match days {
-        7 => weekday_for(date_str).to_string(),
+        7 => weekday_for(date_str),
         28 => if i % 7 == 0 { format!("{} {}", month_short(month), day_num) } else { String::new() },
         // 3-month and 1-year views: single-letter month when it changes,
         // otherwise the 12 monthly labels in 1Y won't fit at 360 px.
@@ -858,25 +889,17 @@ fn month_letter(month: u32) -> &'static str {
     }
 }
 
-fn weekday_for(date_str: &str) -> &'static str {
+fn weekday_for(date_str: &str) -> String {
     let y: i32 = date_str[0..4].parse().unwrap_or(2000);
     let m: i32 = date_str[5..7].parse().unwrap_or(1);
     let d: i32 = date_str[8..10].parse().unwrap_or(1);
+    // %a is the locale's abbreviated weekday ("Mo"/"Di"/"Mi" on de_DE,
+    // "Mon"/"Tue"/… on en_US). Truncate so horizontal labels stay narrow.
     glib::DateTime::new(&glib::TimeZone::local(), y, m, d, 0, 0, 0.0)
         .ok()
-        .map(|dt| match dt.day_of_week() {
-            1 => "Mo", 2 => "Tu", 3 => "We", 4 => "Th",
-            5 => "Fr", 6 => "Sa", _ => "Su",
-        })
-        .unwrap_or("")
-}
-
-fn month_short(month: u32) -> &'static str {
-    match month {
-        1 => "Jan", 2 => "Feb", 3 => "Mar", 4 => "Apr",
-        5 => "May", 6 => "Jun", 7 => "Jul", 8 => "Aug",
-        9 => "Sep", 10 => "Oct", 11 => "Nov", _ => "Dec",
-    }
+        .and_then(|dt| dt.format("%a").ok())
+        .map(|s| s.chars().take(2).collect::<String>())
+        .unwrap_or_default()
 }
 
 /// Compact H/M format for large totals. Drops minutes past 100 h because

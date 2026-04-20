@@ -129,10 +129,9 @@ template $TimerView : Gtk.Widget {
 
               Adw.ComboRow setup_sound_row {
                 title: _("Completion sound");
-                model: Gtk.StringList {
-                  // Sentence case for drop-down items, per HIG.
-                  strings ["None", "Singing bowl", "Bell", "Gong", "Custom file…"]
-                };
+                // Model is populated from Rust so the sound names can run
+                // through gettext — Blueprint's StringList literals are
+                // captured by xgettext but not looked up at runtime.
               }
             };
           }
