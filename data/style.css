@@ -158,6 +158,25 @@ button.period-pill:checked:hover {
     color: @accent_fg_color;
 }
 
+/* Note editor in the log add/edit dialog. We roll the whole look
+   ourselves instead of .card, because .card's rounded outer bounds
+   get overpainted by the inner GtkTextView's opaque background. By
+   owning both the outer frame + zeroing every descendant's bg we
+   know the 12 px radius is the only surface being drawn. */
+.log-note-editor {
+    background-color: @card_bg_color;
+    color: @card_fg_color;
+    border: 1px solid alpha(@card_fg_color, 0.12);
+    border-radius: 12px;
+}
+.log-note-editor > *,
+.log-note-editor viewport,
+.log-note-editor text,
+.log-note-editor textview,
+.log-note-editor textview text {
+    background-color: transparent;
+}
+
 /* ── Log card feed ──────────────────────────────────────────────── */
 
 .log-card {

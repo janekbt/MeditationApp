@@ -613,36 +613,22 @@ impl LogView {
         let labels = self.labels.borrow().clone();
         let session_id = session.map(|s| s.id);
 
-        // ── Duration row ───────────────────────────────────────────────
-        let hours_spin = gtk::SpinButton::with_range(0.0, 23.0, 1.0);
-        hours_spin.set_valign(gtk::Align::Center);
-        hours_spin.set_width_chars(3);
-        let minutes_spin = gtk::SpinButton::with_range(0.0, 59.0, 1.0);
-        minutes_spin.set_valign(gtk::Align::Center);
-        minutes_spin.set_width_chars(3);
+        // ── Duration (hours + minutes as AdwSpinRows) ─────────────────
+        let hours_spin = adw::SpinRow::builder()
+            .title("Hours")
+            .adjustment(&gtk::Adjustment::new(0.0, 0.0, 23.0, 1.0, 5.0, 0.0))
+            .digits(0)
+            .build();
+        let minutes_spin = adw::SpinRow::builder()
+            .title("Minutes")
+            .adjustment(&gtk::Adjustment::new(0.0, 0.0, 59.0, 1.0, 5.0, 0.0))
+            .digits(0)
+            .build();
 
         if let Some(s) = session {
             hours_spin.set_value((s.duration_secs / 3600) as f64);
             minutes_spin.set_value(((s.duration_secs % 3600) / 60) as f64);
         }
-
-        let h_label = gtk::Label::builder().label("h").margin_start(4).margin_end(8).build();
-        let m_label = gtk::Label::builder().label("min").margin_start(4).build();
-        let spin_box = gtk::Box::builder()
-            .orientation(gtk::Orientation::Horizontal)
-            .spacing(0)
-            .valign(gtk::Align::Center)
-            .build();
-        spin_box.append(&hours_spin);
-        spin_box.append(&h_label);
-        spin_box.append(&minutes_spin);
-        spin_box.append(&m_label);
-
-        let duration_row = adw::ActionRow::builder()
-            .title("Duration")
-            .activatable_widget(&hours_spin)
-            .build();
-        duration_row.add_suffix(&spin_box);
 
         // ── Date row with calendar picker ──────────────────────────────
         let init_time = session.map(|s| s.start_time).unwrap_or_else(unix_now);
@@ -691,33 +677,17 @@ impl LogView {
             }
         ));
 
-        // ── Time row ───────────────────────────────────────────────────
-        let time_hours_spin = gtk::SpinButton::with_range(0.0, 23.0, 1.0);
-        time_hours_spin.set_valign(gtk::Align::Center);
-        time_hours_spin.set_width_chars(3);
-        time_hours_spin.set_value(init_hour as f64);
-        let time_minutes_spin = gtk::SpinButton::with_range(0.0, 59.0, 1.0);
-        time_minutes_spin.set_valign(gtk::Align::Center);
-        time_minutes_spin.set_width_chars(3);
-        time_minutes_spin.set_value(init_minute as f64);
-
-        let th_label = gtk::Label::builder().label("h").margin_start(4).margin_end(8).build();
-        let tm_label = gtk::Label::builder().label("min").margin_start(4).build();
-        let time_spin_box = gtk::Box::builder()
-            .orientation(gtk::Orientation::Horizontal)
-            .spacing(0)
-            .valign(gtk::Align::Center)
+        // ── Start time (hour + minute as AdwSpinRows) ─────────────────
+        let time_hours_spin = adw::SpinRow::builder()
+            .title("Hour")
+            .adjustment(&gtk::Adjustment::new(init_hour as f64, 0.0, 23.0, 1.0, 5.0, 0.0))
+            .digits(0)
             .build();
-        time_spin_box.append(&time_hours_spin);
-        time_spin_box.append(&th_label);
-        time_spin_box.append(&time_minutes_spin);
-        time_spin_box.append(&tm_label);
-
-        let time_row = adw::ActionRow::builder()
-            .title("Time")
-            .activatable_widget(&time_hours_spin)
+        let time_minutes_spin = adw::SpinRow::builder()
+            .title("Minute")
+            .adjustment(&gtk::Adjustment::new(init_minute as f64, 0.0, 59.0, 1.0, 5.0, 0.0))
+            .digits(0)
             .build();
-        time_row.add_suffix(&time_spin_box);
 
         // ── Label row ──────────────────────────────────────────────────
         let label_names: Vec<&str> = std::iter::once("None")
@@ -751,11 +721,13 @@ impl LogView {
             .build();
         let note_scroll = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
-            .min_content_height(80)
-            .max_content_height(160)
-            .propagate_natural_height(true)
+            // Fixed taller starting size — GtkTextView reports a small
+            // natural height (one line-ish) when empty, so
+            // propagate_natural_height wasn't actually letting it grow.
+            // Just force the height via height_request.
+            .height_request(240)
             .child(&note_view)
-            .css_classes(["card"])
+            .css_classes(["log-note-editor"])
             .build();
         let note_caption = gtk::Label::builder()
             .label("Note (optional)")
@@ -771,11 +743,21 @@ impl LogView {
         note_box.append(&note_scroll);
 
         // ── Assemble dialog ────────────────────────────────────────────
-        let group = adw::PreferencesGroup::new();
-        group.add(&duration_row);
-        group.add(&date_row);
-        group.add(&time_row);
-        group.add(&label_row);
+        let duration_group = adw::PreferencesGroup::builder()
+            .title("Duration")
+            .build();
+        duration_group.add(&hours_spin);
+        duration_group.add(&minutes_spin);
+
+        let time_group = adw::PreferencesGroup::builder()
+            .title("Start time")
+            .build();
+        time_group.add(&date_row);
+        time_group.add(&time_hours_spin);
+        time_group.add(&time_minutes_spin);
+
+        let label_group = adw::PreferencesGroup::new();
+        label_group.add(&label_row);
 
         let content_box = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
@@ -785,7 +767,9 @@ impl LogView {
             .margin_top(12)
             .margin_bottom(12)
             .build();
-        content_box.append(&group);
+        content_box.append(&duration_group);
+        content_box.append(&time_group);
+        content_box.append(&label_group);
         content_box.append(&note_box);
 
         let scrolled = gtk::ScrolledWindow::builder()
