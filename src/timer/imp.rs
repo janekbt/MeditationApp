@@ -205,6 +205,7 @@ impl TimerView {
                     };
                     if let Some(app) = imp.get_app() {
                         app.with_db(|db| db.set_setting("end_sound", key));
+                        crate::sound::preload_end_sound(&app);
                     }
                 }
             ),
