@@ -2,15 +2,35 @@ mod imp {
     use adw::prelude::*;
     use adw::subclass::prelude::*;
     use gtk::{gdk, gio, glib};
-    use std::cell::RefCell;
+    use std::sync::{Arc, Mutex};
 
     use crate::config;
     use crate::db::Database;
     use crate::window::MeditateWindow;
 
-    #[derive(Debug, Default)]
+    // The Database lives behind an Arc<Mutex<_>> so it can be accessed
+    // either from the GTK main thread (cheap sync `with_db`) or from the
+    // GIO blocking pool (async `with_db_blocking` for writes on eMMC).
+    // Main-thread contention is effectively zero — the only concurrent
+    // access is when a worker task holds the lock during a write.
+    #[derive(Debug)]
     pub struct MeditateApplication {
-        pub db: RefCell<Option<Database>>,
+        pub db: Arc<Mutex<Option<Database>>>,
+        // Dirty flags consumed by StatsView::refresh / LogView::refresh so
+        // the aggregations re-run only when data actually changed — not on
+        // every tab switch. Start `true` so the first show populates them.
+        pub stats_dirty: std::cell::Cell<bool>,
+        pub log_dirty:   std::cell::Cell<bool>,
+    }
+
+    impl Default for MeditateApplication {
+        fn default() -> Self {
+            Self {
+                db: Arc::default(),
+                stats_dirty: std::cell::Cell::new(true),
+                log_dirty:   std::cell::Cell::new(true),
+            }
+        }
     }
 
     #[glib::object_subclass]
@@ -43,7 +63,7 @@ mod imp {
                 .join("meditate")
                 .join("meditate.db");
             match Database::open(&db_path) {
-                Ok(db) => *self.db.borrow_mut() = Some(db),
+                Ok(db) => *self.db.lock().unwrap() = Some(db),
                 Err(e) => eprintln!("Failed to open database: {e}"),
             }
 
@@ -166,14 +186,84 @@ impl Default for MeditateApplication {
 }
 
 impl MeditateApplication {
-    /// Run a closure with a reference to the open database.
+    /// Run a closure with a reference to the open database, on the current
+    /// thread. Holds the DB mutex for the duration of the closure, so keep
+    /// the work short — SQLite PRAGMAs tune this for single-writer use.
     /// Returns `None` if the database failed to open at startup.
     pub fn with_db<F, R>(&self, f: F) -> Option<R>
     where
         F: FnOnce(&crate::db::Database) -> R,
     {
         use glib::subclass::prelude::ObjectSubclassIsExt;
-        let borrow = self.imp().db.borrow();
-        borrow.as_ref().map(f)
+        let guard = self.imp().db.lock().unwrap();
+        guard.as_ref().map(f)
     }
+
+    /// Run a DB operation on the GIO blocking thread pool. Use for writes
+    /// (fsync-heavy on eMMC) so the main thread keeps servicing frames.
+    /// Returns a future that resolves with the closure's return value —
+    /// awaiting this from the main thread never blocks the frame clock.
+    pub async fn with_db_blocking<F, R>(&self, f: F) -> Option<R>
+    where
+        F: FnOnce(&crate::db::Database) -> R + Send + 'static,
+        R: Send + 'static,
+    {
+        use glib::subclass::prelude::ObjectSubclassIsExt;
+        let db_arc = std::sync::Arc::clone(&self.imp().db);
+        gtk::gio::spawn_blocking(move || {
+            let guard = db_arc.lock().unwrap();
+            guard.as_ref().map(f)
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+
+    /// Mark aggregated views stale after a data mutation. Callers pick
+    /// which views are affected so we avoid redundant full refreshes —
+    /// session-save updates the log incrementally and only dirties stats;
+    /// a bulk delete dirties everything.
+    pub fn invalidate(&self, scope: InvalidateScope) {
+        use glib::subclass::prelude::ObjectSubclassIsExt;
+        let imp = self.imp();
+        if scope.stats { imp.stats_dirty.set(true); }
+        if scope.log   { imp.log_dirty.set(true); }
+    }
+
+    /// Whether the stats view needs to re-run its aggregations; cleared
+    /// by `StatsView::refresh` after the work completes.
+    pub fn stats_dirty(&self) -> bool {
+        use glib::subclass::prelude::ObjectSubclassIsExt;
+        self.imp().stats_dirty.get()
+    }
+
+    pub fn clear_stats_dirty(&self) {
+        use glib::subclass::prelude::ObjectSubclassIsExt;
+        self.imp().stats_dirty.set(false);
+    }
+
+    pub fn log_dirty(&self) -> bool {
+        use glib::subclass::prelude::ObjectSubclassIsExt;
+        self.imp().log_dirty.get()
+    }
+
+    pub fn clear_log_dirty(&self) {
+        use glib::subclass::prelude::ObjectSubclassIsExt;
+        self.imp().log_dirty.set(false);
+    }
+}
+
+/// Selector for `MeditateApplication::invalidate`. Callers construct an
+/// instance via the helper constants — `InvalidateScope::ALL` after bulk
+/// mutations, `InvalidateScope::STATS` after an incremental log update.
+#[derive(Debug, Clone, Copy)]
+pub struct InvalidateScope {
+    pub stats: bool,
+    pub log:   bool,
+}
+
+impl InvalidateScope {
+    pub const ALL:   Self = Self { stats: true, log: true };
+    pub const STATS: Self = Self { stats: true, log: false };
+    pub const LOG:   Self = Self { stats: false, log: true };
 }
