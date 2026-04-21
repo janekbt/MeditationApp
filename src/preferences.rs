@@ -279,6 +279,7 @@ pub fn show_preferences(app: &MeditateApplication) {
                     _ => "7",
                 };
                 app.with_db(|db| db.set_setting("running_avg_days", val));
+                app.invalidate(crate::application::InvalidateScope::STATS);
             }
         ),
     );
@@ -305,6 +306,7 @@ pub fn show_preferences(app: &MeditateApplication) {
             move |row, _| {
                 let val = row.value() as i64;
                 app.with_db(|db| db.set_setting("weekly_goal_mins", &val.to_string()));
+                app.invalidate(crate::application::InvalidateScope::STATS);
             }
         ),
     );
@@ -651,6 +653,9 @@ fn do_delete(
     allow_undo: bool,
 ) {
     app.with_db(|db| db.delete_label(label_id.get()));
+    // Label text shows on every log card; deleting it affects rendering.
+    // Stats also indirectly (label-filter dropdowns etc.).
+    app.invalidate(crate::application::InvalidateScope::ALL);
     row.set_visible(false);
 
     // When sessions were affected the user already confirmed via AlertDialog,
@@ -675,6 +680,7 @@ fn do_delete(
                 {
                     label_id.set(label.id);
                     row.set_visible(true);
+                    app.invalidate(crate::application::InvalidateScope::ALL);
                 }
             }
         ));
@@ -780,6 +786,8 @@ fn make_label_row(
                 return;
             }
             app.with_db(|db| db.update_label(label_id.get(), &new_name));
+            // Renamed labels need to reflect on log cards + label filter.
+            app.invalidate(crate::application::InvalidateScope::ALL);
             *committed.borrow_mut() = new_name;
             apply_btn.set_visible(false);
             discard_btn.set_visible(false);
@@ -968,6 +976,7 @@ fn wire_data_actions(
                                     &gettext("Deleted {n} sessions"),
                                     n,
                                 ));
+                                app.invalidate(crate::application::InvalidateScope::ALL);
                                 refresh_main_window(&app);
                             }
                             Err(e) => data_toast(&dialog, &gettext("Delete failed: {error}")
@@ -1014,6 +1023,7 @@ where F: FnOnce(&MeditateApplication, &std::path::Path) -> Result<usize, crate::
                         &gettext("Imported {n} sessions"),
                         n,
                     ));
+                    app.invalidate(crate::application::InvalidateScope::ALL);
                     refresh_main_window(&app);
                 }
                 Err(e) => data_toast(&dialog, &gettext("Import failed: {error}")

@@ -446,8 +446,28 @@ impl TimerView {
             note,
         };
 
+        // Fire-and-forget DB write on the blocking pool. SQLite fsync on
+        // eMMC costs ~15 ms even with synchronous=NORMAL; doing it on the
+        // main thread is directly felt as a stall at session end. When
+        // the write lands we're back on the main thread (spawn_local) so
+        // we can push the new session into the log feed incrementally
+        // and mark stats stale for lazy refresh on tab re-entry.
         if let Some(app) = self.get_app() {
-            app.with_db(|db| db.create_session(&data));
+            glib::MainContext::default().spawn_local(async move {
+                let result = app
+                    .with_db_blocking(move |db| db.create_session(&data))
+                    .await;
+                let Some(Ok(session)) = result else { return; };
+
+                app.invalidate(crate::application::InvalidateScope::STATS);
+                if let Some(win) = app.active_window()
+                    .and_then(|w| w.downcast::<crate::window::MeditateWindow>().ok())
+                {
+                    let imp = win.imp();
+                    imp.log_view.prepend_session(session);
+                    imp.timer_view.refresh_streak();
+                }
+            });
         }
 
         self.reset_mode(is_stopwatch);

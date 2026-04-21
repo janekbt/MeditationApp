@@ -149,7 +149,7 @@ impl LogView {
     /// Returns how many rows were appended; also toggles `load_more_btn`
     /// visibility based on whether the query returned a full page.
     fn load_page(&self, app: &crate::application::MeditateApplication) -> usize {
-        const PAGE_SIZE: u32 = 200;
+        const PAGE_SIZE: u32 = 15;
 
         let filter = SessionFilter {
             label_id:        self.filter_label_id.get(),
@@ -221,6 +221,59 @@ impl LogView {
         sec.caption.set_label(
             &section_caption_text(sec.count.get(), sec.total_secs.get()),
         );
+    }
+
+    /// Incrementally insert a just-saved session at the top of the feed,
+    /// without the `refresh()` full rebuild. If the feed hasn't been
+    /// populated yet (first time the log tab hasn't been opened), the
+    /// next `refresh()` will pull this session from DB anyway, so we
+    /// skip work — the caller guards on `app.log_dirty()` for that.
+    pub fn prepend_session(&self, session: Session) {
+        let key = date_group_key(session.start_time);
+
+        let labels_ref = self.labels.borrow();
+        let label_map: std::collections::HashMap<i64, &str> =
+            labels_ref.iter().map(|l| (l.id, l.name.as_str())).collect();
+        let card = build_card(&session, &label_map);
+        drop(labels_ref);
+
+        let mut sections = self.sections_by_key.borrow_mut();
+        if let Some(sec) = sections.get(&key) {
+            // Existing section for today (or whatever date) — card goes
+            // on top of its cards_box so the newest is visually first.
+            sec.cards_box.prepend(&card);
+            sec.count.set(sec.count.get() + 1);
+            sec.total_secs.set(sec.total_secs.get() + session.duration_secs);
+            sec.caption.set_label(
+                &section_caption_text(sec.count.get(), sec.total_secs.get()),
+            );
+        } else {
+            // Crossed a date boundary since last render — new section
+            // before everything else in the feed_box.
+            let (section_box, caption_label, cards_box) =
+                build_section_frame(session.start_time);
+            cards_box.append(&card);
+            self.feed_box.prepend(&section_box);
+            caption_label.set_label(
+                &section_caption_text(1, session.duration_secs),
+            );
+            let section = DateSection {
+                outer:      section_box,
+                caption:    caption_label,
+                cards_box,
+                count:      Cell::new(1),
+                total_secs: Cell::new(session.duration_secs),
+            };
+            sections.insert(key, section);
+        }
+        drop(sections);
+
+        self.cards_by_id.borrow_mut().insert(session.id, card);
+        self.sessions.borrow_mut().insert(0, session);
+        self.loaded_count.set(self.loaded_count.get() + 1);
+
+        // Flip out of the empty state if this was the first session ever.
+        self.view_stack.set_visible_child_name("list");
     }
 
     /// Populate the label combo in the filter popover.
@@ -575,6 +628,7 @@ impl LogView {
             let imp = obj.imp();
             if let Some(app) = imp.get_app() {
                 app.with_db(|db| db.delete_session(session_id));
+                app.invalidate(crate::application::InvalidateScope::STATS);
             }
             imp.commit_delete_in_place(session_id, &session);
         });
@@ -900,6 +954,7 @@ impl LogView {
                     } else {
                         app.with_db(|db| db.create_session(&data));
                     }
+                    app.invalidate(crate::application::InvalidateScope::STATS);
                 }
 
                 dialog.close();
@@ -916,7 +971,7 @@ impl LogView {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 impl LogView {
-    fn get_app(&self) -> Option<crate::application::MeditateApplication> {
+    pub(crate) fn get_app(&self) -> Option<crate::application::MeditateApplication> {
         self.obj()
             .root()
             .and_then(|r| r.downcast::<gtk::Window>().ok())

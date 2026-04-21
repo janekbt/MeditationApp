@@ -10,8 +10,31 @@ glib::wrapper! {
 }
 
 impl LogView {
+    /// Rebuild the session feed, but only when the app-level log flag is
+    /// set. Tab switches trigger this on every visibility change; the flag
+    /// prevents re-issuing the `list_sessions` query each time.
     pub fn refresh(&self) {
-        self.imp().refresh();
+        if let Some(app) = self.imp().get_app() {
+            if !app.log_dirty() { return; }
+            self.imp().refresh();
+            app.clear_log_dirty();
+        } else {
+            self.imp().refresh();
+        }
+    }
+
+    /// Incremental append of a just-saved session to the top of the feed —
+    /// skips the full rebuild that plain `refresh()` does. Called after a
+    /// timer-view session save; keeps the log view in sync without tearing
+    /// down and re-querying 15 cards. Skips work if the view hasn't been
+    /// populated yet (first log-tab entry will pull fresh from DB).
+    pub fn prepend_session(&self, session: crate::db::Session) {
+        // If log is dirty, the next public refresh() will re-query the DB
+        // and our prepend would be discarded. Skip it.
+        if let Some(app) = self.imp().get_app() {
+            if app.log_dirty() { return; }
+        }
+        self.imp().prepend_session(session);
     }
 
     pub fn show_add_dialog(&self) {

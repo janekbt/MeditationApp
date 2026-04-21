@@ -619,7 +619,7 @@ impl StatsView {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 impl StatsView {
-    fn get_app(&self) -> Option<crate::application::MeditateApplication> {
+    pub(crate) fn get_app(&self) -> Option<crate::application::MeditateApplication> {
         self.obj()
             .root()
             .and_then(|r| r.downcast::<gtk::Window>().ok())
