@@ -11,6 +11,13 @@
 /.flatpak-builder/
 /flatpak_app/
 
+# aarch64 cross-build output (see build-aux/dev-xbuild.sh)
+/build-aarch64/
+
+# raw on-device frame logs from perf measurement runs — BASELINE.md
+# and PHASE5_RESULTS.md under the same dir summarise the findings
+baseline/*.log
+
 # Generated config
 src/config.rs.gen
 

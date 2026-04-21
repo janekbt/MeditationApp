@@ -1,0 +1,20 @@
+# Tune codegen for the Librem 5 and similar aarch64 mobile targets.
+# i.MX 8M Quad is 4× Cortex-A53; scheduling for A53 helps on low-end phones
+# without hurting newer cores (A55/A57/A72/A76 all tolerate A53-tuned code).
+#
+# `linker` + `rustflags -L` let the host-native x86_64 toolchain cross-link
+# an aarch64 binary against the GNOME SDK's aarch64 .so files (exposed via
+# ~/sysroots/gnome50-aarch64). The dev-deploy.sh script sets the matching
+# PKG_CONFIG_* env vars so gtk4-rs's build scripts find aarch64 .pc files.
+[target.aarch64-unknown-linux-gnu]
+linker = "aarch64-linux-gnu-gcc"
+rustflags = [
+    "-C", "target-cpu=cortex-a53",
+    # --sysroot makes the linker rewrite absolute paths in GNU ld scripts
+    # like libm.so ("GROUP (/usr/lib/aarch64-linux-gnu/libm.so.6 ...)")
+    # through our sysroot, so libm.so.6 resolves inside the flatpak SDK
+    # instead of looking for the x86 host's nonexistent aarch64 libm.
+    "-C", "link-arg=--sysroot=/home/janek/sysroots/gnome50-aarch64",
+    "-C", "link-arg=-Wl,-rpath-link=/home/janek/sysroots/gnome50-aarch64/usr/lib/aarch64-linux-gnu",
+    "-C", "link-arg=-Wl,-rpath-link=/home/janek/sysroots/gnome50-aarch64/usr/lib",
+]
