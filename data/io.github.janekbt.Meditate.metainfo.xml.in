@@ -88,6 +88,18 @@
   </content_rating>
 
   <releases>
+    <release version="26.4.3" date="2026-04-21">
+      <description>
+        <p>Performance and polish pass, focused on Linux phones like the Librem 5. The app starts and switches views noticeably faster on lower-end ARM hardware, and the consequential-action buttons now carry the standard red tint.</p>
+        <ul>
+          <li>Cold start is roughly twice as fast on slow ARM phones; view switches, session start, and session end no longer stall the UI</li>
+          <li>Haptic feedback on session end now fires correctly on devices with feedbackd, without the end-sound doubling up</li>
+          <li>Stop, Discard, and per-session delete buttons are styled as destructive (red) per the GNOME HIG</li>
+          <li>Log view loads 15 sessions per page by default instead of 200, with Load more for older entries</li>
+        </ul>
+      </description>
+    </release>
+
     <release version="26.4.2" date="2026-04-21">
       <description>
         <p>Major polish release ahead of Flathub submission — every tab redesigned, new data features, and translations in nine languages.</p>
