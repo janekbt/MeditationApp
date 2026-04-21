@@ -2,6 +2,12 @@
 /target/
 /cargo-home/
 
+# Host-specific cargo config for dev-xbuild (sysroot path, cross linker).
+# A checked-in config.toml breaks aarch64 flatpak-builder under QEMU — the
+# target settings would apply to the native aarch64 build too. The env-var
+# alternative lives in build-aux/dev-xbuild.sh.
+/.cargo/
+
 # Meson build directories
 /_build/
 /builddir/

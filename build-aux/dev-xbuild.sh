@@ -35,9 +35,19 @@ export APP_VERSION="26.4.2"
 export PKGDATADIR="/app/share/meditate"
 export LOCALEDIR="/app/share/locale"
 
-# Tell gtk4-sys / glib-sys to look up aarch64-specific includes via the
-# cross pkg-config we configured above; the linker config is already set
-# in .cargo/config.toml for the aarch64 target triple.
+# Cross-toolchain config is scoped to this script via env vars rather than
+# a checked-in .cargo/config.toml, because the sysroot path is host-specific
+# ($HOME) and the linker doesn't exist inside the aarch64-QEMU flatpak CI
+# container — committing it would break `flatpak-builder --arch=aarch64`.
+#
+# target-cpu=cortex-a53 tunes codegen for the Librem 5's i.MX 8M Quad (4×
+# A53); A55/A57/A72/A76 all tolerate A53-tuned code. --sysroot makes the
+# linker rewrite absolute paths in GNU ld scripts (e.g. libm.so's
+# "GROUP (/usr/lib/aarch64-linux-gnu/libm.so.6 ...)") through the flatpak
+# SDK sysroot instead of the x86 host's nonexistent aarch64 libm.
+export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="aarch64-linux-gnu-gcc"
+export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C target-cpu=cortex-a53 -C link-arg=--sysroot=${SYSROOT} -C link-arg=-Wl,-rpath-link=${SYSROOT}/usr/lib/aarch64-linux-gnu -C link-arg=-Wl,-rpath-link=${SYSROOT}/usr/lib"
+
 cd "$(dirname "$0")/.."
 cargo build --release --target aarch64-unknown-linux-gnu "$@"
 
