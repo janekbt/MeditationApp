@@ -43,10 +43,21 @@ impl LogView {
 
     pub fn set_filter_notes_only(&self, value: bool) {
         self.imp().filter_notes_only.set(value);
+        self.invalidate_for_filter();
     }
 
     pub fn set_filter_label_id(&self, id: Option<i64>) {
         self.imp().filter_label_id.set(id);
+        self.invalidate_for_filter();
+    }
+
+    /// A filter change doesn't touch the DB but DOES invalidate the rows
+    /// currently shown — without this, the caller's follow-up `refresh()`
+    /// would no-op because the dirty flag stays false.
+    fn invalidate_for_filter(&self) {
+        if let Some(app) = self.imp().get_app() {
+            app.invalidate(crate::application::InvalidateScope::LOG);
+        }
     }
 
     /// Populate the filter popover's label combo with current DB labels.
