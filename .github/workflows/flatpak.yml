@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Manual trigger: run CI on any branch (e.g. beta) without paying for CI
+  # on every push. Use the "Run workflow" button under the Actions tab and
+  # pick the branch to test.
+  workflow_dispatch:
 
 jobs:
   # Cheap, fast-failing job: catches metainfo schema breakage before either
