@@ -88,7 +88,7 @@
   </content_rating>
 
   <releases>
-    <release version="26.4.3" date="2026-04-21">
+    <release version="26.4.3.1" date="2026-04-21">
       <description>
         <p>Performance and polish pass, focused on Linux phones like the Librem 5. The app starts and switches views noticeably faster on lower-end ARM hardware, and the consequential-action buttons now carry the standard red tint.</p>
         <ul>
