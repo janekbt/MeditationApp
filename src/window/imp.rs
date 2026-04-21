@@ -160,11 +160,11 @@ impl MeditateWindow {
             .build();
         self.timer_view.set_running_label(time_label.clone());
 
-        // Pause is a regular action (toggle-ish, non-destructive); don't
-        // accent-tint it or it visually outranks Stop. Stop, per HIG, is
-        // the consequential action in this view — but not destructive
-        // enough for .destructive-action either, so leave it as a plain
-        // .pill button.
+        // Pause is a regular action (non-destructive, reversible via Resume);
+        // plain .pill. Stop ends the meditation early and surfaces the done
+        // screen where the user must then pick Save or Discard — the action
+        // is consequential enough that the HIG destructive tint is warranted
+        // here, matching the Discard and Stop-from-Pause styling elsewhere.
         let pause_btn = gtk::Button::builder()
             .label("Pause")
             .css_classes(["pill"])
@@ -172,7 +172,7 @@ impl MeditateWindow {
             .build();
         let stop_btn = gtk::Button::builder()
             .label("Stop")
-            .css_classes(["pill"])
+            .css_classes(["pill", "destructive-action"])
             .tooltip_text("Stop and Save Session")
             .build();
 

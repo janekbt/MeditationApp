@@ -163,7 +163,7 @@ template $TimerView : Gtk.Widget {
 
                 Gtk.Button stop_from_pause_btn {
                   label: _("Stop");
-                  css-classes: ["pill"];
+                  css-classes: ["pill", "destructive-action"];
                   visible: false;
                 }
               }
@@ -236,7 +236,7 @@ template $TimerView : Gtk.Widget {
 
             Gtk.Button discard_btn {
               label: _("Discard");
-              css-classes: ["pill"];
+              css-classes: ["pill", "destructive-action"];
             }
 
             Gtk.Button save_btn {

@@ -434,7 +434,7 @@ fn build_card(session: &Session, label_map: &std::collections::HashMap<i64, &str
     // right column's content.
     let delete_btn = gtk::Button::builder()
         .icon_name("user-trash-symbolic")
-        .css_classes(["flat", "circular"])
+        .css_classes(["flat", "circular", "destructive-action"])
         .valign(gtk::Align::Center)
         .margin_end(16)
         .tooltip_text(crate::i18n::gettext("Delete Session"))
