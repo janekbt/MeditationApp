@@ -56,39 +56,54 @@ impl ObjectImpl for MeditateWindow {
         // compiler versions.  Set it explicitly here so we bypass that.
         self.view_stack.page(&*self.stats_view).set_icon_name(Some("chart-bar-symbolic"));
 
-        // Refresh streak and pre-warm audio once the window is mapped.
-        // Deferred to an idle callback so GTK can commit the first frame to
-        // the compositor before the DB queries and GStreamer init run — this
-        // makes the window appear and become interactive immediately.
+        // Refresh streak, pre-warm the stats/log views, and pre-load the
+        // end-of-session audio once the window is mapped. Each step yields
+        // back to the frame clock before the next runs, so the compositor
+        // can commit frames in between and touch input stays responsive.
+        // Previously all four ran inside one idle callback — ~290 ms of
+        // Rust work on the main thread blocking frame 2 on Librem 5.
         let obj = self.obj();
-        obj.connect_map(glib::clone!(
-            #[weak] obj,
-            move |_| {
-                glib::idle_add_local_once(glib::clone!(
-                    #[weak] obj,
-                    move || {
-                        let imp = obj.imp();
+        obj.connect_map(|window| {
+            let weak = window.downgrade();
+            // `idle_add_local_once` runs at GLib's DEFAULT_IDLE priority —
+            // strictly lower than the frame-clock, so the future doesn't
+            // start polling until frame 0 has been presented. Without this
+            // outer defer, spawn_local kicks off inside the map handler
+            // and runs its entire body before frame 0's paint phase,
+            // cramming 300 ms of refresh work into the first visible frame.
+            glib::idle_add_local_once(move || {
+                glib::MainContext::default().spawn_local(async move {
+                    use std::time::Duration;
+                    // 16 ms = one frame clock tick; guarantees a yield
+                    // past the current frame so the compositor can commit
+                    // between each refresh step instead of batching them.
+                    let yield_frame = || glib::timeout_future(Duration::from_millis(16));
 
-                        imp.timer_view.refresh_streak();
-                        // Pre-build stats calendar grid and pre-load log rows
-                        // so that the first tab switch to either view has no
-                        // lazy widget construction to do — prevents the burst
-                        // of AdwNavigationView minimum-width warnings that
-                        // occur when many widgets are attached during a live
-                        // layout pass.
-                        imp.stats_view.refresh();
-                        imp.log_view.refresh();
-                        // Pre-warm the audio pipeline so the end-of-session
-                        // sound plays instantly rather than after a cold-start.
-                        if let Some(app) = obj.application()
+                    if let Some(w) = weak.upgrade() {
+                        w.imp().timer_view.refresh_streak();
+                    }
+                    yield_frame().await;
+
+                    if let Some(w) = weak.upgrade() {
+                        w.imp().stats_view.refresh();
+                    }
+                    yield_frame().await;
+
+                    if let Some(w) = weak.upgrade() {
+                        w.imp().log_view.refresh();
+                    }
+                    yield_frame().await;
+
+                    if let Some(w) = weak.upgrade() {
+                        if let Some(app) = w.application()
                             .and_then(|a| a.downcast::<crate::application::MeditateApplication>().ok())
                         {
                             crate::sound::preload_end_sound(&app);
                         }
                     }
-                ));
-            }
-        ));
+                });
+            });
+        });
     }
 }
 
