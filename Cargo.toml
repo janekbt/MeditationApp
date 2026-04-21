@@ -22,5 +22,8 @@ libc = "0.2"
 glib-build-tools = "0.22"
 
 [profile.release]
-opt-level = "s"
-lto = true
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
