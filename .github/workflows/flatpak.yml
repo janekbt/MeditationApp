@@ -6,9 +6,6 @@ on:
   pull_request:
     branches: [main]
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
   # Cheap, fast-failing job: catches metainfo schema breakage before either
   # Flatpak build spends 10 minutes compiling.
@@ -16,7 +13,7 @@ jobs:
     name: Validate metadata
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install validators
         run: sudo apt-get update && sudo apt-get install -y appstream desktop-file-utils
       - name: Validate AppStream metainfo
@@ -37,14 +34,14 @@ jobs:
       image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
       options: --privileged
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
           bundle: meditate-x86_64.flatpak
           manifest-path: build-aux/io.github.janekbt.Meditate.json
           cache-key: flatpak-builder-x86_64-${{ github.sha }}
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: meditate-x86_64.flatpak
           path: meditate-x86_64.flatpak
@@ -57,7 +54,7 @@ jobs:
     name: Flatpak (aarch64)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Register QEMU binfmt for aarch64
         run: docker run --privileged --rm tonistiigi/binfmt --install aarch64
@@ -88,7 +85,7 @@ jobs:
             '
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: meditate-aarch64.flatpak
           path: meditate-aarch64.flatpak
