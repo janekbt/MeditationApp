@@ -16,6 +16,10 @@ use gtk::gio;
 use gtk::prelude::*;
 
 fn main() -> glib::ExitCode {
+    // Renderer must be selected before gtk::init runs, otherwise GTK has
+    // already picked one and GSK_RENDERER is ignored.
+    select_gsk_renderer();
+
     // gettext must come up before any user-visible string is generated,
     // otherwise lookups fall back to msgid for the whole first frame.
     setup_gettext();
@@ -25,6 +29,25 @@ fn main() -> glib::ExitCode {
 
     let app = application::MeditateApplication::new();
     app.run()
+}
+
+/// On mobile GNOME (Phosh), GTK's default renderer path usually ends up as
+/// `GskVulkanRenderer` on lavapipe — software Vulkan — because the Vivante/
+/// Mali GPUs on devices like the Librem 5 and PinePhone don't have a real
+/// Mesa Vulkan driver, and etnaviv EGL config selection fails. On those
+/// devices, forcing Cairo is ~30× faster for first-frame paint than
+/// lavapipe. Respects an explicit user-set GSK_RENDERER.
+fn select_gsk_renderer() {
+    if std::env::var_os("GSK_RENDERER").is_some() { return; }
+
+    let is_phosh = ["XDG_SESSION_DESKTOP", "XDG_CURRENT_DESKTOP"]
+        .iter()
+        .filter_map(|k| std::env::var(k).ok())
+        .any(|v| v.to_ascii_lowercase().contains("phosh"));
+
+    if is_phosh {
+        std::env::set_var("GSK_RENDERER", "cairo");
+    }
 }
 
 /// Bind the `meditate` gettext text domain so every `gettext("…")` call
