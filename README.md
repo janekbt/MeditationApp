@@ -7,9 +7,11 @@ Countdown and stopwatch, a browsable log, and weekly-goal stats to help you buil
 ## Features
 
 ### Timer
-- Countdown and stopwatch modes
+- Countdown, stopwatch, and Box Breath modes
+- Box Breath: pick a pattern (4-4-4-4, 4-7-8-0, 5-5-5-5) or dial in each phase; the running view traces a dot around an accent-tinted square as you breathe in, hold, out, hold
 - Quick presets plus custom durations
-- Labels and optional post-session notes
+- Per-mode labels: each mode remembers the label you last used for it
+- Optional post-session notes
 - Pause, resume, discard
 - Completion sound — built-in bowls/bell/gong, your own audio, or none
 - Daily streak and a system notification when you're away from the app
@@ -24,16 +26,18 @@ Countdown and stopwatch, a browsable log, and weekly-goal stats to help you buil
 - 13-week contribution heatmap, with stars for days that cleared your weekly goal
 - Weekly-goal ring showing this week's progress
 - Bar or line chart across week / month / 3 months / year
+- Per-label breakdown: totals and session counts for each label
 - Streak, total time, and session count at a glance
 
 ### Preferences
-- Weekly goal, completion sound, running-average period
+- Weekly goal and completion sound
 - Manage your labels and timer presets
 
 ### General
 - Translated into 10 languages (English, German, Spanish, French, Italian, Dutch, Polish, Brazilian Portuguese, Russian, Simplified Chinese)
 - Keyboard shortcuts for the common actions
 - Dark-mode and high-contrast safe; follows your system accent colour
+- About → Troubleshooting view with a rolling diagnostics log, for attaching to bug reports
 
 ## Installation
 

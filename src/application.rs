@@ -125,12 +125,14 @@ mod imp {
                     // truth for release-notes copy (Flathub uses it), this
                     // is the in-app echo for the About dialog.
                     let notes = format!(
-                        "<p>{}</p><ul><li>{}</li><li>{}</li><li>{}</li><li>{}</li></ul>",
-                        gettext("Performance and polish pass, focused on Linux phones like the Librem 5. The app starts and switches views noticeably faster on lower-end ARM hardware, and the consequential-action buttons now carry the standard red tint."),
-                        gettext("Cold start is roughly twice as fast on slow ARM phones; view switches, session start, and session end no longer stall the UI"),
-                        gettext("Haptic feedback on session end now fires correctly on devices with feedbackd, without the end-sound doubling up"),
-                        gettext("Stop, Discard, and per-session delete buttons are styled as destructive (red) per the GNOME HIG"),
-                        gettext("Log view loads 15 sessions per page by default instead of 200, with Load more for older entries"),
+                        "<p>{}</p><ul><li>{}</li><li>{}</li><li>{}</li><li>{}</li><li>{}</li><li>{}</li></ul>",
+                        gettext("A new Box Breath timer mode, per-label stats, and an in-app diagnostics view for bug reporting — plus a handful of polish fixes."),
+                        gettext("New Box Breath mode alongside Countdown and Stopwatch: pick a pattern (4-4-4-4, 4-7-8-0, 5-5-5-5) or dial in each phase, set a session length, and the running view traces a dot around an accent-tinted square as you breathe in, hold, out, hold"),
+                        gettext("Stats tab shows a \"By label\" breakdown below the streak / total / sessions row, so you can see how much meditation time you've spent under each label"),
+                        gettext("About dialog has a new Troubleshooting view with a rolling diagnostics log (startup, database open, import/export results, panics) — copy or save to attach to a bug report"),
+                        gettext("Each timer mode remembers its own last-chosen label, so a Box Breath session no longer changes the default label for Countdown or Stopwatch"),
+                        gettext("Release notes shown in the About dialog now reflect the current version instead of staying pinned to the initial release"),
+                        gettext("Log-edit calendar picker shows the proper icon again; post-session note field no longer steals focus on phones and hides the Save / Discard buttons behind the on-screen keyboard"),
                     );
                     let dialog = adw::AboutDialog::builder()
                         .application_name("Meditate")

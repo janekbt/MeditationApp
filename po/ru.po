@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-24 00:33+0200\n"
+"POT-Creation-Date: 2026-04-24 00:44+0200\n"
 "PO-Revision-Date: 2026-04-20 18:28+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Russian\n"
@@ -19,33 +19,48 @@ msgstr ""
 
 #: src/application.rs:129 data/io.github.janekbt.Meditate.metainfo.xml.in:93
 msgid ""
-"Performance and polish pass, focused on Linux phones like the Librem 5. The "
-"app starts and switches views noticeably faster on lower-end ARM hardware, "
-"and the consequential-action buttons now carry the standard red tint."
+"A new Box Breath timer mode, per-label stats, and an in-app diagnostics view "
+"for bug reporting — plus a handful of polish fixes."
 msgstr ""
 
 #: src/application.rs:130 data/io.github.janekbt.Meditate.metainfo.xml.in:95
 msgid ""
-"Cold start is roughly twice as fast on slow ARM phones; view switches, "
-"session start, and session end no longer stall the UI"
+"New Box Breath mode alongside Countdown and Stopwatch: pick a pattern "
+"(4-4-4-4, 4-7-8-0, 5-5-5-5) or dial in each phase, set a session length, and "
+"the running view traces a dot around an accent-tinted square as you breathe "
+"in, hold, out, hold"
 msgstr ""
 
 #: src/application.rs:131 data/io.github.janekbt.Meditate.metainfo.xml.in:96
 msgid ""
-"Haptic feedback on session end now fires correctly on devices with "
-"feedbackd, without the end-sound doubling up"
+"Stats tab shows a \"By label\" breakdown below the streak / total / sessions "
+"row, so you can see how much meditation time you've spent under each label"
 msgstr ""
 
 #: src/application.rs:132 data/io.github.janekbt.Meditate.metainfo.xml.in:97
 msgid ""
-"Stop, Discard, and per-session delete buttons are styled as destructive "
-"(red) per the GNOME HIG"
+"About dialog has a new Troubleshooting view with a rolling diagnostics log "
+"(startup, database open, import/export results, panics) — copy or save to "
+"attach to a bug report"
 msgstr ""
 
 #: src/application.rs:133 data/io.github.janekbt.Meditate.metainfo.xml.in:98
 msgid ""
-"Log view loads 15 sessions per page by default instead of 200, with Load "
-"more for older entries"
+"Each timer mode remembers its own last-chosen label, so a Box Breath session "
+"no longer changes the default label for Countdown or Stopwatch"
+msgstr ""
+
+#: src/application.rs:134 data/io.github.janekbt.Meditate.metainfo.xml.in:99
+msgid ""
+"Release notes shown in the About dialog now reflect the current version "
+"instead of staying pinned to the initial release"
+msgstr ""
+
+#: src/application.rs:135 data/io.github.janekbt.Meditate.metainfo.xml.in:100
+msgid ""
+"Log-edit calendar picker shows the proper icon again; post-session note "
+"field no longer steals focus on phones and hides the Save / Discard buttons "
+"behind the on-screen keyboard"
 msgstr ""
 
 #: src/data_io.rs:46
@@ -996,62 +1011,93 @@ msgstr "Журнал сессий, сгруппированный по дате,
 msgid "janekbt"
 msgstr "janekbt"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:105
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:107
+msgid ""
+"Performance and polish pass, focused on Linux phones like the Librem 5. The "
+"app starts and switches views noticeably faster on lower-end ARM hardware, "
+"and the consequential-action buttons now carry the standard red tint."
+msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:109
+msgid ""
+"Cold start is roughly twice as fast on slow ARM phones; view switches, "
+"session start, and session end no longer stall the UI"
+msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:110
+msgid ""
+"Haptic feedback on session end now fires correctly on devices with "
+"feedbackd, without the end-sound doubling up"
+msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:111
+msgid ""
+"Stop, Discard, and per-session delete buttons are styled as destructive "
+"(red) per the GNOME HIG"
+msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:112
+msgid ""
+"Log view loads 15 sessions per page by default instead of 200, with Load "
+"more for older entries"
+msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:119
 msgid ""
 "Major polish release ahead of Flathub submission — every tab redesigned, new "
 "data features, and translations in nine languages."
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:107
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:121
 msgid "Timer, Stats, and Log tabs fully redesigned around the GNOME HIG"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:108
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:122
 #, fuzzy
 msgid ""
 "Stats now shows a weekly-goal ring, a 13-week contribution heatmap, and an "
 "insights panel"
 msgstr "Недельная цель, тепловая карта за 13 недель и аналитика"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:109
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:123
 msgid "Log is a date-grouped card feed with swipe-to-delete and undo"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:110
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:124
 msgid "CSV import and export, plus one-click migration from Insight Timer"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:111
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:125
 msgid ""
 "Real CC0 recordings replace the three built-in end sounds, with Singing bowl "
 "as the new default"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:112
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:126
 msgid "Post-session note field is now multi-line"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:113
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:127
 msgid "Weekly goal resets on the locale's first day of the week"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:114
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:128
 msgid "New \"Vibrate on session end\" toggle for Linux phones"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:115
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:129
 msgid ""
 "Full translation coverage across English, German, Spanish, French, Italian, "
 "Dutch, Polish, Brazilian Portuguese, Russian, and Simplified Chinese"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:116
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:130
 msgid ""
 "Adaptive layout down to 360 px; HIG-compliant accent colours and "
 "accessibility"
 msgstr ""
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:122
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:136
 msgid "Initial release."
 msgstr "Первый выпуск."
 

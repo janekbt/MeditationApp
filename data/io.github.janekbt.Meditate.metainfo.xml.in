@@ -88,6 +88,20 @@
   </content_rating>
 
   <releases>
+    <release version="26.4.4" date="2026-04-24">
+      <description>
+        <p>A new Box Breath timer mode, per-label stats, and an in-app diagnostics view for bug reporting — plus a handful of polish fixes.</p>
+        <ul>
+          <li>New Box Breath mode alongside Countdown and Stopwatch: pick a pattern (4-4-4-4, 4-7-8-0, 5-5-5-5) or dial in each phase, set a session length, and the running view traces a dot around an accent-tinted square as you breathe in, hold, out, hold</li>
+          <li>Stats tab shows a "By label" breakdown below the streak / total / sessions row, so you can see how much meditation time you've spent under each label</li>
+          <li>About dialog has a new Troubleshooting view with a rolling diagnostics log (startup, database open, import/export results, panics) — copy or save to attach to a bug report</li>
+          <li>Each timer mode remembers its own last-chosen label, so a Box Breath session no longer changes the default label for Countdown or Stopwatch</li>
+          <li>Release notes shown in the About dialog now reflect the current version instead of staying pinned to the initial release</li>
+          <li>Log-edit calendar picker shows the proper icon again; post-session note field no longer steals focus on phones and hides the Save / Discard buttons behind the on-screen keyboard</li>
+        </ul>
+      </description>
+    </release>
+
     <release version="26.4.3.1" date="2026-04-21">
       <description>
         <p>Performance and polish pass, focused on Linux phones like the Librem 5. The app starts and switches views noticeably faster on lower-end ARM hardware, and the consequential-action buttons now carry the standard red tint.</p>
