@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-23 22:30+0200\n"
+"POT-Creation-Date: 2026-04-24 00:33+0200\n"
 "PO-Revision-Date: 2026-04-20 18:24+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Brazilian Portuguese\n"
@@ -67,112 +67,113 @@ msgstr "Erro de banco de dados"
 msgid "Database unavailable"
 msgstr "Banco de dados indisponível"
 
-#: src/log/imp.rs:282
+#: src/log/imp.rs:294
 msgid "All labels"
 msgstr "Todos os rótulos"
 
 #. Lowercase in source; the .log-unit CSS class renders it uppercase
 #. (HIG forbids all-caps in source text).
-#: src/log/imp.rs:367
+#: src/log/imp.rs:379
 msgid "min"
 msgstr "min"
 
-#: src/log/imp.rs:398
+#: src/log/imp.rs:410
 msgid "No note added"
 msgstr "Sem anotações"
 
-#: src/log/imp.rs:440
+#: src/log/imp.rs:452
 msgid "Delete Session"
 msgstr "Excluir sessão"
 
-#: src/log/imp.rs:561
+#: src/log/imp.rs:573
 msgid "Today"
 msgstr "Hoje"
 
-#: src/log/imp.rs:564
+#: src/log/imp.rs:576
 msgid "Yesterday"
 msgstr "Ontem"
 
-#: src/log/imp.rs:582
+#: src/log/imp.rs:594
 msgid "1 session"
 msgstr "1 sessão"
 
-#: src/log/imp.rs:584
+#: src/log/imp.rs:596
 msgid "{n} sessions"
 msgstr "{n} sessões"
 
-#: src/log/imp.rs:612
+#: src/log/imp.rs:624
 msgid "Session deleted"
 msgstr "Sessão excluída"
 
-#: src/log/imp.rs:613 src/preferences.rs:627
+#: src/log/imp.rs:625 src/preferences.rs:627
 msgid "Undo"
 msgstr "Desfazer"
 
-#: src/log/imp.rs:707 src/timer/imp.rs:801
+#: src/log/imp.rs:719 src/timer/imp.rs:972
 msgid "Hours"
 msgstr "Horas"
 
-#: src/log/imp.rs:712 src/preferences.rs:338 src/timer/imp.rs:808
+#: src/log/imp.rs:724 src/preferences.rs:338 src/timer/imp.rs:979
+#: data/ui/timer_view.blp:236
 msgid "Minutes"
 msgstr "Minutos"
 
-#: src/log/imp.rs:729
+#: src/log/imp.rs:741
 msgid "Date"
 msgstr "Data"
 
-#: src/log/imp.rs:746
+#: src/log/imp.rs:758
 msgid "Pick a Date"
 msgstr "Escolher data"
 
-#: src/log/imp.rs:771
+#: src/log/imp.rs:783
 msgid "Hour"
 msgstr "Hora"
 
-#: src/log/imp.rs:776
+#: src/log/imp.rs:788
 msgid "Minute"
 msgstr "Minuto"
 
 #. ── Label row ──────────────────────────────────────────────────
-#: src/log/imp.rs:782 src/preferences.rs:37 src/timer/imp.rs:650
-#: src/timer/imp.rs:682 src/timer/imp.rs:869 src/timer/imp.rs:896
+#: src/log/imp.rs:794 src/preferences.rs:37 src/timer/imp.rs:823
+#: src/timer/imp.rs:1040 src/timer/imp.rs:1067
 msgid "None"
 msgstr "Nenhum"
 
-#: src/log/imp.rs:787 data/ui/timer_view.blp:127 data/ui/timer_view.blp:227
+#: src/log/imp.rs:799 data/ui/timer_view.blp:251 data/ui/timer_view.blp:318
 #: data/ui/window.blp:69
 msgid "Label"
 msgstr "Rótulo"
 
-#: src/log/imp.rs:823 data/ui/timer_view.blp:203
+#: src/log/imp.rs:835 data/ui/timer_view.blp:294
 msgid "Note (optional)"
 msgstr "Anotação (opcional)"
 
-#: src/log/imp.rs:843
+#: src/log/imp.rs:855
 msgid "Duration"
 msgstr "Duração"
 
-#: src/log/imp.rs:849
+#: src/log/imp.rs:861
 msgid "Start time"
 msgstr "Horário de início"
 
-#: src/log/imp.rs:878
+#: src/log/imp.rs:890
 msgid "_Cancel"
 msgstr "_Cancelar"
 
-#: src/log/imp.rs:882
+#: src/log/imp.rs:894
 msgid "_Save"
 msgstr "_Salvar"
 
-#: src/log/imp.rs:882
+#: src/log/imp.rs:894
 msgid "_Add"
 msgstr "_Adicionar"
 
-#: src/log/imp.rs:896
+#: src/log/imp.rs:908
 msgid "Edit Session"
 msgstr "Editar sessão"
 
-#: src/log/imp.rs:896 data/ui/log_view.blp:18 data/ui/window.blp:79
+#: src/log/imp.rs:908 data/ui/log_view.blp:18 data/ui/window.blp:79
 msgid "Add Session"
 msgstr "Adicionar sessão"
 
@@ -188,19 +189,19 @@ msgstr "Geral"
 msgid "Sound"
 msgstr "Som"
 
-#: src/preferences.rs:38 src/timer/imp.rs:651
+#: src/preferences.rs:38 src/timer/imp.rs:824
 msgid "Singing bowl"
 msgstr "Tigela tibetana"
 
-#: src/preferences.rs:39 src/timer/imp.rs:652
+#: src/preferences.rs:39 src/timer/imp.rs:825
 msgid "Bell"
 msgstr "Sino"
 
-#: src/preferences.rs:40 src/timer/imp.rs:653
+#: src/preferences.rs:40 src/timer/imp.rs:826
 msgid "Gong"
 msgstr "Gongo"
 
-#: src/preferences.rs:41 src/timer/imp.rs:654
+#: src/preferences.rs:41 src/timer/imp.rs:827
 msgid "Custom file…"
 msgstr "Arquivo personalizado…"
 
@@ -369,7 +370,7 @@ msgstr "Rótulo excluído"
 msgid "Discard Changes"
 msgstr "Descartar alterações"
 
-#: src/preferences.rs:692 data/ui/timer_view.blp:243
+#: src/preferences.rs:692 data/ui/timer_view.blp:334
 msgid "Save"
 msgstr "Salvar"
 
@@ -397,8 +398,8 @@ msgstr "Excluir rótulo?"
 #. so we can't mark a mnemonic letter on AdwAlertDialog buttons
 #. without the underscore rendering literally. Return and Esc
 #. still cover the common activations.
-#: src/preferences.rs:815 src/preferences.rs:924 src/timer/imp.rs:498
-#: src/timer/imp.rs:834 src/timer/imp.rs:1039
+#: src/preferences.rs:815 src/preferences.rs:924 src/timer/imp.rs:671
+#: src/timer/imp.rs:1005 src/timer/imp.rs:1546
 msgid "Cancel"
 msgstr "Cancelar"
 
@@ -615,77 +616,140 @@ msgstr "{date} — sem sessões"
 msgid "{duration} · {count} sessions"
 msgstr "{date} — sem sessões"
 
-#: src/timer/imp.rs:287
+#: src/timer/imp.rs:404
 msgid "Paused"
 msgstr "Pausado"
 
-#. Subtitle applies equally to both modes — it labels the digits.
-#: src/timer/imp.rs:304 data/ui/timer_view.blp:47
+#: src/timer/imp.rs:428 data/ui/timer_view.blp:47
 msgid "Hours · Minutes"
 msgstr "Horas · Minutos"
 
-#: src/timer/imp.rs:489
+#: src/timer/imp.rs:662
 msgid "Discard Session?"
 msgstr "Descartar sessão?"
 
-#: src/timer/imp.rs:490
+#: src/timer/imp.rs:663
 msgid "Your note will be lost."
 msgstr "Sua anotação será perdida."
 
-#: src/timer/imp.rs:499 data/ui/timer_view.blp:238
+#: src/timer/imp.rs:672 data/ui/timer_view.blp:329
 msgid "Discard"
 msgstr "Descartar"
 
-#: src/timer/imp.rs:638
+#: src/timer/imp.rs:811
 msgid "Start your streak today"
 msgstr "Comece sua sequência hoje"
 
-#: src/timer/imp.rs:639
+#: src/timer/imp.rs:812
 msgid "1 day streak"
 msgstr "Sequência de 1 dia"
 
-#: src/timer/imp.rs:640
+#: src/timer/imp.rs:813
 msgid "{n} days streak"
 msgstr "Sequência de {n} dias"
+
+#: src/timer/imp.rs:910
+msgid "Custom…"
+msgstr "Personalizado…"
+
+#: src/timer/imp.rs:911
+msgid "Set a Custom Time"
+msgstr "Definir tempo personalizado"
+
+#: src/timer/imp.rs:999
+msgid "Custom Time"
+msgstr "Tempo personalizado"
+
+#: src/timer/imp.rs:1000
+msgid "Hours : Minutes"
+msgstr "Horas : Minutos"
+
+#: src/timer/imp.rs:1006
+msgid "Set"
+msgstr "Definir"
 
 #. +2 for "+ New label" and "None"
 #. default = "None"
 #. default: "None"
-#: src/timer/imp.rs:681 src/timer/imp.rs:868 src/timer/imp.rs:895
+#: src/timer/imp.rs:1039 src/timer/imp.rs:1066
 msgid "+ New Label…"
 msgstr "+ Novo rótulo…"
 
-#: src/timer/imp.rs:739
-msgid "Custom…"
-msgstr "Personalizado…"
+#: src/timer/imp.rs:1222
+msgid "Inhale"
+msgstr ""
 
-#: src/timer/imp.rs:740
-msgid "Set a Custom Time"
-msgstr "Definir tempo personalizado"
+#: src/timer/imp.rs:1223
+msgid "Hold (full)"
+msgstr ""
 
-#: src/timer/imp.rs:828
-msgid "Custom Time"
-msgstr "Tempo personalizado"
+#: src/timer/imp.rs:1224
+msgid "Exhale"
+msgstr ""
 
-#: src/timer/imp.rs:829
-msgid "Hours : Minutes"
-msgstr "Horas : Minutos"
+#: src/timer/imp.rs:1225
+msgid "Hold (empty)"
+msgstr ""
 
-#: src/timer/imp.rs:835
-msgid "Set"
-msgstr "Definir"
+#: src/timer/imp.rs:1287
+msgid "Decrease"
+msgstr ""
 
-#: src/timer/imp.rs:1031
+#: src/timer/imp.rs:1298
+msgid "Increase"
+msgstr ""
+
+#: src/timer/imp.rs:1478
+msgid "Box-breathing"
+msgstr ""
+
+#: src/timer/imp.rs:1538
 msgid "Label name"
 msgstr "Nome do rótulo"
 
-#: src/timer/imp.rs:1035
+#: src/timer/imp.rs:1542
 msgid "New Label"
 msgstr "Novo rótulo"
 
-#: src/timer/imp.rs:1040
+#: src/timer/imp.rs:1547
 msgid "Create"
 msgstr "Criar"
+
+#: src/window/imp.rs:221
+msgid "Box Breathing"
+msgstr ""
+
+#: src/window/imp.rs:343
+#, fuzzy
+msgid "Pause"
+msgstr "Pausado"
+
+#: src/window/imp.rs:345
+#, fuzzy
+msgid "Pause Timer"
+msgstr "Tempo personalizado"
+
+#: src/window/imp.rs:348 data/ui/timer_view.blp:117
+msgid "Stop"
+msgstr "Parar"
+
+#: src/window/imp.rs:350
+#, fuzzy
+msgid "Stop and Save Session"
+msgstr "Iniciar sessão"
+
+#: src/window/imp.rs:418
+#, fuzzy
+msgid "Breathe in"
+msgstr "Criar"
+
+#: src/window/imp.rs:419 src/window/imp.rs:421
+msgid "Hold"
+msgstr ""
+
+#: src/window/imp.rs:420
+msgid "Breathe out"
+msgstr ""
 
 #: data/ui/log_view.blp:14
 msgid "No Sessions Yet"
@@ -777,29 +841,42 @@ msgstr "Contagem regressiva"
 msgid "Stopwatch"
 msgstr "Cronômetro"
 
-#: data/ui/timer_view.blp:93
-msgid "Quick Presets"
-msgstr "Predefinições"
+#: data/ui/timer_view.blp:80
+msgid "Box Breath"
+msgstr ""
 
-#: data/ui/timer_view.blp:124
-msgid "Session"
-msgstr "Sessão"
-
-#: data/ui/timer_view.blp:131
-msgid "Completion sound"
-msgstr "Som final"
-
-#: data/ui/timer_view.blp:149
+#: data/ui/timer_view.blp:101
 msgid "Start Session"
 msgstr "Iniciar sessão"
 
-#: data/ui/timer_view.blp:159
+#: data/ui/timer_view.blp:111
 msgid "Resume"
 msgstr "Retomar"
 
-#: data/ui/timer_view.blp:165
-msgid "Stop"
-msgstr "Parar"
+#: data/ui/timer_view.blp:137
+msgid "Quick Presets"
+msgstr "Predefinições"
+
+#: data/ui/timer_view.blp:178
+msgid "Pattern"
+msgstr ""
+
+#: data/ui/timer_view.blp:207
+msgid "Breath Phases"
+msgstr ""
+
+#: data/ui/timer_view.blp:235
+#, fuzzy
+msgid "Session duration"
+msgstr "Sessão excluída"
+
+#: data/ui/timer_view.blp:248
+msgid "Session"
+msgstr "Sessão"
+
+#: data/ui/timer_view.blp:255
+msgid "Completion sound"
+msgstr "Som final"
 
 #: data/ui/window.blp:20 data/ui/window.blp:33
 #: data/io.github.janekbt.Meditate.desktop.in:2

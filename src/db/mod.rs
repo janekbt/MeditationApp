@@ -7,6 +7,7 @@ use std::path::Path;
 pub enum SessionMode {
     Countdown,
     Stopwatch,
+    Breathing,
 }
 
 impl SessionMode {
@@ -14,13 +15,15 @@ impl SessionMode {
         match self {
             SessionMode::Countdown => "countdown",
             SessionMode::Stopwatch => "stopwatch",
+            SessionMode::Breathing => "breathing",
         }
     }
 
-    fn from_str(s: &str) -> Self {
+    pub fn from_str(s: &str) -> Self {
         match s {
             "stopwatch" => SessionMode::Stopwatch,
-            _ => SessionMode::Countdown,
+            "breathing" => SessionMode::Breathing,
+            _           => SessionMode::Countdown,
         }
     }
 }
@@ -322,10 +325,7 @@ impl Database {
         let mut rows = stmt.query([])?;
         while let Some(row) = rows.next()? {
             let mode_str: String = row.get(3)?;
-            let mode = match mode_str.as_str() {
-                "stopwatch" => SessionMode::Stopwatch,
-                _ => SessionMode::Countdown,
-            };
+            let mode = SessionMode::from_str(&mode_str);
             let sess = Session {
                 id:            row.get(0)?,
                 start_time:    row.get(1)?,
@@ -748,27 +748,30 @@ mod tests {
     fn session_mode_as_str() {
         assert_eq!(SessionMode::Countdown.as_str(), "countdown");
         assert_eq!(SessionMode::Stopwatch.as_str(), "stopwatch");
+        assert_eq!(SessionMode::Breathing.as_str(), "breathing");
     }
 
     #[test]
     fn session_mode_from_str_known() {
         assert_eq!(SessionMode::from_str("countdown"), SessionMode::Countdown);
         assert_eq!(SessionMode::from_str("stopwatch"), SessionMode::Stopwatch);
+        assert_eq!(SessionMode::from_str("breathing"), SessionMode::Breathing);
     }
 
     #[test]
     fn session_mode_from_str_unknown_defaults_to_countdown() {
-        // Old rows / typos must land on Countdown, not panic — Stopwatch was
-        // added later and Countdown is the "pre-feature" default.
+        // Old rows / typos must land on Countdown, not panic — Stopwatch and
+        // Breathing were added later and Countdown is the "pre-feature" default.
         assert_eq!(SessionMode::from_str(""), SessionMode::Countdown);
         assert_eq!(SessionMode::from_str("COUNTDOWN"), SessionMode::Countdown);
         assert_eq!(SessionMode::from_str("timer"), SessionMode::Countdown);
+        assert_eq!(SessionMode::from_str("box"), SessionMode::Countdown);
         assert_eq!(SessionMode::from_str("garbage"), SessionMode::Countdown);
     }
 
     #[test]
     fn session_mode_roundtrip() {
-        for mode in [SessionMode::Countdown, SessionMode::Stopwatch] {
+        for mode in [SessionMode::Countdown, SessionMode::Stopwatch, SessionMode::Breathing] {
             assert_eq!(SessionMode::from_str(mode.as_str()), mode);
         }
     }

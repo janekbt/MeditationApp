@@ -231,6 +231,18 @@ impl LogView {
     pub fn prepend_session(&self, session: Session) {
         let key = date_group_key(session.start_time);
 
+        // Re-fetch labels before rendering. If the session was saved with
+        // a label that was *created* moments earlier (e.g. the auto
+        // "Box-breathing" label on first Box Breath save), our cache
+        // doesn't know about it yet and the card would render unlabelled.
+        if let Some(app) = self.get_app() {
+            if let Some(fresh) = app.with_db(|db| db.list_labels())
+                .and_then(|r| r.ok())
+            {
+                *self.labels.borrow_mut() = fresh;
+            }
+        }
+
         let labels_ref = self.labels.borrow();
         let label_map: std::collections::HashMap<i64, &str> =
             labels_ref.iter().map(|l| (l.id, l.name.as_str())).collect();

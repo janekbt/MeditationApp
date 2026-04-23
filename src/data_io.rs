@@ -153,10 +153,7 @@ pub(crate) fn import_csv_to_db(db: &Database, path: &Path) -> Result<usize, Data
             return Err(DataIoError::Parse(
                 format!("line {line}: duration_secs must be positive, got {duration_secs}")));
         }
-        let mode = match rec.get(2).map(|s| s.trim()) {
-            Some("stopwatch") => SessionMode::Stopwatch,
-            _                 => SessionMode::Countdown,
-        };
+        let mode = SessionMode::from_str(rec.get(2).map(|s| s.trim()).unwrap_or(""));
         let label_txt = rec.get(3).map(|s| s.trim().to_string()).unwrap_or_default();
         let note_txt = rec.get(4).map(|s| s.trim().to_string()).unwrap_or_default();
         let note = if note_txt.is_empty() { None } else { Some(note_txt) };

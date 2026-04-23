@@ -75,6 +75,50 @@ template $TimerView : Gtk.Widget {
                 group: countdown_btn;
                 css-classes: ["mode-toggle-btn"];
               }
+
+              Gtk.ToggleButton breathing_btn {
+                label: _("Box Breath");
+                hexpand: true;
+                group: countdown_btn;
+                css-classes: ["mode-toggle-btn"];
+              }
+            };
+          }
+
+          // ── Buttons ────────────────────────────────────────────────
+          // Placed directly under the mode toggle so the button doesn't
+          // jump positions when switching modes, and so presets-driven
+          // starts don't require scrolling past the phase/label rows.
+          Adw.Clamp {
+            maximum-size: 360;
+            tightening-threshold: 300;
+
+            child: Gtk.Box {
+              orientation: vertical;
+              spacing: 8;
+
+              Gtk.Button start_btn {
+                label: _("Start Session");
+                css-classes: ["suggested-action", "pill"];
+              }
+
+              Gtk.Box {
+                orientation: horizontal;
+                spacing: 12;
+                halign: center;
+
+                Gtk.Button resume_btn {
+                  label: _("Resume");
+                  css-classes: ["suggested-action", "pill"];
+                  visible: false;
+                }
+
+                Gtk.Button stop_from_pause_btn {
+                  label: _("Stop");
+                  css-classes: ["pill", "destructive-action"];
+                  visible: false;
+                }
+              }
             };
           }
 
@@ -115,6 +159,86 @@ template $TimerView : Gtk.Widget {
             }
           }
 
+          // ── Box-breath-only inputs ─────────────────────────────────
+          // Shown only when the Box Breath toggle is active. Rust fills
+          // in the preset chips and the 2×2 phase-tile grid on startup.
+          Gtk.Box boxbreath_inputs {
+            orientation: vertical;
+            spacing: 12;
+            visible: false;
+
+            // Pattern presets (4-4-4-4 / 4-7-8-0 / 5-5-5-5), mirroring
+            // the Quick-Presets row in Countdown mode but for breath
+            // patterns rather than durations.
+            Gtk.Box {
+              orientation: vertical;
+              spacing: 6;
+
+              Gtk.Label {
+                label: _("Pattern");
+                css-classes: ["heading"];
+                halign: start;
+                margin-start: 6;
+              }
+
+              Adw.Clamp {
+                maximum-size: 360;
+                tightening-threshold: 300;
+
+                child: Gtk.FlowBox breathing_presets_box {
+                  selection-mode: none;
+                  max-children-per-line: 4;
+                  min-children-per-line: 1;
+                  homogeneous: true;
+                  column-spacing: 6;
+                  row-spacing: 6;
+                };
+              }
+            }
+
+            // 2×2 phase grid — Inhale / Hold (full) / Exhale / Hold (empty).
+            // Tiles are built and wired programmatically from Rust so the
+            // steppers and labels stay in sync with state.
+            Gtk.Box {
+              orientation: vertical;
+              spacing: 6;
+
+              Gtk.Label {
+                label: _("Breath Phases");
+                css-classes: ["heading"];
+                halign: start;
+                margin-start: 6;
+              }
+
+              Adw.Clamp {
+                maximum-size: 360;
+                tightening-threshold: 300;
+
+                child: Gtk.Grid phase_tiles_grid {
+                  column-spacing: 8;
+                  row-spacing: 8;
+                  column-homogeneous: true;
+                  row-homogeneous: true;
+                };
+              }
+            }
+
+            // Session duration — minutes spinner. Adjustment bounds
+            // (1..60) are set from Rust so we don't duplicate the
+            // default-session-minutes knob in two places.
+            Adw.Clamp {
+              maximum-size: 360;
+              tightening-threshold: 300;
+
+              child: Adw.PreferencesGroup {
+                Adw.SpinRow breathing_duration_row {
+                  title: _("Session duration");
+                  subtitle: _("Minutes");
+                }
+              };
+            }
+          }
+
           // ── Session group ──────────────────────────────────────────
           Adw.Clamp {
             maximum-size: 360;
@@ -136,39 +260,6 @@ template $TimerView : Gtk.Widget {
             };
           }
 
-          // ── Buttons ────────────────────────────────────────────────
-          Adw.Clamp {
-            maximum-size: 360;
-            tightening-threshold: 300;
-
-            child: Gtk.Box {
-              orientation: vertical;
-              spacing: 8;
-
-              Gtk.Button start_btn {
-                label: _("Start Session");
-                css-classes: ["suggested-action", "pill"];
-              }
-
-              Gtk.Box {
-                orientation: horizontal;
-                spacing: 12;
-                halign: center;
-
-                Gtk.Button resume_btn {
-                  label: _("Resume");
-                  css-classes: ["suggested-action", "pill"];
-                  visible: false;
-                }
-
-                Gtk.Button stop_from_pause_btn {
-                  label: _("Stop");
-                  css-classes: ["pill", "destructive-action"];
-                  visible: false;
-                }
-              }
-            };
-          }
         };
       };
     }

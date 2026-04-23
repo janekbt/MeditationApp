@@ -1,6 +1,7 @@
 mod imp;
+pub mod breathing;
 
-pub use imp::format_time;
+pub use imp::{format_time, TimerMode, TimerState};
 
 use gtk::glib;
 use gtk::glib::prelude::*;
@@ -73,5 +74,32 @@ impl TimerView {
             f(&obj);
             None
         })
+    }
+
+    // ── Box-Breath integration ────────────────────────────────────────
+    // Thin wrappers used by window/imp.rs to build the square-frame
+    // running page. All read from imp state; no side effects.
+
+    pub fn is_breathing_mode(&self) -> bool {
+        self.imp().current_mode() == TimerMode::Breathing
+    }
+
+    pub fn breathing_pattern(&self) -> breathing::Pattern {
+        self.imp().breathing_pattern.get()
+    }
+
+    pub fn breathing_target_secs(&self) -> u64 {
+        self.imp().breathing_target_secs()
+    }
+
+    pub fn breathing_timer_state(&self) -> TimerState {
+        self.imp().breathing_timer_state()
+    }
+
+    /// Shared Rc<Cell<f64>> for the high-resolution elapsed time. The
+    /// square-frame running page drives accumulation; TimerView reads it
+    /// for the save/pause/stop paths.
+    pub fn breathing_elapsed_handle(&self) -> std::rc::Rc<std::cell::Cell<f64>> {
+        self.imp().breathing_elapsed_secs.clone()
     }
 }

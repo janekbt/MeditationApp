@@ -152,7 +152,14 @@ impl MeditateWindow {
         if self.nav_view.find_page("running").is_some() {
             return;
         }
+        if self.timer_view.is_breathing_mode() {
+            self.push_breathing_running_page();
+        } else {
+            self.push_time_running_page();
+        }
+    }
 
+    fn push_time_running_page(&self) {
         let time_label = gtk::Label::builder()
             .label(format_time(self.timer_view.current_display_secs()))
             .css_classes(["timer-setup-display"])
@@ -195,13 +202,271 @@ impl MeditateWindow {
         content.append(&time_label);
         content.append(&btn_box);
 
+        self.push_running_page_with_content("Meditating", content, pause_btn, stop_btn);
+    }
+
+    /// Build the Box-Breath running page: session-countdown strip at top,
+    /// animated square frame in the middle (cairo-drawn frame + perimeter
+    /// dot), phase label + per-phase countdown inside, Pause/Stop below.
+    fn push_breathing_running_page(&self) {
+        use crate::timer::breathing::{phase_at, Pattern, Phase};
+        use std::cell::Cell;
+        use std::rc::Rc;
+
+        let pattern = self.timer_view.breathing_pattern();
+        let target_secs = self.timer_view.breathing_target_secs();
+
+        // ── Top strip: "BOX BREATHING" eyebrow + "1:24 / 5:00" counter ──
+        let eyebrow = gtk::Label::builder()
+            .label(&crate::i18n::gettext("Box Breathing"))
+            .css_classes(["caption", "dimmed"])
+            .halign(gtk::Align::Center)
+            .build();
+        let counter_label = gtk::Label::builder()
+            .label(&format!("0:00 / {}", format_time(target_secs)))
+            .css_classes(["title-3", "numeric"])
+            .halign(gtk::Align::Center)
+            .build();
+
+        // ── Center: DrawingArea for the square + dot, overlaid with
+        //    phase label + large per-phase countdown.
+        let drawing_area = gtk::DrawingArea::builder()
+            .content_width(220)
+            .content_height(220)
+            .halign(gtk::Align::Center)
+            .valign(gtk::Align::Center)
+            .build();
+        drawing_area.add_css_class("accent");
+
+        let phase_label = gtk::Label::builder()
+            .label("")
+            .css_classes(["caption", "accent"])
+            .halign(gtk::Align::Center)
+            .valign(gtk::Align::Center)
+            .build();
+        let phase_seconds_label = gtk::Label::builder()
+            .label("")
+            .css_classes(["title-1", "numeric"])
+            .halign(gtk::Align::Center)
+            .valign(gtk::Align::Center)
+            .build();
+
+        // Labels are stacked vertically inside the square, both centred.
+        let inner_stack = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(2)
+            .halign(gtk::Align::Center)
+            .valign(gtk::Align::Center)
+            .build();
+        inner_stack.append(&phase_label);
+        inner_stack.append(&phase_seconds_label);
+
+        let overlay = gtk::Overlay::builder()
+            .halign(gtk::Align::Center)
+            .valign(gtk::Align::Center)
+            .build();
+        overlay.set_child(Some(&drawing_area));
+        overlay.add_overlay(&inner_stack);
+
+        // Cairo draw function: rounded-square frame with accent tint + stroke,
+        // and a single white-filled dot with accent halo travelling the
+        // perimeter. Per user request the progress-stroke trail is omitted —
+        // only the dot moves.
+        let pattern_cell: Rc<Cell<Pattern>> = Rc::new(Cell::new(pattern));
+        let elapsed_handle = self.timer_view.breathing_elapsed_handle();
+        {
+            let pattern_cell = pattern_cell.clone();
+            let elapsed_handle = elapsed_handle.clone();
+            drawing_area.set_draw_func(move |widget, cr, w, h| {
+                let size = w.min(h) as f64;
+                let pad = 12.0;
+                let side = size - 2.0 * pad;
+                let radius = 20.0;
+
+                // Accent RGBA from the style context, with alpha tweaks for
+                // the filled tint vs the stroke. Falling back to a plain
+                // grey if the accent lookup somehow fails.
+                let (ar, ag, ab) = accent_rgb(widget);
+
+                // Filled rounded-square (tint).
+                rounded_rect(cr, pad, pad, side, side, radius);
+                cr.set_source_rgba(ar, ag, ab, 0.08);
+                let _ = cr.fill();
+
+                // Stroked frame.
+                rounded_rect(cr, pad, pad, side, side, radius);
+                cr.set_source_rgba(ar, ag, ab, 0.45);
+                cr.set_line_width(1.5);
+                let _ = cr.stroke();
+
+                // Dot position — only rendered while we actually have a
+                // non-zero cycle; otherwise the widget just shows the empty
+                // frame (which is what the user sees for a split-second at
+                // start-of-session before the tick fires).
+                let p = pattern_cell.get();
+                if p.cycle_secs() == 0 {
+                    return;
+                }
+                let elapsed = elapsed_handle.get();
+                let (phase, phase_elapsed, phase_total) = phase_at(&p, elapsed);
+                let t = (phase_elapsed / phase_total as f64).clamp(0.0, 1.0);
+
+                // Phases are laid out clockwise from the top-left corner:
+                //   In       → top edge (left→right)
+                //   HoldIn   → right edge (top→bottom)
+                //   Out      → bottom edge (right→left)
+                //   HoldOut  → left edge (bottom→top)
+                let (x, y) = match phase {
+                    Phase::In      => (pad + side * t,       pad),
+                    Phase::HoldIn  => (pad + side,            pad + side * t),
+                    Phase::Out     => (pad + side * (1.0 - t), pad + side),
+                    Phase::HoldOut => (pad,                    pad + side * (1.0 - t)),
+                };
+
+                // Halo (semi-transparent accent).
+                cr.set_source_rgba(ar, ag, ab, 0.30);
+                cr.arc(x, y, 11.0, 0.0, std::f64::consts::TAU);
+                let _ = cr.fill();
+                // Dot body — white filled, accent-bordered.
+                cr.set_source_rgb(1.0, 1.0, 1.0);
+                cr.arc(x, y, 7.0, 0.0, std::f64::consts::TAU);
+                let _ = cr.fill();
+                cr.set_source_rgba(ar, ag, ab, 1.0);
+                cr.set_line_width(2.5);
+                cr.arc(x, y, 7.0, 0.0, std::f64::consts::TAU);
+                let _ = cr.stroke();
+            });
+        }
+
+        // ── Pause / Stop buttons ──────────────────────────────────────
+        let pause_btn = gtk::Button::builder()
+            .label(&crate::i18n::gettext("Pause"))
+            .css_classes(["pill"])
+            .tooltip_text(&crate::i18n::gettext("Pause Timer"))
+            .build();
+        let stop_btn = gtk::Button::builder()
+            .label(&crate::i18n::gettext("Stop"))
+            .css_classes(["pill", "destructive-action"])
+            .tooltip_text(&crate::i18n::gettext("Stop and Save Session"))
+            .build();
+
+        let btn_box = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .spacing(12)
+            .halign(gtk::Align::Center)
+            .build();
+        btn_box.append(&pause_btn);
+        btn_box.append(&stop_btn);
+
+        let top_strip = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(2)
+            .halign(gtk::Align::Center)
+            .build();
+        top_strip.append(&eyebrow);
+        top_strip.append(&counter_label);
+
+        let content = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(24)
+            .valign(gtk::Align::Center)
+            .vexpand(true)
+            .margin_top(24).margin_bottom(24)
+            .margin_start(12).margin_end(12)
+            .build();
+        content.append(&top_strip);
+        content.append(&overlay);
+        content.append(&btn_box);
+
+        // Install the per-frame tick callback on the drawing area. It
+        // drives both the smooth circle animation and the cycle-aligned
+        // session-end condition. Kept as a tick_callback (not a glib
+        // timeout) so GTK re-paints at the display refresh rate only.
+        let last_frame: Rc<Cell<i64>> = Rc::new(Cell::new(0));
+        let da_weak = drawing_area.downgrade();
+        let counter_weak = counter_label.downgrade();
+        let phase_lbl_weak = phase_label.downgrade();
+        let phase_sec_weak = phase_seconds_label.downgrade();
+        let obj = self.obj().clone();
+        let target_secs_f = target_secs as f64;
+        let pattern_for_tick = pattern;
+        let elapsed_for_tick = elapsed_handle.clone();
+        drawing_area.add_tick_callback(move |_, clock| {
+            let now_us = clock.frame_time();
+            let prev = last_frame.get();
+            let dt_s = if prev == 0 {
+                0.0
+            } else {
+                ((now_us - prev).max(0) as f64) / 1_000_000.0
+            };
+            last_frame.set(now_us);
+
+            let tv = obj.imp().timer_view.clone();
+            let state = tv.breathing_timer_state();
+
+            // Only accumulate elapsed while Running. Paused / Done → keep
+            // the dot frozen where it was, but still fire (GTK removes the
+            // callback when the drawing area is destroyed, so Paused needs
+            // the tick to stay installed for a clean Resume).
+            if state == crate::timer::TimerState::Running {
+                let cur = elapsed_for_tick.get() + dt_s;
+                elapsed_for_tick.set(cur);
+
+                // UI refresh.
+                let (phase, phase_elapsed, phase_total) = phase_at(&pattern_for_tick, cur);
+                let phase_name = match phase {
+                    Phase::In      => crate::i18n::gettext("Breathe in"),
+                    Phase::HoldIn  => crate::i18n::gettext("Hold"),
+                    Phase::Out     => crate::i18n::gettext("Breathe out"),
+                    Phase::HoldOut => crate::i18n::gettext("Hold"),
+                };
+                if let Some(l) = phase_lbl_weak.upgrade() {
+                    l.set_label(&phase_name);
+                }
+                if let Some(l) = phase_sec_weak.upgrade() {
+                    let remaining = (phase_total as f64 - phase_elapsed).ceil().max(0.0) as i64;
+                    l.set_label(&remaining.to_string());
+                }
+                if let Some(l) = counter_weak.upgrade() {
+                    l.set_label(&format!("{} / {}",
+                        format_time(cur as u64), format_time(target_secs)));
+                }
+                if let Some(da) = da_weak.upgrade() {
+                    da.queue_draw();
+                }
+
+                // Cycle-aligned stop: target_secs was rounded up to a
+                // full cycle in on_start, so crossing it lands exactly at
+                // a cycle boundary (end of HoldOut / end of Out for
+                // patterns with no final hold).
+                if cur >= target_secs_f {
+                    tv.stop();
+                    return glib::ControlFlow::Break;
+                }
+            }
+            glib::ControlFlow::Continue
+        });
+
+        self.push_running_page_with_content("Box Breathing", content, pause_btn, stop_btn);
+    }
+
+    /// Shared scaffolding for both running pages: wraps the content in an
+    /// AdwNavigationPage with a header, wires Pause/Stop/Esc, pushes onto
+    /// the nav view.
+    fn push_running_page_with_content(
+        &self,
+        title: &str,
+        content: gtk::Box,
+        pause_btn: gtk::Button,
+        stop_btn: gtk::Button,
+    ) {
         let header = adw::HeaderBar::builder().show_back_button(false).build();
         let toolbar_view = adw::ToolbarView::new();
         toolbar_view.add_top_bar(&header);
         toolbar_view.set_content(Some(&content));
 
         let page = adw::NavigationPage::builder()
-            .tag("running").title("Meditating")
+            .tag("running").title(title)
             .child(&toolbar_view)
             .build();
 
@@ -226,6 +491,25 @@ impl MeditateWindow {
 
         self.nav_view.push(&page);
     }
+}
+
+/// Read the accent colour from libadwaita's StyleManager (respects the
+/// user's chosen system accent on GNOME 46+). Falls back to the default
+/// Adwaita blue only if the lookup somehow misses.
+fn accent_rgb(_widget: &impl IsA<gtk::Widget>) -> (f64, f64, f64) {
+    let rgba = adw::StyleManager::default().accent_color_rgba();
+    (rgba.red() as f64, rgba.green() as f64, rgba.blue() as f64)
+}
+
+/// Append a rounded-rectangle path to the current cairo context.
+fn rounded_rect(cr: &gtk::cairo::Context, x: f64, y: f64, w: f64, h: f64, r: f64) {
+    use std::f64::consts::PI;
+    cr.new_sub_path();
+    cr.arc(x + w - r, y + r,     r, -PI / 2.0, 0.0);
+    cr.arc(x + w - r, y + h - r, r, 0.0,        PI / 2.0);
+    cr.arc(x + r,     y + h - r, r, PI / 2.0,   PI);
+    cr.arc(x + r,     y + r,     r, PI,         3.0 * PI / 2.0);
+    cr.close_path();
 }
 
 // ── Log ───────────────────────────────────────────────────────────────────────
