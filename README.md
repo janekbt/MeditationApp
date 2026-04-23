@@ -115,9 +115,23 @@ sudo ninja -C build install
 
 **Flatpak build (local)**
 
+One-time setup — install `flatpak-builder` and wire up the Flathub remote so the GNOME 50 runtime/SDK can be pulled automatically:
+
 ```sh
-flatpak-builder --user --install --force-clean flatpak_app \
-    build-aux/io.github.janekbt.Meditate.json
+# Debian / Ubuntu / PureOS
+sudo apt install flatpak flatpak-builder
+# Fedora:  sudo dnf install flatpak flatpak-builder
+# Arch:    sudo pacman -S --needed flatpak flatpak-builder
+
+flatpak remote-add --if-not-exists --user flathub https://flathub.org/repo/flathub.flatpakrepo
+```
+
+Build and install the app. `--install-deps-from=flathub` tells flatpak-builder to fetch `org.gnome.Platform//50`, `org.gnome.Sdk//50`, and the `rust-stable` SDK extension on first run, so you don't need to install them by hand:
+
+```sh
+flatpak-builder --user --install --force-clean \
+    --install-deps-from=flathub \
+    flatpak_app build-aux/io.github.janekbt.Meditate.json
 flatpak run io.github.janekbt.Meditate
 ```
 
