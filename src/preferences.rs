@@ -247,45 +247,6 @@ pub fn show_preferences(app: &MeditateApplication) {
         .title(gettext("Statistics"))
         .build();
 
-    let avg_choices = [
-        gettext("7 days"),
-        gettext("14 days"),
-        gettext("30 days"),
-    ];
-    let avg_choice_refs: Vec<&str> = avg_choices.iter().map(|s| s.as_str()).collect();
-    let avg_row = adw::ComboRow::builder()
-        .title(gettext("Running average period"))
-        .model(&gtk::StringList::new(&avg_choice_refs))
-        .build();
-
-    let current_avg = app
-        .with_db(|db| db.get_setting("running_avg_days", "7"))
-        .and_then(|r| r.ok())
-        .unwrap_or_else(|| "7".to_string());
-    avg_row.set_selected(match current_avg.as_str() {
-        "14" => 1,
-        "30" => 2,
-        _ => 0,
-    });
-
-    avg_row.connect_notify_local(
-        Some("selected"),
-        glib::clone!(
-            #[weak] app,
-            move |row, _| {
-                let val = match row.selected() {
-                    1 => "14",
-                    2 => "30",
-                    _ => "7",
-                };
-                app.with_db(|db| db.set_setting("running_avg_days", val));
-                app.invalidate(crate::application::InvalidateScope::STATS);
-            }
-        ),
-    );
-
-    stats_group.add(&avg_row);
-
     // Weekly meditation goal — drives the ring on the Stats tab.
     let current_goal_mins = app
         .with_db(|db| db.get_setting("weekly_goal_mins", "150"))
@@ -633,7 +594,7 @@ pub fn show_preferences(app: &MeditateApplication) {
                 // combo, and sound row — covers any pref change including
                 // label add/delete/rename and preset edits.
                 win.imp().timer_view.refresh_streak();
-                // Stats view picks up running-average period + weekly goal.
+                // Stats view picks up weekly goal changes.
                 win.imp().stats_view.refresh();
             }
         }
