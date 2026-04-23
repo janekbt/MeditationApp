@@ -354,11 +354,13 @@ impl MeditateWindow {
     fn bind_settings(&self) {
         let Some(src) = gio::SettingsSchemaSource::default() else { return; };
         if src.lookup(crate::config::APP_ID, true).is_none() {
-            eprintln!(
-                "note: GSettings schema '{}' not found — window size won't persist. \
+            let msg = format!(
+                "GSettings schema '{}' not found — window size won't persist. \
                  Set GSETTINGS_SCHEMA_DIR=build/data for dev builds.",
                 crate::config::APP_ID,
             );
+            eprintln!("note: {msg}");
+            crate::diag::log(&msg);
             return;
         }
         let settings = gio::Settings::new(crate::config::APP_ID);

@@ -76,8 +76,13 @@ pub fn suggested_export_filename() -> String {
 /// Write every session in the DB to `path` as CSV. Returns how many rows
 /// were written.
 pub fn export_csv(app: &MeditateApplication, path: &Path) -> Result<usize, DataIoError> {
-    app.with_db(|db| export_csv_to_db(db, path))
-        .ok_or(DataIoError::NoDatabase)?
+    let result = app.with_db(|db| export_csv_to_db(db, path))
+        .ok_or(DataIoError::NoDatabase)?;
+    match &result {
+        Ok(n) => crate::diag::log(&format!("export_csv: wrote {n} sessions to {}", path.display())),
+        Err(e) => crate::diag::log(&format!("export_csv FAILED to {}: {e}", path.display())),
+    }
+    result
 }
 
 /// Core of `export_csv` against an open `Database`. Split out so the full
@@ -115,8 +120,13 @@ pub(crate) fn export_csv_to_db(db: &Database, path: &Path) -> Result<usize, Data
 // ── Native-format import ──────────────────────────────────────────────────────
 
 pub fn import_csv(app: &MeditateApplication, path: &Path) -> Result<usize, DataIoError> {
-    app.with_db(|db| import_csv_to_db(db, path))
-        .ok_or(DataIoError::NoDatabase)?
+    let result = app.with_db(|db| import_csv_to_db(db, path))
+        .ok_or(DataIoError::NoDatabase)?;
+    match &result {
+        Ok(n) => crate::diag::log(&format!("import_csv: read {n} sessions from {}", path.display())),
+        Err(e) => crate::diag::log(&format!("import_csv FAILED from {}: {e}", path.display())),
+    }
+    result
 }
 
 /// Core of `import_csv` against an open `Database`. Split out for the
@@ -172,8 +182,13 @@ pub(crate) fn import_csv_to_db(db: &Database, path: &Path) -> Result<usize, Data
 // ── Insight Timer import ──────────────────────────────────────────────────────
 
 pub fn import_insighttimer(app: &MeditateApplication, path: &Path) -> Result<usize, DataIoError> {
-    app.with_db(|db| import_insighttimer_to_db(db, path))
-        .ok_or(DataIoError::NoDatabase)?
+    let result = app.with_db(|db| import_insighttimer_to_db(db, path))
+        .ok_or(DataIoError::NoDatabase)?;
+    match &result {
+        Ok(n) => crate::diag::log(&format!("import_insighttimer: read {n} sessions from {}", path.display())),
+        Err(e) => crate::diag::log(&format!("import_insighttimer FAILED from {}: {e}", path.display())),
+    }
+    result
 }
 
 pub(crate) fn import_insighttimer_to_db(db: &Database, path: &Path) -> Result<usize, DataIoError> {

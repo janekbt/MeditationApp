@@ -63,8 +63,14 @@ mod imp {
                 .join("meditate")
                 .join("meditate.db");
             match Database::open(&db_path) {
-                Ok(db) => *self.db.lock().unwrap() = Some(db),
-                Err(e) => eprintln!("Failed to open database: {e}"),
+                Ok(db) => {
+                    *self.db.lock().unwrap() = Some(db);
+                    crate::diag::log(&format!("db open ok: {}", db_path.display()));
+                }
+                Err(e) => {
+                    eprintln!("Failed to open database: {e}");
+                    crate::diag::log(&format!("db open FAILED at {}: {e}", db_path.display()));
+                }
             }
 
             // Register the bundled app icon so the About dialog and GNOME Shell
@@ -132,6 +138,11 @@ mod imp {
                         .license_type(gtk::License::Gpl30)
                         .release_notes_version(config::VERSION)
                         .release_notes(&notes)
+                        // Debug Info view in AdwAboutDialog has built-in
+                        // Copy + Save buttons, so wiring the diag log here
+                        // gives us the "Copy diagnostics" UX for free.
+                        .debug_info(&crate::diag::read_all())
+                        .debug_info_filename("meditate-diagnostics.log")
                         .build();
 
                     dialog.present(app.active_window().as_ref());

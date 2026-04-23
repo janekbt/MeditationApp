@@ -2,6 +2,7 @@ mod application;
 mod config;
 mod data_io;
 pub mod db;
+pub mod diag;
 pub mod i18n;
 pub mod log;
 mod preferences;
@@ -16,6 +17,13 @@ use gtk::gio;
 use gtk::prelude::*;
 
 fn main() -> glib::ExitCode {
+    // Diag comes up first so a panic anywhere below still lands in the log.
+    // `glib::user_data_dir()` is a pure XDG lookup and does not require
+    // gtk::init, so this is safe before the renderer/gettext setup.
+    let data_dir = glib::user_data_dir().join("meditate");
+    diag::init(&data_dir);
+    diag::log(&format!("--- startup: meditate {} ---", config::VERSION));
+
     // Renderer must be selected before gtk::init runs, otherwise GTK has
     // already picked one and GSK_RENDERER is ignored.
     select_gsk_renderer();
@@ -62,11 +70,15 @@ fn setup_gettext() {
     let locale_dir = std::env::var("LOCALEDIR")
         .unwrap_or_else(|_| config::LOCALEDIR.to_string());
     if let Err(e) = bindtextdomain(config::GETTEXT_DOMAIN, locale_dir.as_str()) {
-        eprintln!("note: bindtextdomain failed ({e}); strings will stay in source language.");
+        let msg = format!("bindtextdomain failed ({e}); strings will stay in source language.");
+        eprintln!("note: {msg}");
+        diag::log(&msg);
         return;
     }
     let _ = bind_textdomain_codeset(config::GETTEXT_DOMAIN, "UTF-8");
     if let Err(e) = textdomain(config::GETTEXT_DOMAIN) {
-        eprintln!("note: textdomain failed ({e}); strings will stay in source language.");
+        let msg = format!("textdomain failed ({e}); strings will stay in source language.");
+        eprintln!("note: {msg}");
+        diag::log(&msg);
     }
 }
