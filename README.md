@@ -53,10 +53,49 @@ flatpak run io.github.janekbt.Meditate
 
 **Dependencies**
 
-- GNOME Platform / SDK 50 (GTK 4.18+, libadwaita 1.7+, GStreamer)
+- GTK 4.18+, libadwaita 1.7+, GStreamer (with base plugins)
 - [blueprint-compiler](https://gitlab.gnome.org/GNOME/blueprint-compiler) ≥ 0.20
 - Rust (stable toolchain) + Cargo
-- Meson ≥ 0.62
+- Meson ≥ 0.62, Ninja, pkg-config, a C compiler
+
+`meson setup build` will fail fast with the name of anything missing. To install everything in one go:
+
+> **Heads-up: GTK 4.18+ / libadwaita 1.7+ is required.** Older stable releases (e.g. Ubuntu 24.04 LTS, Fedora 40, Debian bookworm) ship GTK 4.14, which the build will reject with a `Package 'gtk4' has version '4.14.x', required version is '>= 4.18'` error during the Rust build. If your distro is below that floor, use the **Flatpak build (local)** path below instead — it pulls the GNOME 50 runtime and ignores system library versions entirely.
+
+<details>
+<summary>Debian / Ubuntu / PureOS</summary>
+
+```sh
+sudo apt install build-essential meson ninja-build pkg-config \
+    libgtk-4-dev libadwaita-1-dev \
+    libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+    blueprint-compiler rustc cargo
+```
+
+If the distro's `rustc`/`cargo` are too old, install via [rustup](https://rustup.rs) instead.
+</details>
+
+<details>
+<summary>Fedora</summary>
+
+```sh
+sudo dnf install gcc meson ninja-build pkgconf-pkg-config \
+    gtk4-devel libadwaita-devel \
+    gstreamer1-devel gstreamer1-plugins-base-devel \
+    blueprint-compiler rust cargo
+```
+</details>
+
+<details>
+<summary>Arch</summary>
+
+```sh
+sudo pacman -S --needed base-devel meson ninja pkgconf \
+    gtk4 libadwaita \
+    gstreamer gst-plugins-base \
+    blueprint-compiler rust
+```
+</details>
 
 **Build**
 
