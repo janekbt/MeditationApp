@@ -400,6 +400,12 @@ impl TimerView {
         self.note_view.buffer().set_text("");
         self.repopulate_label_combo(self.setup_selected_label_id());
         self.view_stack.set_visible_child_name("done");
+        // Without this, GTK's default-focus logic lands on `note_view` (the
+        // first focusable descendant), which on phones pops the on-screen
+        // keyboard up and hides Save/Discard. Putting focus on Save keeps
+        // the action buttons visible; the user can still tap the note view
+        // explicitly to start typing.
+        self.save_btn.grab_focus();
     }
 
     fn on_save(&self) {

@@ -10,7 +10,6 @@
     <file alias="icons/hicolor/symbolic/apps/io.github.janekbt.Meditate-symbolic.svg">icons/hicolor/symbolic/apps/io.github.janekbt.Meditate-symbolic.svg</file>
     <file alias="icons/scalable/actions/chart-bar-symbolic.svg">icons/scalable/actions/chart-bar-symbolic.svg</file>
     <file alias="icons/scalable/actions/funnel-symbolic.svg">icons/scalable/actions/funnel-symbolic.svg</file>
-    <file alias="icons/scalable/actions/office-calendar-symbolic.svg">icons/scalable/actions/office-calendar-symbolic.svg</file>
 
     <file preprocess="xml-stripblanks" alias="ui/shortcuts.ui">ui/shortcuts.ui</file>
     <file alias="sounds/bowl.wav">sounds/bowl.wav</file>

@@ -119,14 +119,18 @@ mod imp {
                 app,
                 move |_, _| {
                     use crate::i18n::gettext;
+                    // Keep this mirror in sync with the first <release> in
+                    // data/io.github.janekbt.Meditate.metainfo.xml.in on
+                    // every version bump — the metainfo is the source of
+                    // truth for release-notes copy (Flathub uses it), this
+                    // is the in-app echo for the About dialog.
                     let notes = format!(
-                        "<p>{}</p><ul><li>{}</li><li>{}</li><li>{}</li><li>{}</li><li>{}</li></ul>",
-                        gettext("Initial release."),
-                        gettext("Countdown and stopwatch timer"),
-                        gettext("Session log with labels and notes"),
-                        gettext("Statistics: calendar, bar chart, streaks"),
-                        gettext("Completion sounds (bowl, bell, gong, or custom file)"),
-                        gettext("Adaptive layout for desktop and phone"),
+                        "<p>{}</p><ul><li>{}</li><li>{}</li><li>{}</li><li>{}</li></ul>",
+                        gettext("Performance and polish pass, focused on Linux phones like the Librem 5. The app starts and switches views noticeably faster on lower-end ARM hardware, and the consequential-action buttons now carry the standard red tint."),
+                        gettext("Cold start is roughly twice as fast on slow ARM phones; view switches, session start, and session end no longer stall the UI"),
+                        gettext("Haptic feedback on session end now fires correctly on devices with feedbackd, without the end-sound doubling up"),
+                        gettext("Stop, Discard, and per-session delete buttons are styled as destructive (red) per the GNOME HIG"),
+                        gettext("Log view loads 15 sessions per page by default instead of 200, with Load more for older entries"),
                     );
                     let dialog = adw::AboutDialog::builder()
                         .application_name("Meditate")

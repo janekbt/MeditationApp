@@ -741,7 +741,7 @@ impl LogView {
 
         // MenuButton manages the popover lifecycle correctly (no manual set_parent/unparent).
         let cal_btn = gtk::MenuButton::builder()
-            .icon_name("office-calendar-symbolic")
+            .icon_name("x-office-calendar-symbolic")
             .valign(gtk::Align::Center)
             .tooltip_text(crate::i18n::gettext("Pick a Date"))
             .css_classes(["flat"])

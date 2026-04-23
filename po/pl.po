@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-23 21:34+0200\n"
+"POT-Creation-Date: 2026-04-23 21:58+0200\n"
 "PO-Revision-Date: 2026-04-20 18:30+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Polish\n"
@@ -17,29 +17,36 @@ msgstr ""
 "Plural-Forms: nplurals=3; plural=(n==1 ? 0 : n%10>=2 && n%10<=4 && (n%100<12 "
 "|| n%100>14) ? 1 : 2);\n"
 
-#: src/application.rs:118 data/io.github.janekbt.Meditate.metainfo.xml.in:122
-msgid "Initial release."
-msgstr "Pierwsze wydanie."
+#: src/application.rs:129 data/io.github.janekbt.Meditate.metainfo.xml.in:93
+msgid ""
+"Performance and polish pass, focused on Linux phones like the Librem 5. The "
+"app starts and switches views noticeably faster on lower-end ARM hardware, "
+"and the consequential-action buttons now carry the standard red tint."
+msgstr ""
 
-#: src/application.rs:119
-msgid "Countdown and stopwatch timer"
-msgstr "Odliczanie i stoper"
+#: src/application.rs:130 data/io.github.janekbt.Meditate.metainfo.xml.in:95
+msgid ""
+"Cold start is roughly twice as fast on slow ARM phones; view switches, "
+"session start, and session end no longer stall the UI"
+msgstr ""
 
-#: src/application.rs:120
-msgid "Session log with labels and notes"
-msgstr "Dziennik sesji z etykietami i notatkami"
+#: src/application.rs:131 data/io.github.janekbt.Meditate.metainfo.xml.in:96
+msgid ""
+"Haptic feedback on session end now fires correctly on devices with "
+"feedbackd, without the end-sound doubling up"
+msgstr ""
 
-#: src/application.rs:121
-msgid "Statistics: calendar, bar chart, streaks"
-msgstr "Statystyki: kalendarz, wykres słupkowy, passy"
+#: src/application.rs:132 data/io.github.janekbt.Meditate.metainfo.xml.in:97
+msgid ""
+"Stop, Discard, and per-session delete buttons are styled as destructive "
+"(red) per the GNOME HIG"
+msgstr ""
 
-#: src/application.rs:122
-msgid "Completion sounds (bowl, bell, gong, or custom file)"
-msgstr "Dźwięki końca (misa, dzwonek, gong lub własny plik)"
-
-#: src/application.rs:123
-msgid "Adaptive layout for desktop and phone"
-msgstr "Układ dostosowany do komputera i telefonu"
+#: src/application.rs:133 data/io.github.janekbt.Meditate.metainfo.xml.in:98
+msgid ""
+"Log view loads 15 sessions per page by default instead of 200, with Load "
+"more for older entries"
+msgstr ""
 
 #: src/data_io.rs:46
 msgid "File error"
@@ -103,11 +110,11 @@ msgstr "Sesja usunięta"
 msgid "Undo"
 msgstr "Cofnij"
 
-#: src/log/imp.rs:707 src/timer/imp.rs:795
+#: src/log/imp.rs:707 src/timer/imp.rs:801
 msgid "Hours"
 msgstr "Godziny"
 
-#: src/log/imp.rs:712 src/preferences.rs:338 src/timer/imp.rs:802
+#: src/log/imp.rs:712 src/preferences.rs:338 src/timer/imp.rs:808
 msgid "Minutes"
 msgstr "Minuty"
 
@@ -128,8 +135,8 @@ msgid "Minute"
 msgstr "Minuta"
 
 #. ── Label row ──────────────────────────────────────────────────
-#: src/log/imp.rs:782 src/preferences.rs:37 src/timer/imp.rs:644
-#: src/timer/imp.rs:676 src/timer/imp.rs:863 src/timer/imp.rs:890
+#: src/log/imp.rs:782 src/preferences.rs:37 src/timer/imp.rs:650
+#: src/timer/imp.rs:682 src/timer/imp.rs:869 src/timer/imp.rs:896
 msgid "None"
 msgstr "Brak"
 
@@ -182,19 +189,19 @@ msgstr "Ogólne"
 msgid "Sound"
 msgstr "Dźwięk"
 
-#: src/preferences.rs:38 src/timer/imp.rs:645
+#: src/preferences.rs:38 src/timer/imp.rs:651
 msgid "Singing bowl"
 msgstr "Misa dźwiękowa"
 
-#: src/preferences.rs:39 src/timer/imp.rs:646
+#: src/preferences.rs:39 src/timer/imp.rs:652
 msgid "Bell"
 msgstr "Dzwonek"
 
-#: src/preferences.rs:40 src/timer/imp.rs:647
+#: src/preferences.rs:40 src/timer/imp.rs:653
 msgid "Gong"
 msgstr "Gong"
 
-#: src/preferences.rs:41 src/timer/imp.rs:648
+#: src/preferences.rs:41 src/timer/imp.rs:654
 msgid "Custom file…"
 msgstr "Własny plik…"
 
@@ -390,8 +397,8 @@ msgstr "Usunąć etykietę?"
 #. so we can't mark a mnemonic letter on AdwAlertDialog buttons
 #. without the underscore rendering literally. Return and Esc
 #. still cover the common activations.
-#: src/preferences.rs:815 src/preferences.rs:924 src/timer/imp.rs:492
-#: src/timer/imp.rs:828 src/timer/imp.rs:1033
+#: src/preferences.rs:815 src/preferences.rs:924 src/timer/imp.rs:498
+#: src/timer/imp.rs:834 src/timer/imp.rs:1039
 msgid "Cancel"
 msgstr "Anuluj"
 
@@ -607,66 +614,66 @@ msgstr "Wstrzymano"
 msgid "Hours · Minutes"
 msgstr "Godziny · Minuty"
 
-#: src/timer/imp.rs:483
+#: src/timer/imp.rs:489
 msgid "Discard Session?"
 msgstr "Odrzucić sesję?"
 
-#: src/timer/imp.rs:484
+#: src/timer/imp.rs:490
 msgid "Your note will be lost."
 msgstr "Notatka zostanie utracona."
 
-#: src/timer/imp.rs:493 data/ui/timer_view.blp:238
+#: src/timer/imp.rs:499 data/ui/timer_view.blp:238
 msgid "Discard"
 msgstr "Odrzuć"
 
-#: src/timer/imp.rs:632
+#: src/timer/imp.rs:638
 msgid "Start your streak today"
 msgstr "Rozpocznij dziś swoją passę"
 
-#: src/timer/imp.rs:633
+#: src/timer/imp.rs:639
 msgid "1 day streak"
 msgstr "1 dzień passy"
 
-#: src/timer/imp.rs:634
+#: src/timer/imp.rs:640
 msgid "{n} days streak"
 msgstr "Passa: {n} dni"
 
 #. +2 for "+ New label" and "None"
 #. default = "None"
 #. default: "None"
-#: src/timer/imp.rs:675 src/timer/imp.rs:862 src/timer/imp.rs:889
+#: src/timer/imp.rs:681 src/timer/imp.rs:868 src/timer/imp.rs:895
 msgid "+ New Label…"
 msgstr "+ Nowa etykieta…"
 
-#: src/timer/imp.rs:733
+#: src/timer/imp.rs:739
 msgid "Custom…"
 msgstr "Własny…"
 
-#: src/timer/imp.rs:734
+#: src/timer/imp.rs:740
 msgid "Set a Custom Time"
 msgstr "Ustaw własny czas"
 
-#: src/timer/imp.rs:822
+#: src/timer/imp.rs:828
 msgid "Custom Time"
 msgstr "Własny czas"
 
-#: src/timer/imp.rs:823
+#: src/timer/imp.rs:829
 msgid "Hours : Minutes"
 msgstr "Godziny : Minuty"
 
-#: src/timer/imp.rs:829
+#: src/timer/imp.rs:835
 msgid "Set"
 msgstr "Ustaw"
 
-#: src/timer/imp.rs:1025
+#: src/timer/imp.rs:1031
 msgid "Label name"
 msgstr "Nazwa etykiety"
 
-#: src/timer/imp.rs:1029
+#: src/timer/imp.rs:1035
 msgid "New Label"
 msgstr "Nowa etykieta"
 
-#: src/timer/imp.rs:1034
+#: src/timer/imp.rs:1040
 msgid "Create"
 msgstr "Utwórz"
 
@@ -896,37 +903,6 @@ msgstr "Dziennik sesji pogrupowany według daty, z etykietami i notatkami"
 msgid "janekbt"
 msgstr "janekbt"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:93
-msgid ""
-"Performance and polish pass, focused on Linux phones like the Librem 5. The "
-"app starts and switches views noticeably faster on lower-end ARM hardware, "
-"and the consequential-action buttons now carry the standard red tint."
-msgstr ""
-
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:95
-msgid ""
-"Cold start is roughly twice as fast on slow ARM phones; view switches, "
-"session start, and session end no longer stall the UI"
-msgstr ""
-
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:96
-msgid ""
-"Haptic feedback on session end now fires correctly on devices with "
-"feedbackd, without the end-sound doubling up"
-msgstr ""
-
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:97
-msgid ""
-"Stop, Discard, and per-session delete buttons are styled as destructive "
-"(red) per the GNOME HIG"
-msgstr ""
-
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:98
-msgid ""
-"Log view loads 15 sessions per page by default instead of 200, with Load "
-"more for older entries"
-msgstr ""
-
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:105
 msgid ""
 "Major polish release ahead of Flathub submission — every tab redesigned, new "
@@ -981,6 +957,25 @@ msgid ""
 "Adaptive layout down to 360 px; HIG-compliant accent colours and "
 "accessibility"
 msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:122
+msgid "Initial release."
+msgstr "Pierwsze wydanie."
+
+#~ msgid "Countdown and stopwatch timer"
+#~ msgstr "Odliczanie i stoper"
+
+#~ msgid "Session log with labels and notes"
+#~ msgstr "Dziennik sesji z etykietami i notatkami"
+
+#~ msgid "Statistics: calendar, bar chart, streaks"
+#~ msgstr "Statystyki: kalendarz, wykres słupkowy, passy"
+
+#~ msgid "Completion sounds (bowl, bell, gong, or custom file)"
+#~ msgstr "Dźwięki końca (misa, dzwonek, gong lub własny plik)"
+
+#~ msgid "Adaptive layout for desktop and phone"
+#~ msgstr "Układ dostosowany do komputera i telefonu"
 
 #~ msgid "7 days"
 #~ msgstr "7 dni"

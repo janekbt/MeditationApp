@@ -2,11 +2,7 @@
 
 Polish and UX items to tackle when convenient. Graduate each one out of this file as it lands in a commit — remove the entry rather than letting the list grow stale.
 
-- **Log edit: calendar button renders as a black square.** When editing a log entry, the button that opens the date picker shows as a solid black rectangle instead of a calendar icon. Likely a missing/wrongly-named symbolic icon reference in the edit-entry blueprint — check the `icon-name` on the date button and confirm the icon is shipped in the gresource bundle (or falls back to a stock Adwaita one).
-
-- **Session-end screen: note field auto-focuses and pulls up the on-screen keyboard, covering Save/Discard.** When a session ends, the post-session note entry grabs focus automatically, which on phones triggers the OSK and hides the action buttons below. Drop the `grab_focus()` (or `has-focus`/`can-focus` wiring) on the note field so Save/Discard stay visible; user can tap the field explicitly if they want to type a note.
-
-- **In-app changelog shows initial-release text, not the current release's.** Wherever the app displays its changelog (About dialog / "What's new" screen / similar), it's rendering the 26.4.1-era copy instead of the 26.4.3.1 entry in `data/io.github.janekbt.Meditate.metainfo.xml.in`. First places to look: any code that parses the metainfo `<release>` list (likely picks the *last* entry instead of the *first*, or sorts ascending instead of descending), or a hardcoded string bundled from an older version. Verify the metainfo itself orders releases newest-first (it does) and that the renderer takes `releases[0]`, not `releases[-1]`.
+_(no open items at the moment — see investigation notes below)_
 
 ## Closed as "not us to fix" — Phosh launcher splash for flatpak apps
 
