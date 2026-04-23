@@ -695,6 +695,24 @@ impl Database {
         stmt.query_row([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
     }
 
+    /// Total session time + count per label, ordered by total duration
+    /// descending (ties broken by name A-Z, case-insensitive). Labels with
+    /// zero sessions and unlabeled sessions are both excluded — INNER JOIN
+    /// drops them at the query level.
+    pub fn get_label_totals(&self) -> Result<Vec<(String, i64, i64)>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT labels.name,
+                    SUM(sessions.duration_secs) AS total,
+                    COUNT(sessions.id) AS n
+             FROM labels
+             INNER JOIN sessions ON sessions.label_id = labels.id
+             GROUP BY labels.id, labels.name
+             ORDER BY total DESC, labels.name COLLATE NOCASE ASC",
+        )?;
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+        rows.collect()
+    }
+
     /// Sum of session durations (seconds) in a given local-time calendar month.
     pub fn get_month_total_secs(&self, year: i32, month: u32) -> Result<i64> {
         let start_str = format!("{year:04}-{month:02}-01");
@@ -974,6 +992,50 @@ mod tests {
             seed_session(&db, local_ts(&db, i as i64, 12, 0), *secs, None);
         }
         assert_eq!(db.get_median_duration_secs().unwrap(), Some(700));
+    }
+
+    // ── Label totals ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn label_totals_groups_sums_and_excludes_empties() {
+        let db = fresh_db();
+        let morning = db.create_label("Morning").unwrap().id;
+        let evening = db.create_label("Evening").unwrap().id;
+        // An extra label with no sessions — must not appear in the output.
+        let _unused = db.create_label("Unused").unwrap().id;
+
+        // Morning: 2 sessions, 900s total.
+        seed_session(&db, local_ts(&db, 0, 7, 0), 600, Some(morning));
+        seed_session(&db, local_ts(&db, 1, 7, 0), 300, Some(morning));
+        // Evening: 1 session, 1200s — the larger total, should sort first.
+        seed_session(&db, local_ts(&db, 0, 20, 0), 1200, Some(evening));
+        // Unlabeled session — must not appear.
+        seed_session(&db, local_ts(&db, 0, 12, 0), 500, None);
+
+        let got = db.get_label_totals().unwrap();
+        assert_eq!(got.len(), 2,
+            "Unused label and unlabeled session must be excluded: {got:?}");
+        assert_eq!(got[0], ("Evening".to_string(), 1200, 1));
+        assert_eq!(got[1], ("Morning".to_string(), 900, 2));
+    }
+
+    #[test]
+    fn label_totals_empty_db_is_empty() {
+        let db = fresh_db();
+        assert!(db.get_label_totals().unwrap().is_empty());
+    }
+
+    #[test]
+    fn label_totals_ties_break_alphabetically() {
+        let db = fresh_db();
+        let zebra = db.create_label("Zebra").unwrap().id;
+        let alpha = db.create_label("Alpha").unwrap().id;
+        // Same total for both — tie-break must be case-insensitive A-Z.
+        seed_session(&db, local_ts(&db, 0, 12, 0), 600, Some(zebra));
+        seed_session(&db, local_ts(&db, 1, 12, 0), 600, Some(alpha));
+        let got = db.get_label_totals().unwrap();
+        assert_eq!(got[0].0, "Alpha");
+        assert_eq!(got[1].0, "Zebra");
     }
 
     #[test]

@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-23 21:58+0200\n"
+"POT-Creation-Date: 2026-04-23 22:30+0200\n"
 "PO-Revision-Date: 2026-04-20 18:26+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Dutch\n"
@@ -473,136 +473,146 @@ msgstr "Import mislukt: {error}"
 msgid "No file selected"
 msgstr "Geen bestand geselecteerd"
 
-#: src/stats/imp.rs:190
+#: src/stats/imp.rs:194
 msgid "Goal reached ✓ · {duration} this week"
 msgstr "Doel bereikt ✓ · {duration} deze week"
 
-#: src/stats/imp.rs:193
+#: src/stats/imp.rs:197
 msgid "{duration} to go this week"
 msgstr "Nog {duration} deze week"
 
 #. Accessible name for the Cairo-drawn ring — no intrinsic text for
 #. screen readers to fall back on.
-#: src/stats/imp.rs:200
+#: src/stats/imp.rs:204
 msgid "Weekly goal: {pct}% — {done} of {goal}"
 msgstr "Wekelijks doel: {pct} % — {done} van {goal}"
 
-#: src/stats/imp.rs:278
+#: src/stats/imp.rs:282
 msgid "{date} — goal exceeded, {mins} minutes"
 msgstr "{date} — doel overschreden, {mins} minuten"
 
-#: src/stats/imp.rs:282
+#: src/stats/imp.rs:286
 msgid "{date} — {mins} minutes"
 msgstr "{date} — {mins} minuten"
 
-#: src/stats/imp.rs:286
+#: src/stats/imp.rs:290
 msgid "{date} — no sessions"
 msgstr "{date} — geen sessies"
 
-#: src/stats/imp.rs:335
+#: src/stats/imp.rs:339
 msgid "{n} days — new record"
 msgstr "{n} dagen — nieuw record"
 
-#: src/stats/imp.rs:338
+#: src/stats/imp.rs:342
 msgid "{n} days · best was {best}"
 msgstr "{n} dagen · record was {best}"
 
-#: src/stats/imp.rs:342
+#: src/stats/imp.rs:346
 msgid "1 day · keep going"
 msgstr "1 dag · ga zo door"
 
-#: src/stats/imp.rs:345
+#: src/stats/imp.rs:349
 msgid "Current streak"
 msgstr "Huidige reeks"
 
-#: src/stats/imp.rs:354
+#: src/stats/imp.rs:358
 #, c-format
 msgid "{pct}% up vs last week ({this} vs {last})"
 msgstr "{pct} % meer dan vorige week ({this} t.o.v. {last})"
 
-#: src/stats/imp.rs:356
+#: src/stats/imp.rs:360
 #, c-format
 msgid "{pct}% down vs last week ({this} vs {last})"
 msgstr "{pct} % minder dan vorige week ({this} t.o.v. {last})"
 
-#: src/stats/imp.rs:362
+#: src/stats/imp.rs:366
 msgid "This week's practice"
 msgstr "Praktijk deze week"
 
-#: src/stats/imp.rs:370
+#: src/stats/imp.rs:374
 msgid "Practising more"
 msgstr "Meer oefening"
 
-#: src/stats/imp.rs:372
+#: src/stats/imp.rs:376
 msgid "Practising less"
 msgstr "Minder oefening"
 
-#: src/stats/imp.rs:374
+#: src/stats/imp.rs:378
 msgid "{pct}% vs last month ({this} vs {last})"
 msgstr "{pct} % t.o.v. vorige maand ({this} t.o.v. {last})"
 
-#: src/stats/imp.rs:387
+#: src/stats/imp.rs:391
 #, c-format
 msgid "{pct}% of sessions are in the morning"
 msgstr "{pct} % van de sessies is in de ochtend"
 
-#: src/stats/imp.rs:389
+#: src/stats/imp.rs:393
 #, c-format
 msgid "{pct}% of sessions are in the evening"
 msgstr "{pct} % van de sessies is in de avond"
 
-#: src/stats/imp.rs:391
+#: src/stats/imp.rs:395
 #, c-format
 msgid "{pct}% of sessions are in the afternoon"
 msgstr "{pct} % van de sessies is in de middag"
 
-#: src/stats/imp.rs:395
+#: src/stats/imp.rs:399
 msgid "Preferred time"
 msgstr "Voorkeurstijd"
 
-#: src/stats/imp.rs:401
+#: src/stats/imp.rs:405
 msgid "About {duration}"
 msgstr "Ongeveer {duration}"
 
-#: src/stats/imp.rs:403
+#: src/stats/imp.rs:407
 msgid "Typical session"
 msgstr "Typische sessie"
 
-#: src/stats/imp.rs:412
+#: src/stats/imp.rs:416
 msgid "{duration} on {date}"
 msgstr "{duration} op {date}"
 
-#: src/stats/imp.rs:417
+#: src/stats/imp.rs:421
 msgid "Longest session"
 msgstr "Langste sessie"
 
-#: src/stats/imp.rs:425
+#: src/stats/imp.rs:429
 msgid "1 session to your {target}th"
 msgstr "Nog 1 sessie tot je {target}e"
 
-#: src/stats/imp.rs:428
+#: src/stats/imp.rs:432
 msgid "{n} sessions to your {target}th"
 msgstr "Nog {n} sessies tot je {target}e"
 
-#: src/stats/imp.rs:432
+#: src/stats/imp.rs:436
 msgid "Next milestone"
 msgstr "Volgende mijlpaal"
 
-#: src/stats/imp.rs:439
+#: src/stats/imp.rs:443
 msgid "{duration} average over last 7 days"
 msgstr "{duration} gemiddeld over de laatste 7 dagen"
 
-#: src/stats/imp.rs:441
+#: src/stats/imp.rs:445
 msgid "Daily rhythm"
 msgstr "Dagelijks ritme"
 
-#: src/stats/imp.rs:448
+#: src/stats/imp.rs:452
 msgid "No sessions yet"
 msgstr "Nog geen sessies"
 
-#: src/stats/imp.rs:449
+#: src/stats/imp.rs:453
 msgid "Complete a meditation to start seeing insights here"
 msgstr "Voltooi een meditatie om hier inzichten te zien"
+
+#: src/stats/imp.rs:638
+#, fuzzy
+msgid "{duration} · 1 session"
+msgstr "{date} — geen sessies"
+
+#: src/stats/imp.rs:641
+#, fuzzy
+msgid "{duration} · {count} sessions"
+msgstr "{date} — geen sessies"
 
 #: src/timer/imp.rs:287
 msgid "Paused"
@@ -752,6 +762,11 @@ msgstr "Totaal"
 #: data/ui/stats_view.blp:280
 msgid "Sessions"
 msgstr "Sessies"
+
+#: data/ui/stats_view.blp:296
+#, fuzzy
+msgid "By label"
+msgstr "Nieuw label"
 
 #: data/ui/timer_view.blp:66
 msgid "Countdown"

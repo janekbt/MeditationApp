@@ -283,6 +283,27 @@ template $StatsView : Gtk.Widget {
             }
           }
         }
+
+        // ── By-label breakdown ───────────────────────────────────────
+        // Hidden by default — reload_label_totals() shows it only when
+        // at least one session has a label attached.
+        Gtk.Box label_totals_section {
+          orientation: vertical;
+          spacing: 8;
+          visible: false;
+
+          Gtk.Label {
+            label: _("By label");
+            css-classes: ["stats-eyebrow"];
+            halign: start;
+            margin-start: 6;
+          }
+
+          Gtk.ListBox label_totals_list {
+            css-classes: ["boxed-list"];
+            selection-mode: none;
+          }
+        }
       };
     };
   }

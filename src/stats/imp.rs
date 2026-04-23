@@ -36,6 +36,9 @@ pub struct StatsView {
     #[template_child] pub mini_streak_value:    TemplateChild<gtk::Label>,
     #[template_child] pub mini_total_value:     TemplateChild<gtk::Label>,
     #[template_child] pub mini_sessions_value:  TemplateChild<gtk::Label>,
+    // By-label breakdown
+    #[template_child] pub label_totals_section: TemplateChild<gtk::Box>,
+    #[template_child] pub label_totals_list:    TemplateChild<gtk::ListBox>,
 
     // State
     /// 91 contribution cells, column-major (col × 7 + row). Each cell is a
@@ -152,6 +155,7 @@ impl StatsView {
         self.reload_insights();
         self.reload_chart();
         self.reload_mini_stats();
+        self.reload_label_totals();
     }
 
     fn reload_goal_ring(&self) {
@@ -606,6 +610,45 @@ impl StatsView {
         self.mini_sessions_value.set_label(
             &if sessions == 0 { "–".to_string() } else { sessions.to_string() }
         );
+    }
+
+    fn reload_label_totals(&self) {
+        // Clear any prior rows — refresh is called on every tab entry and
+        // after label rename/delete, so we can't count on stability.
+        while let Some(c) = self.label_totals_list.first_child() {
+            self.label_totals_list.remove(&c);
+        }
+
+        let totals = self.get_app()
+            .and_then(|app| app.with_db(|db| db.get_label_totals().unwrap_or_default()))
+            .unwrap_or_default();
+
+        if totals.is_empty() {
+            // No labeled sessions yet — hide the section entirely rather
+            // than show an empty list.
+            self.label_totals_section.set_visible(false);
+            return;
+        }
+        self.label_totals_section.set_visible(true);
+
+        for (name, total_secs, n) in totals {
+            // Two-form plural split, matching preferences.rs's
+            // pluralize_sessions — catalogs carry both msgids.
+            let subtitle = if n == 1 {
+                crate::i18n::gettext("{duration} · 1 session")
+                    .replace("{duration}", &format_hm_secs(total_secs))
+            } else {
+                crate::i18n::gettext("{duration} · {count} sessions")
+                    .replace("{duration}", &format_hm_secs(total_secs))
+                    .replace("{count}", &n.to_string())
+            };
+            let row = adw::ActionRow::builder()
+                .title(&name)
+                .subtitle(&subtitle)
+                .activatable(false)
+                .build();
+            self.label_totals_list.append(&row);
+        }
     }
 
     fn current_chart_days(&self) -> u32 {

@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-23 21:58+0200\n"
+"POT-Creation-Date: 2026-04-23 22:30+0200\n"
 "PO-Revision-Date: 2026-04-20 18:32+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Simplified Chinese\n"
@@ -471,136 +471,146 @@ msgstr "导入失败：{error}"
 msgid "No file selected"
 msgstr "未选择文件"
 
-#: src/stats/imp.rs:190
+#: src/stats/imp.rs:194
 msgid "Goal reached ✓ · {duration} this week"
 msgstr "已达成目标 ✓ · 本周 {duration}"
 
-#: src/stats/imp.rs:193
+#: src/stats/imp.rs:197
 msgid "{duration} to go this week"
 msgstr "本周还需 {duration}"
 
 #. Accessible name for the Cairo-drawn ring — no intrinsic text for
 #. screen readers to fall back on.
-#: src/stats/imp.rs:200
+#: src/stats/imp.rs:204
 msgid "Weekly goal: {pct}% — {done} of {goal}"
 msgstr "每周目标：{pct}% — {done} / {goal}"
 
-#: src/stats/imp.rs:278
+#: src/stats/imp.rs:282
 msgid "{date} — goal exceeded, {mins} minutes"
 msgstr "{date} — 超额达成目标，{mins} 分钟"
 
-#: src/stats/imp.rs:282
+#: src/stats/imp.rs:286
 msgid "{date} — {mins} minutes"
 msgstr "{date} — {mins} 分钟"
 
-#: src/stats/imp.rs:286
+#: src/stats/imp.rs:290
 msgid "{date} — no sessions"
 msgstr "{date} — 无会话"
 
-#: src/stats/imp.rs:335
+#: src/stats/imp.rs:339
 msgid "{n} days — new record"
 msgstr "{n} 天 — 新纪录"
 
-#: src/stats/imp.rs:338
+#: src/stats/imp.rs:342
 msgid "{n} days · best was {best}"
 msgstr "{n} 天 · 最高纪录为 {best}"
 
-#: src/stats/imp.rs:342
+#: src/stats/imp.rs:346
 msgid "1 day · keep going"
 msgstr "1 天 · 继续保持"
 
-#: src/stats/imp.rs:345
+#: src/stats/imp.rs:349
 msgid "Current streak"
 msgstr "当前连续天数"
 
-#: src/stats/imp.rs:354
+#: src/stats/imp.rs:358
 #, c-format
 msgid "{pct}% up vs last week ({this} vs {last})"
 msgstr "较上周增加 {pct}%（{this} vs {last}）"
 
-#: src/stats/imp.rs:356
+#: src/stats/imp.rs:360
 #, c-format
 msgid "{pct}% down vs last week ({this} vs {last})"
 msgstr "较上周减少 {pct}%（{this} vs {last}）"
 
-#: src/stats/imp.rs:362
+#: src/stats/imp.rs:366
 msgid "This week's practice"
 msgstr "本周练习"
 
-#: src/stats/imp.rs:370
+#: src/stats/imp.rs:374
 msgid "Practising more"
 msgstr "练习增多"
 
-#: src/stats/imp.rs:372
+#: src/stats/imp.rs:376
 msgid "Practising less"
 msgstr "练习减少"
 
-#: src/stats/imp.rs:374
+#: src/stats/imp.rs:378
 msgid "{pct}% vs last month ({this} vs {last})"
 msgstr "较上月变化 {pct}%（{this} vs {last}）"
 
-#: src/stats/imp.rs:387
+#: src/stats/imp.rs:391
 #, c-format
 msgid "{pct}% of sessions are in the morning"
 msgstr "{pct}% 的会话在上午进行"
 
-#: src/stats/imp.rs:389
+#: src/stats/imp.rs:393
 #, c-format
 msgid "{pct}% of sessions are in the evening"
 msgstr "{pct}% 的会话在晚上进行"
 
-#: src/stats/imp.rs:391
+#: src/stats/imp.rs:395
 #, c-format
 msgid "{pct}% of sessions are in the afternoon"
 msgstr "{pct}% 的会话在下午进行"
 
-#: src/stats/imp.rs:395
+#: src/stats/imp.rs:399
 msgid "Preferred time"
 msgstr "偏好时段"
 
-#: src/stats/imp.rs:401
+#: src/stats/imp.rs:405
 msgid "About {duration}"
 msgstr "约 {duration}"
 
-#: src/stats/imp.rs:403
+#: src/stats/imp.rs:407
 msgid "Typical session"
 msgstr "典型时长"
 
-#: src/stats/imp.rs:412
+#: src/stats/imp.rs:416
 msgid "{duration} on {date}"
 msgstr "{duration}（{date}）"
 
-#: src/stats/imp.rs:417
+#: src/stats/imp.rs:421
 msgid "Longest session"
 msgstr "最长会话"
 
-#: src/stats/imp.rs:425
+#: src/stats/imp.rs:429
 msgid "1 session to your {target}th"
 msgstr "距第 {target} 次还剩 1 条会话"
 
-#: src/stats/imp.rs:428
+#: src/stats/imp.rs:432
 msgid "{n} sessions to your {target}th"
 msgstr "距第 {target} 次还剩 {n} 条会话"
 
-#: src/stats/imp.rs:432
+#: src/stats/imp.rs:436
 msgid "Next milestone"
 msgstr "下一里程碑"
 
-#: src/stats/imp.rs:439
+#: src/stats/imp.rs:443
 msgid "{duration} average over last 7 days"
 msgstr "过去 7 天平均 {duration}"
 
-#: src/stats/imp.rs:441
+#: src/stats/imp.rs:445
 msgid "Daily rhythm"
 msgstr "每日节奏"
 
-#: src/stats/imp.rs:448
+#: src/stats/imp.rs:452
 msgid "No sessions yet"
 msgstr "暂无会话"
 
-#: src/stats/imp.rs:449
+#: src/stats/imp.rs:453
 msgid "Complete a meditation to start seeing insights here"
 msgstr "完成一次冥想后，这里将显示分析"
+
+#: src/stats/imp.rs:638
+#, fuzzy
+msgid "{duration} · 1 session"
+msgstr "{date} — 无会话"
+
+#: src/stats/imp.rs:641
+#, fuzzy
+msgid "{duration} · {count} sessions"
+msgstr "{date} — 无会话"
 
 #: src/timer/imp.rs:287
 msgid "Paused"
@@ -749,6 +759,11 @@ msgstr "总计"
 #: data/ui/stats_view.blp:280
 msgid "Sessions"
 msgstr "会话"
+
+#: data/ui/stats_view.blp:296
+#, fuzzy
+msgid "By label"
+msgstr "新建标签"
 
 #: data/ui/timer_view.blp:66
 msgid "Countdown"
