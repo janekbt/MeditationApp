@@ -26,7 +26,7 @@ use std::io::BufReader;
 use std::path::Path;
 
 use crate::application::MeditateApplication;
-use crate::db::{Session, SessionData, SessionMode};
+use crate::db::{Database, Session, SessionData, SessionMode};
 
 /// Everything that can go wrong during import or export, collapsed into a
 /// single user-facing error type so the caller can just show a toast.
@@ -76,10 +76,14 @@ pub fn suggested_export_filename() -> String {
 /// Write every session in the DB to `path` as CSV. Returns how many rows
 /// were written.
 pub fn export_csv(app: &MeditateApplication, path: &Path) -> Result<usize, DataIoError> {
-    // Collect label names in one pass so the CSV can carry names, not ids.
-    let labels: std::collections::HashMap<i64, String> = app
-        .with_db(|db| db.list_labels())
-        .ok_or(DataIoError::NoDatabase)??
+    app.with_db(|db| export_csv_to_db(db, path))
+        .ok_or(DataIoError::NoDatabase)?
+}
+
+/// Core of `export_csv` against an open `Database`. Split out so the full
+/// export → import round-trip is testable without a live `GApplication`.
+pub(crate) fn export_csv_to_db(db: &Database, path: &Path) -> Result<usize, DataIoError> {
+    let labels: std::collections::HashMap<i64, String> = db.list_labels()?
         .into_iter()
         .map(|l| (l.id, l.name))
         .collect();
@@ -89,27 +93,21 @@ pub fn export_csv(app: &MeditateApplication, path: &Path) -> Result<usize, DataI
     wtr.write_record(["start_time_unix", "duration_secs", "mode", "label", "note"])?;
 
     let mut n = 0usize;
-    let result: Result<(), DataIoError> = app
-        .with_db(|db| -> Result<(), DataIoError> {
-            db.for_each_session(|s: &Session| {
-                let label = s.label_id
-                    .and_then(|id| labels.get(&id).cloned())
-                    .unwrap_or_default();
-                let note = s.note.clone().unwrap_or_default();
-                wtr.write_record([
-                    s.start_time.to_string(),
-                    s.duration_secs.to_string(),
-                    s.mode.as_str().to_string(),
-                    label,
-                    note,
-                ]).map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-                n += 1;
-                Ok(())
-            })?;
-            Ok(())
-        })
-        .ok_or(DataIoError::NoDatabase)?;
-    result?;
+    db.for_each_session(|s: &Session| {
+        let label = s.label_id
+            .and_then(|id| labels.get(&id).cloned())
+            .unwrap_or_default();
+        let note = s.note.clone().unwrap_or_default();
+        wtr.write_record([
+            s.start_time.to_string(),
+            s.duration_secs.to_string(),
+            s.mode.as_str().to_string(),
+            label,
+            note,
+        ]).map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+        n += 1;
+        Ok(())
+    })?;
     wtr.flush()?;
     Ok(n)
 }
@@ -117,6 +115,13 @@ pub fn export_csv(app: &MeditateApplication, path: &Path) -> Result<usize, DataI
 // ── Native-format import ──────────────────────────────────────────────────────
 
 pub fn import_csv(app: &MeditateApplication, path: &Path) -> Result<usize, DataIoError> {
+    app.with_db(|db| import_csv_to_db(db, path))
+        .ok_or(DataIoError::NoDatabase)?
+}
+
+/// Core of `import_csv` against an open `Database`. Split out for the
+/// round-trip test.
+pub(crate) fn import_csv_to_db(db: &Database, path: &Path) -> Result<usize, DataIoError> {
     let file = File::open(path)?;
     let mut rdr = csv::Reader::from_reader(BufReader::new(file));
 
@@ -161,12 +166,17 @@ pub fn import_csv(app: &MeditateApplication, path: &Path) -> Result<usize, DataI
         rows.push((start_time, duration_secs, mode, note, label_idx));
     }
 
-    insert_with_label_lookup(app, &label_names, &rows)
+    insert_sessions_with_labels(db, &label_names, &rows)
 }
 
 // ── Insight Timer import ──────────────────────────────────────────────────────
 
 pub fn import_insighttimer(app: &MeditateApplication, path: &Path) -> Result<usize, DataIoError> {
+    app.with_db(|db| import_insighttimer_to_db(db, path))
+        .ok_or(DataIoError::NoDatabase)?
+}
+
+pub(crate) fn import_insighttimer_to_db(db: &Database, path: &Path) -> Result<usize, DataIoError> {
     let file = File::open(path)?;
     let mut rdr = csv::Reader::from_reader(BufReader::new(file));
 
@@ -205,7 +215,7 @@ pub fn import_insighttimer(app: &MeditateApplication, path: &Path) -> Result<usi
         rows.push((start_time, duration_secs, SessionMode::Countdown, None, label_idx));
     }
 
-    insert_with_label_lookup(app, &label_names, &rows)
+    insert_sessions_with_labels(db, &label_names, &rows)
 }
 
 // ── Delete all ────────────────────────────────────────────────────────────────
@@ -221,28 +231,25 @@ pub fn delete_all(app: &MeditateApplication) -> Result<usize, DataIoError> {
 /// Resolve the accumulated `label_names` to ids (creating missing labels)
 /// and bulk-insert the `rows`. `usize::MAX` in the label-index column means
 /// "no label".
-fn insert_with_label_lookup(
-    app: &MeditateApplication,
+fn insert_sessions_with_labels(
+    db: &Database,
     label_names: &[String],
     rows: &[(i64, i64, SessionMode, Option<String>, usize)],
 ) -> Result<usize, DataIoError> {
-    app.with_db(|db| -> Result<usize, DataIoError> {
-        let mut label_ids: Vec<i64> = Vec::with_capacity(label_names.len());
-        for name in label_names {
-            label_ids.push(db.find_or_create_label(name)?);
-        }
-        let sessions: Vec<SessionData> = rows.iter()
-            .map(|(start_time, duration_secs, mode, note, label_idx)| SessionData {
-                start_time:    *start_time,
-                duration_secs: *duration_secs,
-                mode:          mode.clone(),
-                label_id:      (*label_idx != usize::MAX).then(|| label_ids[*label_idx]),
-                note:          note.clone(),
-            })
-            .collect();
-        Ok(db.bulk_insert_sessions(&sessions)?)
-    })
-    .ok_or(DataIoError::NoDatabase)?
+    let mut label_ids: Vec<i64> = Vec::with_capacity(label_names.len());
+    for name in label_names {
+        label_ids.push(db.find_or_create_label(name)?);
+    }
+    let sessions: Vec<SessionData> = rows.iter()
+        .map(|(start_time, duration_secs, mode, note, label_idx)| SessionData {
+            start_time:    *start_time,
+            duration_secs: *duration_secs,
+            mode:          mode.clone(),
+            label_id:      (*label_idx != usize::MAX).then(|| label_ids[*label_idx]),
+            note:          note.clone(),
+        })
+        .collect();
+    Ok(db.bulk_insert_sessions(&sessions)?)
 }
 
 /// Parse `MM/DD/YYYY HH:MM:SS` as local time and return the unix timestamp.
@@ -342,5 +349,78 @@ mod tests {
         assert_eq!(parse_insighttimer_datetime("xx/yy/zzzz 08:30:00"), None);
         assert_eq!(parse_insighttimer_datetime("04/21/2026 08:30"), None); // missing seconds
         assert_eq!(parse_insighttimer_datetime("13/21/2026 08:30:00"), None); // month 13
+    }
+
+    // ── Native CSV round-trip ────────────────────────────────────────────────
+
+    #[test]
+    fn csv_export_import_roundtrip_preserves_sessions() {
+        use crate::db::{SessionFilter, test_db_in_memory};
+
+        let db = test_db_in_memory();
+
+        // Seed labels and three sessions covering the shape matrix:
+        //   1) labeled + note      — normal case, plus CSV quoting on the note
+        //   2) labeled + no note   — covers the `None` → empty-string branch
+        //   3) no label + note     — covers the `Option<label_id>` None branch
+        let morning = db.create_label("Morning").unwrap().id;
+        let evening = db.create_label("Evening").unwrap().id;
+
+        let originals = [
+            SessionData {
+                start_time: 1_712_000_000,
+                duration_secs: 600,
+                mode: SessionMode::Countdown,
+                label_id: Some(morning),
+                // Commas and a quote to exercise CSV escaping on the note column.
+                note: Some("first sit, \"nice\" focus".to_string()),
+            },
+            SessionData {
+                start_time: 1_712_086_400,
+                duration_secs: 1200,
+                mode: SessionMode::Stopwatch,
+                label_id: Some(evening),
+                note: None,
+            },
+            SessionData {
+                start_time: 1_712_172_800,
+                duration_secs: 300,
+                mode: SessionMode::Countdown,
+                label_id: None,
+                note: Some("no label on this one".to_string()),
+            },
+        ];
+        for s in &originals {
+            db.create_session(s).unwrap();
+        }
+
+        // Export to a tempfile, wipe sessions (keeping the labels so the
+        // import's case-insensitive lookup resolves back to the same ids),
+        // then import.
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let written = export_csv_to_db(&db, tmp.path()).unwrap();
+        assert_eq!(written, originals.len());
+
+        db.delete_all_sessions().unwrap();
+        assert_eq!(db.get_session_count().unwrap(), 0);
+
+        let imported = import_csv_to_db(&db, tmp.path()).unwrap();
+        assert_eq!(imported, originals.len());
+
+        // Pull the sessions back and compare. list_sessions returns them in
+        // descending start_time order — reverse so we can index parallel to
+        // `originals` which is ascending.
+        let mut rows = db.list_sessions(&SessionFilter::default()).unwrap();
+        rows.reverse();
+        assert_eq!(rows.len(), originals.len());
+
+        for (orig, got) in originals.iter().zip(rows.iter()) {
+            assert_eq!(got.start_time, orig.start_time);
+            assert_eq!(got.duration_secs, orig.duration_secs);
+            assert_eq!(got.mode, orig.mode);
+            assert_eq!(got.note, orig.note);
+            assert_eq!(got.label_id, orig.label_id,
+                "label_id mismatch: import should have resolved case-insensitively back to the same row");
+        }
     }
 }

@@ -549,6 +549,12 @@ impl Database {
     /// Average daily meditation time (in seconds) over the last `days` days.
     /// Days with no sessions count as zero.
     pub fn get_running_average_secs(&self, days: u32) -> Result<f64> {
+        // days == 0 would underflow `days - 1` below and divide-by-zero
+        // on the final mean. No caller passes 0 today, but guarding here
+        // keeps the contract total.
+        if days == 0 {
+            return Ok(0.0);
+        }
         // Compute the since-date in local time via SQLite so the boundary is
         // local midnight, not UTC midnight. We then hand the string to
         // strftime('%s', …, 'utc') inside the SUM query to turn it into a
@@ -705,6 +711,17 @@ impl Database {
     }
 }
 
+/// In-memory DB with the schema migrated. Module-level so tests in sibling
+/// files (e.g. `data_io`) can construct a `Database` without access to the
+/// private `conn` field.
+#[cfg(test)]
+pub(crate) fn test_db_in_memory() -> Database {
+    let conn = Connection::open_in_memory().unwrap();
+    let db = Database { conn };
+    db.migrate().unwrap();
+    db
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -736,6 +753,238 @@ mod tests {
         for mode in [SessionMode::Countdown, SessionMode::Stopwatch] {
             assert_eq!(SessionMode::from_str(mode.as_str()), mode);
         }
+    }
+
+    // ── Tier B: in-memory integration tests ───────────────────────────────────
+
+    fn fresh_db() -> Database { super::test_db_in_memory() }
+
+    /// UTC unix timestamp of `days_ago` local-days back, at `hh:mm` local.
+    /// Computed via SQLite so the timezone math matches the queries under
+    /// test exactly — cross-TZ test runners agree.
+    fn local_ts(db: &Database, days_ago: i64, hh: i64, mm: i64) -> i64 {
+        db.conn.query_row(
+            "SELECT CAST(strftime('%s', 'now', 'localtime',
+                                  '-' || ?1 || ' days',
+                                  'start of day',
+                                  '+' || ?2 || ' hours',
+                                  '+' || ?3 || ' minutes',
+                                  'utc') AS INTEGER)",
+            params![days_ago, hh, mm],
+            |r| r.get(0),
+        ).unwrap()
+    }
+
+    fn seed_session(db: &Database, start_time: i64, duration_secs: i64, label_id: Option<i64>) {
+        db.create_session(&SessionData {
+            start_time,
+            duration_secs,
+            mode: SessionMode::Countdown,
+            label_id,
+            note: None,
+        }).unwrap();
+    }
+
+    // ── migrate ───────────────────────────────────────────────────────────────
+
+    #[test]
+    fn migrate_is_idempotent() {
+        let db = fresh_db();
+        // Running migrate twice more on an already-migrated DB must be a no-op
+        // (no duplicate schema_migrations rows, no errors).
+        db.migrate().unwrap();
+        db.migrate().unwrap();
+
+        let versions: Vec<i64> = db.conn
+            .prepare("SELECT version FROM schema_migrations ORDER BY version").unwrap()
+            .query_map([], |r| r.get::<_, i64>(0)).unwrap()
+            .collect::<Result<_>>().unwrap();
+        // If you add a migration in migrate(), extend this list — the assertion
+        // is deliberately exact so an accidental duplicate insert shows up here.
+        assert_eq!(versions, vec![1, 2]);
+    }
+
+    // ── unique_label_name ─────────────────────────────────────────────────────
+
+    #[test]
+    fn unique_label_name_no_collision() {
+        let db = fresh_db();
+        assert_eq!(db.unique_label_name("Morning").unwrap(), "Morning");
+    }
+
+    #[test]
+    fn unique_label_name_collision_chain() {
+        let db = fresh_db();
+        db.create_label("Morning").unwrap();
+        assert_eq!(db.unique_label_name("Morning").unwrap(), "Morning 2");
+        db.create_label("Morning").unwrap();
+        assert_eq!(db.unique_label_name("Morning").unwrap(), "Morning 3");
+        db.create_label("Morning").unwrap();
+        assert_eq!(db.unique_label_name("Morning").unwrap(), "Morning 4");
+    }
+
+    // ── Streak (gap-and-island SQL) ───────────────────────────────────────────
+
+    #[test]
+    fn streak_empty_db_is_zero() {
+        let db = fresh_db();
+        assert_eq!(db.get_streak().unwrap(), 0);
+        assert_eq!(db.get_best_streak().unwrap(), 0);
+    }
+
+    #[test]
+    fn streak_today_only() {
+        let db = fresh_db();
+        seed_session(&db, local_ts(&db, 0, 12, 0), 600, None);
+        assert_eq!(db.get_streak().unwrap(), 1);
+        assert_eq!(db.get_best_streak().unwrap(), 1);
+    }
+
+    #[test]
+    fn streak_yesterday_only_still_counts() {
+        let db = fresh_db();
+        seed_session(&db, local_ts(&db, 1, 12, 0), 600, None);
+        // One grace day: a session yesterday keeps the streak alive until end
+        // of today. Without this grace, the streak would flip to 0 at midnight.
+        assert_eq!(db.get_streak().unwrap(), 1);
+    }
+
+    #[test]
+    fn streak_two_days_ago_is_broken() {
+        let db = fresh_db();
+        seed_session(&db, local_ts(&db, 2, 12, 0), 600, None);
+        // Older than yesterday → current streak is 0 even though best is 1.
+        assert_eq!(db.get_streak().unwrap(), 0);
+        assert_eq!(db.get_best_streak().unwrap(), 1);
+    }
+
+    #[test]
+    fn streak_consecutive_run_of_five() {
+        let db = fresh_db();
+        for d in 0..5 {
+            seed_session(&db, local_ts(&db, d, 12, 0), 600, None);
+        }
+        assert_eq!(db.get_streak().unwrap(), 5);
+        assert_eq!(db.get_best_streak().unwrap(), 5);
+    }
+
+    #[test]
+    fn streak_gap_separates_current_from_best() {
+        let db = fresh_db();
+        // Old 6-day run.
+        for d in [30, 29, 28, 27, 26, 25] {
+            seed_session(&db, local_ts(&db, d, 12, 0), 600, None);
+        }
+        // Then a gap, then a current 3-day run.
+        for d in [2, 1, 0] {
+            seed_session(&db, local_ts(&db, d, 12, 0), 600, None);
+        }
+        assert_eq!(db.get_streak().unwrap(), 3);
+        assert_eq!(db.get_best_streak().unwrap(), 6);
+    }
+
+    #[test]
+    fn streak_multiple_sessions_same_day_count_once() {
+        let db = fresh_db();
+        seed_session(&db, local_ts(&db, 0, 9, 0), 600, None);
+        seed_session(&db, local_ts(&db, 0, 18, 0), 600, None);
+        assert_eq!(db.get_streak().unwrap(), 1);
+        assert_eq!(db.get_best_streak().unwrap(), 1);
+    }
+
+    // ── Running average ───────────────────────────────────────────────────────
+
+    #[test]
+    fn running_average_zero_days_returns_zero() {
+        let db = fresh_db();
+        // Guarded; without the early return, days - 1 underflows and panics.
+        assert_eq!(db.get_running_average_secs(0).unwrap(), 0.0);
+    }
+
+    #[test]
+    fn running_average_empty_window() {
+        let db = fresh_db();
+        assert_eq!(db.get_running_average_secs(7).unwrap(), 0.0);
+    }
+
+    #[test]
+    fn running_average_divides_by_window_not_session_count() {
+        let db = fresh_db();
+        // 600s today + 600s yesterday → 1200 over the 7-day window.
+        seed_session(&db, local_ts(&db, 0, 12, 0), 600, None);
+        seed_session(&db, local_ts(&db, 1, 12, 0), 600, None);
+        let avg = db.get_running_average_secs(7).unwrap();
+        assert!((avg - 1200.0 / 7.0).abs() < 1e-6, "avg was {avg}");
+    }
+
+    #[test]
+    fn running_average_excludes_sessions_before_window() {
+        let db = fresh_db();
+        // In-window (6 days ago, still inside the 7-day count incl. today).
+        seed_session(&db, local_ts(&db, 6, 12, 0), 300, None);
+        // Out-of-window (8 days ago).
+        seed_session(&db, local_ts(&db, 8, 12, 0), 9999, None);
+        let avg = db.get_running_average_secs(7).unwrap();
+        assert!((avg - 300.0 / 7.0).abs() < 1e-6, "avg was {avg}");
+    }
+
+    // ── Daily totals (local-midnight grouping) ───────────────────────────────
+
+    #[test]
+    fn daily_totals_groups_by_local_date() {
+        let db = fresh_db();
+        // Session at 23:55 local on today must group into today's bucket
+        // even though its UTC date may be tomorrow.
+        seed_session(&db, local_ts(&db, 0, 23, 55), 300, None);
+        // A second session at 00:05 local on today — same local date.
+        seed_session(&db, local_ts(&db, 0, 0, 5), 300, None);
+        // A session on an earlier day, to prove grouping actually separates.
+        seed_session(&db, local_ts(&db, 3, 12, 0), 600, None);
+
+        let since: String = db.conn.query_row(
+            "SELECT strftime('%Y-%m-%d', 'now', '-7 days', 'localtime')",
+            [], |r| r.get(0),
+        ).unwrap();
+        let totals = db.get_daily_totals(&since).unwrap();
+        assert_eq!(totals.len(), 2, "expected two distinct local dates, got {totals:?}");
+        // Sorted ascending by day: older day first.
+        assert_eq!(totals[0].1, 600);
+        assert_eq!(totals[1].1, 600); // 300 + 300 collapsed onto today
+    }
+
+    // ── Median ───────────────────────────────────────────────────────────────
+
+    #[test]
+    fn median_empty_db_is_none() {
+        let db = fresh_db();
+        assert_eq!(db.get_median_duration_secs().unwrap(), None);
+    }
+
+    #[test]
+    fn median_single_row() {
+        let db = fresh_db();
+        seed_session(&db, local_ts(&db, 0, 12, 0), 600, None);
+        assert_eq!(db.get_median_duration_secs().unwrap(), Some(600));
+    }
+
+    #[test]
+    fn median_odd_count_is_middle() {
+        let db = fresh_db();
+        for (i, secs) in [100, 500, 700, 1000, 2000].iter().enumerate() {
+            seed_session(&db, local_ts(&db, i as i64, 12, 0), *secs, None);
+        }
+        assert_eq!(db.get_median_duration_secs().unwrap(), Some(700));
+    }
+
+    #[test]
+    fn median_even_count_takes_lower_of_two_middles() {
+        let db = fresh_db();
+        // Values 100, 500, 700, 1000 sorted ascending; the two middles are
+        // 500 and 700. Lower-median rule returns 500, not the mean of 600.
+        for (i, secs) in [100, 500, 700, 1000].iter().enumerate() {
+            seed_session(&db, local_ts(&db, i as i64, 12, 0), *secs, None);
+        }
+        assert_eq!(db.get_median_duration_secs().unwrap(), Some(500));
     }
 }
 
