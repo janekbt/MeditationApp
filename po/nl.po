@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-21 01:24+0200\n"
+"POT-Creation-Date: 2026-04-23 21:34+0200\n"
 "PO-Revision-Date: 2026-04-20 18:26+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Dutch\n"
@@ -16,27 +16,27 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
-#: src/application.rs:98 data/io.github.janekbt.Meditate.metainfo.xml.in:93
+#: src/application.rs:118 data/io.github.janekbt.Meditate.metainfo.xml.in:122
 msgid "Initial release."
 msgstr "Eerste uitgave."
 
-#: src/application.rs:99
+#: src/application.rs:119
 msgid "Countdown and stopwatch timer"
 msgstr "Aftel- en stopwatchtimer"
 
-#: src/application.rs:100
+#: src/application.rs:120
 msgid "Session log with labels and notes"
 msgstr "Sessielogboek met labels en notities"
 
-#: src/application.rs:101
+#: src/application.rs:121
 msgid "Statistics: calendar, bar chart, streaks"
 msgstr "Statistieken: kalender, staafdiagram, reeksen"
 
-#: src/application.rs:102
+#: src/application.rs:122
 msgid "Completion sounds (bowl, bell, gong, or custom file)"
 msgstr "Eindgeluiden (klankschaal, bel, gong of eigen bestand)"
 
-#: src/application.rs:103
+#: src/application.rs:123
 msgid "Adaptive layout for desktop and phone"
 msgstr "Adaptieve lay-out voor desktop en mobiel"
 
@@ -60,109 +60,112 @@ msgstr "Databasefout"
 msgid "Database unavailable"
 msgstr "Database niet beschikbaar"
 
-#: src/log/imp.rs:229
+#: src/log/imp.rs:282
 msgid "All labels"
 msgstr "Alle labels"
 
-#: src/log/imp.rs:314
+#. Lowercase in source; the .log-unit CSS class renders it uppercase
+#. (HIG forbids all-caps in source text).
+#: src/log/imp.rs:367
 msgid "min"
 msgstr "min"
 
-#: src/log/imp.rs:345
+#: src/log/imp.rs:398
 msgid "No note added"
 msgstr "Geen notitie"
 
-#: src/log/imp.rs:387
+#: src/log/imp.rs:440
 msgid "Delete Session"
 msgstr "Sessie verwijderen"
 
-#: src/log/imp.rs:508
+#: src/log/imp.rs:561
 msgid "Today"
 msgstr "Vandaag"
 
-#: src/log/imp.rs:511
+#: src/log/imp.rs:564
 msgid "Yesterday"
 msgstr "Gisteren"
 
-#: src/log/imp.rs:529
+#: src/log/imp.rs:582
 msgid "1 session"
 msgstr "1 sessie"
 
-#: src/log/imp.rs:531
+#: src/log/imp.rs:584
 msgid "{n} sessions"
 msgstr "{n} sessies"
 
-#: src/log/imp.rs:559
+#: src/log/imp.rs:612
 msgid "Session deleted"
 msgstr "Sessie verwijderd"
 
-#: src/log/imp.rs:560 src/preferences.rs:661
+#: src/log/imp.rs:613 src/preferences.rs:627
 msgid "Undo"
 msgstr "Ongedaan maken"
 
-#: src/log/imp.rs:653 src/timer/imp.rs:772
+#: src/log/imp.rs:707 src/timer/imp.rs:795
 msgid "Hours"
 msgstr "Uren"
 
-#: src/log/imp.rs:658 src/preferences.rs:375 src/timer/imp.rs:779
+#: src/log/imp.rs:712 src/preferences.rs:338 src/timer/imp.rs:802
 msgid "Minutes"
 msgstr "Minuten"
 
-#: src/log/imp.rs:675
+#: src/log/imp.rs:729
 msgid "Date"
 msgstr "Datum"
 
-#: src/log/imp.rs:692
+#: src/log/imp.rs:746
 msgid "Pick a Date"
 msgstr "Datum kiezen"
 
-#: src/log/imp.rs:717
+#: src/log/imp.rs:771
 msgid "Hour"
 msgstr "Uur"
 
-#: src/log/imp.rs:722
+#: src/log/imp.rs:776
 msgid "Minute"
 msgstr "Minuut"
 
-#: src/log/imp.rs:728 src/preferences.rs:37 src/timer/imp.rs:624
-#: src/timer/imp.rs:653 src/timer/imp.rs:840 src/timer/imp.rs:867
+#. ── Label row ──────────────────────────────────────────────────
+#: src/log/imp.rs:782 src/preferences.rs:37 src/timer/imp.rs:644
+#: src/timer/imp.rs:676 src/timer/imp.rs:863 src/timer/imp.rs:890
 msgid "None"
 msgstr "Geen"
 
-#: src/log/imp.rs:733 data/ui/timer_view.blp:127 data/ui/timer_view.blp:227
+#: src/log/imp.rs:787 data/ui/timer_view.blp:127 data/ui/timer_view.blp:227
 #: data/ui/window.blp:69
 msgid "Label"
 msgstr "Label"
 
-#: src/log/imp.rs:769 data/ui/timer_view.blp:203
+#: src/log/imp.rs:823 data/ui/timer_view.blp:203
 msgid "Note (optional)"
 msgstr "Notitie (optioneel)"
 
-#: src/log/imp.rs:789
+#: src/log/imp.rs:843
 msgid "Duration"
 msgstr "Duur"
 
-#: src/log/imp.rs:795
+#: src/log/imp.rs:849
 msgid "Start time"
 msgstr "Starttijd"
 
-#: src/log/imp.rs:824
+#: src/log/imp.rs:878
 msgid "_Cancel"
 msgstr "_Annuleren"
 
-#: src/log/imp.rs:828
+#: src/log/imp.rs:882
 msgid "_Save"
 msgstr "Op_slaan"
 
-#: src/log/imp.rs:828
+#: src/log/imp.rs:882
 msgid "_Add"
 msgstr "_Toevoegen"
 
-#: src/log/imp.rs:842
+#: src/log/imp.rs:896
 msgid "Edit Session"
 msgstr "Sessie bewerken"
 
-#: src/log/imp.rs:842 data/ui/log_view.blp:18 data/ui/window.blp:79
+#: src/log/imp.rs:896 data/ui/log_view.blp:18 data/ui/window.blp:79
 msgid "Add Session"
 msgstr "Sessie toevoegen"
 
@@ -178,19 +181,19 @@ msgstr "Algemeen"
 msgid "Sound"
 msgstr "Geluid"
 
-#: src/preferences.rs:38 src/timer/imp.rs:625
+#: src/preferences.rs:38 src/timer/imp.rs:645
 msgid "Singing bowl"
 msgstr "Klankschaal"
 
-#: src/preferences.rs:39 src/timer/imp.rs:626
+#: src/preferences.rs:39 src/timer/imp.rs:646
 msgid "Bell"
 msgstr "Bel"
 
-#: src/preferences.rs:40 src/timer/imp.rs:627
+#: src/preferences.rs:40 src/timer/imp.rs:647
 msgid "Gong"
 msgstr "Gong"
 
-#: src/preferences.rs:41 src/timer/imp.rs:628
+#: src/preferences.rs:41 src/timer/imp.rs:648
 msgid "Custom file…"
 msgstr "Eigen bestand…"
 
@@ -230,209 +233,200 @@ msgstr "Haptische feedback als de timer afloopt (alleen mobiel)"
 msgid "Statistics"
 msgstr "Statistieken"
 
-#: src/preferences.rs:251
-msgid "7 days"
-msgstr "7 dagen"
-
-#: src/preferences.rs:252
-msgid "14 days"
-msgstr "14 dagen"
-
-#: src/preferences.rs:253
-msgid "30 days"
-msgstr "30 dagen"
-
-#: src/preferences.rs:257
-msgid "Running average period"
-msgstr "Periode voor lopend gemiddelde"
-
-#: src/preferences.rs:295 data/ui/stats_view.blp:51
+#: src/preferences.rs:257 data/ui/stats_view.blp:51
 msgid "Weekly goal"
 msgstr "Wekelijks doel"
 
-#: src/preferences.rs:296
+#: src/preferences.rs:258
 msgid "Minutes per week — drives the ring on the Stats tab"
 msgstr "Minuten per week — voedt de ring op het tabblad Statistieken"
 
-#: src/preferences.rs:318
+#: src/preferences.rs:281
 msgid "Timer Presets"
 msgstr "Voorinstellingen"
 
-#: src/preferences.rs:319
+#: src/preferences.rs:282
 msgid ""
 "Quick-select buttons shown in the countdown timer (1–5 presets, in minutes)"
 msgstr "Snelkeuzeknoppen in de aftel-timer (1–5 voorinstellingen, in minuten)"
 
-#: src/preferences.rs:324
+#: src/preferences.rs:287
 msgid "Add Preset"
 msgstr "Voorinstelling toevoegen"
 
-#: src/preferences.rs:382
+#: src/preferences.rs:345
 msgid "Remove Preset"
 msgstr "Voorinstelling verwijderen"
 
-#: src/preferences.rs:442
+#: src/preferences.rs:405
 msgid "Data"
 msgstr "Gegevens"
 
-#: src/preferences.rs:447
+#: src/preferences.rs:410
 msgid "Backup"
 msgstr "Back-up"
 
-#: src/preferences.rs:448
+#: src/preferences.rs:411
 msgid "Export your session log to a CSV file, or restore from one."
 msgstr "Exporteer je sessielogboek naar een CSV-bestand, of herstel het."
 
-#: src/preferences.rs:452
+#: src/preferences.rs:415
 msgid "Export session log"
 msgstr "Sessielogboek exporteren"
 
-#: src/preferences.rs:453
+#: src/preferences.rs:416
 msgid "Save every session to a CSV file"
 msgstr "Bewaar alle sessies in een CSV-bestand"
 
-#: src/preferences.rs:459
+#: src/preferences.rs:422
 msgid "Export"
 msgstr "Exporteren"
 
-#: src/preferences.rs:467
+#: src/preferences.rs:430
 msgid "Import from Meditate CSV"
 msgstr "Importeren uit Meditate-CSV"
 
-#: src/preferences.rs:468
+#: src/preferences.rs:431
 msgid "Restore sessions from a file exported above"
 msgstr "Herstel sessies uit een hierboven geëxporteerd bestand"
 
-#: src/preferences.rs:474
+#: src/preferences.rs:437
 msgid "Import"
 msgstr "Importeren"
 
-#: src/preferences.rs:484
+#: src/preferences.rs:447
 msgid "Migrate"
 msgstr "Migreren"
 
-#: src/preferences.rs:485
+#: src/preferences.rs:448
 msgid "Import sessions from another meditation app."
 msgstr "Importeer sessies uit een andere meditatie-app."
 
-#: src/preferences.rs:489 src/preferences.rs:938
+#: src/preferences.rs:452 src/preferences.rs:907
 msgid "Import from Insight Timer"
 msgstr "Importeren uit Insight Timer"
 
-#: src/preferences.rs:490
+#: src/preferences.rs:453
 msgid "Upload an Insight Timer CSV export"
 msgstr "Upload een Insight Timer CSV-export"
 
-#: src/preferences.rs:496
+#: src/preferences.rs:459
 msgid "Import Insight Timer CSV"
 msgstr "Insight Timer-CSV importeren"
 
-#: src/preferences.rs:506
+#: src/preferences.rs:469
 msgid "Danger Zone"
 msgstr "Gevarenzone"
 
-#: src/preferences.rs:507
+#: src/preferences.rs:470
 msgid "These actions cannot be undone."
 msgstr "Deze acties kunnen niet ongedaan worden gemaakt."
 
-#: src/preferences.rs:511
+#: src/preferences.rs:474
 msgid "Delete all sessions"
 msgstr "Alle sessies verwijderen"
 
-#: src/preferences.rs:512
+#: src/preferences.rs:475
 msgid "Permanently remove every logged session"
 msgstr "Verwijder elke opgeslagen sessie definitief"
 
-#: src/preferences.rs:516
+#: src/preferences.rs:479
 msgid "_Delete All"
 msgstr "_Alles verwijderen"
 
-#: src/preferences.rs:538 src/preferences.rs:543
+#: src/preferences.rs:501 src/preferences.rs:506
 msgid "Labels"
 msgstr "Labels"
 
-#: src/preferences.rs:544
+#: src/preferences.rs:507
 msgid "Organize sessions with custom labels"
 msgstr "Orden sessies met eigen labels"
 
-#: src/preferences.rs:549
+#: src/preferences.rs:512
 msgid "Add Label"
 msgstr "Label toevoegen"
 
-#: src/preferences.rs:576
+#: src/preferences.rs:539
 msgid "New label"
 msgstr "Nieuw label"
 
-#: src/preferences.rs:659
+#. When sessions were affected the user already confirmed via AlertDialog,
+#. so undo would be misleading: the label would be recreated but the
+#. sessions would stay unlabeled.  Only offer undo for unused labels.
+#: src/preferences.rs:625
 msgid "Label deleted"
 msgstr "Label verwijderd"
 
-#: src/preferences.rs:718
+#: src/preferences.rs:685
 msgid "Discard Changes"
 msgstr "Wijzigingen negeren"
 
-#: src/preferences.rs:725 data/ui/timer_view.blp:243
+#: src/preferences.rs:692 data/ui/timer_view.blp:243
 msgid "Save"
 msgstr "Opslaan"
 
-#: src/preferences.rs:732
+#: src/preferences.rs:699
 msgid "Delete Label"
 msgstr "Label verwijderen"
 
-#: src/preferences.rs:776
+#: src/preferences.rs:743
 msgid "A label with that name already exists"
 msgstr "Er bestaat al een label met die naam"
 
-#: src/preferences.rs:835
+#: src/preferences.rs:804
 msgid "1 session uses this label and will become unlabeled."
 msgstr "1 sessie gebruikt dit label en wordt zonder label."
 
-#: src/preferences.rs:837
+#: src/preferences.rs:806
 msgid "{n} sessions use this label and will become unlabeled."
 msgstr "{n} sessies gebruiken dit label en worden zonder label."
 
-#: src/preferences.rs:841
+#: src/preferences.rs:810
 msgid "Delete Label?"
 msgstr "Label verwijderen?"
 
-#: src/preferences.rs:846 src/preferences.rs:955 src/timer/imp.rs:472
-#: src/timer/imp.rs:805 src/timer/imp.rs:1010
+#. libadwaita-rs 0.9 doesn't expose set_response_use_underline,
+#. so we can't mark a mnemonic letter on AdwAlertDialog buttons
+#. without the underscore rendering literally. Return and Esc
+#. still cover the common activations.
+#: src/preferences.rs:815 src/preferences.rs:924 src/timer/imp.rs:492
+#: src/timer/imp.rs:828 src/timer/imp.rs:1033
 msgid "Cancel"
 msgstr "Annuleren"
 
-#: src/preferences.rs:847
+#: src/preferences.rs:816
 msgid "Delete"
 msgstr "Verwijderen"
 
-#: src/preferences.rs:889
+#: src/preferences.rs:858
 msgid "Export Session Log"
 msgstr "Sessielogboek exporteren"
 
-#: src/preferences.rs:893
+#: src/preferences.rs:862
 msgid "CSV files"
 msgstr "CSV-bestanden"
 
-#: src/preferences.rs:909
+#: src/preferences.rs:878
 msgid "Exported 1 session"
 msgstr "1 sessie geëxporteerd"
 
-#: src/preferences.rs:910
+#: src/preferences.rs:879
 msgid "Exported {n} sessions"
 msgstr "{n} sessies geëxporteerd"
 
-#: src/preferences.rs:913
+#: src/preferences.rs:882
 msgid "Export failed: {error}"
 msgstr "Export mislukt: {error}"
 
-#: src/preferences.rs:927
+#: src/preferences.rs:896
 msgid "Import Session Log"
 msgstr "Sessielogboek importeren"
 
-#: src/preferences.rs:950
+#: src/preferences.rs:919
 msgid "Delete Every Session?"
 msgstr "Alle sessies verwijderen?"
 
-#: src/preferences.rs:951
+#: src/preferences.rs:920
 msgid ""
 "This permanently removes every session in your log. Export a backup first if "
 "you want to keep any history."
@@ -440,35 +434,35 @@ msgstr ""
 "Dit verwijdert elke sessie in je logboek definitief. Exporteer eerst een "
 "back-up als je iets wilt bewaren."
 
-#: src/preferences.rs:956
+#: src/preferences.rs:925
 msgid "Delete All"
 msgstr "Alles verwijderen"
 
-#: src/preferences.rs:967
+#: src/preferences.rs:936
 msgid "Deleted 1 session"
 msgstr "1 sessie verwijderd"
 
-#: src/preferences.rs:968
+#: src/preferences.rs:937
 msgid "Deleted {n} sessions"
 msgstr "{n} sessies verwijderd"
 
-#: src/preferences.rs:973
+#: src/preferences.rs:943
 msgid "Delete failed: {error}"
 msgstr "Verwijderen mislukt: {error}"
 
-#: src/preferences.rs:1013
+#: src/preferences.rs:983
 msgid "Imported 1 session"
 msgstr "1 sessie geïmporteerd"
 
-#: src/preferences.rs:1014
+#: src/preferences.rs:984
 msgid "Imported {n} sessions"
 msgstr "{n} sessies geïmporteerd"
 
-#: src/preferences.rs:1019
+#: src/preferences.rs:990
 msgid "Import failed: {error}"
 msgstr "Import mislukt: {error}"
 
-#: src/preferences.rs:1047
+#: src/preferences.rs:1018
 msgid "No file selected"
 msgstr "Geen bestand geselecteerd"
 
@@ -480,6 +474,8 @@ msgstr "Doel bereikt ✓ · {duration} deze week"
 msgid "{duration} to go this week"
 msgstr "Nog {duration} deze week"
 
+#. Accessible name for the Cairo-drawn ring — no intrinsic text for
+#. screen readers to fall back on.
 #: src/stats/imp.rs:200
 msgid "Weekly goal: {pct}% — {done} of {goal}"
 msgstr "Wekelijks doel: {pct} % — {done} van {goal}"
@@ -605,67 +601,71 @@ msgstr "Voltooi een meditatie om hier inzichten te zien"
 msgid "Paused"
 msgstr "Gepauzeerd"
 
+#. Subtitle applies equally to both modes — it labels the digits.
 #: src/timer/imp.rs:304 data/ui/timer_view.blp:47
 msgid "Hours · Minutes"
 msgstr "Uren · Minuten"
 
-#: src/timer/imp.rs:463
+#: src/timer/imp.rs:483
 msgid "Discard Session?"
 msgstr "Sessie verwijderen?"
 
-#: src/timer/imp.rs:464
+#: src/timer/imp.rs:484
 msgid "Your note will be lost."
 msgstr "Je notitie gaat verloren."
 
-#: src/timer/imp.rs:473 data/ui/timer_view.blp:238
+#: src/timer/imp.rs:493 data/ui/timer_view.blp:238
 msgid "Discard"
 msgstr "Verwijderen"
 
-#: src/timer/imp.rs:612
+#: src/timer/imp.rs:632
 msgid "Start your streak today"
 msgstr "Begin vandaag je reeks"
 
-#: src/timer/imp.rs:613
+#: src/timer/imp.rs:633
 msgid "1 day streak"
 msgstr "Reeks van 1 dag"
 
-#: src/timer/imp.rs:614
+#: src/timer/imp.rs:634
 msgid "{n} days streak"
 msgstr "Reeks van {n} dagen"
 
-#: src/timer/imp.rs:652 src/timer/imp.rs:839 src/timer/imp.rs:866
+#. +2 for "+ New label" and "None"
+#. default = "None"
+#. default: "None"
+#: src/timer/imp.rs:675 src/timer/imp.rs:862 src/timer/imp.rs:889
 msgid "+ New Label…"
 msgstr "+ Nieuw label…"
 
-#: src/timer/imp.rs:710
+#: src/timer/imp.rs:733
 msgid "Custom…"
 msgstr "Aangepast…"
 
-#: src/timer/imp.rs:711
+#: src/timer/imp.rs:734
 msgid "Set a Custom Time"
 msgstr "Aangepaste tijd instellen"
 
-#: src/timer/imp.rs:799
+#: src/timer/imp.rs:822
 msgid "Custom Time"
 msgstr "Aangepaste tijd"
 
-#: src/timer/imp.rs:800
+#: src/timer/imp.rs:823
 msgid "Hours : Minutes"
 msgstr "Uren : Minuten"
 
-#: src/timer/imp.rs:806
+#: src/timer/imp.rs:829
 msgid "Set"
 msgstr "Instellen"
 
-#: src/timer/imp.rs:1002
+#: src/timer/imp.rs:1025
 msgid "Label name"
 msgstr "Labelnaam"
 
-#: src/timer/imp.rs:1006
+#: src/timer/imp.rs:1029
 msgid "New Label"
 msgstr "Nieuw label"
 
-#: src/timer/imp.rs:1011
+#: src/timer/imp.rs:1034
 msgid "Create"
 msgstr "Aanmaken"
 
@@ -894,3 +894,101 @@ msgstr "Sessielogboek gegroepeerd op datum, met labels en notities"
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:52
 msgid "janekbt"
 msgstr "janekbt"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:93
+msgid ""
+"Performance and polish pass, focused on Linux phones like the Librem 5. The "
+"app starts and switches views noticeably faster on lower-end ARM hardware, "
+"and the consequential-action buttons now carry the standard red tint."
+msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:95
+msgid ""
+"Cold start is roughly twice as fast on slow ARM phones; view switches, "
+"session start, and session end no longer stall the UI"
+msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:96
+msgid ""
+"Haptic feedback on session end now fires correctly on devices with "
+"feedbackd, without the end-sound doubling up"
+msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:97
+msgid ""
+"Stop, Discard, and per-session delete buttons are styled as destructive "
+"(red) per the GNOME HIG"
+msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:98
+msgid ""
+"Log view loads 15 sessions per page by default instead of 200, with Load "
+"more for older entries"
+msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:105
+msgid ""
+"Major polish release ahead of Flathub submission — every tab redesigned, new "
+"data features, and translations in nine languages."
+msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:107
+msgid "Timer, Stats, and Log tabs fully redesigned around the GNOME HIG"
+msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:108
+#, fuzzy
+msgid ""
+"Stats now shows a weekly-goal ring, a 13-week contribution heatmap, and an "
+"insights panel"
+msgstr "Wekelijks doel, heatmap van 13 weken en inzichten"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:109
+msgid "Log is a date-grouped card feed with swipe-to-delete and undo"
+msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:110
+msgid "CSV import and export, plus one-click migration from Insight Timer"
+msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:111
+msgid ""
+"Real CC0 recordings replace the three built-in end sounds, with Singing bowl "
+"as the new default"
+msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:112
+msgid "Post-session note field is now multi-line"
+msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:113
+msgid "Weekly goal resets on the locale's first day of the week"
+msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:114
+msgid "New \"Vibrate on session end\" toggle for Linux phones"
+msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:115
+msgid ""
+"Full translation coverage across English, German, Spanish, French, Italian, "
+"Dutch, Polish, Brazilian Portuguese, Russian, and Simplified Chinese"
+msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:116
+msgid ""
+"Adaptive layout down to 360 px; HIG-compliant accent colours and "
+"accessibility"
+msgstr ""
+
+#~ msgid "7 days"
+#~ msgstr "7 dagen"
+
+#~ msgid "14 days"
+#~ msgstr "14 dagen"
+
+#~ msgid "30 days"
+#~ msgstr "30 dagen"
+
+#~ msgid "Running average period"
+#~ msgstr "Periode voor lopend gemiddelde"
