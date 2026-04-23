@@ -1041,3 +1041,30 @@ fn build_new_label_dialog() -> (gtk::Entry, adw::AlertDialog) {
     ));
     (entry, dialog)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_time_sub_hour_pads_to_two_digits() {
+        assert_eq!(format_time(0), "00:00");
+        assert_eq!(format_time(1), "00:01");
+        assert_eq!(format_time(59), "00:59");
+        assert_eq!(format_time(60), "01:00");
+        assert_eq!(format_time(61), "01:01");
+        assert_eq!(format_time(10 * 60), "10:00");
+        assert_eq!(format_time(59 * 60 + 59), "59:59");
+    }
+
+    #[test]
+    fn format_time_hour_mark_switches_format() {
+        // At one hour the formatter switches from MM:SS to H:MM:SS.
+        assert_eq!(format_time(3600), "1:00:00");
+        assert_eq!(format_time(3600 + 1), "1:00:01");
+        assert_eq!(format_time(3600 + 60), "1:01:00");
+        assert_eq!(format_time(3661), "1:01:01");
+        assert_eq!(format_time(2 * 3600 + 5 * 60 + 9), "2:05:09");
+        assert_eq!(format_time(10 * 3600), "10:00:00");
+    }
+}

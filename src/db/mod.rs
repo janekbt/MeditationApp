@@ -705,3 +705,37 @@ impl Database {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_mode_as_str() {
+        assert_eq!(SessionMode::Countdown.as_str(), "countdown");
+        assert_eq!(SessionMode::Stopwatch.as_str(), "stopwatch");
+    }
+
+    #[test]
+    fn session_mode_from_str_known() {
+        assert_eq!(SessionMode::from_str("countdown"), SessionMode::Countdown);
+        assert_eq!(SessionMode::from_str("stopwatch"), SessionMode::Stopwatch);
+    }
+
+    #[test]
+    fn session_mode_from_str_unknown_defaults_to_countdown() {
+        // Old rows / typos must land on Countdown, not panic — Stopwatch was
+        // added later and Countdown is the "pre-feature" default.
+        assert_eq!(SessionMode::from_str(""), SessionMode::Countdown);
+        assert_eq!(SessionMode::from_str("COUNTDOWN"), SessionMode::Countdown);
+        assert_eq!(SessionMode::from_str("timer"), SessionMode::Countdown);
+        assert_eq!(SessionMode::from_str("garbage"), SessionMode::Countdown);
+    }
+
+    #[test]
+    fn session_mode_roundtrip() {
+        for mode in [SessionMode::Countdown, SessionMode::Stopwatch] {
+            assert_eq!(SessionMode::from_str(mode.as_str()), mode);
+        }
+    }
+}
+

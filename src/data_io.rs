@@ -283,3 +283,64 @@ fn parse_hms_duration(s: &str) -> Option<i64> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_hms_duration_three_parts() {
+        assert_eq!(parse_hms_duration("1:30:45"), Some(3600 + 30 * 60 + 45));
+        assert_eq!(parse_hms_duration("0:45:0"), Some(45 * 60));
+        assert_eq!(parse_hms_duration("2:00:00"), Some(7200));
+    }
+
+    #[test]
+    fn parse_hms_duration_two_parts() {
+        assert_eq!(parse_hms_duration("45:30"), Some(45 * 60 + 30));
+        assert_eq!(parse_hms_duration("0:0"), Some(0));
+        assert_eq!(parse_hms_duration("90:0"), Some(90 * 60));
+    }
+
+    #[test]
+    fn parse_hms_duration_fractional_seconds_round() {
+        assert_eq!(parse_hms_duration("0:1:30.7"), Some(60 + 31));
+        assert_eq!(parse_hms_duration("0:0:0.4"), Some(0));
+        assert_eq!(parse_hms_duration("0:0:0.6"), Some(1));
+    }
+
+    #[test]
+    fn parse_hms_duration_garbage() {
+        assert_eq!(parse_hms_duration(""), None);
+        assert_eq!(parse_hms_duration("abc"), None);
+        assert_eq!(parse_hms_duration("1"), None);
+        assert_eq!(parse_hms_duration("1:2:3:4"), None);
+        assert_eq!(parse_hms_duration("a:b:c"), None);
+        assert_eq!(parse_hms_duration("1:x:3"), None);
+    }
+
+    #[test]
+    fn parse_insighttimer_datetime_valid() {
+        // MM/DD/YYYY HH:MM:SS, interpreted as local time — assert the parse
+        // succeeds; the exact unix value depends on the host TZ, so we only
+        // check round-trip consistency (same input → same output) rather than
+        // a fixed number.
+        let a = parse_insighttimer_datetime("04/21/2026 08:30:00");
+        let b = parse_insighttimer_datetime("04/21/2026 08:30:00");
+        assert!(a.is_some());
+        assert_eq!(a, b);
+        // One hour later → exactly 3600s later.
+        let c = parse_insighttimer_datetime("04/21/2026 09:30:00").unwrap();
+        assert_eq!(c - a.unwrap(), 3600);
+    }
+
+    #[test]
+    fn parse_insighttimer_datetime_garbage() {
+        assert_eq!(parse_insighttimer_datetime(""), None);
+        assert_eq!(parse_insighttimer_datetime("04/21/2026"), None); // missing time
+        assert_eq!(parse_insighttimer_datetime("2026-04-21 08:30:00"), None); // ISO, wrong fmt
+        assert_eq!(parse_insighttimer_datetime("xx/yy/zzzz 08:30:00"), None);
+        assert_eq!(parse_insighttimer_datetime("04/21/2026 08:30"), None); // missing seconds
+        assert_eq!(parse_insighttimer_datetime("13/21/2026 08:30:00"), None); // month 13
+    }
+}

@@ -938,3 +938,115 @@ fn format_hm_mins(mins: i64) -> String {
         (h, m) => format!("{h}h {m}m"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn minutes_to_level_zero_and_negative() {
+        assert_eq!(minutes_to_level(0, 30), 0);
+        assert_eq!(minutes_to_level(-5, 30), 0);
+    }
+
+    #[test]
+    fn minutes_to_level_no_goal_clips_to_four() {
+        // daily_expected_mins == 0 means the user has no weekly goal; any
+        // session minutes should read as "over" (level 4) rather than divide
+        // by zero.
+        assert_eq!(minutes_to_level(1, 0), 4);
+        assert_eq!(minutes_to_level(100, 0), 4);
+        assert_eq!(minutes_to_level(1, -1), 4);
+    }
+
+    #[test]
+    fn minutes_to_level_bands() {
+        // daily_expected = 30, so pct = mins * 100 / 30.
+        // pct 0..=32 → 1, 33..=79 → 2, 80..=119 → 3, 120+ → 4.
+        assert_eq!(minutes_to_level(1, 30), 1);   // pct=3
+        assert_eq!(minutes_to_level(9, 30), 1);   // pct=30
+        assert_eq!(minutes_to_level(10, 30), 2);  // pct=33 → boundary into 2
+        assert_eq!(minutes_to_level(23, 30), 2);  // pct=76
+        assert_eq!(minutes_to_level(24, 30), 3);  // pct=80 → boundary into 3
+        assert_eq!(minutes_to_level(35, 30), 3);  // pct=116
+        assert_eq!(minutes_to_level(36, 30), 4);  // pct=120 → boundary into 4
+        assert_eq!(minutes_to_level(600, 30), 4); // retreat day clips
+    }
+
+    #[test]
+    fn minutes_to_level_saturating_does_not_overflow() {
+        // Would overflow an i64 in naive mul, should saturate and still
+        // land in the level-4 bucket.
+        assert_eq!(minutes_to_level(i64::MAX, 30), 4);
+    }
+
+    #[test]
+    fn next_session_milestone_boundaries() {
+        assert_eq!(next_session_milestone(0), Some((10, 10)));
+        assert_eq!(next_session_milestone(9), Some((10, 1)));
+        assert_eq!(next_session_milestone(10), Some((25, 15)));
+        assert_eq!(next_session_milestone(24), Some((25, 1)));
+        assert_eq!(next_session_milestone(499), Some((500, 1)));
+        assert_eq!(next_session_milestone(2499), Some((2500, 1)));
+        assert_eq!(next_session_milestone(4999), Some((5000, 1)));
+    }
+
+    #[test]
+    fn next_session_milestone_past_ceiling() {
+        assert_eq!(next_session_milestone(5000), None);
+        assert_eq!(next_session_milestone(5001), None);
+        assert_eq!(next_session_milestone(10_000), None);
+    }
+
+    #[test]
+    fn format_hm_compact_zero_negative() {
+        assert_eq!(format_hm_compact(0), "–");
+        assert_eq!(format_hm_compact(-1), "–");
+    }
+
+    #[test]
+    fn format_hm_compact_shapes() {
+        assert_eq!(format_hm_compact(30 * 60), "30m");
+        assert_eq!(format_hm_compact(3600), "1h");
+        assert_eq!(format_hm_compact(3600 + 30 * 60), "1h 30m");
+        assert_eq!(format_hm_compact(59 * 60), "59m");
+    }
+
+    #[test]
+    fn format_hm_compact_drops_minutes_past_100h() {
+        // Below the threshold: minutes still show.
+        assert_eq!(format_hm_compact(99 * 3600 + 59 * 60), "99h 59m");
+        // At and above the threshold: minutes are dropped.
+        assert_eq!(format_hm_compact(100 * 3600), "100h");
+        assert_eq!(format_hm_compact(100 * 3600 + 59 * 60), "100h");
+        assert_eq!(format_hm_compact(500 * 3600 + 42 * 60), "500h");
+    }
+
+    #[test]
+    fn format_hm_secs_no_clipping() {
+        assert_eq!(format_hm_secs(0), "–");
+        assert_eq!(format_hm_secs(-10), "–");
+        assert_eq!(format_hm_secs(30 * 60), "30m");
+        assert_eq!(format_hm_secs(3600), "1h");
+        assert_eq!(format_hm_secs(3600 + 30 * 60), "1h 30m");
+        // Unlike format_hm_compact, no clip at 100h.
+        assert_eq!(format_hm_secs(100 * 3600 + 42 * 60), "100h 42m");
+    }
+
+    #[test]
+    fn format_hm_mins_zero_case_is_literal_zero() {
+        // Deliberate asymmetry: format_hm_mins returns "0m" for zero/negative,
+        // while the seconds-based formatters return "–". Don't regress this.
+        assert_eq!(format_hm_mins(0), "0m");
+        assert_eq!(format_hm_mins(-3), "0m");
+    }
+
+    #[test]
+    fn format_hm_mins_shapes() {
+        assert_eq!(format_hm_mins(30), "30m");
+        assert_eq!(format_hm_mins(59), "59m");
+        assert_eq!(format_hm_mins(60), "1h");
+        assert_eq!(format_hm_mins(90), "1h 30m");
+        assert_eq!(format_hm_mins(24 * 60), "24h");
+    }
+}
