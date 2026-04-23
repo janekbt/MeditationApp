@@ -145,7 +145,7 @@ mod imp {
                         // Debug Info view in AdwAboutDialog has built-in
                         // Copy + Save buttons, so wiring the diag log here
                         // gives us the "Copy diagnostics" UX for free.
-                        .debug_info(&crate::diag::read_all())
+                        .debug_info(crate::diag::read_all())
                         .debug_info_filename("meditate-diagnostics.log")
                         .build();
 

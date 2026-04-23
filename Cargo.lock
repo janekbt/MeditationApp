@@ -687,7 +687,6 @@ version = "26.4.3"
 dependencies = [
  "csv",
  "gettext-rs",
- "gio",
  "glib",
  "glib-build-tools",
  "gtk4",
