@@ -311,16 +311,18 @@ impl MeditateWindow {
                 let (phase, phase_elapsed, phase_total) = phase_at(&p, elapsed);
                 let t = (phase_elapsed / phase_total as f64).clamp(0.0, 1.0);
 
-                // Phases are laid out clockwise from the top-left corner:
-                //   In       → top edge (left→right)
-                //   HoldIn   → right edge (top→bottom)
-                //   Out      → bottom edge (right→left)
-                //   HoldOut  → left edge (bottom→top)
+                // Phases are laid out clockwise from the bottom-left corner,
+                // so that inhalation is upward motion and exhalation is
+                // downward — reinforcing the breath metaphor.
+                //   In       → left edge (bottom→top)
+                //   HoldIn   → top edge (left→right)
+                //   Out      → right edge (top→bottom)
+                //   HoldOut  → bottom edge (right→left)
                 let (x, y) = match phase {
-                    Phase::In      => (pad + side * t,       pad),
-                    Phase::HoldIn  => (pad + side,            pad + side * t),
-                    Phase::Out     => (pad + side * (1.0 - t), pad + side),
-                    Phase::HoldOut => (pad,                    pad + side * (1.0 - t)),
+                    Phase::In      => (pad,                    pad + side * (1.0 - t)),
+                    Phase::HoldIn  => (pad + side * t,         pad),
+                    Phase::Out     => (pad + side,             pad + side * t),
+                    Phase::HoldOut => (pad + side * (1.0 - t), pad + side),
                 };
 
                 // Halo (semi-transparent accent).
