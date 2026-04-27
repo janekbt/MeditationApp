@@ -78,6 +78,10 @@ impl Countdown {
         self.timer.remaining(self.stopwatch.elapsed(now))
     }
 
+    pub fn elapsed(&self, now: Duration) -> Duration {
+        self.stopwatch.elapsed(now)
+    }
+
     pub fn is_finished(&self, now: Duration) -> bool {
         self.timer.is_finished(self.stopwatch.elapsed(now))
     }
@@ -192,6 +196,18 @@ mod tests {
         assert_eq!(
             restored.elapsed(Duration::from_secs(500)),
             Duration::from_secs(400)
+        );
+    }
+
+    #[test]
+    fn countdown_elapsed_delegates_to_stopwatch() {
+        let countdown = Countdown::new(
+            CountdownTimer::new(Duration::from_secs(600)),
+            Stopwatch::started_at(Duration::from_secs(100)),
+        );
+        assert_eq!(
+            countdown.elapsed(Duration::from_secs(110)),
+            Duration::from_secs(10)
         );
     }
 

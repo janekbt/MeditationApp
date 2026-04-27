@@ -40,9 +40,7 @@ pub enum TimerMode {
 #[derive(Debug, Clone, Default)]
 pub(super) struct ModeState {
     timer_state: TimerState,
-    /// Seconds remaining (countdown) or elapsed (stopwatch).
-    display_secs: u64,
-    /// Original target in seconds — countdown only.
+    /// Original target in seconds — countdown / breath only.
     target_secs: u64,
     /// Unix timestamp when this mode's current session started.
     session_start_time: i64,
@@ -358,17 +356,15 @@ impl TimerView {
         // other two) and apply it to the setup combo.
         self.apply_preferred_label_for_mode(mode);
 
-        let mode_state = match mode {
-            TimerMode::Countdown => self.countdown_mode.borrow(),
-            TimerMode::Stopwatch => self.stopwatch_mode.borrow(),
-            TimerMode::Breathing => self.breathing_mode.borrow(),
+        let timer_state = match mode {
+            TimerMode::Countdown => self.countdown_mode.borrow().timer_state,
+            TimerMode::Stopwatch => self.stopwatch_mode.borrow().timer_state,
+            TimerMode::Breathing => self.breathing_mode.borrow().timer_state,
         };
-        let (timer_state, display_secs) = (mode_state.timer_state, mode_state.display_secs);
-        drop(mode_state);
 
         match timer_state {
             TimerState::Idle    => self.show_idle_ui(),
-            TimerState::Paused  => self.show_paused_ui(display_secs),
+            TimerState::Paused  => self.show_paused_ui(self.current_display_secs()),
             TimerState::Done    => self.view_stack.set_visible_child_name("done"),
             // Running normally can't reach here (the nav page blocks the toggle);
             // fall back to idle UI as a safety net.
@@ -448,7 +444,6 @@ impl TimerView {
             TimerMode::Stopwatch => {
                 let mut m = self.stopwatch_mode.borrow_mut();
                 m.timer_state = TimerState::Running;
-                m.display_secs = 0;
                 m.session_start_time = unix_now();
                 drop(m);
                 self.start_instant.set(Some(Instant::now()));
@@ -463,7 +458,6 @@ impl TimerView {
                 let mut m = self.countdown_mode.borrow_mut();
                 m.timer_state = TimerState::Running;
                 m.target_secs = target;
-                m.display_secs = target;
                 m.session_start_time = unix_now();
                 drop(m);
                 // Anchor monotonic time and build the meditate-core countdown.
@@ -483,7 +477,6 @@ impl TimerView {
                 let mut m = self.breathing_mode.borrow_mut();
                 m.timer_state = TimerState::Running;
                 m.target_secs = target;
-                m.display_secs = 0;
                 m.session_start_time = unix_now();
                 drop(m);
                 self.start_instant.set(Some(Instant::now()));
@@ -540,39 +533,29 @@ impl TimerView {
         self.cancel_tick();
 
         let mode = self.tick_mode.get();
-        let display_secs = match mode {
+        match mode {
             TimerMode::Stopwatch => {
-                let mut m = self.stopwatch_mode.borrow_mut();
-                m.timer_state = TimerState::Paused;
-                let display = m.display_secs;
-                drop(m);
+                self.stopwatch_mode.borrow_mut().timer_state = TimerState::Paused;
                 let now = self.elapsed_since_start();
                 let mut slot = self.stopwatch_core.borrow_mut();
                 *slot = slot.take().map(|s| s.paused_at(now));
-                display
             }
             TimerMode::Countdown => {
-                let mut m = self.countdown_mode.borrow_mut();
-                m.timer_state = TimerState::Paused;
-                let display = m.display_secs;
-                drop(m);
+                self.countdown_mode.borrow_mut().timer_state = TimerState::Paused;
                 let now = self.elapsed_since_start();
                 let mut slot = self.countdown_core.borrow_mut();
                 *slot = slot.take().map(|c| c.pause(now));
-                display
             }
             TimerMode::Breathing => {
                 let now = self.elapsed_since_start();
                 let mut slot = self.breath_stopwatch.borrow_mut();
                 *slot = slot.take().map(|s| s.paused_at(now));
                 drop(slot);
-                let mut m = self.breathing_mode.borrow_mut();
-                m.timer_state = TimerState::Paused;
-                self.breath_elapsed().as_secs()
+                self.breathing_mode.borrow_mut().timer_state = TimerState::Paused;
             }
-        };
+        }
 
-        self.show_paused_ui(display_secs);
+        self.show_paused_ui(self.current_display_secs());
         self.obj().emit_by_name::<()>("timer-paused", &[]);
     }
 
@@ -584,18 +567,15 @@ impl TimerView {
 
         let elapsed = match mode {
             TimerMode::Stopwatch => {
-                let mut m = self.stopwatch_mode.borrow_mut();
-                m.timer_state = TimerState::Done;
-                m.display_secs
+                self.stopwatch_mode.borrow_mut().timer_state = TimerState::Done;
+                self.stopwatch_elapsed_secs()
             }
             TimerMode::Countdown => {
-                let mut m = self.countdown_mode.borrow_mut();
-                m.timer_state = TimerState::Done;
-                m.target_secs.saturating_sub(m.display_secs)
+                self.countdown_mode.borrow_mut().timer_state = TimerState::Done;
+                self.countdown_elapsed_secs()
             }
             TimerMode::Breathing => {
-                let mut m = self.breathing_mode.borrow_mut();
-                m.timer_state = TimerState::Done;
+                self.breathing_mode.borrow_mut().timer_state = TimerState::Done;
                 self.breath_elapsed().as_secs()
             }
         };
@@ -622,18 +602,18 @@ impl TimerView {
         let mode = self.current_mode();
 
         let (elapsed, start_time) = match mode {
-            TimerMode::Stopwatch => {
-                let m = self.stopwatch_mode.borrow();
-                (m.display_secs, m.session_start_time)
-            }
-            TimerMode::Countdown => {
-                let m = self.countdown_mode.borrow();
-                (m.target_secs.saturating_sub(m.display_secs), m.session_start_time)
-            }
-            TimerMode::Breathing => {
-                let m = self.breathing_mode.borrow();
-                (self.breath_elapsed().as_secs(), m.session_start_time)
-            }
+            TimerMode::Stopwatch => (
+                self.stopwatch_elapsed_secs(),
+                self.stopwatch_mode.borrow().session_start_time,
+            ),
+            TimerMode::Countdown => (
+                self.countdown_elapsed_secs(),
+                self.countdown_mode.borrow().session_start_time,
+            ),
+            TimerMode::Breathing => (
+                self.breath_elapsed().as_secs(),
+                self.breathing_mode.borrow().session_start_time,
+            ),
         };
 
         if elapsed == 0 {
@@ -782,38 +762,24 @@ impl TimerView {
                     }
 
                     if is_stopwatch {
-                        // Stopwatch: query meditate-core; floor is correct
-                        // here (display "0:01" once we cross 1.0s).
-                        let now = imp.elapsed_since_start();
-                        let sw = imp.stopwatch_core.borrow();
-                        let Some(s) = sw.as_ref() else {
-                            return glib::ControlFlow::Break;
-                        };
-                        let elapsed = s.elapsed(now).as_secs();
-                        m.display_secs = elapsed;
-                        (elapsed, false)
+                        // Stopwatch: floor seconds (display "0:01" once we
+                        // cross 1.0s, "0:00" otherwise).
+                        (imp.stopwatch_elapsed_secs(), false)
                     } else {
-                        // Countdown: query meditate-core via wall-clock; this
-                        // makes the countdown immune to tick drift / OS suspend.
+                        // Countdown: ceiling seconds (while remaining is in
+                        // (k-1, k], show k — avoids skipping "0:59" on the
+                        // first tick which fires slightly past 1.0s).
                         let now = imp.elapsed_since_start();
                         let core = imp.countdown_core.borrow();
                         let Some(c) = core.as_ref() else {
-                            // Should not happen — on_start always sets it.
                             return glib::ControlFlow::Break;
                         };
                         if c.is_finished(now) {
                             m.timer_state = TimerState::Done;
-                            m.display_secs = 0;
-                            (m.target_secs, true)
+                            (c.elapsed(now).as_secs(), true)
                         } else {
-                            // Ceiling seconds for display: while remaining is
-                            // in (k-1, k] seconds, show k. Truncation would
-                            // skip the "0:59" frame on the first tick after
-                            // start (which fires slightly past t=1.0s).
                             let r = c.remaining(now);
-                            let remaining = r.as_secs() + (r.subsec_nanos() > 0) as u64;
-                            m.display_secs = remaining;
-                            (remaining, false)
+                            (r.as_secs() + (r.subsec_nanos() > 0) as u64, false)
                         }
                     }
                 };
@@ -870,6 +836,38 @@ impl TimerView {
                 app.send_notification(Some("timer-done"), &n);
             }
         }
+    }
+
+    /// Countdown remaining seconds (ceiling), 0 if no session running.
+    fn countdown_remaining_secs(&self) -> u64 {
+        let now = self.elapsed_since_start();
+        self.countdown_core
+            .borrow()
+            .as_ref()
+            .map(|c| {
+                let r = c.remaining(now);
+                r.as_secs() + (r.subsec_nanos() > 0) as u64
+            })
+            .unwrap_or(0)
+    }
+
+    /// Countdown elapsed seconds (target - remaining, capped at target).
+    fn countdown_elapsed_secs(&self) -> u64 {
+        let now = self.elapsed_since_start();
+        self.countdown_core
+            .borrow()
+            .as_ref()
+            .map(|c| c.elapsed(now).as_secs())
+            .unwrap_or(0)
+    }
+
+    fn stopwatch_elapsed_secs(&self) -> u64 {
+        let now = self.elapsed_since_start();
+        self.stopwatch_core
+            .borrow()
+            .as_ref()
+            .map(|s| s.elapsed(now).as_secs())
+            .unwrap_or(0)
     }
 
     /// Wall-clock-anchored elapsed time of the active breath session.
@@ -1265,8 +1263,8 @@ impl TimerView {
     pub fn current_display_secs(&self) -> u64 {
         // Return the display value for whichever mode is about to go running.
         match self.tick_mode.get() {
-            TimerMode::Stopwatch => self.stopwatch_mode.borrow().display_secs,
-            TimerMode::Countdown => self.countdown_mode.borrow().display_secs,
+            TimerMode::Stopwatch => self.stopwatch_elapsed_secs(),
+            TimerMode::Countdown => self.countdown_remaining_secs(),
             TimerMode::Breathing => self.breath_elapsed().as_secs(),
         }
     }
