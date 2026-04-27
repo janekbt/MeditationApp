@@ -40,8 +40,6 @@ pub enum TimerMode {
 #[derive(Debug, Clone, Default)]
 pub(super) struct ModeState {
     timer_state: TimerState,
-    /// Original target in seconds — countdown / breath only.
-    target_secs: u64,
     /// Unix timestamp when this mode's current session started.
     session_start_time: i64,
 }
@@ -86,9 +84,6 @@ pub struct TimerView {
     /// Which mode the active tick belongs to. Only meaningful while
     /// tick_source is Some.
     tick_mode: Cell<TimerMode>,
-    /// Legacy binary flag kept for a few call sites that still consume it;
-    /// mirror of `tick_mode == Stopwatch`. Prefer `tick_mode` in new code.
-    tick_is_stopwatch: Cell<bool>,
 
     /// Active glib timeout handle (at most one mode runs at a time).
     tick_source: RefCell<Option<glib::SourceId>>,
@@ -322,7 +317,7 @@ impl TimerView {
 
 impl TimerView {
     pub(super) fn breathing_target_secs(&self) -> u64 {
-        self.breathing_mode.borrow().target_secs
+        self.breath_target.get().as_secs()
     }
 
     pub(super) fn breathing_timer_state(&self) -> TimerState {
@@ -457,7 +452,6 @@ impl TimerView {
                 }
                 let mut m = self.countdown_mode.borrow_mut();
                 m.timer_state = TimerState::Running;
-                m.target_secs = target;
                 m.session_start_time = unix_now();
                 drop(m);
                 // Anchor monotonic time and build the meditate-core countdown.
@@ -476,7 +470,6 @@ impl TimerView {
                 let target = raw.div_ceil(cycle) * cycle;
                 let mut m = self.breathing_mode.borrow_mut();
                 m.timer_state = TimerState::Running;
-                m.target_secs = target;
                 m.session_start_time = unix_now();
                 drop(m);
                 self.start_instant.set(Some(Instant::now()));
@@ -487,7 +480,6 @@ impl TimerView {
         }
 
         self.tick_mode.set(mode);
-        self.tick_is_stopwatch.set(mode == TimerMode::Stopwatch);
         // Countdown/stopwatch use the shared 1 Hz tick; Breathing drives
         // its own DrawingArea tick from window::push_running_page.
         if mode != TimerMode::Breathing {
@@ -521,7 +513,6 @@ impl TimerView {
         }
 
         self.tick_mode.set(mode);
-        self.tick_is_stopwatch.set(mode == TimerMode::Stopwatch);
         if mode != TimerMode::Breathing {
             self.start_tick();
         }
@@ -742,7 +733,7 @@ impl TimerView {
     fn start_tick(&self) {
         self.cancel_tick();
         let obj = self.obj().clone();
-        let is_stopwatch = self.tick_is_stopwatch.get();
+        let is_stopwatch = self.tick_mode.get() == TimerMode::Stopwatch;
 
         let source_id = glib::timeout_add_local(
             std::time::Duration::from_secs(1),
