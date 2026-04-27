@@ -27,8 +27,8 @@ impl Stopwatch {
         Self { started_at: now }
     }
 
-    pub fn elapsed(&self, _now: Duration) -> Duration {
-        Duration::from_secs(10)
+    pub fn elapsed(&self, now: Duration) -> Duration {
+        now.saturating_sub(self.started_at)
     }
 }
 
@@ -76,5 +76,11 @@ mod tests {
     fn stopwatch_elapsed_is_now_minus_started_at() {
         let stopwatch = Stopwatch::started_at(Duration::from_secs(100));
         assert_eq!(stopwatch.elapsed(Duration::from_secs(110)), Duration::from_secs(10));
+    }
+
+    #[test]
+    fn stopwatch_elapsed_grows_with_now() {
+        let stopwatch = Stopwatch::started_at(Duration::from_secs(100));
+        assert_eq!(stopwatch.elapsed(Duration::from_secs(150)), Duration::from_secs(50));
     }
 }
