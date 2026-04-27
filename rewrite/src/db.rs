@@ -115,8 +115,24 @@ impl Database {
 
     /// Returns a label name guaranteed to be unique in the labels table:
     /// returns `base` if no collision, else `"{base} 2"`, `"{base} 3"`, …
+    /// Bounded: gives up after 10000 attempts.
+    /// Returns a label name guaranteed to be unique in the labels table:
+    /// returns `base` if no collision, else `"{base} 2"`, `"{base} 3"`, …
+    ///
+    /// Bounded by `count_labels() + 1`: among that many candidates, at most
+    /// `count_labels()` can collide, so one must be free.
     pub fn unique_label_name(&self, base: &str) -> Result<String> {
-        Ok(base.to_string())
+        if self.find_label_by_name(base)?.is_none() {
+            return Ok(base.to_string());
+        }
+        let max = self.count_labels()?;
+        for n in 2..=(max + 1) {
+            let candidate = format!("{base} {n}");
+            if self.find_label_by_name(&candidate)?.is_none() {
+                return Ok(candidate);
+            }
+        }
+        unreachable!("more colliding labels than total labels — DB invariant violated")
     }
 
     pub fn find_label_by_name(&self, name: &str) -> Result<Option<i64>> {
@@ -424,6 +440,22 @@ mod tests {
     fn unique_label_name_returns_base_when_no_collision() {
         let db = Database::open_in_memory().unwrap();
         assert_eq!(db.unique_label_name("Morning").unwrap(), "Morning");
+    }
+
+    #[test]
+    fn unique_label_name_appends_two_on_first_collision() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        assert_eq!(db.unique_label_name("Morning").unwrap(), "Morning 2");
+    }
+
+    #[test]
+    fn unique_label_name_continues_chain() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        db.insert_label("Morning 2").unwrap();
+        db.insert_label("Morning 3").unwrap();
+        assert_eq!(db.unique_label_name("Morning").unwrap(), "Morning 4");
     }
 
     #[test]
