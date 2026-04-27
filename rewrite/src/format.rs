@@ -25,10 +25,19 @@ pub fn next_session_milestone(count: u32) -> Option<u32> {
     SESSION_MILESTONES.iter().copied().find(|&m| count < m)
 }
 
-pub fn minutes_to_level(mins: u32) -> u8 {
-    match mins {
-        0 => 0,
-        1..=32 => 1,
+/// Heatmap level (0–4) for a day's meditated minutes against a daily goal.
+/// Bands are percentages of the goal: 0 / 1–32 / 33–79 / 80–119 / 120+.
+/// `mins <= 0` → 0; `goal_mins <= 0` (no goal set) → max level on any activity.
+pub fn minutes_to_level(mins: i64, goal_mins: i64) -> u8 {
+    if mins <= 0 {
+        return 0;
+    }
+    if goal_mins <= 0 {
+        return 4;
+    }
+    let pct = mins.saturating_mul(100) / goal_mins;
+    match pct {
+        0..=32 => 1,
         33..=79 => 2,
         80..=119 => 3,
         _ => 4,
@@ -169,21 +178,36 @@ mod tests {
     }
 
     #[test]
-    fn minutes_to_level_buckets_at_thresholds_0_33_80_120() {
-        // Level 0: no activity.
-        assert_eq!(minutes_to_level(0), 0);
-        // Level 1: any meditation up to 32 mins.
-        assert_eq!(minutes_to_level(1), 1);
-        assert_eq!(minutes_to_level(32), 1);
-        // Level 2: 33..80.
-        assert_eq!(minutes_to_level(33), 2);
-        assert_eq!(minutes_to_level(79), 2);
-        // Level 3: 80..120.
-        assert_eq!(minutes_to_level(80), 3);
-        assert_eq!(minutes_to_level(119), 3);
-        // Level 4: 120+.
-        assert_eq!(minutes_to_level(120), 4);
-        assert_eq!(minutes_to_level(1000), 4);
+    fn minutes_to_level_buckets_at_thresholds_0_33_80_120_percent_of_goal() {
+        // Bands are percentages of the daily goal, not absolute minutes.
+        // With goal=100, the percentage and the minutes happen to match.
+        assert_eq!(minutes_to_level(0, 100), 0);
+        assert_eq!(minutes_to_level(1, 100), 1);
+        assert_eq!(minutes_to_level(32, 100), 1);
+        assert_eq!(minutes_to_level(33, 100), 2);
+        assert_eq!(minutes_to_level(79, 100), 2);
+        assert_eq!(minutes_to_level(80, 100), 3);
+        assert_eq!(minutes_to_level(119, 100), 3);
+        assert_eq!(minutes_to_level(120, 100), 4);
+        assert_eq!(minutes_to_level(1000, 100), 4);
+    }
+
+    #[test]
+    fn minutes_to_level_scales_with_goal() {
+        // 18 mins against a 15-min goal = 120% → level 4 (high achievement).
+        assert_eq!(minutes_to_level(18, 15), 4);
+        // Same 18 mins against a 100-min goal = 18% → level 1.
+        assert_eq!(minutes_to_level(18, 100), 1);
+    }
+
+    #[test]
+    fn minutes_to_level_handles_no_goal_and_negative() {
+        // No goal set → any positive activity clips to max level.
+        assert_eq!(minutes_to_level(60, 0), 4);
+        // Negative goal also treated as no goal.
+        assert_eq!(minutes_to_level(60, -1), 4);
+        // Negative minutes → no activity.
+        assert_eq!(minutes_to_level(-5, 100), 0);
     }
 
     #[test]
