@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
     Inhale,
     HoldAfterInhale,
@@ -8,23 +8,35 @@ pub enum Phase {
     HoldAfterExhale,
 }
 
-pub struct BreathPattern;
+pub struct BreathPattern {
+    phases: Vec<(Phase, Duration)>,
+}
 
 impl BreathPattern {
     pub fn box_breath() -> Self {
-        Self
+        let four_secs = Duration::from_secs(4);
+        Self {
+            phases: vec![
+                (Phase::Inhale, four_secs),
+                (Phase::HoldAfterInhale, four_secs),
+                (Phase::Exhale, four_secs),
+                (Phase::HoldAfterExhale, four_secs),
+            ],
+        }
     }
 
     pub fn phase_at(&self, elapsed: Duration) -> Phase {
-        if elapsed < Duration::from_secs(4) {
-            Phase::Inhale
-        } else if elapsed < Duration::from_secs(8) {
-            Phase::HoldAfterInhale
-        } else if elapsed < Duration::from_secs(12) {
-            Phase::Exhale
-        } else {
-            Phase::HoldAfterExhale
+        let cycle_nanos: u128 = self.phases.iter().map(|(_, d)| d.as_nanos()).sum();
+        let offset_nanos = elapsed.as_nanos() % cycle_nanos;
+
+        let mut accumulated: u128 = 0;
+        for (phase, duration) in &self.phases {
+            accumulated += duration.as_nanos();
+            if offset_nanos < accumulated {
+                return *phase;
+            }
         }
+        unreachable!("phase table exhausted despite offset < cycle")
     }
 }
 
@@ -59,6 +71,16 @@ mod tests {
         assert_eq!(
             pattern.phase_at(Duration::from_secs(12)),
             Phase::HoldAfterExhale
+        );
+    }
+
+    #[test]
+    fn box_breath_cycle_wraps_after_16s() {
+        let pattern = BreathPattern::box_breath();
+        assert_eq!(pattern.phase_at(Duration::from_secs(16)), Phase::Inhale);
+        assert_eq!(
+            pattern.phase_at(Duration::from_secs(20)),
+            Phase::HoldAfterInhale
         );
     }
 }
