@@ -518,4 +518,18 @@ mod tests {
         db.insert_label("Morning").unwrap();
         assert_eq!(db.count_labels().unwrap(), 1);
     }
+
+    #[test]
+    fn data_persists_across_reopens() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.db");
+        {
+            let db = Database::open(&path).unwrap();
+            db.insert_label("Morning").unwrap();
+            db.insert_session(&session_on("2026-04-27")).unwrap();
+        }
+        let db = Database::open(&path).unwrap();
+        assert_eq!(db.list_labels().unwrap(), vec!["Morning"]);
+        assert_eq!(db.count_sessions().unwrap(), 1);
+    }
 }
