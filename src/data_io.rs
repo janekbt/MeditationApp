@@ -283,60 +283,16 @@ fn parse_insighttimer_datetime(s: &str) -> Option<i64> {
     Some(dt.to_unix())
 }
 
-/// Parse `H:M:S` (or `M:S`) into total seconds. Seconds can be fractional
-/// — Insight Timer writes `0:45:0` / `1:50:0`.
+/// Parse `H:M:S` (or `M:S`) into total seconds. Thin shim around
+/// `meditate_core::format::parse_hms_duration` which handles the parsing
+/// (incl. fractional seconds Insight Timer writes as `0:45:0` / `1:50:0`).
 fn parse_hms_duration(s: &str) -> Option<i64> {
-    let parts: Vec<&str> = s.split(':').collect();
-    match parts.len() {
-        3 => {
-            let h: i64 = parts[0].parse().ok()?;
-            let m: i64 = parts[1].parse().ok()?;
-            let sec: f64 = parts[2].parse().ok()?;
-            Some(h * 3600 + m * 60 + sec.round() as i64)
-        }
-        2 => {
-            let m: i64 = parts[0].parse().ok()?;
-            let sec: f64 = parts[1].parse().ok()?;
-            Some(m * 60 + sec.round() as i64)
-        }
-        _ => None,
-    }
+    meditate_core::format::parse_hms_duration(s).map(|d| d.as_secs() as i64)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parse_hms_duration_three_parts() {
-        assert_eq!(parse_hms_duration("1:30:45"), Some(3600 + 30 * 60 + 45));
-        assert_eq!(parse_hms_duration("0:45:0"), Some(45 * 60));
-        assert_eq!(parse_hms_duration("2:00:00"), Some(7200));
-    }
-
-    #[test]
-    fn parse_hms_duration_two_parts() {
-        assert_eq!(parse_hms_duration("45:30"), Some(45 * 60 + 30));
-        assert_eq!(parse_hms_duration("0:0"), Some(0));
-        assert_eq!(parse_hms_duration("90:0"), Some(90 * 60));
-    }
-
-    #[test]
-    fn parse_hms_duration_fractional_seconds_round() {
-        assert_eq!(parse_hms_duration("0:1:30.7"), Some(60 + 31));
-        assert_eq!(parse_hms_duration("0:0:0.4"), Some(0));
-        assert_eq!(parse_hms_duration("0:0:0.6"), Some(1));
-    }
-
-    #[test]
-    fn parse_hms_duration_garbage() {
-        assert_eq!(parse_hms_duration(""), None);
-        assert_eq!(parse_hms_duration("abc"), None);
-        assert_eq!(parse_hms_duration("1"), None);
-        assert_eq!(parse_hms_duration("1:2:3:4"), None);
-        assert_eq!(parse_hms_duration("a:b:c"), None);
-        assert_eq!(parse_hms_duration("1:x:3"), None);
-    }
 
     #[test]
     fn parse_insighttimer_datetime_valid() {
