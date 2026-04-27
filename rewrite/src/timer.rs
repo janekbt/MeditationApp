@@ -62,6 +62,21 @@ impl Stopwatch {
     }
 }
 
+pub struct Countdown {
+    timer: CountdownTimer,
+    stopwatch: Stopwatch,
+}
+
+impl Countdown {
+    pub fn new(timer: CountdownTimer, stopwatch: Stopwatch) -> Self {
+        Self { timer, stopwatch }
+    }
+
+    pub fn remaining(&self, now: Duration) -> Duration {
+        self.timer.remaining(self.stopwatch.elapsed(now))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,6 +170,18 @@ mod tests {
         assert_eq!(
             restored.elapsed(Duration::from_secs(500)),
             Duration::from_secs(400)
+        );
+    }
+
+    #[test]
+    fn countdown_remaining_is_total_minus_stopwatch_elapsed() {
+        let countdown = Countdown::new(
+            CountdownTimer::new(Duration::from_secs(600)),
+            Stopwatch::started_at(Duration::from_secs(100)),
+        );
+        assert_eq!(
+            countdown.remaining(Duration::from_secs(200)),
+            Duration::from_secs(500),
         );
     }
 }
