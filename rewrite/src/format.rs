@@ -14,6 +14,12 @@ pub fn parse_hms_duration(s: &str) -> Option<Duration> {
     }
 }
 
+const SESSION_MILESTONES: &[u32] = &[10, 25, 50, 100, 250, 500, 1000, 2500, 5000];
+
+pub fn next_session_milestone(count: u32) -> Option<u32> {
+    SESSION_MILESTONES.iter().copied().find(|&m| count < m)
+}
+
 pub fn minutes_to_level(mins: u32) -> u8 {
     match mins {
         0 => 0,
@@ -173,5 +179,23 @@ mod tests {
         // Level 4: 120+.
         assert_eq!(minutes_to_level(120), 4);
         assert_eq!(minutes_to_level(1000), 4);
+    }
+
+    #[test]
+    fn next_session_milestone_steps_through_targets() {
+        // Approaching the first milestone.
+        assert_eq!(next_session_milestone(0), Some(10));
+        assert_eq!(next_session_milestone(9), Some(10));
+        // At a milestone — point to the next one, not back to the same.
+        assert_eq!(next_session_milestone(10), Some(25));
+        assert_eq!(next_session_milestone(25), Some(50));
+        // Mid-range.
+        assert_eq!(next_session_milestone(101), Some(250));
+        assert_eq!(next_session_milestone(2499), Some(2500));
+        // Last milestone.
+        assert_eq!(next_session_milestone(4999), Some(5000));
+        // Past 5000 — no further milestone.
+        assert_eq!(next_session_milestone(5000), None);
+        assert_eq!(next_session_milestone(10000), None);
     }
 }
