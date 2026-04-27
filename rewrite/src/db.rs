@@ -153,6 +153,30 @@ impl Database {
         Ok(best)
     }
 
+    pub fn get_daily_totals(&self) -> Result<Vec<(chrono::NaiveDate, i64)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT SUBSTR(start_iso, 1, 10) AS day, SUM(duration_secs)
+             FROM sessions
+             GROUP BY day
+             ORDER BY day",
+        )?;
+        let totals = stmt
+            .query_map([], |row| {
+                let day_str: String = row.get(0)?;
+                let total_secs: i64 = row.get(1)?;
+                Ok((day_str, total_secs))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .filter_map(|(s, secs)| {
+                chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d")
+                    .ok()
+                    .map(|d| (d, secs))
+            })
+            .collect();
+        Ok(totals)
+    }
+
     fn distinct_session_days_ascending(&self) -> Result<Vec<chrono::NaiveDate>> {
         let mut stmt = self
             .conn
@@ -443,5 +467,37 @@ mod tests {
         // Run of 1: Apr 20
         db.insert_session(&session_on("2026-04-20")).unwrap();
         assert_eq!(db.get_best_streak().unwrap(), 4);
+    }
+
+    #[test]
+    fn daily_totals_groups_durations_by_day() {
+        let db = Database::open_in_memory().unwrap();
+        // Two sessions same day → summed.
+        db.insert_session(&Session {
+            duration_secs: 600,
+            ..session_on("2026-04-26")
+        })
+        .unwrap();
+        db.insert_session(&Session {
+            duration_secs: 300,
+            ..session_on("2026-04-26")
+        })
+        .unwrap();
+        // Different day, distinct entry.
+        db.insert_session(&Session {
+            duration_secs: 1200,
+            ..session_on("2026-04-27")
+        })
+        .unwrap();
+        assert_eq!(
+            db.get_daily_totals().unwrap(),
+            vec![(date(2026, 4, 26), 900), (date(2026, 4, 27), 1200)]
+        );
+    }
+
+    #[test]
+    fn daily_totals_is_empty_for_empty_db() {
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(db.get_daily_totals().unwrap(), vec![]);
     }
 }
