@@ -87,6 +87,14 @@ impl Countdown {
             stopwatch: stopwatch.paused_at(now),
         }
     }
+
+    pub fn resume(self, now: Duration) -> Self {
+        let Self { timer, stopwatch } = self;
+        Self {
+            timer,
+            stopwatch: stopwatch.resumed_at(now),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -217,6 +225,21 @@ mod tests {
         assert_eq!(
             countdown.remaining(Duration::from_secs(999)),
             Duration::from_secs(550),
+        );
+    }
+
+    #[test]
+    fn resumed_countdown_continues_counting_down() {
+        let countdown = Countdown::new(
+            CountdownTimer::new(Duration::from_secs(600)),
+            Stopwatch::started_at(Duration::from_secs(100)),
+        )
+        .pause(Duration::from_secs(150))
+        .resume(Duration::from_secs(200));
+        // 50s elapsed before pause + 10s after resume = 60s total elapsed.
+        assert_eq!(
+            countdown.remaining(Duration::from_secs(210)),
+            Duration::from_secs(540),
         );
     }
 }
