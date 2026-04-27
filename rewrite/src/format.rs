@@ -14,6 +14,20 @@ pub fn parse_hms_duration(s: &str) -> Option<Duration> {
     }
 }
 
+pub fn format_hm_secs(d: Duration) -> String {
+    let total = d.as_secs();
+    let h = total / 3600;
+    let m = (total % 3600) / 60;
+    let s = total % 60;
+    if h > 0 {
+        format!("{h}h {m}m {s}s")
+    } else if m > 0 {
+        format!("{m}m {s}s")
+    } else {
+        format!("{s}s")
+    }
+}
+
 pub fn format_time(d: Duration) -> String {
     let total = d.as_secs();
     let h = total / 3600;
@@ -71,5 +85,13 @@ mod tests {
         assert_eq!(parse_hms_duration("1:30:45:00"), None);
         assert_eq!(parse_hms_duration(":30"), None);
         assert_eq!(parse_hms_duration("1:30.5"), None); // fractional seconds rejected
+    }
+
+    #[test]
+    fn format_hm_secs_omits_unused_units() {
+        assert_eq!(format_hm_secs(Duration::ZERO), "0s");
+        assert_eq!(format_hm_secs(Duration::from_secs(30)), "30s");
+        assert_eq!(format_hm_secs(Duration::from_secs(90)), "1m 30s");
+        assert_eq!(format_hm_secs(Duration::from_secs(3665)), "1h 1m 5s");
     }
 }
