@@ -19,10 +19,16 @@ pub fn parse_insighttimer_datetime(s: &str) -> Option<chrono::NaiveDateTime> {
     chrono::NaiveDateTime::parse_from_str(s, "%m/%d/%Y %l:%M:%S %p").ok()
 }
 
-const SESSION_MILESTONES: &[u32] = &[10, 25, 50, 100, 250, 500, 1000, 2500, 5000];
+const SESSION_MILESTONES: &[i64] = &[10, 25, 50, 100, 250, 500, 1000, 2500, 5000];
 
-pub fn next_session_milestone(count: u32) -> Option<u32> {
-    SESSION_MILESTONES.iter().copied().find(|&m| count < m)
+/// Returns `(target, distance_to_target)` for the next session-count milestone,
+/// or `None` past the highest milestone.
+pub fn next_session_milestone(count: i64) -> Option<(i64, i64)> {
+    SESSION_MILESTONES
+        .iter()
+        .copied()
+        .find(|&t| t > count)
+        .map(|t| (t, t - count))
 }
 
 /// Heatmap level (0–4) for a day's meditated minutes against a daily goal.
@@ -211,21 +217,22 @@ mod tests {
     }
 
     #[test]
-    fn next_session_milestone_steps_through_targets() {
-        // Approaching the first milestone.
-        assert_eq!(next_session_milestone(0), Some(10));
-        assert_eq!(next_session_milestone(9), Some(10));
-        // At a milestone — point to the next one, not back to the same.
-        assert_eq!(next_session_milestone(10), Some(25));
-        assert_eq!(next_session_milestone(25), Some(50));
-        // Mid-range.
-        assert_eq!(next_session_milestone(101), Some(250));
-        assert_eq!(next_session_milestone(2499), Some(2500));
-        // Last milestone.
-        assert_eq!(next_session_milestone(4999), Some(5000));
-        // Past 5000 — no further milestone.
+    fn next_session_milestone_returns_target_and_distance() {
+        // (target, distance_to_target).
+        assert_eq!(next_session_milestone(0), Some((10, 10)));
+        assert_eq!(next_session_milestone(9), Some((10, 1)));
+        assert_eq!(next_session_milestone(10), Some((25, 15)));
+        assert_eq!(next_session_milestone(24), Some((25, 1)));
+        assert_eq!(next_session_milestone(499), Some((500, 1)));
+        assert_eq!(next_session_milestone(2499), Some((2500, 1)));
+        assert_eq!(next_session_milestone(4999), Some((5000, 1)));
+    }
+
+    #[test]
+    fn next_session_milestone_returns_none_past_ceiling() {
         assert_eq!(next_session_milestone(5000), None);
-        assert_eq!(next_session_milestone(10000), None);
+        assert_eq!(next_session_milestone(5001), None);
+        assert_eq!(next_session_milestone(10_000), None);
     }
 
     #[test]
