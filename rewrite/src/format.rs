@@ -57,16 +57,18 @@ pub fn minutes_to_level(mins: i64, goal_mins: i64) -> u8 {
 
 pub fn format_hm_compact(d: Duration) -> String {
     let total_mins = d.as_secs() / 60;
+    if total_mins == 0 {
+        return "–".to_string();
+    }
     let h = total_mins / 60;
     let m = total_mins % 60;
     if h >= 100 {
-        format!("{h}h")
-    } else {
-        match (h, m) {
-            (0, _) => format!("{m}m"),
-            (_, 0) => format!("{h}h"),
-            _ => format!("{h}h{m}m"),
-        }
+        return format!("{h}h");
+    }
+    match (h, m) {
+        (0, _) => format!("{m}m"),
+        (_, 0) => format!("{h}h"),
+        _ => format!("{h}h{m}m"),
     }
 }
 
@@ -184,8 +186,13 @@ mod tests {
     }
 
     #[test]
+    fn format_hm_compact_uses_em_dash_for_empty() {
+        // Zero is empty, not "0m" — heatmap cells with no data render "–".
+        assert_eq!(format_hm_compact(Duration::ZERO), "–");
+    }
+
+    #[test]
     fn format_hm_compact_omits_spaces_and_clips_at_100h() {
-        assert_eq!(format_hm_compact(Duration::ZERO), "0m");
         assert_eq!(format_hm_compact(Duration::from_secs(90)), "1m");
         assert_eq!(format_hm_compact(Duration::from_secs(3600)), "1h");
         assert_eq!(format_hm_compact(Duration::from_secs(3661)), "1h1m");
