@@ -47,4 +47,14 @@ mod tests {
         db.insert_label("Evening").unwrap();
         assert_eq!(db.count_labels().unwrap(), 2);
     }
+
+    #[test]
+    fn inserting_duplicate_label_returns_err() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        let second = db.insert_label("Morning");
+        assert!(second.is_err(), "second insert of same label should fail");
+        // The first insert is preserved; no duplicate row is created.
+        assert_eq!(db.count_labels().unwrap(), 1);
+    }
 }
