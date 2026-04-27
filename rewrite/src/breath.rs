@@ -49,8 +49,20 @@ impl BreathPattern {
         unreachable!("phase table exhausted despite offset < cycle")
     }
 
-    pub fn phase_progress(&self, _elapsed: Duration) -> f64 {
-        0.0
+    pub fn phase_progress(&self, elapsed: Duration) -> f64 {
+        let cycle_nanos: u128 = self.phases.iter().map(|(_, d)| d.as_nanos()).sum();
+        let offset_nanos = elapsed.as_nanos() % cycle_nanos;
+
+        let mut accumulated: u128 = 0;
+        for (_, duration) in &self.phases {
+            let phase_end = accumulated + duration.as_nanos();
+            if offset_nanos < phase_end {
+                let into_phase = offset_nanos - accumulated;
+                return into_phase as f64 / duration.as_nanos() as f64;
+            }
+            accumulated = phase_end;
+        }
+        unreachable!("phase table exhausted despite offset < cycle")
     }
 }
 
@@ -115,5 +127,19 @@ mod tests {
     fn phase_progress_starts_at_zero() {
         let pattern = BreathPattern::box_breath();
         assert_eq!(pattern.phase_progress(Duration::ZERO), 0.0);
+    }
+
+    #[test]
+    fn phase_progress_is_half_at_phase_midpoint() {
+        let pattern = BreathPattern::box_breath();
+        // Inhale lasts 4s; at t=2s we're halfway through it.
+        assert_eq!(pattern.phase_progress(Duration::from_secs(2)), 0.5);
+    }
+
+    #[test]
+    fn phase_progress_resets_at_phase_boundary() {
+        let pattern = BreathPattern::box_breath();
+        // t=4s is the start of HoldAfterInhale, so progress within it is 0.0.
+        assert_eq!(pattern.phase_progress(Duration::from_secs(4)), 0.0);
     }
 }
