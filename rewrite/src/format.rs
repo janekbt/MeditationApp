@@ -14,6 +14,21 @@ pub fn parse_hms_duration(s: &str) -> Option<Duration> {
     }
 }
 
+pub fn format_hm_compact(d: Duration) -> String {
+    let total_mins = d.as_secs() / 60;
+    let h = total_mins / 60;
+    let m = total_mins % 60;
+    if h >= 100 {
+        format!("{h}h")
+    } else {
+        match (h, m) {
+            (0, _) => format!("{m}m"),
+            (_, 0) => format!("{h}h"),
+            _ => format!("{h}h{m}m"),
+        }
+    }
+}
+
 pub fn format_hm_mins(d: Duration) -> String {
     let total_mins = d.as_secs() / 60;
     let h = total_mins / 60;
@@ -113,5 +128,22 @@ mod tests {
         assert_eq!(format_hm_mins(Duration::from_secs(90)), "1m");
         assert_eq!(format_hm_mins(Duration::from_secs(3600)), "1h");
         assert_eq!(format_hm_mins(Duration::from_secs(3661)), "1h 1m");
+    }
+
+    #[test]
+    fn format_hm_compact_omits_spaces_and_clips_at_100h() {
+        assert_eq!(format_hm_compact(Duration::ZERO), "0m");
+        assert_eq!(format_hm_compact(Duration::from_secs(90)), "1m");
+        assert_eq!(format_hm_compact(Duration::from_secs(3600)), "1h");
+        assert_eq!(format_hm_compact(Duration::from_secs(3661)), "1h1m");
+        // h >= 100 clips minutes — keeps the cell narrow in the heatmap.
+        assert_eq!(
+            format_hm_compact(Duration::from_secs(100 * 3600)),
+            "100h"
+        );
+        assert_eq!(
+            format_hm_compact(Duration::from_secs(100 * 3600 + 60)),
+            "100h"
+        );
     }
 }
