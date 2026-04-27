@@ -92,10 +92,6 @@ impl TimerView {
         self.imp().breathing_target_secs()
     }
 
-    pub fn breathing_timer_state(&self) -> TimerState {
-        self.imp().breathing_timer_state()
-    }
-
     pub fn breath_elapsed(&self) -> std::time::Duration {
         self.imp().breath_elapsed()
     }
