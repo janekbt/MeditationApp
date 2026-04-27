@@ -48,6 +48,10 @@ impl BreathPattern {
         }
         unreachable!("phase table exhausted despite offset < cycle")
     }
+
+    pub fn phase_progress(&self, _elapsed: Duration) -> f64 {
+        0.0
+    }
 }
 
 #[cfg(test)]
@@ -105,5 +109,11 @@ mod tests {
         assert_eq!(pattern.phase_at(Duration::from_secs(11)), Phase::Exhale);
         // Cycle is 4+7+8 = 19s; wraps back to Inhale.
         assert_eq!(pattern.phase_at(Duration::from_secs(19)), Phase::Inhale);
+    }
+
+    #[test]
+    fn phase_progress_starts_at_zero() {
+        let pattern = BreathPattern::box_breath();
+        assert_eq!(pattern.phase_progress(Duration::ZERO), 0.0);
     }
 }
