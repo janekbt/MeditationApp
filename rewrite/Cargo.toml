@@ -1,0 +1,13 @@
+[package]
+name = "meditate-core"
+version = "0.0.0"
+edition = "2021"
+description = "Pure-Rust logic core for the Meditate app — breath patterns, stats, labels, persistence. No GTK."
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+
+[dev-dependencies]
