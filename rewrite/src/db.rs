@@ -1,5 +1,5 @@
 use rusqlite::{params, Connection, OptionalExtension};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::Path;
 
 #[derive(Debug)]
@@ -162,6 +162,56 @@ impl Database {
             }
         }
         Ok(best)
+    }
+
+    pub fn import_sessions_csv<R: Read>(&self, reader: R) -> Result<usize> {
+        let mut rdr = csv::Reader::from_reader(reader);
+        let mut count = 0;
+        for record in rdr.records() {
+            let record = record.map_err(|e| DbError::Csv(e.to_string()))?;
+            let start_iso = record
+                .get(0)
+                .ok_or_else(|| DbError::Csv("missing start_iso".to_string()))?
+                .to_string();
+            let duration_secs: u32 = record
+                .get(1)
+                .unwrap_or("")
+                .parse()
+                .map_err(|_| DbError::Csv("bad duration_secs".to_string()))?;
+            let label = record
+                .get(2)
+                .map(str::to_string)
+                .filter(|s| !s.is_empty());
+            let notes = record
+                .get(3)
+                .map(str::to_string)
+                .filter(|s| !s.is_empty());
+            let mode_str = record.get(4).unwrap_or("countdown");
+            let mode = SessionMode::from_db_str(mode_str)
+                .ok_or_else(|| DbError::Csv(format!("unknown mode: {mode_str}")))?;
+
+            let label_id = if let Some(label_name) = label {
+                match self.find_label_by_name(&label_name)? {
+                    Some(id) => Some(id),
+                    None => {
+                        self.insert_label(&label_name)?;
+                        self.find_label_by_name(&label_name)?
+                    }
+                }
+            } else {
+                None
+            };
+
+            self.insert_session(&Session {
+                start_iso,
+                duration_secs,
+                label_id,
+                notes,
+                mode,
+            })?;
+            count += 1;
+        }
+        Ok(count)
     }
 
     pub fn export_sessions_csv<W: Write>(&self, writer: W) -> Result<()> {
@@ -690,6 +740,63 @@ mod tests {
             .unwrap();
         }
         assert_eq!(db.get_median_duration_secs().unwrap(), 600);
+    }
+
+    #[test]
+    fn csv_round_trips_sessions_with_labels() {
+        let src = Database::open_in_memory().unwrap();
+        src.insert_label("Morning").unwrap();
+        let morning_id = src.find_label_by_name("Morning").unwrap();
+        src.insert_session(&Session {
+            start_iso: "2026-04-27T10:00:00Z".to_string(),
+            duration_secs: 600,
+            label_id: morning_id,
+            notes: Some("clear, focused".to_string()), // comma forces CSV quoting
+            mode: SessionMode::Countdown,
+        })
+        .unwrap();
+        src.insert_session(&Session {
+            start_iso: "2026-04-27T19:00:00Z".to_string(),
+            duration_secs: 1200,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::BoxBreath,
+        })
+        .unwrap();
+
+        let mut buf = Vec::new();
+        src.export_sessions_csv(&mut buf).unwrap();
+
+        let dst = Database::open_in_memory().unwrap();
+        let imported = dst.import_sessions_csv(&buf[..]).unwrap();
+        assert_eq!(imported, 2);
+
+        // Label was created on import.
+        assert_eq!(dst.list_labels().unwrap(), vec!["Morning"]);
+        let dst_morning_id = dst.find_label_by_name("Morning").unwrap();
+
+        let sessions = dst.list_sessions().unwrap();
+        assert_eq!(sessions.len(), 2);
+        assert_eq!(
+            sessions[0],
+            Session {
+                start_iso: "2026-04-27T10:00:00Z".to_string(),
+                duration_secs: 600,
+                label_id: dst_morning_id,
+                notes: Some("clear, focused".to_string()),
+                mode: SessionMode::Countdown,
+            }
+        );
+        assert_eq!(
+            sessions[1],
+            Session {
+                start_iso: "2026-04-27T19:00:00Z".to_string(),
+                duration_secs: 1200,
+                label_id: None,
+                notes: None,
+                mode: SessionMode::BoxBreath,
+            }
+        );
     }
 
     #[test]
