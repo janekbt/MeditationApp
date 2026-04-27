@@ -135,6 +135,37 @@ impl Database {
         Ok(self.conn.last_insert_rowid())
     }
 
+    pub fn get_best_streak(&self) -> Result<i64> {
+        let days = self.distinct_session_days_ascending()?;
+        if days.is_empty() {
+            return Ok(0);
+        }
+        let mut best = 1i64;
+        let mut current = 1i64;
+        for window in days.windows(2) {
+            if window[1] == window[0].succ_opt().expect("date overflow") {
+                current += 1;
+                best = best.max(current);
+            } else {
+                current = 1;
+            }
+        }
+        Ok(best)
+    }
+
+    fn distinct_session_days_ascending(&self) -> Result<Vec<chrono::NaiveDate>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT DISTINCT SUBSTR(start_iso, 1, 10) FROM sessions ORDER BY 1")?;
+        let days = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .filter_map(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok())
+            .collect();
+        Ok(days)
+    }
+
     pub fn get_streak(&self, today: chrono::NaiveDate) -> Result<i64> {
         let mut stmt = self
             .conn
@@ -400,5 +431,27 @@ mod tests {
         })
         .unwrap();
         assert_eq!(db.get_streak(date(2026, 4, 27)).unwrap(), 1);
+    }
+
+    #[test]
+    fn best_streak_is_zero_for_empty_db() {
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(db.get_best_streak().unwrap(), 0);
+    }
+
+    #[test]
+    fn best_streak_finds_longest_run_across_history() {
+        let db = Database::open_in_memory().unwrap();
+        // Run of 2: Apr 1-2
+        db.insert_session(&session_on("2026-04-01")).unwrap();
+        db.insert_session(&session_on("2026-04-02")).unwrap();
+        // Run of 4: Apr 10-13 (the best)
+        db.insert_session(&session_on("2026-04-10")).unwrap();
+        db.insert_session(&session_on("2026-04-11")).unwrap();
+        db.insert_session(&session_on("2026-04-12")).unwrap();
+        db.insert_session(&session_on("2026-04-13")).unwrap();
+        // Run of 1: Apr 20
+        db.insert_session(&session_on("2026-04-20")).unwrap();
+        assert_eq!(db.get_best_streak().unwrap(), 4);
     }
 }
