@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 pub struct CountdownTimer {
@@ -18,6 +19,7 @@ impl CountdownTimer {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub enum Stopwatch {
     Running {
         running_since: Duration,
@@ -125,5 +127,16 @@ mod tests {
             .paused_at(Duration::from_secs(110))
             .resumed_at(Duration::from_secs(200));
         assert_eq!(stopwatch.elapsed(Duration::from_secs(210)), Duration::from_secs(20));
+    }
+
+    #[test]
+    fn running_stopwatch_round_trips_through_json() {
+        let original = Stopwatch::started_at(Duration::from_secs(100));
+        let json = serde_json::to_string(&original).unwrap();
+        let restored: Stopwatch = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            restored.elapsed(Duration::from_secs(110)),
+            Duration::from_secs(10)
+        );
     }
 }
