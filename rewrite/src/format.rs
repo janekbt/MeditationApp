@@ -14,6 +14,16 @@ pub fn parse_hms_duration(s: &str) -> Option<Duration> {
     }
 }
 
+pub fn minutes_to_level(mins: u32) -> u8 {
+    match mins {
+        0 => 0,
+        1..=32 => 1,
+        33..=79 => 2,
+        80..=119 => 3,
+        _ => 4,
+    }
+}
+
 pub fn format_hm_compact(d: Duration) -> String {
     let total_mins = d.as_secs() / 60;
     let h = total_mins / 60;
@@ -145,5 +155,23 @@ mod tests {
             format_hm_compact(Duration::from_secs(100 * 3600 + 60)),
             "100h"
         );
+    }
+
+    #[test]
+    fn minutes_to_level_buckets_at_thresholds_0_33_80_120() {
+        // Level 0: no activity.
+        assert_eq!(minutes_to_level(0), 0);
+        // Level 1: any meditation up to 32 mins.
+        assert_eq!(minutes_to_level(1), 1);
+        assert_eq!(minutes_to_level(32), 1);
+        // Level 2: 33..80.
+        assert_eq!(minutes_to_level(33), 2);
+        assert_eq!(minutes_to_level(79), 2);
+        // Level 3: 80..120.
+        assert_eq!(minutes_to_level(80), 3);
+        assert_eq!(minutes_to_level(119), 3);
+        // Level 4: 120+.
+        assert_eq!(minutes_to_level(120), 4);
+        assert_eq!(minutes_to_level(1000), 4);
     }
 }
