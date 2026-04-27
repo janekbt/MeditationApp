@@ -302,14 +302,29 @@ impl Database {
     }
 
     pub fn get_daily_totals(&self) -> Result<Vec<(chrono::NaiveDate, i64)>> {
+        self.daily_totals_filtered(None)
+    }
+
+    pub fn get_daily_totals_for_label(
+        &self,
+        label_id: i64,
+    ) -> Result<Vec<(chrono::NaiveDate, i64)>> {
+        self.daily_totals_filtered(Some(label_id))
+    }
+
+    fn daily_totals_filtered(
+        &self,
+        label_filter: Option<i64>,
+    ) -> Result<Vec<(chrono::NaiveDate, i64)>> {
         let mut stmt = self.conn.prepare(
             "SELECT SUBSTR(start_iso, 1, 10) AS day, SUM(duration_secs)
              FROM sessions
+             WHERE ?1 IS NULL OR label_id = ?1
              GROUP BY day
              ORDER BY day",
         )?;
         let totals = stmt
-            .query_map([], |row| {
+            .query_map(params![label_filter], |row| {
                 let day_str: String = row.get(0)?;
                 let total_secs: i64 = row.get(1)?;
                 Ok((day_str, total_secs))
@@ -908,6 +923,37 @@ mod tests {
     fn daily_totals_is_empty_for_empty_db() {
         let db = Database::open_in_memory().unwrap();
         assert_eq!(db.get_daily_totals().unwrap(), vec![]);
+    }
+
+    #[test]
+    fn daily_totals_for_label_filters_per_day() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        let morning = db.find_label_by_name("Morning").unwrap().unwrap();
+        // Morning on Apr 26 (600s) and Apr 27 (1200s).
+        db.insert_session(&Session {
+            duration_secs: 600,
+            label_id: Some(morning),
+            ..session_on("2026-04-26")
+        })
+        .unwrap();
+        db.insert_session(&Session {
+            duration_secs: 1200,
+            label_id: Some(morning),
+            ..session_on("2026-04-27")
+        })
+        .unwrap();
+        // Unlabeled on Apr 27 — must NOT show up in Morning's totals.
+        db.insert_session(&Session {
+            duration_secs: 9999,
+            label_id: None,
+            ..session_on("2026-04-27")
+        })
+        .unwrap();
+        assert_eq!(
+            db.get_daily_totals_for_label(morning).unwrap(),
+            vec![(date(2026, 4, 26), 600), (date(2026, 4, 27), 1200)]
+        );
     }
 
     #[test]
