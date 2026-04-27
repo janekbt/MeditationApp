@@ -25,6 +25,16 @@ impl BreathPattern {
         }
     }
 
+    pub fn four_seven_eight() -> Self {
+        Self {
+            phases: vec![
+                (Phase::Inhale, Duration::from_secs(4)),
+                (Phase::HoldAfterInhale, Duration::from_secs(7)),
+                (Phase::Exhale, Duration::from_secs(8)),
+            ],
+        }
+    }
+
     pub fn phase_at(&self, elapsed: Duration) -> Phase {
         let cycle_nanos: u128 = self.phases.iter().map(|(_, d)| d.as_nanos()).sum();
         let offset_nanos = elapsed.as_nanos() % cycle_nanos;
@@ -82,5 +92,18 @@ mod tests {
             pattern.phase_at(Duration::from_secs(20)),
             Phase::HoldAfterInhale
         );
+    }
+
+    #[test]
+    fn four_seven_eight_cycles_through_uneven_phase_durations() {
+        let pattern = BreathPattern::four_seven_eight();
+        assert_eq!(pattern.phase_at(Duration::ZERO), Phase::Inhale);
+        assert_eq!(
+            pattern.phase_at(Duration::from_secs(4)),
+            Phase::HoldAfterInhale
+        );
+        assert_eq!(pattern.phase_at(Duration::from_secs(11)), Phase::Exhale);
+        // Cycle is 4+7+8 = 19s; wraps back to Inhale.
+        assert_eq!(pattern.phase_at(Duration::from_secs(19)), Phase::Inhale);
     }
 }
