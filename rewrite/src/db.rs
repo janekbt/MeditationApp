@@ -167,31 +167,21 @@ impl Database {
     }
 
     pub fn get_streak(&self, today: chrono::NaiveDate) -> Result<i64> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT DISTINCT SUBSTR(start_iso, 1, 10) FROM sessions ORDER BY 1 DESC")?;
-        let days: Vec<chrono::NaiveDate> = stmt
-            .query_map([], |row| row.get::<_, String>(0))?
-            .collect::<rusqlite::Result<Vec<_>>>()?
-            .into_iter()
-            .filter_map(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok())
-            .collect();
-
-        if days.is_empty() {
+        let days = self.distinct_session_days_ascending()?;
+        let Some(&most_recent) = days.last() else {
             return Ok(0);
-        }
-
+        };
         let yesterday = today.pred_opt().expect("date underflow");
-        let mut expected = if days[0] == today {
+        let mut expected = if most_recent == today {
             today
-        } else if days[0] == yesterday {
+        } else if most_recent == yesterday {
             yesterday
         } else {
             return Ok(0);
         };
 
         let mut count = 0;
-        for day in &days {
+        for day in days.iter().rev() {
             if *day == expected {
                 count += 1;
                 expected = expected.pred_opt().expect("date underflow");
