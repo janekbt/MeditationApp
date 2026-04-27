@@ -350,4 +350,55 @@ mod tests {
         db.insert_session(&session_on("2026-04-27")).unwrap();
         assert_eq!(db.get_streak(date(2026, 4, 27)).unwrap(), 1);
     }
+
+    #[test]
+    fn streak_counts_consecutive_days_back_from_today() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_session(&session_on("2026-04-27")).unwrap();
+        db.insert_session(&session_on("2026-04-26")).unwrap();
+        db.insert_session(&session_on("2026-04-25")).unwrap();
+        assert_eq!(db.get_streak(date(2026, 4, 27)).unwrap(), 3);
+    }
+
+    #[test]
+    fn streak_breaks_at_first_gap() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_session(&session_on("2026-04-27")).unwrap();
+        // gap on 2026-04-26
+        db.insert_session(&session_on("2026-04-25")).unwrap();
+        db.insert_session(&session_on("2026-04-24")).unwrap();
+        assert_eq!(db.get_streak(date(2026, 4, 27)).unwrap(), 1);
+    }
+
+    #[test]
+    fn streak_includes_yesterday_when_no_session_today() {
+        // Forgiving variant: streak still alive if you meditated yesterday.
+        let db = Database::open_in_memory().unwrap();
+        db.insert_session(&session_on("2026-04-26")).unwrap();
+        db.insert_session(&session_on("2026-04-25")).unwrap();
+        assert_eq!(db.get_streak(date(2026, 4, 27)).unwrap(), 2);
+    }
+
+    #[test]
+    fn streak_is_zero_when_most_recent_session_is_older_than_yesterday() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_session(&session_on("2026-04-24")).unwrap();
+        assert_eq!(db.get_streak(date(2026, 4, 27)).unwrap(), 0);
+    }
+
+    #[test]
+    fn streak_counts_each_day_once_even_with_multiple_sessions() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_session(&Session {
+            start_iso: "2026-04-27T08:00:00Z".to_string(),
+            ..session_on("2026-04-27")
+        })
+        .unwrap();
+        db.insert_session(&Session {
+            start_iso: "2026-04-27T19:00:00Z".to_string(),
+            ..session_on("2026-04-27")
+        })
+        .unwrap();
+        assert_eq!(db.get_streak(date(2026, 4, 27)).unwrap(), 1);
+    }
 }
