@@ -14,6 +14,17 @@ pub fn parse_hms_duration(s: &str) -> Option<Duration> {
     }
 }
 
+pub fn format_hm_mins(d: Duration) -> String {
+    let total_mins = d.as_secs() / 60;
+    let h = total_mins / 60;
+    let m = total_mins % 60;
+    match (h, m) {
+        (0, _) => format!("{m}m"),
+        (_, 0) => format!("{h}h"),
+        _ => format!("{h}h {m}m"),
+    }
+}
+
 pub fn format_hm_secs(d: Duration) -> String {
     let total = d.as_secs();
     let h = total / 3600;
@@ -93,5 +104,14 @@ mod tests {
         assert_eq!(format_hm_secs(Duration::from_secs(30)), "30s");
         assert_eq!(format_hm_secs(Duration::from_secs(90)), "1m 30s");
         assert_eq!(format_hm_secs(Duration::from_secs(3665)), "1h 1m 5s");
+    }
+
+    #[test]
+    fn format_hm_mins_drops_seconds_and_unused_units() {
+        assert_eq!(format_hm_mins(Duration::ZERO), "0m");
+        assert_eq!(format_hm_mins(Duration::from_secs(30)), "0m");
+        assert_eq!(format_hm_mins(Duration::from_secs(90)), "1m");
+        assert_eq!(format_hm_mins(Duration::from_secs(3600)), "1h");
+        assert_eq!(format_hm_mins(Duration::from_secs(3661)), "1h 1m");
     }
 }
