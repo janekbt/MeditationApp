@@ -9,6 +9,12 @@ use std::sync::OnceLock;
 use crate::db::{Label, SessionData, SessionMode};
 use super::breathing::Pattern as BreathPattern;
 
+// Step-1 wiring of meditate-core. Not yet used; subsequent migration steps
+// will replace ModeState's display_secs/timer_state for countdown mode with
+// a `Countdown`, then stopwatch + breathing.
+#[allow(unused_imports)]
+use meditate_core::timer::{Countdown as CoreCountdown, CountdownTimer as CoreCountdownTimer};
+
 // ── Per-mode independent state ────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -142,6 +148,12 @@ pub struct TimerView {
     /// func + tick callback — otherwise we'd need a weak TimerView ref in
     /// every closure.
     pub(super) breathing_elapsed_secs: Rc<Cell<f64>>,
+
+    /// Step-1 graduation slot: holds a `meditate_core::timer::Countdown` for
+    /// the active countdown session, alongside the legacy `countdown_mode`
+    /// state. Subsequent steps will read `remaining()` from here on every tick
+    /// instead of decrementing `display_secs`.
+    countdown_core: RefCell<Option<CoreCountdown>>,
 }
 
 #[glib::object_subclass]

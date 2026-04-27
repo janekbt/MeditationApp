@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+#[derive(Debug, Clone)]
 pub struct CountdownTimer {
     total: Duration,
 }
@@ -19,7 +20,7 @@ impl CountdownTimer {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Stopwatch {
     Running {
         running_since: Duration,
@@ -62,6 +63,7 @@ impl Stopwatch {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Countdown {
     timer: CountdownTimer,
     stopwatch: Stopwatch,
