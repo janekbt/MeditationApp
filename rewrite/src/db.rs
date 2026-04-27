@@ -169,7 +169,7 @@ impl Database {
     }
 
     pub fn get_best_streak(&self) -> Result<i64> {
-        let days = self.distinct_session_days_ascending()?;
+        let days = self.distinct_session_days_ascending(None)?;
         if days.is_empty() {
             return Ok(0);
         }
@@ -325,12 +325,17 @@ impl Database {
         Ok(totals)
     }
 
-    fn distinct_session_days_ascending(&self) -> Result<Vec<chrono::NaiveDate>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT DISTINCT SUBSTR(start_iso, 1, 10) FROM sessions ORDER BY 1")?;
+    fn distinct_session_days_ascending(
+        &self,
+        label_filter: Option<i64>,
+    ) -> Result<Vec<chrono::NaiveDate>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT SUBSTR(start_iso, 1, 10) FROM sessions
+             WHERE ?1 IS NULL OR label_id = ?1
+             ORDER BY 1",
+        )?;
         let days = stmt
-            .query_map([], |row| row.get::<_, String>(0))?
+            .query_map(params![label_filter], |row| row.get::<_, String>(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?
             .into_iter()
             .filter_map(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok())
@@ -339,7 +344,19 @@ impl Database {
     }
 
     pub fn get_streak(&self, today: chrono::NaiveDate) -> Result<i64> {
-        let days = self.distinct_session_days_ascending()?;
+        self.streak_filtered(today, None)
+    }
+
+    pub fn get_streak_for_label(&self, today: chrono::NaiveDate, label_id: i64) -> Result<i64> {
+        self.streak_filtered(today, Some(label_id))
+    }
+
+    fn streak_filtered(
+        &self,
+        today: chrono::NaiveDate,
+        label_filter: Option<i64>,
+    ) -> Result<i64> {
+        let days = self.distinct_session_days_ascending(label_filter)?;
         let Some(&most_recent) = days.last() else {
             return Ok(0);
         };
@@ -707,6 +724,45 @@ mod tests {
     fn best_streak_is_zero_for_empty_db() {
         let db = Database::open_in_memory().unwrap();
         assert_eq!(db.get_best_streak().unwrap(), 0);
+    }
+
+    #[test]
+    fn streak_for_label_only_counts_sessions_with_that_label() {
+        let db = Database::open_in_memory().unwrap();
+        let today = date(2026, 4, 27);
+        db.insert_label("Morning").unwrap();
+        db.insert_label("Evening").unwrap();
+        let morning = db.find_label_by_name("Morning").unwrap().unwrap();
+        let evening = db.find_label_by_name("Evening").unwrap().unwrap();
+        // Today: Morning + Evening sessions.
+        db.insert_session(&Session {
+            label_id: Some(morning),
+            ..session_on("2026-04-27")
+        })
+        .unwrap();
+        db.insert_session(&Session {
+            label_id: Some(evening),
+            ..session_on("2026-04-27")
+        })
+        .unwrap();
+        // Yesterday: Morning only.
+        db.insert_session(&Session {
+            label_id: Some(morning),
+            ..session_on("2026-04-26")
+        })
+        .unwrap();
+        // 2 days ago: Evening only.
+        db.insert_session(&Session {
+            label_id: Some(evening),
+            ..session_on("2026-04-25")
+        })
+        .unwrap();
+        // Morning streak: today + yesterday = 2 (gap on day-2).
+        assert_eq!(db.get_streak_for_label(today, morning).unwrap(), 2);
+        // Evening streak: today only (gap on yesterday).
+        assert_eq!(db.get_streak_for_label(today, evening).unwrap(), 1);
+        // Overall streak (no filter): today + yesterday + day-2 = 3.
+        assert_eq!(db.get_streak(today).unwrap(), 3);
     }
 
     #[test]
