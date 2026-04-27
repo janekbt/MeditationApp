@@ -777,7 +777,12 @@ impl TimerView {
                             m.display_secs = 0;
                             (m.target_secs, true)
                         } else {
-                            let remaining = c.remaining(now).as_secs();
+                            // Ceiling seconds for display: while remaining is
+                            // in (k-1, k] seconds, show k. Truncation would
+                            // skip the "0:59" frame on the first tick after
+                            // start (which fires slightly past t=1.0s).
+                            let r = c.remaining(now);
+                            let remaining = r.as_secs() + (r.subsec_nanos() > 0) as u64;
                             m.display_secs = remaining;
                             (remaining, false)
                         }
