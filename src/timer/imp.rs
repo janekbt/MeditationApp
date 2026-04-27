@@ -8,11 +8,22 @@ use std::sync::OnceLock;
 use crate::db::{Label, SessionData, SessionMode};
 use super::breathing::Pattern as BreathPattern;
 
-use std::time::Instant;
 use meditate_core::timer::{
     Countdown as CoreCountdown, CountdownTimer as CoreCountdownTimer,
     Stopwatch as CoreStopwatch,
 };
+
+/// Suspend-resilient monotonic time. Linux's `std::time::Instant` uses
+/// CLOCK_MONOTONIC, which freezes during system suspend — a 30s suspend
+/// in the middle of a session would silently lose 30s of countdown.
+/// CLOCK_BOOTTIME counts time including suspend, which is what a meditation
+/// timer wants: real wall-clock progress regardless of OS power state.
+fn boot_time_now() -> std::time::Duration {
+    let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
+    let rc = unsafe { libc::clock_gettime(libc::CLOCK_BOOTTIME, &mut ts) };
+    debug_assert_eq!(rc, 0, "clock_gettime(CLOCK_BOOTTIME) failed");
+    std::time::Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32)
+}
 
 // ── Per-mode independent state ────────────────────────────────────────────────
 
@@ -142,7 +153,8 @@ pub struct TimerView {
     /// per-frame tick reads elapsed via wall-clock and checks done.
     breath_stopwatch: RefCell<Option<CoreStopwatch>>,
     breath_target: Cell<std::time::Duration>,
-    start_instant: Cell<Option<Instant>>,
+    /// Boot-time anchor at session start. Suspend-resilient (see boot_time_now).
+    start_boot_time: Cell<Option<std::time::Duration>>,
 }
 
 #[glib::object_subclass]
@@ -441,7 +453,7 @@ impl TimerView {
                 m.timer_state = TimerState::Running;
                 m.session_start_time = unix_now();
                 drop(m);
-                self.start_instant.set(Some(Instant::now()));
+                self.start_boot_time.set(Some(boot_time_now()));
                 *self.stopwatch_core.borrow_mut() =
                     Some(CoreStopwatch::started_at(std::time::Duration::ZERO));
             }
@@ -455,7 +467,7 @@ impl TimerView {
                 m.session_start_time = unix_now();
                 drop(m);
                 // Anchor monotonic time and build the meditate-core countdown.
-                self.start_instant.set(Some(Instant::now()));
+                self.start_boot_time.set(Some(boot_time_now()));
                 let timer = CoreCountdownTimer::new(std::time::Duration::from_secs(target));
                 let sw = CoreStopwatch::started_at(std::time::Duration::ZERO);
                 *self.countdown_core.borrow_mut() = Some(CoreCountdown::new(timer, sw));
@@ -472,7 +484,7 @@ impl TimerView {
                 m.timer_state = TimerState::Running;
                 m.session_start_time = unix_now();
                 drop(m);
-                self.start_instant.set(Some(Instant::now()));
+                self.start_boot_time.set(Some(boot_time_now()));
                 *self.breath_stopwatch.borrow_mut() =
                     Some(CoreStopwatch::started_at(std::time::Duration::ZERO));
                 self.breath_target.set(std::time::Duration::from_secs(target));
@@ -876,15 +888,13 @@ impl TimerView {
         self.breath_elapsed() >= self.breath_target.get()
     }
 
-    /// Monotonic time since `on_start` set the anchor, used for feeding
-    /// elapsed into the meditate-core `Countdown`. Returns ZERO if no
-    /// session has been started — defensive, the tick won't be running
-    /// in that case.
+    /// Suspend-resilient monotonic time since on_start set the anchor.
+    /// Returns ZERO if no session has been started.
     fn elapsed_since_start(&self) -> std::time::Duration {
-        self.start_instant
-            .get()
-            .map(|t| t.elapsed())
-            .unwrap_or(std::time::Duration::ZERO)
+        match self.start_boot_time.get() {
+            Some(start) => boot_time_now().saturating_sub(start),
+            None => std::time::Duration::ZERO,
+        }
     }
 
     fn cancel_tick(&self) {
