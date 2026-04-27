@@ -104,6 +104,10 @@ impl TimerView {
         self.imp().breath_is_finished()
     }
 
+    pub fn finish_breath_session(&self) {
+        self.imp().finish_breath_session();
+    }
+
     /// Shared Rc<Cell<f64>> for the high-resolution elapsed time. The
     /// square-frame running page drives accumulation; TimerView reads it
     /// for the save/pause/stop paths.

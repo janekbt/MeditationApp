@@ -863,6 +863,26 @@ impl TimerView {
         *self.tick_source.borrow_mut() = Some(source_id);
     }
 
+    /// Natural completion path for a breath session: marks Done, plays the
+    /// end chime, vibrates, and sends a notification when not focused.
+    /// Mirrors the countdown's done branch (timer.imp at the 1 Hz tick).
+    /// Distinct from `on_stop` (user-initiated), which is silent.
+    pub(super) fn finish_breath_session(&self) {
+        self.breathing_mode.borrow_mut().timer_state = TimerState::Done;
+        let elapsed = self.breathing_elapsed_secs.get() as u64;
+        self.obj().emit_by_name::<()>("timer-stopped", &[]);
+        self.show_done(elapsed);
+        if let Some(app) = self.get_app() {
+            crate::sound::play_end_sound(&app);
+            crate::vibration::trigger_if_enabled(&app);
+            if !app.active_window().map(|w| w.is_active()).unwrap_or(false) {
+                let n = gtk::gio::Notification::new("Meditation Complete");
+                n.set_body(Some(&format!("Session: {}", format_time(elapsed))));
+                app.send_notification(Some("timer-done"), &n);
+            }
+        }
+    }
+
     /// Wall-clock-anchored elapsed time of the active breath session.
     /// Returns ZERO if no session is running. Pause freezes this value.
     pub(super) fn breath_elapsed(&self) -> std::time::Duration {

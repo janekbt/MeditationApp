@@ -422,8 +422,10 @@ impl MeditateWindow {
 
             // Cycle-aligned stop: target was rounded up to a full cycle in
             // on_start, so crossing it lands exactly at a cycle boundary.
+            // Use finish_breath_session() (natural completion: plays chime,
+            // vibrates, notifies) rather than stop() (user-initiated, silent).
             if tv.breath_is_finished() {
-                tv.stop();
+                tv.finish_breath_session();
                 return glib::ControlFlow::Break;
             }
             glib::ControlFlow::Continue
