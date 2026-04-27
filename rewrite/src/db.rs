@@ -1,4 +1,4 @@
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 
 #[derive(Debug)]
 pub enum DbError {
@@ -60,8 +60,16 @@ impl Database {
         Ok(names)
     }
 
-    pub fn find_label_by_name(&self, _name: &str) -> Result<Option<i64>> {
-        Ok(Some(1))
+    pub fn find_label_by_name(&self, name: &str) -> Result<Option<i64>> {
+        let id = self
+            .conn
+            .query_row(
+                "SELECT id FROM labels WHERE name = ?1",
+                [name],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?;
+        Ok(id)
     }
 }
 
@@ -123,5 +131,11 @@ mod tests {
         db.insert_label("Morning").unwrap();
         let id = db.find_label_by_name("Morning").unwrap();
         assert!(id.is_some());
+    }
+
+    #[test]
+    fn find_label_by_name_returns_none_when_absent() {
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(db.find_label_by_name("Morning").unwrap(), None);
     }
 }
