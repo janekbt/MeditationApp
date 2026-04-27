@@ -624,6 +624,28 @@ mod tests {
     }
 
     #[test]
+    fn streak_and_best_streak_diverge_when_current_run_is_shorter() {
+        // Mirrors `streak_gap_separates_current_from_best` from the existing app:
+        // an old 6-day run, a gap, then a recent 3-day run ending today.
+        let db = Database::open_in_memory().unwrap();
+        let today = date(2026, 4, 27);
+        // Old run: 30..25 days ago (6 days).
+        for offset in 25..=30 {
+            let day = today - chrono::Duration::days(offset);
+            db.insert_session(&session_on(&day.format("%Y-%m-%d").to_string()))
+                .unwrap();
+        }
+        // Current run: 0..2 days ago (3 days).
+        for offset in 0..=2 {
+            let day = today - chrono::Duration::days(offset);
+            db.insert_session(&session_on(&day.format("%Y-%m-%d").to_string()))
+                .unwrap();
+        }
+        assert_eq!(db.get_streak(today).unwrap(), 3, "current streak");
+        assert_eq!(db.get_best_streak().unwrap(), 6, "best historical streak");
+    }
+
+    #[test]
     fn best_streak_finds_longest_run_across_history() {
         let db = Database::open_in_memory().unwrap();
         // Run of 2: Apr 1-2
