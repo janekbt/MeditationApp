@@ -162,6 +162,21 @@ impl Database {
         Ok(best)
     }
 
+    pub fn get_running_average_secs(&self, today: chrono::NaiveDate, days: i64) -> Result<f64> {
+        if days <= 0 {
+            return Ok(0.0);
+        }
+        let cutoff = today - chrono::Duration::days(days - 1);
+        let cutoff_str = cutoff.format("%Y-%m-%d").to_string();
+        let total: i64 = self.conn.query_row(
+            "SELECT COALESCE(SUM(duration_secs), 0) FROM sessions
+             WHERE SUBSTR(start_iso, 1, 10) >= ?1",
+            [cutoff_str],
+            |row| row.get(0),
+        )?;
+        Ok(total as f64 / days as f64)
+    }
+
     pub fn get_daily_totals(&self) -> Result<Vec<(chrono::NaiveDate, i64)>> {
         let mut stmt = self.conn.prepare(
             "SELECT SUBSTR(start_iso, 1, 10) AS day, SUM(duration_secs)
@@ -531,5 +546,64 @@ mod tests {
         let db = Database::open(&path).unwrap();
         assert_eq!(db.list_labels().unwrap(), vec!["Morning"]);
         assert_eq!(db.count_sessions().unwrap(), 1);
+    }
+
+    #[test]
+    fn running_average_is_zero_for_empty_db() {
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(
+            db.get_running_average_secs(date(2026, 4, 27), 7).unwrap(),
+            0.0
+        );
+    }
+
+    #[test]
+    fn running_average_handles_zero_days_without_divide_by_zero() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_session(&session_on("2026-04-27")).unwrap();
+        assert_eq!(
+            db.get_running_average_secs(date(2026, 4, 27), 0).unwrap(),
+            0.0
+        );
+    }
+
+    #[test]
+    fn running_average_divides_total_by_window_days() {
+        let db = Database::open_in_memory().unwrap();
+        // 600s today, window of 1 day → average = 600.
+        db.insert_session(&Session {
+            duration_secs: 600,
+            ..session_on("2026-04-27")
+        })
+        .unwrap();
+        assert_eq!(
+            db.get_running_average_secs(date(2026, 4, 27), 1).unwrap(),
+            600.0
+        );
+        // Same data, window of 2 days → average = 300.
+        assert_eq!(
+            db.get_running_average_secs(date(2026, 4, 27), 2).unwrap(),
+            300.0
+        );
+    }
+
+    #[test]
+    fn running_average_excludes_sessions_outside_window() {
+        let db = Database::open_in_memory().unwrap();
+        // Today: 600s — inside any window.
+        db.insert_session(&Session {
+            duration_secs: 600,
+            ..session_on("2026-04-27")
+        })
+        .unwrap();
+        // 10 days ago: 1200s — outside a 7-day window.
+        db.insert_session(&Session {
+            duration_secs: 1200,
+            ..session_on("2026-04-17")
+        })
+        .unwrap();
+        // Window of 7 days = today and 6 prior days; only today's 600s counts.
+        let avg = db.get_running_average_secs(date(2026, 4, 27), 7).unwrap();
+        assert!((avg - (600.0 / 7.0)).abs() < 1e-9, "got {avg}");
     }
 }
