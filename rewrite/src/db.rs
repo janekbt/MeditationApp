@@ -51,6 +51,14 @@ impl Database {
             .conn
             .query_row("SELECT COUNT(*) FROM labels", [], |row| row.get(0))?)
     }
+
+    pub fn list_labels(&self) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare("SELECT name FROM labels ORDER BY name")?;
+        let names = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<String>>>()?;
+        Ok(names)
+    }
 }
 
 #[cfg(test)]
@@ -90,6 +98,18 @@ mod tests {
         assert!(
             matches!(err, DbError::DuplicateLabel(ref name) if name == "Morning"),
             "expected DuplicateLabel(\"Morning\"), got {err:?}"
+        );
+    }
+
+    #[test]
+    fn list_labels_returns_inserted_names_alphabetically() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        db.insert_label("Afternoon").unwrap();
+        db.insert_label("Evening").unwrap();
+        assert_eq!(
+            db.list_labels().unwrap(),
+            vec!["Afternoon", "Evening", "Morning"]
         );
     }
 }
