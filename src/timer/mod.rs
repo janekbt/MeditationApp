@@ -96,6 +96,14 @@ impl TimerView {
         self.imp().breathing_timer_state()
     }
 
+    pub fn breath_elapsed(&self) -> std::time::Duration {
+        self.imp().breath_elapsed()
+    }
+
+    pub fn breath_is_finished(&self) -> bool {
+        self.imp().breath_is_finished()
+    }
+
     /// Shared Rc<Cell<f64>> for the high-resolution elapsed time. The
     /// square-frame running page drives accumulation; TimerView reads it
     /// for the save/pause/stop paths.

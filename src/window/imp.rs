@@ -380,71 +380,51 @@ impl MeditateWindow {
         content.append(&overlay);
         content.append(&btn_box);
 
-        // Install the per-frame tick callback on the drawing area. It
-        // drives both the smooth circle animation and the cycle-aligned
-        // session-end condition. Kept as a tick_callback (not a glib
-        // timeout) so GTK re-paints at the display refresh rate only.
-        let last_frame: Rc<Cell<i64>> = Rc::new(Cell::new(0));
+        // Install the per-frame tick callback on the drawing area. Elapsed
+        // time is now read from `meditate_core::timer::Stopwatch` via the
+        // TimerView's `breath_elapsed()`; that value is wall-clock anchored
+        // and freezes during pause, so the tick body just reads + renders.
         let da_weak = drawing_area.downgrade();
         let counter_weak = counter_label.downgrade();
         let phase_lbl_weak = phase_label.downgrade();
         let phase_sec_weak = phase_seconds_label.downgrade();
         let obj = self.obj().clone();
-        let target_secs_f = target_secs as f64;
         let pattern_for_tick = pattern;
         let elapsed_for_tick = elapsed_handle.clone();
-        drawing_area.add_tick_callback(move |_, clock| {
-            let now_us = clock.frame_time();
-            let prev = last_frame.get();
-            let dt_s = if prev == 0 {
-                0.0
-            } else {
-                ((now_us - prev).max(0) as f64) / 1_000_000.0
-            };
-            last_frame.set(now_us);
-
+        drawing_area.add_tick_callback(move |_, _clock| {
             let tv = obj.imp().timer_view.clone();
-            let state = tv.breathing_timer_state();
+            let cur = tv.breath_elapsed().as_secs_f64();
+            // Mirror to the legacy elapsed cell; on_stop / show_done still
+            // reads this, until the cleanup pass collapses it.
+            elapsed_for_tick.set(cur);
 
-            // Only accumulate elapsed while Running. Paused / Done → keep
-            // the dot frozen where it was, but still fire (GTK removes the
-            // callback when the drawing area is destroyed, so Paused needs
-            // the tick to stay installed for a clean Resume).
-            if state == crate::timer::TimerState::Running {
-                let cur = elapsed_for_tick.get() + dt_s;
-                elapsed_for_tick.set(cur);
+            let (phase, phase_elapsed, phase_total) = phase_at(&pattern_for_tick, cur);
+            let phase_name = match phase {
+                Phase::In      => crate::i18n::gettext("Breathe in"),
+                Phase::HoldIn  => crate::i18n::gettext("Hold"),
+                Phase::Out     => crate::i18n::gettext("Breathe out"),
+                Phase::HoldOut => crate::i18n::gettext("Hold"),
+            };
+            if let Some(l) = phase_lbl_weak.upgrade() {
+                l.set_label(&phase_name);
+            }
+            if let Some(l) = phase_sec_weak.upgrade() {
+                let remaining = (phase_total as f64 - phase_elapsed).ceil().max(0.0) as i64;
+                l.set_label(&remaining.to_string());
+            }
+            if let Some(l) = counter_weak.upgrade() {
+                l.set_label(&format!("{} / {}",
+                    format_time(cur as u64), format_time(target_secs)));
+            }
+            if let Some(da) = da_weak.upgrade() {
+                da.queue_draw();
+            }
 
-                // UI refresh.
-                let (phase, phase_elapsed, phase_total) = phase_at(&pattern_for_tick, cur);
-                let phase_name = match phase {
-                    Phase::In      => crate::i18n::gettext("Breathe in"),
-                    Phase::HoldIn  => crate::i18n::gettext("Hold"),
-                    Phase::Out     => crate::i18n::gettext("Breathe out"),
-                    Phase::HoldOut => crate::i18n::gettext("Hold"),
-                };
-                if let Some(l) = phase_lbl_weak.upgrade() {
-                    l.set_label(&phase_name);
-                }
-                if let Some(l) = phase_sec_weak.upgrade() {
-                    let remaining = (phase_total as f64 - phase_elapsed).ceil().max(0.0) as i64;
-                    l.set_label(&remaining.to_string());
-                }
-                if let Some(l) = counter_weak.upgrade() {
-                    l.set_label(&format!("{} / {}",
-                        format_time(cur as u64), format_time(target_secs)));
-                }
-                if let Some(da) = da_weak.upgrade() {
-                    da.queue_draw();
-                }
-
-                // Cycle-aligned stop: target_secs was rounded up to a
-                // full cycle in on_start, so crossing it lands exactly at
-                // a cycle boundary (end of HoldOut / end of Out for
-                // patterns with no final hold).
-                if cur >= target_secs_f {
-                    tv.stop();
-                    return glib::ControlFlow::Break;
-                }
+            // Cycle-aligned stop: target was rounded up to a full cycle in
+            // on_start, so crossing it lands exactly at a cycle boundary.
+            if tv.breath_is_finished() {
+                tv.stop();
+                return glib::ControlFlow::Break;
             }
             glib::ControlFlow::Continue
         });

@@ -155,6 +155,10 @@ pub struct TimerView {
     /// is kept in sync as a derived shadow until callers are migrated.
     countdown_core: RefCell<Option<CoreCountdown>>,
     stopwatch_core: RefCell<Option<CoreStopwatch>>,
+    /// Box-breath uses a Stopwatch + a separate target duration; the
+    /// per-frame tick reads elapsed via wall-clock and checks done.
+    breath_stopwatch: RefCell<Option<CoreStopwatch>>,
+    breath_target: Cell<std::time::Duration>,
     start_instant: Cell<Option<Instant>>,
 }
 
@@ -492,6 +496,11 @@ impl TimerView {
                 m.display_secs = 0;
                 m.session_start_time = unix_now();
                 self.breathing_elapsed_secs.set(0.0);
+                drop(m);
+                self.start_instant.set(Some(Instant::now()));
+                *self.breath_stopwatch.borrow_mut() =
+                    Some(CoreStopwatch::started_at(std::time::Duration::ZERO));
+                self.breath_target.set(std::time::Duration::from_secs(target));
             }
         }
 
@@ -521,7 +530,12 @@ impl TimerView {
                 let mut slot = self.countdown_core.borrow_mut();
                 *slot = slot.take().map(|c| c.resume(now));
             }
-            TimerMode::Breathing => self.breathing_mode.borrow_mut().timer_state = TimerState::Running,
+            TimerMode::Breathing => {
+                self.breathing_mode.borrow_mut().timer_state = TimerState::Running;
+                let now = self.elapsed_since_start();
+                let mut slot = self.breath_stopwatch.borrow_mut();
+                *slot = slot.take().map(|s| s.resumed_at(now));
+            }
         }
 
         self.tick_mode.set(mode);
@@ -559,6 +573,10 @@ impl TimerView {
                 display
             }
             TimerMode::Breathing => {
+                let now = self.elapsed_since_start();
+                let mut slot = self.breath_stopwatch.borrow_mut();
+                *slot = slot.take().map(|s| s.paused_at(now));
+                drop(slot);
                 let mut m = self.breathing_mode.borrow_mut();
                 m.timer_state = TimerState::Paused;
                 self.breathing_elapsed_secs.get() as u64
@@ -843,6 +861,21 @@ impl TimerView {
             },
         );
         *self.tick_source.borrow_mut() = Some(source_id);
+    }
+
+    /// Wall-clock-anchored elapsed time of the active breath session.
+    /// Returns ZERO if no session is running. Pause freezes this value.
+    pub(super) fn breath_elapsed(&self) -> std::time::Duration {
+        let now = self.elapsed_since_start();
+        self.breath_stopwatch
+            .borrow()
+            .as_ref()
+            .map(|s| s.elapsed(now))
+            .unwrap_or_default()
+    }
+
+    pub(super) fn breath_is_finished(&self) -> bool {
+        self.breath_elapsed() >= self.breath_target.get()
     }
 
     /// Monotonic time since `on_start` set the anchor, used for feeding
