@@ -9,11 +9,11 @@ use std::sync::OnceLock;
 use crate::db::{Label, SessionData, SessionMode};
 use super::breathing::Pattern as BreathPattern;
 
-// Step-1 wiring of meditate-core. Not yet used; subsequent migration steps
-// will replace ModeState's display_secs/timer_state for countdown mode with
-// a `Countdown`, then stopwatch + breathing.
-#[allow(unused_imports)]
-use meditate_core::timer::{Countdown as CoreCountdown, CountdownTimer as CoreCountdownTimer};
+use std::time::Instant;
+use meditate_core::timer::{
+    Countdown as CoreCountdown, CountdownTimer as CoreCountdownTimer,
+    Stopwatch as CoreStopwatch,
+};
 
 // ── Per-mode independent state ────────────────────────────────────────────────
 
@@ -149,11 +149,13 @@ pub struct TimerView {
     /// every closure.
     pub(super) breathing_elapsed_secs: Rc<Cell<f64>>,
 
-    /// Step-1 graduation slot: holds a `meditate_core::timer::Countdown` for
-    /// the active countdown session, alongside the legacy `countdown_mode`
-    /// state. Subsequent steps will read `remaining()` from here on every tick
-    /// instead of decrementing `display_secs`.
+    /// Source of truth for countdown timing (post-graduation step 2).
+    /// `start_instant` anchors monotonic time at on_start; `countdown_core`
+    /// is queried each tick for remaining/finished, and gets `pause(now)` /
+    /// `resume(now)` called on it. The legacy `countdown_mode.display_secs`
+    /// is kept in sync as a derived shadow until callers are migrated.
     countdown_core: RefCell<Option<CoreCountdown>>,
+    start_instant: Cell<Option<Instant>>,
 }
 
 #[glib::object_subclass]
@@ -465,6 +467,12 @@ impl TimerView {
                 m.target_secs = target;
                 m.display_secs = target;
                 m.session_start_time = unix_now();
+                drop(m);
+                // Anchor monotonic time and build the meditate-core countdown.
+                self.start_instant.set(Some(Instant::now()));
+                let timer = CoreCountdownTimer::new(std::time::Duration::from_secs(target));
+                let sw = CoreStopwatch::started_at(std::time::Duration::ZERO);
+                *self.countdown_core.borrow_mut() = Some(CoreCountdown::new(timer, sw));
             }
             TimerMode::Breathing => {
                 let pattern = self.breathing_pattern.get();
@@ -498,7 +506,12 @@ impl TimerView {
 
         match mode {
             TimerMode::Stopwatch => self.stopwatch_mode.borrow_mut().timer_state = TimerState::Running,
-            TimerMode::Countdown => self.countdown_mode.borrow_mut().timer_state = TimerState::Running,
+            TimerMode::Countdown => {
+                self.countdown_mode.borrow_mut().timer_state = TimerState::Running;
+                let now = self.elapsed_since_start();
+                let mut slot = self.countdown_core.borrow_mut();
+                *slot = slot.take().map(|c| c.resume(now));
+            }
             TimerMode::Breathing => self.breathing_mode.borrow_mut().timer_state = TimerState::Running,
         }
 
@@ -524,7 +537,12 @@ impl TimerView {
             TimerMode::Countdown => {
                 let mut m = self.countdown_mode.borrow_mut();
                 m.timer_state = TimerState::Paused;
-                m.display_secs
+                let display = m.display_secs;
+                drop(m);
+                let now = self.elapsed_since_start();
+                let mut slot = self.countdown_core.borrow_mut();
+                *slot = slot.take().map(|c| c.pause(now));
+                display
             }
             TimerMode::Breathing => {
                 let mut m = self.breathing_mode.borrow_mut();
@@ -746,13 +764,22 @@ impl TimerView {
                         m.display_secs += 1;
                         (m.display_secs, false)
                     } else {
-                        if m.display_secs == 0 {
+                        // Countdown: query meditate-core via wall-clock; this
+                        // makes the countdown immune to tick drift / OS suspend.
+                        let now = imp.elapsed_since_start();
+                        let core = imp.countdown_core.borrow();
+                        let Some(c) = core.as_ref() else {
+                            // Should not happen — on_start always sets it.
+                            return glib::ControlFlow::Break;
+                        };
+                        if c.is_finished(now) {
                             m.timer_state = TimerState::Done;
-                            let elapsed = m.target_secs;
-                            (elapsed, true)
+                            m.display_secs = 0;
+                            (m.target_secs, true)
                         } else {
-                            m.display_secs -= 1;
-                            (m.display_secs, false)
+                            let remaining = c.remaining(now).as_secs();
+                            m.display_secs = remaining;
+                            (remaining, false)
                         }
                     }
                 };
@@ -789,6 +816,17 @@ impl TimerView {
             },
         );
         *self.tick_source.borrow_mut() = Some(source_id);
+    }
+
+    /// Monotonic time since `on_start` set the anchor, used for feeding
+    /// elapsed into the meditate-core `Countdown`. Returns ZERO if no
+    /// session has been started — defensive, the tick won't be running
+    /// in that case.
+    fn elapsed_since_start(&self) -> std::time::Duration {
+        self.start_instant
+            .get()
+            .map(|t| t.elapsed())
+            .unwrap_or(std::time::Duration::ZERO)
     }
 
     fn cancel_tick(&self) {
