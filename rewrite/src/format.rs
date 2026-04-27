@@ -68,7 +68,7 @@ pub fn format_hm_compact(d: Duration) -> String {
     match (h, m) {
         (0, _) => format!("{m}m"),
         (_, 0) => format!("{h}h"),
-        _ => format!("{h}h{m}m"),
+        _ => format!("{h}h {m}m"),
     }
 }
 
@@ -83,17 +83,21 @@ pub fn format_hm_mins(d: Duration) -> String {
     }
 }
 
+/// "h/m output from a seconds-precision input." Despite the name (which
+/// reflects the input precision), this drops sub-minute remainder for
+/// stats display where seconds are noise. Use `format_time` for live
+/// session display where seconds matter.
 pub fn format_hm_secs(d: Duration) -> String {
     let total = d.as_secs();
+    if total == 0 {
+        return "–".to_string();
+    }
     let h = total / 3600;
     let m = (total % 3600) / 60;
-    let s = total % 60;
-    if h > 0 {
-        format!("{h}h {m}m {s}s")
-    } else if m > 0 {
-        format!("{m}m {s}s")
-    } else {
-        format!("{s}s")
+    match (h, m) {
+        (0, m) => format!("{m}m"),
+        (h, 0) => format!("{h}h"),
+        (h, m) => format!("{h}h {m}m"),
     }
 }
 
@@ -169,11 +173,13 @@ mod tests {
     }
 
     #[test]
-    fn format_hm_secs_omits_unused_units() {
-        assert_eq!(format_hm_secs(Duration::ZERO), "0s");
-        assert_eq!(format_hm_secs(Duration::from_secs(30)), "30s");
-        assert_eq!(format_hm_secs(Duration::from_secs(90)), "1m 30s");
-        assert_eq!(format_hm_secs(Duration::from_secs(3665)), "1h 1m 5s");
+    fn format_hm_secs_drops_sub_minute_and_uses_em_dash_for_zero() {
+        // Stats display: seconds are noise; show "–" for empty.
+        assert_eq!(format_hm_secs(Duration::ZERO), "–");
+        assert_eq!(format_hm_secs(Duration::from_secs(30)), "0m");
+        assert_eq!(format_hm_secs(Duration::from_secs(90)), "1m");
+        assert_eq!(format_hm_secs(Duration::from_secs(3600)), "1h");
+        assert_eq!(format_hm_secs(Duration::from_secs(3665)), "1h 1m");
     }
 
     #[test]
@@ -192,10 +198,10 @@ mod tests {
     }
 
     #[test]
-    fn format_hm_compact_omits_spaces_and_clips_at_100h() {
+    fn format_hm_compact_clips_at_100h() {
         assert_eq!(format_hm_compact(Duration::from_secs(90)), "1m");
         assert_eq!(format_hm_compact(Duration::from_secs(3600)), "1h");
-        assert_eq!(format_hm_compact(Duration::from_secs(3661)), "1h1m");
+        assert_eq!(format_hm_compact(Duration::from_secs(3661)), "1h 1m");
         // h >= 100 clips minutes — keeps the cell narrow in the heatmap.
         assert_eq!(
             format_hm_compact(Duration::from_secs(100 * 3600)),
