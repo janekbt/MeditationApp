@@ -1,3 +1,4 @@
+use crate::timer::Stopwatch;
 use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,6 +58,21 @@ impl BreathPattern {
             accumulated = phase_end;
         }
         unreachable!("phase table exhausted despite offset < cycle")
+    }
+}
+
+pub struct BreathSession {
+    pattern: BreathPattern,
+    stopwatch: Stopwatch,
+}
+
+impl BreathSession {
+    pub fn new(pattern: BreathPattern, stopwatch: Stopwatch) -> Self {
+        Self { pattern, stopwatch }
+    }
+
+    pub fn current_phase(&self, now: Duration) -> Phase {
+        self.pattern.phase_at(self.stopwatch.elapsed(now))
     }
 }
 
@@ -135,5 +151,18 @@ mod tests {
         let pattern = BreathPattern::box_breath();
         // t=4s is the start of HoldAfterInhale, so progress within it is 0.0.
         assert_eq!(pattern.phase_progress(Duration::from_secs(4)), 0.0);
+    }
+
+    #[test]
+    fn breath_session_reports_current_phase_via_stopwatch() {
+        let session = BreathSession::new(
+            BreathPattern::box_breath(),
+            Stopwatch::started_at(Duration::from_secs(100)),
+        );
+        // 4s after start → HoldAfterInhale.
+        assert_eq!(
+            session.current_phase(Duration::from_secs(104)),
+            Phase::HoldAfterInhale
+        );
     }
 }
