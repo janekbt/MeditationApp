@@ -135,8 +135,40 @@ impl Database {
         Ok(self.conn.last_insert_rowid())
     }
 
-    pub fn get_streak(&self, _today: chrono::NaiveDate) -> Result<i64> {
-        Ok(0)
+    pub fn get_streak(&self, today: chrono::NaiveDate) -> Result<i64> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT DISTINCT SUBSTR(start_iso, 1, 10) FROM sessions ORDER BY 1 DESC")?;
+        let days: Vec<chrono::NaiveDate> = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .filter_map(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok())
+            .collect();
+
+        if days.is_empty() {
+            return Ok(0);
+        }
+
+        let yesterday = today.pred_opt().expect("date underflow");
+        let mut expected = if days[0] == today {
+            today
+        } else if days[0] == yesterday {
+            yesterday
+        } else {
+            return Ok(0);
+        };
+
+        let mut count = 0;
+        for day in &days {
+            if *day == expected {
+                count += 1;
+                expected = expected.pred_opt().expect("date underflow");
+            } else {
+                break;
+            }
+        }
+        Ok(count)
     }
 
     pub fn total_minutes(&self) -> Result<i64> {
@@ -300,5 +332,22 @@ mod tests {
     fn streak_is_zero_for_empty_db() {
         let db = Database::open_in_memory().unwrap();
         assert_eq!(db.get_streak(date(2026, 4, 27)).unwrap(), 0);
+    }
+
+    fn session_on(day: &str) -> Session {
+        Session {
+            start_iso: format!("{day}T10:00:00Z"),
+            duration_secs: 600,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Countdown,
+        }
+    }
+
+    #[test]
+    fn streak_is_one_with_single_session_today() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_session(&session_on("2026-04-27")).unwrap();
+        assert_eq!(db.get_streak(date(2026, 4, 27)).unwrap(), 1);
     }
 }
