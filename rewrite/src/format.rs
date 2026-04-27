@@ -1,5 +1,19 @@
 use std::time::Duration;
 
+pub fn parse_hms_duration(s: &str) -> Option<Duration> {
+    let parts: Vec<&str> = s.split(':').collect();
+    let nums: Vec<u64> = parts
+        .iter()
+        .map(|p| p.parse::<u64>())
+        .collect::<std::result::Result<_, _>>()
+        .ok()?;
+    match nums.as_slice() {
+        [m, s] => Some(Duration::from_secs(m * 60 + s)),
+        [h, m, s] => Some(Duration::from_secs(h * 3600 + m * 60 + s)),
+        _ => None,
+    }
+}
+
 pub fn format_time(d: Duration) -> String {
     let total = d.as_secs();
     let h = total / 3600;
@@ -34,5 +48,28 @@ mod tests {
     #[test]
     fn format_time_at_hour_adds_hours_segment() {
         assert_eq!(format_time(Duration::from_secs(3661)), "01:01:01");
+    }
+
+    #[test]
+    fn parse_hms_duration_accepts_minutes_seconds() {
+        assert_eq!(parse_hms_duration("1:30"), Some(Duration::from_secs(90)));
+    }
+
+    #[test]
+    fn parse_hms_duration_accepts_hours_minutes_seconds() {
+        assert_eq!(
+            parse_hms_duration("1:30:45"),
+            Some(Duration::from_secs(5445))
+        );
+    }
+
+    #[test]
+    fn parse_hms_duration_rejects_garbage() {
+        assert_eq!(parse_hms_duration("garbage"), None);
+        assert_eq!(parse_hms_duration(""), None);
+        assert_eq!(parse_hms_duration("60"), None); // single component is ambiguous
+        assert_eq!(parse_hms_duration("1:30:45:00"), None);
+        assert_eq!(parse_hms_duration(":30"), None);
+        assert_eq!(parse_hms_duration("1:30.5"), None); // fractional seconds rejected
     }
 }
