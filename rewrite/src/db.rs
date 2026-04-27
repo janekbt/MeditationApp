@@ -1,10 +1,12 @@
 use rusqlite::{params, Connection, OptionalExtension};
+use std::io::Write;
 use std::path::Path;
 
 #[derive(Debug)]
 pub enum DbError {
     DuplicateLabel(String),
     Sqlite(rusqlite::Error),
+    Csv(String),
 }
 
 impl From<rusqlite::Error> for DbError {
@@ -160,6 +162,41 @@ impl Database {
             }
         }
         Ok(best)
+    }
+
+    pub fn export_sessions_csv<W: Write>(&self, writer: W) -> Result<()> {
+        let mut wtr = csv::Writer::from_writer(writer);
+        wtr.write_record(["start_iso", "duration_secs", "label", "notes", "mode"])
+            .map_err(|e| DbError::Csv(e.to_string()))?;
+
+        let mut stmt = self.conn.prepare(
+            "SELECT s.start_iso, s.duration_secs, l.name, s.notes, s.mode
+             FROM sessions s
+             LEFT JOIN labels l ON s.label_id = l.id
+             ORDER BY s.id",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, u32>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, String>(4)?,
+            ))
+        })?;
+        for row in rows {
+            let (start, dur, label, notes, mode) = row?;
+            wtr.write_record([
+                &start,
+                &dur.to_string(),
+                label.as_deref().unwrap_or(""),
+                notes.as_deref().unwrap_or(""),
+                &mode,
+            ])
+            .map_err(|e| DbError::Csv(e.to_string()))?;
+        }
+        wtr.flush().map_err(|e| DbError::Csv(e.to_string()))?;
+        Ok(())
     }
 
     pub fn get_median_duration_secs(&self) -> Result<u32> {
@@ -653,5 +690,33 @@ mod tests {
             .unwrap();
         }
         assert_eq!(db.get_median_duration_secs().unwrap(), 600);
+    }
+
+    #[test]
+    fn export_csv_writes_header_and_session_with_label_name() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        let label_id = db.find_label_by_name("Morning").unwrap();
+        db.insert_session(&Session {
+            start_iso: "2026-04-27T10:00:00Z".to_string(),
+            duration_secs: 600,
+            label_id,
+            notes: Some("clear mind".to_string()),
+            mode: SessionMode::Countdown,
+        })
+        .unwrap();
+
+        let mut buf = Vec::new();
+        db.export_sessions_csv(&mut buf).unwrap();
+        let csv = String::from_utf8(buf).unwrap();
+
+        assert!(
+            csv.contains("start_iso,duration_secs,label,notes,mode"),
+            "missing header in:\n{csv}"
+        );
+        assert!(csv.contains("2026-04-27T10:00:00Z"));
+        assert!(csv.contains("Morning"));
+        assert!(csv.contains("clear mind"));
+        assert!(csv.contains("countdown"));
     }
 }
