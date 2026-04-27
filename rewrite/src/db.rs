@@ -162,6 +162,21 @@ impl Database {
         Ok(best)
     }
 
+    pub fn get_median_duration_secs(&self) -> Result<u32> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT duration_secs FROM sessions ORDER BY duration_secs")?;
+        let durations: Vec<u32> = stmt
+            .query_map([], |row| row.get(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        if durations.is_empty() {
+            return Ok(0);
+        }
+        // Lower-median: index (len-1)/2 hits the lower middle on even counts,
+        // and the exact middle on odd counts.
+        Ok(durations[(durations.len() - 1) / 2])
+    }
+
     pub fn get_running_average_secs(&self, today: chrono::NaiveDate, days: i64) -> Result<f64> {
         if days <= 0 {
             return Ok(0.0);
@@ -605,5 +620,38 @@ mod tests {
         // Window of 7 days = today and 6 prior days; only today's 600s counts.
         let avg = db.get_running_average_secs(date(2026, 4, 27), 7).unwrap();
         assert!((avg - (600.0 / 7.0)).abs() < 1e-9, "got {avg}");
+    }
+
+    #[test]
+    fn median_duration_is_zero_for_empty_db() {
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(db.get_median_duration_secs().unwrap(), 0);
+    }
+
+    #[test]
+    fn median_duration_returns_middle_for_odd_count() {
+        let db = Database::open_in_memory().unwrap();
+        for d in [300u32, 600, 900, 1200, 1500] {
+            db.insert_session(&Session {
+                duration_secs: d,
+                ..session_on("2026-04-27")
+            })
+            .unwrap();
+        }
+        assert_eq!(db.get_median_duration_secs().unwrap(), 900);
+    }
+
+    #[test]
+    fn median_duration_uses_lower_median_for_even_count() {
+        let db = Database::open_in_memory().unwrap();
+        // Sorted: [300, 600, 900, 1200]. Lower median = 600.
+        for d in [600u32, 1200, 300, 900] {
+            db.insert_session(&Session {
+                duration_secs: d,
+                ..session_on("2026-04-27")
+            })
+            .unwrap();
+        }
+        assert_eq!(db.get_median_duration_secs().unwrap(), 600);
     }
 }
