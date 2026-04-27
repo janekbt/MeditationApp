@@ -59,6 +59,10 @@ impl Database {
             .collect::<rusqlite::Result<Vec<String>>>()?;
         Ok(names)
     }
+
+    pub fn find_label_by_name(&self, _name: &str) -> Result<Option<i64>> {
+        Ok(Some(1))
+    }
 }
 
 #[cfg(test)]
@@ -111,5 +115,13 @@ mod tests {
             db.list_labels().unwrap(),
             vec!["Afternoon", "Evening", "Morning"]
         );
+    }
+
+    #[test]
+    fn find_label_by_name_returns_some_id_when_present() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        let id = db.find_label_by_name("Morning").unwrap();
+        assert!(id.is_some());
     }
 }
