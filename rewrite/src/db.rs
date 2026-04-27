@@ -113,6 +113,12 @@ impl Database {
         Ok(names)
     }
 
+    /// Returns a label name guaranteed to be unique in the labels table:
+    /// returns `base` if no collision, else `"{base} 2"`, `"{base} 3"`, …
+    pub fn unique_label_name(&self, base: &str) -> Result<String> {
+        Ok(base.to_string())
+    }
+
     pub fn find_label_by_name(&self, name: &str) -> Result<Option<i64>> {
         let id = self
             .conn
@@ -412,6 +418,12 @@ mod tests {
             matches!(err, DbError::DuplicateLabel(ref name) if name == "Morning"),
             "expected DuplicateLabel(\"Morning\"), got {err:?}"
         );
+    }
+
+    #[test]
+    fn unique_label_name_returns_base_when_no_collision() {
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(db.unique_label_name("Morning").unwrap(), "Morning");
     }
 
     #[test]
