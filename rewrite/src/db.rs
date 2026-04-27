@@ -1,4 +1,4 @@
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension};
 
 #[derive(Debug)]
 pub enum DbError {
@@ -13,6 +13,32 @@ impl From<rusqlite::Error> for DbError {
 }
 
 pub type Result<T> = std::result::Result<T, DbError>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Session {
+    pub start_iso: String,
+    pub duration_secs: u32,
+    pub label_id: Option<i64>,
+    pub notes: Option<String>,
+    pub mode: SessionMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionMode {
+    Countdown,
+    Stopwatch,
+    BoxBreath,
+}
+
+impl SessionMode {
+    fn as_db_str(self) -> &'static str {
+        match self {
+            SessionMode::Countdown => "countdown",
+            SessionMode::Stopwatch => "stopwatch",
+            SessionMode::BoxBreath => "box_breath",
+        }
+    }
+}
 
 pub struct Database {
     conn: Connection,
@@ -83,6 +109,21 @@ impl Database {
         Ok(self
             .conn
             .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))?)
+    }
+
+    pub fn insert_session(&self, session: &Session) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO sessions (start_iso, duration_secs, label_id, notes, mode)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                session.start_iso,
+                session.duration_secs,
+                session.label_id,
+                session.notes,
+                session.mode.as_db_str(),
+            ],
+        )?;
+        Ok(self.conn.last_insert_rowid())
     }
 }
 
@@ -156,5 +197,19 @@ mod tests {
     fn empty_database_has_zero_sessions() {
         let db = Database::open_in_memory().unwrap();
         assert_eq!(db.count_sessions().unwrap(), 0);
+    }
+
+    #[test]
+    fn insert_session_increases_count() {
+        let db = Database::open_in_memory().unwrap();
+        let session = Session {
+            start_iso: "2026-04-27T10:00:00Z".to_string(),
+            duration_secs: 600,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Countdown,
+        };
+        db.insert_session(&session).unwrap();
+        assert_eq!(db.count_sessions().unwrap(), 1);
     }
 }
