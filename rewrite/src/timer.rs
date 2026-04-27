@@ -19,27 +19,42 @@ impl CountdownTimer {
 }
 
 pub enum Stopwatch {
-    Running { started_at: Duration },
-    Paused { accumulated: Duration },
+    Running {
+        running_since: Duration,
+        prior_accumulated: Duration,
+    },
+    Paused {
+        accumulated: Duration,
+    },
 }
 
 impl Stopwatch {
     pub fn started_at(now: Duration) -> Self {
-        Self::Running { started_at: now }
+        Self::Running {
+            running_since: now,
+            prior_accumulated: Duration::ZERO,
+        }
     }
 
     pub fn paused_at(self, now: Duration) -> Self {
-        match self {
-            Self::Running { started_at } => Self::Paused {
-                accumulated: now.saturating_sub(started_at),
-            },
-            Self::Paused { .. } => self,
+        Self::Paused {
+            accumulated: self.elapsed(now),
+        }
+    }
+
+    pub fn resumed_at(self, now: Duration) -> Self {
+        Self::Running {
+            running_since: now,
+            prior_accumulated: self.elapsed(now),
         }
     }
 
     pub fn elapsed(&self, now: Duration) -> Duration {
         match self {
-            Self::Running { started_at } => now.saturating_sub(*started_at),
+            Self::Running {
+                running_since,
+                prior_accumulated,
+            } => *prior_accumulated + now.saturating_sub(*running_since),
             Self::Paused { accumulated } => *accumulated,
         }
     }
@@ -102,5 +117,13 @@ mod tests {
         let stopwatch = Stopwatch::started_at(Duration::from_secs(100))
             .paused_at(Duration::from_secs(110));
         assert_eq!(stopwatch.elapsed(Duration::from_secs(200)), Duration::from_secs(10));
+    }
+
+    #[test]
+    fn resumed_stopwatch_continues_from_accumulated_elapsed() {
+        let stopwatch = Stopwatch::started_at(Duration::from_secs(100))
+            .paused_at(Duration::from_secs(110))
+            .resumed_at(Duration::from_secs(200));
+        assert_eq!(stopwatch.elapsed(Duration::from_secs(210)), Duration::from_secs(20));
     }
 }
