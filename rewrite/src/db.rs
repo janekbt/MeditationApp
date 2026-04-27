@@ -390,6 +390,21 @@ impl Database {
         Ok(total_secs / 60)
     }
 
+    /// Per-label session count. `None` represents unlabeled sessions.
+    pub fn count_sessions_by_label(&self) -> Result<Vec<(Option<String>, i64)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT l.name, COUNT(*)
+             FROM sessions s
+             LEFT JOIN labels l ON s.label_id = l.id
+             GROUP BY l.name
+             ORDER BY l.name",
+        )?;
+        let rows = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
     /// Per-label total minutes. `None` represents unlabeled sessions.
     pub fn total_minutes_by_label(&self) -> Result<Vec<(Option<String>, i64)>> {
         let mut stmt = self.conn.prepare(
@@ -674,6 +689,32 @@ mod tests {
     fn total_minutes_by_label_is_empty_for_empty_db() {
         let db = Database::open_in_memory().unwrap();
         assert_eq!(db.total_minutes_by_label().unwrap(), vec![]);
+    }
+
+    #[test]
+    fn count_sessions_by_label_groups_per_label() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        let morning = db.find_label_by_name("Morning").unwrap();
+        db.insert_session(&Session {
+            label_id: morning,
+            ..session_on("2026-04-27")
+        })
+        .unwrap();
+        db.insert_session(&Session {
+            label_id: morning,
+            ..session_on("2026-04-26")
+        })
+        .unwrap();
+        db.insert_session(&Session {
+            label_id: None,
+            ..session_on("2026-04-25")
+        })
+        .unwrap();
+        assert_eq!(
+            db.count_sessions_by_label().unwrap(),
+            vec![(None, 1), (Some("Morning".to_string()), 2)]
+        );
     }
 
     fn date(y: i32, m: u32, d: u32) -> chrono::NaiveDate {
