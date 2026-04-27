@@ -149,12 +149,12 @@ pub struct TimerView {
     /// every closure.
     pub(super) breathing_elapsed_secs: Rc<Cell<f64>>,
 
-    /// Source of truth for countdown timing (post-graduation step 2).
-    /// `start_instant` anchors monotonic time at on_start; `countdown_core`
-    /// is queried each tick for remaining/finished, and gets `pause(now)` /
-    /// `resume(now)` called on it. The legacy `countdown_mode.display_secs`
+    /// Source of truth for countdown / stopwatch timing (graduation step 2/3).
+    /// `start_instant` anchors monotonic time at on_start; the `*_core` fields
+    /// are queried each tick and updated on pause/resume. Legacy `display_secs`
     /// is kept in sync as a derived shadow until callers are migrated.
     countdown_core: RefCell<Option<CoreCountdown>>,
+    stopwatch_core: RefCell<Option<CoreStopwatch>>,
     start_instant: Cell<Option<Instant>>,
 }
 
@@ -456,6 +456,10 @@ impl TimerView {
                 m.timer_state = TimerState::Running;
                 m.display_secs = 0;
                 m.session_start_time = unix_now();
+                drop(m);
+                self.start_instant.set(Some(Instant::now()));
+                *self.stopwatch_core.borrow_mut() =
+                    Some(CoreStopwatch::started_at(std::time::Duration::ZERO));
             }
             TimerMode::Countdown => {
                 let target = self.countdown_target_secs.get();
@@ -505,7 +509,12 @@ impl TimerView {
         let mode = self.current_mode();
 
         match mode {
-            TimerMode::Stopwatch => self.stopwatch_mode.borrow_mut().timer_state = TimerState::Running,
+            TimerMode::Stopwatch => {
+                self.stopwatch_mode.borrow_mut().timer_state = TimerState::Running;
+                let now = self.elapsed_since_start();
+                let mut slot = self.stopwatch_core.borrow_mut();
+                *slot = slot.take().map(|s| s.resumed_at(now));
+            }
             TimerMode::Countdown => {
                 self.countdown_mode.borrow_mut().timer_state = TimerState::Running;
                 let now = self.elapsed_since_start();
@@ -532,7 +541,12 @@ impl TimerView {
             TimerMode::Stopwatch => {
                 let mut m = self.stopwatch_mode.borrow_mut();
                 m.timer_state = TimerState::Paused;
-                m.display_secs
+                let display = m.display_secs;
+                drop(m);
+                let now = self.elapsed_since_start();
+                let mut slot = self.stopwatch_core.borrow_mut();
+                *slot = slot.take().map(|s| s.paused_at(now));
+                display
             }
             TimerMode::Countdown => {
                 let mut m = self.countdown_mode.borrow_mut();
@@ -761,8 +775,16 @@ impl TimerView {
                     }
 
                     if is_stopwatch {
-                        m.display_secs += 1;
-                        (m.display_secs, false)
+                        // Stopwatch: query meditate-core; floor is correct
+                        // here (display "0:01" once we cross 1.0s).
+                        let now = imp.elapsed_since_start();
+                        let sw = imp.stopwatch_core.borrow();
+                        let Some(s) = sw.as_ref() else {
+                            return glib::ControlFlow::Break;
+                        };
+                        let elapsed = s.elapsed(now).as_secs();
+                        m.display_secs = elapsed;
+                        (elapsed, false)
                     } else {
                         // Countdown: query meditate-core via wall-clock; this
                         // makes the countdown immune to tick drift / OS suspend.
