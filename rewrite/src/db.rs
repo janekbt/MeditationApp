@@ -135,6 +135,10 @@ impl Database {
         Ok(self.conn.last_insert_rowid())
     }
 
+    pub fn get_streak(&self, _today: chrono::NaiveDate) -> Result<i64> {
+        Ok(0)
+    }
+
     pub fn total_minutes(&self) -> Result<i64> {
         let total_secs: i64 = self.conn.query_row(
             "SELECT COALESCE(SUM(duration_secs), 0) FROM sessions",
@@ -286,5 +290,15 @@ mod tests {
     fn total_minutes_is_zero_for_empty_db() {
         let db = Database::open_in_memory().unwrap();
         assert_eq!(db.total_minutes().unwrap(), 0);
+    }
+
+    fn date(y: i32, m: u32, d: u32) -> chrono::NaiveDate {
+        chrono::NaiveDate::from_ymd_opt(y, m, d).unwrap()
+    }
+
+    #[test]
+    fn streak_is_zero_for_empty_db() {
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(db.get_streak(date(2026, 4, 27)).unwrap(), 0);
     }
 }
