@@ -135,6 +135,15 @@ impl Database {
         Ok(self.conn.last_insert_rowid())
     }
 
+    pub fn total_minutes(&self) -> Result<i64> {
+        let total_secs: i64 = self.conn.query_row(
+            "SELECT COALESCE(SUM(duration_secs), 0) FROM sessions",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(total_secs / 60)
+    }
+
     pub fn list_sessions(&self) -> Result<Vec<Session>> {
         let mut stmt = self.conn.prepare(
             "SELECT start_iso, duration_secs, label_id, notes, mode FROM sessions ORDER BY id",
@@ -256,5 +265,26 @@ mod tests {
         };
         db.insert_session(&session).unwrap();
         assert_eq!(db.list_sessions().unwrap(), vec![session]);
+    }
+
+    #[test]
+    fn total_minutes_sums_durations_across_sessions() {
+        let db = Database::open_in_memory().unwrap();
+        let session_with_dur = |dur_secs| Session {
+            start_iso: "2026-04-27T10:00:00Z".to_string(),
+            duration_secs: dur_secs,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Countdown,
+        };
+        db.insert_session(&session_with_dur(600)).unwrap(); // 10 min
+        db.insert_session(&session_with_dur(900)).unwrap(); // 15 min
+        assert_eq!(db.total_minutes().unwrap(), 25);
+    }
+
+    #[test]
+    fn total_minutes_is_zero_for_empty_db() {
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(db.total_minutes().unwrap(), 0);
     }
 }
