@@ -38,6 +38,15 @@ impl SessionMode {
             SessionMode::BoxBreath => "box_breath",
         }
     }
+
+    fn from_db_str(s: &str) -> Option<Self> {
+        match s {
+            "countdown" => Some(SessionMode::Countdown),
+            "stopwatch" => Some(SessionMode::Stopwatch),
+            "box_breath" => Some(SessionMode::BoxBreath),
+            _ => None,
+        }
+    }
 }
 
 pub struct Database {
@@ -125,6 +134,28 @@ impl Database {
         )?;
         Ok(self.conn.last_insert_rowid())
     }
+
+    pub fn list_sessions(&self) -> Result<Vec<Session>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT start_iso, duration_secs, label_id, notes, mode FROM sessions ORDER BY id",
+        )?;
+        let sessions = stmt
+            .query_map([], |row| {
+                let mode_str: String = row.get(4)?;
+                let mode = SessionMode::from_db_str(&mode_str).expect(
+                    "DB CHECK constraint should restrict mode to known values",
+                );
+                Ok(Session {
+                    start_iso: row.get(0)?,
+                    duration_secs: row.get(1)?,
+                    label_id: row.get(2)?,
+                    notes: row.get(3)?,
+                    mode,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<Session>>>()?;
+        Ok(sessions)
+    }
 }
 
 #[cfg(test)]
@@ -211,5 +242,19 @@ mod tests {
         };
         db.insert_session(&session).unwrap();
         assert_eq!(db.count_sessions().unwrap(), 1);
+    }
+
+    #[test]
+    fn list_sessions_round_trips_inserted_session() {
+        let db = Database::open_in_memory().unwrap();
+        let session = Session {
+            start_iso: "2026-04-27T10:00:00Z".to_string(),
+            duration_secs: 600,
+            label_id: None,
+            notes: Some("felt clear today".to_string()),
+            mode: SessionMode::BoxBreath,
+        };
+        db.insert_session(&session).unwrap();
+        assert_eq!(db.list_sessions().unwrap(), vec![session]);
     }
 }
