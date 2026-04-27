@@ -18,17 +18,30 @@ impl CountdownTimer {
     }
 }
 
-pub struct Stopwatch {
-    started_at: Duration,
+pub enum Stopwatch {
+    Running { started_at: Duration },
+    Paused { accumulated: Duration },
 }
 
 impl Stopwatch {
     pub fn started_at(now: Duration) -> Self {
-        Self { started_at: now }
+        Self::Running { started_at: now }
+    }
+
+    pub fn paused_at(self, now: Duration) -> Self {
+        match self {
+            Self::Running { started_at } => Self::Paused {
+                accumulated: now.saturating_sub(started_at),
+            },
+            Self::Paused { .. } => self,
+        }
     }
 
     pub fn elapsed(&self, now: Duration) -> Duration {
-        now.saturating_sub(self.started_at)
+        match self {
+            Self::Running { started_at } => now.saturating_sub(*started_at),
+            Self::Paused { accumulated } => *accumulated,
+        }
     }
 }
 
@@ -82,5 +95,12 @@ mod tests {
     fn stopwatch_elapsed_grows_with_now() {
         let stopwatch = Stopwatch::started_at(Duration::from_secs(100));
         assert_eq!(stopwatch.elapsed(Duration::from_secs(150)), Duration::from_secs(50));
+    }
+
+    #[test]
+    fn paused_stopwatch_does_not_accumulate_elapsed_after_pause() {
+        let stopwatch = Stopwatch::started_at(Duration::from_secs(100))
+            .paused_at(Duration::from_secs(110));
+        assert_eq!(stopwatch.elapsed(Duration::from_secs(200)), Duration::from_secs(10));
     }
 }
