@@ -74,6 +74,10 @@ impl BreathSession {
     pub fn current_phase(&self, now: Duration) -> Phase {
         self.pattern.phase_at(self.stopwatch.elapsed(now))
     }
+
+    pub fn current_progress(&self, now: Duration) -> f64 {
+        self.pattern.phase_progress(self.stopwatch.elapsed(now))
+    }
 }
 
 #[cfg(test)]
@@ -164,5 +168,15 @@ mod tests {
             session.current_phase(Duration::from_secs(104)),
             Phase::HoldAfterInhale
         );
+    }
+
+    #[test]
+    fn breath_session_reports_current_progress_via_stopwatch() {
+        let session = BreathSession::new(
+            BreathPattern::box_breath(),
+            Stopwatch::started_at(Duration::from_secs(100)),
+        );
+        // 2s after start = halfway through Inhale.
+        assert_eq!(session.current_progress(Duration::from_secs(102)), 0.5);
     }
 }
