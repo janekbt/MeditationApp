@@ -75,6 +75,10 @@ impl Countdown {
     pub fn remaining(&self, now: Duration) -> Duration {
         self.timer.remaining(self.stopwatch.elapsed(now))
     }
+
+    pub fn is_finished(&self, now: Duration) -> bool {
+        self.timer.is_finished(self.stopwatch.elapsed(now))
+    }
 }
 
 #[cfg(test)]
@@ -183,5 +187,15 @@ mod tests {
             countdown.remaining(Duration::from_secs(200)),
             Duration::from_secs(500),
         );
+    }
+
+    #[test]
+    fn countdown_is_finished_when_stopwatch_elapsed_reaches_total() {
+        let countdown = Countdown::new(
+            CountdownTimer::new(Duration::from_secs(60)),
+            Stopwatch::started_at(Duration::from_secs(0)),
+        );
+        assert!(countdown.is_finished(Duration::from_secs(60)));
+        assert!(!countdown.is_finished(Duration::from_secs(59)));
     }
 }
