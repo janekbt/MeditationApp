@@ -2,14 +2,19 @@ use std::time::Duration;
 
 pub fn parse_hms_duration(s: &str) -> Option<Duration> {
     let parts: Vec<&str> = s.split(':').collect();
-    let nums: Vec<u64> = parts
-        .iter()
-        .map(|p| p.parse::<u64>())
-        .collect::<std::result::Result<_, _>>()
-        .ok()?;
-    match nums.as_slice() {
-        [m, s] => Some(Duration::from_secs(m * 60 + s)),
-        [h, m, s] => Some(Duration::from_secs(h * 3600 + m * 60 + s)),
+    // Last component may be fractional ("30.5"); leading components must be integers.
+    match parts.as_slice() {
+        [m, sec] => {
+            let m: u64 = m.parse().ok()?;
+            let sec: f64 = sec.parse().ok()?;
+            Some(Duration::from_secs(m * 60 + sec.round() as u64))
+        }
+        [h, m, sec] => {
+            let h: u64 = h.parse().ok()?;
+            let m: u64 = m.parse().ok()?;
+            let sec: f64 = sec.parse().ok()?;
+            Some(Duration::from_secs(h * 3600 + m * 60 + sec.round() as u64))
+        }
         _ => None,
     }
 }
@@ -146,7 +151,19 @@ mod tests {
         assert_eq!(parse_hms_duration("60"), None); // single component is ambiguous
         assert_eq!(parse_hms_duration("1:30:45:00"), None);
         assert_eq!(parse_hms_duration(":30"), None);
-        assert_eq!(parse_hms_duration("1:30.5"), None); // fractional seconds rejected
+    }
+
+    #[test]
+    fn parse_hms_duration_rounds_fractional_seconds() {
+        // 1:30.5 = 1m 30.5s → rounds to 91s
+        assert_eq!(parse_hms_duration("1:30.5"), Some(Duration::from_secs(91)));
+        // 1:30.4 → rounds down to 90s
+        assert_eq!(parse_hms_duration("1:30.4"), Some(Duration::from_secs(90)));
+        // Three-part with fractional last component.
+        assert_eq!(
+            parse_hms_duration("1:00:30.5"),
+            Some(Duration::from_secs(3631))
+        );
     }
 
     #[test]
