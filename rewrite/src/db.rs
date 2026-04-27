@@ -410,11 +410,21 @@ impl Database {
     }
 
     pub fn list_sessions(&self) -> Result<Vec<Session>> {
+        self.list_sessions_filtered(None)
+    }
+
+    pub fn list_sessions_for_label(&self, label_id: i64) -> Result<Vec<Session>> {
+        self.list_sessions_filtered(Some(label_id))
+    }
+
+    fn list_sessions_filtered(&self, label_filter: Option<i64>) -> Result<Vec<Session>> {
         let mut stmt = self.conn.prepare(
-            "SELECT start_iso, duration_secs, label_id, notes, mode FROM sessions ORDER BY id",
+            "SELECT start_iso, duration_secs, label_id, notes, mode FROM sessions
+             WHERE ?1 IS NULL OR label_id = ?1
+             ORDER BY id",
         )?;
         let sessions = stmt
-            .query_map([], |row| {
+            .query_map(params![label_filter], |row| {
                 let mode_str: String = row.get(4)?;
                 let mode = SessionMode::from_db_str(&mode_str).expect(
                     "DB CHECK constraint should restrict mode to known values",
@@ -538,6 +548,30 @@ mod tests {
         };
         db.insert_session(&session).unwrap();
         assert_eq!(db.count_sessions().unwrap(), 1);
+    }
+
+    #[test]
+    fn list_sessions_for_label_filters_by_label_id() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        let morning = db.find_label_by_name("Morning").unwrap().unwrap();
+        let labeled = Session {
+            start_iso: "2026-04-27T10:00:00Z".to_string(),
+            duration_secs: 600,
+            label_id: Some(morning),
+            notes: None,
+            mode: SessionMode::Countdown,
+        };
+        let unlabeled = Session {
+            start_iso: "2026-04-27T19:00:00Z".to_string(),
+            duration_secs: 300,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::BoxBreath,
+        };
+        db.insert_session(&labeled).unwrap();
+        db.insert_session(&unlabeled).unwrap();
+        assert_eq!(db.list_sessions_for_label(morning).unwrap(), vec![labeled]);
     }
 
     #[test]
