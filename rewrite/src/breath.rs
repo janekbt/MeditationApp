@@ -204,10 +204,11 @@ mod tests {
         )
         .pause(Duration::from_secs(102)) // 2s into Inhale, paused
         .resume(Duration::from_secs(200)); // 98s of wall time skipped
-        // Active elapsed is still 2s + (210-200) = 12s into the cycle → Exhale.
+        // Active elapsed is 2s + (210-200) = 12s. Box breath:
+        // Inhale [0-4), HoldAfterInhale [4-8), Exhale [8-12), HoldAfterExhale [12-16).
         assert_eq!(
             session.current_phase(Duration::from_secs(210)),
-            Phase::Exhale
+            Phase::HoldAfterExhale
         );
     }
 }
