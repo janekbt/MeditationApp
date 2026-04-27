@@ -5,6 +5,7 @@ pub enum Phase {
     Inhale,
     HoldAfterInhale,
     Exhale,
+    HoldAfterExhale,
 }
 
 pub struct BreathPattern;
@@ -19,8 +20,10 @@ impl BreathPattern {
             Phase::Inhale
         } else if elapsed < Duration::from_secs(8) {
             Phase::HoldAfterInhale
-        } else {
+        } else if elapsed < Duration::from_secs(12) {
             Phase::Exhale
+        } else {
+            Phase::HoldAfterExhale
         }
     }
 }
@@ -48,5 +51,14 @@ mod tests {
     fn box_breath_exhales_at_8s() {
         let pattern = BreathPattern::box_breath();
         assert_eq!(pattern.phase_at(Duration::from_secs(8)), Phase::Exhale);
+    }
+
+    #[test]
+    fn box_breath_holds_after_exhale_at_12s() {
+        let pattern = BreathPattern::box_breath();
+        assert_eq!(
+            pattern.phase_at(Duration::from_secs(12)),
+            Phase::HoldAfterExhale
+        );
     }
 }
