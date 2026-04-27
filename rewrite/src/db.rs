@@ -21,12 +21,19 @@ pub struct Database {
 impl Database {
     pub fn open_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
-        conn.execute(
+        conn.execute_batch(
             "CREATE TABLE labels (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE
-            )",
-            [],
+            );
+            CREATE TABLE sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                start_iso TEXT NOT NULL,
+                duration_secs INTEGER NOT NULL,
+                label_id INTEGER REFERENCES labels(id),
+                notes TEXT,
+                mode TEXT NOT NULL CHECK (mode IN ('countdown', 'stopwatch', 'box_breath'))
+            );",
         )?;
         Ok(Self { conn })
     }
@@ -70,6 +77,12 @@ impl Database {
             )
             .optional()?;
         Ok(id)
+    }
+
+    pub fn count_sessions(&self) -> Result<i64> {
+        Ok(self
+            .conn
+            .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))?)
     }
 }
 
@@ -137,5 +150,11 @@ mod tests {
     fn find_label_by_name_returns_none_when_absent() {
         let db = Database::open_in_memory().unwrap();
         assert_eq!(db.find_label_by_name("Morning").unwrap(), None);
+    }
+
+    #[test]
+    fn empty_database_has_zero_sessions() {
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(db.count_sessions().unwrap(), 0);
     }
 }
