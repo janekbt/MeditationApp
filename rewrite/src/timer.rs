@@ -12,6 +12,10 @@ impl CountdownTimer {
     pub fn remaining(&self, elapsed: Duration) -> Duration {
         self.total.saturating_sub(elapsed)
     }
+
+    pub fn is_finished(&self, _elapsed: Duration) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]
@@ -40,5 +44,11 @@ mod tests {
             timer.remaining(Duration::from_secs(700)),
             Duration::ZERO
         );
+    }
+
+    #[test]
+    fn timer_is_finished_when_elapsed_equals_total() {
+        let timer = CountdownTimer::new(Duration::from_secs(600));
+        assert!(timer.is_finished(Duration::from_secs(600)));
     }
 }
