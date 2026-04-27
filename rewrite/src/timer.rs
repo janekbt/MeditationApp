@@ -139,4 +139,22 @@ mod tests {
             Duration::from_secs(10)
         );
     }
+
+    #[test]
+    fn stopwatch_survives_simulated_process_restart() {
+        // Shell clock at app start: monotonic boot time = 100s.
+        let original = Stopwatch::started_at(Duration::from_secs(100));
+
+        // App runs to boot time = 200s, then OS kills it.
+        // (50s of meditation in the bank.)
+        let saved = serde_json::to_string(&original).unwrap();
+
+        // App relaunches later at boot time = 500s.
+        // No real-world time was lost — the timer was active the whole time.
+        let restored: Stopwatch = serde_json::from_str(&saved).unwrap();
+        assert_eq!(
+            restored.elapsed(Duration::from_secs(500)),
+            Duration::from_secs(400)
+        );
+    }
 }
