@@ -78,6 +78,22 @@ impl BreathSession {
     pub fn current_progress(&self, now: Duration) -> f64 {
         self.pattern.phase_progress(self.stopwatch.elapsed(now))
     }
+
+    pub fn pause(self, now: Duration) -> Self {
+        let Self { pattern, stopwatch } = self;
+        Self {
+            pattern,
+            stopwatch: stopwatch.paused_at(now),
+        }
+    }
+
+    pub fn resume(self, now: Duration) -> Self {
+        let Self { pattern, stopwatch } = self;
+        Self {
+            pattern,
+            stopwatch: stopwatch.resumed_at(now),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -178,5 +194,20 @@ mod tests {
         );
         // 2s after start = halfway through Inhale.
         assert_eq!(session.current_progress(Duration::from_secs(102)), 0.5);
+    }
+
+    #[test]
+    fn breath_session_pause_and_resume_freeze_then_continue_phase() {
+        let session = BreathSession::new(
+            BreathPattern::box_breath(),
+            Stopwatch::started_at(Duration::from_secs(100)),
+        )
+        .pause(Duration::from_secs(102)) // 2s into Inhale, paused
+        .resume(Duration::from_secs(200)); // 98s of wall time skipped
+        // Active elapsed is still 2s + (210-200) = 12s into the cycle → Exhale.
+        assert_eq!(
+            session.current_phase(Duration::from_secs(210)),
+            Phase::Exhale
+        );
     }
 }
