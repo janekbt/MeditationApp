@@ -1,5 +1,4 @@
 use std::cell::{Cell, RefCell};
-use std::rc::Rc;
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{glib, CompositeTemplate};
@@ -140,15 +139,6 @@ pub struct TimerView {
     /// Suppress persistence side-effects while `load_breathing_settings`
     /// is setting initial values from the DB.
     breathing_populating: Cell<bool>,
-    /// High-resolution elapsed time (seconds) for the running Box-Breath
-    /// session. Driven by the DrawingArea's tick callback in the running
-    /// page so the dot animates smoothly; the window reads this to update
-    /// phase label / countdown / top counter. Resets to 0 on each start.
-    /// Wrapped in Rc so the window can share the same cell with its draw
-    /// func + tick callback — otherwise we'd need a weak TimerView ref in
-    /// every closure.
-    pub(super) breathing_elapsed_secs: Rc<Cell<f64>>,
-
     /// Source of truth for countdown / stopwatch timing (graduation step 2/3).
     /// `start_instant` anchors monotonic time at on_start; the `*_core` fields
     /// are queried each tick and updated on pause/resume. Legacy `display_secs`
@@ -495,7 +485,6 @@ impl TimerView {
                 m.target_secs = target;
                 m.display_secs = 0;
                 m.session_start_time = unix_now();
-                self.breathing_elapsed_secs.set(0.0);
                 drop(m);
                 self.start_instant.set(Some(Instant::now()));
                 *self.breath_stopwatch.borrow_mut() =
@@ -579,7 +568,7 @@ impl TimerView {
                 drop(slot);
                 let mut m = self.breathing_mode.borrow_mut();
                 m.timer_state = TimerState::Paused;
-                self.breathing_elapsed_secs.get() as u64
+                self.breath_elapsed().as_secs()
             }
         };
 
@@ -607,7 +596,7 @@ impl TimerView {
             TimerMode::Breathing => {
                 let mut m = self.breathing_mode.borrow_mut();
                 m.timer_state = TimerState::Done;
-                self.breathing_elapsed_secs.get() as u64
+                self.breath_elapsed().as_secs()
             }
         };
 
@@ -643,7 +632,7 @@ impl TimerView {
             }
             TimerMode::Breathing => {
                 let m = self.breathing_mode.borrow();
-                (self.breathing_elapsed_secs.get() as u64, m.session_start_time)
+                (self.breath_elapsed().as_secs(), m.session_start_time)
             }
         };
 
@@ -759,7 +748,7 @@ impl TimerView {
             TimerMode::Countdown => *self.countdown_mode.borrow_mut() = ModeState::default(),
             TimerMode::Breathing => {
                 *self.breathing_mode.borrow_mut() = ModeState::default();
-                self.breathing_elapsed_secs.set(0.0);
+                *self.breath_stopwatch.borrow_mut() = None;
             }
         }
 
@@ -869,7 +858,7 @@ impl TimerView {
     /// Distinct from `on_stop` (user-initiated), which is silent.
     pub(super) fn finish_breath_session(&self) {
         self.breathing_mode.borrow_mut().timer_state = TimerState::Done;
-        let elapsed = self.breathing_elapsed_secs.get() as u64;
+        let elapsed = self.breath_elapsed().as_secs();
         self.obj().emit_by_name::<()>("timer-stopped", &[]);
         self.show_done(elapsed);
         if let Some(app) = self.get_app() {
@@ -1278,7 +1267,7 @@ impl TimerView {
         match self.tick_mode.get() {
             TimerMode::Stopwatch => self.stopwatch_mode.borrow().display_secs,
             TimerMode::Countdown => self.countdown_mode.borrow().display_secs,
-            TimerMode::Breathing => self.breathing_elapsed_secs.get() as u64,
+            TimerMode::Breathing => self.breath_elapsed().as_secs(),
         }
     }
 

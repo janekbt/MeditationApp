@@ -273,10 +273,9 @@ impl MeditateWindow {
         // perimeter. Per user request the progress-stroke trail is omitted —
         // only the dot moves.
         let pattern_cell: Rc<Cell<Pattern>> = Rc::new(Cell::new(pattern));
-        let elapsed_handle = self.timer_view.breathing_elapsed_handle();
         {
             let pattern_cell = pattern_cell.clone();
-            let elapsed_handle = elapsed_handle.clone();
+            let obj = self.obj().clone();
             drawing_area.set_draw_func(move |widget, cr, w, h| {
                 let size = w.min(h) as f64;
                 let pad = 12.0;
@@ -307,7 +306,7 @@ impl MeditateWindow {
                 if p.cycle_secs() == 0 {
                     return;
                 }
-                let elapsed = elapsed_handle.get();
+                let elapsed = obj.imp().timer_view.breath_elapsed().as_secs_f64();
                 let (phase, phase_elapsed, phase_total) = phase_at(&p, elapsed);
                 let t = (phase_elapsed / phase_total as f64).clamp(0.0, 1.0);
 
@@ -390,13 +389,9 @@ impl MeditateWindow {
         let phase_sec_weak = phase_seconds_label.downgrade();
         let obj = self.obj().clone();
         let pattern_for_tick = pattern;
-        let elapsed_for_tick = elapsed_handle.clone();
         drawing_area.add_tick_callback(move |_, _clock| {
             let tv = obj.imp().timer_view.clone();
             let cur = tv.breath_elapsed().as_secs_f64();
-            // Mirror to the legacy elapsed cell; on_stop / show_done still
-            // reads this, until the cleanup pass collapses it.
-            elapsed_for_tick.set(cur);
 
             let (phase, phase_elapsed, phase_total) = phase_at(&pattern_for_tick, cur);
             let phase_name = match phase {
