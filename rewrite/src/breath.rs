@@ -36,29 +36,23 @@ impl BreathPattern {
     }
 
     pub fn phase_at(&self, elapsed: Duration) -> Phase {
+        self.locate(elapsed).0
+    }
+
+    pub fn phase_progress(&self, elapsed: Duration) -> f64 {
+        let (_, into_phase_nanos, phase_duration_nanos) = self.locate(elapsed);
+        into_phase_nanos as f64 / phase_duration_nanos as f64
+    }
+
+    fn locate(&self, elapsed: Duration) -> (Phase, u128, u128) {
         let cycle_nanos: u128 = self.phases.iter().map(|(_, d)| d.as_nanos()).sum();
         let offset_nanos = elapsed.as_nanos() % cycle_nanos;
 
         let mut accumulated: u128 = 0;
         for (phase, duration) in &self.phases {
-            accumulated += duration.as_nanos();
-            if offset_nanos < accumulated {
-                return *phase;
-            }
-        }
-        unreachable!("phase table exhausted despite offset < cycle")
-    }
-
-    pub fn phase_progress(&self, elapsed: Duration) -> f64 {
-        let cycle_nanos: u128 = self.phases.iter().map(|(_, d)| d.as_nanos()).sum();
-        let offset_nanos = elapsed.as_nanos() % cycle_nanos;
-
-        let mut accumulated: u128 = 0;
-        for (_, duration) in &self.phases {
             let phase_end = accumulated + duration.as_nanos();
             if offset_nanos < phase_end {
-                let into_phase = offset_nanos - accumulated;
-                return into_phase as f64 / duration.as_nanos() as f64;
+                return (*phase, offset_nanos - accumulated, duration.as_nanos());
             }
             accumulated = phase_end;
         }
