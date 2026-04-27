@@ -1,4 +1,5 @@
 use rusqlite::{params, Connection, OptionalExtension};
+use std::path::Path;
 
 #[derive(Debug)]
 pub enum DbError {
@@ -53,23 +54,31 @@ pub struct Database {
     conn: Connection,
 }
 
+const SCHEMA: &str = "
+    CREATE TABLE IF NOT EXISTS labels (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE
+    );
+    CREATE TABLE IF NOT EXISTS sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        start_iso TEXT NOT NULL,
+        duration_secs INTEGER NOT NULL,
+        label_id INTEGER REFERENCES labels(id),
+        notes TEXT,
+        mode TEXT NOT NULL CHECK (mode IN ('countdown', 'stopwatch', 'box_breath'))
+    );
+";
+
 impl Database {
     pub fn open_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
-        conn.execute_batch(
-            "CREATE TABLE labels (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL UNIQUE
-            );
-            CREATE TABLE sessions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                start_iso TEXT NOT NULL,
-                duration_secs INTEGER NOT NULL,
-                label_id INTEGER REFERENCES labels(id),
-                notes TEXT,
-                mode TEXT NOT NULL CHECK (mode IN ('countdown', 'stopwatch', 'box_breath'))
-            );",
-        )?;
+        conn.execute_batch(SCHEMA)?;
+        Ok(Self { conn })
+    }
+
+    pub fn open(path: &Path) -> Result<Self> {
+        let conn = Connection::open(path)?;
+        conn.execute_batch(SCHEMA)?;
         Ok(Self { conn })
     }
 
@@ -499,5 +508,14 @@ mod tests {
     fn daily_totals_is_empty_for_empty_db() {
         let db = Database::open_in_memory().unwrap();
         assert_eq!(db.get_daily_totals().unwrap(), vec![]);
+    }
+
+    #[test]
+    fn open_creates_database_at_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.db");
+        let db = Database::open(&path).unwrap();
+        db.insert_label("Morning").unwrap();
+        assert_eq!(db.count_labels().unwrap(), 1);
     }
 }
