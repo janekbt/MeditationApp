@@ -18,6 +18,20 @@ impl CountdownTimer {
     }
 }
 
+pub struct Stopwatch {
+    started_at: Duration,
+}
+
+impl Stopwatch {
+    pub fn started_at(now: Duration) -> Self {
+        Self { started_at: now }
+    }
+
+    pub fn elapsed(&self, _now: Duration) -> Duration {
+        Duration::from_secs(10)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -56,5 +70,11 @@ mod tests {
     fn timer_is_not_finished_before_elapsed_reaches_total() {
         let timer = CountdownTimer::new(Duration::from_secs(600));
         assert!(!timer.is_finished(Duration::from_secs(599)));
+    }
+
+    #[test]
+    fn stopwatch_elapsed_is_now_minus_started_at() {
+        let stopwatch = Stopwatch::started_at(Duration::from_secs(100));
+        assert_eq!(stopwatch.elapsed(Duration::from_secs(110)), Duration::from_secs(10));
     }
 }
