@@ -39,4 +39,12 @@ mod tests {
         db.insert_label("Morning").unwrap();
         assert_eq!(db.count_labels().unwrap(), 1);
     }
+
+    #[test]
+    fn inserting_two_distinct_labels_yields_count_of_two() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        db.insert_label("Evening").unwrap();
+        assert_eq!(db.count_labels().unwrap(), 2);
+    }
 }
