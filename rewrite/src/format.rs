@@ -14,6 +14,11 @@ pub fn parse_hms_duration(s: &str) -> Option<Duration> {
     }
 }
 
+pub fn parse_insighttimer_datetime(s: &str) -> Option<chrono::NaiveDateTime> {
+    // InsightTimer export format, e.g. "10/15/2024 6:30:00 AM".
+    chrono::NaiveDateTime::parse_from_str(s, "%m/%d/%Y %l:%M:%S %p").ok()
+}
+
 const SESSION_MILESTONES: &[u32] = &[10, 25, 50, 100, 250, 500, 1000, 2500, 5000];
 
 pub fn next_session_milestone(count: u32) -> Option<u32> {
@@ -197,5 +202,21 @@ mod tests {
         // Past 5000 — no further milestone.
         assert_eq!(next_session_milestone(5000), None);
         assert_eq!(next_session_milestone(10000), None);
+    }
+
+    #[test]
+    fn parse_insighttimer_datetime_handles_am_and_pm() {
+        let am = parse_insighttimer_datetime("10/15/2024 6:30:00 AM").unwrap();
+        assert_eq!(am.to_string(), "2024-10-15 06:30:00");
+        let pm = parse_insighttimer_datetime("10/15/2024 6:30:00 PM").unwrap();
+        assert_eq!(pm.to_string(), "2024-10-15 18:30:00");
+    }
+
+    #[test]
+    fn parse_insighttimer_datetime_rejects_garbage() {
+        assert_eq!(parse_insighttimer_datetime(""), None);
+        assert_eq!(parse_insighttimer_datetime("not a date"), None);
+        // ISO format is rejected — this parser is for InsightTimer's specific shape.
+        assert_eq!(parse_insighttimer_datetime("2024-10-15T06:30:00"), None);
     }
 }
