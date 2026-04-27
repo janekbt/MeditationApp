@@ -637,6 +637,19 @@ mod tests {
     }
 
     #[test]
+    fn inserting_session_with_unknown_label_id_is_rejected() {
+        let db = Database::open_in_memory().unwrap();
+        let result = db.insert_session(&Session {
+            start_iso: "2026-04-27T10:00:00Z".to_string(),
+            duration_secs: 600,
+            label_id: Some(999), // does not exist
+            notes: None,
+            mode: SessionMode::Countdown,
+        });
+        assert!(result.is_err(), "FK constraint should reject unknown label");
+    }
+
+    #[test]
     fn data_persists_across_reopens() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.db");
