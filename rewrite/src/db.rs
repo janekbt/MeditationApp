@@ -92,6 +92,17 @@ impl Database {
         Ok(Self { conn })
     }
 
+    /// How many sessions reference the label with `id`. Returns 0 for
+    /// unreferenced or non-existent labels (no error). Used by the UI's
+    /// "delete N sessions?" confirmation before unlabel-on-delete.
+    pub fn label_session_count(&self, id: i64) -> Result<i64> {
+        Ok(self.conn.query_row(
+            "SELECT COUNT(*) FROM sessions WHERE label_id = ?1",
+            params![id],
+            |row| row.get(0),
+        )?)
+    }
+
     /// Remove the label with `id`. Sessions that referenced it survive
     /// with `label_id = None` (FK is `ON DELETE SET NULL`). Unknown ids
     /// are silently no-ops.
@@ -614,6 +625,63 @@ mod tests {
         assert!(second.is_err(), "second insert of same label should fail");
         // The first insert is preserved; no duplicate row is created.
         assert_eq!(db.count_labels().unwrap(), 1);
+    }
+
+    #[test]
+    fn label_session_count_zero_for_unreferenced_label() {
+        // A freshly-created label has no sessions referencing it.
+        let db = Database::open_in_memory().unwrap();
+        let id = db.insert_label("Morning").unwrap();
+        assert_eq!(db.label_session_count(id).unwrap(), 0);
+    }
+
+    #[test]
+    fn label_session_count_counts_referencing_sessions() {
+        // Counts only sessions whose label_id matches this label's id.
+        // Sessions without labels and sessions with OTHER labels are not
+        // counted.
+        let db = Database::open_in_memory().unwrap();
+        let morning = db.insert_label("Morning").unwrap();
+        let evening = db.insert_label("Evening").unwrap();
+
+        // Three Morning sessions.
+        for i in 0..3 {
+            db.insert_session(&Session {
+                start_iso: format!("2026-04-2{i}T10:00:00Z"),
+                duration_secs: 600,
+                label_id: Some(morning),
+                notes: None,
+                mode: SessionMode::Countdown,
+            }).unwrap();
+        }
+        // One Evening session — must not contribute to Morning's count.
+        db.insert_session(&Session {
+            start_iso: "2026-04-27T19:00:00Z".to_string(),
+            duration_secs: 600,
+            label_id: Some(evening),
+            notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+        // Two unlabeled sessions — must not contribute either.
+        for i in 0..2 {
+            db.insert_session(&Session {
+                start_iso: format!("2026-04-2{i}T20:00:00Z"),
+                duration_secs: 300,
+                label_id: None,
+                notes: None,
+                mode: SessionMode::Stopwatch,
+            }).unwrap();
+        }
+
+        assert_eq!(db.label_session_count(morning).unwrap(), 3);
+        assert_eq!(db.label_session_count(evening).unwrap(), 1);
+    }
+
+    #[test]
+    fn label_session_count_unknown_id_is_zero() {
+        // No row ⇒ no references; not an error.
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(db.label_session_count(9999).unwrap(), 0);
     }
 
     #[test]
