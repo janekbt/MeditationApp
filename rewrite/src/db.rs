@@ -92,12 +92,17 @@ impl Database {
         Ok(Self { conn })
     }
 
-    pub fn insert_label(&self, name: &str) -> Result<()> {
+    /// Insert a new label and return its AUTOINCREMENT rowid. Returns
+    /// `DbError::DuplicateLabel` if `name` (case-insensitive) already
+    /// exists — the column is `COLLATE NOCASE UNIQUE`, so callers
+    /// should route through `unique_label_name` or `find_or_create_label`
+    /// for the auto-rename UX.
+    pub fn insert_label(&self, name: &str) -> Result<i64> {
         match self
             .conn
             .execute("INSERT INTO labels (name) VALUES (?1)", [name])
         {
-            Ok(_) => Ok(()),
+            Ok(_) => Ok(self.conn.last_insert_rowid()),
             Err(rusqlite::Error::SqliteFailure(err, _))
                 if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE =>
             {
@@ -151,10 +156,7 @@ impl Database {
         if let Some(id) = self.find_label_by_name(name)? {
             return Ok(id);
         }
-        self.insert_label(name)?;
-        // The just-inserted row is the one whose name matches.
-        self.find_label_by_name(name)?
-            .ok_or_else(|| DbError::Sqlite(rusqlite::Error::QueryReturnedNoRows))
+        self.insert_label(name)
     }
 
     pub fn find_label_by_name(&self, name: &str) -> Result<Option<i64>> {
@@ -300,16 +302,9 @@ impl Database {
             let mode = SessionMode::from_db_str(mode_str)
                 .ok_or_else(|| DbError::Csv(format!("unknown mode: {mode_str}")))?;
 
-            let label_id = if let Some(label_name) = label {
-                match self.find_label_by_name(&label_name)? {
-                    Some(id) => Some(id),
-                    None => {
-                        self.insert_label(&label_name)?;
-                        self.find_label_by_name(&label_name)?
-                    }
-                }
-            } else {
-                None
+            let label_id = match label {
+                Some(name) => Some(self.find_or_create_label(&name)?),
+                None => None,
             };
 
             self.insert_session(&Session {
@@ -590,6 +585,22 @@ mod tests {
         assert!(second.is_err(), "second insert of same label should fail");
         // The first insert is preserved; no duplicate row is created.
         assert_eq!(db.count_labels().unwrap(), 1);
+    }
+
+    #[test]
+    fn insert_label_returns_new_rowid() {
+        // insert_label returns the AUTOINCREMENT id of the new row,
+        // matching insert_session's contract. AUTOINCREMENT starts at 1.
+        let db = Database::open_in_memory().unwrap();
+        let id1 = db.insert_label("Morning").unwrap();
+        let id2 = db.insert_label("Evening").unwrap();
+        let id3 = db.insert_label("Afternoon").unwrap();
+        assert_eq!(id1, 1);
+        assert_eq!(id2, 2);
+        assert_eq!(id3, 3);
+        // The returned id matches what find_label_by_name reports.
+        assert_eq!(db.find_label_by_name("Morning").unwrap(), Some(id1));
+        assert_eq!(db.find_label_by_name("Evening").unwrap(), Some(id2));
     }
 
     #[test]
