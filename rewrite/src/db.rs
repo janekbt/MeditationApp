@@ -168,6 +168,12 @@ impl Database {
         Ok(self.conn.last_insert_rowid())
     }
 
+    /// Remove the row with `id`. Unknown ids are silently no-ops.
+    pub fn delete_session(&self, id: i64) -> Result<()> {
+        self.conn.execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
     /// Replace every field of the row with `id`. Unknown ids are silently
     /// no-ops (SQLite UPDATE matches zero rows).
     pub fn update_session(&self, id: i64, session: &Session) -> Result<()> {
@@ -770,6 +776,67 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].1.duration_secs, 600);
         assert_eq!(rows[0].1.start_iso, "2026-04-27T10:00:00Z");
+    }
+
+    #[test]
+    fn delete_session_removes_only_the_addressed_row() {
+        // Delete addresses one row by id; siblings are untouched.
+        let db = Database::open_in_memory().unwrap();
+        let make = |start: &str| Session {
+            start_iso: start.to_string(),
+            duration_secs: 600,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Countdown,
+        };
+        let id1 = db.insert_session(&make("2026-04-27T10:00:00Z")).unwrap();
+        let id2 = db.insert_session(&make("2026-04-27T11:00:00Z")).unwrap();
+        let id3 = db.insert_session(&make("2026-04-27T12:00:00Z")).unwrap();
+
+        db.delete_session(id2).unwrap();
+
+        let surviving_ids: Vec<i64> =
+            db.list_sessions().unwrap().into_iter().map(|(i, _)| i).collect();
+        assert_eq!(surviving_ids, vec![id1, id3]);
+        assert_eq!(db.count_sessions().unwrap(), 2);
+    }
+
+    #[test]
+    fn delete_session_unknown_id_is_noop() {
+        // Matches SQLite DELETE semantics: missing id is silent.
+        let db = Database::open_in_memory().unwrap();
+        let id = db.insert_session(&Session {
+            start_iso: "2026-04-27T10:00:00Z".to_string(),
+            duration_secs: 600,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+        db.delete_session(id + 999).unwrap();
+        // Original row still there.
+        assert_eq!(db.count_sessions().unwrap(), 1);
+    }
+
+    #[test]
+    fn delete_session_does_not_remove_referenced_label() {
+        // Labels survive their sessions — the FK is set-null on the
+        // sessions side, not cascade-delete on the labels side.
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        let morning = db.find_label_by_name("Morning").unwrap().unwrap();
+        let id = db.insert_session(&Session {
+            start_iso: "2026-04-27T10:00:00Z".to_string(),
+            duration_secs: 600,
+            label_id: Some(morning),
+            notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+
+        db.delete_session(id).unwrap();
+
+        // Label outlives the session.
+        assert_eq!(db.list_labels().unwrap(), vec!["Morning"]);
+        assert_eq!(db.count_labels().unwrap(), 1);
     }
 
     #[test]
