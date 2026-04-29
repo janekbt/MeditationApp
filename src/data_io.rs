@@ -373,7 +373,7 @@ mod tests {
         assert_eq!(written, originals.len());
 
         db.delete_all_sessions().unwrap();
-        assert_eq!(db.get_session_count().unwrap(), 0);
+        assert_eq!(db.count_sessions().unwrap(), 0);
 
         let imported = import_csv_to_db(&db, tmp.path()).unwrap();
         assert_eq!(imported, originals.len());

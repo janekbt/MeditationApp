@@ -242,7 +242,7 @@ impl Database {
         Ok(n.max(0) as u32)
     }
 
-    pub fn get_total_duration_secs(&self) -> Result<i64> {
+    pub fn total_seconds(&self) -> Result<i64> {
         self.inner.total_seconds().map_err(map_core_err)
     }
 
@@ -278,15 +278,15 @@ impl Database {
         self.inner.total_secs_since(since).map_err(map_core_err)
     }
 
-    pub fn get_active_months(&self) -> Result<Vec<(i32, u32)>> {
+    pub fn active_months(&self) -> Result<Vec<(i32, u32)>> {
         self.inner.active_months().map_err(map_core_err)
     }
 
-    pub fn get_active_days_in_month(&self, year: i32, month: u32) -> Result<Vec<u32>> {
+    pub fn active_days_in_month(&self, year: i32, month: u32) -> Result<Vec<u32>> {
         self.inner.active_days_in_month(year, month).map_err(map_core_err)
     }
 
-    pub fn get_session_count(&self) -> Result<i64> {
+    pub fn count_sessions(&self) -> Result<i64> {
         self.inner.count_sessions().map_err(map_core_err)
     }
 
@@ -311,7 +311,7 @@ impl Database {
         Ok(Some(secs as i64))
     }
 
-    pub fn get_hour_buckets(&self) -> Result<(i64, i64, i64)> {
+    pub fn hour_buckets(&self) -> Result<(i64, i64, i64)> {
         self.inner.hour_buckets().map_err(map_core_err)
     }
 
@@ -319,7 +319,7 @@ impl Database {
         self.inner.label_totals_seconds().map_err(map_core_err)
     }
 
-    pub fn get_month_total_secs(&self, year: i32, month: u32) -> Result<i64> {
+    pub fn month_total_secs(&self, year: i32, month: u32) -> Result<i64> {
         self.inner.month_total_secs(year, month).map_err(map_core_err)
     }
 }

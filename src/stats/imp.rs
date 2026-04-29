@@ -322,14 +322,14 @@ impl StatsView {
             InsightData {
                 current_streak: db.get_streak().unwrap_or(0),
                 best_streak:    db.get_best_streak().unwrap_or(0),
-                this_month:     db.get_month_total_secs(ty, tm).unwrap_or(0),
-                last_month:     db.get_month_total_secs(ly, lm).unwrap_or(0),
+                this_month:     db.month_total_secs(ty, tm).unwrap_or(0),
+                last_month:     db.month_total_secs(ly, lm).unwrap_or(0),
                 daily_totals:   db.get_daily_totals(&fourteen_since).unwrap_or_default(),
                 longest:        db.get_longest_session().unwrap_or(None),
                 typical:        db.get_median_duration_secs().unwrap_or(None).unwrap_or(0),
                 avg_secs:       db.get_running_average_secs(7).unwrap_or(0.0) as i64,
-                hour_buckets:   db.get_hour_buckets().unwrap_or((0, 0, 0)),
-                session_count:  db.get_session_count().unwrap_or(0),
+                hour_buckets:   db.hour_buckets().unwrap_or((0, 0, 0)),
+                session_count:  db.count_sessions().unwrap_or(0),
             }
         }).unwrap_or_default();
 
@@ -599,8 +599,8 @@ impl StatsView {
         let (streak, total, sessions) = app
             .with_db(|db| {
                 let streak = db.get_best_streak().unwrap_or(0);
-                let total  = db.get_total_duration_secs().unwrap_or(0);
-                let count  = db.get_session_count().unwrap_or(0);
+                let total  = db.total_seconds().unwrap_or(0);
+                let count  = db.count_sessions().unwrap_or(0);
                 (streak, total, count)
             })
             .unwrap_or((0, 0, 0));
