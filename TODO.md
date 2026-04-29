@@ -2,7 +2,7 @@
 
 Polish and UX items to tackle when convenient. Graduate each one out of this file as it lands in a commit — remove the entry rather than letting the list grow stale.
 
-_(no open items at the moment — see investigation notes below)_
+- **Nextcloud sync (option C: append-only event log).** Periodic auto-sync of session/label data between the user's devices via personal Nextcloud, robust under offline edits on multiple devices. See `Nextcloud-Sync.md` for the detailed plan: architecture, schema changes, WebDAV protocol, conflict rules, ~12 TDD cycles across 4-6 sessions.
 
 ## Closed as "not us to fix" — Phosh launcher splash for flatpak apps
 
