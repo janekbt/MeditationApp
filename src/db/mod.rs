@@ -183,13 +183,14 @@ impl Database {
 
     // ── Labels ────────────────────────────────────────────────────────────────
 
-    /// Insert a label, auto-suffixing on collision so the UI always
-    /// gets a usable label back ("Morning", "Morning 2", "Morning 3", …).
-    /// The collision walk lives in core's `unique_label_name`.
-    pub fn create_label(&self, base_name: &str) -> Result<Label> {
-        let name = self.inner.unique_label_name(base_name).map_err(map_core_err)?;
-        let id = self.inner.insert_label(&name).map_err(map_core_err)?;
-        Ok(Label { id, name })
+    /// Insert a label with the exact name supplied. Returns a UNIQUE
+    /// constraint error on collision (case-insensitive — column is
+    /// COLLATE NOCASE). The UI is expected to pre-validate via
+    /// `is_label_name_taken` so this error is a safety net, not the
+    /// primary collision path.
+    pub fn create_label(&self, name: &str) -> Result<Label> {
+        let id = self.inner.insert_label(name).map_err(map_core_err)?;
+        Ok(Label { id, name: name.to_string() })
     }
 
     pub fn list_labels(&self) -> Result<Vec<Label>> {
@@ -586,18 +587,54 @@ mod tests {
         }).unwrap();
     }
 
-    // ── unique label name (auto-rename UX) ────────────────────────────────────
+    // ── create_label collision behaviour ──────────────────────────────────────
 
     #[test]
-    fn create_label_auto_renames_on_collision() {
-        // The wrapper's `create_label` routes through core's
-        // unique_label_name so duplicate base names auto-suffix
-        // ("Morning", "Morning 2", "Morning 3", …) instead of erroring.
+    fn create_label_returns_unique_constraint_error_on_collision() {
+        // create_label does NOT auto-rename. The UI pre-validates with
+        // is_label_name_taken and shows a "label already exists" toast
+        // before even calling this; the error here is the DB safety net
+        // for any code path that bypassed that check.
         let db = fresh_db();
-        assert_eq!(db.create_label("Morning").unwrap().name, "Morning");
-        assert_eq!(db.create_label("Morning").unwrap().name, "Morning 2");
-        assert_eq!(db.create_label("Morning").unwrap().name, "Morning 3");
-        assert_eq!(db.create_label("Morning").unwrap().name, "Morning 4");
+        let first = db.create_label("Morning").unwrap();
+        assert_eq!(first.name, "Morning");
+
+        let second = db.create_label("Morning");
+        let err = second.expect_err("collision must surface as an error");
+        assert!(
+            matches!(
+                err,
+                rusqlite::Error::SqliteFailure(ref f, _)
+                    if f.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE
+            ),
+            "expected UNIQUE constraint violation, got {err:?}",
+        );
+    }
+
+    #[test]
+    fn create_label_returns_unique_constraint_error_on_case_variant() {
+        // Column is COLLATE NOCASE — different casings collide too.
+        let db = fresh_db();
+        db.create_label("Morning").unwrap();
+        for variant in ["morning", "MORNING", "MoRnInG"] {
+            let err = db.create_label(variant)
+                .expect_err(&format!("'{variant}' must collide with 'Morning'"));
+            assert!(matches!(
+                err,
+                rusqlite::Error::SqliteFailure(ref f, _)
+                    if f.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE
+            ));
+        }
+    }
+
+    #[test]
+    fn create_label_preserves_caller_provided_name_verbatim() {
+        // No auto-suffix, no normalisation — the caller gets back the
+        // exact name they passed in, plus the new id.
+        let db = fresh_db();
+        let label = db.create_label("Pre-coffee meditation").unwrap();
+        assert_eq!(label.name, "Pre-coffee meditation");
+        assert!(label.id > 0);
     }
 
     // ── Streak (gap-and-island via core) ──────────────────────────────────────
