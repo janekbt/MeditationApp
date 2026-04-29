@@ -595,15 +595,8 @@ fn section_caption_text(count: u32, total_secs: i64) -> String {
     } else {
         crate::i18n::gettext("{n} sessions").replace("{n}", &count.to_string())
     };
-    format!("{base} · {}", format_total(total_secs))
-}
-
-/// Compact total for section header: "42m" / "1h 04m".
-fn format_total(secs: i64) -> String {
-    if secs <= 0 { return "0m".to_string(); }
-    let h = secs / 3600;
-    let m = (secs % 3600) / 60;
-    if h > 0 { format!("{h}h {m:02}m") } else { format!("{m}m") }
+    let total = std::time::Duration::from_secs(total_secs.max(0) as u64);
+    format!("{base} · {}", meditate_core::format::format_hm_compact(total))
 }
 
 // ── Delete with undo toast ────────────────────────────────────────────────────
