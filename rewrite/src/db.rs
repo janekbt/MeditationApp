@@ -168,6 +168,26 @@ impl Database {
         Ok(self.conn.last_insert_rowid())
     }
 
+    /// Replace every field of the row with `id`. Unknown ids are silently
+    /// no-ops (SQLite UPDATE matches zero rows).
+    pub fn update_session(&self, id: i64, session: &Session) -> Result<()> {
+        self.conn.execute(
+            "UPDATE sessions
+             SET start_iso = ?1, duration_secs = ?2, label_id = ?3,
+                 notes = ?4, mode = ?5
+             WHERE id = ?6",
+            params![
+                session.start_iso,
+                session.duration_secs,
+                session.label_id,
+                session.notes,
+                session.mode.as_db_str(),
+                id,
+            ],
+        )?;
+        Ok(())
+    }
+
     pub fn get_best_streak(&self) -> Result<i64> {
         self.best_streak_filtered(None)
     }
@@ -651,6 +671,105 @@ mod tests {
         let rows = db.list_sessions().unwrap();
         let got_ids: Vec<i64> = rows.iter().map(|(id, _)| *id).collect();
         assert_eq!(got_ids, vec![id1, id2, id3]);
+    }
+
+    #[test]
+    fn update_session_replaces_all_fields() {
+        // Update is destructive: every field of the new Session value
+        // overwrites the row, identified by id. The other rows stay
+        // untouched.
+        let db = Database::open_in_memory().unwrap();
+        let original = Session {
+            start_iso: "2026-04-27T10:00:00Z".to_string(),
+            duration_secs: 600,
+            label_id: None,
+            notes: Some("first take".to_string()),
+            mode: SessionMode::Countdown,
+        };
+        let id = db.insert_session(&original).unwrap();
+
+        // Insert a sibling that must remain untouched.
+        let other_id = db.insert_session(&Session {
+            start_iso: "2026-04-27T11:00:00Z".to_string(),
+            duration_secs: 300,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Stopwatch,
+        }).unwrap();
+
+        db.insert_label("Evening").unwrap();
+        let evening = db.find_label_by_name("Evening").unwrap().unwrap();
+        let updated = Session {
+            start_iso: "2026-04-28T19:00:00Z".to_string(),
+            duration_secs: 1500,
+            label_id: Some(evening),
+            notes: Some("after dinner".to_string()),
+            mode: SessionMode::BoxBreath,
+        };
+        db.update_session(id, &updated).unwrap();
+
+        let rows = db.list_sessions().unwrap();
+        assert_eq!(rows.len(), 2);
+        // Updated row reflects every new field.
+        let updated_row = rows.iter().find(|(rid, _)| *rid == id).unwrap();
+        assert_eq!(updated_row.1, updated);
+        // Sibling row untouched.
+        let other_row = rows.iter().find(|(rid, _)| *rid == other_id).unwrap();
+        assert_eq!(other_row.1.start_iso, "2026-04-27T11:00:00Z");
+        assert_eq!(other_row.1.duration_secs, 300);
+        assert_eq!(other_row.1.mode, SessionMode::Stopwatch);
+    }
+
+    #[test]
+    fn update_session_can_clear_label_and_notes() {
+        // Optional fields go round-trip in both directions: a session
+        // with a label/note can have them cleared by update.
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        let morning = db.find_label_by_name("Morning").unwrap().unwrap();
+        let id = db.insert_session(&Session {
+            start_iso: "2026-04-27T10:00:00Z".to_string(),
+            duration_secs: 600,
+            label_id: Some(morning),
+            notes: Some("had a label".to_string()),
+            mode: SessionMode::Countdown,
+        }).unwrap();
+        db.update_session(id, &Session {
+            start_iso: "2026-04-27T10:00:00Z".to_string(),
+            duration_secs: 600,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+        let row = &db.list_sessions().unwrap()[0].1;
+        assert_eq!(row.label_id, None);
+        assert_eq!(row.notes, None);
+    }
+
+    #[test]
+    fn update_session_unknown_id_is_noop() {
+        // Updating a non-existent row is silent — matches SQLite's
+        // UPDATE-by-id behaviour. The DB stays unchanged.
+        let db = Database::open_in_memory().unwrap();
+        let id = db.insert_session(&Session {
+            start_iso: "2026-04-27T10:00:00Z".to_string(),
+            duration_secs: 600,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+        db.update_session(id + 999, &Session {
+            start_iso: "2099-01-01T00:00:00Z".to_string(),
+            duration_secs: 9999,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+        // Original row is intact.
+        let rows = db.list_sessions().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1.duration_secs, 600);
+        assert_eq!(rows[0].1.start_iso, "2026-04-27T10:00:00Z");
     }
 
     #[test]
