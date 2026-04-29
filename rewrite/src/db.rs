@@ -59,7 +59,7 @@ pub struct Database {
 const SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS labels (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL UNIQUE
+        name TEXT NOT NULL COLLATE NOCASE UNIQUE
     );
     CREATE TABLE IF NOT EXISTS sessions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -576,6 +576,39 @@ mod tests {
         assert!(second.is_err(), "second insert of same label should fail");
         // The first insert is preserved; no duplicate row is created.
         assert_eq!(db.count_labels().unwrap(), 1);
+    }
+
+    #[test]
+    fn label_uniqueness_is_case_insensitive() {
+        // Avoid "Morning" / "morning" as separate rows. The DB enforces
+        // case-insensitive uniqueness so the constraint can't be
+        // bypassed even if a caller skips unique_label_name.
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        let result = db.insert_label("morning");
+        assert!(
+            matches!(result, Err(DbError::DuplicateLabel(ref name)) if name == "morning"),
+            "expected DuplicateLabel for 'morning', got {result:?}"
+        );
+        // Different mixed-case is also a duplicate.
+        assert!(matches!(db.insert_label("MORNING"), Err(DbError::DuplicateLabel(_))));
+        assert!(matches!(db.insert_label("MoRnInG"), Err(DbError::DuplicateLabel(_))));
+        // Only the original survives.
+        assert_eq!(db.count_labels().unwrap(), 1);
+    }
+
+    #[test]
+    fn find_label_by_name_is_case_insensitive() {
+        // Lookups follow the column's NOCASE collation so a case-different
+        // search still finds the existing row — same id, same row.
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        let canonical_id = db.find_label_by_name("Morning").unwrap();
+        assert!(canonical_id.is_some());
+        // All these case variants must return the SAME id.
+        assert_eq!(db.find_label_by_name("morning").unwrap(), canonical_id);
+        assert_eq!(db.find_label_by_name("MORNING").unwrap(), canonical_id);
+        assert_eq!(db.find_label_by_name("MoRnInG").unwrap(), canonical_id);
     }
 
     #[test]
