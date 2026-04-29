@@ -92,6 +92,20 @@ impl Database {
         Ok(Self { conn })
     }
 
+    /// True iff some label OTHER THAN `except_id` already uses `name`
+    /// (case-insensitive — the column is COLLATE NOCASE). UI-side
+    /// pre-validation for renames: pass the row's own id as
+    /// `except_id` so renaming-to-self isn't reported as a collision.
+    /// Pass any non-existent id (e.g. 0) when validating a brand-new
+    /// label.
+    pub fn is_label_name_taken(&self, name: &str, except_id: i64) -> Result<bool> {
+        Ok(self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM labels WHERE name = ?1 AND id != ?2)",
+            params![name, except_id],
+            |row| row.get(0),
+        )?)
+    }
+
     /// How many sessions reference the label with `id`. Returns 0 for
     /// unreferenced or non-existent labels (no error). Used by the UI's
     /// "delete N sessions?" confirmation before unlabel-on-delete.
@@ -625,6 +639,46 @@ mod tests {
         assert!(second.is_err(), "second insert of same label should fail");
         // The first insert is preserved; no duplicate row is created.
         assert_eq!(db.count_labels().unwrap(), 1);
+    }
+
+    #[test]
+    fn is_label_name_taken_false_for_empty_db() {
+        // Nothing exists ⇒ no name is taken.
+        let db = Database::open_in_memory().unwrap();
+        assert!(!db.is_label_name_taken("Morning", 0).unwrap());
+    }
+
+    #[test]
+    fn is_label_name_taken_true_for_existing_other_label() {
+        // Another row holds this name. Exclude id is something else.
+        let db = Database::open_in_memory().unwrap();
+        let morning = db.insert_label("Morning").unwrap();
+        let evening = db.insert_label("Evening").unwrap();
+        // Asking "is 'Morning' taken by anyone other than `evening`?"
+        // returns true because Morning is held by `morning` (≠ evening).
+        assert!(db.is_label_name_taken("Morning", evening).unwrap());
+    }
+
+    #[test]
+    fn is_label_name_taken_false_when_only_owner_is_excluded() {
+        // The single row holding this name is the one being excluded —
+        // typical pre-rename validation: 'is this name taken by anyone
+        // OTHER THAN the row I'm about to update?'
+        let db = Database::open_in_memory().unwrap();
+        let morning = db.insert_label("Morning").unwrap();
+        assert!(!db.is_label_name_taken("Morning", morning).unwrap());
+    }
+
+    #[test]
+    fn is_label_name_taken_is_case_insensitive() {
+        // The column is COLLATE NOCASE — name comparison must follow.
+        let db = Database::open_in_memory().unwrap();
+        let morning = db.insert_label("Morning").unwrap();
+        // Different casing of an existing name is still 'taken'.
+        assert!(db.is_label_name_taken("morning", 0).unwrap());
+        assert!(db.is_label_name_taken("MORNING", 0).unwrap());
+        // …unless the holder is the excluded row.
+        assert!(!db.is_label_name_taken("morning", morning).unwrap());
     }
 
     #[test]
