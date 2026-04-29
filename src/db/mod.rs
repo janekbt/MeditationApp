@@ -49,18 +49,10 @@ pub struct SessionData {
     pub note: Option<String>,
 }
 
-/// Filter options for listing sessions.
-#[derive(Default)]
-pub struct SessionFilter {
-    /// If set, only return sessions with this label.
-    pub label_id: Option<i64>,
-    /// If true, only return sessions that have a non-empty note.
-    pub only_with_notes: bool,
-    /// Pagination — fetch at most this many rows (None = no limit).
-    pub limit: Option<u32>,
-    /// Pagination — skip this many rows (None = start at 0).
-    pub offset: Option<u32>,
-}
+/// `SessionFilter` is the canonical core type — re-exported here so
+/// call sites can import from `crate::db` without learning about
+/// meditate-core directly.
+pub use meditate_core::db::SessionFilter;
 
 // ── Translation: GTK-side ↔ meditate_core::db ─────────────────────────────────
 
@@ -88,15 +80,6 @@ fn session_from_core(id: i64, core: &meditate_core::db::Session) -> Session {
         mode: core.mode,
         label_id: core.label_id,
         note: core.notes.clone(),
-    }
-}
-
-fn filter_to_core(f: &SessionFilter) -> meditate_core::db::SessionFilter {
-    meditate_core::db::SessionFilter {
-        label_id: f.label_id,
-        only_with_notes: f.only_with_notes,
-        limit: f.limit,
-        offset: f.offset,
     }
 }
 
@@ -214,7 +197,7 @@ impl Database {
     }
 
     pub fn list_sessions(&self, filter: &SessionFilter) -> Result<Vec<Session>> {
-        let rows = self.inner.query_sessions(&filter_to_core(filter)).map_err(map_core_err)?;
+        let rows = self.inner.query_sessions(filter).map_err(map_core_err)?;
         Ok(rows.into_iter().map(|(id, c)| session_from_core(id, &c)).collect())
     }
 
