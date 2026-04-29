@@ -607,6 +607,24 @@ impl Database {
         }
     }
 
+    /// Sum of `duration_secs` for sessions inside a calendar month
+    /// (`year`, `month` 1-12). Boundaries are at local midnight on the
+    /// first and last day of the month. December rolls cleanly into
+    /// January of the next year.
+    pub fn month_total_secs(&self, year: i32, month: u32) -> Result<i64> {
+        let start = format!("{year:04}-{month:02}-01");
+        let (next_year, next_month) =
+            if month == 12 { (year + 1, 1) } else { (year, month + 1) };
+        let end = format!("{next_year:04}-{next_month:02}-01");
+        Ok(self.conn.query_row(
+            "SELECT COALESCE(SUM(duration_secs), 0)
+             FROM sessions
+             WHERE start_iso >= ?1 AND start_iso < ?2",
+            params![start, end],
+            |row| row.get(0),
+        )?)
+    }
+
     /// Sum of `duration_secs` for sessions whose `start_iso` is on or
     /// after the start of `since` (interpreted as the user's local
     /// midnight). Returns 0 if no sessions match.
@@ -816,6 +834,69 @@ mod tests {
         assert!(second.is_err(), "second insert of same label should fail");
         // The first insert is preserved; no duplicate row is created.
         assert_eq!(db.count_labels().unwrap(), 1);
+    }
+
+    // ── month_total_secs ─────────────────────────────────────────────────────
+
+    #[test]
+    fn month_total_secs_is_zero_for_empty_month() {
+        let db = Database::open_in_memory().unwrap();
+        // Far past — guaranteed empty.
+        assert_eq!(db.month_total_secs(1999, 1).unwrap(), 0);
+        // Mid-future — also empty.
+        assert_eq!(db.month_total_secs(2099, 12).unwrap(), 0);
+    }
+
+    #[test]
+    fn month_total_secs_sums_only_target_month() {
+        // Adjacent-month boundary edges: last second of March and first
+        // second of May must NOT count toward April.
+        let db = Database::open_in_memory().unwrap();
+        // March 31, very late.
+        db.insert_session(&Session {
+            start_iso: "2026-03-31T23:59:59".to_string(),
+            duration_secs: 9999, label_id: None, notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+        // April 1, midnight — INCLUDED in April.
+        db.insert_session(&Session {
+            start_iso: "2026-04-01T00:00:00".to_string(),
+            duration_secs: 600, label_id: None, notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+        // April 30, late evening — INCLUDED.
+        db.insert_session(&Session {
+            start_iso: "2026-04-30T23:59:59".to_string(),
+            duration_secs: 1200, label_id: None, notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+        // May 1, midnight — EXCLUDED.
+        db.insert_session(&Session {
+            start_iso: "2026-05-01T00:00:00".to_string(),
+            duration_secs: 8888, label_id: None, notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+
+        assert_eq!(db.month_total_secs(2026, 4).unwrap(), 600 + 1200);
+    }
+
+    #[test]
+    fn month_total_secs_handles_december_year_rollover() {
+        // The "next month" boundary is built in code; December must
+        // roll to next-year-January cleanly.
+        let db = Database::open_in_memory().unwrap();
+        db.insert_session(&Session {
+            start_iso: "2026-12-15T10:00:00".to_string(),
+            duration_secs: 600, label_id: None, notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+        // Jan 1, 2027 — must NOT count toward Dec 2026.
+        db.insert_session(&Session {
+            start_iso: "2027-01-01T00:00:00".to_string(),
+            duration_secs: 9999, label_id: None, notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+        assert_eq!(db.month_total_secs(2026, 12).unwrap(), 600);
     }
 
     // ── total_secs_since: weekly goal ring etc. ──────────────────────────────
