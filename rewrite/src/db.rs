@@ -18,6 +18,12 @@ impl From<rusqlite::Error> for DbError {
 pub type Result<T> = std::result::Result<T, DbError>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Label {
+    pub id: i64,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Session {
     pub start_iso: String,
     pub duration_secs: u32,
@@ -223,15 +229,17 @@ impl Database {
             .query_row("SELECT COUNT(*) FROM labels", [], |row| row.get(0))?)
     }
 
-    /// Every label as `(id, name)` pairs, alphabetic by name with the
-    /// column's NOCASE collation so 'apple', 'Banana', 'cherry' come
-    /// back in dictionary order regardless of casing.
-    pub fn list_labels(&self) -> Result<Vec<(i64, String)>> {
+    /// Every label as a `Label { id, name }`, alphabetic by name with
+    /// the column's NOCASE collation so 'apple', 'Banana', 'cherry'
+    /// come back in dictionary order regardless of casing.
+    pub fn list_labels(&self) -> Result<Vec<Label>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, name FROM labels ORDER BY name",
         )?;
         let rows = stmt
-            .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))?
+            .query_map([], |row| {
+                Ok(Label { id: row.get(0)?, name: row.get(1)? })
+            })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
@@ -1862,7 +1870,7 @@ mod tests {
         assert_eq!(db.find_label_by_name("Morning").unwrap(), None);
         assert_eq!(db.find_label_by_name("Evening").unwrap(), Some(evening));
         let names: Vec<String> =
-            db.list_labels().unwrap().into_iter().map(|(_, n)| n).collect();
+            db.list_labels().unwrap().into_iter().map(|l| l.name).collect();
         assert_eq!(names, vec!["Evening"]);
         assert_eq!(db.count_labels().unwrap(), 1);
     }
@@ -1982,8 +1990,8 @@ mod tests {
     }
 
     #[test]
-    fn list_labels_returns_id_per_row_alphabetic_by_name() {
-        // Each retrieved label carries its rowid so callers can address it
+    fn list_labels_returns_label_per_row_alphabetic_by_name() {
+        // Each retrieved Label carries its rowid so callers can address it
         // for update/delete. Order is alphabetic-by-name (case-insensitive)
         // for stable UI rendering.
         let db = Database::open_in_memory().unwrap();
@@ -1993,14 +2001,14 @@ mod tests {
 
         let rows = db.list_labels().unwrap();
         assert_eq!(rows, vec![
-            (afternoon, "Afternoon".to_string()),
-            (evening, "Evening".to_string()),
-            (morning, "Morning".to_string()),
+            Label { id: afternoon, name: "Afternoon".to_string() },
+            Label { id: evening,   name: "Evening".to_string() },
+            Label { id: morning,   name: "Morning".to_string() },
         ]);
     }
 
     #[test]
-    fn list_labels_returns_id_per_row_case_insensitive_sort() {
+    fn list_labels_returns_label_per_row_case_insensitive_sort() {
         // The column is COLLATE NOCASE — sort must follow, so 'apple',
         // 'Banana', 'cherry' come back in that order even with mixed case.
         let db = Database::open_in_memory().unwrap();
@@ -2008,12 +2016,12 @@ mod tests {
         let cherry = db.insert_label("cherry").unwrap();
         let apple = db.insert_label("apple").unwrap();
         let rows = db.list_labels().unwrap();
-        let names: Vec<&str> = rows.iter().map(|(_, n)| n.as_str()).collect();
+        let names: Vec<&str> = rows.iter().map(|l| l.name.as_str()).collect();
         assert_eq!(names, vec!["apple", "Banana", "cherry"]);
         // Each row carries the original casing (no normalisation on read).
-        assert_eq!(rows[0].0, apple);
-        assert_eq!(rows[1].0, banana);
-        assert_eq!(rows[2].0, cherry);
+        assert_eq!(rows[0].id, apple);
+        assert_eq!(rows[1].id, banana);
+        assert_eq!(rows[2].id, cherry);
     }
 
     #[test]
@@ -2029,7 +2037,7 @@ mod tests {
         assert_eq!(db.find_label_by_name("Morning").unwrap(), Some(id));
         // The actual stored value is the new casing.
         let names: Vec<String> =
-            db.list_labels().unwrap().into_iter().map(|(_, n)| n).collect();
+            db.list_labels().unwrap().into_iter().map(|l| l.name).collect();
         assert_eq!(names, vec!["Morning"]);
     }
 
@@ -2049,7 +2057,7 @@ mod tests {
         // Both rows survive with their original names.
         assert_eq!(db.find_label_by_name("Morning").unwrap(), Some(morning));
         let names: Vec<String> =
-            db.list_labels().unwrap().into_iter().map(|(_, n)| n).collect();
+            db.list_labels().unwrap().into_iter().map(|l| l.name).collect();
         assert_eq!(names, vec!["Evening", "Morning"]);
     }
 
@@ -2196,7 +2204,7 @@ mod tests {
         db.insert_label("Afternoon").unwrap();
         db.insert_label("Evening").unwrap();
         let names: Vec<String> =
-            db.list_labels().unwrap().into_iter().map(|(_, n)| n).collect();
+            db.list_labels().unwrap().into_iter().map(|l| l.name).collect();
         assert_eq!(names, vec!["Afternoon", "Evening", "Morning"]);
     }
 
@@ -2453,7 +2461,7 @@ mod tests {
 
         // Label outlives the session.
         let names: Vec<String> =
-            db.list_labels().unwrap().into_iter().map(|(_, n)| n).collect();
+            db.list_labels().unwrap().into_iter().map(|l| l.name).collect();
         assert_eq!(names, vec!["Morning"]);
         assert_eq!(db.count_labels().unwrap(), 1);
     }
@@ -2622,7 +2630,7 @@ mod tests {
 
         // Labels untouched.
         let names: Vec<String> =
-            db.list_labels().unwrap().into_iter().map(|(_, n)| n).collect();
+            db.list_labels().unwrap().into_iter().map(|l| l.name).collect();
         assert_eq!(names, vec!["Morning"]);
     }
 
@@ -3062,7 +3070,7 @@ mod tests {
         }
         let db = Database::open(&path).unwrap();
         let names: Vec<String> =
-            db.list_labels().unwrap().into_iter().map(|(_, n)| n).collect();
+            db.list_labels().unwrap().into_iter().map(|l| l.name).collect();
         assert_eq!(names, vec!["Morning"]);
         assert_eq!(db.count_sessions().unwrap(), 1);
     }
@@ -3190,7 +3198,7 @@ mod tests {
 
         // Label was created on import.
         let dst_names: Vec<String> =
-            dst.list_labels().unwrap().into_iter().map(|(_, n)| n).collect();
+            dst.list_labels().unwrap().into_iter().map(|l| l.name).collect();
         assert_eq!(dst_names, vec!["Morning"]);
         let dst_morning_id = dst.find_label_by_name("Morning").unwrap();
 

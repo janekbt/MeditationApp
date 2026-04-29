@@ -18,16 +18,10 @@ use std::path::Path;
 
 // ── Models ────────────────────────────────────────────────────────────────────
 
-/// `SessionMode` is the canonical core enum (`Countdown`, `Stopwatch`,
-/// `BoxBreath`). Re-exported here so call sites can keep importing from
-/// `crate::db` without learning about meditate-core directly.
-pub use meditate_core::db::SessionMode;
-
-#[derive(Debug, Clone)]
-pub struct Label {
-    pub id: i64,
-    pub name: String,
-}
+/// `SessionMode` and `Label` are canonical core types — re-exported
+/// here so call sites can keep importing from `crate::db` without
+/// learning about meditate-core directly.
+pub use meditate_core::db::{Label, SessionMode};
 
 #[derive(Debug, Clone)]
 pub struct Session {
@@ -150,8 +144,7 @@ impl Database {
     }
 
     pub fn list_labels(&self) -> Result<Vec<Label>> {
-        let rows = self.inner.list_labels().map_err(map_core_err)?;
-        Ok(rows.into_iter().map(|(id, name)| Label { id, name }).collect())
+        self.inner.list_labels().map_err(map_core_err)
     }
 
     /// True iff any label other than `except_id` already uses `name`
