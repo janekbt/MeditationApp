@@ -20,8 +20,13 @@ pub fn parse_hms_duration(s: &str) -> Option<Duration> {
 }
 
 pub fn parse_insighttimer_datetime(s: &str) -> Option<chrono::NaiveDateTime> {
-    // InsightTimer export format, e.g. "10/15/2024 6:30:00 AM".
-    chrono::NaiveDateTime::parse_from_str(s, "%m/%d/%Y %l:%M:%S %p").ok()
+    // InsightTimer export has shipped both shapes across versions/locales:
+    //   "10/15/2024 6:30:00 AM"   (12-hour with AM/PM)
+    //   "04/20/2026 08:21:14"     (24-hour)
+    // Try both so a mixed import works either way.
+    chrono::NaiveDateTime::parse_from_str(s, "%m/%d/%Y %l:%M:%S %p")
+        .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%m/%d/%Y %H:%M:%S"))
+        .ok()
 }
 
 const SESSION_MILESTONES: &[i64] = &[10, 25, 50, 100, 250, 500, 1000, 2500, 5000];
@@ -274,10 +279,21 @@ mod tests {
     }
 
     #[test]
+    fn parse_insighttimer_datetime_handles_24_hour() {
+        // Some InsightTimer exports are 24-hour without AM/PM.
+        let dt = parse_insighttimer_datetime("04/20/2026 08:21:14").unwrap();
+        assert_eq!(dt.to_string(), "2026-04-20 08:21:14");
+        let evening = parse_insighttimer_datetime("04/20/2026 20:00:00").unwrap();
+        assert_eq!(evening.to_string(), "2026-04-20 20:00:00");
+    }
+
+    #[test]
     fn parse_insighttimer_datetime_rejects_garbage() {
         assert_eq!(parse_insighttimer_datetime(""), None);
         assert_eq!(parse_insighttimer_datetime("not a date"), None);
         // ISO format is rejected — this parser is for InsightTimer's specific shape.
         assert_eq!(parse_insighttimer_datetime("2024-10-15T06:30:00"), None);
+        // Month 13 is invalid in either format.
+        assert_eq!(parse_insighttimer_datetime("13/01/2024 08:30:00"), None);
     }
 }
