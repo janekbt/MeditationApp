@@ -577,6 +577,36 @@ impl Database {
         Ok(count)
     }
 
+    /// The longest single session — `(id, Session)`, or None on empty DB.
+    /// Tie-break is unspecified (whichever SQLite returns first); callers
+    /// should not depend on the order of equal-duration rows.
+    pub fn get_longest_session(&self) -> Result<Option<(i64, Session)>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT id, start_iso, duration_secs, label_id, notes, mode
+             FROM sessions
+             ORDER BY duration_secs DESC LIMIT 1",
+        )?;
+        let mut rows = stmt.query([])?;
+        match rows.next()? {
+            None => Ok(None),
+            Some(row) => {
+                let mode_str: String = row.get(5)?;
+                let mode = SessionMode::from_db_str(&mode_str)
+                    .expect("DB CHECK constraint should restrict mode");
+                Ok(Some((
+                    row.get::<_, i64>(0)?,
+                    Session {
+                        start_iso: row.get(1)?,
+                        duration_secs: row.get(2)?,
+                        label_id: row.get(3)?,
+                        notes: row.get(4)?,
+                        mode,
+                    },
+                )))
+            }
+        }
+    }
+
     /// Total of `duration_secs` across every session (no filter). Returns
     /// 0 on an empty DB. Use this when you want the underlying precision
     /// (e.g. weekly-goal ring, longest-session display); use
@@ -767,6 +797,68 @@ mod tests {
         assert!(second.is_err(), "second insert of same label should fail");
         // The first insert is preserved; no duplicate row is created.
         assert_eq!(db.count_labels().unwrap(), 1);
+    }
+
+    // ── get_longest_session ──────────────────────────────────────────────────
+
+    #[test]
+    fn get_longest_session_is_none_for_empty_db() {
+        let db = Database::open_in_memory().unwrap();
+        assert!(db.get_longest_session().unwrap().is_none());
+    }
+
+    #[test]
+    fn get_longest_session_returns_only_session_for_single_row_db() {
+        let db = Database::open_in_memory().unwrap();
+        let session = Session {
+            start_iso: "2026-04-27T10:00:00Z".to_string(),
+            duration_secs: 600,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Countdown,
+        };
+        let id = db.insert_session(&session).unwrap();
+        let got = db.get_longest_session().unwrap().unwrap();
+        assert_eq!(got, (id, session));
+    }
+
+    #[test]
+    fn get_longest_session_returns_largest_duration() {
+        // The longest among many — every other session must be shorter,
+        // and the returned Session is the LONG one with all its fields
+        // intact (not just the duration).
+        let db = Database::open_in_memory().unwrap();
+        for &secs in &[300u32, 600, 900, 1200, 450] {
+            db.insert_session(&Session {
+                start_iso: format!("2026-04-2{secs}T10:00:00Z"),
+                duration_secs: secs,
+                label_id: None,
+                notes: None,
+                mode: SessionMode::Countdown,
+            }).unwrap();
+        }
+        let longest_session = Session {
+            start_iso: "2026-04-30T20:00:00Z".to_string(),
+            duration_secs: 3600,
+            label_id: None,
+            notes: Some("the long one".to_string()),
+            mode: SessionMode::Stopwatch,
+        };
+        let longest_id = db.insert_session(&longest_session).unwrap();
+        // Add one more shorter after — the order of insertion must not
+        // affect which row wins.
+        db.insert_session(&Session {
+            start_iso: "2026-05-01T10:00:00Z".to_string(),
+            duration_secs: 700,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+
+        let (got_id, got) = db.get_longest_session().unwrap().unwrap();
+        assert_eq!(got_id, longest_id);
+        assert_eq!(got, longest_session,
+            "the returned Session must have every field of the long row, not just duration");
     }
 
     // ── total_seconds: precision-preserving aggregate ─────────────────────────
