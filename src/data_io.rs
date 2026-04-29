@@ -264,23 +264,19 @@ fn insert_sessions_with_labels(
     Ok(db.bulk_insert_sessions(&sessions)?)
 }
 
-/// Parse `MM/DD/YYYY HH:MM:SS` as local time and return the unix timestamp.
-/// Returns `None` on any format error.
+/// Parse an InsightTimer "Started At" cell as local time and return the
+/// unix timestamp. Format detection (12-hour AM/PM vs 24-hour) lives in
+/// `meditate_core::format::parse_insighttimer_datetime`; this shim only
+/// owns the local-tz → unix conversion that needs glib.
 fn parse_insighttimer_datetime(s: &str) -> Option<i64> {
-    let (date_part, time_part) = s.split_once(' ')?;
-    let mut date_bits = date_part.split('/');
-    let month: i32 = date_bits.next()?.parse().ok()?;
-    let day:   i32 = date_bits.next()?.parse().ok()?;
-    let year:  i32 = date_bits.next()?.parse().ok()?;
-    let mut time_bits = time_part.split(':');
-    let hour:   i32 = time_bits.next()?.parse().ok()?;
-    let minute: i32 = time_bits.next()?.parse().ok()?;
-    let second: f64 = time_bits.next()?.parse().ok()?;
-    let dt = gtk::glib::DateTime::new(
+    use chrono::{Datelike, Timelike};
+    let dt = meditate_core::format::parse_insighttimer_datetime(s)?;
+    let glib_dt = gtk::glib::DateTime::new(
         &gtk::glib::TimeZone::local(),
-        year, month, day, hour, minute, second,
+        dt.year(), dt.month() as i32, dt.day() as i32,
+        dt.hour() as i32, dt.minute() as i32, dt.second() as f64,
     ).ok()?;
-    Some(dt.to_unix())
+    Some(glib_dt.to_unix())
 }
 
 /// Parse `H:M:S` (or `M:S`) into total seconds. Thin shim around

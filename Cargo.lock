@@ -753,6 +753,7 @@ dependencies = [
 name = "meditate"
 version = "26.4.4"
 dependencies = [
+ "chrono",
  "csv",
  "gettext-rs",
  "glib",
