@@ -74,12 +74,20 @@ const SCHEMA: &str = "
 impl Database {
     pub fn open_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
-        conn.execute_batch(SCHEMA)?;
-        Ok(Self { conn })
+        Self::init(conn)
     }
 
     pub fn open(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)?;
+        Self::init(conn)
+    }
+
+    fn init(conn: Connection) -> Result<Self> {
+        // Explicit PRAGMAs — even when rusqlite enables them by default,
+        // the intent is part of the source so it can't be silently
+        // dropped by a dependency upgrade. The FK clause on
+        // sessions.label_id only fires when this is ON.
+        conn.execute_batch("PRAGMA foreign_keys=ON;")?;
         conn.execute_batch(SCHEMA)?;
         Ok(Self { conn })
     }
@@ -844,6 +852,30 @@ mod tests {
         // Label outlives the session.
         assert_eq!(db.list_labels().unwrap(), vec!["Morning"]);
         assert_eq!(db.count_labels().unwrap(), 1);
+    }
+
+    #[test]
+    fn insert_session_with_unknown_label_id_is_rejected_by_fk() {
+        // The labels.id ↔ sessions.label_id link is an enforced foreign key,
+        // not just documentation. Inserting a session that points at a
+        // non-existent label fails — the DB is the last line of defense
+        // against UI bugs that pass through bad ids.
+        let db = Database::open_in_memory().unwrap();
+        // Sanity: the PRAGMA must be on for the FK clause to actually fire.
+        let pragma: i64 = db.conn.query_row("PRAGMA foreign_keys", [], |r| r.get(0)).unwrap();
+        assert_eq!(pragma, 1, "PRAGMA foreign_keys must be ON");
+
+        let bad_id = 9999i64;
+        let result = db.insert_session(&Session {
+            start_iso: "2026-04-27T10:00:00Z".to_string(),
+            duration_secs: 600,
+            label_id: Some(bad_id),
+            notes: None,
+            mode: SessionMode::Countdown,
+        });
+        assert!(result.is_err(), "expected FK violation, got {result:?}");
+        // No row landed.
+        assert_eq!(db.count_sessions().unwrap(), 0);
     }
 
     #[test]
