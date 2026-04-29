@@ -65,7 +65,7 @@ const SCHEMA: &str = "
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         start_iso TEXT NOT NULL,
         duration_secs INTEGER NOT NULL,
-        label_id INTEGER REFERENCES labels(id),
+        label_id INTEGER REFERENCES labels(id) ON DELETE SET NULL,
         notes TEXT,
         mode TEXT NOT NULL CHECK (mode IN ('countdown', 'stopwatch', 'box_breath'))
     );
@@ -90,6 +90,14 @@ impl Database {
         conn.execute_batch("PRAGMA foreign_keys=ON;")?;
         conn.execute_batch(SCHEMA)?;
         Ok(Self { conn })
+    }
+
+    /// Remove the label with `id`. Sessions that referenced it survive
+    /// with `label_id = None` (FK is `ON DELETE SET NULL`). Unknown ids
+    /// are silently no-ops.
+    pub fn delete_label(&self, id: i64) -> Result<()> {
+        self.conn.execute("DELETE FROM labels WHERE id = ?1", params![id])?;
+        Ok(())
     }
 
     /// Rename the label with `id` to `name`. Unknown ids are silently
@@ -606,6 +614,104 @@ mod tests {
         assert!(second.is_err(), "second insert of same label should fail");
         // The first insert is preserved; no duplicate row is created.
         assert_eq!(db.count_labels().unwrap(), 1);
+    }
+
+    #[test]
+    fn delete_label_removes_only_that_row() {
+        // Delete addresses one row by id; siblings survive.
+        let db = Database::open_in_memory().unwrap();
+        let morning = db.insert_label("Morning").unwrap();
+        let evening = db.insert_label("Evening").unwrap();
+
+        db.delete_label(morning).unwrap();
+
+        // Morning is gone, Evening remains.
+        assert_eq!(db.find_label_by_name("Morning").unwrap(), None);
+        assert_eq!(db.find_label_by_name("Evening").unwrap(), Some(evening));
+        assert_eq!(db.list_labels().unwrap(), vec!["Evening"]);
+        assert_eq!(db.count_labels().unwrap(), 1);
+    }
+
+    #[test]
+    fn delete_label_unknown_id_is_noop() {
+        // Matches SQLite DELETE semantics.
+        let db = Database::open_in_memory().unwrap();
+        let id = db.insert_label("Morning").unwrap();
+        db.delete_label(id + 999).unwrap();
+        assert_eq!(db.count_labels().unwrap(), 1);
+        assert_eq!(db.find_label_by_name("Morning").unwrap(), Some(id));
+    }
+
+    #[test]
+    fn delete_label_unlinks_sessions_via_set_null() {
+        // Deleting a label must NOT destroy historical sessions — the
+        // FK is ON DELETE SET NULL on the sessions side, so referenced
+        // sessions survive with label_id = None.
+        let db = Database::open_in_memory().unwrap();
+        let morning = db.insert_label("Morning").unwrap();
+
+        let labeled_id = db.insert_session(&Session {
+            start_iso: "2026-04-27T10:00:00Z".to_string(),
+            duration_secs: 600,
+            label_id: Some(morning),
+            notes: Some("first sit".to_string()),
+            mode: SessionMode::Countdown,
+        }).unwrap();
+        // A second labeled session — proves the unlink happens for ALL
+        // referencing rows, not just the first.
+        let labeled_id2 = db.insert_session(&Session {
+            start_iso: "2026-04-27T11:00:00Z".to_string(),
+            duration_secs: 1200,
+            label_id: Some(morning),
+            notes: None,
+            mode: SessionMode::Stopwatch,
+        }).unwrap();
+        // An unlabeled control — must remain unlabeled (was None, stays None).
+        let unlabeled_id = db.insert_session(&Session {
+            start_iso: "2026-04-27T12:00:00Z".to_string(),
+            duration_secs: 300,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::BoxBreath,
+        }).unwrap();
+
+        db.delete_label(morning).unwrap();
+
+        // Both formerly-labeled sessions survive but have lost their label.
+        let rows = db.list_sessions().unwrap();
+        assert_eq!(rows.len(), 3, "all sessions must survive label deletion");
+        let by_id: std::collections::HashMap<i64, &Session> =
+            rows.iter().map(|(i, s)| (*i, s)).collect();
+        assert_eq!(by_id[&labeled_id].label_id, None);
+        assert_eq!(by_id[&labeled_id2].label_id, None);
+        assert_eq!(by_id[&unlabeled_id].label_id, None);
+
+        // The label row is gone.
+        assert_eq!(db.count_labels().unwrap(), 0);
+    }
+
+    #[test]
+    fn delete_label_does_not_affect_unrelated_sessions() {
+        // Sessions referencing OTHER labels are untouched when one
+        // label is deleted.
+        let db = Database::open_in_memory().unwrap();
+        let morning = db.insert_label("Morning").unwrap();
+        let evening = db.insert_label("Evening").unwrap();
+
+        let evening_id = db.insert_session(&Session {
+            start_iso: "2026-04-27T19:00:00Z".to_string(),
+            duration_secs: 600,
+            label_id: Some(evening),
+            notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+
+        db.delete_label(morning).unwrap();
+
+        // Evening session still points at Evening label.
+        let row = &db.list_sessions().unwrap()[0];
+        assert_eq!(row.0, evening_id);
+        assert_eq!(row.1.label_id, Some(evening));
     }
 
     #[test]
