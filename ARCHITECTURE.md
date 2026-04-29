@@ -1,23 +1,21 @@
-# Architecture (tdd-rewrite branch)
+# Architecture
 
-A from-scratch, test-driven rewrite of the Meditate app. Lives in `rewrite/` as a
-separate Cargo crate so the existing app on this branch still builds for
-side-by-side reference. When the rewrite reaches feature parity, `rewrite/`
-graduates to replace the top-level `src/`.
+Two-tier split between logic and presentation. The split is structural, not a
+convention.
 
-## Two-tier split
+## The two crates
 
-The rewrite enforces a hard line between logic and presentation:
-
-- **`meditate-core`** (`rewrite/`) — pure Rust, zero GTK imports. Breath
+- **`meditate-core`** (`meditate-core/`) — pure Rust, zero GTK imports. Breath
   patterns, session timing, stats aggregation, label CRUD, SQLite persistence,
   CSV import/export. Everything driven by tests.
-- **`meditate-app`** (future) — thin GTK4/libadwaita shell that calls into
-  `meditate-core`. Hand-tested on device. No business logic here.
+- **`meditate`** (top-level `src/`) — thin GTK4/libadwaita shell that calls
+  into `meditate-core`. Hand-tested on device. No business logic here; the
+  GTK-side `Database` is a translation shim that maps i64-unix timestamps to
+  meditate-core's ISO 8601 strings (the only convention boundary).
 
-The split is structural, not a convention: `meditate-core/Cargo.toml` does not
-depend on `gtk4` or `libadwaita`, so an accidental import won't compile. This
-is what makes the core fully testable without a display server.
+`meditate-core/Cargo.toml` does not depend on `gtk4` or `libadwaita`, so an
+accidental import won't compile. This is what makes the core fully testable
+without a display server, and what makes it portable to a future Android UI.
 
 ## TDD workflow
 
@@ -29,26 +27,19 @@ Standard Red → Green → Refactor:
    urge to anticipate the next test.
 3. **Refactor** — clean up with the test net active. Keep tests green.
 
-Run tests with `cd rewrite && cargo test`. The crate has no GTK deps, so this
-runs anywhere — including in CI without a display.
+Run tests with `cd meditate-core && cargo test`. The crate has no GTK deps, so
+this runs anywhere — including in CI without a display.
 
-## Module layout (planned)
+## Module layout
 
 ```
-rewrite/src/
-├── lib.rs           — module declarations
-├── timer.rs         — countdown / stopwatch state machine (first feature)
-├── breath.rs        — breath patterns (box, 4-7-8, …) and phase calculation
-├── session.rs       — session model: a completed meditation + metadata
-├── label.rs         — label CRUD with DB-level uniqueness
-├── stats.rs         — streaks, totals, heatmap levels, milestones
-├── importers/       — CSV, Insight Timer
-└── db/              — SQLite schema, migrations, query helpers
+meditate-core/src/
+├── lib.rs    — module declarations
+├── timer.rs  — countdown / stopwatch state machines
+├── breath.rs — breath patterns (box, 4-7-8, …) and phase calculation
+├── format.rs — formatters / parsers (h:m:s, InsightTimer dates, milestones)
+└── db.rs     — SQLite schema, migrations, all query helpers, CSV I/O
 ```
-
-Modules appear when a test drives them into existence, not before. The order
-above is roughly the order they'll be built: timer first because it's the
-core user interaction, everything else stacks on top.
 
 ## Android-readiness constraints
 

@@ -1,10 +1,14 @@
-# Migration: graduating `rewrite/` to replace top-level `src/`
+# Migration: graduating `meditate-core/` to replace top-level `src/`
+
+> Historical record. Migration completed; left in place for the audit trail
+> of how the graduation was sequenced. See `ARCHITECTURE.md` for the
+> current architecture.
 
 ## Strategy
 
 Keep the app buildable at every commit. Migrate logic file-by-file to call into
-`meditate-core` (the `rewrite/` crate). Once a file's logic is fully delegated,
-delete the old internals.
+`meditate-core` (the `meditate-core/` crate). Once a file's logic is fully
+delegated, delete the old internals.
 
 ## File mapping
 
@@ -27,7 +31,7 @@ delete the old internals.
 
 Smallest blast radius first. Each step is its own commit; tests stay green.
 
-1. **Path dep wired**. Add `meditate-core = { path = "rewrite" }` to top-level
+1. **Path dep wired**. Add `meditate-core = { path = "meditate-core" }` to top-level
    `Cargo.toml`. App still builds, no behavioural change.
 2. **Format/parse helpers**. Replace bodies in `src/stats/imp.rs` and
    `src/data_io.rs` parsers with calls into `meditate_core::format::*`. Pure
