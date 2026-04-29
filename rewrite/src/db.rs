@@ -52,6 +52,22 @@ impl SessionMode {
     }
 }
 
+/// Pagination + filter for `query_sessions`. Default-constructed value
+/// matches every session with no pagination.
+#[derive(Debug, Clone, Default)]
+pub struct SessionFilter {
+    /// Only sessions referencing this label id. `None` ⇒ every label
+    /// (and unlabeled).
+    pub label_id: Option<i64>,
+    /// Only sessions with a non-empty `notes` field.
+    pub only_with_notes: bool,
+    /// Hard cap on returned rows. `None` ⇒ no cap.
+    pub limit: Option<u32>,
+    /// Skip the first `offset` rows of the (filtered, ordered) result.
+    /// `None` ⇒ no skip.
+    pub offset: Option<u32>,
+}
+
 pub struct Database {
     conn: Connection,
 }
@@ -604,6 +620,83 @@ impl Database {
         Ok(rows)
     }
 
+    /// Rich-filter session query for the log feed: pagination, label
+    /// filter, notes-only. Rows are ordered `start_iso DESC` so the
+    /// caller's first page is the newest sessions.
+    ///
+    /// SQLite quirks handled here:
+    /// - `LIMIT -1` means "no limit" (used when `filter.limit` is None).
+    /// - `OFFSET 0` is the no-skip default.
+    /// - The four (notes × label) combinations get distinct static
+    ///   queries so each is independently cached by `prepare_cached`.
+    pub fn query_sessions(&self, filter: &SessionFilter) -> Result<Vec<(i64, Session)>> {
+        let limit_val: i64 = filter.limit.map(|n| n as i64).unwrap_or(-1);
+        let offset_val: i64 = filter.offset.map(|n| n as i64).unwrap_or(0);
+
+        let map_row = |row: &rusqlite::Row<'_>| -> rusqlite::Result<(i64, Session)> {
+            let mode_str: String = row.get(5)?;
+            let mode = SessionMode::from_db_str(&mode_str)
+                .expect("DB CHECK constraint should restrict mode to known values");
+            Ok((
+                row.get::<_, i64>(0)?,
+                Session {
+                    start_iso: row.get(1)?,
+                    duration_secs: row.get(2)?,
+                    label_id: row.get(3)?,
+                    notes: row.get(4)?,
+                    mode,
+                },
+            ))
+        };
+
+        let rows: rusqlite::Result<Vec<(i64, Session)>> = match (filter.only_with_notes, filter.label_id) {
+            (false, None) => {
+                let mut s = self.conn.prepare_cached(
+                    "SELECT id, start_iso, duration_secs, label_id, notes, mode
+                     FROM sessions
+                     ORDER BY start_iso DESC
+                     LIMIT ?1 OFFSET ?2",
+                )?;
+                let it = s.query_map(params![limit_val, offset_val], map_row)?;
+                it.collect()
+            }
+            (true, None) => {
+                let mut s = self.conn.prepare_cached(
+                    "SELECT id, start_iso, duration_secs, label_id, notes, mode
+                     FROM sessions
+                     WHERE notes IS NOT NULL AND notes != ''
+                     ORDER BY start_iso DESC
+                     LIMIT ?1 OFFSET ?2",
+                )?;
+                let it = s.query_map(params![limit_val, offset_val], map_row)?;
+                it.collect()
+            }
+            (false, Some(lid)) => {
+                let mut s = self.conn.prepare_cached(
+                    "SELECT id, start_iso, duration_secs, label_id, notes, mode
+                     FROM sessions
+                     WHERE label_id = ?1
+                     ORDER BY start_iso DESC
+                     LIMIT ?2 OFFSET ?3",
+                )?;
+                let it = s.query_map(params![lid, limit_val, offset_val], map_row)?;
+                it.collect()
+            }
+            (true, Some(lid)) => {
+                let mut s = self.conn.prepare_cached(
+                    "SELECT id, start_iso, duration_secs, label_id, notes, mode
+                     FROM sessions
+                     WHERE label_id = ?1 AND notes IS NOT NULL AND notes != ''
+                     ORDER BY start_iso DESC
+                     LIMIT ?2 OFFSET ?3",
+                )?;
+                let it = s.query_map(params![lid, limit_val, offset_val], map_row)?;
+                it.collect()
+            }
+        };
+        Ok(rows?)
+    }
+
     pub fn list_sessions(&self) -> Result<Vec<(i64, Session)>> {
         self.list_sessions_filtered(None)
     }
@@ -667,6 +760,250 @@ mod tests {
         assert!(second.is_err(), "second insert of same label should fail");
         // The first insert is preserved; no duplicate row is created.
         assert_eq!(db.count_labels().unwrap(), 1);
+    }
+
+    // ── query_sessions: rich filter for the log feed ──────────────────────────
+
+    #[test]
+    fn query_sessions_default_filter_returns_all_newest_first() {
+        // Default-constructed SessionFilter: no filter, no pagination —
+        // every session, ordered start_iso DESC (newest first), to match
+        // the log feed UX.
+        let db = Database::open_in_memory().unwrap();
+        let make = |iso: &str| Session {
+            start_iso: iso.to_string(),
+            duration_secs: 600,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Countdown,
+        };
+        let _id_old = db.insert_session(&make("2026-04-25T10:00:00Z")).unwrap();
+        let _id_new = db.insert_session(&make("2026-04-27T10:00:00Z")).unwrap();
+        let _id_mid = db.insert_session(&make("2026-04-26T10:00:00Z")).unwrap();
+
+        let rows = db.query_sessions(&SessionFilter::default()).unwrap();
+        let isos: Vec<&str> = rows.iter().map(|(_, s)| s.start_iso.as_str()).collect();
+        assert_eq!(
+            isos,
+            vec!["2026-04-27T10:00:00Z", "2026-04-26T10:00:00Z", "2026-04-25T10:00:00Z"],
+            "rows must be ordered start_iso DESC",
+        );
+    }
+
+    #[test]
+    fn query_sessions_empty_db_returns_empty_vec() {
+        // No rows — not an error, just an empty Vec.
+        let db = Database::open_in_memory().unwrap();
+        let rows = db.query_sessions(&SessionFilter::default()).unwrap();
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn query_sessions_limit_caps_result_count() {
+        // limit=N returns at most N rows; the cap applies AFTER ordering,
+        // so the newest N are returned.
+        let db = Database::open_in_memory().unwrap();
+        for d in 20..28 {
+            db.insert_session(&Session {
+                start_iso: format!("2026-04-{d:02}T10:00:00Z"),
+                duration_secs: 600,
+                label_id: None,
+                notes: None,
+                mode: SessionMode::Countdown,
+            }).unwrap();
+        }
+        let rows = db.query_sessions(&SessionFilter {
+            limit: Some(3), ..Default::default()
+        }).unwrap();
+        let isos: Vec<&str> = rows.iter().map(|(_, s)| s.start_iso.as_str()).collect();
+        assert_eq!(
+            isos,
+            vec!["2026-04-27T10:00:00Z", "2026-04-26T10:00:00Z", "2026-04-25T10:00:00Z"],
+            "limit=3 must return the newest 3",
+        );
+    }
+
+    #[test]
+    fn query_sessions_offset_skips_initial_rows() {
+        // offset=N skips the first N (in DESC order). Combined with
+        // limit, this is the pagination contract: "give me page p of size s"
+        // is offset = (p-1)*s, limit = s.
+        let db = Database::open_in_memory().unwrap();
+        for d in 20..28 {
+            db.insert_session(&Session {
+                start_iso: format!("2026-04-{d:02}T10:00:00Z"),
+                duration_secs: 600,
+                label_id: None,
+                notes: None,
+                mode: SessionMode::Countdown,
+            }).unwrap();
+        }
+        // Page 2 of size 3: skip 3, take 3.
+        let rows = db.query_sessions(&SessionFilter {
+            limit: Some(3),
+            offset: Some(3),
+            ..Default::default()
+        }).unwrap();
+        let isos: Vec<&str> = rows.iter().map(|(_, s)| s.start_iso.as_str()).collect();
+        assert_eq!(
+            isos,
+            vec!["2026-04-24T10:00:00Z", "2026-04-23T10:00:00Z", "2026-04-22T10:00:00Z"],
+            "page 2 of size 3 must be rows 4-6 in DESC order",
+        );
+    }
+
+    #[test]
+    fn query_sessions_offset_past_total_returns_empty() {
+        // Asking for a page past the end is not an error.
+        let db = Database::open_in_memory().unwrap();
+        db.insert_session(&Session {
+            start_iso: "2026-04-27T10:00:00Z".to_string(),
+            duration_secs: 600,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+        let rows = db.query_sessions(&SessionFilter {
+            offset: Some(100),
+            ..Default::default()
+        }).unwrap();
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn query_sessions_label_id_filters_by_label() {
+        // label_id=Some(id) keeps only sessions referencing that label.
+        let db = Database::open_in_memory().unwrap();
+        let morning = db.insert_label("Morning").unwrap();
+        let evening = db.insert_label("Evening").unwrap();
+        // 2 Morning, 1 Evening, 1 unlabeled.
+        db.insert_session(&Session {
+            start_iso: "2026-04-27T10:00:00Z".to_string(),
+            duration_secs: 600, label_id: Some(morning),
+            notes: None, mode: SessionMode::Countdown,
+        }).unwrap();
+        db.insert_session(&Session {
+            start_iso: "2026-04-27T11:00:00Z".to_string(),
+            duration_secs: 600, label_id: Some(morning),
+            notes: None, mode: SessionMode::Countdown,
+        }).unwrap();
+        db.insert_session(&Session {
+            start_iso: "2026-04-27T19:00:00Z".to_string(),
+            duration_secs: 600, label_id: Some(evening),
+            notes: None, mode: SessionMode::Countdown,
+        }).unwrap();
+        db.insert_session(&Session {
+            start_iso: "2026-04-27T20:00:00Z".to_string(),
+            duration_secs: 600, label_id: None,
+            notes: None, mode: SessionMode::Countdown,
+        }).unwrap();
+
+        let rows = db.query_sessions(&SessionFilter {
+            label_id: Some(morning), ..Default::default()
+        }).unwrap();
+        assert_eq!(rows.len(), 2);
+        for (_, s) in &rows {
+            assert_eq!(s.label_id, Some(morning));
+        }
+    }
+
+    #[test]
+    fn query_sessions_only_with_notes_excludes_empty_and_null() {
+        // only_with_notes=true matches when notes IS NOT NULL AND notes != ''.
+        // Both None (NULL in DB) and Some("") must be excluded.
+        let db = Database::open_in_memory().unwrap();
+        // With note.
+        db.insert_session(&Session {
+            start_iso: "2026-04-27T10:00:00Z".to_string(),
+            duration_secs: 600, label_id: None,
+            notes: Some("kept focus".to_string()),
+            mode: SessionMode::Countdown,
+        }).unwrap();
+        // Without note (None).
+        db.insert_session(&Session {
+            start_iso: "2026-04-27T11:00:00Z".to_string(),
+            duration_secs: 600, label_id: None,
+            notes: None, mode: SessionMode::Countdown,
+        }).unwrap();
+        // Empty-string note — also excluded.
+        db.insert_session(&Session {
+            start_iso: "2026-04-27T12:00:00Z".to_string(),
+            duration_secs: 600, label_id: None,
+            notes: Some("".to_string()),
+            mode: SessionMode::Countdown,
+        }).unwrap();
+
+        let rows = db.query_sessions(&SessionFilter {
+            only_with_notes: true, ..Default::default()
+        }).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1.notes, Some("kept focus".to_string()));
+    }
+
+    #[test]
+    fn query_sessions_combines_label_filter_and_notes_filter() {
+        // Compound filter: label_id AND only_with_notes both apply.
+        let db = Database::open_in_memory().unwrap();
+        let morning = db.insert_label("Morning").unwrap();
+        // Morning + note → kept.
+        db.insert_session(&Session {
+            start_iso: "2026-04-27T10:00:00Z".to_string(),
+            duration_secs: 600, label_id: Some(morning),
+            notes: Some("yes".to_string()),
+            mode: SessionMode::Countdown,
+        }).unwrap();
+        // Morning, no note → dropped (notes filter).
+        db.insert_session(&Session {
+            start_iso: "2026-04-27T11:00:00Z".to_string(),
+            duration_secs: 600, label_id: Some(morning),
+            notes: None, mode: SessionMode::Countdown,
+        }).unwrap();
+        // No label, with note → dropped (label filter).
+        db.insert_session(&Session {
+            start_iso: "2026-04-27T12:00:00Z".to_string(),
+            duration_secs: 600, label_id: None,
+            notes: Some("orphan".to_string()),
+            mode: SessionMode::Countdown,
+        }).unwrap();
+
+        let rows = db.query_sessions(&SessionFilter {
+            label_id: Some(morning),
+            only_with_notes: true,
+            ..Default::default()
+        }).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1.notes, Some("yes".to_string()));
+    }
+
+    #[test]
+    fn query_sessions_pagination_walks_all_rows_without_overlap() {
+        // Walking pages of size N covers every row exactly once.
+        let db = Database::open_in_memory().unwrap();
+        for d in 1..=10 {
+            db.insert_session(&Session {
+                start_iso: format!("2026-04-{d:02}T10:00:00Z"),
+                duration_secs: 600, label_id: None,
+                notes: None, mode: SessionMode::Countdown,
+            }).unwrap();
+        }
+        let mut seen: Vec<i64> = Vec::new();
+        let mut offset = 0u32;
+        loop {
+            let page = db.query_sessions(&SessionFilter {
+                limit: Some(3),
+                offset: Some(offset),
+                ..Default::default()
+            }).unwrap();
+            if page.is_empty() { break; }
+            for (id, _) in &page { seen.push(*id); }
+            offset += page.len() as u32;
+        }
+        assert_eq!(seen.len(), 10);
+        // No duplicates.
+        let mut sorted = seen.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), 10);
     }
 
     #[test]
