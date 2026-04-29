@@ -174,6 +174,13 @@ impl Database {
         Ok(())
     }
 
+    /// Remove every session row. Returns how many rows were deleted.
+    /// Labels and settings are untouched.
+    pub fn delete_all_sessions(&self) -> Result<usize> {
+        let n = self.conn.execute("DELETE FROM sessions", [])?;
+        Ok(n)
+    }
+
     /// Replace every field of the row with `id`. Unknown ids are silently
     /// no-ops (SQLite UPDATE matches zero rows).
     pub fn update_session(&self, id: i64, session: &Session) -> Result<()> {
@@ -837,6 +844,41 @@ mod tests {
         // Label outlives the session.
         assert_eq!(db.list_labels().unwrap(), vec!["Morning"]);
         assert_eq!(db.count_labels().unwrap(), 1);
+    }
+
+    #[test]
+    fn delete_all_sessions_returns_count_and_clears_table() {
+        // Wipe-all returns the row count so the caller can show "deleted N
+        // sessions" toasts. Labels survive (this is a sessions-only nuke).
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        let morning = db.find_label_by_name("Morning").unwrap().unwrap();
+        for i in 0..3 {
+            db.insert_session(&Session {
+                start_iso: format!("2026-04-2{i}T10:00:00Z"),
+                duration_secs: 600,
+                label_id: Some(morning),
+                notes: None,
+                mode: SessionMode::Countdown,
+            }).unwrap();
+        }
+        assert_eq!(db.count_sessions().unwrap(), 3);
+
+        let removed = db.delete_all_sessions().unwrap();
+        assert_eq!(removed, 3);
+        assert_eq!(db.count_sessions().unwrap(), 0);
+        assert!(db.list_sessions().unwrap().is_empty());
+
+        // Labels untouched.
+        assert_eq!(db.list_labels().unwrap(), vec!["Morning"]);
+    }
+
+    #[test]
+    fn delete_all_sessions_on_empty_db_returns_zero() {
+        // Idempotent: nothing to delete is not an error.
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(db.delete_all_sessions().unwrap(), 0);
+        assert_eq!(db.count_sessions().unwrap(), 0);
     }
 
     #[test]
