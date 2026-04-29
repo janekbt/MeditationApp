@@ -1,4 +1,18 @@
-use rusqlite::{Connection, OptionalExtension, Result, params};
+//! GTK-side `Database` — a thin wrapper around `meditate_core::db::Database`.
+//!
+//! All persistence logic lives in core. This module owns:
+//! - The GTK-app's domain types (`Session`, `Label`, `SessionData`,
+//!   `SessionMode::Breathing`) which use i64-unix timestamps and the
+//!   `note` field name for ergonomic UI integration.
+//! - Type translation at the API boundary (see `session_data_to_core` /
+//!   `session_from_core` and `crate::time::unix_to_local_iso`).
+//! - The `rusqlite::Result<T>` return type so callers can keep using `?`
+//!   against this module without learning core's `DbError`.
+//!
+//! Core's schema is the on-disk reality; the existing app's old schema
+//! is gone (one user, opted into a fresh DB).
+
+use rusqlite::Result;
 use std::path::Path;
 
 // ── Models ────────────────────────────────────────────────────────────────────
@@ -104,10 +118,47 @@ fn session_from_core(id: i64, core: &meditate_core::db::Session) -> Session {
     }
 }
 
+fn filter_to_core(f: &SessionFilter) -> meditate_core::db::SessionFilter {
+    meditate_core::db::SessionFilter {
+        label_id: f.label_id,
+        only_with_notes: f.only_with_notes,
+        limit: f.limit,
+        offset: f.offset,
+    }
+}
+
+/// Map core's structured error to a `rusqlite::Error` so the GTK side
+/// can keep its `Result = rusqlite::Result` alias. `DuplicateLabel`
+/// becomes a synthesized UNIQUE-constraint failure, matching what
+/// callers used to see when the GTK app talked to rusqlite directly.
+fn map_core_err(e: meditate_core::db::DbError) -> rusqlite::Error {
+    use meditate_core::db::DbError;
+    match e {
+        DbError::Sqlite(err) => err,
+        DbError::DuplicateLabel(name) => rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ErrorCode::ConstraintViolation,
+                extended_code: rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE,
+            },
+            Some(format!("UNIQUE constraint failed: labels.name (\"{name}\")")),
+        ),
+        DbError::Csv(s) => rusqlite::Error::ToSqlConversionFailure(Box::new(
+            std::io::Error::new(std::io::ErrorKind::InvalidData, s),
+        )),
+    }
+}
+
+/// Today as a `chrono::NaiveDate` in the user's local timezone — used
+/// for streak / running-average calculations that need a concrete
+/// "today" boundary.
+fn today_local_naive_date() -> chrono::NaiveDate {
+    chrono::Local::now().date_naive()
+}
+
 // ── Database ──────────────────────────────────────────────────────────────────
 
 pub struct Database {
-    conn: Connection,
+    inner: meditate_core::db::Database,
 }
 
 impl std::fmt::Debug for Database {
@@ -117,367 +168,107 @@ impl std::fmt::Debug for Database {
 }
 
 impl Database {
-    /// Open (or create) the database at `path`, running any pending migrations.
+    /// Open (or create) the database at `path`. Schema is core's; any
+    /// pre-existing DB file written by an older version of this app
+    /// will need to be deleted first (the user opted into that on
+    /// 2026-04-29 — single-user repo).
     pub fn open(path: &Path) -> Result<Self> {
-        // Create parent directories if they don't exist.
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
         }
-
-        let conn = Connection::open(path)?;
-
-        // WAL + synchronous=NORMAL: durable across crashes, only full fsync at
-        // checkpoint boundaries — cuts per-write latency from ~15 ms to ~2 ms
-        // on eMMC (Librem 5 session-save measurement).
-        conn.execute_batch(
-            "PRAGMA journal_mode=WAL;
-             PRAGMA synchronous=NORMAL;
-             PRAGMA temp_store=MEMORY;
-             PRAGMA cache_size=-8000;
-             PRAGMA mmap_size=67108864;
-             PRAGMA busy_timeout=5000;
-             PRAGMA foreign_keys=ON;",
-        )?;
-
-        let db = Self { conn };
-        db.migrate()?;
-        Ok(db)
-    }
-
-    // ── Migrations ────────────────────────────────────────────────────────────
-
-    fn migrate(&self) -> Result<()> {
-        // Base schema — idempotent, runs on every startup.
-        // labels.name has NO UNIQUE constraint; uniqueness at the DB level
-        // was too restrictive (silent failures on "Add label" after renaming).
-        self.conn.execute_batch("
-            CREATE TABLE IF NOT EXISTS schema_migrations (
-                version INTEGER PRIMARY KEY
-            );
-
-            CREATE TABLE IF NOT EXISTS labels (
-                id   INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS sessions (
-                id            INTEGER PRIMARY KEY AUTOINCREMENT,
-                start_time    INTEGER NOT NULL,
-                duration_secs INTEGER NOT NULL,
-                mode          TEXT    NOT NULL DEFAULT 'countdown',
-                label_id      INTEGER REFERENCES labels(id) ON DELETE SET NULL,
-                note          TEXT
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_sessions_start_time
-                ON sessions (start_time);
-
-            CREATE TABLE IF NOT EXISTS settings (
-                key   TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            );
-        ")?;
-
-        // Migration 1: drop the UNIQUE constraint on labels.name that the
-        // initial schema included.  SQLite requires recreating the table.
-        let already_done: bool = self.conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = 1)",
-            [],
-            |row| row.get(0),
-        )?;
-        if !already_done {
-            self.conn.execute_batch("
-                BEGIN;
-                CREATE TABLE labels_new (
-                    id   INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL
-                );
-                INSERT INTO labels_new SELECT id, name FROM labels;
-                DROP TABLE labels;
-                ALTER TABLE labels_new RENAME TO labels;
-                INSERT INTO schema_migrations (version) VALUES (1);
-                COMMIT;
-            ")?;
-        }
-
-        // Migration 2: index on sessions.label_id for filtered log queries.
-        let already_done: bool = self.conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = 2)",
-            [],
-            |row| row.get(0),
-        )?;
-        if !already_done {
-            self.conn.execute_batch("
-                BEGIN;
-                CREATE INDEX IF NOT EXISTS idx_sessions_label_id
-                    ON sessions (label_id);
-                INSERT INTO schema_migrations (version) VALUES (2);
-                COMMIT;
-            ")?;
-        }
-
-        Ok(())
+        let inner = meditate_core::db::Database::open(path).map_err(map_core_err)?;
+        Ok(Self { inner })
     }
 
     // ── Labels ────────────────────────────────────────────────────────────────
 
+    /// Insert a label, auto-suffixing on collision so the UI always
+    /// gets a usable label back ("Morning", "Morning 2", "Morning 3", …).
+    /// The collision walk lives in core's `unique_label_name`.
     pub fn create_label(&self, base_name: &str) -> Result<Label> {
-        // Find a name that isn't already in use: "New label", "New label 2", …
-        let name = self.unique_label_name(base_name)?;
-        self.conn.execute("INSERT INTO labels (name) VALUES (?1)", params![name])?;
-        let id = self.conn.last_insert_rowid();
+        let name = self.inner.unique_label_name(base_name).map_err(map_core_err)?;
+        let id = self.inner.insert_label(&name).map_err(map_core_err)?;
         Ok(Label { id, name })
     }
 
-    fn unique_label_name(&self, base: &str) -> Result<String> {
-        let exists = |n: &str| -> Result<bool> {
-            self.conn.query_row(
-                "SELECT EXISTS(SELECT 1 FROM labels WHERE name = ?1)",
-                params![n],
-                |row| row.get(0),
-            )
-        };
-        if !exists(base)? {
-            return Ok(base.to_owned());
-        }
-        let mut i = 2u32;
-        loop {
-            let candidate = format!("{base} {i}");
-            if !exists(&candidate)? {
-                return Ok(candidate);
-            }
-            i += 1;
-        }
-    }
-
     pub fn list_labels(&self) -> Result<Vec<Label>> {
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT id, name FROM labels ORDER BY name COLLATE NOCASE"
-        )?;
-        let rows = stmt.query_map([], |row| {
-            Ok(Label { id: row.get(0)?, name: row.get(1)? })
-        })?;
-        rows.collect()
+        let rows = self.inner.list_labels().map_err(map_core_err)?;
+        Ok(rows.into_iter().map(|(id, name)| Label { id, name }).collect())
     }
 
-    /// Returns true if any label other than `except_id` already uses `name`.
+    /// True iff any label other than `except_id` already uses `name`
+    /// (case-insensitive — the column is COLLATE NOCASE).
     pub fn is_label_name_taken(&self, name: &str, except_id: i64) -> Result<bool> {
-        self.conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM labels WHERE name = ?1 AND id != ?2)",
-            params![name, except_id],
-            |row| row.get(0),
-        )
+        self.inner.is_label_name_taken(name, except_id).map_err(map_core_err)
     }
 
     pub fn update_label(&self, id: i64, name: &str) -> Result<()> {
-        self.conn.execute(
-            "UPDATE labels SET name = ?1 WHERE id = ?2",
-            params![name, id],
-        )?;
-        Ok(())
+        self.inner.update_label(id, name).map_err(map_core_err)
     }
 
     pub fn label_session_count(&self, id: i64) -> Result<i64> {
-        self.conn.query_row(
-            "SELECT COUNT(*) FROM sessions WHERE label_id = ?1",
-            params![id],
-            |row| row.get(0),
-        )
+        self.inner.label_session_count(id).map_err(map_core_err)
     }
 
     pub fn delete_label(&self, id: i64) -> Result<()> {
-        // Sessions referencing this label will have label_id set to NULL (ON DELETE SET NULL).
-        self.conn.execute("DELETE FROM labels WHERE id = ?1", params![id])?;
-        Ok(())
+        self.inner.delete_label(id).map_err(map_core_err)
     }
 
     // ── Sessions ──────────────────────────────────────────────────────────────
 
     pub fn create_session(&self, data: &SessionData) -> Result<Session> {
-        self.conn.execute(
-            "INSERT INTO sessions (start_time, duration_secs, mode, label_id, note)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![
-                data.start_time,
-                data.duration_secs,
-                data.mode.as_str(),
-                data.label_id,
-                data.note,
-            ],
-        )?;
-        let id = self.conn.last_insert_rowid();
-        Ok(Session {
-            id,
-            start_time:    data.start_time,
-            duration_secs: data.duration_secs,
-            mode:          data.mode.clone(),
-            label_id:      data.label_id,
-            note:          data.note.clone(),
-        })
+        let core = session_data_to_core(data);
+        let id = self.inner.insert_session(&core).map_err(map_core_err)?;
+        Ok(session_from_core(id, &core))
     }
 
-    /// Insert many sessions inside a single transaction — orders of magnitude
-    /// faster than calling `create_session` in a loop. Returns the number of
-    /// rows inserted. Transaction is rolled back on error.
-    ///
-    /// Uses `unchecked_transaction` so the caller can hold a shared `&Database`
-    /// (matching `with_db`'s closure signature); safe here because the app is
-    /// single-threaded and we don't nest transactions.
+    /// Insert many sessions inside a single core-side transaction.
+    /// Atomic on error: a constraint violation rolls back the whole
+    /// batch (see core's `bulk_insert_sessions` tests).
     pub fn bulk_insert_sessions(&self, sessions: &[SessionData]) -> Result<usize> {
-        let tx = self.conn.unchecked_transaction()?;
-        {
-            let mut stmt = tx.prepare(
-                "INSERT INTO sessions (start_time, duration_secs, mode, label_id, note)
-                 VALUES (?1, ?2, ?3, ?4, ?5)"
-            )?;
-            for data in sessions {
-                stmt.execute(params![
-                    data.start_time,
-                    data.duration_secs,
-                    data.mode.as_str(),
-                    data.label_id,
-                    data.note,
-                ])?;
-            }
-        }
-        tx.commit()?;
-        Ok(sessions.len())
+        let core_rows: Vec<_> = sessions.iter().map(session_data_to_core).collect();
+        self.inner.bulk_insert_sessions(&core_rows).map_err(map_core_err)
     }
 
-    /// Delete every row from `sessions`. Returns the number of rows deleted.
     pub fn delete_all_sessions(&self) -> Result<usize> {
-        let n = self.conn.execute("DELETE FROM sessions", [])?;
-        Ok(n)
+        self.inner.delete_all_sessions().map_err(map_core_err)
     }
 
-    /// Stream every session row in a stable order (start_time ASC) — used
-    /// for CSV export. Calls `row_cb` once per session; the callback may
-    /// return Err to abort.
+    /// Iterate every session in start-time ascending order (CSV export's
+    /// stable shape). Implemented by querying all sessions through core
+    /// and reversing the DESC ordering — fine for any realistic session
+    /// count, the alternative is a parallel core method just for the
+    /// CSV path.
     pub fn for_each_session<F: FnMut(&Session) -> Result<()>>(&self, mut row_cb: F) -> Result<()> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, start_time, duration_secs, mode, label_id, note
-             FROM sessions ORDER BY start_time ASC"
-        )?;
-        let mut rows = stmt.query([])?;
-        while let Some(row) = rows.next()? {
-            let mode_str: String = row.get(3)?;
-            let mode = SessionMode::from_str(&mode_str);
-            let sess = Session {
-                id:            row.get(0)?,
-                start_time:    row.get(1)?,
-                duration_secs: row.get(2)?,
-                mode,
-                label_id:      row.get(4)?,
-                note:          row.get(5)?,
-            };
-            row_cb(&sess)?;
+        let mut rows = self
+            .inner
+            .query_sessions(&meditate_core::db::SessionFilter::default())
+            .map_err(map_core_err)?;
+        // query_sessions orders start_iso DESC; CSV export wants ASC.
+        rows.reverse();
+        for (id, core) in &rows {
+            let s = session_from_core(*id, core);
+            row_cb(&s)?;
         }
         Ok(())
     }
 
-    /// Return a label id by name, creating it if missing. Matches
-    /// case-insensitively so an import of "Meditation" finds an existing
-    /// "meditation" instead of producing a duplicate row.
     pub fn find_or_create_label(&self, name: &str) -> Result<i64> {
-        if let Some(id) = self.conn.query_row(
-            "SELECT id FROM labels WHERE name = ?1 COLLATE NOCASE",
-            params![name],
-            |r| r.get::<_, i64>(0),
-        ).optional()? {
-            return Ok(id);
-        }
-        // `create_label` auto-suffixes on collision, so reuse that path when
-        // the simple lookup missed (race-safe enough for a single-user app).
-        Ok(self.create_label(name)?.id)
+        self.inner.find_or_create_label(name).map_err(map_core_err)
     }
 
     pub fn list_sessions(&self, filter: &SessionFilter) -> Result<Vec<Session>> {
-        // Four fixed SQL variants (notes×label) so every statement is a static
-        // string that prepare_cached can cache permanently, and label_id is
-        // always a bound parameter rather than interpolated into the SQL.
-        // ORDER BY start_time DESC uses the idx_sessions_start_time index.
-        macro_rules! map_row {
-            ($row:expr) => {
-                Session {
-                    id:            $row.get(0)?,
-                    start_time:    $row.get(1)?,
-                    duration_secs: $row.get(2)?,
-                    mode:          SessionMode::from_str(&$row.get::<_, String>(3)?),
-                    label_id:      $row.get(4)?,
-                    note:          $row.get(5)?,
-                }
-            };
-        }
-        // LIMIT -1 means "no limit" in SQLite; OFFSET 0 means "no offset".
-        // That lets us keep one static query per variant even when the caller
-        // hasn't paginated.
-        let limit_val: i64 = filter.limit.map(|n| n as i64).unwrap_or(-1);
-        let offset_val: i64 = filter.offset.map(|n| n as i64).unwrap_or(0);
-        match (filter.only_with_notes, filter.label_id) {
-            (false, None) => {
-                let mut s = self.conn.prepare_cached(
-                    "SELECT id, start_time, duration_secs, mode, label_id, note
-                     FROM sessions ORDER BY start_time DESC
-                     LIMIT ?1 OFFSET ?2")?;
-                let rows: Result<Vec<_>> =
-                    s.query_map(params![limit_val, offset_val], |r| Ok(map_row!(r)))?.collect();
-                rows
-            }
-            (true, None) => {
-                let mut s = self.conn.prepare_cached(
-                    "SELECT id, start_time, duration_secs, mode, label_id, note
-                     FROM sessions WHERE note IS NOT NULL AND note != ''
-                     ORDER BY start_time DESC
-                     LIMIT ?1 OFFSET ?2")?;
-                let rows: Result<Vec<_>> =
-                    s.query_map(params![limit_val, offset_val], |r| Ok(map_row!(r)))?.collect();
-                rows
-            }
-            (false, Some(lid)) => {
-                let mut s = self.conn.prepare_cached(
-                    "SELECT id, start_time, duration_secs, mode, label_id, note
-                     FROM sessions WHERE label_id = ?1
-                     ORDER BY start_time DESC
-                     LIMIT ?2 OFFSET ?3")?;
-                let rows: Result<Vec<_>> =
-                    s.query_map(params![lid, limit_val, offset_val], |r| Ok(map_row!(r)))?.collect();
-                rows
-            }
-            (true, Some(lid)) => {
-                let mut s = self.conn.prepare_cached(
-                    "SELECT id, start_time, duration_secs, mode, label_id, note
-                     FROM sessions WHERE label_id = ?1 AND note IS NOT NULL AND note != ''
-                     ORDER BY start_time DESC
-                     LIMIT ?2 OFFSET ?3")?;
-                let rows: Result<Vec<_>> =
-                    s.query_map(params![lid, limit_val, offset_val], |r| Ok(map_row!(r)))?.collect();
-                rows
-            }
-        }
+        let rows = self.inner.query_sessions(&filter_to_core(filter)).map_err(map_core_err)?;
+        Ok(rows.into_iter().map(|(id, c)| session_from_core(id, &c)).collect())
     }
 
     pub fn update_session(&self, id: i64, data: &SessionData) -> Result<()> {
-        self.conn.execute(
-            "UPDATE sessions
-             SET start_time = ?1, duration_secs = ?2, mode = ?3,
-                 label_id = ?4, note = ?5
-             WHERE id = ?6",
-            params![
-                data.start_time,
-                data.duration_secs,
-                data.mode.as_str(),
-                data.label_id,
-                data.note,
-                id,
-            ],
-        )?;
-        Ok(())
+        self.inner.update_session(id, &session_data_to_core(data)).map_err(map_core_err)
     }
 
     pub fn delete_session(&self, id: i64) -> Result<()> {
-        self.conn.execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
-        Ok(())
+        self.inner.delete_session(id).map_err(map_core_err)
     }
 
     // ── Settings ──────────────────────────────────────────────────────────────
@@ -497,284 +288,118 @@ impl Database {
     }
 
     pub fn get_setting(&self, key: &str, default: &str) -> Result<String> {
-        match self.conn.query_row(
-            "SELECT value FROM settings WHERE key = ?1",
-            params![key],
-            |row| row.get::<_, String>(0),
-        ) {
-            Ok(val) => Ok(val),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(default.to_owned()),
-            Err(e) => Err(e),
-        }
+        self.inner.get_setting(key, default).map_err(map_core_err)
     }
 
     pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
-        self.conn.execute(
-            "INSERT INTO settings (key, value) VALUES (?1, ?2)
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            params![key, value],
-        )?;
-        Ok(())
+        self.inner.set_setting(key, value).map_err(map_core_err)
     }
 
     // ── Stats queries ─────────────────────────────────────────────────────────
 
-    /// Current streak: number of consecutive calendar days (ending today or
-    /// yesterday) on which at least one session was completed.
-    ///
-    /// Uses a gap-and-island window query so no rows are loaded into Rust.
+    /// Current streak of consecutive calendar days (ending today or
+    /// yesterday) with at least one session. "Today" is computed in the
+    /// user's local timezone here, then handed to core.
     pub fn get_streak(&self) -> Result<u32> {
-        // CAST(julianday(day) AS INTEGER) gives an integer Julian day number
-        // that increments by exactly 1 per calendar day regardless of DST.
-        // jday - ROW_NUMBER() is constant within a consecutive run (island).
-        self.conn.query_row(
-            "WITH active_days AS (
-                 SELECT DISTINCT strftime('%Y-%m-%d', start_time, 'unixepoch', 'localtime') AS day
-                 FROM sessions
-             ),
-             numbered AS (
-                 SELECT day,
-                        CAST(julianday(day) AS INTEGER) - ROW_NUMBER() OVER (ORDER BY day) AS grp
-                 FROM active_days
-             ),
-             last_grp AS (
-                 SELECT grp FROM numbered ORDER BY day DESC LIMIT 1
-             ),
-             latest_day AS (
-                 SELECT day FROM active_days ORDER BY day DESC LIMIT 1
-             )
-             SELECT CASE
-                 WHEN (SELECT day FROM latest_day) >=
-                      strftime('%Y-%m-%d', 'now', '-1 day', 'localtime')
-                 THEN (SELECT COUNT(*) FROM numbered WHERE grp = (SELECT grp FROM last_grp))
-                 ELSE 0
-             END",
-            [],
-            |row| row.get::<_, u32>(0),
-        )
+        let today = today_local_naive_date();
+        let n = self.inner.get_streak(today).map_err(map_core_err)?;
+        Ok(n.max(0) as u32)
     }
 
-    /// Longest consecutive-day streak ever recorded.
-    ///
-    /// Uses a gap-and-island window query so no rows are loaded into Rust.
     pub fn get_best_streak(&self) -> Result<u32> {
-        self.conn.query_row(
-            "WITH active_days AS (
-                 SELECT DISTINCT strftime('%Y-%m-%d', start_time, 'unixepoch', 'localtime') AS day
-                 FROM sessions
-             ),
-             numbered AS (
-                 SELECT CAST(julianday(day) AS INTEGER) - ROW_NUMBER() OVER (ORDER BY day) AS grp
-                 FROM active_days
-             )
-             SELECT COALESCE(MAX(cnt), 0)
-             FROM (SELECT COUNT(*) AS cnt FROM numbered GROUP BY grp)",
-            [],
-            |row| row.get::<_, u32>(0),
-        )
+        let n = self.inner.get_best_streak().map_err(map_core_err)?;
+        Ok(n.max(0) as u32)
     }
 
-    /// Total meditation time across all sessions, in seconds.
     pub fn get_total_duration_secs(&self) -> Result<i64> {
-        self.conn.query_row(
-            "SELECT COALESCE(SUM(duration_secs), 0) FROM sessions",
-            [],
-            |row| row.get(0),
-        )
+        self.inner.total_seconds().map_err(map_core_err)
     }
 
-    /// Average daily meditation time (in seconds) over the last `days` days.
-    /// Days with no sessions count as zero.
+    /// Average daily duration over the last `days` days. Days with no
+    /// sessions count as zero. Returns 0 for `days == 0` (guards against
+    /// the underflow `days - 1` would cause).
     pub fn get_running_average_secs(&self, days: u32) -> Result<f64> {
-        // days == 0 would underflow `days - 1` below and divide-by-zero
-        // on the final mean. No caller passes 0 today, but guarding here
-        // keeps the contract total.
         if days == 0 {
             return Ok(0.0);
         }
-        // Compute the since-date in local time via SQLite so the boundary is
-        // local midnight, not UTC midnight. We then hand the string to
-        // strftime('%s', …, 'utc') inside the SUM query to turn it into a
-        // unix timestamp, which makes the WHERE sargable against
-        // idx_sessions_start_time.
-        let since: String = self.conn.query_row(
-            "SELECT strftime('%Y-%m-%d', 'now', ?1, 'localtime')",
-            params![format!("-{} days", days - 1)],
-            |r| r.get(0),
-        )?;
-        let total: i64 = self.conn.query_row(
-            "SELECT COALESCE(SUM(duration_secs), 0)
-             FROM sessions
-             WHERE start_time >= strftime('%s', ?1, 'utc')",
-            params![since],
-            |row| row.get(0),
-        )?;
+        let since = today_local_naive_date() - chrono::Duration::days((days - 1) as i64);
+        let total = self.inner.total_secs_since(since).map_err(map_core_err)?;
         Ok(total as f64 / days as f64)
     }
 
-    /// Returns `(local-date-string "YYYY-MM-DD", total_secs)` for each day
-    /// on or after `since_date` that had at least one session. WHERE uses
-    /// the unix boundary so the index drives the scan; only the narrowed
-    /// subset pays for the strftime that produces the GROUP key.
+    /// `(local-date "YYYY-MM-DD", total_secs)` for each day on or after
+    /// `since_date`. Filters core's full daily-totals list in Rust;
+    /// fine for the typical 30–90 day window the heatmap asks for.
     pub fn get_daily_totals(&self, since_date: &str) -> Result<Vec<(String, i64)>> {
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT strftime('%Y-%m-%d', start_time, 'unixepoch', 'localtime') AS day,
-                    SUM(duration_secs) AS total
-             FROM sessions
-             WHERE start_time >= strftime('%s', ?1, 'utc')
-             GROUP BY day
-             ORDER BY day ASC"
-        )?;
-        let rows = stmt.query_map(params![since_date], |row| Ok((row.get(0)?, row.get(1)?)))?;
-        rows.collect()
+        let since = chrono::NaiveDate::parse_from_str(since_date, "%Y-%m-%d")
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+        let totals = self.inner.get_daily_totals().map_err(map_core_err)?;
+        Ok(totals
+            .into_iter()
+            .filter(|(d, _)| *d >= since)
+            .map(|(d, secs)| (d.format("%Y-%m-%d").to_string(), secs))
+            .collect())
     }
 
-    /// Sum of `duration_secs` for every session whose local-time start date
-    /// is on or after `since_date` (YYYY-MM-DD). Used for the weekly-goal
-    /// ring, where `since_date` is the locale's current-week start.
     pub fn get_total_secs_since(&self, since_date: &str) -> Result<i64> {
-        let total: i64 = self.conn.query_row(
-            "SELECT COALESCE(SUM(duration_secs), 0)
-             FROM sessions
-             WHERE start_time >= strftime('%s', ?1, 'utc')",
-            params![since_date],
-            |row| row.get(0),
-        )?;
-        Ok(total)
+        let since = chrono::NaiveDate::parse_from_str(since_date, "%Y-%m-%d")
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+        self.inner.total_secs_since(since).map_err(map_core_err)
     }
 
-    /// Returns distinct (year, month) pairs that have at least one session,
-    /// in descending order. Used to populate the calendar month picker.
     pub fn get_active_months(&self) -> Result<Vec<(i32, u32)>> {
-        // 'localtime' matches every other date bucket in the DB layer; without
-        // it, sessions started just before local midnight file into the wrong
-        // month in the picker.
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT DISTINCT
-                 CAST(strftime('%Y', start_time, 'unixepoch', 'localtime') AS INTEGER),
-                 CAST(strftime('%m', start_time, 'unixepoch', 'localtime') AS INTEGER)
-             FROM sessions
-             ORDER BY 1 DESC, 2 DESC"
-        )?;
-        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
-        rows.collect()
+        self.inner.active_months().map_err(map_core_err)
     }
 
-    /// Returns the set of day-of-month numbers in the given year/month that had
-    /// at least one session. Uses `start_time BETWEEN` so the index is used.
     pub fn get_active_days_in_month(&self, year: i32, month: u32) -> Result<Vec<u32>> {
-        // Compute the local-midnight boundaries as date strings; the 'utc'
-        // modifier in SQLite converts them to the correct UTC epoch so the
-        // idx_sessions_start_time index is usable.
-        let start_str = format!("{year:04}-{month:02}-01");
-        let (next_year, next_month) = if month == 12 { (year + 1, 1) } else { (year, month + 1) };
-        let end_str = format!("{next_year:04}-{next_month:02}-01");
-
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT DISTINCT
-                 CAST(strftime('%d', start_time, 'unixepoch', 'localtime') AS INTEGER)
-             FROM sessions
-             WHERE start_time >= strftime('%s', ?1, 'utc')
-               AND start_time <  strftime('%s', ?2, 'utc')
-             ORDER BY 1"
-        )?;
-        let rows = stmt.query_map(params![start_str, end_str], |row| row.get::<_, u32>(0))?;
-        rows.collect()
+        self.inner.active_days_in_month(year, month).map_err(map_core_err)
     }
 
-    /// Total number of sessions ever recorded.
     pub fn get_session_count(&self) -> Result<i64> {
-        self.conn.query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))
+        self.inner.count_sessions().map_err(map_core_err)
     }
 
-    /// Longest single session, as (duration_secs, start_time_unix). None if
-    /// the database is empty.
+    /// Longest single session as `(duration_secs, start_time_unix)`,
+    /// None on empty DB. The shape is a tuple for backward compat with
+    /// existing UI sites; core returns the full Session.
     pub fn get_longest_session(&self) -> Result<Option<(i64, i64)>> {
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT duration_secs, start_time FROM sessions
-             ORDER BY duration_secs DESC LIMIT 1"
-        )?;
-        let mut rows = stmt.query([])?;
-        match rows.next()? {
-            Some(row) => Ok(Some((row.get(0)?, row.get(1)?))),
-            None => Ok(None),
-        }
+        let row = self.inner.get_longest_session().map_err(map_core_err)?;
+        Ok(row.map(|(_id, c)| {
+            (c.duration_secs as i64, crate::time::local_iso_to_unix(&c.start_iso))
+        }))
     }
 
-    /// Median session duration (seconds). Returns the lower median on even
-    /// counts. None if the database is empty.
+    /// Median session duration, None on empty DB. Core's variant
+    /// returns 0 for empty (lossy for the UI's "n/a" display); the
+    /// wrapper checks `count_sessions` first to recover the None case.
     pub fn get_median_duration_secs(&self) -> Result<Option<i64>> {
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT duration_secs FROM sessions
-             ORDER BY duration_secs
-             LIMIT 1 OFFSET (SELECT MAX(0, (COUNT(*) - 1) / 2) FROM sessions)"
-        )?;
-        let mut rows = stmt.query([])?;
-        match rows.next()? {
-            Some(row) => Ok(Some(row.get(0)?)),
-            None => Ok(None),
+        if self.inner.count_sessions().map_err(map_core_err)? == 0 {
+            return Ok(None);
         }
+        let secs = self.inner.get_median_duration_secs().map_err(map_core_err)?;
+        Ok(Some(secs as i64))
     }
 
-    /// Session counts bucketed by local time-of-day:
-    /// (morning <12, afternoon 12–17, evening ≥18).
     pub fn get_hour_buckets(&self) -> Result<(i64, i64, i64)> {
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT
-               COALESCE(SUM(CASE WHEN h < 12 THEN 1 ELSE 0 END), 0),
-               COALESCE(SUM(CASE WHEN h >= 12 AND h < 18 THEN 1 ELSE 0 END), 0),
-               COALESCE(SUM(CASE WHEN h >= 18 THEN 1 ELSE 0 END), 0)
-             FROM (
-               SELECT CAST(strftime('%H', start_time, 'unixepoch', 'localtime') AS INTEGER) AS h
-               FROM sessions
-             )"
-        )?;
-        stmt.query_row([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        self.inner.hour_buckets().map_err(map_core_err)
     }
 
-    /// Total session time + count per label, ordered by total duration
-    /// descending (ties broken by name A-Z, case-insensitive). Labels with
-    /// zero sessions and unlabeled sessions are both excluded — INNER JOIN
-    /// drops them at the query level.
     pub fn get_label_totals(&self) -> Result<Vec<(String, i64, i64)>> {
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT labels.name,
-                    SUM(sessions.duration_secs) AS total,
-                    COUNT(sessions.id) AS n
-             FROM labels
-             INNER JOIN sessions ON sessions.label_id = labels.id
-             GROUP BY labels.id, labels.name
-             ORDER BY total DESC, labels.name COLLATE NOCASE ASC",
-        )?;
-        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
-        rows.collect()
+        self.inner.label_totals_seconds().map_err(map_core_err)
     }
 
-    /// Sum of session durations (seconds) in a given local-time calendar month.
     pub fn get_month_total_secs(&self, year: i32, month: u32) -> Result<i64> {
-        let start_str = format!("{year:04}-{month:02}-01");
-        let (next_year, next_month) = if month == 12 { (year + 1, 1) } else { (year, month + 1) };
-        let end_str = format!("{next_year:04}-{next_month:02}-01");
-        self.conn.query_row(
-            "SELECT COALESCE(SUM(duration_secs), 0)
-             FROM sessions
-             WHERE start_time >= strftime('%s', ?1, 'utc')
-               AND start_time <  strftime('%s', ?2, 'utc')",
-            params![start_str, end_str],
-            |row| row.get(0),
-        )
+        self.inner.month_total_secs(year, month).map_err(map_core_err)
     }
 }
 
-/// In-memory DB with the schema migrated. Module-level so tests in sibling
-/// files (e.g. `data_io`) can construct a `Database` without access to the
-/// private `conn` field.
+/// In-memory DB for tests. Module-level so sibling files (e.g.
+/// `data_io`) can construct a `Database` without needing a path.
 #[cfg(test)]
 pub(crate) fn test_db_in_memory() -> Database {
-    let conn = Connection::open_in_memory().unwrap();
-    let db = Database { conn };
-    db.migrate().unwrap();
-    db
+    Database {
+        inner: meditate_core::db::Database::open_in_memory().unwrap(),
+    }
 }
 
 #[cfg(test)]
@@ -785,9 +410,6 @@ mod tests {
 
     #[test]
     fn session_data_to_core_preserves_every_field() {
-        // Translate the GTK-side insert shape (i64 unix, `note`,
-        // `Breathing`) into the core insert shape (ISO string, `notes`,
-        // `BoxBreath`). Each field must end up where it belongs.
         let sd = SessionData {
             start_time: 1_700_000_000,
             duration_secs: 1234,
@@ -796,7 +418,6 @@ mod tests {
             note: Some("hello".to_string()),
         };
         let core = session_data_to_core(&sd);
-        // start_time → ISO via local TZ; round-trip back gives the same unix.
         assert_eq!(crate::time::local_iso_to_unix(&core.start_iso), 1_700_000_000);
         assert_eq!(core.duration_secs, 1234);
         assert_eq!(core.label_id, Some(42));
@@ -806,8 +427,6 @@ mod tests {
 
     #[test]
     fn session_data_to_core_maps_every_session_mode() {
-        // Pin every mode mapping. 'Breathing' is named differently on
-        // each side ('BoxBreath' in core); the others share names.
         let make = |mode| SessionData {
             start_time: 0, duration_secs: 0, mode, label_id: None, note: None,
         };
@@ -827,9 +446,6 @@ mod tests {
 
     #[test]
     fn session_data_to_core_clamps_negative_duration_to_zero() {
-        // GTK side carries duration_secs as i64 (can be negative from
-        // a buggy caller); core uses u32. The translation must clamp
-        // to zero rather than wrap into a huge unsigned value.
         let sd = SessionData {
             start_time: 1_700_000_000,
             duration_secs: -1,
@@ -837,16 +453,11 @@ mod tests {
             label_id: None,
             note: None,
         };
-        let core = session_data_to_core(&sd);
-        assert_eq!(core.duration_secs, 0,
-            "negative durations must clamp to 0, not wrap to u32::MAX-ish");
+        assert_eq!(session_data_to_core(&sd).duration_secs, 0);
     }
 
     #[test]
     fn session_data_to_core_clamps_overflowing_duration_to_u32_max() {
-        // Defence-in-depth: a wildly-large i64 stays bounded on the
-        // u32 side. (Real sessions are well under u32::MAX seconds —
-        // ~136 years — but the cast must be saturating either way.)
         let sd = SessionData {
             start_time: 0,
             duration_secs: i64::MAX,
@@ -854,14 +465,11 @@ mod tests {
             label_id: None,
             note: None,
         };
-        let core = session_data_to_core(&sd);
-        assert_eq!(core.duration_secs, u32::MAX);
+        assert_eq!(session_data_to_core(&sd).duration_secs, u32::MAX);
     }
 
     #[test]
     fn session_from_core_preserves_every_field() {
-        // Inverse direction: a core (id, Session) becomes the GTK-side
-        // Session (with embedded id, i64 timestamps, `note`, `Breathing`).
         let core = meditate_core::db::Session {
             start_iso: crate::time::unix_to_local_iso(1_700_000_000),
             duration_secs: 600,
@@ -880,7 +488,6 @@ mod tests {
 
     #[test]
     fn session_from_core_maps_every_session_mode() {
-        // Every core::SessionMode lands on the right GTK-side variant.
         let make = |mode| meditate_core::db::Session {
             start_iso: "2026-04-27T10:00:00".to_string(),
             duration_secs: 0, label_id: None, notes: None, mode,
@@ -901,8 +508,6 @@ mod tests {
 
     #[test]
     fn session_data_round_trips_through_core_and_back() {
-        // Compose: SessionData → core::Session → Session. Every field
-        // (other than the new id) survives.
         let original = SessionData {
             start_time: 1_700_000_000,
             duration_secs: 750,
@@ -920,6 +525,8 @@ mod tests {
         assert_eq!(restored.note, original.note);
     }
 
+    // ── SessionMode tests (pure enum) ─────────────────────────────────────────
+
     #[test]
     fn session_mode_as_str() {
         assert_eq!(SessionMode::Countdown.as_str(), "countdown");
@@ -936,8 +543,6 @@ mod tests {
 
     #[test]
     fn session_mode_from_str_unknown_defaults_to_countdown() {
-        // Old rows / typos must land on Countdown, not panic — Stopwatch and
-        // Breathing were added later and Countdown is the "pre-feature" default.
         assert_eq!(SessionMode::from_str(""), SessionMode::Countdown);
         assert_eq!(SessionMode::from_str("COUNTDOWN"), SessionMode::Countdown);
         assert_eq!(SessionMode::from_str("timer"), SessionMode::Countdown);
@@ -952,24 +557,23 @@ mod tests {
         }
     }
 
-    // ── Tier B: in-memory integration tests ───────────────────────────────────
+    // ── Tier B: in-memory integration tests against the wrapper ──────────────
 
     fn fresh_db() -> Database { super::test_db_in_memory() }
 
-    /// UTC unix timestamp of `days_ago` local-days back, at `hh:mm` local.
-    /// Computed via SQLite so the timezone math matches the queries under
-    /// test exactly — cross-TZ test runners agree.
-    fn local_ts(db: &Database, days_ago: i64, hh: i64, mm: i64) -> i64 {
-        db.conn.query_row(
-            "SELECT CAST(strftime('%s', 'now', 'localtime',
-                                  '-' || ?1 || ' days',
-                                  'start of day',
-                                  '+' || ?2 || ' hours',
-                                  '+' || ?3 || ' minutes',
-                                  'utc') AS INTEGER)",
-            params![days_ago, hh, mm],
-            |r| r.get(0),
-        ).unwrap()
+    /// Unix timestamp at `hh:mm` local time, `days_ago` local-days back.
+    /// Computed via chrono::Local — matches the wrapper's own
+    /// `today_local_naive_date` so streak / running-average tests share
+    /// the same "today" boundary.
+    fn local_ts(days_ago: i64, hh: u32, mm: u32) -> i64 {
+        use chrono::TimeZone;
+        let date = chrono::Local::now().date_naive() - chrono::Duration::days(days_ago);
+        let datetime = date.and_hms_opt(hh, mm, 0).unwrap();
+        chrono::Local
+            .from_local_datetime(&datetime)
+            .single()
+            .unwrap()
+            .timestamp()
     }
 
     fn seed_session(db: &Database, start_time: i64, duration_secs: i64, label_id: Option<i64>) {
@@ -982,45 +586,21 @@ mod tests {
         }).unwrap();
     }
 
-    // ── migrate ───────────────────────────────────────────────────────────────
+    // ── unique label name (auto-rename UX) ────────────────────────────────────
 
     #[test]
-    fn migrate_is_idempotent() {
+    fn create_label_auto_renames_on_collision() {
+        // The wrapper's `create_label` routes through core's
+        // unique_label_name so duplicate base names auto-suffix
+        // ("Morning", "Morning 2", "Morning 3", …) instead of erroring.
         let db = fresh_db();
-        // Running migrate twice more on an already-migrated DB must be a no-op
-        // (no duplicate schema_migrations rows, no errors).
-        db.migrate().unwrap();
-        db.migrate().unwrap();
-
-        let versions: Vec<i64> = db.conn
-            .prepare("SELECT version FROM schema_migrations ORDER BY version").unwrap()
-            .query_map([], |r| r.get::<_, i64>(0)).unwrap()
-            .collect::<Result<_>>().unwrap();
-        // If you add a migration in migrate(), extend this list — the assertion
-        // is deliberately exact so an accidental duplicate insert shows up here.
-        assert_eq!(versions, vec![1, 2]);
+        assert_eq!(db.create_label("Morning").unwrap().name, "Morning");
+        assert_eq!(db.create_label("Morning").unwrap().name, "Morning 2");
+        assert_eq!(db.create_label("Morning").unwrap().name, "Morning 3");
+        assert_eq!(db.create_label("Morning").unwrap().name, "Morning 4");
     }
 
-    // ── unique_label_name ─────────────────────────────────────────────────────
-
-    #[test]
-    fn unique_label_name_no_collision() {
-        let db = fresh_db();
-        assert_eq!(db.unique_label_name("Morning").unwrap(), "Morning");
-    }
-
-    #[test]
-    fn unique_label_name_collision_chain() {
-        let db = fresh_db();
-        db.create_label("Morning").unwrap();
-        assert_eq!(db.unique_label_name("Morning").unwrap(), "Morning 2");
-        db.create_label("Morning").unwrap();
-        assert_eq!(db.unique_label_name("Morning").unwrap(), "Morning 3");
-        db.create_label("Morning").unwrap();
-        assert_eq!(db.unique_label_name("Morning").unwrap(), "Morning 4");
-    }
-
-    // ── Streak (gap-and-island SQL) ───────────────────────────────────────────
+    // ── Streak (gap-and-island via core) ──────────────────────────────────────
 
     #[test]
     fn streak_empty_db_is_zero() {
@@ -1032,7 +612,7 @@ mod tests {
     #[test]
     fn streak_today_only() {
         let db = fresh_db();
-        seed_session(&db, local_ts(&db, 0, 12, 0), 600, None);
+        seed_session(&db, local_ts(0, 12, 0), 600, None);
         assert_eq!(db.get_streak().unwrap(), 1);
         assert_eq!(db.get_best_streak().unwrap(), 1);
     }
@@ -1040,17 +620,16 @@ mod tests {
     #[test]
     fn streak_yesterday_only_still_counts() {
         let db = fresh_db();
-        seed_session(&db, local_ts(&db, 1, 12, 0), 600, None);
-        // One grace day: a session yesterday keeps the streak alive until end
-        // of today. Without this grace, the streak would flip to 0 at midnight.
+        seed_session(&db, local_ts(1, 12, 0), 600, None);
+        // Grace day: yesterday counts until end-of-today.
         assert_eq!(db.get_streak().unwrap(), 1);
     }
 
     #[test]
     fn streak_two_days_ago_is_broken() {
         let db = fresh_db();
-        seed_session(&db, local_ts(&db, 2, 12, 0), 600, None);
-        // Older than yesterday → current streak is 0 even though best is 1.
+        seed_session(&db, local_ts(2, 12, 0), 600, None);
+        // Older than yesterday → current streak 0 even though best is 1.
         assert_eq!(db.get_streak().unwrap(), 0);
         assert_eq!(db.get_best_streak().unwrap(), 1);
     }
@@ -1059,7 +638,7 @@ mod tests {
     fn streak_consecutive_run_of_five() {
         let db = fresh_db();
         for d in 0..5 {
-            seed_session(&db, local_ts(&db, d, 12, 0), 600, None);
+            seed_session(&db, local_ts(d, 12, 0), 600, None);
         }
         assert_eq!(db.get_streak().unwrap(), 5);
         assert_eq!(db.get_best_streak().unwrap(), 5);
@@ -1068,13 +647,11 @@ mod tests {
     #[test]
     fn streak_gap_separates_current_from_best() {
         let db = fresh_db();
-        // Old 6-day run.
         for d in [30, 29, 28, 27, 26, 25] {
-            seed_session(&db, local_ts(&db, d, 12, 0), 600, None);
+            seed_session(&db, local_ts(d, 12, 0), 600, None);
         }
-        // Then a gap, then a current 3-day run.
         for d in [2, 1, 0] {
-            seed_session(&db, local_ts(&db, d, 12, 0), 600, None);
+            seed_session(&db, local_ts(d, 12, 0), 600, None);
         }
         assert_eq!(db.get_streak().unwrap(), 3);
         assert_eq!(db.get_best_streak().unwrap(), 6);
@@ -1083,8 +660,8 @@ mod tests {
     #[test]
     fn streak_multiple_sessions_same_day_count_once() {
         let db = fresh_db();
-        seed_session(&db, local_ts(&db, 0, 9, 0), 600, None);
-        seed_session(&db, local_ts(&db, 0, 18, 0), 600, None);
+        seed_session(&db, local_ts(0, 9, 0), 600, None);
+        seed_session(&db, local_ts(0, 18, 0), 600, None);
         assert_eq!(db.get_streak().unwrap(), 1);
         assert_eq!(db.get_best_streak().unwrap(), 1);
     }
@@ -1094,7 +671,6 @@ mod tests {
     #[test]
     fn running_average_zero_days_returns_zero() {
         let db = fresh_db();
-        // Guarded; without the early return, days - 1 underflows and panics.
         assert_eq!(db.get_running_average_secs(0).unwrap(), 0.0);
     }
 
@@ -1107,9 +683,8 @@ mod tests {
     #[test]
     fn running_average_divides_by_window_not_session_count() {
         let db = fresh_db();
-        // 600s today + 600s yesterday → 1200 over the 7-day window.
-        seed_session(&db, local_ts(&db, 0, 12, 0), 600, None);
-        seed_session(&db, local_ts(&db, 1, 12, 0), 600, None);
+        seed_session(&db, local_ts(0, 12, 0), 600, None);
+        seed_session(&db, local_ts(1, 12, 0), 600, None);
         let avg = db.get_running_average_secs(7).unwrap();
         assert!((avg - 1200.0 / 7.0).abs() < 1e-6, "avg was {avg}");
     }
@@ -1117,39 +692,38 @@ mod tests {
     #[test]
     fn running_average_excludes_sessions_before_window() {
         let db = fresh_db();
-        // In-window (6 days ago, still inside the 7-day count incl. today).
-        seed_session(&db, local_ts(&db, 6, 12, 0), 300, None);
+        // In-window (6 days ago, inside the 7-day window incl. today).
+        seed_session(&db, local_ts(6, 12, 0), 300, None);
         // Out-of-window (8 days ago).
-        seed_session(&db, local_ts(&db, 8, 12, 0), 9999, None);
+        seed_session(&db, local_ts(8, 12, 0), 9999, None);
         let avg = db.get_running_average_secs(7).unwrap();
         assert!((avg - 300.0 / 7.0).abs() < 1e-6, "avg was {avg}");
     }
 
-    // ── Daily totals (local-midnight grouping) ───────────────────────────────
+    // ── Daily totals (local-midnight grouping) ────────────────────────────────
 
     #[test]
     fn daily_totals_groups_by_local_date() {
         let db = fresh_db();
-        // Session at 23:55 local on today must group into today's bucket
-        // even though its UTC date may be tomorrow.
-        seed_session(&db, local_ts(&db, 0, 23, 55), 300, None);
-        // A second session at 00:05 local on today — same local date.
-        seed_session(&db, local_ts(&db, 0, 0, 5), 300, None);
-        // A session on an earlier day, to prove grouping actually separates.
-        seed_session(&db, local_ts(&db, 3, 12, 0), 600, None);
+        // 23:55 local + 00:05 local on the same local day must collapse.
+        seed_session(&db, local_ts(0, 23, 55), 300, None);
+        seed_session(&db, local_ts(0, 0, 5), 300, None);
+        // An earlier local day to prove the grouping actually separates.
+        seed_session(&db, local_ts(3, 12, 0), 600, None);
 
-        let since: String = db.conn.query_row(
-            "SELECT strftime('%Y-%m-%d', 'now', '-7 days', 'localtime')",
-            [], |r| r.get(0),
-        ).unwrap();
+        // Pick a 7-day window that includes both the today-bucket and
+        // the 3-days-ago bucket.
+        let since = (chrono::Local::now().date_naive() - chrono::Duration::days(7))
+            .format("%Y-%m-%d")
+            .to_string();
         let totals = db.get_daily_totals(&since).unwrap();
-        assert_eq!(totals.len(), 2, "expected two distinct local dates, got {totals:?}");
-        // Sorted ascending by day: older day first.
+        assert_eq!(totals.len(), 2, "two distinct local dates expected, got {totals:?}");
+        // Sorted ascending by day: older first.
         assert_eq!(totals[0].1, 600);
         assert_eq!(totals[1].1, 600); // 300 + 300 collapsed onto today
     }
 
-    // ── Median ───────────────────────────────────────────────────────────────
+    // ── Median ────────────────────────────────────────────────────────────────
 
     #[test]
     fn median_empty_db_is_none() {
@@ -1160,7 +734,7 @@ mod tests {
     #[test]
     fn median_single_row() {
         let db = fresh_db();
-        seed_session(&db, local_ts(&db, 0, 12, 0), 600, None);
+        seed_session(&db, local_ts(0, 12, 0), 600, None);
         assert_eq!(db.get_median_duration_secs().unwrap(), Some(600));
     }
 
@@ -1168,9 +742,18 @@ mod tests {
     fn median_odd_count_is_middle() {
         let db = fresh_db();
         for (i, secs) in [100, 500, 700, 1000, 2000].iter().enumerate() {
-            seed_session(&db, local_ts(&db, i as i64, 12, 0), *secs, None);
+            seed_session(&db, local_ts(i as i64, 12, 0), *secs, None);
         }
         assert_eq!(db.get_median_duration_secs().unwrap(), Some(700));
+    }
+
+    #[test]
+    fn median_even_count_takes_lower_of_two_middles() {
+        let db = fresh_db();
+        for (i, secs) in [100, 500, 700, 1000].iter().enumerate() {
+            seed_session(&db, local_ts(i as i64, 12, 0), *secs, None);
+        }
+        assert_eq!(db.get_median_duration_secs().unwrap(), Some(500));
     }
 
     // ── Label totals ──────────────────────────────────────────────────────────
@@ -1180,20 +763,15 @@ mod tests {
         let db = fresh_db();
         let morning = db.create_label("Morning").unwrap().id;
         let evening = db.create_label("Evening").unwrap().id;
-        // An extra label with no sessions — must not appear in the output.
         let _unused = db.create_label("Unused").unwrap().id;
 
-        // Morning: 2 sessions, 900s total.
-        seed_session(&db, local_ts(&db, 0, 7, 0), 600, Some(morning));
-        seed_session(&db, local_ts(&db, 1, 7, 0), 300, Some(morning));
-        // Evening: 1 session, 1200s — the larger total, should sort first.
-        seed_session(&db, local_ts(&db, 0, 20, 0), 1200, Some(evening));
-        // Unlabeled session — must not appear.
-        seed_session(&db, local_ts(&db, 0, 12, 0), 500, None);
+        seed_session(&db, local_ts(0, 7, 0), 600, Some(morning));
+        seed_session(&db, local_ts(1, 7, 0), 300, Some(morning));
+        seed_session(&db, local_ts(0, 20, 0), 1200, Some(evening));
+        seed_session(&db, local_ts(0, 12, 0), 500, None);
 
         let got = db.get_label_totals().unwrap();
-        assert_eq!(got.len(), 2,
-            "Unused label and unlabeled session must be excluded: {got:?}");
+        assert_eq!(got.len(), 2);
         assert_eq!(got[0], ("Evening".to_string(), 1200, 1));
         assert_eq!(got[1], ("Morning".to_string(), 900, 2));
     }
@@ -1209,23 +787,10 @@ mod tests {
         let db = fresh_db();
         let zebra = db.create_label("Zebra").unwrap().id;
         let alpha = db.create_label("Alpha").unwrap().id;
-        // Same total for both — tie-break must be case-insensitive A-Z.
-        seed_session(&db, local_ts(&db, 0, 12, 0), 600, Some(zebra));
-        seed_session(&db, local_ts(&db, 1, 12, 0), 600, Some(alpha));
+        seed_session(&db, local_ts(0, 12, 0), 600, Some(zebra));
+        seed_session(&db, local_ts(1, 12, 0), 600, Some(alpha));
         let got = db.get_label_totals().unwrap();
         assert_eq!(got[0].0, "Alpha");
         assert_eq!(got[1].0, "Zebra");
     }
-
-    #[test]
-    fn median_even_count_takes_lower_of_two_middles() {
-        let db = fresh_db();
-        // Values 100, 500, 700, 1000 sorted ascending; the two middles are
-        // 500 and 700. Lower-median rule returns 500, not the mean of 600.
-        for (i, secs) in [100, 500, 700, 1000].iter().enumerate() {
-            seed_session(&db, local_ts(&db, i as i64, 12, 0), *secs, None);
-        }
-        assert_eq!(db.get_median_duration_secs().unwrap(), Some(500));
-    }
 }
-
