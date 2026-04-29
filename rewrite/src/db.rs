@@ -607,6 +607,25 @@ impl Database {
         }
     }
 
+    /// Sum of `duration_secs` for sessions whose `start_iso` is on or
+    /// after the start of `since` (interpreted as the user's local
+    /// midnight). Returns 0 if no sessions match.
+    ///
+    /// Lexicographic comparison on ISO 8601 strings works because the
+    /// format sorts chronologically as ASCII text. The cut-off is at
+    /// the START of the date — a session at 00:00:00 on `since` is
+    /// included.
+    pub fn total_secs_since(&self, since: chrono::NaiveDate) -> Result<i64> {
+        let prefix = since.format("%Y-%m-%d").to_string();
+        Ok(self.conn.query_row(
+            "SELECT COALESCE(SUM(duration_secs), 0)
+             FROM sessions
+             WHERE start_iso >= ?1",
+            params![prefix],
+            |row| row.get(0),
+        )?)
+    }
+
     /// Total of `duration_secs` across every session (no filter). Returns
     /// 0 on an empty DB. Use this when you want the underlying precision
     /// (e.g. weekly-goal ring, longest-session display); use
@@ -797,6 +816,74 @@ mod tests {
         assert!(second.is_err(), "second insert of same label should fail");
         // The first insert is preserved; no duplicate row is created.
         assert_eq!(db.count_labels().unwrap(), 1);
+    }
+
+    // ── total_secs_since: weekly goal ring etc. ──────────────────────────────
+
+    #[test]
+    fn total_secs_since_is_zero_for_empty_db() {
+        let db = Database::open_in_memory().unwrap();
+        let since = chrono::NaiveDate::from_ymd_opt(2026, 4, 27).unwrap();
+        assert_eq!(db.total_secs_since(since).unwrap(), 0);
+    }
+
+    #[test]
+    fn total_secs_since_includes_sessions_on_or_after_date() {
+        // Cut-off is at the START of the local-naive `since` date — a
+        // session at 00:00:00 on `since` IS included.
+        let db = Database::open_in_memory().unwrap();
+        // On the cut-off date.
+        db.insert_session(&Session {
+            start_iso: "2026-04-27T00:00:00".to_string(),
+            duration_secs: 600, label_id: None, notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+        // Later that day.
+        db.insert_session(&Session {
+            start_iso: "2026-04-27T18:00:00".to_string(),
+            duration_secs: 1200, label_id: None, notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+        // Following day.
+        db.insert_session(&Session {
+            start_iso: "2026-04-28T10:00:00".to_string(),
+            duration_secs: 300, label_id: None, notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+        let since = chrono::NaiveDate::from_ymd_opt(2026, 4, 27).unwrap();
+        assert_eq!(db.total_secs_since(since).unwrap(), 600 + 1200 + 300);
+    }
+
+    #[test]
+    fn total_secs_since_excludes_sessions_before_date() {
+        let db = Database::open_in_memory().unwrap();
+        // Day before the cut-off.
+        db.insert_session(&Session {
+            start_iso: "2026-04-26T23:59:59".to_string(),
+            duration_secs: 9999, label_id: None, notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+        // On / after cut-off — counted.
+        db.insert_session(&Session {
+            start_iso: "2026-04-27T00:00:00".to_string(),
+            duration_secs: 600, label_id: None, notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+        let since = chrono::NaiveDate::from_ymd_opt(2026, 4, 27).unwrap();
+        assert_eq!(db.total_secs_since(since).unwrap(), 600);
+    }
+
+    #[test]
+    fn total_secs_since_far_future_date_returns_zero() {
+        // Asking for a date past every session's start returns 0.
+        let db = Database::open_in_memory().unwrap();
+        db.insert_session(&Session {
+            start_iso: "2026-04-27T10:00:00".to_string(),
+            duration_secs: 600, label_id: None, notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+        let since = chrono::NaiveDate::from_ymd_opt(2099, 1, 1).unwrap();
+        assert_eq!(db.total_secs_since(since).unwrap(), 0);
     }
 
     // ── get_longest_session ──────────────────────────────────────────────────
