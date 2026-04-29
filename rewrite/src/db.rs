@@ -92,6 +92,27 @@ impl Database {
         Ok(Self { conn })
     }
 
+    /// Rename the label with `id` to `name`. Unknown ids are silently
+    /// no-ops (SQLite UPDATE matches zero rows). If `name` collides
+    /// case-insensitively with another label, returns
+    /// `DbError::DuplicateLabel`. Renaming a row to its own current name
+    /// (incl. a case variant of itself) succeeds, since SQLite's UNIQUE
+    /// check excludes the row being updated.
+    pub fn update_label(&self, id: i64, name: &str) -> Result<()> {
+        match self.conn.execute(
+            "UPDATE labels SET name = ?1 WHERE id = ?2",
+            params![name, id],
+        ) {
+            Ok(_) => Ok(()),
+            Err(rusqlite::Error::SqliteFailure(err, _))
+                if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE =>
+            {
+                Err(DbError::DuplicateLabel(name.to_string()))
+            }
+            Err(e) => Err(DbError::Sqlite(e)),
+        }
+    }
+
     /// Insert a new label and return its AUTOINCREMENT rowid. Returns
     /// `DbError::DuplicateLabel` if `name` (case-insensitive) already
     /// exists — the column is `COLLATE NOCASE UNIQUE`, so callers
@@ -584,6 +605,101 @@ mod tests {
         let second = db.insert_label("Morning");
         assert!(second.is_err(), "second insert of same label should fail");
         // The first insert is preserved; no duplicate row is created.
+        assert_eq!(db.count_labels().unwrap(), 1);
+    }
+
+    #[test]
+    fn update_label_renames_row() {
+        // Rename takes id + new name. The row keeps its id but the
+        // name changes; sibling labels are untouched.
+        let db = Database::open_in_memory().unwrap();
+        let morning = db.insert_label("Morning").unwrap();
+        let evening = db.insert_label("Evening").unwrap();
+
+        db.update_label(morning, "Pre-coffee").unwrap();
+
+        // Morning row now reports the new name.
+        assert_eq!(db.find_label_by_name("Pre-coffee").unwrap(), Some(morning));
+        // Old name is gone.
+        assert_eq!(db.find_label_by_name("Morning").unwrap(), None);
+        // Sibling untouched.
+        assert_eq!(db.find_label_by_name("Evening").unwrap(), Some(evening));
+        // Count unchanged.
+        assert_eq!(db.count_labels().unwrap(), 2);
+    }
+
+    #[test]
+    fn update_label_to_same_name_is_idempotent() {
+        // Renaming to the current name is a no-op, not a UNIQUE violation.
+        // The row updates "to itself" — SQLite UPDATE allows this.
+        let db = Database::open_in_memory().unwrap();
+        let id = db.insert_label("Morning").unwrap();
+        db.update_label(id, "Morning").unwrap();
+        // Still one row, still the same id.
+        assert_eq!(db.count_labels().unwrap(), 1);
+        assert_eq!(db.find_label_by_name("Morning").unwrap(), Some(id));
+    }
+
+    #[test]
+    fn update_label_to_case_variant_of_own_name_succeeds() {
+        // Capitalising "morning" → "Morning" is a legitimate rename of
+        // the same row. Because of COLLATE NOCASE on UNIQUE, SQLite
+        // does NOT see this as a collision against itself.
+        let db = Database::open_in_memory().unwrap();
+        let id = db.insert_label("morning").unwrap();
+        db.update_label(id, "Morning").unwrap();
+        // Lookup by either case still finds the row (NOCASE column).
+        assert_eq!(db.find_label_by_name("morning").unwrap(), Some(id));
+        assert_eq!(db.find_label_by_name("Morning").unwrap(), Some(id));
+        // The actual stored value is the new casing.
+        let names = db.list_labels().unwrap();
+        assert_eq!(names, vec!["Morning"]);
+    }
+
+    #[test]
+    fn update_label_to_existing_other_name_returns_duplicate_error() {
+        // Renaming to a name another row already has must fail with
+        // DuplicateLabel. The DB stays unchanged.
+        let db = Database::open_in_memory().unwrap();
+        let morning = db.insert_label("Morning").unwrap();
+        let _evening = db.insert_label("Evening").unwrap();
+
+        let result = db.update_label(morning, "Evening");
+        assert!(
+            matches!(result, Err(DbError::DuplicateLabel(ref n)) if n == "Evening"),
+            "expected DuplicateLabel(\"Evening\"), got {result:?}"
+        );
+        // Both rows survive with their original names.
+        assert_eq!(db.find_label_by_name("Morning").unwrap(), Some(morning));
+        assert_eq!(db.list_labels().unwrap(), vec!["Evening", "Morning"]);
+    }
+
+    #[test]
+    fn update_label_to_case_variant_of_other_name_returns_duplicate_error() {
+        // Case-insensitive collision: renaming "Morning" to "evening"
+        // collides with existing "Evening" because labels.name is
+        // COLLATE NOCASE.
+        let db = Database::open_in_memory().unwrap();
+        let morning = db.insert_label("Morning").unwrap();
+        db.insert_label("Evening").unwrap();
+
+        let result = db.update_label(morning, "evening");
+        assert!(
+            matches!(result, Err(DbError::DuplicateLabel(ref n)) if n == "evening"),
+            "expected DuplicateLabel(\"evening\"), got {result:?}"
+        );
+    }
+
+    #[test]
+    fn update_label_unknown_id_is_noop() {
+        // Matches the SQLite UPDATE-zero-rows convention shared by
+        // update_session: missing id is silent.
+        let db = Database::open_in_memory().unwrap();
+        let id = db.insert_label("Morning").unwrap();
+        db.update_label(id + 999, "Phantom").unwrap();
+        // Original row untouched; phantom name not present.
+        assert_eq!(db.find_label_by_name("Morning").unwrap(), Some(id));
+        assert_eq!(db.find_label_by_name("Phantom").unwrap(), None);
         assert_eq!(db.count_labels().unwrap(), 1);
     }
 
