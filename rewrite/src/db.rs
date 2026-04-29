@@ -732,6 +732,26 @@ impl Database {
         Ok(rows)
     }
 
+    /// Per-label `(name, total_secs, session_count)` ordered by total
+    /// seconds DESC, ties broken by name NOCASE ASC. Excludes unlabeled
+    /// sessions AND labels with zero sessions (INNER JOIN drops both).
+    /// Used by the stats panel's per-label breakdown.
+    pub fn label_totals_seconds(&self) -> Result<Vec<(String, i64, i64)>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT labels.name,
+                    SUM(sessions.duration_secs) AS total,
+                    COUNT(sessions.id) AS n
+             FROM labels
+             INNER JOIN sessions ON sessions.label_id = labels.id
+             GROUP BY labels.id, labels.name
+             ORDER BY total DESC, labels.name COLLATE NOCASE ASC",
+        )?;
+        let rows = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
     /// Per-label total minutes. `None` represents unlabeled sessions.
     pub fn total_minutes_by_label(&self) -> Result<Vec<(Option<String>, i64)>> {
         let mut stmt = self.conn.prepare(
@@ -891,6 +911,100 @@ mod tests {
         assert!(second.is_err(), "second insert of same label should fail");
         // The first insert is preserved; no duplicate row is created.
         assert_eq!(db.count_labels().unwrap(), 1);
+    }
+
+    // ── label_totals_seconds (name, secs, count) ─────────────────────────────
+
+    #[test]
+    fn label_totals_seconds_is_empty_for_empty_db() {
+        let db = Database::open_in_memory().unwrap();
+        assert!(db.label_totals_seconds().unwrap().is_empty());
+    }
+
+    #[test]
+    fn label_totals_seconds_groups_secs_and_counts_per_label() {
+        // (name, total_secs, session_count) per label. Unlabeled sessions
+        // and labels with zero sessions are excluded — INNER JOIN drops
+        // them at the SQL level. Sort: total_secs DESC, name ASC NOCASE.
+        let db = Database::open_in_memory().unwrap();
+        let morning = db.insert_label("Morning").unwrap();
+        let evening = db.insert_label("Evening").unwrap();
+        // An extra label with no sessions — must NOT appear in output.
+        let _unused = db.insert_label("Unused").unwrap();
+
+        // Morning: 2 sessions, 900s total.
+        db.insert_session(&Session {
+            start_iso: "2026-04-27T07:00:00".to_string(),
+            duration_secs: 600, label_id: Some(morning), notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+        db.insert_session(&Session {
+            start_iso: "2026-04-28T07:00:00".to_string(),
+            duration_secs: 300, label_id: Some(morning), notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+        // Evening: 1 session, 1200s total — larger total, should sort first.
+        db.insert_session(&Session {
+            start_iso: "2026-04-27T20:00:00".to_string(),
+            duration_secs: 1200, label_id: Some(evening), notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+        // Unlabeled session — must NOT appear.
+        db.insert_session(&Session {
+            start_iso: "2026-04-27T12:00:00".to_string(),
+            duration_secs: 500, label_id: None, notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+
+        let got = db.label_totals_seconds().unwrap();
+        assert_eq!(got.len(), 2,
+            "Unused label and unlabeled session must be excluded: {got:?}");
+        assert_eq!(got[0], ("Evening".to_string(), 1200, 1));
+        assert_eq!(got[1], ("Morning".to_string(), 900, 2));
+    }
+
+    #[test]
+    fn label_totals_seconds_ties_break_case_insensitive_alphabetic() {
+        // Same total ⇒ secondary sort by name, NOCASE.
+        let db = Database::open_in_memory().unwrap();
+        let zebra = db.insert_label("Zebra").unwrap();
+        let alpha = db.insert_label("alpha").unwrap();
+        db.insert_session(&Session {
+            start_iso: "2026-04-27T12:00:00".to_string(),
+            duration_secs: 600, label_id: Some(zebra), notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+        db.insert_session(&Session {
+            start_iso: "2026-04-28T12:00:00".to_string(),
+            duration_secs: 600, label_id: Some(alpha), notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+        let got = db.label_totals_seconds().unwrap();
+        // 'alpha' (lowercase) sorts before 'Zebra' under NOCASE collation.
+        assert_eq!(got[0].0, "alpha");
+        assert_eq!(got[1].0, "Zebra");
+    }
+
+    #[test]
+    fn label_totals_seconds_preserves_full_seconds_precision() {
+        // total_minutes_by_label returns minutes (lossy integer division).
+        // This variant must NOT lose sub-minute precision.
+        let db = Database::open_in_memory().unwrap();
+        let lid = db.insert_label("Morning").unwrap();
+        // 90s + 45s = 135s — would round to 2 minutes (=120s) under
+        // the minutes-then-converted approach.
+        db.insert_session(&Session {
+            start_iso: "2026-04-27T10:00:00".to_string(),
+            duration_secs: 90, label_id: Some(lid), notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+        db.insert_session(&Session {
+            start_iso: "2026-04-28T10:00:00".to_string(),
+            duration_secs: 45, label_id: Some(lid), notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+        let got = db.label_totals_seconds().unwrap();
+        assert_eq!(got[0], ("Morning".to_string(), 135, 2));
     }
 
     // ── hour_buckets ─────────────────────────────────────────────────────────
