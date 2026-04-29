@@ -447,35 +447,38 @@ impl Database {
         Ok(rows)
     }
 
-    pub fn list_sessions(&self) -> Result<Vec<Session>> {
+    pub fn list_sessions(&self) -> Result<Vec<(i64, Session)>> {
         self.list_sessions_filtered(None)
     }
 
-    pub fn list_sessions_for_label(&self, label_id: i64) -> Result<Vec<Session>> {
+    pub fn list_sessions_for_label(&self, label_id: i64) -> Result<Vec<(i64, Session)>> {
         self.list_sessions_filtered(Some(label_id))
     }
 
-    fn list_sessions_filtered(&self, label_filter: Option<i64>) -> Result<Vec<Session>> {
+    fn list_sessions_filtered(&self, label_filter: Option<i64>) -> Result<Vec<(i64, Session)>> {
         let mut stmt = self.conn.prepare(
-            "SELECT start_iso, duration_secs, label_id, notes, mode FROM sessions
+            "SELECT id, start_iso, duration_secs, label_id, notes, mode FROM sessions
              WHERE ?1 IS NULL OR label_id = ?1
              ORDER BY id",
         )?;
         let sessions = stmt
             .query_map(params![label_filter], |row| {
-                let mode_str: String = row.get(4)?;
+                let mode_str: String = row.get(5)?;
                 let mode = SessionMode::from_db_str(&mode_str).expect(
                     "DB CHECK constraint should restrict mode to known values",
                 );
-                Ok(Session {
-                    start_iso: row.get(0)?,
-                    duration_secs: row.get(1)?,
-                    label_id: row.get(2)?,
-                    notes: row.get(3)?,
-                    mode,
-                })
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    Session {
+                        start_iso: row.get(1)?,
+                        duration_secs: row.get(2)?,
+                        label_id: row.get(3)?,
+                        notes: row.get(4)?,
+                        mode,
+                    },
+                ))
             })?
-            .collect::<rusqlite::Result<Vec<Session>>>()?;
+            .collect::<rusqlite::Result<Vec<(i64, Session)>>>()?;
         Ok(sessions)
     }
 }
@@ -607,9 +610,9 @@ mod tests {
             notes: None,
             mode: SessionMode::BoxBreath,
         };
-        db.insert_session(&labeled).unwrap();
+        let labeled_id = db.insert_session(&labeled).unwrap();
         db.insert_session(&unlabeled).unwrap();
-        assert_eq!(db.list_sessions_for_label(morning).unwrap(), vec![labeled]);
+        assert_eq!(db.list_sessions_for_label(morning).unwrap(), vec![(labeled_id, labeled)]);
     }
 
     #[test]
@@ -622,8 +625,58 @@ mod tests {
             notes: Some("felt clear today".to_string()),
             mode: SessionMode::BoxBreath,
         };
-        db.insert_session(&session).unwrap();
-        assert_eq!(db.list_sessions().unwrap(), vec![session]);
+        let id = db.insert_session(&session).unwrap();
+        assert_eq!(db.list_sessions().unwrap(), vec![(id, session)]);
+    }
+
+    #[test]
+    fn list_sessions_returns_id_per_row_in_insert_order() {
+        // Each retrieved row carries its DB rowid so callers can address it
+        // for update / delete. Ids are SQLite AUTOINCREMENT, so they
+        // increase strictly and start at 1 on a fresh DB.
+        let db = Database::open_in_memory().unwrap();
+        let make = |start: &str| Session {
+            start_iso: start.to_string(),
+            duration_secs: 600,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Countdown,
+        };
+        let id1 = db.insert_session(&make("2026-04-27T10:00:00Z")).unwrap();
+        let id2 = db.insert_session(&make("2026-04-27T11:00:00Z")).unwrap();
+        let id3 = db.insert_session(&make("2026-04-27T12:00:00Z")).unwrap();
+        assert_eq!(id1, 1);
+        assert_eq!(id2, 2);
+        assert_eq!(id3, 3);
+        let rows = db.list_sessions().unwrap();
+        let got_ids: Vec<i64> = rows.iter().map(|(id, _)| *id).collect();
+        assert_eq!(got_ids, vec![id1, id2, id3]);
+    }
+
+    #[test]
+    fn list_sessions_for_label_returns_id_per_row() {
+        // Filtered list must also carry ids — same contract.
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        let morning = db.find_label_by_name("Morning").unwrap().unwrap();
+        let labeled = Session {
+            start_iso: "2026-04-27T10:00:00Z".to_string(),
+            duration_secs: 600,
+            label_id: Some(morning),
+            notes: None,
+            mode: SessionMode::Countdown,
+        };
+        let id = db.insert_session(&labeled).unwrap();
+        // Insert a second, unlabeled session — must not appear.
+        db.insert_session(&Session {
+            start_iso: "2026-04-27T11:00:00Z".to_string(),
+            duration_secs: 300,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+        let rows = db.list_sessions_for_label(morning).unwrap();
+        assert_eq!(rows, vec![(id, labeled)]);
     }
 
     #[test]
@@ -1159,7 +1212,7 @@ mod tests {
         let sessions = dst.list_sessions().unwrap();
         assert_eq!(sessions.len(), 2);
         assert_eq!(
-            sessions[0],
+            sessions[0].1,
             Session {
                 start_iso: "2026-04-27T10:00:00Z".to_string(),
                 duration_secs: 600,
@@ -1169,7 +1222,7 @@ mod tests {
             }
         );
         assert_eq!(
-            sessions[1],
+            sessions[1].1,
             Session {
                 start_iso: "2026-04-27T19:00:00Z".to_string(),
                 duration_secs: 1200,
