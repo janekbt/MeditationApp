@@ -192,9 +192,9 @@ impl Database {
 
     /// Insert a new label and return its AUTOINCREMENT rowid. Returns
     /// `DbError::DuplicateLabel` if `name` (case-insensitive) already
-    /// exists — the column is `COLLATE NOCASE UNIQUE`, so callers
-    /// should route through `unique_label_name` or `find_or_create_label`
-    /// for the auto-rename UX.
+    /// exists — the column is `COLLATE NOCASE UNIQUE`. UIs that want to
+    /// silently reuse an existing row (e.g. CSV import) should call
+    /// `find_or_create_label` instead.
     pub fn insert_label(&self, name: &str) -> Result<i64> {
         match self
             .conn
@@ -227,28 +227,6 @@ impl Database {
             .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
-    }
-
-    /// Returns a label name guaranteed to be unique in the labels table:
-    /// returns `base` if no collision, else `"{base} 2"`, `"{base} 3"`, …
-    /// Bounded: gives up after 10000 attempts.
-    /// Returns a label name guaranteed to be unique in the labels table:
-    /// returns `base` if no collision, else `"{base} 2"`, `"{base} 3"`, …
-    ///
-    /// Bounded by `count_labels() + 1`: among that many candidates, at most
-    /// `count_labels()` can collide, so one must be free.
-    pub fn unique_label_name(&self, base: &str) -> Result<String> {
-        if self.find_label_by_name(base)?.is_none() {
-            return Ok(base.to_string());
-        }
-        let max = self.count_labels()?;
-        for n in 2..=(max + 1) {
-            let candidate = format!("{base} {n}");
-            if self.find_label_by_name(&candidate)?.is_none() {
-                return Ok(candidate);
-            }
-        }
-        unreachable!("more colliding labels than total labels — DB invariant violated")
     }
 
     /// Return a label id by name, creating the label if missing. Lookup
@@ -2126,8 +2104,8 @@ mod tests {
     #[test]
     fn label_uniqueness_is_case_insensitive() {
         // Avoid "Morning" / "morning" as separate rows. The DB enforces
-        // case-insensitive uniqueness so the constraint can't be
-        // bypassed even if a caller skips unique_label_name.
+        // case-insensitive uniqueness so UI bugs that skip pre-validation
+        // (is_label_name_taken) still get caught at the DB layer.
         let db = Database::open_in_memory().unwrap();
         db.insert_label("Morning").unwrap();
         let result = db.insert_label("morning");
@@ -2165,28 +2143,6 @@ mod tests {
             matches!(err, DbError::DuplicateLabel(ref name) if name == "Morning"),
             "expected DuplicateLabel(\"Morning\"), got {err:?}"
         );
-    }
-
-    #[test]
-    fn unique_label_name_returns_base_when_no_collision() {
-        let db = Database::open_in_memory().unwrap();
-        assert_eq!(db.unique_label_name("Morning").unwrap(), "Morning");
-    }
-
-    #[test]
-    fn unique_label_name_appends_two_on_first_collision() {
-        let db = Database::open_in_memory().unwrap();
-        db.insert_label("Morning").unwrap();
-        assert_eq!(db.unique_label_name("Morning").unwrap(), "Morning 2");
-    }
-
-    #[test]
-    fn unique_label_name_continues_chain() {
-        let db = Database::open_in_memory().unwrap();
-        db.insert_label("Morning").unwrap();
-        db.insert_label("Morning 2").unwrap();
-        db.insert_label("Morning 3").unwrap();
-        assert_eq!(db.unique_label_name("Morning").unwrap(), "Morning 4");
     }
 
     #[test]
