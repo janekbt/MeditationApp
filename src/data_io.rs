@@ -26,7 +26,7 @@ use std::io::BufReader;
 use std::path::Path;
 
 use crate::application::MeditateApplication;
-use crate::db::{Database, Session, SessionData, SessionMode};
+use crate::db::{Database, SessionData, SessionFilter, SessionMode};
 
 /// Everything that can go wrong during import or export, collapsed into a
 /// single user-facing error type so the caller can just show a toast.
@@ -97,8 +97,13 @@ pub(crate) fn export_csv_to_db(db: &Database, path: &Path) -> Result<usize, Data
     let mut wtr = csv::Writer::from_writer(file);
     wtr.write_record(["start_time_unix", "duration_secs", "mode", "label", "note"])?;
 
+    // list_sessions returns start_iso DESC; reverse so the CSV is
+    // start-time ascending, matching what users expect when opening
+    // a backup file in chronological order.
+    let mut sessions = db.list_sessions(&SessionFilter::default())?;
+    sessions.reverse();
     let mut n = 0usize;
-    db.for_each_session(|s: &Session| {
+    for s in &sessions {
         let label = s.label_id
             .and_then(|id| labels.get(&id).cloned())
             .unwrap_or_default();
@@ -109,10 +114,9 @@ pub(crate) fn export_csv_to_db(db: &Database, path: &Path) -> Result<usize, Data
             s.mode.as_str().to_string(),
             label,
             note,
-        ]).map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+        ])?;
         n += 1;
-        Ok(())
-    })?;
+    }
     wtr.flush()?;
     Ok(n)
 }

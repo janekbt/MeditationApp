@@ -236,25 +236,6 @@ impl Database {
         self.inner.delete_all_sessions().map_err(map_core_err)
     }
 
-    /// Iterate every session in start-time ascending order (CSV export's
-    /// stable shape). Implemented by querying all sessions through core
-    /// and reversing the DESC ordering — fine for any realistic session
-    /// count, the alternative is a parallel core method just for the
-    /// CSV path.
-    pub fn for_each_session<F: FnMut(&Session) -> Result<()>>(&self, mut row_cb: F) -> Result<()> {
-        let mut rows = self
-            .inner
-            .query_sessions(&meditate_core::db::SessionFilter::default())
-            .map_err(map_core_err)?;
-        // query_sessions orders start_iso DESC; CSV export wants ASC.
-        rows.reverse();
-        for (id, core) in &rows {
-            let s = session_from_core(*id, core);
-            row_cb(&s)?;
-        }
-        Ok(())
-    }
-
     pub fn find_or_create_label(&self, name: &str) -> Result<i64> {
         self.inner.find_or_create_label(name).map_err(map_core_err)
     }
