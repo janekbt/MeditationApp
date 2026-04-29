@@ -176,6 +176,31 @@ impl Database {
         Ok(self.conn.last_insert_rowid())
     }
 
+    /// Insert many sessions inside a single transaction — orders of
+    /// magnitude faster than calling `insert_session` in a loop. Atomic:
+    /// if any row fails a constraint, the whole batch is rolled back and
+    /// the caller never sees a partially-imported DB.
+    pub fn bulk_insert_sessions(&self, sessions: &[Session]) -> Result<usize> {
+        let tx = self.conn.unchecked_transaction()?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO sessions (start_iso, duration_secs, label_id, notes, mode)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+            )?;
+            for s in sessions {
+                stmt.execute(params![
+                    s.start_iso,
+                    s.duration_secs,
+                    s.label_id,
+                    s.notes,
+                    s.mode.as_db_str(),
+                ])?;
+            }
+        }
+        tx.commit()?;
+        Ok(sessions.len())
+    }
+
     /// Remove the row with `id`. Unknown ids are silently no-ops.
     pub fn delete_session(&self, id: i64) -> Result<()> {
         self.conn.execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
@@ -876,6 +901,121 @@ mod tests {
         assert!(result.is_err(), "expected FK violation, got {result:?}");
         // No row landed.
         assert_eq!(db.count_sessions().unwrap(), 0);
+    }
+
+    #[test]
+    fn bulk_insert_sessions_inserts_every_row_and_returns_count() {
+        // Bulk insert is the import-CSV path's transactional API: every
+        // row in the slice goes in (or none on error — see rollback test).
+        // Returns the count for "imported N sessions" toasts.
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        let morning = db.find_label_by_name("Morning").unwrap().unwrap();
+
+        let to_insert = vec![
+            Session {
+                start_iso: "2026-04-27T10:00:00Z".to_string(),
+                duration_secs: 600,
+                label_id: Some(morning),
+                notes: Some("first".to_string()),
+                mode: SessionMode::Countdown,
+            },
+            Session {
+                start_iso: "2026-04-27T11:00:00Z".to_string(),
+                duration_secs: 1200,
+                label_id: None,
+                notes: None,
+                mode: SessionMode::Stopwatch,
+            },
+            Session {
+                start_iso: "2026-04-27T12:00:00Z".to_string(),
+                duration_secs: 300,
+                label_id: Some(morning),
+                notes: None,
+                mode: SessionMode::BoxBreath,
+            },
+        ];
+
+        let n = db.bulk_insert_sessions(&to_insert).unwrap();
+        assert_eq!(n, 3);
+        assert_eq!(db.count_sessions().unwrap(), 3);
+
+        // Every row round-trips through the DB unchanged (modulo the new id).
+        let stored: Vec<Session> =
+            db.list_sessions().unwrap().into_iter().map(|(_, s)| s).collect();
+        assert_eq!(stored, to_insert);
+    }
+
+    #[test]
+    fn bulk_insert_sessions_empty_slice_is_zero_and_no_op() {
+        // Empty input is not an error; the DB is unchanged.
+        let db = Database::open_in_memory().unwrap();
+        let n = db.bulk_insert_sessions(&[]).unwrap();
+        assert_eq!(n, 0);
+        assert_eq!(db.count_sessions().unwrap(), 0);
+    }
+
+    #[test]
+    fn bulk_insert_sessions_rolls_back_on_constraint_violation() {
+        // If any row in the batch violates a constraint (here: a foreign-key
+        // pointing at a non-existent label), the WHOLE batch is reverted —
+        // the caller never gets a half-imported DB.
+        let db = Database::open_in_memory().unwrap();
+        let pre_id = db.insert_session(&Session {
+            start_iso: "2026-04-27T09:00:00Z".to_string(),
+            duration_secs: 600,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+        assert_eq!(db.count_sessions().unwrap(), 1);
+
+        let bad_label = 9999i64; // No label has this id.
+        let batch = vec![
+            Session {
+                start_iso: "2026-04-27T10:00:00Z".to_string(),
+                duration_secs: 600,
+                label_id: None, // OK
+                notes: None,
+                mode: SessionMode::Countdown,
+            },
+            Session {
+                start_iso: "2026-04-27T11:00:00Z".to_string(),
+                duration_secs: 600,
+                label_id: Some(bad_label), // FK violation
+                notes: None,
+                mode: SessionMode::Countdown,
+            },
+        ];
+        let result = db.bulk_insert_sessions(&batch);
+        assert!(result.is_err(), "expected FK violation, got {result:?}");
+
+        // No rows from the failed batch landed; the pre-existing row is intact.
+        assert_eq!(db.count_sessions().unwrap(), 1);
+        let rows = db.list_sessions().unwrap();
+        assert_eq!(rows[0].0, pre_id);
+    }
+
+    #[test]
+    fn bulk_insert_sessions_is_atomic_with_no_partial_state_visible() {
+        // Atomic-on-error: even after a failed bulk insert, count_sessions
+        // and list_sessions agree on the pre-batch state. (This pins the
+        // contract: "rolled back" means no observable side effect, not
+        // just "rows aren't there".)
+        let db = Database::open_in_memory().unwrap();
+        let bad_label = 9999i64;
+        let batch = vec![
+            Session {
+                start_iso: "2026-04-27T10:00:00Z".to_string(),
+                duration_secs: 600,
+                label_id: Some(bad_label), // fails immediately
+                notes: None,
+                mode: SessionMode::Countdown,
+            },
+        ];
+        let _ = db.bulk_insert_sessions(&batch);
+        assert_eq!(db.count_sessions().unwrap(), 0);
+        assert!(db.list_sessions().unwrap().is_empty());
     }
 
     #[test]
