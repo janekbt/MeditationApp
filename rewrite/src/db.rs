@@ -143,6 +143,20 @@ impl Database {
         unreachable!("more colliding labels than total labels — DB invariant violated")
     }
 
+    /// Return a label id by name, creating the label if missing. Lookup
+    /// is case-insensitive (column COLLATE NOCASE), so an import of
+    /// "Meditation" finds an existing "meditation" instead of producing
+    /// a duplicate row.
+    pub fn find_or_create_label(&self, name: &str) -> Result<i64> {
+        if let Some(id) = self.find_label_by_name(name)? {
+            return Ok(id);
+        }
+        self.insert_label(name)?;
+        // The just-inserted row is the one whose name matches.
+        self.find_label_by_name(name)?
+            .ok_or_else(|| DbError::Sqlite(rusqlite::Error::QueryReturnedNoRows))
+    }
+
     pub fn find_label_by_name(&self, name: &str) -> Result<Option<i64>> {
         let id = self
             .conn
@@ -575,6 +589,53 @@ mod tests {
         let second = db.insert_label("Morning");
         assert!(second.is_err(), "second insert of same label should fail");
         // The first insert is preserved; no duplicate row is created.
+        assert_eq!(db.count_labels().unwrap(), 1);
+    }
+
+    #[test]
+    fn find_or_create_label_creates_when_missing() {
+        // First call to a fresh DB inserts the label and returns its new id.
+        let db = Database::open_in_memory().unwrap();
+        let id = db.find_or_create_label("Morning").unwrap();
+        assert_eq!(db.count_labels().unwrap(), 1);
+        // The returned id matches what find_label_by_name reports.
+        assert_eq!(db.find_label_by_name("Morning").unwrap(), Some(id));
+    }
+
+    #[test]
+    fn find_or_create_label_returns_existing_id() {
+        // If the label already exists, the existing id is returned and
+        // no new row is created.
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        let existing = db.find_label_by_name("Morning").unwrap().unwrap();
+        let got = db.find_or_create_label("Morning").unwrap();
+        assert_eq!(got, existing);
+        assert_eq!(db.count_labels().unwrap(), 1);
+    }
+
+    #[test]
+    fn find_or_create_label_is_case_insensitive() {
+        // CSV import frequently differs in case from what the user
+        // already has; we must reuse the existing row, not duplicate.
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        let existing = db.find_label_by_name("Morning").unwrap().unwrap();
+        // Lookup with different casings — same id, no new rows.
+        assert_eq!(db.find_or_create_label("morning").unwrap(), existing);
+        assert_eq!(db.find_or_create_label("MORNING").unwrap(), existing);
+        assert_eq!(db.count_labels().unwrap(), 1);
+    }
+
+    #[test]
+    fn find_or_create_label_idempotent_across_calls() {
+        // Calling repeatedly never inflates the row count.
+        let db = Database::open_in_memory().unwrap();
+        let id1 = db.find_or_create_label("Evening").unwrap();
+        let id2 = db.find_or_create_label("Evening").unwrap();
+        let id3 = db.find_or_create_label("evening").unwrap(); // case variant
+        assert_eq!(id1, id2);
+        assert_eq!(id1, id3);
         assert_eq!(db.count_labels().unwrap(), 1);
     }
 
