@@ -607,6 +607,26 @@ impl Database {
         }
     }
 
+    /// Counts of sessions bucketed by start hour: morning < 12 (hours
+    /// 0-11), afternoon 12-17, evening ≥ 18 (18-23). Returns
+    /// `(morning, afternoon, evening)`. Every session lands in exactly
+    /// one bucket.
+    pub fn hour_buckets(&self) -> Result<(i64, i64, i64)> {
+        // Hour is at chars 12-13 of start_iso (0-indexed in SQL it's 12).
+        // Cast to integer once and bucket in a single pass.
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT
+               COALESCE(SUM(CASE WHEN h <  12 THEN 1 ELSE 0 END), 0),
+               COALESCE(SUM(CASE WHEN h >= 12 AND h < 18 THEN 1 ELSE 0 END), 0),
+               COALESCE(SUM(CASE WHEN h >= 18 THEN 1 ELSE 0 END), 0)
+             FROM (
+               SELECT CAST(SUBSTR(start_iso, 12, 2) AS INTEGER) AS h
+               FROM sessions
+             )",
+        )?;
+        Ok(stmt.query_row([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?)
+    }
+
     /// Distinct (year, month) pairs that have at least one session,
     /// ordered most-recent first. Used by the calendar-picker dropdown.
     pub fn active_months(&self) -> Result<Vec<(i32, u32)>> {
@@ -866,6 +886,62 @@ mod tests {
         assert!(second.is_err(), "second insert of same label should fail");
         // The first insert is preserved; no duplicate row is created.
         assert_eq!(db.count_labels().unwrap(), 1);
+    }
+
+    // ── hour_buckets ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn hour_buckets_is_zero_zero_zero_for_empty_db() {
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(db.hour_buckets().unwrap(), (0, 0, 0));
+    }
+
+    #[test]
+    fn hour_buckets_assigns_each_session_to_exactly_one_bucket() {
+        // Boundaries: morning < 12 (00:00–11:59), afternoon 12–17,
+        // evening ≥ 18 (18:00–23:59). Pin every boundary explicitly.
+        let db = Database::open_in_memory().unwrap();
+        let make = |hh: u32, mm: u32| Session {
+            start_iso: format!("2026-04-27T{hh:02}:{mm:02}:00"),
+            duration_secs: 600, label_id: None, notes: None,
+            mode: SessionMode::Countdown,
+        };
+        // Morning (5 sessions, hours 0, 6, 11:00, 11:59).
+        db.insert_session(&make(0, 0)).unwrap();
+        db.insert_session(&make(6, 30)).unwrap();
+        db.insert_session(&make(11, 0)).unwrap();
+        db.insert_session(&make(11, 59)).unwrap();
+        db.insert_session(&make(8, 15)).unwrap();
+        // Afternoon (3 sessions, hours 12:00, 15:30, 17:59).
+        db.insert_session(&make(12, 0)).unwrap();  // boundary into afternoon
+        db.insert_session(&make(15, 30)).unwrap();
+        db.insert_session(&make(17, 59)).unwrap(); // last minute of afternoon
+        // Evening (2 sessions, hours 18:00, 23:59).
+        db.insert_session(&make(18, 0)).unwrap();  // boundary into evening
+        db.insert_session(&make(23, 59)).unwrap();
+
+        let (morning, afternoon, evening) = db.hour_buckets().unwrap();
+        assert_eq!(morning, 5, "five sessions in 00:00–11:59");
+        assert_eq!(afternoon, 3, "three sessions in 12:00–17:59");
+        assert_eq!(evening, 2, "two sessions in 18:00–23:59");
+    }
+
+    #[test]
+    fn hour_buckets_total_equals_session_count() {
+        // Defensive: every session lands in exactly one bucket, no
+        // sessions are dropped or double-counted.
+        let db = Database::open_in_memory().unwrap();
+        let hours = [3u32, 7, 11, 12, 13, 17, 18, 22];
+        for &h in &hours {
+            db.insert_session(&Session {
+                start_iso: format!("2026-04-27T{h:02}:00:00"),
+                duration_secs: 600, label_id: None, notes: None,
+                mode: SessionMode::Countdown,
+            }).unwrap();
+        }
+        let (m, a, e) = db.hour_buckets().unwrap();
+        assert_eq!(m + a + e, hours.len() as i64);
+        assert_eq!(m + a + e, db.count_sessions().unwrap());
     }
 
     // ── active_months ────────────────────────────────────────────────────────
