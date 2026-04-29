@@ -67,6 +67,43 @@ pub struct SessionFilter {
     pub offset: Option<u32>,
 }
 
+// ── Translation: GTK-side ↔ meditate_core::db ─────────────────────────────────
+
+/// Convert this app's `SessionData` (i64 unix, `note`, `Breathing`)
+/// into core's insert shape (ISO 8601 string, `notes`, `BoxBreath`).
+/// Negative or overflowing durations clamp to the u32 range.
+fn session_data_to_core(s: &SessionData) -> meditate_core::db::Session {
+    meditate_core::db::Session {
+        start_iso: crate::time::unix_to_local_iso(s.start_time),
+        duration_secs: s.duration_secs.clamp(0, u32::MAX as i64) as u32,
+        label_id: s.label_id,
+        notes: s.note.clone(),
+        mode: match s.mode {
+            SessionMode::Countdown => meditate_core::db::SessionMode::Countdown,
+            SessionMode::Stopwatch => meditate_core::db::SessionMode::Stopwatch,
+            SessionMode::Breathing => meditate_core::db::SessionMode::BoxBreath,
+        },
+    }
+}
+
+/// Inverse of `session_data_to_core` for retrievals: takes core's
+/// `(id, Session)` shape and produces the GTK-side `Session` with
+/// embedded id and i64-unix `start_time`.
+fn session_from_core(id: i64, core: &meditate_core::db::Session) -> Session {
+    Session {
+        id,
+        start_time: crate::time::local_iso_to_unix(&core.start_iso),
+        duration_secs: core.duration_secs as i64,
+        mode: match core.mode {
+            meditate_core::db::SessionMode::Countdown => SessionMode::Countdown,
+            meditate_core::db::SessionMode::Stopwatch => SessionMode::Stopwatch,
+            meditate_core::db::SessionMode::BoxBreath => SessionMode::Breathing,
+        },
+        label_id: core.label_id,
+        note: core.notes.clone(),
+    }
+}
+
 // ── Database ──────────────────────────────────────────────────────────────────
 
 pub struct Database {
@@ -743,6 +780,145 @@ pub(crate) fn test_db_in_memory() -> Database {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── core::Session translation helpers ─────────────────────────────────────
+
+    #[test]
+    fn session_data_to_core_preserves_every_field() {
+        // Translate the GTK-side insert shape (i64 unix, `note`,
+        // `Breathing`) into the core insert shape (ISO string, `notes`,
+        // `BoxBreath`). Each field must end up where it belongs.
+        let sd = SessionData {
+            start_time: 1_700_000_000,
+            duration_secs: 1234,
+            mode: SessionMode::Breathing,
+            label_id: Some(42),
+            note: Some("hello".to_string()),
+        };
+        let core = session_data_to_core(&sd);
+        // start_time → ISO via local TZ; round-trip back gives the same unix.
+        assert_eq!(crate::time::local_iso_to_unix(&core.start_iso), 1_700_000_000);
+        assert_eq!(core.duration_secs, 1234);
+        assert_eq!(core.label_id, Some(42));
+        assert_eq!(core.notes, Some("hello".to_string()));
+        assert!(matches!(core.mode, meditate_core::db::SessionMode::BoxBreath));
+    }
+
+    #[test]
+    fn session_data_to_core_maps_every_session_mode() {
+        // Pin every mode mapping. 'Breathing' is named differently on
+        // each side ('BoxBreath' in core); the others share names.
+        let make = |mode| SessionData {
+            start_time: 0, duration_secs: 0, mode, label_id: None, note: None,
+        };
+        assert!(matches!(
+            session_data_to_core(&make(SessionMode::Countdown)).mode,
+            meditate_core::db::SessionMode::Countdown
+        ));
+        assert!(matches!(
+            session_data_to_core(&make(SessionMode::Stopwatch)).mode,
+            meditate_core::db::SessionMode::Stopwatch
+        ));
+        assert!(matches!(
+            session_data_to_core(&make(SessionMode::Breathing)).mode,
+            meditate_core::db::SessionMode::BoxBreath
+        ));
+    }
+
+    #[test]
+    fn session_data_to_core_clamps_negative_duration_to_zero() {
+        // GTK side carries duration_secs as i64 (can be negative from
+        // a buggy caller); core uses u32. The translation must clamp
+        // to zero rather than wrap into a huge unsigned value.
+        let sd = SessionData {
+            start_time: 1_700_000_000,
+            duration_secs: -1,
+            mode: SessionMode::Countdown,
+            label_id: None,
+            note: None,
+        };
+        let core = session_data_to_core(&sd);
+        assert_eq!(core.duration_secs, 0,
+            "negative durations must clamp to 0, not wrap to u32::MAX-ish");
+    }
+
+    #[test]
+    fn session_data_to_core_clamps_overflowing_duration_to_u32_max() {
+        // Defence-in-depth: a wildly-large i64 stays bounded on the
+        // u32 side. (Real sessions are well under u32::MAX seconds —
+        // ~136 years — but the cast must be saturating either way.)
+        let sd = SessionData {
+            start_time: 0,
+            duration_secs: i64::MAX,
+            mode: SessionMode::Countdown,
+            label_id: None,
+            note: None,
+        };
+        let core = session_data_to_core(&sd);
+        assert_eq!(core.duration_secs, u32::MAX);
+    }
+
+    #[test]
+    fn session_from_core_preserves_every_field() {
+        // Inverse direction: a core (id, Session) becomes the GTK-side
+        // Session (with embedded id, i64 timestamps, `note`, `Breathing`).
+        let core = meditate_core::db::Session {
+            start_iso: crate::time::unix_to_local_iso(1_700_000_000),
+            duration_secs: 600,
+            label_id: Some(7),
+            notes: Some("from core".to_string()),
+            mode: meditate_core::db::SessionMode::BoxBreath,
+        };
+        let s = session_from_core(99, &core);
+        assert_eq!(s.id, 99);
+        assert_eq!(s.start_time, 1_700_000_000);
+        assert_eq!(s.duration_secs, 600);
+        assert_eq!(s.label_id, Some(7));
+        assert_eq!(s.note, Some("from core".to_string()));
+        assert_eq!(s.mode, SessionMode::Breathing);
+    }
+
+    #[test]
+    fn session_from_core_maps_every_session_mode() {
+        // Every core::SessionMode lands on the right GTK-side variant.
+        let make = |mode| meditate_core::db::Session {
+            start_iso: "2026-04-27T10:00:00".to_string(),
+            duration_secs: 0, label_id: None, notes: None, mode,
+        };
+        assert_eq!(
+            session_from_core(1, &make(meditate_core::db::SessionMode::Countdown)).mode,
+            SessionMode::Countdown,
+        );
+        assert_eq!(
+            session_from_core(1, &make(meditate_core::db::SessionMode::Stopwatch)).mode,
+            SessionMode::Stopwatch,
+        );
+        assert_eq!(
+            session_from_core(1, &make(meditate_core::db::SessionMode::BoxBreath)).mode,
+            SessionMode::Breathing,
+        );
+    }
+
+    #[test]
+    fn session_data_round_trips_through_core_and_back() {
+        // Compose: SessionData → core::Session → Session. Every field
+        // (other than the new id) survives.
+        let original = SessionData {
+            start_time: 1_700_000_000,
+            duration_secs: 750,
+            mode: SessionMode::Stopwatch,
+            label_id: Some(11),
+            note: Some("noted".to_string()),
+        };
+        let core = session_data_to_core(&original);
+        let restored = session_from_core(123, &core);
+        assert_eq!(restored.id, 123);
+        assert_eq!(restored.start_time, original.start_time);
+        assert_eq!(restored.duration_secs, original.duration_secs);
+        assert_eq!(restored.mode, original.mode);
+        assert_eq!(restored.label_id, original.label_id);
+        assert_eq!(restored.note, original.note);
+    }
 
     #[test]
     fn session_mode_as_str() {
