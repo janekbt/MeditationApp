@@ -1,9 +1,10 @@
 //! GTK-side `Database` — a thin wrapper around `meditate_core::db::Database`.
 //!
 //! All persistence logic lives in core. This module owns:
-//! - The GTK-app's domain types (`Session`, `Label`, `SessionData`,
-//!   `SessionMode::Breathing`) which use i64-unix timestamps and the
-//!   `note` field name for ergonomic UI integration.
+//! - The GTK-app's domain types (`Session`, `Label`, `SessionData`)
+//!   which use i64-unix timestamps and the `note` field name for
+//!   ergonomic UI integration. `SessionMode` is re-exported from
+//!   core directly — no separate enum.
 //! - Type translation at the API boundary (see `session_data_to_core` /
 //!   `session_from_core` and `crate::time::unix_to_local_iso`).
 //! - The `rusqlite::Result<T>` return type so callers can keep using `?`
@@ -17,30 +18,10 @@ use std::path::Path;
 
 // ── Models ────────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SessionMode {
-    Countdown,
-    Stopwatch,
-    Breathing,
-}
-
-impl SessionMode {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            SessionMode::Countdown => "countdown",
-            SessionMode::Stopwatch => "stopwatch",
-            SessionMode::Breathing => "breathing",
-        }
-    }
-
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "stopwatch" => SessionMode::Stopwatch,
-            "breathing" => SessionMode::Breathing,
-            _           => SessionMode::Countdown,
-        }
-    }
-}
+/// `SessionMode` is the canonical core enum (`Countdown`, `Stopwatch`,
+/// `BoxBreath`). Re-exported here so call sites can keep importing from
+/// `crate::db` without learning about meditate-core directly.
+pub use meditate_core::db::SessionMode;
 
 #[derive(Debug, Clone)]
 pub struct Label {
@@ -83,20 +64,16 @@ pub struct SessionFilter {
 
 // ── Translation: GTK-side ↔ meditate_core::db ─────────────────────────────────
 
-/// Convert this app's `SessionData` (i64 unix, `note`, `Breathing`)
-/// into core's insert shape (ISO 8601 string, `notes`, `BoxBreath`).
-/// Negative or overflowing durations clamp to the u32 range.
+/// Convert this app's `SessionData` (i64 unix, `note`) into core's
+/// insert shape (ISO 8601 string, `notes`). Negative or overflowing
+/// durations clamp to the u32 range.
 fn session_data_to_core(s: &SessionData) -> meditate_core::db::Session {
     meditate_core::db::Session {
         start_iso: crate::time::unix_to_local_iso(s.start_time),
         duration_secs: s.duration_secs.clamp(0, u32::MAX as i64) as u32,
         label_id: s.label_id,
         notes: s.note.clone(),
-        mode: match s.mode {
-            SessionMode::Countdown => meditate_core::db::SessionMode::Countdown,
-            SessionMode::Stopwatch => meditate_core::db::SessionMode::Stopwatch,
-            SessionMode::Breathing => meditate_core::db::SessionMode::BoxBreath,
-        },
+        mode: s.mode,
     }
 }
 
@@ -108,11 +85,7 @@ fn session_from_core(id: i64, core: &meditate_core::db::Session) -> Session {
         id,
         start_time: crate::time::local_iso_to_unix(&core.start_iso),
         duration_secs: core.duration_secs as i64,
-        mode: match core.mode {
-            meditate_core::db::SessionMode::Countdown => SessionMode::Countdown,
-            meditate_core::db::SessionMode::Stopwatch => SessionMode::Stopwatch,
-            meditate_core::db::SessionMode::BoxBreath => SessionMode::Breathing,
-        },
+        mode: core.mode,
         label_id: core.label_id,
         note: core.notes.clone(),
     }
@@ -395,7 +368,7 @@ mod tests {
         let sd = SessionData {
             start_time: 1_700_000_000,
             duration_secs: 1234,
-            mode: SessionMode::Breathing,
+            mode: SessionMode::BoxBreath,
             label_id: Some(42),
             note: Some("hello".to_string()),
         };
@@ -405,25 +378,6 @@ mod tests {
         assert_eq!(core.label_id, Some(42));
         assert_eq!(core.notes, Some("hello".to_string()));
         assert!(matches!(core.mode, meditate_core::db::SessionMode::BoxBreath));
-    }
-
-    #[test]
-    fn session_data_to_core_maps_every_session_mode() {
-        let make = |mode| SessionData {
-            start_time: 0, duration_secs: 0, mode, label_id: None, note: None,
-        };
-        assert!(matches!(
-            session_data_to_core(&make(SessionMode::Countdown)).mode,
-            meditate_core::db::SessionMode::Countdown
-        ));
-        assert!(matches!(
-            session_data_to_core(&make(SessionMode::Stopwatch)).mode,
-            meditate_core::db::SessionMode::Stopwatch
-        ));
-        assert!(matches!(
-            session_data_to_core(&make(SessionMode::Breathing)).mode,
-            meditate_core::db::SessionMode::BoxBreath
-        ));
     }
 
     #[test]
@@ -465,27 +419,7 @@ mod tests {
         assert_eq!(s.duration_secs, 600);
         assert_eq!(s.label_id, Some(7));
         assert_eq!(s.note, Some("from core".to_string()));
-        assert_eq!(s.mode, SessionMode::Breathing);
-    }
-
-    #[test]
-    fn session_from_core_maps_every_session_mode() {
-        let make = |mode| meditate_core::db::Session {
-            start_iso: "2026-04-27T10:00:00".to_string(),
-            duration_secs: 0, label_id: None, notes: None, mode,
-        };
-        assert_eq!(
-            session_from_core(1, &make(meditate_core::db::SessionMode::Countdown)).mode,
-            SessionMode::Countdown,
-        );
-        assert_eq!(
-            session_from_core(1, &make(meditate_core::db::SessionMode::Stopwatch)).mode,
-            SessionMode::Stopwatch,
-        );
-        assert_eq!(
-            session_from_core(1, &make(meditate_core::db::SessionMode::BoxBreath)).mode,
-            SessionMode::Breathing,
-        );
+        assert_eq!(s.mode, SessionMode::BoxBreath);
     }
 
     #[test]
@@ -505,38 +439,6 @@ mod tests {
         assert_eq!(restored.mode, original.mode);
         assert_eq!(restored.label_id, original.label_id);
         assert_eq!(restored.note, original.note);
-    }
-
-    // ── SessionMode tests (pure enum) ─────────────────────────────────────────
-
-    #[test]
-    fn session_mode_as_str() {
-        assert_eq!(SessionMode::Countdown.as_str(), "countdown");
-        assert_eq!(SessionMode::Stopwatch.as_str(), "stopwatch");
-        assert_eq!(SessionMode::Breathing.as_str(), "breathing");
-    }
-
-    #[test]
-    fn session_mode_from_str_known() {
-        assert_eq!(SessionMode::from_str("countdown"), SessionMode::Countdown);
-        assert_eq!(SessionMode::from_str("stopwatch"), SessionMode::Stopwatch);
-        assert_eq!(SessionMode::from_str("breathing"), SessionMode::Breathing);
-    }
-
-    #[test]
-    fn session_mode_from_str_unknown_defaults_to_countdown() {
-        assert_eq!(SessionMode::from_str(""), SessionMode::Countdown);
-        assert_eq!(SessionMode::from_str("COUNTDOWN"), SessionMode::Countdown);
-        assert_eq!(SessionMode::from_str("timer"), SessionMode::Countdown);
-        assert_eq!(SessionMode::from_str("box"), SessionMode::Countdown);
-        assert_eq!(SessionMode::from_str("garbage"), SessionMode::Countdown);
-    }
-
-    #[test]
-    fn session_mode_roundtrip() {
-        for mode in [SessionMode::Countdown, SessionMode::Stopwatch, SessionMode::Breathing] {
-            assert_eq!(SessionMode::from_str(mode.as_str()), mode);
-        }
     }
 
     // ── Tier B: in-memory integration tests against the wrapper ──────────────

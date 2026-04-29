@@ -111,7 +111,7 @@ pub(crate) fn export_csv_to_db(db: &Database, path: &Path) -> Result<usize, Data
         wtr.write_record([
             s.start_time.to_string(),
             s.duration_secs.to_string(),
-            s.mode.as_str().to_string(),
+            s.mode.as_db_str().to_string(),
             label,
             note,
         ])?;
@@ -157,7 +157,10 @@ pub(crate) fn import_csv_to_db(db: &Database, path: &Path) -> Result<usize, Data
             return Err(DataIoError::Parse(
                 format!("line {line}: duration_secs must be positive, got {duration_secs}")));
         }
-        let mode = SessionMode::from_str(rec.get(2).map(|s| s.trim()).unwrap_or(""));
+        // Unknown / typo'd mode values default to Countdown — that
+        // preserves the row rather than discarding it on import.
+        let mode = SessionMode::from_db_str(rec.get(2).map(|s| s.trim()).unwrap_or(""))
+            .unwrap_or(SessionMode::Countdown);
         let label_txt = rec.get(3).map(|s| s.trim().to_string()).unwrap_or_default();
         let note_txt = rec.get(4).map(|s| s.trim().to_string()).unwrap_or_default();
         let note = if note_txt.is_empty() { None } else { Some(note_txt) };

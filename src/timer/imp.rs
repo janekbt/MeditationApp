@@ -589,7 +589,7 @@ impl TimerView {
         let session_mode = match mode {
             TimerMode::Stopwatch => SessionMode::Stopwatch,
             TimerMode::Countdown => SessionMode::Countdown,
-            TimerMode::Breathing => SessionMode::Breathing,
+            TimerMode::Breathing => SessionMode::BoxBreath,
         };
 
         let data = SessionData {

@@ -34,7 +34,10 @@ pub enum SessionMode {
 }
 
 impl SessionMode {
-    fn as_db_str(self) -> &'static str {
+    /// On-disk and CSV string representation. Exposed so callers
+    /// (CSV import/export, debug logging) don't need to re-implement
+    /// this match against the enum.
+    pub fn as_db_str(self) -> &'static str {
         match self {
             SessionMode::Countdown => "countdown",
             SessionMode::Stopwatch => "stopwatch",
@@ -42,7 +45,11 @@ impl SessionMode {
         }
     }
 
-    fn from_db_str(s: &str) -> Option<Self> {
+    /// Inverse of `as_db_str`. Returns `None` for unknown / typo'd
+    /// values; callers decide whether to fall back to Countdown
+    /// (the historical pre-feature default) or treat the row as
+    /// corrupt.
+    pub fn from_db_str(s: &str) -> Option<Self> {
         match s {
             "countdown" => Some(SessionMode::Countdown),
             "stopwatch" => Some(SessionMode::Stopwatch),
@@ -865,6 +872,43 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── SessionMode serialization ─────────────────────────────────────────────
+
+    #[test]
+    fn session_mode_as_db_str_returns_canonical_strings() {
+        // These are the values that go into the sessions.mode column AND
+        // the CSV mode column — pinning them so a refactor that quietly
+        // changes one (e.g. 'box_breath' → 'breath') gets caught.
+        assert_eq!(SessionMode::Countdown.as_db_str(), "countdown");
+        assert_eq!(SessionMode::Stopwatch.as_db_str(), "stopwatch");
+        assert_eq!(SessionMode::BoxBreath.as_db_str(), "box_breath");
+    }
+
+    #[test]
+    fn session_mode_from_db_str_parses_canonical_strings() {
+        assert_eq!(SessionMode::from_db_str("countdown"), Some(SessionMode::Countdown));
+        assert_eq!(SessionMode::from_db_str("stopwatch"), Some(SessionMode::Stopwatch));
+        assert_eq!(SessionMode::from_db_str("box_breath"), Some(SessionMode::BoxBreath));
+    }
+
+    #[test]
+    fn session_mode_from_db_str_returns_none_for_unknown() {
+        // Caller decides the fallback (e.g. Countdown for tolerant import,
+        // hard-error for strict). We don't bake one in.
+        assert_eq!(SessionMode::from_db_str(""), None);
+        assert_eq!(SessionMode::from_db_str("COUNTDOWN"), None);  // case-sensitive
+        assert_eq!(SessionMode::from_db_str("breathing"), None);  // old name
+        assert_eq!(SessionMode::from_db_str("box-breath"), None); // dash, not underscore
+        assert_eq!(SessionMode::from_db_str("garbage"), None);
+    }
+
+    #[test]
+    fn session_mode_db_str_round_trip() {
+        for &mode in &[SessionMode::Countdown, SessionMode::Stopwatch, SessionMode::BoxBreath] {
+            assert_eq!(SessionMode::from_db_str(mode.as_db_str()), Some(mode));
+        }
+    }
 
     #[test]
     fn inserting_label_increases_count() {
