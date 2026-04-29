@@ -69,6 +69,10 @@ const SCHEMA: &str = "
         notes TEXT,
         mode TEXT NOT NULL CHECK (mode IN ('countdown', 'stopwatch', 'box_breath'))
     );
+    CREATE TABLE IF NOT EXISTS settings (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    );
 ";
 
 impl Database {
@@ -90,6 +94,30 @@ impl Database {
         conn.execute_batch("PRAGMA foreign_keys=ON;")?;
         conn.execute_batch(SCHEMA)?;
         Ok(Self { conn })
+    }
+
+    /// Read the value of a settings key. Returns `default` (without
+    /// inserting it) when the key has never been set.
+    pub fn get_setting(&self, key: &str, default: &str) -> Result<String> {
+        match self.conn.query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            params![key],
+            |row| row.get::<_, String>(0),
+        ) {
+            Ok(val) => Ok(val),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(default.to_string()),
+            Err(e) => Err(DbError::Sqlite(e)),
+        }
+    }
+
+    /// Write a settings value. Upserts: subsequent calls overwrite.
+    pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )?;
+        Ok(())
     }
 
     /// True iff some label OTHER THAN `except_id` already uses `name`
@@ -642,6 +670,65 @@ mod tests {
     }
 
     #[test]
+    fn get_setting_returns_default_when_key_missing() {
+        // Reads of unset keys fall back to the caller-provided default
+        // (no INSERT, no error).
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(
+            db.get_setting("timer_presets", "5,10,15,20,30").unwrap(),
+            "5,10,15,20,30",
+        );
+        // The key remained absent — getting it again returns the same default.
+        assert_eq!(
+            db.get_setting("timer_presets", "5,10,15,20,30").unwrap(),
+            "5,10,15,20,30",
+        );
+    }
+
+    #[test]
+    fn set_setting_then_get_setting_round_trip() {
+        // Setting a key persists the value; subsequent gets ignore the
+        // default and return the stored value verbatim.
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("timer_presets", "3,7,12").unwrap();
+        assert_eq!(
+            db.get_setting("timer_presets", "5,10,15,20,30").unwrap(),
+            "3,7,12",
+        );
+    }
+
+    #[test]
+    fn set_setting_overwrites_existing_value() {
+        // Repeat sets overwrite (UPSERT semantics). The second value
+        // wins; the row count stays at 1 per key.
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("daily_goal_mins", "20").unwrap();
+        db.set_setting("daily_goal_mins", "25").unwrap();
+        assert_eq!(db.get_setting("daily_goal_mins", "0").unwrap(), "25");
+    }
+
+    #[test]
+    fn settings_keys_are_independent() {
+        // Setting key A does not affect key B's value or default.
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("daily_goal_mins", "20").unwrap();
+        // Other keys still return their defaults.
+        assert_eq!(db.get_setting("weekly_goal_mins", "150").unwrap(), "150");
+        // The set key is unaffected.
+        assert_eq!(db.get_setting("daily_goal_mins", "0").unwrap(), "20");
+    }
+
+    #[test]
+    fn set_setting_accepts_empty_string_and_unicode() {
+        // Values are opaque to the DB layer — UTF-8 string in, UTF-8 string out.
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("note_template", "").unwrap();
+        assert_eq!(db.get_setting("note_template", "fallback").unwrap(), "");
+        db.set_setting("greeting", "こんにちは ☀️").unwrap();
+        assert_eq!(db.get_setting("greeting", "").unwrap(), "こんにちは ☀️");
+    }
+
+    #[test]
     fn is_label_name_taken_false_for_empty_db() {
         // Nothing exists ⇒ no name is taken.
         let db = Database::open_in_memory().unwrap();
@@ -652,10 +739,10 @@ mod tests {
     fn is_label_name_taken_true_for_existing_other_label() {
         // Another row holds this name. Exclude id is something else.
         let db = Database::open_in_memory().unwrap();
-        let morning = db.insert_label("Morning").unwrap();
+        db.insert_label("Morning").unwrap();
         let evening = db.insert_label("Evening").unwrap();
         // Asking "is 'Morning' taken by anyone other than `evening`?"
-        // returns true because Morning is held by `morning` (≠ evening).
+        // returns true because Morning is held by a different row.
         assert!(db.is_label_name_taken("Morning", evening).unwrap());
     }
 
