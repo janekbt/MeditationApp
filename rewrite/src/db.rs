@@ -577,13 +577,20 @@ impl Database {
         Ok(count)
     }
 
-    pub fn total_minutes(&self) -> Result<i64> {
-        let total_secs: i64 = self.conn.query_row(
+    /// Total of `duration_secs` across every session (no filter). Returns
+    /// 0 on an empty DB. Use this when you want the underlying precision
+    /// (e.g. weekly-goal ring, longest-session display); use
+    /// `total_minutes` for stats lines that show "X min".
+    pub fn total_seconds(&self) -> Result<i64> {
+        Ok(self.conn.query_row(
             "SELECT COALESCE(SUM(duration_secs), 0) FROM sessions",
             [],
             |row| row.get(0),
-        )?;
-        Ok(total_secs / 60)
+        )?)
+    }
+
+    pub fn total_minutes(&self) -> Result<i64> {
+        Ok(self.total_seconds()? / 60)
     }
 
     /// Per-label session count. `None` represents unlabeled sessions.
@@ -760,6 +767,55 @@ mod tests {
         assert!(second.is_err(), "second insert of same label should fail");
         // The first insert is preserved; no duplicate row is created.
         assert_eq!(db.count_labels().unwrap(), 1);
+    }
+
+    // ── total_seconds: precision-preserving aggregate ─────────────────────────
+
+    #[test]
+    fn total_seconds_is_zero_for_empty_db() {
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(db.total_seconds().unwrap(), 0);
+    }
+
+    #[test]
+    fn total_seconds_sums_all_durations() {
+        // Sums every session, regardless of label / mode / notes.
+        let db = Database::open_in_memory().unwrap();
+        db.insert_session(&Session {
+            start_iso: "2026-04-27T10:00:00Z".to_string(),
+            duration_secs: 600, label_id: None, notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+        db.insert_session(&Session {
+            start_iso: "2026-04-27T11:00:00Z".to_string(),
+            duration_secs: 1245, label_id: None, notes: None,
+            mode: SessionMode::Stopwatch,
+        }).unwrap();
+        // Sub-minute remainder must NOT be lost — the whole point of
+        // having a seconds aggregate alongside total_minutes.
+        db.insert_session(&Session {
+            start_iso: "2026-04-27T12:00:00Z".to_string(),
+            duration_secs: 17, label_id: None, notes: None,
+            mode: SessionMode::BoxBreath,
+        }).unwrap();
+        assert_eq!(db.total_seconds().unwrap(), 600 + 1245 + 17);
+    }
+
+    #[test]
+    fn total_minutes_agrees_with_total_seconds_div_60() {
+        // After refactoring total_minutes to delegate to total_seconds,
+        // the contract is: minutes = seconds / 60 (integer division).
+        let db = Database::open_in_memory().unwrap();
+        for &secs in &[59i64, 60, 61, 119, 120, 600, 1245] {
+            db.insert_session(&Session {
+                start_iso: format!("2026-04-27T10:{:02}:00Z", secs % 60),
+                duration_secs: secs as u32, label_id: None, notes: None,
+                mode: SessionMode::Countdown,
+            }).unwrap();
+        }
+        let secs = db.total_seconds().unwrap();
+        let mins = db.total_minutes().unwrap();
+        assert_eq!(mins, secs / 60);
     }
 
     // ── query_sessions: rich filter for the log feed ──────────────────────────
