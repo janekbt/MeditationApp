@@ -607,6 +607,38 @@ impl Database {
         }
     }
 
+    /// Distinct (year, month) pairs that have at least one session,
+    /// ordered most-recent first. Used by the calendar-picker dropdown.
+    pub fn active_months(&self) -> Result<Vec<(i32, u32)>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT DISTINCT
+                 CAST(SUBSTR(start_iso, 1, 4) AS INTEGER),
+                 CAST(SUBSTR(start_iso, 6, 2) AS INTEGER)
+             FROM sessions
+             ORDER BY 1 DESC, 2 DESC",
+        )?;
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Day-of-month numbers in `(year, month)` that have at least one
+    /// session, ascending. Caller maps these directly to calendar cells.
+    /// December rolls cleanly to next-year January for the upper bound.
+    pub fn active_days_in_month(&self, year: i32, month: u32) -> Result<Vec<u32>> {
+        let start = format!("{year:04}-{month:02}-01");
+        let (next_year, next_month) =
+            if month == 12 { (year + 1, 1) } else { (year, month + 1) };
+        let end = format!("{next_year:04}-{next_month:02}-01");
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT DISTINCT CAST(SUBSTR(start_iso, 9, 2) AS INTEGER)
+             FROM sessions
+             WHERE start_iso >= ?1 AND start_iso < ?2
+             ORDER BY 1",
+        )?;
+        let rows = stmt.query_map(params![start, end], |row| row.get::<_, u32>(0))?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     /// Sum of `duration_secs` for sessions inside a calendar month
     /// (`year`, `month` 1-12). Boundaries are at local midnight on the
     /// first and last day of the month. December rolls cleanly into
@@ -834,6 +866,128 @@ mod tests {
         assert!(second.is_err(), "second insert of same label should fail");
         // The first insert is preserved; no duplicate row is created.
         assert_eq!(db.count_labels().unwrap(), 1);
+    }
+
+    // ── active_months ────────────────────────────────────────────────────────
+
+    #[test]
+    fn active_months_is_empty_for_empty_db() {
+        let db = Database::open_in_memory().unwrap();
+        assert!(db.active_months().unwrap().is_empty());
+    }
+
+    #[test]
+    fn active_months_returns_distinct_year_month_pairs_descending() {
+        // Each session contributes its (year, month) — duplicates within
+        // the same month collapse to one entry. Order is most-recent first
+        // (the calendar picker shows latest months at the top).
+        let db = Database::open_in_memory().unwrap();
+        // Three sessions in 2026-04, two in 2026-03, one in 2025-12.
+        for d in 1..=3 {
+            db.insert_session(&Session {
+                start_iso: format!("2026-04-{d:02}T10:00:00"),
+                duration_secs: 600, label_id: None, notes: None,
+                mode: SessionMode::Countdown,
+            }).unwrap();
+        }
+        for d in 5..=6 {
+            db.insert_session(&Session {
+                start_iso: format!("2026-03-{d:02}T10:00:00"),
+                duration_secs: 600, label_id: None, notes: None,
+                mode: SessionMode::Countdown,
+            }).unwrap();
+        }
+        db.insert_session(&Session {
+            start_iso: "2025-12-25T10:00:00".to_string(),
+            duration_secs: 600, label_id: None, notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+
+        let got = db.active_months().unwrap();
+        // Three distinct months, newest first.
+        assert_eq!(got, vec![(2026, 4), (2026, 3), (2025, 12)]);
+    }
+
+    #[test]
+    fn active_months_orders_correctly_across_year_boundary() {
+        // 2025-12 must sort BEFORE 2026-01 in newest-first ordering.
+        let db = Database::open_in_memory().unwrap();
+        db.insert_session(&Session {
+            start_iso: "2026-01-15T10:00:00".to_string(),
+            duration_secs: 600, label_id: None, notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+        db.insert_session(&Session {
+            start_iso: "2025-12-15T10:00:00".to_string(),
+            duration_secs: 600, label_id: None, notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+        let got = db.active_months().unwrap();
+        assert_eq!(got, vec![(2026, 1), (2025, 12)]);
+    }
+
+    // ── active_days_in_month ─────────────────────────────────────────────────
+
+    #[test]
+    fn active_days_in_month_is_empty_for_silent_month() {
+        let db = Database::open_in_memory().unwrap();
+        assert!(db.active_days_in_month(2026, 4).unwrap().is_empty());
+    }
+
+    #[test]
+    fn active_days_in_month_returns_distinct_days_ascending() {
+        // Each day with at least one session contributes once. Multiple
+        // sessions on the same day collapse to one entry. Returned in
+        // ascending order (1, 2, 3, …) so callers can directly map to
+        // calendar cells.
+        let db = Database::open_in_memory().unwrap();
+        // Two sessions on day 5, one on day 12, one on day 28.
+        for hr in 9..=10 {
+            db.insert_session(&Session {
+                start_iso: format!("2026-04-05T{hr:02}:00:00"),
+                duration_secs: 600, label_id: None, notes: None,
+                mode: SessionMode::Countdown,
+            }).unwrap();
+        }
+        db.insert_session(&Session {
+            start_iso: "2026-04-12T10:00:00".to_string(),
+            duration_secs: 600, label_id: None, notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+        db.insert_session(&Session {
+            start_iso: "2026-04-28T10:00:00".to_string(),
+            duration_secs: 600, label_id: None, notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+        // A session in March — must NOT appear in April's days.
+        db.insert_session(&Session {
+            start_iso: "2026-03-15T10:00:00".to_string(),
+            duration_secs: 600, label_id: None, notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+
+        let got = db.active_days_in_month(2026, 4).unwrap();
+        assert_eq!(got, vec![5u32, 12, 28]);
+    }
+
+    #[test]
+    fn active_days_in_month_handles_december() {
+        // The 'next month' boundary in code must roll to next-year-Jan
+        // for December queries.
+        let db = Database::open_in_memory().unwrap();
+        db.insert_session(&Session {
+            start_iso: "2026-12-31T23:00:00".to_string(),
+            duration_secs: 600, label_id: None, notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+        // Jan 1 next year — must NOT contribute.
+        db.insert_session(&Session {
+            start_iso: "2027-01-01T00:30:00".to_string(),
+            duration_secs: 600, label_id: None, notes: None,
+            mode: SessionMode::Countdown,
+        }).unwrap();
+        let got = db.active_days_in_month(2026, 12).unwrap();
+        assert_eq!(got, vec![31u32]);
     }
 
     // ── month_total_secs ─────────────────────────────────────────────────────
