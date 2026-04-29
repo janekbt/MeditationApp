@@ -617,6 +617,11 @@ fn do_delete(
     // Label text shows on every log card; deleting it affects rendering.
     // Stats also indirectly (label-filter dropdowns etc.).
     app.invalidate(crate::application::InvalidateScope::ALL);
+    // Force a refresh of the main window's tabs — invalidate() only sets
+    // dirty flags, which the visible-child handler consumes on tab
+    // switch. Without this, a user who deletes a label while sitting on
+    // the log tab sees the old (now-stale) chips until they switch tabs.
+    refresh_main_window(app);
     row.set_visible(false);
 
     // When sessions were affected the user already confirmed via AlertDialog,
