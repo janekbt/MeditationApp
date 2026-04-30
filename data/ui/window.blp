@@ -45,15 +45,42 @@ template $MeditateWindow : Adw.ApplicationWindow {
             }
 
             // Nextcloud sync status — hidden until the user has set up
-            // an account; afterwards reflects idle / syncing / error.
-            // Click → opens Preferences → Data so the user can adjust
-            // settings or see what's happening.
+            // an account; afterwards reflects idle / syncing / error
+            // via a Stack inside the button (Image vs Spinner).
+            //
+            // Icons: `object-select-symbolic` (standard GNOME checkmark
+            // used for selected / OK states) and `dialog-warning-symbolic`.
+            // Both ship in every Adwaita install and the GNOME 50 flatpak
+            // runtime. No custom bundling — see commit 38c81b7 ("Use
+            // format-justify-fill-symbolic for stats tab, remove custom
+            // icon") for why GResource icon paths are unreliable across
+            // GLib versions.
             [end]
             Button sync_status_btn {
-              icon-name: "emblem-default-symbolic";
               tooltip-text: _("Nextcloud sync status");
               visible: false;
               styles ["flat"]
+
+              child: Stack sync_status_stack {
+                hhomogeneous: true;
+                vhomogeneous: true;
+                transition-type: crossfade;
+                transition-duration: 120;
+
+                StackPage {
+                  name: "idle";
+                  child: Image sync_status_icon {
+                    icon-name: "object-select-symbolic";
+                  };
+                }
+
+                StackPage {
+                  name: "syncing";
+                  child: Spinner sync_status_spinner {
+                    spinning: true;
+                  };
+                }
+              };
             }
 
             // Log-specific buttons (hidden when not on log tab)

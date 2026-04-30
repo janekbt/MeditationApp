@@ -22,7 +22,10 @@ pub struct MeditateWindow {
     #[template_child] pub log_filter_btn:   TemplateChild<gtk::MenuButton>,
     #[template_child] pub filter_notes_row: TemplateChild<adw::SwitchRow>,
     #[template_child] pub filter_label_row: TemplateChild<adw::ComboRow>,
-    #[template_child] pub sync_status_btn:  TemplateChild<gtk::Button>,
+    #[template_child] pub sync_status_btn:     TemplateChild<gtk::Button>,
+    #[template_child] pub sync_status_stack:   TemplateChild<gtk::Stack>,
+    #[template_child] pub sync_status_icon:    TemplateChild<gtk::Image>,
+    #[template_child] pub sync_status_spinner: TemplateChild<gtk::Spinner>,
 }
 
 #[glib::object_subclass]
@@ -480,29 +483,35 @@ impl MeditateWindow {
     fn wire_sync_status(&self) {
         let obj = self.obj();
 
-        // Click → open Preferences (the Data tab holds sync settings).
-        // We don't open a popover with status detail because the
-        // tooltip already surfaces it; keeping the click semantics
-        // simple ("take me to where I can act on this") matches the
-        // Files-app sync indicator pattern.
+        // Click → open Preferences directly on the Data tab (where
+        // the sync settings live). Going through General first would
+        // make the user click twice for an obviously-related panel.
         self.sync_status_btn.connect_clicked(glib::clone!(
             #[weak] obj,
             move |_| {
                 if let Some(app) = obj.application()
                     .and_then(|a| a.downcast::<crate::application::MeditateApplication>().ok())
                 {
-                    crate::preferences::show_preferences(&app);
+                    crate::preferences::show_preferences_on_page(&app, Some("data"));
                 }
             }
         ));
 
-        // Initial paint — important so the configured-and-idle case
-        // renders correctly before any timer tick.
-        self.refresh_sync_status();
+        // Defer the initial paint to `connect_map`. At `constructed()`
+        // time the window isn't yet linked to its application, so
+        // `obj.application()` returns None and the indicator stays
+        // blank until the polling timer below catches up. `connect_map`
+        // fires once the window is realised AND the application
+        // binding is in place — the very first frame shows the
+        // correct state.
+        obj.connect_map(|window| {
+            use glib::subclass::prelude::ObjectSubclassIsExt;
+            window.imp().refresh_sync_status();
+        });
 
-        // Poll the application + DB every 2s for a state change. The
-        // timer self-cancels via the weak-ref upgrade failing once
-        // the window is destroyed; no manual SourceId tracking.
+        // Poll every 2s for state changes. The timer self-cancels via
+        // the weak-ref upgrade failing once the window is destroyed;
+        // no manual SourceId tracking.
         let weak = obj.downgrade();
         glib::timeout_add_seconds_local(2, move || {
             match weak.upgrade() {
@@ -538,37 +547,57 @@ impl MeditateWindow {
             None => return, // DB unavailable — leave the button alone.
         };
 
-        let btn = &*self.sync_status_btn;
+        let btn     = &*self.sync_status_btn;
+        let stack   = &*self.sync_status_stack;
+        let icon    = &*self.sync_status_icon;
+        let spinner = &*self.sync_status_spinner;
 
         // Unconfigured: hide the indicator entirely. There's nothing
         // useful for the user to see or click on.
         if account.is_none() {
             btn.set_visible(false);
+            spinner.set_spinning(false);
             return;
         }
         btn.set_visible(true);
 
-        // Reset stateful CSS classes between transitions.
+        // Icon-tint classes (`success`, `warning`) are exclusive — at
+        // most one applies at a time. Reset between transitions.
+        btn.remove_css_class("success");
         btn.remove_css_class("warning");
-        btn.remove_css_class("error");
 
         if app.is_syncing() {
-            btn.set_icon_name("emblem-synchronizing-symbolic");
+            // Animated Spinner is the only visual that distinguishes
+            // "actively syncing" from "idle" — there's no third
+            // reliably-available status icon across our targets.
+            spinner.set_spinning(true);
+            stack.set_visible_child_name("syncing");
             btn.set_tooltip_text(Some(&gettext("Syncing with Nextcloud…")));
         } else if let Some(err) = last_error {
-            btn.set_icon_name("dialog-warning-symbolic");
+            spinner.set_spinning(false);
+            stack.set_visible_child_name("idle");
+            icon.set_icon_name(Some("dialog-warning-symbolic"));
             btn.add_css_class("warning");
             btn.set_tooltip_text(Some(
                 &format!("{}\n{}",
                     gettext("Last sync failed — click to open settings"),
                     err)));
         } else if let Some(ts) = last_ts {
-            btn.set_icon_name("emblem-default-symbolic");
+            // Synced successfully — checkmark, tinted via libadwaita's
+            // `.success` button class so it reads green and clearly
+            // signals "all good" without hinting at an action.
+            spinner.set_spinning(false);
+            stack.set_visible_child_name("idle");
+            icon.set_icon_name(Some("object-select-symbolic"));
+            btn.add_css_class("success");
             btn.set_tooltip_text(Some(&format_synced_ago(ts)));
         } else {
-            // Configured but never synced — initial state right after
-            // the user saves credentials, before the first run completes.
-            btn.set_icon_name("emblem-synchronizing-symbolic");
+            // Configured but no sync has completed yet — same
+            // checkmark in neutral foreground. Avoids a blank period
+            // between "save credentials" and "first sync done".
+            spinner.set_spinning(false);
+            stack.set_visible_child_name("idle");
+            icon.set_icon_name(Some("object-select-symbolic"));
             btn.set_tooltip_text(Some(&gettext("Sync configured (waiting for first run)")));
         }
     }

@@ -9,6 +9,14 @@ use crate::application::MeditateApplication;
 use crate::i18n::gettext;
 
 pub fn show_preferences(app: &MeditateApplication) {
+    show_preferences_on_page(app, None);
+}
+
+/// Open the Preferences dialog with a specific page pre-selected.
+/// Page name is matched against the `name` property on each
+/// `AdwPreferencesPage` ("general", "data", "labels"). Used by the
+/// headerbar sync indicator so a click lands directly on Data.
+pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<&str>) {
     let app = app.clone();
 
     let dialog = adw::PreferencesDialog::builder()
@@ -24,6 +32,7 @@ pub fn show_preferences(app: &MeditateApplication) {
 
     let general_page = adw::PreferencesPage::builder()
         .title(gettext("General"))
+        .name("general")
         .icon_name("preferences-system-symbolic")
         .build();
 
@@ -403,6 +412,7 @@ pub fn show_preferences(app: &MeditateApplication) {
 
     let data_page = adw::PreferencesPage::builder()
         .title(gettext("Data"))
+        .name("data")
         .icon_name("drive-harddisk-symbolic")
         .build();
 
@@ -630,6 +640,7 @@ pub fn show_preferences(app: &MeditateApplication) {
 
     let labels_page = adw::PreferencesPage::builder()
         .title(gettext("Labels"))
+        .name("labels")
         .icon_name("user-bookmarks-symbolic")
         .build();
 
@@ -730,6 +741,13 @@ pub fn show_preferences(app: &MeditateApplication) {
             }
         }
     ));
+
+    // If a caller asked us to open on a specific page, select it
+    // before present(). AdwPreferencesDialog ignores unknown names
+    // gracefully, so passing None or a typo is safe.
+    if let Some(page_name) = initial_page {
+        dialog.set_visible_page_name(page_name);
+    }
 
     let parent = app.active_window();
     dialog.present(parent.as_ref());
