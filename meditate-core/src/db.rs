@@ -88,13 +88,19 @@ impl SessionMode {
 /// - `target_id` denormalises the affected row's cross-device identity
 ///   (session/label uuid, or setting key) so replay queries can scan
 ///   "all events for X" without parsing JSON in SQL.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Event {
     pub event_uuid: String,
     pub lamport_ts: i64,
     pub device_id: String,
     pub kind: String,
     pub target_id: String,
+    /// On-wire format is the JSON-encoded event body (e.g. session
+    /// fields). Stored locally as a string so SQLite doesn't need a
+    /// JSON-aware projection; the recompute helpers parse it on demand.
+    /// Serialising the envelope as JSON gives JSON-in-JSON on the wire,
+    /// which is uglier than nesting but trivially round-trips through
+    /// `serde_json::to_vec` / `from_slice` without any custom shape.
     pub payload: String,
 }
 
@@ -381,6 +387,18 @@ impl Database {
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
+    }
+
+    /// Every `event_uuid` we've seen, in a HashSet for fast existence
+    /// checks. Sync's pull phase uses this to diff against a remote
+    /// listing — only events we don't have get GETted. Cheap up to
+    /// the order of (event count) — fine for personal use sizes.
+    pub fn known_event_uuids(&self) -> Result<std::collections::HashSet<String>> {
+        let mut stmt = self.conn.prepare("SELECT event_uuid FROM events")?;
+        let ids = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<std::collections::HashSet<_>>>()?;
+        Ok(ids)
     }
 
     /// Flip the `synced` flag on the event with this local rowid so it
