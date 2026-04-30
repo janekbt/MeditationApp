@@ -85,12 +85,16 @@ impl SessionMode {
 /// - `device_id` records authorship.
 /// - `kind` is the event type (e.g. `"session_insert"`); `payload`
 ///   is its JSON-encoded specifics. Both opaque at this layer.
+/// - `target_id` denormalises the affected row's cross-device identity
+///   (session/label uuid, or setting key) so replay queries can scan
+///   "all events for X" without parsing JSON in SQL.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Event {
     pub event_uuid: String,
     pub lamport_ts: i64,
     pub device_id: String,
     pub kind: String,
+    pub target_id: String,
     pub payload: String,
 }
 
@@ -147,12 +151,16 @@ const SCHEMA: &str = "
     -- (replay, push) sort by `lamport_ts` for causal ordering;
     -- `event_uuid` UNIQUE makes append idempotent against retries and
     -- peer-forwarded duplicates. `synced` is the push-queue gate.
+    -- `target_id` denormalises the affected row identity (session or
+    -- label uuid, or setting key) so replay queries can scan all
+    -- events for one target via an index instead of JSON parsing.
     CREATE TABLE IF NOT EXISTS events (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         event_uuid  TEXT NOT NULL UNIQUE,
         lamport_ts  INTEGER NOT NULL,
         device_id   TEXT NOT NULL,
         kind        TEXT NOT NULL,
+        target_id   TEXT NOT NULL,
         payload     TEXT NOT NULL,
         synced      INTEGER NOT NULL DEFAULT 0
     );
@@ -165,6 +173,11 @@ const SCHEMA: &str = "
     -- synced = 0) efficient even when the log grows large.
     CREATE INDEX IF NOT EXISTS events_synced_idx
         ON events(synced);
+    -- Index on `target_id` makes the apply_event recompute query
+    -- (all events touching one uuid/key) fast even when the log has
+    -- thousands of entries.
+    CREATE INDEX IF NOT EXISTS events_target_idx
+        ON events(target_id);
     -- Sync-loop bookkeeping: server URL, last-pull cursor, last
     -- successful sync timestamp, etc. Separate namespace from `settings`
     -- so user-facing prefs and sync internals don't share a key space.
@@ -226,7 +239,7 @@ impl Database {
             "key": key,
             "value": value,
         }).to_string();
-        self.emit_event("setting_changed", payload)?;
+        self.emit_event("setting_changed", key, payload)?;
         tx.commit()?;
         Ok(())
     }
@@ -313,13 +326,14 @@ impl Database {
         // authoritative local id.
         self.conn.execute(
             "INSERT OR IGNORE INTO events
-                (event_uuid, lamport_ts, device_id, kind, payload)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+                (event_uuid, lamport_ts, device_id, kind, target_id, payload)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 event.event_uuid,
                 event.lamport_ts,
                 event.device_id,
                 event.kind,
+                event.target_id,
                 event.payload,
             ],
         )?;
@@ -336,7 +350,7 @@ impl Database {
     /// once the WebDAV PUT succeeds.
     pub fn pending_events(&self) -> Result<Vec<(i64, Event)>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, event_uuid, lamport_ts, device_id, kind, payload
+            "SELECT id, event_uuid, lamport_ts, device_id, kind, target_id, payload
              FROM events
              WHERE synced = 0
              ORDER BY lamport_ts ASC, id ASC",
@@ -350,7 +364,8 @@ impl Database {
                         lamport_ts: row.get(2)?,
                         device_id: row.get(3)?,
                         kind: row.get(4)?,
-                        payload: row.get(5)?,
+                        target_id: row.get(5)?,
+                        payload: row.get(6)?,
                     },
                 ))
             })?
@@ -374,7 +389,10 @@ impl Database {
     /// fresh `event_uuid`, tags with this device's id, and appends to the
     /// log. Mutation methods call this AFTER the data write inside a
     /// shared transaction so the cache row and its event commit atomically.
-    fn emit_event(&self, kind: &str, payload: String) -> Result<()> {
+    /// `target_id` is the affected row's cross-device identity (session
+    /// or label uuid, or setting key) — denormalised onto the event so
+    /// replay queries don't need to parse the JSON payload.
+    fn emit_event(&self, kind: &str, target_id: &str, payload: String) -> Result<()> {
         let device_id = self.device_id()?;
         let lamport_ts = self.bump_lamport_clock()?;
         let event = Event {
@@ -382,6 +400,7 @@ impl Database {
             lamport_ts,
             device_id,
             kind: kind.to_string(),
+            target_id: target_id.to_string(),
             payload,
         };
         self.append_event(&event)?;
@@ -399,6 +418,233 @@ impl Database {
             params![id],
             |row| row.get::<_, String>(0),
         )?)
+    }
+
+    /// Apply a single event to the materialized cache. Idempotent on
+    /// `event.event_uuid` (a duplicate is a silent no-op). Order-
+    /// independent: out-of-order delivery converges because the cache
+    /// is recomputed from MAX-lamport queries against the events table,
+    /// not from incremental application of just-this-event's payload.
+    ///
+    /// Conflict-resolution rules (per Nextcloud-Sync.md):
+    /// - Same event observed twice → idempotent.
+    /// - Two devices update same target → higher `lamport_ts` wins;
+    ///   tie breaks on lex-larger `device_id`.
+    /// - Update + delete on same target → delete wins on tie (≥).
+    /// - Insert + delete out of order → tombstone wins if its lamport
+    ///   ≥ the mutate's, regardless of arrival sequence.
+    pub fn apply_event(&self, event: &Event) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        self.apply_event_inner(event)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// The transaction-less core of `apply_event`. Extracted so
+    /// `replay_events` can apply many events under a single outer
+    /// transaction — opening a SAVEPOINT per event would be correct but
+    /// pointlessly slow.
+    fn apply_event_inner(&self, event: &Event) -> Result<()> {
+        // Record first — the recompute query reads from events, so the
+        // freshly-arrived event needs to be visible.
+        self.append_event(event)?;
+        match event.kind.as_str() {
+            "session_insert" | "session_update" | "session_delete" => {
+                self.recompute_session(&event.target_id)?;
+            }
+            "label_insert" | "label_rename" | "label_delete" => {
+                self.recompute_label(&event.target_id)?;
+            }
+            "setting_changed" => {
+                self.recompute_setting(&event.target_id)?;
+            }
+            _ => {
+                // Unknown kind — record for forwards-compat (a later
+                // build may know how to apply it) but don't mutate the
+                // cache from a payload shape we don't understand.
+            }
+        }
+        Ok(())
+    }
+
+    /// Apply a batch of events to the materialized cache. Events are
+    /// sorted by `(lamport_ts, device_id, event_uuid)` for a stable
+    /// deterministic order before dispatch — this matches the canonical
+    /// replay order across peers (the plan's tie-break rule). The whole
+    /// batch runs inside one transaction so a partial failure rolls back.
+    /// Idempotent on `event_uuid`: repeat calls with the same input are
+    /// no-ops on the cache.
+    pub fn replay_events(&self, events: &[Event]) -> Result<()> {
+        if events.is_empty() { return Ok(()); }
+        let tx = self.conn.unchecked_transaction()?;
+        let mut sorted: Vec<&Event> = events.iter().collect();
+        sorted.sort_by(|a, b| {
+            a.lamport_ts.cmp(&b.lamport_ts)
+                .then_with(|| a.device_id.cmp(&b.device_id))
+                .then_with(|| a.event_uuid.cmp(&b.event_uuid))
+        });
+        for event in sorted {
+            self.apply_event_inner(event)?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Recompute the `sessions` row for `session_uuid` from the events
+    /// table: tombstone wins if its lamport ≥ the latest mutate; else
+    /// the highest-lamport mutate event drives the row's values
+    /// (tie-breaking on lex-larger device_id).
+    fn recompute_session(&self, session_uuid: &str) -> Result<()> {
+        let delete_ts: Option<i64> = self.conn.query_row(
+            "SELECT MAX(lamport_ts) FROM events
+             WHERE target_id = ?1 AND kind = 'session_delete'",
+            params![session_uuid],
+            |row| row.get::<_, Option<i64>>(0),
+        )?;
+
+        // Latest mutate event by (lamport_ts, device_id) DESC. We pull
+        // the payload too, since it carries the field values to write.
+        let mutate: Option<(i64, String)> = self.conn.query_row(
+            "SELECT lamport_ts, payload FROM events
+             WHERE target_id = ?1
+               AND kind IN ('session_insert', 'session_update')
+             ORDER BY lamport_ts DESC, device_id DESC
+             LIMIT 1",
+            params![session_uuid],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+        ).optional()?;
+
+        let row_should_exist = match (mutate.as_ref(), delete_ts) {
+            (Some(_), None) => true,
+            (None, _) => false,
+            // Delete wins on tie: only mutate > delete keeps the row.
+            (Some((m_ts, _)), Some(d_ts)) => *m_ts > d_ts,
+        };
+
+        if let Some((_, payload)) = mutate.filter(|_| row_should_exist) {
+            let v: serde_json::Value = serde_json::from_str(&payload)
+                .map_err(|e| DbError::Csv(
+                    format!("session event payload not valid JSON: {e}")))?;
+            let start_iso = v["start_iso"].as_str().unwrap_or_default();
+            let duration_secs = v["duration_secs"].as_u64().unwrap_or(0) as u32;
+            let label_uuid = v["label_uuid"].as_str();
+            let label_id: Option<i64> = match label_uuid {
+                Some(luuid) => self.conn.query_row(
+                    "SELECT id FROM labels WHERE uuid = ?1",
+                    params![luuid],
+                    |row| row.get::<_, i64>(0),
+                ).optional()?,
+                None => None,
+            };
+            let notes = v["notes"].as_str();
+            let mode = v["mode"].as_str().unwrap_or("countdown");
+
+            // UPSERT — first time materialising creates the row, later
+            // recomputes overwrite every field with the winning event's
+            // values. The local rowid stays stable across recomputes
+            // because the UNIQUE column we conflict on is `uuid`.
+            self.conn.execute(
+                "INSERT INTO sessions (uuid, start_iso, duration_secs, label_id, notes, mode)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(uuid) DO UPDATE SET
+                    start_iso     = excluded.start_iso,
+                    duration_secs = excluded.duration_secs,
+                    label_id      = excluded.label_id,
+                    notes         = excluded.notes,
+                    mode          = excluded.mode",
+                params![session_uuid, start_iso, duration_secs, label_id, notes, mode],
+            )?;
+        } else {
+            // Tombstoned (or no mutate event yet) → ensure absent.
+            self.conn.execute(
+                "DELETE FROM sessions WHERE uuid = ?1",
+                params![session_uuid],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Recompute the `settings` value for `key` from the events table.
+    /// No tombstone — settings have no `setting_delete` kind, every
+    /// write is a `setting_changed` event. Highest (lamport_ts,
+    /// device_id) wins; if no events exist for the key the row is left
+    /// alone (the local cache may have a value from a pre-event-log
+    /// build, which we treat as already-converged).
+    fn recompute_setting(&self, key: &str) -> Result<()> {
+        let mutate: Option<String> = self.conn.query_row(
+            "SELECT payload FROM events
+             WHERE target_id = ?1 AND kind = 'setting_changed'
+             ORDER BY lamport_ts DESC, device_id DESC
+             LIMIT 1",
+            params![key],
+            |row| row.get::<_, String>(0),
+        ).optional()?;
+
+        if let Some(payload) = mutate {
+            let v: serde_json::Value = serde_json::from_str(&payload)
+                .map_err(|e| DbError::Csv(
+                    format!("setting_changed payload not valid JSON: {e}")))?;
+            let value = v["value"].as_str().unwrap_or_default();
+            self.conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![key, value],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Recompute the `labels` row for `label_uuid` from the events table.
+    /// Same precedence rules as sessions: tombstone wins on tie/precedence,
+    /// else the highest-(lamport, device_id) mutate event drives the name.
+    fn recompute_label(&self, label_uuid: &str) -> Result<()> {
+        let delete_ts: Option<i64> = self.conn.query_row(
+            "SELECT MAX(lamport_ts) FROM events
+             WHERE target_id = ?1 AND kind = 'label_delete'",
+            params![label_uuid],
+            |row| row.get::<_, Option<i64>>(0),
+        )?;
+        let mutate: Option<(i64, String)> = self.conn.query_row(
+            "SELECT lamport_ts, payload FROM events
+             WHERE target_id = ?1
+               AND kind IN ('label_insert', 'label_rename')
+             ORDER BY lamport_ts DESC, device_id DESC
+             LIMIT 1",
+            params![label_uuid],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+        ).optional()?;
+
+        let row_should_exist = match (mutate.as_ref(), delete_ts) {
+            (Some(_), None) => true,
+            (None, _) => false,
+            (Some((m_ts, _)), Some(d_ts)) => *m_ts > d_ts,
+        };
+
+        if let Some((_, payload)) = mutate.filter(|_| row_should_exist) {
+            let v: serde_json::Value = serde_json::from_str(&payload)
+                .map_err(|e| DbError::Csv(
+                    format!("label event payload not valid JSON: {e}")))?;
+            let name = v["name"].as_str().unwrap_or_default();
+            // UPSERT keyed on uuid (column is UNIQUE). The `name` column
+            // is also UNIQUE COLLATE NOCASE — peers must not concurrently
+            // pick the same name for two different label uuids; if they
+            // do the cache write will fail and we'd need a rename-conflict
+            // resolution, but the v1 plan considers that rare and accepts
+            // the failure mode for now.
+            self.conn.execute(
+                "INSERT INTO labels (uuid, name) VALUES (?1, ?2)
+                 ON CONFLICT(uuid) DO UPDATE SET name = excluded.name",
+                params![label_uuid, name],
+            )?;
+        } else {
+            // Tombstoned. `ON DELETE SET NULL` on the FK clears
+            // label_id on any cached sessions that referenced this row.
+            self.conn.execute(
+                "DELETE FROM labels WHERE uuid = ?1",
+                params![label_uuid],
+            )?;
+        }
+        Ok(())
     }
 
     /// Read a sync-state value (server URL, last-pull cursor, …),
@@ -466,7 +712,7 @@ impl Database {
         let Some(uuid) = row_uuid else { return Ok(()); };
         self.conn.execute("DELETE FROM labels WHERE id = ?1", params![id])?;
         let payload = serde_json::json!({ "uuid": uuid }).to_string();
-        self.emit_event("label_delete", payload)?;
+        self.emit_event("label_delete", &uuid, payload)?;
         tx.commit()?;
         Ok(())
     }
@@ -495,7 +741,7 @@ impl Database {
                     "uuid": label_uuid,
                     "name": name,
                 }).to_string();
-                self.emit_event("label_rename", payload)?;
+                self.emit_event("label_rename", &label_uuid, payload)?;
                 tx.commit()?;
                 Ok(())
             }
@@ -526,7 +772,7 @@ impl Database {
                     "uuid": label_uuid,
                     "name": name,
                 }).to_string();
-                self.emit_event("label_insert", payload)?;
+                self.emit_event("label_insert", &label_uuid, payload)?;
                 tx.commit()?;
                 Ok(rowid)
             }
@@ -621,7 +867,7 @@ impl Database {
             "notes": session.notes,
             "mode": session.mode.as_db_str(),
         }).to_string();
-        self.emit_event("session_insert", payload)?;
+        self.emit_event("session_insert", &session_uuid, payload)?;
 
         tx.commit()?;
         Ok(rowid)
@@ -669,7 +915,7 @@ impl Database {
                 "notes": s.notes,
                 "mode": s.mode.as_db_str(),
             }).to_string();
-            self.emit_event("session_insert", payload)?;
+            self.emit_event("session_insert", &session_uuid, payload)?;
         }
         tx.commit()?;
         Ok(sessions.len())
@@ -693,7 +939,7 @@ impl Database {
         };
         self.conn.execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
         let payload = serde_json::json!({ "uuid": uuid }).to_string();
-        self.emit_event("session_delete", payload)?;
+        self.emit_event("session_delete", &uuid, payload)?;
         tx.commit()?;
         Ok(())
     }
@@ -716,7 +962,7 @@ impl Database {
         let n = self.conn.execute("DELETE FROM sessions", [])?;
         for uuid in &row_uuids {
             let payload = serde_json::json!({ "uuid": uuid }).to_string();
-            self.emit_event("session_delete", payload)?;
+            self.emit_event("session_delete", uuid, payload)?;
         }
         tx.commit()?;
         Ok(n)
@@ -763,7 +1009,7 @@ impl Database {
             "notes": session.notes,
             "mode": session.mode.as_db_str(),
         }).to_string();
-        self.emit_event("session_update", payload)?;
+        self.emit_event("session_update", &session_uuid, payload)?;
         tx.commit()?;
         Ok(())
     }
@@ -4163,12 +4409,14 @@ mod tests {
     // by `lamport_ts` so peers see events in causal order.
 
     fn sample_event(seed: i64) -> Event {
+        let session_uuid = format!("00000000-0000-4000-9000-{:012x}", seed);
         Event {
             event_uuid: format!("00000000-0000-4000-8000-{:012x}", seed),
             lamport_ts: seed,
             device_id: "00000000-0000-4000-8000-aaaaaaaaaaaa".to_string(),
             kind: "session_insert".to_string(),
-            payload: format!("{{\"seed\":{seed}}}"),
+            target_id: session_uuid.clone(),
+            payload: format!("{{\"uuid\":\"{session_uuid}\",\"seed\":{seed}}}"),
         }
     }
 
@@ -4989,5 +5237,722 @@ mod tests {
         db.set_setting("greeting", "🧘 こんにちは").unwrap();
         let payload = event_payload(&db.pending_events().unwrap()[0].1);
         assert_eq!(payload["value"], "🧘 こんにちは");
+    }
+
+    // ── B1.0: events carry target_id for fast lookup ─────────────────────────
+    //
+    // Replay queries need to find "all events affecting target X" cheaply.
+    // Parsing the JSON payload in SQL is awkward, so each event also
+    // stores the affected row's identity in a denormalised `target_id`
+    // column — for sessions/labels the cross-device uuid, for settings
+    // the key.
+
+    #[test]
+    fn session_insert_event_target_id_is_the_session_uuid() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_session(&Session {
+            start_iso: "2026-04-30T10:00:00".to_string(),
+            duration_secs: 600,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Countdown,
+            uuid: String::new(),
+        }).unwrap();
+        let row_uuid = db.list_sessions().unwrap()[0].1.uuid.clone();
+        let events = db.pending_events().unwrap();
+        assert_eq!(events[0].1.target_id, row_uuid);
+    }
+
+    #[test]
+    fn session_delete_event_target_id_is_the_session_uuid() {
+        let db = Database::open_in_memory().unwrap();
+        let id = db.insert_session(&Session {
+            start_iso: "2026-04-30T10:00:00".to_string(),
+            duration_secs: 600,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Countdown,
+            uuid: String::new(),
+        }).unwrap();
+        let row_uuid = db.list_sessions().unwrap()[0].1.uuid.clone();
+        drain_events(&db);
+        db.delete_session(id).unwrap();
+        let events = db.pending_events().unwrap();
+        assert_eq!(events[0].1.target_id, row_uuid);
+    }
+
+    #[test]
+    fn label_insert_event_target_id_is_the_label_uuid() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        let row_uuid = db.list_labels().unwrap()[0].uuid.clone();
+        let events = db.pending_events().unwrap();
+        assert_eq!(events[0].1.target_id, row_uuid);
+    }
+
+    #[test]
+    fn setting_changed_event_target_id_is_the_setting_key() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("daily_goal_minutes", "20").unwrap();
+        let events = db.pending_events().unwrap();
+        assert_eq!(events[0].1.target_id, "daily_goal_minutes",
+            "settings have no uuid; the key acts as cross-device identity");
+    }
+
+    // ── B1.1: apply_event for session events ─────────────────────────────────
+    //
+    // apply_event consumes a remote-authored event and updates the local
+    // materialized cache. The model: record the event in `events`, then
+    // recompute the cache row for its target_id from the events table —
+    // tombstone wins on tie/precedence, otherwise the highest-lamport
+    // mutate event drives the row's values. This makes apply_event
+    // idempotent (re-applying same event_uuid is a no-op via INSERT OR
+    // IGNORE) and order-independent (out-of-order delivery converges).
+
+    /// Hand-construct an event without going through a Database. Lets
+    /// tests pin specific lamport_ts / device_id values for tie-break
+    /// and out-of-order scenarios.
+    fn synth_event(
+        kind: &str,
+        target_id: &str,
+        lamport_ts: i64,
+        device_id: &str,
+        payload: serde_json::Value,
+    ) -> Event {
+        Event {
+            event_uuid: uuid::Uuid::new_v4().to_string(),
+            lamport_ts,
+            device_id: device_id.to_string(),
+            kind: kind.to_string(),
+            target_id: target_id.to_string(),
+            payload: payload.to_string(),
+        }
+    }
+
+    fn synth_session_insert(
+        session_uuid: &str,
+        lamport_ts: i64,
+        device_id: &str,
+        start_iso: &str,
+        duration_secs: u32,
+        label_uuid: Option<&str>,
+        notes: Option<&str>,
+        mode: SessionMode,
+    ) -> Event {
+        synth_event(
+            "session_insert",
+            session_uuid,
+            lamport_ts,
+            device_id,
+            serde_json::json!({
+                "uuid": session_uuid,
+                "start_iso": start_iso,
+                "duration_secs": duration_secs,
+                "label_uuid": label_uuid,
+                "notes": notes,
+                "mode": mode.as_db_str(),
+            }),
+        )
+    }
+
+    fn synth_session_update(
+        session_uuid: &str,
+        lamport_ts: i64,
+        device_id: &str,
+        start_iso: &str,
+        duration_secs: u32,
+        label_uuid: Option<&str>,
+        notes: Option<&str>,
+        mode: SessionMode,
+    ) -> Event {
+        synth_event(
+            "session_update",
+            session_uuid,
+            lamport_ts,
+            device_id,
+            serde_json::json!({
+                "uuid": session_uuid,
+                "start_iso": start_iso,
+                "duration_secs": duration_secs,
+                "label_uuid": label_uuid,
+                "notes": notes,
+                "mode": mode.as_db_str(),
+            }),
+        )
+    }
+
+    fn synth_session_delete(
+        session_uuid: &str,
+        lamport_ts: i64,
+        device_id: &str,
+    ) -> Event {
+        synth_event(
+            "session_delete",
+            session_uuid,
+            lamport_ts,
+            device_id,
+            serde_json::json!({ "uuid": session_uuid }),
+        )
+    }
+
+    const DEVICE_A: &str = "00000000-0000-4000-8000-aaaaaaaaaaaa";
+    const DEVICE_B: &str = "00000000-0000-4000-8000-bbbbbbbbbbbb";
+    const SESSION_X: &str = "11111111-1111-4111-8111-111111111111";
+
+    #[test]
+    fn apply_event_session_insert_creates_the_row() {
+        // Apply a single insert event from a peer; the cache row appears
+        // with all the event's values.
+        let db = Database::open_in_memory().unwrap();
+        let event = synth_session_insert(
+            SESSION_X, 5, DEVICE_A,
+            "2026-04-30T10:00:00", 600,
+            None, Some("from peer"), SessionMode::BoxBreath,
+        );
+        db.apply_event(&event).unwrap();
+        let rows = db.list_sessions().unwrap();
+        assert_eq!(rows.len(), 1);
+        let s = &rows[0].1;
+        assert_eq!(s.uuid, SESSION_X);
+        assert_eq!(s.start_iso, "2026-04-30T10:00:00");
+        assert_eq!(s.duration_secs, 600);
+        assert_eq!(s.notes.as_deref(), Some("from peer"));
+        assert_eq!(s.mode, SessionMode::BoxBreath);
+    }
+
+    #[test]
+    fn apply_event_is_idempotent_on_event_uuid() {
+        // Applying the exact same Event twice must not double-insert
+        // and must not error. The events table's UNIQUE(event_uuid)
+        // is the dedup key.
+        let db = Database::open_in_memory().unwrap();
+        let event = synth_session_insert(
+            SESSION_X, 5, DEVICE_A,
+            "2026-04-30T10:00:00", 600,
+            None, None, SessionMode::Countdown,
+        );
+        db.apply_event(&event).unwrap();
+        db.apply_event(&event).unwrap();
+        assert_eq!(db.list_sessions().unwrap().len(), 1,
+            "duplicate event_uuid must not create a second row");
+    }
+
+    #[test]
+    fn apply_event_session_update_after_insert_updates_the_row() {
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_session_insert(
+            SESSION_X, 5, DEVICE_A,
+            "2026-04-30T10:00:00", 600,
+            None, None, SessionMode::Countdown,
+        )).unwrap();
+        db.apply_event(&synth_session_update(
+            SESSION_X, 10, DEVICE_A,
+            "2026-05-01T11:00:00", 1200,
+            None, Some("revised"), SessionMode::Stopwatch,
+        )).unwrap();
+        let s = &db.list_sessions().unwrap()[0].1;
+        assert_eq!(s.start_iso, "2026-05-01T11:00:00");
+        assert_eq!(s.duration_secs, 1200);
+        assert_eq!(s.notes.as_deref(), Some("revised"));
+        assert_eq!(s.mode, SessionMode::Stopwatch);
+    }
+
+    #[test]
+    fn apply_event_session_delete_removes_the_row() {
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_session_insert(
+            SESSION_X, 5, DEVICE_A,
+            "2026-04-30T10:00:00", 600,
+            None, None, SessionMode::Countdown,
+        )).unwrap();
+        db.apply_event(&synth_session_delete(SESSION_X, 10, DEVICE_A)).unwrap();
+        assert!(db.list_sessions().unwrap().is_empty());
+    }
+
+    #[test]
+    fn apply_event_tombstone_resists_later_applied_lower_lamport_insert() {
+        // Out-of-order delivery: peer's delete arrives first (lamport=10),
+        // then their insert at lamport=5 lands. The row must stay gone —
+        // delete tombstones beat earlier inserts.
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_session_delete(SESSION_X, 10, DEVICE_A)).unwrap();
+        db.apply_event(&synth_session_insert(
+            SESSION_X, 5, DEVICE_A,
+            "2026-04-30T10:00:00", 600,
+            None, None, SessionMode::Countdown,
+        )).unwrap();
+        assert!(db.list_sessions().unwrap().is_empty(),
+            "tombstone with lamport 10 must beat insert at lamport 5");
+    }
+
+    #[test]
+    fn apply_event_higher_lamport_update_supersedes_lower_one() {
+        // Two updates from different devices on the same uuid; whichever
+        // has the higher lamport_ts wins, regardless of arrival order.
+        let db = Database::open_in_memory().unwrap();
+        // Device A's update at lamport 10, Device B's at lamport 7 —
+        // A wins. Apply B first (out of order), then A.
+        db.apply_event(&synth_session_insert(
+            SESSION_X, 1, DEVICE_A,
+            "initial", 100, None, None, SessionMode::Countdown,
+        )).unwrap();
+        db.apply_event(&synth_session_update(
+            SESSION_X, 7, DEVICE_B,
+            "B's edit", 700, None, Some("from B"), SessionMode::Stopwatch,
+        )).unwrap();
+        db.apply_event(&synth_session_update(
+            SESSION_X, 10, DEVICE_A,
+            "A's edit", 1000, None, Some("from A"), SessionMode::BoxBreath,
+        )).unwrap();
+        let s = &db.list_sessions().unwrap()[0].1;
+        assert_eq!(s.notes.as_deref(), Some("from A"),
+            "A's lamport-10 update must win over B's lamport-7");
+        assert_eq!(s.duration_secs, 1000);
+    }
+
+    #[test]
+    fn apply_event_concurrent_updates_break_ties_on_device_id() {
+        // Two updates with the SAME lamport_ts but different device_ids.
+        // Lex-larger device_id wins (consistent across all peers per the
+        // plan's tie-break rule).
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_session_insert(
+            SESSION_X, 1, DEVICE_A,
+            "initial", 100, None, None, SessionMode::Countdown,
+        )).unwrap();
+        db.apply_event(&synth_session_update(
+            SESSION_X, 5, DEVICE_A,
+            "A wrote this", 500, None, Some("from A"), SessionMode::Countdown,
+        )).unwrap();
+        db.apply_event(&synth_session_update(
+            SESSION_X, 5, DEVICE_B,
+            "B wrote this", 500, None, Some("from B"), SessionMode::Countdown,
+        )).unwrap();
+        let s = &db.list_sessions().unwrap()[0].1;
+        assert_eq!(s.notes.as_deref(), Some("from B"),
+            "DEVICE_B is lex-larger than DEVICE_A; B's update wins on tie");
+    }
+
+    #[test]
+    fn apply_event_records_the_event_in_the_log() {
+        // After apply_event, the event must be in the events table so
+        // future recomputes see it. Sync's push phase will pick it up
+        // via pending_events (since `synced=0` by default).
+        let db = Database::open_in_memory().unwrap();
+        let event = synth_session_insert(
+            SESSION_X, 5, DEVICE_A,
+            "2026-04-30T10:00:00", 600,
+            None, None, SessionMode::Countdown,
+        );
+        let event_uuid = event.event_uuid.clone();
+        db.apply_event(&event).unwrap();
+        let pending = db.pending_events().unwrap();
+        assert!(pending.iter().any(|(_, e)| e.event_uuid == event_uuid),
+            "applied event must appear in events table");
+    }
+
+    #[test]
+    fn apply_event_with_unknown_kind_is_a_silent_record_only() {
+        // Forwards-compat: a future event kind we don't understand must
+        // not panic or error. Record it — a future build can replay —
+        // but don't try to mutate the cache from it.
+        let db = Database::open_in_memory().unwrap();
+        let weird = synth_event(
+            "future_kind_not_yet_invented",
+            SESSION_X, 5, DEVICE_A,
+            serde_json::json!({"some": "future-data"}),
+        );
+        db.apply_event(&weird).unwrap();
+        // Cache is empty (the event affected nothing it understood),
+        // but the event was recorded.
+        assert!(db.list_sessions().unwrap().is_empty());
+        assert_eq!(db.pending_events().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn apply_event_session_insert_resolves_label_uuid_to_local_label_id() {
+        // The peer's event references a label by label_uuid. If we have
+        // a local label with that uuid, the materialized session must
+        // link to it via local label_id. (Ensures cross-device
+        // referential integrity survives the rowid-to-uuid translation.)
+        let db = Database::open_in_memory().unwrap();
+        let local_label_id = db.insert_label("Morning").unwrap();
+        let label_uuid = db.list_labels().unwrap()[0].uuid.clone();
+        drain_events(&db);
+
+        db.apply_event(&synth_session_insert(
+            SESSION_X, 5, DEVICE_A,
+            "2026-04-30T10:00:00", 600,
+            Some(&label_uuid), None, SessionMode::Countdown,
+        )).unwrap();
+        let s = &db.list_sessions().unwrap()[0].1;
+        assert_eq!(s.label_id, Some(local_label_id),
+            "label_uuid must round-trip back to the local label_id");
+    }
+
+    // ── B1.2: apply_event for label events ───────────────────────────────────
+    //
+    // Same recompute pattern as sessions. label_delete cascades through
+    // the FK (`ON DELETE SET NULL`) to clear `label_id` on any cached
+    // sessions that referenced it.
+
+    const LABEL_X: &str = "22222222-2222-4222-8222-222222222222";
+
+    fn synth_label_insert(label_uuid: &str, lamport_ts: i64, device: &str, name: &str) -> Event {
+        synth_event(
+            "label_insert",
+            label_uuid, lamport_ts, device,
+            serde_json::json!({ "uuid": label_uuid, "name": name }),
+        )
+    }
+    fn synth_label_rename(label_uuid: &str, lamport_ts: i64, device: &str, name: &str) -> Event {
+        synth_event(
+            "label_rename",
+            label_uuid, lamport_ts, device,
+            serde_json::json!({ "uuid": label_uuid, "name": name }),
+        )
+    }
+    fn synth_label_delete(label_uuid: &str, lamport_ts: i64, device: &str) -> Event {
+        synth_event(
+            "label_delete",
+            label_uuid, lamport_ts, device,
+            serde_json::json!({ "uuid": label_uuid }),
+        )
+    }
+
+    #[test]
+    fn apply_event_label_insert_creates_the_label() {
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_label_insert(LABEL_X, 5, DEVICE_A, "Morning")).unwrap();
+        let labels = db.list_labels().unwrap();
+        assert_eq!(labels.len(), 1);
+        assert_eq!(labels[0].name, "Morning");
+        assert_eq!(labels[0].uuid, LABEL_X);
+    }
+
+    #[test]
+    fn apply_event_label_rename_updates_the_name() {
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_label_insert(LABEL_X, 5, DEVICE_A, "Morning")).unwrap();
+        db.apply_event(&synth_label_rename(LABEL_X, 10, DEVICE_A, "Sunrise")).unwrap();
+        let labels = db.list_labels().unwrap();
+        assert_eq!(labels.len(), 1);
+        assert_eq!(labels[0].name, "Sunrise");
+        assert_eq!(labels[0].uuid, LABEL_X,
+            "rename must NOT change the cross-device uuid");
+    }
+
+    #[test]
+    fn apply_event_label_delete_removes_the_label() {
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_label_insert(LABEL_X, 5, DEVICE_A, "Morning")).unwrap();
+        db.apply_event(&synth_label_delete(LABEL_X, 10, DEVICE_A)).unwrap();
+        assert!(db.list_labels().unwrap().is_empty());
+    }
+
+    #[test]
+    fn apply_event_label_tombstone_resists_lower_lamport_insert() {
+        let db = Database::open_in_memory().unwrap();
+        // Delete arrives first at lamport 10.
+        db.apply_event(&synth_label_delete(LABEL_X, 10, DEVICE_A)).unwrap();
+        // Insert at lamport 5 arrives later — tombstone wins.
+        db.apply_event(&synth_label_insert(LABEL_X, 5, DEVICE_A, "Morning")).unwrap();
+        assert!(db.list_labels().unwrap().is_empty(),
+            "tombstone with higher lamport must beat earlier insert");
+    }
+
+    #[test]
+    fn apply_event_label_concurrent_renames_break_ties_on_device_id() {
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_label_insert(LABEL_X, 1, DEVICE_A, "Morning")).unwrap();
+        db.apply_event(&synth_label_rename(LABEL_X, 5, DEVICE_A, "From A")).unwrap();
+        db.apply_event(&synth_label_rename(LABEL_X, 5, DEVICE_B, "From B")).unwrap();
+        let labels = db.list_labels().unwrap();
+        assert_eq!(labels[0].name, "From B",
+            "lex-larger device_id wins on lamport tie");
+    }
+
+    #[test]
+    fn apply_event_label_delete_clears_label_id_on_cached_sessions() {
+        // FK is `ON DELETE SET NULL` — when the labels row goes, sessions
+        // that referenced it lose the link locally. Their session events
+        // still carry the label_uuid; if the label later resurrects via
+        // a higher-lamport insert, future recompute_session runs would
+        // re-link.
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_label_insert(LABEL_X, 1, DEVICE_A, "Morning")).unwrap();
+        db.apply_event(&synth_session_insert(
+            SESSION_X, 2, DEVICE_A,
+            "2026-04-30T10:00:00", 600,
+            Some(LABEL_X), None, SessionMode::Countdown,
+        )).unwrap();
+        // Sanity: the link is set.
+        assert!(db.list_sessions().unwrap()[0].1.label_id.is_some());
+
+        db.apply_event(&synth_label_delete(LABEL_X, 10, DEVICE_A)).unwrap();
+        assert!(db.list_labels().unwrap().is_empty());
+        let s = &db.list_sessions().unwrap()[0].1;
+        assert_eq!(s.label_id, None,
+            "session's label_id must clear when the label is deleted");
+    }
+
+    #[test]
+    fn apply_event_label_is_idempotent() {
+        let db = Database::open_in_memory().unwrap();
+        let event = synth_label_insert(LABEL_X, 5, DEVICE_A, "Morning");
+        db.apply_event(&event).unwrap();
+        db.apply_event(&event).unwrap();
+        assert_eq!(db.list_labels().unwrap().len(), 1);
+    }
+
+    // ── B1.3: apply_event for setting_changed ────────────────────────────────
+    //
+    // Settings have no tombstone (no `setting_delete` kind) — every
+    // setting_changed event is a write. Conflict resolution: highest
+    // (lamport_ts, device_id) wins per key. Out-of-order delivery is
+    // handled by the same recompute-from-events approach.
+
+    fn synth_setting_changed(key: &str, value: &str, lamport_ts: i64, device: &str) -> Event {
+        synth_event(
+            "setting_changed",
+            key, lamport_ts, device,
+            serde_json::json!({ "key": key, "value": value }),
+        )
+    }
+
+    #[test]
+    fn apply_event_setting_changed_writes_value_into_settings() {
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_setting_changed("daily_goal", "20", 5, DEVICE_A)).unwrap();
+        assert_eq!(db.get_setting("daily_goal", "fallback").unwrap(), "20");
+    }
+
+    #[test]
+    fn apply_event_higher_lamport_setting_overwrites_lower() {
+        // First device A writes "20" at lamport 5; later device A writes
+        // "30" at lamport 10. The newer value wins.
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_setting_changed("daily_goal", "20", 5, DEVICE_A)).unwrap();
+        db.apply_event(&synth_setting_changed("daily_goal", "30", 10, DEVICE_A)).unwrap();
+        assert_eq!(db.get_setting("daily_goal", "x").unwrap(), "30");
+    }
+
+    #[test]
+    fn apply_event_out_of_order_settings_converge_correctly() {
+        // The newer write (lamport=10) arrives BEFORE the older one
+        // (lamport=5). The newer must still win after both are applied.
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_setting_changed("daily_goal", "30", 10, DEVICE_A)).unwrap();
+        db.apply_event(&synth_setting_changed("daily_goal", "20", 5, DEVICE_A)).unwrap();
+        assert_eq!(db.get_setting("daily_goal", "x").unwrap(), "30");
+    }
+
+    #[test]
+    fn apply_event_setting_concurrent_writes_break_ties_on_device_id() {
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_setting_changed("daily_goal", "from A", 5, DEVICE_A)).unwrap();
+        db.apply_event(&synth_setting_changed("daily_goal", "from B", 5, DEVICE_B)).unwrap();
+        assert_eq!(db.get_setting("daily_goal", "x").unwrap(), "from B",
+            "lex-larger device_id wins on lamport tie");
+    }
+
+    #[test]
+    fn apply_event_settings_for_different_keys_do_not_collide() {
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_setting_changed("a", "alpha", 5, DEVICE_A)).unwrap();
+        db.apply_event(&synth_setting_changed("b", "beta",  6, DEVICE_A)).unwrap();
+        assert_eq!(db.get_setting("a", "x").unwrap(), "alpha");
+        assert_eq!(db.get_setting("b", "x").unwrap(), "beta");
+    }
+
+    #[test]
+    fn apply_event_setting_is_idempotent() {
+        let db = Database::open_in_memory().unwrap();
+        let event = synth_setting_changed("daily_goal", "20", 5, DEVICE_A);
+        db.apply_event(&event).unwrap();
+        db.apply_event(&event).unwrap();
+        assert_eq!(db.get_setting("daily_goal", "x").unwrap(), "20");
+    }
+
+    // ── B2: replay_events ─────────────────────────────────────────────────────
+    //
+    // Bulk applier for incoming sync batches. Sorts the slice by
+    // (lamport_ts ASC, device_id ASC, event_uuid ASC) for a stable
+    // deterministic order, then dispatches each through apply_event's
+    // recompute path. Idempotent on event_uuid, order-independent
+    // because apply_event itself is.
+
+    #[test]
+    fn replay_events_with_empty_slice_is_a_noop() {
+        let db = Database::open_in_memory().unwrap();
+        db.replay_events(&[]).unwrap();
+        assert!(db.list_sessions().unwrap().is_empty());
+        assert!(db.list_labels().unwrap().is_empty());
+        assert!(db.pending_events().unwrap().is_empty());
+    }
+
+    #[test]
+    fn replay_events_with_one_event_matches_apply_event_alone() {
+        let db = Database::open_in_memory().unwrap();
+        let event = synth_session_insert(
+            SESSION_X, 5, DEVICE_A,
+            "2026-04-30T10:00:00", 600,
+            None, None, SessionMode::Countdown,
+        );
+        db.replay_events(std::slice::from_ref(&event)).unwrap();
+        let rows = db.list_sessions().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1.uuid, SESSION_X);
+    }
+
+    #[test]
+    fn replay_events_converges_regardless_of_input_order() {
+        // The same event set in two different orders must produce the
+        // same final cache state. This is the core convergence property.
+        let session_b = "33333333-3333-4333-8333-333333333333";
+        let events = vec![
+            synth_session_insert(SESSION_X, 1, DEVICE_A,
+                "S-X", 100, None, None, SessionMode::Countdown),
+            synth_session_insert(session_b, 2, DEVICE_A,
+                "S-B", 200, None, None, SessionMode::Stopwatch),
+            synth_session_update(SESSION_X, 5, DEVICE_A,
+                "S-X-edited", 150, None, Some("edit"), SessionMode::Countdown),
+            synth_session_delete(session_b, 6, DEVICE_A),
+        ];
+
+        let db_in_order = Database::open_in_memory().unwrap();
+        db_in_order.replay_events(&events).unwrap();
+
+        let mut shuffled = events.clone();
+        shuffled.reverse();
+        let db_reversed = Database::open_in_memory().unwrap();
+        db_reversed.replay_events(&shuffled).unwrap();
+
+        let in_order = db_in_order.list_sessions().unwrap();
+        let reversed = db_reversed.list_sessions().unwrap();
+        assert_eq!(in_order.len(), 1, "session_b must be tombstoned away");
+        assert_eq!(in_order.len(), reversed.len(),
+            "convergence: same event set yields same row count regardless of order");
+        assert_eq!(in_order[0].1.uuid, reversed[0].1.uuid);
+        assert_eq!(in_order[0].1.start_iso, reversed[0].1.start_iso);
+        assert_eq!(in_order[0].1.duration_secs, reversed[0].1.duration_secs);
+        assert_eq!(in_order[0].1.notes, reversed[0].1.notes);
+    }
+
+    #[test]
+    fn replay_events_dedups_duplicate_event_uuids() {
+        // Same Event present twice in the input slice must be applied
+        // only once — no double row, no error. Real-world cause:
+        // overlapping pull windows or peer-forwarded duplicates.
+        let db = Database::open_in_memory().unwrap();
+        let event = synth_session_insert(
+            SESSION_X, 5, DEVICE_A,
+            "2026-04-30T10:00:00", 600,
+            None, None, SessionMode::Countdown,
+        );
+        db.replay_events(&[event.clone(), event]).unwrap();
+        assert_eq!(db.list_sessions().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn replay_events_two_devices_authoring_independently_merges_both() {
+        // Realistic scenario: two devices author concurrently, then each
+        // pulls the other's events. After cross-replay both DBs have the
+        // union of both devices' inserts.
+        let device_a = Database::open_in_memory().unwrap();
+        let device_b = Database::open_in_memory().unwrap();
+
+        device_a.insert_session(&Session {
+            start_iso: "2026-04-30T10:00:00".to_string(),
+            duration_secs: 600, label_id: None, notes: Some("from A".to_string()),
+            mode: SessionMode::Countdown, uuid: String::new(),
+        }).unwrap();
+        device_b.insert_session(&Session {
+            start_iso: "2026-04-30T18:00:00".to_string(),
+            duration_secs: 1200, label_id: None, notes: Some("from B".to_string()),
+            mode: SessionMode::Stopwatch, uuid: String::new(),
+        }).unwrap();
+
+        let events_a: Vec<Event> = device_a.pending_events().unwrap()
+            .into_iter().map(|(_, e)| e).collect();
+        let events_b: Vec<Event> = device_b.pending_events().unwrap()
+            .into_iter().map(|(_, e)| e).collect();
+
+        device_a.replay_events(&events_b).unwrap();
+        device_b.replay_events(&events_a).unwrap();
+
+        let sessions_a = device_a.list_sessions().unwrap();
+        let sessions_b = device_b.list_sessions().unwrap();
+        assert_eq!(sessions_a.len(), 2);
+        assert_eq!(sessions_b.len(), 2);
+
+        let notes_a: std::collections::HashSet<_> = sessions_a.iter()
+            .filter_map(|(_, s)| s.notes.clone()).collect();
+        let notes_b: std::collections::HashSet<_> = sessions_b.iter()
+            .filter_map(|(_, s)| s.notes.clone()).collect();
+        let expected: std::collections::HashSet<_> = ["from A", "from B"]
+            .iter().map(|s| s.to_string()).collect();
+        assert_eq!(notes_a, expected);
+        assert_eq!(notes_b, expected,
+            "after cross-replay, both devices must hold the same union of events");
+    }
+
+    #[test]
+    fn replay_events_idempotent_under_repeat_application() {
+        // Replaying the same batch twice produces the same state as
+        // replaying it once. Important for sync reliability — a partial
+        // sync that retries the whole batch must not corrupt state.
+        let device_a = Database::open_in_memory().unwrap();
+        let device_b = Database::open_in_memory().unwrap();
+        for i in 0..3 {
+            device_a.insert_session(&Session {
+                start_iso: format!("2026-04-3{i}T10:00:00"),
+                duration_secs: 600, label_id: None, notes: None,
+                mode: SessionMode::Countdown, uuid: String::new(),
+            }).unwrap();
+        }
+        let events: Vec<Event> = device_a.pending_events().unwrap()
+            .into_iter().map(|(_, e)| e).collect();
+        device_b.replay_events(&events).unwrap();
+        let after_first = device_b.list_sessions().unwrap();
+        device_b.replay_events(&events).unwrap();
+        let after_second = device_b.list_sessions().unwrap();
+        assert_eq!(after_first.len(), after_second.len());
+        assert_eq!(after_first, after_second,
+            "second replay of the same batch must be a no-op on the cache");
+    }
+
+    #[test]
+    fn replay_events_handles_mixed_kinds_in_one_batch() {
+        // A realistic batch: an insert label, an insert session that
+        // references the label, an update session, a delete label, and
+        // a settings change. Apply all together and the final cache
+        // reflects every conflict-resolution rule.
+        let db = Database::open_in_memory().unwrap();
+        let events = vec![
+            synth_label_insert(LABEL_X, 1, DEVICE_A, "Morning"),
+            synth_session_insert(
+                SESSION_X, 2, DEVICE_A,
+                "10:00", 600, Some(LABEL_X), None, SessionMode::Countdown,
+            ),
+            synth_session_update(
+                SESSION_X, 3, DEVICE_A,
+                "10:00", 900, Some(LABEL_X), Some("longer"), SessionMode::Countdown,
+            ),
+            synth_label_delete(LABEL_X, 4, DEVICE_A),
+            synth_setting_changed("daily_goal", "20", 5, DEVICE_A),
+        ];
+        db.replay_events(&events).unwrap();
+
+        // Label is gone (deleted at lamport 4 after insert at 1).
+        assert!(db.list_labels().unwrap().is_empty());
+        // Session is present with the lamport-3 update's values, but
+        // its label_id is NULL because the label has been deleted.
+        let s = &db.list_sessions().unwrap()[0].1;
+        assert_eq!(s.duration_secs, 900);
+        assert_eq!(s.notes.as_deref(), Some("longer"));
+        assert_eq!(s.label_id, None,
+            "session keeps its data but loses the label link when the label tombstones");
+        assert_eq!(db.get_setting("daily_goal", "x").unwrap(), "20");
     }
 }
