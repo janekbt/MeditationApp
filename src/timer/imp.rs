@@ -282,7 +282,7 @@ impl TimerView {
                         _ => "none",
                     };
                     if let Some(app) = imp.get_app() {
-                        app.with_db(|db| db.set_setting("end_sound", key));
+                        app.with_db_mut(|db| db.set_setting("end_sound", key));
                         crate::sound::preload_end_sound(&app);
                     }
                 }
@@ -617,7 +617,7 @@ impl TimerView {
         if let Some(app) = self.get_app() {
             glib::MainContext::default().spawn_local(async move {
                 let result = app
-                    .with_db_blocking(move |db| db.create_session(&data))
+                    .with_db_blocking_mut(move |db| db.create_session(&data))
                     .await;
                 let Some(Ok(session)) = result else { return; };
 
@@ -1159,7 +1159,7 @@ impl TimerView {
                 let name = entry.text().trim().to_string();
                 if name.is_empty() { imp.setup_label_row.set_selected(1); return; }
                 let new_label = imp.get_app()
-                    .and_then(|app| app.with_db(|db| db.create_label(&name)))
+                    .and_then(|app| app.with_db_mut(|db| db.create_label(&name)))
                     .and_then(|r| r.ok());
                 imp.refresh_setup_labels(new_label.map(|l| l.id));
             }
@@ -1184,7 +1184,7 @@ impl TimerView {
                 let name = entry.text().trim().to_string();
                 if name.is_empty() { imp.label_row.set_selected(1); return; }
                 let new_label = imp.get_app()
-                    .and_then(|app| app.with_db(|db| db.create_label(&name)))
+                    .and_then(|app| app.with_db_mut(|db| db.create_label(&name)))
                     .and_then(|r| r.ok());
                 imp.repopulate_label_combo(new_label.map(|l| l.id));
             }
@@ -1507,7 +1507,7 @@ impl TimerView {
         let p = self.breathing_pattern.get();
         let mins = self.breathing_session_mins.get();
         let preset = self.breathing_preset_name.borrow().clone();
-        app.with_db(|db| {
+        app.with_db_mut(|db| {
             let _ = db.set_setting("breathing_in", &p.in_secs.to_string());
             let _ = db.set_setting("breathing_hold_in", &p.hold_in.to_string());
             let _ = db.set_setting("breathing_out", &p.out_secs.to_string());
@@ -1528,7 +1528,7 @@ impl TimerView {
             // First-time Breathing: the "Box-breathing" label is the shipped
             // default, create on demand so users don't have to set it up.
             (TimerMode::Breathing, None) => self.get_app().and_then(|app| {
-                app.with_db(|db| db.find_or_create_label(
+                app.with_db_mut(|db| db.find_or_create_label(
                     &crate::i18n::gettext("Box-breathing"),
                 ).ok()).flatten()
             }),
@@ -1574,7 +1574,7 @@ impl TimerView {
         let Some(app) = self.get_app() else { return; };
         let key = label_setting_key(mode);
         let val = name.unwrap_or_default();
-        app.with_db(|db| { let _ = db.set_setting(key, &val); });
+        app.with_db_mut(|db| { let _ = db.set_setting(key, &val); });
     }
 }
 

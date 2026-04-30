@@ -693,7 +693,7 @@ impl LogView {
 
         if let Some(app) = self.get_app() {
             for (id, session) in &pending {
-                app.with_db(|db| db.delete_session(*id));
+                app.with_db_mut(|db| db.delete_session(*id));
                 self.commit_delete_in_place(*id, session);
             }
             app.invalidate(crate::application::InvalidateScope::STATS);
@@ -1012,9 +1012,9 @@ impl LogView {
 
                 if let Some(app) = imp.get_app() {
                     if let Some(id) = session_id {
-                        app.with_db(|db| db.update_session(id, &data));
+                        app.with_db_mut(|db| db.update_session(id, &data));
                     } else {
-                        app.with_db(|db| db.create_session(&data));
+                        app.with_db_mut(|db| db.create_session(&data));
                     }
                     app.invalidate(crate::application::InvalidateScope::STATS);
                 }

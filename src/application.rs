@@ -2,6 +2,8 @@ mod imp {
     use adw::prelude::*;
     use adw::subclass::prelude::*;
     use gtk::{gdk, gio, glib};
+    use std::path::PathBuf;
+    use std::sync::atomic::AtomicBool;
     use std::sync::{Arc, Mutex};
 
     use crate::config;
@@ -21,6 +23,25 @@ mod imp {
         // every tab switch. Start `true` so the first show populates them.
         pub stats_dirty: std::cell::Cell<bool>,
         pub log_dirty:   std::cell::Cell<bool>,
+
+        /// Path to the SQLite file. Cached here so the sync worker
+        /// thread can open its OWN connection (rusqlite::Connection
+        /// is !Send so the main-thread DB can't be shared). `None`
+        /// before `startup` runs.
+        pub db_path: Mutex<Option<PathBuf>>,
+
+        /// True while a sync attempt is running. Triggers that arrive
+        /// during this window set `sync_re_trigger` instead of
+        /// spawning a second worker — at most one sync runs at a time.
+        pub sync_in_flight: Arc<AtomicBool>,
+
+        /// Set by `trigger_sync` when a sync is already in flight; the
+        /// worker checks this on completion and runs another pass if
+        /// it's true. Bulk-mutation flurries (the user deleting 10
+        /// sessions in a row) trigger one sync, queue a re-trigger,
+        /// and end with one follow-up sync that captures everything
+        /// that arrived during the first.
+        pub sync_re_trigger: Arc<AtomicBool>,
     }
 
     impl Default for MeditateApplication {
@@ -29,6 +50,9 @@ mod imp {
                 db: Arc::default(),
                 stats_dirty: std::cell::Cell::new(true),
                 log_dirty:   std::cell::Cell::new(true),
+                db_path: Mutex::new(None),
+                sync_in_flight: Arc::new(AtomicBool::new(false)),
+                sync_re_trigger: Arc::new(AtomicBool::new(false)),
             }
         }
     }
@@ -49,10 +73,18 @@ mod imp {
 
             if let Some(window) = app.active_window() {
                 window.present();
+                // Re-activation (user clicked the launcher again with
+                // the app already running) is a "user opened the app"
+                // signal — pull anything new from Nextcloud in the
+                // background.
+                app.trigger_sync();
                 return;
             }
 
             MeditateWindow::new(&*app).present();
+            // First activation after startup: pull whatever a peer
+            // device authored while we were closed.
+            app.trigger_sync();
         }
 
         fn startup(&self) {
@@ -72,6 +104,11 @@ mod imp {
                     crate::diag::log(&format!("db open FAILED at {}: {e}", db_path.display()));
                 }
             }
+            // Cache the path so the sync worker thread can open its own
+            // connection later. We do this even if the open above failed —
+            // a successful retry by the worker would be a nice surprise,
+            // and there's no harm in handing it the path either way.
+            *self.db_path.lock().unwrap() = Some(db_path);
 
             // Register the bundled app icon so the About dialog and GNOME Shell
             // can find it in development builds (installed builds use the
@@ -181,6 +218,10 @@ mod imp {
 
 use gtk::glib;
 
+use adw::prelude::*;
+use gtk::gio;
+use std::sync::Arc;
+
 glib::wrapper! {
     pub struct MeditateApplication(ObjectSubclass<imp::MeditateApplication>)
         @extends adw::Application, gtk::Application, gtk::gio::Application,
@@ -267,6 +308,129 @@ impl MeditateApplication {
     pub fn clear_log_dirty(&self) {
         use glib::subclass::prelude::ObjectSubclassIsExt;
         self.imp().log_dirty.set(false);
+    }
+
+    /// `with_db` + a follow-up `trigger_sync()`. Use when the closure
+    /// MUTATES the database — the trigger pushes the new event(s) to
+    /// Nextcloud (when configured) without callers having to remember
+    /// the separate trigger call. Read-only closures should keep
+    /// using plain `with_db`.
+    pub fn with_db_mut<F, R>(&self, f: F) -> Option<R>
+    where
+        F: FnOnce(&crate::db::Database) -> R,
+    {
+        let result = self.with_db(f);
+        self.trigger_sync();
+        result
+    }
+
+    /// Async variant of `with_db_mut`. Triggers AFTER the blocking
+    /// write finishes — calling `trigger_sync` before the await would
+    /// race the worker against the writer for the SQLite file.
+    pub async fn with_db_blocking_mut<F, R>(&self, f: F) -> Option<R>
+    where
+        F: FnOnce(&crate::db::Database) -> R + Send + 'static,
+        R: Send + 'static,
+    {
+        let result = self.with_db_blocking(f).await;
+        self.trigger_sync();
+        result
+    }
+
+    /// Spawn a Nextcloud sync attempt on a worker thread. Returns
+    /// immediately. While a sync is in flight, additional triggers
+    /// just set the re-trigger flag — the running worker spots it on
+    /// completion and runs another pass. This collapses bursts of
+    /// rapid mutations (bulk delete, log import) into at most two
+    /// sync rounds total.
+    ///
+    /// On completion the worker schedules a callback on the GTK main
+    /// loop that invalidates UI state and re-fires if the dirty flag
+    /// is set. Errors are recorded to `sync_state` so the (future)
+    /// status indicator can surface them; callers see fire-and-forget
+    /// semantics here.
+    pub fn trigger_sync(&self) {
+        use glib::subclass::prelude::ObjectSubclassIsExt;
+        use std::sync::atomic::Ordering;
+
+        // Fast-path: if sync isn't set up, skip everything below.
+        // Saves spawning a worker (and pulling in the keychain D-Bus
+        // round-trip) just to find out we have no account configured.
+        let configured = self
+            .with_db(|db| {
+                crate::sync_settings::get_nextcloud_account(db)
+                    .map(|opt| opt.is_some())
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false);
+        if !configured {
+            return;
+        }
+
+        let imp = self.imp();
+        // Mark the re-trigger flag first so a sync that finishes
+        // RIGHT NOW (before our `swap` below) still picks us up via
+        // the worker's completion check.
+        imp.sync_re_trigger.store(true, Ordering::SeqCst);
+
+        // Try to take the in-flight slot. If someone else already has
+        // it, we're done — they'll see our re-trigger and re-fire.
+        if imp.sync_in_flight.swap(true, Ordering::SeqCst) {
+            return;
+        }
+
+        let Some(db_path) = imp.db_path.lock().unwrap().clone() else {
+            // No DB path → startup never ran or failed; clear the flag
+            // we just took and bail.
+            imp.sync_in_flight.store(false, Ordering::SeqCst);
+            return;
+        };
+
+        let in_flight = Arc::clone(&imp.sync_in_flight);
+        let re_trigger = Arc::clone(&imp.sync_re_trigger);
+
+        std::thread::spawn(move || {
+            // Run sync attempts in a loop while the re-trigger flag
+            // is set. Clearing it BEFORE each pass means a trigger
+            // arriving during the pass survives to schedule another.
+            loop {
+                re_trigger.store(false, Ordering::SeqCst);
+                let result = crate::sync_runner::run_sync_attempt(&db_path);
+                if let Err(e) = &result {
+                    crate::diag::log(&format!("sync: {e}"));
+                }
+                if !re_trigger.load(Ordering::SeqCst) {
+                    break;
+                }
+            }
+            // Release the in-flight slot before we hop back to the
+            // main loop, so a trigger arriving on the main thread
+            // *during* the invoke can spawn a fresh worker if needed.
+            in_flight.store(false, Ordering::SeqCst);
+
+            // Hop back to the GTK main loop to refresh UI. The closure
+            // is Send (captures nothing); we look the application up
+            // via the gio default registry on the main thread, which
+            // avoids having to send a !Send GObject across.
+            glib::MainContext::default().invoke(|| {
+                if let Some(app) = gio::Application::default()
+                    .and_then(|a| a.downcast::<crate::application::MeditateApplication>().ok())
+                {
+                    app.invalidate(InvalidateScope::ALL);
+                    // Force a redraw of the visible views so the user
+                    // sees pulled changes immediately rather than on
+                    // their next tab switch.
+                    if let Some(win) = app.active_window()
+                        .and_then(|w| w.downcast::<crate::window::MeditateWindow>().ok())
+                    {
+                        use glib::subclass::prelude::ObjectSubclassIsExt;
+                        win.imp().timer_view.refresh_streak();
+                        win.imp().stats_view.refresh();
+                        win.imp().log_view.refresh();
+                    }
+                }
+            });
+        });
     }
 }
 

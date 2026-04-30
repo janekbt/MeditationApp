@@ -124,7 +124,7 @@ pub(crate) fn export_csv_to_db(db: &Database, path: &Path) -> Result<usize, Data
 // ── Native-format import ──────────────────────────────────────────────────────
 
 pub fn import_csv(app: &MeditateApplication, path: &Path) -> Result<usize, DataIoError> {
-    let result = app.with_db(|db| import_csv_to_db(db, path))
+    let result = app.with_db_mut(|db| import_csv_to_db(db, path))
         .ok_or(DataIoError::NoDatabase)?;
     match &result {
         Ok(n) => crate::diag::log(&format!("import_csv: read {n} sessions from {}", path.display())),
@@ -186,7 +186,7 @@ pub(crate) fn import_csv_to_db(db: &Database, path: &Path) -> Result<usize, Data
 // ── Insight Timer import ──────────────────────────────────────────────────────
 
 pub fn import_insighttimer(app: &MeditateApplication, path: &Path) -> Result<usize, DataIoError> {
-    let result = app.with_db(|db| import_insighttimer_to_db(db, path))
+    let result = app.with_db_mut(|db| import_insighttimer_to_db(db, path))
         .ok_or(DataIoError::NoDatabase)?;
     match &result {
         Ok(n) => crate::diag::log(&format!("import_insighttimer: read {n} sessions from {}", path.display())),
@@ -240,7 +240,7 @@ pub(crate) fn import_insighttimer_to_db(db: &Database, path: &Path) -> Result<us
 // ── Delete all ────────────────────────────────────────────────────────────────
 
 pub fn delete_all(app: &MeditateApplication) -> Result<usize, DataIoError> {
-    app.with_db(|db| db.delete_all_sessions())
+    app.with_db_mut(|db| db.delete_all_sessions())
         .ok_or(DataIoError::NoDatabase)?
         .map_err(Into::into)
 }

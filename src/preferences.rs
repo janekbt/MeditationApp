@@ -106,7 +106,7 @@ pub fn show_preferences(app: &MeditateApplication) {
                     4 => "custom",
                     _ => "none",
                 };
-                app.with_db(|db| db.set_setting("end_sound", key));
+                app.with_db_mut(|db| db.set_setting("end_sound", key));
                 crate::sound::preload_end_sound(&app);
                 custom_row.set_visible(key == "custom");
                 preview_btn.set_sensitive(key != "none");
@@ -204,7 +204,7 @@ pub fn show_preferences(app: &MeditateApplication) {
                                 let path_str = p.to_string_lossy().to_string();
                                 custom_row.set_subtitle(&path_subtitle(&path_str));
                                 *custom_sound_path.borrow_mut() = path_str.clone();
-                                app.with_db(|db| db.set_setting("end_sound_path", &path_str));
+                                app.with_db_mut(|db| db.set_setting("end_sound_path", &path_str));
                                 crate::sound::preload_end_sound(&app);
                             }
                         }
@@ -234,7 +234,7 @@ pub fn show_preferences(app: &MeditateApplication) {
         #[weak] app,
         move |row| {
             let v = if row.is_active() { "true" } else { "false" };
-            app.with_db(|db| db.set_setting("vibrate_on_end", v));
+            app.with_db_mut(|db| db.set_setting("vibrate_on_end", v));
         }
     ));
     sound_group.add(&vibrate_row);
@@ -266,7 +266,7 @@ pub fn show_preferences(app: &MeditateApplication) {
             #[weak] app,
             move |row, _| {
                 let val = row.value() as i64;
-                app.with_db(|db| db.set_setting("weekly_goal_mins", &val.to_string()));
+                app.with_db_mut(|db| db.set_setting("weekly_goal_mins", &val.to_string()));
                 app.invalidate(crate::application::InvalidateScope::STATS);
             }
         ),
@@ -309,7 +309,7 @@ pub fn show_preferences(app: &MeditateApplication) {
                 .iter()
                 .map(|(r, _)| r.value() as u32)
                 .collect();
-            app.with_db(|db| db.set_presets(&vals));
+            app.with_db_mut(|db| db.set_presets(&vals));
         }
     ));
 
@@ -551,7 +551,11 @@ pub fn show_preferences(app: &MeditateApplication) {
             // URL/username are still saved (the user can retry the
             // password). Order chosen so a half-success leaves a usable
             // state rather than a broken one.
-            let account_result = app.with_db(|db| {
+            // `with_db_mut` so saving the account (which is what
+            // unlocks sync from "unconfigured" to "go") immediately
+            // fires the first sync attempt. Without that the user
+            // would have to click something else to trigger it.
+            let account_result = app.with_db_mut(|db| {
                 crate::sync_settings::set_nextcloud_account(db, url_trimmed, username_trimmed)
             });
             match account_result {
@@ -663,7 +667,7 @@ pub fn show_preferences(app: &MeditateApplication) {
         #[strong] rows,
         move |_| {
             let Some(label) = app
-                .with_db(|db| db.create_label(&gettext("New label")))
+                .with_db_mut(|db| db.create_label(&gettext("New label")))
                 .and_then(|r| r.ok())
             else {
                 return;
@@ -740,7 +744,7 @@ fn do_delete(
     label_id: &Rc<std::cell::Cell<i64>>,
     allow_undo: bool,
 ) {
-    app.with_db(|db| db.delete_label(label_id.get()));
+    app.with_db_mut(|db| db.delete_label(label_id.get()));
     // Label text shows on every log card; deleting it affects rendering.
     // Stats also indirectly (label-filter dropdowns etc.).
     app.invalidate(crate::application::InvalidateScope::ALL);
@@ -768,7 +772,7 @@ fn do_delete(
             #[strong] label_id,
             move |_| {
                 if let Some(label) = app
-                    .with_db(|db| db.create_label(&deleted_name))
+                    .with_db_mut(|db| db.create_label(&deleted_name))
                     .and_then(|r| r.ok())
                 {
                     label_id.set(label.id);
@@ -878,7 +882,7 @@ fn make_label_row(
                 );
                 return;
             }
-            app.with_db(|db| db.update_label(label_id.get(), &new_name));
+            app.with_db_mut(|db| db.update_label(label_id.get(), &new_name));
             // Renamed labels need to reflect on log cards + label filter.
             app.invalidate(crate::application::InvalidateScope::ALL);
             *committed.borrow_mut() = new_name;
