@@ -238,6 +238,18 @@ impl Database {
         self.inner.set_setting(key, value).map_err(map_core_err)
     }
 
+    /// Read a sync-loop bookkeeping value (Nextcloud URL, username,
+    /// last-sync timestamp, …). Separate namespace from `settings` so
+    /// user-facing prefs and sync internals don't collide on a key.
+    pub fn get_sync_state(&self, key: &str, default: &str) -> Result<String> {
+        self.inner.get_sync_state(key, default).map_err(map_core_err)
+    }
+
+    /// Upsert a sync-loop bookkeeping value.
+    pub fn set_sync_state(&self, key: &str, value: &str) -> Result<()> {
+        self.inner.set_sync_state(key, value).map_err(map_core_err)
+    }
+
     // ── Stats queries ─────────────────────────────────────────────────────────
 
     /// Current streak of consecutive calendar days (ending today or
