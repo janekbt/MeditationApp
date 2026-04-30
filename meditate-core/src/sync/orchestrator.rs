@@ -34,6 +34,13 @@ pub enum SyncError {
     /// String is the underlying serde_json error, plus the filename
     /// for diagnostics.
     InvalidEvent(String),
+    /// The remote folder was previously populated by this device but
+    /// is now empty of any file we recognise — likely wiped by the
+    /// user (or on the server) since the last successful sync. The
+    /// orchestrator stops before push so the shell can ask the user
+    /// what to do (push local back up, wipe local to match, or cancel)
+    /// rather than silently re-uploading everything.
+    RemoteDataLost,
 }
 
 impl fmt::Display for SyncError {
@@ -42,6 +49,10 @@ impl fmt::Display for SyncError {
             Self::WebDav(e) => write!(f, "sync: webdav: {e}"),
             Self::Db(e) => write!(f, "sync: db: {e:?}"),
             Self::InvalidEvent(s) => write!(f, "sync: invalid event: {s}"),
+            Self::RemoteDataLost => write!(
+                f, "sync: remote data lost — every batch this device \
+                    previously synced is missing from the Nextcloud folder",
+            ),
         }
     }
 }
@@ -115,16 +126,37 @@ impl<'a, W: WebDav> Sync<'a, W> {
         // Per the plan: pull is non-destructive — only adds events.
         // First sync against an empty remote dir is just an empty list.
         let events_dir = self.events_dir();
-        let listing = match self.webdav.list_collection(&events_dir) {
+        let listing: Vec<String> = match self.webdav.list_collection(&events_dir) {
             Ok(names) => names,
-            Err(WebDavError::NotFound) => {
-                // Remote dir absent — first-ever sync, nothing upstream.
-                return Ok(PullStats::default());
-            }
+            // Treat NotFound as an empty listing so the same code path
+            // handles "first sync against an empty Nextcloud" and
+            // "remote dir was deleted since last sync". The remote-
+            // data-lost check below distinguishes the two via
+            // known_remote_files: a non-empty known set is the
+            // signal that we've previously synced.
+            Err(WebDavError::NotFound) => Vec::new(),
             Err(e) => return Err(e.into()),
         };
 
         let known_files = self.db.known_remote_file_uuids()?;
+
+        // Remote-data-lost fail-safe. Trigger when this device has
+        // previously synced (known set non-empty) but the current
+        // listing contains zero of those batch_uuids. Bail BEFORE any
+        // local writes so the shell can surface a dialog without us
+        // having modified state.
+        if !known_files.is_empty() {
+            let listing_uuids: std::collections::HashSet<String> = listing
+                .iter()
+                .filter_map(|n| parse_batch_uuid_from_filename(n))
+                .collect();
+            let any_match = known_files.iter()
+                .any(|uuid| listing_uuids.contains(uuid));
+            if !any_match {
+                return Err(SyncError::RemoteDataLost);
+            }
+        }
+
         let known_events = self.db.known_event_uuids()?;
         let mut new_events: Vec<Event> = Vec::new();
         let mut newly_ingested_files: Vec<String> = Vec::new();
@@ -776,6 +808,174 @@ mod tests {
         assert!(our_event_lamport > peer_max_lamport,
             "post-sync local event at lamport {} must exceed peer's max {}",
             our_event_lamport, peer_max_lamport);
+    }
+
+    // ── Remote data lost — fail-safe on wiped Nextcloud ──────────────────
+    //
+    // After a successful sync this device has recorded one or more
+    // batch_uuids in `known_remote_files`. If a later sync sees a
+    // remote whose listing contains zero of those known uuids, the
+    // remote was wiped (intentionally or not). Pushing local state in
+    // that situation is a destructive surprise — the user might have
+    // wiped the Nextcloud with the intent of also wiping this device.
+    // The fail-safe surfaces this via `SyncError::RemoteDataLost` so
+    // the shell can put up a "what do you want to do?" dialog.
+
+    #[test]
+    fn sync_does_not_trigger_remote_data_lost_on_first_ever_sync() {
+        // First-ever sync: known_remote_files is empty, remote is
+        // empty. Cannot trigger because the precondition (we've
+        // previously synced) isn't met.
+        let (db, fs) = setup();
+        let result = Sync::new(&db, &fs, "Meditate").sync();
+        assert!(result.is_ok(),
+            "fresh sync against empty remote must not trigger; got {result:?}");
+    }
+
+    #[test]
+    fn sync_does_not_trigger_remote_data_lost_when_we_pull_a_peer_into_an_empty_local() {
+        // Common scenario: laptop already populated Nextcloud, phone
+        // is fresh. Phone's known_remote_files is empty (precondition
+        // false), so pulling the peer's files must not trigger.
+        let (peer_db, fs) = setup();
+        insert_session(&peer_db, "peer", 100);
+        Sync::new(&peer_db, &fs, "Meditate").sync().unwrap();
+
+        let (us_db, _) = setup();
+        let result = Sync::new(&us_db, &fs, "Meditate").sync();
+        assert!(result.is_ok(),
+            "first-time pull from a populated remote must not trigger");
+    }
+
+    #[test]
+    fn sync_does_not_trigger_remote_data_lost_when_some_of_our_files_are_still_present() {
+        // Partial wipe: known_remote_files has A, B, C; listing has
+        // A, B (C deleted). At least one of ours survives → not the
+        // "everything got wiped" pattern. Don't trigger.
+        let (db, fs) = setup();
+        insert_session(&db, "first", 100);
+        Sync::new(&db, &fs, "Meditate").sync().unwrap();
+        insert_session(&db, "second", 200);
+        Sync::new(&db, &fs, "Meditate").sync().unwrap();
+        // Now the remote has 2 files; both batch_uuids are in
+        // known_remote_files. Manually delete just one.
+        let listing: Vec<String> = fs
+            .list_collection("/Meditate/events/").unwrap();
+        assert_eq!(listing.len(), 2);
+        fs.delete(&format!("/Meditate/events/{}", listing[0])).unwrap();
+
+        let result = Sync::new(&db, &fs, "Meditate").sync();
+        assert!(result.is_ok(),
+            "partial wipe must not trigger fail-safe; got {result:?}");
+    }
+
+    #[test]
+    fn sync_triggers_remote_data_lost_when_every_known_file_is_gone() {
+        // Setup: device pushes once → known_remote_files contains the
+        // batch_uuid. Wipe the remote folder. Next sync: listing is
+        // empty, but known_remote_files isn't → trigger.
+        let (db, fs) = setup();
+        insert_session(&db, "first", 100);
+        Sync::new(&db, &fs, "Meditate").sync().unwrap();
+        assert_eq!(db.known_remote_file_uuids().unwrap().len(), 1);
+        // Wipe the remote.
+        for name in fs.list_collection("/Meditate/events/").unwrap() {
+            fs.delete(&format!("/Meditate/events/{}", name)).unwrap();
+        }
+
+        let err = Sync::new(&db, &fs, "Meditate").sync().unwrap_err();
+        assert!(matches!(err, SyncError::RemoteDataLost),
+            "wiped remote must surface RemoteDataLost; got {err:?}");
+    }
+
+    #[test]
+    fn sync_triggers_remote_data_lost_even_when_a_peer_repopulated_with_new_files() {
+        // Subtle case: our previous remote was wiped AND a peer wrote
+        // new files. The listing is non-empty but contains none of our
+        // known_remote_files entries — still a wipe from our point of
+        // view. Trigger so the user sees the prompt.
+        let (db, fs) = setup();
+        insert_session(&db, "ours", 100);
+        Sync::new(&db, &fs, "Meditate").sync().unwrap();
+        // Wipe the remote.
+        for name in fs.list_collection("/Meditate/events/").unwrap() {
+            fs.delete(&format!("/Meditate/events/{}", name)).unwrap();
+        }
+        // Peer authors and pushes its own data.
+        let (peer_db, _) = setup();
+        insert_session(&peer_db, "peer", 200);
+        Sync::new(&peer_db, &fs, "Meditate").sync().unwrap();
+
+        // We sync. Remote has ONE file (the peer's), but it's not one
+        // we've previously seen. Our known set has entries → trigger.
+        let err = Sync::new(&db, &fs, "Meditate").sync().unwrap_err();
+        assert!(matches!(err, SyncError::RemoteDataLost),
+            "peer-repopulated wipe must still trigger; got {err:?}");
+    }
+
+    #[test]
+    fn sync_does_not_trigger_remote_data_lost_after_an_explicit_wipe_known_remote_files() {
+        // The "push local to remote" recovery path: after the user
+        // resolves the dialog by saying "push my local up", the shell
+        // calls `wipe_known_remote_files` and re-runs sync. The next
+        // sync sees an empty remote and an empty known set →
+        // precondition false → no trigger.
+        let (db, fs) = setup();
+        insert_session(&db, "first", 100);
+        Sync::new(&db, &fs, "Meditate").sync().unwrap();
+        for name in fs.list_collection("/Meditate/events/").unwrap() {
+            fs.delete(&format!("/Meditate/events/{}", name)).unwrap();
+        }
+        // Operator action: clear the dedup tracker.
+        db.wipe_known_remote_files().unwrap();
+        // Mark events un-synced so push has work to do.
+        for name in fs.list_collection("/Meditate/events/").unwrap() {
+            fs.delete(&format!("/Meditate/events/{}", name)).unwrap();
+        }
+
+        let result = Sync::new(&db, &fs, "Meditate").sync();
+        assert!(result.is_ok(),
+            "after wipe_known_remote_files the next sync must succeed; got {result:?}");
+    }
+
+    #[test]
+    fn sync_remote_data_lost_does_not_modify_local_state() {
+        // The fail-safe gates the destructive write. When it fires,
+        // pending events must remain pending and known_remote_files
+        // must be untouched — the user hasn't decided yet whether to
+        // push or wipe, so we leave everything as-is.
+        let (db, fs) = setup();
+        insert_session(&db, "first", 100);
+        Sync::new(&db, &fs, "Meditate").sync().unwrap();
+        // Author a new pending event AFTER the successful sync.
+        insert_session(&db, "second", 200);
+        let pending_before = db.pending_events().unwrap().len();
+        let known_before = db.known_remote_file_uuids().unwrap();
+
+        // Wipe remote.
+        for name in fs.list_collection("/Meditate/events/").unwrap() {
+            fs.delete(&format!("/Meditate/events/{}", name)).unwrap();
+        }
+
+        let _ = Sync::new(&db, &fs, "Meditate").sync().unwrap_err();
+        let pending_after = db.pending_events().unwrap().len();
+        let known_after = db.known_remote_file_uuids().unwrap();
+        assert_eq!(pending_after, pending_before,
+            "RemoteDataLost must not flip the pending flag on any event");
+        assert_eq!(known_after, known_before,
+            "RemoteDataLost must not modify known_remote_files");
+    }
+
+    #[test]
+    fn sync_error_remote_data_lost_displays_a_clear_message() {
+        // The Display string flows into the diagnostics log and (later)
+        // the user-facing dialog body. Pin the wording so a future copy
+        // edit doesn't accidentally make it ambiguous.
+        let s = SyncError::RemoteDataLost.to_string();
+        assert!(s.contains("remote") || s.contains("Nextcloud"),
+            "must mention what was lost (remote/Nextcloud), got: {s}");
+        assert!(s.contains("data lost") || s.contains("wiped") || s.contains("missing"),
+            "must indicate the loss explicitly, got: {s}");
     }
 
     // ── Bulk-import scale ────────────────────────────────────────────────
