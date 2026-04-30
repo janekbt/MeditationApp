@@ -1542,12 +1542,37 @@ impl TimerView {
     fn apply_preferred_label_for_mode(&self, mode: TimerMode) {
         let pref = self.persisted_label_for_mode(mode);
         let label_id: Option<i64> = match (mode, pref) {
-            // First-time Breathing: the "Box-breathing" label is the shipped
-            // default, create on demand so users don't have to set it up.
+            // First-time Breathing: the "Box-breathing" label is the
+            // shipped default, create on demand so users don't have
+            // to set it up.
+            //
+            // Read-only check FIRST so we only hit the mutating path
+            // (and its auto-trigger of a sync) when the label
+            // genuinely needs creating. Without this, every Breathing
+            // mode switch on a configured Nextcloud account fires a
+            // sync — visually "the sync spinner keeps spinning" until
+            // the slow remote completes.
             (TimerMode::Breathing, None) => self.get_app().and_then(|app| {
-                app.with_db_mut(|db| db.find_or_create_label(
-                    &crate::i18n::gettext("Box-breathing"),
-                ).ok()).flatten()
+                let label_name = crate::i18n::gettext("Box-breathing");
+                let existing = app.with_db(|db| {
+                    db.list_labels().ok().and_then(|labels| labels.into_iter()
+                        .find(|l| l.name.to_lowercase() == label_name.to_lowercase())
+                        .map(|l| l.id))
+                }).flatten();
+                let id = match existing {
+                    Some(id) => Some(id),
+                    None => app.with_db_mut(|db|
+                        db.find_or_create_label(&label_name).ok()).flatten(),
+                };
+                // Persist the auto-default so the NEXT Breathing
+                // switch falls into the (Breathing, Some(Some(name)))
+                // arm — read-only, no sync trigger. Without this the
+                // setting key stays unset forever and we'd land here
+                // (and re-trigger sync) on every single switch.
+                if id.is_some() {
+                    self.persist_label_for_mode(mode, Some(label_name));
+                }
+                id
             }),
             // First-time Countdown / Stopwatch, or explicit None: no label.
             (_, None) | (_, Some(None)) => None,
