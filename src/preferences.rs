@@ -465,6 +465,133 @@ pub fn show_preferences(app: &MeditateApplication) {
 
     data_page.add(&migrate_group);
 
+    // ── Nextcloud sync group ──────────────────────────────────────────────
+    //
+    // Opt-in: the rows are blank on a fresh install. Saving here writes
+    // URL+username to the sync_state KV (`sync_settings`) and the
+    // password to libsecret (`keychain`). The password row stays blank
+    // on dialog reopen — leaving it blank on Save means "keep the
+    // currently-stored password".
+
+    let sync_group = adw::PreferencesGroup::builder()
+        .title(gettext("Nextcloud Sync"))
+        .description(gettext(
+            "Sync sessions, labels, and preferences between your devices via your own Nextcloud server.",
+        ))
+        .build();
+
+    let url_row = adw::EntryRow::builder()
+        .title(gettext("Server URL"))
+        .input_purpose(gtk::InputPurpose::Url)
+        .build();
+    let username_row = adw::EntryRow::builder()
+        .title(gettext("Username"))
+        .build();
+    let password_row = adw::PasswordEntryRow::builder()
+        .title(gettext("App password"))
+        .build();
+    // Helps the user understand that empty password is non-destructive.
+    password_row.add_css_class("monospace");
+
+    // Pre-fill from previously-saved values. Password stays blank by
+    // design — we don't echo what's in the keychain.
+    if let Some(account) = app
+        .with_db(|db| crate::sync_settings::get_nextcloud_account(db))
+        .and_then(|r| r.ok())
+        .flatten()
+    {
+        url_row.set_text(&account.url);
+        username_row.set_text(&account.username);
+    }
+
+    sync_group.add(&url_row);
+    sync_group.add(&username_row);
+    sync_group.add(&password_row);
+
+    // Save button as a row suffix — clicking it commits the form.
+    let save_row = adw::ActionRow::builder()
+        .title(gettext("Save sync settings"))
+        .subtitle(gettext("Stores URL and username locally; password goes to your keyring."))
+        .activatable(true)
+        .build();
+    let save_btn = gtk::Button::builder()
+        .label(gettext("_Save"))
+        .use_underline(true)
+        .valign(gtk::Align::Center)
+        .css_classes(["suggested-action"])
+        .build();
+    save_row.add_suffix(&save_btn);
+    save_row.set_activatable_widget(Some(&save_btn));
+    sync_group.add(&save_row);
+
+    save_btn.connect_clicked(glib::clone!(
+        #[strong] app,
+        #[weak] dialog,
+        #[weak] url_row,
+        #[weak] username_row,
+        #[weak] password_row,
+        move |_| {
+            let url = url_row.text().to_string();
+            let username = username_row.text().to_string();
+            let password = password_row.text().to_string();
+
+            // Trim leading/trailing whitespace on URL and username only.
+            // Password is taken verbatim — Nextcloud app-passwords are
+            // hex blobs that don't need trimming.
+            let url_trimmed = url.trim();
+            let username_trimmed = username.trim();
+
+            if url_trimmed.is_empty() || username_trimmed.is_empty() {
+                data_toast(&dialog, &gettext(
+                    "URL and username are required."));
+                return;
+            }
+
+            // Persist the account first; if the keychain step fails the
+            // URL/username are still saved (the user can retry the
+            // password). Order chosen so a half-success leaves a usable
+            // state rather than a broken one.
+            let account_result = app.with_db(|db| {
+                crate::sync_settings::set_nextcloud_account(db, url_trimmed, username_trimmed)
+            });
+            match account_result {
+                Some(Ok(())) => {}
+                Some(Err(e)) => {
+                    data_toast(&dialog, &format!(
+                        "{}: {e}", gettext("Couldn't save sync settings")));
+                    return;
+                }
+                None => {
+                    // No DB available — shouldn't happen at runtime.
+                    data_toast(&dialog, &gettext("Database unavailable; sync settings not saved."));
+                    return;
+                }
+            }
+
+            // Empty password = "keep what's in the keychain". Storing
+            // an empty string would clobber the existing one which is
+            // almost never what the user means.
+            if !password.is_empty() {
+                match crate::keychain::store_password(url_trimmed, username_trimmed, &password) {
+                    Ok(()) => {
+                        password_row.set_text("");
+                        data_toast(&dialog, &gettext("Sync settings saved."));
+                    }
+                    Err(e) => {
+                        data_toast(&dialog, &format!(
+                            "{}: {e}",
+                            gettext("URL/username saved, but the password couldn't be stored"),
+                        ));
+                    }
+                }
+            } else {
+                data_toast(&dialog, &gettext("Sync settings saved."));
+            }
+        }
+    ));
+
+    data_page.add(&sync_group);
+
     let danger_group = adw::PreferencesGroup::builder()
         .title(gettext("Danger Zone"))
         .description(gettext("These actions cannot be undone."))
