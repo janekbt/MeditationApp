@@ -319,12 +319,20 @@ impl Database {
     /// delivery at-most-once on the local cache regardless of retries
     /// or peer forwarding.
     pub fn append_event(&self, event: &Event) -> Result<i64> {
+        Ok(self.append_event_returning_newness(event)?.0)
+    }
+
+    /// Like `append_event` but also tells the caller whether the row
+    /// was actually new (vs. silently ignored as a dup). `apply_event`
+    /// uses this to avoid re-bumping the Lamport clock on a duplicate
+    /// observation — the Lamport rule fires once per *new* observation,
+    /// not once per call.
+    fn append_event_returning_newness(&self, event: &Event) -> Result<(i64, bool)> {
         // INSERT OR IGNORE handles the dedup case without raising the
-        // UNIQUE-constraint error to the caller. On ignore, last_insert_rowid
-        // is unchanged (could be 0 on a brand-new connection, or stale
-        // from a prior insert) — query the row by event_uuid to get the
-        // authoritative local id.
-        self.conn.execute(
+        // UNIQUE-constraint error to the caller. The number of rows
+        // changed tells us which branch SQLite took: 1 = inserted,
+        // 0 = ignored due to existing UNIQUE event_uuid.
+        let rows_changed = self.conn.execute(
             "INSERT OR IGNORE INTO events
                 (event_uuid, lamport_ts, device_id, kind, target_id, payload)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -337,11 +345,13 @@ impl Database {
                 event.payload,
             ],
         )?;
-        Ok(self.conn.query_row(
+        let was_new = rows_changed > 0;
+        let rowid = self.conn.query_row(
             "SELECT id FROM events WHERE event_uuid = ?1",
             params![event.event_uuid],
             |row| row.get::<_, i64>(0),
-        )?)
+        )?;
+        Ok((rowid, was_new))
     }
 
     /// All events not yet pushed to remote, ordered by `lamport_ts` ASC
@@ -447,7 +457,19 @@ impl Database {
     fn apply_event_inner(&self, event: &Event) -> Result<()> {
         // Record first — the recompute query reads from events, so the
         // freshly-arrived event needs to be visible.
-        self.append_event(event)?;
+        let (_, was_new) = self.append_event_returning_newness(event)?;
+
+        // Lamport's observation rule: when we accept a fresh event from
+        // a peer, advance our local clock to `max(local, remote) + 1`
+        // so any event we author next strictly orders after the one we
+        // just observed. We skip this for our own device's events
+        // (re-applying our own event must not bump the clock — that
+        // would break the idempotency the user-facing API depends on)
+        // and for duplicates (we already observed this one).
+        if was_new && event.device_id != self.device_id()? {
+            self.observe_remote_lamport(event.lamport_ts)?;
+        }
+
         match event.kind.as_str() {
             "session_insert" | "session_update" | "session_delete" => {
                 self.recompute_session(&event.target_id)?;
@@ -5920,6 +5942,138 @@ mod tests {
         assert_eq!(after_first.len(), after_second.len());
         assert_eq!(after_first, after_second,
             "second replay of the same batch must be a no-op on the cache");
+    }
+
+    // ── Lamport observation rule on apply_event (regression) ────────────────
+    //
+    // Per Nextcloud-Sync.md: "on remote event observation: lamport =
+    // max(lamport, remote.lamport) + 1". apply_event must advance the
+    // local clock for fresh remote events so a follow-up local write
+    // strictly orders after what we just observed. Skipped for our own
+    // device's events (idempotency) and for duplicates (only first
+    // observation counts).
+
+    #[test]
+    fn apply_event_advances_local_lamport_when_observing_a_higher_remote_event() {
+        // Local clock starts at 0. We see a remote event tagged
+        // lamport=10 from a different device. After applying, our
+        // local clock must be max(0,10)+1 = 11 — so any event we
+        // author next will sort strictly after the observed one.
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(db.lamport_clock().unwrap(), 0);
+        db.apply_event(&synth_session_insert(
+            SESSION_X, 10, DEVICE_A,
+            "2026-04-30T10:00:00", 600,
+            None, None, SessionMode::Countdown,
+        )).unwrap();
+        assert_eq!(db.lamport_clock().unwrap(), 11,
+            "observation rule: local must jump to max(local, remote)+1");
+    }
+
+    #[test]
+    fn apply_event_advances_local_lamport_even_when_local_is_already_ahead() {
+        // Local has done lots of work (clock at 50). Remote observation
+        // at lamport=10 must still advance to max(50,10)+1=51 — every
+        // observation strictly increases the clock so no two events
+        // ever share a (lamport, device_id) pair on the same device.
+        let db = Database::open_in_memory().unwrap();
+        for _ in 0..50 { db.bump_lamport_clock().unwrap(); }
+        assert_eq!(db.lamport_clock().unwrap(), 50);
+        db.apply_event(&synth_session_insert(
+            SESSION_X, 10, DEVICE_A,
+            "_", 1, None, None, SessionMode::Countdown,
+        )).unwrap();
+        assert_eq!(db.lamport_clock().unwrap(), 51);
+    }
+
+    #[test]
+    fn apply_event_does_not_advance_local_lamport_for_our_own_device_events() {
+        // Re-applying an event we authored locally (idempotency retry,
+        // or pulling our own event back from remote storage) must not
+        // shift the clock. Otherwise a "harmless retry" would silently
+        // mutate clock state and break ordering invariants.
+        let db = Database::open_in_memory().unwrap();
+        let our_device_id = db.device_id().unwrap();
+        db.bump_lamport_clock().unwrap();
+        db.bump_lamport_clock().unwrap();
+        let before = db.lamport_clock().unwrap();
+        // Author an event "from us" with a very high lamport value.
+        let our_event = synth_session_insert(
+            SESSION_X, 999, &our_device_id,
+            "_", 1, None, None, SessionMode::Countdown,
+        );
+        db.apply_event(&our_event).unwrap();
+        assert_eq!(db.lamport_clock().unwrap(), before,
+            "apply_event with our own device_id must not bump the clock");
+    }
+
+    #[test]
+    fn apply_event_does_not_advance_local_lamport_on_duplicate_remote_observation() {
+        // Receiving the same event twice — e.g. overlapping pull
+        // windows or peer-forwarded duplicates — must only bump the
+        // clock once. The bump is per *new observation*, not per call.
+        let db = Database::open_in_memory().unwrap();
+        let event = synth_session_insert(
+            SESSION_X, 10, DEVICE_A,
+            "_", 1, None, None, SessionMode::Countdown,
+        );
+        db.apply_event(&event).unwrap();
+        let after_first = db.lamport_clock().unwrap();
+        db.apply_event(&event).unwrap();
+        let after_second = db.lamport_clock().unwrap();
+        assert_eq!(after_first, after_second,
+            "second observation of the same event_uuid must not bump");
+    }
+
+    #[test]
+    fn local_writes_after_observing_a_remote_event_strictly_order_after_it() {
+        // The end-to-end correctness property: a write authored after
+        // observing a remote event must have a strictly larger
+        // lamport_ts than the remote event. Without the observation
+        // rule, a slow local clock would author "in the past" and
+        // peers would resolve it as the older write — wrong.
+        let db = Database::open_in_memory().unwrap();
+        // Remote event at lamport=20 lands on a fresh local DB.
+        db.apply_event(&synth_session_insert(
+            SESSION_X, 20, DEVICE_A,
+            "remote", 100, None, None, SessionMode::Countdown,
+        )).unwrap();
+        // Now author a local session. Its event must have lamport > 20.
+        db.insert_session(&Session {
+            start_iso: "local".into(),
+            duration_secs: 200,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Countdown,
+            uuid: String::new(),
+        }).unwrap();
+        let local_event = db.pending_events().unwrap()
+            .into_iter()
+            .find(|(_, e)| e.kind == "session_insert" && e.device_id == db.device_id().unwrap())
+            .map(|(_, e)| e)
+            .expect("local session_insert must be in pending events");
+        assert!(local_event.lamport_ts > 20,
+            "local event at lamport {} must order strictly after observed remote at 20",
+            local_event.lamport_ts);
+    }
+
+    #[test]
+    fn replay_events_advances_lamport_through_the_observation_rule() {
+        // replay_events processes a batch via apply_event_inner, which
+        // includes the observation step. After replaying a batch from
+        // a peer whose highest lamport was N, our local clock must be
+        // ≥ N+1 so subsequent local writes order after the batch.
+        let db = Database::open_in_memory().unwrap();
+        let batch = vec![
+            synth_session_insert(SESSION_X, 5, DEVICE_A,
+                "_", 1, None, None, SessionMode::Countdown),
+            synth_session_update(SESSION_X, 12, DEVICE_A,
+                "_", 1, None, None, SessionMode::Countdown),
+        ];
+        db.replay_events(&batch).unwrap();
+        assert!(db.lamport_clock().unwrap() >= 13,
+            "after replaying a batch up to lamport 12, local clock must be >= 13, got {}",
+            db.lamport_clock().unwrap());
     }
 
     #[test]
