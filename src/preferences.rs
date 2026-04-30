@@ -572,6 +572,11 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
                 match crate::keychain::store_password(url_trimmed, username_trimmed, &password) {
                     Ok(()) => password_row.set_text(""),
                     Err(e) => {
+                        // Log the full error to diagnostics — toast text
+                        // gets cut off in narrow viewports (Librem 5,
+                        // GNOME Shell), but the diagnostics file is
+                        // uncapped and visible via About → Troubleshooting.
+                        crate::diag::log(&format!("keychain store failed: {e:?}"));
                         data_toast(&dialog, &format!(
                             "{}: {e}",
                             gettext("Couldn't store password in keyring"),
