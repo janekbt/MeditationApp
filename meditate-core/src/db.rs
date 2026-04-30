@@ -475,6 +475,21 @@ impl Database {
         Ok(())
     }
 
+    /// Reset the synced flag on every event row to 0, putting all of
+    /// them back into `pending_events`. Used by the "push local up"
+    /// recovery path when the user has resolved a remote-data-lost
+    /// prompt by re-uploading their local state — the next push must
+    /// see every authored event as pending so it can bundle them all
+    /// into a fresh batch file.
+    ///
+    /// Scoped to the events table only. The caller is responsible for
+    /// also calling `wipe_known_remote_files` (so the dedup tracker
+    /// doesn't claim the freshly-emptied remote already has them).
+    pub fn flag_all_events_unsynced(&self) -> Result<()> {
+        self.conn.execute("UPDATE events SET synced = 0", [])?;
+        Ok(())
+    }
+
     /// Same as `mark_event_synced`, but for a batch of ids in a single
     /// transaction. Used by the bulk-push path: after one PUT covers
     /// all pending events, a single transaction flips the synced flag
@@ -4681,6 +4696,70 @@ mod tests {
         assert!(result.is_ok());
         assert!(db.pending_events().unwrap().is_empty(),
             "the real event must still be marked synced");
+    }
+
+    // ── flag_all_events_unsynced — "push local" recovery primitive ─────
+
+    #[test]
+    fn flag_all_events_unsynced_marks_every_synced_event_pending() {
+        // The "push local up" recovery path needs every authored
+        // event to be re-pushed as a single fresh batch. Flipping
+        // synced=0 across the table puts them all back into
+        // pending_events.
+        let db = Database::open_in_memory().unwrap();
+        let id_a = db.append_event(&sample_event(1)).unwrap();
+        let id_b = db.append_event(&sample_event(2)).unwrap();
+        db.mark_events_synced(&[id_a, id_b]).unwrap();
+        assert!(db.pending_events().unwrap().is_empty());
+
+        db.flag_all_events_unsynced().unwrap();
+        let pending = db.pending_events().unwrap();
+        assert_eq!(pending.len(), 2,
+            "every authored event must be back in pending");
+    }
+
+    #[test]
+    fn flag_all_events_unsynced_is_a_no_op_on_already_pending_events() {
+        // Already-pending rows must stay pending — the operation is
+        // idempotent. (SQLite UPDATE WHERE matches no rows is fine,
+        // but we shouldn't accidentally clobber other state.)
+        let db = Database::open_in_memory().unwrap();
+        let _ = db.append_event(&sample_event(1)).unwrap();
+        let _ = db.append_event(&sample_event(2)).unwrap();
+        let count_before = db.pending_events().unwrap().len();
+        db.flag_all_events_unsynced().unwrap();
+        assert_eq!(db.pending_events().unwrap().len(), count_before);
+    }
+
+    #[test]
+    fn flag_all_events_unsynced_on_an_empty_log_is_a_silent_no_op() {
+        // Defensive: never-synced device, empty events table. Don't
+        // crash; subsequent assertions about pending_events stay valid.
+        let db = Database::open_in_memory().unwrap();
+        db.flag_all_events_unsynced().unwrap();
+        assert!(db.pending_events().unwrap().is_empty());
+    }
+
+    #[test]
+    fn flag_all_events_unsynced_does_not_touch_other_tables() {
+        // Defensive: the operation is scoped to the synced flag.
+        // Sessions, labels, settings, and known_remote_files must
+        // survive untouched — only the events table changes.
+        let db = Database::open_in_memory().unwrap();
+        db.append_event(&sample_event(1)).unwrap();
+        let label_id = db.insert_label("focus").unwrap();
+        db.set_setting("k", "v").unwrap();
+        db.record_known_remote_file("a").unwrap();
+        let labels_before = db.list_labels().unwrap().len();
+
+        db.flag_all_events_unsynced().unwrap();
+
+        assert_eq!(db.list_labels().unwrap().len(), labels_before);
+        assert!(db.list_labels().unwrap().iter().any(|l| l.id == label_id));
+        assert_eq!(db.get_setting("k", "default").unwrap(), "v");
+        assert!(db.known_remote_file_uuids().unwrap().contains("a"),
+            "known_remote_files must be left alone — the caller wipes it \
+             explicitly when needed");
     }
 
     #[test]
