@@ -60,6 +60,9 @@ fn session_data_to_core(s: &SessionData) -> meditate_core::db::Session {
         label_id: s.label_id,
         notes: s.note.clone(),
         mode: s.mode,
+        // Empty placeholder — core's `insert_session` overwrites this
+        // with a freshly generated v4 uuid. Read paths see the real one.
+        uuid: String::new(),
     }
 }
 
@@ -140,7 +143,16 @@ impl Database {
     /// primary collision path.
     pub fn create_label(&self, name: &str) -> Result<Label> {
         let id = self.inner.insert_label(name).map_err(map_core_err)?;
-        Ok(Label { id, name: name.to_string() })
+        // Look the row back up so we return the DB-assigned uuid rather
+        // than synthesising a half-populated Label. `list_labels` is the
+        // only existing read path; it's O(n) over labels but n stays
+        // small (~tens) and label creation isn't a hot path.
+        self.inner
+            .list_labels()
+            .map_err(map_core_err)?
+            .into_iter()
+            .find(|l| l.id == id)
+            .ok_or(rusqlite::Error::QueryReturnedNoRows)
     }
 
     pub fn list_labels(&self) -> Result<Vec<Label>> {
@@ -388,6 +400,10 @@ mod tests {
             label_id: Some(7),
             notes: Some("from core".to_string()),
             mode: meditate_core::db::SessionMode::BoxBreath,
+            // Translation from core → shell drops the uuid (the GTK-side
+            // Session doesn't carry one). This test pins the rest of the
+            // mapping; uuid round-trip is covered in core's tests.
+            uuid: "ignored-by-shell".to_string(),
         };
         let s = session_from_core(99, &core);
         assert_eq!(s.id, 99);

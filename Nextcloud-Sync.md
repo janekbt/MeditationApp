@@ -192,33 +192,32 @@ F3. Network-failure resilience: partial pull/push retries, no-internet detection
 
 **Total estimate: ~12 cycles, plus device testing — call it 4-6 implementation sessions.**
 
+## Resolved decisions
+
+- **Settings sync — in scope** (decided 2026-04-30). `SettingChanged`
+  events ride the same log as session/label events, so presets, daily
+  goal, and sound choice all converge across devices.
+- **Encryption of payloads — deferred** (decided 2026-04-30). v1 ships
+  plaintext JSON on the user's own Nextcloud. Layering passphrase-derived
+  encryption on later is ~1 extra cycle of crypto plumbing if we change
+  our mind.
+
 ## Open decisions
 
-1. **Encryption of payloads.** Nextcloud's WebDAV stores plaintext.
-   For session data this is probably fine (it's already on the user's
-   own server). But if you want defense-in-depth, encrypt the JSON
-   payload with a passphrase-derived key, store nothing sensitive in
-   filenames. Adds ~1 cycle of crypto plumbing.
-
-2. **App-password storage.** `secret-service` (libsecret) on Linux is
+1. **App-password storage.** `secret-service` (libsecret) on Linux is
    the standard. Android Keystore on Android. Both have Rust crates
    (`secret-service`, `keystore`). Decide before Phase E.
 
-3. **Sync trigger policy.** Options:
+2. **Sync trigger policy.** Options:
    - Every N minutes when app is open (simple, can miss closed-app changes)
    - On every session save + N-minute heartbeat
    - Manual only (button in settings)
    Recommend: on-save + 30-min heartbeat. Configurable.
 
-4. **Event log retention before compaction.** A meditation session
+3. **Event log retention before compaction.** A meditation session
    per day = ~365 events/year. After 5 years that's 1825 events,
    each ~500 bytes JSON = ~1 MB. Fine to never compact for personal
    use. Decide if Phase F is needed at all.
-
-5. **What about settings sync?** `SettingChanged` events let you sync
-   prefs (presets, daily goal, sound choice). Decide whether that's
-   in scope or settings stay device-local. Probably in scope — annoying
-   to set up presets twice.
 
 ## Out of scope
 
