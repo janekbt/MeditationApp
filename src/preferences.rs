@@ -557,15 +557,34 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
                 return;
             }
 
-            // Persist the account first; if the keychain step fails the
-            // URL/username are still saved (the user can retry the
-            // password). Order chosen so a half-success leaves a usable
-            // state rather than a broken one.
-            // `with_db_mut` so saving the account (which is what
-            // unlocks sync from "unconfigured" to "go") immediately
-            // fires the first sync attempt. Without that the user
-            // would have to click something else to trigger it.
-            let account_result = app.with_db_mut(|db| {
+            // Order matters: store the password FIRST, then save the
+            // account, then fire the sync trigger explicitly. The
+            // alternative (account → with_db_mut auto-trigger →
+            // password) races the worker thread against the keychain
+            // write — the worker reads the keychain before the
+            // password lands, sees PasswordMissing, bails. First
+            // sync never happens until the user authors something
+            // else, so the Meditate folder isn't created on Nextcloud.
+            //
+            // Empty password = "keep what's in the keychain" — don't
+            // clobber the saved one with "".
+            if !password.is_empty() {
+                match crate::keychain::store_password(url_trimmed, username_trimmed, &password) {
+                    Ok(()) => password_row.set_text(""),
+                    Err(e) => {
+                        data_toast(&dialog, &format!(
+                            "{}: {e}",
+                            gettext("Couldn't store password in keyring"),
+                        ));
+                        return;
+                    }
+                }
+            }
+
+            // Now save the account. Use `with_db` (not `with_db_mut`)
+            // so we control when the trigger fires — explicitly,
+            // below, after BOTH credentials are in place.
+            let account_result = app.with_db(|db| {
                 crate::sync_settings::set_nextcloud_account(db, url_trimmed, username_trimmed)
             });
             match account_result {
@@ -576,31 +595,14 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
                     return;
                 }
                 None => {
-                    // No DB available — shouldn't happen at runtime.
                     data_toast(&dialog, &gettext("Database unavailable; sync settings not saved."));
                     return;
                 }
             }
 
-            // Empty password = "keep what's in the keychain". Storing
-            // an empty string would clobber the existing one which is
-            // almost never what the user means.
-            if !password.is_empty() {
-                match crate::keychain::store_password(url_trimmed, username_trimmed, &password) {
-                    Ok(()) => {
-                        password_row.set_text("");
-                        data_toast(&dialog, &gettext("Sync settings saved."));
-                    }
-                    Err(e) => {
-                        data_toast(&dialog, &format!(
-                            "{}: {e}",
-                            gettext("URL/username saved, but the password couldn't be stored"),
-                        ));
-                    }
-                }
-            } else {
-                data_toast(&dialog, &gettext("Sync settings saved."));
-            }
+            data_toast(&dialog, &gettext("Sync settings saved."));
+            // Now both pieces are persisted — kick off the first sync.
+            app.trigger_sync();
         }
     ));
 

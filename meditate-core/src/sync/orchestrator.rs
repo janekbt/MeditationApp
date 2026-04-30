@@ -133,15 +133,28 @@ impl<'a, W: WebDav> Sync<'a, W> {
     }
 
     pub fn push(&self) -> SyncResult<PushStats> {
+        // Always ensure the collection exists, even when we have zero
+        // pending events. Two reasons:
+        // - First-sync UX: after the user saves credentials and the
+        //   trigger fires, the Meditate folder appears on Nextcloud
+        //   even before any sessions have been authored. That's
+        //   meaningful confirmation that URL+credentials work.
+        // - Recovery: if a peer wiped the folder (or it never
+        //   existed), repopulation works on next sync without
+        //   requiring a fresh local mutation to wake the MKCOL path.
+        //
+        // Idempotent on the wire: 405 (Conflict-existing) is treated
+        // as success in `ensure_events_dir_exists`. The cost is one
+        // MKCOL round-trip per sync (~50-200 ms) which is small
+        // compared to the actual upload work; for offline / errored
+        // hosts, MKCOL fails the same way PUT would, so this also
+        // surfaces the auth/connectivity error one step earlier.
+        self.ensure_events_dir_exists()?;
+
         let pending = self.db.pending_events()?;
         if pending.is_empty() {
             return Ok(PushStats::default());
         }
-
-        // Idempotent: 405 Conflict on existing collection is fine.
-        // Any other error short-circuits the push so we don't try to
-        // PUT into a broken remote.
-        self.ensure_events_dir_exists()?;
 
         let mut pushed = 0;
         for (id, event) in pending {
@@ -255,17 +268,23 @@ mod tests {
     // ── Sync::push ───────────────────────────────────────────────────────────
 
     #[test]
-    fn push_on_empty_pending_is_a_noop_no_remote_writes() {
-        // Important: a sync run with nothing to push must NOT touch
-        // the remote (no MKCOL spam, no failed PUTs against an empty
-        // queue). The first-ever push on an empty fresh DB shouldn't
-        // even try to create the events directory.
+    fn push_on_empty_pending_uploads_zero_files_but_creates_events_dir() {
+        // First-sync UX: after saving credentials with no sessions yet,
+        // push runs with zero pending events. It must still MKCOL the
+        // events collection so the Meditate folder visibly appears on
+        // the user's Nextcloud — that's confirmation the credentials
+        // work. (FakeWebDav models directories implicitly, so we can't
+        // observe the MKCOL directly, but `pushed` should still be 0
+        // and no files should appear under events/.)
         let (db, fs) = setup();
         let sync = Sync::new(&db, &fs, "Meditate");
         let stats = sync.push().unwrap();
-        assert_eq!(stats.pushed, 0);
-        assert_eq!(fs.file_count(), 0,
-            "push with nothing to do must leave the remote untouched");
+        assert_eq!(stats.pushed, 0,
+            "no pending events → zero files uploaded");
+        assert!(
+            fs.list_collection("/Meditate/events/").unwrap().is_empty(),
+            "no event files created on empty pending",
+        );
     }
 
     #[test]
