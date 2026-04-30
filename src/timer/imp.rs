@@ -1161,7 +1161,18 @@ impl TimerView {
                 let new_label = imp.get_app()
                     .and_then(|app| app.with_db_mut(|db| db.create_label(&name)))
                     .and_then(|r| r.ok());
-                imp.refresh_setup_labels(new_label.map(|l| l.id));
+                imp.refresh_setup_labels(new_label.as_ref().map(|l| l.id));
+                // Persist the new label as the current mode's preferred
+                // choice. Without this, refresh_streak's later call to
+                // apply_preferred_label_for_mode (after the sync trigger
+                // completes and re-runs the visit-time refresh) reads the
+                // stale persisted value and resets the combo back to None.
+                // The notify handler that normally persists fires only on
+                // SELECT-existing-label paths (idx >= 1), not on the
+                // create-new-label flow.
+                if let Some(label) = new_label {
+                    imp.persist_label_for_mode(imp.current_mode(), Some(label.name));
+                }
             }
         });
         if let Some(win) = self.obj().root().and_then(|r| r.downcast::<gtk::Window>().ok()) {
@@ -1186,7 +1197,13 @@ impl TimerView {
                 let new_label = imp.get_app()
                     .and_then(|app| app.with_db_mut(|db| db.create_label(&name)))
                     .and_then(|r| r.ok());
-                imp.repopulate_label_combo(new_label.map(|l| l.id));
+                imp.repopulate_label_combo(new_label.as_ref().map(|l| l.id));
+                // Mirror the setup-combo fix: persist this new label as
+                // the current mode's preferred so the post-sync refresh
+                // doesn't reset the combo to the stale persisted value.
+                if let Some(label) = new_label {
+                    imp.persist_label_for_mode(imp.current_mode(), Some(label.name));
+                }
             }
         });
         if let Some(win) = self.obj().root().and_then(|r| r.downcast::<gtk::Window>().ok()) {
