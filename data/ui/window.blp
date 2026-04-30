@@ -19,8 +19,7 @@ template $MeditateWindow : Adw.ApplicationWindow {
       tag: "main";
       title: _("Meditate");
 
-      child: Adw.ToastOverlay toast_overlay {
-        child: Adw.ToolbarView {
+      child: Adw.ToolbarView {
           [top]
           Adw.HeaderBar {
             title-widget: Box {
@@ -120,30 +119,41 @@ template $MeditateWindow : Adw.ApplicationWindow {
             }
           }
 
-          content: Adw.ViewStack view_stack {
-            Adw.ViewStackPage {
-              name: "timer";
-              title: _("Timer");
-              icon-name: "alarm-symbolic";
+          // ToastOverlay sits BETWEEN the HeaderBar and the
+          // ViewSwitcherBar (rather than wrapping the whole
+          // ToolbarView) so toasts render above the bottom switcher
+          // bar. With the overlay on the outside, libadwaita anchors
+          // toasts to the bottom of the overlay's allocation — which
+          // covers the entire window — and the toast then overlaps
+          // the navigation bar. Inner placement gives the overlay
+          // exactly the content region's allocation, so toasts sit
+          // above the switcher.
+          content: Adw.ToastOverlay toast_overlay {
+            child: Adw.ViewStack view_stack {
+              Adw.ViewStackPage {
+                name: "timer";
+                title: _("Timer");
+                icon-name: "alarm-symbolic";
 
-              child: $TimerView timer_view {};
-            }
+                child: $TimerView timer_view {};
+              }
 
-            Adw.ViewStackPage {
-              name: "stats";
-              title: _("Stats");
-              icon-name: "chart-bar-symbolic";
+              Adw.ViewStackPage {
+                name: "stats";
+                title: _("Stats");
+                icon-name: "chart-bar-symbolic";
 
-              child: $StatsView stats_view {};
-            }
+                child: $StatsView stats_view {};
+              }
 
-            Adw.ViewStackPage {
-              name: "log";
-              title: _("Log");
-              icon-name: "view-list-symbolic";
+              Adw.ViewStackPage {
+                name: "log";
+                title: _("Log");
+                icon-name: "view-list-symbolic";
 
-              child: $LogView log_view {};
-            }
+                child: $LogView log_view {};
+              }
+            };
           };
 
           [bottom]
@@ -151,7 +161,6 @@ template $MeditateWindow : Adw.ApplicationWindow {
             stack: view_stack;
             reveal: false;
           }
-        };
       };
     }
   };
