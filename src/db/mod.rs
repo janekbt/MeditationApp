@@ -277,6 +277,14 @@ impl Database {
         self.inner.flag_all_events_unsynced().map_err(map_core_err)
     }
 
+    /// Erase every user-content row plus the dedup tracker — events,
+    /// sessions, labels, known_remote_files. Settings, sync_state,
+    /// and device identity survive. Used by the "wipe local to match
+    /// remote" recovery path.
+    pub fn wipe_local_event_log(&self) -> Result<()> {
+        self.inner.wipe_local_event_log().map_err(map_core_err)
+    }
+
     /// How many events are currently pending push. Mostly a test-
     /// observability helper, but useful for any caller that wants to
     /// know "is there local work to sync?" without listing the full

@@ -160,6 +160,18 @@ pub fn prepare_push_local_recovery(db: &Database) -> Result<()> {
     Ok(())
 }
 
+/// Prepare the local DB for a "wipe local to match remote" recovery:
+/// erase every user-content row (events / sessions / labels /
+/// known_remote_files) and clear any stale sync-error display state.
+/// Settings, sync_state, and device identity survive. The caller
+/// follows this with an explicit sync trigger so the remote's
+/// (possibly empty) state replays into the now-empty local store.
+pub fn prepare_wipe_local_recovery(db: &Database) -> Result<()> {
+    db.wipe_local_event_log()?;
+    clear_sync_error(db)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -288,27 +300,12 @@ mod tests {
         assert!(pending_before_recovery >= 1,
             "sanity: authoring must create a pending event");
 
-        // Pretend the previous sync succeeded by bulk-marking
-        // everything synced.
-        let ids: Vec<i64> = (1..=pending_before_recovery as i64).collect();
-        // mark_events_synced lives on core's Database; the shell's
-        // shim doesn't expose it directly, but we can drive the same
-        // outcome via a pretend successful push: flag + then assert.
-        // Simpler: call flag_all_events_unsynced first to be sure
-        // they're at 0, then call recovery and expect the same count.
-        db.flag_all_events_unsynced().unwrap();
-        let pending_after_unflag = db.pending_events_count().unwrap();
-        assert_eq!(pending_after_unflag, pending_before_recovery);
-
-        // Now simulate "everything is marked synced" by marking each
-        // pending event synced. The shell DB doesn't expose
-        // mark_events_synced — but the sync orchestrator does, via the
-        // bulk-push path. For this test, use a different angle:
-        // assert the recovery primitive is itself idempotent on
-        // already-pending events. The unsynced-after-recovery state
-        // is guaranteed by `flag_all_events_unsynced` (covered by db.rs
-        // tests directly); here we pin that the recovery wrapper
-        // delegates to it correctly.
+        // The unsynced-after-recovery state is guaranteed by
+        // `flag_all_events_unsynced` (covered by db.rs tests
+        // directly); here we just pin that the recovery wrapper
+        // delegates to it correctly — pending count is preserved
+        // (idempotent on already-pending) and the helper doesn't
+        // throw on this path.
         prepare_push_local_recovery(&db).unwrap();
         assert_eq!(db.pending_events_count().unwrap(), pending_before_recovery,
             "recovery must leave events in pending state");
@@ -337,6 +334,53 @@ mod tests {
         prepare_push_local_recovery(&db).unwrap();
         assert_eq!(get_last_sync_unix_ts(&db).unwrap(), Some(1_700_000_000),
             "the success timestamp must survive the recovery prep");
+    }
+
+    // ── prepare_wipe_local_recovery ──────────────────────────────────────
+
+    #[test]
+    fn prepare_wipe_local_recovery_clears_user_content() {
+        // The "wipe local" recovery branch erases every authored row
+        // so the next sync against the (empty) remote leaves the
+        // local DB matching it.
+        let db = fresh();
+        db.create_label("focus").unwrap();
+        // Authoring a label + a session emits events into the log.
+        let pending_before = db.pending_events_count().unwrap();
+        assert!(pending_before > 0,
+            "sanity: authoring a label must create a pending event");
+
+        prepare_wipe_local_recovery(&db).unwrap();
+
+        assert_eq!(db.list_labels().unwrap().len(), 0);
+        assert_eq!(db.pending_events_count().unwrap(), 0);
+    }
+
+    #[test]
+    fn prepare_wipe_local_recovery_preserves_sync_account() {
+        // Same constraint as set_nextcloud_account: the user is
+        // wiping local state to match the configured Nextcloud, NOT
+        // unconfiguring sync. URL+username must survive.
+        let db = fresh();
+        set_nextcloud_account(&db, "https://nc.example/", "alice").unwrap();
+        prepare_wipe_local_recovery(&db).unwrap();
+        let account = get_nextcloud_account(&db).unwrap();
+        assert_eq!(account, Some(NextcloudAccount {
+            url: "https://nc.example/".to_string(),
+            username: "alice".to_string(),
+        }));
+    }
+
+    #[test]
+    fn prepare_wipe_local_recovery_clears_error_and_kind() {
+        // Same UX rule as the push-local-recovery: take the indicator
+        // out of warning state immediately so the user doesn't see
+        // the warning while the recovery sync runs.
+        let db = fresh();
+        record_remote_data_lost(&db, "remote data appears wiped").unwrap();
+        prepare_wipe_local_recovery(&db).unwrap();
+        assert_eq!(get_last_sync_error(&db).unwrap(), None);
+        assert!(!is_last_sync_remote_data_lost(&db).unwrap());
     }
 
     // ── last_sync_error_kind: routing for the recovery dialog ────────────
