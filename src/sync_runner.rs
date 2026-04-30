@@ -99,12 +99,48 @@ pub fn run_sync_attempt(db_path: &Path) -> Result<SyncStats, SyncRunnerError> {
     };
 
     let webdav = meditate_core::sync::HttpWebDav::new(&url, &username, &password);
-    run_with_webdav(&db, &webdav)
+
+    let started = std::time::Instant::now();
+    let pending_at_start = db.pending_events().map(|v| v.len()).unwrap_or(0);
+    crate::diag::log(&format!(
+        "sync attempt starting: {pending_at_start} events pending",
+    ));
+
+    // Progress callback. With the bulk-file format the push phase
+    // does ONE PUT regardless of event count, so the callback fires
+    // at most once at the end. We log it directly there — no
+    // per-N-event throttle needed any more.
+    let progress = |pushed: usize, total: usize| {
+        let secs = started.elapsed().as_secs_f64().max(0.001);
+        crate::diag::log(&format!(
+            "sync push progress: {pushed}/{total} in {secs:.1}s ({:.1}/s)",
+            pushed as f64 / secs,
+        ));
+    };
+
+    let result = meditate_core::sync::Sync::new(&db, &webdav, REMOTE_BASE_PATH)
+        .sync_with_progress(progress);
+    let elapsed = started.elapsed();
+
+    if let Ok(stats) = &result {
+        let total = stats.pulled + stats.pushed;
+        if total > 0 {
+            let secs = elapsed.as_secs_f64().max(0.001);
+            crate::diag::log(&format!(
+                "sync: pulled {} pushed {} in {:.2}s ({:.1}/s)",
+                stats.pulled, stats.pushed, secs, total as f64 / secs,
+            ));
+        }
+    }
+
+    record_outcome(&db, &result)?;
+    result.map_err(SyncRunnerError::Sync)
 }
 
 /// The transport-agnostic core of the runner. Tests pass a FakeWebDav;
-/// the production caller above passes an HttpWebDav. Either way: run
-/// Sync::sync, record the outcome in sync_state, propagate the result.
+/// production goes through `run_sync_attempt` which adds progress
+/// logging and the keychain lookup. Either way: run Sync::sync, record
+/// the outcome in sync_state, propagate the result.
 pub fn run_with_webdav<W: WebDav>(
     db: &CoreDb,
     webdav: &W,
@@ -171,15 +207,31 @@ pub enum TestConnectionResult {
 }
 
 impl fmt::Display for TestConnectionResult {
+    /// Toast text — kept terse so it fits on narrow viewports
+    /// (Librem 5 truncates around 30 chars). Longer diagnostic
+    /// strings live in `detail()` and go to the diagnostics log.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Ok => write!(f, "Connection OK — your Nextcloud is reachable"),
-            Self::Unauthorized => write!(
-                f, "Authentication failed — check your username and app password"),
-            Self::Network(s) => write!(f, "Couldn't reach the server: {s}"),
-            Self::NotWebDavRoot => write!(
-                f, "The URL doesn't point at a WebDAV folder. Check the path component."),
-            Self::Other(s) => write!(f, "Unexpected server response: {s}"),
+            Self::Ok => write!(f, "Connection OK"),
+            Self::Unauthorized => write!(f, "Authentication failed"),
+            Self::Network(_) => write!(f, "Network error"),
+            Self::NotWebDavRoot => write!(f, "Not a WebDAV folder"),
+            Self::Other(_) => write!(f, "Server error"),
+        }
+    }
+}
+
+impl TestConnectionResult {
+    /// Detailed text for the diagnostics log — includes the
+    /// underlying error string for Network/Other so post-hoc
+    /// debugging has the full picture even though the toast is short.
+    pub fn detail(&self) -> String {
+        match self {
+            Self::Ok => "Connection OK".to_string(),
+            Self::Unauthorized => "Authentication failed (HTTP 401)".to_string(),
+            Self::Network(s) => format!("Network error: {s}"),
+            Self::NotWebDavRoot => "URL is not a WebDAV folder (HTTP 404)".to_string(),
+            Self::Other(s) => format!("Server error: {s}"),
         }
     }
 }
@@ -425,6 +477,8 @@ mod tests {
                 E::Unauthorized => E::Unauthorized,
                 E::Conflict => E::Conflict,
                 E::Network(s) => E::Network(s.clone()),
+                E::RateLimited { retry_after } =>
+                    E::RateLimited { retry_after: *retry_after },
                 E::Server { status, body } => E::Server {
                     status: *status, body: body.clone() },
                 E::MalformedResponse(s) => E::MalformedResponse(s.clone()),
@@ -485,15 +539,51 @@ mod tests {
 
     #[test]
     fn test_connection_result_display_text_is_actionable() {
-        // The Display impl IS the toast text — pin the user-facing
-        // wording so a future copy edit doesn't accidentally make it
-        // jargon-heavy.
-        assert!(TestConnectionResult::Ok.to_string().contains("Connection OK"));
-        assert!(TestConnectionResult::Unauthorized.to_string()
-            .contains("Authentication failed"));
-        assert!(TestConnectionResult::NotWebDavRoot.to_string()
-            .contains("doesn't point at a WebDAV"));
-        assert!(TestConnectionResult::Network("dns".into()).to_string()
-            .contains("Couldn't reach"));
+        // Display IS the toast text — kept short so it fits on the
+        // Librem 5 viewport. Pin the wording so a future copy edit
+        // doesn't accidentally let it grow back into the cut-off zone.
+        assert_eq!(TestConnectionResult::Ok.to_string(), "Connection OK");
+        assert_eq!(
+            TestConnectionResult::Unauthorized.to_string(),
+            "Authentication failed",
+        );
+        assert_eq!(
+            TestConnectionResult::NotWebDavRoot.to_string(),
+            "Not a WebDAV folder",
+        );
+        // Inner string is dropped from Display (it goes to detail()
+        // for the diag log), so the toast doesn't balloon when the
+        // underlying error is verbose.
+        assert_eq!(
+            TestConnectionResult::Network("Dns Failed: long verbose msg".into())
+                .to_string(),
+            "Network error",
+        );
+        assert_eq!(
+            TestConnectionResult::Other("HTTP 503: a long body".into()).to_string(),
+            "Server error",
+        );
+    }
+
+    #[test]
+    fn test_connection_result_detail_includes_inner_strings() {
+        // detail() goes to the diagnostics log — it MUST include the
+        // underlying error for Network/Other variants so a user who
+        // sends the log can be helped without guessing.
+        assert!(
+            TestConnectionResult::Network("Dns Failed: x".into())
+                .detail().contains("Dns Failed: x"),
+            "Network detail must contain the inner error",
+        );
+        assert!(
+            TestConnectionResult::Other("HTTP 503".into())
+                .detail().contains("HTTP 503"),
+            "Other detail must contain the inner error",
+        );
+        // The Ok / Unauthorized / NotWebDavRoot variants don't carry
+        // payload — detail() just emits a fuller human-readable form.
+        assert!(TestConnectionResult::Ok.detail().contains("Connection OK"));
+        assert!(TestConnectionResult::Unauthorized.detail().contains("401"));
+        assert!(TestConnectionResult::NotWebDavRoot.detail().contains("404"));
     }
 }

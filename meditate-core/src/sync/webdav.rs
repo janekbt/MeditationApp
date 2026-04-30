@@ -22,6 +22,13 @@ pub enum WebDavError {
     /// etc). The string is the underlying error's message — opaque,
     /// callers should treat it as a retry signal not a programmable error.
     Network(String),
+    /// 429 Too Many Requests. The server is asking us to slow down.
+    /// `retry_after` carries the `Retry-After` header value in seconds
+    /// when the server provided one, and `None` otherwise — callers
+    /// should fall back to exponential backoff in that case. Distinct
+    /// from `Server { status: 429, .. }` so the push retry loop can
+    /// recognise it and back off rather than surface a hard failure.
+    RateLimited { retry_after: Option<u64> },
     /// HTTP status code we didn't translate to a more specific variant.
     /// Body is included so logs can show what the server complained about.
     Server { status: u16, body: String },
@@ -37,6 +44,10 @@ impl fmt::Display for WebDavError {
             Self::Unauthorized => write!(f, "WebDAV: unauthorized (check app password)"),
             Self::Conflict => write!(f, "WebDAV: conflict (resource exists)"),
             Self::Network(s) => write!(f, "WebDAV: network error: {s}"),
+            Self::RateLimited { retry_after } => match retry_after {
+                Some(s) => write!(f, "WebDAV: rate limited (retry after {s}s)"),
+                None => write!(f, "WebDAV: rate limited"),
+            },
             Self::Server { status, body } => {
                 write!(f, "WebDAV: server returned {status}: {body}")
             }
@@ -51,10 +62,10 @@ pub type WebDavResult<T> = Result<T, WebDavError>;
 
 pub trait WebDav {
     /// List entries in a WebDAV collection (directory). Returns each
-    /// entry's URL-decoded final path segment — for events stored under
-    /// `/Meditate/events/`, this means filenames like
-    /// `00000000000001-{device_uuid}-{event_uuid}.json`. The collection
-    /// itself is NOT included in the result.
+    /// entry's URL-decoded final path segment — for events stored
+    /// under `/Meditate/events/`, this means filenames like
+    /// `00000000000001__{batch_uuid}.json`. The collection itself is
+    /// NOT included in the result.
     fn list_collection(&self, path: &str) -> WebDavResult<Vec<String>>;
 
     /// Download a file's full body. `NotFound` for missing paths.
@@ -114,8 +125,27 @@ impl HttpWebDav {
             // race signal. Treat all three as Conflict so the caller
             // can act on "resource state collided with my expectation".
             405 | 409 | 412 => WebDavError::Conflict,
+            // 429 should NEVER reach this function — verbs intercept
+            // it before the body is consumed so the Retry-After header
+            // can be read. If we see it here, the verb forgot to call
+            // `extract_rate_limit` first; surface as Server so it's
+            // visible (rather than a silent-bad-mapping bug).
             _ => WebDavError::Server { status, body },
         }
+    }
+
+    /// Read the `Retry-After` header off a ureq Response and return a
+    /// `RateLimited` variant. The header MAY be:
+    /// - an integer (seconds) — what every modern server emits;
+    /// - an HTTP-date — RFC-allowed but rare;
+    /// - missing or unparseable — degrade to None and let exponential
+    ///   backoff take over.
+    /// Splitting this out so every verb can call it on a 429 response
+    /// before consuming the body, keeping the behaviour consistent.
+    fn extract_rate_limit(resp: &ureq::Response) -> WebDavError {
+        let retry_after = resp.header("Retry-After")
+            .and_then(|s| s.trim().parse::<u64>().ok());
+        WebDavError::RateLimited { retry_after }
     }
 }
 
@@ -133,6 +163,7 @@ impl WebDav for HttpWebDav {
                 Ok(body)
             }
             Err(ureq::Error::Status(status, resp)) => {
+                if status == 429 { return Err(Self::extract_rate_limit(&resp)); }
                 let body = resp.into_string().unwrap_or_default();
                 Err(Self::map_status_error(status, body))
             }
@@ -148,8 +179,12 @@ impl WebDav for HttpWebDav {
             .set("Authorization", &self.auth_header)
             .send_bytes(body)
         {
-            Ok(_resp) => Ok(()),
+            Ok(resp) => {
+                drain_response_body(resp);
+                Ok(())
+            }
             Err(ureq::Error::Status(status, resp)) => {
+                if status == 429 { return Err(Self::extract_rate_limit(&resp)); }
                 let body = resp.into_string().unwrap_or_default();
                 Err(Self::map_status_error(status, body))
             }
@@ -165,8 +200,9 @@ impl WebDav for HttpWebDav {
             .set("Authorization", &self.auth_header)
             .call()
         {
-            Ok(_resp) => Ok(()),
+            Ok(resp) => { drain_response_body(resp); Ok(()) }
             Err(ureq::Error::Status(status, resp)) => {
+                if status == 429 { return Err(Self::extract_rate_limit(&resp)); }
                 let body = resp.into_string().unwrap_or_default();
                 Err(Self::map_status_error(status, body))
             }
@@ -180,8 +216,9 @@ impl WebDav for HttpWebDav {
             .set("Authorization", &self.auth_header)
             .call()
         {
-            Ok(_resp) => Ok(()),
+            Ok(resp) => { drain_response_body(resp); Ok(()) }
             Err(ureq::Error::Status(status, resp)) => {
+                if status == 429 { return Err(Self::extract_rate_limit(&resp)); }
                 let body = resp.into_string().unwrap_or_default();
                 Err(Self::map_status_error(status, body))
             }
@@ -204,6 +241,7 @@ impl WebDav for HttpWebDav {
         {
             Ok(resp) => resp,
             Err(ureq::Error::Status(status, resp)) => {
+                if status == 429 { return Err(Self::extract_rate_limit(&resp)); }
                 let body = resp.into_string().unwrap_or_default();
                 return Err(Self::map_status_error(status, body));
             }
@@ -218,6 +256,20 @@ impl WebDav for HttpWebDav {
 }
 
 use std::io::Read;
+
+/// Read and discard a Response's body so ureq returns the underlying
+/// connection to its idle-connection pool. ureq's pool-return
+/// semantics hinge on the body Reader being driven to EOF — if a verb
+/// just drops the Response (the obvious thing for a "no body needed"
+/// verb like PUT/MKCOL/DELETE), the connection is closed instead of
+/// pooled, and every subsequent request inside the same sync pays a
+/// full TLS handshake. On a slow CPU (Librem 5) those handshakes add
+/// up; calling this on success paths preserves keep-alive across the
+/// PROPFIND → MKCOL → PUT sequence within one sync.
+fn drain_response_body(resp: ureq::Response) {
+    let mut sink = std::io::sink();
+    let _ = std::io::copy(&mut resp.into_reader(), &mut sink);
+}
 
 /// Parse a WebDAV multistatus response body into a list of child file
 /// names, with the self-entry filtered out and URL-encoded characters
@@ -538,6 +590,85 @@ mod tests {
             "expected Conflict, got {err:?}");
     }
 
+    // ── 429 rate-limit handling ──────────────────────────────────────────
+    //
+    // Nextcloud, like most servers, can return 429 Too Many Requests
+    // when a client pushes too fast. The WebDavError::RateLimited
+    // variant lets the push retry loop distinguish this from an
+    // unrecoverable error and back off rather than fail the sync.
+
+    #[test]
+    fn put_429_with_no_retry_after_maps_to_rate_limited_with_none() {
+        // Without a Retry-After header the caller falls back to
+        // exponential backoff. RateLimited { retry_after: None } is the
+        // signal for that path.
+        let mut server = mockito::Server::new();
+        let _mock = server.mock("PUT", "/file.json")
+            .with_status(429)
+            .create();
+        let client = HttpWebDav::new(&server.url(), "u", "p");
+        let err = client.put("/file.json", b"x").unwrap_err();
+        match err {
+            WebDavError::RateLimited { retry_after } => {
+                assert_eq!(retry_after, None,
+                    "no Retry-After header → retry_after must be None");
+            }
+            other => panic!("expected RateLimited, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn put_429_with_retry_after_seconds_passes_value_through() {
+        // Server says "wait 30 s" — the value must reach the caller
+        // verbatim so the backoff state can honor it.
+        let mut server = mockito::Server::new();
+        let _mock = server.mock("PUT", "/file.json")
+            .with_status(429)
+            .with_header("retry-after", "30")
+            .create();
+        let client = HttpWebDav::new(&server.url(), "u", "p");
+        let err = client.put("/file.json", b"x").unwrap_err();
+        match err {
+            WebDavError::RateLimited { retry_after } => {
+                assert_eq!(retry_after, Some(30));
+            }
+            other => panic!("expected RateLimited, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn put_429_with_garbled_retry_after_falls_back_to_none() {
+        // Some servers send Retry-After as an HTTP-date instead of
+        // seconds, or as a malformed value. Don't crash — gracefully
+        // fall back to "none" so exponential backoff kicks in.
+        let mut server = mockito::Server::new();
+        let _mock = server.mock("PUT", "/file.json")
+            .with_status(429)
+            .with_header("retry-after", "not a number")
+            .create();
+        let client = HttpWebDav::new(&server.url(), "u", "p");
+        let err = client.put("/file.json", b"x").unwrap_err();
+        assert!(matches!(err, WebDavError::RateLimited { retry_after: None }),
+            "unparseable Retry-After must degrade to None, got {err:?}");
+    }
+
+    #[test]
+    fn rate_limited_display_text_is_informative() {
+        // The error string flows into diag logs and (for non-429
+        // failures) sometimes user-visible toasts. Verify the wording
+        // includes the key signal so a sleepy debugger spots it fast.
+        assert!(
+            WebDavError::RateLimited { retry_after: Some(45) }.to_string()
+                .contains("rate limited"),
+            "Display must mention 'rate limited'",
+        );
+        assert!(
+            WebDavError::RateLimited { retry_after: Some(45) }.to_string()
+                .contains("45"),
+            "Display must include the suggested retry-after value",
+        );
+    }
+
     #[test]
     fn delete_returns_ok_on_204() {
         // 204 No Content is the canonical success for DELETE.
@@ -766,6 +897,7 @@ mod tests {
         let names = client.list_collection("/x/").unwrap();
         assert_eq!(names, vec!["file.json".to_string()]);
     }
+
 
     #[test]
     fn list_collection_excludes_self_when_self_href_lacks_trailing_slash() {

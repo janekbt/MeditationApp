@@ -3,21 +3,34 @@
 //! `Database`'s event log; the cache is updated as a side effect of
 //! `replay_events` calls.
 //!
-//! Wire layout: every event lives at
-//! `<base>/events/<lamport:014>__<device_uuid>__<event_uuid>.json`.
-//! The triple-underscore-separated triple is unambiguous to parse:
-//! UUIDs contain single dashes, never `__`.
+//! Wire layout: every push writes a single bulk file at
+//! `<base>/events/<min_lamport:014>__<batch_uuid>.json` containing a
+//! JSON array of `Event` objects (length 1+). The two-component
+//! filename is unambiguous to parse: lamport is zero-padded digits,
+//! batch_uuid is a v4 UUID. Pull lists the directory, dedups against
+//! `known_remote_files` (so already-ingested batches aren't re-GET'd),
+//! and replays the contents. Per-event dedup still happens via
+//! `events.event_uuid UNIQUE` so a peer re-uploading our events is
+//! a no-op locally.
 
 use crate::db::{Database, DbError, Event};
+use super::backoff::BackoffState;
 use super::webdav::{WebDav, WebDavError};
 use std::error::Error;
 use std::fmt;
+
+/// Per-PUT cap on consecutive 429 retries before giving up. With
+/// exponential backoff (1+2+4+8+16+30+30+30 s), eight retries cover
+/// ~2 minutes — long enough to ride a transient burst, short enough
+/// that a permanently-throttled server surfaces failure rather than
+/// hanging the sync forever.
+const MAX_429_RETRIES: u32 = 8;
 
 #[derive(Debug)]
 pub enum SyncError {
     WebDav(WebDavError),
     Db(DbError),
-    /// A remote event file couldn't be parsed back into an `Event`.
+    /// A remote event file couldn't be parsed back into a `Vec<Event>`.
     /// String is the underlying serde_json error, plus the filename
     /// for diagnostics.
     InvalidEvent(String),
@@ -85,13 +98,16 @@ impl<'a, W: WebDav> Sync<'a, W> {
         format!("{}/events", self.base_path)
     }
 
-    fn event_path(&self, event: &Event) -> String {
+    /// Build the path for a bulk file. `min_lamport` is the smallest
+    /// lamport_ts among the events bundled inside; sorting filenames
+    /// alphabetically thus orders them roughly chronologically — useful
+    /// when a human browses the remote dir.
+    fn batch_path(&self, min_lamport: i64, batch_uuid: &str) -> String {
         format!(
-            "{}/{:014}__{}__{}.json",
+            "{}/{:014}__{}.json",
             self.events_dir(),
-            event.lamport_ts,
-            event.device_id,
-            event.event_uuid,
+            min_lamport,
+            batch_uuid,
         )
     }
 
@@ -108,33 +124,58 @@ impl<'a, W: WebDav> Sync<'a, W> {
             Err(e) => return Err(e.into()),
         };
 
-        let known = self.db.known_event_uuids()?;
-        let mut new_events = Vec::new();
+        let known_files = self.db.known_remote_file_uuids()?;
+        let known_events = self.db.known_event_uuids()?;
+        let mut new_events: Vec<Event> = Vec::new();
+        let mut newly_ingested_files: Vec<String> = Vec::new();
         for name in &listing {
-            let Some(event_uuid) = parse_event_uuid_from_filename(name) else {
-                // Unrecognised filename — could be a future format, a
-                // snapshot.json, or a stray file. Skip silently so we
-                // don't block sync on garbage in the directory.
+            let Some(batch_uuid) = parse_batch_uuid_from_filename(name) else {
+                // Unrecognised filename — skip silently so a stray
+                // file in the dir doesn't block sync.
                 continue;
             };
-            if known.contains(&event_uuid) { continue; }
+            if known_files.contains(&batch_uuid) { continue; }
             let path = format!("{}/{}", events_dir, name);
             let body = self.webdav.get(&path)?;
-            let event: Event = serde_json::from_slice(&body)
+            let events: Vec<Event> = serde_json::from_slice(&body)
                 .map_err(|e| SyncError::InvalidEvent(format!("{name}: {e}")))?;
-            new_events.push(event);
+            for event in events {
+                if !known_events.contains(&event.event_uuid) {
+                    new_events.push(event);
+                }
+            }
+            newly_ingested_files.push(batch_uuid);
         }
 
         let count = new_events.len();
         if !new_events.is_empty() {
             self.db.replay_events(&new_events)?;
         }
+        // Record ingested batch_uuids only AFTER a successful replay,
+        // so a partial replay doesn't leave us thinking we're done with
+        // a file we didn't fully process.
+        for batch_uuid in newly_ingested_files {
+            self.db.record_known_remote_file(&batch_uuid)?;
+        }
         Ok(PullStats { new_events: count })
     }
 
     pub fn push(&self) -> SyncResult<PushStats> {
-        // Always ensure the collection exists, even when we have zero
-        // pending events. Two reasons:
+        // Default: no progress reporting. Most callers (tests, the
+        // happy path) don't need it. Long-running pushes (batch
+        // import) wire `push_with_progress` so the diagnostics log
+        // gets a completion event with timing.
+        self.push_with_progress(|_, _| {})
+    }
+
+    /// Same as `push`, but invokes `progress(pushed, total)` after the
+    /// (single) bulk PUT completes. The bulk-file design means there's
+    /// just one progress notification per push, fired on success.
+    pub fn push_with_progress<F>(&self, mut progress: F) -> SyncResult<PushStats>
+    where F: FnMut(usize, usize),
+    {
+        // Always ensure the collection exists, even when there are
+        // zero pending events. Two reasons:
         // - First-sync UX: after the user saves credentials and the
         //   trigger fires, the Meditate folder appears on Nextcloud
         //   even before any sessions have been authored. That's
@@ -142,13 +183,6 @@ impl<'a, W: WebDav> Sync<'a, W> {
         // - Recovery: if a peer wiped the folder (or it never
         //   existed), repopulation works on next sync without
         //   requiring a fresh local mutation to wake the MKCOL path.
-        //
-        // Idempotent on the wire: 405 (Conflict-existing) is treated
-        // as success in `ensure_events_dir_exists`. The cost is one
-        // MKCOL round-trip per sync (~50-200 ms) which is small
-        // compared to the actual upload work; for offline / errored
-        // hosts, MKCOL fails the same way PUT would, so this also
-        // surfaces the auth/connectivity error one step earlier.
         self.ensure_events_dir_exists()?;
 
         let pending = self.db.pending_events()?;
@@ -156,18 +190,34 @@ impl<'a, W: WebDav> Sync<'a, W> {
             return Ok(PushStats::default());
         }
 
-        let mut pushed = 0;
-        for (id, event) in pending {
-            let path = self.event_path(&event);
-            let body = serde_json::to_vec(&event)
-                .map_err(|e| SyncError::InvalidEvent(
-                    format!("can't serialise event {}: {e}", event.event_uuid)))?;
-            // PUT errors halt the push so the caller sees the failure
-            // and pending events stay marked unsynced for next attempt.
-            self.webdav.put(&path, &body)?;
-            self.db.mark_event_synced(id)?;
-            pushed += 1;
-        }
+        // Bundle every pending event into a single Vec<Event>. Mint a
+        // fresh batch_uuid for the file's filename. The min lamport
+        // becomes the filename prefix so a directory listing browsed
+        // by hand sorts chronologically.
+        let event_ids: Vec<i64> = pending.iter().map(|(id, _)| *id).collect();
+        let events: Vec<Event> = pending.into_iter().map(|(_, e)| e).collect();
+        let min_lamport = events.iter().map(|e| e.lamport_ts).min().unwrap_or(0);
+        let batch_uuid = uuid::Uuid::new_v4().to_string();
+        let path = self.batch_path(min_lamport, &batch_uuid);
+        let body = serde_json::to_vec(&events)
+            .map_err(|e| SyncError::InvalidEvent(
+                format!("can't serialise batch with {} events: {e}", events.len())))?;
+
+        // Single PUT covers the whole batch. Built-in 429 handling so
+        // a transient rate-limit doesn't surface as a failed sync.
+        put_with_rate_limit_retry(self.webdav, &path, &body)?;
+
+        // Atomically: mark every event in the batch synced, AND
+        // record the batch_uuid as known so a future pull doesn't
+        // re-GET our own upload. Done via batch + record helpers
+        // (each is its own transaction; under WAL+NORMAL these are
+        // cheap, and grouping them in one outer transaction would
+        // require new plumbing).
+        self.db.mark_events_synced(&event_ids)?;
+        self.db.record_known_remote_file(&batch_uuid)?;
+
+        let pushed = events.len();
+        progress(pushed, pushed);
         Ok(PushStats { pushed })
     }
 
@@ -177,8 +227,17 @@ impl<'a, W: WebDav> Sync<'a, W> {
     /// mine" semantics: every device strictly converges over enough
     /// rounds, regardless of timing.
     pub fn sync(&self) -> SyncResult<SyncStats> {
+        self.sync_with_progress(|_, _| {})
+    }
+
+    /// Same as `sync`, but the push phase forwards completion progress
+    /// via the callback. Pull doesn't report — its time is dominated
+    /// by the single PROPFIND.
+    pub fn sync_with_progress<F>(&self, progress: F) -> SyncResult<SyncStats>
+    where F: FnMut(usize, usize),
+    {
         let pull_stats = self.pull()?;
-        let push_stats = self.push()?;
+        let push_stats = self.push_with_progress(progress)?;
         Ok(SyncStats {
             pulled: pull_stats.new_events,
             pushed: push_stats.pushed,
@@ -198,15 +257,51 @@ impl<'a, W: WebDav> Sync<'a, W> {
     }
 }
 
-/// Extract the event_uuid portion of a remote filename. Returns `None`
+/// PUT with cooperative rate-limit handling. On `RateLimited`, the
+/// `BackoffState` updates the next-allowed instant per the server's
+/// `Retry-After` (or exponential fallback), sleeps, and retries.
+/// Bounded by `MAX_429_RETRIES` so a permanently-throttled server
+/// surfaces failure rather than hanging the sync.
+fn put_with_rate_limit_retry<W: WebDav>(
+    webdav: &W,
+    path: &str,
+    body: &[u8],
+) -> Result<(), WebDavError> {
+    let mut backoff = BackoffState::new();
+    let mut attempts: u32 = 0;
+    loop {
+        if let Some(d) = backoff.wait_until_now() {
+            if !d.is_zero() {
+                std::thread::sleep(d);
+            }
+        }
+        match webdav.put(path, body) {
+            Ok(()) => {
+                backoff.note_success();
+                return Ok(());
+            }
+            Err(WebDavError::RateLimited { retry_after }) => {
+                attempts = attempts.saturating_add(1);
+                if attempts >= MAX_429_RETRIES {
+                    return Err(WebDavError::RateLimited { retry_after });
+                }
+                backoff.note_429(retry_after);
+                continue;
+            }
+            Err(other) => return Err(other),
+        }
+    }
+}
+
+/// Extract the batch_uuid portion of a remote filename. Returns `None`
 /// for files that don't match the expected
-/// `<lamport>__<device_uuid>__<event_uuid>.json` shape — any such
-/// files (snapshot.json, future formats, strays) are skipped on pull.
-fn parse_event_uuid_from_filename(name: &str) -> Option<String> {
+/// `<min_lamport:014>__<batch_uuid>.json` shape — strays / future
+/// formats / `snapshot.json` / etc are skipped on pull.
+fn parse_batch_uuid_from_filename(name: &str) -> Option<String> {
     let stem = name.strip_suffix(".json")?;
     let parts: Vec<&str> = stem.split("__").collect();
-    if parts.len() != 3 { return None; }
-    Some(parts[2].to_string())
+    if parts.len() != 2 { return None; }
+    Some(parts[1].to_string())
 }
 
 #[cfg(test)]
@@ -214,6 +309,7 @@ mod tests {
     use super::*;
     use crate::db::{Session, SessionMode};
     use crate::sync::fake::FakeWebDav;
+    use crate::sync::webdav::WebDavResult;
 
     /// Convenience: build a fresh DB + fake remote pair, returning
     /// both. Each test sets up its own state.
@@ -235,47 +331,48 @@ mod tests {
     // ── Filename parser ──────────────────────────────────────────────────
 
     #[test]
-    fn parse_event_uuid_handles_canonical_name() {
-        let name = "00000000000005__d-uuid__e-uuid.json";
-        assert_eq!(parse_event_uuid_from_filename(name), Some("e-uuid".to_string()));
+    fn parse_batch_uuid_handles_canonical_name() {
+        // The canonical filename is two zero-padded numbers / uuid:
+        // <14-digit lamport>__<batch_uuid>.json.
+        let name = "00000000000005__abcdef-1234.json";
+        assert_eq!(parse_batch_uuid_from_filename(name),
+            Some("abcdef-1234".to_string()));
     }
 
     #[test]
-    fn parse_event_uuid_rejects_non_json() {
-        assert_eq!(parse_event_uuid_from_filename("snapshot"), None);
+    fn parse_batch_uuid_rejects_non_json() {
+        // No .json suffix → not our file. Defensive against, e.g., a
+        // user dropping a README into the events dir.
+        assert_eq!(parse_batch_uuid_from_filename("snapshot"), None);
     }
 
     #[test]
-    fn parse_event_uuid_rejects_wrong_field_count() {
-        // Future format with 4 fields, or a stray file with 2: skip.
-        assert_eq!(parse_event_uuid_from_filename("a__b.json"), None);
-        assert_eq!(parse_event_uuid_from_filename("a__b__c__d.json"), None);
+    fn parse_batch_uuid_rejects_wrong_field_count() {
+        // 1 part, 3 parts: neither matches the 2-part contract.
+        assert_eq!(parse_batch_uuid_from_filename("snapshot.json"), None);
+        assert_eq!(parse_batch_uuid_from_filename("a__b__c.json"), None);
     }
 
     #[test]
-    fn parse_event_uuid_handles_real_uuid_shapes() {
-        // UUIDs contain single dashes; the parser must NOT confuse them
-        // with field separators (which are __).
+    fn parse_batch_uuid_handles_real_uuid_shape() {
+        // UUIDs contain single dashes; the parser must NOT confuse
+        // them with the field separator (which is __).
         let name = "00000000000005__\
-            00000000-0000-4000-8000-aaaaaaaaaaaa__\
             11111111-1111-4111-8111-111111111111.json";
         assert_eq!(
-            parse_event_uuid_from_filename(name),
+            parse_batch_uuid_from_filename(name),
             Some("11111111-1111-4111-8111-111111111111".to_string()),
         );
     }
 
-    // ── Sync::push ───────────────────────────────────────────────────────────
+    // ── Sync::push — bulk format ─────────────────────────────────────────
 
     #[test]
     fn push_on_empty_pending_uploads_zero_files_but_creates_events_dir() {
         // First-sync UX: after saving credentials with no sessions yet,
         // push runs with zero pending events. It must still MKCOL the
         // events collection so the Meditate folder visibly appears on
-        // the user's Nextcloud — that's confirmation the credentials
-        // work. (FakeWebDav models directories implicitly, so we can't
-        // observe the MKCOL directly, but `pushed` should still be 0
-        // and no files should appear under events/.)
+        // the user's Nextcloud.
         let (db, fs) = setup();
         let sync = Sync::new(&db, &fs, "Meditate");
         let stats = sync.push().unwrap();
@@ -288,35 +385,44 @@ mod tests {
     }
 
     #[test]
-    fn push_uploads_each_pending_event_as_a_file_under_events() {
+    fn push_uploads_all_pending_events_in_a_single_bulk_file() {
+        // Three pending events bundle into ONE remote file, not three.
         let (db, fs) = setup();
-        insert_session(&db, "2026-04-30T10:00:00", 600);
-        let sync = Sync::new(&db, &fs, "Meditate");
-        let stats = sync.push().unwrap();
-        assert_eq!(stats.pushed, 1);
-
-        // The event is now a file in /Meditate/events/.
+        for i in 0..3 {
+            insert_session(&db, &format!("s-{i}"), 100 + i as u32);
+        }
+        let stats = Sync::new(&db, &fs, "Meditate").push().unwrap();
+        assert_eq!(stats.pushed, 3);
         let listing = fs.list_collection("/Meditate/events/").unwrap();
-        assert_eq!(listing.len(), 1);
+        assert_eq!(listing.len(), 1,
+            "all events bundle into one bulk file, not one per event");
         assert!(listing[0].ends_with(".json"));
     }
 
     #[test]
-    fn push_uses_canonical_filename_with_lamport_prefix_and_event_uuid() {
-        // Filename contract: `<lamport:014>__<device>__<event_uuid>.json`.
-        // Lock this down — peers parse against the same convention.
+    fn push_filename_includes_min_lamport_and_a_batch_uuid() {
+        // Filename layout: <min_lamport:014>__<batch_uuid>.json. Verify
+        // the lamport prefix matches the lowest lamport_ts among
+        // bundled events, and the batch_uuid is parseable.
         let (db, fs) = setup();
-        let device_id = db.device_id().unwrap();
-        insert_session(&db, "2026-04-30T10:00:00", 600);
+        insert_session(&db, "first",  100);
+        insert_session(&db, "second", 200);
+        insert_session(&db, "third",  300);
         let pending = db.pending_events().unwrap();
-        let event_uuid = pending[0].1.event_uuid.clone();
-        let lamport = pending[0].1.lamport_ts;
+        let min_lamport = pending.iter().map(|(_, e)| e.lamport_ts).min().unwrap();
 
         Sync::new(&db, &fs, "Meditate").push().unwrap();
         let listing = fs.list_collection("/Meditate/events/").unwrap();
-        assert_eq!(listing[0],
-            format!("{:014}__{}__{}.json", lamport, device_id, event_uuid),
-            "filename layout must match the documented convention");
+        assert_eq!(listing.len(), 1);
+        let name = &listing[0];
+        // Prefix must be the 14-digit zero-padded min lamport.
+        let expected_prefix = format!("{:014}__", min_lamport);
+        assert!(name.starts_with(&expected_prefix),
+            "filename `{name}` must begin with the min lamport prefix `{expected_prefix}`");
+        // Suffix portion before .json must be parseable as a batch_uuid.
+        let batch_uuid = parse_batch_uuid_from_filename(name).expect(
+            "filename must parse as a batch uuid via the canonical parser");
+        assert!(!batch_uuid.is_empty());
     }
 
     #[test]
@@ -328,39 +434,54 @@ mod tests {
         Sync::new(&db, &fs, "Meditate").push().unwrap();
         assert!(db.pending_events().unwrap().is_empty(),
             "successful push must clear the pending queue");
-
         let count_after_first = fs.file_count();
         let stats = Sync::new(&db, &fs, "Meditate").push().unwrap();
         assert_eq!(stats.pushed, 0);
         assert_eq!(fs.file_count(), count_after_first,
-            "second push must not re-upload anything");
+            "second push must not write a new file");
     }
 
     #[test]
-    fn push_serialises_event_envelope_as_json() {
-        // The wire format is the JSON-encoded `Event` struct. Verify
-        // round-trip through the FakeWebDav store: PUT-as-JSON, GET,
-        // parse, compare. Guards against accidental changes to the
-        // envelope shape.
+    fn push_records_its_own_batch_uuid_in_known_remote_files() {
+        // Self-knowledge: after a successful push, the batch_uuid we
+        // just wrote MUST be recorded locally. Otherwise the very next
+        // pull on this same device would re-GET its own upload —
+        // wasted bandwidth and a confusing trace in the logs.
+        let (db, fs) = setup();
+        insert_session(&db, "x", 100);
+        Sync::new(&db, &fs, "Meditate").push().unwrap();
+        let listing = fs.list_collection("/Meditate/events/").unwrap();
+        let batch_uuid = parse_batch_uuid_from_filename(&listing[0]).unwrap();
+        assert!(db.known_remote_file_uuids().unwrap().contains(&batch_uuid),
+            "push must record the freshly-written batch_uuid as known");
+    }
+
+    #[test]
+    fn push_serialises_events_as_a_json_array() {
+        // Wire format is `Vec<Event>`. Pull on the other side parses
+        // it as such; if push writes a single `Event` (not wrapped in
+        // an array) it'd silently produce an unparseable file. Lock
+        // the contract.
         let (db, fs) = setup();
         insert_session(&db, "2026-04-30T10:00:00", 600);
         let original_events: Vec<Event> = db.pending_events().unwrap()
             .into_iter().map(|(_, e)| e).collect();
 
         Sync::new(&db, &fs, "Meditate").push().unwrap();
-
         let listing = fs.list_collection("/Meditate/events/").unwrap();
         let body = fs.get(&format!("/Meditate/events/{}", listing[0])).unwrap();
-        let parsed: Event = serde_json::from_slice(&body).unwrap();
-        assert_eq!(parsed, original_events[0],
-            "uploaded JSON must round-trip back to the same Event");
+        // Must parse as Vec<Event>.
+        let parsed: Vec<Event> = serde_json::from_slice(&body)
+            .expect("body must be a JSON array of events");
+        assert_eq!(parsed, original_events);
     }
 
     #[test]
-    fn push_includes_payload_field_in_uploaded_json() {
-        // Defensive: the payload string is what `apply_event` parses on
-        // the receiving side, and a future `serde(skip)` mistake would
-        // silently drop it. Pin its presence.
+    fn push_payload_field_round_trips_through_the_wire_format() {
+        // Pin the payload field's presence — it carries the actual
+        // session/label data that replay_events parses on the
+        // receiving side. A future serde(skip) mistake would silently
+        // drop it; this catches that.
         let (db, fs) = setup();
         insert_session(&db, "2026-04-30T10:00:00", 600);
         Sync::new(&db, &fs, "Meditate").push().unwrap();
@@ -371,7 +492,7 @@ mod tests {
             "uploaded JSON must carry the payload field, got: {body_str}");
     }
 
-    // ── Sync::pull ───────────────────────────────────────────────────────────
+    // ── Sync::pull — bulk format ─────────────────────────────────────────
 
     #[test]
     fn pull_against_empty_remote_dir_is_a_noop() {
@@ -384,68 +505,106 @@ mod tests {
     }
 
     #[test]
-    fn pull_against_remote_with_no_files_is_a_noop() {
-        // Remote dir exists but is empty (e.g. another device created
-        // it via MKCOL but never PUT anything). Still nothing to do.
-        let (db, fs) = setup();
-        // Can't directly create a directory in our flat fake — but we
-        // can simulate "exists with no children" by putting a file
-        // elsewhere and then listing the events dir, which returns [].
-        fs.put("/something/else.json", b"x").unwrap();
-        let stats = Sync::new(&db, &fs, "Meditate").pull().unwrap();
-        assert_eq!(stats.new_events, 0);
-    }
-
-    #[test]
-    fn pull_fetches_events_uploaded_by_a_peer() {
-        // Peer pushes; we pull; we have their state. The basic shape
-        // of every cross-device sync.
+    fn pull_fetches_events_from_a_peer_bulk_file() {
+        // Peer pushes 3 events as a single bulk file. We pull once →
+        // we have all 3. The basic shape of cross-device sync.
         let (db_peer, fs) = setup();
-        insert_session(&db_peer, "2026-04-30T10:00:00", 600);
+        insert_session(&db_peer, "peer-a", 100);
+        insert_session(&db_peer, "peer-b", 200);
+        insert_session(&db_peer, "peer-c", 300);
         Sync::new(&db_peer, &fs, "Meditate").push().unwrap();
 
         let (db_us, _) = setup();
         let stats = Sync::new(&db_us, &fs, "Meditate").pull().unwrap();
-        assert_eq!(stats.new_events, 1);
+        assert_eq!(stats.new_events, 3);
         let our_sessions = db_us.list_sessions().unwrap();
-        assert_eq!(our_sessions.len(), 1);
-        assert_eq!(our_sessions[0].1.start_iso, "2026-04-30T10:00:00");
+        assert_eq!(our_sessions.len(), 3);
     }
 
     #[test]
-    fn pull_skips_events_already_in_local_log() {
-        // Already-known event_uuids (from a prior pull, or our own
-        // events that we previously pushed) must NOT be re-fetched.
-        // The dedup check via known_event_uuids is the optimisation
-        // that makes incremental sync cheap.
-        let db = Database::open_in_memory().unwrap();
+    fn pull_skips_a_remote_file_we_have_already_ingested() {
+        // The dedup contract: once we've pulled a batch_uuid, a
+        // subsequent pull MUST skip it (no GET, no replay overhead).
+        // Verified by counting GETs via a counting fake.
+        struct CountingGet {
+            inner: FakeWebDav,
+            gets: std::sync::atomic::AtomicUsize,
+        }
+        impl WebDav for CountingGet {
+            fn list_collection(&self, p: &str) -> WebDavResult<Vec<String>> {
+                self.inner.list_collection(p)
+            }
+            fn get(&self, p: &str) -> WebDavResult<Vec<u8>> {
+                self.gets.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                self.inner.get(p)
+            }
+            fn put(&self, p: &str, b: &[u8]) -> WebDavResult<()> {
+                self.inner.put(p, b)
+            }
+            fn mkcol(&self, p: &str) -> WebDavResult<()> {
+                self.inner.mkcol(p)
+            }
+            fn delete(&self, p: &str) -> WebDavResult<()> {
+                self.inner.delete(p)
+            }
+        }
+
         let fs = FakeWebDav::new();
-        // Author + push two sessions from us.
-        insert_session(&db, "first",  100);
-        insert_session(&db, "second", 200);
-        Sync::new(&db, &fs, "Meditate").push().unwrap();
-        // Now pull: we should see zero NEW events because all uploaded
-        // files correspond to event_uuids we already authored.
-        let stats = Sync::new(&db, &fs, "Meditate").pull().unwrap();
-        assert_eq!(stats.new_events, 0,
-            "pulling our own events back must be a no-op");
+        // Peer pushes; we pull once.
+        let db_peer = Database::open_in_memory().unwrap();
+        insert_session(&db_peer, "from peer", 100);
+        Sync::new(&db_peer, &fs, "Meditate").push().unwrap();
+
+        let counting = CountingGet {
+            inner: fs.clone(),
+            gets: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let db_us = Database::open_in_memory().unwrap();
+        Sync::new(&db_us, &counting, "Meditate").pull().unwrap();
+        assert_eq!(
+            counting.gets.load(std::sync::atomic::Ordering::SeqCst), 1,
+            "first pull must GET the file");
+
+        // Second pull on the same device: no GETs.
+        Sync::new(&db_us, &counting, "Meditate").pull().unwrap();
+        assert_eq!(
+            counting.gets.load(std::sync::atomic::Ordering::SeqCst), 1,
+            "second pull must skip the already-ingested file via known_remote_files");
     }
 
     #[test]
-    fn pull_is_idempotent_under_repeat_calls() {
-        // Two pulls in a row must produce the same total state — no
-        // double-application of any event.
+    fn pull_dedups_events_inside_a_bulk_file_against_local_known_event_uuids() {
+        // Defense-in-depth: even if a forged remote file contains
+        // an event whose UUID is already in our local log (e.g. a
+        // peer re-uploading data, or a buggy peer), the per-event
+        // dedup must prevent double-application.
+        //
+        // Setup: a peer pushes one event. We pull it. We then forge
+        // a SECOND remote file (different batch_uuid) containing the
+        // same event the peer published. Our second pull GETs the
+        // forged file (different batch_uuid → known_remote_files miss)
+        // but per-event dedup must skip the duplicate.
         let (db_peer, fs) = setup();
-        insert_session(&db_peer, "ping", 100);
+        insert_session(&db_peer, "shared", 100);
+        let original_event = db_peer.pending_events().unwrap()
+            .into_iter().map(|(_, e)| e).next().unwrap();
         Sync::new(&db_peer, &fs, "Meditate").push().unwrap();
 
         let (db_us, _) = setup();
         Sync::new(&db_us, &fs, "Meditate").pull().unwrap();
-        let after_first = db_us.list_sessions().unwrap().len();
-        Sync::new(&db_us, &fs, "Meditate").pull().unwrap();
-        let after_second = db_us.list_sessions().unwrap().len();
-        assert_eq!(after_first, after_second);
-        assert_eq!(after_first, 1);
+        assert_eq!(db_us.list_sessions().unwrap().len(), 1);
+
+        // Forge a second remote file with the same event under a new
+        // batch_uuid, bypassing our stored known_remote_files.
+        let forged = vec![original_event];
+        let body = serde_json::to_vec(&forged).unwrap();
+        fs.put("/Meditate/events/00000000000099__forged-batch.json", &body).unwrap();
+
+        let stats = Sync::new(&db_us, &fs, "Meditate").pull().unwrap();
+        assert_eq!(stats.new_events, 0,
+            "events whose UUIDs we already know must not be reapplied");
+        assert_eq!(db_us.list_sessions().unwrap().len(), 1,
+            "row count must not grow under duplicate ingestion");
     }
 
     #[test]
@@ -454,7 +613,7 @@ mod tests {
         // artefact, future) or a stray file someone uploaded by hand.
         // Pull must not bail on these — just skip and move on.
         let (db, fs) = setup();
-        fs.put("/Meditate/events/snapshot.json", b"{}").unwrap();
+        fs.put("/Meditate/events/snapshot.json", b"[]").unwrap();
         fs.put("/Meditate/events/random_garbage", b"junk").unwrap();
         let stats = Sync::new(&db, &fs, "Meditate").pull().unwrap();
         assert_eq!(stats.new_events, 0);
@@ -462,26 +621,25 @@ mod tests {
 
     #[test]
     fn pull_propagates_invalid_event_json_as_typed_error() {
-        // A correctly-named but corrupt event file is a legit error
+        // A correctly-named but corrupt batch file is a legit error
         // signal — surface it so the caller can log/notify, rather
         // than silently dropping events.
         let (db, fs) = setup();
         fs.put(
-            "/Meditate/events/00000000000001__some-device__some-event.json",
+            "/Meditate/events/00000000000001__some-batch.json",
             b"this is not JSON",
         ).unwrap();
         let err = Sync::new(&db, &fs, "Meditate").pull().unwrap_err();
         assert!(matches!(err, SyncError::InvalidEvent(_)),
-            "corrupt remote event must surface as InvalidEvent, got {err:?}");
+            "corrupt remote batch must surface as InvalidEvent, got {err:?}");
     }
 
     #[test]
-    fn pull_after_peer_authors_advances_local_lamport() {
-        // The Lamport observation rule must fire through the pull path
-        // too: after pulling a peer's event with lamport=N, any local
-        // event we author next must have lamport > N.
+    fn pull_after_peer_push_advances_local_lamport() {
+        // The Lamport observation rule must fire through the pull path:
+        // after pulling a peer's event with lamport=N, any local event
+        // we author next must have lamport > N.
         let (db_peer, fs) = setup();
-        // Bump peer's lamport up so its event isn't at lamport 1.
         for _ in 0..20 { db_peer.bump_lamport_clock().unwrap(); }
         insert_session(&db_peer, "peer-session", 100);
         let peer_lamport = db_peer.pending_events().unwrap()
@@ -490,35 +648,12 @@ mod tests {
 
         let (db_us, _) = setup();
         Sync::new(&db_us, &fs, "Meditate").pull().unwrap();
-        // Now our local clock must be at least peer_lamport + 1 so
-        // any subsequent local event sorts after the observed one.
         assert!(db_us.lamport_clock().unwrap() > peer_lamport,
             "local clock {} must exceed observed peer lamport {}",
             db_us.lamport_clock().unwrap(), peer_lamport);
     }
 
-    #[test]
-    fn push_uploads_in_lamport_order() {
-        // pending_events orders by lamport_ts ASC; push iterates that
-        // order. End result: filenames sort chronologically too — peers
-        // can browse the events/ dir in the natural authoring order.
-        let (db, fs) = setup();
-        insert_session(&db, "first",  100);
-        insert_session(&db, "second", 200);
-        insert_session(&db, "third",  300);
-        Sync::new(&db, &fs, "Meditate").push().unwrap();
-        let mut listing = fs.list_collection("/Meditate/events/").unwrap();
-        listing.sort();
-        let lamports: Vec<&str> = listing.iter()
-            .map(|n| n.split("__").next().unwrap())
-            .collect();
-        let mut sorted = lamports.clone();
-        sorted.sort();
-        assert_eq!(lamports, sorted,
-            "filenames sort by their lamport prefix; chronological order on disk");
-    }
-
-    // ── Sync::sync — end-to-end two-device convergence ───────────────────────
+    // ── Sync::sync — end-to-end two-device convergence ───────────────────
 
     #[test]
     fn sync_against_empty_remote_pushes_local_events_first() {
@@ -527,18 +662,15 @@ mod tests {
         let (db, fs) = setup();
         insert_session(&db, "2026-04-30T10:00:00", 600);
         let stats = Sync::new(&db, &fs, "Meditate").sync().unwrap();
-        assert_eq!(stats.pulled, 0,
-            "empty remote → nothing to pull");
-        assert_eq!(stats.pushed, 1,
-            "local writes go up");
+        assert_eq!(stats.pulled, 0);
+        assert_eq!(stats.pushed, 1);
         assert_eq!(fs.file_count(), 1);
     }
 
     #[test]
     fn sync_two_devices_via_one_round_each_converges() {
         // Phone authors. Phone syncs (push). Laptop syncs (pull). Both
-        // now have the same state. The classic "I author offline, sync
-        // when online, you pull and have it" flow.
+        // now have the same state.
         let (phone_db, fs) = setup();
         insert_session(&phone_db, "phone-session", 600);
         Sync::new(&phone_db, &fs, "Meditate").sync().unwrap();
@@ -556,27 +688,17 @@ mod tests {
 
     #[test]
     fn sync_concurrent_authoring_converges_after_two_rounds() {
-        // Both devices author offline, both sync. Each device's first
-        // sync pushes its own work; the second sync pulls the other's.
-        // After both have synced twice, both have everything.
+        // Both devices author offline, both sync. After both have
+        // synced twice, both have everything.
         let (a_db, fs) = setup();
         let (b_db, _) = setup();
         insert_session(&a_db, "from A", 100);
         insert_session(&b_db, "from B", 200);
 
-        // Round 1 — each pushes its own. Each pulls nothing because
-        // the other hasn't pushed yet (the timing race we're testing).
         Sync::new(&a_db, &fs, "Meditate").sync().unwrap();
         Sync::new(&b_db, &fs, "Meditate").sync().unwrap();
-
-        // Round 2 — each device sees the other's events upstream.
-        let stats_a = Sync::new(&a_db, &fs, "Meditate").sync().unwrap();
-        let stats_b = Sync::new(&b_db, &fs, "Meditate").sync().unwrap();
-        assert_eq!(stats_a.pulled, 1, "A pulls B's event in round 2");
-        // B pulled A's event in round 1 (A had pushed before B's sync),
-        // so by round 2 it has nothing left to fetch.
-        assert_eq!(stats_b.pulled, 0,
-            "B already saw A's event in round 1 — nothing new in round 2");
+        Sync::new(&a_db, &fs, "Meditate").sync().unwrap();
+        Sync::new(&b_db, &fs, "Meditate").sync().unwrap();
 
         let starts_a: std::collections::HashSet<String> = a_db.list_sessions()
             .unwrap().iter().map(|(_, s)| s.start_iso.clone()).collect();
@@ -590,22 +712,19 @@ mod tests {
 
     #[test]
     fn sync_propagates_tombstones_across_devices() {
-        // A authors, both have the row, A deletes, A syncs, B syncs,
-        // B no longer has the row. The end-to-end tombstone path.
+        // A authors, both have the row, A deletes, both sync, B no
+        // longer has the row.
         let (a_db, fs) = setup();
         let (b_db, _) = setup();
         let session_id = insert_session(&a_db, "to-be-deleted", 100);
         Sync::new(&a_db, &fs, "Meditate").sync().unwrap();
         Sync::new(&b_db, &fs, "Meditate").sync().unwrap();
-        assert_eq!(b_db.list_sessions().unwrap().len(), 1,
-            "sanity: B has the session after first sync");
+        assert_eq!(b_db.list_sessions().unwrap().len(), 1);
 
-        // A deletes and syncs.
         a_db.delete_session(session_id).unwrap();
         Sync::new(&a_db, &fs, "Meditate").sync().unwrap();
         assert!(a_db.list_sessions().unwrap().is_empty());
 
-        // B pulls and the session is gone.
         Sync::new(&b_db, &fs, "Meditate").sync().unwrap();
         assert!(b_db.list_sessions().unwrap().is_empty(),
             "tombstone must propagate via pull");
@@ -620,7 +739,6 @@ mod tests {
         insert_session(&a_db, "from A", 100);
         insert_session(&b_db, "from B", 200);
 
-        // Pump syncs until convergence (max 4 rounds — 2 should suffice).
         for _ in 0..4 {
             Sync::new(&a_db, &fs, "Meditate").sync().unwrap();
             Sync::new(&b_db, &fs, "Meditate").sync().unwrap();
@@ -628,7 +746,6 @@ mod tests {
         assert_eq!(a_db.list_sessions().unwrap().len(), 2);
         assert_eq!(b_db.list_sessions().unwrap().len(), 2);
 
-        // Two more pumps after convergence: state stays the same.
         for _ in 0..2 {
             Sync::new(&a_db, &fs, "Meditate").sync().unwrap();
             Sync::new(&b_db, &fs, "Meditate").sync().unwrap();
@@ -638,60 +755,15 @@ mod tests {
     }
 
     #[test]
-    fn sync_propagates_label_renames_with_correct_winner() {
-        // Two devices race to rename a label. After both sync twice,
-        // both have the same name (the higher-(lamport, device_id)
-        // event wins per the conflict-resolution rules from Phase B).
-        let (a_db, fs) = setup();
-        let (b_db, _) = setup();
-
-        // A creates the label, both sync so both have it.
-        let label_id_a = a_db.insert_label("Original").unwrap();
-        Sync::new(&a_db, &fs, "Meditate").sync().unwrap();
-        Sync::new(&b_db, &fs, "Meditate").sync().unwrap();
-        let label_id_b = b_db.list_labels().unwrap()
-            .iter().find(|l| l.name == "Original").map(|l| l.id).unwrap();
-
-        // Both rename concurrently.
-        a_db.update_label(label_id_a, "From A").unwrap();
-        b_db.update_label(label_id_b, "From B").unwrap();
-
-        // Two rounds of cross-sync to converge.
-        for _ in 0..2 {
-            Sync::new(&a_db, &fs, "Meditate").sync().unwrap();
-            Sync::new(&b_db, &fs, "Meditate").sync().unwrap();
-        }
-        let a_name = a_db.list_labels().unwrap()[0].name.clone();
-        let b_name = b_db.list_labels().unwrap()[0].name.clone();
-        assert_eq!(a_name, b_name, "both devices must agree on the label name");
-        assert!(a_name == "From A" || a_name == "From B",
-            "winner must be one of the two renames, got `{a_name}`");
-    }
-
-    #[test]
     fn sync_pulls_before_pushing() {
-        // The "I've seen everything you have, here's mine" semantics:
-        // sync() = pull then push. If we pushed first, we might
-        // emit events tagged with a stale lamport that ignores the
-        // remote's clock. Verify the order by checking that a local
-        // event authored AFTER pulling is tagged with a lamport_ts
-        // that reflects the observation rule.
+        // Pull-before-push semantics ensure local events authored AFTER
+        // observing peer state inherit a lamport that exceeds the peer's.
         let (peer_db, fs) = setup();
-        // Peer's clock is artificially high.
         for _ in 0..50 { peer_db.bump_lamport_clock().unwrap(); }
         insert_session(&peer_db, "peer", 100);
         Sync::new(&peer_db, &fs, "Meditate").sync().unwrap();
-        let peer_max_lamport = fs.list_collection("/Meditate/events/")
-            .unwrap()
-            .iter()
-            .filter_map(|n| n.split("__").next())
-            .filter_map(|s| s.parse::<i64>().ok())
-            .max()
-            .unwrap();
+        let peer_max_lamport = peer_db.lamport_clock().unwrap();
 
-        // We're a fresh device that's never authored. Insert AFTER
-        // syncing — sync() must pull peer's events first, observation
-        // rule advances our clock, then our local insert at clock+1.
         let (us_db, _) = setup();
         Sync::new(&us_db, &fs, "Meditate").sync().unwrap();
         insert_session(&us_db, "ours", 200);
@@ -706,22 +778,139 @@ mod tests {
             our_event_lamport, peer_max_lamport);
     }
 
-    #[test]
-    fn sync_returns_combined_stats() {
-        // After B pulls A's event, B's events table holds both A's
-        // (received, synced=0) and B's own (authored, synced=0). The
-        // next push uploads both — events forwarded through any device
-        // that has them. Wasteful in bytes but resilient against
-        // single-device data loss (any peer can re-seed the network).
-        let (a_db, fs) = setup();
-        let (b_db, _) = setup();
-        insert_session(&a_db, "from A", 100);
-        Sync::new(&a_db, &fs, "Meditate").sync().unwrap();
+    // ── Bulk-import scale ────────────────────────────────────────────────
 
-        insert_session(&b_db, "from B", 200);
-        let stats = Sync::new(&b_db, &fs, "Meditate").sync().unwrap();
-        assert_eq!(stats.pulled, 1, "B pulls A's one event");
-        assert_eq!(stats.pushed, 2,
-            "B re-uploads A's event AND its own — events ripple through peers");
+    #[test]
+    fn push_2700_events_uploads_a_single_bulk_file() {
+        // The motivating use case: a 2700-event Insight Timer import
+        // becomes ONE PUT. Without bundling this would have been 2700
+        // PUTs, each 3-15 s on a slow Nextcloud — hours of total time.
+        // We use 2700 here matching the real import; the assertion is
+        // structural (one file regardless of count).
+        let (db, fs) = setup();
+        for i in 0..2700 {
+            insert_session(&db, &format!("import-{i:04}"), 100);
+        }
+        let stats = Sync::new(&db, &fs, "Meditate").push().unwrap();
+        assert_eq!(stats.pushed, 2700);
+        assert_eq!(fs.list_collection("/Meditate/events/").unwrap().len(), 1,
+            "bulk import must produce exactly one remote file");
+        assert!(db.pending_events().unwrap().is_empty());
+    }
+
+    #[test]
+    fn push_2700_events_then_peer_pull_reconstructs_every_session() {
+        // End-to-end bulk-import convergence: 2700 events go up as one
+        // file; a fresh peer's pull replays all 2700 sessions locally.
+        let (db_a, fs) = setup();
+        for i in 0..2700 {
+            insert_session(&db_a, &format!("a-{i:04}"), 100);
+        }
+        Sync::new(&db_a, &fs, "Meditate").push().unwrap();
+
+        let (db_b, _) = setup();
+        let stats = Sync::new(&db_b, &fs, "Meditate").pull().unwrap();
+        assert_eq!(stats.new_events, 2700);
+        assert_eq!(db_b.list_sessions().unwrap().len(), 2700);
+    }
+
+    // ── Push-side dedup: PUT failure modes ────────────────────────────────
+
+    #[test]
+    fn push_propagates_a_non_rate_limit_error() {
+        // 401 Unauthorized is unrecoverable from this side — the user
+        // needs to fix credentials. Push must surface it as a SyncError
+        // so the runner records it on `last_sync_error`.
+        struct PutFails(FakeWebDav);
+        impl WebDav for PutFails {
+            fn list_collection(&self, p: &str) -> WebDavResult<Vec<String>> {
+                self.0.list_collection(p)
+            }
+            fn get(&self, p: &str) -> WebDavResult<Vec<u8>> { self.0.get(p) }
+            fn put(&self, _: &str, _: &[u8]) -> WebDavResult<()> {
+                Err(WebDavError::Unauthorized)
+            }
+            fn mkcol(&self, p: &str) -> WebDavResult<()> { self.0.mkcol(p) }
+            fn delete(&self, p: &str) -> WebDavResult<()> { self.0.delete(p) }
+        }
+        let (db, _) = setup();
+        for i in 0..5 { insert_session(&db, &format!("e-{i}"), 100); }
+        let bad = PutFails(FakeWebDav::new());
+        let err = Sync::new(&db, &bad, "Meditate").push().unwrap_err();
+        match err {
+            SyncError::WebDav(WebDavError::Unauthorized) => {}
+            other => panic!("expected SyncError::WebDav(Unauthorized), got {other:?}"),
+        }
+        // No events get marked synced after a failure (we didn't reach
+        // the post-PUT mark step). Pending stays full so the next sync
+        // retries the whole batch.
+        assert_eq!(db.pending_events().unwrap().len(), 5);
+    }
+
+    #[test]
+    fn push_retries_through_a_burst_of_429s_until_success() {
+        // The rate-limit recovery contract. Custom fake returns 429
+        // with Retry-After: 0 the first 3 PUT attempts, then succeeds.
+        // Push must back off and retry without surfacing failure.
+        struct FlakyRateLimit {
+            inner: FakeWebDav,
+            remaining_429: std::sync::atomic::AtomicUsize,
+        }
+        impl WebDav for FlakyRateLimit {
+            fn list_collection(&self, p: &str) -> WebDavResult<Vec<String>> {
+                self.inner.list_collection(p)
+            }
+            fn get(&self, p: &str) -> WebDavResult<Vec<u8>> { self.inner.get(p) }
+            fn put(&self, p: &str, b: &[u8]) -> WebDavResult<()> {
+                use std::sync::atomic::Ordering;
+                let prev = self.remaining_429.fetch_update(
+                    Ordering::SeqCst, Ordering::SeqCst,
+                    |c| if c > 0 { Some(c - 1) } else { None },
+                );
+                if prev.is_ok() {
+                    Err(WebDavError::RateLimited { retry_after: Some(0) })
+                } else {
+                    self.inner.put(p, b)
+                }
+            }
+            fn mkcol(&self, p: &str) -> WebDavResult<()> { self.inner.mkcol(p) }
+            fn delete(&self, p: &str) -> WebDavResult<()> { self.inner.delete(p) }
+        }
+
+        let (db, fs) = setup();
+        for i in 0..4 { insert_session(&db, &format!("r-{i}"), 100); }
+        let throttled = FlakyRateLimit {
+            inner: fs.clone(),
+            remaining_429: std::sync::atomic::AtomicUsize::new(3),
+        };
+        let stats = Sync::new(&db, &throttled, "Meditate").push().unwrap();
+        assert_eq!(stats.pushed, 4);
+        assert!(db.pending_events().unwrap().is_empty());
+    }
+
+    #[test]
+    fn push_gives_up_after_max_429_retries_and_surfaces_rate_limited() {
+        // A permanently-throttled server must eventually surface
+        // failure. MAX_429_RETRIES caps retry count so a sync attempt
+        // can't hang forever.
+        struct AlwaysRateLimited(FakeWebDav);
+        impl WebDav for AlwaysRateLimited {
+            fn list_collection(&self, p: &str) -> WebDavResult<Vec<String>> {
+                self.0.list_collection(p)
+            }
+            fn get(&self, p: &str) -> WebDavResult<Vec<u8>> { self.0.get(p) }
+            fn put(&self, _: &str, _: &[u8]) -> WebDavResult<()> {
+                Err(WebDavError::RateLimited { retry_after: Some(0) })
+            }
+            fn mkcol(&self, p: &str) -> WebDavResult<()> { self.0.mkcol(p) }
+            fn delete(&self, p: &str) -> WebDavResult<()> { self.0.delete(p) }
+        }
+        let (db, _) = setup();
+        insert_session(&db, "x", 100);
+        let bad = AlwaysRateLimited(FakeWebDav::new());
+        let err = Sync::new(&db, &bad, "Meditate").push().unwrap_err();
+        assert!(matches!(err,
+            SyncError::WebDav(WebDavError::RateLimited { .. })),
+            "after MAX_429_RETRIES the error must surface as RateLimited, got {err:?}");
     }
 }

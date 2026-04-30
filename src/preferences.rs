@@ -539,7 +539,9 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
         .build();
     test_row.add_suffix(&test_btn);
     test_row.set_activatable_widget(Some(&test_btn));
-    sync_group.add(&test_row);
+    // Note: test_row is added to sync_group below, AFTER save_row, so
+    // the save action sits closer to the input fields and Test reads
+    // as a secondary verification step.
 
     test_btn.connect_clicked(glib::clone!(
         #[weak] dialog,
@@ -551,8 +553,7 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
             let url = url_row.text().trim().to_string();
             let username = username_row.text().trim().to_string();
             if url.is_empty() || username.is_empty() {
-                data_toast(&dialog, &gettext(
-                    "Enter a URL and username before testing."));
+                data_toast(&dialog, &gettext("Enter URL and username"));
                 return;
             }
             // If the password field is blank, fall back to the saved
@@ -563,13 +564,14 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
                 match crate::keychain::read_password(&url, &username) {
                     Ok(Some(p)) => p,
                     Ok(None) => {
-                        data_toast(&dialog, &gettext(
-                            "Enter a password — there's no saved one to test against."));
+                        data_toast(&dialog, &gettext("Enter a password"));
                         return;
                     }
                     Err(e) => {
-                        data_toast(&dialog, &format!(
-                            "{}: {e}", gettext("Couldn't read the saved password")));
+                        // Full error to diag log; toast stays narrow.
+                        crate::diag::log(&format!(
+                            "test_connection: keychain read failed: {e:?}"));
+                        data_toast(&dialog, &gettext("Keyring read failed"));
                         return;
                     }
                 }
@@ -595,14 +597,20 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
                             &url, &username, &password)
                     }).await;
                     test_btn.set_sensitive(true);
-                    let msg = match result {
-                        Ok(r) => r.to_string(),
-                        Err(_) => gettext(
-                            "Test connection thread panicked — see diagnostics."),
+                    // Toast = short Display; diag log = full detail().
+                    // Keeps the phone toast inside the visible width
+                    // while preserving the network-error specifics
+                    // for post-hoc troubleshooting.
+                    let (toast, detail) = match result {
+                        Ok(r) => (r.to_string(), r.detail()),
+                        Err(_) => {
+                            let m = gettext("Test failed");
+                            (m.clone(), "worker thread panicked".to_string())
+                        }
                     };
-                    crate::diag::log(&format!("test_connection: {msg}"));
+                    crate::diag::log(&format!("test_connection: {detail}"));
                     dialog.add_toast(adw::Toast::builder()
-                        .title(&msg).timeout(6).build());
+                        .title(&toast).timeout(4).build());
                 }
             ));
         }
@@ -623,6 +631,7 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
     save_row.add_suffix(&save_btn);
     save_row.set_activatable_widget(Some(&save_btn));
     sync_group.add(&save_row);
+    sync_group.add(&test_row);
 
     save_btn.connect_clicked(glib::clone!(
         #[strong] app,
@@ -642,8 +651,7 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
             let username_trimmed = username.trim();
 
             if url_trimmed.is_empty() || username_trimmed.is_empty() {
-                data_toast(&dialog, &gettext(
-                    "URL and username are required."));
+                data_toast(&dialog, &gettext("Enter URL and username"));
                 return;
             }
 
@@ -667,10 +675,7 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
                         // GNOME Shell), but the diagnostics file is
                         // uncapped and visible via About → Troubleshooting.
                         crate::diag::log(&format!("keychain store failed: {e:?}"));
-                        data_toast(&dialog, &format!(
-                            "{}: {e}",
-                            gettext("Couldn't store password in keyring"),
-                        ));
+                        data_toast(&dialog, &gettext("Keyring write failed"));
                         return;
                     }
                 }
@@ -685,17 +690,18 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
             match account_result {
                 Some(Ok(())) => {}
                 Some(Err(e)) => {
-                    data_toast(&dialog, &format!(
-                        "{}: {e}", gettext("Couldn't save sync settings")));
+                    crate::diag::log(&format!(
+                        "sync settings save failed: {e:?}"));
+                    data_toast(&dialog, &gettext("Save failed"));
                     return;
                 }
                 None => {
-                    data_toast(&dialog, &gettext("Database unavailable; sync settings not saved."));
+                    data_toast(&dialog, &gettext("Database unavailable"));
                     return;
                 }
             }
 
-            data_toast(&dialog, &gettext("Sync settings saved."));
+            data_toast(&dialog, &gettext("Sync settings saved"));
             // Now both pieces are persisted — kick off the first sync.
             app.trigger_sync();
         }

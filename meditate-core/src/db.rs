@@ -193,6 +193,16 @@ const SCHEMA: &str = "
         key   TEXT PRIMARY KEY,
         value TEXT NOT NULL
     );
+    -- Filename-level dedup for the bulk-file sync layout. Each remote
+    -- file has a `batch_uuid` baked into its name; the puller records
+    -- batch_uuids it has already ingested here so a subsequent pull
+    -- can skip GET on files it already replayed (events themselves are
+    -- still dedup'd by event_uuid via `events`, but this avoids the
+    -- per-file GET round-trip). The pusher records its own batch_uuid
+    -- here on success so we don't re-fetch our own uploads.
+    CREATE TABLE IF NOT EXISTS known_remote_files (
+        file_uuid TEXT PRIMARY KEY
+    );
 ";
 
 impl Database {
@@ -203,6 +213,21 @@ impl Database {
 
     pub fn open(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)?;
+        // For on-disk databases, enable WAL with synchronous=NORMAL.
+        // The default (rollback journal + synchronous=FULL) does a
+        // full fsync on every commit — autocommit UPDATEs become
+        // ~50–200 ms each on phone eMMC, which bottlenecks any
+        // hot-loop write. WAL+NORMAL fsyncs only on checkpoint and
+        // the WAL header on commit, two orders of magnitude cheaper.
+        // Durability tradeoff: a power loss between commit and
+        // checkpoint may roll back a small number of recently
+        // committed transactions. Acceptable here — events are
+        // append-only and idempotent on re-sync.
+        //
+        // In-memory `open_in_memory` skips this — WAL on `:memory:` is
+        // a no-op (the journal is also in memory) and synchronous
+        // doesn't apply.
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
         Self::init(conn)
     }
 
@@ -401,6 +426,30 @@ impl Database {
         Ok(ids)
     }
 
+    /// Return every remote file_uuid that this device has already
+    /// ingested or pushed. The puller queries this BEFORE issuing a GET
+    /// on each remote file, so it can skip files it already pulled.
+    /// The pusher inserts its own batch_uuid into this table on
+    /// successful PUT.
+    pub fn known_remote_file_uuids(&self) -> Result<std::collections::HashSet<String>> {
+        let mut stmt = self.conn.prepare("SELECT file_uuid FROM known_remote_files")?;
+        let ids = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<std::collections::HashSet<_>>>()?;
+        Ok(ids)
+    }
+
+    /// Record a single batch_uuid as ingested. Idempotent (uses
+    /// INSERT OR IGNORE) so callers don't have to check membership
+    /// first.
+    pub fn record_known_remote_file(&self, file_uuid: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO known_remote_files (file_uuid) VALUES (?1)",
+            params![file_uuid],
+        )?;
+        Ok(())
+    }
+
     /// Flip the `synced` flag on the event with this local rowid so it
     /// drops out of `pending_events`. Unknown ids are silently no-ops —
     /// SQLite's UPDATE-on-no-match behaviour, exposed verbatim so a
@@ -410,6 +459,26 @@ impl Database {
             "UPDATE events SET synced = 1 WHERE id = ?1",
             params![id],
         )?;
+        Ok(())
+    }
+
+    /// Same as `mark_event_synced`, but for a batch of ids in a single
+    /// transaction. Used by the bulk-push path: after one PUT covers
+    /// all pending events, a single transaction flips the synced flag
+    /// on every contained event_id. Marking N rows one-at-a-time would
+    /// fire N autocommit fsyncs; this batches them into the WAL's
+    /// usual one-fsync-per-commit. Empty input is a no-op.
+    pub fn mark_events_synced(&self, ids: &[i64]) -> Result<()> {
+        if ids.is_empty() { return Ok(()); }
+        let tx = self.conn.unchecked_transaction()?;
+        {
+            let mut stmt = tx.prepare(
+                "UPDATE events SET synced = 1 WHERE id = ?1")?;
+            for id in ids {
+                stmt.execute(params![id])?;
+            }
+        }
+        tx.commit()?;
         Ok(())
     }
 
@@ -4547,6 +4616,61 @@ mod tests {
     }
 
     #[test]
+    fn mark_events_synced_batch_marks_every_provided_id() {
+        // The batch variant must produce the same end state as N calls
+        // to `mark_event_synced`. Used by the bulk-push path to flip
+        // every event in a successful batch in a single transaction.
+        let db = Database::open_in_memory().unwrap();
+        let id_a = db.append_event(&sample_event(1)).unwrap();
+        let id_b = db.append_event(&sample_event(2)).unwrap();
+        let id_c = db.append_event(&sample_event(3)).unwrap();
+        db.mark_events_synced(&[id_a, id_c]).unwrap();
+        let pending = db.pending_events().unwrap();
+        assert_eq!(pending.len(), 1, "only the un-marked event remains pending");
+        assert_eq!(pending[0].0, id_b,
+            "the un-marked event is the one whose id wasn't in the batch");
+    }
+
+    #[test]
+    fn mark_events_synced_empty_slice_is_a_silent_no_op() {
+        // Don't crash on the no-work path. The bulk push only calls
+        // this when at least one event was pushed, but defending
+        // against the empty input is cheap and removes a footgun.
+        let db = Database::open_in_memory().unwrap();
+        db.append_event(&sample_event(1)).unwrap();
+        db.mark_events_synced(&[]).unwrap();
+        assert_eq!(db.pending_events().unwrap().len(), 1,
+            "the existing event must remain pending — nothing was asked of us");
+    }
+
+    #[test]
+    fn mark_events_synced_is_atomic_across_the_batch() {
+        // The batch runs inside one transaction. Verifies that the
+        // mid-batch state isn't visible to a concurrent reader: either
+        // all rows are marked or none. Hard to test fully without a
+        // second connection — we check the post-condition.
+        let db = Database::open_in_memory().unwrap();
+        let ids: Vec<i64> = (1..=10)
+            .map(|i| db.append_event(&sample_event(i)).unwrap())
+            .collect();
+        db.mark_events_synced(&ids).unwrap();
+        assert!(db.pending_events().unwrap().is_empty(),
+            "every event in the batch must be marked synced");
+    }
+
+    #[test]
+    fn mark_events_synced_ignores_unknown_ids_among_known_ones() {
+        // Same defensive shape as the single-id variant: a stale id
+        // mixed in with valid ones doesn't poison the batch.
+        let db = Database::open_in_memory().unwrap();
+        let id_real = db.append_event(&sample_event(1)).unwrap();
+        let result = db.mark_events_synced(&[id_real, 99_999]);
+        assert!(result.is_ok());
+        assert!(db.pending_events().unwrap().is_empty(),
+            "the real event must still be marked synced");
+    }
+
+    #[test]
     fn pending_events_excludes_synced_rows() {
         // After every event has been synced, pending_events is empty
         // again. Documents the boundary case of "fully caught up".
@@ -4556,6 +4680,52 @@ mod tests {
         db.mark_event_synced(id_a).unwrap();
         db.mark_event_synced(id_b).unwrap();
         assert!(db.pending_events().unwrap().is_empty());
+    }
+
+    // ── known_remote_files: bulk-file dedup tracker ─────────────────────
+
+    #[test]
+    fn known_remote_file_uuids_starts_empty() {
+        // Fresh database: no batch_uuids ingested. The puller takes
+        // this empty set and GETs every file it sees.
+        let db = Database::open_in_memory().unwrap();
+        assert!(db.known_remote_file_uuids().unwrap().is_empty());
+    }
+
+    #[test]
+    fn record_known_remote_file_then_known_remote_file_uuids_returns_it() {
+        // Round-trip: a recorded uuid shows up in the next read.
+        let db = Database::open_in_memory().unwrap();
+        db.record_known_remote_file("aaa-batch-uuid").unwrap();
+        let known = db.known_remote_file_uuids().unwrap();
+        assert!(known.contains("aaa-batch-uuid"),
+            "recorded uuid must appear in the known set");
+    }
+
+    #[test]
+    fn record_known_remote_file_is_idempotent() {
+        // Inserting the same uuid twice must not error — INSERT OR
+        // IGNORE protects against the "we re-pulled the same file"
+        // case where the puller calls record() unconditionally.
+        let db = Database::open_in_memory().unwrap();
+        db.record_known_remote_file("xyz").unwrap();
+        db.record_known_remote_file("xyz").unwrap();
+        assert_eq!(db.known_remote_file_uuids().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn known_remote_files_persist_across_database_reopens() {
+        // The dedup tracker MUST survive process restart — otherwise a
+        // user who closes the app between sync attempts re-GETs every
+        // remote file on the next pull, defeating the optimisation.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.db");
+        {
+            let db = Database::open(&path).unwrap();
+            db.record_known_remote_file("persistent-batch").unwrap();
+        }
+        let db2 = Database::open(&path).unwrap();
+        assert!(db2.known_remote_file_uuids().unwrap().contains("persistent-batch"));
     }
 
     #[test]
