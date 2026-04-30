@@ -145,6 +145,67 @@ fn unix_now() -> i64 {
         .unwrap_or(0)
 }
 
+// ── Connection test ────────────────────────────────────────────────────────
+//
+// User-facing "Test connection" button in the sync settings dialog.
+// Validates a (URL, username, password) tuple by issuing a single
+// PROPFIND against the user's WebDAV root — cheap, doesn't touch the
+// local DB or keychain, doesn't write anything to the remote. Maps
+// the typed `WebDavError` variants to user-readable outcomes.
+
+/// Outcome of a connection test. Display impl is the toast text.
+#[derive(Debug, PartialEq, Eq)]
+pub enum TestConnectionResult {
+    /// PROPFIND returned 207 (Multi-Status) — auth + URL are good.
+    Ok,
+    /// 401 — credentials wrong (username, app-password, or both).
+    Unauthorized,
+    /// DNS / connection refused / timeout — couldn't reach the host.
+    /// The string is the underlying error for diagnostics.
+    Network(String),
+    /// 404 — the URL points somewhere that exists but isn't a WebDAV
+    /// folder. Almost always a typo in the path component.
+    NotWebDavRoot,
+    /// Anything else: 5xx, malformed XML, etc.
+    Other(String),
+}
+
+impl fmt::Display for TestConnectionResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Ok => write!(f, "Connection OK — your Nextcloud is reachable"),
+            Self::Unauthorized => write!(
+                f, "Authentication failed — check your username and app password"),
+            Self::Network(s) => write!(f, "Couldn't reach the server: {s}"),
+            Self::NotWebDavRoot => write!(
+                f, "The URL doesn't point at a WebDAV folder. Check the path component."),
+            Self::Other(s) => write!(f, "Unexpected server response: {s}"),
+        }
+    }
+}
+
+/// Run a connection test using a real `HttpWebDav` against the given
+/// credentials. Synchronous — call from a worker thread so the UI
+/// doesn't freeze on slow networks. Doesn't read or write any local
+/// state.
+pub fn test_connection(url: &str, username: &str, password: &str) -> TestConnectionResult {
+    let webdav = meditate_core::sync::HttpWebDav::new(url, username, password);
+    test_connection_with(&webdav)
+}
+
+/// Transport-agnostic core. Lifts the WebDav trait so unit tests can
+/// pass a fake impl that produces specific error variants.
+pub fn test_connection_with<W: WebDav>(webdav: &W) -> TestConnectionResult {
+    use meditate_core::sync::WebDavError;
+    match webdav.list_collection("/") {
+        Ok(_) => TestConnectionResult::Ok,
+        Err(WebDavError::Unauthorized) => TestConnectionResult::Unauthorized,
+        Err(WebDavError::Network(s)) => TestConnectionResult::Network(s),
+        Err(WebDavError::NotFound) => TestConnectionResult::NotWebDavRoot,
+        Err(e) => TestConnectionResult::Other(e.to_string()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     //! Tests use core's `Database::open_in_memory` plus a `FakeWebDav`
@@ -326,5 +387,113 @@ mod tests {
             SyncRunnerError::PasswordMissing.to_string(),
             "no password in keyring — re-enter it in Preferences",
         );
+    }
+
+    // ── test_connection_with ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_connection_with_succeeds_on_a_reachable_webdav() {
+        // FakeWebDav's list_collection always returns Ok([]) for an
+        // empty store — that's what we expect when the URL points at
+        // a working but empty user root.
+        let fs = FakeWebDav::new();
+        assert_eq!(test_connection_with(&fs), TestConnectionResult::Ok);
+    }
+
+    /// Tiny scripted WebDav that returns a fixed error from every method.
+    /// Easier than per-test inline impls and lets us exercise the error
+    /// mapping branches one variant at a time.
+    struct AlwaysErrs(meditate_core::sync::WebDavError);
+    impl WebDav for AlwaysErrs {
+        fn list_collection(&self, _: &str)
+            -> meditate_core::sync::WebDavResult<Vec<String>>
+        { Err(self.clone_err()) }
+        fn get(&self, _: &str)
+            -> meditate_core::sync::WebDavResult<Vec<u8>> { unreachable!() }
+        fn put(&self, _: &str, _: &[u8])
+            -> meditate_core::sync::WebDavResult<()> { unreachable!() }
+        fn mkcol(&self, _: &str)
+            -> meditate_core::sync::WebDavResult<()> { unreachable!() }
+        fn delete(&self, _: &str)
+            -> meditate_core::sync::WebDavResult<()> { unreachable!() }
+    }
+    impl AlwaysErrs {
+        fn clone_err(&self) -> meditate_core::sync::WebDavError {
+            use meditate_core::sync::WebDavError as E;
+            match &self.0 {
+                E::NotFound => E::NotFound,
+                E::Unauthorized => E::Unauthorized,
+                E::Conflict => E::Conflict,
+                E::Network(s) => E::Network(s.clone()),
+                E::Server { status, body } => E::Server {
+                    status: *status, body: body.clone() },
+                E::MalformedResponse(s) => E::MalformedResponse(s.clone()),
+            }
+        }
+    }
+
+    #[test]
+    fn test_connection_with_maps_401_to_unauthorized() {
+        // Wrong app password is THE failure mode users will hit most.
+        // The toast must read "Authentication failed" so they know to
+        // re-check the password (not the URL, not the network).
+        let w = AlwaysErrs(meditate_core::sync::WebDavError::Unauthorized);
+        assert_eq!(test_connection_with(&w), TestConnectionResult::Unauthorized);
+    }
+
+    #[test]
+    fn test_connection_with_maps_dns_failure_to_network_error() {
+        // The exact error pattern we hit on the Librem 5 with stale
+        // resolver state — surface as Network, not as a generic Server
+        // error, so the toast tells the user "couldn't reach" rather
+        // than "server returned bad data".
+        let w = AlwaysErrs(meditate_core::sync::WebDavError::Network(
+            "Dns Failed: ...".to_string()));
+        assert_eq!(
+            test_connection_with(&w),
+            TestConnectionResult::Network("Dns Failed: ...".to_string()),
+        );
+    }
+
+    #[test]
+    fn test_connection_with_maps_404_to_not_webdav_root() {
+        // Distinguishing 404 from generic-server-error matters because
+        // the user-actionable advice is different: 404 means "fix the
+        // URL"; 5xx means "wait / contact admin".
+        let w = AlwaysErrs(meditate_core::sync::WebDavError::NotFound);
+        assert_eq!(
+            test_connection_with(&w),
+            TestConnectionResult::NotWebDavRoot,
+        );
+    }
+
+    #[test]
+    fn test_connection_with_routes_500_to_other() {
+        // Server-side 500 isn't a config bug on our end, so the toast
+        // should be diagnostic ("unexpected response") rather than
+        // pointing fingers at the user's credentials or path.
+        let w = AlwaysErrs(meditate_core::sync::WebDavError::Server {
+            status: 500, body: "internal".to_string() });
+        match test_connection_with(&w) {
+            TestConnectionResult::Other(s) => {
+                assert!(s.contains("500"),
+                    "Other variant must include the status code, got: {s}");
+            }
+            other => panic!("expected Other, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_connection_result_display_text_is_actionable() {
+        // The Display impl IS the toast text — pin the user-facing
+        // wording so a future copy edit doesn't accidentally make it
+        // jargon-heavy.
+        assert!(TestConnectionResult::Ok.to_string().contains("Connection OK"));
+        assert!(TestConnectionResult::Unauthorized.to_string()
+            .contains("Authentication failed"));
+        assert!(TestConnectionResult::NotWebDavRoot.to_string()
+            .contains("doesn't point at a WebDAV"));
+        assert!(TestConnectionResult::Network("dns".into()).to_string()
+            .contains("Couldn't reach"));
     }
 }

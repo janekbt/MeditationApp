@@ -518,6 +518,96 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
     sync_group.add(&username_row);
     sync_group.add(&password_row);
 
+    // Test connection — runs a single PROPFIND against the entered
+    // URL+credentials, doesn't persist anything. Useful to verify
+    // before saving (the more common case: an app-password got
+    // revoked on the Nextcloud server and the user wants to confirm
+    // the new one works). Reads from form fields; if the password
+    // field is blank, falls back to the saved keychain entry so the
+    // "URL and username are right but is the keyring still good?"
+    // workflow doesn't require re-typing.
+    let test_row = adw::ActionRow::builder()
+        .title(gettext("Test connection"))
+        .subtitle(gettext("Verify the URL and credentials reach your Nextcloud."))
+        .activatable(true)
+        .build();
+    let test_btn = gtk::Button::builder()
+        .label(gettext("_Test"))
+        .use_underline(true)
+        .valign(gtk::Align::Center)
+        .css_classes(["flat"])
+        .build();
+    test_row.add_suffix(&test_btn);
+    test_row.set_activatable_widget(Some(&test_btn));
+    sync_group.add(&test_row);
+
+    test_btn.connect_clicked(glib::clone!(
+        #[weak] dialog,
+        #[weak] url_row,
+        #[weak] username_row,
+        #[weak] password_row,
+        #[weak] test_btn,
+        move |_| {
+            let url = url_row.text().trim().to_string();
+            let username = username_row.text().trim().to_string();
+            if url.is_empty() || username.is_empty() {
+                data_toast(&dialog, &gettext(
+                    "Enter a URL and username before testing."));
+                return;
+            }
+            // If the password field is blank, fall back to the saved
+            // keychain entry so testing doesn't require re-typing for
+            // the "URL+user are right, is the keyring still good?" case.
+            let typed_pw = password_row.text().to_string();
+            let password = if typed_pw.is_empty() {
+                match crate::keychain::read_password(&url, &username) {
+                    Ok(Some(p)) => p,
+                    Ok(None) => {
+                        data_toast(&dialog, &gettext(
+                            "Enter a password — there's no saved one to test against."));
+                        return;
+                    }
+                    Err(e) => {
+                        data_toast(&dialog, &format!(
+                            "{}: {e}", gettext("Couldn't read the saved password")));
+                        return;
+                    }
+                }
+            } else {
+                typed_pw
+            };
+
+            // Disable the button while the HTTP call is in flight.
+            test_btn.set_sensitive(false);
+
+            // Run the synchronous HTTP call on the GIO blocking pool
+            // so it doesn't stall the GLib main loop, then await the
+            // result on the main thread to update UI directly.
+            // `spawn_local` keeps !Send GTK widgets in scope; only
+            // `String`s and `TestConnectionResult` (also pure data)
+            // cross into the worker, both Send.
+            glib::MainContext::default().spawn_local(glib::clone!(
+                #[weak] dialog,
+                #[weak] test_btn,
+                async move {
+                    let result = gtk::gio::spawn_blocking(move || {
+                        crate::sync_runner::test_connection(
+                            &url, &username, &password)
+                    }).await;
+                    test_btn.set_sensitive(true);
+                    let msg = match result {
+                        Ok(r) => r.to_string(),
+                        Err(_) => gettext(
+                            "Test connection thread panicked — see diagnostics."),
+                    };
+                    crate::diag::log(&format!("test_connection: {msg}"));
+                    dialog.add_toast(adw::Toast::builder()
+                        .title(&msg).timeout(6).build());
+                }
+            ));
+        }
+    ));
+
     // Save button as a row suffix — clicking it commits the form.
     let save_row = adw::ActionRow::builder()
         .title(gettext("Save sync settings"))

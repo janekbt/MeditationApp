@@ -483,15 +483,26 @@ impl MeditateWindow {
     fn wire_sync_status(&self) {
         let obj = self.obj();
 
-        // Click → open Preferences directly on the Data tab (where
-        // the sync settings live). Going through General first would
-        // make the user click twice for an obviously-related panel.
+        // Click semantics depend on the current state:
+        // - Warning (last sync failed): retry the sync. On Phosh
+        //   especially, transient network/DNS failures stick the
+        //   icon at warning until the next mutation; a manual retry
+        //   path closes that gap without requiring the user to
+        //   author something.
+        // - Anything else: open Preferences → Data so the user can
+        //   adjust settings or check status.
         self.sync_status_btn.connect_clicked(glib::clone!(
             #[weak] obj,
             move |_| {
-                if let Some(app) = obj.application()
+                let Some(app) = obj.application()
                     .and_then(|a| a.downcast::<crate::application::MeditateApplication>().ok())
-                {
+                else { return; };
+                let last_error = app.with_db(|db|
+                    crate::sync_settings::get_last_sync_error(db).unwrap_or(None));
+                let has_error = matches!(last_error, Some(Some(_)));
+                if has_error {
+                    app.trigger_sync();
+                } else {
                     crate::preferences::show_preferences_on_page(&app, Some("data"));
                 }
             }
@@ -580,7 +591,7 @@ impl MeditateWindow {
             btn.add_css_class("warning");
             btn.set_tooltip_text(Some(
                 &format!("{}\n{}",
-                    gettext("Last sync failed — click to open settings"),
+                    gettext("Last sync failed — click to retry"),
                     err)));
         } else if let Some(ts) = last_ts {
             // Synced successfully — checkmark, tinted via libadwaita's
