@@ -39,7 +39,19 @@ pub fn get_nextcloud_account(db: &Database) -> Result<Option<NextcloudAccount>> 
 /// in a single logical "save" — leaving one stale would create a
 /// half-configured state that `get_nextcloud_account` would still
 /// report as `None`, but cleaner to just keep the pair consistent.
+///
+/// On a real change to either URL or username the dedup tracker
+/// `known_remote_files` is wiped — its entries belonged to a
+/// different store and would falsely trigger the remote-data-lost
+/// detection on the next pull against the new account. A no-op save
+/// (same URL+username re-saved) leaves it intact so previously-
+/// pulled batches don't get re-GET'd.
 pub fn set_nextcloud_account(db: &Database, url: &str, username: &str) -> Result<()> {
+    let prev_url = db.get_sync_state(KEY_URL, "")?;
+    let prev_username = db.get_sync_state(KEY_USERNAME, "")?;
+    if prev_url != url || prev_username != username {
+        db.wipe_known_remote_files()?;
+    }
     db.set_sync_state(KEY_URL, url)?;
     db.set_sync_state(KEY_USERNAME, username)?;
     Ok(())
@@ -133,6 +145,62 @@ mod tests {
         let got = get_nextcloud_account(&db).unwrap().unwrap();
         assert_eq!(got.url, "https://new.example/");
         assert_eq!(got.username, "new-user");
+    }
+
+    #[test]
+    fn set_account_wipes_known_remote_files_when_url_changes() {
+        // Account swap (URL change): the previously-known remote
+        // batch_uuids belong to a different store entirely. Leaving
+        // them in the table would falsely trigger the remote-data-
+        // lost detection on the next pull against the new account.
+        let db = fresh();
+        set_nextcloud_account(&db, "https://old.example/", "u").unwrap();
+        db.record_known_remote_file("from-old-server").unwrap();
+        assert_eq!(db.known_remote_file_uuids().unwrap().len(), 1);
+
+        set_nextcloud_account(&db, "https://new.example/", "u").unwrap();
+        assert!(db.known_remote_file_uuids().unwrap().is_empty(),
+            "URL change must wipe known_remote_files");
+    }
+
+    #[test]
+    fn set_account_wipes_known_remote_files_when_username_changes() {
+        // Same account swap rule but driven by username change. A user
+        // signing in as a different Nextcloud user is effectively a
+        // different account even on the same URL.
+        let db = fresh();
+        set_nextcloud_account(&db, "https://nc.example/", "alice").unwrap();
+        db.record_known_remote_file("from-alice").unwrap();
+
+        set_nextcloud_account(&db, "https://nc.example/", "bob").unwrap();
+        assert!(db.known_remote_file_uuids().unwrap().is_empty(),
+            "username change must wipe known_remote_files");
+    }
+
+    #[test]
+    fn set_account_does_not_wipe_known_remote_files_when_pair_is_unchanged() {
+        // Re-saving the exact same URL+username (e.g. user edited and
+        // saved without actually changing anything) MUST preserve the
+        // dedup tracker — wiping it would cause every previously-pulled
+        // remote file to be re-GET'd on the next sync.
+        let db = fresh();
+        set_nextcloud_account(&db, "https://nc.example/", "alice").unwrap();
+        db.record_known_remote_file("a").unwrap();
+        db.record_known_remote_file("b").unwrap();
+
+        set_nextcloud_account(&db, "https://nc.example/", "alice").unwrap();
+        assert_eq!(db.known_remote_file_uuids().unwrap().len(), 2,
+            "unchanged account must preserve known_remote_files");
+    }
+
+    #[test]
+    fn first_time_set_account_does_not_error_on_empty_known_remote_files() {
+        // The wipe path runs unconditionally on any change including
+        // first-time set (where the previous-pair is empty and the
+        // table is already empty). Must not crash.
+        let db = fresh();
+        set_nextcloud_account(&db, "https://nc.example/", "alice").unwrap();
+        assert!(db.known_remote_file_uuids().unwrap().is_empty());
     }
 
     #[test]

@@ -250,6 +250,27 @@ impl Database {
         self.inner.set_sync_state(key, value).map_err(map_core_err)
     }
 
+    /// All remote file_uuids this device has ingested or pushed.
+    /// Used by the remote-data-lost detection to recognise our own
+    /// previous batches in the remote listing.
+    pub fn known_remote_file_uuids(&self)
+        -> Result<std::collections::HashSet<String>>
+    {
+        self.inner.known_remote_file_uuids().map_err(map_core_err)
+    }
+
+    /// Record a remote batch_uuid as ingested. Idempotent.
+    pub fn record_known_remote_file(&self, file_uuid: &str) -> Result<()> {
+        self.inner.record_known_remote_file(file_uuid).map_err(map_core_err)
+    }
+
+    /// Drop every recorded remote file_uuid. Called on account swap
+    /// (URL or username change) and on the "push local up" recovery
+    /// path after a remote-data-lost prompt.
+    pub fn wipe_known_remote_files(&self) -> Result<()> {
+        self.inner.wipe_known_remote_files().map_err(map_core_err)
+    }
+
     // ── Stats queries ─────────────────────────────────────────────────────────
 
     /// Current streak of consecutive calendar days (ending today or
