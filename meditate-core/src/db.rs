@@ -450,6 +450,19 @@ impl Database {
         Ok(())
     }
 
+    /// Clear every recorded remote file_uuid. Two callers:
+    /// - Account swap: when the user changes URL or username, the
+    ///   previously-known remote files belong to a different store
+    ///   entirely; clearing prevents a phantom "remote data lost"
+    ///   trigger against the new account.
+    /// - Push-local-after-wipe: after the user resolves a "remote data
+    ///   lost" prompt by re-uploading, we wipe + re-anchor against
+    ///   the now-empty remote.
+    pub fn wipe_known_remote_files(&self) -> Result<()> {
+        self.conn.execute("DELETE FROM known_remote_files", [])?;
+        Ok(())
+    }
+
     /// Flip the `synced` flag on the event with this local rowid so it
     /// drops out of `pending_events`. Unknown ids are silently no-ops —
     /// SQLite's UPDATE-on-no-match behaviour, exposed verbatim so a
@@ -4726,6 +4739,55 @@ mod tests {
         }
         let db2 = Database::open(&path).unwrap();
         assert!(db2.known_remote_file_uuids().unwrap().contains("persistent-batch"));
+    }
+
+    #[test]
+    fn wipe_known_remote_files_clears_every_recorded_uuid() {
+        // The "remote data lost" fail-safe re-anchors the dedup tracker
+        // when (a) the account changes, or (b) the user decides to push
+        // their local state back up after a wipe. Both flows call
+        // `wipe_known_remote_files` to flush the table cleanly.
+        let db = Database::open_in_memory().unwrap();
+        db.record_known_remote_file("a").unwrap();
+        db.record_known_remote_file("b").unwrap();
+        db.record_known_remote_file("c").unwrap();
+        assert_eq!(db.known_remote_file_uuids().unwrap().len(), 3);
+        db.wipe_known_remote_files().unwrap();
+        assert!(db.known_remote_file_uuids().unwrap().is_empty(),
+            "wipe must remove every recorded file_uuid");
+    }
+
+    #[test]
+    fn wipe_known_remote_files_on_an_empty_table_is_a_silent_no_op() {
+        // First-time account setup: the table is already empty, but the
+        // wipe path runs unconditionally on account change. Don't crash.
+        let db = Database::open_in_memory().unwrap();
+        db.wipe_known_remote_files().unwrap();
+        assert!(db.known_remote_file_uuids().unwrap().is_empty());
+    }
+
+    #[test]
+    fn wipe_known_remote_files_does_not_touch_other_tables() {
+        // Defensive: the wipe is scoped to the dedup tracker. Sessions,
+        // labels, events, and settings must all survive untouched —
+        // otherwise an account swap would silently destroy local state.
+        let db = Database::open_in_memory().unwrap();
+        let _ = db.append_event(&sample_event(1)).unwrap();
+        let label_id = db.insert_label("focus").unwrap();
+        db.record_known_remote_file("a").unwrap();
+        db.set_setting("k", "v").unwrap();
+        let labels_before = db.list_labels().unwrap().len();
+        let events_before = db.pending_events().unwrap().len();
+
+        db.wipe_known_remote_files().unwrap();
+
+        assert_eq!(db.list_labels().unwrap().len(), labels_before,
+            "labels must not be wiped");
+        assert!(db.list_labels().unwrap().iter().any(|l| l.id == label_id));
+        assert_eq!(db.pending_events().unwrap().len(), events_before,
+            "events must not be wiped");
+        assert_eq!(db.get_setting("k", "default").unwrap(), "v",
+            "settings must not be wiped");
     }
 
     #[test]
