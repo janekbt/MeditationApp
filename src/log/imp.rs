@@ -41,6 +41,18 @@ pub struct LogView {
     /// in-place delete so neither has to rebuild the whole feed (which
     /// resets the scroll position).
     cards_by_id: RefCell<std::collections::HashMap<i64, gtk::Box>>,
+
+    /// Sessions whose card is hidden but whose DB row still exists, waiting
+    /// on a coalesced undo-toast to either restore them (Undo) or commit
+    /// the deletes (timer expiry). Drains in `commit_all_pending`.
+    pending_deletes: RefCell<Vec<(i64, Session)>>,
+
+    /// The current "N sessions deleted · Undo" toast, if any. We hold a ref
+    /// so a follow-up delete can dismiss-and-replace it (libadwaita has no
+    /// reset-timeout API). Identity comparison in `connect_dismissed`
+    /// distinguishes "we replaced it" from "timer expired" — see
+    /// `on_delete_clicked` for the swap order that makes that work.
+    active_delete_toast: RefCell<Option<adw::Toast>>,
 }
 
 /// One "Today" / "Yesterday" / "Apr 17" group in the feed.
@@ -602,44 +614,89 @@ fn section_caption_text(count: u32, total_secs: i64) -> String {
 // ── Delete with undo toast ────────────────────────────────────────────────────
 
 impl LogView {
-    /// Hide the card for `session_id` and show a "Session deleted · Undo"
-    /// toast. The DB row only actually goes away when the toast is
-    /// dismissed without pressing Undo. Keeps the feed's scroll position
-    /// — no refresh() involved.
+    /// Hide the card for `session_id` and show (or update) a coalescing
+    /// "N sessions deleted · Undo" toast. The DB rows only actually go
+    /// away when the toast times out without Undo being pressed. Rapid
+    /// successive deletes update the count and reset the timer instead of
+    /// stacking individual toasts.
     pub fn on_delete_clicked(&self, session_id: i64) {
         let Some(card) = self.cards_by_id.borrow().get(&session_id).cloned() else { return; };
         let sess = self.sessions.borrow().iter().find(|s| s.id == session_id).cloned();
         let Some(session) = sess else { return; };
 
         card.set_visible(false);
+        self.pending_deletes.borrow_mut().push((session_id, session));
 
-        let toast = adw::Toast::builder()
-            .title(crate::i18n::gettext("Session deleted"))
+        let count = self.pending_deletes.borrow().len();
+        let title = if count == 1 {
+            crate::i18n::gettext("Session deleted")
+        } else {
+            crate::i18n::gettext("{n} sessions deleted").replace("{n}", &count.to_string())
+        };
+
+        let new_toast = adw::Toast::builder()
+            .title(&title)
             .button_label(crate::i18n::gettext("Undo"))
             .timeout(5)
             .build();
 
-        // Undo: just restore the card — nothing changed in the DB yet.
-        let card_undo = card.clone();
-        toast.connect_button_clicked(move |_| {
-            card_undo.set_visible(true);
+        // Undo: restore every hidden card and clear pending state. The
+        // toast's auto-dismiss after this fires the dismissed handler too,
+        // but the identity check there sees `active_delete_toast = None`
+        // and skips the commit.
+        let obj_undo = self.obj().clone();
+        new_toast.connect_button_clicked(move |_| {
+            let imp = obj_undo.imp();
+            let pending = std::mem::take(&mut *imp.pending_deletes.borrow_mut());
+            let cards = imp.cards_by_id.borrow();
+            for (id, _) in &pending {
+                if let Some(c) = cards.get(id) { c.set_visible(true); }
+            }
+            *imp.active_delete_toast.borrow_mut() = None;
         });
 
-        // Dismissed: commit the delete unless the user hit Undo.
-        let obj = self.obj().clone();
-        let card_commit = card.clone();
-        toast.connect_dismissed(move |_| {
-            if card_commit.is_visible() { return; }  // Undo was pressed.
-            let imp = obj.imp();
-            if let Some(app) = imp.get_app() {
-                app.with_db(|db| db.delete_session(session_id));
-                app.invalidate(crate::application::InvalidateScope::STATS);
-            }
-            imp.commit_delete_in_place(session_id, &session);
+        // Dismissed: commit pending deletes only if we're still the active
+        // toast. If `active_delete_toast` points elsewhere we got replaced
+        // by a follow-up delete; if it's None the user pressed Undo. Both
+        // cases skip silently.
+        let obj_dismiss = self.obj().clone();
+        new_toast.connect_dismissed(move |t| {
+            let imp = obj_dismiss.imp();
+            let still_active = imp.active_delete_toast.borrow().as_ref()
+                .map(|a| a.as_ptr() == t.as_ptr())
+                .unwrap_or(false);
+            if !still_active { return; }
+            imp.commit_all_pending();
         });
+
+        // Swap in the new toast BEFORE dismissing the old one — that way
+        // the old toast's dismissed handler (which fires synchronously
+        // from `dismiss()`) sees the new toast in `active_delete_toast`,
+        // identity check fails, no commit. Borrow scope ends at the
+        // semicolon so the dismiss call below can reborrow safely.
+        let prev = self.active_delete_toast.borrow_mut().replace(new_toast.clone());
+        if let Some(old) = prev { old.dismiss(); }
 
         if let Some(win) = self.get_window() {
-            win.add_toast(toast);
+            win.add_toast(new_toast);
+        }
+    }
+
+    /// Drain `pending_deletes`, delete each row from the DB, and tear down
+    /// the corresponding cards. One STATS invalidate at the end rather
+    /// than per-row. Called from the toast's dismissed handler when the
+    /// timer naturally expires.
+    fn commit_all_pending(&self) {
+        let pending = std::mem::take(&mut *self.pending_deletes.borrow_mut());
+        *self.active_delete_toast.borrow_mut() = None;
+        if pending.is_empty() { return; }
+
+        if let Some(app) = self.get_app() {
+            for (id, session) in &pending {
+                app.with_db(|db| db.delete_session(*id));
+                self.commit_delete_in_place(*id, session);
+            }
+            app.invalidate(crate::application::InvalidateScope::STATS);
         }
     }
 
