@@ -7,6 +7,7 @@ pub mod i18n;
 pub mod keychain;
 pub mod log;
 mod preferences;
+mod recovery_dialog;
 pub mod sound;
 pub mod stats;
 pub mod sync_runner;

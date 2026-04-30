@@ -484,7 +484,11 @@ impl MeditateWindow {
         let obj = self.obj();
 
         // Click semantics depend on the current state:
-        // - Warning (last sync failed): retry the sync. On Phosh
+        // - Warning AND last error was remote-data-lost: open the
+        //   recovery dialog so the user picks Push-Local / Cancel.
+        //   This case is destructive enough that auto-retrying
+        //   silently would surprise the user.
+        // - Warning (any other error): retry the sync. On Phosh
         //   especially, transient network/DNS failures stick the
         //   icon at warning until the next mutation; a manual retry
         //   path closes that gap without requiring the user to
@@ -497,10 +501,16 @@ impl MeditateWindow {
                 let Some(app) = obj.application()
                     .and_then(|a| a.downcast::<crate::application::MeditateApplication>().ok())
                 else { return; };
-                let last_error = app.with_db(|db|
-                    crate::sync_settings::get_last_sync_error(db).unwrap_or(None));
-                let has_error = matches!(last_error, Some(Some(_)));
-                if has_error {
+                let (has_error, is_data_lost) = app.with_db(|db| {
+                    let err = crate::sync_settings::get_last_sync_error(db)
+                        .unwrap_or(None);
+                    let kind = crate::sync_settings::is_last_sync_remote_data_lost(db)
+                        .unwrap_or(false);
+                    (err.is_some(), kind)
+                }).unwrap_or((false, false));
+                if has_error && is_data_lost {
+                    crate::recovery_dialog::show(&app);
+                } else if has_error {
                     app.trigger_sync();
                 } else {
                     crate::preferences::show_preferences_on_page(&app, Some("data"));

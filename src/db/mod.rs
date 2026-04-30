@@ -271,6 +271,20 @@ impl Database {
         self.inner.wipe_known_remote_files().map_err(map_core_err)
     }
 
+    /// Reset every event row's synced flag to 0, putting all of them
+    /// back into pending. Used by the "push local up" recovery path.
+    pub fn flag_all_events_unsynced(&self) -> Result<()> {
+        self.inner.flag_all_events_unsynced().map_err(map_core_err)
+    }
+
+    /// How many events are currently pending push. Mostly a test-
+    /// observability helper, but useful for any caller that wants to
+    /// know "is there local work to sync?" without listing the full
+    /// pending vector.
+    pub fn pending_events_count(&self) -> Result<usize> {
+        Ok(self.inner.pending_events().map_err(map_core_err)?.len())
+    }
+
     // ── Stats queries ─────────────────────────────────────────────────────────
 
     /// Current streak of consecutive calendar days (ending today or
