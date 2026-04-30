@@ -454,6 +454,32 @@ impl MeditateWindow {
             .child(&toolbar_view)
             .build();
 
+        // Force the dark colour scheme for the duration of the
+        // running page. Meditation is typically done in low light;
+        // a bright header + bright content stab the eye when the
+        // user just wants to watch a timer count down. Saving the
+        // previous scheme on `shown` and restoring on `hidden`
+        // keeps the rest of the app on whatever theme the user has
+        // configured (system / light / dark) unchanged.
+        let style_manager = adw::StyleManager::default();
+        let saved_scheme = std::rc::Rc::new(std::cell::Cell::new(
+            adw::ColorScheme::Default));
+        page.connect_shown(glib::clone!(
+            #[strong] saved_scheme,
+            #[weak] style_manager,
+            move |_| {
+                saved_scheme.set(style_manager.color_scheme());
+                style_manager.set_color_scheme(adw::ColorScheme::ForceDark);
+            }
+        ));
+        page.connect_hidden(glib::clone!(
+            #[strong] saved_scheme,
+            #[weak] style_manager,
+            move |_| {
+                style_manager.set_color_scheme(saved_scheme.get());
+            }
+        ));
+
         let obj = self.obj().clone();
         pause_btn.connect_clicked(move |_| obj.imp().timer_view.pause());
         let obj2 = self.obj().clone();
