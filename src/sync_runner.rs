@@ -45,6 +45,15 @@ pub enum SyncRunnerError {
 
     /// The sync proper failed — pull/push couldn't complete.
     Sync(meditate_core::sync::SyncError),
+
+    /// The remote folder was wiped between sync attempts: every batch
+    /// this device previously synced is gone. Surfaced distinctly from
+    /// `Sync(_)` so the shell can present a recovery dialog (push
+    /// local up / wipe local / cancel) instead of the generic error
+    /// toast. The previous-success timestamp is intentionally NOT
+    /// updated when this fires — the user gets to keep "last synced
+    /// N minutes ago" while they decide.
+    RemoteDataLost,
 }
 
 impl fmt::Display for SyncRunnerError {
@@ -58,6 +67,10 @@ impl fmt::Display for SyncRunnerError {
             Self::Keychain(e) => write!(f, "{e}"),
             Self::Db(e) => write!(f, "database error: {e:?}"),
             Self::Sync(e) => write!(f, "{e}"),
+            Self::RemoteDataLost => write!(
+                f, "remote data appears wiped — previously synced batches \
+                    are missing from the Nextcloud folder",
+            ),
         }
     }
 }
@@ -73,7 +86,15 @@ impl From<KeychainError> for SyncRunnerError {
 }
 
 impl From<meditate_core::sync::SyncError> for SyncRunnerError {
-    fn from(e: meditate_core::sync::SyncError) -> Self { Self::Sync(e) }
+    fn from(e: meditate_core::sync::SyncError) -> Self {
+        match e {
+            // Promote the typed wipe-detection variant out of the
+            // generic Sync bucket so the shell can pattern-match it
+            // for the recovery-dialog routing.
+            meditate_core::sync::SyncError::RemoteDataLost => Self::RemoteDataLost,
+            other => Self::Sync(other),
+        }
+    }
 }
 
 /// Run one sync attempt against the database at `db_path`. Reads the
@@ -134,7 +155,7 @@ pub fn run_sync_attempt(db_path: &Path) -> Result<SyncStats, SyncRunnerError> {
     }
 
     record_outcome(&db, &result)?;
-    result.map_err(SyncRunnerError::Sync)
+    result.map_err(SyncRunnerError::from)
 }
 
 /// The transport-agnostic core of the runner. Tests pass a FakeWebDav;
@@ -147,7 +168,7 @@ pub fn run_with_webdav<W: WebDav>(
 ) -> Result<SyncStats, SyncRunnerError> {
     let result = Sync::new(db, webdav, REMOTE_BASE_PATH).sync();
     record_outcome(db, &result)?;
-    result.map_err(SyncRunnerError::Sync)
+    result.map_err(SyncRunnerError::from)
 }
 
 /// Persist the sync outcome so the status indicator (Phase E.5) can
@@ -438,6 +459,65 @@ mod tests {
         assert_eq!(
             SyncRunnerError::PasswordMissing.to_string(),
             "no password in keyring — re-enter it in Preferences",
+        );
+    }
+
+    #[test]
+    fn run_with_webdav_surfaces_remote_data_lost_as_a_distinct_runner_variant() {
+        // The shell needs to discriminate "remote was wiped" from
+        // generic sync failures so it can show the recovery dialog
+        // (push local up / wipe local / cancel) rather than the
+        // generic error toast. SyncError::RemoteDataLost must reach
+        // the runner as SyncRunnerError::RemoteDataLost, not be
+        // collapsed into the generic Sync(_) bucket.
+        let db = fresh_db_with_session();
+        let fake = FakeWebDav::new();
+        // First sync succeeds and records a batch_uuid in
+        // known_remote_files.
+        run_with_webdav(&db, &fake).unwrap();
+        assert!(!db.known_remote_file_uuids().unwrap().is_empty());
+        // Wipe the remote.
+        for name in fake.list_collection("/Meditate/events/").unwrap() {
+            use meditate_core::sync::WebDav;
+            fake.delete(&format!("/Meditate/events/{}", name)).unwrap();
+        }
+        let err = run_with_webdav(&db, &fake).unwrap_err();
+        assert!(matches!(err, SyncRunnerError::RemoteDataLost),
+            "wiped remote must surface as RemoteDataLost runner variant, \
+             got {err:?}");
+    }
+
+    #[test]
+    fn sync_runner_error_remote_data_lost_displays_an_actionable_message() {
+        // Display flows into the diagnostics log + the (forthcoming)
+        // dialog body. Pin the wording so the user sees a clear cause
+        // and isn't left guessing whether their data is safe.
+        let s = SyncRunnerError::RemoteDataLost.to_string();
+        assert!(s.contains("remote") || s.contains("Nextcloud"),
+            "must mention what was lost, got: {s}");
+        assert!(s.contains("missing") || s.contains("wiped") || s.contains("data lost"),
+            "must indicate the loss, got: {s}");
+    }
+
+    #[test]
+    fn run_with_webdav_remote_data_lost_does_not_clobber_last_sync_unix_ts() {
+        // When the fail-safe fires, the previous successful timestamp
+        // must remain intact — the user sees "last sync was 5 min ago"
+        // and decides what to do; we don't want to obscure that.
+        let db = fresh_db_with_session();
+        let fake = FakeWebDav::new();
+        run_with_webdav(&db, &fake).unwrap();
+        let ts_before = db.get_sync_state(KEY_LAST_SYNC_UNIX_TS, "").unwrap();
+        assert!(!ts_before.is_empty());
+        for name in fake.list_collection("/Meditate/events/").unwrap() {
+            use meditate_core::sync::WebDav;
+            fake.delete(&format!("/Meditate/events/{}", name)).unwrap();
+        }
+        let _ = run_with_webdav(&db, &fake).unwrap_err();
+        assert_eq!(
+            db.get_sync_state(KEY_LAST_SYNC_UNIX_TS, "").unwrap(),
+            ts_before,
+            "RemoteDataLost must not overwrite the success timestamp",
         );
     }
 
