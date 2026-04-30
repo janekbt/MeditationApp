@@ -73,6 +73,27 @@ impl SessionMode {
     }
 }
 
+/// One entry in the append-only sync event log. A self-contained
+/// description of a state-changing operation — sessions inserted /
+/// updated / deleted, labels renamed, settings changed. Every field
+/// is part of the cross-device identity or ordering contract:
+///
+/// - `event_uuid` is the dedup key. Receiving the same uuid twice
+///   (retry, peer-forwarding) is a silent no-op.
+/// - `lamport_ts` orders events; ties break on `device_id` per the
+///   conflict-resolution rules.
+/// - `device_id` records authorship.
+/// - `kind` is the event type (e.g. `"session_insert"`); `payload`
+///   is its JSON-encoded specifics. Both opaque at this layer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Event {
+    pub event_uuid: String,
+    pub lamport_ts: i64,
+    pub device_id: String,
+    pub kind: String,
+    pub payload: String,
+}
+
 /// Pagination + filter for `query_sessions`. Default-constructed value
 /// matches every session with no pagination.
 #[derive(Debug, Clone, Default)]
@@ -109,6 +130,47 @@ const SCHEMA: &str = "
         uuid TEXT NOT NULL UNIQUE
     );
     CREATE TABLE IF NOT EXISTS settings (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    );
+    -- Single-row per database. Holds the stable per-device UUID that
+    -- tags every locally-authored event in the sync log, plus the
+    -- monotonic Lamport counter used to order events across devices.
+    -- `lamport_clock` defaults to 0 and is bumped on local writes /
+    -- max-merged on remote observations.
+    CREATE TABLE IF NOT EXISTS device (
+        device_id     TEXT PRIMARY KEY,
+        lamport_clock INTEGER NOT NULL DEFAULT 0
+    );
+    -- Append-only event log for Nextcloud sync. Every row is a
+    -- self-contained description of a state-changing operation. Reads
+    -- (replay, push) sort by `lamport_ts` for causal ordering;
+    -- `event_uuid` UNIQUE makes append idempotent against retries and
+    -- peer-forwarded duplicates. `synced` is the push-queue gate.
+    CREATE TABLE IF NOT EXISTS events (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_uuid  TEXT NOT NULL UNIQUE,
+        lamport_ts  INTEGER NOT NULL,
+        device_id   TEXT NOT NULL,
+        kind        TEXT NOT NULL,
+        payload     TEXT NOT NULL,
+        synced      INTEGER NOT NULL DEFAULT 0
+    );
+    -- Index on (lamport_ts, device_id) supports the canonical
+    -- replay-order scan; SQLite tie-breaks on device_id so the order is
+    -- deterministic across peers.
+    CREATE INDEX IF NOT EXISTS events_lamport_idx
+        ON events(lamport_ts, device_id);
+    -- Index on `synced` makes `pending_events` (which scans WHERE
+    -- synced = 0) efficient even when the log grows large.
+    CREATE INDEX IF NOT EXISTS events_synced_idx
+        ON events(synced);
+    -- Sync-loop bookkeeping: server URL, last-pull cursor, last
+    -- successful sync timestamp, etc. Separate namespace from `settings`
+    -- so user-facing prefs and sync internals don't share a key space.
+    -- Sensitive values (app password) belong in libsecret/Keystore, not
+    -- here.
+    CREATE TABLE IF NOT EXISTS sync_state (
         key   TEXT PRIMARY KEY,
         value TEXT NOT NULL
     );
@@ -153,6 +215,171 @@ impl Database {
     pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
         self.conn.execute(
             "INSERT INTO settings (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+
+    /// This database's stable device UUID. Generated lazily on first call
+    /// after a fresh DB and persisted in the single-row `device` table —
+    /// every subsequent call (including after the process restarts and
+    /// reopens the file) returns the same value. The id tags every
+    /// locally-authored event so devices can attribute writes during
+    /// merge.
+    pub fn device_id(&self) -> Result<String> {
+        if let Some(existing) = self
+            .conn
+            .query_row("SELECT device_id FROM device LIMIT 1", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .optional()?
+        {
+            return Ok(existing);
+        }
+        // First call on a fresh DB — mint a new id and remember it.
+        let new_id = uuid::Uuid::new_v4().to_string();
+        self.conn.execute(
+            "INSERT INTO device (device_id) VALUES (?1)",
+            params![new_id],
+        )?;
+        Ok(new_id)
+    }
+
+    /// Current Lamport clock value (0 on a fresh DB). Returns even before
+    /// `device_id()` has been called: an empty `device` table reads back
+    /// the column default rather than failing.
+    pub fn lamport_clock(&self) -> Result<i64> {
+        let v: Option<i64> = self
+            .conn
+            .query_row("SELECT lamport_clock FROM device LIMIT 1", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .optional()?;
+        Ok(v.unwrap_or(0))
+    }
+
+    /// Increment the Lamport clock by 1; return the new value (so the
+    /// caller can stamp the event they're about to author with it). On
+    /// a fresh DB this also seeds the single `device` row.
+    pub fn bump_lamport_clock(&self) -> Result<i64> {
+        // Make sure a row exists — sharing the existing seed path with
+        // `device_id` keeps the device_id and lamport_clock in the same
+        // single row, as the schema requires (device_id is PRIMARY KEY).
+        let _ = self.device_id()?;
+        self.conn.execute(
+            "UPDATE device SET lamport_clock = lamport_clock + 1",
+            [],
+        )?;
+        self.lamport_clock()
+    }
+
+    /// Apply the Lamport observation rule: set local = max(local, remote)
+    /// + 1. Returns the new local value. Always strictly increases the
+    /// clock, so any event authored after observation sorts after the
+    /// remote one we just witnessed.
+    pub fn observe_remote_lamport(&self, remote_ts: i64) -> Result<i64> {
+        let _ = self.device_id()?;
+        // Single statement, no read-modify-write race: SQL computes
+        // max(stored, ?) + 1 inline.
+        self.conn.execute(
+            "UPDATE device SET lamport_clock = MAX(lamport_clock, ?1) + 1",
+            params![remote_ts],
+        )?;
+        self.lamport_clock()
+    }
+
+    /// Append an event to the sync log. Returns the local rowid (the
+    /// cache key inside this device — distinct from `event.event_uuid`,
+    /// the cross-device identity). A second append with an
+    /// `event_uuid` already present is a silent no-op; this makes
+    /// delivery at-most-once on the local cache regardless of retries
+    /// or peer forwarding.
+    pub fn append_event(&self, event: &Event) -> Result<i64> {
+        // INSERT OR IGNORE handles the dedup case without raising the
+        // UNIQUE-constraint error to the caller. On ignore, last_insert_rowid
+        // is unchanged (could be 0 on a brand-new connection, or stale
+        // from a prior insert) — query the row by event_uuid to get the
+        // authoritative local id.
+        self.conn.execute(
+            "INSERT OR IGNORE INTO events
+                (event_uuid, lamport_ts, device_id, kind, payload)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                event.event_uuid,
+                event.lamport_ts,
+                event.device_id,
+                event.kind,
+                event.payload,
+            ],
+        )?;
+        Ok(self.conn.query_row(
+            "SELECT id FROM events WHERE event_uuid = ?1",
+            params![event.event_uuid],
+            |row| row.get::<_, i64>(0),
+        )?)
+    }
+
+    /// All events not yet pushed to remote, ordered by `lamport_ts` ASC
+    /// (then by local `id` as a stable tie-break). Sync's push phase
+    /// drains this list in order; mark each entry with `mark_event_synced`
+    /// once the WebDAV PUT succeeds.
+    pub fn pending_events(&self) -> Result<Vec<(i64, Event)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, event_uuid, lamport_ts, device_id, kind, payload
+             FROM events
+             WHERE synced = 0
+             ORDER BY lamport_ts ASC, id ASC",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    Event {
+                        event_uuid: row.get(1)?,
+                        lamport_ts: row.get(2)?,
+                        device_id: row.get(3)?,
+                        kind: row.get(4)?,
+                        payload: row.get(5)?,
+                    },
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Flip the `synced` flag on the event with this local rowid so it
+    /// drops out of `pending_events`. Unknown ids are silently no-ops —
+    /// SQLite's UPDATE-on-no-match behaviour, exposed verbatim so a
+    /// stale id from a partial sync doesn't escalate to an error.
+    pub fn mark_event_synced(&self, id: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE events SET synced = 1 WHERE id = ?1",
+            params![id],
+        )?;
+        Ok(())
+    }
+
+    /// Read a sync-state value (server URL, last-pull cursor, …),
+    /// returning `default` if the key has never been set. Mirrors
+    /// `get_setting` but keyed against the `sync_state` namespace.
+    pub fn get_sync_state(&self, key: &str, default: &str) -> Result<String> {
+        match self.conn.query_row(
+            "SELECT value FROM sync_state WHERE key = ?1",
+            params![key],
+            |row| row.get::<_, String>(0),
+        ) {
+            Ok(val) => Ok(val),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(default.to_string()),
+            Err(e) => Err(DbError::Sqlite(e)),
+        }
+    }
+
+    /// Upsert a sync-state value. Subsequent calls overwrite. Mirrors
+    /// `set_setting`'s semantics in the `sync_state` namespace.
+    pub fn set_sync_state(&self, key: &str, value: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO sync_state (key, value) VALUES (?1, ?2)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             params![key, value],
         )?;
@@ -3570,5 +3797,380 @@ mod tests {
         let uuid = &db.list_labels().unwrap()[0].uuid;
         assert!(looks_like_uuid_v4(uuid),
             "label uuid `{uuid}` doesn't match v4 shape");
+    }
+
+    // ── Device identity (Nextcloud-Sync phase A2.1) ──────────────────────────
+    //
+    // Each device gets a stable UUID that survives across app restarts and
+    // tags every locally-authored event. Generated lazily on first call to
+    // `device_id()` so a fresh in-memory test DB doesn't pay the cost
+    // unless something asks for it.
+
+    #[test]
+    fn device_id_is_a_v4_uuid() {
+        let db = Database::open_in_memory().unwrap();
+        let id = db.device_id().unwrap();
+        assert!(looks_like_uuid_v4(&id),
+            "device_id `{id}` doesn't match v4 shape");
+    }
+
+    #[test]
+    fn device_id_is_stable_across_calls_within_one_process() {
+        // Two calls in succession must agree — the second call must not
+        // re-generate. Otherwise every event we author would be tagged
+        // with a different device, defeating the conflict-resolution
+        // rule that ties-break by device_id.
+        let db = Database::open_in_memory().unwrap();
+        let a = db.device_id().unwrap();
+        let b = db.device_id().unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn device_id_is_stable_across_database_reopens() {
+        // Persistence: closing the DB and reopening the same file must
+        // yield the same device_id. This is the actual cross-restart
+        // contract; the in-memory variant above only proves "same call,
+        // same answer".
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("device_id.db");
+
+        let id_first = {
+            let db = Database::open(&path).unwrap();
+            db.device_id().unwrap()
+        };
+        let id_second = {
+            let db = Database::open(&path).unwrap();
+            db.device_id().unwrap()
+        };
+        assert_eq!(id_first, id_second,
+            "device_id must persist across DB reopens");
+    }
+
+    #[test]
+    fn two_separate_databases_get_different_device_ids() {
+        // Two fresh DBs simulate two devices on the same network. Their
+        // device_ids must differ so events authored on each can be
+        // distinguished by `device_id` in the conflict-resolution rules.
+        let db_a = Database::open_in_memory().unwrap();
+        let db_b = Database::open_in_memory().unwrap();
+        assert_ne!(db_a.device_id().unwrap(), db_b.device_id().unwrap());
+    }
+
+    // ── Lamport clock (Nextcloud-Sync phase A2.2) ────────────────────────────
+    //
+    // Logical clock for event ordering: bumped on local writes, max-merged
+    // with observed remote timestamps. Persisted in the single `device`
+    // row so it survives restarts. Conflict resolution depends on a
+    // monotonic counter — subtle bugs here cause silent data divergence.
+
+    #[test]
+    fn lamport_clock_is_zero_on_a_fresh_database() {
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(db.lamport_clock().unwrap(), 0);
+    }
+
+    #[test]
+    fn lamport_clock_starts_at_zero_even_before_device_id_is_minted() {
+        // Reading the clock must not implicitly require device_id() to
+        // have been called. The single-row `device` table is shared
+        // state — a query on an empty table returns the column default
+        // (0), not an error.
+        let db = Database::open_in_memory().unwrap();
+        let _ = db.lamport_clock().unwrap();          // no panic
+        assert_eq!(db.lamport_clock().unwrap(), 0);   // and idempotent
+    }
+
+    #[test]
+    fn bump_lamport_clock_returns_post_increment_value() {
+        // Caller-friendly contract: the returned value is the timestamp
+        // to attach to the event we're about to author. So bump() yields
+        // 1 on a fresh DB, then 2, then 3 — never 0.
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(db.bump_lamport_clock().unwrap(), 1);
+        assert_eq!(db.bump_lamport_clock().unwrap(), 2);
+        assert_eq!(db.bump_lamport_clock().unwrap(), 3);
+    }
+
+    #[test]
+    fn bump_lamport_clock_persists_the_increment() {
+        // After a bump, the *plain* read must reflect it — otherwise
+        // `lamport_clock()` and `bump_lamport_clock()` disagree, and
+        // observe_remote_lamport's max-merge logic breaks.
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(db.bump_lamport_clock().unwrap(), 1);
+        assert_eq!(db.lamport_clock().unwrap(), 1);
+    }
+
+    #[test]
+    fn bump_lamport_clock_persists_across_database_reopens() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("lamport.db");
+
+        let mid = {
+            let db = Database::open(&path).unwrap();
+            db.bump_lamport_clock().unwrap();
+            db.bump_lamport_clock().unwrap()
+        };
+        assert_eq!(mid, 2);
+        let after_reopen = {
+            let db = Database::open(&path).unwrap();
+            db.lamport_clock().unwrap()
+        };
+        assert_eq!(after_reopen, 2,
+            "lamport_clock must survive process restart unchanged");
+        let bumped = {
+            let db = Database::open(&path).unwrap();
+            db.bump_lamport_clock().unwrap()
+        };
+        assert_eq!(bumped, 3,
+            "the next bump after restart continues from the persisted value");
+    }
+
+    #[test]
+    fn observe_remote_lamport_advances_when_remote_is_ahead() {
+        // The Lamport rule: on observing a remote ts, set local =
+        // max(local, remote) + 1. When remote > local, this jumps the
+        // clock forward — necessary so any event we author after
+        // observing the remote will sort *after* it.
+        let db = Database::open_in_memory().unwrap();
+        let new_local = db.observe_remote_lamport(42).unwrap();
+        assert_eq!(new_local, 43);
+        assert_eq!(db.lamport_clock().unwrap(), 43);
+    }
+
+    #[test]
+    fn observe_remote_lamport_keeps_advancing_when_local_is_already_ahead() {
+        // Conversely, when local > remote, we use local+1 — local was
+        // already ahead, so we must still produce a strictly larger
+        // value to satisfy "every observation advances the clock".
+        let db = Database::open_in_memory().unwrap();
+        // Get local to 100.
+        for _ in 0..100 { db.bump_lamport_clock().unwrap(); }
+        let new_local = db.observe_remote_lamport(7).unwrap();
+        assert_eq!(new_local, 101);
+        assert_eq!(db.lamport_clock().unwrap(), 101);
+    }
+
+    #[test]
+    fn observe_remote_lamport_treats_equal_as_max_plus_one() {
+        // Tie case: max(5, 5) + 1 = 6. Documents that "max" really is
+        // max, not "strictly greater" — this is what guarantees a total
+        // order even when two devices independently land on the same ts.
+        let db = Database::open_in_memory().unwrap();
+        for _ in 0..5 { db.bump_lamport_clock().unwrap(); }
+        let new_local = db.observe_remote_lamport(5).unwrap();
+        assert_eq!(new_local, 6);
+    }
+
+    #[test]
+    fn observe_remote_lamport_handles_zero() {
+        // The very first observation of a fresh remote (ts=0) must still
+        // bump the local clock past it — otherwise an event tagged 0
+        // would be indistinguishable from never-set state.
+        let db = Database::open_in_memory().unwrap();
+        let new_local = db.observe_remote_lamport(0).unwrap();
+        assert_eq!(new_local, 1);
+    }
+
+    // ── Event log: append + pending + mark_synced (A2.3) ─────────────────────
+    //
+    // The append-only event log is the single source of truth for all
+    // mutations. `append_event` is idempotent on `event_uuid`: receiving
+    // the same event twice (e.g. on retry, or from a peer that already
+    // forwarded it) is a no-op rather than a constraint error escalated
+    // to the caller. `pending_events` is the push-queue contract — sorted
+    // by `lamport_ts` so peers see events in causal order.
+
+    fn sample_event(seed: i64) -> Event {
+        Event {
+            event_uuid: format!("00000000-0000-4000-8000-{:012x}", seed),
+            lamport_ts: seed,
+            device_id: "00000000-0000-4000-8000-aaaaaaaaaaaa".to_string(),
+            kind: "session_insert".to_string(),
+            payload: format!("{{\"seed\":{seed}}}"),
+        }
+    }
+
+    #[test]
+    fn pending_events_is_empty_on_a_fresh_database() {
+        let db = Database::open_in_memory().unwrap();
+        assert!(db.pending_events().unwrap().is_empty());
+    }
+
+    #[test]
+    fn append_event_then_read_back_via_pending_events() {
+        let db = Database::open_in_memory().unwrap();
+        let event = sample_event(7);
+        db.append_event(&event).unwrap();
+        let rows = db.pending_events().unwrap();
+        assert_eq!(rows.len(), 1);
+        let (_, got) = &rows[0];
+        assert_eq!(got, &event,
+            "appended event must round-trip every field unchanged");
+    }
+
+    #[test]
+    fn append_event_returns_a_distinct_local_rowid_per_call() {
+        // The local rowid is the cache key inside this device — distinct
+        // from `event_uuid` (the cross-device identity). Two appends must
+        // get two different rowids so callers can address them locally.
+        let db = Database::open_in_memory().unwrap();
+        let id_a = db.append_event(&sample_event(1)).unwrap();
+        let id_b = db.append_event(&sample_event(2)).unwrap();
+        assert_ne!(id_a, id_b);
+    }
+
+    #[test]
+    fn append_event_with_duplicate_uuid_is_idempotent_no_op() {
+        // `event_uuid` is UNIQUE — a second insert of the same uuid must
+        // succeed silently and NOT create a second row. This makes
+        // event delivery at-most-once on the local cache regardless of
+        // how often the caller (or a sync retry) submits it.
+        let db = Database::open_in_memory().unwrap();
+        let event = sample_event(1);
+        db.append_event(&event).unwrap();
+        let res = db.append_event(&event);
+        assert!(res.is_ok(),
+            "duplicate-event_uuid append must be a silent no-op, got: {res:?}");
+        assert_eq!(db.pending_events().unwrap().len(), 1,
+            "duplicate append must not create a second row");
+    }
+
+    #[test]
+    fn pending_events_orders_by_lamport_ts_ascending() {
+        // Peers replay in lamport order to converge on a consistent
+        // state. The push queue must hand events out in that same order
+        // so a peer with a slow-then-fast connection still gets them
+        // monotonically.
+        let db = Database::open_in_memory().unwrap();
+        // Insert out of order — ts 5, then 1, then 3.
+        db.append_event(&sample_event(5)).unwrap();
+        db.append_event(&sample_event(1)).unwrap();
+        db.append_event(&sample_event(3)).unwrap();
+        let timestamps: Vec<i64> = db.pending_events().unwrap()
+            .iter().map(|(_, e)| e.lamport_ts).collect();
+        assert_eq!(timestamps, vec![1, 3, 5]);
+    }
+
+    #[test]
+    fn mark_event_synced_removes_it_from_pending_events() {
+        let db = Database::open_in_memory().unwrap();
+        let id_a = db.append_event(&sample_event(1)).unwrap();
+        let _id_b = db.append_event(&sample_event(2)).unwrap();
+        db.mark_event_synced(id_a).unwrap();
+        let pending: Vec<i64> = db.pending_events().unwrap()
+            .iter().map(|(_, e)| e.lamport_ts).collect();
+        assert_eq!(pending, vec![2],
+            "synced event must drop out of the pending list");
+    }
+
+    #[test]
+    fn mark_event_synced_unknown_id_is_a_silent_no_op() {
+        // Defensive: a stale id from a partial sync attempt must not
+        // panic or surface an error. SQLite UPDATE on no-match is
+        // already a no-op; the wrapper preserves that.
+        let db = Database::open_in_memory().unwrap();
+        db.append_event(&sample_event(1)).unwrap();
+        let res = db.mark_event_synced(999);
+        assert!(res.is_ok());
+        assert_eq!(db.pending_events().unwrap().len(), 1,
+            "the existing event must still be pending — nothing was marked");
+    }
+
+    #[test]
+    fn pending_events_excludes_synced_rows() {
+        // After every event has been synced, pending_events is empty
+        // again. Documents the boundary case of "fully caught up".
+        let db = Database::open_in_memory().unwrap();
+        let id_a = db.append_event(&sample_event(1)).unwrap();
+        let id_b = db.append_event(&sample_event(2)).unwrap();
+        db.mark_event_synced(id_a).unwrap();
+        db.mark_event_synced(id_b).unwrap();
+        assert!(db.pending_events().unwrap().is_empty());
+    }
+
+    #[test]
+    fn append_event_persists_across_database_reopens() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("events.db");
+        let event = sample_event(42);
+        {
+            let db = Database::open(&path).unwrap();
+            db.append_event(&event).unwrap();
+        }
+        let db = Database::open(&path).unwrap();
+        let rows = db.pending_events().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(&rows[0].1, &event);
+    }
+
+    // ── sync_state KV (A2.4) ─────────────────────────────────────────────────
+    //
+    // Holds sync-loop bookkeeping — server URL, last-pull cursor, last
+    // successful sync timestamp, etc. Sensitive values (app password)
+    // live in libsecret/Keystore, not here. Mirrors the existing
+    // `settings` table in shape but is a separate namespace so a UI
+    // export of sync diagnostics doesn't have to filter prefs out, and
+    // vice-versa.
+
+    #[test]
+    fn get_sync_state_returns_default_on_a_fresh_database() {
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(db.get_sync_state("server_url", "fallback").unwrap(),
+                   "fallback");
+    }
+
+    #[test]
+    fn get_sync_state_returns_default_for_unknown_key_after_other_keys_set() {
+        // Defensive: setting key A must not affect get on key B.
+        let db = Database::open_in_memory().unwrap();
+        db.set_sync_state("server_url", "https://nc.example").unwrap();
+        assert_eq!(db.get_sync_state("missing", "fallback").unwrap(),
+                   "fallback");
+    }
+
+    #[test]
+    fn set_then_get_sync_state_round_trips_the_value() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_sync_state("server_url", "https://nc.example").unwrap();
+        assert_eq!(db.get_sync_state("server_url", "fallback").unwrap(),
+                   "https://nc.example");
+    }
+
+    #[test]
+    fn set_sync_state_overwrites_an_existing_value() {
+        // Upsert semantics — same as `set_setting`. A second `set` must
+        // replace, not silently no-op.
+        let db = Database::open_in_memory().unwrap();
+        db.set_sync_state("interval_seconds", "1800").unwrap();
+        db.set_sync_state("interval_seconds", "300").unwrap();
+        assert_eq!(db.get_sync_state("interval_seconds", "0").unwrap(),
+                   "300");
+    }
+
+    #[test]
+    fn sync_state_persists_across_database_reopens() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sync_state.db");
+        {
+            let db = Database::open(&path).unwrap();
+            db.set_sync_state("server_url", "https://nc.example").unwrap();
+        }
+        let db = Database::open(&path).unwrap();
+        assert_eq!(db.get_sync_state("server_url", "x").unwrap(),
+                   "https://nc.example");
+    }
+
+    #[test]
+    fn sync_state_and_settings_are_separate_namespaces() {
+        // Same key in both tables must NOT collide — they're conceptually
+        // independent stores. Pinning this makes future "let's just merge
+        // them" refactors visible in CI.
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("foo", "from-settings").unwrap();
+        db.set_sync_state("foo", "from-sync-state").unwrap();
+        assert_eq!(db.get_setting("foo", "x").unwrap(), "from-settings");
+        assert_eq!(db.get_sync_state("foo", "x").unwrap(), "from-sync-state");
     }
 }
