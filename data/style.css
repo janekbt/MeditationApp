@@ -321,3 +321,14 @@ button.period-pill:checked {
 .cal-day-active-label {
     color: @accent_fg_color;
 }
+
+/* Black background for the running timer / stopwatch / boxbreath view.
+   Meditation typically happens in low light; a bright content area
+   stabs the eye while the user just wants to watch a clock. The class
+   is applied to the running page's content Box only — header bar and
+   the rest of the app keep whatever theme the user has configured.
+   `color` cascades to the time label, button captions, etc. */
+.running-view-dark {
+    background-color: black;
+    color: white;
+}

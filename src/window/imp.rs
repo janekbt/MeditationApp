@@ -449,36 +449,20 @@ impl MeditateWindow {
         toolbar_view.add_top_bar(&header);
         toolbar_view.set_content(Some(&content));
 
+        // Black background + light foreground for low-light
+        // meditation comfort. Applied to the ToolbarView (NOT the
+        // inner content Box) so the dark fills the entire content
+        // region edge-to-edge — the content Box has side margins
+        // and centred alignment, which would otherwise leave bright
+        // gaps around the timer. The HeaderBar paints its own
+        // theme-supplied opaque background on top, so the header
+        // stays the user's normal theme.
+        toolbar_view.add_css_class("running-view-dark");
+
         let page = adw::NavigationPage::builder()
             .tag("running").title(title)
             .child(&toolbar_view)
             .build();
-
-        // Force the dark colour scheme for the duration of the
-        // running page. Meditation is typically done in low light;
-        // a bright header + bright content stab the eye when the
-        // user just wants to watch a timer count down. Saving the
-        // previous scheme on `shown` and restoring on `hidden`
-        // keeps the rest of the app on whatever theme the user has
-        // configured (system / light / dark) unchanged.
-        let style_manager = adw::StyleManager::default();
-        let saved_scheme = std::rc::Rc::new(std::cell::Cell::new(
-            adw::ColorScheme::Default));
-        page.connect_shown(glib::clone!(
-            #[strong] saved_scheme,
-            #[weak] style_manager,
-            move |_| {
-                saved_scheme.set(style_manager.color_scheme());
-                style_manager.set_color_scheme(adw::ColorScheme::ForceDark);
-            }
-        ));
-        page.connect_hidden(glib::clone!(
-            #[strong] saved_scheme,
-            #[weak] style_manager,
-            move |_| {
-                style_manager.set_color_scheme(saved_scheme.get());
-            }
-        ));
 
         let obj = self.obj().clone();
         pause_btn.connect_clicked(move |_| obj.imp().timer_view.pause());
