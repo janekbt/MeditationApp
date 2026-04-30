@@ -212,12 +212,22 @@ impl Database {
     }
 
     /// Write a settings value. Upserts: subsequent calls overwrite.
+    /// Each call emits its own `setting_changed` event — peers
+    /// last-write-wins by Lamport ts, so collapsing two overwrites to
+    /// one event would lose the intermediate ordering.
     pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
         self.conn.execute(
             "INSERT INTO settings (key, value) VALUES (?1, ?2)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             params![key, value],
         )?;
+        let payload = serde_json::json!({
+            "key": key,
+            "value": value,
+        }).to_string();
+        self.emit_event("setting_changed", payload)?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -360,6 +370,37 @@ impl Database {
         Ok(())
     }
 
+    /// Emit a locally-authored event: bumps the Lamport clock, mints a
+    /// fresh `event_uuid`, tags with this device's id, and appends to the
+    /// log. Mutation methods call this AFTER the data write inside a
+    /// shared transaction so the cache row and its event commit atomically.
+    fn emit_event(&self, kind: &str, payload: String) -> Result<()> {
+        let device_id = self.device_id()?;
+        let lamport_ts = self.bump_lamport_clock()?;
+        let event = Event {
+            event_uuid: uuid::Uuid::new_v4().to_string(),
+            lamport_ts,
+            device_id,
+            kind: kind.to_string(),
+            payload,
+        };
+        self.append_event(&event)?;
+        Ok(())
+    }
+
+    /// Look up a label's cross-device UUID by its local rowid. Used at
+    /// event-emission time to translate from the cache key (rowid) to
+    /// the cross-device identity. Errors when the rowid is unknown —
+    /// callers should already have validated this via the FK constraint
+    /// or by reading the row's `label_id` from a known-good source.
+    fn label_uuid_by_id(&self, id: i64) -> Result<String> {
+        Ok(self.conn.query_row(
+            "SELECT uuid FROM labels WHERE id = ?1",
+            params![id],
+            |row| row.get::<_, String>(0),
+        )?)
+    }
+
     /// Read a sync-state value (server URL, last-pull cursor, …),
     /// returning `default` if the key has never been set. Mirrors
     /// `get_setting` but keyed against the `sync_state` namespace.
@@ -413,24 +454,51 @@ impl Database {
 
     /// Remove the label with `id`. Sessions that referenced it survive
     /// with `label_id = None` (FK is `ON DELETE SET NULL`). Unknown ids
-    /// are silently no-ops.
+    /// are silently no-ops AND emit no event — peers would otherwise
+    /// receive a tombstone for a label they never knew existed.
     pub fn delete_label(&self, id: i64) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        let row_uuid: Option<String> = self.conn.query_row(
+            "SELECT uuid FROM labels WHERE id = ?1",
+            params![id],
+            |row| row.get::<_, String>(0),
+        ).optional()?;
+        let Some(uuid) = row_uuid else { return Ok(()); };
         self.conn.execute("DELETE FROM labels WHERE id = ?1", params![id])?;
+        let payload = serde_json::json!({ "uuid": uuid }).to_string();
+        self.emit_event("label_delete", payload)?;
+        tx.commit()?;
         Ok(())
     }
 
     /// Rename the label with `id` to `name`. Unknown ids are silently
-    /// no-ops (SQLite UPDATE matches zero rows). If `name` collides
-    /// case-insensitively with another label, returns
-    /// `DbError::DuplicateLabel`. Renaming a row to its own current name
-    /// (incl. a case variant of itself) succeeds, since SQLite's UNIQUE
-    /// check excludes the row being updated.
+    /// no-ops AND emit no event. If `name` collides case-insensitively
+    /// with another label, returns `DbError::DuplicateLabel` and the
+    /// transaction rolls back (so no rename event leaks to peers).
+    /// Renaming a row to its own current name (incl. a case variant
+    /// of itself) succeeds, since SQLite's UNIQUE check excludes the
+    /// row being updated.
     pub fn update_label(&self, id: i64, name: &str) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        let row_uuid: Option<String> = self.conn.query_row(
+            "SELECT uuid FROM labels WHERE id = ?1",
+            params![id],
+            |row| row.get::<_, String>(0),
+        ).optional()?;
+        let Some(label_uuid) = row_uuid else { return Ok(()); };
         match self.conn.execute(
             "UPDATE labels SET name = ?1 WHERE id = ?2",
             params![name, id],
         ) {
-            Ok(_) => Ok(()),
+            Ok(_) => {
+                let payload = serde_json::json!({
+                    "uuid": label_uuid,
+                    "name": name,
+                }).to_string();
+                self.emit_event("label_rename", payload)?;
+                tx.commit()?;
+                Ok(())
+            }
             Err(rusqlite::Error::SqliteFailure(err, _))
                 if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE =>
             {
@@ -446,15 +514,26 @@ impl Database {
     /// silently reuse an existing row (e.g. CSV import) should call
     /// `find_or_create_label` instead.
     pub fn insert_label(&self, name: &str) -> Result<i64> {
-        let uuid = uuid::Uuid::new_v4().to_string();
-        match self
-            .conn
-            .execute("INSERT INTO labels (name, uuid) VALUES (?1, ?2)", params![name, uuid])
-        {
-            Ok(_) => Ok(self.conn.last_insert_rowid()),
+        let tx = self.conn.unchecked_transaction()?;
+        let label_uuid = uuid::Uuid::new_v4().to_string();
+        match self.conn.execute(
+            "INSERT INTO labels (name, uuid) VALUES (?1, ?2)",
+            params![name, label_uuid],
+        ) {
+            Ok(_) => {
+                let rowid = self.conn.last_insert_rowid();
+                let payload = serde_json::json!({
+                    "uuid": label_uuid,
+                    "name": name,
+                }).to_string();
+                self.emit_event("label_insert", payload)?;
+                tx.commit()?;
+                Ok(rowid)
+            }
             Err(rusqlite::Error::SqliteFailure(err, _))
                 if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE =>
             {
+                // Tx implicit rollback on drop — no event was emitted.
                 Err(DbError::DuplicateLabel(name.to_string()))
             }
             Err(e) => Err(DbError::Sqlite(e)),
@@ -512,7 +591,8 @@ impl Database {
     }
 
     pub fn insert_session(&self, session: &Session) -> Result<i64> {
-        let uuid = uuid::Uuid::new_v4().to_string();
+        let tx = self.conn.unchecked_transaction()?;
+        let session_uuid = uuid::Uuid::new_v4().to_string();
         self.conn.execute(
             "INSERT INTO sessions (start_iso, duration_secs, label_id, notes, mode, uuid)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -522,18 +602,42 @@ impl Database {
                 session.label_id,
                 session.notes,
                 session.mode.as_db_str(),
-                uuid,
+                session_uuid,
             ],
         )?;
-        Ok(self.conn.last_insert_rowid())
+        let rowid = self.conn.last_insert_rowid();
+
+        // Translate label_id (local rowid) → label_uuid (cross-device).
+        // The peer applying this event has a different rowid space.
+        let label_uuid = match session.label_id {
+            Some(id) => Some(self.label_uuid_by_id(id)?),
+            None => None,
+        };
+        let payload = serde_json::json!({
+            "uuid": session_uuid,
+            "start_iso": session.start_iso,
+            "duration_secs": session.duration_secs,
+            "label_uuid": label_uuid,
+            "notes": session.notes,
+            "mode": session.mode.as_db_str(),
+        }).to_string();
+        self.emit_event("session_insert", payload)?;
+
+        tx.commit()?;
+        Ok(rowid)
     }
 
     /// Insert many sessions inside a single transaction — orders of
     /// magnitude faster than calling `insert_session` in a loop. Atomic:
     /// if any row fails a constraint, the whole batch is rolled back and
-    /// the caller never sees a partially-imported DB.
+    /// the caller never sees a partially-imported DB. Each row also
+    /// emits its own `session_insert` event — peers replay them
+    /// independently, there is no "bulk" event kind.
     pub fn bulk_insert_sessions(&self, sessions: &[Session]) -> Result<usize> {
         let tx = self.conn.unchecked_transaction()?;
+        // Cache each row's freshly-minted uuid so we can build the event
+        // payload without re-reading from disk after the INSERT.
+        let mut session_uuids: Vec<String> = Vec::with_capacity(sessions.len());
         {
             let mut stmt = tx.prepare(
                 "INSERT INTO sessions (start_iso, duration_secs, label_id, notes, mode, uuid)
@@ -549,28 +653,90 @@ impl Database {
                     s.mode.as_db_str(),
                     uuid,
                 ])?;
+                session_uuids.push(uuid);
             }
+        }
+        for (s, session_uuid) in sessions.iter().zip(session_uuids) {
+            let label_uuid = match s.label_id {
+                Some(id) => Some(self.label_uuid_by_id(id)?),
+                None => None,
+            };
+            let payload = serde_json::json!({
+                "uuid": session_uuid,
+                "start_iso": s.start_iso,
+                "duration_secs": s.duration_secs,
+                "label_uuid": label_uuid,
+                "notes": s.notes,
+                "mode": s.mode.as_db_str(),
+            }).to_string();
+            self.emit_event("session_insert", payload)?;
         }
         tx.commit()?;
         Ok(sessions.len())
     }
 
-    /// Remove the row with `id`. Unknown ids are silently no-ops.
+    /// Remove the row with `id`. Unknown ids are silently no-ops AND
+    /// emit no event — otherwise peers would see a tombstone for a
+    /// session they never knew existed.
     pub fn delete_session(&self, id: i64) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        // Look up the uuid before deleting — the row's gone after the
+        // DELETE, but the event needs the cross-device identity.
+        let row_uuid: Option<String> = self.conn.query_row(
+            "SELECT uuid FROM sessions WHERE id = ?1",
+            params![id],
+            |row| row.get::<_, String>(0),
+        ).optional()?;
+        let Some(uuid) = row_uuid else {
+            // Unknown id → no row to delete, no event to emit.
+            return Ok(());
+        };
         self.conn.execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
+        let payload = serde_json::json!({ "uuid": uuid }).to_string();
+        self.emit_event("session_delete", payload)?;
+        tx.commit()?;
         Ok(())
     }
 
     /// Remove every session row. Returns how many rows were deleted.
-    /// Labels and settings are untouched.
+    /// Labels and settings are untouched. Emits one `session_delete`
+    /// event per row that was actually present, so peers tombstone the
+    /// same set we cleared locally.
     pub fn delete_all_sessions(&self) -> Result<usize> {
+        let tx = self.conn.unchecked_transaction()?;
+        // Capture the uuids before the DELETE — afterwards there's
+        // nothing to read.
+        let row_uuids: Vec<String> = {
+            let mut stmt = self.conn.prepare("SELECT uuid FROM sessions")?;
+            let rows = stmt
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            rows
+        };
         let n = self.conn.execute("DELETE FROM sessions", [])?;
+        for uuid in &row_uuids {
+            let payload = serde_json::json!({ "uuid": uuid }).to_string();
+            self.emit_event("session_delete", payload)?;
+        }
+        tx.commit()?;
         Ok(n)
     }
 
     /// Replace every field of the row with `id`. Unknown ids are silently
-    /// no-ops (SQLite UPDATE matches zero rows).
+    /// no-ops AND emit no event — peers would otherwise receive an update
+    /// referencing a uuid we don't have.
     pub fn update_session(&self, id: i64, session: &Session) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        // Resolve the existing row's uuid first; absence means "unknown
+        // id" and we drop out without writing or logging.
+        let row_uuid: Option<String> = self.conn.query_row(
+            "SELECT uuid FROM sessions WHERE id = ?1",
+            params![id],
+            |row| row.get::<_, String>(0),
+        ).optional()?;
+        let Some(session_uuid) = row_uuid else {
+            return Ok(());
+        };
         self.conn.execute(
             "UPDATE sessions
              SET start_iso = ?1, duration_secs = ?2, label_id = ?3,
@@ -585,6 +751,20 @@ impl Database {
                 id,
             ],
         )?;
+        let label_uuid = match session.label_id {
+            Some(id) => Some(self.label_uuid_by_id(id)?),
+            None => None,
+        };
+        let payload = serde_json::json!({
+            "uuid": session_uuid,
+            "start_iso": session.start_iso,
+            "duration_secs": session.duration_secs,
+            "label_uuid": label_uuid,
+            "notes": session.notes,
+            "mode": session.mode.as_db_str(),
+        }).to_string();
+        self.emit_event("session_update", payload)?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -4172,5 +4352,642 @@ mod tests {
         db.set_sync_state("foo", "from-sync-state").unwrap();
         assert_eq!(db.get_setting("foo", "x").unwrap(), "from-settings");
         assert_eq!(db.get_sync_state("foo", "x").unwrap(), "from-sync-state");
+    }
+
+    // ── Event emission on mutations (A3) ─────────────────────────────────────
+    //
+    // Every state-changing operation appends a self-contained event to
+    // `events` so peers can replay it. The local DB (`sessions`,
+    // `labels`, `settings`) is the materialized cache derived from
+    // those events; if the cache and the log disagree, the log wins on
+    // every other device.
+
+    /// Parse the JSON payload of an event into a generic `serde_json::Value`
+    /// for assertions. Avoids hardcoding a Rust struct per event kind in
+    /// the test surface — the payload contract IS the JSON shape.
+    fn event_payload(event: &Event) -> serde_json::Value {
+        serde_json::from_str(&event.payload)
+            .unwrap_or_else(|e| panic!("payload `{}` is not valid JSON: {e}",
+                event.payload))
+    }
+
+    // ── A3.1: insert_session emits a session_insert event ────────────────────
+
+    #[test]
+    fn insert_session_appends_exactly_one_session_insert_event() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_session(&Session {
+            start_iso: "2026-04-30T10:00:00".to_string(),
+            duration_secs: 600,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Countdown,
+            uuid: String::new(),
+        }).unwrap();
+        let events = db.pending_events().unwrap();
+        assert_eq!(events.len(), 1, "one insert must produce exactly one event");
+        assert_eq!(events[0].1.kind, "session_insert");
+    }
+
+    #[test]
+    fn session_insert_event_payload_contains_the_rows_uuid() {
+        // The event's session uuid must match the row's uuid — that's
+        // how peers cross-reference events to materialized rows.
+        let db = Database::open_in_memory().unwrap();
+        db.insert_session(&Session {
+            start_iso: "2026-04-30T10:00:00".to_string(),
+            duration_secs: 600,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Countdown,
+            uuid: String::new(),
+        }).unwrap();
+        let row_uuid = db.list_sessions().unwrap()[0].1.uuid.clone();
+        let events = db.pending_events().unwrap();
+        let payload = event_payload(&events[0].1);
+        assert_eq!(payload["uuid"], serde_json::Value::String(row_uuid));
+    }
+
+    #[test]
+    fn session_insert_event_payload_carries_every_relevant_field() {
+        // Every column that a peer needs to reconstruct the row must be
+        // present in the payload — start_iso, duration_secs, notes, mode.
+        // label_uuid is null here (label_id is None); covered separately
+        // when the session does have a label.
+        let db = Database::open_in_memory().unwrap();
+        db.insert_session(&Session {
+            start_iso: "2026-04-30T10:00:00".to_string(),
+            duration_secs: 1234,
+            label_id: None,
+            notes: Some("note text".to_string()),
+            mode: SessionMode::BoxBreath,
+            uuid: String::new(),
+        }).unwrap();
+        let payload = event_payload(&db.pending_events().unwrap()[0].1);
+        assert_eq!(payload["start_iso"], "2026-04-30T10:00:00");
+        assert_eq!(payload["duration_secs"], 1234);
+        assert_eq!(payload["notes"], "note text");
+        assert_eq!(payload["mode"], "box_breath");
+        assert_eq!(payload["label_uuid"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn session_insert_event_payload_label_uuid_resolves_from_label_id() {
+        // sessions reference labels by rowid locally, but the event must
+        // carry the label's UUID — the cross-device identity. The
+        // resolution `label_id → label_uuid` happens at event-emission
+        // time so a peer can apply the event without needing this
+        // device's rowid space.
+        let db = Database::open_in_memory().unwrap();
+        let label_id = db.insert_label("Morning").unwrap();
+        let label_uuid = db.list_labels().unwrap()[0].uuid.clone();
+        // insert_label also emits an event — drain it before the session
+        // insert so we can assert on a single event below.
+        for (id, _) in db.pending_events().unwrap() {
+            db.mark_event_synced(id).unwrap();
+        }
+        db.insert_session(&Session {
+            start_iso: "2026-04-30T10:00:00".to_string(),
+            duration_secs: 600,
+            label_id: Some(label_id),
+            notes: None,
+            mode: SessionMode::Countdown,
+            uuid: String::new(),
+        }).unwrap();
+        let payload = event_payload(&db.pending_events().unwrap()[0].1);
+        assert_eq!(payload["label_uuid"], serde_json::Value::String(label_uuid));
+    }
+
+    #[test]
+    fn session_insert_event_payload_serializes_notes_null_when_absent() {
+        // `notes: None` round-trips through the payload as JSON null —
+        // not an empty string, which would lose the "no notes" vs "empty
+        // notes" distinction on a peer that re-applies the event.
+        let db = Database::open_in_memory().unwrap();
+        db.insert_session(&Session {
+            start_iso: "2026-04-30T10:00:00".to_string(),
+            duration_secs: 600,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Countdown,
+            uuid: String::new(),
+        }).unwrap();
+        let payload = event_payload(&db.pending_events().unwrap()[0].1);
+        assert_eq!(payload["notes"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn session_insert_event_carries_this_devices_id() {
+        let db = Database::open_in_memory().unwrap();
+        let device_id = db.device_id().unwrap();
+        db.insert_session(&Session {
+            start_iso: "2026-04-30T10:00:00".to_string(),
+            duration_secs: 600,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Countdown,
+            uuid: String::new(),
+        }).unwrap();
+        let events = db.pending_events().unwrap();
+        assert_eq!(events[0].1.device_id, device_id,
+            "event must be attributed to the authoring device");
+    }
+
+    #[test]
+    fn session_insert_event_advances_the_lamport_clock() {
+        // Bumping the clock on every authored event is what gives the
+        // log a total order. After one insert, lamport must be ≥ 1; the
+        // event's own ts must equal that bumped value.
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(db.lamport_clock().unwrap(), 0);
+        db.insert_session(&Session {
+            start_iso: "2026-04-30T10:00:00".to_string(),
+            duration_secs: 600,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Countdown,
+            uuid: String::new(),
+        }).unwrap();
+        let lamport = db.lamport_clock().unwrap();
+        assert!(lamport >= 1, "lamport must advance past zero");
+        let events = db.pending_events().unwrap();
+        assert_eq!(events[0].1.lamport_ts, lamport,
+            "event ts must equal the post-bump clock value");
+    }
+
+    #[test]
+    fn two_inserts_produce_two_distinct_events_in_lamport_order() {
+        let db = Database::open_in_memory().unwrap();
+        for i in 0..2 {
+            db.insert_session(&Session {
+                start_iso: format!("2026-04-3{}T10:00:00", i),
+                duration_secs: 600,
+                label_id: None,
+                notes: None,
+                mode: SessionMode::Countdown,
+                uuid: String::new(),
+            }).unwrap();
+        }
+        let events = db.pending_events().unwrap();
+        assert_eq!(events.len(), 2);
+        assert!(events[0].1.lamport_ts < events[1].1.lamport_ts,
+            "events must be sorted ASC by lamport_ts");
+        assert_ne!(events[0].1.event_uuid, events[1].1.event_uuid);
+    }
+
+    /// Drain every currently-pending event (mark them all synced) so
+    /// follow-up assertions can focus on the events produced by a
+    /// specific subsequent mutation. Returns nothing — callers don't
+    /// care about the drained content, only that what comes next is
+    /// observable in isolation.
+    fn drain_events(db: &Database) {
+        for (id, _) in db.pending_events().unwrap() {
+            db.mark_event_synced(id).unwrap();
+        }
+    }
+
+    // ── A3.2: update_session and delete_session emit events ──────────────────
+
+    #[test]
+    fn update_session_appends_a_session_update_event() {
+        let db = Database::open_in_memory().unwrap();
+        let id = db.insert_session(&Session {
+            start_iso: "2026-04-30T10:00:00".to_string(),
+            duration_secs: 600,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Countdown,
+            uuid: String::new(),
+        }).unwrap();
+        drain_events(&db);
+
+        db.update_session(id, &Session {
+            start_iso: "2026-05-01T11:00:00".to_string(),
+            duration_secs: 1800,
+            label_id: None,
+            notes: Some("revised".to_string()),
+            mode: SessionMode::Stopwatch,
+            uuid: String::new(),
+        }).unwrap();
+        let events = db.pending_events().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].1.kind, "session_update");
+    }
+
+    #[test]
+    fn session_update_event_payload_carries_the_rows_uuid_unchanged() {
+        // The session's uuid is stable — update changes every other field
+        // but the cross-device identity of the session is fixed at insert
+        // time. The event must reference that same uuid so peers can
+        // locate the row to update.
+        let db = Database::open_in_memory().unwrap();
+        let id = db.insert_session(&Session {
+            start_iso: "2026-04-30T10:00:00".to_string(),
+            duration_secs: 600,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Countdown,
+            uuid: String::new(),
+        }).unwrap();
+        let original_uuid = db.list_sessions().unwrap()[0].1.uuid.clone();
+        drain_events(&db);
+
+        db.update_session(id, &Session {
+            start_iso: "2026-05-01T11:00:00".to_string(),
+            duration_secs: 1800,
+            label_id: None,
+            notes: Some("revised".to_string()),
+            mode: SessionMode::Stopwatch,
+            uuid: String::new(),
+        }).unwrap();
+        let payload = event_payload(&db.pending_events().unwrap()[0].1);
+        assert_eq!(payload["uuid"], serde_json::Value::String(original_uuid));
+    }
+
+    #[test]
+    fn session_update_event_payload_reflects_the_new_field_values() {
+        let db = Database::open_in_memory().unwrap();
+        let id = db.insert_session(&Session {
+            start_iso: "2026-04-30T10:00:00".to_string(),
+            duration_secs: 600,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Countdown,
+            uuid: String::new(),
+        }).unwrap();
+        drain_events(&db);
+
+        db.update_session(id, &Session {
+            start_iso: "2026-05-01T11:00:00".to_string(),
+            duration_secs: 1800,
+            label_id: None,
+            notes: Some("revised".to_string()),
+            mode: SessionMode::Stopwatch,
+            uuid: String::new(),
+        }).unwrap();
+        let payload = event_payload(&db.pending_events().unwrap()[0].1);
+        assert_eq!(payload["start_iso"], "2026-05-01T11:00:00");
+        assert_eq!(payload["duration_secs"], 1800);
+        assert_eq!(payload["notes"], "revised");
+        assert_eq!(payload["mode"], "stopwatch");
+    }
+
+    #[test]
+    fn session_update_event_payload_label_uuid_resolves_from_new_label() {
+        // Updates can change the label — the event payload must reflect
+        // the *new* label's uuid, not the old one or the rowid.
+        let db = Database::open_in_memory().unwrap();
+        let label_id = db.insert_label("Evening").unwrap();
+        let label_uuid = db.list_labels().unwrap()[0].uuid.clone();
+        let id = db.insert_session(&Session {
+            start_iso: "2026-04-30T10:00:00".to_string(),
+            duration_secs: 600,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Countdown,
+            uuid: String::new(),
+        }).unwrap();
+        drain_events(&db);
+
+        db.update_session(id, &Session {
+            start_iso: "2026-04-30T10:00:00".to_string(),
+            duration_secs: 600,
+            label_id: Some(label_id),
+            notes: None,
+            mode: SessionMode::Countdown,
+            uuid: String::new(),
+        }).unwrap();
+        let payload = event_payload(&db.pending_events().unwrap()[0].1);
+        assert_eq!(payload["label_uuid"], serde_json::Value::String(label_uuid));
+    }
+
+    #[test]
+    fn update_session_unknown_id_emits_no_event() {
+        // Defensive: an UPDATE that affects zero rows must NOT log a
+        // ghost event referencing a uuid we don't know. Otherwise peers
+        // would receive an update for a session they've never seen.
+        let db = Database::open_in_memory().unwrap();
+        drain_events(&db);
+        db.update_session(9999, &Session {
+            start_iso: "2026-05-01T11:00:00".to_string(),
+            duration_secs: 1800,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Stopwatch,
+            uuid: String::new(),
+        }).unwrap();
+        assert!(db.pending_events().unwrap().is_empty(),
+            "no-match update must produce no event");
+    }
+
+    #[test]
+    fn delete_session_appends_a_session_delete_event() {
+        let db = Database::open_in_memory().unwrap();
+        let id = db.insert_session(&Session {
+            start_iso: "2026-04-30T10:00:00".to_string(),
+            duration_secs: 600,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Countdown,
+            uuid: String::new(),
+        }).unwrap();
+        let row_uuid = db.list_sessions().unwrap()[0].1.uuid.clone();
+        drain_events(&db);
+
+        db.delete_session(id).unwrap();
+        let events = db.pending_events().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].1.kind, "session_delete");
+
+        // Payload is just the uuid — peers don't need any other field
+        // since the tombstone semantics is "drop the row by this id".
+        let payload = event_payload(&events[0].1);
+        assert_eq!(payload["uuid"], serde_json::Value::String(row_uuid));
+    }
+
+    #[test]
+    fn delete_session_unknown_id_emits_no_event() {
+        let db = Database::open_in_memory().unwrap();
+        drain_events(&db);
+        db.delete_session(9999).unwrap();
+        assert!(db.pending_events().unwrap().is_empty(),
+            "no-match delete must produce no event");
+    }
+
+    // ── A3.3: bulk operations emit one event per row ─────────────────────────
+
+    #[test]
+    fn bulk_insert_sessions_emits_one_event_per_row() {
+        // Each row crosses the network as its own SessionInserted event —
+        // the cross-device replay model has no concept of "bulk insert",
+        // every row is independent. So N inputs must yield N events.
+        let db = Database::open_in_memory().unwrap();
+        let to_insert: Vec<Session> = (0..3).map(|i| Session {
+            start_iso: format!("2026-04-3{i}T10:00:00"),
+            duration_secs: 600,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Countdown,
+            uuid: String::new(),
+        }).collect();
+        db.bulk_insert_sessions(&to_insert).unwrap();
+        let events = db.pending_events().unwrap();
+        assert_eq!(events.len(), 3,
+            "three input rows must yield three events");
+        for (_, e) in &events {
+            assert_eq!(e.kind, "session_insert");
+        }
+    }
+
+    #[test]
+    fn bulk_insert_sessions_event_uuids_match_inserted_rows() {
+        // Each event's session uuid must correspond to a stored row's
+        // uuid — the set must be equal. Otherwise a peer would receive
+        // events for rows we don't have, or skip rows we do.
+        let db = Database::open_in_memory().unwrap();
+        let to_insert: Vec<Session> = (0..3).map(|i| Session {
+            start_iso: format!("2026-04-3{i}T10:00:00"),
+            duration_secs: 600,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Countdown,
+            uuid: String::new(),
+        }).collect();
+        db.bulk_insert_sessions(&to_insert).unwrap();
+        let row_uuids: std::collections::HashSet<String> = db.list_sessions()
+            .unwrap()
+            .iter().map(|(_, s)| s.uuid.clone()).collect();
+        let event_uuids: std::collections::HashSet<String> = db
+            .pending_events()
+            .unwrap()
+            .iter()
+            .map(|(_, e)| event_payload(e)["uuid"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(row_uuids, event_uuids,
+            "every stored row must have a matching event, and vice versa");
+    }
+
+    #[test]
+    fn bulk_insert_sessions_with_empty_slice_emits_no_events() {
+        let db = Database::open_in_memory().unwrap();
+        drain_events(&db);
+        db.bulk_insert_sessions(&[]).unwrap();
+        assert!(db.pending_events().unwrap().is_empty());
+    }
+
+    #[test]
+    fn bulk_insert_session_events_have_strictly_increasing_lamport_ts() {
+        // Replay order is determined by lamport_ts. Even within a bulk
+        // op, each row gets its own ts so peers can apply them in a
+        // consistent order across devices.
+        let db = Database::open_in_memory().unwrap();
+        let to_insert: Vec<Session> = (0..3).map(|i| Session {
+            start_iso: format!("2026-04-3{i}T10:00:00"),
+            duration_secs: 600,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Countdown,
+            uuid: String::new(),
+        }).collect();
+        db.bulk_insert_sessions(&to_insert).unwrap();
+        let timestamps: Vec<i64> = db.pending_events().unwrap()
+            .iter().map(|(_, e)| e.lamport_ts).collect();
+        let mut sorted = timestamps.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(timestamps.len(), sorted.len(),
+            "every bulk-inserted event must have a unique lamport_ts: {timestamps:?}");
+        assert_eq!(timestamps, sorted,
+            "events must be returned in ascending lamport_ts order");
+    }
+
+    #[test]
+    fn delete_all_sessions_emits_one_delete_event_per_existing_row() {
+        let db = Database::open_in_memory().unwrap();
+        for i in 0..3 {
+            db.insert_session(&Session {
+                start_iso: format!("2026-04-3{i}T10:00:00"),
+                duration_secs: 600,
+                label_id: None,
+                notes: None,
+                mode: SessionMode::Countdown,
+                uuid: String::new(),
+            }).unwrap();
+        }
+        let row_uuids: std::collections::HashSet<String> = db.list_sessions()
+            .unwrap()
+            .iter().map(|(_, s)| s.uuid.clone()).collect();
+        drain_events(&db);
+
+        let removed = db.delete_all_sessions().unwrap();
+        assert_eq!(removed, 3);
+
+        let events = db.pending_events().unwrap();
+        assert_eq!(events.len(), 3,
+            "delete_all must emit one delete event per row that was present");
+        for (_, e) in &events {
+            assert_eq!(e.kind, "session_delete");
+        }
+        let event_uuids: std::collections::HashSet<String> = events.iter()
+            .map(|(_, e)| event_payload(e)["uuid"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(row_uuids, event_uuids,
+            "every previously-present row must show up in a tombstone event");
+    }
+
+    #[test]
+    fn delete_all_sessions_on_empty_database_emits_no_events() {
+        let db = Database::open_in_memory().unwrap();
+        drain_events(&db);
+        let removed = db.delete_all_sessions().unwrap();
+        assert_eq!(removed, 0);
+        assert!(db.pending_events().unwrap().is_empty());
+    }
+
+    // ── A3.4: label mutations emit events ────────────────────────────────────
+
+    #[test]
+    fn insert_label_appends_a_label_insert_event() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        let events = db.pending_events().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].1.kind, "label_insert");
+    }
+
+    #[test]
+    fn label_insert_event_payload_carries_uuid_and_name() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        let row_uuid = db.list_labels().unwrap()[0].uuid.clone();
+        let payload = event_payload(&db.pending_events().unwrap()[0].1);
+        assert_eq!(payload["uuid"], serde_json::Value::String(row_uuid));
+        assert_eq!(payload["name"], "Morning");
+    }
+
+    #[test]
+    fn duplicate_insert_label_emits_no_event() {
+        // The second insert errors with DuplicateLabel — no row was
+        // created, so no event must be emitted (would leak a phantom
+        // label_insert to peers).
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        drain_events(&db);
+        let result = db.insert_label("Morning");
+        assert!(result.is_err());
+        assert!(db.pending_events().unwrap().is_empty(),
+            "rejected duplicate insert must produce no event");
+    }
+
+    #[test]
+    fn update_label_appends_a_label_rename_event() {
+        let db = Database::open_in_memory().unwrap();
+        let id = db.insert_label("Morning").unwrap();
+        let row_uuid = db.list_labels().unwrap()[0].uuid.clone();
+        drain_events(&db);
+
+        db.update_label(id, "Sunrise").unwrap();
+        let events = db.pending_events().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].1.kind, "label_rename");
+
+        let payload = event_payload(&events[0].1);
+        assert_eq!(payload["uuid"], serde_json::Value::String(row_uuid),
+            "rename event uuid must match the row's stable uuid");
+        assert_eq!(payload["name"], "Sunrise",
+            "rename event must carry the NEW name, not the old");
+    }
+
+    #[test]
+    fn update_label_unknown_id_emits_no_event() {
+        let db = Database::open_in_memory().unwrap();
+        drain_events(&db);
+        db.update_label(9999, "Whatever").unwrap();
+        assert!(db.pending_events().unwrap().is_empty(),
+            "no-match rename must produce no event");
+    }
+
+    #[test]
+    fn update_label_to_duplicate_emits_no_event() {
+        // The UPDATE fails with DuplicateLabel; the transaction rolls
+        // back. No name actually changed, so no rename event must reach
+        // peers (otherwise they'd update to a name we never committed).
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        let evening_id = db.insert_label("Evening").unwrap();
+        drain_events(&db);
+        let result = db.update_label(evening_id, "Morning");
+        assert!(result.is_err());
+        assert!(db.pending_events().unwrap().is_empty(),
+            "rejected rename must produce no event");
+    }
+
+    #[test]
+    fn delete_label_appends_a_label_delete_event() {
+        let db = Database::open_in_memory().unwrap();
+        let id = db.insert_label("Morning").unwrap();
+        let row_uuid = db.list_labels().unwrap()[0].uuid.clone();
+        drain_events(&db);
+
+        db.delete_label(id).unwrap();
+        let events = db.pending_events().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].1.kind, "label_delete");
+
+        let payload = event_payload(&events[0].1);
+        assert_eq!(payload["uuid"], serde_json::Value::String(row_uuid));
+    }
+
+    #[test]
+    fn delete_label_unknown_id_emits_no_event() {
+        let db = Database::open_in_memory().unwrap();
+        drain_events(&db);
+        db.delete_label(9999).unwrap();
+        assert!(db.pending_events().unwrap().is_empty(),
+            "no-match delete must produce no event");
+    }
+
+    // ── A3.5: set_setting emits a setting_changed event ──────────────────────
+
+    #[test]
+    fn set_setting_appends_a_setting_changed_event() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("daily_goal_minutes", "20").unwrap();
+        let events = db.pending_events().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].1.kind, "setting_changed");
+
+        let payload = event_payload(&events[0].1);
+        assert_eq!(payload["key"], "daily_goal_minutes");
+        assert_eq!(payload["value"], "20");
+    }
+
+    #[test]
+    fn set_setting_overwrite_emits_a_second_event_with_the_new_value() {
+        // Settings are last-write-wins by lamport_ts on the receiving
+        // peer, so every overwrite must produce its own event — silently
+        // collapsing to one would lose the intermediate state's lamport
+        // ordering and tie-breaks.
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("daily_goal_minutes", "20").unwrap();
+        db.set_setting("daily_goal_minutes", "30").unwrap();
+
+        let events = db.pending_events().unwrap();
+        assert_eq!(events.len(), 2,
+            "two `set_setting` calls must emit two events");
+        let last_payload = event_payload(&events[1].1);
+        assert_eq!(last_payload["value"], "30",
+            "the later event must carry the latest value");
+    }
+
+    #[test]
+    fn set_setting_with_unicode_value_round_trips_through_payload() {
+        // Defensive: JSON-encoding emoji / non-ASCII must not corrupt
+        // the value. serde_json handles this, but pinning it makes
+        // future swaps to other JSON libs visible.
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("greeting", "🧘 こんにちは").unwrap();
+        let payload = event_payload(&db.pending_events().unwrap()[0].1);
+        assert_eq!(payload["value"], "🧘 こんにちは");
     }
 }
