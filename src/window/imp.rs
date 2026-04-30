@@ -22,6 +22,7 @@ pub struct MeditateWindow {
     #[template_child] pub log_filter_btn:   TemplateChild<gtk::MenuButton>,
     #[template_child] pub filter_notes_row: TemplateChild<adw::SwitchRow>,
     #[template_child] pub filter_label_row: TemplateChild<adw::ComboRow>,
+    #[template_child] pub sync_status_btn:  TemplateChild<gtk::Button>,
 }
 
 #[glib::object_subclass]
@@ -48,6 +49,7 @@ impl ObjectImpl for MeditateWindow {
         self.wire_timer_signals();
         self.wire_log_signals();
         self.wire_stats_signals();
+        self.wire_sync_status();
         self.setup_help_overlay();
         self.setup_window_actions();
         self.bind_settings();
@@ -469,6 +471,186 @@ impl MeditateWindow {
         page.add_controller(esc);
 
         self.nav_view.push(&page);
+    }
+}
+
+// ── Sync status indicator ─────────────────────────────────────────────────────
+
+impl MeditateWindow {
+    fn wire_sync_status(&self) {
+        let obj = self.obj();
+
+        // Click → open Preferences (the Data tab holds sync settings).
+        // We don't open a popover with status detail because the
+        // tooltip already surfaces it; keeping the click semantics
+        // simple ("take me to where I can act on this") matches the
+        // Files-app sync indicator pattern.
+        self.sync_status_btn.connect_clicked(glib::clone!(
+            #[weak] obj,
+            move |_| {
+                if let Some(app) = obj.application()
+                    .and_then(|a| a.downcast::<crate::application::MeditateApplication>().ok())
+                {
+                    crate::preferences::show_preferences(&app);
+                }
+            }
+        ));
+
+        // Initial paint — important so the configured-and-idle case
+        // renders correctly before any timer tick.
+        self.refresh_sync_status();
+
+        // Poll the application + DB every 2s for a state change. The
+        // timer self-cancels via the weak-ref upgrade failing once
+        // the window is destroyed; no manual SourceId tracking.
+        let weak = obj.downgrade();
+        glib::timeout_add_seconds_local(2, move || {
+            match weak.upgrade() {
+                Some(w) => {
+                    use glib::subclass::prelude::ObjectSubclassIsExt;
+                    w.imp().refresh_sync_status();
+                    glib::ControlFlow::Continue
+                }
+                None => glib::ControlFlow::Break,
+            }
+        });
+    }
+
+    /// Recompute and apply the headerbar sync icon's state. Cheap: a
+    /// few in-memory SQLite reads + an atomic load. Safe to call on
+    /// every timer tick (every 2s) without measurable load.
+    pub fn refresh_sync_status(&self) {
+        use crate::i18n::gettext;
+        let Some(app) = self.obj().application()
+            .and_then(|a| a.downcast::<crate::application::MeditateApplication>().ok())
+        else { return; };
+
+        // Single DB borrow — read all three values in one with_db call
+        // so a slow lock contention can't put state out of sync between
+        // them.
+        let snapshot = app.with_db(|db| (
+            crate::sync_settings::get_nextcloud_account(db).unwrap_or(None),
+            crate::sync_settings::get_last_sync_unix_ts(db).unwrap_or(None),
+            crate::sync_settings::get_last_sync_error(db).unwrap_or(None),
+        ));
+        let (account, last_ts, last_error) = match snapshot {
+            Some(t) => t,
+            None => return, // DB unavailable — leave the button alone.
+        };
+
+        let btn = &*self.sync_status_btn;
+
+        // Unconfigured: hide the indicator entirely. There's nothing
+        // useful for the user to see or click on.
+        if account.is_none() {
+            btn.set_visible(false);
+            return;
+        }
+        btn.set_visible(true);
+
+        // Reset stateful CSS classes between transitions.
+        btn.remove_css_class("warning");
+        btn.remove_css_class("error");
+
+        if app.is_syncing() {
+            btn.set_icon_name("emblem-synchronizing-symbolic");
+            btn.set_tooltip_text(Some(&gettext("Syncing with Nextcloud…")));
+        } else if let Some(err) = last_error {
+            btn.set_icon_name("dialog-warning-symbolic");
+            btn.add_css_class("warning");
+            btn.set_tooltip_text(Some(
+                &format!("{}\n{}",
+                    gettext("Last sync failed — click to open settings"),
+                    err)));
+        } else if let Some(ts) = last_ts {
+            btn.set_icon_name("emblem-default-symbolic");
+            btn.set_tooltip_text(Some(&format_synced_ago(ts)));
+        } else {
+            // Configured but never synced — initial state right after
+            // the user saves credentials, before the first run completes.
+            btn.set_icon_name("emblem-synchronizing-symbolic");
+            btn.set_tooltip_text(Some(&gettext("Sync configured (waiting for first run)")));
+        }
+    }
+}
+
+/// Render a unix timestamp as a human-friendly "synced N ago" tooltip.
+/// Granularity steps up the further back the timestamp lies — minutes
+/// for the first hour, hours within a day, days beyond. Doesn't
+/// localise the count words; gettext takes care of that via the
+/// surrounding translatable templates.
+fn format_synced_ago(unix_ts: i64) -> String {
+    use crate::i18n::gettext;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let secs_ago = (now - unix_ts).max(0);
+    if secs_ago < 60 {
+        gettext("Synced just now")
+    } else if secs_ago < 3600 {
+        gettext("Synced {n} minutes ago")
+            .replace("{n}", &(secs_ago / 60).to_string())
+    } else if secs_ago < 86400 {
+        gettext("Synced {n} hours ago")
+            .replace("{n}", &(secs_ago / 3600).to_string())
+    } else {
+        gettext("Synced {n} days ago")
+            .replace("{n}", &(secs_ago / 86400).to_string())
+    }
+}
+
+#[cfg(test)]
+mod sync_status_tests {
+    //! `format_synced_ago` is the only piece of E.5 worth a unit test —
+    //! the GTK glue (template wiring, tooltip text setting, CSS class
+    //! flips) is verified by running the app. The "ago" formatting is
+    //! pure logic and easy to pin: pick a fixed `now` via the formula
+    //! and step `unix_ts` through each bucket boundary.
+    use super::format_synced_ago;
+
+    fn ago(unix_ts_offset_secs: i64) -> String {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        format_synced_ago(now + unix_ts_offset_secs)
+    }
+
+    #[test]
+    fn under_a_minute_says_just_now() {
+        assert!(ago(-30).contains("just now"),
+            "30 s ago should fall into the 'just now' bucket, got `{}`", ago(-30));
+        assert!(ago(0).contains("just now"));
+    }
+
+    #[test]
+    fn between_one_minute_and_an_hour_uses_minutes() {
+        assert!(ago(-90).contains("minute"));
+        assert!(ago(-3540).contains("minute"),
+            "59 minutes still falls in the minutes bucket, got `{}`", ago(-3540));
+    }
+
+    #[test]
+    fn between_one_hour_and_a_day_uses_hours() {
+        assert!(ago(-3600).contains("hour"));
+        assert!(ago(-86399).contains("hour"));
+    }
+
+    #[test]
+    fn beyond_a_day_uses_days() {
+        assert!(ago(-86400).contains("day"));
+        assert!(ago(-86400 * 7).contains("day"));
+    }
+
+    #[test]
+    fn future_timestamps_clamp_to_just_now_rather_than_negative() {
+        // Defensive: clock skew between two devices can land a
+        // timestamp slightly in the future. Avoid showing "synced -3
+        // minutes ago" via the saturating max(0) clamp.
+        let s = ago(60);  // 60 s in the future
+        assert!(s.contains("just now"),
+            "future timestamps should clamp to 'just now', got `{s}`");
     }
 }
 

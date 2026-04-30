@@ -44,6 +44,18 @@ template $MeditateWindow : Adw.ApplicationWindow {
               primary: true;
             }
 
+            // Nextcloud sync status — hidden until the user has set up
+            // an account; afterwards reflects idle / syncing / error.
+            // Click → opens Preferences → Data so the user can adjust
+            // settings or see what's happening.
+            [end]
+            Button sync_status_btn {
+              icon-name: "emblem-default-symbolic";
+              tooltip-text: _("Nextcloud sync status");
+              visible: false;
+              styles ["flat"]
+            }
+
             // Log-specific buttons (hidden when not on log tab)
             [end]
             MenuButton log_filter_btn {

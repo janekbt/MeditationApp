@@ -310,6 +310,15 @@ impl MeditateApplication {
         self.imp().log_dirty.set(false);
     }
 
+    /// True while a sync attempt is in flight on a worker thread. Used
+    /// by the headerbar status indicator so it can show a spinner /
+    /// syncing icon during the run.
+    pub fn is_syncing(&self) -> bool {
+        use glib::subclass::prelude::ObjectSubclassIsExt;
+        use std::sync::atomic::Ordering;
+        self.imp().sync_in_flight.load(Ordering::SeqCst)
+    }
+
     /// `with_db` + a follow-up `trigger_sync()`. Use when the closure
     /// MUTATES the database — the trigger pushes the new event(s) to
     /// Nextcloud (when configured) without callers having to remember
