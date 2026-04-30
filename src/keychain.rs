@@ -195,20 +195,36 @@ static BACKEND_CHOICE: AtomicU8 = AtomicU8::new(BACKEND_UNDECIDED);
 /// Open whichever backend the previous call decided on; if undecided,
 /// open the portal/D-Bus path first and let the caller catch the
 /// WeakKey error to trigger the fallback.
+///
+/// Across process restarts, `BACKEND_CHOICE` resets to undecided —
+/// but if the self-keyed master file already exists on disk, that's
+/// strong evidence a previous run committed to self-keyed. Use it to
+/// seed the choice so we don't re-probe the portal AND, more
+/// importantly, don't query the (empty) portal store on `read_password`
+/// while the actual password sits in the self-keyed store. Without
+/// this, `read_password` returns `Ok(None)` (item not found in portal
+/// store), the runner sees PasswordMissing, and sync dies until the
+/// user re-enters credentials.
 async fn open_chosen_backend() -> Result<Backend> {
-    match BACKEND_CHOICE.load(Ordering::Acquire) {
-        BACKEND_SELF_KEYED => open_self_keyed_backend().await,
-        _ => match open_portal().await {
-            Ok(kr) => Ok(kr),
-            Err(e) => {
-                // Even opening the portal/D-Bus failed (e.g. neither
-                // is available). Fall back unconditionally and remember.
-                crate::diag::log(&format!(
-                    "keychain: portal/D-Bus open failed ({e}); using self-keyed file backend"));
-                BACKEND_CHOICE.store(BACKEND_SELF_KEYED, Ordering::Release);
-                open_self_keyed_backend().await
-            }
-        },
+    let cached = BACKEND_CHOICE.load(Ordering::Acquire);
+    if cached == BACKEND_SELF_KEYED {
+        return open_self_keyed_backend().await;
+    }
+    if cached == BACKEND_UNDECIDED && self_keyed_master_path().exists() {
+        // Previous-run signal: master file present → self-keyed.
+        BACKEND_CHOICE.store(BACKEND_SELF_KEYED, Ordering::Release);
+        return open_self_keyed_backend().await;
+    }
+    match open_portal().await {
+        Ok(kr) => Ok(kr),
+        Err(e) => {
+            // Even opening the portal/D-Bus failed (e.g. neither
+            // is available). Fall back unconditionally and remember.
+            crate::diag::log(&format!(
+                "keychain: portal/D-Bus open failed ({e}); using self-keyed file backend"));
+            BACKEND_CHOICE.store(BACKEND_SELF_KEYED, Ordering::Release);
+            open_self_keyed_backend().await
+        }
     }
 }
 
@@ -522,6 +538,24 @@ mod tests {
         let mode = std::fs::metadata(&path).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600,
             "master key file must be owner-only, got {:o}", mode & 0o777);
+    }
+
+    #[test]
+    fn master_path_existence_is_the_persistence_signal_for_self_keyed_choice() {
+        // The cross-process-restart trick: BACKEND_CHOICE is an
+        // in-process atomic and resets to undecided on every launch,
+        // but `self_keyed_master_path().exists()` is a filesystem
+        // signal that survives across runs. open_chosen_backend uses
+        // it to skip the portal probe on subsequent launches once
+        // we've previously committed to self-keyed.
+        //
+        // Pinning the SHAPE of the path here so a refactor that moves
+        // the master file elsewhere doesn't silently break the
+        // cross-restart persistence. (The function isn't called from
+        // tests — the path uses glib::user_data_dir() — but the
+        // filename component is the relevant signal.)
+        assert_eq!(SELF_KEYED_MASTER_FILENAME, "nextcloud-sync.master");
+        assert_eq!(SELF_KEYED_KEYRING_FILENAME, "nextcloud-sync.keyring");
     }
 
     #[test]
