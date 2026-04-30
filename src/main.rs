@@ -4,6 +4,7 @@ mod data_io;
 pub mod db;
 pub mod diag;
 pub mod i18n;
+pub mod keychain;
 pub mod log;
 mod preferences;
 pub mod sound;

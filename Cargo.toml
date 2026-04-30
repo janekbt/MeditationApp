@@ -8,6 +8,10 @@ rust-version = "1.75"
 name = "meditate"
 path = "src/main.rs"
 
+[[bin]]
+name = "keychain_smoke"
+path = "src/bin/keychain_smoke.rs"
+
 [dependencies]
 gtk = { package = "gtk4", version = "0.11", features = ["v4_18"] }
 adw = { package = "libadwaita", version = "0.9", features = ["v1_7"] }
@@ -18,6 +22,14 @@ gettext-rs = { version = "0.7", features = ["gettext-system"] }
 libc = "0.2"
 chrono = { version = "0.4", default-features = false }
 meditate-core = { path = "meditate-core" }
+# oo7: pure-Rust Secret Service client for storing the Nextcloud
+# app-password in the user's keyring. async-only over D-Bus, requires
+# a tokio reactor (oo7's default). We host a small multi-threaded
+# tokio runtime alongside GLib's main loop and `block_on` from the
+# settings/sync handlers — keychain calls are infrequent and brief
+# (~50ms warm), so the synchronous shape avoids a swarm of channels.
+oo7 = "0.4"
+tokio = { version = "1", features = ["rt-multi-thread"] }
 
 [build-dependencies]
 glib-build-tools = "0.22"
