@@ -490,6 +490,28 @@ impl Database {
         Ok(())
     }
 
+    /// Erase every user-content row plus the dedup tracker, preserving
+    /// settings, sync_state, and the device row (id + lamport clock).
+    /// Used by the "wipe local to match remote" recovery path: the
+    /// user has resolved a remote-data-lost prompt by saying "the
+    /// authoritative state is the empty remote — drop my local copy."
+    ///
+    /// All four DELETEs run inside one transaction so the wipe is
+    /// atomic — a crash mid-wipe leaves the DB in either the pre-wipe
+    /// state or the post-wipe state, never half-and-half. Settings
+    /// (end-sound, weekly goal, etc.) and sync_state (URL, username,
+    /// last-sync timestamp) are deliberately preserved: they're not
+    /// part of the event-log content the user is discarding.
+    pub fn wipe_local_event_log(&self) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM known_remote_files", [])?;
+        tx.execute("DELETE FROM events", [])?;
+        tx.execute("DELETE FROM sessions", [])?;
+        tx.execute("DELETE FROM labels", [])?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Same as `mark_event_synced`, but for a batch of ids in a single
     /// transaction. Used by the bulk-push path: after one PUT covers
     /// all pending events, a single transaction flips the synced flag
@@ -4760,6 +4782,131 @@ mod tests {
         assert!(db.known_remote_file_uuids().unwrap().contains("a"),
             "known_remote_files must be left alone — the caller wipes it \
              explicitly when needed");
+    }
+
+    // ── wipe_local_event_log — "wipe local" recovery primitive ─────────
+
+    #[test]
+    fn wipe_local_event_log_clears_events_sessions_labels_and_known_remote_files() {
+        // The "wipe local to match remote" recovery deletes every
+        // user-content table whose source-of-truth is the event log,
+        // plus the dedup tracker. After the wipe, the local DB looks
+        // like a freshly-initialised one minus settings/device.
+        let db = Database::open_in_memory().unwrap();
+        db.append_event(&sample_event(1)).unwrap();
+        db.insert_label("focus").unwrap();
+        db.insert_session(&Session {
+            start_iso: "2026-04-30T10:00:00".into(),
+            duration_secs: 600,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Countdown,
+            uuid: String::new(),
+        }).unwrap();
+        db.record_known_remote_file("a").unwrap();
+        // Sanity: rows present before wipe.
+        assert!(!db.pending_events().unwrap().is_empty());
+        assert!(!db.list_labels().unwrap().is_empty());
+        assert!(!db.list_sessions().unwrap().is_empty());
+        assert!(!db.known_remote_file_uuids().unwrap().is_empty());
+
+        db.wipe_local_event_log().unwrap();
+
+        assert!(db.pending_events().unwrap().is_empty(),
+            "events table must be empty");
+        assert!(db.list_labels().unwrap().is_empty(),
+            "labels table must be empty");
+        assert!(db.list_sessions().unwrap().is_empty(),
+            "sessions table must be empty");
+        assert!(db.known_remote_file_uuids().unwrap().is_empty(),
+            "dedup tracker must be empty");
+    }
+
+    #[test]
+    fn wipe_local_event_log_preserves_settings() {
+        // User preferences (end_sound, weekly_goal, vibrate, etc.) are
+        // independent of the event log we're discarding. The user
+        // explicitly chose "wipe content"; their UI prefs should not
+        // surprise-reset.
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("end_sound", "bowl").unwrap();
+        db.set_setting("weekly_goal_mins", "150").unwrap();
+
+        db.wipe_local_event_log().unwrap();
+
+        assert_eq!(db.get_setting("end_sound", "fallback").unwrap(), "bowl");
+        assert_eq!(db.get_setting("weekly_goal_mins", "0").unwrap(), "150");
+    }
+
+    #[test]
+    fn wipe_local_event_log_preserves_sync_state() {
+        // The configured Nextcloud account (URL, username) must
+        // survive — the user is wiping local state to converge with
+        // the same remote. Re-entering the URL would be a friction
+        // surprise.
+        let db = Database::open_in_memory().unwrap();
+        db.set_sync_state("nextcloud_url", "https://nc.example/").unwrap();
+        db.set_sync_state("nextcloud_username", "alice").unwrap();
+
+        db.wipe_local_event_log().unwrap();
+
+        assert_eq!(
+            db.get_sync_state("nextcloud_url", "").unwrap(),
+            "https://nc.example/");
+        assert_eq!(
+            db.get_sync_state("nextcloud_username", "").unwrap(),
+            "alice");
+    }
+
+    #[test]
+    fn wipe_local_event_log_preserves_device_id_and_lamport() {
+        // Device identity persists across wipes. Resetting device_id
+        // would create a new identity for the same physical device,
+        // confusing peers' replay; resetting lamport could in theory
+        // produce duplicate (lamport, device_id) tuples, though
+        // monotonicity of the next emit_event would still prevent
+        // collisions. Conservative: leave the device row alone.
+        let db = Database::open_in_memory().unwrap();
+        let device_before = db.device_id().unwrap();
+        for _ in 0..5 { db.bump_lamport_clock().unwrap(); }
+        let lamport_before = db.lamport_clock().unwrap();
+
+        db.wipe_local_event_log().unwrap();
+
+        assert_eq!(db.device_id().unwrap(), device_before,
+            "device_id must survive wipe — it's this device's identity");
+        assert_eq!(db.lamport_clock().unwrap(), lamport_before,
+            "lamport_clock must survive wipe — keeps causal correctness");
+    }
+
+    #[test]
+    fn wipe_local_event_log_is_idempotent_on_an_empty_database() {
+        // Defensive: never-authored device, fresh DB. Don't crash.
+        let db = Database::open_in_memory().unwrap();
+        db.wipe_local_event_log().unwrap();
+        db.wipe_local_event_log().unwrap();
+        assert!(db.pending_events().unwrap().is_empty());
+    }
+
+    #[test]
+    fn wipe_local_event_log_followed_by_authoring_creates_a_fresh_event() {
+        // After wipe, normal authoring must work. The empty events
+        // table accepts new inserts; pending_events sees the new row.
+        let db = Database::open_in_memory().unwrap();
+        db.append_event(&sample_event(1)).unwrap();
+        db.wipe_local_event_log().unwrap();
+
+        db.insert_session(&Session {
+            start_iso: "2026-04-30T11:00:00".into(),
+            duration_secs: 300,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Countdown,
+            uuid: String::new(),
+        }).unwrap();
+        assert_eq!(db.list_sessions().unwrap().len(), 1);
+        assert!(!db.pending_events().unwrap().is_empty(),
+            "the new authoring must produce a pending event");
     }
 
     #[test]
