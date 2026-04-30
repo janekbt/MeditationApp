@@ -16,6 +16,14 @@ pub const KEY_USERNAME: &str = "nextcloud_username";
 pub const KEY_LAST_SYNC_UNIX_TS: &str = "nextcloud_last_sync_unix_ts";
 pub const KEY_LAST_SYNC_ERROR: &str = "nextcloud_last_sync_error";
 
+/// Tag attached to the last-sync-error so the status-indicator click
+/// handler can route differently for the special "remote data lost"
+/// recovery flow vs generic errors. Stored values: `""` (no error or
+/// generic), `"remote_data_lost"`. Kept as a separate key (not
+/// inferred from the error message) so a copy edit doesn't silently
+/// break the routing.
+pub const KEY_LAST_SYNC_ERROR_KIND: &str = "nextcloud_last_sync_error_kind";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NextcloudAccount {
     pub url: String,
@@ -81,11 +89,12 @@ pub fn get_last_sync_unix_ts(db: &Database) -> Result<Option<i64>> {
 }
 
 /// Record a successful sync at `unix_ts`. Also clears any previously-
-/// recorded last-sync-error since success supersedes the previous
-/// failure for status-display purposes.
+/// recorded last-sync-error and the error-kind tag — success
+/// supersedes the previous failure for status-display purposes.
 pub fn record_successful_sync(db: &Database, unix_ts: i64) -> Result<()> {
     db.set_sync_state(KEY_LAST_SYNC_UNIX_TS, &unix_ts.to_string())?;
     db.set_sync_state(KEY_LAST_SYNC_ERROR, "")?;
+    db.set_sync_state(KEY_LAST_SYNC_ERROR_KIND, "")?;
     Ok(())
 }
 
@@ -98,10 +107,35 @@ pub fn get_last_sync_error(db: &Database) -> Result<Option<String>> {
 
 /// Record a sync failure. Doesn't touch the last-sync-success timestamp
 /// — the user wants to see "last successful sync" stay accurate even
-/// when the most recent attempt has failed.
+/// when the most recent attempt has failed. Resets the error-kind tag
+/// to `""` (generic): a previous remote-data-lost tag must NOT persist
+/// once a different error has occurred, otherwise the status
+/// indicator would route the click to the recovery dialog despite
+/// the wipe-detection no longer being the live failure.
 pub fn record_sync_error(db: &Database, message: &str) -> Result<()> {
     db.set_sync_state(KEY_LAST_SYNC_ERROR, message)?;
+    db.set_sync_state(KEY_LAST_SYNC_ERROR_KIND, "")?;
     Ok(())
+}
+
+/// Record a sync failure caused by `SyncError::RemoteDataLost`.
+/// Tags the kind so the status indicator's click handler routes to
+/// the recovery dialog instead of a plain retry. The Display message
+/// is still recorded so existing surfaces (tooltip, diagnostics log)
+/// stay informative.
+pub fn record_remote_data_lost(db: &Database, message: &str) -> Result<()> {
+    db.set_sync_state(KEY_LAST_SYNC_ERROR, message)?;
+    db.set_sync_state(KEY_LAST_SYNC_ERROR_KIND, "remote_data_lost")?;
+    Ok(())
+}
+
+/// Whether the latest recorded sync failure was a remote-data-lost
+/// detection (as opposed to a generic error or no error at all).
+/// Used by the status-indicator click handler to decide between
+/// "retry sync" and "open recovery dialog".
+pub fn is_last_sync_remote_data_lost(db: &Database) -> Result<bool> {
+    let kind = db.get_sync_state(KEY_LAST_SYNC_ERROR_KIND, "")?;
+    Ok(kind == "remote_data_lost")
 }
 
 #[cfg(test)]
@@ -201,6 +235,69 @@ mod tests {
         let db = fresh();
         set_nextcloud_account(&db, "https://nc.example/", "alice").unwrap();
         assert!(db.known_remote_file_uuids().unwrap().is_empty());
+    }
+
+    // ── last_sync_error_kind: routing for the recovery dialog ────────────
+
+    #[test]
+    fn is_last_sync_remote_data_lost_is_false_on_a_fresh_database() {
+        // Default state: no sync has run, no error has been recorded.
+        let db = fresh();
+        assert!(!is_last_sync_remote_data_lost(&db).unwrap());
+    }
+
+    #[test]
+    fn record_remote_data_lost_then_is_last_sync_remote_data_lost_returns_true() {
+        // After the orchestrator surfaces RemoteDataLost, sync_runner
+        // calls this helper. The status-indicator click handler can
+        // then route the click to the recovery dialog.
+        let db = fresh();
+        record_remote_data_lost(&db, "remote data appears wiped").unwrap();
+        assert!(is_last_sync_remote_data_lost(&db).unwrap());
+        // The error message itself is still recorded so existing
+        // surfaces (tooltip, diagnostics log) stay informative.
+        assert_eq!(
+            get_last_sync_error(&db).unwrap(),
+            Some("remote data appears wiped".to_string()),
+        );
+    }
+
+    #[test]
+    fn record_sync_error_does_not_set_remote_data_lost_kind() {
+        // Generic errors (network, auth, server 5xx) MUST NOT route
+        // to the recovery dialog — that dialog is destructive and
+        // only valid when we've actually detected a wipe.
+        let db = fresh();
+        record_sync_error(&db, "WebDAV: unauthorized").unwrap();
+        assert!(!is_last_sync_remote_data_lost(&db).unwrap(),
+            "generic errors must not be tagged remote_data_lost");
+    }
+
+    #[test]
+    fn record_successful_sync_clears_the_remote_data_lost_kind() {
+        // If a previous attempt was tagged remote_data_lost and the
+        // user resolved it (e.g. via "push local up"), the next
+        // successful sync clears the tag so the indicator stops
+        // routing to the recovery dialog.
+        let db = fresh();
+        record_remote_data_lost(&db, "remote data appears wiped").unwrap();
+        assert!(is_last_sync_remote_data_lost(&db).unwrap());
+        record_successful_sync(&db, 1_700_000_000).unwrap();
+        assert!(!is_last_sync_remote_data_lost(&db).unwrap(),
+            "successful sync must clear the kind tag");
+    }
+
+    #[test]
+    fn record_sync_error_after_remote_data_lost_clears_the_kind() {
+        // Subtler case: a remote-data-lost error followed by a
+        // generic error (e.g. user's wifi dropped before they
+        // resolved the dialog). The kind tag must reset to "" so
+        // the indicator click goes to retry-sync, not the dialog.
+        let db = fresh();
+        record_remote_data_lost(&db, "remote data appears wiped").unwrap();
+        record_sync_error(&db, "WebDAV: network error").unwrap();
+        assert!(!is_last_sync_remote_data_lost(&db).unwrap(),
+            "newer non-wipe error must clear the kind tag");
     }
 
     #[test]

@@ -180,14 +180,25 @@ fn record_outcome(
     db: &CoreDb,
     result: &Result<SyncStats, meditate_core::sync::SyncError>,
 ) -> Result<(), SyncRunnerError> {
+    use crate::sync_settings::KEY_LAST_SYNC_ERROR_KIND;
+    use meditate_core::sync::SyncError;
     match result {
         Ok(_) => {
             let now = unix_now();
             db.set_sync_state(KEY_LAST_SYNC_UNIX_TS, &now.to_string())?;
             db.set_sync_state(KEY_LAST_SYNC_ERROR, "")?;
+            db.set_sync_state(KEY_LAST_SYNC_ERROR_KIND, "")?;
         }
         Err(e) => {
+            // Tag remote-data-lost distinctly so the status-indicator
+            // click handler can route to the recovery dialog rather
+            // than the generic retry path.
+            let kind = match e {
+                SyncError::RemoteDataLost => "remote_data_lost",
+                _ => "",
+            };
             db.set_sync_state(KEY_LAST_SYNC_ERROR, &e.to_string())?;
+            db.set_sync_state(KEY_LAST_SYNC_ERROR_KIND, kind)?;
         }
     }
     Ok(())
