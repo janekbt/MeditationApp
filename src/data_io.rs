@@ -3,11 +3,11 @@
 //! Native format (the one `export_csv` writes + `import_csv` reads):
 //! ```csv
 //! start_time_unix,duration_secs,mode,label,note
-//! 1712345678,600,countdown,Morning,First sit of the day
+//! 1712345678,600,timer,Morning,First sit of the day
 //! ```
 //! - `start_time_unix`: UTC seconds since epoch.
 //! - `duration_secs`: integer seconds.
-//! - `mode`: "countdown" or "stopwatch".
+//! - `mode`: "timer" (countdowns + open-ended runs) or "box_breath".
 //! - `label`: plain text — empty means no label. Labels are looked up or
 //!   created by name on import, so ids are not persisted.
 //! - `note`: optional free text (csv-quoted as needed).
@@ -157,10 +157,10 @@ pub(crate) fn import_csv_to_db(db: &Database, path: &Path) -> Result<usize, Data
             return Err(DataIoError::Parse(
                 format!("line {line}: duration_secs must be positive, got {duration_secs}")));
         }
-        // Unknown / typo'd mode values default to Countdown — that
+        // Unknown / typo'd mode values default to Timer — that
         // preserves the row rather than discarding it on import.
         let mode = SessionMode::from_db_str(rec.get(2).map(|s| s.trim()).unwrap_or(""))
-            .unwrap_or(SessionMode::Countdown);
+            .unwrap_or(SessionMode::Timer);
         let label_txt = rec.get(3).map(|s| s.trim().to_string()).unwrap_or_default();
         let note_txt = rec.get(4).map(|s| s.trim().to_string()).unwrap_or_default();
         let note = if note_txt.is_empty() { None } else { Some(note_txt) };
@@ -231,7 +231,7 @@ pub(crate) fn import_insighttimer_to_db(db: &Database, path: &Path) -> Result<us
                 label_names.len() - 1
             })
         };
-        rows.push((start_time, duration_secs, SessionMode::Countdown, None, label_idx));
+        rows.push((start_time, duration_secs, SessionMode::Timer, None, label_idx));
     }
 
     insert_sessions_with_labels(db, &label_names, &rows)
@@ -341,7 +341,7 @@ mod tests {
             SessionData {
                 start_time: 1_712_000_000,
                 duration_secs: 600,
-                mode: SessionMode::Countdown,
+                mode: SessionMode::Timer,
                 label_id: Some(morning),
                 // Commas and a quote to exercise CSV escaping on the note column.
                 note: Some("first sit, \"nice\" focus".to_string()),
@@ -349,14 +349,14 @@ mod tests {
             SessionData {
                 start_time: 1_712_086_400,
                 duration_secs: 1200,
-                mode: SessionMode::Stopwatch,
+                mode: SessionMode::Timer,
                 label_id: Some(evening),
                 note: None,
             },
             SessionData {
                 start_time: 1_712_172_800,
                 duration_secs: 300,
-                mode: SessionMode::Countdown,
+                mode: SessionMode::Timer,
                 label_id: None,
                 note: Some("no label on this one".to_string()),
             },

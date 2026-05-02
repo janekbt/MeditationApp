@@ -42,8 +42,11 @@ pub struct Session {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionMode {
-    Countdown,
-    Stopwatch,
+    /// Generic timer session — covers both targeted countdowns and
+    /// open-ended (stopwatch) runs. The distinction lives at the UI
+    /// level (`current_target_secs: Option<u32>`) and isn't persisted:
+    /// stats and the log already key off the recorded duration alone.
+    Timer,
     BoxBreath,
 }
 
@@ -53,20 +56,20 @@ impl SessionMode {
     /// this match against the enum.
     pub fn as_db_str(self) -> &'static str {
         match self {
-            SessionMode::Countdown => "countdown",
-            SessionMode::Stopwatch => "stopwatch",
+            SessionMode::Timer => "timer",
             SessionMode::BoxBreath => "box_breath",
         }
     }
 
     /// Inverse of `as_db_str`. Returns `None` for unknown / typo'd
-    /// values; callers decide whether to fall back to Countdown
-    /// (the historical pre-feature default) or treat the row as
-    /// corrupt.
+    /// values; callers decide whether to hard-error or treat the row
+    /// as corrupt. The DB column carries a CHECK constraint matching
+    /// these strings, so reads off the local DB cannot legitimately
+    /// hit the None branch — only out-of-band data (sync wire format,
+    /// CSV import, hand-edited rows) needs to think about it.
     pub fn from_db_str(s: &str) -> Option<Self> {
         match s {
-            "countdown" => Some(SessionMode::Countdown),
-            "stopwatch" => Some(SessionMode::Stopwatch),
+            "timer" => Some(SessionMode::Timer),
             "box_breath" => Some(SessionMode::BoxBreath),
             _ => None,
         }
@@ -136,7 +139,7 @@ const SCHEMA: &str = "
         duration_secs INTEGER NOT NULL,
         label_id INTEGER REFERENCES labels(id) ON DELETE SET NULL,
         notes TEXT,
-        mode TEXT NOT NULL CHECK (mode IN ('countdown', 'stopwatch', 'box_breath')),
+        mode TEXT NOT NULL CHECK (mode IN ('timer', 'box_breath')),
         uuid TEXT NOT NULL UNIQUE
     );
     CREATE TABLE IF NOT EXISTS settings (
@@ -696,7 +699,7 @@ impl Database {
                 None => None,
             };
             let notes = v["notes"].as_str();
-            let mode = v["mode"].as_str().unwrap_or("countdown");
+            let mode = v["mode"].as_str().unwrap_or("timer");
 
             // UPSERT — first time materialising creates the row, later
             // recomputes overwrite every field with the winning event's
@@ -1221,7 +1224,7 @@ impl Database {
                 .get(3)
                 .map(str::to_string)
                 .filter(|s| !s.is_empty());
-            let mode_str = record.get(4).unwrap_or("countdown");
+            let mode_str = record.get(4).unwrap_or("timer");
             let mode = SessionMode::from_db_str(mode_str)
                 .ok_or_else(|| DbError::Csv(format!("unknown mode: {mode_str}")))?;
 
@@ -1719,24 +1722,26 @@ mod tests {
         // These are the values that go into the sessions.mode column AND
         // the CSV mode column — pinning them so a refactor that quietly
         // changes one (e.g. 'box_breath' → 'breath') gets caught.
-        assert_eq!(SessionMode::Countdown.as_db_str(), "countdown");
-        assert_eq!(SessionMode::Stopwatch.as_db_str(), "stopwatch");
+        assert_eq!(SessionMode::Timer.as_db_str(), "timer");
         assert_eq!(SessionMode::BoxBreath.as_db_str(), "box_breath");
     }
 
     #[test]
     fn session_mode_from_db_str_parses_canonical_strings() {
-        assert_eq!(SessionMode::from_db_str("countdown"), Some(SessionMode::Countdown));
-        assert_eq!(SessionMode::from_db_str("stopwatch"), Some(SessionMode::Stopwatch));
+        assert_eq!(SessionMode::from_db_str("timer"), Some(SessionMode::Timer));
         assert_eq!(SessionMode::from_db_str("box_breath"), Some(SessionMode::BoxBreath));
     }
 
     #[test]
     fn session_mode_from_db_str_returns_none_for_unknown() {
-        // Caller decides the fallback (e.g. Countdown for tolerant import,
-        // hard-error for strict). We don't bake one in.
+        // No legacy fallback — "countdown" and "stopwatch" deliberately
+        // map to None. Callers decide what to do (existing data_io /
+        // log paths default to Timer via unwrap_or, which makes legacy
+        // rows readable without us adding a compat shim).
         assert_eq!(SessionMode::from_db_str(""), None);
-        assert_eq!(SessionMode::from_db_str("COUNTDOWN"), None);  // case-sensitive
+        assert_eq!(SessionMode::from_db_str("countdown"), None);
+        assert_eq!(SessionMode::from_db_str("stopwatch"), None);
+        assert_eq!(SessionMode::from_db_str("TIMER"), None);  // case-sensitive
         assert_eq!(SessionMode::from_db_str("breathing"), None);  // old name
         assert_eq!(SessionMode::from_db_str("box-breath"), None); // dash, not underscore
         assert_eq!(SessionMode::from_db_str("garbage"), None);
@@ -1744,7 +1749,7 @@ mod tests {
 
     #[test]
     fn session_mode_db_str_round_trip() {
-        for &mode in &[SessionMode::Countdown, SessionMode::Stopwatch, SessionMode::BoxBreath] {
+        for &mode in &[SessionMode::Timer, SessionMode::BoxBreath] {
             assert_eq!(SessionMode::from_db_str(mode.as_db_str()), Some(mode));
         }
     }
@@ -1797,27 +1802,27 @@ mod tests {
         db.insert_session(&Session {
             start_iso: "2026-04-27T07:00:00".to_string(),
             duration_secs: 600, label_id: Some(morning), notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         db.insert_session(&Session {
             start_iso: "2026-04-28T07:00:00".to_string(),
             duration_secs: 300, label_id: Some(morning), notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         // Evening: 1 session, 1200s total — larger total, should sort first.
         db.insert_session(&Session {
             start_iso: "2026-04-27T20:00:00".to_string(),
             duration_secs: 1200, label_id: Some(evening), notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         // Unlabeled session — must NOT appear.
         db.insert_session(&Session {
             start_iso: "2026-04-27T12:00:00".to_string(),
             duration_secs: 500, label_id: None, notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
 
@@ -1837,13 +1842,13 @@ mod tests {
         db.insert_session(&Session {
             start_iso: "2026-04-27T12:00:00".to_string(),
             duration_secs: 600, label_id: Some(zebra), notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         db.insert_session(&Session {
             start_iso: "2026-04-28T12:00:00".to_string(),
             duration_secs: 600, label_id: Some(alpha), notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         let got = db.label_totals_seconds().unwrap();
@@ -1863,13 +1868,13 @@ mod tests {
         db.insert_session(&Session {
             start_iso: "2026-04-27T10:00:00".to_string(),
             duration_secs: 90, label_id: Some(lid), notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         db.insert_session(&Session {
             start_iso: "2026-04-28T10:00:00".to_string(),
             duration_secs: 45, label_id: Some(lid), notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         let got = db.label_totals_seconds().unwrap();
@@ -1892,7 +1897,7 @@ mod tests {
         let make = |hh: u32, mm: u32| Session {
             start_iso: format!("2026-04-27T{hh:02}:{mm:02}:00"),
             duration_secs: 600, label_id: None, notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         };
         // Morning (5 sessions, hours 0, 6, 11:00, 11:59).
@@ -1925,7 +1930,7 @@ mod tests {
             db.insert_session(&Session {
                 start_iso: format!("2026-04-27T{h:02}:00:00"),
                 duration_secs: 600, label_id: None, notes: None,
-                mode: SessionMode::Countdown,
+                mode: SessionMode::Timer,
                 uuid: String::new(),
             }).unwrap();
         }
@@ -1953,7 +1958,7 @@ mod tests {
             db.insert_session(&Session {
                 start_iso: format!("2026-04-{d:02}T10:00:00"),
                 duration_secs: 600, label_id: None, notes: None,
-                mode: SessionMode::Countdown,
+                mode: SessionMode::Timer,
                 uuid: String::new(),
             }).unwrap();
         }
@@ -1961,14 +1966,14 @@ mod tests {
             db.insert_session(&Session {
                 start_iso: format!("2026-03-{d:02}T10:00:00"),
                 duration_secs: 600, label_id: None, notes: None,
-                mode: SessionMode::Countdown,
+                mode: SessionMode::Timer,
                 uuid: String::new(),
             }).unwrap();
         }
         db.insert_session(&Session {
             start_iso: "2025-12-25T10:00:00".to_string(),
             duration_secs: 600, label_id: None, notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
 
@@ -1984,13 +1989,13 @@ mod tests {
         db.insert_session(&Session {
             start_iso: "2026-01-15T10:00:00".to_string(),
             duration_secs: 600, label_id: None, notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         db.insert_session(&Session {
             start_iso: "2025-12-15T10:00:00".to_string(),
             duration_secs: 600, label_id: None, notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         let got = db.active_months().unwrap();
@@ -2017,27 +2022,27 @@ mod tests {
             db.insert_session(&Session {
                 start_iso: format!("2026-04-05T{hr:02}:00:00"),
                 duration_secs: 600, label_id: None, notes: None,
-                mode: SessionMode::Countdown,
+                mode: SessionMode::Timer,
                 uuid: String::new(),
             }).unwrap();
         }
         db.insert_session(&Session {
             start_iso: "2026-04-12T10:00:00".to_string(),
             duration_secs: 600, label_id: None, notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         db.insert_session(&Session {
             start_iso: "2026-04-28T10:00:00".to_string(),
             duration_secs: 600, label_id: None, notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         // A session in March — must NOT appear in April's days.
         db.insert_session(&Session {
             start_iso: "2026-03-15T10:00:00".to_string(),
             duration_secs: 600, label_id: None, notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
 
@@ -2053,14 +2058,14 @@ mod tests {
         db.insert_session(&Session {
             start_iso: "2026-12-31T23:00:00".to_string(),
             duration_secs: 600, label_id: None, notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         // Jan 1 next year — must NOT contribute.
         db.insert_session(&Session {
             start_iso: "2027-01-01T00:30:00".to_string(),
             duration_secs: 600, label_id: None, notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         let got = db.active_days_in_month(2026, 12).unwrap();
@@ -2087,28 +2092,28 @@ mod tests {
         db.insert_session(&Session {
             start_iso: "2026-03-31T23:59:59".to_string(),
             duration_secs: 9999, label_id: None, notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         // April 1, midnight — INCLUDED in April.
         db.insert_session(&Session {
             start_iso: "2026-04-01T00:00:00".to_string(),
             duration_secs: 600, label_id: None, notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         // April 30, late evening — INCLUDED.
         db.insert_session(&Session {
             start_iso: "2026-04-30T23:59:59".to_string(),
             duration_secs: 1200, label_id: None, notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         // May 1, midnight — EXCLUDED.
         db.insert_session(&Session {
             start_iso: "2026-05-01T00:00:00".to_string(),
             duration_secs: 8888, label_id: None, notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
 
@@ -2123,14 +2128,14 @@ mod tests {
         db.insert_session(&Session {
             start_iso: "2026-12-15T10:00:00".to_string(),
             duration_secs: 600, label_id: None, notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         // Jan 1, 2027 — must NOT count toward Dec 2026.
         db.insert_session(&Session {
             start_iso: "2027-01-01T00:00:00".to_string(),
             duration_secs: 9999, label_id: None, notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         assert_eq!(db.month_total_secs(2026, 12).unwrap(), 600);
@@ -2154,21 +2159,21 @@ mod tests {
         db.insert_session(&Session {
             start_iso: "2026-04-27T00:00:00".to_string(),
             duration_secs: 600, label_id: None, notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         // Later that day.
         db.insert_session(&Session {
             start_iso: "2026-04-27T18:00:00".to_string(),
             duration_secs: 1200, label_id: None, notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         // Following day.
         db.insert_session(&Session {
             start_iso: "2026-04-28T10:00:00".to_string(),
             duration_secs: 300, label_id: None, notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         let since = chrono::NaiveDate::from_ymd_opt(2026, 4, 27).unwrap();
@@ -2182,14 +2187,14 @@ mod tests {
         db.insert_session(&Session {
             start_iso: "2026-04-26T23:59:59".to_string(),
             duration_secs: 9999, label_id: None, notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         // On / after cut-off — counted.
         db.insert_session(&Session {
             start_iso: "2026-04-27T00:00:00".to_string(),
             duration_secs: 600, label_id: None, notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         let since = chrono::NaiveDate::from_ymd_opt(2026, 4, 27).unwrap();
@@ -2203,7 +2208,7 @@ mod tests {
         db.insert_session(&Session {
             start_iso: "2026-04-27T10:00:00".to_string(),
             duration_secs: 600, label_id: None, notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         let since = chrono::NaiveDate::from_ymd_opt(2099, 1, 1).unwrap();
@@ -2226,7 +2231,7 @@ mod tests {
             duration_secs: 600,
             label_id: None,
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         };
         let id = db.insert_session(&session).unwrap();
@@ -2249,7 +2254,7 @@ mod tests {
                 duration_secs: secs,
                 label_id: None,
                 notes: None,
-                mode: SessionMode::Countdown,
+                mode: SessionMode::Timer,
                 uuid: String::new(),
             }).unwrap();
         }
@@ -2258,7 +2263,7 @@ mod tests {
             duration_secs: 3600,
             label_id: None,
             notes: Some("the long one".to_string()),
-            mode: SessionMode::Stopwatch,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         };
         let longest_id = db.insert_session(&longest_session).unwrap();
@@ -2269,7 +2274,7 @@ mod tests {
             duration_secs: 700,
             label_id: None,
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
 
@@ -2296,13 +2301,13 @@ mod tests {
         db.insert_session(&Session {
             start_iso: "2026-04-27T10:00:00Z".to_string(),
             duration_secs: 600, label_id: None, notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         db.insert_session(&Session {
             start_iso: "2026-04-27T11:00:00Z".to_string(),
             duration_secs: 1245, label_id: None, notes: None,
-            mode: SessionMode::Stopwatch,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         // Sub-minute remainder must NOT be lost — the whole point of
@@ -2325,7 +2330,7 @@ mod tests {
             db.insert_session(&Session {
                 start_iso: format!("2026-04-27T10:{:02}:00Z", secs % 60),
                 duration_secs: secs as u32, label_id: None, notes: None,
-                mode: SessionMode::Countdown,
+                mode: SessionMode::Timer,
                 uuid: String::new(),
             }).unwrap();
         }
@@ -2347,7 +2352,7 @@ mod tests {
             duration_secs: 600,
             label_id: None,
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         };
         let _id_old = db.insert_session(&make("2026-04-25T10:00:00Z")).unwrap();
@@ -2382,7 +2387,7 @@ mod tests {
                 duration_secs: 600,
                 label_id: None,
                 notes: None,
-                mode: SessionMode::Countdown,
+                mode: SessionMode::Timer,
                 uuid: String::new(),
             }).unwrap();
         }
@@ -2409,7 +2414,7 @@ mod tests {
                 duration_secs: 600,
                 label_id: None,
                 notes: None,
-                mode: SessionMode::Countdown,
+                mode: SessionMode::Timer,
                 uuid: String::new(),
             }).unwrap();
         }
@@ -2436,7 +2441,7 @@ mod tests {
             duration_secs: 600,
             label_id: None,
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         let rows = db.query_sessions(&SessionFilter {
@@ -2456,25 +2461,25 @@ mod tests {
         db.insert_session(&Session {
             start_iso: "2026-04-27T10:00:00Z".to_string(),
             duration_secs: 600, label_id: Some(morning),
-            notes: None, mode: SessionMode::Countdown,
+            notes: None, mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         db.insert_session(&Session {
             start_iso: "2026-04-27T11:00:00Z".to_string(),
             duration_secs: 600, label_id: Some(morning),
-            notes: None, mode: SessionMode::Countdown,
+            notes: None, mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         db.insert_session(&Session {
             start_iso: "2026-04-27T19:00:00Z".to_string(),
             duration_secs: 600, label_id: Some(evening),
-            notes: None, mode: SessionMode::Countdown,
+            notes: None, mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         db.insert_session(&Session {
             start_iso: "2026-04-27T20:00:00Z".to_string(),
             duration_secs: 600, label_id: None,
-            notes: None, mode: SessionMode::Countdown,
+            notes: None, mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
 
@@ -2497,14 +2502,14 @@ mod tests {
             start_iso: "2026-04-27T10:00:00Z".to_string(),
             duration_secs: 600, label_id: None,
             notes: Some("kept focus".to_string()),
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         // Without note (None).
         db.insert_session(&Session {
             start_iso: "2026-04-27T11:00:00Z".to_string(),
             duration_secs: 600, label_id: None,
-            notes: None, mode: SessionMode::Countdown,
+            notes: None, mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         // Empty-string note — also excluded.
@@ -2512,7 +2517,7 @@ mod tests {
             start_iso: "2026-04-27T12:00:00Z".to_string(),
             duration_secs: 600, label_id: None,
             notes: Some("".to_string()),
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
 
@@ -2533,14 +2538,14 @@ mod tests {
             start_iso: "2026-04-27T10:00:00Z".to_string(),
             duration_secs: 600, label_id: Some(morning),
             notes: Some("yes".to_string()),
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         // Morning, no note → dropped (notes filter).
         db.insert_session(&Session {
             start_iso: "2026-04-27T11:00:00Z".to_string(),
             duration_secs: 600, label_id: Some(morning),
-            notes: None, mode: SessionMode::Countdown,
+            notes: None, mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         // No label, with note → dropped (label filter).
@@ -2548,7 +2553,7 @@ mod tests {
             start_iso: "2026-04-27T12:00:00Z".to_string(),
             duration_secs: 600, label_id: None,
             notes: Some("orphan".to_string()),
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
 
@@ -2569,7 +2574,7 @@ mod tests {
             db.insert_session(&Session {
                 start_iso: format!("2026-04-{d:02}T10:00:00Z"),
                 duration_secs: 600, label_id: None,
-                notes: None, mode: SessionMode::Countdown,
+                notes: None, mode: SessionMode::Timer,
                 uuid: String::new(),
             }).unwrap();
         }
@@ -2716,7 +2721,7 @@ mod tests {
                 duration_secs: 600,
                 label_id: Some(morning),
                 notes: None,
-                mode: SessionMode::Countdown,
+                mode: SessionMode::Timer,
                 uuid: String::new(),
             }).unwrap();
         }
@@ -2726,7 +2731,7 @@ mod tests {
             duration_secs: 600,
             label_id: Some(evening),
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         // Two unlabeled sessions — must not contribute either.
@@ -2736,7 +2741,7 @@ mod tests {
                 duration_secs: 300,
                 label_id: None,
                 notes: None,
-                mode: SessionMode::Stopwatch,
+                mode: SessionMode::Timer,
                 uuid: String::new(),
             }).unwrap();
         }
@@ -2793,7 +2798,7 @@ mod tests {
             duration_secs: 600,
             label_id: Some(morning),
             notes: Some("first sit".to_string()),
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         // A second labeled session — proves the unlink happens for ALL
@@ -2803,7 +2808,7 @@ mod tests {
             duration_secs: 1200,
             label_id: Some(morning),
             notes: None,
-            mode: SessionMode::Stopwatch,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         // An unlabeled control — must remain unlabeled (was None, stays None).
@@ -2844,7 +2849,7 @@ mod tests {
             duration_secs: 600,
             label_id: Some(evening),
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
 
@@ -3153,7 +3158,7 @@ mod tests {
             duration_secs: 600,
             label_id: None,
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         };
         db.insert_session(&session).unwrap();
@@ -3170,7 +3175,7 @@ mod tests {
             duration_secs: 600,
             label_id: Some(morning),
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         };
         let unlabeled = Session {
@@ -3223,7 +3228,7 @@ mod tests {
             duration_secs: 600,
             label_id: None,
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         };
         let id1 = db.insert_session(&make("2026-04-27T10:00:00Z")).unwrap();
@@ -3248,7 +3253,7 @@ mod tests {
             duration_secs: 600,
             label_id: None,
             notes: Some("first take".to_string()),
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         };
         let id = db.insert_session(&original).unwrap();
@@ -3259,7 +3264,7 @@ mod tests {
             duration_secs: 300,
             label_id: None,
             notes: None,
-            mode: SessionMode::Stopwatch,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
 
@@ -3288,7 +3293,7 @@ mod tests {
         let other_row = rows.iter().find(|(rid, _)| *rid == other_id).unwrap();
         assert_eq!(other_row.1.start_iso, "2026-04-27T11:00:00Z");
         assert_eq!(other_row.1.duration_secs, 300);
-        assert_eq!(other_row.1.mode, SessionMode::Stopwatch);
+        assert_eq!(other_row.1.mode, SessionMode::Timer);
         // Each row must carry its own distinct uuid.
         assert!(looks_like_uuid_v4(&other_row.1.uuid));
         assert_ne!(updated_row.1.uuid, other_row.1.uuid);
@@ -3306,7 +3311,7 @@ mod tests {
             duration_secs: 600,
             label_id: Some(morning),
             notes: Some("had a label".to_string()),
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         db.update_session(id, &Session {
@@ -3314,7 +3319,7 @@ mod tests {
             duration_secs: 600,
             label_id: None,
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         let row = &db.list_sessions().unwrap()[0].1;
@@ -3332,7 +3337,7 @@ mod tests {
             duration_secs: 600,
             label_id: None,
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         db.update_session(id + 999, &Session {
@@ -3340,7 +3345,7 @@ mod tests {
             duration_secs: 9999,
             label_id: None,
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         // Original row is intact.
@@ -3359,7 +3364,7 @@ mod tests {
             duration_secs: 600,
             label_id: None,
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         };
         let id1 = db.insert_session(&make("2026-04-27T10:00:00Z")).unwrap();
@@ -3383,7 +3388,7 @@ mod tests {
             duration_secs: 600,
             label_id: None,
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         db.delete_session(id + 999).unwrap();
@@ -3403,7 +3408,7 @@ mod tests {
             duration_secs: 600,
             label_id: Some(morning),
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
 
@@ -3433,7 +3438,7 @@ mod tests {
             duration_secs: 600,
             label_id: Some(bad_id),
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         });
         assert!(result.is_err(), "expected FK violation, got {result:?}");
@@ -3456,7 +3461,7 @@ mod tests {
                 duration_secs: 600,
                 label_id: Some(morning),
                 notes: Some("first".to_string()),
-                mode: SessionMode::Countdown,
+                mode: SessionMode::Timer,
                 uuid: String::new(),
             },
             Session {
@@ -3464,7 +3469,7 @@ mod tests {
                 duration_secs: 1200,
                 label_id: None,
                 notes: None,
-                mode: SessionMode::Stopwatch,
+                mode: SessionMode::Timer,
                 uuid: String::new(),
             },
             Session {
@@ -3525,7 +3530,7 @@ mod tests {
             duration_secs: 600,
             label_id: None,
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         assert_eq!(db.count_sessions().unwrap(), 1);
@@ -3537,7 +3542,7 @@ mod tests {
                 duration_secs: 600,
                 label_id: None, // OK
                 notes: None,
-                mode: SessionMode::Countdown,
+                mode: SessionMode::Timer,
                 uuid: String::new(),
             },
             Session {
@@ -3545,7 +3550,7 @@ mod tests {
                 duration_secs: 600,
                 label_id: Some(bad_label), // FK violation
                 notes: None,
-                mode: SessionMode::Countdown,
+                mode: SessionMode::Timer,
                 uuid: String::new(),
             },
         ];
@@ -3572,7 +3577,7 @@ mod tests {
                 duration_secs: 600,
                 label_id: Some(bad_label), // fails immediately
                 notes: None,
-                mode: SessionMode::Countdown,
+                mode: SessionMode::Timer,
                 uuid: String::new(),
             },
         ];
@@ -3594,7 +3599,7 @@ mod tests {
                 duration_secs: 600,
                 label_id: Some(morning),
                 notes: None,
-                mode: SessionMode::Countdown,
+                mode: SessionMode::Timer,
                 uuid: String::new(),
             }).unwrap();
         }
@@ -3630,7 +3635,7 @@ mod tests {
             duration_secs: 600,
             label_id: Some(morning),
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         };
         let id = db.insert_session(&labeled).unwrap();
@@ -3640,7 +3645,7 @@ mod tests {
             duration_secs: 300,
             label_id: None,
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         let rows = db.list_sessions_for_label(morning).unwrap();
@@ -3658,7 +3663,7 @@ mod tests {
             duration_secs: dur_secs,
             label_id: None,
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         };
         db.insert_session(&session_with_dur(600)).unwrap(); // 10 min
@@ -3781,7 +3786,7 @@ mod tests {
             duration_secs: 600,
             label_id: None,
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }
     }
@@ -4038,7 +4043,7 @@ mod tests {
             duration_secs: 600,
             label_id: Some(999), // does not exist
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         });
         assert!(result.is_err(), "FK constraint should reject unknown label");
@@ -4162,7 +4167,7 @@ mod tests {
             duration_secs: 600,
             label_id: morning_id,
             notes: Some("clear, focused".to_string()), // comma forces CSV quoting
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         })
         .unwrap();
@@ -4205,7 +4210,7 @@ mod tests {
                 duration_secs: 600,
                 label_id: dst_morning_id,
                 notes: Some("clear, focused".to_string()),
-                mode: SessionMode::Countdown,
+                mode: SessionMode::Timer,
                 uuid: sessions[0].1.uuid.clone(),
             }
         );
@@ -4232,7 +4237,7 @@ mod tests {
             duration_secs: 600,
             label_id,
             notes: Some("clear mind".to_string()),
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         })
         .unwrap();
@@ -4248,7 +4253,7 @@ mod tests {
         assert!(csv.contains("2026-04-27T10:00:00Z"));
         assert!(csv.contains("Morning"));
         assert!(csv.contains("clear mind"));
-        assert!(csv.contains("countdown"));
+        assert!(csv.contains("timer"));
     }
 
     // ── UUIDs on sessions and labels (Nextcloud-Sync phase A1) ───────────────
@@ -4286,7 +4291,7 @@ mod tests {
             duration_secs: 600,
             label_id: None,
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
                         uuid: String::new(),  // ignored — DB assigns
         })
         .unwrap();
@@ -4304,7 +4309,7 @@ mod tests {
                 duration_secs: 600,
                 label_id: None,
                 notes: None,
-                mode: SessionMode::Countdown,
+                mode: SessionMode::Timer,
                                 uuid: String::new(),
             })
             .unwrap();
@@ -4323,7 +4328,7 @@ mod tests {
             duration_secs: 600,
             label_id: None,
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
                         uuid: String::new(),
         })
         .unwrap();
@@ -4345,7 +4350,7 @@ mod tests {
                 duration_secs: 600,
                 label_id: None,
                 notes: None,
-                mode: SessionMode::Countdown,
+                mode: SessionMode::Timer,
                                 uuid: bogus.clone(),
             })
             .unwrap();
@@ -4800,7 +4805,7 @@ mod tests {
             duration_secs: 600,
             label_id: None,
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         db.record_known_remote_file("a").unwrap();
@@ -4901,7 +4906,7 @@ mod tests {
             duration_secs: 300,
             label_id: None,
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         assert_eq!(db.list_sessions().unwrap().len(), 1);
@@ -5127,7 +5132,7 @@ mod tests {
             duration_secs: 600,
             label_id: None,
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         let events = db.pending_events().unwrap();
@@ -5145,7 +5150,7 @@ mod tests {
             duration_secs: 600,
             label_id: None,
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         let row_uuid = db.list_sessions().unwrap()[0].1.uuid.clone();
@@ -5197,7 +5202,7 @@ mod tests {
             duration_secs: 600,
             label_id: Some(label_id),
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         let payload = event_payload(&db.pending_events().unwrap()[0].1);
@@ -5215,7 +5220,7 @@ mod tests {
             duration_secs: 600,
             label_id: None,
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         let payload = event_payload(&db.pending_events().unwrap()[0].1);
@@ -5231,7 +5236,7 @@ mod tests {
             duration_secs: 600,
             label_id: None,
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         let events = db.pending_events().unwrap();
@@ -5251,7 +5256,7 @@ mod tests {
             duration_secs: 600,
             label_id: None,
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         let lamport = db.lamport_clock().unwrap();
@@ -5270,7 +5275,7 @@ mod tests {
                 duration_secs: 600,
                 label_id: None,
                 notes: None,
-                mode: SessionMode::Countdown,
+                mode: SessionMode::Timer,
                 uuid: String::new(),
             }).unwrap();
         }
@@ -5302,7 +5307,7 @@ mod tests {
             duration_secs: 600,
             label_id: None,
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         drain_events(&db);
@@ -5312,7 +5317,7 @@ mod tests {
             duration_secs: 1800,
             label_id: None,
             notes: Some("revised".to_string()),
-            mode: SessionMode::Stopwatch,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         let events = db.pending_events().unwrap();
@@ -5332,7 +5337,7 @@ mod tests {
             duration_secs: 600,
             label_id: None,
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         let original_uuid = db.list_sessions().unwrap()[0].1.uuid.clone();
@@ -5343,7 +5348,7 @@ mod tests {
             duration_secs: 1800,
             label_id: None,
             notes: Some("revised".to_string()),
-            mode: SessionMode::Stopwatch,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         let payload = event_payload(&db.pending_events().unwrap()[0].1);
@@ -5358,7 +5363,7 @@ mod tests {
             duration_secs: 600,
             label_id: None,
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         drain_events(&db);
@@ -5368,14 +5373,14 @@ mod tests {
             duration_secs: 1800,
             label_id: None,
             notes: Some("revised".to_string()),
-            mode: SessionMode::Stopwatch,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         let payload = event_payload(&db.pending_events().unwrap()[0].1);
         assert_eq!(payload["start_iso"], "2026-05-01T11:00:00");
         assert_eq!(payload["duration_secs"], 1800);
         assert_eq!(payload["notes"], "revised");
-        assert_eq!(payload["mode"], "stopwatch");
+        assert_eq!(payload["mode"], "timer");
     }
 
     #[test]
@@ -5390,7 +5395,7 @@ mod tests {
             duration_secs: 600,
             label_id: None,
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         drain_events(&db);
@@ -5400,7 +5405,7 @@ mod tests {
             duration_secs: 600,
             label_id: Some(label_id),
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         let payload = event_payload(&db.pending_events().unwrap()[0].1);
@@ -5419,7 +5424,7 @@ mod tests {
             duration_secs: 1800,
             label_id: None,
             notes: None,
-            mode: SessionMode::Stopwatch,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         assert!(db.pending_events().unwrap().is_empty(),
@@ -5434,7 +5439,7 @@ mod tests {
             duration_secs: 600,
             label_id: None,
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         let row_uuid = db.list_sessions().unwrap()[0].1.uuid.clone();
@@ -5473,7 +5478,7 @@ mod tests {
             duration_secs: 600,
             label_id: None,
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).collect();
         db.bulk_insert_sessions(&to_insert).unwrap();
@@ -5496,7 +5501,7 @@ mod tests {
             duration_secs: 600,
             label_id: None,
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).collect();
         db.bulk_insert_sessions(&to_insert).unwrap();
@@ -5532,7 +5537,7 @@ mod tests {
             duration_secs: 600,
             label_id: None,
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).collect();
         db.bulk_insert_sessions(&to_insert).unwrap();
@@ -5556,7 +5561,7 @@ mod tests {
                 duration_secs: 600,
                 label_id: None,
                 notes: None,
-                mode: SessionMode::Countdown,
+                mode: SessionMode::Timer,
                 uuid: String::new(),
             }).unwrap();
         }
@@ -5753,7 +5758,7 @@ mod tests {
             duration_secs: 600,
             label_id: None,
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         let row_uuid = db.list_sessions().unwrap()[0].1.uuid.clone();
@@ -5769,7 +5774,7 @@ mod tests {
             duration_secs: 600,
             label_id: None,
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         let row_uuid = db.list_sessions().unwrap()[0].1.uuid.clone();
@@ -5927,7 +5932,7 @@ mod tests {
         let event = synth_session_insert(
             SESSION_X, 5, DEVICE_A,
             "2026-04-30T10:00:00", 600,
-            None, None, SessionMode::Countdown,
+            None, None, SessionMode::Timer,
         );
         db.apply_event(&event).unwrap();
         db.apply_event(&event).unwrap();
@@ -5941,18 +5946,18 @@ mod tests {
         db.apply_event(&synth_session_insert(
             SESSION_X, 5, DEVICE_A,
             "2026-04-30T10:00:00", 600,
-            None, None, SessionMode::Countdown,
+            None, None, SessionMode::Timer,
         )).unwrap();
         db.apply_event(&synth_session_update(
             SESSION_X, 10, DEVICE_A,
             "2026-05-01T11:00:00", 1200,
-            None, Some("revised"), SessionMode::Stopwatch,
+            None, Some("revised"), SessionMode::Timer,
         )).unwrap();
         let s = &db.list_sessions().unwrap()[0].1;
         assert_eq!(s.start_iso, "2026-05-01T11:00:00");
         assert_eq!(s.duration_secs, 1200);
         assert_eq!(s.notes.as_deref(), Some("revised"));
-        assert_eq!(s.mode, SessionMode::Stopwatch);
+        assert_eq!(s.mode, SessionMode::Timer);
     }
 
     #[test]
@@ -5961,7 +5966,7 @@ mod tests {
         db.apply_event(&synth_session_insert(
             SESSION_X, 5, DEVICE_A,
             "2026-04-30T10:00:00", 600,
-            None, None, SessionMode::Countdown,
+            None, None, SessionMode::Timer,
         )).unwrap();
         db.apply_event(&synth_session_delete(SESSION_X, 10, DEVICE_A)).unwrap();
         assert!(db.list_sessions().unwrap().is_empty());
@@ -5977,7 +5982,7 @@ mod tests {
         db.apply_event(&synth_session_insert(
             SESSION_X, 5, DEVICE_A,
             "2026-04-30T10:00:00", 600,
-            None, None, SessionMode::Countdown,
+            None, None, SessionMode::Timer,
         )).unwrap();
         assert!(db.list_sessions().unwrap().is_empty(),
             "tombstone with lamport 10 must beat insert at lamport 5");
@@ -5992,11 +5997,11 @@ mod tests {
         // A wins. Apply B first (out of order), then A.
         db.apply_event(&synth_session_insert(
             SESSION_X, 1, DEVICE_A,
-            "initial", 100, None, None, SessionMode::Countdown,
+            "initial", 100, None, None, SessionMode::Timer,
         )).unwrap();
         db.apply_event(&synth_session_update(
             SESSION_X, 7, DEVICE_B,
-            "B's edit", 700, None, Some("from B"), SessionMode::Stopwatch,
+            "B's edit", 700, None, Some("from B"), SessionMode::Timer,
         )).unwrap();
         db.apply_event(&synth_session_update(
             SESSION_X, 10, DEVICE_A,
@@ -6016,15 +6021,15 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         db.apply_event(&synth_session_insert(
             SESSION_X, 1, DEVICE_A,
-            "initial", 100, None, None, SessionMode::Countdown,
+            "initial", 100, None, None, SessionMode::Timer,
         )).unwrap();
         db.apply_event(&synth_session_update(
             SESSION_X, 5, DEVICE_A,
-            "A wrote this", 500, None, Some("from A"), SessionMode::Countdown,
+            "A wrote this", 500, None, Some("from A"), SessionMode::Timer,
         )).unwrap();
         db.apply_event(&synth_session_update(
             SESSION_X, 5, DEVICE_B,
-            "B wrote this", 500, None, Some("from B"), SessionMode::Countdown,
+            "B wrote this", 500, None, Some("from B"), SessionMode::Timer,
         )).unwrap();
         let s = &db.list_sessions().unwrap()[0].1;
         assert_eq!(s.notes.as_deref(), Some("from B"),
@@ -6040,7 +6045,7 @@ mod tests {
         let event = synth_session_insert(
             SESSION_X, 5, DEVICE_A,
             "2026-04-30T10:00:00", 600,
-            None, None, SessionMode::Countdown,
+            None, None, SessionMode::Timer,
         );
         let event_uuid = event.event_uuid.clone();
         db.apply_event(&event).unwrap();
@@ -6081,7 +6086,7 @@ mod tests {
         db.apply_event(&synth_session_insert(
             SESSION_X, 5, DEVICE_A,
             "2026-04-30T10:00:00", 600,
-            Some(&label_uuid), None, SessionMode::Countdown,
+            Some(&label_uuid), None, SessionMode::Timer,
         )).unwrap();
         let s = &db.list_sessions().unwrap()[0].1;
         assert_eq!(s.label_id, Some(local_label_id),
@@ -6182,7 +6187,7 @@ mod tests {
         db.apply_event(&synth_session_insert(
             SESSION_X, 2, DEVICE_A,
             "2026-04-30T10:00:00", 600,
-            Some(LABEL_X), None, SessionMode::Countdown,
+            Some(LABEL_X), None, SessionMode::Timer,
         )).unwrap();
         // Sanity: the link is set.
         assert!(db.list_sessions().unwrap()[0].1.label_id.is_some());
@@ -6295,7 +6300,7 @@ mod tests {
         let event = synth_session_insert(
             SESSION_X, 5, DEVICE_A,
             "2026-04-30T10:00:00", 600,
-            None, None, SessionMode::Countdown,
+            None, None, SessionMode::Timer,
         );
         db.replay_events(std::slice::from_ref(&event)).unwrap();
         let rows = db.list_sessions().unwrap();
@@ -6310,11 +6315,11 @@ mod tests {
         let session_b = "33333333-3333-4333-8333-333333333333";
         let events = vec![
             synth_session_insert(SESSION_X, 1, DEVICE_A,
-                "S-X", 100, None, None, SessionMode::Countdown),
+                "S-X", 100, None, None, SessionMode::Timer),
             synth_session_insert(session_b, 2, DEVICE_A,
-                "S-B", 200, None, None, SessionMode::Stopwatch),
+                "S-B", 200, None, None, SessionMode::Timer),
             synth_session_update(SESSION_X, 5, DEVICE_A,
-                "S-X-edited", 150, None, Some("edit"), SessionMode::Countdown),
+                "S-X-edited", 150, None, Some("edit"), SessionMode::Timer),
             synth_session_delete(session_b, 6, DEVICE_A),
         ];
 
@@ -6346,7 +6351,7 @@ mod tests {
         let event = synth_session_insert(
             SESSION_X, 5, DEVICE_A,
             "2026-04-30T10:00:00", 600,
-            None, None, SessionMode::Countdown,
+            None, None, SessionMode::Timer,
         );
         db.replay_events(&[event.clone(), event]).unwrap();
         assert_eq!(db.list_sessions().unwrap().len(), 1);
@@ -6363,12 +6368,12 @@ mod tests {
         device_a.insert_session(&Session {
             start_iso: "2026-04-30T10:00:00".to_string(),
             duration_secs: 600, label_id: None, notes: Some("from A".to_string()),
-            mode: SessionMode::Countdown, uuid: String::new(),
+            mode: SessionMode::Timer, uuid: String::new(),
         }).unwrap();
         device_b.insert_session(&Session {
             start_iso: "2026-04-30T18:00:00".to_string(),
             duration_secs: 1200, label_id: None, notes: Some("from B".to_string()),
-            mode: SessionMode::Stopwatch, uuid: String::new(),
+            mode: SessionMode::Timer, uuid: String::new(),
         }).unwrap();
 
         let events_a: Vec<Event> = device_a.pending_events().unwrap()
@@ -6406,7 +6411,7 @@ mod tests {
             device_a.insert_session(&Session {
                 start_iso: format!("2026-04-3{i}T10:00:00"),
                 duration_secs: 600, label_id: None, notes: None,
-                mode: SessionMode::Countdown, uuid: String::new(),
+                mode: SessionMode::Timer, uuid: String::new(),
             }).unwrap();
         }
         let events: Vec<Event> = device_a.pending_events().unwrap()
@@ -6440,7 +6445,7 @@ mod tests {
         db.apply_event(&synth_session_insert(
             SESSION_X, 10, DEVICE_A,
             "2026-04-30T10:00:00", 600,
-            None, None, SessionMode::Countdown,
+            None, None, SessionMode::Timer,
         )).unwrap();
         assert_eq!(db.lamport_clock().unwrap(), 11,
             "observation rule: local must jump to max(local, remote)+1");
@@ -6457,7 +6462,7 @@ mod tests {
         assert_eq!(db.lamport_clock().unwrap(), 50);
         db.apply_event(&synth_session_insert(
             SESSION_X, 10, DEVICE_A,
-            "_", 1, None, None, SessionMode::Countdown,
+            "_", 1, None, None, SessionMode::Timer,
         )).unwrap();
         assert_eq!(db.lamport_clock().unwrap(), 51);
     }
@@ -6476,7 +6481,7 @@ mod tests {
         // Author an event "from us" with a very high lamport value.
         let our_event = synth_session_insert(
             SESSION_X, 999, &our_device_id,
-            "_", 1, None, None, SessionMode::Countdown,
+            "_", 1, None, None, SessionMode::Timer,
         );
         db.apply_event(&our_event).unwrap();
         assert_eq!(db.lamport_clock().unwrap(), before,
@@ -6491,7 +6496,7 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         let event = synth_session_insert(
             SESSION_X, 10, DEVICE_A,
-            "_", 1, None, None, SessionMode::Countdown,
+            "_", 1, None, None, SessionMode::Timer,
         );
         db.apply_event(&event).unwrap();
         let after_first = db.lamport_clock().unwrap();
@@ -6512,7 +6517,7 @@ mod tests {
         // Remote event at lamport=20 lands on a fresh local DB.
         db.apply_event(&synth_session_insert(
             SESSION_X, 20, DEVICE_A,
-            "remote", 100, None, None, SessionMode::Countdown,
+            "remote", 100, None, None, SessionMode::Timer,
         )).unwrap();
         // Now author a local session. Its event must have lamport > 20.
         db.insert_session(&Session {
@@ -6520,7 +6525,7 @@ mod tests {
             duration_secs: 200,
             label_id: None,
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         let local_event = db.pending_events().unwrap()
@@ -6542,9 +6547,9 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         let batch = vec![
             synth_session_insert(SESSION_X, 5, DEVICE_A,
-                "_", 1, None, None, SessionMode::Countdown),
+                "_", 1, None, None, SessionMode::Timer),
             synth_session_update(SESSION_X, 12, DEVICE_A,
-                "_", 1, None, None, SessionMode::Countdown),
+                "_", 1, None, None, SessionMode::Timer),
         ];
         db.replay_events(&batch).unwrap();
         assert!(db.lamport_clock().unwrap() >= 13,
@@ -6563,11 +6568,11 @@ mod tests {
             synth_label_insert(LABEL_X, 1, DEVICE_A, "Morning"),
             synth_session_insert(
                 SESSION_X, 2, DEVICE_A,
-                "10:00", 600, Some(LABEL_X), None, SessionMode::Countdown,
+                "10:00", 600, Some(LABEL_X), None, SessionMode::Timer,
             ),
             synth_session_update(
                 SESSION_X, 3, DEVICE_A,
-                "10:00", 900, Some(LABEL_X), Some("longer"), SessionMode::Countdown,
+                "10:00", 900, Some(LABEL_X), Some("longer"), SessionMode::Timer,
             ),
             synth_label_delete(LABEL_X, 4, DEVICE_A),
             synth_setting_changed("daily_goal", "20", 5, DEVICE_A),

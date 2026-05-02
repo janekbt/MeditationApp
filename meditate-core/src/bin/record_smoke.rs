@@ -38,7 +38,7 @@ fn main() {
         duration_secs: 5,
         label_id: None,
         notes: None,
-        mode: SessionMode::Countdown,
+        mode: SessionMode::Timer,
         uuid: String::new(),
     };
     db.insert_session(&session).expect("insert session");

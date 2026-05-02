@@ -308,7 +308,7 @@ mod tests {
             duration_secs: 600,
             label_id: None,
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         db
@@ -437,7 +437,7 @@ mod tests {
             duration_secs: 1200,
             label_id: None,
             notes: None,
-            mode: SessionMode::Stopwatch,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
         let shared = FakeWebDav::new();

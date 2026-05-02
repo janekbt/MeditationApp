@@ -31,7 +31,7 @@ fn main() {
         duration_secs: 600,
         label_id: Some(morning_id),
         notes: Some("clear and present".into()),
-        mode: SessionMode::Countdown,
+        mode: SessionMode::Timer,
         uuid: String::new(),
     }).unwrap();
     println!("Phone authored: 1 label (Morning), 1 session at 07:00 (600s)");
@@ -43,7 +43,7 @@ fn main() {
         duration_secs: 1200,
         label_id: Some(evening_id),
         notes: None,
-        mode: SessionMode::Stopwatch,
+        mode: SessionMode::Timer,
         uuid: String::new(),
     }).unwrap();
     println!("Laptop authored: 1 label (Evening), 1 session at 20:00 (1200s)");
@@ -99,7 +99,7 @@ fn main() {
         label_id: phone.list_labels().unwrap()
             .iter().find(|l| l.name == "Morning").map(|l| l.id),
         notes: Some("phone says: I extended this".into()),
-        mode: SessionMode::Countdown,
+        mode: SessionMode::Timer,
         uuid: String::new(),
     }).unwrap();
     println!("Phone updated session: notes='phone says: I extended this', lamport now {}",
@@ -111,7 +111,7 @@ fn main() {
         label_id: laptop.list_labels().unwrap()
             .iter().find(|l| l.name == "Morning").map(|l| l.id),
         notes: Some("laptop says: I went longer!".into()),
-        mode: SessionMode::Countdown,
+        mode: SessionMode::Timer,
         uuid: String::new(),
     }).unwrap();
     println!("Laptop updated session: notes='laptop says: I went longer!', lamport now {}",
@@ -194,7 +194,7 @@ fn main() {
         start_iso: "2026-05-01T08:00:00".into(),
         duration_secs: 600, label_id: None,
         notes: Some("from A".into()),
-        mode: SessionMode::Countdown, uuid: String::new(),
+        mode: SessionMode::Timer, uuid: String::new(),
     }).unwrap();
     let from_a = drain(&device_a);
     device_b.replay_events(&from_a).unwrap();
@@ -209,7 +209,7 @@ fn main() {
         start_iso: "2026-05-01T12:00:00".into(),
         duration_secs: 1200, label_id: None,
         notes: Some("from B".into()),
-        mode: SessionMode::Countdown, uuid: String::new(),
+        mode: SessionMode::Timer, uuid: String::new(),
     }).unwrap();
     let from_b_to_c = drain(&device_b);
     device_c.replay_events(&from_b_to_c).unwrap();
@@ -229,7 +229,7 @@ fn main() {
         start_iso: "2026-05-01T18:00:00".into(),
         duration_secs: 900, label_id: None,
         notes: Some("from C".into()),
-        mode: SessionMode::Countdown, uuid: String::new(),
+        mode: SessionMode::Timer, uuid: String::new(),
     }).unwrap();
     let from_c = drain(&device_c);
     device_a.replay_events(&from_c).unwrap();
@@ -270,7 +270,7 @@ fn main() {
             duration_secs: 600, label_id: db.list_labels().unwrap()
                 .iter().find(|l| l.name == "Persistent").map(|l| l.id),
             notes: Some("survives a restart".into()),
-            mode: SessionMode::Countdown, uuid: String::new(),
+            mode: SessionMode::Timer, uuid: String::new(),
         }).unwrap();
         saved_session_uuid = db.list_sessions().unwrap()[0].1.uuid.clone();
         saved_lamport = db.lamport_clock().unwrap();
@@ -415,7 +415,7 @@ fn synth_session_event_insert(
         "duration_secs": duration_secs,
         "label_uuid": label_uuid,
         "notes": notes,
-        "mode": "countdown",
+        "mode": "timer",
     }).to_string();
     Event {
         event_uuid: format!("ev-si-{session_uuid}-{lamport_ts}"),
@@ -438,7 +438,7 @@ fn synth_session_event_update(
         "duration_secs": duration_secs,
         "label_uuid": label_uuid,
         "notes": notes,
-        "mode": "countdown",
+        "mode": "timer",
     }).to_string();
     Event {
         event_uuid: format!("ev-su-{session_uuid}-{lamport_ts}"),

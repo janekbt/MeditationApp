@@ -355,7 +355,7 @@ mod tests {
             duration_secs: secs,
             label_id: None,
             notes: None,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap()
     }

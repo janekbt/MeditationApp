@@ -1005,7 +1005,7 @@ impl LogView {
                 let data = SessionData {
                     start_time,
                     duration_secs: duration.max(0),
-                    mode: SessionMode::Countdown,
+                    mode: SessionMode::Timer,
                     label_id,
                     note,
                 };

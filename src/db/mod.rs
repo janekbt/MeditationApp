@@ -428,7 +428,7 @@ mod tests {
         let sd = SessionData {
             start_time: 1_700_000_000,
             duration_secs: -1,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             label_id: None,
             note: None,
         };
@@ -440,7 +440,7 @@ mod tests {
         let sd = SessionData {
             start_time: 0,
             duration_secs: i64::MAX,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             label_id: None,
             note: None,
         };
@@ -474,7 +474,7 @@ mod tests {
         let original = SessionData {
             start_time: 1_700_000_000,
             duration_secs: 750,
-            mode: SessionMode::Stopwatch,
+            mode: SessionMode::Timer,
             label_id: Some(11),
             note: Some("noted".to_string()),
         };
@@ -511,7 +511,7 @@ mod tests {
         db.create_session(&SessionData {
             start_time,
             duration_secs,
-            mode: SessionMode::Countdown,
+            mode: SessionMode::Timer,
             label_id,
             note: None,
         }).unwrap();

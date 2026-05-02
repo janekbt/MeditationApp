@@ -208,7 +208,7 @@ fn insert_session(db: &Database, start_iso: &str, secs: u32, notes: Option<&str>
         duration_secs: secs,
         label_id: None,
         notes: notes.map(|s| s.to_string()),
-        mode: SessionMode::Countdown,
+        mode: SessionMode::Timer,
         uuid: String::new(),
     }).unwrap()
 }
