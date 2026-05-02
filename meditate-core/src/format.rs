@@ -118,6 +118,20 @@ pub fn format_time(d: Duration) -> String {
     }
 }
 
+/// Hero-label text for a running Timer-mode session.
+///
+/// `target = Some(d)` means the user picked a duration; the label counts
+/// down (`format_time(target - elapsed)`). `target = None` means the
+/// stopwatch toggle is on; the label counts up (`format_time(elapsed)`).
+/// Saturating subtraction: if a tick lands a beat past `target`, the
+/// caller gets `00:00` instead of an underflow panic.
+pub fn running_text(target: Option<Duration>, elapsed: Duration) -> String {
+    match target {
+        Some(t) => format_time(t.saturating_sub(elapsed)),
+        None => format_time(elapsed),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,6 +139,50 @@ mod tests {
     #[test]
     fn format_time_zero_shows_double_zero() {
         assert_eq!(format_time(Duration::ZERO), "00:00");
+    }
+
+    // ── running_text ──────────────────────────────────────────────────
+    // The hero label on the running timer page. Two regimes folded into
+    // one helper so the merged Timer mode (M.2 onwards) can branch on a
+    // single Option<Duration> rather than a TimerMode variant.
+
+    #[test]
+    fn running_text_targeted_shows_remaining() {
+        assert_eq!(
+            running_text(Some(Duration::from_secs(60)), Duration::from_secs(10)),
+            "00:50"
+        );
+    }
+
+    #[test]
+    fn running_text_open_ended_shows_elapsed() {
+        assert_eq!(
+            running_text(None, Duration::from_secs(10)),
+            "00:10"
+        );
+    }
+
+    #[test]
+    fn running_text_targeted_clamps_to_zero_when_elapsed_overshoots() {
+        // Tick scheduling sometimes lands one tick after target; saturating_sub
+        // gives "00:00" instead of underflowing.
+        assert_eq!(
+            running_text(Some(Duration::from_secs(60)), Duration::from_secs(75)),
+            "00:00"
+        );
+    }
+
+    #[test]
+    fn running_text_targeted_at_start_shows_full_target() {
+        assert_eq!(
+            running_text(Some(Duration::from_secs(600)), Duration::ZERO),
+            "10:00"
+        );
+    }
+
+    #[test]
+    fn running_text_open_ended_at_start_shows_zero() {
+        assert_eq!(running_text(None, Duration::ZERO), "00:00");
     }
 
     #[test]
