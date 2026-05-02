@@ -4,8 +4,6 @@ Polish and UX items to tackle when convenient. Graduate each one out of this fil
 
 - **Nextcloud sync (option C: append-only event log).** Periodic auto-sync of session/label data between the user's devices via personal Nextcloud, robust under offline edits on multiple devices. See `Nextcloud-Sync.md` for the detailed plan: architecture, schema changes, WebDAV protocol, conflict rules, ~12 TDD cycles across 4-6 sessions.
 
-- **Merge Countdown + Stopwatch into one mode.** Stopwatch is a Countdown with no target; the mode toggle becomes 2-button [Timer | Box Breath], and an Adw.SwitchRow "Stopwatch Mode" inside the Timer-mode session settings activates count-up: big_time_label flips to 00:00, the Quick Presets card greys out. Reduces tabs to 3 (merged · Box Breath · Guided when added) and avoids duplicating the bell/waiting/interval wiring across two modes. Land this first — it's the smallest change and unblocks the rest.
-
 - **Starting bell, waiting period, interval bells (Countdown mode).** Three new options on the timer setup page:
   - *Waiting period*: silence for N seconds before the start bell, lets the user settle. 0 = off.
   - *Start bell*: rings at t=0 (after the waiting period). Pickable from the bundled bell library.
