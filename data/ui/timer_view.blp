@@ -61,6 +61,10 @@ template $TimerView : Gtk.Widget {
             child: Gtk.Box {
               css-classes: ["linked"];
               spacing: 0;
+              // Force equal widths so the divider between the two
+              // segments sits exactly in the middle, regardless of
+              // label-text length differences ("Timer" vs "Box Breath").
+              homogeneous: true;
 
               Gtk.ToggleButton countdown_btn {
                 label: _("Timer");
@@ -82,9 +86,13 @@ template $TimerView : Gtk.Widget {
           // Placed directly under the mode toggle so the button doesn't
           // jump positions when switching modes, and so presets-driven
           // starts don't require scrolling past the phase/label rows.
+          // Top margin compensates for the AdwPreferencesGroup chrome
+          // that lives below the Stopwatch-Mode row, so the gap above
+          // and below the Start button reads as visually equal.
           Adw.Clamp {
             maximum-size: 360;
             tightening-threshold: 300;
+            margin-top: 6;
 
             child: Gtk.Box {
               orientation: vertical;

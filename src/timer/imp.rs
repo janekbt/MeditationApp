@@ -434,11 +434,6 @@ impl TimerView {
     /// Set the hero time display + subtitle to their idle-state values for
     /// whichever mode is currently active.
     fn refresh_hero_for_idle(&self) {
-        // Stopwatch setup has no target to label: hide the eyebrow and
-        // park the hero at 00:00 so it lines up with what the running
-        // view will show on the first tick.
-        let stopwatch_setup =
-            self.current_mode() == TimerMode::Timer && self.stopwatch_toggle_on.get();
         let label = match self.current_mode() {
             TimerMode::Timer => {
                 if self.stopwatch_toggle_on.get() {
@@ -460,7 +455,7 @@ impl TimerView {
         };
         self.big_time_label.set_label(&label);
         self.time_unit_label.set_label(&crate::i18n::gettext("Hours · Minutes"));
-        self.time_unit_label.set_visible(!stopwatch_setup);
+        self.time_unit_label.set_visible(true);
     }
 
     /// Re-apply the stopwatch toggle's effect on the rest of the setup
