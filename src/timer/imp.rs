@@ -36,14 +36,17 @@ pub enum TimerState {
     Done,
 }
 
-/// Which of the three modes is currently selected. Encapsulates the
-/// countdown_btn/stopwatch_btn/breathing_btn radio group in a single
-/// readable value so callers don't sprinkle `is_active()` checks.
+/// Which of the two modes is currently selected. Encapsulates the
+/// countdown_btn/breathing_btn radio group in a single readable value
+/// so callers don't sprinkle `is_active()` checks.
+///
+/// Within `Timer` mode, the Stopwatch-Mode SwitchRow toggles between
+/// counting down to a target and counting up open-endedly — that bit
+/// lives on `TimerView::stopwatch_toggle_on`, not in this enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TimerMode {
     #[default]
-    Countdown,
-    Stopwatch,
+    Timer,
     Breathing,
 }
 
@@ -57,10 +60,10 @@ pub struct TimerView {
     #[template_child] pub view_stack:            TemplateChild<gtk::Stack>,
     #[template_child] pub streak_label:          TemplateChild<gtk::Label>,
     #[template_child] pub countdown_btn:         TemplateChild<gtk::ToggleButton>,
-    #[template_child] pub stopwatch_btn:         TemplateChild<gtk::ToggleButton>,
     #[template_child] pub breathing_btn:         TemplateChild<gtk::ToggleButton>,
     #[template_child] pub big_time_label:         TemplateChild<gtk::Label>,
     #[template_child] pub countdown_inputs:       TemplateChild<gtk::Box>,
+    #[template_child] pub stopwatch_mode_row:     TemplateChild<adw::SwitchRow>,
     #[template_child] pub presets_box:           TemplateChild<gtk::FlowBox>,
     #[template_child] pub boxbreath_inputs:       TemplateChild<gtk::Box>,
     #[template_child] pub breathing_presets_box:  TemplateChild<gtk::FlowBox>,
@@ -107,8 +110,16 @@ pub struct TimerView {
     sound_populating: Cell<bool>,
     /// Currently-selected countdown duration in seconds, set by preset
     /// chips or the "Custom" dialog. Default 10 min; used as the target
-    /// when the user taps Start.
+    /// when the user taps Start (and Stopwatch Mode is off).
     countdown_target_secs: Cell<u64>,
+    /// Live mirror of the persisted "stopwatch_mode_active" setting and
+    /// of `stopwatch_mode_row`'s active state. `true` means count up
+    /// from zero with no target; `false` means count down to
+    /// `countdown_target_secs`.
+    stopwatch_toggle_on: Cell<bool>,
+    /// Suppress the SwitchRow's notify::active handler while
+    /// `refresh_streak` is loading the persisted setting on visit.
+    stopwatch_loading: Cell<bool>,
     /// Preset pills currently attached to presets_box, paired with their
     /// duration in minutes. Used to toggle the `.preset-chip-active` CSS
     /// class on the button whose minutes match countdown_target_secs.
@@ -215,7 +226,7 @@ impl TimerView {
     fn setup_buttons(&self) {
         let obj = self.obj();
 
-        // Mode toggle — all three radios share a group, so exactly one
+        // Mode toggle — both radios share a group, so exactly one
         // emits `toggled` with `is_active() == true` on every switch.
         // Route both into one handler.
         let mode_toggled = glib::clone!(
@@ -227,8 +238,30 @@ impl TimerView {
             }
         );
         self.countdown_btn.connect_toggled(mode_toggled.clone());
-        self.stopwatch_btn.connect_toggled(mode_toggled.clone());
         self.breathing_btn.connect_toggled(mode_toggled);
+
+        // Stopwatch-Mode SwitchRow: persist state, mirror on the cell,
+        // refresh the hero label + preset sensitivity. The
+        // stopwatch_loading guard suppresses persistence while
+        // refresh_streak is restoring the value on visit.
+        self.stopwatch_mode_row.connect_active_notify(glib::clone!(
+            #[weak(rename_to = this)] obj,
+            move |row| {
+                let imp = this.imp();
+                if imp.stopwatch_loading.get() { return; }
+                let on = row.is_active();
+                imp.stopwatch_toggle_on.set(on);
+                if let Some(app) = imp.get_app() {
+                    app.with_db_mut(|db| {
+                        let _ = db.set_setting(
+                            "stopwatch_mode_active",
+                            if on { "true" } else { "false" },
+                        );
+                    });
+                }
+                imp.refresh_stopwatch_dependent_ui();
+            }
+        ));
 
         self.start_btn.connect_clicked(glib::clone!(
             #[weak(rename_to = this)] obj,
@@ -327,16 +360,15 @@ impl TimerView {
     }
 
 
-    /// Which mode the radio group currently reflects. Exactly one of the
-    /// three buttons is active at any time (they share a group), so the
-    /// priority order is: breathing → stopwatch → countdown (default).
+    /// Which mode the radio group currently reflects. Exactly one of
+    /// the two buttons is active at any time (they share a group).
+    /// Stopwatch-vs-countdown lives on `stopwatch_toggle_on` within
+    /// the Timer branch.
     pub(crate) fn current_mode(&self) -> TimerMode {
         if self.breathing_btn.is_active() {
             TimerMode::Breathing
-        } else if self.stopwatch_btn.is_active() {
-            TimerMode::Stopwatch
         } else {
-            TimerMode::Countdown
+            TimerMode::Timer
         }
     }
 
@@ -345,7 +377,7 @@ impl TimerView {
         let mode = self.current_mode();
 
         // Input panels: only the active mode's inputs are visible.
-        self.countdown_inputs.set_visible(mode == TimerMode::Countdown);
+        self.countdown_inputs.set_visible(mode == TimerMode::Timer);
         self.boxbreath_inputs.set_visible(mode == TimerMode::Breathing);
 
         // Each mode keeps its own last-used label. On switch, pull the
@@ -372,10 +404,9 @@ impl TimerView {
         let mode = self.current_mode();
         self.countdown_inputs.set_sensitive(true);
         self.boxbreath_inputs.set_sensitive(true);
-        self.countdown_inputs.set_visible(mode == TimerMode::Countdown);
+        self.countdown_inputs.set_visible(mode == TimerMode::Timer);
         self.boxbreath_inputs.set_visible(mode == TimerMode::Breathing);
         self.countdown_btn.set_sensitive(true);
-        self.stopwatch_btn.set_sensitive(true);
         self.breathing_btn.set_sensitive(true);
         self.session_group.set_sensitive(true);
         self.refresh_hero_for_idle();
@@ -393,7 +424,6 @@ impl TimerView {
         self.countdown_inputs.set_sensitive(false);
         self.boxbreath_inputs.set_sensitive(false);
         self.countdown_btn.set_sensitive(false);
-        self.stopwatch_btn.set_sensitive(false);
         self.breathing_btn.set_sensitive(false);
         self.session_group.set_sensitive(false);
         self.big_time_label.set_label(&format_time(display_secs));
@@ -405,17 +435,20 @@ impl TimerView {
     /// whichever mode is currently active.
     fn refresh_hero_for_idle(&self) {
         let label = match self.current_mode() {
-            TimerMode::Stopwatch => "00:00".to_string(),
-            TimerMode::Countdown => {
-                let secs = self.countdown_target_secs.get();
-                let h = secs / 3600;
-                let m = (secs % 3600) / 60;
-                format!("{h:02}:{m:02}")
+            TimerMode::Timer => {
+                if self.stopwatch_toggle_on.get() {
+                    "00:00".to_string()
+                } else {
+                    let secs = self.countdown_target_secs.get();
+                    let h = secs / 3600;
+                    let m = (secs % 3600) / 60;
+                    format!("{h:02}:{m:02}")
+                }
             }
             TimerMode::Breathing => {
                 // Breathing sessions are always sub-hour by construction
                 // (duration spinner caps at 60 min), but use the same
-                // hh:mm format for layout consistency with countdown.
+                // hh:mm format for layout consistency.
                 let m = self.breathing_session_mins.get();
                 format!("{:02}:{:02}", m / 60, m % 60)
             }
@@ -423,6 +456,20 @@ impl TimerView {
         self.big_time_label.set_label(&label);
         self.time_unit_label.set_label(&crate::i18n::gettext("Hours · Minutes"));
         self.time_unit_label.set_visible(true);
+    }
+
+    /// Re-apply the stopwatch toggle's effect on the rest of the setup
+    /// page: hero label flips between the picked target and 00:00, and
+    /// the Quick Presets card greys out so the user can't tap a chip
+    /// while the toggle is on.
+    fn refresh_stopwatch_dependent_ui(&self) {
+        if self.timer_state.get() == TimerState::Idle
+            && self.current_mode() == TimerMode::Timer
+        {
+            self.refresh_hero_for_idle();
+        }
+        let presets_active = !self.stopwatch_toggle_on.get();
+        self.presets_box.set_sensitive(presets_active);
     }
 }
 
@@ -433,20 +480,22 @@ impl TimerView {
         let mode = self.current_mode();
 
         match mode {
-            TimerMode::Stopwatch => {
+            TimerMode::Timer => {
                 self.start_boot_time.set(Some(boot_time_now()));
-                *self.stopwatch_core.borrow_mut() =
-                    Some(CoreStopwatch::started_at(std::time::Duration::ZERO));
-            }
-            TimerMode::Countdown => {
-                let target = self.countdown_target_secs.get();
-                if target == 0 {
-                    return;
+                if self.stopwatch_toggle_on.get() {
+                    *self.stopwatch_core.borrow_mut() =
+                        Some(CoreStopwatch::started_at(std::time::Duration::ZERO));
+                } else {
+                    let target = self.countdown_target_secs.get();
+                    if target == 0 {
+                        return;
+                    }
+                    let timer =
+                        CoreCountdownTimer::new(std::time::Duration::from_secs(target));
+                    let sw = CoreStopwatch::started_at(std::time::Duration::ZERO);
+                    *self.countdown_core.borrow_mut() =
+                        Some(CoreCountdown::new(timer, sw));
                 }
-                self.start_boot_time.set(Some(boot_time_now()));
-                let timer = CoreCountdownTimer::new(std::time::Duration::from_secs(target));
-                let sw = CoreStopwatch::started_at(std::time::Duration::ZERO);
-                *self.countdown_core.borrow_mut() = Some(CoreCountdown::new(timer, sw));
             }
             TimerMode::Breathing => {
                 let pattern = self.breathing_pattern.get();
@@ -479,13 +528,14 @@ impl TimerView {
 
         let now = self.elapsed_since_start();
         match mode {
-            TimerMode::Stopwatch => {
-                let mut slot = self.stopwatch_core.borrow_mut();
-                *slot = slot.take().map(|s| s.resumed_at(now));
-            }
-            TimerMode::Countdown => {
-                let mut slot = self.countdown_core.borrow_mut();
-                *slot = slot.take().map(|c| c.resume(now));
+            TimerMode::Timer => {
+                if self.stopwatch_toggle_on.get() {
+                    let mut slot = self.stopwatch_core.borrow_mut();
+                    *slot = slot.take().map(|s| s.resumed_at(now));
+                } else {
+                    let mut slot = self.countdown_core.borrow_mut();
+                    *slot = slot.take().map(|c| c.resume(now));
+                }
             }
             TimerMode::Breathing => {
                 let mut slot = self.breath_stopwatch.borrow_mut();
@@ -508,13 +558,14 @@ impl TimerView {
         let mode = self.tick_mode.get();
         let now = self.elapsed_since_start();
         match mode {
-            TimerMode::Stopwatch => {
-                let mut slot = self.stopwatch_core.borrow_mut();
-                *slot = slot.take().map(|s| s.paused_at(now));
-            }
-            TimerMode::Countdown => {
-                let mut slot = self.countdown_core.borrow_mut();
-                *slot = slot.take().map(|c| c.pause(now));
+            TimerMode::Timer => {
+                if self.stopwatch_toggle_on.get() {
+                    let mut slot = self.stopwatch_core.borrow_mut();
+                    *slot = slot.take().map(|s| s.paused_at(now));
+                } else {
+                    let mut slot = self.countdown_core.borrow_mut();
+                    *slot = slot.take().map(|c| c.pause(now));
+                }
             }
             TimerMode::Breathing => {
                 let mut slot = self.breath_stopwatch.borrow_mut();
@@ -533,15 +584,27 @@ impl TimerView {
 
         let mode = self.current_mode();
 
-        let elapsed = match mode {
-            TimerMode::Stopwatch => self.stopwatch_elapsed_secs(),
-            TimerMode::Countdown => self.countdown_elapsed_secs(),
-            TimerMode::Breathing => self.breath_elapsed().as_secs(),
-        };
+        let elapsed = self.elapsed_secs_for_mode(mode);
         self.timer_state.set(TimerState::Done);
 
         self.obj().emit_by_name::<()>("timer-stopped", &[]);
         self.show_done(elapsed);
+    }
+
+    /// Elapsed seconds for the active session, dispatching on mode +
+    /// stopwatch toggle. Used by on_stop / on_save (both produce a
+    /// session row whose `duration_secs` is what we return here).
+    fn elapsed_secs_for_mode(&self, mode: TimerMode) -> u64 {
+        match mode {
+            TimerMode::Timer => {
+                if self.stopwatch_toggle_on.get() {
+                    self.stopwatch_elapsed_secs()
+                } else {
+                    self.countdown_elapsed_secs()
+                }
+            }
+            TimerMode::Breathing => self.breath_elapsed().as_secs(),
+        }
     }
 
     fn show_done(&self, elapsed_secs: u64) {
@@ -561,11 +624,7 @@ impl TimerView {
         crate::sound::stop_current();
         let mode = self.current_mode();
 
-        let elapsed = match mode {
-            TimerMode::Stopwatch => self.stopwatch_elapsed_secs(),
-            TimerMode::Countdown => self.countdown_elapsed_secs(),
-            TimerMode::Breathing => self.breath_elapsed().as_secs(),
-        };
+        let elapsed = self.elapsed_secs_for_mode(mode);
         let start_time = self.session_start_time.get();
 
         if elapsed == 0 {
@@ -587,7 +646,7 @@ impl TimerView {
         };
 
         let session_mode = match mode {
-            TimerMode::Stopwatch | TimerMode::Countdown => SessionMode::Timer,
+            TimerMode::Timer => SessionMode::Timer,
             TimerMode::Breathing => SessionMode::BoxBreath,
         };
 
@@ -675,8 +734,13 @@ impl TimerView {
     /// Reset a single mode back to Idle and update the UI if it's currently shown.
     fn reset_mode(&self, mode: TimerMode) {
         match mode {
-            TimerMode::Stopwatch => *self.stopwatch_core.borrow_mut() = None,
-            TimerMode::Countdown => *self.countdown_core.borrow_mut() = None,
+            TimerMode::Timer => {
+                // Clear whichever core was running — at most one is Some
+                // per session, but blanking both is safe and saves the
+                // toggle-state read.
+                *self.stopwatch_core.borrow_mut() = None;
+                *self.countdown_core.borrow_mut() = None;
+            }
             TimerMode::Breathing => *self.breath_stopwatch.borrow_mut() = None,
         }
         self.timer_state.set(TimerState::Idle);
@@ -692,7 +756,11 @@ impl TimerView {
     fn start_tick(&self) {
         self.cancel_tick();
         let obj = self.obj().clone();
-        let is_stopwatch = self.tick_mode.get() == TimerMode::Stopwatch;
+        // Captured at start_tick so the closure doesn't need to read the
+        // toggle on every tick — the toggle is locked while a session is
+        // running (countdown_inputs is set_sensitive(false) during pause
+        // and the running view replaces the setup page entirely).
+        let is_stopwatch = self.stopwatch_toggle_on.get();
 
         let source_id = glib::timeout_add_local(
             std::time::Duration::from_secs(1),
@@ -852,16 +920,30 @@ impl TimerView {
             return;
         };
 
-        // Batch all three DB reads into a single borrow: one get_app() walk,
-        // one RefCell lock, three SQL queries instead of three separate calls.
-        let (streak, presets, labels) = app
+        // Batch every DB read this visit needs into a single borrow:
+        // one get_app() walk, one RefCell lock, four SQL queries instead
+        // of as many separate calls.
+        let (streak, presets, labels, stopwatch_on) = app
             .with_db(|db| {
                 let streak  = db.get_streak().unwrap_or(0);
                 let presets = db.get_presets().unwrap_or_else(|_| vec![5, 10, 15, 20, 30]);
                 let labels  = db.list_labels().unwrap_or_default();
-                (streak, presets, labels)
+                let stopwatch_on = db
+                    .get_setting("stopwatch_mode_active", "false")
+                    .map(|v| v == "true")
+                    .unwrap_or(false);
+                (streak, presets, labels, stopwatch_on)
             })
-            .unwrap_or_else(|| (0, vec![5, 10, 15, 20, 30], vec![]));
+            .unwrap_or_else(|| (0, vec![5, 10, 15, 20, 30], vec![], false));
+
+        // Restore the persisted Stopwatch-Mode toggle. The loading guard
+        // suppresses the notify::active handler so this read-back doesn't
+        // re-persist or fire a sync.
+        self.stopwatch_loading.set(true);
+        self.stopwatch_mode_row.set_active(stopwatch_on);
+        self.stopwatch_toggle_on.set(stopwatch_on);
+        self.stopwatch_loading.set(false);
+        self.refresh_stopwatch_dependent_ui();
 
         // Update streak label. .streak-chip applies text-transform:
         // uppercase, so we keep the source text sentence-case here.
@@ -1221,8 +1303,13 @@ impl TimerView {
     pub fn current_display_secs(&self) -> u64 {
         // Return the display value for whichever mode is about to go running.
         match self.tick_mode.get() {
-            TimerMode::Stopwatch => self.stopwatch_elapsed_secs(),
-            TimerMode::Countdown => self.countdown_remaining_secs(),
+            TimerMode::Timer => {
+                if self.stopwatch_toggle_on.get() {
+                    self.stopwatch_elapsed_secs()
+                } else {
+                    self.countdown_remaining_secs()
+                }
+            }
             TimerMode::Breathing => self.breath_elapsed().as_secs(),
         }
     }
@@ -1534,10 +1621,10 @@ impl TimerView {
     }
 
     /// Apply the user's last-chosen label for the given mode to the setup
-    /// label combo. Each of the three modes carries its own preference:
-    /// Breathing remembers "Box-breathing" (auto-created on first entry),
-    /// Countdown and Stopwatch default to "None" until the user picks a
-    /// label and saves or changes the selection.
+    /// label combo. Each mode carries its own preference: Breathing
+    /// remembers "Box-breathing" (auto-created on first entry); Timer
+    /// defaults to "None" until the user picks a label and saves or
+    /// changes the selection.
     fn apply_preferred_label_for_mode(&self, mode: TimerMode) {
         let pref = self.persisted_label_for_mode(mode);
         let label_id: Option<i64> = match (mode, pref) {
@@ -1621,8 +1708,7 @@ impl TimerView {
 
 fn label_setting_key(mode: TimerMode) -> &'static str {
     match mode {
-        TimerMode::Countdown => "last_label_countdown",
-        TimerMode::Stopwatch => "last_label_stopwatch",
+        TimerMode::Timer => "last_label_timer",
         TimerMode::Breathing => "last_label_breathing",
     }
 }

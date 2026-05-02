@@ -63,16 +63,9 @@ template $TimerView : Gtk.Widget {
               spacing: 0;
 
               Gtk.ToggleButton countdown_btn {
-                label: _("Countdown");
+                label: _("Timer");
                 hexpand: true;
                 active: true;
-                css-classes: ["mode-toggle-btn"];
-              }
-
-              Gtk.ToggleButton stopwatch_btn {
-                label: _("Stopwatch");
-                hexpand: true;
-                group: countdown_btn;
                 css-classes: ["mode-toggle-btn"];
               }
 
@@ -122,12 +115,30 @@ template $TimerView : Gtk.Widget {
             };
           }
 
-          // ── Countdown-only inputs (presets card) ───────────────────
-          // Stays visible while paused so the page doesn't collapse — just
-          // made insensitive from Rust to grey it out.
+          // ── Timer-only inputs ──────────────────────────────────────
+          // The Stopwatch-Mode toggle, the presets card, and the per-mode
+          // label/sound combos that mean "Timer mode setup". Stays visible
+          // while paused so the page doesn't collapse — just made
+          // insensitive from Rust to grey it out.
           Gtk.Box countdown_inputs {
             orientation: vertical;
             spacing: 12;
+
+            // Stopwatch-mode switch — sits at the top of the timer
+            // settings so flipping between a limited and unlimited
+            // session with the same label/sound is one tap, very
+            // visible right under the Start button.
+            Adw.Clamp {
+              maximum-size: 360;
+              tightening-threshold: 300;
+
+              child: Adw.PreferencesGroup {
+                Adw.SwitchRow stopwatch_mode_row {
+                  title: _("Stopwatch Mode");
+                  subtitle: _("Count up from zero");
+                }
+              };
+            }
 
             Gtk.Box {
               orientation: vertical;
