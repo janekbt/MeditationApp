@@ -1424,6 +1424,69 @@ impl Database {
         Ok(rowid)
     }
 
+    /// Rename a bell sound. The only mutable property is `name`;
+    /// file_path / is_bundled / mime_type are fixed at insert time.
+    /// Unknown uuids are silent no-ops AND emit no event (mirrors
+    /// the labels rename pattern). The event payload carries every
+    /// field of the row so a peer that's missed the insert can still
+    /// materialise from this rename alone.
+    pub fn rename_bell_sound(&self, uuid_str: &str, name: &str) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        let row: Option<(String, i64, String, String)> = self.conn.query_row(
+            "SELECT file_path, is_bundled, mime_type, created_iso
+               FROM bell_sounds WHERE uuid = ?1",
+            params![uuid_str],
+            |row| Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            )),
+        ).optional()?;
+        let Some((file_path, is_bundled, mime_type, created_iso)) = row else {
+            return Ok(());
+        };
+        self.conn.execute(
+            "UPDATE bell_sounds SET name = ?1 WHERE uuid = ?2",
+            params![name, uuid_str],
+        )?;
+        let payload = serde_json::json!({
+            "uuid": uuid_str,
+            "name": name,
+            "file_path": file_path,
+            "is_bundled": is_bundled != 0,
+            "mime_type": mime_type,
+            "created_iso": created_iso,
+        }).to_string();
+        self.emit_event("bell_sound_update", uuid_str, payload)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Remove a bell-sound row and emit a tombstone. Unknown uuids
+    /// are silent no-ops AND emit no event. The UI gates by
+    /// `is_bundled` to keep bundled rows from being deleted by mistake;
+    /// no DB-level enforcement here.
+    pub fn delete_bell_sound(&self, uuid_str: &str) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        let exists: Option<i64> = self.conn.query_row(
+            "SELECT id FROM bell_sounds WHERE uuid = ?1",
+            params![uuid_str],
+            |row| row.get::<_, i64>(0),
+        ).optional()?;
+        if exists.is_none() {
+            return Ok(());
+        }
+        self.conn.execute(
+            "DELETE FROM bell_sounds WHERE uuid = ?1",
+            params![uuid_str],
+        )?;
+        let payload = serde_json::json!({ "uuid": uuid_str }).to_string();
+        self.emit_event("bell_sound_delete", uuid_str, payload)?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Every bell sound in insert order. The B.4.3 chooser renders
     /// this directly. id ASC keeps bundled rows (which get inserted
     /// first via the seed) at the top of the list.
@@ -7545,6 +7608,72 @@ mod tests {
     fn list_bell_sounds_returns_empty_when_none_inserted() {
         let db = Database::open_in_memory().unwrap();
         assert!(db.list_bell_sounds().unwrap().is_empty());
+    }
+
+    #[test]
+    fn rename_bell_sound_changes_name_and_emits_update_event() {
+        // The only mutable property is `name`. file_path / is_bundled /
+        // mime_type are immutable for the row's lifetime — bundled is
+        // determined at seed time, custom file_path at import time.
+        let db = Database::open_in_memory().unwrap();
+        db.insert_bell_sound("Bowl", "/p/bowl.wav", true, "audio/wav").unwrap();
+        let uuid = db.list_bell_sounds().unwrap()[0].uuid.clone();
+        db.rename_bell_sound(&uuid, "Singing Bowl").unwrap();
+        assert_eq!(db.list_bell_sounds().unwrap()[0].name, "Singing Bowl");
+
+        let updates: Vec<_> = db.pending_events().unwrap()
+            .into_iter()
+            .filter(|(_, e)| e.kind == "bell_sound_update")
+            .collect();
+        assert_eq!(updates.len(), 1);
+        let payload: serde_json::Value =
+            serde_json::from_str(&updates[0].1.payload).unwrap();
+        assert_eq!(payload["name"], "Singing Bowl");
+        assert_eq!(payload["uuid"], uuid);
+        // file_path + is_bundled + mime_type ride along so a peer that
+        // has the rename event but missed the insert can still
+        // materialise the row.
+        assert_eq!(payload["file_path"], "/p/bowl.wav");
+        assert_eq!(payload["is_bundled"], true);
+        assert_eq!(payload["mime_type"], "audio/wav");
+    }
+
+    #[test]
+    fn rename_bell_sound_unknown_uuid_is_silent_noop() {
+        let db = Database::open_in_memory().unwrap();
+        db.rename_bell_sound("non-existent", "Bowl").unwrap();
+        let updates: Vec<_> = db.pending_events().unwrap()
+            .into_iter()
+            .filter(|(_, e)| e.kind == "bell_sound_update")
+            .collect();
+        assert!(updates.is_empty());
+    }
+
+    #[test]
+    fn delete_bell_sound_removes_the_row_and_emits_tombstone() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_bell_sound("Bowl", "/p/bowl.wav", false, "audio/wav").unwrap();
+        let uuid = db.list_bell_sounds().unwrap()[0].uuid.clone();
+        db.delete_bell_sound(&uuid).unwrap();
+        assert!(db.list_bell_sounds().unwrap().is_empty());
+
+        let deletes: Vec<_> = db.pending_events().unwrap()
+            .into_iter()
+            .filter(|(_, e)| e.kind == "bell_sound_delete")
+            .collect();
+        assert_eq!(deletes.len(), 1);
+        assert_eq!(deletes[0].1.target_id, uuid);
+    }
+
+    #[test]
+    fn delete_bell_sound_unknown_uuid_is_silent_noop() {
+        let db = Database::open_in_memory().unwrap();
+        db.delete_bell_sound("non-existent").unwrap();
+        let deletes: Vec<_> = db.pending_events().unwrap()
+            .into_iter()
+            .filter(|(_, e)| e.kind == "bell_sound_delete")
+            .collect();
+        assert!(deletes.is_empty());
     }
 
     #[test]
