@@ -20,8 +20,9 @@ use std::path::Path;
 
 /// `SessionMode` and `Label` are canonical core types — re-exported
 /// here so call sites can keep importing from `crate::db` without
-/// learning about meditate-core directly.
-pub use meditate_core::db::{Label, SessionMode};
+/// learning about meditate-core directly. Same for the bell-library
+/// types added in B.3.1.
+pub use meditate_core::db::{IntervalBell, IntervalBellKind, Label, SessionMode};
 
 #[derive(Debug, Clone)]
 pub struct Session {
@@ -175,6 +176,50 @@ impl Database {
 
     pub fn delete_label(&self, id: i64) -> Result<()> {
         self.inner.delete_label(id).map_err(map_core_err)
+    }
+
+    // ── Interval bells ────────────────────────────────────────────────────────
+    // Thin pass-throughs onto core's CRUD. Domain types are re-exported
+    // from core verbatim — no shell-side translation needed.
+
+    pub fn list_interval_bells(&self) -> Result<Vec<meditate_core::db::IntervalBell>> {
+        self.inner.list_interval_bells().map_err(map_core_err)
+    }
+
+    pub fn insert_interval_bell(
+        &self,
+        kind: meditate_core::db::IntervalBellKind,
+        minutes: u32,
+        jitter_pct: u32,
+        sound: &str,
+    ) -> Result<i64> {
+        self.inner
+            .insert_interval_bell(kind, minutes, jitter_pct, sound)
+            .map_err(map_core_err)
+    }
+
+    pub fn update_interval_bell(
+        &self,
+        uuid: &str,
+        kind: meditate_core::db::IntervalBellKind,
+        minutes: u32,
+        jitter_pct: u32,
+        sound: &str,
+        enabled: bool,
+    ) -> Result<()> {
+        self.inner
+            .update_interval_bell(uuid, kind, minutes, jitter_pct, sound, enabled)
+            .map_err(map_core_err)
+    }
+
+    pub fn set_interval_bell_enabled(&self, uuid: &str, enabled: bool) -> Result<()> {
+        self.inner
+            .set_interval_bell_enabled(uuid, enabled)
+            .map_err(map_core_err)
+    }
+
+    pub fn delete_interval_bell(&self, uuid: &str) -> Result<()> {
+        self.inner.delete_interval_bell(uuid).map_err(map_core_err)
     }
 
     // ── Sessions ──────────────────────────────────────────────────────────────

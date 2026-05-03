@@ -1,4 +1,5 @@
 mod application;
+pub mod bells;
 mod config;
 mod data_io;
 pub mod db;

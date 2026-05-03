@@ -19,6 +19,14 @@ impl TimerView {
         self.imp().refresh_streak();
     }
 
+    /// Refresh the "Manage Bells" subtitle (count of enabled interval
+    /// bells). Called by the window after the user pops back from the
+    /// bell-library page so the timer page reflects the new state
+    /// without rebuilding everything else.
+    pub fn refresh_interval_bells_count(&self) {
+        self.imp().refresh_interval_bells_count();
+    }
+
     /// Rebuild the preset buttons from the database.
     pub fn refresh_presets(&self) {
         self.imp().refresh_presets();

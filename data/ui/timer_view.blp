@@ -302,6 +302,30 @@ template $TimerView : Gtk.Widget {
                 }
               }
 
+              // Master toggle for session-time bells. Turning it on
+              // reveals the "Manage Bells" row that drills into the
+              // library page (built programmatically in src/bells.rs).
+              // Mirrors the Starting Bell expander shape — same nested
+              // ExpanderRow + show-enable-switch idiom — so flipping
+              // between the two feels symmetric.
+              Adw.ExpanderRow interval_bells_enabled_row {
+                title: _("Interval Bells");
+                subtitle: _("Ring during the session");
+                show-enable-switch: true;
+                enable-expansion: false;
+
+                Adw.ActionRow interval_bells_row {
+                  title: _("Manage Bells");
+                  activatable: true;
+
+                  [suffix]
+                  Gtk.Image {
+                    icon-name: "go-next-symbolic";
+                    styles ["dim-label"]
+                  }
+                }
+              }
+
               Adw.ComboRow setup_sound_row {
                 title: _("Completion sound");
                 // Model is populated from Rust so the sound names can run

@@ -82,6 +82,8 @@ pub struct TimerView {
     #[template_child] pub starting_bell_sound_row:  TemplateChild<adw::ComboRow>,
     #[template_child] pub preparation_time_row:     TemplateChild<adw::ExpanderRow>,
     #[template_child] pub preparation_time_secs_row:TemplateChild<adw::SpinRow>,
+    #[template_child] pub interval_bells_enabled_row: TemplateChild<adw::ExpanderRow>,
+    #[template_child] pub interval_bells_row:       TemplateChild<adw::ActionRow>,
     #[template_child] pub setup_sound_row:        TemplateChild<adw::ComboRow>,
     #[template_child] pub time_unit_label:        TemplateChild<gtk::Label>,
     #[template_child] pub done_duration_label:   TemplateChild<gtk::Label>,
@@ -437,6 +439,40 @@ impl TimerView {
             }
         ));
 
+        // Interval Bells master toggle — same persistence + bells_loading
+        // guard pattern as Starting Bell. The ExpanderRow's switch gates
+        // whether the running tick fires interval bells at all (B.3.4
+        // checks `interval_bells_active` before iterating the library).
+        self.interval_bells_enabled_row.connect_enable_expansion_notify(glib::clone!(
+            #[weak(rename_to = this)] obj,
+            move |row| {
+                let imp = this.imp();
+                if imp.bells_loading.get() { return; }
+                let on = row.enables_expansion();
+                if let Some(app) = imp.get_app() {
+                    app.with_db_mut(|db| {
+                        let _ = db.set_setting(
+                            "interval_bells_active",
+                            if on { "true" } else { "false" },
+                        );
+                    });
+                }
+            }
+        ));
+
+        // "Manage Bells" row — tap pushes the bell-library NavigationPage.
+        self.interval_bells_row.connect_activated(glib::clone!(
+            #[weak(rename_to = this)] obj,
+            move |_| {
+                let imp = this.imp();
+                let Some(app) = imp.get_app() else { return; };
+                let Some(window) = this.root()
+                    .and_then(|r| r.downcast::<crate::window::MeditateWindow>().ok())
+                else { return; };
+                window.push_bells_page(&app);
+            }
+        ));
+
         // Preparation Time SpinRow — value persisted as a plain integer
         // string, parsed on read via `meditate_core::format::parse_prep_secs`
         // so out-of-range or garbage values can never crash the shell.
@@ -503,11 +539,12 @@ impl TimerView {
         // Input panels: only the active mode's inputs are visible.
         self.countdown_inputs.set_visible(mode == TimerMode::Timer);
         self.boxbreath_inputs.set_visible(mode == TimerMode::Breathing);
-        // Starting Bell + Preparation Time apply to Timer mode only —
-        // Box Breathing has its own independent rhythm and start-of-
-        // session cues, so the whole expander goes away when breathing
-        // is active.
+        // Starting Bell + Preparation Time + Interval Bells apply to
+        // Timer mode only — Box Breathing has its own independent
+        // rhythm and start-of-session cues, so the whole bell stack
+        // goes away when breathing is active.
         self.starting_bell_row.set_visible(mode == TimerMode::Timer);
+        self.interval_bells_enabled_row.set_visible(mode == TimerMode::Timer);
 
         // Each mode keeps its own last-used label. On switch, pull the
         // stored preference (or fall back to the mode-specific default —
@@ -537,6 +574,7 @@ impl TimerView {
         self.countdown_inputs.set_visible(mode == TimerMode::Timer);
         self.boxbreath_inputs.set_visible(mode == TimerMode::Breathing);
         self.starting_bell_row.set_visible(mode == TimerMode::Timer);
+        self.interval_bells_enabled_row.set_visible(mode == TimerMode::Timer);
         self.countdown_btn.set_sensitive(true);
         self.breathing_btn.set_sensitive(true);
         self.session_group.set_sensitive(true);
@@ -1209,7 +1247,7 @@ impl TimerView {
         // of as many separate calls. The bells block also rides along —
         // four extra get_setting() calls are cheap next to the existing
         // streak / presets / labels SQL we're already running.
-        let (streak, presets, labels, stopwatch_on, bells) = app
+        let (streak, presets, labels, stopwatch_on, bells, intervals) = app
             .with_db(|db| {
                 let streak  = db.get_streak().unwrap_or(0);
                 let presets = db.get_presets().unwrap_or_else(|_| vec![5, 10, 15, 20, 30]);
@@ -1236,12 +1274,23 @@ impl TimerView {
                     )
                     .map(|s| meditate_core::format::parse_prep_secs(&s))
                     .unwrap_or(meditate_core::format::PREP_SECS_DEFAULT);
+                let intervals_on = db
+                    .get_setting("interval_bells_active", "false")
+                    .map(|v| v == "true")
+                    .unwrap_or(false);
+                let intervals_enabled_count = db
+                    .list_interval_bells()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|b| b.enabled)
+                    .count();
                 (
                     streak,
                     presets,
                     labels,
                     stopwatch_on,
                     (starting_bell_on, starting_bell_sound, prep_on, prep_secs),
+                    (intervals_on, intervals_enabled_count),
                 )
             })
             .unwrap_or_else(|| {
@@ -1251,6 +1300,7 @@ impl TimerView {
                     vec![],
                     false,
                     (false, "bowl".to_string(), false, meditate_core::format::PREP_SECS_DEFAULT),
+                    (false, 0),
                 )
             });
 
@@ -1288,6 +1338,10 @@ impl TimerView {
         });
         self.preparation_time_row.set_enable_expansion(prep_on);
         self.preparation_time_secs_row.set_value(prep_secs as f64);
+        // Interval-bells master toggle + count subtitle.
+        let (intervals_on, intervals_enabled_count) = intervals;
+        self.interval_bells_enabled_row.set_enable_expansion(intervals_on);
+        self.interval_bells_row.set_subtitle(&intervals_count_subtitle(intervals_enabled_count));
         self.bells_loading.set(false);
 
         // Update streak label. .streak-chip applies text-transform:
@@ -1681,7 +1735,41 @@ impl TimerView {
     }
 }
 
+// ── Public refresh hooks ─────────────────────────────────────────────────────
+
+impl TimerView {
+    /// Refresh just the "Manage Bells" subtitle. Called when the user
+    /// pops back from the bell-library page so the count stays in sync
+    /// without us having to invalidate the whole streak/presets/labels
+    /// read in refresh_streak.
+    pub(crate) fn refresh_interval_bells_count(&self) {
+        let count = self
+            .get_app()
+            .and_then(|app| {
+                app.with_db(|db| {
+                    db.list_interval_bells()
+                        .map(|bells| bells.into_iter().filter(|b| b.enabled).count())
+                        .unwrap_or(0)
+                })
+            })
+            .unwrap_or(0);
+        self.interval_bells_row.set_subtitle(&intervals_count_subtitle(count));
+    }
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Subtitle text for the "Manage Bells" row reflecting how many of the
+/// library's bells are currently enabled. Uses gettext so the count
+/// can be localised; "None" is its own string for grammatical reasons
+/// in some languages.
+fn intervals_count_subtitle(enabled_count: usize) -> String {
+    match enabled_count {
+        0 => crate::i18n::gettext("None enabled"),
+        1 => crate::i18n::gettext("1 enabled"),
+        n => crate::i18n::gettext("{n} enabled").replace("{n}", &n.to_string()),
+    }
+}
 
 pub fn format_time(secs: u64) -> String {
     let h = secs / 3600;
