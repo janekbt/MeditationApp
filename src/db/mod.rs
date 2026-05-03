@@ -409,6 +409,24 @@ impl Database {
         self.inner.wipe_known_remote_files().map_err(map_core_err)
     }
 
+    // ── known_remote_sounds (B.6) ─────────────────────────────────────────────
+    // Same lifecycle shape as known_remote_files but keyed on
+    // bell_sounds.uuid for the audio-file sync layer.
+
+    pub fn known_remote_sound_uuids(&self)
+        -> Result<std::collections::HashSet<String>>
+    {
+        self.inner.known_remote_sound_uuids().map_err(map_core_err)
+    }
+
+    pub fn record_known_remote_sound(&self, bell_uuid: &str) -> Result<()> {
+        self.inner.record_known_remote_sound(bell_uuid).map_err(map_core_err)
+    }
+
+    pub fn wipe_known_remote_sounds(&self) -> Result<()> {
+        self.inner.wipe_known_remote_sounds().map_err(map_core_err)
+    }
+
     /// Reset every event row's synced flag to 0, putting all of them
     /// back into pending. Used by the "push local up" recovery path.
     pub fn flag_all_events_unsynced(&self) -> Result<()> {

@@ -59,6 +59,10 @@ pub fn set_nextcloud_account(db: &Database, url: &str, username: &str) -> Result
     let prev_username = db.get_sync_state(KEY_USERNAME, "")?;
     if prev_url != url || prev_username != username {
         db.wipe_known_remote_files()?;
+        // Bell-sound files belong to the previous account's storage
+        // — clear that tracker too so the new account doesn't think
+        // the audio files are already up there.
+        db.wipe_known_remote_sounds()?;
     }
     db.set_sync_state(KEY_URL, url)?;
     db.set_sync_state(KEY_USERNAME, username)?;
@@ -155,6 +159,7 @@ pub fn clear_sync_error(db: &Database) -> Result<()> {
 /// trigger.
 pub fn prepare_push_local_recovery(db: &Database) -> Result<()> {
     db.wipe_known_remote_files()?;
+    db.wipe_known_remote_sounds()?;
     db.flag_all_events_unsynced()?;
     clear_sync_error(db)?;
     Ok(())

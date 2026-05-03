@@ -320,6 +320,17 @@ const SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS known_remote_files (
         file_uuid TEXT PRIMARY KEY
     );
+    -- Per-bell tracker for the bell-sound audio files synced over
+    -- WebDAV (B.6). Mirrors known_remote_files but keyed on the
+    -- bell_sounds.uuid rather than the bulk-file batch_uuid — each
+    -- bell sound is its own remote file, with its own PUT/GET cycle.
+    -- The push side INSERT-OR-IGNOREs into this table after a
+    -- successful PUT; the pull side checks membership before
+    -- issuing a GET to skip files this device already pulled or
+    -- pushed itself.
+    CREATE TABLE IF NOT EXISTS known_remote_sounds (
+        bell_uuid TEXT PRIMARY KEY
+    );
 ";
 
 impl Database {
@@ -580,6 +591,35 @@ impl Database {
         Ok(())
     }
 
+    /// Per-bell-sound version of `known_remote_file_uuids` for the
+    /// B.6 audio-file sync layer. Returns every bell uuid this device
+    /// has either pushed or pulled; the orchestrator's push side
+    /// skips files in this set and the pull side dittos.
+    pub fn known_remote_sound_uuids(&self) -> Result<std::collections::HashSet<String>> {
+        let mut stmt = self.conn.prepare("SELECT bell_uuid FROM known_remote_sounds")?;
+        let ids = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<std::collections::HashSet<_>>>()?;
+        Ok(ids)
+    }
+
+    /// INSERT-OR-IGNORE on the known-sound tracker. Idempotent so a
+    /// retry after a half-completed PUT can re-call without fuss.
+    pub fn record_known_remote_sound(&self, bell_uuid: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO known_remote_sounds (bell_uuid) VALUES (?1)",
+            params![bell_uuid],
+        )?;
+        Ok(())
+    }
+
+    /// Clear the known-sound tracker. Same callers as
+    /// wipe_known_remote_files: account swap, push-after-wipe.
+    pub fn wipe_known_remote_sounds(&self) -> Result<()> {
+        self.conn.execute("DELETE FROM known_remote_sounds", [])?;
+        Ok(())
+    }
+
     /// Flip the `synced` flag on the event with this local rowid so it
     /// drops out of `pending_events`. Unknown ids are silently no-ops —
     /// SQLite's UPDATE-on-no-match behaviour, exposed verbatim so a
@@ -622,9 +662,12 @@ impl Database {
     pub fn wipe_local_event_log(&self) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
         tx.execute("DELETE FROM known_remote_files", [])?;
+        tx.execute("DELETE FROM known_remote_sounds", [])?;
         tx.execute("DELETE FROM events", [])?;
         tx.execute("DELETE FROM sessions", [])?;
         tx.execute("DELETE FROM labels", [])?;
+        tx.execute("DELETE FROM bell_sounds", [])?;
+        tx.execute("DELETE FROM interval_bells", [])?;
         tx.commit()?;
         Ok(())
     }
@@ -5390,11 +5433,11 @@ mod tests {
     // ── wipe_local_event_log — "wipe local" recovery primitive ─────────
 
     #[test]
-    fn wipe_local_event_log_clears_events_sessions_labels_and_known_remote_files() {
+    fn wipe_local_event_log_clears_every_event_sourced_table() {
         // The "wipe local to match remote" recovery deletes every
         // user-content table whose source-of-truth is the event log,
-        // plus the dedup tracker. After the wipe, the local DB looks
-        // like a freshly-initialised one minus settings/device.
+        // plus both dedup trackers. After the wipe, the local DB
+        // looks like a freshly-initialised one minus settings/device.
         let db = Database::open_in_memory().unwrap();
         db.append_event(&sample_event(1)).unwrap();
         db.insert_label("focus").unwrap();
@@ -5406,12 +5449,18 @@ mod tests {
             mode: SessionMode::Timer,
             uuid: String::new(),
         }).unwrap();
+        db.insert_interval_bell(IntervalBellKind::Interval, 5, 0, "bowl").unwrap();
+        db.insert_bell_sound("Custom", "/p/c.wav", false, "audio/wav").unwrap();
         db.record_known_remote_file("a").unwrap();
+        db.record_known_remote_sound("bs-1").unwrap();
         // Sanity: rows present before wipe.
         assert!(!db.pending_events().unwrap().is_empty());
         assert!(!db.list_labels().unwrap().is_empty());
         assert!(!db.list_sessions().unwrap().is_empty());
+        assert!(!db.list_interval_bells().unwrap().is_empty());
+        assert!(!db.list_bell_sounds().unwrap().is_empty());
         assert!(!db.known_remote_file_uuids().unwrap().is_empty());
+        assert!(!db.known_remote_sound_uuids().unwrap().is_empty());
 
         db.wipe_local_event_log().unwrap();
 
@@ -5421,8 +5470,14 @@ mod tests {
             "labels table must be empty");
         assert!(db.list_sessions().unwrap().is_empty(),
             "sessions table must be empty");
+        assert!(db.list_interval_bells().unwrap().is_empty(),
+            "interval_bells table must be empty");
+        assert!(db.list_bell_sounds().unwrap().is_empty(),
+            "bell_sounds table must be empty");
         assert!(db.known_remote_file_uuids().unwrap().is_empty(),
-            "dedup tracker must be empty");
+            "file dedup tracker must be empty");
+        assert!(db.known_remote_sound_uuids().unwrap().is_empty(),
+            "sound dedup tracker must be empty");
     }
 
     #[test]
@@ -7809,6 +7864,48 @@ mod tests {
         db.apply_event(&synth_bell_sound_delete("bs-1", 10, "dev-A")).unwrap();
         db.apply_event(&synth_bell_sound_insert("bs-1", 5, "dev-A", "Bowl")).unwrap();
         assert!(db.list_bell_sounds().unwrap().is_empty());
+    }
+
+    // ── known_remote_sounds (B.6.1) ──────────────────────────────
+    // Per-bell tracker mirroring known_remote_files. The push side
+    // marks each bell uuid after a successful WebDAV PUT; the pull
+    // side checks membership before issuing GETs.
+
+    #[test]
+    fn known_remote_sound_uuids_starts_empty() {
+        let db = Database::open_in_memory().unwrap();
+        assert!(db.known_remote_sound_uuids().unwrap().is_empty());
+    }
+
+    #[test]
+    fn record_known_remote_sound_adds_to_membership_set() {
+        let db = Database::open_in_memory().unwrap();
+        db.record_known_remote_sound("bs-1").unwrap();
+        db.record_known_remote_sound("bs-2").unwrap();
+        let known = db.known_remote_sound_uuids().unwrap();
+        assert_eq!(known.len(), 2);
+        assert!(known.contains("bs-1"));
+        assert!(known.contains("bs-2"));
+    }
+
+    #[test]
+    fn record_known_remote_sound_is_idempotent_on_repeat() {
+        // INSERT OR IGNORE — calling twice with the same uuid keeps
+        // the set at one entry, no error. Push retries can re-call
+        // safely.
+        let db = Database::open_in_memory().unwrap();
+        db.record_known_remote_sound("bs-1").unwrap();
+        db.record_known_remote_sound("bs-1").unwrap();
+        assert_eq!(db.known_remote_sound_uuids().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn wipe_known_remote_sounds_clears_the_set() {
+        let db = Database::open_in_memory().unwrap();
+        db.record_known_remote_sound("bs-1").unwrap();
+        db.record_known_remote_sound("bs-2").unwrap();
+        db.wipe_known_remote_sounds().unwrap();
+        assert!(db.known_remote_sound_uuids().unwrap().is_empty());
     }
 
     #[test]
