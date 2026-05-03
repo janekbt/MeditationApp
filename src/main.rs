@@ -6,6 +6,7 @@ pub mod db;
 pub mod diag;
 pub mod i18n;
 pub mod keychain;
+pub mod labels;
 pub mod log;
 mod preferences;
 mod recovery_dialog;
