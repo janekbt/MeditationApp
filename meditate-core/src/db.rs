@@ -196,6 +196,15 @@ pub struct Database {
     conn: Connection,
 }
 
+/// Mint a fresh v4 UUID. Exposed so the shell (which doesn't have
+/// the `uuid` crate as a direct dep) can generate UUIDs for places
+/// where the id has to be known before the row is created — e.g.,
+/// the custom-bell-import path that needs a UUID for the destination
+/// filename before the DB insert.
+pub fn mint_uuid() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
 const SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS labels (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

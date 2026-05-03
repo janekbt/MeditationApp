@@ -21,8 +21,10 @@ use std::path::Path;
 /// `SessionMode` and `Label` are canonical core types — re-exported
 /// here so call sites can keep importing from `crate::db` without
 /// learning about meditate-core directly. Same for the bell-library
-/// types added in B.3.1.
-pub use meditate_core::db::{BellSound, IntervalBell, IntervalBellKind, Label, SessionMode};
+/// types added in B.3.1, and the `mint_uuid` helper added in B.5.
+pub use meditate_core::db::{
+    mint_uuid, BellSound, IntervalBell, IntervalBellKind, Label, SessionMode,
+};
 
 /// Bundled bell-sound seed: hardcoded (uuid, display name, GResource
 /// path, MIME). UUIDs are STABLE across versions — never edit a row
@@ -289,6 +291,19 @@ impl Database {
     ) -> Result<i64> {
         self.inner
             .insert_bell_sound(name, file_path, is_bundled, mime_type)
+            .map_err(map_core_err)
+    }
+
+    pub fn insert_bell_sound_with_uuid(
+        &self,
+        uuid: &str,
+        name: &str,
+        file_path: &str,
+        is_bundled: bool,
+        mime_type: &str,
+    ) -> Result<i64> {
+        self.inner
+            .insert_bell_sound_with_uuid(uuid, name, file_path, is_bundled, mime_type)
             .map_err(map_core_err)
     }
 

@@ -45,21 +45,42 @@ pub fn push_sounds_chooser(
         .child(&toolbar)
         .build();
 
-    let sounds = app
-        .with_db(|db| db.list_bell_sounds())
-        .and_then(|r| r.ok())
-        .unwrap_or_default();
-
     let on_selected = Rc::new(on_selected);
     let nav_view_clone = nav_view.clone();
-    for sound in sounds {
-        let row = build_sound_row(
-            &sound,
-            current_uuid.as_deref(),
-            &nav_view_clone,
-            on_selected.clone(),
+
+    // Track every row we add so a rebuild can drain them by ref.
+    // Adw.PreferencesGroup wraps its rows inside an internal GtkBox,
+    // so group.first_child() returns the wrapper — iterating that
+    // would spin forever (and yell "tried to remove non-child" at
+    // every loop). Holding row refs ourselves bypasses the wrapper
+    // entirely.
+    let rows: Rc<std::cell::RefCell<Vec<gtk::Widget>>> =
+        Rc::new(std::cell::RefCell::new(Vec::new()));
+
+    let rebuilder: Rc<std::cell::RefCell<Option<Box<dyn Fn()>>>> =
+        Rc::new(std::cell::RefCell::new(None));
+
+    let group_for_rb = group.clone();
+    let rows_for_rb = rows.clone();
+    let app_for_rb = app.clone();
+    let nav_view_for_rb = nav_view_clone.clone();
+    let current_uuid_for_rb = current_uuid.clone();
+    let on_selected_for_rb = on_selected.clone();
+    let rebuilder_for_self = rebuilder.clone();
+    *rebuilder.borrow_mut() = Some(Box::new(move || {
+        rebuild_chooser_rows(
+            &group_for_rb,
+            &rows_for_rb,
+            &app_for_rb,
+            current_uuid_for_rb.as_deref(),
+            &nav_view_for_rb,
+            on_selected_for_rb.clone(),
+            rebuilder_for_self.clone(),
         );
-        group.add(&row);
+    }));
+
+    if let Some(rb) = rebuilder.borrow().as_ref() {
+        rb();
     }
 
     // Stop any in-flight preview when the user pops the page so a
@@ -67,6 +88,66 @@ pub fn push_sounds_chooser(
     page.connect_hidden(move |_| crate::sound::stop_preview());
 
     nav_view.push(&page);
+}
+
+/// Drain every previously-added row from the chooser's group, then
+/// rebuild from the current bell_sounds library state. The synthetic
+/// "Choose your own…" row goes back at the top.
+fn rebuild_chooser_rows(
+    group: &adw::PreferencesGroup,
+    rows: &Rc<std::cell::RefCell<Vec<gtk::Widget>>>,
+    app: &MeditateApplication,
+    current_uuid: Option<&str>,
+    nav_view: &adw::NavigationView,
+    on_selected: Rc<dyn Fn(String)>,
+    rebuilder: Rc<std::cell::RefCell<Option<Box<dyn Fn()>>>>,
+) {
+    for row in rows.borrow_mut().drain(..) {
+        group.remove(&row);
+    }
+
+    // "Choose your own…" — synthetic, always at the top, opens a
+    // file picker. The closure borrows the same rebuilder so a
+    // successful import re-renders the list with the new row.
+    let import_row = adw::ActionRow::builder()
+        .title(gettext("Choose your own…"))
+        .activatable(true)
+        .build();
+    let chooser_arrow = gtk::Image::from_icon_name("document-open-symbolic");
+    chooser_arrow.add_css_class("dim-label");
+    import_row.add_suffix(&chooser_arrow);
+    let app_for_import = app.clone();
+    let rebuilder_for_import = rebuilder.clone();
+    import_row.connect_activated(move |row| {
+        let rebuilder = rebuilder_for_import.clone();
+        present_file_picker(
+            row,
+            &app_for_import,
+            Box::new(move || {
+                if let Some(rb) = rebuilder.borrow().as_ref() {
+                    rb();
+                }
+            }),
+        );
+    });
+    group.add(&import_row);
+    rows.borrow_mut().push(import_row.upcast());
+
+    let selection = SelectionContext {
+        current_uuid: current_uuid.map(|s| s.to_string()),
+        on_selected,
+        nav_view: nav_view.clone(),
+    };
+
+    let sounds = app
+        .with_db(|db| db.list_bell_sounds())
+        .and_then(|r| r.ok())
+        .unwrap_or_default();
+    for sound in sounds {
+        let row = build_sound_row(&sound, app, rebuilder.clone(), Some(&selection));
+        group.add(&row);
+        rows.borrow_mut().push(row.upcast());
+    }
 }
 
 /// Build the "Sounds" preferences-tab page used to manage the
@@ -128,16 +209,32 @@ fn rebuild_management_list(
         .and_then(|r| r.ok())
         .unwrap_or_default();
     for sound in sounds {
-        let row = build_management_row(&sound, app, rebuilder.clone());
+        // No selection context — Preferences tab is management-only.
+        let row = build_sound_row(&sound, app, rebuilder.clone(), None);
         group.add(&row);
         rows.borrow_mut().push(row);
     }
 }
 
-fn build_management_row(
+/// Selection-mode parameters for the unified row builder. `Some`
+/// → the row is tap-to-pick (selection mode used by the chooser);
+/// `None` → no checkmark, no activation (management mode used by
+/// the Preferences Sounds tab).
+pub struct SelectionContext {
+    pub current_uuid: Option<String>,
+    pub on_selected: Rc<dyn Fn(String)>,
+    pub nav_view: adw::NavigationView,
+}
+
+/// Unified row builder used by both the chooser and the Preferences
+/// Sounds tab. Every row gets Play/Stop preview, Rename, and (for
+/// non-bundled) Delete. In selection mode the row also carries a
+/// checkmark for the current uuid and a tap-to-pick activation.
+fn build_sound_row(
     sound: &BellSound,
     app: &MeditateApplication,
     rebuilder: Rc<std::cell::RefCell<Option<Box<dyn Fn()>>>>,
+    selection: Option<&SelectionContext>,
 ) -> adw::ActionRow {
     let row = adw::ActionRow::builder()
         .title(&sound.name)
@@ -146,9 +243,48 @@ fn build_management_row(
         } else {
             gettext("Custom")
         })
+        .activatable(selection.is_some())
         .build();
 
-    // Per-row preview button — same Play/Stop toggle as the chooser.
+    // Selection-mode checkmark. Lives left of the buttons because
+    // suffix order is left→right on the right side, so adding it
+    // first lands it adjacent to the title block.
+    if let Some(ctx) = selection {
+        if ctx.current_uuid.as_deref() == Some(sound.uuid.as_str()) {
+            let check = gtk::Image::from_icon_name("object-select-symbolic");
+            check.add_css_class("dim-label");
+            row.add_suffix(&check);
+        }
+    }
+
+    add_play_button(&row, sound);
+    add_rename_button(&row, sound, app, rebuilder.clone());
+    if !sound.is_bundled {
+        // Bundled rows stay permanent — the seed re-creates them on
+        // every open anyway, and an accidental tombstone could
+        // confuse a peer.
+        add_delete_button(&row, sound, app, rebuilder);
+    }
+
+    if let Some(ctx) = selection {
+        let uuid = sound.uuid.clone();
+        let on_selected = ctx.on_selected.clone();
+        let nav_view = ctx.nav_view.clone();
+        row.connect_activated(move |_| {
+            on_selected(uuid.clone());
+            nav_view.pop();
+        });
+    }
+    row
+}
+
+fn add_play_button(row: &adw::ActionRow, sound: &BellSound) {
+    // Per-row preview button. Toggles between Play and Stop:
+    //   - Tap while idle → start playback, icon flips to stop.
+    //   - Tap while playing → stop, icon flips back to play.
+    //   - Sound finishes naturally / a different row's Play takes
+    //     over PREVIEW_MEDIA → notify::playing fires false on this
+    //     MediaFile, the listener flips our icon back too.
     let play_btn = gtk::Button::builder()
         .icon_name("media-playback-start-symbolic")
         .tooltip_text(gettext("Preview sound"))
@@ -158,69 +294,277 @@ fn build_management_row(
     let path = sound.file_path.clone();
     let is_bundled = sound.is_bundled;
     let playing = Rc::new(Cell::new(false));
-    {
-        let playing = playing.clone();
-        let play_btn_clone = play_btn.clone();
-        play_btn.connect_clicked(move |_| {
-            if playing.get() {
-                crate::sound::stop_preview();
-                playing.set(false);
-                play_btn_clone.set_icon_name("media-playback-start-symbolic");
-                return;
+    let play_btn_clone = play_btn.clone();
+    play_btn.connect_clicked(move |_| {
+        if playing.get() {
+            crate::sound::stop_preview();
+            playing.set(false);
+            play_btn_clone.set_icon_name("media-playback-start-symbolic");
+            return;
+        }
+        let media = crate::sound::play_preview(&path, is_bundled);
+        playing.set(true);
+        play_btn_clone.set_icon_name("media-playback-stop-symbolic");
+        let playing_for_notify = playing.clone();
+        let btn_for_notify = play_btn_clone.clone();
+        media.connect_notify_local(Some("playing"), move |m, _| {
+            if !m.is_playing() && playing_for_notify.get() {
+                playing_for_notify.set(false);
+                btn_for_notify.set_icon_name("media-playback-start-symbolic");
             }
-            let media = crate::sound::play_preview(&path, is_bundled);
-            playing.set(true);
-            play_btn_clone.set_icon_name("media-playback-stop-symbolic");
-            let playing_for_notify = playing.clone();
-            let btn_for_notify = play_btn_clone.clone();
-            media.connect_notify_local(Some("playing"), move |m, _| {
-                if !m.is_playing() && playing_for_notify.get() {
-                    playing_for_notify.set(false);
-                    btn_for_notify.set_icon_name("media-playback-start-symbolic");
-                }
-            });
         });
-    }
+    });
     row.add_suffix(&play_btn);
+}
 
-    // Rename button — opens an AlertDialog with a text entry.
+fn add_rename_button(
+    row: &adw::ActionRow,
+    sound: &BellSound,
+    app: &MeditateApplication,
+    rebuilder: Rc<std::cell::RefCell<Option<Box<dyn Fn()>>>>,
+) {
     let rename_btn = gtk::Button::builder()
         .icon_name("document-edit-symbolic")
         .tooltip_text(gettext("Rename"))
         .css_classes(["flat", "circular"])
         .valign(gtk::Align::Center)
         .build();
-    {
-        let app = app.clone();
-        let uuid = sound.uuid.clone();
-        let row_clone = row.clone();
-        let rebuilder = rebuilder.clone();
-        rename_btn.connect_clicked(move |btn| {
-            present_rename_dialog(btn, &app, &uuid, &row_clone.title(), rebuilder.clone());
-        });
-    }
+    let app = app.clone();
+    let uuid = sound.uuid.clone();
+    let row_clone = row.clone();
+    rename_btn.connect_clicked(move |btn| {
+        present_rename_dialog(btn, &app, &uuid, &row_clone.title(), rebuilder.clone());
+    });
     row.add_suffix(&rename_btn);
+}
 
-    // Delete button — only for non-bundled rows. Bundled stay
-    // permanent; the chooser would just re-seed them on next open
-    // anyway, and an accidental tombstone could confuse a peer.
-    if !sound.is_bundled {
-        let delete_btn = gtk::Button::builder()
-            .icon_name("user-trash-symbolic")
-            .tooltip_text(gettext("Delete sound"))
-            .css_classes(["flat", "circular", "destructive-action"])
-            .valign(gtk::Align::Center)
-            .build();
-        let app = app.clone();
-        let uuid = sound.uuid.clone();
-        let rebuilder = rebuilder.clone();
-        delete_btn.connect_clicked(move |btn| {
-            present_delete_dialog(btn, &app, &uuid, rebuilder.clone());
-        });
-        row.add_suffix(&delete_btn);
+fn add_delete_button(
+    row: &adw::ActionRow,
+    sound: &BellSound,
+    app: &MeditateApplication,
+    rebuilder: Rc<std::cell::RefCell<Option<Box<dyn Fn()>>>>,
+) {
+    let delete_btn = gtk::Button::builder()
+        .icon_name("user-trash-symbolic")
+        .tooltip_text(gettext("Delete sound"))
+        .css_classes(["flat", "circular", "destructive-action"])
+        .valign(gtk::Align::Center)
+        .build();
+    let app = app.clone();
+    let uuid = sound.uuid.clone();
+    delete_btn.connect_clicked(move |btn| {
+        present_delete_dialog(btn, &app, &uuid, rebuilder.clone());
+    });
+    row.add_suffix(&delete_btn);
+}
+
+/// 10 MB cap matches the locked B.5 spec — same number is enforced
+/// on the inbound sync side in B.6 so a peer can't push a file
+/// bigger than what the local UI would accept.
+const MAX_CUSTOM_BELL_BYTES: u64 = 10 * 1024 * 1024;
+
+/// Open a file picker, validate the chosen file, and (on confirm)
+/// import it into the bell-sound library. Calls `on_imported` after
+/// a successful import so the caller can rebuild its list.
+fn present_file_picker(
+    anchor: &adw::ActionRow,
+    app: &MeditateApplication,
+    on_imported: Box<dyn Fn()>,
+) {
+    let file_dialog = gtk::FileDialog::builder()
+        .title(gettext("Choose Sound File"))
+        .build();
+
+    let filter = gtk::FileFilter::new();
+    filter.set_name(Some(&gettext("Audio files")));
+    for ext in ["wav", "ogg", "mp3", "opus", "flac", "m4a"] {
+        filter.add_suffix(ext);
     }
+    file_dialog.set_default_filter(Some(&filter));
 
-    row
+    let parent = anchor
+        .root()
+        .and_then(|r| r.downcast::<gtk::Window>().ok());
+    let on_imported = Rc::new(on_imported);
+    let app = app.clone();
+    let anchor = anchor.clone();
+    file_dialog.open(
+        parent.as_ref(),
+        None::<&gtk::gio::Cancellable>,
+        move |result| {
+            let Ok(file) = result else { return; };
+            let Some(path) = file.path() else { return; };
+
+            // Size cap.
+            let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+            if size > MAX_CUSTOM_BELL_BYTES {
+                present_size_toast(&anchor);
+                return;
+            }
+
+            present_import_confirm_dialog(
+                &anchor,
+                &app,
+                &path,
+                on_imported.clone(),
+            );
+        },
+    );
+}
+
+fn present_size_toast(anchor: &adw::ActionRow) {
+    // Surface via the main window's toast overlay.
+    if let Some(root) = anchor.root() {
+        if let Ok(window) = root.downcast::<crate::window::MeditateWindow>() {
+            window.add_toast(
+                adw::Toast::builder()
+                    .title(gettext("File is larger than 10 MB"))
+                    .timeout(4)
+                    .build(),
+            );
+        }
+    }
+}
+
+fn present_import_confirm_dialog(
+    anchor: &adw::ActionRow,
+    app: &MeditateApplication,
+    source_path: &std::path::Path,
+    on_imported: Rc<Box<dyn Fn()>>,
+) {
+    let stem = source_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("Custom sound")
+        .to_string();
+    let filename = source_path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_string();
+
+    let entry = gtk::Entry::builder()
+        .text(&stem)
+        .activates_default(true)
+        .build();
+
+    let dialog = adw::AlertDialog::builder()
+        .heading(gettext("Import Sound"))
+        .body(format!("{} {}", gettext("Importing:"), filename))
+        .extra_child(&entry)
+        .close_response("cancel")
+        .default_response("import")
+        .build();
+    dialog.add_response("cancel", &gettext("Cancel"));
+    dialog.add_response("import", &gettext("Import"));
+    dialog.set_response_appearance("import", adw::ResponseAppearance::Suggested);
+
+    // Live validation — name not empty, no collision with existing
+    // bell-sound names (case-insensitive). Same shape the rename
+    // dialog uses.
+    let validate: Rc<dyn Fn()> = {
+        let app = app.clone();
+        let entry = entry.clone();
+        let dialog = dialog.clone();
+        Rc::new(move || {
+            let text = entry.text();
+            let trimmed = text.trim();
+            let lower = trimmed.to_lowercase();
+            let collision = app
+                .with_db(|db| db.list_bell_sounds())
+                .and_then(|r| r.ok())
+                .unwrap_or_default()
+                .into_iter()
+                .any(|s| s.name.to_lowercase() == lower);
+            let valid = !trimmed.is_empty() && !collision;
+            dialog.set_response_enabled("import", valid);
+        })
+    };
+    validate();
+    let validate_for_change = validate.clone();
+    entry.connect_changed(move |_| validate_for_change());
+
+    let app = app.clone();
+    let source_path = source_path.to_path_buf();
+    let entry_for_response = entry.clone();
+    let anchor_for_response = anchor.clone();
+    dialog.connect_response(None, move |_, id| {
+        if id != "import" { return; }
+        let name = entry_for_response.text().to_string();
+        let trimmed = name.trim().to_string();
+        if trimmed.is_empty() {
+            return;
+        }
+        match do_import(&app, &source_path, &trimmed) {
+            Ok(()) => on_imported(),
+            Err(msg) => {
+                if let Some(root) = anchor_for_response.root() {
+                    if let Ok(window) = root.downcast::<crate::window::MeditateWindow>() {
+                        window.add_toast(
+                            adw::Toast::builder()
+                                .title(format!("{} {}", gettext("Import failed:"), msg))
+                                .timeout(4)
+                                .build(),
+                        );
+                    }
+                }
+            }
+        }
+    });
+
+    if let Some(root) = anchor.root() {
+        if let Ok(window) = root.downcast::<gtk::Window>() {
+            dialog.present(Some(&window));
+            entry.grab_focus();
+        }
+    }
+}
+
+/// Copy the source file into $XDG_DATA_HOME/meditate/sounds/<uuid>.<ext>
+/// and insert a bell_sounds row referencing it. Returns a short
+/// human-readable error message for toast display on failure.
+fn do_import(
+    app: &MeditateApplication,
+    source: &std::path::Path,
+    name: &str,
+) -> std::result::Result<(), String> {
+    let ext = source
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_else(|| "wav".to_string());
+    let mime = match ext.as_str() {
+        "ogg" => "audio/ogg",
+        "mp3" => "audio/mpeg",
+        "opus" => "audio/opus",
+        "flac" => "audio/flac",
+        "m4a" => "audio/mp4",
+        _ => "audio/wav",
+    };
+
+    let new_uuid = crate::db::mint_uuid();
+    let dest_dir = gtk::glib::user_data_dir()
+        .join("meditate")
+        .join("sounds");
+    std::fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
+    let dest_path = dest_dir.join(format!("{new_uuid}.{ext}"));
+    std::fs::copy(source, &dest_path).map_err(|e| e.to_string())?;
+
+    let dest_str = dest_path.to_string_lossy().to_string();
+    let mut insert_err: Option<String> = None;
+    app.with_db_mut(|db| {
+        if let Err(e) = db.insert_bell_sound_with_uuid(
+            &new_uuid, name, &dest_str, false, mime,
+        ) {
+            insert_err = Some(e.to_string());
+        }
+    });
+    if let Some(msg) = insert_err {
+        // Roll back the file we just copied — the row didn't take.
+        let _ = std::fs::remove_file(&dest_path);
+        return Err(msg);
+    }
+    Ok(())
 }
 
 fn present_rename_dialog(
@@ -329,77 +673,3 @@ fn present_delete_dialog(
     }
 }
 
-fn build_sound_row(
-    sound: &BellSound,
-    current_uuid: Option<&str>,
-    nav_view: &adw::NavigationView,
-    on_selected: Rc<dyn Fn(String)>,
-) -> adw::ActionRow {
-    let row = adw::ActionRow::builder()
-        .title(&sound.name)
-        .activatable(true)
-        .build();
-
-    // Currently-selected row gets a discreet checkmark on the left
-    // (suffix order in adw is left-to-right on the right side, so
-    // adding the check first puts it before the play button).
-    if current_uuid == Some(&sound.uuid) {
-        let check = gtk::Image::from_icon_name("object-select-symbolic");
-        check.add_css_class("dim-label");
-        row.add_suffix(&check);
-    }
-
-    // Per-row preview button. Toggles between Play and Stop:
-    //   - Tap while idle → start playback, icon flips to stop.
-    //   - Tap while playing → stop, icon flips back to play.
-    //   - Sound finishes naturally / a different row's Play takes
-    //     over PREVIEW_MEDIA → notify::playing fires false on this
-    //     MediaFile, the listener flips our icon back too.
-    let play_btn = gtk::Button::builder()
-        .icon_name("media-playback-start-symbolic")
-        .tooltip_text(gettext("Preview sound"))
-        .css_classes(["flat", "circular"])
-        .valign(gtk::Align::Center)
-        .build();
-    let path = sound.file_path.clone();
-    let is_bundled = sound.is_bundled;
-    let playing = Rc::new(Cell::new(false));
-    {
-        let playing = playing.clone();
-        let play_btn_clone = play_btn.clone();
-        play_btn.connect_clicked(move |_| {
-            if playing.get() {
-                crate::sound::stop_preview();
-                playing.set(false);
-                play_btn_clone.set_icon_name("media-playback-start-symbolic");
-                return;
-            }
-            let media = crate::sound::play_preview(&path, is_bundled);
-            playing.set(true);
-            play_btn_clone.set_icon_name("media-playback-stop-symbolic");
-            // Revert icon when playback ends — natural end-of-file,
-            // user stop on the same button, or another row's Play
-            // taking over the PREVIEW_MEDIA slot (which sets the old
-            // MediaFile to playing=false before swapping).
-            let playing_for_notify = playing.clone();
-            let btn_for_notify = play_btn_clone.clone();
-            media.connect_notify_local(Some("playing"), move |m, _| {
-                if !m.is_playing() && playing_for_notify.get() {
-                    playing_for_notify.set(false);
-                    btn_for_notify.set_icon_name("media-playback-start-symbolic");
-                }
-            });
-        });
-    }
-    row.add_suffix(&play_btn);
-
-    // Tap row body → pick this sound and pop. Switch + play button
-    // handle their own clicks so they don't trigger row activation.
-    let uuid = sound.uuid.clone();
-    let nav = nav_view.clone();
-    row.connect_activated(move |_| {
-        on_selected(uuid.clone());
-        nav.pop();
-    });
-    row
-}
