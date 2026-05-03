@@ -127,6 +127,20 @@ pub const PREP_SECS_MIN: u32 = 5;
 pub const PREP_SECS_MAX: u32 = 300;
 pub const PREP_SECS_DEFAULT: u32 = 30;
 
+/// Decide whether to enter the Preparing state at session start.
+///
+/// `Some(d)` means schedule a prep tick of `d` and play the starting
+/// bell at the end of it; `None` means skip prep and go straight to
+/// Running. A 0-second prep is treated as "no prep" — bouncing through
+/// Preparing for an instant would just create a flicker.
+pub fn prep_target_duration(prep_active: bool, prep_secs: u32) -> Option<Duration> {
+    if prep_active && prep_secs > 0 {
+        Some(Duration::from_secs(prep_secs as u64))
+    } else {
+        None
+    }
+}
+
 /// Parse a settings-table preparation-time value into a clamped u32.
 ///
 /// Returns `PREP_SECS_DEFAULT` for empty / non-numeric / negative input
@@ -420,5 +434,40 @@ mod tests {
         assert_eq!(parse_prep_secs("-5"), PREP_SECS_DEFAULT);
         // Stray decimals — u32 parse fails, default kicks in.
         assert_eq!(parse_prep_secs("30.0"), PREP_SECS_DEFAULT);
+    }
+
+    // ── prep_target_duration ─────────────────────────────────────────
+    // Decides whether the timer should enter the Preparing state. The
+    // shell calls this once at on_start; Some(d) → schedule prep,
+    // None → skip prep and go straight to Running.
+
+    #[test]
+    fn prep_target_duration_returns_some_only_when_active_and_positive() {
+        assert_eq!(
+            prep_target_duration(true, 30),
+            Some(Duration::from_secs(30))
+        );
+        assert_eq!(
+            prep_target_duration(true, PREP_SECS_MIN),
+            Some(Duration::from_secs(PREP_SECS_MIN as u64))
+        );
+        assert_eq!(
+            prep_target_duration(true, PREP_SECS_MAX),
+            Some(Duration::from_secs(PREP_SECS_MAX as u64))
+        );
+    }
+
+    #[test]
+    fn prep_target_duration_is_none_when_inactive() {
+        // Switch off → no prep, regardless of seconds value.
+        assert_eq!(prep_target_duration(false, 30), None);
+        assert_eq!(prep_target_duration(false, 0), None);
+    }
+
+    #[test]
+    fn prep_target_duration_is_none_when_zero_seconds() {
+        // A 0-second prep is just "no prep" — don't bounce through
+        // the Preparing state for an instant.
+        assert_eq!(prep_target_duration(true, 0), None);
     }
 }
