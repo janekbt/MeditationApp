@@ -31,6 +31,11 @@ button.preset-chip {
     font-size: 4.5rem;
     font-weight: 500;
     letter-spacing: -1px;
+    /* Tabular figures so every digit reserves the same horizontal
+       slot — the readout doesn't jiggle as digits change between
+       seconds (e.g. 1→0 in Cantarell would otherwise widen the
+       label). */
+    font-variant-numeric: tabular-nums;
 }
 
 /* Shared accent-fill for every "selected" state across the app's custom
