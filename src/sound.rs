@@ -115,14 +115,40 @@ fn lookup_bell_sound_by_uuid(app: &MeditateApplication, uuid: &str) -> Option<Be
         .find(|s| s.uuid == uuid)
 }
 
-/// Build a MediaFile from a BellSound row, dispatching on
-/// is_bundled — bundled rows hold a GResource path, custom rows
-/// hold a filesystem path.
+/// Build a MediaFile from a BellSound row.
+///
+/// Bundled rows: `file_path` is a GResource path baked into every
+/// device's binary, so we use it directly.
+///
+/// Custom rows: the stored `file_path` is the *importing* device's
+/// absolute path, which doesn't resolve on a peer that synced the
+/// row. We ignore it and derive the canonical local path from
+/// `uuid + mime_type`. Every device that has the actual file (B.6
+/// makes sure peers do, by pulling from WebDAV) finds it at the
+/// same relative location.
 fn media_for_bell_sound(sound: &BellSound) -> gtk::MediaFile {
     if sound.is_bundled {
-        gtk::MediaFile::for_resource(&sound.file_path)
-    } else {
-        gtk::MediaFile::for_file(&gtk::gio::File::for_path(&sound.file_path))
+        return gtk::MediaFile::for_resource(&sound.file_path);
+    }
+    let ext = ext_for_mime(&sound.mime_type);
+    let local_path = gtk::glib::user_data_dir()
+        .join("meditate")
+        .join("sounds")
+        .join(format!("{}.{ext}", sound.uuid));
+    gtk::MediaFile::for_file(&gtk::gio::File::for_path(&local_path))
+}
+
+/// Map a mime_type to the file-extension used in the canonical
+/// local path. Falls back to "wav" for anything we don't recognise
+/// — that matches the import code's default.
+fn ext_for_mime(mime: &str) -> &'static str {
+    match mime {
+        "audio/ogg" => "ogg",
+        "audio/mpeg" => "mp3",
+        "audio/opus" => "opus",
+        "audio/flac" => "flac",
+        "audio/mp4" => "m4a",
+        _ => "wav",
     }
 }
 
