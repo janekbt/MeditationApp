@@ -20,23 +20,7 @@ Polish and UX items to tackle when convenient. Graduate each one out of this fil
 
   - **✓ B.2 — Wire starting bell playback + prep-time delay.** Landed on `beta` as `e6c83de..11782d4`. Box Breathing is treated as fully separate (no starting bell, no prep). Stop during prep saves a real session row with duration = prep elapsed. Tick dispatches on `TimerState::{Preparing, Running}`; bell-cut polish via `sound::stop_all()` in Save/Discard.
 
-  - **B.3 — Interval bell library.** Replaces the originally-locked one-spinner shape with a small library the user manages. Three bell kinds in a single table:
-    - **Interval** — every N minutes ± jitter %. Jitter rerolls each ring (so a 9-min ±30% bell fires somewhere in 6.3–11.7 min, never settling into a predictable beat). Defeats anticipation; keeps the practice pulse honest for longer sits.
-    - **Fixed from start** — at exactly T minutes elapsed (e.g., switch from metta to breath at 10:00).
-    - **Fixed from end** — at T minutes before session end (e.g., share of merit at -5:00). Only meaningful in countdown mode.
-
-    Per-bell properties: kind, timing parameters, independent sound choice (bowl/bell/gong for now; UUID into the B.4 library later), enabled flag.
-
-    UX is `Adw.NavigationPage` pushed from the timer setup — list view of bells with `Adw.SwitchRow`-style enable toggle on each row, "+" to add (inserts a default-configured bell, then navigates to its edit page), tap-to-edit navigates to a per-bell edit page, delete from the edit page. Save-as-you-go (no Cancel; back-button means done). Same NavigationPage shell B.4's bell-sound library will use, so the two pages feel like siblings.
-
-    Persisted globally — checkmarks aren't per-session. Every enabled bell fires in any Timer session. Box Breathing is exempt (carve-out from B.2.a follow-up).
-
-    Sub-cycles:
-    - **B.3.1** — DB schema `interval_bells` table + CRUD + three sync event kinds (`interval_bell_insert`/`update`/`delete`).
-    - **B.3.2** — Pure-fn helpers: jitter rerolling, "did this tick cross a fixed boundary", target-clamping for countdown mode.
-    - **B.3.3** — `Adw.NavigationPage` shell: list page + edit page + add/delete.
-    - **B.3.4** — Wire into running tick: load enabled bells at on_start, fire on tick, drop in stopwatch mode for fixed-from-end.
-    - **B.3.5** — Hand-test on laptop.
+  - **✓ B.3 — Interval bell library.** Landed on `beta` as `63f6b61..9bbf05c` (10 commits). User-managed library with three kinds (Interval with jitter, Fixed-from-start, Fixed-from-end), per-bell sound + enabled flag, master toggle in the timer setup. Adw.NavigationPage shell (list + edit), inline red-trash delete, save-as-you-go. Stopwatch mode greys out fixed-from-end (UI + tick). Concurrent bell playback via `INTERVAL_MEDIA: Vec<MediaFile>` so two cues colliding don't clip each other.
 
   - **B.4 — Bell library + bundled sounds.**
     - Land the `bell_sounds` table + the three new event kinds.
