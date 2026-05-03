@@ -76,6 +76,26 @@ impl SessionMode {
     }
 }
 
+/// One audio file in the bell-sound library — bundled CC0 sounds the
+/// app ships with, plus user-imported custom files. Referenced by
+/// every bell-fire site (starting bell, interval bells, completion
+/// sound) via the `uuid` column. The `is_bundled` flag distinguishes
+/// what the audio system does with `file_path`: bundled rows hold a
+/// GResource path the binary contains; custom rows hold a filesystem
+/// path under `$XDG_DATA_HOME`. Bundled rows ride sync (so a peer
+/// without the bundle inherits the same UUIDs from the seeding device)
+/// but the audio itself doesn't — peers compile in their own copy.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BellSound {
+    pub id: i64,
+    pub uuid: String,
+    pub name: String,
+    pub file_path: String,
+    pub is_bundled: bool,
+    pub mime_type: String,
+    pub created_iso: String,
+}
+
 /// One configured bell entry in the user's interval-bell library.
 /// All enabled rows fire as bells during a Timer-mode session;
 /// Box Breathing is exempt. Three kinds:
@@ -181,6 +201,23 @@ const SCHEMA: &str = "
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL COLLATE NOCASE UNIQUE,
         uuid TEXT NOT NULL UNIQUE
+    );
+    -- Audio-file library referenced by every bell-fire site (starting
+    -- bell, interval bells, completion sound). is_bundled rows ship
+    -- with the app and use a GResource path in file_path; user-
+    -- imported custom rows (B.5) point at $XDG_DATA_HOME/.../sounds/
+    -- and ride sync as actual files (B.6). The seed-on-first-run
+    -- path inserts bundled rows with stable hardcoded UUIDs so a
+    -- peer device that already has the bundle doesn't end up with
+    -- duplicate rows after a sync round-trip.
+    CREATE TABLE IF NOT EXISTS bell_sounds (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        uuid        TEXT NOT NULL UNIQUE,
+        name        TEXT NOT NULL,
+        file_path   TEXT NOT NULL,
+        is_bundled  INTEGER NOT NULL DEFAULT 0,
+        mime_type   TEXT NOT NULL,
+        created_iso TEXT NOT NULL
     );
     -- User-managed library of bells fired during a Timer-mode session.
     -- Three kinds (see IntervalBellKind): periodic with jitter, fixed
@@ -1307,6 +1344,105 @@ impl Database {
                     sound: row.get(5)?,
                     enabled: row.get::<_, i64>(6)? != 0,
                     created_iso: row.get(7)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    // ── Bell-sound library (B.4.1) ────────────────────────────────────
+    // CRUD onto `bell_sounds`. Two insert variants — fresh-uuid for
+    // user-imported customs, explicit-uuid for the bundled-seed path
+    // that has to be stable across devices.
+
+    /// Insert a bell-sound row with a fresh UUID. Used by custom-file
+    /// imports (B.5). Returns the AUTOINCREMENT rowid; emits a
+    /// `bell_sound_insert` event.
+    pub fn insert_bell_sound(
+        &self,
+        name: &str,
+        file_path: &str,
+        is_bundled: bool,
+        mime_type: &str,
+    ) -> Result<i64> {
+        self.insert_bell_sound_with_uuid(
+            &uuid::Uuid::new_v4().to_string(),
+            name,
+            file_path,
+            is_bundled,
+            mime_type,
+        )
+    }
+
+    /// Insert with a caller-supplied UUID. Idempotent on uuid: a re-
+    /// run with the same id skips the insert AND emits no event so a
+    /// peer doesn't get a redundant duplicate-insert. Returns the
+    /// existing rowid in that case. Used by the bundled-seed path
+    /// where every device must end up with the same UUID per file.
+    pub fn insert_bell_sound_with_uuid(
+        &self,
+        uuid_str: &str,
+        name: &str,
+        file_path: &str,
+        is_bundled: bool,
+        mime_type: &str,
+    ) -> Result<i64> {
+        let tx = self.conn.unchecked_transaction()?;
+        // Pre-check for an existing row with this uuid — return its
+        // rowid without inserting or emitting an event.
+        if let Some(existing) = self.conn.query_row(
+            "SELECT id FROM bell_sounds WHERE uuid = ?1",
+            params![uuid_str],
+            |row| row.get::<_, i64>(0),
+        ).optional()? {
+            return Ok(existing);
+        }
+        let created_iso = chrono::Utc::now().to_rfc3339();
+        self.conn.execute(
+            "INSERT INTO bell_sounds (uuid, name, file_path, is_bundled, mime_type, created_iso)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                uuid_str,
+                name,
+                file_path,
+                is_bundled as i64,
+                mime_type,
+                created_iso,
+            ],
+        )?;
+        let rowid = self.conn.last_insert_rowid();
+        let payload = serde_json::json!({
+            "uuid": uuid_str,
+            "name": name,
+            "file_path": file_path,
+            "is_bundled": is_bundled,
+            "mime_type": mime_type,
+            "created_iso": created_iso,
+        }).to_string();
+        self.emit_event("bell_sound_insert", uuid_str, payload)?;
+        tx.commit()?;
+        Ok(rowid)
+    }
+
+    /// Every bell sound in insert order. The B.4.3 chooser renders
+    /// this directly. id ASC keeps bundled rows (which get inserted
+    /// first via the seed) at the top of the list.
+    pub fn list_bell_sounds(&self) -> Result<Vec<BellSound>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, uuid, name, file_path, is_bundled, mime_type, created_iso
+             FROM bell_sounds
+             ORDER BY id ASC",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(BellSound {
+                    id: row.get(0)?,
+                    uuid: row.get(1)?,
+                    name: row.get(2)?,
+                    file_path: row.get(3)?,
+                    is_bundled: row.get::<_, i64>(4)? != 0,
+                    mime_type: row.get(5)?,
+                    created_iso: row.get(6)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -7301,6 +7437,114 @@ mod tests {
         db.apply_event(&synth_interval_bell_update("bell-1", 8, "dev-B", 18, true)).unwrap();
         let b = &db.list_interval_bells().unwrap()[0];
         assert_eq!(b.minutes, 18, "higher lamport (8 from dev-B) wins over (7 from dev-A)");
+    }
+
+    // ── Bell-sound library (B.4.1) ───────────────────────────────
+    // Audio-file rows the bell sites reference by uuid.
+
+    #[test]
+    fn insert_bell_sound_inserts_a_row_with_uuid_and_returns_rowid() {
+        let db = Database::open_in_memory().unwrap();
+        let rowid = db
+            .insert_bell_sound(
+                "Tibetan Bowl",
+                "/io/github/janekbt/Meditate/sounds/bowl.wav",
+                true,
+                "audio/wav",
+            )
+            .unwrap();
+        assert!(rowid > 0);
+        let sounds = db.list_bell_sounds().unwrap();
+        assert_eq!(sounds.len(), 1);
+        let s = &sounds[0];
+        assert_eq!(s.id, rowid);
+        assert!(!s.uuid.is_empty(), "uuid is minted at insert");
+        assert_eq!(s.name, "Tibetan Bowl");
+        assert_eq!(s.file_path, "/io/github/janekbt/Meditate/sounds/bowl.wav");
+        assert!(s.is_bundled);
+        assert_eq!(s.mime_type, "audio/wav");
+        assert!(!s.created_iso.is_empty());
+    }
+
+    #[test]
+    fn insert_bell_sound_with_explicit_uuid_uses_it() {
+        // Stable bundled UUIDs must be reusable across devices — the
+        // seed path passes them in rather than letting the DB mint a
+        // fresh one each time.
+        let db = Database::open_in_memory().unwrap();
+        let fixed = "11111111-2222-3333-4444-555555555555";
+        let rowid = db
+            .insert_bell_sound_with_uuid(
+                fixed,
+                "Bundled bowl",
+                "/io/github/janekbt/Meditate/sounds/bowl.wav",
+                true,
+                "audio/wav",
+            )
+            .unwrap();
+        assert!(rowid > 0);
+        let s = &db.list_bell_sounds().unwrap()[0];
+        assert_eq!(s.uuid, fixed);
+    }
+
+    #[test]
+    fn insert_bell_sound_with_existing_uuid_is_silent_noop() {
+        // Idempotent seed: a re-run with the same uuid skips the
+        // insert AND emits no event (no peer needs to learn we
+        // re-tried what they already have).
+        let db = Database::open_in_memory().unwrap();
+        let fixed = "22222222-2222-3333-4444-555555555555";
+        let r1 = db.insert_bell_sound_with_uuid(
+            fixed, "Bowl", "/path/bowl.wav", true, "audio/wav",
+        ).unwrap();
+        let r2 = db.insert_bell_sound_with_uuid(
+            fixed, "Bowl", "/path/bowl.wav", true, "audio/wav",
+        ).unwrap();
+        assert_eq!(r1, r2, "second call returns the existing rowid");
+        assert_eq!(db.list_bell_sounds().unwrap().len(), 1);
+        // Only one bell_sound_insert event in pending.
+        let inserts: Vec<_> = db.pending_events().unwrap()
+            .into_iter()
+            .filter(|(_, e)| e.kind == "bell_sound_insert")
+            .collect();
+        assert_eq!(inserts.len(), 1);
+    }
+
+    #[test]
+    fn insert_bell_sound_emits_a_bell_sound_insert_event() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_bell_sound("Zen Bell", "/path/zen.wav", true, "audio/wav").unwrap();
+        let events = db.pending_events().unwrap();
+        let inserts: Vec<_> = events
+            .iter()
+            .filter(|(_, e)| e.kind == "bell_sound_insert")
+            .collect();
+        assert_eq!(inserts.len(), 1);
+        let payload: serde_json::Value =
+            serde_json::from_str(&inserts[0].1.payload).unwrap();
+        assert_eq!(payload["name"], "Zen Bell");
+        assert_eq!(payload["file_path"], "/path/zen.wav");
+        assert_eq!(payload["is_bundled"], true);
+        assert_eq!(payload["mime_type"], "audio/wav");
+        assert!(payload["uuid"].is_string());
+        assert!(payload["created_iso"].is_string());
+    }
+
+    #[test]
+    fn list_bell_sounds_returns_rows_in_insert_order() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_bell_sound("A", "/p/a.wav", true, "audio/wav").unwrap();
+        db.insert_bell_sound("B", "/p/b.wav", false, "audio/wav").unwrap();
+        let s = db.list_bell_sounds().unwrap();
+        assert_eq!(s.len(), 2);
+        assert_eq!(s[0].name, "A");
+        assert_eq!(s[1].name, "B");
+    }
+
+    #[test]
+    fn list_bell_sounds_returns_empty_when_none_inserted() {
+        let db = Database::open_in_memory().unwrap();
+        assert!(db.list_bell_sounds().unwrap().is_empty());
     }
 
     #[test]
