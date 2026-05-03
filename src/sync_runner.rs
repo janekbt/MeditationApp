@@ -139,8 +139,12 @@ pub fn run_sync_attempt(db_path: &Path) -> Result<SyncStats, SyncRunnerError> {
         ));
     };
 
-    let result = meditate_core::sync::Sync::new(&db, &webdav, REMOTE_BASE_PATH)
-        .sync_with_progress(progress);
+    let result = meditate_core::sync::Sync::new(
+        &db,
+        &webdav,
+        REMOTE_BASE_PATH,
+        local_sounds_dir(),
+    ).sync_with_progress(progress);
     let elapsed = started.elapsed();
 
     if let Ok(stats) = &result {
@@ -166,9 +170,16 @@ pub fn run_with_webdav<W: WebDav>(
     db: &CoreDb,
     webdav: &W,
 ) -> Result<SyncStats, SyncRunnerError> {
-    let result = Sync::new(db, webdav, REMOTE_BASE_PATH).sync();
+    let result = Sync::new(db, webdav, REMOTE_BASE_PATH, local_sounds_dir()).sync();
     record_outcome(db, &result)?;
     result.map_err(SyncRunnerError::from)
+}
+
+/// Canonical local directory for custom-imported bell-sound audio
+/// files. Used by both the import flow (B.5) and the orchestrator's
+/// sync push/pull paths.
+pub fn local_sounds_dir() -> std::path::PathBuf {
+    gtk::glib::user_data_dir().join("meditate").join("sounds")
 }
 
 /// Persist the sync outcome so the status indicator (Phase E.5) can

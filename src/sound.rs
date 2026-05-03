@@ -130,26 +130,11 @@ fn media_for_bell_sound(sound: &BellSound) -> gtk::MediaFile {
     if sound.is_bundled {
         return gtk::MediaFile::for_resource(&sound.file_path);
     }
-    let ext = ext_for_mime(&sound.mime_type);
     let local_path = gtk::glib::user_data_dir()
         .join("meditate")
         .join("sounds")
-        .join(format!("{}.{ext}", sound.uuid));
+        .join(format!("{}.{}", sound.uuid, sound.extension()));
     gtk::MediaFile::for_file(&gtk::gio::File::for_path(&local_path))
-}
-
-/// Map a mime_type to the file-extension used in the canonical
-/// local path. Falls back to "wav" for anything we don't recognise
-/// — that matches the import code's default.
-fn ext_for_mime(mime: &str) -> &'static str {
-    match mime {
-        "audio/ogg" => "ogg",
-        "audio/mpeg" => "mp3",
-        "audio/opus" => "opus",
-        "audio/flac" => "flac",
-        "audio/mp4" => "m4a",
-        _ => "wav",
-    }
 }
 
 /// Construct the MediaFile for the configured end bell and cache

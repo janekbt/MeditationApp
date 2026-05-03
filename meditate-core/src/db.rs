@@ -96,6 +96,23 @@ pub struct BellSound {
     pub created_iso: String,
 }
 
+impl BellSound {
+    /// File extension corresponding to `mime_type`. Used by both the
+    /// shell (canonical local-audio path) and the orchestrator
+    /// (remote PUT/GET path). Falls back to "wav" for any mime not
+    /// in the small known set — matches the import code's default.
+    pub fn extension(&self) -> &'static str {
+        match self.mime_type.as_str() {
+            "audio/ogg" => "ogg",
+            "audio/mpeg" => "mp3",
+            "audio/opus" => "opus",
+            "audio/flac" => "flac",
+            "audio/mp4" => "m4a",
+            _ => "wav",
+        }
+    }
+}
+
 /// One configured bell entry in the user's interval-bell library.
 /// All enabled rows fire as bells during a Timer-mode session;
 /// Box Breathing is exempt. Three kinds:
