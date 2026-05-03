@@ -26,11 +26,7 @@ Polish and UX items to tackle when convenient. Graduate each one out of this fil
 
   - **✓ B.5 — Custom bell file import.** Landed on `beta` as `cc92926`. "Choose your own…" entry in every chooser → `Gtk.FileDialog` → 10 MB cap with toast → confirmation dialog with editable name + live duplicate-validation → copy to `$XDG_DATA_HOME/meditate/sounds/<uuid>.<ext>` + insert `bell_sounds` row. Same commit unified the chooser and Preferences row builder so rename / delete / import are available everywhere a sound list shows up. Local-only — B.6 layers WebDAV file sync on top.
 
-  - **B.6 — Bell file sync over WebDAV.**
-    - Extend orchestrator: alongside the existing JSON event-log push/pull, push each local-only file to `Meditate/sounds/<uuid>.<ext>` and pull each remote-only file referenced by a `bell_insert` we've ingested.
-    - New `known_remote_sounds` tracking table (mirrors `known_remote_files`).
-    - 10 MB size cap re-enforced on inbound; refuse to pull anything bigger and surface a toast.
-    - ~3–4 commits on its own — TDD by the book against `FakeWebDav`.
+  - **✓ B.6 — Bell file sync over WebDAV.** Landed on `beta` as `465a28b..95c016a` (6 commits). Custom-sound path semantics derived from `uuid + mime` (peer-stable). `known_remote_sounds` tracking table. Push/pull of `Meditate/sounds/<uuid>.<ext>` alongside the JSON event log. 10 MB cap re-enforced inbound. Custom imports re-encoded to OGG/Vorbis at import time via an in-process gst pipeline (sidesteps a gst 1.26.x `decodebin3` assertion-fail on aarch64). Import dialog: spinner-in-button while transcoding, inline collision label when the typed name is already taken.
 
 - **Source 6–10 additional CC0 bundled bells.** B.4 ships the existing 3 WAVs (bowl/bell/gong); the locked plan called for a richer set: Tibetan bowl variants, Zen bell, gong types, tingsha, soft chime. Source from freesound.org under CC0, package in `data/sounds/`, append to `BUNDLED_BELL_SOUNDS` in `src/db/mod.rs` with new stable UUIDs, credits in `data/sounds/CREDITS.md`. Append-only — never reorder or rename existing entries (peer DBs have those UUIDs).
 
