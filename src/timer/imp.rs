@@ -109,7 +109,8 @@ pub struct TimerView {
     #[template_child] pub resume_btn:            TemplateChild<gtk::Button>,
     #[template_child] pub stop_from_pause_btn:   TemplateChild<gtk::Button>,
     #[template_child] pub session_group:          TemplateChild<adw::PreferencesGroup>,
-    #[template_child] pub setup_label_row:        TemplateChild<adw::ComboRow>,
+    #[template_child] pub setup_label_enabled_row: TemplateChild<adw::ExpanderRow>,
+    #[template_child] pub setup_label_chooser_row: TemplateChild<adw::ActionRow>,
     #[template_child] pub starting_bell_row:        TemplateChild<adw::ExpanderRow>,
     #[template_child] pub starting_bell_sound_row:  TemplateChild<adw::ActionRow>,
     #[template_child] pub preparation_time_row:     TemplateChild<adw::ExpanderRow>,
@@ -122,7 +123,8 @@ pub struct TimerView {
     #[template_child] pub done_duration_label:   TemplateChild<gtk::Label>,
     #[template_child] pub note_view:             TemplateChild<gtk::TextView>,
     #[template_child] pub note_caption:          TemplateChild<gtk::Label>,
-    #[template_child] pub label_row:             TemplateChild<adw::ComboRow>,
+    #[template_child] pub done_label_enabled_row: TemplateChild<adw::ExpanderRow>,
+    #[template_child] pub done_label_chooser_row: TemplateChild<adw::ActionRow>,
     #[template_child] pub discard_btn:           TemplateChild<gtk::Button>,
     #[template_child] pub save_btn:              TemplateChild<gtk::Button>,
 
@@ -153,15 +155,18 @@ pub struct TimerView {
     /// path leaves it unset and on_save uses the natural elapsed
     /// (countdown target + overtime).
     final_duration_secs: Cell<Option<u64>>,
-    /// Labels fetched from DB for the setup-page combo.
-    setup_db_labels: RefCell<Vec<Label>>,
-    /// True while refresh_setup_labels is rebuilding the setup combo model.
-    setup_populating: Cell<bool>,
-    /// Labels fetched from DB when entering Done state.
-    db_labels: RefCell<Vec<Label>>,
-    /// True while show_done/repopulate_label_combo is rebuilding the model,
-    /// to suppress the notify::selected handler from opening the new-label dialog.
-    populating_labels: Cell<bool>,
+    /// True while a label-row update is being applied programmatically
+    /// (mode switch, show_done refresh) — suppresses the
+    /// enable_expansion_notify / activated callbacks so they don't
+    /// re-write the same value back to settings or open a chooser.
+    labels_loading: Cell<bool>,
+    /// Per-session label pick on the Done page. Set in show_done
+    /// from the Setup view's current state, mutable when the user
+    /// taps the chooser on Done. Read by on_save. Stored as a
+    /// resolved local id (not uuid) since on_save writes label_id
+    /// to the session row, and the row is gone (label_id = NULL)
+    /// when the toggle is off.
+    done_selected_label_id: Cell<Option<i64>>,
     /// Currently-selected countdown duration in seconds, set by preset
     /// chips or the "Custom" dialog. Default 10 min; used as the target
     /// when the user taps Start (and Stopwatch Mode is off).
@@ -367,20 +372,47 @@ impl TimerView {
             move |_| this.imp().on_discard()
         ));
 
-        // "＋ New label" is index 0; show creation dialog when selected.
-        self.label_row.connect_notify_local(
-            Some("selected"),
-            glib::clone!(
-                #[weak(rename_to = this)] obj,
-                move |_, _| {
-                    let imp = this.imp();
-                    if imp.populating_labels.get() { return; }
-                    if imp.label_row.selected() == 0 {
-                        imp.show_new_label_dialog();
-                    }
+        // ── Done-page label expander ────────────────────────────────
+        // Per-session pick. Initialized in show_done from the Setup
+        // view's currently-active label. Toggling here doesn't write
+        // any persistent setting — the choice rides with the session.
+        self.done_label_enabled_row.connect_enable_expansion_notify(glib::clone!(
+            #[weak(rename_to = this)] obj,
+            move |row| {
+                let imp = this.imp();
+                if imp.labels_loading.get() { return; }
+                if !row.enables_expansion() {
+                    imp.done_selected_label_id.set(None);
+                    imp.refresh_done_label_chooser_subtitle();
+                    return;
                 }
-            ),
-        );
+                // Toggling on: if no per-session pick is set yet,
+                // resolve the mode-default and adopt it.
+                if imp.done_selected_label_id.get().is_none() {
+                    let id = imp.resolve_label_for_mode(imp.current_mode())
+                        .map(|l| l.id);
+                    imp.done_selected_label_id.set(id);
+                }
+                imp.refresh_done_label_chooser_subtitle();
+            }
+        ));
+        self.done_label_chooser_row.connect_activated(glib::clone!(
+            #[weak(rename_to = this)] obj,
+            move |_| {
+                let imp = this.imp();
+                let Some(app) = imp.get_app() else { return; };
+                let Some(window) = this.root()
+                    .and_then(|r| r.downcast::<crate::window::MeditateWindow>().ok())
+                else { return; };
+                let current_id = imp.done_selected_label_id.get();
+                let this_for_pick = this.clone();
+                window.push_label_chooser(&app, current_id, move |label| {
+                    let imp2 = this_for_pick.imp();
+                    imp2.done_selected_label_id.set(Some(label.id));
+                    imp2.refresh_done_label_chooser_subtitle();
+                });
+            }
+        ));
 
         // End Bell master toggle — gates whether the bell plays at the
         // end of a session. Persists end_bell_active.
@@ -427,33 +459,47 @@ impl TimerView {
             }
         ));
 
-        // Same for the pre-start label selector.
-        self.setup_label_row.connect_notify_local(
-            Some("selected"),
-            glib::clone!(
-                #[weak(rename_to = this)] obj,
-                move |_, _| {
-                    let imp = this.imp();
-                    if imp.setup_populating.get() { return; }
-                    let idx = imp.setup_label_row.selected();
-                    if idx == 0 {
-                        imp.show_new_label_dialog_for_setup();
-                        return;
-                    }
-                    // Persist the user's choice as the preferred label for
-                    // the currently active mode so the next visit to that
-                    // mode re-applies it. idx == 1 is "None"; 2+ are labels.
-                    let name = if idx == 1 {
-                        None
-                    } else {
-                        imp.setup_db_labels.borrow()
-                            .get(idx as usize - 2)
-                            .map(|l| l.name.clone())
-                    };
-                    imp.persist_label_for_mode(imp.current_mode(), name);
+        // ── Setup-page label expander ───────────────────────────────
+        // Master toggle persists `label_active_<mode>`; the inner
+        // chooser-row pushes the label chooser and persists the
+        // selected uuid per-mode.
+        self.setup_label_enabled_row.connect_enable_expansion_notify(glib::clone!(
+            #[weak(rename_to = this)] obj,
+            move |row| {
+                let imp = this.imp();
+                if imp.labels_loading.get() { return; }
+                let on = row.enables_expansion();
+                let mode = imp.current_mode();
+                imp.persist_label_active_for_mode(mode, on);
+                if on && imp.persisted_label_uuid_for_mode(mode).is_none() {
+                    // First time the toggle flips on for this mode:
+                    // adopt the mode-default uuid so subsequent reads
+                    // resolve cleanly.
+                    let default = imp.mode_default_label_uuid(mode);
+                    imp.persist_label_uuid_for_mode(mode, default);
                 }
-            ),
-        );
+                imp.refresh_setup_label_chooser_subtitle();
+            }
+        ));
+        self.setup_label_chooser_row.connect_activated(glib::clone!(
+            #[weak(rename_to = this)] obj,
+            move |_| {
+                let imp = this.imp();
+                let Some(app) = imp.get_app() else { return; };
+                let Some(window) = this.root()
+                    .and_then(|r| r.downcast::<crate::window::MeditateWindow>().ok())
+                else { return; };
+                let mode = imp.current_mode();
+                let current_id = imp.resolve_label_for_mode(mode).map(|l| l.id);
+                let this_for_pick = this.clone();
+                window.push_label_chooser(&app, current_id, move |label| {
+                    let imp2 = this_for_pick.imp();
+                    let mode = imp2.current_mode();
+                    imp2.persist_label_uuid_for_mode(mode, &label.uuid);
+                    imp2.refresh_setup_label_chooser_subtitle();
+                });
+            }
+        ));
 
         // ── Starting Bell expander ───────────────────────────────────
         // Adw.ExpanderRow drives the slide-down animation itself when
@@ -1047,7 +1093,11 @@ impl TimerView {
     fn show_done(&self, elapsed_secs: u64) {
         self.done_duration_label.set_label(&format_time(elapsed_secs));
         self.note_view.buffer().set_text("");
-        self.repopulate_label_combo(self.setup_selected_label_id());
+        // Mirror the Setup view's currently-active label into the
+        // Done page's per-session pick. The user can flip the toggle
+        // off or change the pick before tapping Save.
+        self.done_selected_label_id.set(self.setup_selected_label_id());
+        self.refresh_done_label_chooser_subtitle();
         // Skip the stack's crossfade when entering Done — the running
         // nav page is about to pop on top of this stack, and a fade
         // here means the timer view bleeds through for the first
@@ -1083,12 +1133,10 @@ impl TimerView {
             let t = buffer.text(&start, &end, false);
             if t.is_empty() { None } else { Some(t.to_string()) }
         };
-        // Index 0 = "+ New label" (shouldn't reach Save), 1 = "None", 2+ = labels
-        let selected = self.label_row.selected() as usize;
-        let label_id = match selected {
-            0 | 1 => None,
-            n => self.db_labels.borrow().get(n - 2).map(|l| l.id),
-        };
+        // Per-session pick is stored on `done_selected_label_id`,
+        // mirrored from Setup at show_done and mutable on the Done
+        // page. None = toggle off / no label.
+        let label_id = self.done_selected_label_id.get();
 
         let session_mode = match mode {
             TimerMode::Timer => SessionMode::Timer,
@@ -1103,13 +1151,28 @@ impl TimerView {
             note,
         };
 
-        // Record the label the user actually saved under for this mode —
-        // covers the case where they changed the selection on the Done
-        // screen (setup_label_row's notify handler would miss that).
-        let saved_label_name: Option<String> = label_id.and_then(|id| {
-            self.db_labels.borrow().iter().find(|l| l.id == id).map(|l| l.name.clone())
-        });
-        self.persist_label_for_mode(mode, saved_label_name);
+        // Record the user's pick as the new persisted default for
+        // this mode — covers the case where they changed the
+        // selection on the Done screen and want it stuck for next
+        // session. Off-toggle clears the active flag so the next
+        // session starts off too.
+        match label_id {
+            Some(id) => {
+                let uuid = self.get_app().and_then(|app| {
+                    app.with_db(|db| db.list_labels())
+                        .and_then(|r| r.ok())
+                        .unwrap_or_default()
+                        .into_iter()
+                        .find(|l| l.id == id)
+                        .map(|l| l.uuid)
+                });
+                if let Some(uuid) = uuid {
+                    self.persist_label_uuid_for_mode(mode, &uuid);
+                    self.persist_label_active_for_mode(mode, true);
+                }
+            }
+            None => self.persist_label_active_for_mode(mode, false),
+        }
 
         // Fire-and-forget DB write on the blocking pool. SQLite fsync on
         // eMMC costs ~15 ms even with synchronous=NORMAL; doing it on the
@@ -1540,7 +1603,7 @@ impl TimerView {
         let Some(app) = self.get_app() else {
             // No app yet (shouldn't happen in practice) — use defaults.
             self.refresh_presets();
-            self.refresh_setup_labels(self.setup_selected_label_id());
+            self.refresh_setup_label_chooser_subtitle();
             return;
         };
 
@@ -1549,11 +1612,10 @@ impl TimerView {
         // of as many separate calls. The bells block also rides along —
         // four extra get_setting() calls are cheap next to the existing
         // streak / presets / labels SQL we're already running.
-        let (streak, presets, labels, stopwatch_on, bells, intervals) = app
+        let (streak, presets, stopwatch_on, bells, intervals) = app
             .with_db(|db| {
                 let streak  = db.get_streak().unwrap_or(0);
                 let presets = db.get_presets().unwrap_or_else(|_| vec![5, 10, 15, 20, 30]);
-                let labels  = db.list_labels().unwrap_or_default();
                 let stopwatch_on = db
                     .get_setting("stopwatch_mode_active", "false")
                     .map(|v| v == "true")
@@ -1596,7 +1658,6 @@ impl TimerView {
                 (
                     streak,
                     presets,
-                    labels,
                     stopwatch_on,
                     (starting_bell_on, starting_bell_sound, prep_on, prep_secs),
                     (intervals_on, intervals_enabled_count),
@@ -1606,7 +1667,6 @@ impl TimerView {
                 (
                     0,
                     vec![5, 10, 15, 20, 30],
-                    vec![],
                     false,
                     (false, "bowl".to_string(), false, meditate_core::format::PREP_SECS_DEFAULT),
                     (false, 0),
@@ -1671,19 +1731,8 @@ impl TimerView {
         // the sound-row subtitle here.
         self.refresh_end_bell_sound_subtitle();
 
-        // Rebuild setup label combo. The selection comes from the per-mode
-        // persisted preference (via `apply_preferred_label_for_mode`)
-        // rather than whatever `setup_label_row` happened to hold, so that:
-        //   - on first launch, each mode starts at its documented default
-        //     (None / None / Box-breathing);
-        //   - after a Save on the Done screen changes the label, the next
-        //     setup entry reflects the new choice instead of reverting to
-        //     the stale setup-combo selection.
-        // `apply_preferred_label_for_mode` → `refresh_setup_labels` does its
-        // own model build + selection, so we can drop the redundant inline
-        // version. The extra DB round-trips are trivial next to the visit-
-        // triggered streak/preset queries we're already doing.
-        *self.setup_db_labels.borrow_mut() = labels;
+        // Rebuild the Setup view's label chooser-row + master toggle
+        // from the per-mode persisted state.
         self.apply_preferred_label_for_mode(self.current_mode());
     }
 
@@ -1847,135 +1896,89 @@ impl TimerView {
         }
     }
 
-    /// Rebuild the label combo from the DB.
-    /// `select_id`: if Some, auto-selects that label; otherwise selects "None" (index 1).
-    fn repopulate_label_combo(&self, select_id: Option<i64>) {
-        let mut labels = Vec::new();
-        if let Some(app) = self.get_app() {
-            if let Some(fetched) = app.with_db(|db| db.list_labels()) {
-                labels = fetched.unwrap_or_default();
-            }
+    /// Resolve the label currently configured for `mode`. Reads
+    /// `default_label_uuid_<mode>`, falls back to the mode-default
+    /// uuid (Meditation / Box-Breathing) when the setting is unset
+    /// or empty. Returns `None` only when even the mode-default row
+    /// has been deleted by the user.
+    fn resolve_label_for_mode(&self, mode: TimerMode) -> Option<Label> {
+        let app = self.get_app()?;
+        let uuid = self
+            .persisted_label_uuid_for_mode(mode)
+            .unwrap_or_else(|| self.mode_default_label_uuid(mode).to_string());
+        if uuid.is_empty() {
+            return None;
         }
-
-        let select_idx = select_id
-            .and_then(|id| labels.iter().position(|l| l.id == id))
-            .map(|pos| (pos + 2) as u32) // +2 for "+ New label" and "None"
-            .unwrap_or(1);              // default = "None"
-
-        let names: Vec<String> = std::iter::once(crate::i18n::gettext("+ New Label…"))
-            .chain(std::iter::once(crate::i18n::gettext("None")))
-            .chain(labels.iter().map(|l| l.name.clone()))
-            .collect();
-        let name_refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
-
-        *self.db_labels.borrow_mut() = labels;
-
-        self.populating_labels.set(true);
-        self.label_row.set_model(Some(&gtk::StringList::new(&name_refs)));
-        self.label_row.set_selected(select_idx);
-        self.populating_labels.set(false);
+        app.with_db(|db| db.list_labels())
+            .and_then(|r| r.ok())
+            .unwrap_or_default()
+            .into_iter()
+            .find(|l| l.uuid == uuid)
     }
 
-    /// Populate the pre-start label combo from the DB.
-    /// `select_id`: if Some, keeps that label selected; otherwise selects "None".
-    fn refresh_setup_labels(&self, select_id: Option<i64>) {
-        let labels = self.get_app()
-            .and_then(|app| app.with_db(|db| db.list_labels()))
+    /// Returns the label currently configured for the active Setup
+    /// view — `None` when the master toggle is off OR the resolved
+    /// row no longer exists.
+    fn setup_selected_label_id(&self) -> Option<i64> {
+        let mode = self.current_mode();
+        if !self.persisted_label_active_for_mode(mode) {
+            return None;
+        }
+        self.resolve_label_for_mode(mode).map(|l| l.id)
+    }
+
+    /// Refresh the Setup-view label chooser-row's subtitle to show
+    /// the currently-resolved label name (or a hint when the toggle
+    /// is off / the mode-default row has been deleted).
+    fn refresh_setup_label_chooser_subtitle(&self) {
+        let mode = self.current_mode();
+        let active = self.persisted_label_active_for_mode(mode);
+        // The chooser-row sits inside the ExpanderRow's expansion
+        // body; its visibility tracks the toggle automatically.
+        // We still update its subtitle so it's correct the moment
+        // the user expands the row.
+        let subtitle = if active {
+            self.resolve_label_for_mode(mode)
+                .map(|l| l.name)
+                .unwrap_or_else(|| crate::i18n::gettext("(none — pick one)"))
+        } else {
+            crate::i18n::gettext("Off")
+        };
+        self.setup_label_chooser_row.set_subtitle(&subtitle);
+
+        // Also keep the ExpanderRow's switch state in sync without
+        // re-firing the persist callback.
+        self.labels_loading.set(true);
+        self.setup_label_enabled_row.set_enable_expansion(active);
+        self.labels_loading.set(false);
+    }
+
+    /// Refresh the Done-view label chooser-row's subtitle from the
+    /// current `done_selected_label_id` state.
+    fn refresh_done_label_chooser_subtitle(&self) {
+        let app = self.get_app();
+        let id = self.done_selected_label_id.get();
+        let labels = app
+            .as_ref()
+            .and_then(|a| a.with_db(|db| db.list_labels()))
             .and_then(|r| r.ok())
             .unwrap_or_default();
-
-        let select_idx = select_id
-            .and_then(|id| labels.iter().position(|l| l.id == id))
-            .map(|pos| (pos + 2) as u32)
-            .unwrap_or(1); // default: "None"
-
-        let names: Vec<String> = std::iter::once(crate::i18n::gettext("+ New Label…"))
-            .chain(std::iter::once(crate::i18n::gettext("None")))
-            .chain(labels.iter().map(|l| l.name.clone()))
-            .collect();
-        let name_refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
-
-        *self.setup_db_labels.borrow_mut() = labels;
-        self.setup_populating.set(true);
-        self.setup_label_row.set_model(Some(&gtk::StringList::new(&name_refs)));
-        self.setup_label_row.set_selected(select_idx);
-        self.setup_populating.set(false);
-    }
-
-    /// Returns the label ID currently selected in the pre-start combo, if any.
-    fn setup_selected_label_id(&self) -> Option<i64> {
-        let selected = self.setup_label_row.selected() as usize;
-        match selected {
-            0 | 1 => None,
-            n => self.setup_db_labels.borrow().get(n - 2).map(|l| l.id),
-        }
-    }
-
-    /// Show the new-label dialog, selecting the result in the pre-start combo.
-    fn show_new_label_dialog_for_setup(&self) {
-        let (entry, dialog) = build_new_label_dialog();
-        let obj = self.obj().clone();
-        dialog.connect_response(None, {
-            let entry = entry.clone();
-            move |_, response| {
-                let imp = obj.imp();
-                if response != "create" {
-                    imp.setup_label_row.set_selected(1); // revert to "None"
-                    return;
+        let subtitle = id
+            .and_then(|id| labels.iter().find(|l| l.id == id).map(|l| l.name.clone()))
+            .unwrap_or_else(|| {
+                if id.is_some() {
+                    crate::i18n::gettext("(none — pick one)")
+                } else {
+                    crate::i18n::gettext("Off")
                 }
-                let name = entry.text().trim().to_string();
-                if name.is_empty() { imp.setup_label_row.set_selected(1); return; }
-                let new_label = imp.get_app()
-                    .and_then(|app| app.with_db_mut(|db| db.create_label(&name)))
-                    .and_then(|r| r.ok());
-                imp.refresh_setup_labels(new_label.as_ref().map(|l| l.id));
-                // Persist the new label as the current mode's preferred
-                // choice. Without this, refresh_streak's later call to
-                // apply_preferred_label_for_mode (after the sync trigger
-                // completes and re-runs the visit-time refresh) reads the
-                // stale persisted value and resets the combo back to None.
-                // The notify handler that normally persists fires only on
-                // SELECT-existing-label paths (idx >= 1), not on the
-                // create-new-label flow.
-                if let Some(label) = new_label {
-                    imp.persist_label_for_mode(imp.current_mode(), Some(label.name));
-                }
-            }
-        });
-        if let Some(win) = self.obj().root().and_then(|r| r.downcast::<gtk::Window>().ok()) {
-            dialog.present(Some(&win));
-        }
-    }
+            });
+        self.done_label_chooser_row.set_subtitle(&subtitle);
 
-    /// Show a dialog to create a new label, then select it in the done-page combo.
-    fn show_new_label_dialog(&self) {
-        let (entry, dialog) = build_new_label_dialog();
-        let obj = self.obj().clone();
-        dialog.connect_response(None, {
-            let entry = entry.clone();
-            move |_, response| {
-                let imp = obj.imp();
-                if response != "create" {
-                    imp.label_row.set_selected(1); // revert to "None"
-                    return;
-                }
-                let name = entry.text().trim().to_string();
-                if name.is_empty() { imp.label_row.set_selected(1); return; }
-                let new_label = imp.get_app()
-                    .and_then(|app| app.with_db_mut(|db| db.create_label(&name)))
-                    .and_then(|r| r.ok());
-                imp.repopulate_label_combo(new_label.as_ref().map(|l| l.id));
-                // Mirror the setup-combo fix: persist this new label as
-                // the current mode's preferred so the post-sync refresh
-                // doesn't reset the combo to the stale persisted value.
-                if let Some(label) = new_label {
-                    imp.persist_label_for_mode(imp.current_mode(), Some(label.name));
-                }
-            }
-        });
-        if let Some(win) = self.obj().root().and_then(|r| r.downcast::<gtk::Window>().ok()) {
-            dialog.present(Some(&win));
-        }
+        // Keep the ExpanderRow's switch state in sync with the
+        // selected-id state without re-firing the toggle callback.
+        self.labels_loading.set(true);
+        self.done_label_enabled_row.set_enable_expansion(id.is_some());
+        self.labels_loading.set(false);
     }
 
     fn get_app(&self) -> Option<crate::application::MeditateApplication> {
@@ -2553,121 +2556,77 @@ impl TimerView {
         });
     }
 
-    /// Apply the user's last-chosen label for the given mode to the setup
-    /// label combo. Each mode carries its own preference: Breathing
-    /// remembers "Box-breathing" (auto-created on first entry); Timer
-    /// defaults to "None" until the user picks a label and saves or
-    /// changes the selection.
-    fn apply_preferred_label_for_mode(&self, mode: TimerMode) {
-        let pref = self.persisted_label_for_mode(mode);
-        let label_id: Option<i64> = match (mode, pref) {
-            // First-time Breathing: the "Box-breathing" label is the
-            // shipped default, create on demand so users don't have
-            // to set it up.
-            //
-            // Read-only check FIRST so we only hit the mutating path
-            // (and its auto-trigger of a sync) when the label
-            // genuinely needs creating. Without this, every Breathing
-            // mode switch on a configured Nextcloud account fires a
-            // sync — visually "the sync spinner keeps spinning" until
-            // the slow remote completes.
-            (TimerMode::Breathing, None) => self.get_app().and_then(|app| {
-                let label_name = crate::i18n::gettext("Box-breathing");
-                let existing = app.with_db(|db| {
-                    db.list_labels().ok().and_then(|labels| labels.into_iter()
-                        .find(|l| l.name.to_lowercase() == label_name.to_lowercase())
-                        .map(|l| l.id))
-                }).flatten();
-                let id = match existing {
-                    Some(id) => Some(id),
-                    None => app.with_db_mut(|db|
-                        db.find_or_create_label(&label_name).ok()).flatten(),
-                };
-                // Persist the auto-default so the NEXT Breathing
-                // switch falls into the (Breathing, Some(Some(name)))
-                // arm — read-only, no sync trigger. Without this the
-                // setting key stays unset forever and we'd land here
-                // (and re-trigger sync) on every single switch.
-                if id.is_some() {
-                    self.persist_label_for_mode(mode, Some(label_name));
-                }
-                id
-            }),
-            // First-time Countdown / Stopwatch, or explicit None: no label.
-            (_, None) | (_, Some(None)) => None,
-            // Explicit name: look up an *existing* label. We deliberately
-            // do not auto-recreate a deleted label — if the user removed
-            // Box-breathing, respect that and fall back to no label.
-            (_, Some(Some(name))) => self.get_app().and_then(|app| {
-                app.with_db(|db| {
-                    db.list_labels().ok().and_then(|labels| labels.into_iter()
-                        .find(|l| l.name.to_lowercase() == name.to_lowercase())
-                        .map(|l| l.id))
-                }).flatten()
-            }),
-        };
-        self.refresh_setup_labels(label_id);
+    /// Apply the user's persisted label state for `mode` to the
+    /// Setup view's chooser-row + master toggle. Read-only — never
+    /// writes, so visit-time refreshes don't bump sync chatter.
+    fn apply_preferred_label_for_mode(&self, _mode: TimerMode) {
+        // refresh_setup_label_chooser_subtitle does the full
+        // resolve-and-update dance from the persisted UUID + active
+        // toggle, so this call is the single touchpoint.
+        self.refresh_setup_label_chooser_subtitle();
     }
 
-    /// Read the persisted "last label" for this mode. Returns None when the
-    /// key is entirely missing (first launch / first visit to the mode), so
-    /// callers can tell apart "user explicitly chose None" from "never
-    /// touched". The inner Option distinguishes None-selection (Some(None))
-    /// from a named label (Some(Some(name))).
-    fn persisted_label_for_mode(&self, mode: TimerMode) -> Option<Option<String>> {
-        const SENTINEL: &str = "\x01unset\x01";
+    fn persisted_label_active_for_mode(&self, mode: TimerMode) -> bool {
+        let Some(app) = self.get_app() else { return false; };
+        let key = label_active_setting_key(mode);
+        app.with_db(|db| db.get_setting(key, "false"))
+            .and_then(|r| r.ok())
+            .map(|v| v == "true")
+            .unwrap_or(false)
+    }
+
+    fn persist_label_active_for_mode(&self, mode: TimerMode, on: bool) {
+        let Some(app) = self.get_app() else { return; };
+        let key = label_active_setting_key(mode);
+        app.with_db_mut(|db| {
+            let _ = db.set_setting(key, if on { "true" } else { "false" });
+        });
+    }
+
+    /// Read the persisted label uuid for `mode`. Returns `None` when
+    /// the setting is missing or empty — callers fall back to
+    /// `mode_default_label_uuid`.
+    fn persisted_label_uuid_for_mode(&self, mode: TimerMode) -> Option<String> {
         let app = self.get_app()?;
-        let key = label_setting_key(mode);
-        let val = app.with_db(|db| db.get_setting(key, SENTINEL)
-            .unwrap_or_else(|_| SENTINEL.to_string()))?;
-        if val == SENTINEL {
-            None
-        } else if val.is_empty() {
-            Some(None)
-        } else {
-            Some(Some(val))
+        let key = label_uuid_setting_key(mode);
+        let val = app
+            .with_db(|db| db.get_setting(key, ""))
+            .and_then(|r| r.ok())?;
+        if val.is_empty() { None } else { Some(val) }
+    }
+
+    fn persist_label_uuid_for_mode(&self, mode: TimerMode, uuid: &str) {
+        let Some(app) = self.get_app() else { return; };
+        let key = label_uuid_setting_key(mode);
+        app.with_db_mut(|db| { let _ = db.set_setting(key, uuid); });
+    }
+
+    /// Stable per-mode default label uuid used when the user's
+    /// stored choice is missing — Meditation in Timer, Box-Breathing
+    /// in Box Breath. Resolves through the seeded rows
+    /// (`crate::db::DEFAULT_*_LABEL_UUID`).
+    fn mode_default_label_uuid(&self, mode: TimerMode) -> &'static str {
+        match mode {
+            TimerMode::Timer => crate::db::DEFAULT_TIMER_LABEL_UUID,
+            TimerMode::Breathing => crate::db::DEFAULT_BREATHING_LABEL_UUID,
         }
     }
-
-    /// Store (or clear) the "last label" preference for this mode. Empty
-    /// string means "user picked None"; anything else is the label's name.
-    fn persist_label_for_mode(&self, mode: TimerMode, name: Option<String>) {
-        let Some(app) = self.get_app() else { return; };
-        let key = label_setting_key(mode);
-        let val = name.unwrap_or_default();
-        app.with_db_mut(|db| { let _ = db.set_setting(key, &val); });
-    }
 }
 
-fn label_setting_key(mode: TimerMode) -> &'static str {
+fn label_active_setting_key(mode: TimerMode) -> &'static str {
     match mode {
-        TimerMode::Timer => "last_label_timer",
-        TimerMode::Breathing => "last_label_breathing",
+        TimerMode::Timer => "label_active_timer",
+        TimerMode::Breathing => "label_active_breathing",
     }
 }
 
-/// Build the shared "New Label" alert dialog + text entry.
-fn build_new_label_dialog() -> (gtk::Entry, adw::AlertDialog) {
-    let entry = gtk::Entry::builder()
-        .placeholder_text(crate::i18n::gettext("Label name"))
-        .activates_default(true)
-        .build();
-    let dialog = adw::AlertDialog::builder()
-        .heading(crate::i18n::gettext("New Label"))
-        .close_response("cancel")
-        .default_response("create")
-        .build();
-    dialog.add_response("cancel", &crate::i18n::gettext("Cancel"));
-    dialog.add_response("create", &crate::i18n::gettext("Create"));
-    dialog.set_response_appearance("create", adw::ResponseAppearance::Suggested);
-    dialog.set_response_enabled("create", false);
-    dialog.set_extra_child(Some(&entry));
-    entry.connect_changed(glib::clone!(
-        #[weak] dialog,
-        move |e| dialog.set_response_enabled("create", !e.text().trim().is_empty())
-    ));
-    (entry, dialog)
+fn label_uuid_setting_key(mode: TimerMode) -> &'static str {
+    match mode {
+        TimerMode::Timer => "default_label_uuid_timer",
+        TimerMode::Breathing => "default_label_uuid_breathing",
+    }
 }
+
 
 #[cfg(test)]
 mod tests {

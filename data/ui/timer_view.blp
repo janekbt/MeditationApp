@@ -266,8 +266,22 @@ template $TimerView : Gtk.Widget {
             child: Adw.PreferencesGroup session_group {
               title: _("Session");
 
-              Adw.ComboRow setup_label_row {
+              Adw.ExpanderRow setup_label_enabled_row {
                 title: _("Label");
+                subtitle: _("Tag this session");
+                show-enable-switch: true;
+                enable-expansion: false;
+
+                Adw.ActionRow setup_label_chooser_row {
+                  title: _("Selected");
+                  activatable: true;
+
+                  [suffix]
+                  Gtk.Image {
+                    icon-name: "go-next-symbolic";
+                    styles ["dim-label"]
+                  }
+                }
               }
 
               // ── Starting bell + preparation time ───────────────────
@@ -410,8 +424,22 @@ template $TimerView : Gtk.Widget {
           }
 
           Adw.PreferencesGroup {
-            Adw.ComboRow label_row {
+            Adw.ExpanderRow done_label_enabled_row {
               title: _("Label");
+              subtitle: _("Tag this session");
+              show-enable-switch: true;
+              enable-expansion: false;
+
+              Adw.ActionRow done_label_chooser_row {
+                title: _("Selected");
+                activatable: true;
+
+                [suffix]
+                Gtk.Image {
+                  icon-name: "go-next-symbolic";
+                  styles ["dim-label"]
+                }
+              }
             }
           }
 

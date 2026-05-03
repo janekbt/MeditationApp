@@ -57,4 +57,24 @@ impl MeditateWindow {
             on_selected,
         );
     }
+
+    /// Push the label chooser onto the navigation view. Triggered
+    /// by both label-selection rows (Setup view + Done view). The
+    /// caller's `on_selected` callback fires when the user taps a
+    /// label row, receives the chosen `Label`, and the page pops
+    /// automatically.
+    pub fn push_label_chooser(
+        &self,
+        app: &crate::application::MeditateApplication,
+        current_label_id: Option<i64>,
+        on_selected: impl Fn(crate::db::Label) + 'static,
+    ) {
+        use glib::subclass::prelude::ObjectSubclassIsExt;
+        crate::labels::push_labels_chooser(
+            &self.imp().nav_view,
+            app,
+            current_label_id,
+            on_selected,
+        );
+    }
 }
