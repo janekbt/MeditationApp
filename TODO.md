@@ -18,7 +18,7 @@ Polish and UX items to tackle when convenient. Graduate each one out of this fil
 
   - **✓ B.1 — Setup-page progressive-disclosure UI shell.** Landed on `beta` as `9e2f3ed..e75f549`. Used nested `Adw.ExpanderRow` (rather than `SwitchRow`) for the native slide animation; inner chevron suppressed via a one-line override in `data/style.css` to dodge a libadwaita 1.7 descendant-selector quirk on nested expander chevrons.
 
-  - **B.2 — Wire starting bell playback + prep-time delay.** Reuse the existing `crate::sound::play_end_sound` infrastructure (gstreamer playbin). glib timeout for the prep-time delay; cancel cleanly on pause / stop / resume.
+  - **✓ B.2 — Wire starting bell playback + prep-time delay.** Landed on `beta` as `e6c83de..11782d4`. Box Breathing is treated as fully separate (no starting bell, no prep). Stop during prep saves a real session row with duration = prep elapsed. Tick dispatches on `TimerState::{Preparing, Running}`; bell-cut polish via `sound::stop_all()` in Save/Discard.
 
   - **B.3 — Interval bells.** `Adw.SwitchRow` "Interval Bell" + `Adw.SpinRow` "Every N Minutes" with progressive disclosure. Scheduler fires on cycle boundaries; respects pause; independent sound choice from start/end.
 
