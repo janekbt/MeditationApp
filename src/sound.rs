@@ -11,6 +11,15 @@ thread_local! {
     /// CURRENT_MEDIA so playing the starting bell doesn't clobber the
     /// pre-warmed end-sound MediaFile that lives there.
     static STARTING_MEDIA: RefCell<Option<gtk::MediaFile>> = const { RefCell::new(None) };
+    /// Vec of in-flight interval-bell MediaFiles. Two bells whose
+    /// boundaries land on the same second both play to completion —
+    /// a single slot would clip the first, which would silently hide
+    /// from the user that two cues collided. Each MediaFile removes
+    /// itself from this vec via notify::ended once playback finishes.
+    /// stop_all drains the vec on Save/Discard. Kept separate from
+    /// CURRENT_MEDIA and STARTING_MEDIA so in-session bells don't
+    /// clobber the completion-sound preload or the starting bell.
+    static INTERVAL_MEDIA: RefCell<Vec<gtk::MediaFile>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Stop whatever is currently playing in CURRENT_MEDIA (no-op if
@@ -24,14 +33,20 @@ pub fn stop_current() {
     });
 }
 
-/// Stop every session-related sound — both the end-sound slot
-/// (CURRENT_MEDIA) and the starting-bell slot (STARTING_MEDIA).
-/// Called from Save / Discard on the Done page so a bell still
-/// playing through doesn't outlast the user's choice to leave.
+/// Stop every session-related sound — the end-sound slot
+/// (CURRENT_MEDIA), the starting-bell slot (STARTING_MEDIA), and the
+/// interval-bell slot (INTERVAL_MEDIA). Called from Save / Discard
+/// on the Done page so a bell still playing through doesn't outlast
+/// the user's choice to leave.
 pub fn stop_all() {
     stop_current();
     STARTING_MEDIA.with(|cell| {
         if let Some(m) = cell.replace(None) {
+            m.set_playing(false);
+        }
+    });
+    INTERVAL_MEDIA.with(|cell| {
+        for m in cell.borrow_mut().drain(..) {
             m.set_playing(false);
         }
     });
@@ -138,6 +153,35 @@ pub fn bundled_bell_resource_path(sound: &str) -> Option<String> {
         "bowl" | "bell" | "gong" => Some(format!("{RESOURCE_BASE}/{sound}.wav")),
         _ => None,
     }
+}
+
+/// Play one of the bundled bells by direct sound key
+/// ("bowl" / "bell" / "gong"). Used by the running tick to fire
+/// interval / fixed-time bells. Each call appends to the
+/// INTERVAL_MEDIA vec so two bells whose boundaries land on the
+/// same second both play through — clipping one would silently
+/// hide the collision from the user. The MediaFile removes itself
+/// from the vec via notify::ended once playback finishes.
+/// No-op for unrecognised keys.
+pub fn play_interval_sound(sound: &str) {
+    let Some(resource) = bundled_bell_resource_path(sound) else {
+        return;
+    };
+    let media = gtk::MediaFile::for_resource(&resource);
+
+    // Self-removal on completion so the vec doesn't accumulate over a
+    // long session. PartialEq on glib::Object compares by pointer
+    // identity, which is exactly what we need to find the entry.
+    media.connect_ended_notify(|m| {
+        if m.is_ended() {
+            INTERVAL_MEDIA.with(|cell| {
+                cell.borrow_mut().retain(|x| x != m);
+            });
+        }
+    });
+
+    INTERVAL_MEDIA.with(|cell| cell.borrow_mut().push(media.clone()));
+    media.set_playing(true);
 }
 
 /// Play the starting bell at session start. No-op if the user has the

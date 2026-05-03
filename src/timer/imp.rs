@@ -25,6 +25,30 @@ fn boot_time_now() -> std::time::Duration {
     std::time::Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32)
 }
 
+/// Per-bell schedule used by the running tick. Built once at the
+/// moment the session enters Running (after prep, if any) from the
+/// enabled rows of `interval_bells`. Mutated in place each tick:
+/// interval bells reroll their next ring after firing; fixed bells
+/// flip their `fired` flag.
+#[derive(Debug, Clone)]
+struct ActiveBell {
+    sound: String,
+    schedule: BellSchedule,
+}
+
+#[derive(Debug, Clone)]
+enum BellSchedule {
+    Interval {
+        base_min: u32,
+        jitter_pct: u32,
+        next_ring_secs: u64,
+    },
+    Fixed {
+        target_secs: u64,
+        fired: bool,
+    },
+}
+
 // ── Per-mode independent state ────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -181,6 +205,21 @@ pub struct TimerView {
     /// and swap in the real countdown/stopwatch core.
     prep_stopwatch: RefCell<Option<CoreStopwatch>>,
     prep_target: Cell<std::time::Duration>,
+    /// Snapshot of every interval/fixed bell that should fire during
+    /// the current Timer-mode session. Built once at the moment the
+    /// session enters Running (either directly from on_start with no
+    /// prep, or from transition_prep_to_running). Per-tick check
+    /// flips fired flags / reschedules the next ring on this in-
+    /// memory state — the DB rows + their enabled flags are read
+    /// only at session start, so toggling a bell mid-session is a
+    /// no-op for that session and takes effect next time. Cleared on
+    /// stop / done / reset.
+    active_bells: RefCell<Vec<ActiveBell>>,
+    /// Per-process xorshift state seeded once from the wall clock.
+    /// The first jittered ring of the first session may roll a tiny
+    /// non-uniform value; subsequent rolls are well-distributed.
+    /// Lazy init (Cell<u64> defaulting to 0 means "not yet seeded").
+    bell_rng_state: Cell<u64>,
     /// Boot-time anchor at session start. Suspend-resilient (see boot_time_now).
     start_boot_time: Cell<Option<std::time::Duration>>,
 }
@@ -741,6 +780,11 @@ impl TimerView {
             self.timer_state.set(TimerState::Preparing);
         } else {
             self.timer_state.set(TimerState::Running);
+            // Bell-library schedule is built when Running starts. With
+            // prep, the same call lives in transition_prep_to_running.
+            if mode == TimerMode::Timer {
+                self.load_active_bells_for_running();
+            }
         }
 
         self.session_start_time.set(unix_now());
@@ -849,7 +893,11 @@ impl TimerView {
         self.timer_state.set(TimerState::Done);
         // Drop any prep state — the user stopped during prep, the
         // session's "elapsed" came from the prep stopwatch above.
+        // Active bells stop firing the moment we leave Running, but
+        // the schedule is also dropped here so a quick re-Start
+        // rebuilds it from current settings.
         *self.prep_stopwatch.borrow_mut() = None;
+        self.active_bells.borrow_mut().clear();
 
         self.obj().emit_by_name::<()>("timer-stopped", &[]);
         self.show_done(elapsed);
@@ -1008,10 +1056,12 @@ impl TimerView {
                 // Clear whichever core was running — at most one is Some
                 // per session, but blanking both is safe and saves the
                 // toggle-state read. The prep stopwatch is also Timer-
-                // mode only and gets reset alongside.
+                // mode only and gets reset alongside, as is the active
+                // bell schedule built at session start.
                 *self.stopwatch_core.borrow_mut() = None;
                 *self.countdown_core.borrow_mut() = None;
                 *self.prep_stopwatch.borrow_mut() = None;
+                self.active_bells.borrow_mut().clear();
             }
             TimerMode::Breathing => *self.breath_stopwatch.borrow_mut() = None,
         }
@@ -1120,6 +1170,20 @@ impl TimerView {
             return glib::ControlFlow::Break;
         }
 
+        // Fire any bell whose ring boundary has been crossed since the
+        // previous tick. For Timer mode the relevant elapsed is the
+        // running stopwatch's elapsed (post-prep, post-resume). The
+        // collected list is empty when the master toggle is off, so
+        // this is cheap when bells aren't in use.
+        let elapsed_for_bells = if is_stopwatch {
+            new_secs
+        } else {
+            // Countdown branch's `new_secs` is REMAINING; we want
+            // ELAPSED. Read the core's elapsed directly.
+            self.countdown_elapsed_secs()
+        };
+        self.fire_due_bells_at(elapsed_for_bells);
+
         if let Some(label) = self.running_label.borrow().as_ref() {
             label.set_label(&format_time(new_secs));
         }
@@ -1153,6 +1217,8 @@ impl TimerView {
         }
 
         self.timer_state.set(TimerState::Running);
+        // Now that Running has started, build the bell schedule.
+        self.load_active_bells_for_running();
     }
 
     /// Natural completion path for a breath session: marks Done, plays the
@@ -1743,6 +1809,151 @@ impl TimerView {
             TimerState::Paused    => self.on_resume(),
             TimerState::Done      => {}
         }
+    }
+}
+
+// ── Interval / fixed bell scheduling ─────────────────────────────────────────
+
+impl TimerView {
+    /// Build the per-session bell schedule from the library + the
+    /// current session's parameters. Called at the moment the session
+    /// enters Running (in on_start when prep is off, or in
+    /// transition_prep_to_running when prep ends). No-op writes to
+    /// active_bells when interval_bells_active is off — the empty
+    /// vec means the per-tick check has nothing to do.
+    fn load_active_bells_for_running(&self) {
+        use meditate_core::db::IntervalBellKind as Kind;
+        let mut new_bells: Vec<ActiveBell> = Vec::new();
+        let Some(app) = self.get_app() else {
+            *self.active_bells.borrow_mut() = new_bells;
+            return;
+        };
+        let active = app
+            .with_db(|db| {
+                db.get_setting("interval_bells_active", "false")
+                    .map(|v| v == "true")
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false);
+        if !active {
+            *self.active_bells.borrow_mut() = new_bells;
+            return;
+        }
+
+        let stopwatch_on = self.stopwatch_toggle_on.get();
+        let total_target_secs: Option<u64> = if stopwatch_on {
+            None
+        } else {
+            Some(self.countdown_target_secs.get())
+        };
+
+        let bells = app
+            .with_db(|db| db.list_interval_bells())
+            .and_then(|r| r.ok())
+            .unwrap_or_default();
+        for b in bells {
+            if !b.enabled {
+                continue;
+            }
+            // Stopwatch mode mutes fixed-from-end bells — no end to
+            // count backwards from. Mirrors the UI grey-out.
+            if stopwatch_on && b.kind == Kind::FixedFromEnd {
+                continue;
+            }
+            let schedule = match b.kind {
+                Kind::Interval => {
+                    let r = self.next_random_unit();
+                    let next_ring = meditate_core::format::next_interval_ring_secs(
+                        0, b.minutes, b.jitter_pct, r,
+                    );
+                    BellSchedule::Interval {
+                        base_min: b.minutes,
+                        jitter_pct: b.jitter_pct,
+                        next_ring_secs: next_ring,
+                    }
+                }
+                Kind::FixedFromStart => {
+                    match meditate_core::format::fixed_from_start_target_secs(
+                        b.minutes, total_target_secs,
+                    ) {
+                        Some(t) => BellSchedule::Fixed { target_secs: t, fired: false },
+                        None => continue,
+                    }
+                }
+                Kind::FixedFromEnd => {
+                    let Some(total) = total_target_secs else { continue; };
+                    match meditate_core::format::fixed_from_end_target_secs(
+                        b.minutes, total,
+                    ) {
+                        Some(t) => BellSchedule::Fixed { target_secs: t, fired: false },
+                        None => continue,
+                    }
+                }
+            };
+            new_bells.push(ActiveBell { sound: b.sound, schedule });
+        }
+        *self.active_bells.borrow_mut() = new_bells;
+    }
+
+    /// Per-tick check: fire any bell whose ring boundary has been
+    /// crossed since the previous tick. Interval bells reroll their
+    /// next ring; fixed bells flip their fired flag so they don't
+    /// re-fire on subsequent ticks. `elapsed_secs` is the running
+    /// session's elapsed-secs (post-prep).
+    fn fire_due_bells_at(&self, elapsed_secs: u64) {
+        if self.active_bells.borrow().is_empty() {
+            return;
+        }
+        // Collect-then-fire pattern so we don't keep the RefCell
+        // borrowed across the play_interval_sound call (sound.rs uses
+        // its own thread-locals; no recursion expected, but the
+        // collect is also clearer).
+        let mut to_play: Vec<String> = Vec::new();
+        let mut bells = self.active_bells.borrow_mut();
+        for bell in bells.iter_mut() {
+            match &mut bell.schedule {
+                BellSchedule::Interval { base_min, jitter_pct, next_ring_secs } => {
+                    if elapsed_secs >= *next_ring_secs {
+                        to_play.push(bell.sound.clone());
+                        let r = self.next_random_unit();
+                        *next_ring_secs = meditate_core::format::next_interval_ring_secs(
+                            *next_ring_secs, *base_min, *jitter_pct, r,
+                        );
+                    }
+                }
+                BellSchedule::Fixed { target_secs, fired } => {
+                    if !*fired && elapsed_secs >= *target_secs {
+                        to_play.push(bell.sound.clone());
+                        *fired = true;
+                    }
+                }
+            }
+        }
+        drop(bells);
+        for sound in to_play {
+            crate::sound::play_interval_sound(&sound);
+        }
+    }
+
+    /// Lazy-seeded xorshift64 → unit-uniform f64 in [0, 1). Quality is
+    /// fine for "shake bell timing slightly" — we're not doing crypto.
+    /// Seeded once from wall-clock nanos on first use; subsequent
+    /// rolls are well-distributed for the lifetime of the process.
+    fn next_random_unit(&self) -> f64 {
+        let mut s = self.bell_rng_state.get();
+        if s == 0 {
+            s = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(1)
+                .max(1);
+        }
+        s ^= s << 13;
+        s ^= s >> 7;
+        s ^= s << 17;
+        self.bell_rng_state.set(s);
+        // Top 53 bits → f64 in [0, 1) without losing precision.
+        (s >> 11) as f64 / (1u64 << 53) as f64
     }
 }
 
