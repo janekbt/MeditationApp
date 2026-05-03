@@ -74,6 +74,10 @@ pub struct TimerView {
     #[template_child] pub stop_from_pause_btn:   TemplateChild<gtk::Button>,
     #[template_child] pub session_group:          TemplateChild<adw::PreferencesGroup>,
     #[template_child] pub setup_label_row:        TemplateChild<adw::ComboRow>,
+    #[template_child] pub starting_bell_row:        TemplateChild<adw::SwitchRow>,
+    #[template_child] pub starting_bell_sound_row:  TemplateChild<adw::ComboRow>,
+    #[template_child] pub preparation_time_row:     TemplateChild<adw::SwitchRow>,
+    #[template_child] pub preparation_time_secs_row:TemplateChild<adw::SpinRow>,
     #[template_child] pub setup_sound_row:        TemplateChild<adw::ComboRow>,
     #[template_child] pub time_unit_label:        TemplateChild<gtk::Label>,
     #[template_child] pub done_duration_label:   TemplateChild<gtk::Label>,
@@ -120,6 +124,12 @@ pub struct TimerView {
     /// Suppress the SwitchRow's notify::active handler while
     /// `refresh_streak` is loading the persisted setting on visit.
     stopwatch_loading: Cell<bool>,
+    /// Suppress notify handlers on the four bell-related rows
+    /// (Starting-Bell switch, Bell-Sound combo, Preparation-Time switch,
+    /// Preparation-Time SpinRow) while `refresh_streak` is loading their
+    /// persisted values on visit. One flag covers all four because they
+    /// load atomically in the same DB roundtrip.
+    bells_loading: Cell<bool>,
     /// Preset pills currently attached to presets_box, paired with their
     /// duration in minutes. Used to toggle the `.preset-chip-active` CSS
     /// class on the button whose minutes match countdown_target_secs.
@@ -204,6 +214,7 @@ impl ObjectImpl for TimerView {
         *self.breathing_preset_name.borrow_mut() = "4-4-4-4".to_string();
         self.setup_buttons();
         self.build_breathing_setup();
+        self.configure_preparation_time_secs_row();
 
         // Tell screen readers that the free-text editor is labelled by
         // its caption, matching the Log add/edit dialog.
@@ -349,6 +360,119 @@ impl TimerView {
                 }
             ),
         );
+
+        // ── Starting Bell switch ─────────────────────────────────────
+        // Toggling reveals/hides the bell-sound combo, the preparation
+        // switch, and (transitively) the prep-seconds spin. The
+        // bells_loading guard suppresses persistence while
+        // `refresh_streak` is restoring the saved state on visit.
+        self.starting_bell_row.connect_active_notify(glib::clone!(
+            #[weak(rename_to = this)] obj,
+            move |row| {
+                let imp = this.imp();
+                if imp.bells_loading.get() { return; }
+                let on = row.is_active();
+                if let Some(app) = imp.get_app() {
+                    app.with_db_mut(|db| {
+                        let _ = db.set_setting(
+                            "starting_bell_active",
+                            if on { "true" } else { "false" },
+                        );
+                    });
+                }
+                imp.update_bell_row_visibility();
+            }
+        ));
+
+        // Bell-sound combo — three actual sounds (Bowl / Bell / Gong);
+        // "no bell" is encoded by the parent SwitchRow being off, so the
+        // combo doesn't list a None option. B.4 collapses this onto the
+        // shared bell library.
+        self.starting_bell_sound_row.connect_notify_local(
+            Some("selected"),
+            glib::clone!(
+                #[weak(rename_to = this)] obj,
+                move |row, _| {
+                    let imp = this.imp();
+                    if imp.bells_loading.get() { return; }
+                    let key = match row.selected() {
+                        1 => "bell",
+                        2 => "gong",
+                        _ => "bowl",
+                    };
+                    if let Some(app) = imp.get_app() {
+                        app.with_db_mut(|db| db.set_setting("starting_bell_sound", key));
+                    }
+                }
+            ),
+        );
+
+        // Preparation Time switch — reveals the seconds SpinRow.
+        self.preparation_time_row.connect_active_notify(glib::clone!(
+            #[weak(rename_to = this)] obj,
+            move |row| {
+                let imp = this.imp();
+                if imp.bells_loading.get() { return; }
+                let on = row.is_active();
+                if let Some(app) = imp.get_app() {
+                    app.with_db_mut(|db| {
+                        let _ = db.set_setting(
+                            "preparation_time_active",
+                            if on { "true" } else { "false" },
+                        );
+                    });
+                }
+                imp.update_bell_row_visibility();
+            }
+        ));
+
+        // Preparation Time SpinRow — value persisted as a plain integer
+        // string, parsed on read via `meditate_core::format::parse_prep_secs`
+        // so out-of-range or garbage values can never crash the shell.
+        self.preparation_time_secs_row.connect_notify_local(
+            Some("value"),
+            glib::clone!(
+                #[weak(rename_to = this)] obj,
+                move |row, _| {
+                    let imp = this.imp();
+                    if imp.bells_loading.get() { return; }
+                    let v = row.value().round() as i64;
+                    let v = v.clamp(
+                        meditate_core::format::PREP_SECS_MIN as i64,
+                        meditate_core::format::PREP_SECS_MAX as i64,
+                    );
+                    if let Some(app) = imp.get_app() {
+                        app.with_db_mut(|db| {
+                            let _ = db.set_setting("preparation_time_secs", &v.to_string());
+                        });
+                    }
+                }
+            ),
+        );
+    }
+
+    /// Set the SpinRow's adjustment to the bell prep-time bounds. Called
+    /// once at construction; the actual current value is restored from
+    /// the DB by `refresh_streak`.
+    fn configure_preparation_time_secs_row(&self) {
+        let adj = gtk::Adjustment::new(
+            meditate_core::format::PREP_SECS_DEFAULT as f64,
+            meditate_core::format::PREP_SECS_MIN as f64,
+            meditate_core::format::PREP_SECS_MAX as f64,
+            5.0, 15.0, 0.0,
+        );
+        self.preparation_time_secs_row.set_adjustment(Some(&adj));
+    }
+
+    /// Show the bell sub-rows according to the two switches' current
+    /// state. Sound combo + prep switch follow `starting_bell_row`;
+    /// the seconds SpinRow follows the AND of both switches.
+    fn update_bell_row_visibility(&self) {
+        let starting_on = self.starting_bell_row.is_active();
+        let prep_on = self.preparation_time_row.is_active();
+        self.starting_bell_sound_row.set_visible(starting_on);
+        self.preparation_time_row.set_visible(starting_on);
+        self.preparation_time_secs_row.set_visible(starting_on && prep_on);
     }
 }
 
@@ -922,8 +1046,10 @@ impl TimerView {
 
         // Batch every DB read this visit needs into a single borrow:
         // one get_app() walk, one RefCell lock, four SQL queries instead
-        // of as many separate calls.
-        let (streak, presets, labels, stopwatch_on) = app
+        // of as many separate calls. The bells block also rides along —
+        // four extra get_setting() calls are cheap next to the existing
+        // streak / presets / labels SQL we're already running.
+        let (streak, presets, labels, stopwatch_on, bells) = app
             .with_db(|db| {
                 let streak  = db.get_streak().unwrap_or(0);
                 let presets = db.get_presets().unwrap_or_else(|_| vec![5, 10, 15, 20, 30]);
@@ -932,9 +1058,41 @@ impl TimerView {
                     .get_setting("stopwatch_mode_active", "false")
                     .map(|v| v == "true")
                     .unwrap_or(false);
-                (streak, presets, labels, stopwatch_on)
+                let starting_bell_on = db
+                    .get_setting("starting_bell_active", "false")
+                    .map(|v| v == "true")
+                    .unwrap_or(false);
+                let starting_bell_sound = db
+                    .get_setting("starting_bell_sound", "bowl")
+                    .unwrap_or_else(|_| "bowl".to_string());
+                let prep_on = db
+                    .get_setting("preparation_time_active", "false")
+                    .map(|v| v == "true")
+                    .unwrap_or(false);
+                let prep_secs = db
+                    .get_setting(
+                        "preparation_time_secs",
+                        &meditate_core::format::PREP_SECS_DEFAULT.to_string(),
+                    )
+                    .map(|s| meditate_core::format::parse_prep_secs(&s))
+                    .unwrap_or(meditate_core::format::PREP_SECS_DEFAULT);
+                (
+                    streak,
+                    presets,
+                    labels,
+                    stopwatch_on,
+                    (starting_bell_on, starting_bell_sound, prep_on, prep_secs),
+                )
             })
-            .unwrap_or_else(|| (0, vec![5, 10, 15, 20, 30], vec![], false));
+            .unwrap_or_else(|| {
+                (
+                    0,
+                    vec![5, 10, 15, 20, 30],
+                    vec![],
+                    false,
+                    (false, "bowl".to_string(), false, meditate_core::format::PREP_SECS_DEFAULT),
+                )
+            });
 
         // Restore the persisted Stopwatch-Mode toggle. The loading guard
         // suppresses the notify::active handler so this read-back doesn't
@@ -944,6 +1102,32 @@ impl TimerView {
         self.stopwatch_toggle_on.set(stopwatch_on);
         self.stopwatch_loading.set(false);
         self.refresh_stopwatch_dependent_ui();
+
+        // Restore bell-related rows. Same loading-guard pattern: raise
+        // the flag, write all four widgets, drop the flag, then call
+        // update_bell_row_visibility() once with the now-correct state.
+        let (starting_bell_on, starting_bell_sound, prep_on, prep_secs) = bells;
+        self.bells_loading.set(true);
+        self.starting_bell_row.set_active(starting_bell_on);
+        // Bell-sound combo — 3 entries (Bowl / Bell / Gong); "no bell"
+        // is encoded by the parent SwitchRow being off. The "Custom file…"
+        // path lands in B.5 with proper plumbing.
+        let bell_sound_choices = [
+            crate::i18n::gettext("Singing bowl"),
+            crate::i18n::gettext("Bell"),
+            crate::i18n::gettext("Gong"),
+        ];
+        let bell_sound_refs: Vec<&str> = bell_sound_choices.iter().map(|s| s.as_str()).collect();
+        self.starting_bell_sound_row.set_model(Some(&gtk::StringList::new(&bell_sound_refs)));
+        self.starting_bell_sound_row.set_selected(match starting_bell_sound.as_str() {
+            "bell" => 1,
+            "gong" => 2,
+            _ => 0,
+        });
+        self.preparation_time_row.set_active(prep_on);
+        self.preparation_time_secs_row.set_value(prep_secs as f64);
+        self.bells_loading.set(false);
+        self.update_bell_row_visibility();
 
         // Update streak label. .streak-chip applies text-transform:
         // uppercase, so we keep the source text sentence-case here.
