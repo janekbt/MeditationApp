@@ -444,27 +444,69 @@ fn present_import_confirm_dialog(
 
     let entry = gtk::Entry::builder()
         .text(&stem)
-        .activates_default(true)
         .build();
+
+    // Inline form-error label hidden by default. Shown when the
+    // user types a name that collides with an existing bell-sound,
+    // so the greyed-out Import button has a visible reason next
+    // to it (tooltips don't reach touch users on the Librem).
+    let collision_label = gtk::Label::builder()
+        .label(gettext("This name is already in use"))
+        .css_classes(["error", "caption"])
+        .halign(gtk::Align::Start)
+        .visible(false)
+        .build();
+
+    // Import is a custom button (not an AdwAlertDialog response) so
+    // the dialog stays open while the worker thread transcodes —
+    // responses auto-dismiss on dispatch and can't host a "loading"
+    // state. With Import as a regular gtk::Button we can swap its
+    // child for a spinner while the file IO is in flight, then
+    // force_close the dialog when the worker reports back.
+    let import_btn = gtk::Button::builder()
+        .label(gettext("Import"))
+        .css_classes(["suggested-action"])
+        .hexpand(true)
+        .build();
+
+    // Two-level box: tight gap (4px) between entry and inline
+    // error label so they read as one form field; wider gap (18px)
+    // between the form and Import so import_btn↔Cancel and
+    // entry↔import_btn feel symmetric (Cancel sits in AdwAlertDialog's
+    // own response row below extra_child, separated by the dialog's
+    // internal padding which is in the same range).
+    let form_box = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(4)
+        .build();
+    form_box.append(&entry);
+    form_box.append(&collision_label);
+
+    let extra_box = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(18)
+        .build();
+    extra_box.append(&form_box);
+    extra_box.append(&import_btn);
 
     let dialog = adw::AlertDialog::builder()
         .heading(gettext("Import Sound"))
         .body(format!("{} {}", gettext("Importing:"), filename))
-        .extra_child(&entry)
+        .extra_child(&extra_box)
         .close_response("cancel")
-        .default_response("import")
+        .default_response("cancel")
         .build();
     dialog.add_response("cancel", &gettext("Cancel"));
-    dialog.add_response("import", &gettext("Import"));
-    dialog.set_response_appearance("import", adw::ResponseAppearance::Suggested);
 
     // Live validation — name not empty, no collision with existing
     // bell-sound names (case-insensitive). Same shape the rename
-    // dialog uses.
+    // dialog uses, plus the collision_label appears next to a
+    // greyed Import so the user sees *why* it isn't clickable.
     let validate: Rc<dyn Fn()> = {
         let app = app.clone();
         let entry = entry.clone();
-        let dialog = dialog.clone();
+        let import_btn = import_btn.clone();
+        let collision_label = collision_label.clone();
         Rc::new(move || {
             let text = entry.text();
             let trimmed = text.trim();
@@ -476,39 +518,102 @@ fn present_import_confirm_dialog(
                 .into_iter()
                 .any(|s| s.name.to_lowercase() == lower);
             let valid = !trimmed.is_empty() && !collision;
-            dialog.set_response_enabled("import", valid);
+            import_btn.set_sensitive(valid);
+            // Only show the collision message when the user has
+            // actually typed something. For an empty entry the
+            // greyed button is intuitive on its own — flagging
+            // "name in use" against a blank field would mislead.
+            collision_label.set_visible(!trimmed.is_empty() && collision);
         })
     };
     validate();
     let validate_for_change = validate.clone();
     entry.connect_changed(move |_| validate_for_change());
 
-    let app = app.clone();
-    let source_path = source_path.to_path_buf();
-    let entry_for_response = entry.clone();
-    let anchor_for_response = anchor.clone();
-    dialog.connect_response(None, move |_, id| {
-        if id != "import" { return; }
-        let name = entry_for_response.text().to_string();
+    // Enter on the entry triggers Import (replaces the
+    // activates_default behavior we lost when Import left the
+    // response row).
+    let import_btn_for_enter = import_btn.clone();
+    entry.connect_activate(move |_| {
+        if import_btn_for_enter.is_sensitive() {
+            import_btn_for_enter.emit_clicked();
+        }
+    });
+
+    let app_for_click = app.clone();
+    let source_for_click = source_path.to_path_buf();
+    let entry_for_click = entry.clone();
+    let dialog_for_click = dialog.clone();
+    let anchor_for_click = anchor.clone();
+    let on_imported_for_click = on_imported.clone();
+    import_btn.connect_clicked(move |btn| {
+        let name = entry_for_click.text().to_string();
         let trimmed = name.trim().to_string();
         if trimmed.is_empty() {
             return;
         }
-        match do_import(&app, &source_path, &trimmed) {
-            Ok(()) => on_imported(),
-            Err(msg) => {
-                if let Some(root) = anchor_for_response.root() {
-                    if let Ok(window) = root.downcast::<crate::window::MeditateWindow>() {
-                        window.add_toast(
-                            adw::Toast::builder()
-                                .title(format!("{} {}", gettext("Import failed:"), msg))
-                                .timeout(4)
-                                .build(),
-                        );
+
+        // Lock the dialog while the worker runs — Cancel disabled,
+        // entry frozen, button greyed and showing a spinner.
+        // can_close=false suppresses Escape too. The only exit
+        // path is the spawn_local closure's force_close().
+        dialog_for_click.set_can_close(false);
+        dialog_for_click.set_response_enabled("cancel", false);
+        entry_for_click.set_sensitive(false);
+        btn.set_sensitive(false);
+
+        let spinner = adw::Spinner::new();
+        let label = gtk::Label::new(Some(&gettext("Converting…")));
+        let busy_box = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .spacing(8)
+            .halign(gtk::Align::Center)
+            .build();
+        busy_box.append(&spinner);
+        busy_box.append(&label);
+        btn.set_child(Some(&busy_box));
+
+        // Off-thread: copy or transcode the file. !Send GTK widgets
+        // (app handle, dialog, anchor, on_imported callback) stay
+        // on the main thread inside the spawn_local closure; only
+        // the source PathBuf crosses into spawn_blocking.
+        let app = app_for_click.clone();
+        let source = source_for_click.clone();
+        let dialog = dialog_for_click.clone();
+        let anchor = anchor_for_click.clone();
+        let on_imported = on_imported_for_click.clone();
+        let trimmed_for_done = trimmed.clone();
+        glib::MainContext::default().spawn_local(async move {
+            let import_result = gtk::gio::spawn_blocking(move || {
+                do_import_io(&source)
+            }).await;
+
+            match import_result {
+                Ok(Ok((new_uuid, dest_path, mime))) => {
+                    let dest_str = dest_path.to_string_lossy().to_string();
+                    let mut insert_err: Option<String> = None;
+                    app.with_db_mut(|db| {
+                        if let Err(e) = db.insert_bell_sound_with_uuid(
+                            &new_uuid, &trimmed_for_done, &dest_str, false, mime,
+                        ) {
+                            insert_err = Some(e.to_string());
+                        }
+                    });
+                    if let Some(msg) = insert_err {
+                        let _ = std::fs::remove_file(&dest_path);
+                        present_import_error_toast(&anchor, &msg);
+                    } else {
+                        on_imported();
                     }
                 }
+                Ok(Err(e)) => present_import_error_toast(&anchor, &e),
+                Err(_) => present_import_error_toast(
+                    &anchor,
+                    &gettext("import worker died"),
+                ),
             }
-        }
+            dialog.force_close();
+        });
     });
 
     if let Some(root) = anchor.root() {
@@ -519,17 +624,29 @@ fn present_import_confirm_dialog(
     }
 }
 
-/// Copy or transcode the source file into
-/// $XDG_DATA_HOME/meditate/sounds/<uuid>.<ext> and insert a
-/// bell_sounds row referencing it. Anything that isn't already
+fn present_import_error_toast(anchor: &adw::ActionRow, msg: &str) {
+    if let Some(root) = anchor.root() {
+        if let Ok(window) = root.downcast::<crate::window::MeditateWindow>() {
+            window.add_toast(
+                adw::Toast::builder()
+                    .title(format!("{} {}", gettext("Import failed:"), msg))
+                    .timeout(4)
+                    .build(),
+            );
+        }
+    }
+}
+
+/// Worker-thread half of the custom-sound import. Copies or
+/// transcodes the source into $XDG_DATA_HOME/meditate/sounds/
+/// <uuid>.<ext> and returns the generated UUID, dest path, and
+/// mime type so the caller can insert the bell_sounds row on the
+/// main thread (Database is !Send). Anything that isn't already
 /// WAV or OGG gets transcoded to OGG/Vorbis to dodge the gst 1.26.x
-/// decodebin3 assertion-fail (see `transcode_to_ogg`). Returns a
-/// short human-readable error message for toast display on failure.
-fn do_import(
-    app: &MeditateApplication,
+/// decodebin3 assertion-fail (see `transcode_to_ogg`).
+fn do_import_io(
     source: &std::path::Path,
-    name: &str,
-) -> std::result::Result<(), String> {
+) -> std::result::Result<(String, std::path::PathBuf, &'static str), String> {
     let source_ext = source
         .extension()
         .and_then(|s| s.to_str())
@@ -541,7 +658,7 @@ fn do_import(
     // OGG/Vorbis on the way in. Vorbis at quality 0.4 (~128 kbps) is
     // far below the 10 MB cap for any reasonable bell-length input
     // and is plenty for short transient sounds.
-    let (dest_ext, mime) = match source_ext.as_str() {
+    let (dest_ext, mime): (&str, &'static str) = match source_ext.as_str() {
         "wav" => ("wav", "audio/wav"),
         "ogg" => ("ogg", "audio/ogg"),
         _ => ("ogg", "audio/ogg"),
@@ -561,20 +678,7 @@ fn do_import(
         return Err(e);
     }
 
-    let dest_str = dest_path.to_string_lossy().to_string();
-    let mut insert_err: Option<String> = None;
-    app.with_db_mut(|db| {
-        if let Err(e) = db.insert_bell_sound_with_uuid(
-            &new_uuid, name, &dest_str, false, mime,
-        ) {
-            insert_err = Some(e.to_string());
-        }
-    });
-    if let Some(msg) = insert_err {
-        let _ = std::fs::remove_file(&dest_path);
-        return Err(msg);
-    }
-    Ok(())
+    Ok((new_uuid, dest_path, mime))
 }
 
 /// Build a one-shot gst pipeline that decodes `source` (any format
