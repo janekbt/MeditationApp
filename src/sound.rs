@@ -65,22 +65,20 @@ pub fn stop_all() {
     });
 }
 
-/// Play one of the bundled or custom sounds as a preview. Used by
-/// the bell-sound chooser's per-row Play/Stop button. Mono — a new
-/// preview stops the previous, so users can scrub through a list
-/// without stacking sounds. `is_bundled=true` treats `path` as a
-/// GResource path; `false` treats it as a filesystem path.
+/// Play a bell-sound row as a preview. Used by the bell-sound
+/// chooser's per-row Play/Stop button. Mono — a new preview stops
+/// the previous, so users can scrub through a list without stacking
+/// sounds. Uses `media_for_bell_sound` so custom rows resolve to
+/// the canonical local path derived from uuid+mime, not the stored
+/// `file_path` (which is the importing device's absolute path and
+/// doesn't resolve on a peer that synced the row).
 ///
 /// Returns the MediaFile so the caller can connect a notify::playing
 /// listener and revert its button icon when playback ends (whether
 /// via user stop, end of file, or a different row's Play taking
 /// over the slot).
-pub fn play_preview(path: &str, is_bundled: bool) -> gtk::MediaFile {
-    let media = if is_bundled {
-        gtk::MediaFile::for_resource(path)
-    } else {
-        gtk::MediaFile::for_file(&gtk::gio::File::for_path(path))
-    };
+pub fn play_preview(sound: &BellSound) -> gtk::MediaFile {
+    let media = media_for_bell_sound(sound);
     PREVIEW_MEDIA.with(|cell| {
         if let Some(old) = cell.replace(Some(media.clone())) {
             old.set_playing(false);

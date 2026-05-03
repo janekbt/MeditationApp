@@ -291,8 +291,7 @@ fn add_play_button(row: &adw::ActionRow, sound: &BellSound) {
         .css_classes(["flat", "circular"])
         .valign(gtk::Align::Center)
         .build();
-    let path = sound.file_path.clone();
-    let is_bundled = sound.is_bundled;
+    let sound_clone = sound.clone();
     let playing = Rc::new(Cell::new(false));
     let play_btn_clone = play_btn.clone();
     play_btn.connect_clicked(move |_| {
@@ -302,7 +301,7 @@ fn add_play_button(row: &adw::ActionRow, sound: &BellSound) {
             play_btn_clone.set_icon_name("media-playback-start-symbolic");
             return;
         }
-        let media = crate::sound::play_preview(&path, is_bundled);
+        let media = crate::sound::play_preview(&sound_clone);
         playing.set(true);
         play_btn_clone.set_icon_name("media-playback-stop-symbolic");
         let playing_for_notify = playing.clone();
@@ -520,26 +519,32 @@ fn present_import_confirm_dialog(
     }
 }
 
-/// Copy the source file into $XDG_DATA_HOME/meditate/sounds/<uuid>.<ext>
-/// and insert a bell_sounds row referencing it. Returns a short
-/// human-readable error message for toast display on failure.
+/// Copy or transcode the source file into
+/// $XDG_DATA_HOME/meditate/sounds/<uuid>.<ext> and insert a
+/// bell_sounds row referencing it. Anything that isn't already
+/// WAV or OGG gets transcoded to OGG/Vorbis to dodge the gst 1.26.x
+/// decodebin3 assertion-fail (see `transcode_to_ogg`). Returns a
+/// short human-readable error message for toast display on failure.
 fn do_import(
     app: &MeditateApplication,
     source: &std::path::Path,
     name: &str,
 ) -> std::result::Result<(), String> {
-    let ext = source
+    let source_ext = source
         .extension()
         .and_then(|s| s.to_str())
         .map(|s| s.to_ascii_lowercase())
         .unwrap_or_else(|| "wav".to_string());
-    let mime = match ext.as_str() {
-        "ogg" => "audio/ogg",
-        "mp3" => "audio/mpeg",
-        "opus" => "audio/opus",
-        "flac" => "audio/flac",
-        "m4a" => "audio/mp4",
-        _ => "audio/wav",
+
+    // wav and ogg pass through gtk::MediaFile cleanly on every runtime
+    // we ship to. Everything else (mp3, m4a, opus, flac, …) becomes
+    // OGG/Vorbis on the way in. Vorbis at quality 0.4 (~128 kbps) is
+    // far below the 10 MB cap for any reasonable bell-length input
+    // and is plenty for short transient sounds.
+    let (dest_ext, mime) = match source_ext.as_str() {
+        "wav" => ("wav", "audio/wav"),
+        "ogg" => ("ogg", "audio/ogg"),
+        _ => ("ogg", "audio/ogg"),
     };
 
     let new_uuid = crate::db::mint_uuid();
@@ -547,8 +552,14 @@ fn do_import(
         .join("meditate")
         .join("sounds");
     std::fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
-    let dest_path = dest_dir.join(format!("{new_uuid}.{ext}"));
-    std::fs::copy(source, &dest_path).map_err(|e| e.to_string())?;
+    let dest_path = dest_dir.join(format!("{new_uuid}.{dest_ext}"));
+
+    if dest_ext == source_ext.as_str() {
+        std::fs::copy(source, &dest_path).map_err(|e| e.to_string())?;
+    } else if let Err(e) = transcode_to_ogg(source, &dest_path) {
+        let _ = std::fs::remove_file(&dest_path);
+        return Err(e);
+    }
 
     let dest_str = dest_path.to_string_lossy().to_string();
     let mut insert_err: Option<String> = None;
@@ -560,11 +571,117 @@ fn do_import(
         }
     });
     if let Some(msg) = insert_err {
-        // Roll back the file we just copied — the row didn't take.
         let _ = std::fs::remove_file(&dest_path);
         return Err(msg);
     }
     Ok(())
+}
+
+/// Build a one-shot gst pipeline that decodes `source` (any format
+/// gst can read), re-encodes it to OGG/Vorbis at quality 0.4, and
+/// writes the result to `dest`. Runs synchronously on the calling
+/// thread — for ~10 MB inputs this is a few seconds even on the
+/// Librem 5, which is acceptable for a one-time import flow.
+///
+/// Pipeline:
+///   filesrc ! decodebin ! audioconvert ! audioresample !
+///   vorbisenc quality=0.4 ! oggmux ! filesink
+///
+/// Crucially uses `decodebin` (legacy), not `decodebin3`. The newer
+/// element has a known race in `mq_slot_handle_stream_start` that
+/// aborts the process on certain MP3 streams (gst 1.26.x). Since
+/// `vorbisenc` + `oggmux` produce a clean single-stream OGG, the
+/// transcoded file then plays back through gtk::MediaFile without
+/// touching the buggy code path.
+fn transcode_to_ogg(
+    source: &std::path::Path,
+    dest: &std::path::Path,
+) -> std::result::Result<(), String> {
+    use gstreamer as gst;
+    use gst::prelude::*;
+
+    gst::init().map_err(|e| format!("gst init failed: {e}"))?;
+
+    let pipeline = gst::Pipeline::new();
+    let make = |name: &str| -> Result<gst::Element, String> {
+        gst::ElementFactory::make(name)
+            .build()
+            .map_err(|e| format!("create {name}: {e}"))
+    };
+    let filesrc = gst::ElementFactory::make("filesrc")
+        .property("location", source.to_string_lossy().as_ref())
+        .build()
+        .map_err(|e| format!("create filesrc: {e}"))?;
+    let decodebin = make("decodebin")?;
+    let audioconvert = make("audioconvert")?;
+    let audioresample = make("audioresample")?;
+    let vorbisenc = gst::ElementFactory::make("vorbisenc")
+        .property("quality", 0.4f32)
+        .build()
+        .map_err(|e| format!("create vorbisenc: {e}"))?;
+    let oggmux = make("oggmux")?;
+    let filesink = gst::ElementFactory::make("filesink")
+        .property("location", dest.to_string_lossy().as_ref())
+        .build()
+        .map_err(|e| format!("create filesink: {e}"))?;
+
+    pipeline
+        .add_many([
+            &filesrc,
+            &decodebin,
+            &audioconvert,
+            &audioresample,
+            &vorbisenc,
+            &oggmux,
+            &filesink,
+        ])
+        .map_err(|e| e.to_string())?;
+    filesrc.link(&decodebin).map_err(|e| e.to_string())?;
+    gst::Element::link_many([
+        &audioconvert,
+        &audioresample,
+        &vorbisenc,
+        &oggmux,
+        &filesink,
+    ])
+    .map_err(|e| e.to_string())?;
+
+    // decodebin produces its source pad lazily once the input is
+    // typefind-ed, so we link it to audioconvert's sink in pad-added.
+    let audioconvert_sink = audioconvert
+        .static_pad("sink")
+        .ok_or("audioconvert missing sink pad".to_string())?;
+    decodebin.connect_pad_added(move |_, src_pad| {
+        if !audioconvert_sink.is_linked() {
+            let _ = src_pad.link(&audioconvert_sink);
+        }
+    });
+
+    pipeline
+        .set_state(gst::State::Playing)
+        .map_err(|e| e.to_string())?;
+
+    let bus = pipeline
+        .bus()
+        .ok_or("pipeline missing bus".to_string())?;
+    let mut transcode_err: Option<String> = None;
+    for msg in bus.iter_timed(gst::ClockTime::NONE) {
+        use gst::MessageView::*;
+        match msg.view() {
+            Eos(..) => break,
+            Error(err) => {
+                transcode_err = Some(format!(
+                    "{} ({})",
+                    err.error(),
+                    err.debug().unwrap_or_default()
+                ));
+                break;
+            }
+            _ => {}
+        }
+    }
+    let _ = pipeline.set_state(gst::State::Null);
+    transcode_err.map_or(Ok(()), Err)
 }
 
 fn present_rename_dialog(

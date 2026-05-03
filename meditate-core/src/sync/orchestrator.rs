@@ -375,12 +375,13 @@ impl<'a, W: WebDav> Sync<'a, W> {
             let ext = bell.extension();
             let local = self.sound_local_path(&bell.uuid, ext);
             if local.exists() {
-                // We have the file already (e.g., we authored the
-                // row locally, the file was copied in by the import
-                // flow, but we never marked it known because we
-                // hadn't yet pushed). Mark it known so subsequent
-                // sync rounds skip the GET.
-                self.db.record_known_remote_sound(&bell.uuid)?;
+                // We already have the audio. Skip the GET — but
+                // DON'T mark it known. The known set means "this
+                // device has confirmed the file is on the remote",
+                // and we haven't confirmed that here. The push side
+                // marks it after a successful PUT. Marking it here
+                // would let push skip its own upload, leaving the
+                // file local-only forever.
                 continue;
             }
             let remote = self.sound_remote_path(&bell.uuid, ext);
@@ -1514,6 +1515,34 @@ mod tests {
         // when the user reduces the file. Don't record known unless
         // the file actually landed.
         assert!(!db_peer.known_remote_sound_uuids().unwrap().contains(&uuid));
+    }
+
+    #[test]
+    fn sync_pull_then_push_uploads_locally_authored_sound_file() {
+        // Regression for a bug where pull's "I have this file
+        // locally, skip the GET" branch ALSO marked the uuid as
+        // known. Push then filtered it out and the file never
+        // went up to remote. Ground truth: importing on the source
+        // device + sync should land both the row AND the audio
+        // file on the remote, so the peer can pull both.
+        let (db, fs) = setup();
+        let tmp = tempfile::tempdir().unwrap();
+        let uuid = seed_custom_bell_sound(&db, tmp.path(), "Custom A", b"AUDIO", "wav");
+
+        // Full sync = pull THEN push, just like sync_with_progress.
+        Sync::new(&db, &fs, "Meditate", tmp.path().to_path_buf())
+            .sync().unwrap();
+
+        // File landed on remote.
+        let put = fs.paths();
+        assert!(
+            put.iter().any(|p| p.ends_with(&format!("Meditate/sounds/{uuid}.wav"))),
+            "expected sounds/{uuid}.wav on remote after sync, got {put:?}",
+        );
+        // Body intact.
+        assert_eq!(fs.get(&format!("/Meditate/sounds/{uuid}.wav")).unwrap(), b"AUDIO");
+        // Known set marks it now (post-PUT).
+        assert!(db.known_remote_sound_uuids().unwrap().contains(&uuid));
     }
 
     #[test]

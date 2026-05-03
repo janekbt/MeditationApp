@@ -30,6 +30,15 @@ meditate-core = { path = "meditate-core" }
 # (~50ms warm), so the synchronous shape avoids a swarm of channels.
 oo7 = "0.4"
 tokio = { version = "1", features = ["rt-multi-thread"] }
+# gstreamer-rs: in-process audio transcoding for custom-bell imports.
+# We re-encode anything that isn't already WAV/OGG into OGG/Vorbis at
+# import time. Routing the audio through the legacy `decodebin` (not
+# `decodebin3`) sidesteps a known gst 1.26.x assertion-fail in
+# `mq_slot_handle_stream_start: collection != NULL` that aborts the
+# process when previewing certain demuxer-heavy formats (notably MP3,
+# m4a) on aarch64 / Phosh runtime. OGG playback through gtk::MediaFile
+# stays on a code path that doesn't trip the assertion.
+gstreamer = "0.25"
 
 [build-dependencies]
 glib-build-tools = "0.22"
