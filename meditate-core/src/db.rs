@@ -1238,26 +1238,47 @@ impl Database {
     /// silently reuse an existing row (e.g. CSV import) should call
     /// `find_or_create_label` instead.
     pub fn insert_label(&self, name: &str) -> Result<i64> {
-        let tx = self.conn.unchecked_transaction()?;
         let label_uuid = uuid::Uuid::new_v4().to_string();
+        self.insert_label_with_uuid(&label_uuid, name)
+    }
+
+    /// Insert a label with a caller-supplied uuid. Idempotent on the
+    /// uuid: if a row with that uuid already exists (regardless of
+    /// its current name), returns its rowid without inserting or
+    /// emitting. A duplicate *name* with a different uuid still
+    /// surfaces `DuplicateLabel` so unrelated callers don't silently
+    /// shadow each other's rows.
+    ///
+    /// Used by the shell's `seed_default_labels` to create the
+    /// "Meditation" / "Box-Breathing" rows under stable UUIDs so
+    /// every device — fresh seed or post-sync — ends up with the
+    /// same row identity.
+    pub fn insert_label_with_uuid(&self, uuid_str: &str, name: &str) -> Result<i64> {
+        let tx = self.conn.unchecked_transaction()?;
+        if let Some(existing) = self.conn.query_row(
+            "SELECT id FROM labels WHERE uuid = ?1",
+            params![uuid_str],
+            |row| row.get::<_, i64>(0),
+        ).optional()? {
+            return Ok(existing);
+        }
         match self.conn.execute(
             "INSERT INTO labels (name, uuid) VALUES (?1, ?2)",
-            params![name, label_uuid],
+            params![name, uuid_str],
         ) {
             Ok(_) => {
                 let rowid = self.conn.last_insert_rowid();
                 let payload = serde_json::json!({
-                    "uuid": label_uuid,
+                    "uuid": uuid_str,
                     "name": name,
                 }).to_string();
-                self.emit_event("label_insert", &label_uuid, payload)?;
+                self.emit_event("label_insert", uuid_str, payload)?;
                 tx.commit()?;
                 Ok(rowid)
             }
             Err(rusqlite::Error::SqliteFailure(err, _))
                 if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE =>
             {
-                // Tx implicit rollback on drop — no event was emitted.
                 Err(DbError::DuplicateLabel(name.to_string()))
             }
             Err(e) => Err(DbError::Sqlite(e)),
@@ -7749,14 +7770,19 @@ mod tests {
     }
 
     #[test]
-    fn list_bell_sounds_returns_rows_in_insert_order() {
+    fn list_bell_sounds_returns_custom_rows_before_bundled() {
+        // Chooser UX: a freshly imported sound lives at the top of the
+        // list, directly under the synthetic "Choose your own…" entry,
+        // so the user doesn't have to scroll past the bundled set.
+        // Within each group, insertion order is preserved.
         let db = Database::open_in_memory().unwrap();
         db.insert_bell_sound("A", "/p/a.wav", true, "audio/wav").unwrap();
         db.insert_bell_sound("B", "/p/b.wav", false, "audio/wav").unwrap();
+        db.insert_bell_sound("C", "/p/c.wav", true, "audio/wav").unwrap();
+        db.insert_bell_sound("D", "/p/d.wav", false, "audio/wav").unwrap();
         let s = db.list_bell_sounds().unwrap();
-        assert_eq!(s.len(), 2);
-        assert_eq!(s[0].name, "A");
-        assert_eq!(s[1].name, "B");
+        let names: Vec<_> = s.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, vec!["B", "D", "A", "C"]);
     }
 
     #[test]

@@ -112,6 +112,23 @@ pub const BUNDLED_BOWL_UUID: &str = "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0001";
 pub const BUNDLED_BELL_UUID: &str = "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0002";
 pub const BUNDLED_GONG_UUID: &str = "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0003";
 
+/// Stable UUIDs for the two seeded default labels. The seed inserts
+/// these on every app open under `INSERT-OR-IGNORE` semantics, so a
+/// device that has already received them via sync (or already
+/// renamed the row) keeps its current state. Auto-pick when the
+/// label toggle flips on uses these — a renamed default still
+/// resolves through the UUID, so the user's rename sticks.
+pub const DEFAULT_TIMER_LABEL_UUID: &str = "e2d5a4b8-7c91-4e3f-a826-d40f1c5b9001";
+pub const DEFAULT_BREATHING_LABEL_UUID: &str = "e2d5a4b8-7c91-4e3f-a826-d40f1c5b9002";
+
+/// Seed list mirrors `BUNDLED_BELL_SOUNDS` — uuid + display name.
+/// Append-only on UUID; the user can rename or delete the row from
+/// the chooser like any other label.
+const DEFAULT_LABELS: &[(&str, &str)] = &[
+    (DEFAULT_TIMER_LABEL_UUID, "Meditation"),
+    (DEFAULT_BREATHING_LABEL_UUID, "Box-Breathing"),
+];
+
 #[derive(Debug, Clone)]
 pub struct Session {
     pub id: i64,
@@ -222,6 +239,7 @@ impl Database {
         let inner = meditate_core::db::Database::open(path).map_err(map_core_err)?;
         let db = Self { inner };
         db.seed_bundled_bell_sounds()?;
+        db.seed_default_labels()?;
         Ok(db)
     }
 
@@ -236,6 +254,23 @@ impl Database {
             self.inner
                 .insert_bell_sound_with_uuid(uuid, name, path, true, mime)
                 .map_err(map_core_err)?;
+        }
+        Ok(())
+    }
+
+    /// Seed the two default labels ("Meditation", "Box-Breathing")
+    /// with stable UUIDs. Same idempotency story as the bell-sound
+    /// seed — `insert_label_with_uuid` no-ops when the uuid already
+    /// exists. A `DuplicateLabel` error (the user already has a row
+    /// with this *name* under a different uuid) is silently swallowed
+    /// so we don't shadow user-managed rows.
+    fn seed_default_labels(&self) -> Result<()> {
+        for (uuid, name) in DEFAULT_LABELS {
+            match self.inner.insert_label_with_uuid(uuid, name) {
+                Ok(_) => {}
+                Err(meditate_core::db::DbError::DuplicateLabel(_)) => {}
+                Err(e) => return Err(map_core_err(e)),
+            }
         }
         Ok(())
     }
@@ -610,6 +645,7 @@ pub(crate) fn test_db_in_memory() -> Database {
         inner: meditate_core::db::Database::open_in_memory().unwrap(),
     };
     db.seed_bundled_bell_sounds().unwrap();
+    db.seed_default_labels().unwrap();
     db
 }
 
@@ -980,7 +1016,11 @@ mod tests {
     fn open_seeds_bundled_bell_sounds_with_stable_uuids() {
         let db = test_db_in_memory();
         let sounds = db.list_bell_sounds().unwrap();
-        assert_eq!(sounds.len(), 3, "three bundled rows seeded on first open");
+        assert_eq!(
+            sounds.len(),
+            BUNDLED_BELL_SOUNDS.len(),
+            "every bundled row must be seeded on first open",
+        );
         assert!(sounds.iter().all(|s| s.is_bundled));
         // Stable UUIDs the constants point at.
         assert!(sounds.iter().any(|s| s.uuid == BUNDLED_BOWL_UUID));
@@ -994,8 +1034,46 @@ mod tests {
         // Helper already seeded once; do it again manually.
         db.seed_bundled_bell_sounds().unwrap();
         let sounds = db.list_bell_sounds().unwrap();
-        assert_eq!(sounds.len(), 3, "second seed must not duplicate rows");
+        assert_eq!(
+            sounds.len(),
+            BUNDLED_BELL_SOUNDS.len(),
+            "second seed must not duplicate rows",
+        );
     }
+
+    #[test]
+    fn open_seeds_default_labels_with_stable_uuids() {
+        let db = test_db_in_memory();
+        let labels = db.list_labels().unwrap();
+        assert!(
+            labels.iter().any(|l| l.uuid == DEFAULT_TIMER_LABEL_UUID
+                && l.name == "Meditation"),
+            "Meditation default seeded under stable uuid",
+        );
+        assert!(
+            labels.iter().any(|l| l.uuid == DEFAULT_BREATHING_LABEL_UUID
+                && l.name == "Box-Breathing"),
+            "Box-Breathing default seeded under stable uuid",
+        );
+    }
+
+    #[test]
+    fn seeding_default_labels_twice_is_idempotent() {
+        let db = test_db_in_memory();
+        db.seed_default_labels().unwrap();
+        let labels = db.list_labels().unwrap();
+        assert_eq!(
+            labels.iter().filter(|l| l.uuid == DEFAULT_TIMER_LABEL_UUID).count(),
+            1,
+            "second seed must not duplicate the Meditation row",
+        );
+        assert_eq!(
+            labels.iter().filter(|l| l.uuid == DEFAULT_BREATHING_LABEL_UUID).count(),
+            1,
+            "second seed must not duplicate the Box-Breathing row",
+        );
+    }
+
 
     #[test]
     fn seeding_emits_one_insert_event_per_bundled_row_and_no_more_on_re_seed() {
@@ -1011,7 +1089,7 @@ mod tests {
             .into_iter()
             .filter(|(_, e)| e.kind == "bell_sound_insert")
             .collect();
-        assert_eq!(after_first.len(), 3);
+        assert_eq!(after_first.len(), BUNDLED_BELL_SOUNDS.len());
 
         db.seed_bundled_bell_sounds().unwrap();
         let after_second: Vec<_> = db
@@ -1021,6 +1099,10 @@ mod tests {
             .into_iter()
             .filter(|(_, e)| e.kind == "bell_sound_insert")
             .collect();
-        assert_eq!(after_second.len(), 3, "no extra events on re-seed");
+        assert_eq!(
+            after_second.len(),
+            BUNDLED_BELL_SOUNDS.len(),
+            "no extra events on re-seed",
+        );
     }
 }
