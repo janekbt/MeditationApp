@@ -627,6 +627,15 @@ impl TimerView {
         self.timer_state.set(TimerState::Running);
         self.session_start_time.set(unix_now());
 
+        // Starting bell — no-op if the user has the switch off, otherwise
+        // plays the chosen bundled sound through its own STARTING_MEDIA
+        // slot so the end-sound preload stays warm. Prep-time delay
+        // lands in B.2.b and will reschedule this call to fire at the
+        // end of prep instead of at session start.
+        if let Some(app) = self.get_app() {
+            crate::sound::play_starting_sound(&app);
+        }
+
         self.tick_mode.set(mode);
         // Countdown/stopwatch use the shared 1 Hz tick; Breathing drives
         // its own DrawingArea tick from window::push_running_page.

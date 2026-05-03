@@ -6,6 +6,11 @@ const RESOURCE_BASE: &str = "/io/github/janekbt/Meditate/sounds";
 thread_local! {
     /// Keeps the currently-playing (or pre-warmed) MediaFile alive.
     static CURRENT_MEDIA: RefCell<Option<gtk::MediaFile>> = const { RefCell::new(None) };
+    /// Holds the active starting-bell MediaFile so the playback isn't
+    /// dropped before the bell finishes. Kept separate from
+    /// CURRENT_MEDIA so playing the starting bell doesn't clobber the
+    /// pre-warmed end-sound MediaFile that lives there.
+    static STARTING_MEDIA: RefCell<Option<gtk::MediaFile>> = const { RefCell::new(None) };
 }
 
 /// Stop whatever is currently playing (no-op if nothing is).
@@ -107,6 +112,48 @@ pub fn play_end_sound(app: &crate::application::MeditateApplication) {
     }
 }
 
+/// Map a bundled bell key ("bowl" / "bell" / "gong") to its full GResource
+/// path. Returns `None` for any unrecognised key — callers can treat that
+/// as "no bell" and skip playback. Pure fn so it's covered in unit tests.
+///
+/// B.4 broadens this to UUIDs plus custom files; for now, the same three
+/// names the existing Completion-Sound combo uses.
+pub fn bundled_bell_resource_path(sound: &str) -> Option<String> {
+    match sound {
+        "bowl" | "bell" | "gong" => Some(format!("{RESOURCE_BASE}/{sound}.wav")),
+        _ => None,
+    }
+}
+
+/// Play the starting bell at session start. No-op if the user has the
+/// Starting Bell switch off, or if the configured sound key isn't a
+/// recognised bundled bell. Uses STARTING_MEDIA so the existing
+/// end-sound preload in CURRENT_MEDIA isn't disturbed.
+pub fn play_starting_sound(app: &crate::application::MeditateApplication) {
+    let active = app
+        .with_db(|db| db.get_setting("starting_bell_active", "false"))
+        .and_then(|r| r.ok())
+        .map(|v| v == "true")
+        .unwrap_or(false);
+    if !active {
+        return;
+    }
+    let sound = app
+        .with_db(|db| db.get_setting("starting_bell_sound", "bowl"))
+        .and_then(|r| r.ok())
+        .unwrap_or_else(|| "bowl".to_string());
+    let Some(resource) = bundled_bell_resource_path(&sound) else {
+        return;
+    };
+    let media = gtk::MediaFile::for_resource(&resource);
+    STARTING_MEDIA.with(|cell| {
+        if let Some(old) = cell.replace(Some(media.clone())) {
+            old.set_playing(false);
+        }
+    });
+    media.set_playing(true);
+}
+
 // ── Internal ──────────────────────────────────────────────────────────────────
 
 fn swap_and_play(media: gtk::MediaFile) {
@@ -117,4 +164,33 @@ fn swap_and_play(media: gtk::MediaFile) {
         }
     });
     media.set_playing(true);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bundled_bell_path_resolves_for_each_known_key() {
+        assert_eq!(
+            bundled_bell_resource_path("bowl"),
+            Some("/io/github/janekbt/Meditate/sounds/bowl.wav".to_string())
+        );
+        assert_eq!(
+            bundled_bell_resource_path("bell"),
+            Some("/io/github/janekbt/Meditate/sounds/bell.wav".to_string())
+        );
+        assert_eq!(
+            bundled_bell_resource_path("gong"),
+            Some("/io/github/janekbt/Meditate/sounds/gong.wav".to_string())
+        );
+    }
+
+    #[test]
+    fn bundled_bell_path_is_none_for_unknown_keys() {
+        assert_eq!(bundled_bell_resource_path("none"), None);
+        assert_eq!(bundled_bell_resource_path(""), None);
+        assert_eq!(bundled_bell_resource_path("custom"), None);
+        assert_eq!(bundled_bell_resource_path("BOWL"), None);
+    }
 }
