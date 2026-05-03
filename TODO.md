@@ -22,12 +22,7 @@ Polish and UX items to tackle when convenient. Graduate each one out of this fil
 
   - **✓ B.3 — Interval bell library.** Landed on `beta` as `63f6b61..9bbf05c` (10 commits). User-managed library with three kinds (Interval with jitter, Fixed-from-start, Fixed-from-end), per-bell sound + enabled flag, master toggle in the timer setup. Adw.NavigationPage shell (list + edit), inline red-trash delete, save-as-you-go. Stopwatch mode greys out fixed-from-end (UI + tick). Concurrent bell playback via `INTERVAL_MEDIA: Vec<MediaFile>` so two cues colliding don't clip each other.
 
-  - **B.4 — Bell library + bundled sounds.**
-    - Land the `bell_sounds` table + the three new event kinds.
-    - Seed 6–10 CC0 bundled bells on first run with stable UUIDs so they sync deduplicated across devices: Tibetan singing bowl (small + large), Zen bell, Burmese/Thai gong, tingsha, Indian brass bell, soft chime/pling. Sourced from freesound.org under CC0; credits in `data/sounds/CREDITS.md`.
-    - Bell chooser as `Adw.NavigationPage` with per-row Play/Stop preview, reachable from every bell-selection row in the timer setup.
-    - Same view added as a new `Adw.PreferencesPage` tab (`Sounds`?) in the Preferences window: delete + rename actions, no selection semantics.
-    - Existing standalone Completion Sound combo + Preferences sound chooser deleted in this same commit.
+  - **✓ B.4 — Bell library.** Landed on `beta` as `46e350c..be8a46a` (8 commits). `bell_sounds` table + 3 sync events + recompute. Seeded with the existing 3 bundled WAVs (bowl/bell/gong) under stable hardcoded UUIDs. `Adw.NavigationPage` chooser used by every bell-fire site (Starting Bell sound, per-interval-bell sound, End Bell), with Play/Stop preview per row. New "Sounds" preferences tab manages the library (rename + delete custom imports). Legacy "Completion Sound" combo deleted; renamed to "End Bell" everywhere for consistency, gated on a master switch like Starting Bell. Stopwatch mode greys out End Bell + fixed-from-end interval bells. Audio-file sourcing for additional CC0 bundles is a separate follow-up; current B.4.x infrastructure makes it a 1-tuple addition to `BUNDLED_BELL_SOUNDS`.
 
   - **B.5 — Custom bell file import.**
     - "Choose your own…" entry at the top of the bell list → `Gtk.FileDialog`.
@@ -41,6 +36,8 @@ Polish and UX items to tackle when convenient. Graduate each one out of this fil
     - New `known_remote_sounds` tracking table (mirrors `known_remote_files`).
     - 10 MB size cap re-enforced on inbound; refuse to pull anything bigger and surface a toast.
     - ~3–4 commits on its own — TDD by the book against `FakeWebDav`.
+
+- **Source 6–10 additional CC0 bundled bells.** B.4 ships the existing 3 WAVs (bowl/bell/gong); the locked plan called for a richer set: Tibetan bowl variants, Zen bell, gong types, tingsha, soft chime. Source from freesound.org under CC0, package in `data/sounds/`, append to `BUNDLED_BELL_SOUNDS` in `src/db/mod.rs` with new stable UUIDs, credits in `data/sounds/CREDITS.md`. Append-only — never reorder or rename existing entries (peer DBs have those UUIDs).
 
 - **Sit-longer mode: keep going past the countdown.** When a countdown reaches 0:00, instead of auto-finishing, switch into open-ended elapsed mode (or just keep the tick going as if stopwatch had been on the whole time). User stops manually when they're done. Interval bells continue firing throughout. Useful for "I planned 30 min but I'm actually settled, give me more". Independent of presets — small change in `tick_running`'s done branch.
 
