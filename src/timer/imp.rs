@@ -492,6 +492,11 @@ impl TimerView {
         // Input panels: only the active mode's inputs are visible.
         self.countdown_inputs.set_visible(mode == TimerMode::Timer);
         self.boxbreath_inputs.set_visible(mode == TimerMode::Breathing);
+        // Starting Bell + Preparation Time apply to Timer mode only —
+        // Box Breathing has its own independent rhythm and start-of-
+        // session cues, so the whole expander goes away when breathing
+        // is active.
+        self.starting_bell_row.set_visible(mode == TimerMode::Timer);
 
         // Each mode keeps its own last-used label. On switch, pull the
         // stored preference (or fall back to the mode-specific default —
@@ -519,6 +524,7 @@ impl TimerView {
         self.boxbreath_inputs.set_sensitive(true);
         self.countdown_inputs.set_visible(mode == TimerMode::Timer);
         self.boxbreath_inputs.set_visible(mode == TimerMode::Breathing);
+        self.starting_bell_row.set_visible(mode == TimerMode::Timer);
         self.countdown_btn.set_sensitive(true);
         self.breathing_btn.set_sensitive(true);
         self.session_group.set_sensitive(true);
@@ -627,13 +633,16 @@ impl TimerView {
         self.timer_state.set(TimerState::Running);
         self.session_start_time.set(unix_now());
 
-        // Starting bell — no-op if the user has the switch off, otherwise
-        // plays the chosen bundled sound through its own STARTING_MEDIA
-        // slot so the end-sound preload stays warm. Prep-time delay
-        // lands in B.2.b and will reschedule this call to fire at the
-        // end of prep instead of at session start.
-        if let Some(app) = self.get_app() {
-            crate::sound::play_starting_sound(&app);
+        // Starting bell — Timer mode only. Box Breathing is treated as
+        // a fully separate thing (no starting bell, no prep-time), so
+        // a stale starting_bell_active=true persisted from a Timer-mode
+        // session can't trigger a bell at the start of a breath
+        // session. Prep-time delay lands in B.2.b and will reschedule
+        // this call to fire at the end of prep instead of immediately.
+        if mode == TimerMode::Timer {
+            if let Some(app) = self.get_app() {
+                crate::sound::play_starting_sound(&app);
+            }
         }
 
         self.tick_mode.set(mode);
