@@ -229,6 +229,13 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
     general_page.add(&presets_group);
     dialog.add(&general_page);
 
+    // ── Sounds page ───────────────────────────────────────────────────────────
+    // Library management for bell_sounds: rename rows, delete custom
+    // imports, preview every entry. Separate from the per-row chooser
+    // (which is selection-mode); same row builder reused via
+    // src/sounds.rs.
+    dialog.add(&crate::sounds::build_sounds_management_page(&app));
+
     // ── Data page ─────────────────────────────────────────────────────────────
 
     let data_page = adw::PreferencesPage::builder()

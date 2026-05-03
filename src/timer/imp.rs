@@ -701,8 +701,44 @@ impl TimerView {
         self.presets_box.set_sensitive(presets_active);
         // Fixed-from-end bells become inert when stopwatch flips on,
         // active again when it flips off — refresh the Manage Bells
-        // subtitle so the count matches what will actually fire.
+        // subtitle so the count matches what will actually fire. End
+        // Bell falls into the same bucket: stopwatch has no end so
+        // the bell can't fire. Override the row to off + insensitive
+        // without touching the persisted setting, so flipping
+        // stopwatch back off restores the user's previous choice.
         self.refresh_interval_bells_count();
+        self.refresh_end_bell_dependent_ui();
+    }
+
+    /// Mute / restore the End Bell row as a function of the
+    /// stopwatch toggle. UI-only override — the persisted
+    /// `end_bell_active` setting stays as the user left it, so
+    /// flipping stopwatch off brings the previous state back. The
+    /// bells_loading guard suppresses the row's own notify handler
+    /// during the programmatic state change.
+    fn refresh_end_bell_dependent_ui(&self) {
+        let stopwatch_on = self.stopwatch_toggle_on.get();
+        let persisted_on = self
+            .get_app()
+            .and_then(|app| {
+                app.with_db(|db| {
+                    db.get_setting("end_bell_active", "true")
+                        .map(|v| v == "true")
+                        .unwrap_or(true)
+                })
+            })
+            .unwrap_or(true);
+        self.bells_loading.set(true);
+        if stopwatch_on {
+            self.end_bell_row.set_enable_expansion(false);
+            self.end_bell_row.set_expanded(false);
+            self.end_bell_row.set_sensitive(false);
+        } else {
+            self.end_bell_row.set_enable_expansion(persisted_on);
+            self.end_bell_row.set_expanded(persisted_on);
+            self.end_bell_row.set_sensitive(true);
+        }
+        self.bells_loading.set(false);
     }
 }
 
@@ -1453,20 +1489,11 @@ impl TimerView {
         // Rebuild preset buttons with the data we already fetched
         self.rebuild_preset_chips(&presets);
 
-        // Restore End Bell master toggle + sound row subtitle. The
-        // bells_loading guard suppresses the toggle's notify handler
-        // so the read-back doesn't re-persist or re-preload.
-        let end_bell_on = app
-            .with_db(|db| {
-                db.get_setting("end_bell_active", "true")
-                    .map(|v| v == "true")
-                    .unwrap_or(true)
-            })
-            .unwrap_or(true);
-        self.bells_loading.set(true);
-        self.end_bell_row.set_enable_expansion(end_bell_on);
-        self.end_bell_row.set_expanded(end_bell_on);
-        self.bells_loading.set(false);
+        // End Bell master toggle is restored by refresh_stopwatch_
+        // dependent_ui above (it calls refresh_end_bell_dependent_ui,
+        // which reads end_bell_active and either applies it or
+        // overrides to off when stopwatch mode is on). Just refresh
+        // the sound-row subtitle here.
         self.refresh_end_bell_sound_subtitle();
 
         // Rebuild setup label combo. The selection comes from the per-mode

@@ -69,6 +69,266 @@ pub fn push_sounds_chooser(
     nav_view.push(&page);
 }
 
+/// Build the "Sounds" preferences-tab page used to manage the
+/// bell-sound library: rename rows, delete custom imports, preview
+/// every entry. Bundled rows can't be deleted but can be renamed.
+/// Same Play/Stop preview as the chooser (rows + buttons share
+/// PREVIEW_MEDIA via mono playback).
+pub fn build_sounds_management_page(app: &MeditateApplication) -> adw::PreferencesPage {
+    let prefs_page = adw::PreferencesPage::builder()
+        .title(gettext("Sounds"))
+        .name("sounds")
+        .icon_name("audio-x-generic-symbolic")
+        .build();
+
+    let group = adw::PreferencesGroup::new();
+    let rows: Rc<std::cell::RefCell<Vec<adw::ActionRow>>> =
+        Rc::new(std::cell::RefCell::new(Vec::new()));
+
+    // Rebuild closure so rename / delete flows can re-render the
+    // group from current DB state. Stored behind the same Rc<RefCell>
+    // pattern bells.rs uses so the closures plumbed into per-row
+    // handlers can fire it without us threading self-referential
+    // generics.
+    let rebuilder: Rc<std::cell::RefCell<Option<Box<dyn Fn()>>>> =
+        Rc::new(std::cell::RefCell::new(None));
+
+    let rebuilder_for_init = rebuilder.clone();
+    let group_for_init = group.clone();
+    let rows_for_init = rows.clone();
+    let app_for_init = app.clone();
+    *rebuilder.borrow_mut() = Some(Box::new(move || {
+        rebuild_management_list(
+            &group_for_init,
+            &rows_for_init,
+            &app_for_init,
+            rebuilder_for_init.clone(),
+        );
+    }));
+
+    if let Some(rb) = rebuilder.borrow().as_ref() {
+        rb();
+    }
+
+    prefs_page.add(&group);
+    prefs_page
+}
+
+fn rebuild_management_list(
+    group: &adw::PreferencesGroup,
+    rows: &Rc<std::cell::RefCell<Vec<adw::ActionRow>>>,
+    app: &MeditateApplication,
+    rebuilder: Rc<std::cell::RefCell<Option<Box<dyn Fn()>>>>,
+) {
+    for row in rows.borrow_mut().drain(..) {
+        group.remove(&row);
+    }
+    let sounds = app
+        .with_db(|db| db.list_bell_sounds())
+        .and_then(|r| r.ok())
+        .unwrap_or_default();
+    for sound in sounds {
+        let row = build_management_row(&sound, app, rebuilder.clone());
+        group.add(&row);
+        rows.borrow_mut().push(row);
+    }
+}
+
+fn build_management_row(
+    sound: &BellSound,
+    app: &MeditateApplication,
+    rebuilder: Rc<std::cell::RefCell<Option<Box<dyn Fn()>>>>,
+) -> adw::ActionRow {
+    let row = adw::ActionRow::builder()
+        .title(&sound.name)
+        .subtitle(if sound.is_bundled {
+            gettext("Bundled")
+        } else {
+            gettext("Custom")
+        })
+        .build();
+
+    // Per-row preview button — same Play/Stop toggle as the chooser.
+    let play_btn = gtk::Button::builder()
+        .icon_name("media-playback-start-symbolic")
+        .tooltip_text(gettext("Preview sound"))
+        .css_classes(["flat", "circular"])
+        .valign(gtk::Align::Center)
+        .build();
+    let path = sound.file_path.clone();
+    let is_bundled = sound.is_bundled;
+    let playing = Rc::new(Cell::new(false));
+    {
+        let playing = playing.clone();
+        let play_btn_clone = play_btn.clone();
+        play_btn.connect_clicked(move |_| {
+            if playing.get() {
+                crate::sound::stop_preview();
+                playing.set(false);
+                play_btn_clone.set_icon_name("media-playback-start-symbolic");
+                return;
+            }
+            let media = crate::sound::play_preview(&path, is_bundled);
+            playing.set(true);
+            play_btn_clone.set_icon_name("media-playback-stop-symbolic");
+            let playing_for_notify = playing.clone();
+            let btn_for_notify = play_btn_clone.clone();
+            media.connect_notify_local(Some("playing"), move |m, _| {
+                if !m.is_playing() && playing_for_notify.get() {
+                    playing_for_notify.set(false);
+                    btn_for_notify.set_icon_name("media-playback-start-symbolic");
+                }
+            });
+        });
+    }
+    row.add_suffix(&play_btn);
+
+    // Rename button — opens an AlertDialog with a text entry.
+    let rename_btn = gtk::Button::builder()
+        .icon_name("document-edit-symbolic")
+        .tooltip_text(gettext("Rename"))
+        .css_classes(["flat", "circular"])
+        .valign(gtk::Align::Center)
+        .build();
+    {
+        let app = app.clone();
+        let uuid = sound.uuid.clone();
+        let row_clone = row.clone();
+        let rebuilder = rebuilder.clone();
+        rename_btn.connect_clicked(move |btn| {
+            present_rename_dialog(btn, &app, &uuid, &row_clone.title(), rebuilder.clone());
+        });
+    }
+    row.add_suffix(&rename_btn);
+
+    // Delete button — only for non-bundled rows. Bundled stay
+    // permanent; the chooser would just re-seed them on next open
+    // anyway, and an accidental tombstone could confuse a peer.
+    if !sound.is_bundled {
+        let delete_btn = gtk::Button::builder()
+            .icon_name("user-trash-symbolic")
+            .tooltip_text(gettext("Delete sound"))
+            .css_classes(["flat", "circular", "destructive-action"])
+            .valign(gtk::Align::Center)
+            .build();
+        let app = app.clone();
+        let uuid = sound.uuid.clone();
+        let rebuilder = rebuilder.clone();
+        delete_btn.connect_clicked(move |btn| {
+            present_delete_dialog(btn, &app, &uuid, rebuilder.clone());
+        });
+        row.add_suffix(&delete_btn);
+    }
+
+    row
+}
+
+fn present_rename_dialog(
+    anchor: &gtk::Button,
+    app: &MeditateApplication,
+    uuid: &str,
+    current_name: &str,
+    rebuilder: Rc<std::cell::RefCell<Option<Box<dyn Fn()>>>>,
+) {
+    let entry = gtk::Entry::builder()
+        .text(current_name)
+        .activates_default(true)
+        .build();
+
+    let dialog = adw::AlertDialog::builder()
+        .heading(gettext("Rename Sound"))
+        .extra_child(&entry)
+        .close_response("cancel")
+        .default_response("rename")
+        .build();
+    dialog.add_response("cancel", &gettext("Cancel"));
+    dialog.add_response("rename", &gettext("Rename"));
+    dialog.set_response_appearance("rename", adw::ResponseAppearance::Suggested);
+
+    // Live validation — gate the Rename button on:
+    //   1. non-empty trimmed name
+    //   2. no other bell-sound row holds the same name (case-insensitive)
+    // The user's own current name is allowed (renaming-to-self is a no-op).
+    let validate: Rc<dyn Fn()> = {
+        let app = app.clone();
+        let uuid = uuid.to_string();
+        let entry = entry.clone();
+        let dialog = dialog.clone();
+        Rc::new(move || {
+            let text = entry.text();
+            let trimmed = text.trim();
+            let lower = trimmed.to_lowercase();
+            let collision = app
+                .with_db(|db| db.list_bell_sounds())
+                .and_then(|r| r.ok())
+                .unwrap_or_default()
+                .into_iter()
+                .any(|s| s.uuid != uuid && s.name.to_lowercase() == lower);
+            let valid = !trimmed.is_empty() && !collision;
+            dialog.set_response_enabled("rename", valid);
+        })
+    };
+    validate();
+    let validate_for_change = validate.clone();
+    entry.connect_changed(move |_| validate_for_change());
+
+    let app = app.clone();
+    let uuid = uuid.to_string();
+    let entry_for_response = entry.clone();
+    dialog.connect_response(None, move |_, id| {
+        if id != "rename" { return; }
+        let new_name = entry_for_response.text().to_string();
+        let trimmed = new_name.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        app.with_db_mut(|db| db.rename_bell_sound(&uuid, trimmed));
+        if let Some(rb) = rebuilder.borrow().as_ref() {
+            rb();
+        }
+    });
+
+    if let Some(root) = anchor.root() {
+        if let Ok(window) = root.downcast::<gtk::Window>() {
+            dialog.present(Some(&window));
+            entry.grab_focus();
+        }
+    }
+}
+
+fn present_delete_dialog(
+    anchor: &gtk::Button,
+    app: &MeditateApplication,
+    uuid: &str,
+    rebuilder: Rc<std::cell::RefCell<Option<Box<dyn Fn()>>>>,
+) {
+    let dialog = adw::AlertDialog::builder()
+        .heading(gettext("Delete Sound?"))
+        .body(gettext("Bells that reference this sound will lose their audio."))
+        .close_response("cancel")
+        .default_response("cancel")
+        .build();
+    dialog.add_response("cancel", &gettext("Cancel"));
+    dialog.add_response("delete", &gettext("Delete"));
+    dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+
+    let app = app.clone();
+    let uuid = uuid.to_string();
+    dialog.connect_response(None, move |_, id| {
+        if id != "delete" { return; }
+        app.with_db_mut(|db| db.delete_bell_sound(&uuid));
+        if let Some(rb) = rebuilder.borrow().as_ref() {
+            rb();
+        }
+    });
+
+    if let Some(root) = anchor.root() {
+        if let Ok(window) = root.downcast::<gtk::Window>() {
+            dialog.present(Some(&window));
+        }
+    }
+}
+
 fn build_sound_row(
     sound: &BellSound,
     current_uuid: Option<&str>,
