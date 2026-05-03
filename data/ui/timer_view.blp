@@ -271,31 +271,35 @@ template $TimerView : Gtk.Widget {
               }
 
               // ── Starting bell + preparation time ───────────────────
-              // Progressive disclosure: each switch's child rows are
-              // rendered only when its parent toggle is on, so the group
-              // stays tidy while the user only cares about the simple
-              // case. Sound list reuses the existing Completion-Sound
-              // model in B.1; the shared library lands in B.4.
-              Adw.SwitchRow starting_bell_row {
+              // Progressive disclosure via nested Adw.ExpanderRow: the
+              // outer switch animates Bell Sound + Preparation Time in
+              // from underneath, and the inner switch animates the
+              // Duration spin in the same way. The inner chevron is
+              // hidden via a one-line override in data/style.css —
+              // libadwaita 1.7 rotates nested chevrons incorrectly
+              // (descendant CSS selector); see the override for the
+              // full story.
+              Adw.ExpanderRow starting_bell_row {
                 title: _("Starting Bell");
                 subtitle: _("Play a bell when the session begins");
-              }
+                show-enable-switch: true;
+                enable-expansion: false;
 
-              Adw.ComboRow starting_bell_sound_row {
-                title: _("Bell Sound");
-                visible: false;
-              }
+                Adw.ComboRow starting_bell_sound_row {
+                  title: _("Bell Sound");
+                }
 
-              Adw.SwitchRow preparation_time_row {
-                title: _("Preparation Time");
-                subtitle: _("Silence before the starting bell");
-                visible: false;
-              }
+                Adw.ExpanderRow preparation_time_row {
+                  title: _("Preparation Time");
+                  subtitle: _("Silence before the starting bell");
+                  show-enable-switch: true;
+                  enable-expansion: false;
 
-              Adw.SpinRow preparation_time_secs_row {
-                title: _("Duration");
-                subtitle: _("Seconds");
-                visible: false;
+                  Adw.SpinRow preparation_time_secs_row {
+                    title: _("Duration");
+                    subtitle: _("Seconds");
+                  }
+                }
               }
 
               Adw.ComboRow setup_sound_row {

@@ -74,9 +74,9 @@ pub struct TimerView {
     #[template_child] pub stop_from_pause_btn:   TemplateChild<gtk::Button>,
     #[template_child] pub session_group:          TemplateChild<adw::PreferencesGroup>,
     #[template_child] pub setup_label_row:        TemplateChild<adw::ComboRow>,
-    #[template_child] pub starting_bell_row:        TemplateChild<adw::SwitchRow>,
+    #[template_child] pub starting_bell_row:        TemplateChild<adw::ExpanderRow>,
     #[template_child] pub starting_bell_sound_row:  TemplateChild<adw::ComboRow>,
-    #[template_child] pub preparation_time_row:     TemplateChild<adw::SwitchRow>,
+    #[template_child] pub preparation_time_row:     TemplateChild<adw::ExpanderRow>,
     #[template_child] pub preparation_time_secs_row:TemplateChild<adw::SpinRow>,
     #[template_child] pub setup_sound_row:        TemplateChild<adw::ComboRow>,
     #[template_child] pub time_unit_label:        TemplateChild<gtk::Label>,
@@ -361,17 +361,18 @@ impl TimerView {
             ),
         );
 
-        // ── Starting Bell switch ─────────────────────────────────────
-        // Toggling reveals/hides the bell-sound combo, the preparation
-        // switch, and (transitively) the prep-seconds spin. The
-        // bells_loading guard suppresses persistence while
-        // `refresh_streak` is restoring the saved state on visit.
-        self.starting_bell_row.connect_active_notify(glib::clone!(
+        // ── Starting Bell expander ───────────────────────────────────
+        // Adw.ExpanderRow drives the slide-down animation itself when
+        // enable-expansion flips. The bells_loading guard suppresses
+        // persistence while `refresh_streak` is restoring the saved
+        // state on visit, so the read-back can't masquerade as a user
+        // toggle and re-write the same value.
+        self.starting_bell_row.connect_enable_expansion_notify(glib::clone!(
             #[weak(rename_to = this)] obj,
             move |row| {
                 let imp = this.imp();
                 if imp.bells_loading.get() { return; }
-                let on = row.is_active();
+                let on = row.enables_expansion();
                 if let Some(app) = imp.get_app() {
                     app.with_db_mut(|db| {
                         let _ = db.set_setting(
@@ -380,7 +381,6 @@ impl TimerView {
                         );
                     });
                 }
-                imp.update_bell_row_visibility();
             }
         ));
 
@@ -407,13 +407,14 @@ impl TimerView {
             ),
         );
 
-        // Preparation Time switch — reveals the seconds SpinRow.
-        self.preparation_time_row.connect_active_notify(glib::clone!(
+        // Preparation Time expander — nested inside the Starting Bell
+        // expander, animates the seconds spin in and out the same way.
+        self.preparation_time_row.connect_enable_expansion_notify(glib::clone!(
             #[weak(rename_to = this)] obj,
             move |row| {
                 let imp = this.imp();
                 if imp.bells_loading.get() { return; }
-                let on = row.is_active();
+                let on = row.enables_expansion();
                 if let Some(app) = imp.get_app() {
                     app.with_db_mut(|db| {
                         let _ = db.set_setting(
@@ -422,7 +423,6 @@ impl TimerView {
                         );
                     });
                 }
-                imp.update_bell_row_visibility();
             }
         ));
 
@@ -462,17 +462,6 @@ impl TimerView {
             5.0, 15.0, 0.0,
         );
         self.preparation_time_secs_row.set_adjustment(Some(&adj));
-    }
-
-    /// Show the bell sub-rows according to the two switches' current
-    /// state. Sound combo + prep switch follow `starting_bell_row`;
-    /// the seconds SpinRow follows the AND of both switches.
-    fn update_bell_row_visibility(&self) {
-        let starting_on = self.starting_bell_row.is_active();
-        let prep_on = self.preparation_time_row.is_active();
-        self.starting_bell_sound_row.set_visible(starting_on);
-        self.preparation_time_row.set_visible(starting_on);
-        self.preparation_time_secs_row.set_visible(starting_on && prep_on);
     }
 }
 
@@ -1103,15 +1092,17 @@ impl TimerView {
         self.stopwatch_loading.set(false);
         self.refresh_stopwatch_dependent_ui();
 
-        // Restore bell-related rows. Same loading-guard pattern: raise
-        // the flag, write all four widgets, drop the flag, then call
-        // update_bell_row_visibility() once with the now-correct state.
+        // Restore bell-related rows. Each ExpanderRow's enable-expansion
+        // flag drives both the persisted state and the slide animation;
+        // the bells_loading guard prevents the program-driven
+        // set_enable_expansion() calls from looking like user toggles
+        // and re-writing the same value.
         let (starting_bell_on, starting_bell_sound, prep_on, prep_secs) = bells;
         self.bells_loading.set(true);
-        self.starting_bell_row.set_active(starting_bell_on);
+        self.starting_bell_row.set_enable_expansion(starting_bell_on);
         // Bell-sound combo — 3 entries (Bowl / Bell / Gong); "no bell"
-        // is encoded by the parent SwitchRow being off. The "Custom file…"
-        // path lands in B.5 with proper plumbing.
+        // is encoded by the parent ExpanderRow's switch being off. The
+        // "Custom file…" path lands in B.5 with proper plumbing.
         let bell_sound_choices = [
             crate::i18n::gettext("Singing bowl"),
             crate::i18n::gettext("Bell"),
@@ -1124,10 +1115,9 @@ impl TimerView {
             "gong" => 2,
             _ => 0,
         });
-        self.preparation_time_row.set_active(prep_on);
+        self.preparation_time_row.set_enable_expansion(prep_on);
         self.preparation_time_secs_row.set_value(prep_secs as f64);
         self.bells_loading.set(false);
-        self.update_bell_row_visibility();
 
         // Update streak label. .streak-chip applies text-transform:
         // uppercase, so we keep the source text sentence-case here.

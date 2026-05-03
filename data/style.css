@@ -332,3 +332,18 @@ button.period-pill:checked {
     background-color: black;
     color: white;
 }
+
+/* Hide the chevron of a nested AdwExpanderRow.
+
+   libadwaita 1.7 (and current main) defines:
+       row.expander:checked image.expander-row-arrow { -gtk-icon-transform: rotate(0turn); ... }
+   That's a descendant selector — when the OUTER expander is checked,
+   the inner expander's chevron also gets the "expanded" rotation
+   regardless of the inner's own state. The inner chevron then looks
+   stuck pointing up. With show-enable-switch=true the chevron is
+   purely decorative anyway — the switch is the toggle — so we just
+   suppress it on the nested row. Drop this rule once libadwaita ships
+   a direct-child selector upstream. */
+row.expander row.expander image.expander-row-arrow {
+    opacity: 0;
+}
