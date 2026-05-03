@@ -76,6 +76,55 @@ impl SessionMode {
     }
 }
 
+/// One configured bell entry in the user's interval-bell library.
+/// All enabled rows fire as bells during a Timer-mode session;
+/// Box Breathing is exempt. Three kinds:
+///
+/// - `Interval` — every `minutes` ± `jitter_pct`% of itself, rerolled
+///   on each ring. A 9-min ±30% bell fires somewhere in 6.3–11.7 min,
+///   never settling into a predictable beat (defeats anticipation).
+/// - `FixedFromStart` — at exactly `minutes` elapsed (e.g., switch
+///   from metta to breath at 10:00). `jitter_pct` is ignored.
+/// - `FixedFromEnd` — at `minutes` before session end (only meaningful
+///   in countdown mode; stopwatch sessions skip these). `jitter_pct`
+///   is ignored.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IntervalBell {
+    pub id: i64,
+    pub uuid: String,
+    pub kind: IntervalBellKind,
+    pub minutes: u32,
+    pub jitter_pct: u32,
+    pub sound: String,
+    pub enabled: bool,
+    pub created_iso: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IntervalBellKind {
+    Interval,
+    FixedFromStart,
+    FixedFromEnd,
+}
+
+impl IntervalBellKind {
+    pub fn as_db_str(self) -> &'static str {
+        match self {
+            IntervalBellKind::Interval => "interval",
+            IntervalBellKind::FixedFromStart => "fixed_from_start",
+            IntervalBellKind::FixedFromEnd => "fixed_from_end",
+        }
+    }
+    pub fn from_db_str(s: &str) -> Option<Self> {
+        match s {
+            "interval" => Some(IntervalBellKind::Interval),
+            "fixed_from_start" => Some(IntervalBellKind::FixedFromStart),
+            "fixed_from_end" => Some(IntervalBellKind::FixedFromEnd),
+            _ => None,
+        }
+    }
+}
+
 /// One entry in the append-only sync event log. A self-contained
 /// description of a state-changing operation — sessions inserted /
 /// updated / deleted, labels renamed, settings changed. Every field
@@ -132,6 +181,25 @@ const SCHEMA: &str = "
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL COLLATE NOCASE UNIQUE,
         uuid TEXT NOT NULL UNIQUE
+    );
+    -- User-managed library of bells fired during a Timer-mode session.
+    -- Three kinds (see IntervalBellKind): periodic with jitter, fixed
+    -- offset from start, fixed offset from end. `enabled` is the
+    -- per-row checkmark — disabled rows stay in the library but don't
+    -- ring. `sound` mirrors the existing bowl/bell/gong vocabulary
+    -- and transitions to a UUID into the bell-sound library in B.4.
+    -- `created_iso` is captured at insert and never updated; it lets
+    -- list views sort newest-first or oldest-first without an extra
+    -- column on the row.
+    CREATE TABLE IF NOT EXISTS interval_bells (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        uuid        TEXT NOT NULL UNIQUE,
+        kind        TEXT NOT NULL CHECK (kind IN ('interval', 'fixed_from_start', 'fixed_from_end')),
+        minutes     INTEGER NOT NULL,
+        jitter_pct  INTEGER NOT NULL DEFAULT 0,
+        sound       TEXT NOT NULL DEFAULT 'bowl',
+        enabled     INTEGER NOT NULL DEFAULT 1,
+        created_iso TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS sessions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -990,6 +1058,85 @@ impl Database {
             )
             .optional()?;
         Ok(id)
+    }
+
+    // ── Interval-bell library ──────────────────────────────────────────
+    // Manages user-configured bells that fire during Timer-mode sessions.
+    // All CRUD ops emit sync events so the library round-trips across
+    // devices the same way labels and sessions do.
+
+    /// Insert a new bell row. Mints a UUID + created_iso, records an
+    /// `interval_bell_insert` event, returns the AUTOINCREMENT rowid.
+    /// `enabled` defaults to true on a fresh insert — the user opts a
+    /// bell out by toggling it off later, not at creation time.
+    pub fn insert_interval_bell(
+        &self,
+        kind: IntervalBellKind,
+        minutes: u32,
+        jitter_pct: u32,
+        sound: &str,
+    ) -> Result<i64> {
+        let tx = self.conn.unchecked_transaction()?;
+        let bell_uuid = uuid::Uuid::new_v4().to_string();
+        let created_iso = chrono::Utc::now().to_rfc3339();
+        self.conn.execute(
+            "INSERT INTO interval_bells
+                (uuid, kind, minutes, jitter_pct, sound, enabled, created_iso)
+             VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6)",
+            params![
+                bell_uuid,
+                kind.as_db_str(),
+                minutes,
+                jitter_pct,
+                sound,
+                created_iso,
+            ],
+        )?;
+        let rowid = self.conn.last_insert_rowid();
+        let payload = serde_json::json!({
+            "uuid": bell_uuid,
+            "kind": kind.as_db_str(),
+            "minutes": minutes,
+            "jitter_pct": jitter_pct,
+            "sound": sound,
+            "enabled": true,
+            "created_iso": created_iso,
+        }).to_string();
+        self.emit_event("interval_bell_insert", &bell_uuid, payload)?;
+        tx.commit()?;
+        Ok(rowid)
+    }
+
+    /// Every bell row in insert order. The B.3.3 list page renders this
+    /// directly. Order is `id ASC` (rowid) — deterministic and stable
+    /// across reads, matches the user's mental model of "first one I
+    /// added is at the top".
+    pub fn list_interval_bells(&self) -> Result<Vec<IntervalBell>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, uuid, kind, minutes, jitter_pct, sound, enabled, created_iso
+             FROM interval_bells
+             ORDER BY id ASC",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                let kind_str: String = row.get(2)?;
+                Ok(IntervalBell {
+                    id: row.get(0)?,
+                    uuid: row.get(1)?,
+                    // The CHECK constraint guarantees only valid strings
+                    // land here. Unwrap with a clear message if a hand-
+                    // edited DB ever sneaks something else through.
+                    kind: IntervalBellKind::from_db_str(&kind_str)
+                        .expect("interval_bells.kind violates CHECK constraint"),
+                    minutes: row.get::<_, i64>(3)? as u32,
+                    jitter_pct: row.get::<_, i64>(4)? as u32,
+                    sound: row.get(5)?,
+                    enabled: row.get::<_, i64>(6)? != 0,
+                    created_iso: row.get(7)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
     }
 
     pub fn count_sessions(&self) -> Result<i64> {
@@ -6589,5 +6736,99 @@ mod tests {
         assert_eq!(s.label_id, None,
             "session keeps its data but loses the label link when the label tombstones");
         assert_eq!(db.get_setting("daily_goal", "x").unwrap(), "20");
+    }
+
+    // ── Interval-bell library ────────────────────────────────────────
+    // Tests pin: enum string round-trip, schema bring-up, and the
+    // base CRUD that the UI list page in B.3.3 will call.
+
+    #[test]
+    fn interval_bell_kind_round_trips_through_db_strings() {
+        assert_eq!(IntervalBellKind::Interval.as_db_str(), "interval");
+        assert_eq!(IntervalBellKind::FixedFromStart.as_db_str(), "fixed_from_start");
+        assert_eq!(IntervalBellKind::FixedFromEnd.as_db_str(), "fixed_from_end");
+        assert_eq!(
+            IntervalBellKind::from_db_str("interval"),
+            Some(IntervalBellKind::Interval)
+        );
+        assert_eq!(
+            IntervalBellKind::from_db_str("fixed_from_start"),
+            Some(IntervalBellKind::FixedFromStart)
+        );
+        assert_eq!(
+            IntervalBellKind::from_db_str("fixed_from_end"),
+            Some(IntervalBellKind::FixedFromEnd)
+        );
+    }
+
+    #[test]
+    fn interval_bell_kind_from_db_str_rejects_unknown() {
+        assert_eq!(IntervalBellKind::from_db_str(""), None);
+        assert_eq!(IntervalBellKind::from_db_str("INTERVAL"), None);
+        assert_eq!(IntervalBellKind::from_db_str("from_start"), None);
+        assert_eq!(IntervalBellKind::from_db_str("garbage"), None);
+    }
+
+    #[test]
+    fn insert_interval_bell_inserts_a_row_with_uuid_and_returns_rowid() {
+        let db = Database::open_in_memory().unwrap();
+        let rowid = db
+            .insert_interval_bell(IntervalBellKind::Interval, 9, 30, "bowl")
+            .unwrap();
+        assert!(rowid > 0);
+        let bells = db.list_interval_bells().unwrap();
+        assert_eq!(bells.len(), 1);
+        let b = &bells[0];
+        assert_eq!(b.id, rowid);
+        assert!(!b.uuid.is_empty(), "uuid is minted at insert");
+        assert_eq!(b.kind, IntervalBellKind::Interval);
+        assert_eq!(b.minutes, 9);
+        assert_eq!(b.jitter_pct, 30);
+        assert_eq!(b.sound, "bowl");
+        assert!(b.enabled, "new bells default to enabled");
+        assert!(!b.created_iso.is_empty());
+    }
+
+    #[test]
+    fn insert_interval_bell_emits_an_interval_bell_insert_event() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_interval_bell(IntervalBellKind::FixedFromStart, 10, 0, "bell")
+            .unwrap();
+        let events = db.pending_events().unwrap();
+        // Schema-init may pre-record device-init events; filter to our kind.
+        let mine: Vec<_> = events
+            .iter()
+            .filter(|(_, e)| e.kind == "interval_bell_insert")
+            .collect();
+        assert_eq!(mine.len(), 1);
+        let payload: serde_json::Value =
+            serde_json::from_str(&mine[0].1.payload).unwrap();
+        assert_eq!(payload["kind"], "fixed_from_start");
+        assert_eq!(payload["minutes"], 10);
+        assert_eq!(payload["jitter_pct"], 0);
+        assert_eq!(payload["sound"], "bell");
+        assert_eq!(payload["enabled"], true);
+        assert!(payload["uuid"].is_string());
+        assert!(payload["created_iso"].is_string());
+    }
+
+    #[test]
+    fn list_interval_bells_returns_rows_in_insert_order() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_interval_bell(IntervalBellKind::Interval, 5, 0, "bowl").unwrap();
+        db.insert_interval_bell(IntervalBellKind::FixedFromStart, 10, 0, "bell").unwrap();
+        db.insert_interval_bell(IntervalBellKind::FixedFromEnd, 5, 0, "gong").unwrap();
+        let bells = db.list_interval_bells().unwrap();
+        assert_eq!(bells.len(), 3);
+        // Insert order — rowid ASC, deterministic.
+        assert_eq!(bells[0].kind, IntervalBellKind::Interval);
+        assert_eq!(bells[1].kind, IntervalBellKind::FixedFromStart);
+        assert_eq!(bells[2].kind, IntervalBellKind::FixedFromEnd);
+    }
+
+    #[test]
+    fn list_interval_bells_returns_empty_when_none_inserted() {
+        let db = Database::open_in_memory().unwrap();
+        assert!(db.list_interval_bells().unwrap().is_empty());
     }
 }
