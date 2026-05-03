@@ -685,6 +685,9 @@ impl Database {
             "label_insert" | "label_rename" | "label_delete" => {
                 self.recompute_label(&event.target_id)?;
             }
+            "interval_bell_insert" | "interval_bell_update" | "interval_bell_delete" => {
+                self.recompute_interval_bell(&event.target_id)?;
+            }
             "setting_changed" => {
                 self.recompute_setting(&event.target_id)?;
             }
@@ -872,6 +875,76 @@ impl Database {
             self.conn.execute(
                 "DELETE FROM labels WHERE uuid = ?1",
                 params![label_uuid],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Recompute the `interval_bells` row for `bell_uuid` from the
+    /// events table. Same precedence rules as labels: tombstone wins
+    /// on tie/precedence, else the highest-(lamport, device_id) mutate
+    /// event drives the row's values. Update events carry every
+    /// mutable field plus created_iso so they're self-sufficient if
+    /// the corresponding insert event hasn't arrived yet.
+    fn recompute_interval_bell(&self, bell_uuid: &str) -> Result<()> {
+        let delete_ts: Option<i64> = self.conn.query_row(
+            "SELECT MAX(lamport_ts) FROM events
+             WHERE target_id = ?1 AND kind = 'interval_bell_delete'",
+            params![bell_uuid],
+            |row| row.get::<_, Option<i64>>(0),
+        )?;
+        let mutate: Option<(i64, String)> = self.conn.query_row(
+            "SELECT lamport_ts, payload FROM events
+             WHERE target_id = ?1
+               AND kind IN ('interval_bell_insert', 'interval_bell_update')
+             ORDER BY lamport_ts DESC, device_id DESC
+             LIMIT 1",
+            params![bell_uuid],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+        ).optional()?;
+
+        let row_should_exist = match (mutate.as_ref(), delete_ts) {
+            (Some(_), None) => true,
+            (None, _) => false,
+            // Delete wins on tie: only mutate > delete keeps the row.
+            (Some((m_ts, _)), Some(d_ts)) => *m_ts > d_ts,
+        };
+
+        if let Some((_, payload)) = mutate.filter(|_| row_should_exist) {
+            let v: serde_json::Value = serde_json::from_str(&payload)
+                .map_err(|e| DbError::Csv(
+                    format!("interval_bell event payload not valid JSON: {e}")))?;
+            let kind = v["kind"].as_str().unwrap_or("interval");
+            let minutes = v["minutes"].as_u64().unwrap_or(0) as u32;
+            let jitter_pct = v["jitter_pct"].as_u64().unwrap_or(0) as u32;
+            let sound = v["sound"].as_str().unwrap_or("bowl");
+            let enabled = v["enabled"].as_bool().unwrap_or(true);
+            let created_iso = v["created_iso"].as_str().unwrap_or_default();
+            self.conn.execute(
+                "INSERT INTO interval_bells
+                    (uuid, kind, minutes, jitter_pct, sound, enabled, created_iso)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT(uuid) DO UPDATE SET
+                    kind        = excluded.kind,
+                    minutes     = excluded.minutes,
+                    jitter_pct  = excluded.jitter_pct,
+                    sound       = excluded.sound,
+                    enabled     = excluded.enabled,
+                    created_iso = excluded.created_iso",
+                params![
+                    bell_uuid,
+                    kind,
+                    minutes,
+                    jitter_pct,
+                    sound,
+                    enabled as i64,
+                    created_iso,
+                ],
+            )?;
+        } else {
+            self.conn.execute(
+                "DELETE FROM interval_bells WHERE uuid = ?1",
+                params![bell_uuid],
             )?;
         }
         Ok(())
@@ -1122,14 +1195,18 @@ impl Database {
         enabled: bool,
     ) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
-        let exists: Option<i64> = self.conn.query_row(
-            "SELECT id FROM interval_bells WHERE uuid = ?1",
+        // Read created_iso so we can include it in the update event —
+        // a peer replaying just this update (its insert event lost or
+        // not yet arrived) needs every field to materialize the row,
+        // and created_iso is not derivable from elsewhere.
+        let created_iso: Option<String> = self.conn.query_row(
+            "SELECT created_iso FROM interval_bells WHERE uuid = ?1",
             params![uuid],
-            |row| row.get::<_, i64>(0),
+            |row| row.get::<_, String>(0),
         ).optional()?;
-        if exists.is_none() {
+        let Some(created_iso) = created_iso else {
             return Ok(());
-        }
+        };
         self.conn.execute(
             "UPDATE interval_bells
                 SET kind = ?1, minutes = ?2, jitter_pct = ?3, sound = ?4, enabled = ?5
@@ -1150,6 +1227,7 @@ impl Database {
             "jitter_pct": jitter_pct,
             "sound": sound,
             "enabled": enabled,
+            "created_iso": created_iso,
         }).to_string();
         self.emit_event("interval_bell_update", uuid, payload)?;
         tx.commit()?;
@@ -7081,5 +7159,175 @@ mod tests {
             serde_json::from_str(&updates[0].1.payload).unwrap();
         assert_eq!(payload["enabled"], false);
         assert_eq!(payload["minutes"], 9);
+    }
+
+    // ── Sync round-trip + tombstone precedence ────────────────────
+    // Mirrors the same shape as the existing apply_event tests for
+    // labels — a peer replays events and ends up at the same row state.
+
+    fn synth_interval_bell_insert(
+        bell_uuid: &str,
+        lamport_ts: i64,
+        device: &str,
+        kind: IntervalBellKind,
+        minutes: u32,
+        jitter_pct: u32,
+        sound: &str,
+    ) -> Event {
+        Event {
+            event_uuid: format!("ev-insert-{bell_uuid}-{lamport_ts}-{device}"),
+            lamport_ts,
+            device_id: device.to_string(),
+            kind: "interval_bell_insert".to_string(),
+            target_id: bell_uuid.to_string(),
+            payload: serde_json::json!({
+                "uuid": bell_uuid,
+                "kind": kind.as_db_str(),
+                "minutes": minutes,
+                "jitter_pct": jitter_pct,
+                "sound": sound,
+                "enabled": true,
+                "created_iso": "2026-05-03T12:00:00Z",
+            }).to_string(),
+        }
+    }
+
+    fn synth_interval_bell_update(
+        bell_uuid: &str,
+        lamport_ts: i64,
+        device: &str,
+        minutes: u32,
+        enabled: bool,
+    ) -> Event {
+        Event {
+            event_uuid: format!("ev-update-{bell_uuid}-{lamport_ts}-{device}"),
+            lamport_ts,
+            device_id: device.to_string(),
+            kind: "interval_bell_update".to_string(),
+            target_id: bell_uuid.to_string(),
+            payload: serde_json::json!({
+                "uuid": bell_uuid,
+                "kind": "interval",
+                "minutes": minutes,
+                "jitter_pct": 0,
+                "sound": "bowl",
+                "enabled": enabled,
+                "created_iso": "2026-05-03T12:00:00Z",
+            }).to_string(),
+        }
+    }
+
+    fn synth_interval_bell_delete(
+        bell_uuid: &str,
+        lamport_ts: i64,
+        device: &str,
+    ) -> Event {
+        Event {
+            event_uuid: format!("ev-delete-{bell_uuid}-{lamport_ts}-{device}"),
+            lamport_ts,
+            device_id: device.to_string(),
+            kind: "interval_bell_delete".to_string(),
+            target_id: bell_uuid.to_string(),
+            payload: serde_json::json!({ "uuid": bell_uuid }).to_string(),
+        }
+    }
+
+    #[test]
+    fn apply_event_interval_bell_insert_creates_the_row() {
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_interval_bell_insert(
+            "bell-1", 5, "dev-A",
+            IntervalBellKind::Interval, 9, 30, "bell",
+        )).unwrap();
+        let bells = db.list_interval_bells().unwrap();
+        assert_eq!(bells.len(), 1);
+        assert_eq!(bells[0].uuid, "bell-1");
+        assert_eq!(bells[0].kind, IntervalBellKind::Interval);
+        assert_eq!(bells[0].minutes, 9);
+        assert_eq!(bells[0].jitter_pct, 30);
+        assert_eq!(bells[0].sound, "bell");
+        assert!(bells[0].enabled);
+    }
+
+    #[test]
+    fn apply_event_interval_bell_update_applies_after_insert() {
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_interval_bell_insert(
+            "bell-1", 5, "dev-A",
+            IntervalBellKind::Interval, 9, 30, "bell",
+        )).unwrap();
+        db.apply_event(&synth_interval_bell_update(
+            "bell-1", 7, "dev-A", 12, false,
+        )).unwrap();
+        let b = &db.list_interval_bells().unwrap()[0];
+        assert_eq!(b.minutes, 12);
+        assert!(!b.enabled);
+    }
+
+    #[test]
+    fn apply_event_interval_bell_delete_removes_the_row() {
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_interval_bell_insert(
+            "bell-1", 5, "dev-A",
+            IntervalBellKind::Interval, 9, 30, "bell",
+        )).unwrap();
+        db.apply_event(&synth_interval_bell_delete("bell-1", 6, "dev-A")).unwrap();
+        assert!(db.list_interval_bells().unwrap().is_empty());
+    }
+
+    #[test]
+    fn apply_event_interval_bell_tombstone_resists_lower_lamport_insert() {
+        // Out-of-order arrival: the delete from device A (lamport 10) lands
+        // on device B before A's earlier insert (lamport 5). Tombstone wins.
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_interval_bell_delete("bell-1", 10, "dev-A")).unwrap();
+        db.apply_event(&synth_interval_bell_insert(
+            "bell-1", 5, "dev-A",
+            IntervalBellKind::Interval, 9, 30, "bell",
+        )).unwrap();
+        assert!(db.list_interval_bells().unwrap().is_empty(),
+            "delete at lamport 10 must outrank insert at lamport 5");
+    }
+
+    #[test]
+    fn apply_event_interval_bell_higher_lamport_update_supersedes_lower_one() {
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_interval_bell_insert(
+            "bell-1", 5, "dev-A",
+            IntervalBellKind::Interval, 9, 30, "bell",
+        )).unwrap();
+        // Two competing updates from different devices.
+        db.apply_event(&synth_interval_bell_update("bell-1", 7, "dev-A", 12, true)).unwrap();
+        db.apply_event(&synth_interval_bell_update("bell-1", 8, "dev-B", 18, true)).unwrap();
+        let b = &db.list_interval_bells().unwrap()[0];
+        assert_eq!(b.minutes, 18, "higher lamport (8 from dev-B) wins over (7 from dev-A)");
+    }
+
+    #[test]
+    fn apply_event_interval_bell_replay_round_trip_across_peers() {
+        // Device A creates + updates; device B replays the event log and
+        // arrives at exactly the same row state.
+        let dev_a = Database::open_in_memory().unwrap();
+        dev_a.insert_interval_bell(IntervalBellKind::Interval, 9, 30, "bell").unwrap();
+        let uuid = dev_a.list_interval_bells().unwrap()[0].uuid.clone();
+        dev_a.update_interval_bell(
+            &uuid, IntervalBellKind::FixedFromStart, 10, 0, "gong", true,
+        ).unwrap();
+
+        let events: Vec<Event> = dev_a.pending_events().unwrap()
+            .into_iter()
+            .filter(|(_, e)| e.kind.starts_with("interval_bell_"))
+            .map(|(_, e)| e)
+            .collect();
+
+        let dev_b = Database::open_in_memory().unwrap();
+        dev_b.replay_events(&events).unwrap();
+        let bells_b = dev_b.list_interval_bells().unwrap();
+        assert_eq!(bells_b.len(), 1);
+        let b = &bells_b[0];
+        assert_eq!(b.uuid, uuid);
+        assert_eq!(b.kind, IntervalBellKind::FixedFromStart);
+        assert_eq!(b.minutes, 10);
+        assert_eq!(b.sound, "gong");
     }
 }
