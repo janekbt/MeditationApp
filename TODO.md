@@ -24,12 +24,7 @@ Polish and UX items to tackle when convenient. Graduate each one out of this fil
 
   - **✓ B.4 — Bell library.** Landed on `beta` as `46e350c..be8a46a` (8 commits). `bell_sounds` table + 3 sync events + recompute. Seeded with the existing 3 bundled WAVs (bowl/bell/gong) under stable hardcoded UUIDs. `Adw.NavigationPage` chooser used by every bell-fire site (Starting Bell sound, per-interval-bell sound, End Bell), with Play/Stop preview per row. New "Sounds" preferences tab manages the library (rename + delete custom imports). Legacy "Completion Sound" combo deleted; renamed to "End Bell" everywhere for consistency, gated on a master switch like Starting Bell. Stopwatch mode greys out End Bell + fixed-from-end interval bells. Audio-file sourcing for additional CC0 bundles is a separate follow-up; current B.4.x infrastructure makes it a 1-tuple addition to `BUNDLED_BELL_SOUNDS`.
 
-  - **B.5 — Custom bell file import.**
-    - "Choose your own…" entry at the top of the bell list → `Gtk.FileDialog`.
-    - 10 MB size cap with toast on rejection.
-    - Confirmation dialog: editable name field + the chosen file's filename as a preview.
-    - Confirm: copy file into `$XDG_DATA_HOME/.../sounds/<uuid>.<ext>`, insert `bell_sounds` row, fire `bell_insert` event.
-    - Local-only at this stage; B.6 makes it sync.
+  - **✓ B.5 — Custom bell file import.** Landed on `beta` as `cc92926`. "Choose your own…" entry in every chooser → `Gtk.FileDialog` → 10 MB cap with toast → confirmation dialog with editable name + live duplicate-validation → copy to `$XDG_DATA_HOME/meditate/sounds/<uuid>.<ext>` + insert `bell_sounds` row. Same commit unified the chooser and Preferences row builder so rename / delete / import are available everywhere a sound list shows up. Local-only — B.6 layers WebDAV file sync on top.
 
   - **B.6 — Bell file sync over WebDAV.**
     - Extend orchestrator: alongside the existing JSON event-log push/pull, push each local-only file to `Meditate/sounds/<uuid>.<ext>` and pull each remote-only file referenced by a `bell_insert` we've ingested.
