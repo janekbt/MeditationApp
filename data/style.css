@@ -46,6 +46,13 @@ button.preset-chip {
     font-variant-numeric: tabular-nums;
 }
 
+/* Accent-coloured check mark next to the currently-selected row in
+   any bell-sound chooser. Distinguishes "this is your active pick"
+   from a normal dim suffix glyph. */
+.selected-check {
+    color: @accent_color;
+}
+
 /* Shared accent-fill for every "selected" state across the app's custom
    toggles and pills. HIG pair: @accent_bg_color + @accent_fg_color. */
 button.mode-toggle-btn:checked,

@@ -35,20 +35,73 @@ const BUNDLED_BELL_SOUNDS: &[(&str, &str, &str, &str)] = &[
     (
         "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0001",
         "Singing Bowl",
-        "/io/github/janekbt/Meditate/sounds/bowl.wav",
-        "audio/wav",
+        "/io/github/janekbt/Meditate/sounds/bowl.ogg",
+        "audio/ogg",
     ),
     (
         "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0002",
         "Bell",
-        "/io/github/janekbt/Meditate/sounds/bell.wav",
-        "audio/wav",
+        "/io/github/janekbt/Meditate/sounds/bell.ogg",
+        "audio/ogg",
     ),
     (
         "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0003",
         "Gong",
-        "/io/github/janekbt/Meditate/sounds/gong.wav",
-        "audio/wav",
+        "/io/github/janekbt/Meditate/sounds/gong.ogg",
+        "audio/ogg",
+    ),
+    // ── B.* expansion: curated meditation-bell library. All OGG/Vorbis,
+    // mono 48 kHz, EBU R128 loudness-normalised to -16 LUFS so the
+    // 0.3 s woodblock click and the 30 s bonshō tail land at comparable
+    // perceived volume. Sources + license attribution in
+    // data/sounds/CREDITS.md.
+    (
+        "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0004",
+        "Tibetan Singing Bowl",
+        "/io/github/janekbt/Meditate/sounds/tibetan-bowl-medium.ogg",
+        "audio/ogg",
+    ),
+    (
+        "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0005",
+        "Inkin",
+        "/io/github/janekbt/Meditate/sounds/inkin.ogg",
+        "audio/ogg",
+    ),
+    (
+        "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0006",
+        "Tingsha",
+        "/io/github/janekbt/Meditate/sounds/tingsha.ogg",
+        "audio/ogg",
+    ),
+    (
+        "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0007",
+        "Bonshō",
+        "/io/github/janekbt/Meditate/sounds/bonsho.ogg",
+        "audio/ogg",
+    ),
+    (
+        "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0008",
+        "Burmese Brass Bell",
+        "/io/github/janekbt/Meditate/sounds/burmese-brass.ogg",
+        "audio/ogg",
+    ),
+    (
+        "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0009",
+        "Chau Gong",
+        "/io/github/janekbt/Meditate/sounds/chau-gong.ogg",
+        "audio/ogg",
+    ),
+    (
+        "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c000a",
+        "Crystal Bowl",
+        "/io/github/janekbt/Meditate/sounds/crystal-bowl.ogg",
+        "audio/ogg",
+    ),
+    (
+        "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c000b",
+        "Woodblock",
+        "/io/github/janekbt/Meditate/sounds/woodblock.ogg",
+        "audio/ogg",
     ),
 ];
 

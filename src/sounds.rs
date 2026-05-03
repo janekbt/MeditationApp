@@ -183,7 +183,7 @@ fn build_sound_row(
     // so adding it first lands it adjacent to the title block.
     if selection.current_uuid.as_deref() == Some(sound.uuid.as_str()) {
         let check = gtk::Image::from_icon_name("object-select-symbolic");
-        check.add_css_class("dim-label");
+        check.add_css_class("selected-check");
         row.add_suffix(&check);
     }
 
@@ -646,6 +646,27 @@ fn transcode_to_ogg(
         .map_err(|e| format!("create filesrc: {e}"))?;
     let decodebin = make("decodebin")?;
     let audioconvert = make("audioconvert")?;
+    // EBU R128 loudness normalisation — same -16 LUFS / 11 LU range /
+    // -1.5 dBTP target the bundled set is encoded at, so an imported
+    // metal singing bowl can't end up twice as loud as a bundled
+    // woodblock click. Optional: the element ships in gst-plugins-bad
+    // and is present in the freedesktop-sdk flatpak runtime we deploy
+    // to, but Debian Trixie's 1.26.2 packages plugins-bad without it.
+    // Falling through silently keeps `cargo run` working on the dev
+    // laptop; the production import path on the phone gets the
+    // normalisation.
+    let audioloudnorm = gst::ElementFactory::make("audioloudnorm")
+        .property("loudness-target", -16.0_f64)
+        .property("loudness-range-target", 11.0_f64)
+        .property("true-peak-target", -1.5_f64)
+        .build()
+        .ok();
+    if audioloudnorm.is_none() {
+        crate::diag::log(
+            "transcode_to_ogg: audioloudnorm element not registered — \
+             skipping loudness-normalisation step",
+        );
+    }
     let audioresample = make("audioresample")?;
     let vorbisenc = gst::ElementFactory::make("vorbisenc")
         .property("quality", 0.4f32)
@@ -657,26 +678,23 @@ fn transcode_to_ogg(
         .build()
         .map_err(|e| format!("create filesink: {e}"))?;
 
+    // Build the post-decodebin chain dynamically so the pipeline
+    // is identical whether or not audioloudnorm is in the registry.
+    let mut chain: Vec<&gst::Element> = vec![&audioconvert];
+    if let Some(ln) = audioloudnorm.as_ref() {
+        chain.push(ln);
+    }
+    chain.extend([&audioresample, &vorbisenc, &oggmux, &filesink]);
+
     pipeline
-        .add_many([
-            &filesrc,
-            &decodebin,
-            &audioconvert,
-            &audioresample,
-            &vorbisenc,
-            &oggmux,
-            &filesink,
-        ])
-        .map_err(|e| e.to_string())?;
+        .add(&filesrc).map_err(|e| e.to_string())?;
+    pipeline
+        .add(&decodebin).map_err(|e| e.to_string())?;
+    for el in &chain {
+        pipeline.add(*el).map_err(|e| e.to_string())?;
+    }
     filesrc.link(&decodebin).map_err(|e| e.to_string())?;
-    gst::Element::link_many([
-        &audioconvert,
-        &audioresample,
-        &vorbisenc,
-        &oggmux,
-        &filesink,
-    ])
-    .map_err(|e| e.to_string())?;
+    gst::Element::link_many(&chain).map_err(|e| e.to_string())?;
 
     // decodebin produces its source pad lazily once the input is
     // typefind-ed, so we link it to audioconvert's sink in pad-added.

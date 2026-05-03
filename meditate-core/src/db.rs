@@ -1629,10 +1629,15 @@ impl Database {
     /// this directly. id ASC keeps bundled rows (which get inserted
     /// first via the seed) at the top of the list.
     pub fn list_bell_sounds(&self) -> Result<Vec<BellSound>> {
+        // Custom imports first (is_bundled = 0), then the curated
+        // bundled set. The chooser places "Choose your own…" at the
+        // very top, then this list — so the user's own imports sit
+        // immediately under the import affordance instead of being
+        // pushed to the bottom of a long bundled list.
         let mut stmt = self.conn.prepare(
             "SELECT id, uuid, name, file_path, is_bundled, mime_type, created_iso
              FROM bell_sounds
-             ORDER BY id ASC",
+             ORDER BY is_bundled ASC, id ASC",
         )?;
         let rows = stmt
             .query_map([], |row| {
