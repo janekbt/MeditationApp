@@ -144,97 +144,29 @@ fn rebuild_chooser_rows(
         .and_then(|r| r.ok())
         .unwrap_or_default();
     for sound in sounds {
-        let row = build_sound_row(&sound, app, rebuilder.clone(), Some(&selection));
+        let row = build_sound_row(&sound, app, rebuilder.clone(), &selection);
         group.add(&row);
         rows.borrow_mut().push(row.upcast());
     }
 }
 
-/// Build the "Sounds" preferences-tab page used to manage the
-/// bell-sound library: rename rows, delete custom imports, preview
-/// every entry. Bundled rows can't be deleted but can be renamed.
-/// Same Play/Stop preview as the chooser (rows + buttons share
-/// PREVIEW_MEDIA via mono playback).
-pub fn build_sounds_management_page(app: &MeditateApplication) -> adw::PreferencesPage {
-    let prefs_page = adw::PreferencesPage::builder()
-        .title(gettext("Sounds"))
-        .name("sounds")
-        .icon_name("audio-x-generic-symbolic")
-        .build();
-
-    let group = adw::PreferencesGroup::new();
-    let rows: Rc<std::cell::RefCell<Vec<adw::ActionRow>>> =
-        Rc::new(std::cell::RefCell::new(Vec::new()));
-
-    // Rebuild closure so rename / delete flows can re-render the
-    // group from current DB state. Stored behind the same Rc<RefCell>
-    // pattern bells.rs uses so the closures plumbed into per-row
-    // handlers can fire it without us threading self-referential
-    // generics.
-    let rebuilder: Rc<std::cell::RefCell<Option<Box<dyn Fn()>>>> =
-        Rc::new(std::cell::RefCell::new(None));
-
-    let rebuilder_for_init = rebuilder.clone();
-    let group_for_init = group.clone();
-    let rows_for_init = rows.clone();
-    let app_for_init = app.clone();
-    *rebuilder.borrow_mut() = Some(Box::new(move || {
-        rebuild_management_list(
-            &group_for_init,
-            &rows_for_init,
-            &app_for_init,
-            rebuilder_for_init.clone(),
-        );
-    }));
-
-    if let Some(rb) = rebuilder.borrow().as_ref() {
-        rb();
-    }
-
-    prefs_page.add(&group);
-    prefs_page
-}
-
-fn rebuild_management_list(
-    group: &adw::PreferencesGroup,
-    rows: &Rc<std::cell::RefCell<Vec<adw::ActionRow>>>,
-    app: &MeditateApplication,
-    rebuilder: Rc<std::cell::RefCell<Option<Box<dyn Fn()>>>>,
-) {
-    for row in rows.borrow_mut().drain(..) {
-        group.remove(&row);
-    }
-    let sounds = app
-        .with_db(|db| db.list_bell_sounds())
-        .and_then(|r| r.ok())
-        .unwrap_or_default();
-    for sound in sounds {
-        // No selection context — Preferences tab is management-only.
-        let row = build_sound_row(&sound, app, rebuilder.clone(), None);
-        group.add(&row);
-        rows.borrow_mut().push(row);
-    }
-}
-
-/// Selection-mode parameters for the unified row builder. `Some`
-/// → the row is tap-to-pick (selection mode used by the chooser);
-/// `None` → no checkmark, no activation (management mode used by
-/// the Preferences Sounds tab).
+/// Selection-mode parameters for the unified row builder. The
+/// chooser tap-picks the row's uuid via `on_selected` and pops the
+/// nav view; `current_uuid` is the entry to mark with a checkmark.
 pub struct SelectionContext {
     pub current_uuid: Option<String>,
     pub on_selected: Rc<dyn Fn(String)>,
     pub nav_view: adw::NavigationView,
 }
 
-/// Unified row builder used by both the chooser and the Preferences
-/// Sounds tab. Every row gets Play/Stop preview, Rename, and (for
-/// non-bundled) Delete. In selection mode the row also carries a
-/// checkmark for the current uuid and a tap-to-pick activation.
+/// Build a sound-library row for the chooser: tap-to-pick body
+/// plus per-row Play/Stop preview, Rename, and (for non-bundled
+/// rows) Delete.
 fn build_sound_row(
     sound: &BellSound,
     app: &MeditateApplication,
     rebuilder: Rc<std::cell::RefCell<Option<Box<dyn Fn()>>>>,
-    selection: Option<&SelectionContext>,
+    selection: &SelectionContext,
 ) -> adw::ActionRow {
     let row = adw::ActionRow::builder()
         .title(&sound.name)
@@ -243,18 +175,16 @@ fn build_sound_row(
         } else {
             gettext("Custom")
         })
-        .activatable(selection.is_some())
+        .activatable(true)
         .build();
 
-    // Selection-mode checkmark. Lives left of the buttons because
-    // suffix order is left→right on the right side, so adding it
-    // first lands it adjacent to the title block.
-    if let Some(ctx) = selection {
-        if ctx.current_uuid.as_deref() == Some(sound.uuid.as_str()) {
-            let check = gtk::Image::from_icon_name("object-select-symbolic");
-            check.add_css_class("dim-label");
-            row.add_suffix(&check);
-        }
+    // Checkmark for the currently-selected row. Lives left of the
+    // buttons because suffix order is left→right on the right side,
+    // so adding it first lands it adjacent to the title block.
+    if selection.current_uuid.as_deref() == Some(sound.uuid.as_str()) {
+        let check = gtk::Image::from_icon_name("object-select-symbolic");
+        check.add_css_class("dim-label");
+        row.add_suffix(&check);
     }
 
     add_play_button(&row, sound);
@@ -266,15 +196,13 @@ fn build_sound_row(
         add_delete_button(&row, sound, app, rebuilder);
     }
 
-    if let Some(ctx) = selection {
-        let uuid = sound.uuid.clone();
-        let on_selected = ctx.on_selected.clone();
-        let nav_view = ctx.nav_view.clone();
-        row.connect_activated(move |_| {
-            on_selected(uuid.clone());
-            nav_view.pop();
-        });
-    }
+    let uuid = sound.uuid.clone();
+    let on_selected = selection.on_selected.clone();
+    let nav_view = selection.nav_view.clone();
+    row.connect_activated(move |_| {
+        on_selected(uuid.clone());
+        nav_view.pop();
+    });
     row
 }
 
