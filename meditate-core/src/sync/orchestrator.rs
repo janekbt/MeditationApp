@@ -26,6 +26,13 @@ use std::fmt;
 /// hanging the sync forever.
 const MAX_429_RETRIES: u32 = 8;
 
+/// Inbound size cap for custom bell-sound files. Mirrors the
+/// import side's outbound cap so a peer pushing a >10MB file (e.g.
+/// uploaded directly via WebDAV outside the app) doesn't bypass the
+/// limit. Refused files are silently skipped on pull and not marked
+/// known, so they retry next round if shrunk / replaced.
+const MAX_CUSTOM_BELL_BYTES: u64 = 10 * 1024 * 1024;
+
 #[derive(Debug)]
 pub enum SyncError {
     WebDav(WebDavError),
@@ -202,6 +209,11 @@ impl<'a, W: WebDav> Sync<'a, W> {
         for batch_uuid in newly_ingested_files {
             self.db.record_known_remote_file(&batch_uuid)?;
         }
+
+        // After event replay, fetch any custom bell-sound audio
+        // files referenced by newly-known bell_sounds rows.
+        self.pull_custom_sound_files()?;
+
         Ok(PullStats { new_events: count })
     }
 
@@ -328,6 +340,70 @@ impl<'a, W: WebDav> Sync<'a, W> {
             Ok(()) | Err(WebDavError::Conflict) => Ok(()),
             Err(e) => Err(e.into()),
         }
+    }
+
+    /// Pull every custom bell-sound audio file referenced by a
+    /// replayed `bell_sound_insert` event whose binary isn't on this
+    /// device yet. GETs from `<base>/sounds/<uuid>.<ext>`, refuses
+    /// anything bigger than the 10 MB cap (the import side enforces
+    /// the same number outbound), and writes the bytes to
+    /// `<sounds_dir>/<uuid>.<ext>`.
+    ///
+    /// Bundled rows are skipped — their audio lives in each device's
+    /// binary via GResource. Files already in the known set are
+    /// skipped (we either pulled them in a prior round or pushed
+    /// them ourselves). NotFound on GET is treated as transient
+    /// (peer probably pushed the event but their file PUT slipped
+    /// past) and skipped; the next pull will retry.
+    fn pull_custom_sound_files(&self) -> SyncResult<usize> {
+        let known = self.db.known_remote_sound_uuids()?;
+        let bells = self.db.list_bell_sounds()?;
+        let pending: Vec<crate::db::BellSound> = bells
+            .into_iter()
+            .filter(|b| !b.is_bundled && !known.contains(&b.uuid))
+            .collect();
+        if pending.is_empty() {
+            return Ok(0);
+        }
+        // Make sure the local target dir exists once before iterating.
+        if let Err(e) = std::fs::create_dir_all(&self.sounds_dir) {
+            return Err(SyncError::InvalidEvent(
+                format!("can't create local sounds dir: {e}")));
+        }
+        let mut pulled = 0;
+        for bell in pending {
+            let ext = bell.extension();
+            let local = self.sound_local_path(&bell.uuid, ext);
+            if local.exists() {
+                // We have the file already (e.g., we authored the
+                // row locally, the file was copied in by the import
+                // flow, but we never marked it known because we
+                // hadn't yet pushed). Mark it known so subsequent
+                // sync rounds skip the GET.
+                self.db.record_known_remote_sound(&bell.uuid)?;
+                continue;
+            }
+            let remote = self.sound_remote_path(&bell.uuid, ext);
+            let bytes = match self.webdav.get(&remote) {
+                Ok(b) => b,
+                Err(WebDavError::NotFound) => continue,
+                Err(e) => return Err(e.into()),
+            };
+            // 10 MB cap mirrors the import side. Drop oversized
+            // payloads silently — don't mark them known so a future
+            // sync (after the user shrinks / replaces the file)
+            // can retry.
+            if bytes.len() as u64 > MAX_CUSTOM_BELL_BYTES {
+                continue;
+            }
+            if let Err(e) = std::fs::write(&local, &bytes) {
+                return Err(SyncError::InvalidEvent(
+                    format!("can't write sound file {local:?}: {e}")));
+            }
+            self.db.record_known_remote_sound(&bell.uuid)?;
+            pulled += 1;
+        }
+        Ok(pulled)
     }
 
     /// Push every local custom bell-sound audio file that isn't yet
@@ -1322,6 +1398,122 @@ mod tests {
         );
         assert!(!db.known_remote_sound_uuids().unwrap().contains(&uuid),
             "row must NOT be marked known when its file wasn't actually uploaded");
+    }
+
+    // ── B.6.3: Pull side for custom bell-sound audio files ──────────────
+
+    #[test]
+    fn pull_downloads_custom_sound_file_referenced_by_replayed_event() {
+        // Source device imports a custom sound + pushes events + file.
+        // Peer pulls: replays the bell_sound_insert event, then GETs
+        // the audio file and saves it to the canonical local path.
+        let (db_src, fs) = setup();
+        let tmp_src = tempfile::tempdir().unwrap();
+        let uuid = seed_custom_bell_sound(&db_src, tmp_src.path(), "Custom A", b"AUDIO", "wav");
+        Sync::new(&db_src, &fs, "Meditate", tmp_src.path().to_path_buf())
+            .push().unwrap();
+
+        // Peer side — fresh DB, fresh sounds dir.
+        let db_peer = Database::open_in_memory().unwrap();
+        let tmp_peer = tempfile::tempdir().unwrap();
+        Sync::new(&db_peer, &fs, "Meditate", tmp_peer.path().to_path_buf())
+            .pull().unwrap();
+
+        // Bell-sound row replicated.
+        let peer_sounds = db_peer.list_bell_sounds().unwrap();
+        assert_eq!(peer_sounds.len(), 1);
+        assert_eq!(peer_sounds[0].uuid, uuid);
+
+        // Audio file landed at the peer's canonical path.
+        let local = tmp_peer.path().join(format!("{uuid}.wav"));
+        assert!(local.exists(), "expected file at {local:?}");
+        assert_eq!(std::fs::read(&local).unwrap(), b"AUDIO");
+
+        // Recorded as known.
+        assert!(db_peer.known_remote_sound_uuids().unwrap().contains(&uuid));
+    }
+
+    #[test]
+    fn pull_skips_already_known_sound_files() {
+        // After a successful pull marks a file known, the next pull
+        // round shouldn't re-GET it. Simulates the steady-state sync
+        // loop where most pulls do no file work.
+        let (db_src, fs) = setup();
+        let tmp_src = tempfile::tempdir().unwrap();
+        let uuid = seed_custom_bell_sound(&db_src, tmp_src.path(), "Custom", b"AUDIO", "wav");
+        Sync::new(&db_src, &fs, "Meditate", tmp_src.path().to_path_buf())
+            .push().unwrap();
+
+        let db_peer = Database::open_in_memory().unwrap();
+        let tmp_peer = tempfile::tempdir().unwrap();
+        Sync::new(&db_peer, &fs, "Meditate", tmp_peer.path().to_path_buf())
+            .pull().unwrap();
+        // Delete the local file to prove the second pull skips the
+        // GET (if it didn't, the file would be re-created).
+        std::fs::remove_file(tmp_peer.path().join(format!("{uuid}.wav"))).unwrap();
+        Sync::new(&db_peer, &fs, "Meditate", tmp_peer.path().to_path_buf())
+            .pull().unwrap();
+
+        // File NOT re-pulled — known set already covered it.
+        assert!(!tmp_peer.path().join(format!("{uuid}.wav")).exists());
+    }
+
+    #[test]
+    fn pull_skips_bundled_sounds() {
+        // Bundled sounds ride the event log (rows replicate) but the
+        // audio files live in each device's binary — pull must not
+        // try to GET them.
+        let (db_src, fs) = setup();
+        let tmp_src = tempfile::tempdir().unwrap();
+        db_src.insert_bell_sound_with_uuid(
+            "bundled-1",
+            "Bowl",
+            "/io/github/janekbt/Meditate/sounds/bowl.wav",
+            true,
+            "audio/wav",
+        ).unwrap();
+        Sync::new(&db_src, &fs, "Meditate", tmp_src.path().to_path_buf())
+            .push().unwrap();
+
+        let db_peer = Database::open_in_memory().unwrap();
+        let tmp_peer = tempfile::tempdir().unwrap();
+        Sync::new(&db_peer, &fs, "Meditate", tmp_peer.path().to_path_buf())
+            .pull().unwrap();
+
+        // No file written for the bundled row.
+        assert!(
+            !tmp_peer.path().join("bundled-1.wav").exists(),
+            "bundled rows must not produce a local file pull",
+        );
+    }
+
+    #[test]
+    fn pull_drops_files_over_10mb_cap() {
+        // Inbound size cap mirrors the import side. A peer that
+        // somehow pushed a >10MB file (maybe via direct WebDAV
+        // upload outside the app) should NOT have it land locally.
+        let (db_src, fs) = setup();
+        let tmp_src = tempfile::tempdir().unwrap();
+        let big = vec![0u8; (10 * 1024 * 1024) + 1];
+        let uuid = seed_custom_bell_sound(&db_src, tmp_src.path(), "Big", &big, "wav");
+        Sync::new(&db_src, &fs, "Meditate", tmp_src.path().to_path_buf())
+            .push().unwrap();
+
+        let db_peer = Database::open_in_memory().unwrap();
+        let tmp_peer = tempfile::tempdir().unwrap();
+        Sync::new(&db_peer, &fs, "Meditate", tmp_peer.path().to_path_buf())
+            .pull().unwrap();
+
+        // Row replicated but the file isn't saved.
+        assert!(!db_peer.list_bell_sounds().unwrap().is_empty());
+        assert!(
+            !tmp_peer.path().join(format!("{uuid}.wav")).exists(),
+            "10MB+ file must be dropped on pull",
+        );
+        // Mark the uuid known? No — a future pull might try again
+        // when the user reduces the file. Don't record known unless
+        // the file actually landed.
+        assert!(!db_peer.known_remote_sound_uuids().unwrap().contains(&uuid));
     }
 
     #[test]
