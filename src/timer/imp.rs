@@ -639,6 +639,10 @@ impl TimerView {
         }
         let presets_active = !self.stopwatch_toggle_on.get();
         self.presets_box.set_sensitive(presets_active);
+        // Fixed-from-end bells become inert when stopwatch flips on,
+        // active again when it flips off — refresh the Manage Bells
+        // subtitle so the count matches what will actually fire.
+        self.refresh_interval_bells_count();
     }
 }
 
@@ -1283,6 +1287,13 @@ impl TimerView {
                     .unwrap_or_default()
                     .into_iter()
                     .filter(|b| b.enabled)
+                    // Stopwatch mode mutes fixed-from-end bells — no
+                    // end to count backwards from. The persisted
+                    // enabled flag stays untouched (returns when
+                    // stopwatch flips off); the UI subtitle just
+                    // reflects what will actually fire right now.
+                    .filter(|b| !(stopwatch_on
+                        && b.kind == meditate_core::db::IntervalBellKind::FixedFromEnd))
                     .count();
                 (
                     streak,
@@ -1747,8 +1758,16 @@ impl TimerView {
             .get_app()
             .and_then(|app| {
                 app.with_db(|db| {
+                    let stopwatch_on = db
+                        .get_setting("stopwatch_mode_active", "false")
+                        .map(|v| v == "true")
+                        .unwrap_or(false);
                     db.list_interval_bells()
-                        .map(|bells| bells.into_iter().filter(|b| b.enabled).count())
+                        .map(|bells| bells.into_iter()
+                            .filter(|b| b.enabled)
+                            .filter(|b| !(stopwatch_on
+                                && b.kind == meditate_core::db::IntervalBellKind::FixedFromEnd))
+                            .count())
                         .unwrap_or(0)
                 })
             })

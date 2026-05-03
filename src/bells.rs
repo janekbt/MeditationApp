@@ -52,28 +52,45 @@ where F: Fn() + Clone + 'static,
         .child(&toolbar)
         .build();
 
-    let rebuild = {
-        let group = group.clone();
-        let app = app.clone();
-        let rows = rows.clone();
-        let on_changed = on_changed.clone();
-        move || rebuild_list(&group, &rows, &app, on_changed.clone())
-    };
+    // Shared "rebuild + on_changed" closure stored behind a RefCell so
+    // both the add button and the edit-page callback can fire it
+    // without us having to thread Clone through a self-referential
+    // type. Set once below after the per-row handlers are built.
+    let rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>> =
+        Rc::new(RefCell::new(None));
 
-    let rebuild_for_add = rebuild.clone();
+    let rebuilder_for_add = rebuilder.clone();
     let app_for_add = app.clone();
-    let on_changed_for_add = on_changed.clone();
     add_btn.connect_clicked(move |_| {
         // Insert a sensible default — every 5 min, no jitter, bowl. The
-        // user dials it in via the edit page (lands in B.3.3.B).
+        // user dials it in via the edit page.
         app_for_add.with_db_mut(|db| {
             db.insert_interval_bell(IntervalBellKind::Interval, 5, 0, "bowl")
         });
-        rebuild_for_add();
-        on_changed_for_add();
+        if let Some(rb) = rebuilder_for_add.borrow().as_ref() {
+            rb();
+        }
     });
 
-    rebuild();
+    let rebuilder_for_init = rebuilder.clone();
+    let nav_view_clone = nav_view.clone();
+    let app_clone = app.clone();
+    let on_changed_clone = on_changed.clone();
+    *rebuilder.borrow_mut() = Some(Box::new(move || {
+        rebuild_list(
+            &group,
+            &rows,
+            &app_clone,
+            &nav_view_clone,
+            rebuilder_for_init.clone(),
+            on_changed_clone.clone(),
+        );
+        on_changed_clone();
+    }));
+
+    if let Some(rb) = rebuilder.borrow().as_ref() {
+        rb();
+    }
     nav_view.push(&page);
 }
 
@@ -81,17 +98,31 @@ where F: Fn() + Clone + 'static,
 /// state. Called on initial push and after an add. Per-row Switch
 /// toggles call `set_interval_bell_enabled` directly so they don't
 /// need a rebuild.
-fn rebuild_list<F>(
+type Rebuilder = Rc<RefCell<Option<Box<dyn Fn()>>>>;
+
+fn rebuild_list(
     group: &adw::PreferencesGroup,
     rows: &Rc<RefCell<Vec<adw::ActionRow>>>,
     app: &MeditateApplication,
-    on_changed: F,
-)
-where F: Fn() + Clone + 'static,
-{
+    nav_view: &adw::NavigationView,
+    rebuilder: Rebuilder,
+    on_changed: impl Fn() + Clone + 'static,
+) {
     for row in rows.borrow_mut().drain(..) {
         group.remove(&row);
     }
+
+    // Stopwatch mode disables fixed-from-end bells (no end to count
+    // backwards from). The bell library is global, so we override the
+    // visual switch state without writing to the DB — flipping
+    // stopwatch off restores the user's persisted enabled flag.
+    let stopwatch_on = app
+        .with_db(|db| {
+            db.get_setting("stopwatch_mode_active", "false")
+                .map(|v| v == "true")
+                .unwrap_or(false)
+        })
+        .unwrap_or(false);
 
     let bells = app
         .with_db(|db| db.list_interval_bells())
@@ -106,45 +137,141 @@ where F: Fn() + Clone + 'static,
     }
 
     for bell in bells {
-        let row = build_bell_row(&bell, app, on_changed.clone());
+        let row = build_bell_row(
+            &bell,
+            app,
+            nav_view,
+            rebuilder.clone(),
+            on_changed.clone(),
+            stopwatch_on,
+        );
         group.add(&row);
         rows.borrow_mut().push(row);
     }
 }
 
-fn build_bell_row<F>(
+fn build_bell_row(
     bell: &IntervalBell,
     app: &MeditateApplication,
-    on_changed: F,
-) -> adw::ActionRow
-where F: Fn() + Clone + 'static,
-{
+    nav_view: &adw::NavigationView,
+    rebuilder: Rebuilder,
+    on_changed: impl Fn() + Clone + 'static,
+    stopwatch_on: bool,
+) -> adw::ActionRow {
     let row = adw::ActionRow::builder()
         .title(bell_title(bell))
         .subtitle(sound_label(&bell.sound))
+        .activatable(true)
         .build();
 
+    // Fixed-from-end bells are inert in stopwatch mode (no end to
+    // count backwards from). Switch shows OFF + insensitive without
+    // touching the persisted enabled flag — the user's previous
+    // intent comes back as soon as stopwatch flips off.
+    let inert = stopwatch_on && bell.kind == IntervalBellKind::FixedFromEnd;
     let switch = gtk::Switch::builder()
-        .active(bell.enabled)
+        .active(bell.enabled && !inert)
+        .sensitive(!inert)
         .valign(gtk::Align::Center)
         .build();
 
-    // Toggle persists immediately. The bells_loading-style guards
-    // aren't needed here because the rebuild path doesn't drive these
-    // switches — it tears down the rows entirely and rebuilds.
-    let bell_uuid = bell.uuid.clone();
+    // Toggle persists immediately. No list rebuild needed for an
+    // enabled flip — the row's title/subtitle don't change, only the
+    // count subtitle on the timer setup page.
+    let bell_uuid_for_toggle = bell.uuid.clone();
     let app_for_toggle = app.clone();
     let on_changed_for_toggle = on_changed.clone();
     switch.connect_active_notify(move |s| {
         app_for_toggle.with_db_mut(|db| {
-            db.set_interval_bell_enabled(&bell_uuid, s.is_active())
+            db.set_interval_bell_enabled(&bell_uuid_for_toggle, s.is_active())
         });
         on_changed_for_toggle();
     });
-
     row.add_suffix(&switch);
-    row.set_activatable_widget(Some(&switch));
+
+    // Inline delete: small icon-only destructive button next to the
+    // switch. Same confirmation dialog the edit page uses.
+    // .destructive-action on a flat button tints just the symbolic
+    // icon red via libadwaita's currentColor — no red background fill,
+    // which would be too loud on a list row that's mostly chrome.
+    let delete_btn = gtk::Button::builder()
+        .icon_name("user-trash-symbolic")
+        .tooltip_text(gettext("Delete bell"))
+        .css_classes(["flat", "circular", "destructive-action"])
+        .valign(gtk::Align::Center)
+        .build();
+    let bell_uuid_for_del = bell.uuid.clone();
+    let app_for_del = app.clone();
+    let rebuilder_for_del = rebuilder.clone();
+    let on_changed_for_del = on_changed.clone();
+    let row_for_del = row.clone();
+    delete_btn.connect_clicked(move |_| {
+        confirm_and_delete(
+            &row_for_del,
+            &app_for_del,
+            &bell_uuid_for_del,
+            rebuilder_for_del.clone(),
+            on_changed_for_del.clone(),
+        );
+    });
+    row.add_suffix(&delete_btn);
+    // No set_activatable_widget — we want a tap on the row body to
+    // emit `activated` and push the edit page; taps on the switch
+    // and delete button handle themselves as their own widgets.
+
+    let bell_uuid_for_edit = bell.uuid.clone();
+    let app_for_edit = app.clone();
+    let nav_view_for_edit = nav_view.clone();
+    let rebuilder_for_edit = rebuilder.clone();
+    let on_changed_for_edit = on_changed.clone();
+    row.connect_activated(move |_| {
+        push_edit_page(
+            &nav_view_for_edit,
+            &app_for_edit,
+            &bell_uuid_for_edit,
+            rebuilder_for_edit.clone(),
+            on_changed_for_edit.clone(),
+        );
+    });
     row
+}
+
+/// Shared deletion dialog used by the inline trash button on each
+/// list row. Mirrors the edit-page delete flow but lives at the list
+/// level so the confirmation can present against the list-page root.
+fn confirm_and_delete(
+    anchor: &adw::ActionRow,
+    app: &MeditateApplication,
+    bell_uuid: &str,
+    rebuilder: Rebuilder,
+    on_changed: impl Fn() + Clone + 'static,
+) {
+    let dialog = adw::AlertDialog::builder()
+        .heading(gettext("Delete Bell?"))
+        .body(gettext("This bell will no longer ring during sessions."))
+        .close_response("cancel")
+        .default_response("cancel")
+        .build();
+    dialog.add_response("cancel", &gettext("Cancel"));
+    dialog.add_response("delete", &gettext("Delete"));
+    dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+
+    let app = app.clone();
+    let uuid = bell_uuid.to_string();
+    let rebuilder = rebuilder.clone();
+    let on_changed = on_changed.clone();
+    dialog.connect_response(None, move |_, id| {
+        if id != "delete" { return; }
+        app.with_db_mut(|db| db.delete_interval_bell(&uuid));
+        if let Some(rb) = rebuilder.borrow().as_ref() { rb(); }
+        on_changed();
+    });
+
+    if let Some(root) = anchor.root() {
+        if let Ok(window) = root.downcast::<gtk::Window>() {
+            dialog.present(Some(&window));
+        }
+    }
 }
 
 fn empty_state_row() -> adw::ActionRow {
@@ -184,6 +311,252 @@ fn sound_label(sound: &str) -> String {
         "gong" => gettext("Gong"),
         other => other.to_string(),
     }
+}
+
+/// Edit page for one bell — pushed when the user taps a row in the
+/// list. Save-as-you-go: every field change persists immediately
+/// (with a populating-style guard during the initial load) and fires
+/// the same rebuilder/on_changed pipeline so the list page and the
+/// timer setup's subtitle stay in sync. Delete asks for confirmation
+/// via Adw.AlertDialog and pops the page on confirm.
+fn push_edit_page(
+    nav_view: &adw::NavigationView,
+    app: &MeditateApplication,
+    bell_uuid: &str,
+    rebuilder: Rebuilder,
+    on_changed: impl Fn() + Clone + 'static,
+) {
+    // Resolve the bell. If it's gone (raced with a delete from a peer
+    // sync, say), bail silently — pushing an edit page for a row that
+    // no longer exists would just confuse the user.
+    let Some(bell) = lookup_bell(app, bell_uuid) else {
+        return;
+    };
+
+    let prefs_page = adw::PreferencesPage::new();
+
+    // ── Form group ─────────────────────────────────────────────────
+    let form = adw::PreferencesGroup::new();
+
+    // Kind combo — three entries matching IntervalBellKind. The user-
+    // facing strings are gettext'd.
+    let kind_choices = [
+        gettext("Every N minutes"),
+        gettext("At time from start"),
+        gettext("Before end"),
+    ];
+    let kind_refs: Vec<&str> = kind_choices.iter().map(|s| s.as_str()).collect();
+    let kind_row = adw::ComboRow::builder()
+        .title(gettext("Kind"))
+        .model(&gtk::StringList::new(&kind_refs))
+        .selected(match bell.kind {
+            IntervalBellKind::Interval => 0,
+            IntervalBellKind::FixedFromStart => 1,
+            IntervalBellKind::FixedFromEnd => 2,
+        })
+        .build();
+    form.add(&kind_row);
+
+    // Minutes spinner — common to all kinds; semantic shifts with kind.
+    let minutes_row = adw::SpinRow::builder()
+        .title(gettext("Minutes"))
+        .adjustment(&gtk::Adjustment::new(
+            bell.minutes as f64, 1.0, 120.0, 1.0, 5.0, 0.0,
+        ))
+        .build();
+    form.add(&minutes_row);
+
+    // Jitter spinner — only meaningful for the Interval kind. Visible
+    // gates on kind below.
+    let jitter_row = adw::SpinRow::builder()
+        .title(gettext("Jitter"))
+        .subtitle(gettext("Percent — randomises the next ring"))
+        .adjustment(&gtk::Adjustment::new(
+            bell.jitter_pct as f64, 0.0, 50.0, 5.0, 10.0, 0.0,
+        ))
+        .visible(bell.kind == IntervalBellKind::Interval)
+        .build();
+    form.add(&jitter_row);
+
+    // Sound combo — same 3-entry vocabulary as Starting Bell.
+    let sound_choices = [
+        gettext("Singing bowl"),
+        gettext("Bell"),
+        gettext("Gong"),
+    ];
+    let sound_refs: Vec<&str> = sound_choices.iter().map(|s| s.as_str()).collect();
+    let sound_row = adw::ComboRow::builder()
+        .title(gettext("Sound"))
+        .model(&gtk::StringList::new(&sound_refs))
+        .selected(match bell.sound.as_str() {
+            "bell" => 1,
+            "gong" => 2,
+            _ => 0,
+        })
+        .build();
+    form.add(&sound_row);
+
+    prefs_page.add(&form);
+
+    // ── Delete group ───────────────────────────────────────────────
+    let delete_group = adw::PreferencesGroup::new();
+    let delete_btn = gtk::Button::builder()
+        .label(gettext("Delete Bell"))
+        .css_classes(["destructive-action", "pill"])
+        .halign(gtk::Align::Center)
+        .margin_top(12)
+        .build();
+    delete_group.add(&delete_btn);
+    prefs_page.add(&delete_group);
+
+    // ── Page chrome ────────────────────────────────────────────────
+    let header = adw::HeaderBar::builder().show_back_button(true).build();
+    let toolbar = adw::ToolbarView::new();
+    toolbar.add_top_bar(&header);
+    toolbar.set_content(Some(&prefs_page));
+    let page = adw::NavigationPage::builder()
+        .tag("interval-bell-edit")
+        .title(gettext("Edit Bell"))
+        .child(&toolbar)
+        .build();
+
+    // ── Save-as-you-go wiring ──────────────────────────────────────
+    // Snapshot of the current bell's state lives behind a RefCell so
+    // each per-field handler reads the OTHER fields without re-querying
+    // the DB. Updated whenever a handler writes back.
+    let snapshot = Rc::new(RefCell::new(bell));
+    let populating = Rc::new(std::cell::Cell::new(false));
+
+    fn write_back(
+        app: &MeditateApplication,
+        snap: &Rc<RefCell<IntervalBell>>,
+        rebuilder: &Rebuilder,
+        on_changed: &(impl Fn() + Clone + 'static),
+    ) {
+        let s = snap.borrow();
+        app.with_db_mut(|db| {
+            db.update_interval_bell(
+                &s.uuid, s.kind, s.minutes, s.jitter_pct, &s.sound, s.enabled,
+            )
+        });
+        if let Some(rb) = rebuilder.borrow().as_ref() {
+            rb();
+        }
+        on_changed();
+    }
+
+    // Kind changes also flip jitter row visibility.
+    let snap_for_kind = snapshot.clone();
+    let app_for_kind = app.clone();
+    let rebuilder_for_kind = rebuilder.clone();
+    let on_changed_for_kind = on_changed.clone();
+    let jitter_row_clone = jitter_row.clone();
+    let populating_for_kind = populating.clone();
+    kind_row.connect_selected_notify(move |row| {
+        if populating_for_kind.get() { return; }
+        let new_kind = match row.selected() {
+            1 => IntervalBellKind::FixedFromStart,
+            2 => IntervalBellKind::FixedFromEnd,
+            _ => IntervalBellKind::Interval,
+        };
+        snap_for_kind.borrow_mut().kind = new_kind;
+        jitter_row_clone.set_visible(new_kind == IntervalBellKind::Interval);
+        write_back(&app_for_kind, &snap_for_kind, &rebuilder_for_kind, &on_changed_for_kind);
+    });
+
+    let snap_for_min = snapshot.clone();
+    let app_for_min = app.clone();
+    let rebuilder_for_min = rebuilder.clone();
+    let on_changed_for_min = on_changed.clone();
+    let populating_for_min = populating.clone();
+    minutes_row.connect_notify_local(Some("value"), move |row, _| {
+        if populating_for_min.get() { return; }
+        snap_for_min.borrow_mut().minutes = row.value().round().max(1.0) as u32;
+        write_back(&app_for_min, &snap_for_min, &rebuilder_for_min, &on_changed_for_min);
+    });
+
+    let snap_for_jitter = snapshot.clone();
+    let app_for_jitter = app.clone();
+    let rebuilder_for_jitter = rebuilder.clone();
+    let on_changed_for_jitter = on_changed.clone();
+    let populating_for_jitter = populating.clone();
+    jitter_row.connect_notify_local(Some("value"), move |row, _| {
+        if populating_for_jitter.get() { return; }
+        snap_for_jitter.borrow_mut().jitter_pct = row.value().round().clamp(0.0, 50.0) as u32;
+        write_back(&app_for_jitter, &snap_for_jitter, &rebuilder_for_jitter, &on_changed_for_jitter);
+    });
+
+    let snap_for_sound = snapshot.clone();
+    let app_for_sound = app.clone();
+    let rebuilder_for_sound = rebuilder.clone();
+    let on_changed_for_sound = on_changed.clone();
+    let populating_for_sound = populating.clone();
+    sound_row.connect_selected_notify(move |row| {
+        if populating_for_sound.get() { return; }
+        let s = match row.selected() {
+            1 => "bell",
+            2 => "gong",
+            _ => "bowl",
+        };
+        snap_for_sound.borrow_mut().sound = s.to_string();
+        write_back(&app_for_sound, &snap_for_sound, &rebuilder_for_sound, &on_changed_for_sound);
+    });
+
+    // ── Delete ────────────────────────────────────────────────────
+    let app_for_delete = app.clone();
+    let bell_uuid = bell_uuid.to_string();
+    let nav_view_for_delete = nav_view.clone();
+    let rebuilder_for_delete = rebuilder.clone();
+    let on_changed_for_delete = on_changed.clone();
+    let page_for_delete = page.clone();
+    delete_btn.connect_clicked(move |_| {
+        let dialog = adw::AlertDialog::builder()
+            .heading(gettext("Delete Bell?"))
+            .body(gettext("This bell will no longer ring during sessions."))
+            .close_response("cancel")
+            .default_response("cancel")
+            .build();
+        dialog.add_response("cancel", &gettext("Cancel"));
+        dialog.add_response("delete", &gettext("Delete"));
+        dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+
+        let app = app_for_delete.clone();
+        let uuid = bell_uuid.clone();
+        let nav_view = nav_view_for_delete.clone();
+        let rebuilder = rebuilder_for_delete.clone();
+        let on_changed = on_changed_for_delete.clone();
+        let _page_ref = page_for_delete.clone();
+        dialog.connect_response(None, move |_, id| {
+            if id != "delete" { return; }
+            app.with_db_mut(|db| db.delete_interval_bell(&uuid));
+            if let Some(rb) = rebuilder.borrow().as_ref() { rb(); }
+            on_changed();
+            nav_view.pop();
+        });
+
+        if let Some(root) = page_for_delete.root() {
+            if let Ok(window) = root.downcast::<gtk::Window>() {
+                dialog.present(Some(&window));
+            }
+        }
+    });
+
+    // No need for actual populating-guard flips here because we set the
+    // initial values on widget construction (via builder()), which
+    // doesn't fire notify::* signals — set_value does, set_selected
+    // does, but not the builder. Guard left in place only as a safety
+    // hook for future reset flows.
+    let _ = populating;
+
+    nav_view.push(&page);
+}
+
+fn lookup_bell(app: &MeditateApplication, uuid: &str) -> Option<IntervalBell> {
+    app.with_db(|db| db.list_interval_bells())
+        .and_then(|r| r.ok())
+        .unwrap_or_default()
+        .into_iter()
+        .find(|b| b.uuid == uuid)
 }
 
 #[cfg(test)]
