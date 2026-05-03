@@ -1107,6 +1107,102 @@ impl Database {
         Ok(rowid)
     }
 
+    /// Overwrite every mutable field of the bell with `uuid`. UUID +
+    /// created_iso are immutable. Unknown uuids are a silent no-op AND
+    /// emit no event — peers receiving an update for a row they've
+    /// already tombstoned should not be reflected back as "this bell
+    /// is alive again". Mirrors `update_label`'s shape.
+    pub fn update_interval_bell(
+        &self,
+        uuid: &str,
+        kind: IntervalBellKind,
+        minutes: u32,
+        jitter_pct: u32,
+        sound: &str,
+        enabled: bool,
+    ) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        let exists: Option<i64> = self.conn.query_row(
+            "SELECT id FROM interval_bells WHERE uuid = ?1",
+            params![uuid],
+            |row| row.get::<_, i64>(0),
+        ).optional()?;
+        if exists.is_none() {
+            return Ok(());
+        }
+        self.conn.execute(
+            "UPDATE interval_bells
+                SET kind = ?1, minutes = ?2, jitter_pct = ?3, sound = ?4, enabled = ?5
+              WHERE uuid = ?6",
+            params![
+                kind.as_db_str(),
+                minutes,
+                jitter_pct,
+                sound,
+                enabled as i64,
+                uuid,
+            ],
+        )?;
+        let payload = serde_json::json!({
+            "uuid": uuid,
+            "kind": kind.as_db_str(),
+            "minutes": minutes,
+            "jitter_pct": jitter_pct,
+            "sound": sound,
+            "enabled": enabled,
+        }).to_string();
+        self.emit_event("interval_bell_update", uuid, payload)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Convenience for the common path — toggling enabled without the
+    /// UI having to read the other fields back. Emits the same
+    /// `interval_bell_update` event as a full-fields update so the
+    /// sync replay code only has to handle one update kind.
+    pub fn set_interval_bell_enabled(&self, uuid: &str, enabled: bool) -> Result<()> {
+        let row: Option<(String, u32, u32, String)> = self.conn.query_row(
+            "SELECT kind, minutes, jitter_pct, sound
+               FROM interval_bells WHERE uuid = ?1",
+            params![uuid],
+            |row| Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)? as u32,
+                row.get::<_, i64>(2)? as u32,
+                row.get::<_, String>(3)?,
+            )),
+        ).optional()?;
+        let Some((kind_str, minutes, jitter_pct, sound)) = row else {
+            return Ok(());
+        };
+        let kind = IntervalBellKind::from_db_str(&kind_str)
+            .expect("interval_bells.kind violates CHECK constraint");
+        self.update_interval_bell(uuid, kind, minutes, jitter_pct, &sound, enabled)
+    }
+
+    /// Remove the bell row with `uuid` and emit a tombstone event.
+    /// Unknown uuids are silent no-ops AND emit no event (peers
+    /// shouldn't get a delete for a row they never knew existed).
+    pub fn delete_interval_bell(&self, uuid: &str) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        let exists: Option<i64> = self.conn.query_row(
+            "SELECT id FROM interval_bells WHERE uuid = ?1",
+            params![uuid],
+            |row| row.get::<_, i64>(0),
+        ).optional()?;
+        if exists.is_none() {
+            return Ok(());
+        }
+        self.conn.execute(
+            "DELETE FROM interval_bells WHERE uuid = ?1",
+            params![uuid],
+        )?;
+        let payload = serde_json::json!({ "uuid": uuid }).to_string();
+        self.emit_event("interval_bell_delete", uuid, payload)?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Every bell row in insert order. The B.3.3 list page renders this
     /// directly. Order is `id ASC` (rowid) — deterministic and stable
     /// across reads, matches the user's mental model of "first one I
@@ -6830,5 +6926,160 @@ mod tests {
     fn list_interval_bells_returns_empty_when_none_inserted() {
         let db = Database::open_in_memory().unwrap();
         assert!(db.list_interval_bells().unwrap().is_empty());
+    }
+
+    #[test]
+    fn update_interval_bell_overwrites_every_mutable_field() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_interval_bell(IntervalBellKind::Interval, 5, 0, "bowl").unwrap();
+        let uuid = db.list_interval_bells().unwrap()[0].uuid.clone();
+
+        db.update_interval_bell(
+            &uuid,
+            IntervalBellKind::FixedFromStart,
+            12,
+            25,
+            "bell",
+            false,
+        ).unwrap();
+
+        let b = &db.list_interval_bells().unwrap()[0];
+        assert_eq!(b.kind, IntervalBellKind::FixedFromStart);
+        assert_eq!(b.minutes, 12);
+        assert_eq!(b.jitter_pct, 25);
+        assert_eq!(b.sound, "bell");
+        assert!(!b.enabled);
+        // uuid + created_iso must be untouched by an update.
+        assert_eq!(b.uuid, uuid);
+    }
+
+    #[test]
+    fn update_interval_bell_emits_an_interval_bell_update_event() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_interval_bell(IntervalBellKind::Interval, 5, 0, "bowl").unwrap();
+        let uuid = db.list_interval_bells().unwrap()[0].uuid.clone();
+
+        db.update_interval_bell(
+            &uuid,
+            IntervalBellKind::Interval,
+            9,
+            30,
+            "gong",
+            true,
+        ).unwrap();
+
+        let events = db.pending_events().unwrap();
+        let updates: Vec<_> = events
+            .iter()
+            .filter(|(_, e)| e.kind == "interval_bell_update")
+            .collect();
+        assert_eq!(updates.len(), 1);
+        let payload: serde_json::Value =
+            serde_json::from_str(&updates[0].1.payload).unwrap();
+        assert_eq!(payload["uuid"], uuid);
+        assert_eq!(payload["kind"], "interval");
+        assert_eq!(payload["minutes"], 9);
+        assert_eq!(payload["jitter_pct"], 30);
+        assert_eq!(payload["sound"], "gong");
+        assert_eq!(payload["enabled"], true);
+    }
+
+    #[test]
+    fn update_interval_bell_unknown_uuid_is_silent_noop() {
+        // Same shape as update_label — peers receiving an update for a
+        // tombstoned-locally row would otherwise loop. No event emitted.
+        let db = Database::open_in_memory().unwrap();
+        db.update_interval_bell(
+            "non-existent-uuid",
+            IntervalBellKind::Interval,
+            5,
+            0,
+            "bowl",
+            true,
+        ).unwrap();
+        let updates: Vec<_> = db.pending_events().unwrap()
+            .into_iter()
+            .filter(|(_, e)| e.kind == "interval_bell_update")
+            .collect();
+        assert!(updates.is_empty());
+    }
+
+    #[test]
+    fn delete_interval_bell_removes_the_row() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_interval_bell(IntervalBellKind::Interval, 5, 0, "bowl").unwrap();
+        let uuid = db.list_interval_bells().unwrap()[0].uuid.clone();
+        db.delete_interval_bell(&uuid).unwrap();
+        assert!(db.list_interval_bells().unwrap().is_empty());
+    }
+
+    #[test]
+    fn delete_interval_bell_emits_a_delete_event_with_uuid_target() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_interval_bell(IntervalBellKind::Interval, 5, 0, "bowl").unwrap();
+        let uuid = db.list_interval_bells().unwrap()[0].uuid.clone();
+        db.delete_interval_bell(&uuid).unwrap();
+        let deletes: Vec<_> = db.pending_events().unwrap()
+            .into_iter()
+            .filter(|(_, e)| e.kind == "interval_bell_delete")
+            .collect();
+        assert_eq!(deletes.len(), 1);
+        assert_eq!(deletes[0].1.target_id, uuid);
+        let payload: serde_json::Value =
+            serde_json::from_str(&deletes[0].1.payload).unwrap();
+        assert_eq!(payload["uuid"], uuid);
+    }
+
+    #[test]
+    fn delete_interval_bell_unknown_uuid_is_silent_noop() {
+        let db = Database::open_in_memory().unwrap();
+        db.delete_interval_bell("non-existent-uuid").unwrap();
+        let deletes: Vec<_> = db.pending_events().unwrap()
+            .into_iter()
+            .filter(|(_, e)| e.kind == "interval_bell_delete")
+            .collect();
+        assert!(deletes.is_empty());
+    }
+
+    #[test]
+    fn set_interval_bell_enabled_toggles_the_flag_only() {
+        // Convenience helper for the common path: SwitchRow toggle flips
+        // enabled without the UI having to round-trip the other fields.
+        let db = Database::open_in_memory().unwrap();
+        db.insert_interval_bell(IntervalBellKind::Interval, 9, 30, "bell").unwrap();
+        let uuid = db.list_interval_bells().unwrap()[0].uuid.clone();
+
+        db.set_interval_bell_enabled(&uuid, false).unwrap();
+        let b = &db.list_interval_bells().unwrap()[0];
+        assert!(!b.enabled);
+        // Other fields must be preserved verbatim — this is just a flag flip.
+        assert_eq!(b.kind, IntervalBellKind::Interval);
+        assert_eq!(b.minutes, 9);
+        assert_eq!(b.jitter_pct, 30);
+        assert_eq!(b.sound, "bell");
+
+        db.set_interval_bell_enabled(&uuid, true).unwrap();
+        assert!(db.list_interval_bells().unwrap()[0].enabled);
+    }
+
+    #[test]
+    fn set_interval_bell_enabled_emits_an_update_event_with_new_state() {
+        // Toggle goes through the same "update" event channel as a full
+        // update — peers reconstruct state by replaying events, so a
+        // discrete "enabled flipped" event would just complicate apply.
+        let db = Database::open_in_memory().unwrap();
+        db.insert_interval_bell(IntervalBellKind::Interval, 9, 30, "bell").unwrap();
+        let uuid = db.list_interval_bells().unwrap()[0].uuid.clone();
+        db.set_interval_bell_enabled(&uuid, false).unwrap();
+
+        let updates: Vec<_> = db.pending_events().unwrap()
+            .into_iter()
+            .filter(|(_, e)| e.kind == "interval_bell_update")
+            .collect();
+        assert_eq!(updates.len(), 1);
+        let payload: serde_json::Value =
+            serde_json::from_str(&updates[0].1.payload).unwrap();
+        assert_eq!(payload["enabled"], false);
+        assert_eq!(payload["minutes"], 9);
     }
 }
