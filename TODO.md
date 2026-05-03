@@ -16,12 +16,7 @@ Polish and UX items to tackle when convenient. Graduate each one out of this fil
 
   Phases:
 
-  - **B.1 — Setup-page progressive-disclosure UI shell.** Adds:
-    - `Adw.SwitchRow` "Starting Bell" / subtitle "Play a bell when the session begins".
-    - When ON: bell-selection row (uses the existing sound list for now; library lands in B.4).
-    - `Adw.SwitchRow` "Preparation Time" / subtitle "Silence before the starting bell".
-    - When that's ON: `Adw.SpinRow` for the silence duration in seconds.
-    Pure UI work; no audio plumbing changes; persisted via the existing settings table so sync is automatic.
+  - **✓ B.1 — Setup-page progressive-disclosure UI shell.** Landed on `beta` as `9e2f3ed..e75f549`. Used nested `Adw.ExpanderRow` (rather than `SwitchRow`) for the native slide animation; inner chevron suppressed via a one-line override in `data/style.css` to dodge a libadwaita 1.7 descendant-selector quirk on nested expander chevrons.
 
   - **B.2 — Wire starting bell playback + prep-time delay.** Reuse the existing `crate::sound::play_end_sound` infrastructure (gstreamer playbin). glib timeout for the prep-time delay; cancel cleanly on pause / stop / resume.
 
