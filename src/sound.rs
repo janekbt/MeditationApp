@@ -13,9 +13,24 @@ thread_local! {
     static STARTING_MEDIA: RefCell<Option<gtk::MediaFile>> = const { RefCell::new(None) };
 }
 
-/// Stop whatever is currently playing (no-op if nothing is).
+/// Stop whatever is currently playing in CURRENT_MEDIA (no-op if
+/// nothing is). Used by preferences-page sound previews to stop the
+/// previous preview before playing the next.
 pub fn stop_current() {
     CURRENT_MEDIA.with(|cell| {
+        if let Some(m) = cell.replace(None) {
+            m.set_playing(false);
+        }
+    });
+}
+
+/// Stop every session-related sound — both the end-sound slot
+/// (CURRENT_MEDIA) and the starting-bell slot (STARTING_MEDIA).
+/// Called from Save / Discard on the Done page so a bell still
+/// playing through doesn't outlast the user's choice to leave.
+pub fn stop_all() {
+    stop_current();
+    STARTING_MEDIA.with(|cell| {
         if let Some(m) = cell.replace(None) {
             m.set_playing(false);
         }

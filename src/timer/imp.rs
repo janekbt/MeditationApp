@@ -31,6 +31,10 @@ fn boot_time_now() -> std::time::Duration {
 pub enum TimerState {
     #[default]
     Idle,
+    /// Counting down the silent preparation interval before the
+    /// starting bell fires and the actual Timer-mode session begins.
+    /// Timer-mode only; Box Breathing skips this entirely.
+    Preparing,
     Running,
     Paused,
     Done,
@@ -168,6 +172,13 @@ pub struct TimerView {
     /// per-frame tick reads elapsed via wall-clock and checks done.
     breath_stopwatch: RefCell<Option<CoreStopwatch>>,
     breath_target: Cell<std::time::Duration>,
+    /// Timer-mode preparation-interval state. `prep_stopwatch` is
+    /// `Some` while we're in (or paused-from) the Preparing state and
+    /// gets cleared at the prep→Running transition. The tick reads
+    /// elapsed against `prep_target` to decide when to play the bell
+    /// and swap in the real countdown/stopwatch core.
+    prep_stopwatch: RefCell<Option<CoreStopwatch>>,
+    prep_target: Cell<std::time::Duration>,
     /// Boot-time anchor at session start. Suspend-resilient (see boot_time_now).
     start_boot_time: Cell<Option<std::time::Duration>>,
 }
@@ -505,12 +516,13 @@ impl TimerView {
         self.apply_preferred_label_for_mode(mode);
 
         match self.timer_state.get() {
-            TimerState::Idle    => self.show_idle_ui(),
-            TimerState::Paused  => self.show_paused_ui(self.current_display_secs()),
-            TimerState::Done    => self.view_stack.set_visible_child_name("done"),
-            // Running normally can't reach here (the nav page blocks the toggle);
-            // fall back to idle UI as a safety net.
-            TimerState::Running => self.show_idle_ui(),
+            TimerState::Idle      => self.show_idle_ui(),
+            TimerState::Paused    => self.show_paused_ui(self.current_display_secs()),
+            TimerState::Done      => self.view_stack.set_visible_child_name("done"),
+            // Running and Preparing normally can't reach here (the nav
+            // page blocks the toggle while a session or prep is in
+            // flight); fall back to idle UI as a safety net.
+            TimerState::Running | TimerState::Preparing => self.show_idle_ui(),
         }
     }
 
@@ -598,22 +610,67 @@ impl TimerView {
     fn on_start(&self) {
         let mode = self.current_mode();
 
+        // Timer mode + Preparation Time on: enter Preparing, defer the
+        // real cores + starting bell until the prep tick transitions.
+        // Box Breathing skips prep entirely (it's a Timer-only feature).
+        let prep = if mode == TimerMode::Timer {
+            self.get_app()
+                .and_then(|app| {
+                    app.with_db(|db| {
+                        let active = db
+                            .get_setting("preparation_time_active", "false")
+                            .map(|v| v == "true")
+                            .unwrap_or(false);
+                        let starting = db
+                            .get_setting("starting_bell_active", "false")
+                            .map(|v| v == "true")
+                            .unwrap_or(false);
+                        let secs = db
+                            .get_setting(
+                                "preparation_time_secs",
+                                &meditate_core::format::PREP_SECS_DEFAULT.to_string(),
+                            )
+                            .map(|s| meditate_core::format::parse_prep_secs(&s))
+                            .unwrap_or(meditate_core::format::PREP_SECS_DEFAULT);
+                        // Prep only makes sense if there's a starting bell
+                        // to delay — silence with no bell is just a wait
+                        // for nothing.
+                        meditate_core::format::prep_target_duration(active && starting, secs)
+                    })
+                })
+                .flatten()
+        } else {
+            None
+        };
+
         match mode {
             TimerMode::Timer => {
-                self.start_boot_time.set(Some(boot_time_now()));
-                if self.stopwatch_toggle_on.get() {
-                    *self.stopwatch_core.borrow_mut() =
-                        Some(CoreStopwatch::started_at(std::time::Duration::ZERO));
-                } else {
-                    let target = self.countdown_target_secs.get();
-                    if target == 0 {
-                        return;
+                if prep.is_none() {
+                    self.start_boot_time.set(Some(boot_time_now()));
+                    if self.stopwatch_toggle_on.get() {
+                        *self.stopwatch_core.borrow_mut() =
+                            Some(CoreStopwatch::started_at(std::time::Duration::ZERO));
+                    } else {
+                        let target = self.countdown_target_secs.get();
+                        if target == 0 {
+                            return;
+                        }
+                        let timer =
+                            CoreCountdownTimer::new(std::time::Duration::from_secs(target));
+                        let sw = CoreStopwatch::started_at(std::time::Duration::ZERO);
+                        *self.countdown_core.borrow_mut() =
+                            Some(CoreCountdown::new(timer, sw));
                     }
-                    let timer =
-                        CoreCountdownTimer::new(std::time::Duration::from_secs(target));
-                    let sw = CoreStopwatch::started_at(std::time::Duration::ZERO);
-                    *self.countdown_core.borrow_mut() =
-                        Some(CoreCountdown::new(timer, sw));
+                }
+                // Else: cores stay None until transition_prep_to_running.
+                // Validate countdown target up front so a 0-target
+                // countdown doesn't enter prep just to land on an
+                // un-startable session.
+                if prep.is_some()
+                    && !self.stopwatch_toggle_on.get()
+                    && self.countdown_target_secs.get() == 0
+                {
+                    return;
                 }
             }
             TimerMode::Breathing => {
@@ -630,16 +687,26 @@ impl TimerView {
                 self.breath_target.set(std::time::Duration::from_secs(target));
             }
         }
-        self.timer_state.set(TimerState::Running);
+
+        // Prep-mode setup: anchor the boot time, install the prep
+        // stopwatch + target, and the tick will count down before
+        // playing the bell + setting up the real cores.
+        if let Some(prep_dur) = prep {
+            self.start_boot_time.set(Some(boot_time_now()));
+            *self.prep_stopwatch.borrow_mut() =
+                Some(CoreStopwatch::started_at(std::time::Duration::ZERO));
+            self.prep_target.set(prep_dur);
+            self.timer_state.set(TimerState::Preparing);
+        } else {
+            self.timer_state.set(TimerState::Running);
+        }
+
         self.session_start_time.set(unix_now());
 
-        // Starting bell — Timer mode only. Box Breathing is treated as
-        // a fully separate thing (no starting bell, no prep-time), so
-        // a stale starting_bell_active=true persisted from a Timer-mode
-        // session can't trigger a bell at the start of a breath
-        // session. Prep-time delay lands in B.2.b and will reschedule
-        // this call to fire at the end of prep instead of immediately.
-        if mode == TimerMode::Timer {
+        // Starting bell at session start — only when there's no prep.
+        // With prep, the bell fires at the prep→Running transition.
+        // Box Breathing never plays the starting bell (Timer-only).
+        if mode == TimerMode::Timer && prep.is_none() {
             if let Some(app) = self.get_app() {
                 crate::sound::play_starting_sound(&app);
             }
@@ -648,6 +715,8 @@ impl TimerView {
         self.tick_mode.set(mode);
         // Countdown/stopwatch use the shared 1 Hz tick; Breathing drives
         // its own DrawingArea tick from window::push_running_page.
+        // Preparing is Timer-mode-only and uses the same tick — the
+        // tick's state branch handles prep countdown vs. running.
         if mode != TimerMode::Breathing {
             self.start_tick();
         }
@@ -658,22 +727,34 @@ impl TimerView {
         let mode = self.current_mode();
 
         let now = self.elapsed_since_start();
-        match mode {
-            TimerMode::Timer => {
-                if self.stopwatch_toggle_on.get() {
-                    let mut slot = self.stopwatch_core.borrow_mut();
+        // If the user paused during prep, the prep stopwatch is the
+        // one to resume — the real cores haven't been built yet.
+        let resuming_prep = self.prep_stopwatch.borrow().is_some();
+        if resuming_prep {
+            let mut slot = self.prep_stopwatch.borrow_mut();
+            *slot = slot.take().map(|s| s.resumed_at(now));
+        } else {
+            match mode {
+                TimerMode::Timer => {
+                    if self.stopwatch_toggle_on.get() {
+                        let mut slot = self.stopwatch_core.borrow_mut();
+                        *slot = slot.take().map(|s| s.resumed_at(now));
+                    } else {
+                        let mut slot = self.countdown_core.borrow_mut();
+                        *slot = slot.take().map(|c| c.resume(now));
+                    }
+                }
+                TimerMode::Breathing => {
+                    let mut slot = self.breath_stopwatch.borrow_mut();
                     *slot = slot.take().map(|s| s.resumed_at(now));
-                } else {
-                    let mut slot = self.countdown_core.borrow_mut();
-                    *slot = slot.take().map(|c| c.resume(now));
                 }
             }
-            TimerMode::Breathing => {
-                let mut slot = self.breath_stopwatch.borrow_mut();
-                *slot = slot.take().map(|s| s.resumed_at(now));
-            }
         }
-        self.timer_state.set(TimerState::Running);
+        self.timer_state.set(if resuming_prep {
+            TimerState::Preparing
+        } else {
+            TimerState::Running
+        });
 
         self.tick_mode.set(mode);
         if mode != TimerMode::Breathing {
@@ -688,19 +769,26 @@ impl TimerView {
 
         let mode = self.tick_mode.get();
         let now = self.elapsed_since_start();
-        match mode {
-            TimerMode::Timer => {
-                if self.stopwatch_toggle_on.get() {
-                    let mut slot = self.stopwatch_core.borrow_mut();
-                    *slot = slot.take().map(|s| s.paused_at(now));
-                } else {
-                    let mut slot = self.countdown_core.borrow_mut();
-                    *slot = slot.take().map(|c| c.pause(now));
+        // Prep gets paused on its own stopwatch; the real cores
+        // haven't been set up yet during prep.
+        if self.prep_stopwatch.borrow().is_some() {
+            let mut slot = self.prep_stopwatch.borrow_mut();
+            *slot = slot.take().map(|s| s.paused_at(now));
+        } else {
+            match mode {
+                TimerMode::Timer => {
+                    if self.stopwatch_toggle_on.get() {
+                        let mut slot = self.stopwatch_core.borrow_mut();
+                        *slot = slot.take().map(|s| s.paused_at(now));
+                    } else {
+                        let mut slot = self.countdown_core.borrow_mut();
+                        *slot = slot.take().map(|c| c.pause(now));
+                    }
                 }
-            }
-            TimerMode::Breathing => {
-                let mut slot = self.breath_stopwatch.borrow_mut();
-                *slot = slot.take().map(|s| s.paused_at(now));
+                TimerMode::Breathing => {
+                    let mut slot = self.breath_stopwatch.borrow_mut();
+                    *slot = slot.take().map(|s| s.paused_at(now));
+                }
             }
         }
         self.timer_state.set(TimerState::Paused);
@@ -717,6 +805,9 @@ impl TimerView {
 
         let elapsed = self.elapsed_secs_for_mode(mode);
         self.timer_state.set(TimerState::Done);
+        // Drop any prep state — the user stopped during prep, the
+        // session's "elapsed" came from the prep stopwatch above.
+        *self.prep_stopwatch.borrow_mut() = None;
 
         self.obj().emit_by_name::<()>("timer-stopped", &[]);
         self.show_done(elapsed);
@@ -725,7 +816,13 @@ impl TimerView {
     /// Elapsed seconds for the active session, dispatching on mode +
     /// stopwatch toggle. Used by on_stop / on_save (both produce a
     /// session row whose `duration_secs` is what we return here).
+    /// During (or paused-from) prep, the cores haven't been set up
+    /// yet — fall back to the prep stopwatch so a "stop during prep"
+    /// still saves a real session row with the time the user spent.
     fn elapsed_secs_for_mode(&self, mode: TimerMode) -> u64 {
+        if let Some(prep) = self.prep_stopwatch.borrow().as_ref() {
+            return prep.elapsed(self.elapsed_since_start()).as_secs();
+        }
         match mode {
             TimerMode::Timer => {
                 if self.stopwatch_toggle_on.get() {
@@ -752,7 +849,7 @@ impl TimerView {
     }
 
     fn on_save(&self) {
-        crate::sound::stop_current();
+        crate::sound::stop_all();
         let mode = self.current_mode();
 
         let elapsed = self.elapsed_secs_for_mode(mode);
@@ -825,7 +922,7 @@ impl TimerView {
     }
 
     fn on_discard(&self) {
-        crate::sound::stop_current();
+        crate::sound::stop_all();
         let buffer = self.note_view.buffer();
         let (start, end) = buffer.bounds();
         let note = buffer.text(&start, &end, false);
@@ -868,9 +965,11 @@ impl TimerView {
             TimerMode::Timer => {
                 // Clear whichever core was running — at most one is Some
                 // per session, but blanking both is safe and saves the
-                // toggle-state read.
+                // toggle-state read. The prep stopwatch is also Timer-
+                // mode only and gets reset alongside.
                 *self.stopwatch_core.borrow_mut() = None;
                 *self.countdown_core.borrow_mut() = None;
+                *self.prep_stopwatch.borrow_mut() = None;
             }
             TimerMode::Breathing => *self.breath_stopwatch.borrow_mut() = None,
         }
@@ -887,77 +986,131 @@ impl TimerView {
     fn start_tick(&self) {
         self.cancel_tick();
         let obj = self.obj().clone();
-        // Captured at start_tick so the closure doesn't need to read the
-        // toggle on every tick — the toggle is locked while a session is
-        // running (countdown_inputs is set_sensitive(false) during pause
-        // and the running view replaces the setup page entirely).
-        let is_stopwatch = self.stopwatch_toggle_on.get();
 
         let source_id = glib::timeout_add_local(
             std::time::Duration::from_secs(1),
             move || {
                 let imp = obj.imp();
-
-                if imp.timer_state.get() != TimerState::Running {
-                    return glib::ControlFlow::Break;
+                match imp.timer_state.get() {
+                    TimerState::Preparing => imp.tick_prep(&obj),
+                    TimerState::Running => imp.tick_running(&obj),
+                    _ => glib::ControlFlow::Break,
                 }
-
-                let (new_secs, done) = {
-                    if is_stopwatch {
-                        // Stopwatch: floor seconds (display "0:01" once we
-                        // cross 1.0s, "0:00" otherwise).
-                        (imp.stopwatch_elapsed_secs(), false)
-                    } else {
-                        // Countdown: ceiling seconds (while remaining is in
-                        // (k-1, k], show k — avoids skipping "0:59" on the
-                        // first tick which fires slightly past 1.0s).
-                        let now = imp.elapsed_since_start();
-                        let core = imp.countdown_core.borrow();
-                        let Some(c) = core.as_ref() else {
-                            return glib::ControlFlow::Break;
-                        };
-                        if c.is_finished(now) {
-                            imp.timer_state.set(TimerState::Done);
-                            (c.elapsed(now).as_secs(), true)
-                        } else {
-                            let r = c.remaining(now);
-                            (r.as_secs() + (r.subsec_nanos() > 0) as u64, false)
-                        }
-                    }
-                };
-
-                if done {
-                    // Clear the SourceId before GLib removes it. If we leave it
-                    // set, cancel_tick() in dispose() will call src.remove() on
-                    // an already-removed source and panic.
-                    *imp.tick_source.borrow_mut() = None;
-                    *imp.running_label.borrow_mut() = None;
-
-                    obj.emit_by_name::<()>("timer-stopped", &[]);
-                    imp.show_done(new_secs);
-                    if let Some(app) = imp.get_app() {
-                        crate::sound::play_end_sound(&app);
-                        crate::vibration::trigger_if_enabled(&app);
-                        // Only send a system notification when the app is not
-                        // the focused window — the done screen is already shown
-                        // in-app, so a notification would be redundant noise.
-                        if !app.active_window().map(|w| w.is_active()).unwrap_or(false) {
-                            let n = gtk::gio::Notification::new("Meditation Complete");
-                            n.set_body(Some(&format!("Session: {}", format_time(new_secs))));
-                            app.send_notification(Some("timer-done"), &n);
-                        }
-                    }
-                    return glib::ControlFlow::Break;
-                }
-
-                if let Some(label) = imp.running_label.borrow().as_ref() {
-                    label.set_label(&format_time(new_secs));
-                }
-
-                glib::ControlFlow::Continue
             },
         );
         *self.tick_source.borrow_mut() = Some(source_id);
+    }
+
+    /// Prep tick: count down the silent preparation interval. When
+    /// elapsed crosses the target, transition to Running — that
+    /// flips the cores in, plays the starting bell, and the same
+    /// tick keeps firing on the next iteration but takes the Running
+    /// branch.
+    fn tick_prep(&self, _obj: &super::TimerView) -> glib::ControlFlow {
+        let now = self.elapsed_since_start();
+        let target = self.prep_target.get();
+        let elapsed = self.prep_stopwatch
+            .borrow()
+            .as_ref()
+            .map(|s| s.elapsed(now))
+            .unwrap_or_default();
+        if elapsed >= target {
+            self.transition_prep_to_running();
+            return glib::ControlFlow::Continue;
+        }
+        let remaining = target.saturating_sub(elapsed);
+        // Ceiling — when (k-1, k] remaining, show k. Same trick as
+        // tick_running's countdown branch.
+        let display = remaining.as_secs() + (remaining.subsec_nanos() > 0) as u64;
+        if let Some(label) = self.running_label.borrow().as_ref() {
+            label.set_label(&format_time(display));
+        }
+        glib::ControlFlow::Continue
+    }
+
+    fn tick_running(&self, obj: &super::TimerView) -> glib::ControlFlow {
+        let is_stopwatch = self.stopwatch_toggle_on.get();
+        let (new_secs, done) = {
+            if is_stopwatch {
+                // Stopwatch: floor seconds (display "0:01" once we
+                // cross 1.0s, "0:00" otherwise).
+                (self.stopwatch_elapsed_secs(), false)
+            } else {
+                // Countdown: ceiling seconds (while remaining is in
+                // (k-1, k], show k — avoids skipping "0:59" on the
+                // first tick which fires slightly past 1.0s).
+                let now = self.elapsed_since_start();
+                let core = self.countdown_core.borrow();
+                let Some(c) = core.as_ref() else {
+                    return glib::ControlFlow::Break;
+                };
+                if c.is_finished(now) {
+                    self.timer_state.set(TimerState::Done);
+                    (c.elapsed(now).as_secs(), true)
+                } else {
+                    let r = c.remaining(now);
+                    (r.as_secs() + (r.subsec_nanos() > 0) as u64, false)
+                }
+            }
+        };
+
+        if done {
+            // Clear the SourceId before GLib removes it. If we leave it
+            // set, cancel_tick() in dispose() will call src.remove() on
+            // an already-removed source and panic.
+            *self.tick_source.borrow_mut() = None;
+            *self.running_label.borrow_mut() = None;
+
+            obj.emit_by_name::<()>("timer-stopped", &[]);
+            self.show_done(new_secs);
+            if let Some(app) = self.get_app() {
+                crate::sound::play_end_sound(&app);
+                crate::vibration::trigger_if_enabled(&app);
+                // Only send a system notification when the app is not
+                // the focused window — the done screen is already shown
+                // in-app, so a notification would be redundant noise.
+                if !app.active_window().map(|w| w.is_active()).unwrap_or(false) {
+                    let n = gtk::gio::Notification::new("Meditation Complete");
+                    n.set_body(Some(&format!("Session: {}", format_time(new_secs))));
+                    app.send_notification(Some("timer-done"), &n);
+                }
+            }
+            return glib::ControlFlow::Break;
+        }
+
+        if let Some(label) = self.running_label.borrow().as_ref() {
+            label.set_label(&format_time(new_secs));
+        }
+
+        glib::ControlFlow::Continue
+    }
+
+    /// Prep finished — drop the prep stopwatch, play the starting
+    /// bell, set up the real countdown/stopwatch core, re-anchor the
+    /// boot time so the running session counts from zero, and flip
+    /// the state to Running. The same tick will pick up where this
+    /// left off on its next iteration.
+    fn transition_prep_to_running(&self) {
+        *self.prep_stopwatch.borrow_mut() = None;
+
+        if let Some(app) = self.get_app() {
+            crate::sound::play_starting_sound(&app);
+        }
+
+        // Re-anchor so the running cores see elapsed starting at zero,
+        // not at prep_target.
+        self.start_boot_time.set(Some(boot_time_now()));
+        if self.stopwatch_toggle_on.get() {
+            *self.stopwatch_core.borrow_mut() =
+                Some(CoreStopwatch::started_at(std::time::Duration::ZERO));
+        } else {
+            let target = self.countdown_target_secs.get();
+            let timer = CoreCountdownTimer::new(std::time::Duration::from_secs(target));
+            let sw = CoreStopwatch::started_at(std::time::Duration::ZERO);
+            *self.countdown_core.borrow_mut() = Some(CoreCountdown::new(timer, sw));
+        }
+
+        self.timer_state.set(TimerState::Running);
     }
 
     /// Natural completion path for a breath session: marks Done, plays the
@@ -1493,6 +1646,13 @@ impl TimerView {
     }
 
     pub fn current_display_secs(&self) -> u64 {
+        // While in (or paused from) prep, the hero shows the prep
+        // remaining — the real cores haven't been wired up yet.
+        if let Some(prep) = self.prep_stopwatch.borrow().as_ref() {
+            let elapsed = prep.elapsed(self.elapsed_since_start());
+            let remaining = self.prep_target.get().saturating_sub(elapsed);
+            return remaining.as_secs() + (remaining.subsec_nanos() > 0) as u64;
+        }
         // Return the display value for whichever mode is about to go running.
         match self.tick_mode.get() {
             TimerMode::Timer => {
@@ -1512,10 +1672,11 @@ impl TimerView {
 
     pub fn toggle_playback(&self) {
         match self.timer_state.get() {
-            TimerState::Idle    => self.on_start(),
-            TimerState::Running => self.on_pause(),
-            TimerState::Paused  => self.on_resume(),
-            TimerState::Done    => {}
+            TimerState::Idle      => self.on_start(),
+            TimerState::Preparing => self.on_pause(),
+            TimerState::Running   => self.on_pause(),
+            TimerState::Paused    => self.on_resume(),
+            TimerState::Done      => {}
         }
     }
 }
