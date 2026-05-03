@@ -22,7 +22,40 @@ use std::path::Path;
 /// here so call sites can keep importing from `crate::db` without
 /// learning about meditate-core directly. Same for the bell-library
 /// types added in B.3.1.
-pub use meditate_core::db::{IntervalBell, IntervalBellKind, Label, SessionMode};
+pub use meditate_core::db::{BellSound, IntervalBell, IntervalBellKind, Label, SessionMode};
+
+/// Bundled bell-sound seed: hardcoded (uuid, display name, GResource
+/// path, MIME). UUIDs are STABLE across versions — never edit a row
+/// here. New bundles get appended (never replace) so a peer that
+/// already seeded the old set picks up the new ones via insert-or-
+/// ignore. Adding a sound is a 1-tuple addition; no migration code.
+const BUNDLED_BELL_SOUNDS: &[(&str, &str, &str, &str)] = &[
+    (
+        "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0001",
+        "Singing Bowl",
+        "/io/github/janekbt/Meditate/sounds/bowl.wav",
+        "audio/wav",
+    ),
+    (
+        "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0002",
+        "Bell",
+        "/io/github/janekbt/Meditate/sounds/bell.wav",
+        "audio/wav",
+    ),
+    (
+        "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0003",
+        "Gong",
+        "/io/github/janekbt/Meditate/sounds/gong.wav",
+        "audio/wav",
+    ),
+];
+
+/// Public so callers (B.4.4 migration site, etc.) can map old
+/// "bowl" / "bell" / "gong" string keys to their bundled UUIDs
+/// without re-deriving the table here.
+pub const BUNDLED_BOWL_UUID: &str = "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0001";
+pub const BUNDLED_BELL_UUID: &str = "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0002";
+pub const BUNDLED_GONG_UUID: &str = "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0003";
 
 #[derive(Debug, Clone)]
 pub struct Session {
@@ -132,7 +165,24 @@ impl Database {
                 .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
         }
         let inner = meditate_core::db::Database::open(path).map_err(map_core_err)?;
-        Ok(Self { inner })
+        let db = Self { inner };
+        db.seed_bundled_bell_sounds()?;
+        Ok(db)
+    }
+
+    /// Insert the bundled bell-sound rows on first run. Idempotent:
+    /// `insert_bell_sound_with_uuid` is a no-op when the uuid row
+    /// already exists, so subsequent runs (or runs that already had
+    /// the bundle from a peer sync) skip without emitting duplicate
+    /// events. UUIDs are hardcoded so every device — fresh seed or
+    /// post-sync — ends up with the same row identity per file.
+    fn seed_bundled_bell_sounds(&self) -> Result<()> {
+        for (uuid, name, path, mime) in BUNDLED_BELL_SOUNDS {
+            self.inner
+                .insert_bell_sound_with_uuid(uuid, name, path, true, mime)
+                .map_err(map_core_err)?;
+        }
+        Ok(())
     }
 
     // ── Labels ────────────────────────────────────────────────────────────────
@@ -220,6 +270,34 @@ impl Database {
 
     pub fn delete_interval_bell(&self, uuid: &str) -> Result<()> {
         self.inner.delete_interval_bell(uuid).map_err(map_core_err)
+    }
+
+    // ── Bell sounds ───────────────────────────────────────────────────────────
+    // Audio-file library shared by every bell-fire site. Pass-through
+    // wrappers; domain types are re-exported from core.
+
+    pub fn list_bell_sounds(&self) -> Result<Vec<BellSound>> {
+        self.inner.list_bell_sounds().map_err(map_core_err)
+    }
+
+    pub fn insert_bell_sound(
+        &self,
+        name: &str,
+        file_path: &str,
+        is_bundled: bool,
+        mime_type: &str,
+    ) -> Result<i64> {
+        self.inner
+            .insert_bell_sound(name, file_path, is_bundled, mime_type)
+            .map_err(map_core_err)
+    }
+
+    pub fn rename_bell_sound(&self, uuid: &str, name: &str) -> Result<()> {
+        self.inner.rename_bell_sound(uuid, name).map_err(map_core_err)
+    }
+
+    pub fn delete_bell_sound(&self, uuid: &str) -> Result<()> {
+        self.inner.delete_bell_sound(uuid).map_err(map_core_err)
     }
 
     // ── Sessions ──────────────────────────────────────────────────────────────
@@ -438,11 +516,15 @@ impl Database {
 
 /// In-memory DB for tests. Module-level so sibling files (e.g.
 /// `data_io`) can construct a `Database` without needing a path.
+/// Seeds the bundled bell sounds the same way `open()` does so tests
+/// see post-seed state by default.
 #[cfg(test)]
 pub(crate) fn test_db_in_memory() -> Database {
-    Database {
+    let db = Database {
         inner: meditate_core::db::Database::open_in_memory().unwrap(),
-    }
+    };
+    db.seed_bundled_bell_sounds().unwrap();
+    db
 }
 
 #[cfg(test)]
@@ -804,5 +886,55 @@ mod tests {
         let got = db.get_label_totals().unwrap();
         assert_eq!(got[0].0, "Alpha");
         assert_eq!(got[1].0, "Zebra");
+    }
+
+    // ── Bundled bell-sound seeding (B.4.2) ────────────────────────
+
+    #[test]
+    fn open_seeds_bundled_bell_sounds_with_stable_uuids() {
+        let db = test_db_in_memory();
+        let sounds = db.list_bell_sounds().unwrap();
+        assert_eq!(sounds.len(), 3, "three bundled rows seeded on first open");
+        assert!(sounds.iter().all(|s| s.is_bundled));
+        // Stable UUIDs the constants point at.
+        assert!(sounds.iter().any(|s| s.uuid == BUNDLED_BOWL_UUID));
+        assert!(sounds.iter().any(|s| s.uuid == BUNDLED_BELL_UUID));
+        assert!(sounds.iter().any(|s| s.uuid == BUNDLED_GONG_UUID));
+    }
+
+    #[test]
+    fn seeding_twice_is_idempotent() {
+        let db = test_db_in_memory();
+        // Helper already seeded once; do it again manually.
+        db.seed_bundled_bell_sounds().unwrap();
+        let sounds = db.list_bell_sounds().unwrap();
+        assert_eq!(sounds.len(), 3, "second seed must not duplicate rows");
+    }
+
+    #[test]
+    fn seeding_emits_one_insert_event_per_bundled_row_and_no_more_on_re_seed() {
+        // Sync correctness: every seeded row produces exactly one
+        // bell_sound_insert in the event log on the first device that
+        // sees it. A re-seed on a device that's already done it must
+        // not bump the event log — peers don't need a redundant insert.
+        let db = test_db_in_memory();
+        let after_first: Vec<_> = db
+            .inner
+            .pending_events()
+            .unwrap()
+            .into_iter()
+            .filter(|(_, e)| e.kind == "bell_sound_insert")
+            .collect();
+        assert_eq!(after_first.len(), 3);
+
+        db.seed_bundled_bell_sounds().unwrap();
+        let after_second: Vec<_> = db
+            .inner
+            .pending_events()
+            .unwrap()
+            .into_iter()
+            .filter(|(_, e)| e.kind == "bell_sound_insert")
+            .collect();
+        assert_eq!(after_second.len(), 3, "no extra events on re-seed");
     }
 }
