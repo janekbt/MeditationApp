@@ -61,14 +61,45 @@ where F: Fn() + Clone + 'static,
 
     let rebuilder_for_add = rebuilder.clone();
     let app_for_add = app.clone();
+    let nav_view_for_add = nav_view.clone();
+    let on_changed_for_add = on_changed.clone();
     add_btn.connect_clicked(move |_| {
-        // Insert a sensible default — every 5 min, no jitter, bowl. The
-        // user dials it in via the edit page.
-        app_for_add.with_db_mut(|db| {
-            db.insert_interval_bell(IntervalBellKind::Interval, 5, 0, "bowl")
-        });
+        // Insert a sensible default — every 5 min, no jitter, bundled
+        // bowl. Then push the edit page right away so the user lands
+        // on the form to dial in the bell rather than having to tap
+        // back into the brand-new row.
+        let new_id = app_for_add.with_db_mut(|db| {
+            db.insert_interval_bell(
+                IntervalBellKind::Interval,
+                5,
+                0,
+                crate::db::BUNDLED_BOWL_UUID,
+            )
+        }).and_then(|r| r.ok());
+
         if let Some(rb) = rebuilder_for_add.borrow().as_ref() {
             rb();
+        }
+
+        // Look up the just-inserted row's uuid (insert returns the
+        // rowid, not the uuid) and drill into its edit page.
+        if let Some(rowid) = new_id {
+            let new_uuid = app_for_add
+                .with_db(|db| db.list_interval_bells())
+                .and_then(|r| r.ok())
+                .unwrap_or_default()
+                .into_iter()
+                .find(|b| b.id == rowid)
+                .map(|b| b.uuid);
+            if let Some(uuid) = new_uuid {
+                push_edit_page(
+                    &nav_view_for_add,
+                    &app_for_add,
+                    &uuid,
+                    rebuilder_for_add.clone(),
+                    on_changed_for_add.clone(),
+                );
+            }
         }
     });
 
@@ -160,7 +191,7 @@ fn build_bell_row(
 ) -> adw::ActionRow {
     let row = adw::ActionRow::builder()
         .title(bell_title(bell))
-        .subtitle(sound_label(&bell.sound))
+        .subtitle(sound_label(app, &bell.sound))
         .activatable(true)
         .build();
 
@@ -304,13 +335,21 @@ fn bell_title(bell: &IntervalBell) -> String {
     }
 }
 
-fn sound_label(sound: &str) -> String {
-    match sound {
-        "bowl" => gettext("Singing bowl"),
-        "bell" => gettext("Bell"),
-        "gong" => gettext("Gong"),
-        other => other.to_string(),
+/// Look up a bell-sound's display name from the bell_sounds library.
+/// Empty string if the uuid is empty or stale (post-wipe legacy
+/// values point at no row); the row will just have no subtitle until
+/// the user re-picks via the chooser.
+fn sound_label(app: &MeditateApplication, uuid: &str) -> String {
+    if uuid.is_empty() {
+        return String::new();
     }
+    app.with_db(|db| db.list_bell_sounds())
+        .and_then(|r| r.ok())
+        .unwrap_or_default()
+        .into_iter()
+        .find(|s| s.uuid == uuid)
+        .map(|s| s.name)
+        .unwrap_or_default()
 }
 
 /// Edit page for one bell — pushed when the user taps a row in the
@@ -378,22 +417,18 @@ fn push_edit_page(
         .build();
     form.add(&jitter_row);
 
-    // Sound combo — same 3-entry vocabulary as Starting Bell.
-    let sound_choices = [
-        gettext("Singing bowl"),
-        gettext("Bell"),
-        gettext("Gong"),
-    ];
-    let sound_refs: Vec<&str> = sound_choices.iter().map(|s| s.as_str()).collect();
-    let sound_row = adw::ComboRow::builder()
+    // Sound row — taps push the bell-sound chooser. Subtitle shows the
+    // currently-selected sound's name (looked up by uuid).
+    let sound_row = adw::ActionRow::builder()
         .title(gettext("Sound"))
-        .model(&gtk::StringList::new(&sound_refs))
-        .selected(match bell.sound.as_str() {
-            "bell" => 1,
-            "gong" => 2,
-            _ => 0,
-        })
+        .subtitle(sound_label(app, &bell.sound))
+        .activatable(true)
         .build();
+    {
+        let chevron = gtk::Image::from_icon_name("go-next-symbolic");
+        chevron.add_css_class("dim-label");
+        sound_row.add_suffix(&chevron);
+    }
     form.add(&sound_row);
 
     prefs_page.add(&form);
@@ -486,20 +521,30 @@ fn push_edit_page(
         write_back(&app_for_jitter, &snap_for_jitter, &rebuilder_for_jitter, &on_changed_for_jitter);
     });
 
+    // Sound activation: walk to window, push chooser, on pick update
+    // the bell + the row subtitle. The chooser handles its own preview
+    // playback so we don't need to gate on a populating flag here.
     let snap_for_sound = snapshot.clone();
     let app_for_sound = app.clone();
     let rebuilder_for_sound = rebuilder.clone();
     let on_changed_for_sound = on_changed.clone();
-    let populating_for_sound = populating.clone();
-    sound_row.connect_selected_notify(move |row| {
-        if populating_for_sound.get() { return; }
-        let s = match row.selected() {
-            1 => "bell",
-            2 => "gong",
-            _ => "bowl",
-        };
-        snap_for_sound.borrow_mut().sound = s.to_string();
-        write_back(&app_for_sound, &snap_for_sound, &rebuilder_for_sound, &on_changed_for_sound);
+    let sound_row_for_sub = sound_row.clone();
+    sound_row.connect_activated(move |row| {
+        let Some(window) = row.root()
+            .and_then(|r| r.downcast::<crate::window::MeditateWindow>().ok())
+        else { return; };
+        let current = Some(snap_for_sound.borrow().sound.clone());
+        let snap = snap_for_sound.clone();
+        let app_outer = app_for_sound.clone();
+        let app_inner = app_for_sound.clone();
+        let rebuilder = rebuilder_for_sound.clone();
+        let on_changed = on_changed_for_sound.clone();
+        let sound_row = sound_row_for_sub.clone();
+        window.push_sound_chooser(&app_outer, current, move |uuid| {
+            snap.borrow_mut().sound = uuid.clone();
+            sound_row.set_subtitle(&sound_label(&app_inner, &uuid));
+            write_back(&app_inner, &snap, &rebuilder, &on_changed);
+        });
     });
 
     // ── Delete ────────────────────────────────────────────────────

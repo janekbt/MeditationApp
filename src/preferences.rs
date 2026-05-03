@@ -1,4 +1,4 @@
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use adw::prelude::*;
@@ -37,194 +37,15 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
         .build();
 
     // ── Sound group ───────────────────────────────────────────────────────────
+    // The legacy "End sound" ComboRow + custom-file picker lived here
+    // before B.4. Sound choice now lives on the timer setup's End Bell
+    // row, which drills into the bell-sound chooser. Only the
+    // vibrate-on-end toggle remains in Preferences for now; B.4.5
+    // adds a "Sounds" tab for managing the bell-sound library.
 
     let sound_group = adw::PreferencesGroup::builder()
         .title(gettext("Sound"))
         .build();
-
-    let sound_choices = [
-        gettext("None"),
-        gettext("Singing bowl"),
-        gettext("Bell"),
-        gettext("Gong"),
-        gettext("Custom file…"),
-    ];
-    let sound_choice_refs: Vec<&str> = sound_choices.iter().map(|s| s.as_str()).collect();
-    let sound_row = adw::ComboRow::builder()
-        .title(gettext("End sound"))
-        .model(&gtk::StringList::new(&sound_choice_refs))
-        .build();
-
-    let preview_btn = gtk::Button::builder()
-        .icon_name("media-playback-start-symbolic")
-        .valign(gtk::Align::Center)
-        .tooltip_text(gettext("Preview sound"))
-        .css_classes(["flat"])
-        .build();
-    sound_row.add_suffix(&preview_btn);
-
-    let current_sound = app
-        .with_db(|db| db.get_setting("end_sound", "bowl"))
-        .and_then(|r| r.ok())
-        .unwrap_or_else(|| "bowl".to_string());
-    sound_row.set_selected(match current_sound.as_str() {
-        "bowl"   => 1,
-        "bell"   => 2,
-        "gong"   => 3,
-        "custom" => 4,
-        _        => 0,
-    });
-    preview_btn.set_sensitive(current_sound != "none");
-
-    // Tracks whether a preview is currently playing so the button toggles.
-    let preview_playing: Rc<Cell<bool>> = Rc::new(Cell::new(false));
-
-    // Custom file row — only visible when "Custom file…" is selected.
-    let custom_sound_path: Rc<RefCell<String>> = Rc::new(RefCell::new(
-        app.with_db(|db| db.get_setting("end_sound_path", ""))
-            .and_then(|r| r.ok())
-            .unwrap_or_default(),
-    ));
-
-    let custom_row = adw::ActionRow::builder()
-        .title(gettext("Sound file"))
-        .visible(current_sound == "custom")
-        .build();
-    custom_row.set_subtitle(&path_subtitle(&custom_sound_path.borrow()));
-
-    let choose_btn = gtk::Button::builder()
-        .label(gettext("Choose…"))
-        .valign(gtk::Align::Center)
-        .css_classes(["flat"])
-        .build();
-    custom_row.add_suffix(&choose_btn);
-
-    // Save selection + show/hide custom row whenever the combo changes.
-    sound_row.connect_notify_local(
-        Some("selected"),
-        glib::clone!(
-            #[weak] app,
-            #[weak] custom_row,
-            #[weak] preview_btn,
-            #[strong] preview_playing,
-            move |row, _| {
-                let key = match row.selected() {
-                    1 => "bowl",
-                    2 => "bell",
-                    3 => "gong",
-                    4 => "custom",
-                    _ => "none",
-                };
-                app.with_db_mut(|db| db.set_setting("end_sound", key));
-                crate::sound::preload_end_sound(&app);
-                custom_row.set_visible(key == "custom");
-                preview_btn.set_sensitive(key != "none");
-                // Stop any in-progress preview when the selection changes.
-                if preview_playing.get() {
-                    preview_playing.set(false);
-                    preview_btn.set_icon_name("media-playback-start-symbolic");
-                    crate::sound::stop_current();
-                }
-            }
-        ),
-    );
-
-    // Toggle play/stop on the preview button.
-    preview_btn.connect_clicked(glib::clone!(
-        #[weak] sound_row,
-        #[weak] preview_btn,
-        #[strong] custom_sound_path,
-        #[strong] preview_playing,
-        move |_| {
-            if preview_playing.get() {
-                // Stop
-                preview_playing.set(false);
-                preview_btn.set_icon_name("media-playback-start-symbolic");
-                crate::sound::stop_current();
-                return;
-            }
-
-            // Start
-            let media = match sound_row.selected() {
-                1 => Some(crate::sound::play_bundled("bowl")),
-                2 => Some(crate::sound::play_bundled("bell")),
-                3 => Some(crate::sound::play_bundled("gong")),
-                4 => {
-                    let p = custom_sound_path.borrow().clone();
-                    if p.is_empty() { None } else { Some(crate::sound::play_uri(&format!("file://{p}"))) }
-                }
-                _ => None,
-            };
-            if let Some(media) = media {
-                preview_playing.set(true);
-                preview_btn.set_icon_name("media-playback-stop-symbolic");
-
-                // Reset the button icon when playback ends naturally.
-                media.connect_notify_local(
-                    Some("playing"),
-                    glib::clone!(
-                        #[strong] preview_playing,
-                        #[weak] preview_btn,
-                        move |m, _| {
-                            if !m.is_playing() && preview_playing.get() {
-                                preview_playing.set(false);
-                                preview_btn.set_icon_name("media-playback-start-symbolic");
-                            }
-                        }
-                    ),
-                );
-            }
-        }
-    ));
-
-    // Open a file chooser to select a custom sound.
-    choose_btn.connect_clicked(glib::clone!(
-        #[weak] app,
-        #[weak] custom_row,
-        #[strong] custom_sound_path,
-        move |_| {
-            let file_dialog = gtk::FileDialog::builder()
-                .title(gettext("Choose Sound File"))
-                .build();
-
-            let filter = gtk::FileFilter::new();
-            filter.set_name(Some(&gettext("Audio files")));
-            for ext in ["ogg", "wav", "flac", "mp3", "opus"] {
-                filter.add_suffix(ext);
-            }
-            file_dialog.set_default_filter(Some(&filter));
-
-            let path = custom_sound_path.borrow().clone();
-            if !path.is_empty() {
-                file_dialog.set_initial_file(Some(&gio::File::for_path(&path)));
-            }
-
-            let parent = app.active_window().and_downcast::<gtk::Window>();
-            file_dialog.open(
-                parent.as_ref(),
-                None::<&gio::Cancellable>,
-                glib::clone!(
-                    #[weak] app,
-                    #[weak] custom_row,
-                    #[strong] custom_sound_path,
-                    move |result| {
-                        if let Ok(file) = result {
-                            if let Some(p) = file.path() {
-                                let path_str = p.to_string_lossy().to_string();
-                                custom_row.set_subtitle(&path_subtitle(&path_str));
-                                *custom_sound_path.borrow_mut() = path_str.clone();
-                                app.with_db_mut(|db| db.set_setting("end_sound_path", &path_str));
-                                crate::sound::preload_end_sound(&app);
-                            }
-                        }
-                    }
-                ),
-            );
-        }
-    ));
-
-    sound_group.add(&sound_row);
-    sound_group.add(&custom_row);
 
     // Vibrate-on-end toggle. Routed through feedbackd on mobile; a no-op on
     // systems without it, so desktop users with this accidentally enabled
@@ -815,18 +636,6 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
     labels_page.add(&labels_group);
     dialog.add(&labels_page);
 
-    // Stop preview when the user switches away from General or closes the dialog.
-    general_page.connect_unmap(glib::clone!(
-        #[strong] preview_playing,
-        #[weak] preview_btn,
-        move |_| {
-            if preview_playing.get() {
-                preview_playing.set(false);
-                preview_btn.set_icon_name("media-playback-start-symbolic");
-            }
-            crate::sound::stop_current();
-        }
-    ));
     dialog.connect_closed(glib::clone!(
         #[weak] app,
         move |_| {
@@ -1266,20 +1075,6 @@ fn refresh_main_window(app: &MeditateApplication) {
     }
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-/// Subtitle text for the custom sound row: show just the filename, or a
-/// placeholder when no file has been selected yet.
-fn path_subtitle(path: &str) -> String {
-    if path.is_empty() {
-        return gettext("No file selected");
-    }
-    std::path::Path::new(path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or(path)
-        .to_string()
-}
 
 /// Two-form pluralization for session counts. Uses the shipped `_one` /
 /// `_other` msgids directly — we don't need full ngettext support because

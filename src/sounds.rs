@@ -9,6 +9,7 @@
 //! B.4.5 reuses the same module's row builder for the Preferences
 //! tab in management mode (no selection, delete + rename).
 
+use std::cell::Cell;
 use std::rc::Rc;
 
 use adw::prelude::*;
@@ -88,9 +89,12 @@ fn build_sound_row(
         row.add_suffix(&check);
     }
 
-    // Per-row preview button. Tapping plays through PREVIEW_MEDIA;
-    // tapping a different row stops the previous so previews don't
-    // stack while the user is scrubbing the list.
+    // Per-row preview button. Toggles between Play and Stop:
+    //   - Tap while idle → start playback, icon flips to stop.
+    //   - Tap while playing → stop, icon flips back to play.
+    //   - Sound finishes naturally / a different row's Play takes
+    //     over PREVIEW_MEDIA → notify::playing fires false on this
+    //     MediaFile, the listener flips our icon back too.
     let play_btn = gtk::Button::builder()
         .icon_name("media-playback-start-symbolic")
         .tooltip_text(gettext("Preview sound"))
@@ -99,9 +103,34 @@ fn build_sound_row(
         .build();
     let path = sound.file_path.clone();
     let is_bundled = sound.is_bundled;
-    play_btn.connect_clicked(move |_| {
-        crate::sound::play_preview(&path, is_bundled);
-    });
+    let playing = Rc::new(Cell::new(false));
+    {
+        let playing = playing.clone();
+        let play_btn_clone = play_btn.clone();
+        play_btn.connect_clicked(move |_| {
+            if playing.get() {
+                crate::sound::stop_preview();
+                playing.set(false);
+                play_btn_clone.set_icon_name("media-playback-start-symbolic");
+                return;
+            }
+            let media = crate::sound::play_preview(&path, is_bundled);
+            playing.set(true);
+            play_btn_clone.set_icon_name("media-playback-stop-symbolic");
+            // Revert icon when playback ends — natural end-of-file,
+            // user stop on the same button, or another row's Play
+            // taking over the PREVIEW_MEDIA slot (which sets the old
+            // MediaFile to playing=false before swapping).
+            let playing_for_notify = playing.clone();
+            let btn_for_notify = play_btn_clone.clone();
+            media.connect_notify_local(Some("playing"), move |m, _| {
+                if !m.is_playing() && playing_for_notify.get() {
+                    playing_for_notify.set(false);
+                    btn_for_notify.set_icon_name("media-playback-start-symbolic");
+                }
+            });
+        });
+    }
     row.add_suffix(&play_btn);
 
     // Tap row body → pick this sound and pop. Switch + play button

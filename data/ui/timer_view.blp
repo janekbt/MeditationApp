@@ -285,8 +285,15 @@ template $TimerView : Gtk.Widget {
                 show-enable-switch: true;
                 enable-expansion: false;
 
-                Adw.ComboRow starting_bell_sound_row {
+                Adw.ActionRow starting_bell_sound_row {
                   title: _("Bell Sound");
+                  activatable: true;
+
+                  [suffix]
+                  Gtk.Image {
+                    icon-name: "go-next-symbolic";
+                    styles ["dim-label"]
+                  }
                 }
 
                 Adw.ExpanderRow preparation_time_row {
@@ -326,11 +333,25 @@ template $TimerView : Gtk.Widget {
                 }
               }
 
-              Adw.ComboRow setup_sound_row {
-                title: _("Completion sound");
-                // Model is populated from Rust so the sound names can run
-                // through gettext — Blueprint's StringList literals are
-                // captured by xgettext but not looked up at runtime.
+              // End-bell master toggle + drill-to-chooser. Same shape as
+              // Starting Bell so the two read as siblings — flipping
+              // between them in setup is visually symmetric.
+              Adw.ExpanderRow end_bell_row {
+                title: _("End Bell");
+                subtitle: _("Play a bell when the session ends");
+                show-enable-switch: true;
+                enable-expansion: true;
+
+                Adw.ActionRow end_bell_sound_row {
+                  title: _("Bell Sound");
+                  activatable: true;
+
+                  [suffix]
+                  Gtk.Image {
+                    icon-name: "go-next-symbolic";
+                    styles ["dim-label"]
+                  }
+                }
               }
             };
           }

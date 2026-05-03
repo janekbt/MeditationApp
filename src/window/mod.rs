@@ -37,4 +37,24 @@ impl MeditateWindow {
             move || timer_view.refresh_interval_bells_count(),
         );
     }
+
+    /// Push the bell-sound chooser onto the navigation view.
+    /// Triggered by every bell-sound row in the app — Starting Bell,
+    /// per-bell row in the interval-bell edit page, End Bell. The
+    /// caller's on_selected callback fires when the user taps a sound
+    /// row, receives the chosen UUID, and the page pops automatically.
+    pub fn push_sound_chooser(
+        &self,
+        app: &crate::application::MeditateApplication,
+        current_uuid: Option<String>,
+        on_selected: impl Fn(String) + 'static,
+    ) {
+        use glib::subclass::prelude::ObjectSubclassIsExt;
+        crate::sounds::push_sounds_chooser(
+            &self.imp().nav_view,
+            app,
+            current_uuid,
+            on_selected,
+        );
+    }
 }

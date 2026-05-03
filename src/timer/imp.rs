@@ -103,12 +103,13 @@ pub struct TimerView {
     #[template_child] pub session_group:          TemplateChild<adw::PreferencesGroup>,
     #[template_child] pub setup_label_row:        TemplateChild<adw::ComboRow>,
     #[template_child] pub starting_bell_row:        TemplateChild<adw::ExpanderRow>,
-    #[template_child] pub starting_bell_sound_row:  TemplateChild<adw::ComboRow>,
+    #[template_child] pub starting_bell_sound_row:  TemplateChild<adw::ActionRow>,
     #[template_child] pub preparation_time_row:     TemplateChild<adw::ExpanderRow>,
     #[template_child] pub preparation_time_secs_row:TemplateChild<adw::SpinRow>,
     #[template_child] pub interval_bells_enabled_row: TemplateChild<adw::ExpanderRow>,
     #[template_child] pub interval_bells_row:       TemplateChild<adw::ActionRow>,
-    #[template_child] pub setup_sound_row:        TemplateChild<adw::ComboRow>,
+    #[template_child] pub end_bell_row:            TemplateChild<adw::ExpanderRow>,
+    #[template_child] pub end_bell_sound_row:      TemplateChild<adw::ActionRow>,
     #[template_child] pub time_unit_label:        TemplateChild<gtk::Label>,
     #[template_child] pub done_duration_label:   TemplateChild<gtk::Label>,
     #[template_child] pub note_view:             TemplateChild<gtk::TextView>,
@@ -140,8 +141,6 @@ pub struct TimerView {
     /// True while show_done/repopulate_label_combo is rebuilding the model,
     /// to suppress the notify::selected handler from opening the new-label dialog.
     populating_labels: Cell<bool>,
-    /// True while refresh_streak is populating the setup sound combo.
-    sound_populating: Cell<bool>,
     /// Currently-selected countdown duration in seconds, set by preset
     /// chips or the "Custom" dialog. Default 10 min; used as the target
     /// when the user taps Start (and Stopwatch Mode is off).
@@ -362,28 +361,50 @@ impl TimerView {
             ),
         );
 
-        // Completion Sound row on the setup page — mirrors the Preferences sound setting.
-        self.setup_sound_row.connect_notify_local(
-            Some("selected"),
-            glib::clone!(
-                #[weak(rename_to = this)] obj,
-                move |row, _| {
-                    let imp = this.imp();
-                    if imp.sound_populating.get() { return; }
-                    let key = match row.selected() {
-                        1 => "bowl",
-                        2 => "bell",
-                        3 => "gong",
-                        4 => "custom",
-                        _ => "none",
-                    };
-                    if let Some(app) = imp.get_app() {
-                        app.with_db_mut(|db| db.set_setting("end_sound", key));
-                        crate::sound::preload_end_sound(&app);
-                    }
+        // End Bell master toggle — gates whether the bell plays at the
+        // end of a session. Persists end_bell_active.
+        self.end_bell_row.connect_enable_expansion_notify(glib::clone!(
+            #[weak(rename_to = this)] obj,
+            move |row| {
+                let imp = this.imp();
+                if imp.bells_loading.get() { return; }
+                let on = row.enables_expansion();
+                if let Some(app) = imp.get_app() {
+                    app.with_db_mut(|db| {
+                        let _ = db.set_setting(
+                            "end_bell_active",
+                            if on { "true" } else { "false" },
+                        );
+                    });
+                    // Re-warm the preload so the next play_end_bell()
+                    // either has a MediaFile ready (active=true) or
+                    // doesn't waste cycles trying to reuse a stale one.
+                    crate::sound::preload_end_bell(&app);
                 }
-            ),
-        );
+            }
+        ));
+
+        // End Bell sound row — tap pushes the bell-sound chooser.
+        self.end_bell_sound_row.connect_activated(glib::clone!(
+            #[weak(rename_to = this)] obj,
+            move |_| {
+                let imp = this.imp();
+                let Some(app) = imp.get_app() else { return; };
+                let Some(window) = this.root()
+                    .and_then(|r| r.downcast::<crate::window::MeditateWindow>().ok())
+                else { return; };
+                let current = app
+                    .with_db(|db| db.get_setting("end_bell_sound", crate::db::BUNDLED_BOWL_UUID))
+                    .and_then(|r| r.ok());
+                let app_for_pick = app.clone();
+                let this_for_pick = this.clone();
+                window.push_sound_chooser(&app, current, move |uuid| {
+                    app_for_pick.with_db_mut(|db| db.set_setting("end_bell_sound", &uuid));
+                    crate::sound::preload_end_bell(&app_for_pick);
+                    this_for_pick.imp().refresh_end_bell_sound_subtitle();
+                });
+            }
+        ));
 
         // Same for the pre-start label selector.
         self.setup_label_row.connect_notify_local(
@@ -436,28 +457,28 @@ impl TimerView {
             }
         ));
 
-        // Bell-sound combo — three actual sounds (Bowl / Bell / Gong);
-        // "no bell" is encoded by the parent SwitchRow being off, so the
-        // combo doesn't list a None option. B.4 collapses this onto the
-        // shared bell library.
-        self.starting_bell_sound_row.connect_notify_local(
-            Some("selected"),
-            glib::clone!(
-                #[weak(rename_to = this)] obj,
-                move |row, _| {
-                    let imp = this.imp();
-                    if imp.bells_loading.get() { return; }
-                    let key = match row.selected() {
-                        1 => "bell",
-                        2 => "gong",
-                        _ => "bowl",
-                    };
-                    if let Some(app) = imp.get_app() {
-                        app.with_db_mut(|db| db.set_setting("starting_bell_sound", key));
-                    }
-                }
-            ),
-        );
+        // Starting-Bell sound row — tap pushes the bell-sound chooser.
+        // "No bell" is still handled by the parent ExpanderRow's
+        // master toggle; the chooser only lists real sounds.
+        self.starting_bell_sound_row.connect_activated(glib::clone!(
+            #[weak(rename_to = this)] obj,
+            move |_| {
+                let imp = this.imp();
+                let Some(app) = imp.get_app() else { return; };
+                let Some(window) = this.root()
+                    .and_then(|r| r.downcast::<crate::window::MeditateWindow>().ok())
+                else { return; };
+                let current = app
+                    .with_db(|db| db.get_setting("starting_bell_sound", crate::db::BUNDLED_BOWL_UUID))
+                    .and_then(|r| r.ok());
+                let app_for_pick = app.clone();
+                let this_for_pick = this.clone();
+                window.push_sound_chooser(&app, current, move |uuid| {
+                    app_for_pick.with_db_mut(|db| db.set_setting("starting_bell_sound", &uuid));
+                    this_for_pick.imp().refresh_starting_bell_sound_subtitle();
+                });
+            }
+        ));
 
         // Preparation Time expander — nested inside the Starting Bell
         // expander, animates the seconds spin in and out the same way.
@@ -1156,7 +1177,7 @@ impl TimerView {
             obj.emit_by_name::<()>("timer-stopped", &[]);
             self.show_done(new_secs);
             if let Some(app) = self.get_app() {
-                crate::sound::play_end_sound(&app);
+                crate::sound::play_end_bell(&app);
                 crate::vibration::trigger_if_enabled(&app);
                 // Only send a system notification when the app is not
                 // the focused window — the done screen is already shown
@@ -1231,7 +1252,7 @@ impl TimerView {
         self.obj().emit_by_name::<()>("timer-stopped", &[]);
         self.show_done(elapsed);
         if let Some(app) = self.get_app() {
-            crate::sound::play_end_sound(&app);
+            crate::sound::play_end_bell(&app);
             crate::vibration::trigger_if_enabled(&app);
             if !app.active_window().map(|w| w.is_active()).unwrap_or(false) {
                 let n = gtk::gio::Notification::new("Meditation Complete");
@@ -1395,29 +1416,28 @@ impl TimerView {
         // the bells_loading guard prevents the program-driven
         // set_enable_expansion() calls from looking like user toggles
         // and re-writing the same value.
-        let (starting_bell_on, starting_bell_sound, prep_on, prep_secs) = bells;
+        //
+        // We also call set_expanded with the same value — libadwaita
+        // auto-mirrors expanded ↔ enable-expansion only on user switch
+        // taps, not on programmatic set_enable_expansion. Without this
+        // a row whose persisted toggle is on appears collapsed (sub-
+        // rows hidden) on first launch / after restart, even though
+        // the switch shows on.
+        let (starting_bell_on, _starting_bell_sound_legacy, prep_on, prep_secs) = bells;
         self.bells_loading.set(true);
         self.starting_bell_row.set_enable_expansion(starting_bell_on);
-        // Bell-sound combo — 3 entries (Bowl / Bell / Gong); "no bell"
-        // is encoded by the parent ExpanderRow's switch being off. The
-        // "Custom file…" path lands in B.5 with proper plumbing.
-        let bell_sound_choices = [
-            crate::i18n::gettext("Singing bowl"),
-            crate::i18n::gettext("Bell"),
-            crate::i18n::gettext("Gong"),
-        ];
-        let bell_sound_refs: Vec<&str> = bell_sound_choices.iter().map(|s| s.as_str()).collect();
-        self.starting_bell_sound_row.set_model(Some(&gtk::StringList::new(&bell_sound_refs)));
-        self.starting_bell_sound_row.set_selected(match starting_bell_sound.as_str() {
-            "bell" => 1,
-            "gong" => 2,
-            _ => 0,
-        });
+        self.starting_bell_row.set_expanded(starting_bell_on);
+        // Sound-row subtitle: name resolved from the bell_sounds library
+        // by uuid. Empty subtitle if the persisted uuid is stale (e.g.,
+        // a wiped DB seed) — the user re-picks via the chooser.
+        self.refresh_starting_bell_sound_subtitle();
         self.preparation_time_row.set_enable_expansion(prep_on);
+        self.preparation_time_row.set_expanded(prep_on);
         self.preparation_time_secs_row.set_value(prep_secs as f64);
         // Interval-bells master toggle + count subtitle.
         let (intervals_on, intervals_enabled_count) = intervals;
         self.interval_bells_enabled_row.set_enable_expansion(intervals_on);
+        self.interval_bells_enabled_row.set_expanded(intervals_on);
         self.interval_bells_row.set_subtitle(&intervals_count_subtitle(intervals_enabled_count));
         self.bells_loading.set(false);
 
@@ -1433,33 +1453,21 @@ impl TimerView {
         // Rebuild preset buttons with the data we already fetched
         self.rebuild_preset_chips(&presets);
 
-        // Populate setup page sound row from DB setting.
-        // Build the model here so we can route each option through gettext.
-        let sound_choices = [
-            crate::i18n::gettext("None"),
-            crate::i18n::gettext("Singing bowl"),
-            crate::i18n::gettext("Bell"),
-            crate::i18n::gettext("Gong"),
-            crate::i18n::gettext("Custom file…"),
-        ];
-        let sound_refs: Vec<&str> = sound_choices.iter().map(|s| s.as_str()).collect();
-        // set_model() resets `selected` to 0, which fires the notify handler
-        // — without the guard in place it'd persist "none" into the DB before
-        // we get to read the actual setting below. Raise the flag first.
-        self.sound_populating.set(true);
-        self.setup_sound_row.set_model(Some(&gtk::StringList::new(&sound_refs)));
-        let current_sound = app
-            .with_db(|db| db.get_setting("end_sound", "bowl"))
-            .and_then(|r| r.ok())
-            .unwrap_or_else(|| "bowl".to_string());
-        self.setup_sound_row.set_selected(match current_sound.as_str() {
-            "bowl"   => 1,
-            "bell"   => 2,
-            "gong"   => 3,
-            "custom" => 4,
-            _        => 0,
-        });
-        self.sound_populating.set(false);
+        // Restore End Bell master toggle + sound row subtitle. The
+        // bells_loading guard suppresses the toggle's notify handler
+        // so the read-back doesn't re-persist or re-preload.
+        let end_bell_on = app
+            .with_db(|db| {
+                db.get_setting("end_bell_active", "true")
+                    .map(|v| v == "true")
+                    .unwrap_or(true)
+            })
+            .unwrap_or(true);
+        self.bells_loading.set(true);
+        self.end_bell_row.set_enable_expansion(end_bell_on);
+        self.end_bell_row.set_expanded(end_bell_on);
+        self.bells_loading.set(false);
+        self.refresh_end_bell_sound_subtitle();
 
         // Rebuild setup label combo. The selection comes from the per-mode
         // persisted preference (via `apply_preferred_label_for_mode`)
@@ -1930,8 +1938,9 @@ impl TimerView {
             }
         }
         drop(bells);
-        for sound in to_play {
-            crate::sound::play_interval_sound(&sound);
+        let Some(app) = self.get_app() else { return; };
+        for sound_uuid in to_play {
+            crate::sound::play_interval_sound(&sound_uuid, &app);
         }
     }
 
@@ -1984,6 +1993,39 @@ impl TimerView {
             })
             .unwrap_or(0);
         self.interval_bells_row.set_subtitle(&intervals_count_subtitle(count));
+    }
+
+    /// Refresh the subtitle of the Starting Bell sound row to the
+    /// human-readable name of whichever bell_sounds row the persisted
+    /// uuid points at. Empty if the uuid is stale (post-wipe legacy
+    /// value) — the user re-picks via the chooser to fix.
+    pub(crate) fn refresh_starting_bell_sound_subtitle(&self) {
+        let name = self.lookup_sound_name_for_setting("starting_bell_sound");
+        self.starting_bell_sound_row.set_subtitle(&name);
+    }
+
+    /// Same for End Bell.
+    pub(crate) fn refresh_end_bell_sound_subtitle(&self) {
+        let name = self.lookup_sound_name_for_setting("end_bell_sound");
+        self.end_bell_sound_row.set_subtitle(&name);
+    }
+
+    fn lookup_sound_name_for_setting(&self, setting_key: &str) -> String {
+        let Some(app) = self.get_app() else { return String::new(); };
+        let uuid = app
+            .with_db(|db| db.get_setting(setting_key, crate::db::BUNDLED_BOWL_UUID))
+            .and_then(|r| r.ok())
+            .unwrap_or_default();
+        if uuid.is_empty() {
+            return String::new();
+        }
+        app.with_db(|db| db.list_bell_sounds())
+            .and_then(|r| r.ok())
+            .unwrap_or_default()
+            .into_iter()
+            .find(|s| s.uuid == uuid)
+            .map(|s| s.name)
+            .unwrap_or_default()
     }
 }
 

@@ -103,7 +103,7 @@ impl ObjectImpl for MeditateWindow {
                         if let Some(app) = w.application()
                             .and_then(|a| a.downcast::<crate::application::MeditateApplication>().ok())
                         {
-                            crate::sound::preload_end_sound(&app);
+                            crate::sound::preload_end_bell(&app);
                         }
                     }
                 });
