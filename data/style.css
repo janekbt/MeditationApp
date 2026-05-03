@@ -38,6 +38,14 @@ button.preset-chip {
     font-variant-numeric: tabular-nums;
 }
 
+/* Generic helper for any label whose text contains live-updating
+   numbers and shouldn't reflow as digits change. Reused by the
+   sit-longer "Add MM:SS ?" button — its embedded time updates each
+   second and the surrounding pill width would otherwise wobble. */
+.tabular-nums {
+    font-variant-numeric: tabular-nums;
+}
+
 /* Shared accent-fill for every "selected" state across the app's custom
    toggles and pills. HIG pair: @accent_bg_color + @accent_fg_color. */
 button.mode-toggle-btn:checked,

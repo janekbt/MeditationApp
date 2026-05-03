@@ -42,6 +42,31 @@ impl TimerView {
         self.imp().set_running_label(label);
     }
 
+    /// Stash the running-page Pause button so on_pause / on_resume
+    /// can morph its label in place (Pause ↔ Resume) without
+    /// popping the running page back to the setup view. Called by
+    /// both the timer running page and the breathing running page.
+    pub fn set_running_pause_btn(&self, btn: gtk::Button) {
+        self.imp().set_running_pause_btn(btn);
+    }
+
+    /// Timer-mode-only: stash Stop + Add buttons so the Overtime
+    /// transition can hide Stop and reveal the dynamic
+    /// "Add MM:SS ?" button.
+    pub fn set_running_overtime_widgets(
+        &self,
+        stop_btn: gtk::Button,
+        add_btn: gtk::Button,
+    ) {
+        self.imp().set_running_overtime_widgets(stop_btn, add_btn);
+    }
+
+    /// Called by the running-page Add button — records the planned
+    /// duration plus the elapsed overtime as the session length.
+    pub fn add_overtime_and_finish(&self) {
+        self.imp().add_overtime_and_finish();
+    }
+
     /// Called by the window when the running page's Pause button is pressed.
     pub fn pause(&self) {
         self.imp().on_pause();

@@ -60,6 +60,14 @@ pub enum TimerState {
     /// Timer-mode only; Box Breathing skips this entirely.
     Preparing,
     Running,
+    /// Countdown reached 0:00 but the user hasn't yet finished —
+    /// big-clock readout flips from "remaining" to "elapsed past
+    /// zero" (counting up), and Pause becomes Finish + an "Add
+    /// MM:SS?" button appears that commits the overtime as part
+    /// of the session duration. Interval bells keep firing on
+    /// the original session timeline. Stopwatch and Box Breath
+    /// don't enter this state — they have no countdown to overshoot.
+    Overtime,
     Paused,
     Done,
 }
@@ -132,6 +140,19 @@ pub struct TimerView {
     tick_source: RefCell<Option<glib::SourceId>>,
     /// Weak ref to the running-page time label for live updates.
     running_label: RefCell<Option<gtk::Label>>,
+    /// Refs to the running-page buttons so the Overtime transition
+    /// can morph them in place (Pause → Finish, Stop hidden, the
+    /// "Add MM:SS?" suffix shown). All three are dropped when the
+    /// session ends to release the widgets.
+    running_pause_btn: RefCell<Option<gtk::Button>>,
+    running_stop_btn: RefCell<Option<gtk::Button>>,
+    overtime_add_btn: RefCell<Option<gtk::Button>>,
+    /// When `Some`, on_save records this duration instead of the
+    /// raw elapsed. Used by the Overtime "Finish" button so the
+    /// recorded session is exactly the planned countdown — Add's
+    /// path leaves it unset and on_save uses the natural elapsed
+    /// (countdown target + overtime).
+    final_duration_secs: Cell<Option<u64>>,
     /// Labels fetched from DB for the setup-page combo.
     setup_db_labels: RefCell<Vec<Label>>,
     /// True while refresh_setup_labels is rebuilding the setup combo model.
@@ -616,10 +637,13 @@ impl TimerView {
             TimerState::Idle      => self.show_idle_ui(),
             TimerState::Paused    => self.show_paused_ui(self.current_display_secs()),
             TimerState::Done      => self.view_stack.set_visible_child_name("done"),
-            // Running and Preparing normally can't reach here (the nav
-            // page blocks the toggle while a session or prep is in
-            // flight); fall back to idle UI as a safety net.
-            TimerState::Running | TimerState::Preparing => self.show_idle_ui(),
+            // Running, Preparing, and Overtime normally can't reach
+            // here (the nav page blocks the toggle while a session
+            // or prep is in flight); fall back to idle UI as a
+            // safety net.
+            TimerState::Running | TimerState::Preparing | TimerState::Overtime => {
+                self.show_idle_ui()
+            }
         }
     }
 
@@ -903,6 +927,22 @@ impl TimerView {
         if mode != TimerMode::Breathing {
             self.start_tick();
         }
+        // Flip the pause-button label back from "Resume" to "Pause"
+        // — the running page stays up across pause/resume now, so
+        // we own this morph end-to-end.
+        if let Some(btn) = self.running_pause_btn.borrow().as_ref() {
+            btn.set_label(&crate::i18n::gettext("Pause"));
+            btn.set_tooltip_text(Some(&crate::i18n::gettext("Pause Timer")));
+        }
+        // Refresh the hero label NOW instead of waiting up to ~1s for
+        // the first post-resume tick. The cores' elapsed reading is
+        // correct the moment resumed_at fires — without this push,
+        // tick-scheduling jitter occasionally makes the first visible
+        // update land >1s after the click and the user perceives a
+        // skipped second.
+        if let Some(label) = self.running_label.borrow().as_ref() {
+            label.set_label(&format_time(self.current_display_secs()));
+        }
         self.obj().emit_by_name::<()>("timer-started", &[]);
     }
 
@@ -936,6 +976,15 @@ impl TimerView {
         }
         self.timer_state.set(TimerState::Paused);
 
+        // Stay on the running page — morph the running pause-button
+        // to "Resume" so the user can pick up without first popping
+        // back to the dimmed setup view. The same physical button
+        // is reused; toggle_playback dispatches Paused → on_resume.
+        if let Some(btn) = self.running_pause_btn.borrow().as_ref() {
+            btn.set_label(&crate::i18n::gettext("Resume"));
+            btn.set_tooltip_text(Some(&crate::i18n::gettext("Resume Timer")));
+        }
+
         self.show_paused_ui(self.current_display_secs());
         self.obj().emit_by_name::<()>("timer-paused", &[]);
     }
@@ -956,6 +1005,13 @@ impl TimerView {
         *self.prep_stopwatch.borrow_mut() = None;
         self.active_bells.borrow_mut().clear();
 
+        // Release the running-page widget refs — the page is about
+        // to pop when "timer-stopped" fires below.
+        *self.running_label.borrow_mut() = None;
+        *self.running_pause_btn.borrow_mut() = None;
+        *self.running_stop_btn.borrow_mut() = None;
+        *self.overtime_add_btn.borrow_mut() = None;
+
         self.obj().emit_by_name::<()>("timer-stopped", &[]);
         self.show_done(elapsed);
     }
@@ -967,6 +1023,12 @@ impl TimerView {
     /// yet — fall back to the prep stopwatch so a "stop during prep"
     /// still saves a real session row with the time the user spent.
     fn elapsed_secs_for_mode(&self, mode: TimerMode) -> u64 {
+        // Overtime "Finish" sets this so the saved duration is the
+        // planned countdown instead of countdown + overtime. Add's
+        // path leaves it unset and falls through to natural elapsed.
+        if let Some(forced) = self.final_duration_secs.get() {
+            return forced;
+        }
         if let Some(prep) = self.prep_stopwatch.borrow().as_ref() {
             return prep.elapsed(self.elapsed_since_start()).as_secs();
         }
@@ -986,7 +1048,15 @@ impl TimerView {
         self.done_duration_label.set_label(&format_time(elapsed_secs));
         self.note_view.buffer().set_text("");
         self.repopulate_label_combo(self.setup_selected_label_id());
+        // Skip the stack's crossfade when entering Done — the running
+        // nav page is about to pop on top of this stack, and a fade
+        // here means the timer view bleeds through for the first
+        // frames of the pop animation. Done is the destination, so
+        // flip instantly; the back-to-setup path keeps its fade.
+        let saved = self.view_stack.transition_type();
+        self.view_stack.set_transition_type(gtk::StackTransitionType::None);
         self.view_stack.set_visible_child_name("done");
+        self.view_stack.set_transition_type(saved);
         // Without this, GTK's default-focus logic lands on `note_view` (the
         // first focusable descendant), which on phones pops the on-screen
         // keyboard up and hides Save/Discard. Putting focus on Save keeps
@@ -1124,6 +1194,7 @@ impl TimerView {
         }
         self.timer_state.set(TimerState::Idle);
         self.session_start_time.set(0);
+        self.final_duration_secs.set(None);
 
         // Only update the visible UI if this mode is the one currently shown.
         if mode == self.current_mode() {
@@ -1143,6 +1214,7 @@ impl TimerView {
                 match imp.timer_state.get() {
                     TimerState::Preparing => imp.tick_prep(&obj),
                     TimerState::Running => imp.tick_running(&obj),
+                    TimerState::Overtime => imp.tick_overtime(&obj),
                     _ => glib::ControlFlow::Break,
                 }
             },
@@ -1177,7 +1249,7 @@ impl TimerView {
         glib::ControlFlow::Continue
     }
 
-    fn tick_running(&self, obj: &super::TimerView) -> glib::ControlFlow {
+    fn tick_running(&self, _obj: &super::TimerView) -> glib::ControlFlow {
         let is_stopwatch = self.stopwatch_toggle_on.get();
         let (new_secs, done) = {
             if is_stopwatch {
@@ -1204,27 +1276,14 @@ impl TimerView {
         };
 
         if done {
-            // Clear the SourceId before GLib removes it. If we leave it
-            // set, cancel_tick() in dispose() will call src.remove() on
-            // an already-removed source and panic.
-            *self.tick_source.borrow_mut() = None;
-            *self.running_label.borrow_mut() = None;
-
-            obj.emit_by_name::<()>("timer-stopped", &[]);
-            self.show_done(new_secs);
-            if let Some(app) = self.get_app() {
-                crate::sound::play_end_bell(&app);
-                crate::vibration::trigger_if_enabled(&app);
-                // Only send a system notification when the app is not
-                // the focused window — the done screen is already shown
-                // in-app, so a notification would be redundant noise.
-                if !app.active_window().map(|w| w.is_active()).unwrap_or(false) {
-                    let n = gtk::gio::Notification::new("Meditation Complete");
-                    n.set_body(Some(&format!("Session: {}", format_time(new_secs))));
-                    app.send_notification(Some("timer-done"), &n);
-                }
-            }
-            return glib::ControlFlow::Break;
+            // Countdown crossed zero. Don't auto-finish — slide
+            // into Overtime so the user can either commit the
+            // extra time (Add) or stop at the planned duration
+            // (Finish). The end bell, vibration, and system
+            // notification still fire here because the *planned*
+            // session is over; overtime is bonus.
+            self.transition_running_to_overtime();
+            return glib::ControlFlow::Continue;
         }
 
         // Fire any bell whose ring boundary has been crossed since the
@@ -1246,6 +1305,116 @@ impl TimerView {
         }
 
         glib::ControlFlow::Continue
+    }
+
+    /// One-shot at zero-crossing: ring the end bell + vibrate +
+    /// notify, morph the running buttons into the Finish/Add
+    /// layout, and flip state to Overtime so subsequent ticks
+    /// dispatch through `tick_overtime`. The 1 Hz tick itself
+    /// keeps running.
+    fn transition_running_to_overtime(&self) {
+        self.timer_state.set(TimerState::Overtime);
+
+        if let Some(app) = self.get_app() {
+            crate::sound::play_end_bell(&app);
+            crate::vibration::trigger_if_enabled(&app);
+            // Only send a system notification when the app isn't
+            // focused — the in-app overtime UI already signals
+            // completion.
+            if !app.active_window().map(|w| w.is_active()).unwrap_or(false) {
+                let n = gtk::gio::Notification::new("Meditation Complete");
+                let target = self.countdown_target_secs.get();
+                n.set_body(Some(&format!("Session: {}", format_time(target))));
+                app.send_notification(Some("timer-done"), &n);
+            }
+        }
+
+        if let Some(stop_btn) = self.running_stop_btn.borrow().as_ref() {
+            stop_btn.set_visible(false);
+        }
+        if let Some(pause_btn) = self.running_pause_btn.borrow().as_ref() {
+            pause_btn.set_label(&crate::i18n::gettext("Finish"));
+            pause_btn.set_tooltip_text(Some(&crate::i18n::gettext(
+                "End at the planned duration",
+            )));
+        }
+        if let Some(add_btn) = self.overtime_add_btn.borrow().as_ref() {
+            add_btn.set_label(&format!(
+                "{} {} ?",
+                crate::i18n::gettext("Add"),
+                format_time(0),
+            ));
+            // Visibility is owned by the Clamp wrapper that the
+            // window builder put around the button — flipping the
+            // button itself wouldn't reveal the row.
+            if let Some(parent) = add_btn.parent() {
+                parent.set_visible(true);
+            }
+        }
+        // Hero stays frozen at the planned countdown duration —
+        // the user chose that target, so the static reading is
+        // their accomplishment. Only the Add button counts up,
+        // surfacing how much extra time they've accumulated.
+        if let Some(label) = self.running_label.borrow().as_ref() {
+            let target = self.countdown_target_secs.get();
+            label.set_label(&format_time(target));
+        }
+    }
+
+    /// 1 Hz update for the Overtime state — refreshes only the
+    /// dynamic Add button label, and keeps interval bells firing
+    /// on the original session timeline. The hero readout stays
+    /// frozen at the planned duration.
+    fn tick_overtime(&self, _obj: &super::TimerView) -> glib::ControlFlow {
+        let target = self.countdown_target_secs.get();
+        let total_elapsed = self.countdown_elapsed_secs();
+        let overtime = total_elapsed.saturating_sub(target);
+
+        self.fire_due_bells_at(total_elapsed);
+
+        if let Some(add_btn) = self.overtime_add_btn.borrow().as_ref() {
+            add_btn.set_label(&format!(
+                "{} {} ?",
+                crate::i18n::gettext("Add"),
+                format_time(overtime),
+            ));
+        }
+        glib::ControlFlow::Continue
+    }
+
+    /// Overtime user picked "Add MM:SS?" — record the planned
+    /// duration *plus* the elapsed overtime as the session length,
+    /// pop the running page, surface the Done screen.
+    pub(super) fn add_overtime_and_finish(&self) {
+        if self.timer_state.get() != TimerState::Overtime {
+            return;
+        }
+        let elapsed = self.countdown_elapsed_secs();
+        self.end_overtime_session(elapsed);
+    }
+
+    /// Overtime user picked "Finish" — record exactly the planned
+    /// countdown duration (overtime discarded). `final_duration_secs`
+    /// overrides the natural elapsed reading in `elapsed_secs_for_mode`
+    /// so the Save path stores the same value the Done screen shows.
+    pub(super) fn finish_overtime_session(&self) {
+        if self.timer_state.get() != TimerState::Overtime {
+            return;
+        }
+        let target = self.countdown_target_secs.get();
+        self.final_duration_secs.set(Some(target));
+        self.end_overtime_session(target);
+    }
+
+    fn end_overtime_session(&self, elapsed_secs: u64) {
+        self.cancel_tick();
+        *self.running_label.borrow_mut() = None;
+        *self.running_pause_btn.borrow_mut() = None;
+        *self.running_stop_btn.borrow_mut() = None;
+        *self.overtime_add_btn.borrow_mut() = None;
+        self.timer_state.set(TimerState::Done);
+        self.obj().emit_by_name::<()>("timer-stopped", &[]);
+        self.show_done(elapsed_secs);
     }
 
     /// Prep finished — drop the prep stopwatch, play the starting
@@ -1285,6 +1454,9 @@ impl TimerView {
     pub(super) fn finish_breath_session(&self) {
         self.timer_state.set(TimerState::Done);
         let elapsed = self.breath_elapsed().as_secs();
+        // Release running-page widget refs — the page pops next.
+        *self.running_label.borrow_mut() = None;
+        *self.running_pause_btn.borrow_mut() = None;
         self.obj().emit_by_name::<()>("timer-stopped", &[]);
         self.show_done(elapsed);
         if let Some(app) = self.get_app() {
@@ -1358,7 +1530,10 @@ impl TimerView {
         if let Some(src) = self.tick_source.borrow_mut().take() {
             src.remove();
         }
-        *self.running_label.borrow_mut() = None;
+        // Don't drop running_label here — cancel_tick is also called
+        // from on_pause now, and the running page stays up across
+        // pause/resume so the label widget is still valid. Sessions
+        // ending (on_stop, end_overtime_session) drop it explicitly.
     }
 
     pub fn refresh_streak(&self) {
@@ -1836,11 +2011,29 @@ impl TimerView {
         *self.running_label.borrow_mut() = Some(label);
     }
 
+    /// Both modes (timer + breathing) call this so on_pause /
+    /// on_resume can morph the label in place.
+    pub fn set_running_pause_btn(&self, btn: gtk::Button) {
+        *self.running_pause_btn.borrow_mut() = Some(btn);
+    }
+
+    /// Timer-mode only — these are needed for the Overtime
+    /// transition (Stop hidden, "Add MM:SS ?" revealed).
+    pub fn set_running_overtime_widgets(
+        &self,
+        stop_btn: gtk::Button,
+        add_btn: gtk::Button,
+    ) {
+        *self.running_stop_btn.borrow_mut() = Some(stop_btn);
+        *self.overtime_add_btn.borrow_mut() = Some(add_btn);
+    }
+
     pub fn toggle_playback(&self) {
         match self.timer_state.get() {
             TimerState::Idle      => self.on_start(),
             TimerState::Preparing => self.on_pause(),
             TimerState::Running   => self.on_pause(),
+            TimerState::Overtime  => self.finish_overtime_session(),
             TimerState::Paused    => self.on_resume(),
             TimerState::Done      => {}
         }

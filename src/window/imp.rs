@@ -139,10 +139,10 @@ impl MeditateWindow {
             #[weak] obj,
             move |_| obj.imp().push_running_page()
         ));
-        self.timer_view.connect_timer_paused(glib::clone!(
-            #[weak] obj,
-            move |_| { obj.imp().nav_view.pop(); }
-        ));
+        // No timer-paused handler: the running page stays put on
+        // pause now. The Pause button morphs to "Resume" in place
+        // (see TimerView::on_pause) instead of popping the user
+        // back to the dimmed setup view.
         self.timer_view.connect_timer_stopped(glib::clone!(
             #[weak] obj,
             move |_| {
@@ -188,6 +188,37 @@ impl MeditateWindow {
             .tooltip_text("Stop and Save Session")
             .build();
 
+        // Sit-longer mode "Add MM:SS ?" — only visible after the
+        // countdown reaches zero. Tapping it commits the elapsed
+        // overtime as part of the session duration. Hidden in
+        // Running, in stopwatch mode, and in Box Breath since none
+        // of those have a countdown to overshoot. Wrapped in
+        // Adw.Clamp so it stays at a comfortable pill width on
+        // wide windows rather than stretching across the running
+        // page; tightening-threshold lets it shrink gracefully on
+        // phone-sized screens. Visibility lives on the Clamp (the
+        // imp walks `add_btn.parent()` to flip it).
+        let add_btn = gtk::Button::builder()
+            .label("Add 00:00 ?")
+            .css_classes(["suggested-action", "pill", "tabular-nums"])
+            .tooltip_text("Include the elapsed overtime in the session")
+            .build();
+        let add_clamp = adw::Clamp::builder()
+            .maximum_size(180)
+            .tightening_threshold(120)
+            .child(&add_btn)
+            .visible(false)
+            .build();
+        self.timer_view.set_running_pause_btn(pause_btn.clone());
+        self.timer_view.set_running_overtime_widgets(
+            stop_btn.clone(),
+            add_btn.clone(),
+        );
+        let obj_for_add = self.obj().clone();
+        add_btn.connect_clicked(move |_| {
+            obj_for_add.imp().timer_view.add_overtime_and_finish();
+        });
+
         let btn_box = gtk::Box::builder()
             .orientation(gtk::Orientation::Horizontal)
             .spacing(12)
@@ -205,6 +236,7 @@ impl MeditateWindow {
             .margin_start(12).margin_end(12)
             .build();
         content.append(&time_label);
+        content.append(&add_clamp);
         content.append(&btn_box);
 
         self.push_running_page_with_content("Meditating", content, pause_btn, stop_btn);
@@ -363,6 +395,10 @@ impl MeditateWindow {
             .build();
         btn_box.append(&pause_btn);
         btn_box.append(&stop_btn);
+        // Mirror the timer-mode running page: stash the pause button
+        // on TimerView so on_pause / on_resume can morph the label
+        // (Pause ↔ Resume) in place without popping back to setup.
+        self.timer_view.set_running_pause_btn(pause_btn.clone());
 
         let top_strip = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
@@ -464,8 +500,12 @@ impl MeditateWindow {
             .child(&toolbar_view)
             .build();
 
+        // toggle_playback dispatches by state — Running/Preparing →
+        // pause, Overtime → finish-overtime-session. The Pause button
+        // label morphs to "Finish" when we enter Overtime, so the
+        // user-visible action stays consistent with what gets called.
         let obj = self.obj().clone();
-        pause_btn.connect_clicked(move |_| obj.imp().timer_view.pause());
+        pause_btn.connect_clicked(move |_| obj.imp().timer_view.toggle_playback());
         let obj2 = self.obj().clone();
         stop_btn.connect_clicked(move |_| obj2.imp().timer_view.stop());
 
