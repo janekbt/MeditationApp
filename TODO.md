@@ -6,6 +6,8 @@ Polish and UX items to tackle when convenient. Graduate each one out of this fil
 
 - **Guided meditation pane.** New tab next to the merged timer and Box Breath. User imports an audio file; app probes duration via `gst-discoverer`, plays it via `playbin`, auto-labels the session "Guided", and uses the file's duration as the session length. Decision: copy imported files into the app data dir (robust against the user moving them) and offer a "remove guided file" UI. Independent of the other items — can ship any time once gstreamer is in the build.
 
+- **Vibration patterns as a per-bell property.** New `vibration_patterns(uuid, name, pattern_json, is_bundled)` table parallel to `bell_sounds`; `bell_sounds` gains a nullable `vibration_pattern_uuid` column. Pattern is a sequence of `{duration_ms, intensity}` segments — long-pulse, double-buzz, heartbeat-style, etc. Three or four bundled patterns under stable UUIDs (None, Short, Long, Heartbeat). Per-bell row in the chooser shows the current pattern as a sub-row pointing at a vibration-pattern chooser modeled on the sound chooser (create / rename / delete custom patterns; auto-pick on enable). Bells can also flip a "Mute" toggle so playback is vibration-only — useful in shared spaces. Sync over the existing event log via `vibration_pattern_insert/update/delete` events. The Librem's `org.gnome.SettingsDaemon.Vibrator` D-Bus interface (or `feedbackd` directly) drives playback; laptop preview is a no-op stub. Independent of presets / guided meditation.
+
 ## Closed as "not us to fix" — Phosh launcher splash for flatpak apps
 
 On Librem 5 (Phosh 0.34 / Phoc 0.33, PureOS Crimson), the launcher
