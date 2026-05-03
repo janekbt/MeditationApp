@@ -725,6 +725,9 @@ impl Database {
             "interval_bell_insert" | "interval_bell_update" | "interval_bell_delete" => {
                 self.recompute_interval_bell(&event.target_id)?;
             }
+            "bell_sound_insert" | "bell_sound_update" | "bell_sound_delete" => {
+                self.recompute_bell_sound(&event.target_id)?;
+            }
             "setting_changed" => {
                 self.recompute_setting(&event.target_id)?;
             }
@@ -982,6 +985,72 @@ impl Database {
             self.conn.execute(
                 "DELETE FROM interval_bells WHERE uuid = ?1",
                 params![bell_uuid],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Recompute the `bell_sounds` row for `sound_uuid` from the events
+    /// table. Same precedence rules as labels / interval_bells:
+    /// tombstone wins on tie, else the highest-(lamport, device_id)
+    /// mutate event drives the row's values. Update events carry every
+    /// field plus created_iso so they self-suffice if the corresponding
+    /// insert event hasn't arrived yet.
+    fn recompute_bell_sound(&self, sound_uuid: &str) -> Result<()> {
+        let delete_ts: Option<i64> = self.conn.query_row(
+            "SELECT MAX(lamport_ts) FROM events
+             WHERE target_id = ?1 AND kind = 'bell_sound_delete'",
+            params![sound_uuid],
+            |row| row.get::<_, Option<i64>>(0),
+        )?;
+        let mutate: Option<(i64, String)> = self.conn.query_row(
+            "SELECT lamport_ts, payload FROM events
+             WHERE target_id = ?1
+               AND kind IN ('bell_sound_insert', 'bell_sound_update')
+             ORDER BY lamport_ts DESC, device_id DESC
+             LIMIT 1",
+            params![sound_uuid],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+        ).optional()?;
+
+        let row_should_exist = match (mutate.as_ref(), delete_ts) {
+            (Some(_), None) => true,
+            (None, _) => false,
+            (Some((m_ts, _)), Some(d_ts)) => *m_ts > d_ts,
+        };
+
+        if let Some((_, payload)) = mutate.filter(|_| row_should_exist) {
+            let v: serde_json::Value = serde_json::from_str(&payload)
+                .map_err(|e| DbError::Csv(
+                    format!("bell_sound event payload not valid JSON: {e}")))?;
+            let name = v["name"].as_str().unwrap_or_default();
+            let file_path = v["file_path"].as_str().unwrap_or_default();
+            let is_bundled = v["is_bundled"].as_bool().unwrap_or(false);
+            let mime_type = v["mime_type"].as_str().unwrap_or("audio/wav");
+            let created_iso = v["created_iso"].as_str().unwrap_or_default();
+            self.conn.execute(
+                "INSERT INTO bell_sounds
+                    (uuid, name, file_path, is_bundled, mime_type, created_iso)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(uuid) DO UPDATE SET
+                    name        = excluded.name,
+                    file_path   = excluded.file_path,
+                    is_bundled  = excluded.is_bundled,
+                    mime_type   = excluded.mime_type,
+                    created_iso = excluded.created_iso",
+                params![
+                    sound_uuid,
+                    name,
+                    file_path,
+                    is_bundled as i64,
+                    mime_type,
+                    created_iso,
+                ],
+            )?;
+        } else {
+            self.conn.execute(
+                "DELETE FROM bell_sounds WHERE uuid = ?1",
+                params![sound_uuid],
             )?;
         }
         Ok(())
@@ -7674,6 +7743,86 @@ mod tests {
             .filter(|(_, e)| e.kind == "bell_sound_delete")
             .collect();
         assert!(deletes.is_empty());
+    }
+
+    fn synth_bell_sound_insert(uuid: &str, lamport_ts: i64, device: &str, name: &str) -> Event {
+        Event {
+            event_uuid: format!("bs-insert-{uuid}-{lamport_ts}-{device}"),
+            lamport_ts,
+            device_id: device.to_string(),
+            kind: "bell_sound_insert".to_string(),
+            target_id: uuid.to_string(),
+            payload: serde_json::json!({
+                "uuid": uuid,
+                "name": name,
+                "file_path": format!("/path/{name}.wav"),
+                "is_bundled": false,
+                "mime_type": "audio/wav",
+                "created_iso": "2026-05-03T00:00:00Z",
+            }).to_string(),
+        }
+    }
+
+    fn synth_bell_sound_delete(uuid: &str, lamport_ts: i64, device: &str) -> Event {
+        Event {
+            event_uuid: format!("bs-del-{uuid}-{lamport_ts}-{device}"),
+            lamport_ts,
+            device_id: device.to_string(),
+            kind: "bell_sound_delete".to_string(),
+            target_id: uuid.to_string(),
+            payload: serde_json::json!({ "uuid": uuid }).to_string(),
+        }
+    }
+
+    #[test]
+    fn apply_event_bell_sound_insert_creates_the_row() {
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_bell_sound_insert("bs-1", 5, "dev-A", "Bowl")).unwrap();
+        let s = &db.list_bell_sounds().unwrap()[0];
+        assert_eq!(s.uuid, "bs-1");
+        assert_eq!(s.name, "Bowl");
+        assert_eq!(s.file_path, "/path/Bowl.wav");
+    }
+
+    #[test]
+    fn apply_event_bell_sound_delete_removes_the_row() {
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_bell_sound_insert("bs-1", 5, "dev-A", "Bowl")).unwrap();
+        db.apply_event(&synth_bell_sound_delete("bs-1", 6, "dev-A")).unwrap();
+        assert!(db.list_bell_sounds().unwrap().is_empty());
+    }
+
+    #[test]
+    fn apply_event_bell_sound_tombstone_resists_lower_lamport_insert() {
+        // Out-of-order arrival on a peer: delete (lamport 10) lands
+        // first, then the earlier insert (lamport 5). Tombstone wins.
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_bell_sound_delete("bs-1", 10, "dev-A")).unwrap();
+        db.apply_event(&synth_bell_sound_insert("bs-1", 5, "dev-A", "Bowl")).unwrap();
+        assert!(db.list_bell_sounds().unwrap().is_empty());
+    }
+
+    #[test]
+    fn apply_event_bell_sound_replay_round_trip_across_peers() {
+        let dev_a = Database::open_in_memory().unwrap();
+        dev_a.insert_bell_sound("Bowl", "/p/bowl.wav", true, "audio/wav").unwrap();
+        let uuid = dev_a.list_bell_sounds().unwrap()[0].uuid.clone();
+        dev_a.rename_bell_sound(&uuid, "Singing Bowl").unwrap();
+
+        let events: Vec<Event> = dev_a.pending_events().unwrap()
+            .into_iter()
+            .filter(|(_, e)| e.kind.starts_with("bell_sound_"))
+            .map(|(_, e)| e)
+            .collect();
+
+        let dev_b = Database::open_in_memory().unwrap();
+        dev_b.replay_events(&events).unwrap();
+        let sounds = dev_b.list_bell_sounds().unwrap();
+        assert_eq!(sounds.len(), 1);
+        assert_eq!(sounds[0].uuid, uuid);
+        assert_eq!(sounds[0].name, "Singing Bowl");
+        assert!(sounds[0].is_bundled);
+        assert_eq!(sounds[0].file_path, "/p/bowl.wav");
     }
 
     #[test]
