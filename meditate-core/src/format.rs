@@ -118,6 +118,27 @@ pub fn format_time(d: Duration) -> String {
     }
 }
 
+/// Bounds + default for the preparation-time silence in seconds.
+///
+/// Min 5 s — anything shorter feels accidental. Max 5 min — keeps the
+/// SpinRow tractable and avoids a "the app froze" reading. Default 30 s
+/// is long enough to settle, short enough to feel snappy.
+pub const PREP_SECS_MIN: u32 = 5;
+pub const PREP_SECS_MAX: u32 = 300;
+pub const PREP_SECS_DEFAULT: u32 = 30;
+
+/// Parse a settings-table preparation-time value into a clamped u32.
+///
+/// Returns `PREP_SECS_DEFAULT` for empty / non-numeric / negative input
+/// (anything `u32::from_str` rejects), and clamps in-range integers to
+/// `[PREP_SECS_MIN, PREP_SECS_MAX]`. The shell never has to think about
+/// sanitising a raw string read from the DB.
+pub fn parse_prep_secs(s: &str) -> u32 {
+    s.parse::<u32>()
+        .map(|n| n.clamp(PREP_SECS_MIN, PREP_SECS_MAX))
+        .unwrap_or(PREP_SECS_DEFAULT)
+}
+
 /// Hero-label text for a running Timer-mode session.
 ///
 /// `target = Some(d)` means the user picked a duration; the label counts
@@ -353,5 +374,51 @@ mod tests {
         assert_eq!(parse_insighttimer_datetime("2024-10-15T06:30:00"), None);
         // Month 13 is invalid in either format.
         assert_eq!(parse_insighttimer_datetime("13/01/2024 08:30:00"), None);
+    }
+
+    // ── parse_prep_secs ──────────────────────────────────────────────
+    // Settings-table values for the Preparation-Time SpinRow round-trip
+    // through this helper so the shell never has to think about garbage,
+    // empty strings, or out-of-range values from a future hand-edit.
+
+    #[test]
+    fn parse_prep_secs_constants_have_expected_shape() {
+        // Min / max bound a "settle in" silence — long enough to feel
+        // intentional, short enough not to feel like a frozen UI.
+        assert_eq!(PREP_SECS_MIN, 5);
+        assert_eq!(PREP_SECS_MAX, 300);
+        assert_eq!(PREP_SECS_DEFAULT, 30);
+        // Default must lie in the allowed range.
+        assert!(PREP_SECS_MIN <= PREP_SECS_DEFAULT && PREP_SECS_DEFAULT <= PREP_SECS_MAX);
+    }
+
+    #[test]
+    fn parse_prep_secs_passes_through_in_range() {
+        assert_eq!(parse_prep_secs("5"), 5);
+        assert_eq!(parse_prep_secs("30"), 30);
+        assert_eq!(parse_prep_secs("60"), 60);
+        assert_eq!(parse_prep_secs("300"), 300);
+    }
+
+    #[test]
+    fn parse_prep_secs_clamps_below_min() {
+        assert_eq!(parse_prep_secs("0"), PREP_SECS_MIN);
+        assert_eq!(parse_prep_secs("4"), PREP_SECS_MIN);
+    }
+
+    #[test]
+    fn parse_prep_secs_clamps_above_max() {
+        assert_eq!(parse_prep_secs("301"), PREP_SECS_MAX);
+        assert_eq!(parse_prep_secs("100000"), PREP_SECS_MAX);
+    }
+
+    #[test]
+    fn parse_prep_secs_falls_back_to_default_on_garbage() {
+        assert_eq!(parse_prep_secs(""), PREP_SECS_DEFAULT);
+        assert_eq!(parse_prep_secs("garbage"), PREP_SECS_DEFAULT);
+        // Negative — u32 parse fails, default kicks in.
+        assert_eq!(parse_prep_secs("-5"), PREP_SECS_DEFAULT);
+        // Stray decimals — u32 parse fails, default kicks in.
+        assert_eq!(parse_prep_secs("30.0"), PREP_SECS_DEFAULT);
     }
 }
