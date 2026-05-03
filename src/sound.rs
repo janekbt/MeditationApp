@@ -20,6 +20,12 @@ thread_local! {
     /// CURRENT_MEDIA and STARTING_MEDIA so in-session bells don't
     /// clobber the completion-sound preload or the starting bell.
     static INTERVAL_MEDIA: RefCell<Vec<gtk::MediaFile>> = const { RefCell::new(Vec::new()) };
+    /// Single slot for the bell-sound chooser's per-row preview.
+    /// Mono playback (one preview at a time) — tapping a different
+    /// row's play button stops the previous. Kept separate from the
+    /// in-session slots so a preview in Settings can't fight with a
+    /// running session's audio.
+    static PREVIEW_MEDIA: RefCell<Option<gtk::MediaFile>> = const { RefCell::new(None) };
 }
 
 /// Stop whatever is currently playing in CURRENT_MEDIA (no-op if
@@ -47,6 +53,40 @@ pub fn stop_all() {
     });
     INTERVAL_MEDIA.with(|cell| {
         for m in cell.borrow_mut().drain(..) {
+            m.set_playing(false);
+        }
+    });
+    PREVIEW_MEDIA.with(|cell| {
+        if let Some(m) = cell.replace(None) {
+            m.set_playing(false);
+        }
+    });
+}
+
+/// Play one of the bundled or custom sounds as a preview. Used by
+/// the bell-sound chooser's per-row Play button. Mono — a new
+/// preview stops the previous, so users can scrub through a list
+/// without stacking sounds. `is_bundled=true` treats `path` as a
+/// GResource path; `false` treats it as a filesystem path.
+pub fn play_preview(path: &str, is_bundled: bool) {
+    let media = if is_bundled {
+        gtk::MediaFile::for_resource(path)
+    } else {
+        gtk::MediaFile::for_file(&gtk::gio::File::for_path(path))
+    };
+    PREVIEW_MEDIA.with(|cell| {
+        if let Some(old) = cell.replace(Some(media.clone())) {
+            old.set_playing(false);
+        }
+    });
+    media.set_playing(true);
+}
+
+/// Stop the active preview, if any. Called by the chooser page
+/// when it pops so a preview doesn't outlast the user's choice.
+pub fn stop_preview() {
+    PREVIEW_MEDIA.with(|cell| {
+        if let Some(m) = cell.replace(None) {
             m.set_playing(false);
         }
     });
