@@ -192,6 +192,15 @@ pub struct TimerView {
     /// rebuilt cleanly on mode switch / sync update without leaking
     /// rows from the previous mode.
     starred_preset_rows: RefCell<Vec<(adw::ActionRow, String)>>,
+    /// The most-recently-shown apply toast. Tapping a second preset
+    /// dismisses the prior toast immediately so the new one renders
+    /// without waiting for the queue — otherwise the user has to
+    /// wait through the full timeout before seeing the next "applied"
+    /// confirmation. The Undo affordance on the dismissed toast is
+    /// lost, but that's the right trade: the user has just chosen
+    /// to apply a different preset, so undoing the previous one no
+    /// longer makes sense.
+    current_apply_toast: RefCell<Option<adw::Toast>>,
 
     // ── Breathing (Box Breath) state ─────────────────────────────────
     /// Four phase durations. Defaults 4/4/4/4 (classic box breathing).
@@ -2121,6 +2130,13 @@ impl TimerView {
         // its previous value (including a destructive interval-bells
         // round-trip — same DB cost as the forward apply, accepted
         // for what's already a low-frequency action).
+        //
+        // Dismiss any previous apply toast first so a quick second
+        // tap shows the new "applied" message without waiting through
+        // the queue — see `current_apply_toast` for the rationale.
+        if let Some(prev) = self.current_apply_toast.borrow_mut().take() {
+            prev.dismiss();
+        }
         let toast = adw::Toast::builder()
             .title(crate::i18n::gettext("'{name}' applied")
                 .replace("{name}", &preset.name))
@@ -2130,6 +2146,18 @@ impl TimerView {
         toast.connect_button_clicked(move |_| {
             obj.imp().apply_config(&snapshot);
         });
+        // Clear the cached handle when the toast finishes (queue exit
+        // / explicit dismiss / button click) — otherwise a long-lived
+        // strong reference would outlive the toast on the overlay.
+        let obj_for_dismiss = self.obj().clone();
+        toast.connect_dismissed(move |t| {
+            let imp = obj_for_dismiss.imp();
+            let mut slot = imp.current_apply_toast.borrow_mut();
+            if slot.as_ref().map(|cur| cur == t).unwrap_or(false) {
+                *slot = None;
+            }
+        });
+        *self.current_apply_toast.borrow_mut() = Some(toast.clone());
         if let Some(window) = self.obj().root().and_downcast::<crate::window::MeditateWindow>() {
             window.add_toast(toast);
         }
