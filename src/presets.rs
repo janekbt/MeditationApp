@@ -65,9 +65,20 @@ pub fn push_presets_chooser(
         ChooserMode::Manage      => gettext("Manage Presets"),
     };
     let header = adw::HeaderBar::builder().show_back_button(true).build();
+
+    // Per-chooser ToastOverlay. The window's primary toast_overlay
+    // lives inside the "main" NavigationPage, which is off-screen
+    // while a chooser is pushed — toasts pushed to the window-level
+    // overlay would appear on the hidden page and look like nothing
+    // happened. The local overlay anchors toasts to the chooser's
+    // own content allocation so they show up where the user is
+    // actually looking.
+    let toast_overlay = adw::ToastOverlay::new();
+    toast_overlay.set_child(Some(&prefs_page));
+
     let toolbar = adw::ToolbarView::new();
     toolbar.add_top_bar(&header);
-    toolbar.set_content(Some(&prefs_page));
+    toolbar.set_content(Some(&toast_overlay));
 
     let page = adw::NavigationPage::builder()
         .tag("presets-chooser")
@@ -88,6 +99,7 @@ pub fn push_presets_chooser(
     let rows_for_rb = rows.clone();
     let app_for_rb = app.clone();
     let nav_view_for_rb = nav_view_clone.clone();
+    let toast_overlay_for_rb = toast_overlay.clone();
     let chooser_mode_for_rb = chooser_mode.clone();
     let on_changed_for_rb = on_changed.clone();
     let toast_slot_for_rb = toast_slot.clone();
@@ -99,6 +111,7 @@ pub fn push_presets_chooser(
             &app_for_rb,
             mode,
             &nav_view_for_rb,
+            &toast_overlay_for_rb,
             chooser_mode_for_rb.clone(),
             on_changed_for_rb.clone(),
             toast_slot_for_rb.clone(),
@@ -119,6 +132,7 @@ fn rebuild_chooser_rows(
     app: &MeditateApplication,
     mode: SessionMode,
     nav_view: &adw::NavigationView,
+    toast_overlay: &adw::ToastOverlay,
     chooser_mode: Rc<ChooserMode>,
     on_changed: Rc<dyn Fn()>,
     toast_slot: ToastSlot,
@@ -189,7 +203,7 @@ fn rebuild_chooser_rows(
         .unwrap_or_default();
     for preset in presets {
         let row = build_preset_row(
-            &preset, app, &chooser_mode, nav_view,
+            &preset, app, &chooser_mode, nav_view, toast_overlay,
             on_changed.clone(), toast_slot.clone(),
             &label_names, rebuilder.clone(),
         );
@@ -203,6 +217,7 @@ fn build_preset_row(
     app: &MeditateApplication,
     chooser_mode: &Rc<ChooserMode>,
     nav_view: &adw::NavigationView,
+    toast_overlay: &adw::ToastOverlay,
     on_changed: Rc<dyn Fn()>,
     toast_slot: ToastSlot,
     label_names: &HashMap<String, String>,
@@ -228,7 +243,8 @@ fn build_preset_row(
     if matches!(**chooser_mode, ChooserMode::Manage) {
         add_rename_button(&row, preset, app, rebuilder.clone(), on_changed.clone());
         add_delete_button(
-            &row, preset, app, rebuilder, on_changed.clone(), toast_slot.clone(),
+            &row, preset, app, rebuilder, on_changed.clone(),
+            toast_slot.clone(), toast_overlay,
         );
     }
 
@@ -241,6 +257,11 @@ fn build_preset_row(
         let nav_view = nav_view.clone();
         let on_changed = on_changed.clone();
         let toast_slot = toast_slot.clone();
+        // The override toast is posted on the *outer* (main-window)
+        // overlay because the action pops the chooser page itself,
+        // so the chooser-local overlay disappears with it. Capture
+        // the window now while the row is still in the tree.
+        let window = window_from(&row);
         row.connect_activated(move |btn| {
             let preset_uuid = preset_uuid.clone();
             let preset_name = preset_name.clone();
@@ -251,10 +272,7 @@ fn build_preset_row(
             let on_changed = on_changed.clone();
             let toast_slot = toast_slot.clone();
             let dialog_name = preset_name.clone();
-            // Capture the parent window *before* the dialog response
-            // pops the chooser page — anchor.root() afterwards walks
-            // a navigation tree that's already in motion.
-            let window = window_from(btn);
+            let window = window.clone();
             present_override_dialog(
                 btn,
                 &dialog_name,
@@ -275,7 +293,7 @@ fn build_preset_row(
                     let preset_uuid_undo = preset_uuid.clone();
                     let on_changed_undo = on_changed.clone();
                     if let Some(window) = window.as_ref() {
-                        push_undo_toast(
+                        push_undo_toast_window(
                             window,
                             &toast_slot,
                             &gettext("'{name}' overridden")
@@ -373,6 +391,7 @@ fn add_delete_button(
     rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
     on_changed: Rc<dyn Fn()>,
     toast_slot: ToastSlot,
+    toast_overlay: &adw::ToastOverlay,
 ) {
     let delete_btn = gtk::Button::builder()
         .icon_name("user-trash-symbolic")
@@ -382,10 +401,12 @@ fn add_delete_button(
         .build();
     let app = app.clone();
     let preset_full = preset.clone();
+    let toast_overlay = toast_overlay.clone();
     delete_btn.connect_clicked(move |btn| {
         present_delete_preset_dialog(
             btn, &app, &preset_full,
-            rebuilder.clone(), on_changed.clone(), toast_slot.clone(),
+            rebuilder.clone(), on_changed.clone(),
+            toast_slot.clone(), &toast_overlay,
         );
     });
     row.add_suffix(&delete_btn);
@@ -521,6 +542,7 @@ fn present_delete_preset_dialog(
     rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
     on_changed: Rc<dyn Fn()>,
     toast_slot: ToastSlot,
+    toast_overlay: &adw::ToastOverlay,
 ) {
     let body = gettext("'{name}' will be removed from this device and any synced peers.")
         .replace("{name}", &preset.name);
@@ -536,11 +558,7 @@ fn present_delete_preset_dialog(
 
     let app = app.clone();
     let preset_full = preset.clone();
-    // Resolve the parent window now while the trash button is still
-    // in the tree. The dialog response handler kicks off a rebuild
-    // that drops this row, so an anchor-relative root() walk
-    // afterwards would return None and the toast would silently fail.
-    let window = window_from(anchor);
+    let toast_overlay = toast_overlay.clone();
     dialog.connect_response(None, move |_, id| {
         if id != "delete" { return; }
         app.with_db_mut(|db| { let _ = db.delete_preset(&preset_full.uuid); });
@@ -556,26 +574,24 @@ fn present_delete_preset_dialog(
         let preset_undo = preset_full.clone();
         let on_changed_undo = on_changed.clone();
         let rebuilder_undo = rebuilder.clone();
-        if let Some(window) = window.as_ref() {
-            push_undo_toast(
-                window,
-                &toast_slot,
-                &gettext("'{name}' deleted").replace("{name}", &preset_full.name),
-                move || {
-                    app_undo.with_db_mut(|db| {
-                        let _ = db.insert_preset_with_uuid(
-                            &preset_undo.uuid,
-                            &preset_undo.name,
-                            preset_undo.mode,
-                            preset_undo.is_starred,
-                            &preset_undo.config_json,
-                        );
-                    });
-                    on_changed_undo();
-                    if let Some(rb) = rebuilder_undo.borrow().as_ref() { rb(); }
-                },
-            );
-        }
+        push_undo_toast(
+            &toast_overlay,
+            &toast_slot,
+            &gettext("'{name}' deleted").replace("{name}", &preset_full.name),
+            move || {
+                app_undo.with_db_mut(|db| {
+                    let _ = db.insert_preset_with_uuid(
+                        &preset_undo.uuid,
+                        &preset_undo.name,
+                        preset_undo.mode,
+                        preset_undo.is_starred,
+                        &preset_undo.config_json,
+                    );
+                });
+                on_changed_undo();
+                if let Some(rb) = rebuilder_undo.borrow().as_ref() { rb(); }
+            },
+        );
     });
 
     if let Some(root) = anchor.root() {
@@ -666,20 +682,47 @@ fn subtitle_for(p: &Preset, label_names: &HashMap<String, String>) -> String {
     parts.join(" · ")
 }
 
-/// Push (or replace) the chooser's currently-visible undo toast.
-/// Takes a `MeditateWindow` directly because some action paths
-/// remove the anchor widget from the tree before this runs (the
-/// delete handler triggers a rebuild that drops the row + its
-/// trash button), so an anchor-relative root() walk would fail.
+/// Push (or replace) the chooser's currently-visible undo toast on
+/// the chooser-local ToastOverlay. The chooser is a NavigationPage
+/// pushed onto the window's NavigationView, so the window's
+/// primary toast_overlay is currently off-screen — toasts pushed
+/// to it would appear on the hidden "main" page and look like
+/// nothing happened. This function targets the overlay that wraps
+/// the chooser's own content allocation.
+///
 /// Same panic-avoidance contract as src/timer/imp.rs's apply toast:
 /// release the RefCell guard before dismiss(), and the dismissed
 /// callback uses a separate read+write borrow.
 fn push_undo_toast(
+    toast_overlay: &adw::ToastOverlay,
+    toast_slot: &ToastSlot,
+    title: &str,
+    on_undo: impl Fn() + 'static,
+) {
+    let toast = build_undo_toast(toast_slot, title, on_undo);
+    toast_overlay.add_toast(toast);
+}
+
+/// Variant of push_undo_toast that targets the main window's overlay
+/// instead of the chooser-local one. Used by the override path,
+/// which pops the chooser page itself — the chooser-local overlay
+/// goes away with it, so the toast has to live on the persistent
+/// main-window overlay or it'd vanish before the user could undo.
+fn push_undo_toast_window(
     window: &crate::window::MeditateWindow,
     toast_slot: &ToastSlot,
     title: &str,
     on_undo: impl Fn() + 'static,
 ) {
+    let toast = build_undo_toast(toast_slot, title, on_undo);
+    window.add_toast(toast);
+}
+
+fn build_undo_toast(
+    toast_slot: &ToastSlot,
+    title: &str,
+    on_undo: impl Fn() + 'static,
+) -> adw::Toast {
     let prev = toast_slot.replace(None);
     if let Some(prev) = prev { prev.dismiss(); }
 
@@ -702,7 +745,7 @@ fn push_undo_toast(
         }
     });
     toast_slot.replace(Some(toast.clone()));
-    window.add_toast(toast);
+    toast
 }
 
 /// Resolve the parent MeditateWindow from a live widget. The
