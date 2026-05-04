@@ -1847,7 +1847,9 @@ impl TimerView {
             TimerMode::Timer     => crate::db::SessionMode::Timer,
             TimerMode::Breathing => crate::db::SessionMode::BoxBreath,
         };
-        let presets = self.get_app()
+        let app_opt = self.get_app();
+        let presets = app_opt
+            .as_ref()
             .and_then(|app| app.with_db(|db| db.list_starred_presets_for_mode(session_mode)))
             .and_then(|r| r.ok())
             .unwrap_or_default();
@@ -1860,12 +1862,23 @@ impl TimerView {
         }
         self.presets_group.set_description(None::<&str>);
 
+        // Resolve the labels table once per rebuild so each row's
+        // subtitle lookup is O(1) against the in-memory map.
+        let label_names: std::collections::HashMap<String, String> = app_opt
+            .as_ref()
+            .and_then(|app| app.with_db(|db| db.list_labels()))
+            .and_then(|r| r.ok())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|l| (l.uuid, l.name))
+            .collect();
+
         let obj = self.obj();
         let mut tracked: Vec<(adw::ActionRow, String)> = Vec::with_capacity(presets.len());
         for p in presets {
             let row = adw::ActionRow::builder()
                 .title(&p.name)
-                .subtitle(&preset_subtitle(&p))
+                .subtitle(&preset_subtitle(&p, &label_names))
                 .activatable(true)
                 .build();
             let uuid = p.uuid.clone();
@@ -2668,31 +2681,57 @@ fn intervals_count_subtitle(enabled_count: usize) -> String {
 }
 
 /// One-line subtitle for a preset row in the home-view starred list.
-/// Mode-shaped: Timer ⇒ "{N} min" or "Stopwatch", Box Breath ⇒
-/// "{i}-{h_full}-{e}-{h_empty} · {N} min". Renders the at-a-glance
-/// summary the user needs without opening the preset.
-fn preset_subtitle(p: &meditate_core::db::Preset) -> String {
+/// Composes timing + label + interval-bell count, matching the
+/// chooser's subtitle for visual consistency. `label_names` is a
+/// uuid → name map already resolved by the caller (one DB roundtrip
+/// per rebuild instead of per row).
+fn preset_subtitle(
+    p: &meditate_core::db::Preset,
+    label_names: &std::collections::HashMap<String, String>,
+) -> String {
     use crate::preset_config::{PresetConfig, PresetTiming};
     let cfg = match PresetConfig::from_json(&p.config_json) {
         Ok(c) => c,
         Err(_) => return String::new(),
     };
+    let mut parts: Vec<String> = Vec::new();
     match cfg.timing {
-        PresetTiming::Timer { stopwatch: true, .. } =>
-            crate::i18n::gettext("Stopwatch"),
+        PresetTiming::Timer { stopwatch: true, .. } => {
+            parts.push(crate::i18n::gettext("Stopwatch"));
+        }
         PresetTiming::Timer { stopwatch: false, duration_secs } => {
             let mins = duration_secs / 60;
-            crate::i18n::gettext("{n} min").replace("{n}", &mins.to_string())
+            parts.push(crate::i18n::gettext("{n} min")
+                .replace("{n}", &mins.to_string()));
         }
         PresetTiming::BoxBreath {
             inhale_secs, hold_full_secs, exhale_secs, hold_empty_secs,
             duration_minutes,
-        } => format!(
-            "{}-{}-{}-{} · {}",
-            inhale_secs, hold_full_secs, exhale_secs, hold_empty_secs,
-            crate::i18n::gettext("{n} min").replace("{n}", &duration_minutes.to_string()),
-        ),
+        } => {
+            parts.push(format!(
+                "{}-{}-{}-{}",
+                inhale_secs, hold_full_secs, exhale_secs, hold_empty_secs,
+            ));
+            parts.push(crate::i18n::gettext("{n} min")
+                .replace("{n}", &duration_minutes.to_string()));
+        }
     }
+    if cfg.label.enabled {
+        if let Some(uuid) = cfg.label.uuid.as_ref() {
+            if let Some(name) = label_names.get(uuid) {
+                parts.push(name.clone());
+            }
+        }
+    }
+    if cfg.interval_bells.enabled && !cfg.interval_bells.bells.is_empty() {
+        let n = cfg.interval_bells.bells.len();
+        parts.push(if n == 1 {
+            crate::i18n::gettext("1 bell")
+        } else {
+            crate::i18n::gettext("{n} bells").replace("{n}", &n.to_string())
+        });
+    }
+    parts.join(" · ")
 }
 
 pub fn format_time(secs: u64) -> String {

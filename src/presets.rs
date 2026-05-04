@@ -17,6 +17,7 @@
 //! through the caller's `on_changed` hook.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use adw::prelude::*;
@@ -25,6 +26,13 @@ use crate::application::MeditateApplication;
 use crate::db::{Preset, SessionMode};
 use crate::i18n::gettext;
 use crate::preset_config::PresetConfig;
+
+/// Tracker for the most-recently-shown chooser-action toast. Used to
+/// dismiss a prior toast when the user fires a second action quickly
+/// — same shape and same panic-avoidance contract as the apply
+/// toast in src/timer/imp.rs (release the RefCell guard before
+/// dismiss(), separate read+write borrows in the dismissed callback).
+type ToastSlot = Rc<RefCell<Option<adw::Toast>>>;
 
 /// Two-mode chooser parameter. The `Save` variant carries the live
 /// Setup snapshot the caller wants to persist; the `Manage` variant
@@ -71,6 +79,7 @@ pub fn push_presets_chooser(
     let on_changed: Rc<dyn Fn()> = Rc::new(on_changed);
     let nav_view_clone = nav_view.clone();
     let rows: Rc<RefCell<Vec<gtk::Widget>>> = Rc::new(RefCell::new(Vec::new()));
+    let toast_slot: ToastSlot = Rc::new(RefCell::new(None));
 
     let rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>> =
         Rc::new(RefCell::new(None));
@@ -81,6 +90,7 @@ pub fn push_presets_chooser(
     let nav_view_for_rb = nav_view_clone.clone();
     let chooser_mode_for_rb = chooser_mode.clone();
     let on_changed_for_rb = on_changed.clone();
+    let toast_slot_for_rb = toast_slot.clone();
     let rebuilder_for_self = rebuilder.clone();
     *rebuilder.borrow_mut() = Some(Box::new(move || {
         rebuild_chooser_rows(
@@ -91,6 +101,7 @@ pub fn push_presets_chooser(
             &nav_view_for_rb,
             chooser_mode_for_rb.clone(),
             on_changed_for_rb.clone(),
+            toast_slot_for_rb.clone(),
             rebuilder_for_self.clone(),
         );
     }));
@@ -110,11 +121,22 @@ fn rebuild_chooser_rows(
     nav_view: &adw::NavigationView,
     chooser_mode: Rc<ChooserMode>,
     on_changed: Rc<dyn Fn()>,
+    toast_slot: ToastSlot,
     rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
 ) {
     for row in rows.borrow_mut().drain(..) {
         group.remove(&row);
     }
+
+    // Resolve the labels table once per rebuild so every row's
+    // subtitle lookup is O(1) against the in-memory map.
+    let label_names: HashMap<String, String> = app
+        .with_db(|db| db.list_labels())
+        .and_then(|r| r.ok())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|l| (l.uuid, l.name))
+        .collect();
 
     // Synthetic "Create new preset…" entry — Save mode only. In
     // Manage mode taps shouldn't create new presets (we'd lack a
@@ -168,7 +190,8 @@ fn rebuild_chooser_rows(
     for preset in presets {
         let row = build_preset_row(
             &preset, app, &chooser_mode, nav_view,
-            on_changed.clone(), rebuilder.clone(),
+            on_changed.clone(), toast_slot.clone(),
+            &label_names, rebuilder.clone(),
         );
         group.add(&row);
         rows.borrow_mut().push(row.upcast());
@@ -181,11 +204,13 @@ fn build_preset_row(
     chooser_mode: &Rc<ChooserMode>,
     nav_view: &adw::NavigationView,
     on_changed: Rc<dyn Fn()>,
+    toast_slot: ToastSlot,
+    label_names: &HashMap<String, String>,
     rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
 ) -> adw::ActionRow {
     let row = adw::ActionRow::builder()
         .title(&preset.name)
-        .subtitle(&subtitle_for(preset))
+        .subtitle(&subtitle_for(preset, label_names))
         .activatable(matches!(**chooser_mode, ChooserMode::Save { .. }))
         .build();
 
@@ -193,32 +218,42 @@ fn build_preset_row(
     // outline when off. Live in both modes: the chooser_mode only
     // affects how row activation behaves, not whether you can change
     // the pin state.
-    let star_btn = build_star_button(preset, app, on_changed.clone(), rebuilder.clone());
+    let star_btn = build_star_button(
+        preset, app, on_changed.clone(), toast_slot.clone(), rebuilder.clone(),
+    );
     row.add_prefix(&star_btn);
 
     // Manage-only suffixes: rename + delete buttons. In Save mode
     // taps on the row body trigger the override dialog instead.
     if matches!(**chooser_mode, ChooserMode::Manage) {
         add_rename_button(&row, preset, app, rebuilder.clone(), on_changed.clone());
-        add_delete_button(&row, preset, app, rebuilder, on_changed.clone());
+        add_delete_button(
+            &row, preset, app, rebuilder, on_changed.clone(), toast_slot.clone(),
+        );
     }
 
     if let ChooserMode::Save { snapshot } = &**chooser_mode {
         let preset_uuid = preset.uuid.clone();
         let preset_name = preset.name.clone();
         let snapshot = snapshot.clone();
+        let prior_config_json = preset.config_json.clone();
         let app = app.clone();
         let nav_view = nav_view.clone();
         let on_changed = on_changed.clone();
+        let toast_slot = toast_slot.clone();
         row.connect_activated(move |btn| {
             let preset_uuid = preset_uuid.clone();
+            let preset_name = preset_name.clone();
             let snapshot = snapshot.clone();
+            let prior_config_json = prior_config_json.clone();
             let app = app.clone();
             let nav_view = nav_view.clone();
             let on_changed = on_changed.clone();
+            let toast_slot = toast_slot.clone();
+            let dialog_name = preset_name.clone();
             present_override_dialog(
                 btn,
-                &preset_name,
+                &dialog_name,
                 Box::new(move || {
                     let json = snapshot.to_json();
                     app.with_db_mut(|db| {
@@ -226,6 +261,29 @@ fn build_preset_row(
                     });
                     on_changed();
                     nav_view.pop();
+
+                    // Undo: restore the prior config_json. The
+                    // forward write emitted preset_update; the undo
+                    // emits another preset_update with newer ts so
+                    // peers converge on the restored state.
+                    let app_undo = app.clone();
+                    let prior_undo = prior_config_json.clone();
+                    let preset_uuid_undo = preset_uuid.clone();
+                    let on_changed_undo = on_changed.clone();
+                    push_undo_toast(
+                        &nav_view,
+                        &toast_slot,
+                        &gettext("'{name}' overridden")
+                            .replace("{name}", &preset_name),
+                        move || {
+                            app_undo.with_db_mut(|db| {
+                                let _ = db.update_preset_config(
+                                    &preset_uuid_undo, &prior_undo,
+                                );
+                            });
+                            on_changed_undo();
+                        },
+                    );
                 }),
             );
         });
@@ -237,6 +295,7 @@ fn build_star_button(
     preset: &Preset,
     app: &MeditateApplication,
     on_changed: Rc<dyn Fn()>,
+    toast_slot: ToastSlot,
     rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
 ) -> gtk::Button {
     let icon_name = if preset.is_starred {
@@ -262,13 +321,33 @@ fn build_star_button(
         .build();
     let app = app.clone();
     let preset_uuid = preset.uuid.clone();
-    let new_starred = !preset.is_starred;
-    btn.connect_clicked(move |_| {
+    let preset_name = preset.name.clone();
+    let was_starred = preset.is_starred;
+    let new_starred = !was_starred;
+    btn.connect_clicked(move |b| {
         app.with_db_mut(|db| {
             let _ = db.update_preset_starred(&preset_uuid, new_starred);
         });
         on_changed();
         if let Some(rb) = rebuilder.borrow().as_ref() { rb(); }
+
+        // Undo toast: snap back to the prior starred state.
+        let title = if new_starred {
+            gettext("'{name}' pinned to home").replace("{name}", &preset_name)
+        } else {
+            gettext("'{name}' unpinned").replace("{name}", &preset_name)
+        };
+        let app_undo = app.clone();
+        let preset_uuid_undo = preset_uuid.clone();
+        let on_changed_undo = on_changed.clone();
+        let rebuilder_undo = rebuilder.clone();
+        push_undo_toast(b, &toast_slot, &title, move || {
+            app_undo.with_db_mut(|db| {
+                let _ = db.update_preset_starred(&preset_uuid_undo, was_starred);
+            });
+            on_changed_undo();
+            if let Some(rb) = rebuilder_undo.borrow().as_ref() { rb(); }
+        });
     });
     btn
 }
@@ -304,6 +383,7 @@ fn add_delete_button(
     app: &MeditateApplication,
     rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
     on_changed: Rc<dyn Fn()>,
+    toast_slot: ToastSlot,
 ) {
     let delete_btn = gtk::Button::builder()
         .icon_name("user-trash-symbolic")
@@ -312,12 +392,11 @@ fn add_delete_button(
         .valign(gtk::Align::Center)
         .build();
     let app = app.clone();
-    let preset_uuid = preset.uuid.clone();
-    let preset_name = preset.name.clone();
+    let preset_full = preset.clone();
     delete_btn.connect_clicked(move |btn| {
         present_delete_preset_dialog(
-            btn, &app, &preset_uuid, &preset_name,
-            rebuilder.clone(), on_changed.clone(),
+            btn, &app, &preset_full,
+            rebuilder.clone(), on_changed.clone(), toast_slot.clone(),
         );
     });
     row.add_suffix(&delete_btn);
@@ -449,13 +528,13 @@ fn present_rename_preset_dialog(
 fn present_delete_preset_dialog(
     anchor: &gtk::Button,
     app: &MeditateApplication,
-    preset_uuid: &str,
-    preset_name: &str,
+    preset: &Preset,
     rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
     on_changed: Rc<dyn Fn()>,
+    toast_slot: ToastSlot,
 ) {
     let body = gettext("'{name}' will be removed from this device and any synced peers.")
-        .replace("{name}", preset_name);
+        .replace("{name}", &preset.name);
     let dialog = adw::AlertDialog::builder()
         .heading(gettext("Delete Preset?"))
         .body(body)
@@ -467,12 +546,41 @@ fn present_delete_preset_dialog(
     dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
 
     let app = app.clone();
-    let preset_uuid = preset_uuid.to_string();
+    let preset_full = preset.clone();
+    let anchor_clone = anchor.clone();
     dialog.connect_response(None, move |_, id| {
         if id != "delete" { return; }
-        app.with_db_mut(|db| { let _ = db.delete_preset(&preset_uuid); });
+        app.with_db_mut(|db| { let _ = db.delete_preset(&preset_full.uuid); });
         on_changed();
         if let Some(rb) = rebuilder.borrow().as_ref() { rb(); }
+
+        // Undo: re-insert with the same uuid + name + mode +
+        // is_starred + config_json so the row resurrects identically.
+        // The forward delete emitted preset_delete; the undo emits
+        // preset_insert with newer ts so peers converge on the
+        // restored row.
+        let app_undo = app.clone();
+        let preset_undo = preset_full.clone();
+        let on_changed_undo = on_changed.clone();
+        let rebuilder_undo = rebuilder.clone();
+        push_undo_toast(
+            &anchor_clone,
+            &toast_slot,
+            &gettext("'{name}' deleted").replace("{name}", &preset_full.name),
+            move || {
+                app_undo.with_db_mut(|db| {
+                    let _ = db.insert_preset_with_uuid(
+                        &preset_undo.uuid,
+                        &preset_undo.name,
+                        preset_undo.mode,
+                        preset_undo.is_starred,
+                        &preset_undo.config_json,
+                    );
+                });
+                on_changed_undo();
+                if let Some(rb) = rebuilder_undo.borrow().as_ref() { rb(); }
+            },
+        );
     });
 
     if let Some(root) = anchor.root() {
@@ -512,27 +620,93 @@ fn present_override_dialog(
     }
 }
 
-/// One-line subtitle on a chooser row. Matches the home-view chip
-/// list's subtitle format so a preset reads the same in both places.
-fn subtitle_for(p: &Preset) -> String {
+/// One-line subtitle on a chooser row, populated from the preset's
+/// config_json. Composes timing + label name + interval-bell count
+/// so a preset reads the same here as on the home-view chip list.
+/// `label_names` is a uuid → name map already resolved by the
+/// caller (one DB roundtrip per rebuild instead of per row).
+fn subtitle_for(p: &Preset, label_names: &HashMap<String, String>) -> String {
     use crate::preset_config::PresetTiming;
     let cfg = match PresetConfig::from_json(&p.config_json) {
         Ok(c) => c,
         Err(_) => return String::new(),
     };
+    let mut parts: Vec<String> = Vec::new();
     match cfg.timing {
-        PresetTiming::Timer { stopwatch: true, .. } => gettext("Stopwatch"),
+        PresetTiming::Timer { stopwatch: true, .. } => {
+            parts.push(gettext("Stopwatch"));
+        }
         PresetTiming::Timer { stopwatch: false, duration_secs } => {
             let mins = duration_secs / 60;
-            gettext("{n} min").replace("{n}", &mins.to_string())
+            parts.push(gettext("{n} min").replace("{n}", &mins.to_string()));
         }
         PresetTiming::BoxBreath {
             inhale_secs, hold_full_secs, exhale_secs, hold_empty_secs,
             duration_minutes,
-        } => format!(
-            "{}-{}-{}-{} · {}",
-            inhale_secs, hold_full_secs, exhale_secs, hold_empty_secs,
-            gettext("{n} min").replace("{n}", &duration_minutes.to_string()),
-        ),
+        } => {
+            parts.push(format!(
+                "{}-{}-{}-{}",
+                inhale_secs, hold_full_secs, exhale_secs, hold_empty_secs,
+            ));
+            parts.push(
+                gettext("{n} min").replace("{n}", &duration_minutes.to_string()),
+            );
+        }
+    }
+    if cfg.label.enabled {
+        if let Some(uuid) = cfg.label.uuid.as_ref() {
+            if let Some(name) = label_names.get(uuid) {
+                parts.push(name.clone());
+            }
+        }
+    }
+    if cfg.interval_bells.enabled && !cfg.interval_bells.bells.is_empty() {
+        let n = cfg.interval_bells.bells.len();
+        parts.push(if n == 1 {
+            gettext("1 bell")
+        } else {
+            gettext("{n} bells").replace("{n}", &n.to_string())
+        });
+    }
+    parts.join(" · ")
+}
+
+/// Push (or replace) the chooser's currently-visible undo toast.
+/// Same panic-avoidance contract as src/timer/imp.rs's apply toast:
+/// release the RefCell guard before dismiss(), and the dismissed
+/// callback uses a separate read+write borrow.
+fn push_undo_toast(
+    anchor: &impl IsA<gtk::Widget>,
+    toast_slot: &ToastSlot,
+    title: &str,
+    on_undo: impl Fn() + 'static,
+) {
+    let prev = toast_slot.replace(None);
+    if let Some(prev) = prev { prev.dismiss(); }
+
+    let toast = adw::Toast::builder()
+        .title(title)
+        .button_label(gettext("Undo"))
+        .build();
+    let on_undo = Rc::new(on_undo);
+    toast.connect_button_clicked(move |_| { on_undo(); });
+
+    let toast_slot_dismiss = toast_slot.clone();
+    toast.connect_dismissed(move |t| {
+        let should_clear = toast_slot_dismiss
+            .borrow()
+            .as_ref()
+            .map(|cur| cur == t)
+            .unwrap_or(false);
+        if should_clear {
+            toast_slot_dismiss.replace(None);
+        }
+    });
+    toast_slot.replace(Some(toast.clone()));
+
+    if let Some(root) = anchor.as_ref().root() {
+        if let Ok(window) = root.downcast::<crate::window::MeditateWindow>() {
+            window.add_toast(toast);
+        }
     }
 }
