@@ -9,6 +9,7 @@ pub mod keychain;
 pub mod labels;
 pub mod log;
 mod preferences;
+pub mod preset_config;
 mod recovery_dialog;
 pub mod sound;
 pub mod sounds;

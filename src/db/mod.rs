@@ -23,7 +23,7 @@ use std::path::Path;
 /// learning about meditate-core directly. Same for the bell-library
 /// types added in B.3.1, and the `mint_uuid` helper added in B.5.
 pub use meditate_core::db::{
-    mint_uuid, BellSound, IntervalBell, IntervalBellKind, Label, SessionMode,
+    mint_uuid, BellSound, IntervalBell, IntervalBellKind, Label, Preset, SessionMode,
 };
 
 /// Bundled bell-sound seed: hardcoded (uuid, display name, GResource
@@ -134,6 +134,19 @@ const DEFAULT_LABELS: &[(&str, &str)] = &[
 /// overrides the user's delete on every synced peer).
 const LABELS_SEEDED_KEY: &str = "default_labels_seeded";
 const BELLS_SEEDED_KEY: &str = "bundled_bell_sounds_seeded";
+const PRESETS_SEEDED_KEY: &str = "default_presets_seeded";
+
+/// Stable UUIDs for the three seeded default presets. Bundled rows
+/// have no special property at the schema level — they're regular
+/// presets that the user can rename, restar, or delete just like
+/// their own. The UUIDs let the one-shot seed know "we already did
+/// this" without scanning by name.
+pub const DEFAULT_SITTING_PRESET_UUID: &str
+    = "b9e1c5a4-2d3f-4d8b-9c70-7a0e1d2c3001";
+pub const DEFAULT_BOX_BREATH_4444_UUID: &str
+    = "b9e1c5a4-2d3f-4d8b-9c70-7a0e1d2c3002";
+pub const DEFAULT_BOX_BREATH_4780_UUID: &str
+    = "b9e1c5a4-2d3f-4d8b-9c70-7a0e1d2c3003";
 
 #[derive(Debug, Clone)]
 pub struct Session {
@@ -253,6 +266,7 @@ impl Database {
         let db = Self { inner };
         db.seed_bundled_bell_sounds()?;
         db.seed_default_labels()?;
+        db.seed_default_presets()?;
         Ok(db)
     }
 
@@ -299,6 +313,91 @@ impl Database {
             }
         }
         self.inner.set_setting(LABELS_SEEDED_KEY, "1").map_err(map_core_err)?;
+        Ok(())
+    }
+
+    /// Seed the three bundled presets — one Timer ("Sitting") plus two
+    /// Box-Breath patterns (4-4-4-4 and 4-7-8-0) — under stable UUIDs,
+    /// all starred so they show in the home-screen chip list on first
+    /// run. Mode-strict separation means the user always sees one of
+    /// each kind regardless of which mode they start the app in. Per
+    /// the design call (2026-05-04), these are *regular* presets:
+    /// fully renamable / destarable / deletable, no special property
+    /// at the schema level. Same one-shot flag pattern as the labels
+    /// and bell-sounds seeds — deletion does not resurrect on the next
+    /// open.
+    fn seed_default_presets(&self) -> Result<()> {
+        if self.inner.get_setting(PRESETS_SEEDED_KEY, "0").map_err(map_core_err)? == "1" {
+            return Ok(());
+        }
+
+        use crate::preset_config::*;
+        let sitting = PresetConfig {
+            label: PresetLabel {
+                enabled: true,
+                uuid: Some(DEFAULT_TIMER_LABEL_UUID.to_string()),
+            },
+            starting_bell: PresetStartingBell {
+                enabled: true,
+                sound_uuid: BUNDLED_BOWL_UUID.to_string(),
+                prep_time_enabled: false,
+                prep_time_secs: 5,
+            },
+            interval_bells: PresetIntervalBells::default(),
+            end_bell: PresetEndBell {
+                enabled: true,
+                sound_uuid: BUNDLED_BELL_UUID.to_string(),
+            },
+            timing: PresetTiming::Timer { stopwatch: false, duration_secs: 15 * 60 },
+        };
+        let box_4444 = PresetConfig {
+            label: PresetLabel {
+                enabled: true,
+                uuid: Some(DEFAULT_BREATHING_LABEL_UUID.to_string()),
+            },
+            starting_bell: PresetStartingBell::default(),
+            interval_bells: PresetIntervalBells::default(),
+            end_bell: PresetEndBell {
+                enabled: true,
+                sound_uuid: BUNDLED_BELL_UUID.to_string(),
+            },
+            timing: PresetTiming::BoxBreath {
+                inhale_secs: 4,
+                hold_full_secs: 4,
+                exhale_secs: 4,
+                hold_empty_secs: 4,
+                duration_minutes: 10,
+            },
+        };
+        let box_4780 = PresetConfig {
+            timing: PresetTiming::BoxBreath {
+                inhale_secs: 4,
+                hold_full_secs: 7,
+                exhale_secs: 8,
+                hold_empty_secs: 0,
+                duration_minutes: 10,
+            },
+            ..box_4444.clone()
+        };
+
+        let seeds: &[(&str, &str, SessionMode, &PresetConfig)] = &[
+            (DEFAULT_SITTING_PRESET_UUID, "Sitting", SessionMode::Timer, &sitting),
+            (DEFAULT_BOX_BREATH_4444_UUID, "Box Breath 4-4-4-4",
+                SessionMode::BoxBreath, &box_4444),
+            (DEFAULT_BOX_BREATH_4780_UUID, "Box Breath 4-7-8-0",
+                SessionMode::BoxBreath, &box_4780),
+        ];
+
+        for (uuid, name, mode, cfg) in seeds {
+            match self.inner.insert_preset_with_uuid(
+                uuid, name, *mode, true, &cfg.to_json(),
+            ) {
+                Ok(_) => {}
+                Err(meditate_core::db::DbError::DuplicatePreset(_)) => {}
+                Err(e) => return Err(map_core_err(e)),
+            }
+        }
+        self.inner.set_setting(PRESETS_SEEDED_KEY, "1").map_err(map_core_err)?;
         Ok(())
     }
 
@@ -428,6 +527,71 @@ impl Database {
 
     pub fn delete_bell_sound(&self, uuid: &str) -> Result<()> {
         self.inner.delete_bell_sound(uuid).map_err(map_core_err)
+    }
+
+    // ── Presets ───────────────────────────────────────────────────────────────
+    // Thin pass-throughs onto core's CRUD. The chooser UI (P.4) reaches
+    // for these via the GTK shell's Database wrapper.
+
+    pub fn list_presets(&self) -> Result<Vec<Preset>> {
+        self.inner.list_presets().map_err(map_core_err)
+    }
+
+    pub fn list_presets_for_mode(&self, mode: SessionMode) -> Result<Vec<Preset>> {
+        self.inner.list_presets_for_mode(mode).map_err(map_core_err)
+    }
+
+    pub fn list_starred_presets_for_mode(&self, mode: SessionMode) -> Result<Vec<Preset>> {
+        self.inner.list_starred_presets_for_mode(mode).map_err(map_core_err)
+    }
+
+    pub fn insert_preset(
+        &self,
+        name: &str,
+        mode: SessionMode,
+        is_starred: bool,
+        config_json: &str,
+    ) -> Result<i64> {
+        self.inner
+            .insert_preset(name, mode, is_starred, config_json)
+            .map_err(map_core_err)
+    }
+
+    pub fn insert_preset_with_uuid(
+        &self,
+        uuid: &str,
+        name: &str,
+        mode: SessionMode,
+        is_starred: bool,
+        config_json: &str,
+    ) -> Result<i64> {
+        self.inner
+            .insert_preset_with_uuid(uuid, name, mode, is_starred, config_json)
+            .map_err(map_core_err)
+    }
+
+    pub fn is_preset_name_taken(&self, name: &str, except_uuid: &str) -> Result<bool> {
+        self.inner.is_preset_name_taken(name, except_uuid).map_err(map_core_err)
+    }
+
+    pub fn find_preset_by_uuid(&self, uuid: &str) -> Result<Option<Preset>> {
+        self.inner.find_preset_by_uuid(uuid).map_err(map_core_err)
+    }
+
+    pub fn update_preset_name(&self, uuid: &str, name: &str) -> Result<()> {
+        self.inner.update_preset_name(uuid, name).map_err(map_core_err)
+    }
+
+    pub fn update_preset_config(&self, uuid: &str, config_json: &str) -> Result<()> {
+        self.inner.update_preset_config(uuid, config_json).map_err(map_core_err)
+    }
+
+    pub fn update_preset_starred(&self, uuid: &str, is_starred: bool) -> Result<()> {
+        self.inner.update_preset_starred(uuid, is_starred).map_err(map_core_err)
+    }
+
+    pub fn delete_preset(&self, uuid: &str) -> Result<()> {
+        self.inner.delete_preset(uuid).map_err(map_core_err)
     }
 
     // ── Sessions ──────────────────────────────────────────────────────────────
@@ -673,6 +837,7 @@ pub(crate) fn test_db_in_memory() -> Database {
     };
     db.seed_bundled_bell_sounds().unwrap();
     db.seed_default_labels().unwrap();
+    db.seed_default_presets().unwrap();
     db
 }
 
@@ -1182,9 +1347,9 @@ mod tests {
     fn second_open_emits_no_seed_events() {
         // Belt-and-braces sync test: even if the deletes above are
         // mocked out, a vanilla second `open()` on a previously-seeded
-        // DB must not append `bell_sound_insert` / `label_insert`
-        // events — those would propagate to peers and look like the
-        // local user just re-created the rows.
+        // DB must not append `bell_sound_insert` / `label_insert` /
+        // `preset_insert` events — those would propagate to peers and
+        // look like the local user just re-created the rows.
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("meditate.db");
         {
@@ -1192,14 +1357,80 @@ mod tests {
         }
         let db2 = Database::open(&path).unwrap();
         let pending = db2.inner.pending_events().unwrap();
-        let seed_events: Vec<_> = pending
-            .into_iter()
-            .filter(|(_, e)| e.kind == "bell_sound_insert" || e.kind == "label_insert")
-            .collect();
-        assert_eq!(
-            seed_events.len(),
-            BUNDLED_BELL_SOUNDS.len() + DEFAULT_LABELS.len(),
-            "second open must not append additional seed events",
+        let bell_count = pending.iter()
+            .filter(|(_, e)| e.kind == "bell_sound_insert").count();
+        let label_count = pending.iter()
+            .filter(|(_, e)| e.kind == "label_insert").count();
+        let preset_count = pending.iter()
+            .filter(|(_, e)| e.kind == "preset_insert").count();
+        assert_eq!(bell_count, BUNDLED_BELL_SOUNDS.len(),
+            "no extra bell_sound_insert events on reopen");
+        assert_eq!(label_count, DEFAULT_LABELS.len(),
+            "no extra label_insert events on reopen");
+        assert_eq!(preset_count, 3,
+            "no extra preset_insert events on reopen");
+    }
+
+    // ── Preset seeding ────────────────────────────────────────────────
+
+    #[test]
+    fn open_seeds_three_default_presets_with_stable_uuids_all_starred() {
+        let db = test_db_in_memory();
+        let presets = db.list_presets().unwrap();
+        assert_eq!(presets.len(), 3);
+        assert!(presets.iter().all(|p| p.is_starred), "all bundled starred");
+        assert!(presets.iter().any(|p| p.uuid == DEFAULT_SITTING_PRESET_UUID
+            && p.name == "Sitting" && p.mode == SessionMode::Timer));
+        assert!(presets.iter().any(|p| p.uuid == DEFAULT_BOX_BREATH_4444_UUID
+            && p.name == "Box Breath 4-4-4-4" && p.mode == SessionMode::BoxBreath));
+        assert!(presets.iter().any(|p| p.uuid == DEFAULT_BOX_BREATH_4780_UUID
+            && p.name == "Box Breath 4-7-8-0" && p.mode == SessionMode::BoxBreath));
+    }
+
+    #[test]
+    fn seeded_preset_configs_round_trip_through_preset_config_schema() {
+        let db = test_db_in_memory();
+        for p in db.list_presets().unwrap() {
+            let cfg = crate::preset_config::PresetConfig::from_json(&p.config_json)
+                .unwrap_or_else(|e| panic!(
+                    "preset '{}' config_json must round-trip: {e} — json={}",
+                    p.name, p.config_json,
+                ));
+            // Mode invariant: column-level mode and timing variant agree.
+            match (&p.mode, &cfg.timing) {
+                (SessionMode::Timer,
+                    crate::preset_config::PresetTiming::Timer { .. }) => {},
+                (SessionMode::BoxBreath,
+                    crate::preset_config::PresetTiming::BoxBreath { .. }) => {},
+                _ => panic!("preset '{}' column mode {:?} disagrees with timing variant",
+                    p.name, p.mode),
+            }
+        }
+    }
+
+    #[test]
+    fn seeding_default_presets_twice_is_idempotent() {
+        let db = test_db_in_memory();
+        // test_db_in_memory already seeded once; do it again.
+        db.seed_default_presets().unwrap();
+        assert_eq!(db.list_presets().unwrap().len(), 3,
+            "second seed must not duplicate rows");
+    }
+
+    #[test]
+    fn deleted_default_preset_stays_deleted_after_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meditate.db");
+        let db = Database::open(&path).unwrap();
+        db.delete_preset(DEFAULT_SITTING_PRESET_UUID).unwrap();
+        drop(db);
+
+        let db2 = Database::open(&path).unwrap();
+        let presets = db2.list_presets().unwrap();
+        assert!(
+            !presets.iter().any(|p| p.uuid == DEFAULT_SITTING_PRESET_UUID),
+            "deleted seed preset must stay deleted across reopen",
         );
+        assert_eq!(presets.len(), 2, "the other two seeds remain");
     }
 }

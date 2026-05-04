@@ -1287,6 +1287,8 @@ dependencies = [
  "meditate-core",
  "oo7",
  "rusqlite",
+ "serde",
+ "serde_json",
  "tempfile",
  "tokio",
 ]

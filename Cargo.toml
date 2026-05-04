@@ -22,6 +22,13 @@ gettext-rs = { version = "0.7", features = ["gettext-system"] }
 libc = "0.2"
 chrono = { version = "0.4", default-features = false }
 meditate-core = { path = "meditate-core" }
+# serde + serde_json for the preset-config JSON blob persisted in the
+# `presets` table. meditate-core already pulls these in transitively
+# (its event payloads are JSON-encoded the same way), but the shell
+# now derives Serialize / Deserialize on its own types so the
+# direct dep is required for the proc-macro lookup.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 # oo7: pure-Rust Secret Service client for storing the Nextcloud
 # app-password in the user's keyring. async-only over D-Bus, requires
 # a tokio reactor (oo7's default). We host a small multi-threaded
