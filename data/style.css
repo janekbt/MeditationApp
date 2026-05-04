@@ -53,6 +53,14 @@ button.preset-chip {
     color: @accent_color;
 }
 
+/* Accent-coloured star prefix on a starred preset row. The unstarred
+   form uses the standard `.dimmed` muting; the starred form fills
+   with the standalone @accent_color (HIG: standalone-on-neutral, not
+   the @accent_bg_color pair). */
+.preset-star-on {
+    color: @accent_color;
+}
+
 /* Shared accent-fill for every "selected" state across the app's custom
    toggles and pills. HIG pair: @accent_bg_color + @accent_fg_color. */
 button.mode-toggle-btn:checked,

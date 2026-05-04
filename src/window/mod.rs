@@ -77,4 +77,26 @@ impl MeditateWindow {
             on_selected,
         );
     }
+
+    /// Push the preset chooser. Save mode carries the live Setup
+    /// snapshot to write into the chosen preset; Manage mode is
+    /// view + rename + delete + star toggle. `on_changed` is called
+    /// after any DB write so the home-view starred-list refreshes
+    /// without the user having to leave + return.
+    pub fn push_presets_chooser(
+        &self,
+        app: &crate::application::MeditateApplication,
+        mode: crate::db::SessionMode,
+        chooser_mode: crate::presets::ChooserMode,
+        on_changed: impl Fn() + 'static,
+    ) {
+        use glib::subclass::prelude::ObjectSubclassIsExt;
+        crate::presets::push_presets_chooser(
+            &self.imp().nav_view,
+            app,
+            mode,
+            chooser_mode,
+            on_changed,
+        );
+    }
 }

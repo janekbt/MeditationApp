@@ -383,31 +383,52 @@ impl TimerView {
         ));
 
         // ── Save Settings / Manage Presets buttons ──────────────────
-        // Stubbed for P.4a — wiring the chooser-page push lands in
-        // P.4c (Save) and P.4d (Manage). For now a toast acknowledges
-        // the tap so the user knows the affordance is wired up.
+        // Both push the same chooser NavigationPage — the variant
+        // (Save vs Manage) determines whether the synthetic "Create
+        // new preset…" row appears, whether row taps trigger an
+        // override-confirmation dialog, and whether rename/delete
+        // suffix buttons render.
         self.save_settings_btn.connect_clicked(glib::clone!(
             #[weak(rename_to = this)] obj,
             move |_| {
-                if let Some(window) = this.root()
+                let imp = this.imp();
+                let Some(app) = imp.get_app() else { return; };
+                let Some(window) = this.root()
                     .and_downcast::<crate::window::MeditateWindow>()
-                {
-                    window.add_toast(adw::Toast::new(
-                        &crate::i18n::gettext("Save Settings: chooser coming next commit"),
-                    ));
-                }
+                else { return; };
+                let session_mode = match imp.current_mode() {
+                    TimerMode::Timer     => crate::db::SessionMode::Timer,
+                    TimerMode::Breathing => crate::db::SessionMode::BoxBreath,
+                };
+                let snapshot = imp.snapshot_current_setup();
+                let this_for_changed = this.clone();
+                window.push_presets_chooser(
+                    &app,
+                    session_mode,
+                    crate::presets::ChooserMode::Save { snapshot },
+                    move || this_for_changed.imp().rebuild_starred_presets_list(),
+                );
             },
         ));
         self.manage_presets_btn.connect_clicked(glib::clone!(
             #[weak(rename_to = this)] obj,
             move |_| {
-                if let Some(window) = this.root()
+                let imp = this.imp();
+                let Some(app) = imp.get_app() else { return; };
+                let Some(window) = this.root()
                     .and_downcast::<crate::window::MeditateWindow>()
-                {
-                    window.add_toast(adw::Toast::new(
-                        &crate::i18n::gettext("Manage Presets: chooser coming next commit"),
-                    ));
-                }
+                else { return; };
+                let session_mode = match imp.current_mode() {
+                    TimerMode::Timer     => crate::db::SessionMode::Timer,
+                    TimerMode::Breathing => crate::db::SessionMode::BoxBreath,
+                };
+                let this_for_changed = this.clone();
+                window.push_presets_chooser(
+                    &app,
+                    session_mode,
+                    crate::presets::ChooserMode::Manage,
+                    move || this_for_changed.imp().rebuild_starred_presets_list(),
+                );
             },
         ));
 
