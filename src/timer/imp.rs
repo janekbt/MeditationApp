@@ -106,7 +106,6 @@ pub struct TimerView {
     #[template_child] pub boxbreath_inputs:       TemplateChild<gtk::Box>,
     #[template_child] pub breathing_presets_box:  TemplateChild<gtk::FlowBox>,
     #[template_child] pub phase_tiles_grid:       TemplateChild<gtk::Grid>,
-    #[template_child] pub breathing_duration_row: TemplateChild<adw::SpinRow>,
     #[template_child] pub start_btn:             TemplateChild<gtk::Button>,
     #[template_child] pub resume_btn:            TemplateChild<gtk::Button>,
     #[template_child] pub stop_from_pause_btn:   TemplateChild<gtk::Button>,
@@ -712,10 +711,14 @@ impl TimerView {
         // goes away when breathing is active.
         self.starting_bell_row.set_visible(mode == TimerMode::Timer);
         self.interval_bells_enabled_row.set_visible(mode == TimerMode::Timer);
-        // Duration row lives in the shared session_group but only
-        // applies to Timer mode (Box Breath has its own
-        // breathing_duration_row inside boxbreath_inputs).
-        self.duration_row.set_visible(mode == TimerMode::Timer);
+        // Stopwatch toggle only makes sense in Timer mode (Box Breath
+        // has no count-up mode); hide the row entirely under breath.
+        self.stopwatch_mode_row.set_visible(mode == TimerMode::Timer);
+        // Duration row stays visible in both modes — Timer reads
+        // countdown_target_secs, Box Breath reads breathing_session_mins.
+        // Refresh the value label from the appropriate Cell on every
+        // mode switch so the suffix doesn't lag.
+        self.refresh_duration_value_label();
         // Visible-list contents are mode-strict (Timer presets only
         // appear in Timer mode, Box-Breath presets in Box Breath mode)
         // — rebuild on every switch.
@@ -753,11 +756,32 @@ impl TimerView {
         self.boxbreath_inputs.set_visible(mode == TimerMode::Breathing);
         self.starting_bell_row.set_visible(mode == TimerMode::Timer);
         self.interval_bells_enabled_row.set_visible(mode == TimerMode::Timer);
-        self.duration_row.set_visible(mode == TimerMode::Timer);
+        self.stopwatch_mode_row.set_visible(mode == TimerMode::Timer);
+        self.refresh_duration_value_label();
         self.countdown_btn.set_sensitive(true);
         self.breathing_btn.set_sensitive(true);
         self.session_group.set_sensitive(true);
         self.refresh_hero_for_idle();
+    }
+
+    /// Pull the right Cell into the shared Duration row's value label.
+    /// Timer mode reads countdown_target_secs (formatted H:MM); Box
+    /// Breath reads breathing_session_mins (formatted 00:MM since
+    /// breath sessions cap at 60 minutes).
+    fn refresh_duration_value_label(&self) {
+        let label = match self.current_mode() {
+            TimerMode::Timer => {
+                let secs = self.countdown_target_secs.get();
+                let h = secs / 3600;
+                let m = (secs % 3600) / 60;
+                format!("{h:02}:{m:02}")
+            }
+            TimerMode::Breathing => {
+                let mins = self.breathing_session_mins.get();
+                format!("00:{:02}", mins)
+            }
+        };
+        self.duration_value_label.set_label(&label);
     }
 
     /// Paused state: same layout as idle, but the hero shows the live time,
@@ -1843,81 +1867,139 @@ impl TimerView {
         *self.starred_preset_rows.borrow_mut() = tracked;
     }
 
-    /// Apply a saved preset to the live Setup state. Replays the
-    /// stored config_json into every persistence point: per-mode
-    /// settings, the interval-bell library (DELETEd then re-INSERTed
-    /// from the snapshot), the breath-pattern Cells, and the
-    /// countdown target. After the writes land we trigger one
-    /// refresh_streak / load_breathing_settings round so the rows on
-    /// screen converge to the new state without a stale frame.
+    /// Snapshot the live Setup state into a `PresetConfig`. Reads
+    /// from the same persistence points the apply path writes to, so
+    /// `apply_config(snapshot_current_setup())` is a round-trip with
+    /// no observable change. Used by both the Undo path on
+    /// preset-tap (capture pre-apply state) and the future "Save
+    /// Settings" chooser flow (capture state to write into a new or
+    /// overwritten preset).
+    fn snapshot_current_setup(&self) -> crate::preset_config::PresetConfig {
+        use crate::preset_config::*;
+        let mode = self.current_mode();
+
+        let label = PresetLabel {
+            enabled: self.persisted_label_active_for_mode(mode),
+            uuid: self.persisted_label_uuid_for_mode(mode),
+        };
+
+        // Bell + interval state. Default values mirror the read-back
+        // defaults in refresh_streak (starting bell off, prep off, etc.).
+        let read_bool = |k: &str, default: bool| -> bool {
+            self.get_app()
+                .and_then(|app| app.with_db(|db| db.get_setting(
+                    k, if default { "true" } else { "false" },
+                )))
+                .and_then(|r| r.ok())
+                .map(|v| v == "true")
+                .unwrap_or(default)
+        };
+        let read_str = |k: &str, default: &str| -> String {
+            self.get_app()
+                .and_then(|app| app.with_db(|db| db.get_setting(k, default)))
+                .and_then(|r| r.ok())
+                .unwrap_or_else(|| default.to_string())
+        };
+        let read_u32 = |k: &str, default: u32| -> u32 {
+            read_str(k, &default.to_string()).parse::<u32>().unwrap_or(default)
+        };
+
+        let starting_bell = PresetStartingBell {
+            enabled: read_bool("starting_bell_active", false),
+            sound_uuid: read_str("starting_bell_sound", crate::db::BUNDLED_BOWL_UUID),
+            prep_time_enabled: read_bool("preparation_time_active", false),
+            prep_time_secs: read_u32(
+                "preparation_time_secs",
+                meditate_core::format::PREP_SECS_DEFAULT,
+            ),
+        };
+
+        let end_bell = PresetEndBell {
+            enabled: read_bool("end_bell_active", true),
+            sound_uuid: read_str("end_bell_sound", crate::db::BUNDLED_BOWL_UUID),
+        };
+
+        let intervals_enabled = read_bool("interval_bells_active", false);
+        let bells: Vec<PresetIntervalBell> = self.get_app()
+            .and_then(|app| app.with_db(|db| db.list_interval_bells()))
+            .and_then(|r| r.ok())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|b| PresetIntervalBell {
+                kind: b.kind.as_db_str().to_string(),
+                minutes: b.minutes,
+                jitter_pct: b.jitter_pct,
+                sound_uuid: b.sound,
+                enabled: b.enabled,
+            })
+            .collect();
+        let interval_bells = PresetIntervalBells {
+            enabled: intervals_enabled,
+            bells,
+        };
+
+        let timing = match mode {
+            TimerMode::Timer => PresetTiming::Timer {
+                stopwatch: self.stopwatch_toggle_on.get(),
+                duration_secs: self.countdown_target_secs.get() as u32,
+            },
+            TimerMode::Breathing => {
+                let p = self.breathing_pattern.get();
+                PresetTiming::BoxBreath {
+                    inhale_secs:    p.in_secs,
+                    hold_full_secs: p.hold_in,
+                    exhale_secs:    p.out_secs,
+                    hold_empty_secs:p.hold_out,
+                    duration_minutes: self.breathing_session_mins.get(),
+                }
+            }
+        };
+
+        PresetConfig { label, starting_bell, interval_bells, end_bell, timing }
+    }
+
+    /// Apply a `PresetConfig` to the live Setup state. Replays the
+    /// config into every persistence point — per-mode settings, the
+    /// interval-bell library (DELETE-ALL + re-INSERT from snapshot),
+    /// the breath-pattern Cells, and the countdown target — then
+    /// triggers refresh_streak so the on-screen rows converge.
     ///
-    /// Mode-strict guard: preset's mode must match the current Setup
-    /// view's mode. Per the design (2026-05-04, point B/C), tapping a
-    /// preset must never side-effect the mode toggle — Box-Breath
-    /// presets only show in Box-Breath mode and Timer presets only in
-    /// Timer mode, so no cross-mode application happens in practice.
-    /// Defensive `return` here covers the corner case where a sync
-    /// race surfaces a stale row.
-    fn on_preset_row_activated(&self, uuid: &str) {
-        use crate::preset_config::{PresetConfig, PresetTiming};
-
-        let Some(app) = self.get_app() else { return; };
-        let preset = match app.with_db(|db| db.find_preset_by_uuid(uuid)) {
-            Some(Ok(Some(p))) => p,
-            _ => return,
-        };
-        let cfg = match PresetConfig::from_json(&preset.config_json) {
-            Ok(c) => c,
-            Err(_) => return,
-        };
-
-        // Reject cross-mode: shouldn't happen given the visible list
-        // is mode-filtered, but never side-effect the mode toggle from
-        // a tap.
-        let current_mode = self.current_mode();
-        let want_session_mode = match current_mode {
-            TimerMode::Timer     => crate::db::SessionMode::Timer,
-            TimerMode::Breathing => crate::db::SessionMode::BoxBreath,
-        };
-        if preset.mode != want_session_mode {
-            return;
-        }
+    /// Returns true iff the apply happened. Returns false when a
+    /// referenced bell sound hasn't arrived locally yet (sync-pending);
+    /// callers can decide how to surface that to the user.
+    fn apply_config(&self, cfg: &crate::preset_config::PresetConfig) -> bool {
+        use crate::preset_config::PresetTiming;
+        let Some(app) = self.get_app() else { return false; };
 
         // Sync sound-uuid lookups: a preset synced from another
         // device may reference a bell sound that hasn't arrived yet
-        // through the WebDAV layer. Refuse to apply and toast the
-        // user — the sync spinner will eventually complete.
+        // through the WebDAV layer. Refuse to apply and let the
+        // caller decide how to message it.
         let known_sound_uuids: std::collections::HashSet<String> = app
             .with_db(|db| db.list_bell_sounds())
             .and_then(|r| r.ok())
             .map(|sounds| sounds.into_iter().map(|s| s.uuid).collect())
             .unwrap_or_default();
         let mut needs_sound = Vec::<&str>::new();
-        if cfg.starting_bell.enabled {
-            needs_sound.push(&cfg.starting_bell.sound_uuid);
-        }
-        if cfg.end_bell.enabled {
-            needs_sound.push(&cfg.end_bell.sound_uuid);
-        }
+        if cfg.starting_bell.enabled { needs_sound.push(&cfg.starting_bell.sound_uuid); }
+        if cfg.end_bell.enabled      { needs_sound.push(&cfg.end_bell.sound_uuid); }
         for b in &cfg.interval_bells.bells {
             needs_sound.push(&b.sound_uuid);
         }
         if needs_sound.iter().any(|u| !known_sound_uuids.contains(*u)) {
-            self.toast(&crate::i18n::gettext(
-                "Please wait until fully synced — not all bell sounds have arrived",
-            ));
-            return;
+            return false;
         }
 
-        // ── Persist settings ─────────────────────────────────────
-        let mode = current_mode;
-        let label_active = cfg.label.enabled;
-        let label_uuid_opt = cfg.label.uuid.clone();
+        let mode = self.current_mode();
         let stopwatch_active = matches!(
             cfg.timing, PresetTiming::Timer { stopwatch: true, .. }
         );
+
+        // Persist settings
+        let label_uuid_opt = cfg.label.uuid.clone();
+        let label_active = cfg.label.enabled;
+        let cfg_owned = cfg.clone();
         app.with_db_mut(|db| {
-            // Label rows
             let _ = db.set_setting(
                 label_active_setting_key(mode),
                 if label_active { "true" } else { "false" },
@@ -1925,33 +2007,31 @@ impl TimerView {
             if let Some(luuid) = label_uuid_opt.as_ref() {
                 let _ = db.set_setting(label_uuid_setting_key(mode), luuid);
             }
-            // Bells (Timer-mode-only persistence; harmless to write
-            // these in Box-Breath mode but the rows are hidden there)
             let _ = db.set_setting(
                 "starting_bell_active",
-                if cfg.starting_bell.enabled { "true" } else { "false" },
+                if cfg_owned.starting_bell.enabled { "true" } else { "false" },
             );
-            if !cfg.starting_bell.sound_uuid.is_empty() {
-                let _ = db.set_setting("starting_bell_sound", &cfg.starting_bell.sound_uuid);
+            if !cfg_owned.starting_bell.sound_uuid.is_empty() {
+                let _ = db.set_setting("starting_bell_sound", &cfg_owned.starting_bell.sound_uuid);
             }
             let _ = db.set_setting(
                 "preparation_time_active",
-                if cfg.starting_bell.prep_time_enabled { "true" } else { "false" },
+                if cfg_owned.starting_bell.prep_time_enabled { "true" } else { "false" },
             );
             let _ = db.set_setting(
                 "preparation_time_secs",
-                &cfg.starting_bell.prep_time_secs.to_string(),
+                &cfg_owned.starting_bell.prep_time_secs.to_string(),
             );
             let _ = db.set_setting(
                 "interval_bells_active",
-                if cfg.interval_bells.enabled { "true" } else { "false" },
+                if cfg_owned.interval_bells.enabled { "true" } else { "false" },
             );
             let _ = db.set_setting(
                 "end_bell_active",
-                if cfg.end_bell.enabled { "true" } else { "false" },
+                if cfg_owned.end_bell.enabled { "true" } else { "false" },
             );
-            if !cfg.end_bell.sound_uuid.is_empty() {
-                let _ = db.set_setting("end_bell_sound", &cfg.end_bell.sound_uuid);
+            if !cfg_owned.end_bell.sound_uuid.is_empty() {
+                let _ = db.set_setting("end_bell_sound", &cfg_owned.end_bell.sound_uuid);
             }
             let _ = db.set_setting(
                 "stopwatch_mode_active",
@@ -1959,14 +2039,7 @@ impl TimerView {
             );
         });
 
-        // ── Replace interval-bell library from the snapshot ─────
-        // Destructive: every existing interval_bells row is dropped
-        // (each emits one interval_bell_delete event for sync), then
-        // the snapshot is inserted in order. Disabled-flag handling
-        // is best-effort — `insert_interval_bell` always creates rows
-        // enabled, so we follow up with a per-uuid set_enabled(false)
-        // for snapshots that were saved as disabled. Acceptable cost
-        // for what's a low-frequency action.
+        // Replace interval-bell library from the snapshot.
         let snapshot_bells = cfg.interval_bells.bells.clone();
         app.with_db_mut(|db| {
             let existing = db.list_interval_bells().unwrap_or_default();
@@ -1997,7 +2070,7 @@ impl TimerView {
             }
         });
 
-        // ── Apply mode-specific live state ──────────────────────
+        // Apply mode-specific live state.
         match cfg.timing {
             PresetTiming::Timer { stopwatch, duration_secs } => {
                 self.set_countdown_target(duration_secs as u64);
@@ -2016,30 +2089,70 @@ impl TimerView {
                     out_secs: exhale_secs,
                     hold_out: hold_empty_secs,
                 });
-                self.breathing_session_mins.set(duration_minutes);
-                self.save_breathing_settings();
-                self.breathing_populating.set(true);
-                self.breathing_duration_row.set_value(duration_minutes as f64);
-                self.breathing_populating.set(false);
+                self.set_breathing_duration_mins(duration_minutes);
                 self.refresh_phase_tiles();
             }
         }
 
-        // ── Refresh dependent UI ────────────────────────────────
-        // refresh_streak picks up stopwatch / starting-bell / interval
-        // counts from the freshly-written settings; refresh_setup_label
-        // _chooser_subtitle picks up the label change. End-bell sound
-        // subtitle and interval-bell count refresh on their own from
-        // refresh_streak (which calls refresh_end_bell_sound_subtitle
-        // and the count helpers).
+        // Refresh dependent UI in one round.
         self.refresh_streak();
-
-        self.toast(&crate::i18n::gettext("Preset '{name}' applied")
-            .replace("{name}", &preset.name));
+        true
     }
 
-    /// Push a toast onto the window's overlay. Quick helper since the
-    /// preset apply path emits success / sync-pending toasts.
+    /// Tap-to-apply on a starred preset row. Snapshots pre-apply
+    /// state so a follow-up Undo button on the toast can put things
+    /// back where they were. Mode-strict: cross-mode application is
+    /// rejected defensively (the visible list is mode-filtered, but
+    /// a sync race could still surface a stale row); the mode toggle
+    /// is never side-effected from a tap.
+    fn on_preset_row_activated(&self, uuid: &str) {
+        use crate::preset_config::PresetConfig;
+
+        let Some(app) = self.get_app() else { return; };
+        let preset = match app.with_db(|db| db.find_preset_by_uuid(uuid)) {
+            Some(Ok(Some(p))) => p,
+            _ => return,
+        };
+        let cfg = match PresetConfig::from_json(&preset.config_json) {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        let want_session_mode = match self.current_mode() {
+            TimerMode::Timer     => crate::db::SessionMode::Timer,
+            TimerMode::Breathing => crate::db::SessionMode::BoxBreath,
+        };
+        if preset.mode != want_session_mode {
+            return;
+        }
+
+        let snapshot = self.snapshot_current_setup();
+        if !self.apply_config(&cfg) {
+            self.toast(&crate::i18n::gettext(
+                "Please wait until fully synced — not all bell sounds have arrived",
+            ));
+            return;
+        }
+
+        // Toast with Undo. The action callback re-applies the
+        // pre-apply snapshot, putting every persistence point back to
+        // its previous value (including a destructive interval-bells
+        // round-trip — same DB cost as the forward apply, accepted
+        // for what's already a low-frequency action).
+        let toast = adw::Toast::builder()
+            .title(crate::i18n::gettext("Preset '{name}' applied")
+                .replace("{name}", &preset.name))
+            .button_label(crate::i18n::gettext("Undo"))
+            .build();
+        let obj = self.obj().clone();
+        toast.connect_button_clicked(move |_| {
+            obj.imp().apply_config(&snapshot);
+        });
+        if let Some(window) = self.obj().root().and_downcast::<crate::window::MeditateWindow>() {
+            window.add_toast(toast);
+        }
+    }
+
+    /// Push a plain (no-action) toast onto the window's overlay.
     fn toast(&self, message: &str) {
         if let Some(window) = self.obj().root().and_downcast::<crate::window::MeditateWindow>() {
             window.add_toast(adw::Toast::new(message));
@@ -2057,10 +2170,22 @@ impl TimerView {
 
     /// Show a dialog with H:M spin buttons; apply result to the countdown
     /// target on "Set".
+    ///
+    /// Mode-aware: Timer mode shows H 0-23 + M 0-59 and writes
+    /// countdown_target_secs; Box-Breath mode shows minutes only
+    /// (capped at 60) and writes breathing_session_mins via
+    /// `set_breathing_duration_mins`. The Hours spinner is hidden
+    /// in Box Breath rather than range-zeroed so the dialog reads
+    /// as a clean "Minutes" input.
     fn show_custom_time_dialog(&self) {
-        let current = self.countdown_target_secs.get();
-        let cur_h = (current / 3600) as f64;
-        let cur_m = ((current % 3600) / 60) as f64;
+        let mode = self.current_mode();
+        let (cur_h, cur_m) = match mode {
+            TimerMode::Timer => {
+                let s = self.countdown_target_secs.get();
+                ((s / 3600) as f64, ((s % 3600) / 60) as f64)
+            }
+            TimerMode::Breathing => (0.0, self.breathing_session_mins.get() as f64),
+        };
 
         // Tooltips double as accessible names — without them screen
         // readers only announce the raw numeric value.
@@ -2071,11 +2196,15 @@ impl TimerView {
             .adjustment(&gtk::Adjustment::new(cur_h, 0.0, 23.0, 1.0, 1.0, 0.0))
             .tooltip_text(crate::i18n::gettext("Hours"))
             .build();
+        // Box Breath sessions cap at 60 minutes — adjust the upper
+        // bound and the increment defaults so the spinner doesn't
+        // confuse the user with values that get silently clamped.
+        let minutes_max = if mode == TimerMode::Breathing { 60.0 } else { 59.0 };
         let minutes_spin = gtk::SpinButton::builder()
             .orientation(gtk::Orientation::Vertical)
             .numeric(true)
             .width_chars(2)
-            .adjustment(&gtk::Adjustment::new(cur_m, 0.0, 59.0, 1.0, 5.0, 0.0))
+            .adjustment(&gtk::Adjustment::new(cur_m, 1.0, minutes_max, 1.0, 5.0, 0.0))
             .tooltip_text(crate::i18n::gettext("Minutes"))
             .build();
 
@@ -2091,13 +2220,19 @@ impl TimerView {
             .margin_top(6)
             .margin_bottom(6)
             .build();
-        row.append(&hours_spin);
-        row.append(&colon);
+        if mode == TimerMode::Timer {
+            row.append(&hours_spin);
+            row.append(&colon);
+        }
         row.append(&minutes_spin);
 
+        let body = match mode {
+            TimerMode::Timer    => crate::i18n::gettext("Hours : Minutes"),
+            TimerMode::Breathing => crate::i18n::gettext("Minutes"),
+        };
         let dialog = adw::AlertDialog::builder()
             .heading(crate::i18n::gettext("Custom Time"))
-            .body(crate::i18n::gettext("Hours : Minutes"))
+            .body(body)
             .close_response("cancel")
             .default_response("set")
             .extra_child(&row)
@@ -2107,13 +2242,22 @@ impl TimerView {
         dialog.set_response_appearance("set", adw::ResponseAppearance::Suggested);
 
         let obj = self.obj().clone();
+        let mode_for_response = mode;
         dialog.connect_response(None, move |_, response| {
             if response != "set" { return; }
             let h = hours_spin.value() as u64;
             let m = minutes_spin.value() as u64;
-            let total = h * 3600 + m * 60;
-            if total == 0 { return; }
-            obj.imp().set_countdown_target(total);
+            match mode_for_response {
+                TimerMode::Timer => {
+                    let total = h * 3600 + m * 60;
+                    if total == 0 { return; }
+                    obj.imp().set_countdown_target(total);
+                }
+                TimerMode::Breathing => {
+                    if m == 0 { return; }
+                    obj.imp().set_breathing_duration_mins(m as u32);
+                }
+            }
         });
 
         if let Some(win) = self.obj().root().and_then(|r| r.downcast::<gtk::Window>().ok()) {
@@ -2554,7 +2698,6 @@ impl TimerView {
     fn build_breathing_setup(&self) {
         self.build_phase_tiles();
         self.build_breathing_presets();
-        self.configure_breathing_duration_row();
         // Load persisted values — overrides defaults set in `constructed`.
         self.load_breathing_settings();
         self.refresh_phase_tiles();
@@ -2682,27 +2825,21 @@ impl TimerView {
         }
     }
 
-    fn configure_breathing_duration_row(&self) {
-        let adj = gtk::Adjustment::new(5.0, 1.0, 60.0, 1.0, 5.0, 0.0);
-        self.breathing_duration_row.set_adjustment(Some(&adj));
-        let obj = self.obj();
-        self.breathing_duration_row.connect_notify_local(
-            Some("value"),
-            glib::clone!(
-                #[weak(rename_to = this)] obj,
-                move |row, _| {
-                    let imp = this.imp();
-                    if imp.breathing_populating.get() { return; }
-                    let v = row.value().round().clamp(1.0, 60.0) as u32;
-                    imp.breathing_session_mins.set(v);
-                    imp.save_breathing_settings();
-                    // Hero mirrors the minutes spinner while in breathing mode.
-                    if imp.current_mode() == TimerMode::Breathing {
-                        imp.refresh_hero_for_idle();
-                    }
-                }
-            ),
-        );
+    /// Set the Box-Breath session-length cell, persist, refresh the
+    /// hero label and the shared Duration row's value label. Used by
+    /// both `load_breathing_settings` (initial visit) and the H:M
+    /// dialog (Box-Breath branch). Clamps to 1..=60 minutes — the
+    /// breathing scheduler caps at one hour.
+    fn set_breathing_duration_mins(&self, mins: u32) {
+        let mins = mins.clamp(1, 60);
+        self.breathing_session_mins.set(mins);
+        self.save_breathing_settings();
+        // Duration row label is shared between modes; reflect the new
+        // value here so a Box-Breath edit shows up immediately.
+        self.duration_value_label.set_label(&format!("00:{:02}", mins));
+        if self.current_mode() == TimerMode::Breathing {
+            self.refresh_hero_for_idle();
+        }
     }
 
     fn adjust_phase(&self, index: u8, delta: i32, min_val: u32) {
@@ -2789,7 +2926,11 @@ impl TimerView {
         self.breathing_pattern.set(p);
         self.breathing_session_mins.set(mins);
         *self.breathing_preset_name.borrow_mut() = preset;
-        self.breathing_duration_row.set_value(mins as f64);
+        // The shared Duration row reflects whichever Cell the current
+        // mode reads; reflect this load even if the user is currently
+        // viewing Timer mode — switching to Box Breath later will
+        // already have the right value visible.
+        self.duration_value_label.set_label(&format!("00:{:02}", mins));
         self.breathing_populating.set(false);
     }
 

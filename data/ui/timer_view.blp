@@ -123,73 +123,58 @@ template $TimerView : Gtk.Widget {
             };
           }
 
+          // ── Presets ───────────────────────────────────────────────
+          // Mode-strict visible list of starred presets (Timer presets
+          // in Timer mode, Box-Breath presets in Box Breath mode), at
+          // the parent-box level so it stays visible across mode
+          // switches. Group hides entirely when no starred presets
+          // exist for the current mode; when empty, the group's
+          // description prompts the user to Save Settings. The two
+          // buttons below are always visible — Save opens the chooser
+          // in create-or-overwrite mode, Manage in rename / delete /
+          // star mode.
+          Adw.Clamp {
+            maximum-size: 360;
+            tightening-threshold: 300;
+
+            child: Gtk.Box {
+              orientation: vertical;
+              spacing: 8;
+
+              Adw.PreferencesGroup presets_group {
+                title: _("Presets");
+              }
+
+              Gtk.Box {
+                orientation: horizontal;
+                spacing: 8;
+                homogeneous: true;
+                halign: fill;
+
+                // Standard width rather than pill: two homogeneous
+                // pills overflow the 360-px mobile floor.
+                Gtk.Button save_settings_btn {
+                  label: _("Save Settings");
+                  css-classes: ["suggested-action"];
+                }
+
+                Gtk.Button manage_presets_btn {
+                  label: _("Manage Presets");
+                }
+              }
+            };
+          }
+
           // ── Timer-only inputs ──────────────────────────────────────
-          // The Stopwatch-Mode toggle, the presets card, and the per-mode
-          // label/sound combos that mean "Timer mode setup". Stays visible
-          // while paused so the page doesn't collapse — just made
-          // insensitive from Rust to grey it out.
+          // Reserved container for any Timer-only widgets that don't
+          // belong in the shared Session group. After moving Stopwatch
+          // and Duration into Session, this box currently has no
+          // children of its own — kept around so on_mode_switched can
+          // still hide it under Box-Breath mode without churn, and so
+          // future Timer-mode-only knobs have a home.
           Gtk.Box countdown_inputs {
             orientation: vertical;
             spacing: 12;
-
-            // Stopwatch-mode switch — sits at the top of the timer
-            // settings so flipping between a limited and unlimited
-            // session with the same label/sound is one tap, very
-            // visible right under the Start button.
-            Adw.Clamp {
-              maximum-size: 360;
-              tightening-threshold: 300;
-
-              child: Adw.PreferencesGroup {
-                Adw.SwitchRow stopwatch_mode_row {
-                  title: _("Stopwatch Mode");
-                  subtitle: _("Count up from zero");
-                }
-              };
-            }
-
-            // ── Presets ───────────────────────────────────────────────
-            // Visible list of starred presets (one row per, populated
-            // from Rust via `presets_group.add(...)`); group hides
-            // entirely when no starred presets exist for this mode and
-            // the description below acts as an empty-state hint when
-            // no rows are present. The two pill buttons below are
-            // always visible — Save Settings opens the chooser in
-            // create-or-overwrite mode, Manage Presets opens it in
-            // rename / delete / star mode.
-            Adw.Clamp {
-              maximum-size: 360;
-              tightening-threshold: 300;
-
-              child: Gtk.Box {
-                orientation: vertical;
-                spacing: 8;
-
-                Adw.PreferencesGroup presets_group {
-                  title: _("Presets");
-                }
-
-                Gtk.Box {
-                  orientation: horizontal;
-                  spacing: 8;
-                  homogeneous: true;
-                  halign: fill;
-
-                  // Standard width buttons rather than pill: two pills
-                  // homogeneously sized push the natural width past
-                  // the 360-px mobile floor. Suggested-action keeps
-                  // the Save action visually distinct from Manage.
-                  Gtk.Button save_settings_btn {
-                    label: _("Save Settings");
-                    css-classes: ["suggested-action"];
-                  }
-
-                  Gtk.Button manage_presets_btn {
-                    label: _("Manage Presets");
-                  }
-                }
-              };
-            }
           }
 
           // ── Box-breath-only inputs ─────────────────────────────────
@@ -256,20 +241,6 @@ template $TimerView : Gtk.Widget {
               }
             }
 
-            // Session duration — minutes spinner. Adjustment bounds
-            // (1..60) are set from Rust so we don't duplicate the
-            // default-session-minutes knob in two places.
-            Adw.Clamp {
-              maximum-size: 360;
-              tightening-threshold: 300;
-
-              child: Adw.PreferencesGroup {
-                Adw.SpinRow breathing_duration_row {
-                  title: _("Session duration");
-                  subtitle: _("Minutes");
-                }
-              };
-            }
           }
 
           // ── Session group ──────────────────────────────────────────
@@ -280,10 +251,20 @@ template $TimerView : Gtk.Widget {
             child: Adw.PreferencesGroup session_group {
               title: _("Session");
 
-              // Timer-mode duration. Tap pops the H:M dialog to set
-              // an ad-hoc value that doesn't match any saved preset.
-              // Hidden in Box Breath mode (which uses
-              // breathing_duration_row inside boxbreath_inputs).
+              // Stopwatch toggle — top of the Session group. Visible
+              // in Timer mode only; flipping on greys out the Duration
+              // row (the planned-duration concept doesn't apply when
+              // counting up from zero). Box Breath has no stopwatch
+              // analogue so the row hides under that mode.
+              Adw.SwitchRow stopwatch_mode_row {
+                title: _("Stopwatch Mode");
+                subtitle: _("Count up from zero");
+              }
+
+              // Duration. Visible in both modes — Timer reads/writes
+              // countdown_target_secs, Box Breath reads/writes
+              // breathing_session_mins. Tap pops a mode-aware time
+              // dialog (Timer accepts H:M; Box Breath caps at 60 min).
               Adw.ActionRow duration_row {
                 title: _("Duration");
                 activatable: true;
