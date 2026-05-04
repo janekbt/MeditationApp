@@ -207,6 +207,13 @@ fn map_core_err(e: meditate_core::db::DbError) -> rusqlite::Error {
             },
             Some(format!("UNIQUE constraint failed: labels.name (\"{name}\")")),
         ),
+        DbError::DuplicatePreset(name) => rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ErrorCode::ConstraintViolation,
+                extended_code: rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE,
+            },
+            Some(format!("UNIQUE constraint failed: presets.name (\"{name}\")")),
+        ),
         DbError::Csv(s) => rusqlite::Error::ToSqlConversionFailure(Box::new(
             std::io::Error::new(std::io::ErrorKind::InvalidData, s),
         )),
