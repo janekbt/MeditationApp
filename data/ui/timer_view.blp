@@ -179,40 +179,14 @@ template $TimerView : Gtk.Widget {
 
           // ── Box-breath-only inputs ─────────────────────────────────
           // Shown only when the Box Breath toggle is active. Rust fills
-          // in the preset chips and the 2×2 phase-tile grid on startup.
+          // in the 2×2 phase-tile grid on startup. Pattern-chip strip
+          // dropped on 2026-05-04 — the new starred-presets section
+          // above subsumes "quick pick a known pattern" through saved
+          // presets like "Box Breath 4-4-4-4" and "Box Breath 4-7-8-0".
           Gtk.Box boxbreath_inputs {
             orientation: vertical;
             spacing: 12;
             visible: false;
-
-            // Pattern presets (4-4-4-4 / 4-7-8-0 / 5-5-5-5), mirroring
-            // the Quick-Presets row in Countdown mode but for breath
-            // patterns rather than durations.
-            Gtk.Box {
-              orientation: vertical;
-              spacing: 6;
-
-              Gtk.Label {
-                label: _("Pattern");
-                css-classes: ["heading"];
-                halign: start;
-                margin-start: 6;
-              }
-
-              Adw.Clamp {
-                maximum-size: 360;
-                tightening-threshold: 300;
-
-                child: Gtk.FlowBox breathing_presets_box {
-                  selection-mode: none;
-                  max-children-per-line: 4;
-                  min-children-per-line: 1;
-                  homogeneous: true;
-                  column-spacing: 6;
-                  row-spacing: 6;
-                };
-              }
-            }
 
             // 2×2 phase grid — Inhale / Hold (full) / Exhale / Hold (empty).
             // Tiles are built and wired programmatically from Rust so the
