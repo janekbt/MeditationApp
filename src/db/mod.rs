@@ -633,20 +633,6 @@ impl Database {
 
     // ── Settings ──────────────────────────────────────────────────────────────
 
-    pub fn get_presets(&self) -> Result<Vec<u32>> {
-        let s = self.get_setting("timer_presets", "5,10,15,20,30")?;
-        let vals: Vec<u32> = s.split(',')
-            .filter_map(|v| v.trim().parse::<u32>().ok())
-            .filter(|&v| v > 0)
-            .collect();
-        if vals.is_empty() { Ok(vec![5, 10, 15, 20, 30]) } else { Ok(vals) }
-    }
-
-    pub fn set_presets(&self, presets: &[u32]) -> Result<()> {
-        let s = presets.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(",");
-        self.set_setting("timer_presets", &s)
-    }
-
     pub fn get_setting(&self, key: &str, default: &str) -> Result<String> {
         self.inner.get_setting(key, default).map_err(map_core_err)
     }

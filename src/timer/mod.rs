@@ -27,9 +27,12 @@ impl TimerView {
         self.imp().refresh_interval_bells_count();
     }
 
-    /// Rebuild the preset buttons from the database.
-    pub fn refresh_presets(&self) {
-        self.imp().refresh_presets();
+    /// Rebuild the visible starred-preset list from the database.
+    /// Called by the chooser pages (P.4c onward) after a preset is
+    /// created, updated, deleted, or re-starred so the home-view chip
+    /// list converges without the user having to leave + return.
+    pub fn rebuild_starred_presets_list(&self) {
+        self.imp().rebuild_starred_presets_list();
     }
 
     /// Returns the current display time in seconds.

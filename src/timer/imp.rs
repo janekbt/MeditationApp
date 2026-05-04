@@ -100,7 +100,9 @@ pub struct TimerView {
     #[template_child] pub big_time_label:         TemplateChild<gtk::Label>,
     #[template_child] pub countdown_inputs:       TemplateChild<gtk::Box>,
     #[template_child] pub stopwatch_mode_row:     TemplateChild<adw::SwitchRow>,
-    #[template_child] pub presets_box:           TemplateChild<gtk::FlowBox>,
+    #[template_child] pub presets_group:         TemplateChild<adw::PreferencesGroup>,
+    #[template_child] pub save_settings_btn:     TemplateChild<gtk::Button>,
+    #[template_child] pub manage_presets_btn:    TemplateChild<gtk::Button>,
     #[template_child] pub boxbreath_inputs:       TemplateChild<gtk::Box>,
     #[template_child] pub breathing_presets_box:  TemplateChild<gtk::FlowBox>,
     #[template_child] pub phase_tiles_grid:       TemplateChild<gtk::Grid>,
@@ -109,6 +111,8 @@ pub struct TimerView {
     #[template_child] pub resume_btn:            TemplateChild<gtk::Button>,
     #[template_child] pub stop_from_pause_btn:   TemplateChild<gtk::Button>,
     #[template_child] pub session_group:          TemplateChild<adw::PreferencesGroup>,
+    #[template_child] pub duration_row:            TemplateChild<adw::ActionRow>,
+    #[template_child] pub duration_value_label:    TemplateChild<gtk::Label>,
     #[template_child] pub setup_label_enabled_row: TemplateChild<adw::ExpanderRow>,
     #[template_child] pub setup_label_chooser_row: TemplateChild<adw::ActionRow>,
     #[template_child] pub starting_bell_row:        TemplateChild<adw::ExpanderRow>,
@@ -185,13 +189,11 @@ pub struct TimerView {
     /// persisted values on visit. One flag covers all four because they
     /// load atomically in the same DB roundtrip.
     bells_loading: Cell<bool>,
-    /// Preset pills currently attached to presets_box, paired with their
-    /// duration in minutes. Used to toggle the `.preset-chip-active` CSS
-    /// class on the button whose minutes match countdown_target_secs.
-    preset_buttons: RefCell<Vec<(gtk::Button, u32)>>,
-    /// The trailing "Custom" pill — gets `.preset-chip-active` when the
-    /// current countdown_target_secs doesn't match any preset.
-    custom_preset_btn: RefCell<Option<gtk::Button>>,
+    /// Starred-preset rows currently attached to `presets_group`,
+    /// paired with their preset uuid. Tracked so the list can be
+    /// rebuilt cleanly on mode switch / sync update without leaking
+    /// rows from the previous mode.
+    starred_preset_rows: RefCell<Vec<(adw::ActionRow, String)>>,
 
     // ── Breathing (Box Breath) state ─────────────────────────────────
     /// Four phase durations. Defaults 4/4/4/4 (classic box breathing).
@@ -370,6 +372,44 @@ impl TimerView {
         self.discard_btn.connect_clicked(glib::clone!(
             #[weak(rename_to = this)] obj,
             move |_| this.imp().on_discard()
+        ));
+
+        // ── Duration row: tap opens the H:M dialog ──────────────────
+        // The only entry point for setting an ad-hoc Timer duration
+        // (one not in any saved preset). Greyed out when stopwatch
+        // mode is on — the planned-duration concept doesn't apply.
+        self.duration_row.connect_activated(glib::clone!(
+            #[weak(rename_to = this)] obj,
+            move |_| this.imp().show_custom_time_dialog(),
+        ));
+
+        // ── Save Settings / Manage Presets buttons ──────────────────
+        // Stubbed for P.4a — wiring the chooser-page push lands in
+        // P.4c (Save) and P.4d (Manage). For now a toast acknowledges
+        // the tap so the user knows the affordance is wired up.
+        self.save_settings_btn.connect_clicked(glib::clone!(
+            #[weak(rename_to = this)] obj,
+            move |_| {
+                if let Some(window) = this.root()
+                    .and_downcast::<crate::window::MeditateWindow>()
+                {
+                    window.add_toast(adw::Toast::new(
+                        &crate::i18n::gettext("Save Settings: chooser coming next commit"),
+                    ));
+                }
+            },
+        ));
+        self.manage_presets_btn.connect_clicked(glib::clone!(
+            #[weak(rename_to = this)] obj,
+            move |_| {
+                if let Some(window) = this.root()
+                    .and_downcast::<crate::window::MeditateWindow>()
+                {
+                    window.add_toast(adw::Toast::new(
+                        &crate::i18n::gettext("Manage Presets: chooser coming next commit"),
+                    ));
+                }
+            },
         ));
 
         // ── Done-page label expander ────────────────────────────────
@@ -672,6 +712,14 @@ impl TimerView {
         // goes away when breathing is active.
         self.starting_bell_row.set_visible(mode == TimerMode::Timer);
         self.interval_bells_enabled_row.set_visible(mode == TimerMode::Timer);
+        // Duration row lives in the shared session_group but only
+        // applies to Timer mode (Box Breath has its own
+        // breathing_duration_row inside boxbreath_inputs).
+        self.duration_row.set_visible(mode == TimerMode::Timer);
+        // Visible-list contents are mode-strict (Timer presets only
+        // appear in Timer mode, Box-Breath presets in Box Breath mode)
+        // — rebuild on every switch.
+        self.rebuild_starred_presets_list();
 
         // Each mode keeps its own last-used label. On switch, pull the
         // stored preference (or fall back to the mode-specific default —
@@ -705,6 +753,7 @@ impl TimerView {
         self.boxbreath_inputs.set_visible(mode == TimerMode::Breathing);
         self.starting_bell_row.set_visible(mode == TimerMode::Timer);
         self.interval_bells_enabled_row.set_visible(mode == TimerMode::Timer);
+        self.duration_row.set_visible(mode == TimerMode::Timer);
         self.countdown_btn.set_sensitive(true);
         self.breathing_btn.set_sensitive(true);
         self.session_group.set_sensitive(true);
@@ -767,8 +816,14 @@ impl TimerView {
         {
             self.refresh_hero_for_idle();
         }
-        let presets_active = !self.stopwatch_toggle_on.get();
-        self.presets_box.set_sensitive(presets_active);
+        // The Duration row + preset-list belong together: when
+        // stopwatch mode flips on, the planned-duration concept
+        // becomes inert — grey out the Duration row and the starred-
+        // preset list (tapping them would change a target the
+        // stopwatch session never reads).
+        let duration_active = !self.stopwatch_toggle_on.get();
+        self.duration_row.set_sensitive(duration_active);
+        self.presets_group.set_sensitive(duration_active);
         // Fixed-from-end bells become inert when stopwatch flips on,
         // active again when it flips off — refresh the Manage Bells
         // subtitle so the count matches what will actually fire. End
@@ -1602,7 +1657,7 @@ impl TimerView {
     pub fn refresh_streak(&self) {
         let Some(app) = self.get_app() else {
             // No app yet (shouldn't happen in practice) — use defaults.
-            self.refresh_presets();
+            self.rebuild_starred_presets_list();
             self.refresh_setup_label_chooser_subtitle();
             return;
         };
@@ -1611,11 +1666,10 @@ impl TimerView {
         // one get_app() walk, one RefCell lock, four SQL queries instead
         // of as many separate calls. The bells block also rides along —
         // four extra get_setting() calls are cheap next to the existing
-        // streak / presets / labels SQL we're already running.
-        let (streak, presets, stopwatch_on, bells, intervals) = app
+        // streak / labels SQL we're already running.
+        let (streak, stopwatch_on, bells, intervals) = app
             .with_db(|db| {
                 let streak  = db.get_streak().unwrap_or(0);
-                let presets = db.get_presets().unwrap_or_else(|_| vec![5, 10, 15, 20, 30]);
                 let stopwatch_on = db
                     .get_setting("stopwatch_mode_active", "false")
                     .map(|v| v == "true")
@@ -1657,7 +1711,6 @@ impl TimerView {
                     .count();
                 (
                     streak,
-                    presets,
                     stopwatch_on,
                     (starting_bell_on, starting_bell_sound, prep_on, prep_secs),
                     (intervals_on, intervals_enabled_count),
@@ -1666,7 +1719,6 @@ impl TimerView {
             .unwrap_or_else(|| {
                 (
                     0,
-                    vec![5, 10, 15, 20, 30],
                     false,
                     (false, "bowl".to_string(), false, meditate_core::format::PREP_SECS_DEFAULT),
                     (false, 0),
@@ -1721,8 +1773,13 @@ impl TimerView {
         };
         self.streak_label.set_label(&text);
 
-        // Rebuild preset buttons with the data we already fetched
-        self.rebuild_preset_chips(&presets);
+        // Rebuild visible starred-preset list for the current mode.
+        self.rebuild_starred_presets_list();
+        // Sync the duration row's value label with the current target.
+        let secs = self.countdown_target_secs.get();
+        let h = secs / 3600;
+        let m = (secs % 3600) / 60;
+        self.duration_value_label.set_label(&format!("{h:02}:{m:02}"));
 
         // End Bell master toggle is restored by refresh_stopwatch_
         // dependent_ui above (it calls refresh_end_bell_dependent_ui,
@@ -1736,98 +1793,76 @@ impl TimerView {
         self.apply_preferred_label_for_mode(self.current_mode());
     }
 
-    pub fn refresh_presets(&self) {
+    /// Rebuild the visible starred-preset list — mode-strict, so a
+    /// Timer-mode user only ever sees Timer presets here (and same
+    /// for Box Breath). Empty list ⇒ a description hint sitting under
+    /// the group title prompts the user to Save Settings; non-empty ⇒
+    /// the description is cleared and one row per preset is appended,
+    /// each tap-to-apply.
+    pub fn rebuild_starred_presets_list(&self) {
+        // Drop any rows from the previous mode / refresh — Adw groups
+        // don't expose a .clear() so we walk the tracking vec.
+        for (row, _) in self.starred_preset_rows.borrow_mut().drain(..) {
+            self.presets_group.remove(&row);
+        }
+
+        let session_mode = match self.current_mode() {
+            TimerMode::Timer     => crate::db::SessionMode::Timer,
+            TimerMode::Breathing => crate::db::SessionMode::BoxBreath,
+        };
         let presets = self.get_app()
-            .and_then(|app| app.with_db(|db| db.get_presets()))
+            .and_then(|app| app.with_db(|db| db.list_starred_presets_for_mode(session_mode)))
             .and_then(|r| r.ok())
-            .unwrap_or_else(|| vec![5, 10, 15, 20, 30]);
-        self.rebuild_preset_chips(&presets);
-    }
+            .unwrap_or_default();
 
-    /// Rebuild the preset FlowBox: one pill per DB preset (each tapping
-    /// it selects that duration), plus a trailing "Custom" pill that
-    /// opens a dialog to pick an arbitrary H:M value.
-    fn rebuild_preset_chips(&self, presets: &[u32]) {
-        while let Some(child) = self.presets_box.first_child() {
-            self.presets_box.remove(&child);
-        }
-        let mut tracked: Vec<(gtk::Button, u32)> = Vec::with_capacity(presets.len());
-        let obj = self.obj();
-        for &mins in presets {
-            let (label, tooltip) = if mins < 60 {
-                (format!("{mins}m"), format!("{mins} minutes"))
-            } else {
-                let h = mins / 60;
-                let m = mins % 60;
-                if m == 0 {
-                    (format!("{h}h"), format!("{h} hour{}", if h == 1 { "" } else { "s" }))
-                } else {
-                    (format!("{h}h {m}m"), format!("{h}h {m}min"))
-                }
-            };
-            let btn = gtk::Button::builder()
-                .label(&label)
-                .tooltip_text(&tooltip)
-                .css_classes(["preset-chip"])
-                .build();
-            btn.connect_clicked(glib::clone!(
-                #[weak(rename_to = this)] obj,
-                move |_| {
-                    this.imp().set_countdown_target((mins as u64) * 60);
-                }
+        if presets.is_empty() {
+            self.presets_group.set_description(Some(
+                &crate::i18n::gettext("Tap Save Settings to create your first preset"),
             ));
-            self.presets_box.append(&btn);
-            tracked.push((btn, mins));
+            return;
         }
+        self.presets_group.set_description(None::<&str>);
 
-        // Trailing "Custom" pill — opens a dialog to pick an H:M value.
-        let custom_btn = gtk::Button::builder()
-            .label(crate::i18n::gettext("Custom…"))
-            .tooltip_text(crate::i18n::gettext("Set a Custom Time"))
-            .css_classes(["preset-chip"])
-            .build();
-        custom_btn.connect_clicked(glib::clone!(
-            #[weak(rename_to = this)] obj,
-            move |_| this.imp().show_custom_time_dialog()
-        ));
-        self.presets_box.append(&custom_btn);
-
-        *self.preset_buttons.borrow_mut() = tracked;
-        *self.custom_preset_btn.borrow_mut() = Some(custom_btn);
-        // Reapply active highlight for the current target.
-        self.refresh_preset_selection();
+        let obj = self.obj();
+        let mut tracked: Vec<(adw::ActionRow, String)> = Vec::with_capacity(presets.len());
+        for p in presets {
+            let row = adw::ActionRow::builder()
+                .title(&p.name)
+                .subtitle(&preset_subtitle(&p))
+                .activatable(true)
+                .build();
+            let uuid = p.uuid.clone();
+            row.connect_activated(glib::clone!(
+                #[weak(rename_to = this)] obj,
+                #[strong] uuid,
+                move |_| this.imp().on_preset_row_activated(&uuid),
+            ));
+            self.presets_group.add(&row);
+            tracked.push((row, p.uuid));
+        }
+        *self.starred_preset_rows.borrow_mut() = tracked;
     }
 
-    /// Toggle the `.preset-chip-active` class on whichever chip matches
-    /// the current countdown_target_secs (or on the Custom pill if no
-    /// preset matches). Called whenever the target changes.
-    fn refresh_preset_selection(&self) {
-        let target_mins = (self.countdown_target_secs.get() / 60) as u32;
-        let mut matched = false;
-        for (btn, mins) in self.preset_buttons.borrow().iter() {
-            if *mins == target_mins {
-                btn.add_css_class("preset-chip-active");
-                matched = true;
-            } else {
-                btn.remove_css_class("preset-chip-active");
-            }
-        }
-        if let Some(custom) = self.custom_preset_btn.borrow().as_ref() {
-            if matched {
-                custom.remove_css_class("preset-chip-active");
-            } else {
-                custom.add_css_class("preset-chip-active");
-            }
+    /// Stub for the apply-preset action triggered from the visible
+    /// list. Wired in P.4b — for now a toast keeps the user aware
+    /// that the row reacted but the actual replay-into-state isn't
+    /// hooked up yet.
+    fn on_preset_row_activated(&self, uuid: &str) {
+        let _ = uuid;
+        if let Some(window) = self.obj().root().and_downcast::<crate::window::MeditateWindow>() {
+            window.add_toast(adw::Toast::new(
+                &crate::i18n::gettext("Preset apply: coming next commit"),
+            ));
         }
     }
 
-    /// Update the countdown target + hero label + preset highlight together.
+    /// Update the countdown target + hero label + duration row suffix.
     fn set_countdown_target(&self, secs: u64) {
         self.countdown_target_secs.set(secs);
         let h = secs / 3600;
         let m = (secs % 3600) / 60;
         self.big_time_label.set_label(&format!("{h:02}:{m:02}"));
-        self.refresh_preset_selection();
+        self.duration_value_label.set_label(&format!("{h:02}:{m:02}"));
     }
 
     /// Show a dialog with H:M spin buttons; apply result to the countdown
@@ -2263,6 +2298,34 @@ fn intervals_count_subtitle(enabled_count: usize) -> String {
         0 => crate::i18n::gettext("None enabled"),
         1 => crate::i18n::gettext("1 enabled"),
         n => crate::i18n::gettext("{n} enabled").replace("{n}", &n.to_string()),
+    }
+}
+
+/// One-line subtitle for a preset row in the home-view starred list.
+/// Mode-shaped: Timer ⇒ "{N} min" or "Stopwatch", Box Breath ⇒
+/// "{i}-{h_full}-{e}-{h_empty} · {N} min". Renders the at-a-glance
+/// summary the user needs without opening the preset.
+fn preset_subtitle(p: &meditate_core::db::Preset) -> String {
+    use crate::preset_config::{PresetConfig, PresetTiming};
+    let cfg = match PresetConfig::from_json(&p.config_json) {
+        Ok(c) => c,
+        Err(_) => return String::new(),
+    };
+    match cfg.timing {
+        PresetTiming::Timer { stopwatch: true, .. } =>
+            crate::i18n::gettext("Stopwatch"),
+        PresetTiming::Timer { stopwatch: false, duration_secs } => {
+            let mins = duration_secs / 60;
+            crate::i18n::gettext("{n} min").replace("{n}", &mins.to_string())
+        }
+        PresetTiming::BoxBreath {
+            inhale_secs, hold_full_secs, exhale_secs, hold_empty_secs,
+            duration_minutes,
+        } => format!(
+            "{}-{}-{}-{} · {}",
+            inhale_secs, hold_full_secs, exhale_secs, hold_empty_secs,
+            crate::i18n::gettext("{n} min").replace("{n}", &duration_minutes.to_string()),
+        ),
     }
 }
 

@@ -148,33 +148,44 @@ template $TimerView : Gtk.Widget {
               };
             }
 
-            Gtk.Box {
-              orientation: vertical;
-              spacing: 6;
+            // ── Presets ───────────────────────────────────────────────
+            // Visible list of starred presets (one row per, populated
+            // from Rust via `presets_group.add(...)`); group hides
+            // entirely when no starred presets exist for this mode and
+            // the description below acts as an empty-state hint when
+            // no rows are present. The two pill buttons below are
+            // always visible — Save Settings opens the chooser in
+            // create-or-overwrite mode, Manage Presets opens it in
+            // rename / delete / star mode.
+            Adw.Clamp {
+              maximum-size: 360;
+              tightening-threshold: 300;
 
-              Gtk.Label {
-                label: _("Quick Presets");
-                css-classes: ["heading"];
-                halign: start;
-                margin-start: 6;
-              }
+              child: Gtk.Box {
+                orientation: vertical;
+                spacing: 8;
 
-              // Presets FlowBox directly in a Clamp — no more
-              // activatable-false ListBoxRow wrapper, since a flow of
-              // chips isn't really a boxed list.
-              Adw.Clamp {
-                maximum-size: 360;
-                tightening-threshold: 300;
+                Adw.PreferencesGroup presets_group {
+                  title: _("Presets");
+                }
 
-                child: Gtk.FlowBox presets_box {
-                  selection-mode: none;
-                  max-children-per-line: 5;
-                  min-children-per-line: 1;
+                Gtk.Box {
+                  orientation: horizontal;
+                  spacing: 8;
                   homogeneous: true;
-                  column-spacing: 6;
-                  row-spacing: 6;
-                };
-              }
+                  halign: fill;
+
+                  Gtk.Button save_settings_btn {
+                    label: _("Save Settings");
+                    css-classes: ["pill", "suggested-action"];
+                  }
+
+                  Gtk.Button manage_presets_btn {
+                    label: _("Manage Presets");
+                    css-classes: ["pill"];
+                  }
+                }
+              };
             }
           }
 
@@ -265,6 +276,28 @@ template $TimerView : Gtk.Widget {
 
             child: Adw.PreferencesGroup session_group {
               title: _("Session");
+
+              // Timer-mode duration. Tap pops the H:M dialog to set
+              // an ad-hoc value that doesn't match any saved preset.
+              // Hidden in Box Breath mode (which uses
+              // breathing_duration_row inside boxbreath_inputs).
+              Adw.ActionRow duration_row {
+                title: _("Duration");
+                activatable: true;
+
+                [suffix]
+                Gtk.Label duration_value_label {
+                  label: "00:15";
+                  css-classes: ["dimmed"];
+                  valign: center;
+                }
+
+                [suffix]
+                Gtk.Image {
+                  icon-name: "go-next-symbolic";
+                  styles ["dim-label"]
+                }
+              }
 
               Adw.ExpanderRow setup_label_enabled_row {
                 title: _("Label");
