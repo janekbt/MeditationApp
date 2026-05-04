@@ -112,12 +112,10 @@ pub const BUNDLED_BOWL_UUID: &str = "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0001";
 pub const BUNDLED_BELL_UUID: &str = "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0002";
 pub const BUNDLED_GONG_UUID: &str = "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0003";
 
-/// Stable UUIDs for the two seeded default labels. The seed inserts
-/// these on every app open under `INSERT-OR-IGNORE` semantics, so a
-/// device that has already received them via sync (or already
-/// renamed the row) keeps its current state. Auto-pick when the
-/// label toggle flips on uses these — a renamed default still
-/// resolves through the UUID, so the user's rename sticks.
+/// Stable UUIDs for the two seeded default labels. The seed runs once
+/// on first open (gated by `LABELS_SEEDED_KEY`) and never again — a
+/// renamed default still resolves through the UUID, and a *deleted*
+/// default stays deleted instead of resurrecting from the next open.
 pub const DEFAULT_TIMER_LABEL_UUID: &str = "e2d5a4b8-7c91-4e3f-a826-d40f1c5b9001";
 pub const DEFAULT_BREATHING_LABEL_UUID: &str = "e2d5a4b8-7c91-4e3f-a826-d40f1c5b9002";
 
@@ -128,6 +126,14 @@ const DEFAULT_LABELS: &[(&str, &str)] = &[
     (DEFAULT_TIMER_LABEL_UUID, "Meditation"),
     (DEFAULT_BREATHING_LABEL_UUID, "Box-Breathing"),
 ];
+
+/// One-shot seed flags in the `settings` table. Set to "1" after the
+/// first successful seed; subsequent `open()` calls early-return
+/// from the seed function. Without these, a deleted seed row would
+/// resurrect on the next open (and re-emit an `*_insert` event that
+/// overrides the user's delete on every synced peer).
+const LABELS_SEEDED_KEY: &str = "default_labels_seeded";
+const BELLS_SEEDED_KEY: &str = "bundled_bell_sounds_seeded";
 
 #[derive(Debug, Clone)]
 pub struct Session {
@@ -243,28 +249,41 @@ impl Database {
         Ok(db)
     }
 
-    /// Insert the bundled bell-sound rows on first run. Idempotent:
-    /// `insert_bell_sound_with_uuid` is a no-op when the uuid row
-    /// already exists, so subsequent runs (or runs that already had
-    /// the bundle from a peer sync) skip without emitting duplicate
-    /// events. UUIDs are hardcoded so every device — fresh seed or
-    /// post-sync — ends up with the same row identity per file.
+    /// Insert the bundled bell-sound rows on first run, gated by a
+    /// one-shot `bundled_bell_sounds_seeded` settings flag so a user
+    /// who deletes a bundled row can't have it resurrect on the next
+    /// open. (Without the flag, a deletion frees the seed UUID,
+    /// `insert_bell_sound_with_uuid` re-INSERTs and emits a fresh
+    /// `bell_sound_insert` event with a newer lamport ts, which on
+    /// sync overrides the user's `bell_sound_delete` everywhere.)
+    /// UUIDs are still hardcoded so every device — fresh seed or
+    /// post-sync — converges on the same row identity per file.
     fn seed_bundled_bell_sounds(&self) -> Result<()> {
+        if self.inner.get_setting(BELLS_SEEDED_KEY, "0").map_err(map_core_err)? == "1" {
+            return Ok(());
+        }
         for (uuid, name, path, mime) in BUNDLED_BELL_SOUNDS {
             self.inner
                 .insert_bell_sound_with_uuid(uuid, name, path, true, mime)
                 .map_err(map_core_err)?;
         }
+        self.inner.set_setting(BELLS_SEEDED_KEY, "1").map_err(map_core_err)?;
         Ok(())
     }
 
     /// Seed the two default labels ("Meditation", "Box-Breathing")
-    /// with stable UUIDs. Same idempotency story as the bell-sound
-    /// seed — `insert_label_with_uuid` no-ops when the uuid already
-    /// exists. A `DuplicateLabel` error (the user already has a row
-    /// with this *name* under a different uuid) is silently swallowed
-    /// so we don't shadow user-managed rows.
+    /// with stable UUIDs, gated by a one-shot `default_labels_seeded`
+    /// settings flag. Same resurrect-bug rationale as the bell-sound
+    /// seed: deleting a seed label leaves its UUID free, and a
+    /// re-seed without the flag would emit a fresh `label_insert`
+    /// event that overrides the user's deletion via sync. A
+    /// `DuplicateLabel` error (user already has a row with this
+    /// *name* under a different uuid) is silently swallowed so we
+    /// don't shadow user-managed rows.
     fn seed_default_labels(&self) -> Result<()> {
+        if self.inner.get_setting(LABELS_SEEDED_KEY, "0").map_err(map_core_err)? == "1" {
+            return Ok(());
+        }
         for (uuid, name) in DEFAULT_LABELS {
             match self.inner.insert_label_with_uuid(uuid, name) {
                 Ok(_) => {}
@@ -272,6 +291,7 @@ impl Database {
                 Err(e) => return Err(map_core_err(e)),
             }
         }
+        self.inner.set_setting(LABELS_SEEDED_KEY, "1").map_err(map_core_err)?;
         Ok(())
     }
 
@@ -1103,6 +1123,76 @@ mod tests {
             after_second.len(),
             BUNDLED_BELL_SOUNDS.len(),
             "no extra events on re-seed",
+        );
+    }
+
+    // ── Seed-once flags: deletion must not resurrect on next open ─────
+    // The seed functions used to run on every `open()`, INSERT-OR-IGNORE
+    // by uuid. If the user deleted a seeded row, the next open re-
+    // inserted it — and emitted a fresh `*_insert` event with a newer
+    // lamport ts, undoing the user's delete on every synced peer. The
+    // fix is a one-shot settings flag (`default_labels_seeded`,
+    // `bundled_bell_sounds_seeded`) gating each seed.
+
+    #[test]
+    fn deleted_default_label_stays_deleted_after_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meditate.db");
+        let db = Database::open(&path).unwrap();
+        let labels = db.list_labels().unwrap();
+        let meditation = labels
+            .iter()
+            .find(|l| l.uuid == DEFAULT_TIMER_LABEL_UUID)
+            .expect("Meditation seeded on first open");
+        db.delete_label(meditation.id).unwrap();
+        drop(db);
+
+        let db2 = Database::open(&path).unwrap();
+        let labels2 = db2.list_labels().unwrap();
+        assert!(
+            !labels2.iter().any(|l| l.uuid == DEFAULT_TIMER_LABEL_UUID),
+            "deleted seed label must stay deleted across reopen",
+        );
+    }
+
+    #[test]
+    fn deleted_bundled_bell_sound_stays_deleted_after_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meditate.db");
+        let db = Database::open(&path).unwrap();
+        db.delete_bell_sound(BUNDLED_BOWL_UUID).unwrap();
+        drop(db);
+
+        let db2 = Database::open(&path).unwrap();
+        let sounds = db2.list_bell_sounds().unwrap();
+        assert!(
+            !sounds.iter().any(|s| s.uuid == BUNDLED_BOWL_UUID),
+            "deleted seed bell sound must stay deleted across reopen",
+        );
+    }
+
+    #[test]
+    fn second_open_emits_no_seed_events() {
+        // Belt-and-braces sync test: even if the deletes above are
+        // mocked out, a vanilla second `open()` on a previously-seeded
+        // DB must not append `bell_sound_insert` / `label_insert`
+        // events — those would propagate to peers and look like the
+        // local user just re-created the rows.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meditate.db");
+        {
+            let _db = Database::open(&path).unwrap();
+        }
+        let db2 = Database::open(&path).unwrap();
+        let pending = db2.inner.pending_events().unwrap();
+        let seed_events: Vec<_> = pending
+            .into_iter()
+            .filter(|(_, e)| e.kind == "bell_sound_insert" || e.kind == "label_insert")
+            .collect();
+        assert_eq!(
+            seed_events.len(),
+            BUNDLED_BELL_SOUNDS.len() + DEFAULT_LABELS.len(),
+            "second open must not append additional seed events",
         );
     }
 }
