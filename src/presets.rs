@@ -251,6 +251,10 @@ fn build_preset_row(
             let on_changed = on_changed.clone();
             let toast_slot = toast_slot.clone();
             let dialog_name = preset_name.clone();
+            // Capture the parent window *before* the dialog response
+            // pops the chooser page — anchor.root() afterwards walks
+            // a navigation tree that's already in motion.
+            let window = window_from(btn);
             present_override_dialog(
                 btn,
                 &dialog_name,
@@ -270,20 +274,22 @@ fn build_preset_row(
                     let prior_undo = prior_config_json.clone();
                     let preset_uuid_undo = preset_uuid.clone();
                     let on_changed_undo = on_changed.clone();
-                    push_undo_toast(
-                        &nav_view,
-                        &toast_slot,
-                        &gettext("'{name}' overridden")
-                            .replace("{name}", &preset_name),
-                        move || {
-                            app_undo.with_db_mut(|db| {
-                                let _ = db.update_preset_config(
-                                    &preset_uuid_undo, &prior_undo,
-                                );
-                            });
-                            on_changed_undo();
-                        },
-                    );
+                    if let Some(window) = window.as_ref() {
+                        push_undo_toast(
+                            window,
+                            &toast_slot,
+                            &gettext("'{name}' overridden")
+                                .replace("{name}", &preset_name),
+                            move || {
+                                app_undo.with_db_mut(|db| {
+                                    let _ = db.update_preset_config(
+                                        &preset_uuid_undo, &prior_undo,
+                                    );
+                                });
+                                on_changed_undo();
+                            },
+                        );
+                    }
                 }),
             );
         });
@@ -319,35 +325,18 @@ fn build_star_button(
             gettext("Pin to home list")
         })
         .build();
+    let _ = toast_slot;  // star toggle no longer emits a toast — kept
+                          // in scope to avoid signature churn through
+                          // build_preset_row's call site.
     let app = app.clone();
     let preset_uuid = preset.uuid.clone();
-    let preset_name = preset.name.clone();
-    let was_starred = preset.is_starred;
-    let new_starred = !was_starred;
-    btn.connect_clicked(move |b| {
+    let new_starred = !preset.is_starred;
+    btn.connect_clicked(move |_| {
         app.with_db_mut(|db| {
             let _ = db.update_preset_starred(&preset_uuid, new_starred);
         });
         on_changed();
         if let Some(rb) = rebuilder.borrow().as_ref() { rb(); }
-
-        // Undo toast: snap back to the prior starred state.
-        let title = if new_starred {
-            gettext("'{name}' pinned to home").replace("{name}", &preset_name)
-        } else {
-            gettext("'{name}' unpinned").replace("{name}", &preset_name)
-        };
-        let app_undo = app.clone();
-        let preset_uuid_undo = preset_uuid.clone();
-        let on_changed_undo = on_changed.clone();
-        let rebuilder_undo = rebuilder.clone();
-        push_undo_toast(b, &toast_slot, &title, move || {
-            app_undo.with_db_mut(|db| {
-                let _ = db.update_preset_starred(&preset_uuid_undo, was_starred);
-            });
-            on_changed_undo();
-            if let Some(rb) = rebuilder_undo.borrow().as_ref() { rb(); }
-        });
     });
     btn
 }
@@ -547,7 +536,11 @@ fn present_delete_preset_dialog(
 
     let app = app.clone();
     let preset_full = preset.clone();
-    let anchor_clone = anchor.clone();
+    // Resolve the parent window now while the trash button is still
+    // in the tree. The dialog response handler kicks off a rebuild
+    // that drops this row, so an anchor-relative root() walk
+    // afterwards would return None and the toast would silently fail.
+    let window = window_from(anchor);
     dialog.connect_response(None, move |_, id| {
         if id != "delete" { return; }
         app.with_db_mut(|db| { let _ = db.delete_preset(&preset_full.uuid); });
@@ -563,24 +556,26 @@ fn present_delete_preset_dialog(
         let preset_undo = preset_full.clone();
         let on_changed_undo = on_changed.clone();
         let rebuilder_undo = rebuilder.clone();
-        push_undo_toast(
-            &anchor_clone,
-            &toast_slot,
-            &gettext("'{name}' deleted").replace("{name}", &preset_full.name),
-            move || {
-                app_undo.with_db_mut(|db| {
-                    let _ = db.insert_preset_with_uuid(
-                        &preset_undo.uuid,
-                        &preset_undo.name,
-                        preset_undo.mode,
-                        preset_undo.is_starred,
-                        &preset_undo.config_json,
-                    );
-                });
-                on_changed_undo();
-                if let Some(rb) = rebuilder_undo.borrow().as_ref() { rb(); }
-            },
-        );
+        if let Some(window) = window.as_ref() {
+            push_undo_toast(
+                window,
+                &toast_slot,
+                &gettext("'{name}' deleted").replace("{name}", &preset_full.name),
+                move || {
+                    app_undo.with_db_mut(|db| {
+                        let _ = db.insert_preset_with_uuid(
+                            &preset_undo.uuid,
+                            &preset_undo.name,
+                            preset_undo.mode,
+                            preset_undo.is_starred,
+                            &preset_undo.config_json,
+                        );
+                    });
+                    on_changed_undo();
+                    if let Some(rb) = rebuilder_undo.borrow().as_ref() { rb(); }
+                },
+            );
+        }
     });
 
     if let Some(root) = anchor.root() {
@@ -672,11 +667,15 @@ fn subtitle_for(p: &Preset, label_names: &HashMap<String, String>) -> String {
 }
 
 /// Push (or replace) the chooser's currently-visible undo toast.
+/// Takes a `MeditateWindow` directly because some action paths
+/// remove the anchor widget from the tree before this runs (the
+/// delete handler triggers a rebuild that drops the row + its
+/// trash button), so an anchor-relative root() walk would fail.
 /// Same panic-avoidance contract as src/timer/imp.rs's apply toast:
 /// release the RefCell guard before dismiss(), and the dismissed
 /// callback uses a separate read+write borrow.
 fn push_undo_toast(
-    anchor: &impl IsA<gtk::Widget>,
+    window: &crate::window::MeditateWindow,
     toast_slot: &ToastSlot,
     title: &str,
     on_undo: impl Fn() + 'static,
@@ -703,10 +702,13 @@ fn push_undo_toast(
         }
     });
     toast_slot.replace(Some(toast.clone()));
+    window.add_toast(toast);
+}
 
-    if let Some(root) = anchor.as_ref().root() {
-        if let Ok(window) = root.downcast::<crate::window::MeditateWindow>() {
-            window.add_toast(toast);
-        }
-    }
+/// Resolve the parent MeditateWindow from a live widget. The
+/// caller is responsible for grabbing this *before* any DOM
+/// mutation that might remove the widget from the tree.
+fn window_from(anchor: &impl IsA<gtk::Widget>) -> Option<crate::window::MeditateWindow> {
+    anchor.as_ref().root()
+        .and_then(|r| r.downcast::<crate::window::MeditateWindow>().ok())
 }
