@@ -257,11 +257,6 @@ fn build_preset_row(
         let nav_view = nav_view.clone();
         let on_changed = on_changed.clone();
         let toast_slot = toast_slot.clone();
-        // The override toast is posted on the *outer* (main-window)
-        // overlay because the action pops the chooser page itself,
-        // so the chooser-local overlay disappears with it. Capture
-        // the window now while the row is still in the tree.
-        let window = window_from(&row);
         row.connect_activated(move |btn| {
             let preset_uuid = preset_uuid.clone();
             let preset_name = preset_name.clone();
@@ -272,7 +267,14 @@ fn build_preset_row(
             let on_changed = on_changed.clone();
             let toast_slot = toast_slot.clone();
             let dialog_name = preset_name.clone();
-            let window = window.clone();
+            // Resolve the parent window inside the activate handler,
+            // not at row-build time — the row hasn't been added to
+            // the group yet when build_preset_row returns, so a
+            // build-time `window_from(&row)` walks an orphan widget
+            // and yields None. By the time the user taps the row,
+            // it's parented all the way up to the application
+            // window, so root() resolves correctly.
+            let window = window_from(btn);
             present_override_dialog(
                 btn,
                 &dialog_name,
