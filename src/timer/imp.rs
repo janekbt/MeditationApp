@@ -2134,7 +2134,13 @@ impl TimerView {
         // Dismiss any previous apply toast first so a quick second
         // tap shows the new "applied" message without waiting through
         // the queue — see `current_apply_toast` for the rationale.
-        if let Some(prev) = self.current_apply_toast.borrow_mut().take() {
+        // Bind the previous toast into a local *before* calling
+        // dismiss(): GTK fires the dismissed signal synchronously,
+        // so a `take()` on the borrow_mut would still hold the
+        // RefCell guard across the callback's own borrow_mut and
+        // panic with "already borrowed".
+        let prev_toast = self.current_apply_toast.replace(None);
+        if let Some(prev) = prev_toast {
             prev.dismiss();
         }
         let toast = adw::Toast::builder()
@@ -2149,15 +2155,22 @@ impl TimerView {
         // Clear the cached handle when the toast finishes (queue exit
         // / explicit dismiss / button click) — otherwise a long-lived
         // strong reference would outlive the toast on the overlay.
+        // Two-step borrow (read then write) so the read-only borrow
+        // doesn't span the assignment, matching the dismiss-during-
+        // callback rule.
         let obj_for_dismiss = self.obj().clone();
         toast.connect_dismissed(move |t| {
             let imp = obj_for_dismiss.imp();
-            let mut slot = imp.current_apply_toast.borrow_mut();
-            if slot.as_ref().map(|cur| cur == t).unwrap_or(false) {
-                *slot = None;
+            let should_clear = imp.current_apply_toast
+                .borrow()
+                .as_ref()
+                .map(|cur| cur == t)
+                .unwrap_or(false);
+            if should_clear {
+                imp.current_apply_toast.replace(None);
             }
         });
-        *self.current_apply_toast.borrow_mut() = Some(toast.clone());
+        self.current_apply_toast.replace(Some(toast.clone()));
         if let Some(window) = self.obj().root().and_downcast::<crate::window::MeditateWindow>() {
             window.add_toast(toast);
         }
