@@ -175,14 +175,17 @@ template $TimerView : Gtk.Widget {
                   homogeneous: true;
                   halign: fill;
 
+                  // Standard width buttons rather than pill: two pills
+                  // homogeneously sized push the natural width past
+                  // the 360-px mobile floor. Suggested-action keeps
+                  // the Save action visually distinct from Manage.
                   Gtk.Button save_settings_btn {
                     label: _("Save Settings");
-                    css-classes: ["pill", "suggested-action"];
+                    css-classes: ["suggested-action"];
                   }
 
                   Gtk.Button manage_presets_btn {
                     label: _("Manage Presets");
-                    css-classes: ["pill"];
                   }
                 }
               };
