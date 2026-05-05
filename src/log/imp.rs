@@ -1,4 +1,5 @@
 use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{glib, CompositeTemplate};
@@ -840,22 +841,74 @@ impl LogView {
             .digits(0)
             .build();
 
-        // ── Label row ──────────────────────────────────────────────────
-        let none_label = crate::i18n::gettext("None");
-        let label_names: Vec<&str> = std::iter::once(none_label.as_str())
-            .chain(labels.iter().map(|l| l.name.as_str()))
-            .collect();
-        let label_row = adw::ComboRow::builder()
-            .title(crate::i18n::gettext("Label"))
-            .model(&gtk::StringList::new(&label_names))
-            .build();
+        // ── Label row (ExpanderRow + chooser sub-row) ────────────────
+        // Mirrors the timer Setup / Done pages: master switch toggles
+        // whether the session has a label, the inner chooser-row pushes
+        // the canonical label chooser. State is held locally in a Cell
+        // since the dialog is transient (nothing persists until Save).
+        let initial_label_id: Option<i64> = session.and_then(|s| s.label_id);
+        let selected_label_id: Rc<Cell<Option<i64>>> = Rc::new(Cell::new(initial_label_id));
 
-        if let Some(s) = session {
-            let idx = s.label_id
-                .and_then(|id| labels.iter().position(|l| l.id == id))
-                .map(|i| (i + 1) as u32)
-                .unwrap_or(0);
-            label_row.set_selected(idx);
+        let label_chooser_row = adw::ActionRow::builder()
+            .title(crate::i18n::gettext("Selected"))
+            .activatable(true)
+            .build();
+        {
+            let chevron = gtk::Image::from_icon_name("go-next-symbolic");
+            chevron.add_css_class("dim-label");
+            label_chooser_row.add_suffix(&chevron);
+        }
+        let initial_subtitle = initial_label_id
+            .and_then(|id| labels.iter().find(|l| l.id == id))
+            .map(|l| l.name.clone())
+            .unwrap_or_default();
+        label_chooser_row.set_subtitle(&initial_subtitle);
+
+        let label_expander = adw::ExpanderRow::builder()
+            .title(crate::i18n::gettext("Label"))
+            .subtitle(crate::i18n::gettext("Tag this session"))
+            .show_enable_switch(true)
+            .enable_expansion(initial_label_id.is_some())
+            .build();
+        label_expander.add_row(&label_chooser_row);
+
+        // Toggle: when flipped on with no selection yet, adopt the
+        // first available label so subsequent reads resolve cleanly.
+        // Mirrors `mode_default_label_uuid` on the timer Setup expander.
+        {
+            let selected_label_id = selected_label_id.clone();
+            let labels_for_toggle = labels.clone();
+            let label_chooser_row = label_chooser_row.clone();
+            label_expander.connect_enable_expansion_notify(move |row| {
+                let on = row.enables_expansion();
+                if on && selected_label_id.get().is_none() {
+                    if let Some(first) = labels_for_toggle.first() {
+                        selected_label_id.set(Some(first.id));
+                        label_chooser_row.set_subtitle(&first.name);
+                    }
+                }
+            });
+        }
+
+        // Inner row tap: push the canonical label chooser. The chooser
+        // pops automatically once the user picks; we update the local
+        // state slot and refresh the row subtitle.
+        {
+            let obj = self.obj().clone();
+            let selected_label_id = selected_label_id.clone();
+            let label_chooser_row_outer = label_chooser_row.clone();
+            label_chooser_row.connect_activated(move |_| {
+                let imp = obj.imp();
+                let Some(app) = imp.get_app() else { return; };
+                let Some(window) = imp.get_window() else { return; };
+                let current_id = selected_label_id.get();
+                let selected_label_id = selected_label_id.clone();
+                let label_chooser_row = label_chooser_row_outer.clone();
+                window.push_label_chooser(&app, current_id, move |label| {
+                    selected_label_id.set(Some(label.id));
+                    label_chooser_row.set_subtitle(&label.name);
+                });
+            });
         }
 
         // ── Note (multiline) ───────────────────────────────────────────
@@ -915,7 +968,7 @@ impl LogView {
         time_group.add(&time_minutes_spin);
 
         let label_group = adw::PreferencesGroup::new();
-        label_group.add(&label_row);
+        label_group.add(&label_expander);
 
         let content_box = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
@@ -968,6 +1021,7 @@ impl LogView {
 
         // Save
         let obj = self.obj().clone();
+        let selected_label_id_for_save = selected_label_id.clone();
         save_btn.connect_clicked(glib::clone!(
             #[weak] dialog,
             #[weak] hours_spin,
@@ -975,7 +1029,7 @@ impl LogView {
             #[weak] time_hours_spin,
             #[weak] time_minutes_spin,
             #[weak] calendar,
-            #[weak] label_row,
+            #[weak] label_expander,
             #[weak] note_buffer,
             move |_| {
                 let imp = obj.imp();
@@ -989,11 +1043,10 @@ impl LogView {
                     time_minutes_spin.value() as i32,
                     0.0,
                 ).ok().map(|d| d.to_unix()).unwrap_or_else(unix_now);
-                let selected = label_row.selected() as usize;
-                let label_id = if selected == 0 {
-                    None
+                let label_id = if label_expander.enables_expansion() {
+                    selected_label_id_for_save.get()
                 } else {
-                    imp.labels.borrow().get(selected - 1).map(|l| l.id)
+                    None
                 };
                 let note_text = note_buffer.text(
                     &note_buffer.start_iter(),
