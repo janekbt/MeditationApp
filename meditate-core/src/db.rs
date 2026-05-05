@@ -2289,6 +2289,91 @@ impl Database {
         Ok(rows)
     }
 
+    /// Rename a guided-file row. Bumps `updated_iso` so the recompute
+    /// helper can resolve concurrent renames by lamport timestamp.
+    /// Unknown uuids are silent no-ops AND emit no event (mirrors the
+    /// bell-sound / preset rename pattern). Returns
+    /// `DuplicateGuidedFile(name)` if another row already holds the
+    /// new name (case-insensitive).
+    pub fn rename_guided_file(&self, uuid_str: &str, name: &str) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        let row: Option<(String, i64, String)> = self.conn.query_row(
+            "SELECT file_path, duration_secs, created_iso
+               FROM guided_files WHERE uuid = ?1",
+            params![uuid_str],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).optional()?;
+        let Some((file_path, duration_secs, created_iso)) = row else {
+            return Ok(());
+        };
+        let now_iso = chrono::Utc::now().to_rfc3339();
+        let result = self.conn.execute(
+            "UPDATE guided_files SET name = ?1, updated_iso = ?2 WHERE uuid = ?3",
+            params![name, now_iso, uuid_str],
+        );
+        match result {
+            Ok(_) => {}
+            Err(rusqlite::Error::SqliteFailure(err, _))
+                if err.code == rusqlite::ErrorCode::ConstraintViolation =>
+            {
+                return Err(DbError::DuplicateGuidedFile(name.to_string()));
+            }
+            Err(e) => return Err(DbError::Sqlite(e)),
+        }
+        // Read back is_starred so the event payload carries every
+        // field — peers that missed the insert can still materialise
+        // from this single update event alone.
+        let is_starred: bool = self.conn.query_row(
+            "SELECT is_starred FROM guided_files WHERE uuid = ?1",
+            params![uuid_str],
+            |row| row.get::<_, i64>(0),
+        )? != 0;
+        let payload = serde_json::json!({
+            "uuid": uuid_str,
+            "name": name,
+            "file_path": file_path,
+            "duration_secs": duration_secs,
+            "is_starred": is_starred,
+            "created_iso": created_iso,
+            "updated_iso": now_iso,
+        }).to_string();
+        self.emit_event("guided_file_update", uuid_str, payload)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Toggle the home-screen-pin flag. Same payload shape as rename
+    /// so peers can replay either change with the same recompute path.
+    pub fn set_guided_file_starred(&self, uuid_str: &str, is_starred: bool) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        let row: Option<(String, String, i64, String)> = self.conn.query_row(
+            "SELECT name, file_path, duration_secs, created_iso
+               FROM guided_files WHERE uuid = ?1",
+            params![uuid_str],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        ).optional()?;
+        let Some((name, file_path, duration_secs, created_iso)) = row else {
+            return Ok(());
+        };
+        let now_iso = chrono::Utc::now().to_rfc3339();
+        self.conn.execute(
+            "UPDATE guided_files SET is_starred = ?1, updated_iso = ?2 WHERE uuid = ?3",
+            params![is_starred as i64, now_iso, uuid_str],
+        )?;
+        let payload = serde_json::json!({
+            "uuid": uuid_str,
+            "name": name,
+            "file_path": file_path,
+            "duration_secs": duration_secs,
+            "is_starred": is_starred,
+            "created_iso": created_iso,
+            "updated_iso": now_iso,
+        }).to_string();
+        self.emit_event("guided_file_update", uuid_str, payload)?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Drop a guided-file row. Unknown uuids are silent no-ops AND
     /// emit no event — peers would otherwise see a tombstone for a
     /// row they never knew existed. Mirrors bell_sounds / presets.
@@ -9419,5 +9504,93 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         db.delete_guided_file("never-existed").unwrap();
         assert!(db.list_guided_files().unwrap().is_empty());
+    }
+
+    // ── GuidedFiles — updates (rename / star toggle) ─────────────────
+
+    #[test]
+    fn rename_guided_file_changes_name_and_bumps_updated_iso() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_guided_file_with_uuid(
+            "gf-1", "Old Name", "guided/gf-1.ogg", 600, false,
+        ).unwrap();
+        let before = db.list_guided_files().unwrap()[0].clone();
+        // Sleep so the iso timestamp moves forward measurably.
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        db.rename_guided_file("gf-1", "New Name").unwrap();
+        let after = db.list_guided_files().unwrap()[0].clone();
+        assert_eq!(after.name, "New Name");
+        assert_eq!(after.created_iso, before.created_iso,
+            "created_iso must not move on rename");
+        assert!(after.updated_iso > before.updated_iso,
+            "updated_iso must bump forward on rename");
+    }
+
+    #[test]
+    fn rename_guided_file_unknown_uuid_is_silent_noop() {
+        let db = Database::open_in_memory().unwrap();
+        db.rename_guided_file("never-existed", "anything").unwrap();
+        let renames: Vec<_> = db.pending_events().unwrap()
+            .into_iter()
+            .filter(|(_, e)| e.kind == "guided_file_update")
+            .collect();
+        assert!(renames.is_empty(),
+            "no event for an unknown uuid (peers would otherwise update a row they don't have)");
+    }
+
+    #[test]
+    fn rename_guided_file_to_existing_name_returns_duplicate_error() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_guided_file_with_uuid(
+            "gf-1", "Body Scan", "guided/gf-1.ogg", 600, false,
+        ).unwrap();
+        db.insert_guided_file_with_uuid(
+            "gf-2", "Loving Kindness", "guided/gf-2.ogg", 900, false,
+        ).unwrap();
+        match db.rename_guided_file("gf-2", "Body Scan") {
+            Err(DbError::DuplicateGuidedFile(name)) => assert_eq!(name, "Body Scan"),
+            other => panic!("expected DuplicateGuidedFile, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rename_guided_file_to_same_name_with_different_case_is_accepted() {
+        // The UNIQUE NOCASE check excludes the row being renamed
+        // (matches the preset rename semantics).
+        let db = Database::open_in_memory().unwrap();
+        db.insert_guided_file_with_uuid(
+            "gf-1", "body scan", "guided/gf-1.ogg", 600, false,
+        ).unwrap();
+        db.rename_guided_file("gf-1", "Body Scan").unwrap();
+        assert_eq!(db.list_guided_files().unwrap()[0].name, "Body Scan");
+    }
+
+    #[test]
+    fn set_guided_file_starred_toggles_and_emits_event() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_guided_file_with_uuid(
+            "gf-1", "Body Scan", "guided/gf-1.ogg", 600, false,
+        ).unwrap();
+        db.set_guided_file_starred("gf-1", true).unwrap();
+        assert!(db.list_guided_files().unwrap()[0].is_starred);
+        db.set_guided_file_starred("gf-1", false).unwrap();
+        assert!(!db.list_guided_files().unwrap()[0].is_starred);
+        let updates: Vec<_> = db.pending_events().unwrap()
+            .into_iter()
+            .filter(|(_, e)| e.kind == "guided_file_update")
+            .collect();
+        assert_eq!(updates.len(), 2,
+            "one event per star flip");
+    }
+
+    #[test]
+    fn set_guided_file_starred_unknown_uuid_is_silent_noop() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_guided_file_starred("never-existed", true).unwrap();
+        let events: Vec<_> = db.pending_events().unwrap()
+            .into_iter()
+            .filter(|(_, e)| e.kind.starts_with("guided_file"))
+            .collect();
+        assert!(events.is_empty());
     }
 }
