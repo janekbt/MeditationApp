@@ -302,7 +302,7 @@ const SCHEMA: &str = "
         duration_secs INTEGER NOT NULL,
         label_id INTEGER REFERENCES labels(id) ON DELETE SET NULL,
         notes TEXT,
-        mode TEXT NOT NULL CHECK (mode IN ('timer', 'box_breath')),
+        mode TEXT NOT NULL CHECK (mode IN ('timer', 'box_breath', 'guided')),
         uuid TEXT NOT NULL UNIQUE
     );
     -- Named, full-fidelity session templates. `config_json` is opaque
@@ -4312,6 +4312,24 @@ mod tests {
             label_id: None,
             notes: None,
             mode: SessionMode::Timer,
+            uuid: String::new(),
+        };
+        db.insert_session(&session).unwrap();
+        assert_eq!(db.count_sessions().unwrap(), 1);
+    }
+
+    #[test]
+    fn insert_session_with_mode_guided_is_accepted_by_check_constraint() {
+        // Sessions saved at the end of a guided meditation carry
+        // mode='guided'. The schema's CHECK clause must accept it
+        // alongside 'timer' and 'box_breath' or insert fails.
+        let db = Database::open_in_memory().unwrap();
+        let session = Session {
+            start_iso: "2026-05-05T20:30:00Z".to_string(),
+            duration_secs: 1200,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Guided,
             uuid: String::new(),
         };
         db.insert_session(&session).unwrap();
