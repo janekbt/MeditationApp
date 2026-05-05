@@ -75,8 +75,8 @@ const BUNDLED_BELL_SOUNDS: &[(&str, &str, &str, &str)] = &[
     ),
     (
         "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0007",
-        "Bonshō",
-        "/io/github/janekbt/Meditate/sounds/bonsho.ogg",
+        "Kanshō",
+        "/io/github/janekbt/Meditate/sounds/kansho.ogg",
         "audio/ogg",
     ),
     (

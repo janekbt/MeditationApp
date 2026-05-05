@@ -15,15 +15,16 @@ Mono 48 kHz / OGG Vorbis q4 keeps the bundle small (a 30 s gong tail is ~250 KB)
 ## bowl.wav · bell.wav · gong.wav
 
 The original three placeholder bundles. CC0 — no attribution required.
+`bell.ogg` had a faint pre-strike artefact (a faded-out earlier strike audible for ~1 s before the real one); cleaned up by trimming 1.20 s + a 30 ms fade-in.
 
 ## Expanded set (CC0 except where noted)
 
 | File | Source | License |
 |---|---|---|
-| `tibetan-bowl-medium.ogg` | [Tibetan singing bowl for meditation](https://freesound.org/people/franciscoguerrero/sounds/436935/) by *franciscoguerrero* (Freesound) — trimmed to start at 20 s (the strongest of three takes in the original). | CC0 |
-| `inkin.ogg` | [Bell Meditation](https://freesound.org/people/fauxpress/sounds/42095/) by *fauxpress* (Freesound). | CC0 |
+| `tibetan-bowl-medium.ogg` | [Tibetan singing bowl for meditation](https://freesound.org/people/franciscoguerrero/sounds/436935/) by *franciscoguerrero* (Freesound) — trimmed to start at 20 s (the strongest of three takes in the original); 0.75 s of leading near-silence trimmed off in a second pass + 30 ms fade-in. | CC0 |
+| `inkin.ogg` | [Bell Meditation](https://freesound.org/people/fauxpress/sounds/42095/) by *fauxpress* (Freesound) — re-encoded with `afftdn=nr=30:nf=-30:nt=w` to suppress the recording's stationary background hiss. | CC0 |
 | `tingsha.ogg` | [Tingsha Cymbal](https://freesound.org/people/steffcaffrey/sounds/435074/) by *steffcaffrey* (Freesound). | CC0 |
-| `bonsho.ogg` | [Montbell (Bonshō) von Japan](https://freesound.org/people/Vurca/sounds/397352/) by *Vurca* (Freesound). | CC0 |
+| `kansho.ogg` | [Bell at Daitokuji temple, Kyoto](https://freesound.org/people/nahmandub/sounds/131348/) by *nahmandub* (Freesound) — calling bell (kanshō, 喚鐘) at the Daitokuji Zen complex in Kyoto, single strike + tail. Replaced an earlier multi-strike bonshō recording (`bonsho.ogg`, by *Vurca*) that had unrecoverable background voices; the new sample is a different bell type so the file + display name were renamed accordingly. | CC0 |
 | `burmese-brass.ogg` | [Buddhist Prayer Bell](https://freesound.org/people/surly/sounds/91196/) by *surly* (Freesound) — trimmed to start at 4 s. | CC0 |
 | `chau-gong.ogg` | [Gong](https://freesound.org/people/juskiddink/sounds/86773/) by *juskiddink* (Freesound). | **CC-BY 4.0** — attribution required, satisfied by this file. |
 | `crystal-bowl.ogg` | [Crystal bowl F#3](https://freesound.org/people/caiogracco/sounds/150454/) by *caiogracco* (Freesound). | CC0 |
