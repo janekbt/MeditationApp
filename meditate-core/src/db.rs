@@ -903,6 +903,9 @@ impl Database {
             "preset_insert" | "preset_update" | "preset_delete" => {
                 self.recompute_preset(&event.target_id)?;
             }
+            "guided_file_insert" | "guided_file_update" | "guided_file_delete" => {
+                self.recompute_guided_file(&event.target_id)?;
+            }
             "setting_changed" => {
                 self.recompute_setting(&event.target_id)?;
             }
@@ -1240,6 +1243,70 @@ impl Database {
             self.conn.execute(
                 "DELETE FROM presets WHERE uuid = ?1",
                 params![preset_uuid],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Recompute the `guided_files` row for `file_uuid` from the events
+    /// table. Same precedence rules as labels / interval_bells / presets:
+    /// tombstone wins on tie, else the highest-(lamport, device_id)
+    /// mutate event drives the row. Update events carry every field
+    /// (name, file_path, duration, is_starred, both timestamps) so they
+    /// self-suffice on out-of-order delivery.
+    fn recompute_guided_file(&self, file_uuid: &str) -> Result<()> {
+        let delete_ts: Option<i64> = self.conn.query_row(
+            "SELECT MAX(lamport_ts) FROM events
+             WHERE target_id = ?1 AND kind = 'guided_file_delete'",
+            params![file_uuid],
+            |row| row.get::<_, Option<i64>>(0),
+        )?;
+        let mutate: Option<(i64, String)> = self.conn.query_row(
+            "SELECT lamport_ts, payload FROM events
+             WHERE target_id = ?1
+               AND kind IN ('guided_file_insert', 'guided_file_update')
+             ORDER BY lamport_ts DESC, device_id DESC
+             LIMIT 1",
+            params![file_uuid],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+        ).optional()?;
+
+        let row_should_exist = match (mutate.as_ref(), delete_ts) {
+            (Some(_), None) => true,
+            (None, _) => false,
+            (Some((m_ts, _)), Some(d_ts)) => *m_ts > d_ts,
+        };
+
+        if let Some((_, payload)) = mutate.filter(|_| row_should_exist) {
+            let v: serde_json::Value = serde_json::from_str(&payload)
+                .map_err(|e| DbError::Csv(
+                    format!("guided_file event payload not valid JSON: {e}")))?;
+            let name = v["name"].as_str().unwrap_or_default();
+            let file_path = v["file_path"].as_str().unwrap_or_default();
+            let duration_secs = v["duration_secs"].as_u64().unwrap_or(0) as u32;
+            let is_starred = v["is_starred"].as_bool().unwrap_or(false);
+            let created_iso = v["created_iso"].as_str().unwrap_or_default();
+            let updated_iso = v["updated_iso"].as_str().unwrap_or(created_iso);
+            self.conn.execute(
+                "INSERT INTO guided_files
+                    (uuid, name, file_path, duration_secs, is_starred, created_iso, updated_iso)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT(uuid) DO UPDATE SET
+                    name          = excluded.name,
+                    file_path     = excluded.file_path,
+                    duration_secs = excluded.duration_secs,
+                    is_starred    = excluded.is_starred,
+                    created_iso   = excluded.created_iso,
+                    updated_iso   = excluded.updated_iso",
+                params![
+                    file_uuid, name, file_path, duration_secs,
+                    is_starred as i64, created_iso, updated_iso,
+                ],
+            )?;
+        } else {
+            self.conn.execute(
+                "DELETE FROM guided_files WHERE uuid = ?1",
+                params![file_uuid],
             )?;
         }
         Ok(())
@@ -9681,5 +9748,128 @@ mod tests {
         assert!(!db.is_guided_file_name_taken("body scan", "gf-1").unwrap());
         // But same name under a different uuid still flags as taken.
         assert!(db.is_guided_file_name_taken("Body Scan", "gf-2").unwrap());
+    }
+
+    // ── GuidedFiles — sync replay (apply_event / replay_events) ──────
+
+    #[test]
+    fn apply_event_guided_file_insert_creates_the_row_on_a_fresh_peer() {
+        let peer = Database::open_in_memory().unwrap();
+        let payload = serde_json::json!({
+            "uuid": "gf-1",
+            "name": "Body Scan",
+            "file_path": "guided/gf-1.ogg",
+            "duration_secs": 1200,
+            "is_starred": true,
+            "created_iso": "2026-05-05T20:00:00Z",
+            "updated_iso": "2026-05-05T20:00:00Z",
+        });
+        let event = synth_event(
+            "guided_file_insert", "gf-1", 5, DEVICE_A, payload,
+        );
+        peer.apply_event(&event).unwrap();
+        let rows = peer.list_guided_files().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, "Body Scan");
+        assert_eq!(rows[0].duration_secs, 1200);
+        assert!(rows[0].is_starred);
+    }
+
+    #[test]
+    fn apply_event_guided_file_update_overwrites_earlier_state() {
+        let peer = Database::open_in_memory().unwrap();
+        let insert_payload = serde_json::json!({
+            "uuid": "gf-1",
+            "name": "Old Name",
+            "file_path": "guided/gf-1.ogg",
+            "duration_secs": 1200,
+            "is_starred": false,
+            "created_iso": "2026-05-05T20:00:00Z",
+            "updated_iso": "2026-05-05T20:00:00Z",
+        });
+        peer.apply_event(&synth_event(
+            "guided_file_insert", "gf-1", 5, DEVICE_A, insert_payload,
+        )).unwrap();
+        let update_payload = serde_json::json!({
+            "uuid": "gf-1",
+            "name": "New Name",
+            "file_path": "guided/gf-1.ogg",
+            "duration_secs": 1200,
+            "is_starred": true,
+            "created_iso": "2026-05-05T20:00:00Z",
+            "updated_iso": "2026-05-05T20:05:00Z",
+        });
+        peer.apply_event(&synth_event(
+            "guided_file_update", "gf-1", 7, DEVICE_A, update_payload,
+        )).unwrap();
+        let rows = peer.list_guided_files().unwrap();
+        assert_eq!(rows[0].name, "New Name");
+        assert!(rows[0].is_starred);
+    }
+
+    #[test]
+    fn apply_event_guided_file_delete_removes_the_row() {
+        let peer = Database::open_in_memory().unwrap();
+        let insert_payload = serde_json::json!({
+            "uuid": "gf-1",
+            "name": "Body Scan",
+            "file_path": "guided/gf-1.ogg",
+            "duration_secs": 1200,
+            "is_starred": false,
+            "created_iso": "2026-05-05T20:00:00Z",
+            "updated_iso": "2026-05-05T20:00:00Z",
+        });
+        peer.apply_event(&synth_event(
+            "guided_file_insert", "gf-1", 5, DEVICE_A, insert_payload,
+        )).unwrap();
+        peer.apply_event(&synth_event(
+            "guided_file_delete", "gf-1", 7, DEVICE_A,
+            serde_json::json!({ "uuid": "gf-1" }),
+        )).unwrap();
+        assert!(peer.list_guided_files().unwrap().is_empty());
+    }
+
+    #[test]
+    fn apply_event_guided_file_tombstone_resists_lower_lamport_insert() {
+        // Out-of-order arrival: delete event lands first (lamport 10),
+        // then a stale insert (lamport 5). Tombstone wins.
+        let peer = Database::open_in_memory().unwrap();
+        peer.apply_event(&synth_event(
+            "guided_file_delete", "gf-1", 10, DEVICE_A,
+            serde_json::json!({ "uuid": "gf-1" }),
+        )).unwrap();
+        let insert_payload = serde_json::json!({
+            "uuid": "gf-1",
+            "name": "Body Scan",
+            "file_path": "guided/gf-1.ogg",
+            "duration_secs": 1200,
+            "is_starred": false,
+            "created_iso": "2026-05-05T20:00:00Z",
+            "updated_iso": "2026-05-05T20:00:00Z",
+        });
+        peer.apply_event(&synth_event(
+            "guided_file_insert", "gf-1", 5, DEVICE_A, insert_payload,
+        )).unwrap();
+        assert!(peer.list_guided_files().unwrap().is_empty(),
+            "tombstone with lamport 10 must beat insert with lamport 5");
+    }
+
+    #[test]
+    fn replay_guided_file_events_round_trips_to_a_fresh_peer() {
+        let dev_a = Database::open_in_memory().unwrap();
+        dev_a.insert_guided_file_with_uuid(
+            "gf-1", "Body Scan", "guided/gf-1.ogg", 1200, true,
+        ).unwrap();
+        dev_a.set_guided_file_starred("gf-1", false).unwrap();
+        let events: Vec<Event> = dev_a.pending_events().unwrap()
+            .into_iter().map(|(_, e)| e).collect();
+
+        let dev_b = Database::open_in_memory().unwrap();
+        dev_b.replay_events(&events).unwrap();
+        let rows = dev_b.list_guided_files().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, "Body Scan");
+        assert!(!rows[0].is_starred,
+            "the more recent star=false update must win on the replay");
     }
 }
