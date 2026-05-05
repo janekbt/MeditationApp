@@ -869,6 +869,7 @@ impl LogView {
             .subtitle(crate::i18n::gettext("Tag this session"))
             .show_enable_switch(true)
             .enable_expansion(initial_label_id.is_some())
+            .expanded(initial_label_id.is_some())
             .build();
         label_expander.add_row(&label_chooser_row);
 
@@ -881,6 +882,10 @@ impl LogView {
             let label_chooser_row = label_chooser_row.clone();
             label_expander.connect_enable_expansion_notify(move |row| {
                 let on = row.enables_expansion();
+                // Mirror `expanded` to `enable_expansion` so flipping
+                // the switch reveals (or hides) the chooser sub-row.
+                // libadwaita doesn't link the two automatically.
+                row.set_expanded(on);
                 if on && selected_label_id.get().is_none() {
                     if let Some(first) = labels_for_toggle.first() {
                         selected_label_id.set(Some(first.id));
@@ -890,26 +895,10 @@ impl LogView {
             });
         }
 
-        // Inner row tap: push the canonical label chooser. The chooser
-        // pops automatically once the user picks; we update the local
-        // state slot and refresh the row subtitle.
-        {
-            let obj = self.obj().clone();
-            let selected_label_id = selected_label_id.clone();
-            let label_chooser_row_outer = label_chooser_row.clone();
-            label_chooser_row.connect_activated(move |_| {
-                let imp = obj.imp();
-                let Some(app) = imp.get_app() else { return; };
-                let Some(window) = imp.get_window() else { return; };
-                let current_id = selected_label_id.get();
-                let selected_label_id = selected_label_id.clone();
-                let label_chooser_row = label_chooser_row_outer.clone();
-                window.push_label_chooser(&app, current_id, move |label| {
-                    selected_label_id.set(Some(label.id));
-                    label_chooser_row.set_subtitle(&label.name);
-                });
-            });
-        }
+        // Inner row tap pushes the chooser onto the dialog's own
+        // nav_view (built below) so it lands *inside* the dialog
+        // rather than behind it. Wired further down once the
+        // nav_view exists.
 
         // ── Note (multiline) ───────────────────────────────────────────
         let note_buffer = gtk::TextBuffer::new(None);
@@ -1007,11 +996,48 @@ impl LogView {
         toolbar_view.add_top_bar(&header);
         toolbar_view.set_content(Some(&scrolled));
 
+        // Wrap the dialog content in its own NavigationView so the
+        // label chooser can push *inside* the dialog. Pushing onto the
+        // main window's nav_view sends the chooser behind the dialog,
+        // which is layered on top of the window.
+        let dialog_root_page = adw::NavigationPage::builder()
+            .tag("session-dialog-root")
+            .title(if is_edit { crate::i18n::gettext("Edit Session") } else { crate::i18n::gettext("Add Session") })
+            .child(&toolbar_view)
+            .build();
+        let dialog_nav_view = adw::NavigationView::new();
+        dialog_nav_view.add(&dialog_root_page);
+
         let dialog = adw::Dialog::builder()
             .title(if is_edit { crate::i18n::gettext("Edit Session") } else { crate::i18n::gettext("Add Session") })
             .content_width(360)
-            .child(&toolbar_view)
+            .child(&dialog_nav_view)
             .build();
+
+        // Now that the dialog's nav_view exists, wire the label
+        // chooser-row tap to push the chooser onto it.
+        {
+            let obj = self.obj().clone();
+            let selected_label_id = selected_label_id.clone();
+            let label_chooser_row_outer = label_chooser_row.clone();
+            let dialog_nav_view = dialog_nav_view.clone();
+            label_chooser_row.connect_activated(move |_| {
+                let imp = obj.imp();
+                let Some(app) = imp.get_app() else { return; };
+                let current_id = selected_label_id.get();
+                let selected_label_id = selected_label_id.clone();
+                let label_chooser_row = label_chooser_row_outer.clone();
+                crate::labels::push_labels_chooser(
+                    &dialog_nav_view,
+                    &app,
+                    current_id,
+                    move |label| {
+                        selected_label_id.set(Some(label.id));
+                        label_chooser_row.set_subtitle(&label.name);
+                    },
+                );
+            });
+        }
 
         // Cancel
         cancel_btn.connect_clicked(glib::clone!(
