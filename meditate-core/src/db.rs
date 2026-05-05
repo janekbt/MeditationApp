@@ -49,6 +49,11 @@ pub enum SessionMode {
     /// stats and the log already key off the recorded duration alone.
     Timer,
     BoxBreath,
+    /// Guided meditation — the user picks an audio file (transient
+    /// "Open File" or imported into the library); the session length
+    /// is the file's natural duration. Pause / Stop / Add overtime
+    /// mirror the Timer countdown's running view.
+    Guided,
 }
 
 impl SessionMode {
@@ -59,6 +64,7 @@ impl SessionMode {
         match self {
             SessionMode::Timer => "timer",
             SessionMode::BoxBreath => "box_breath",
+            SessionMode::Guided => "guided",
         }
     }
 
@@ -72,6 +78,7 @@ impl SessionMode {
         match s {
             "timer" => Some(SessionMode::Timer),
             "box_breath" => Some(SessionMode::BoxBreath),
+            "guided" => Some(SessionMode::Guided),
             _ => None,
         }
     }
@@ -2867,12 +2874,14 @@ mod tests {
         // changes one (e.g. 'box_breath' → 'breath') gets caught.
         assert_eq!(SessionMode::Timer.as_db_str(), "timer");
         assert_eq!(SessionMode::BoxBreath.as_db_str(), "box_breath");
+        assert_eq!(SessionMode::Guided.as_db_str(), "guided");
     }
 
     #[test]
     fn session_mode_from_db_str_parses_canonical_strings() {
         assert_eq!(SessionMode::from_db_str("timer"), Some(SessionMode::Timer));
         assert_eq!(SessionMode::from_db_str("box_breath"), Some(SessionMode::BoxBreath));
+        assert_eq!(SessionMode::from_db_str("guided"), Some(SessionMode::Guided));
     }
 
     #[test]
@@ -2887,12 +2896,13 @@ mod tests {
         assert_eq!(SessionMode::from_db_str("TIMER"), None);  // case-sensitive
         assert_eq!(SessionMode::from_db_str("breathing"), None);  // old name
         assert_eq!(SessionMode::from_db_str("box-breath"), None); // dash, not underscore
+        assert_eq!(SessionMode::from_db_str("Guided"), None);     // case-sensitive
         assert_eq!(SessionMode::from_db_str("garbage"), None);
     }
 
     #[test]
     fn session_mode_db_str_round_trip() {
-        for &mode in &[SessionMode::Timer, SessionMode::BoxBreath] {
+        for &mode in &[SessionMode::Timer, SessionMode::BoxBreath, SessionMode::Guided] {
             assert_eq!(SessionMode::from_db_str(mode.as_db_str()), Some(mode));
         }
     }
