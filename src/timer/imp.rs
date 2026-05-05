@@ -84,6 +84,14 @@ pub enum TimerMode {
     #[default]
     Timer,
     Breathing,
+    /// Guided meditation — user picks an audio file and the session
+    /// length is the file's natural duration. Setup view shows the
+    /// guided-files section (Selected row + Open/Import buttons + a
+    /// starred-files list + Manage Files button) plus the shared
+    /// Label and End Bell rows. Runs through the same hero countdown
+    /// pattern as the Timer countdown, with the audio playing in
+    /// parallel via gst playbin.
+    Guided,
 }
 
 
@@ -96,6 +104,7 @@ pub struct TimerView {
     #[template_child] pub view_stack:            TemplateChild<gtk::Stack>,
     #[template_child] pub streak_label:          TemplateChild<gtk::Label>,
     #[template_child] pub countdown_btn:         TemplateChild<gtk::ToggleButton>,
+    #[template_child] pub guided_btn:             TemplateChild<gtk::ToggleButton>,
     #[template_child] pub breathing_btn:         TemplateChild<gtk::ToggleButton>,
     #[template_child] pub big_time_label:         TemplateChild<gtk::Label>,
     #[template_child] pub countdown_inputs:       TemplateChild<gtk::Box>,
@@ -104,6 +113,13 @@ pub struct TimerView {
     #[template_child] pub save_settings_btn:     TemplateChild<gtk::Button>,
     #[template_child] pub manage_presets_btn:    TemplateChild<gtk::Button>,
     #[template_child] pub boxbreath_inputs:       TemplateChild<gtk::Box>,
+    #[template_child] pub guided_inputs:          TemplateChild<gtk::Box>,
+    #[template_child] pub guided_selected_group:  TemplateChild<adw::PreferencesGroup>,
+    #[template_child] pub guided_selected_row:    TemplateChild<adw::ActionRow>,
+    #[template_child] pub open_file_btn:          TemplateChild<gtk::Button>,
+    #[template_child] pub import_file_btn:        TemplateChild<gtk::Button>,
+    #[template_child] pub guided_files_group:     TemplateChild<adw::PreferencesGroup>,
+    #[template_child] pub manage_guided_files_btn: TemplateChild<gtk::Button>,
     #[template_child] pub phase_tiles_grid:       TemplateChild<gtk::Grid>,
     #[template_child] pub start_btn:             TemplateChild<gtk::Button>,
     #[template_child] pub resume_btn:            TemplateChild<gtk::Button>,
@@ -201,6 +217,22 @@ pub struct TimerView {
     /// to apply a different preset, so undoing the previous one no
     /// longer makes sense.
     current_apply_toast: RefCell<Option<adw::Toast>>,
+
+    // ── Guided meditation state ──────────────────────────────────────
+    /// Transient "Open File" pick — set when the user picks a file via
+    /// the file dialog, cleared when they tap Import File (which
+    /// promotes it into the library) or pick a starred row from the
+    /// list. Drives the hero countdown's target during a guided run.
+    guided_pick: RefCell<Option<crate::guided::GuidedFilePick>>,
+    /// UUID of the currently-selected library row, when the user has
+    /// tapped a row in the starred list. `None` for transient picks
+    /// AND for the empty state. The session-save path reads this so
+    /// per-file stats can resolve later.
+    guided_selected_uuid: RefCell<Option<String>>,
+    /// Starred guided-file rows currently attached to the home-list
+    /// group. Same shape as `starred_preset_rows` so the rebuild path
+    /// can drain and re-add cleanly without leaking rows.
+    starred_guided_rows: RefCell<Vec<(adw::ActionRow, String)>>,
 
     // ── Breathing (Box Breath) state ─────────────────────────────────
     /// Four phase durations. Defaults 4/4/4/4 (classic box breathing).
@@ -315,9 +347,9 @@ impl TimerView {
     fn setup_buttons(&self) {
         let obj = self.obj();
 
-        // Mode toggle — both radios share a group, so exactly one
+        // Mode toggle — all three radios share a group, so exactly one
         // emits `toggled` with `is_active() == true` on every switch.
-        // Route both into one handler.
+        // Route all three into one handler.
         let mode_toggled = glib::clone!(
             #[weak(rename_to = this)] obj,
             move |btn: &gtk::ToggleButton| {
@@ -327,6 +359,7 @@ impl TimerView {
             }
         );
         self.countdown_btn.connect_toggled(mode_toggled.clone());
+        self.guided_btn.connect_toggled(mode_toggled.clone());
         self.breathing_btn.connect_toggled(mode_toggled);
 
         // Stopwatch-Mode SwitchRow: persist state, mirror on the cell,
@@ -399,6 +432,10 @@ impl TimerView {
                 let session_mode = match imp.current_mode() {
                     TimerMode::Timer     => crate::db::SessionMode::Timer,
                     TimerMode::Breathing => crate::db::SessionMode::BoxBreath,
+                    // Guided mode hides this button — pre-empt anyway
+                    // so a future flag-flip can't accidentally drive
+                    // a Save Preset flow against a non-preset mode.
+                    TimerMode::Guided    => return,
                 };
                 let snapshot = imp.snapshot_current_setup();
                 let this_for_changed = this.clone();
@@ -421,6 +458,7 @@ impl TimerView {
                 let session_mode = match imp.current_mode() {
                     TimerMode::Timer     => crate::db::SessionMode::Timer,
                     TimerMode::Breathing => crate::db::SessionMode::BoxBreath,
+                    TimerMode::Guided    => return,
                 };
                 let this_for_changed = this.clone();
                 window.push_presets_chooser(
@@ -428,6 +466,86 @@ impl TimerView {
                     session_mode,
                     crate::presets::ChooserMode::Manage,
                     move || this_for_changed.imp().rebuild_starred_presets_list(),
+                );
+            },
+        ));
+
+        // ── Guided-mode buttons ─────────────────────────────────────
+        // Open File: pop the gtk::FileDialog, on success populate the
+        // Selected row + hero countdown, ungrey Import.
+        self.open_file_btn.connect_clicked(glib::clone!(
+            #[weak(rename_to = this)] obj,
+            move |_| {
+                let Some(window) = this.root()
+                    .and_then(|r| r.downcast::<gtk::Window>().ok())
+                else { return; };
+                let this_for_pick = this.clone();
+                crate::guided::pick_file_for_open(&window, move |pick| {
+                    let imp = this_for_pick.imp();
+                    *imp.guided_pick.borrow_mut() = Some(pick);
+                    // Transient pick — clear any prior starred-row uuid
+                    // so the session-save path logs guided_file_uuid=None.
+                    *imp.guided_selected_uuid.borrow_mut() = None;
+                    imp.refresh_guided_selected_row();
+                    imp.refresh_hero_for_idle();
+                });
+            },
+        ));
+
+        // Import File: take the current transient pick, run the name
+        // dialog → transcode → DB insert pipeline, and on success
+        // promote the row into the starred list. The button is greyed
+        // when there's no transient pick to import (toggled in
+        // refresh_guided_selected_row).
+        self.import_file_btn.connect_clicked(glib::clone!(
+            #[weak(rename_to = this)] obj,
+            move |_| {
+                let imp = this.imp();
+                let Some(app) = imp.get_app() else { return; };
+                let Some(window) = this.root()
+                    .and_then(|r| r.downcast::<gtk::Window>().ok())
+                else { return; };
+                let Some(pick) = imp.guided_pick.borrow().clone() else { return; };
+                let this_for_done = this.clone();
+                crate::guided::import_picked_file(
+                    &window,
+                    &app,
+                    pick,
+                    move |row| {
+                        // Promote the freshly-imported row into the
+                        // Selected slot — it stays as the active pick
+                        // (now with a uuid attached), so the user can
+                        // hit Start without re-tapping anything.
+                        let imp = this_for_done.imp();
+                        *imp.guided_selected_uuid.borrow_mut() = Some(row.uuid.clone());
+                        *imp.guided_pick.borrow_mut() = Some(crate::guided::GuidedFilePick {
+                            display_name: row.name.clone(),
+                            source_path: std::path::PathBuf::from(&row.file_path),
+                            duration_secs: row.duration_secs,
+                        });
+                        imp.rebuild_starred_guided_list();
+                        imp.refresh_guided_selected_row();
+                        imp.refresh_hero_for_idle();
+                    },
+                );
+            },
+        ));
+
+        // Manage Files: push the chooser NavigationPage. On every
+        // change inside (rename / star toggle / delete / import),
+        // refresh the home-list so the Setup view reflects state.
+        self.manage_guided_files_btn.connect_clicked(glib::clone!(
+            #[weak(rename_to = this)] obj,
+            move |_| {
+                let imp = this.imp();
+                let Some(app) = imp.get_app() else { return; };
+                let Some(window) = this.root()
+                    .and_downcast::<crate::window::MeditateWindow>()
+                else { return; };
+                let this_for_changed = this.clone();
+                window.push_guided_files_chooser(
+                    &app,
+                    move || this_for_changed.imp().rebuild_starred_guided_list(),
                 );
             },
         ));
@@ -708,12 +826,14 @@ impl TimerView {
 
 
     /// Which mode the radio group currently reflects. Exactly one of
-    /// the two buttons is active at any time (they share a group).
+    /// the three toggles is active at any time (they share a group).
     /// Stopwatch-vs-countdown lives on `stopwatch_toggle_on` within
     /// the Timer branch.
     pub(crate) fn current_mode(&self) -> TimerMode {
         if self.breathing_btn.is_active() {
             TimerMode::Breathing
+        } else if self.guided_btn.is_active() {
+            TimerMode::Guided
         } else {
             TimerMode::Timer
         }
@@ -726,29 +846,45 @@ impl TimerView {
         // Input panels: only the active mode's inputs are visible.
         self.countdown_inputs.set_visible(mode == TimerMode::Timer);
         self.boxbreath_inputs.set_visible(mode == TimerMode::Breathing);
+        self.guided_inputs.set_visible(mode == TimerMode::Guided);
         // Starting Bell + Preparation Time + Interval Bells apply to
         // Timer mode only — Box Breathing has its own independent
-        // rhythm and start-of-session cues, so the whole bell stack
-        // goes away when breathing is active.
+        // rhythm + start-cue model, and Guided mode's "start cue" is
+        // the audio file's natural opening, so the whole bell stack
+        // goes away outside Timer.
         self.starting_bell_row.set_visible(mode == TimerMode::Timer);
         self.interval_bells_enabled_row.set_visible(mode == TimerMode::Timer);
         // Stopwatch toggle only makes sense in Timer mode (Box Breath
-        // has no count-up mode); hide the row entirely under breath.
+        // has no count-up mode; Guided mode's duration comes from the
+        // file). Hide the row entirely outside Timer.
         self.stopwatch_mode_row.set_visible(mode == TimerMode::Timer);
-        // Duration row stays visible in both modes — Timer reads
-        // countdown_target_secs, Box Breath reads breathing_session_secs.
-        // Refresh the value label from the appropriate Cell on every
+        // Duration row hides in Guided mode — the duration is read
+        // from the picked file's metadata, the user can't dial it in.
+        self.duration_row.set_visible(mode != TimerMode::Guided);
+        // Presets section also hides in Guided mode — guided meditation
+        // has its own library (the starred-files group inside
+        // guided_inputs) so the preset machinery is irrelevant.
+        self.presets_group.set_visible(mode != TimerMode::Guided);
+        self.save_settings_btn.set_visible(mode != TimerMode::Guided);
+        self.manage_presets_btn.set_visible(mode != TimerMode::Guided);
+        // Refresh the duration label from the appropriate Cell on every
         // mode switch so the suffix doesn't lag.
         self.refresh_duration_value_label();
         // Visible-list contents are mode-strict (Timer presets only
         // appear in Timer mode, Box-Breath presets in Box Breath mode)
-        // — rebuild on every switch.
-        self.rebuild_starred_presets_list();
+        // — rebuild on every switch. Guided mode rebuilds its own
+        // starred-files list instead.
+        if mode == TimerMode::Guided {
+            self.rebuild_starred_guided_list();
+            self.refresh_guided_selected_row();
+        } else {
+            self.rebuild_starred_presets_list();
+        }
 
         // Each mode keeps its own last-used label. On switch, pull the
         // stored preference (or fall back to the mode-specific default —
-        // "Box-breathing" for Breathing's first visit, "None" for the
-        // other two) and apply it to the setup combo.
+        // "Box-breathing" for Breathing, "Guided Meditation" for Guided,
+        // "Meditation" for Timer) and apply it to the setup combo.
         self.apply_preferred_label_for_mode(mode);
 
         match self.timer_state.get() {
@@ -773,13 +909,20 @@ impl TimerView {
         let mode = self.current_mode();
         self.countdown_inputs.set_sensitive(true);
         self.boxbreath_inputs.set_sensitive(true);
+        self.guided_inputs.set_sensitive(true);
         self.countdown_inputs.set_visible(mode == TimerMode::Timer);
         self.boxbreath_inputs.set_visible(mode == TimerMode::Breathing);
+        self.guided_inputs.set_visible(mode == TimerMode::Guided);
         self.starting_bell_row.set_visible(mode == TimerMode::Timer);
         self.interval_bells_enabled_row.set_visible(mode == TimerMode::Timer);
         self.stopwatch_mode_row.set_visible(mode == TimerMode::Timer);
+        self.duration_row.set_visible(mode != TimerMode::Guided);
+        self.presets_group.set_visible(mode != TimerMode::Guided);
+        self.save_settings_btn.set_visible(mode != TimerMode::Guided);
+        self.manage_presets_btn.set_visible(mode != TimerMode::Guided);
         self.refresh_duration_value_label();
         self.countdown_btn.set_sensitive(true);
+        self.guided_btn.set_sensitive(true);
         self.breathing_btn.set_sensitive(true);
         self.session_group.set_sensitive(true);
         self.refresh_hero_for_idle();
@@ -791,6 +934,11 @@ impl TimerView {
         let mins = match self.current_mode() {
             TimerMode::Timer     => self.countdown_target_secs.get() / 60,
             TimerMode::Breathing => self.breathing_session_secs.get() as u64 / 60,
+            // Duration row is hidden in Guided mode (the duration
+            // comes from the picked file's metadata, the user can't
+            // dial it in). The label would never render — read 0
+            // so a future flag-flip can't expose stale numbers.
+            TimerMode::Guided    => 0,
         };
         let h = mins / 60;
         let m = mins % 60;
@@ -836,6 +984,21 @@ impl TimerView {
                 // by 60 to get minutes for the display computation.
                 let m = self.breathing_session_secs.get() / 60;
                 format!("{:02}:{:02}", m / 60, m % 60)
+            }
+            TimerMode::Guided => {
+                // Hero shows the picked file's natural duration — the
+                // session length is whatever the audio runs for. Empty
+                // state (no file selected) reads 00:00 so the layout
+                // doesn't shift when the user picks something.
+                let secs = self
+                    .guided_pick
+                    .borrow()
+                    .as_ref()
+                    .map(|p| p.duration_secs)
+                    .unwrap_or(0) as u64;
+                let h = secs / 3600;
+                let m = (secs % 3600) / 60;
+                format!("{h:02}:{m:02}")
             }
         };
         self.big_time_label.set_label(&label);
@@ -985,6 +1148,25 @@ impl TimerView {
                     Some(CoreStopwatch::started_at(std::time::Duration::ZERO));
                 self.breath_target.set(std::time::Duration::from_secs(target));
             }
+            TimerMode::Guided => {
+                // Phase 6 wires up the gst playbin instance + countdown
+                // core here. For phase 5 the start path is gated by
+                // `guided_pick`/`guided_selected_uuid`; with no pick
+                // the start_btn handler refuses to enter Running.
+                let target = self
+                    .guided_pick
+                    .borrow()
+                    .as_ref()
+                    .map(|p| p.duration_secs as u64)
+                    .unwrap_or(0);
+                if target == 0 {
+                    return;
+                }
+                self.start_boot_time.set(Some(boot_time_now()));
+                let timer = CoreCountdownTimer::new(std::time::Duration::from_secs(target));
+                let sw = CoreStopwatch::started_at(std::time::Duration::ZERO);
+                *self.countdown_core.borrow_mut() = Some(CoreCountdown::new(timer, sw));
+            }
         }
 
         // Prep-mode setup: anchor the boot time, install the prep
@@ -1052,6 +1234,13 @@ impl TimerView {
                     let mut slot = self.breath_stopwatch.borrow_mut();
                     *slot = slot.take().map(|s| s.resumed_at(now));
                 }
+                TimerMode::Guided => {
+                    // Guided mode reuses the countdown_core (set up at
+                    // start) for the elapsed-tracking machinery. The
+                    // gst playback resume is wired in phase 6.
+                    let mut slot = self.countdown_core.borrow_mut();
+                    *slot = slot.take().map(|c| c.resume(now));
+                }
             }
         }
         self.timer_state.set(if resuming_prep {
@@ -1108,6 +1297,10 @@ impl TimerView {
                 TimerMode::Breathing => {
                     let mut slot = self.breath_stopwatch.borrow_mut();
                     *slot = slot.take().map(|s| s.paused_at(now));
+                }
+                TimerMode::Guided => {
+                    let mut slot = self.countdown_core.borrow_mut();
+                    *slot = slot.take().map(|c| c.pause(now));
                 }
             }
         }
@@ -1187,6 +1380,9 @@ impl TimerView {
                 }
             }
             TimerMode::Breathing => self.breath_elapsed().as_secs(),
+            // Guided uses the countdown_core for elapsed tracking
+            // (set up in start_session). Same shape as Timer countdown.
+            TimerMode::Guided => self.countdown_elapsed_secs(),
         }
     }
 
@@ -1241,6 +1437,16 @@ impl TimerView {
         let session_mode = match mode {
             TimerMode::Timer => SessionMode::Timer,
             TimerMode::Breathing => SessionMode::BoxBreath,
+            TimerMode::Guided => SessionMode::Guided,
+        };
+
+        // Guided sessions log the file's uuid (when the user played a
+        // starred library row) so per-file stats can resolve later.
+        // Transient Open-File picks log None.
+        let guided_file_uuid = if mode == TimerMode::Guided {
+            self.guided_selected_uuid.borrow().clone()
+        } else {
+            None
         };
 
         let data = SessionData {
@@ -1249,7 +1455,7 @@ impl TimerView {
             mode:          session_mode,
             label_id,
             note,
-            guided_file_uuid: None,
+            guided_file_uuid,
         };
 
         // Record the user's pick as the new persisted default for
@@ -1355,6 +1561,11 @@ impl TimerView {
                 self.active_bells.borrow_mut().clear();
             }
             TimerMode::Breathing => *self.breath_stopwatch.borrow_mut() = None,
+            TimerMode::Guided => {
+                // Same countdown_core slot as Timer countdown.
+                *self.countdown_core.borrow_mut() = None;
+                // Phase 6 also tears down the gst playbin instance here.
+            }
         }
         self.timer_state.set(TimerState::Idle);
         self.session_start_time.set(0);
@@ -1860,6 +2071,9 @@ impl TimerView {
         let session_mode = match self.current_mode() {
             TimerMode::Timer     => crate::db::SessionMode::Timer,
             TimerMode::Breathing => crate::db::SessionMode::BoxBreath,
+            // Guided mode rebuilds via `rebuild_starred_guided_list`
+            // instead of this path. on_mode_switched routes them.
+            TimerMode::Guided    => return,
         };
         let app_opt = self.get_app();
         let presets = app_opt
@@ -1905,6 +2119,102 @@ impl TimerView {
             tracked.push((row, p.uuid));
         }
         *self.starred_preset_rows.borrow_mut() = tracked;
+    }
+
+    /// Rebuild the starred-guided-files list under
+    /// `guided_files_group`. Mirrors `rebuild_starred_presets_list`
+    /// shape — drain the tracking vec, query the DB for starred rows,
+    /// rebuild fresh. Tap on a row populates the Selected slot AND
+    /// stashes the uuid in `guided_selected_uuid` so the session-save
+    /// path can record per-file attribution.
+    pub fn rebuild_starred_guided_list(&self) {
+        for (row, _) in self.starred_guided_rows.borrow_mut().drain(..) {
+            self.guided_files_group.remove(&row);
+        }
+
+        let app_opt = self.get_app();
+        let files = app_opt
+            .as_ref()
+            .and_then(|app| app.with_db(|db| db.list_guided_files()))
+            .and_then(|r| r.ok())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|f| f.is_starred)
+            .collect::<Vec<_>>();
+
+        if files.is_empty() {
+            self.guided_files_group.set_description(Some(
+                &crate::i18n::gettext(
+                    "Tap Open File then Import to add your first guided meditation",
+                ),
+            ));
+            return;
+        }
+        self.guided_files_group.set_description(None::<&str>);
+
+        let mut tracked: Vec<(adw::ActionRow, String)> = Vec::with_capacity(files.len());
+        for f in &files {
+            let row = adw::ActionRow::builder()
+                .title(&f.name)
+                .subtitle(crate::guided::format_duration_brief(f.duration_secs))
+                .activatable(true)
+                .build();
+            // Star prefix (always on for the home-list — destarring
+            // happens via Manage Files).
+            let star = gtk::Image::from_icon_name("starred-symbolic");
+            star.add_css_class("preset-star-on");
+            row.add_prefix(&star);
+
+            let uuid = f.uuid.clone();
+            let name = f.name.clone();
+            let path = f.file_path.clone();
+            let duration_secs = f.duration_secs;
+            let obj = self.obj().clone();
+            row.connect_activated(move |_| {
+                let imp = obj.imp();
+                // Promote this starred row into the Selected slot and
+                // record its uuid for the session-save path.
+                *imp.guided_selected_uuid.borrow_mut() = Some(uuid.clone());
+                *imp.guided_pick.borrow_mut() = Some(crate::guided::GuidedFilePick {
+                    display_name: name.clone(),
+                    source_path: std::path::PathBuf::from(&path),
+                    duration_secs,
+                });
+                imp.refresh_guided_selected_row();
+                imp.refresh_hero_for_idle();
+            });
+
+            self.guided_files_group.add(&row);
+            tracked.push((row, f.uuid.clone()));
+        }
+        *self.starred_guided_rows.borrow_mut() = tracked;
+    }
+
+    /// Update the Selected row's title/subtitle from the current
+    /// `guided_pick` slot — empty state if nothing's picked, file
+    /// name + duration otherwise.
+    pub fn refresh_guided_selected_row(&self) {
+        match self.guided_pick.borrow().as_ref() {
+            Some(pick) => {
+                self.guided_selected_row.set_title(&pick.display_name);
+                self.guided_selected_row
+                    .set_subtitle(&crate::guided::format_duration_brief(pick.duration_secs));
+                self.guided_selected_row.remove_css_class("dim-label");
+            }
+            None => {
+                self.guided_selected_row.set_title(&crate::i18n::gettext("No file selected"));
+                self.guided_selected_row.set_subtitle(
+                    &crate::i18n::gettext("Tap Open File or pick from list below"),
+                );
+                self.guided_selected_row.add_css_class("dim-label");
+            }
+        }
+        // Import button is greyed when there's no transient pick OR
+        // when the current pick is already a starred library row
+        // (selected_uuid Some → already imported).
+        let has_transient = self.guided_pick.borrow().is_some()
+            && self.guided_selected_uuid.borrow().is_none();
+        self.import_file_btn.set_sensitive(has_transient);
     }
 
     /// Snapshot the live Setup state into a `PresetConfig`. Reads
@@ -1993,6 +2303,13 @@ impl TimerView {
                     duration_secs:  self.breathing_session_secs.get(),
                 }
             }
+            // Snapshot is unreachable in Guided (Save Settings button
+            // is hidden + early-returns above). Synthesise a Timer-
+            // shaped value just to satisfy the match — never read.
+            TimerMode::Guided => PresetTiming::Timer {
+                stopwatch: false,
+                duration_secs: 0,
+            },
         };
 
         PresetConfig { label, starting_bell, interval_bells, end_bell, timing }
@@ -2160,6 +2477,10 @@ impl TimerView {
         let want_session_mode = match self.current_mode() {
             TimerMode::Timer     => crate::db::SessionMode::Timer,
             TimerMode::Breathing => crate::db::SessionMode::BoxBreath,
+            // Preset rows aren't surfaced in Guided mode; this would
+            // only fire from a stale callback retained across a mode
+            // switch. Refuse rather than mutating Setup state.
+            TimerMode::Guided    => return,
         };
         if preset.mode != want_session_mode {
             return;
@@ -2247,6 +2568,11 @@ impl TimerView {
     /// spinner ranges.
     fn show_custom_time_dialog(&self) {
         let mode = self.current_mode();
+        // Duration row is hidden in Guided mode; this dialog can't
+        // be reached from there. Bail out defensively.
+        if mode == TimerMode::Guided {
+            return;
+        }
         let (cur_h, cur_m) = match mode {
             TimerMode::Timer => {
                 let s = self.countdown_target_secs.get();
@@ -2256,6 +2582,7 @@ impl TimerView {
                 let m = self.breathing_session_secs.get() / 60;
                 ((m / 60) as f64, (m % 60) as f64)
             }
+            TimerMode::Guided => unreachable!("guarded above"),
         };
 
         // Tooltips double as accessible names — without them screen
@@ -2317,6 +2644,7 @@ impl TimerView {
                 TimerMode::Breathing => {
                     obj.imp().set_breathing_duration_secs((total_mins * 60) as u32);
                 }
+                TimerMode::Guided => {} // unreachable per show_custom_time_dialog guard
             }
         });
 
@@ -2436,6 +2764,9 @@ impl TimerView {
                 }
             }
             TimerMode::Breathing => self.breath_elapsed().as_secs(),
+            // Guided mode counts down from the file's natural length;
+            // same shape as Timer countdown.
+            TimerMode::Guided => self.countdown_remaining_secs(),
         }
     }
 
@@ -3035,12 +3366,13 @@ impl TimerView {
 
     /// Stable per-mode default label uuid used when the user's
     /// stored choice is missing — Meditation in Timer, Box-Breathing
-    /// in Box Breath. Resolves through the seeded rows
-    /// (`crate::db::DEFAULT_*_LABEL_UUID`).
+    /// in Box Breath, Guided Meditation in Guided. Resolves through
+    /// the seeded rows (`crate::db::DEFAULT_*_LABEL_UUID`).
     fn mode_default_label_uuid(&self, mode: TimerMode) -> &'static str {
         match mode {
             TimerMode::Timer => crate::db::DEFAULT_TIMER_LABEL_UUID,
             TimerMode::Breathing => crate::db::DEFAULT_BREATHING_LABEL_UUID,
+            TimerMode::Guided => crate::db::DEFAULT_GUIDED_LABEL_UUID,
         }
     }
 }
@@ -3049,6 +3381,7 @@ fn label_active_setting_key(mode: TimerMode) -> &'static str {
     match mode {
         TimerMode::Timer => "label_active_timer",
         TimerMode::Breathing => "label_active_breathing",
+        TimerMode::Guided => "label_active_guided",
     }
 }
 
@@ -3056,6 +3389,7 @@ fn label_uuid_setting_key(mode: TimerMode) -> &'static str {
     match mode {
         TimerMode::Timer => "default_label_uuid_timer",
         TimerMode::Breathing => "default_label_uuid_breathing",
+        TimerMode::Guided => "default_label_uuid_guided",
     }
 }
 

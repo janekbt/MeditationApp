@@ -837,7 +837,7 @@ fn present_delete_dialog(
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
-fn format_duration_brief(secs: u32) -> String {
+pub fn format_duration_brief(secs: u32) -> String {
     let h = secs / 3600;
     let m = (secs % 3600) / 60;
     let s = secs % 60;

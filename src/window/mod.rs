@@ -99,4 +99,23 @@ impl MeditateWindow {
             on_changed,
         );
     }
+
+    /// Push the guided-meditation Manage Files chooser. Triggered by
+    /// the timer Setup view's Manage Files button under Guided mode.
+    /// `on_changed` fires after every DB write inside the chooser
+    /// (rename / delete / star toggle / import) so the Setup view's
+    /// starred-files list refreshes without requiring a back-and-
+    /// forth navigation.
+    pub fn push_guided_files_chooser(
+        &self,
+        app: &crate::application::MeditateApplication,
+        on_changed: impl Fn() + Clone + 'static,
+    ) {
+        use glib::subclass::prelude::ObjectSubclassIsExt;
+        crate::guided::push_guided_files_chooser(
+            &self.imp().nav_view,
+            app,
+            on_changed,
+        );
+    }
 }

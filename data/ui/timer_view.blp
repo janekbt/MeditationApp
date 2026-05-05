@@ -73,6 +73,13 @@ template $TimerView : Gtk.Widget {
                 css-classes: ["mode-toggle-btn"];
               }
 
+              Gtk.ToggleButton guided_btn {
+                label: _("Guided");
+                hexpand: true;
+                group: countdown_btn;
+                css-classes: ["mode-toggle-btn"];
+              }
+
               Gtk.ToggleButton breathing_btn {
                 label: _("Box Breath");
                 hexpand: true;
@@ -215,6 +222,85 @@ template $TimerView : Gtk.Widget {
               }
             }
 
+          }
+
+          // ── Guided-only inputs ─────────────────────────────────────
+          // Shown only when the Guided toggle is active. Mirrors the
+          // preset section's shape: a one-row group for the current
+          // selection, two action buttons, then the starred-files list,
+          // then the Manage Files button. Built programmatically from
+          // Rust on visit + after every DB write that affects the list.
+          Gtk.Box guided_inputs {
+            orientation: vertical;
+            spacing: 8;
+            visible: false;
+
+            // Current selection (transient Open-File pick OR a starred
+            // row the user tapped). When empty: a dim hint row prompts
+            // the user to pick one. The single Adw.ActionRow inside
+            // is mutated in place; the wrapping Adw.PreferencesGroup
+            // stays mounted.
+            Adw.Clamp {
+              maximum-size: 360;
+              tightening-threshold: 300;
+
+              child: Adw.PreferencesGroup guided_selected_group {
+                Adw.ActionRow guided_selected_row {
+                  title: _("No file selected");
+                  subtitle: _("Tap Open File or pick from list below");
+                  activatable: false;
+                  styles ["dim-label"]
+                }
+              };
+            }
+
+            // [Open File] [Import File] — the Guided-mode analogue of
+            // [Save Settings] [Manage Presets]. Import is greyed when
+            // there's no pending Open-File pick to import.
+            Adw.Clamp {
+              maximum-size: 360;
+              tightening-threshold: 300;
+
+              child: Gtk.Box {
+                orientation: horizontal;
+                spacing: 8;
+                homogeneous: true;
+                halign: fill;
+
+                Gtk.Button open_file_btn {
+                  label: _("Open File");
+                  css-classes: ["suggested-action"];
+                }
+
+                Gtk.Button import_file_btn {
+                  label: _("Import File");
+                  sensitive: false;
+                }
+              };
+            }
+
+            // Starred guided-files list. Rust appends rows on visit;
+            // empty by default so the description reads as a hint when
+            // no files are imported yet.
+            Adw.Clamp {
+              maximum-size: 360;
+              tightening-threshold: 300;
+
+              child: Adw.PreferencesGroup guided_files_group {
+                title: _("Starred Files");
+              };
+            }
+
+            // Manage Files — pushes the chooser NavigationPage built
+            // in src/guided.rs::push_guided_files_chooser.
+            Adw.Clamp {
+              maximum-size: 360;
+              tightening-threshold: 300;
+
+              child: Gtk.Button manage_guided_files_btn {
+                label: _("Manage Files");
+              };
+            }
           }
 
           // ── Session group ──────────────────────────────────────────
