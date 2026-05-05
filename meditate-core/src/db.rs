@@ -6,6 +6,7 @@ use std::path::Path;
 pub enum DbError {
     DuplicateLabel(String),
     DuplicatePreset(String),
+    DuplicateGuidedFile(String),
     Sqlite(rusqlite::Error),
     Csv(String),
 }
@@ -200,6 +201,27 @@ pub struct Preset {
     pub updated_iso: String,
 }
 
+/// One entry in the user's guided-meditation file library — an audio
+/// track imported via the file picker, transcoded to OGG, and stored
+/// under the app's data dir. Referenced by `sessions.guided_file_uuid`
+/// for per-file aggregates. `is_starred` controls whether the row
+/// shows up directly in the home-screen list (mirrors the preset
+/// star flag); destarred files only appear inside the Manage Files
+/// chooser. `file_path` is a relative path under the per-device data
+/// dir (the binary itself doesn't sync — peers fetch it via WebDAV
+/// the same way custom bell-sound binaries do).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GuidedFile {
+    pub id: i64,
+    pub uuid: String,
+    pub name: String,
+    pub file_path: String,
+    pub duration_secs: u32,
+    pub is_starred: bool,
+    pub created_iso: String,
+    pub updated_iso: String,
+}
+
 /// One entry in the append-only sync event log. A self-contained
 /// description of a state-changing operation — sessions inserted /
 /// updated / deleted, labels renamed, settings changed. Every field
@@ -336,6 +358,24 @@ const SCHEMA: &str = "
         updated_iso TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS presets_mode_idx ON presets(mode);
+    -- Guided-meditation audio library. Each row is a user-imported
+    -- track that the app transcoded to OGG and stored under the
+    -- per-device data dir. `is_starred` is the per-row pin into the
+    -- home-screen list; the chooser shows every row regardless.
+    -- `name` is COLLATE NOCASE UNIQUE so the user can't end up with
+    -- two rows that look the same in the chooser. `duration_secs` is
+    -- denormalised here so the home-screen subtitle and the hero
+    -- countdown can render without re-probing the file.
+    CREATE TABLE IF NOT EXISTS guided_files (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        uuid          TEXT NOT NULL UNIQUE,
+        name          TEXT NOT NULL COLLATE NOCASE UNIQUE,
+        file_path     TEXT NOT NULL,
+        duration_secs INTEGER NOT NULL,
+        is_starred    INTEGER NOT NULL DEFAULT 0,
+        created_iso   TEXT NOT NULL,
+        updated_iso   TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS settings (
         key   TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -2155,6 +2195,117 @@ impl Database {
         )?;
         let payload = serde_json::json!({ "uuid": uuid_str }).to_string();
         self.emit_event("preset_delete", uuid_str, payload)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    // ── GuidedFiles ───────────────────────────────────────────────────
+    // CRUD for the user's imported guided-meditation tracks. The
+    // `_with_uuid` insert is the only entry point — fresh UUIDs come
+    // from the shell (`mint_uuid`) before the file is transcoded so
+    // the on-disk filename can encode the same uuid the row uses.
+
+    /// Insert a row keyed on `uuid_str`. Idempotent — a second call
+    /// with the same uuid returns the existing rowid without touching
+    /// the row or emitting another event (mirrors bell_sounds /
+    /// presets). Returns `DuplicateGuidedFile(name)` if a row with
+    /// the same case-insensitive `name` already exists under a
+    /// different uuid; the shell surfaces that as a "name already
+    /// taken" toast on the import / rename dialog.
+    pub fn insert_guided_file_with_uuid(
+        &self,
+        uuid_str: &str,
+        name: &str,
+        file_path: &str,
+        duration_secs: u32,
+        is_starred: bool,
+    ) -> Result<i64> {
+        let tx = self.conn.unchecked_transaction()?;
+        if let Some(existing) = self.conn.query_row(
+            "SELECT id FROM guided_files WHERE uuid = ?1",
+            params![uuid_str],
+            |row| row.get::<_, i64>(0),
+        ).optional()? {
+            return Ok(existing);
+        }
+        let now_iso = chrono::Utc::now().to_rfc3339();
+        let result = self.conn.execute(
+            "INSERT INTO guided_files
+                (uuid, name, file_path, duration_secs, is_starred, created_iso, updated_iso)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+            params![
+                uuid_str,
+                name,
+                file_path,
+                duration_secs,
+                is_starred as i64,
+                now_iso,
+            ],
+        );
+        match result {
+            Ok(_) => {}
+            Err(rusqlite::Error::SqliteFailure(err, _))
+                if err.code == rusqlite::ErrorCode::ConstraintViolation =>
+            {
+                return Err(DbError::DuplicateGuidedFile(name.to_string()));
+            }
+            Err(e) => return Err(DbError::Sqlite(e)),
+        }
+        let rowid = self.conn.last_insert_rowid();
+        let payload = serde_json::json!({
+            "uuid": uuid_str,
+            "name": name,
+            "file_path": file_path,
+            "duration_secs": duration_secs,
+            "is_starred": is_starred,
+            "created_iso": now_iso,
+            "updated_iso": now_iso,
+        }).to_string();
+        self.emit_event("guided_file_insert", uuid_str, payload)?;
+        tx.commit()?;
+        Ok(rowid)
+    }
+
+    pub fn list_guided_files(&self) -> Result<Vec<GuidedFile>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, uuid, name, file_path, duration_secs, is_starred, created_iso, updated_iso
+             FROM guided_files
+             ORDER BY created_iso ASC, id ASC",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(GuidedFile {
+                    id: row.get(0)?,
+                    uuid: row.get(1)?,
+                    name: row.get(2)?,
+                    file_path: row.get(3)?,
+                    duration_secs: row.get::<_, i64>(4)? as u32,
+                    is_starred: row.get::<_, i64>(5)? != 0,
+                    created_iso: row.get(6)?,
+                    updated_iso: row.get(7)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Drop a guided-file row. Unknown uuids are silent no-ops AND
+    /// emit no event — peers would otherwise see a tombstone for a
+    /// row they never knew existed. Mirrors bell_sounds / presets.
+    pub fn delete_guided_file(&self, uuid_str: &str) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        let exists: bool = self.conn.query_row(
+            "SELECT 1 FROM guided_files WHERE uuid = ?1",
+            params![uuid_str],
+            |_| Ok(true),
+        ).optional()?.unwrap_or(false);
+        if !exists { return Ok(()); }
+        self.conn.execute(
+            "DELETE FROM guided_files WHERE uuid = ?1",
+            params![uuid_str],
+        )?;
+        let payload = serde_json::json!({ "uuid": uuid_str }).to_string();
+        self.emit_event("guided_file_delete", uuid_str, payload)?;
         tx.commit()?;
         Ok(())
     }
@@ -9168,5 +9319,105 @@ mod tests {
         let dev_b = Database::open_in_memory().unwrap();
         dev_b.replay_events(&events).unwrap();
         assert!(dev_b.find_preset_by_uuid("u-1").unwrap().is_none());
+    }
+
+    // ── GuidedFiles — basic CRUD ─────────────────────────────────────
+
+    #[test]
+    fn list_guided_files_is_empty_on_a_fresh_database() {
+        let db = Database::open_in_memory().unwrap();
+        assert!(db.list_guided_files().unwrap().is_empty());
+    }
+
+    #[test]
+    fn insert_guided_file_with_uuid_round_trips_through_list() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_guided_file_with_uuid(
+            "gf-1", "Body Scan", "guided/gf-1.ogg", 1200, true,
+        ).unwrap();
+        let rows = db.list_guided_files().unwrap();
+        assert_eq!(rows.len(), 1);
+        let r = &rows[0];
+        assert_eq!(r.uuid, "gf-1");
+        assert_eq!(r.name, "Body Scan");
+        assert_eq!(r.file_path, "guided/gf-1.ogg");
+        assert_eq!(r.duration_secs, 1200);
+        assert!(r.is_starred);
+        assert!(!r.created_iso.is_empty());
+        assert_eq!(r.created_iso, r.updated_iso,
+            "fresh insert: updated_iso == created_iso");
+    }
+
+    #[test]
+    fn insert_guided_file_with_existing_uuid_is_silent_noop() {
+        // Sync replay can land the same insert twice; the second call
+        // returns the existing rowid without changing the row or
+        // emitting a second event.
+        let db = Database::open_in_memory().unwrap();
+        let id1 = db.insert_guided_file_with_uuid(
+            "gf-1", "Body Scan", "guided/gf-1.ogg", 1200, false,
+        ).unwrap();
+        let id2 = db.insert_guided_file_with_uuid(
+            "gf-1", "Different Name", "guided/different.ogg", 999, true,
+        ).unwrap();
+        assert_eq!(id1, id2);
+        let rows = db.list_guided_files().unwrap();
+        assert_eq!(rows.len(), 1);
+        // Original values preserved — no overwrite.
+        assert_eq!(rows[0].name, "Body Scan");
+        assert_eq!(rows[0].duration_secs, 1200);
+    }
+
+    #[test]
+    fn insert_guided_file_with_duplicate_name_returns_duplicate_error() {
+        // The schema's UNIQUE NOCASE on `name` blocks two rows with
+        // the same display name even under different uuids — so the
+        // chooser can't end up showing two visually identical entries.
+        let db = Database::open_in_memory().unwrap();
+        db.insert_guided_file_with_uuid(
+            "gf-1", "Body Scan", "guided/gf-1.ogg", 1200, false,
+        ).unwrap();
+        match db.insert_guided_file_with_uuid(
+            "gf-2", "BODY SCAN", "guided/gf-2.ogg", 800, false,
+        ) {
+            Err(DbError::DuplicateGuidedFile(name)) => assert_eq!(name, "BODY SCAN"),
+            other => panic!("expected DuplicateGuidedFile, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn list_guided_files_orders_by_created_iso() {
+        // Stable creation-order makes the home-screen list show files
+        // in the order the user imported them (no surprise reshuffles
+        // when toggling stars).
+        let db = Database::open_in_memory().unwrap();
+        db.insert_guided_file_with_uuid(
+            "gf-1", "First", "guided/1.ogg", 600, true,
+        ).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        db.insert_guided_file_with_uuid(
+            "gf-2", "Second", "guided/2.ogg", 1200, true,
+        ).unwrap();
+        let rows = db.list_guided_files().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].name, "First");
+        assert_eq!(rows[1].name, "Second");
+    }
+
+    #[test]
+    fn delete_guided_file_removes_the_row() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_guided_file_with_uuid(
+            "gf-1", "Body Scan", "guided/gf-1.ogg", 1200, true,
+        ).unwrap();
+        db.delete_guided_file("gf-1").unwrap();
+        assert!(db.list_guided_files().unwrap().is_empty());
+    }
+
+    #[test]
+    fn delete_guided_file_unknown_uuid_is_silent_noop() {
+        let db = Database::open_in_memory().unwrap();
+        db.delete_guided_file("never-existed").unwrap();
+        assert!(db.list_guided_files().unwrap().is_empty());
     }
 }
