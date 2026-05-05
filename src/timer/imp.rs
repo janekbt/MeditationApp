@@ -1562,6 +1562,11 @@ impl TimerView {
     }
 
     fn end_overtime_session(&self, elapsed_secs: u64) {
+        // The end bell started ringing at the running→overtime
+        // transition; once the user picks Finish or Add they've
+        // acknowledged the session, so cut any still-playing bell
+        // (end + interval) before the Done page comes up.
+        crate::sound::stop_all();
         self.cancel_tick();
         *self.running_label.borrow_mut() = None;
         *self.running_pause_btn.borrow_mut() = None;
