@@ -1134,6 +1134,15 @@ impl TimerView {
         let mode = self.current_mode();
 
         let elapsed = self.elapsed_secs_for_mode(mode);
+        // Pin the elapsed we just computed so on_save reads the same
+        // value the Done page is about to show. Without this, a stop
+        // during prep loses the session: on_save recomputes elapsed
+        // through `elapsed_secs_for_mode`, but by then prep_stopwatch
+        // has been cleared (line below) and no running core exists
+        // (transition_prep_to_running never ran), so the fallback
+        // returns 0 and on_save silently drops the row. Mirrors the
+        // Overtime Finish path which uses the same slot.
+        self.final_duration_secs.set(Some(elapsed));
         self.timer_state.set(TimerState::Done);
         // Drop any prep state — the user stopped during prep, the
         // session's "elapsed" came from the prep stopwatch above.
