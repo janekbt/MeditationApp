@@ -764,6 +764,14 @@ impl LogView {
         let is_edit = session.is_some();
         let labels = self.labels.borrow().clone();
         let session_id = session.map(|s| s.id);
+        // Capture mode + guided_file_uuid up front so the Save handler
+        // can preserve them on edit. Manual log entries via this
+        // dialog default to Timer for new entries (the dialog has no
+        // mode selector — Box Breath / Guided sessions are produced
+        // by the live timer view, not the log dialog).
+        let original_mode = session.map(|s| s.mode).unwrap_or(SessionMode::Timer);
+        let original_guided_file_uuid = session
+            .and_then(|s| s.guided_file_uuid.clone());
 
         // ── Duration (hours + minutes as AdwSpinRows) ─────────────────
         let hours_spin = adw::SpinRow::builder()
@@ -1084,10 +1092,10 @@ impl LogView {
                 let data = SessionData {
                     start_time,
                     duration_secs: duration.max(0),
-                    mode: SessionMode::Timer,
+                    mode: original_mode,
                     label_id,
                     note,
-                    guided_file_uuid: None,
+                    guided_file_uuid: original_guided_file_uuid.clone(),
                 };
 
                 if let Some(app) = imp.get_app() {
