@@ -235,6 +235,11 @@ pub struct TimerView {
     /// group. Same shape as `starred_preset_rows` so the rebuild path
     /// can drain and re-add cleanly without leaking rows.
     starred_guided_rows: RefCell<Vec<(adw::ActionRow, String)>>,
+    /// Active gst playbin instance during a Guided session. Set by
+    /// `start_session`'s Guided arm, paused/resumed alongside the
+    /// hero countdown, and torn down (Drop runs set_state(Null) +
+    /// removes the bus signal-watch) on every session-end path.
+    guided_playback: RefCell<Option<crate::guided::GuidedPlayback>>,
 
     // ── Breathing (Box Breath) state ─────────────────────────────────
     /// Four phase durations. Defaults 4/4/4/4 (classic box breathing).
@@ -1153,19 +1158,49 @@ impl TimerView {
                 self.breath_target.set(std::time::Duration::from_secs(target));
             }
             TimerMode::Guided => {
-                // Phase 6 wires up the gst playbin instance + countdown
-                // core here. For phase 5 the start path is gated by
-                // `guided_pick`/`guided_selected_uuid`; with no pick
-                // the start_btn handler refuses to enter Running.
-                let target = self
-                    .guided_pick
-                    .borrow()
-                    .as_ref()
-                    .map(|p| p.duration_secs as u64)
-                    .unwrap_or(0);
+                // Build the countdown core (drives the hero) AND the
+                // gst playbin (drives the audio). Both are tied to the
+                // same target duration probed at file-pick time. The
+                // playbin's EOS signal-watch slides into Overtime in
+                // case the file ends slightly before the probed
+                // duration — keeps the session.end-bell handshake
+                // honest even with sub-second drift between the two.
+                let pick = self.guided_pick.borrow().clone();
+                let Some(pick) = pick else { return; };
+                let target = pick.duration_secs as u64;
                 if target == 0 {
                     return;
                 }
+
+                // Audio first: a failure here (corrupt file, missing
+                // codec) bails the whole start path so the user sees
+                // a toast and the session never enters Running.
+                let obj_for_eos = self.obj().clone();
+                match crate::guided::GuidedPlayback::start(
+                    &pick.source_path,
+                    move |/* on_eos */| {
+                        // EOS arrives on the GTK main thread thanks
+                        // to the bus signal watch + glib's default
+                        // MainContext. Slide into Overtime if Running;
+                        // a no-op if we've already transitioned.
+                        let imp = obj_for_eos.imp();
+                        if imp.timer_state.get() == TimerState::Running {
+                            imp.transition_running_to_overtime();
+                        }
+                    },
+                ) {
+                    Ok(playback) => {
+                        *self.guided_playback.borrow_mut() = Some(playback);
+                    }
+                    Err(e) => {
+                        self.toast(&format!(
+                            "{}: {e}",
+                            crate::i18n::gettext("Couldn't start playback"),
+                        ));
+                        return;
+                    }
+                }
+
                 self.start_boot_time.set(Some(boot_time_now()));
                 let timer = CoreCountdownTimer::new(std::time::Duration::from_secs(target));
                 let sw = CoreStopwatch::started_at(std::time::Duration::ZERO);
@@ -1239,11 +1274,16 @@ impl TimerView {
                     *slot = slot.take().map(|s| s.resumed_at(now));
                 }
                 TimerMode::Guided => {
-                    // Guided mode reuses the countdown_core (set up at
-                    // start) for the elapsed-tracking machinery. The
-                    // gst playback resume is wired in phase 6.
+                    // Guided mode reuses the countdown_core for elapsed
+                    // tracking AND drives a gst playbin alongside it.
+                    // Resume both — the playbin picks up at the same
+                    // position the user paused at; the countdown core
+                    // resumes from its frozen elapsed value.
                     let mut slot = self.countdown_core.borrow_mut();
                     *slot = slot.take().map(|c| c.resume(now));
+                    if let Some(p) = self.guided_playback.borrow().as_ref() {
+                        p.resume();
+                    }
                 }
             }
         }
@@ -1305,6 +1345,9 @@ impl TimerView {
                 TimerMode::Guided => {
                     let mut slot = self.countdown_core.borrow_mut();
                     *slot = slot.take().map(|c| c.pause(now));
+                    if let Some(p) = self.guided_playback.borrow().as_ref() {
+                        p.pause();
+                    }
                 }
             }
         }
@@ -1347,6 +1390,10 @@ impl TimerView {
         // rebuilds it from current settings.
         *self.prep_stopwatch.borrow_mut() = None;
         self.active_bells.borrow_mut().clear();
+        // Guided playback stops the moment the user picks Stop —
+        // Drop runs set_state(Null) + drops the bus signal-watch.
+        // No-op for non-Guided sessions (slot is already None).
+        *self.guided_playback.borrow_mut() = None;
 
         // Release the running-page widget refs — the page is about
         // to pop when "timer-stopped" fires below.
@@ -1566,9 +1613,14 @@ impl TimerView {
             }
             TimerMode::Breathing => *self.breath_stopwatch.borrow_mut() = None,
             TimerMode::Guided => {
-                // Same countdown_core slot as Timer countdown.
+                // Same countdown_core slot as Timer countdown. Plus
+                // tear down the gst playbin (Drop runs set_state(Null)
+                // + removes the bus signal-watch). The playback might
+                // already be None if a prior on_stop / overtime path
+                // dropped it; the borrow_mut + None assignment is
+                // idempotent.
                 *self.countdown_core.borrow_mut() = None;
-                // Phase 6 also tears down the gst playbin instance here.
+                *self.guided_playback.borrow_mut() = None;
             }
         }
         self.timer_state.set(TimerState::Idle);
@@ -1694,6 +1746,13 @@ impl TimerView {
     fn transition_running_to_overtime(&self) {
         self.timer_state.set(TimerState::Overtime);
 
+        // Guided mode: drop the playbin BEFORE play_end_bell so the
+        // end bell isn't competing with a few last frames of audio
+        // (gst playbin holds a small buffer ahead of the wall clock,
+        // so the file may still be sounding when the countdown hits
+        // zero). Drop runs set_state(Null) + removes the bus watch.
+        *self.guided_playback.borrow_mut() = None;
+
         if let Some(app) = self.get_app() {
             crate::sound::play_end_bell(&app);
             crate::vibration::trigger_if_enabled(&app);
@@ -1702,7 +1761,18 @@ impl TimerView {
             // completion.
             if !app.active_window().map(|w| w.is_active()).unwrap_or(false) {
                 let n = gtk::gio::Notification::new("Meditation Complete");
-                let target = self.countdown_target_secs.get();
+                // For Guided sessions, the Hero's frozen value is the
+                // file's natural duration — read from the active pick
+                // since countdown_target_secs is the Timer-mode field.
+                let target = match self.current_mode() {
+                    TimerMode::Guided => self
+                        .guided_pick
+                        .borrow()
+                        .as_ref()
+                        .map(|p| p.duration_secs as u64)
+                        .unwrap_or(0),
+                    _ => self.countdown_target_secs.get(),
+                };
                 n.set_body(Some(&format!("Session: {}", format_time(target))));
                 app.send_notification(Some("timer-done"), &n);
             }

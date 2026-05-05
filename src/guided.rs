@@ -1062,6 +1062,124 @@ fn add_toast_to_window(window: &gtk::Window, msg: &str) {
     }
 }
 
+// ── Playback (phase 6) ───────────────────────────────────────────────
+
+/// A live gst playbin instance + its bus watch guard. The timer view
+/// holds one of these in a RefCell across the running session and
+/// tears it down on stop / save / discard / reset. Drop runs the
+/// pipeline's set_state(Null) AND the watch guard's drop (which
+/// removes the bus watch).
+#[derive(Debug)]
+pub struct GuidedPlayback {
+    pipeline: gstreamer::Pipeline,
+    /// Holds the bus watch alive — drops on the same teardown path.
+    /// Stored in an Option so we never need to read it back; named
+    /// underscore-prefix to silence the unused-field warning.
+    _watch: gstreamer::bus::BusWatchGuard,
+}
+
+impl GuidedPlayback {
+    /// Build a fresh playbin pointed at `path` and set its state to
+    /// Playing. Returns Err with a human-readable string for any gst
+    /// failure (init, element creation, file URI bad, state change).
+    /// `on_eos` fires on the GTK main thread when the playback hits
+    /// end-of-stream — used by the timer view to slide into Overtime
+    /// in case the audio happens to end slightly earlier than the
+    /// duration we probed at import time.
+    pub fn start(
+        path: &Path,
+        on_eos: impl Fn() + 'static,
+    ) -> Result<Self, String> {
+        use gst::prelude::*;
+        use gstreamer as gst;
+
+        gst::init().map_err(|e| format!("gst init failed: {e}"))?;
+
+        let abs = path
+            .canonicalize()
+            .map_err(|e| format!("canonicalize {}: {e}", path.display()))?;
+        let uri = format!("file://{}", abs.to_string_lossy());
+
+        // playbin handles full audio decode + render through the
+        // platform's autoaudiosink. Same element used in the duration
+        // probe — same compatibility envelope.
+        let playbin = gst::ElementFactory::make("playbin")
+            .property("uri", &uri)
+            .build()
+            .map_err(|e| format!("create playbin: {e}"))?;
+
+        // Wrap in a Pipeline so the bus is reachable and start/stop
+        // semantics are explicit. playbin IS already a pipeline-like
+        // bin internally, but exposing it through gst::Pipeline gives
+        // a cleaner state-management surface.
+        let pipeline = gst::Pipeline::new();
+        pipeline
+            .add(&playbin)
+            .map_err(|e| format!("add playbin to pipeline: {e}"))?;
+
+        // `add_watch_local` (vs `add_watch` / `connect_message`) takes
+        // a !Send closure and dispatches on the thread-local main
+        // context — the right shape when the closure body touches
+        // GTK objects (which are themselves !Send). The returned
+        // BusWatchGuard removes the watch on Drop.
+        let bus = pipeline
+            .bus()
+            .ok_or_else(|| "pipeline missing bus".to_string())?;
+        let on_eos = Rc::new(on_eos);
+        let watch = bus
+            .add_watch_local(move |_, msg| {
+                use gst::MessageView;
+                match msg.view() {
+                    MessageView::Eos(_) => on_eos(),
+                    MessageView::Error(err) => {
+                        crate::diag::log(&format!(
+                            "guided playback error: {} ({})",
+                            err.error(),
+                            err.debug().unwrap_or_default()
+                        ));
+                    }
+                    _ => {}
+                }
+                glib::ControlFlow::Continue
+            })
+            .map_err(|e| format!("add_watch_local: {e}"))?;
+
+        pipeline
+            .set_state(gst::State::Playing)
+            .map_err(|e| format!("set state Playing: {e}"))?;
+
+        Ok(Self {
+            pipeline,
+            _watch: watch,
+        })
+    }
+
+    /// Pause playback in place. Position freezes; resume() picks up
+    /// at the same offset. No-op if the pipeline already isn't in a
+    /// playing state.
+    pub fn pause(&self) {
+        use gst::prelude::*;
+        use gstreamer as gst;
+        let _ = self.pipeline.set_state(gst::State::Paused);
+    }
+
+    /// Resume playback from the position where pause() left off.
+    pub fn resume(&self) {
+        use gst::prelude::*;
+        use gstreamer as gst;
+        let _ = self.pipeline.set_state(gst::State::Playing);
+    }
+}
+
+impl Drop for GuidedPlayback {
+    fn drop(&mut self) {
+        use gst::prelude::*;
+        use gstreamer as gst;
+        let _ = self.pipeline.set_state(gst::State::Null);
+        // The BusWatchGuard's own Drop removes the bus watch.
+    }
+}
+
 // ── Duration probe (phase 3) ─────────────────────────────────────────
 
 /// Probe the duration of an audio file in seconds, using a paused
