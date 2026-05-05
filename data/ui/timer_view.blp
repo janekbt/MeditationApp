@@ -140,7 +140,12 @@ template $TimerView : Gtk.Widget {
           // buttons below are always visible — Save opens the chooser
           // in create-or-overwrite mode, Manage in rename / delete /
           // star mode.
-          Adw.Clamp {
+          //
+          // Named so Rust can hide the WHOLE clamp in Guided mode —
+          // hiding only the inner widgets leaves the empty clamp in
+          // the parent-box spacing chain and adds a phantom 14px gap
+          // on either side of it.
+          Adw.Clamp presets_section {
             maximum-size: 360;
             tightening-threshold: 300;
 
@@ -226,42 +231,44 @@ template $TimerView : Gtk.Widget {
 
           // ── Guided-only inputs ─────────────────────────────────────
           // Shown only when the Guided toggle is active. Mirrors the
-          // preset section's shape: a one-row group for the current
-          // selection, two action buttons, then the starred-files list,
-          // then the Manage Files button. Built programmatically from
-          // Rust on visit + after every DB write that affects the list.
-          Gtk.Box guided_inputs {
-            orientation: vertical;
-            spacing: 8;
+          // Timer-mode Presets section's shape exactly: outer
+          // Adw.Clamp wraps a vertical Gtk.Box that contains the
+          // section's widgets directly (PreferencesGroups + button
+          // rows + a button), so the parent-box vertical-spacing reads
+          // identically to how the Presets clamp sits below the Start
+          // Session button. The outer clamp itself is named
+          // `guided_section` so Rust can hide the whole slot in
+          // non-Guided modes — same reasoning as `presets_section`,
+          // an empty visible clamp would still take up its parent-box
+          // spacing slot and add a phantom 14px gap.
+          Adw.Clamp guided_section {
+            maximum-size: 360;
+            tightening-threshold: 300;
             visible: false;
 
-            // Current selection (transient Open-File pick OR a starred
-            // row the user tapped). When empty: a dim hint row prompts
-            // the user to pick one. The single Adw.ActionRow inside
-            // is mutated in place; the wrapping Adw.PreferencesGroup
-            // stays mounted.
-            Adw.Clamp {
-              maximum-size: 360;
-              tightening-threshold: 300;
+            child: Gtk.Box guided_inputs {
+              orientation: vertical;
+              spacing: 8;
 
-              child: Adw.PreferencesGroup guided_selected_group {
+              // Current selection (transient Open-File pick OR a
+              // starred row the user tapped). When empty: a dim hint
+              // row prompts the user to pick one. The single
+              // Adw.ActionRow inside is mutated in place.
+              Adw.PreferencesGroup guided_selected_group {
+                title: _("Current file");
+
                 Adw.ActionRow guided_selected_row {
                   title: _("No file selected");
                   subtitle: _("Tap Open File or pick from list below");
                   activatable: false;
                   styles ["dim-label"]
                 }
-              };
-            }
+              }
 
-            // [Open File] [Import File] — the Guided-mode analogue of
-            // [Save Settings] [Manage Presets]. Import is greyed when
-            // there's no pending Open-File pick to import.
-            Adw.Clamp {
-              maximum-size: 360;
-              tightening-threshold: 300;
-
-              child: Gtk.Box {
+              // [Open File] [Import File] — the Guided-mode analogue
+              // of [Save Settings] [Manage Presets]. Import is greyed
+              // when there's no pending Open-File pick to import.
+              Gtk.Box {
                 orientation: horizontal;
                 spacing: 8;
                 homogeneous: true;
@@ -276,31 +283,21 @@ template $TimerView : Gtk.Widget {
                   label: _("Import File");
                   sensitive: false;
                 }
-              };
-            }
+              }
 
-            // Starred guided-files list. Rust appends rows on visit;
-            // empty by default so the description reads as a hint when
-            // no files are imported yet.
-            Adw.Clamp {
-              maximum-size: 360;
-              tightening-threshold: 300;
-
-              child: Adw.PreferencesGroup guided_files_group {
+              // Starred guided-files list. Rust appends rows on visit
+              // and on every DB change inside Manage Files; empty
+              // state is a dim placeholder row.
+              Adw.PreferencesGroup guided_files_group {
                 title: _("Starred Files");
-              };
-            }
+              }
 
-            // Manage Files — pushes the chooser NavigationPage built
-            // in src/guided.rs::push_guided_files_chooser.
-            Adw.Clamp {
-              maximum-size: 360;
-              tightening-threshold: 300;
-
-              child: Gtk.Button manage_guided_files_btn {
+              // Manage Files — pushes the chooser NavigationPage
+              // built in src/guided.rs::push_guided_files_chooser.
+              Gtk.Button manage_guided_files_btn {
                 label: _("Manage Files");
-              };
-            }
+              }
+            };
           }
 
           // ── Session group ──────────────────────────────────────────

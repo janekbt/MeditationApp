@@ -26,7 +26,7 @@
 //! Phases 5 + 6 build the timer Setup-view UI + playback engine on
 //! top of these primitives.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -35,6 +35,14 @@ use adw::prelude::*;
 use crate::application::MeditateApplication;
 use crate::db::GuidedFile;
 use crate::i18n::gettext;
+
+/// Single slot for the chooser's most-recently-shown undo toast.
+/// Tapping a second mutating action (rename + rename, delete + delete,
+/// rename + delete in either order) dismisses the prior toast so the
+/// new one renders without queue delay. The Undo affordance on the
+/// dismissed toast is lost, but that's the right trade — the user has
+/// just done a NEW action, undoing the previous one would conflict.
+type ToastSlot = Rc<RefCell<Option<adw::Toast>>>;
 
 /// Transient selection from "Open File". Lives in the Setup view's
 /// state until the session starts, the user picks something else, or
@@ -474,12 +482,19 @@ pub fn push_guided_files_chooser<F>(
     // wrapped Box<dyn Fn()> matches the bells.rs / labels.rs idiom.
     let rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>> = Rc::new(RefCell::new(None));
 
+    // One slot for the chooser's most-recently-shown undo toast.
+    // Subsequent rename/delete actions dismiss whichever toast is in
+    // the slot before showing their own — see ToastSlot's docs.
+    let toast_slot: ToastSlot = Rc::new(RefCell::new(None));
+
     let group_for_init = group.clone();
     let rows_for_init = rows.clone();
     let app_for_init = app.clone();
     let nav_view_for_init = nav_view.clone();
     let on_changed_for_init = on_changed.clone();
     let rebuilder_for_init = rebuilder.clone();
+    let toast_overlay_for_rb = toast_overlay.clone();
+    let toast_slot_for_rb = toast_slot.clone();
     *rebuilder.borrow_mut() = Some(Box::new(move || {
         rebuild_chooser_rows(
             &group_for_init,
@@ -488,6 +503,8 @@ pub fn push_guided_files_chooser<F>(
             &nav_view_for_init,
             rebuilder_for_init.clone(),
             on_changed_for_init.clone(),
+            &toast_overlay_for_rb,
+            toast_slot_for_rb.clone(),
         );
         on_changed_for_init();
     }));
@@ -505,6 +522,8 @@ fn rebuild_chooser_rows(
     nav_view: &adw::NavigationView,
     rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
     on_changed: impl Fn() + Clone + 'static,
+    toast_overlay: &adw::ToastOverlay,
+    toast_slot: ToastSlot,
 ) {
     for row in rows.borrow_mut().drain(..) {
         group.remove(&row);
@@ -529,7 +548,10 @@ fn rebuild_chooser_rows(
     }
 
     for file in files {
-        let row = build_guided_file_row(&file, app, rebuilder.clone(), on_changed.clone());
+        let row = build_guided_file_row(
+            &file, app, rebuilder.clone(), on_changed.clone(),
+            toast_overlay, toast_slot.clone(),
+        );
         group.add(&row);
         rows.borrow_mut().push(row);
     }
@@ -585,6 +607,8 @@ fn build_guided_file_row(
     app: &MeditateApplication,
     rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
     on_changed: impl Fn() + Clone + 'static,
+    toast_overlay: &adw::ToastOverlay,
+    toast_slot: ToastSlot,
 ) -> adw::ActionRow {
     let row = adw::ActionRow::builder()
         .title(&file.name)
@@ -641,6 +665,8 @@ fn build_guided_file_row(
         let current_name = file.name.clone();
         let rebuilder = rebuilder.clone();
         let on_changed = on_changed.clone();
+        let toast_overlay = toast_overlay.clone();
+        let toast_slot = toast_slot.clone();
         rename_btn.connect_clicked(move |btn| {
             present_rename_dialog(
                 btn,
@@ -649,6 +675,8 @@ fn build_guided_file_row(
                 &current_name,
                 rebuilder.clone(),
                 on_changed.clone(),
+                &toast_overlay,
+                toast_slot.clone(),
             );
         });
     }
@@ -665,18 +693,20 @@ fn build_guided_file_row(
         let app = app.clone();
         let uuid = file.uuid.clone();
         let display_name = file.name.clone();
-        let file_path = file.file_path.clone();
         let rebuilder = rebuilder.clone();
         let on_changed = on_changed.clone();
+        let toast_overlay = toast_overlay.clone();
+        let toast_slot = toast_slot.clone();
         delete_btn.connect_clicked(move |btn| {
             present_delete_dialog(
                 btn,
                 &app,
                 &uuid,
                 &display_name,
-                &file_path,
                 rebuilder.clone(),
                 on_changed.clone(),
+                &toast_overlay,
+                toast_slot.clone(),
             );
         });
     }
@@ -703,6 +733,8 @@ fn present_rename_dialog(
     current_name: &str,
     rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
     on_changed: impl Fn() + Clone + 'static,
+    toast_overlay: &adw::ToastOverlay,
+    toast_slot: ToastSlot,
 ) {
     let entry = gtk::Entry::builder()
         .text(current_name)
@@ -757,13 +789,16 @@ fn present_rename_dialog(
 
     let app_for_response = app.clone();
     let uuid_for_response = uuid.to_string();
+    let old_name = current_name.to_string();
     let entry_for_response = entry.clone();
+    let toast_overlay_for_response = toast_overlay.clone();
+    let toast_slot_for_response = toast_slot.clone();
     dialog.connect_response(None, move |_, id| {
         if id != "rename" {
             return;
         }
         let new_name = entry_for_response.text().trim().to_string();
-        if new_name.is_empty() {
+        if new_name.is_empty() || new_name == old_name {
             return;
         }
         app_for_response.with_db_mut(|db| {
@@ -773,6 +808,33 @@ fn present_rename_dialog(
             rb();
         }
         on_changed.clone()();
+
+        // Undo: rename back to old_name. Same DB call, fires another
+        // guided_file_update event with the old name as the new value
+        // — peers replay it correctly because the event log resolves
+        // by lamport_ts (undo's event is later, so it wins).
+        let app_for_undo = app_for_response.clone();
+        let uuid_for_undo = uuid_for_response.clone();
+        let old_name_for_undo = old_name.clone();
+        let on_changed_for_undo = on_changed.clone();
+        let rebuilder_for_undo = rebuilder.clone();
+        push_undo_toast(
+            &toast_overlay_for_response,
+            &toast_slot_for_response,
+            &gettext("File renamed"),
+            move || {
+                app_for_undo.with_db_mut(|db| {
+                    db.rename_guided_file(&uuid_for_undo, &old_name_for_undo)
+                });
+                if let Some(rb) = rebuilder_for_undo.borrow().as_ref() {
+                    rb();
+                }
+                on_changed_for_undo();
+            },
+            // Rename undo has no on-natural-dismiss work — no on-disk
+            // file to clean up like the delete case does.
+            || {},
+        );
     });
 
     if let Some(root) = anchor.root() {
@@ -789,9 +851,10 @@ fn present_delete_dialog(
     app: &MeditateApplication,
     uuid: &str,
     display_name: &str,
-    file_path: &str,
     rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
     on_changed: impl Fn() + Clone + 'static,
+    toast_overlay: &adw::ToastOverlay,
+    toast_slot: ToastSlot,
 ) {
     let dialog = adw::AlertDialog::builder()
         .heading(gettext("Delete Guided File?"))
@@ -810,22 +873,77 @@ fn present_delete_dialog(
 
     let app = app.clone();
     let uuid = uuid.to_string();
-    let file_path_for_response = file_path.to_string();
+    let display_name_for_response = display_name.to_string();
+    let toast_overlay_for_response = toast_overlay.clone();
+    let toast_slot_for_response = toast_slot.clone();
     dialog.connect_response(None, move |_, id| {
         if id != "delete" {
             return;
         }
+        // Capture the full row state BEFORE the DB delete so the Undo
+        // path can re-insert it. Bail out if the row's already gone
+        // (sync race between two devices, say).
+        let Some(file) = app
+            .with_db(|db| db.find_guided_file_by_uuid(&uuid))
+            .and_then(|r| r.ok())
+            .flatten()
+        else {
+            return;
+        };
+
         app.with_db_mut(|db| db.delete_guided_file(&uuid));
-        // Best-effort: clean up the on-disk file too. A failure here
-        // (file already gone, permissions) is logged but doesn't roll
-        // back the DB delete — past sessions can still resolve to a
-        // missing-file row, which the playback path will toast about
-        // when the user tries to play it.
-        let _ = std::fs::remove_file(&file_path_for_response);
+        // The on-disk file is NOT removed here — that's deferred to
+        // the toast's natural dismissal so Undo can restore the row
+        // without needing to re-transcode. If the toast times out
+        // or gets dismissed by a subsequent action, the on-dismiss
+        // handler below cleans up.
         if let Some(rb) = rebuilder.borrow().as_ref() {
             rb();
         }
         on_changed.clone()();
+
+        // Undo: re-insert with the same uuid + the captured fields.
+        // emits a fresh guided_file_insert event whose lamport_ts is
+        // strictly later than the prior delete event, so peers replay
+        // both and recompute_guided_file resolves the row as live.
+        let app_for_undo = app.clone();
+        let file_for_undo = file.clone();
+        let rebuilder_for_undo = rebuilder.clone();
+        let on_changed_for_undo = on_changed.clone();
+
+        // On natural dismiss (timeout or replacement, NOT undo): now
+        // safe to delete the on-disk file. Best-effort — failures
+        // (file already gone, permissions) get swallowed; a stale
+        // row in past sessions resolves to a missing file, which
+        // playback will toast about if the user tries to play it.
+        let file_path_for_dismiss = file.file_path.clone();
+        push_undo_toast(
+            &toast_overlay_for_response,
+            &toast_slot_for_response,
+            &format!(
+                "{} {}",
+                gettext("Deleted"),
+                ellipsize(&display_name_for_response, 28),
+            ),
+            move || {
+                app_for_undo.with_db_mut(|db| {
+                    db.insert_guided_file_with_uuid(
+                        &file_for_undo.uuid,
+                        &file_for_undo.name,
+                        &file_for_undo.file_path,
+                        file_for_undo.duration_secs,
+                        file_for_undo.is_starred,
+                    )
+                });
+                if let Some(rb) = rebuilder_for_undo.borrow().as_ref() {
+                    rb();
+                }
+                on_changed_for_undo();
+            },
+            move || {
+                let _ = std::fs::remove_file(&file_path_for_dismiss);
+            },
+        );
     });
 
     if let Some(root) = anchor.root() {
@@ -836,6 +954,90 @@ fn present_delete_dialog(
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
+
+/// Push an undo toast onto the chooser-local overlay. `on_undo` fires
+/// when the user taps the Undo button. `on_dismiss_natural` fires on
+/// any other dismissal (timeout, programmatic replacement by a newer
+/// toast, manual close) — used by the delete path to clean up the
+/// on-disk file once it's clear the user isn't going to undo.
+fn push_undo_toast(
+    toast_overlay: &adw::ToastOverlay,
+    toast_slot: &ToastSlot,
+    title: &str,
+    on_undo: impl Fn() + 'static,
+    on_dismiss_natural: impl Fn() + 'static,
+) {
+    let toast = build_undo_toast(toast_slot, title, on_undo, on_dismiss_natural);
+    toast_overlay.add_toast(toast);
+}
+
+fn build_undo_toast(
+    toast_slot: &ToastSlot,
+    title: &str,
+    on_undo: impl Fn() + 'static,
+    on_dismiss_natural: impl Fn() + 'static,
+) -> adw::Toast {
+    // Replace any in-flight toast — its dismiss handler picks up the
+    // change-of-slot and clears itself. The two-step (replace, then
+    // dismiss) ordering avoids re-entering the dismiss callback
+    // before the new toast has been installed.
+    let prev = toast_slot.replace(None);
+    if let Some(prev) = prev {
+        prev.dismiss();
+    }
+
+    let toast = adw::Toast::builder()
+        .title(title)
+        .button_label(gettext("Undo"))
+        .build();
+
+    // Track whether Undo was invoked so connect_dismissed can decide
+    // whether to fire the on-dismiss-natural cleanup. Without this
+    // flag, dismissing the toast post-undo would re-run the cleanup
+    // path (e.g. delete the file we just restored).
+    let undone: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+    let undone_for_btn = undone.clone();
+    let on_undo = Rc::new(on_undo);
+    toast.connect_button_clicked(move |_| {
+        undone_for_btn.set(true);
+        on_undo();
+    });
+
+    let toast_slot_dismiss = toast_slot.clone();
+    let on_dismiss_natural = Rc::new(on_dismiss_natural);
+    toast.connect_dismissed(move |t| {
+        if !undone.get() {
+            on_dismiss_natural();
+        }
+        // Clear the slot iff the toast that's dismissing IS the one
+        // currently in the slot. A newer toast that replaced this
+        // one has already taken the slot — don't clobber it.
+        let should_clear = toast_slot_dismiss
+            .borrow()
+            .as_ref()
+            .map(|cur| cur == t)
+            .unwrap_or(false);
+        if should_clear {
+            toast_slot_dismiss.replace(None);
+        }
+    });
+    toast_slot.replace(Some(toast.clone()));
+    toast
+}
+
+/// Truncate a string to `max_chars` Unicode scalar values, appending
+/// "…" if truncation happened. Used by the toast titles so a long
+/// guided-file name doesn't push the Undo button off-screen on phone.
+fn ellipsize(s: &str, max_chars: usize) -> String {
+    let count = s.chars().count();
+    if count <= max_chars {
+        s.to_string()
+    } else {
+        let mut out: String = s.chars().take(max_chars.saturating_sub(1)).collect();
+        out.push('…');
+        out
+    }
+}
 
 pub fn format_duration_brief(secs: u32) -> String {
     let h = secs / 3600;

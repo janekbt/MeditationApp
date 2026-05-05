@@ -109,10 +109,12 @@ pub struct TimerView {
     #[template_child] pub big_time_label:         TemplateChild<gtk::Label>,
     #[template_child] pub countdown_inputs:       TemplateChild<gtk::Box>,
     #[template_child] pub stopwatch_mode_row:     TemplateChild<adw::SwitchRow>,
+    #[template_child] pub presets_section:       TemplateChild<adw::Clamp>,
     #[template_child] pub presets_group:         TemplateChild<adw::PreferencesGroup>,
     #[template_child] pub save_settings_btn:     TemplateChild<gtk::Button>,
     #[template_child] pub manage_presets_btn:    TemplateChild<gtk::Button>,
     #[template_child] pub boxbreath_inputs:       TemplateChild<gtk::Box>,
+    #[template_child] pub guided_section:         TemplateChild<adw::Clamp>,
     #[template_child] pub guided_inputs:          TemplateChild<gtk::Box>,
     #[template_child] pub guided_selected_group:  TemplateChild<adw::PreferencesGroup>,
     #[template_child] pub guided_selected_row:    TemplateChild<adw::ActionRow>,
@@ -844,9 +846,14 @@ impl TimerView {
         let mode = self.current_mode();
 
         // Input panels: only the active mode's inputs are visible.
+        // Toggle visibility on the OUTER clamp wrappers (where they
+        // exist) so the parent-box spacing chain skips the slot
+        // entirely. Hiding only the inner content would leave an
+        // empty visible clamp in the chain and add a phantom 14 px
+        // gap on either side of it.
         self.countdown_inputs.set_visible(mode == TimerMode::Timer);
         self.boxbreath_inputs.set_visible(mode == TimerMode::Breathing);
-        self.guided_inputs.set_visible(mode == TimerMode::Guided);
+        self.guided_section.set_visible(mode == TimerMode::Guided);
         // Starting Bell + Preparation Time + Interval Bells apply to
         // Timer mode only — Box Breathing has its own independent
         // rhythm + start-cue model, and Guided mode's "start cue" is
@@ -863,10 +870,9 @@ impl TimerView {
         self.duration_row.set_visible(mode != TimerMode::Guided);
         // Presets section also hides in Guided mode — guided meditation
         // has its own library (the starred-files group inside
-        // guided_inputs) so the preset machinery is irrelevant.
-        self.presets_group.set_visible(mode != TimerMode::Guided);
-        self.save_settings_btn.set_visible(mode != TimerMode::Guided);
-        self.manage_presets_btn.set_visible(mode != TimerMode::Guided);
+        // guided_inputs) so the preset machinery is irrelevant. Hide
+        // the OUTER clamp (presets_section), not just the inner widgets.
+        self.presets_section.set_visible(mode != TimerMode::Guided);
         // Refresh the duration label from the appropriate Cell on every
         // mode switch so the suffix doesn't lag.
         self.refresh_duration_value_label();
@@ -909,17 +915,15 @@ impl TimerView {
         let mode = self.current_mode();
         self.countdown_inputs.set_sensitive(true);
         self.boxbreath_inputs.set_sensitive(true);
-        self.guided_inputs.set_sensitive(true);
+        self.guided_section.set_sensitive(true);
         self.countdown_inputs.set_visible(mode == TimerMode::Timer);
         self.boxbreath_inputs.set_visible(mode == TimerMode::Breathing);
-        self.guided_inputs.set_visible(mode == TimerMode::Guided);
+        self.guided_section.set_visible(mode == TimerMode::Guided);
         self.starting_bell_row.set_visible(mode == TimerMode::Timer);
         self.interval_bells_enabled_row.set_visible(mode == TimerMode::Timer);
         self.stopwatch_mode_row.set_visible(mode == TimerMode::Timer);
         self.duration_row.set_visible(mode != TimerMode::Guided);
-        self.presets_group.set_visible(mode != TimerMode::Guided);
-        self.save_settings_btn.set_visible(mode != TimerMode::Guided);
-        self.manage_presets_btn.set_visible(mode != TimerMode::Guided);
+        self.presets_section.set_visible(mode != TimerMode::Guided);
         self.refresh_duration_value_label();
         self.countdown_btn.set_sensitive(true);
         self.guided_btn.set_sensitive(true);
@@ -2143,14 +2147,23 @@ impl TimerView {
             .collect::<Vec<_>>();
 
         if files.is_empty() {
-            self.guided_files_group.set_description(Some(
-                &crate::i18n::gettext(
-                    "Tap Open File then Import to add your first guided meditation",
-                ),
-            ));
+            // Empty-state row inside the group keeps the section
+            // visually tall enough that the [Open / Import] buttons
+            // above don't feel cramped against the group title.
+            // Mirrors the bells.rs empty-state pattern.
+            let row = adw::ActionRow::builder()
+                .title(crate::i18n::gettext("No starred files"))
+                .subtitle(crate::i18n::gettext(
+                    "Tap Open File then Import File, or star a file in Manage Files",
+                ))
+                .activatable(false)
+                .selectable(false)
+                .build();
+            row.add_css_class("dim-label");
+            self.guided_files_group.add(&row);
+            self.starred_guided_rows.borrow_mut().push((row, String::new()));
             return;
         }
-        self.guided_files_group.set_description(None::<&str>);
 
         let mut tracked: Vec<(adw::ActionRow, String)> = Vec::with_capacity(files.len());
         for f in &files {
@@ -2192,8 +2205,11 @@ impl TimerView {
 
     /// Update the Selected row's title/subtitle from the current
     /// `guided_pick` slot — empty state if nothing's picked, file
-    /// name + duration otherwise.
+    /// name + duration otherwise. Also updates the Open File button
+    /// label to "Open New File" when a pick is already populated, so
+    /// the user understands tapping it replaces the selection.
     pub fn refresh_guided_selected_row(&self) {
+        let has_pick = self.guided_pick.borrow().is_some();
         match self.guided_pick.borrow().as_ref() {
             Some(pick) => {
                 self.guided_selected_row.set_title(&pick.display_name);
@@ -2209,11 +2225,17 @@ impl TimerView {
                 self.guided_selected_row.add_css_class("dim-label");
             }
         }
+        // Reflect the "you already have a pick — tapping replaces it"
+        // semantic in the button label so the affordance is honest.
+        self.open_file_btn.set_label(&if has_pick {
+            crate::i18n::gettext("Open New File")
+        } else {
+            crate::i18n::gettext("Open File")
+        });
         // Import button is greyed when there's no transient pick OR
         // when the current pick is already a starred library row
         // (selected_uuid Some → already imported).
-        let has_transient = self.guided_pick.borrow().is_some()
-            && self.guided_selected_uuid.borrow().is_none();
+        let has_transient = has_pick && self.guided_selected_uuid.borrow().is_none();
         self.import_file_btn.set_sensitive(has_transient);
     }
 
