@@ -2374,6 +2374,45 @@ impl Database {
         Ok(())
     }
 
+    /// Look up a guided-file row by its cross-device uuid. Returns
+    /// None if no row matches. Used by the chooser sub-row, the
+    /// session-save path (resolving the home-list selection's
+    /// uuid → row → file_path / duration), and the import flow's
+    /// "did this UUID land?" check.
+    pub fn find_guided_file_by_uuid(&self, uuid_str: &str) -> Result<Option<GuidedFile>> {
+        let row = self.conn.query_row(
+            "SELECT id, uuid, name, file_path, duration_secs, is_starred, created_iso, updated_iso
+             FROM guided_files WHERE uuid = ?1",
+            params![uuid_str],
+            |row| Ok(GuidedFile {
+                id: row.get(0)?,
+                uuid: row.get(1)?,
+                name: row.get(2)?,
+                file_path: row.get(3)?,
+                duration_secs: row.get::<_, i64>(4)? as u32,
+                is_starred: row.get::<_, i64>(5)? != 0,
+                created_iso: row.get(6)?,
+                updated_iso: row.get(7)?,
+            }),
+        ).optional()?;
+        Ok(row)
+    }
+
+    /// True iff a row other than `except_uuid` already holds `name`
+    /// (case-insensitive). The import / rename dialogs use this to
+    /// live-validate input — `except_uuid` must be the row currently
+    /// being renamed (or "" for fresh imports) so the user's own
+    /// case-only renames don't false-positive.
+    pub fn is_guided_file_name_taken(&self, name: &str, except_uuid: &str) -> Result<bool> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM guided_files
+              WHERE name = ?1 COLLATE NOCASE AND uuid != ?2",
+            params![name, except_uuid],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
     /// Drop a guided-file row. Unknown uuids are silent no-ops AND
     /// emit no event — peers would otherwise see a tombstone for a
     /// row they never knew existed. Mirrors bell_sounds / presets.
@@ -9592,5 +9631,55 @@ mod tests {
             .filter(|(_, e)| e.kind.starts_with("guided_file"))
             .collect();
         assert!(events.is_empty());
+    }
+
+    // ── GuidedFiles — lookups ────────────────────────────────────────
+
+    #[test]
+    fn find_guided_file_by_uuid_returns_some_when_present() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_guided_file_with_uuid(
+            "gf-1", "Body Scan", "guided/gf-1.ogg", 600, true,
+        ).unwrap();
+        let got = db.find_guided_file_by_uuid("gf-1").unwrap();
+        assert!(got.is_some());
+        let r = got.unwrap();
+        assert_eq!(r.name, "Body Scan");
+        assert_eq!(r.duration_secs, 600);
+        assert!(r.is_starred);
+    }
+
+    #[test]
+    fn find_guided_file_by_uuid_returns_none_when_missing() {
+        let db = Database::open_in_memory().unwrap();
+        assert!(db.find_guided_file_by_uuid("never-existed").unwrap().is_none());
+    }
+
+    #[test]
+    fn is_guided_file_name_taken_matches_case_insensitively() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_guided_file_with_uuid(
+            "gf-1", "Body Scan", "guided/gf-1.ogg", 600, false,
+        ).unwrap();
+        assert!(db.is_guided_file_name_taken("Body Scan", "").unwrap());
+        assert!(db.is_guided_file_name_taken("body scan", "").unwrap());
+        assert!(db.is_guided_file_name_taken("BODY SCAN", "").unwrap());
+        assert!(!db.is_guided_file_name_taken("Different Name", "").unwrap());
+    }
+
+    #[test]
+    fn is_guided_file_name_taken_excludes_the_row_being_renamed() {
+        // The rename dialog uses this to live-validate input. The
+        // user's own current name must not register as "taken" against
+        // their own uuid, otherwise renaming "Body Scan" → "body scan"
+        // would falsely report a collision.
+        let db = Database::open_in_memory().unwrap();
+        db.insert_guided_file_with_uuid(
+            "gf-1", "Body Scan", "guided/gf-1.ogg", 600, false,
+        ).unwrap();
+        assert!(!db.is_guided_file_name_taken("Body Scan", "gf-1").unwrap());
+        assert!(!db.is_guided_file_name_taken("body scan", "gf-1").unwrap());
+        // But same name under a different uuid still flags as taken.
+        assert!(db.is_guided_file_name_taken("Body Scan", "gf-2").unwrap());
     }
 }
