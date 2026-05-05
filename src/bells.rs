@@ -1,8 +1,10 @@
 //! Interval-bell library UI — the NavigationPage pushed when the user
 //! taps the "Interval Bells" row in the timer setup. Lists every
 //! configured bell (regardless of enabled state) with a per-row Switch
-//! to toggle enabled and a "+" headerbar button to add a new default
-//! bell. The edit page reachable by tapping a row lands in B.3.3.B.
+//! to toggle enabled. A synthetic "Create new interval bell…" entry
+//! sits at the top of the list to add a new default bell, mirroring
+//! the label and sound choosers. The edit page reachable by tapping
+//! a bell row is defined further down in this file.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -36,12 +38,6 @@ where F: Fn() + Clone + 'static,
         .show_back_button(true)
         .build();
 
-    let add_btn = gtk::Button::builder()
-        .icon_name("list-add-symbolic")
-        .tooltip_text(gettext("Add interval bell"))
-        .build();
-    header.pack_end(&add_btn);
-
     let toolbar = adw::ToolbarView::new();
     toolbar.add_top_bar(&header);
     toolbar.set_content(Some(&prefs_page));
@@ -53,55 +49,11 @@ where F: Fn() + Clone + 'static,
         .build();
 
     // Shared "rebuild + on_changed" closure stored behind a RefCell so
-    // both the add button and the edit-page callback can fire it
-    // without us having to thread Clone through a self-referential
+    // both the synthetic create-row and the edit-page callback can fire
+    // it without us having to thread Clone through a self-referential
     // type. Set once below after the per-row handlers are built.
     let rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>> =
         Rc::new(RefCell::new(None));
-
-    let rebuilder_for_add = rebuilder.clone();
-    let app_for_add = app.clone();
-    let nav_view_for_add = nav_view.clone();
-    let on_changed_for_add = on_changed.clone();
-    add_btn.connect_clicked(move |_| {
-        // Insert a sensible default — every 5 min, no jitter, bundled
-        // bowl. Then push the edit page right away so the user lands
-        // on the form to dial in the bell rather than having to tap
-        // back into the brand-new row.
-        let new_id = app_for_add.with_db_mut(|db| {
-            db.insert_interval_bell(
-                IntervalBellKind::Interval,
-                5,
-                0,
-                crate::db::BUNDLED_BOWL_UUID,
-            )
-        }).and_then(|r| r.ok());
-
-        if let Some(rb) = rebuilder_for_add.borrow().as_ref() {
-            rb();
-        }
-
-        // Look up the just-inserted row's uuid (insert returns the
-        // rowid, not the uuid) and drill into its edit page.
-        if let Some(rowid) = new_id {
-            let new_uuid = app_for_add
-                .with_db(|db| db.list_interval_bells())
-                .and_then(|r| r.ok())
-                .unwrap_or_default()
-                .into_iter()
-                .find(|b| b.id == rowid)
-                .map(|b| b.uuid);
-            if let Some(uuid) = new_uuid {
-                push_edit_page(
-                    &nav_view_for_add,
-                    &app_for_add,
-                    &uuid,
-                    rebuilder_for_add.clone(),
-                    on_changed_for_add.clone(),
-                );
-            }
-        }
-    });
 
     let rebuilder_for_init = rebuilder.clone();
     let nav_view_clone = nav_view.clone();
@@ -143,6 +95,14 @@ fn rebuild_list(
         group.remove(&row);
     }
 
+    // Synthetic "Create new interval bell…" entry, always at the top —
+    // matches the label and sound choosers' creation affordance and
+    // keeps the action thumb-reachable on a phone instead of tucked
+    // into the headerbar.
+    let create_row = build_create_row(app, nav_view, rebuilder.clone(), on_changed.clone());
+    group.add(&create_row);
+    rows.borrow_mut().push(create_row);
+
     // Stopwatch mode disables fixed-from-end bells (no end to count
     // backwards from). The bell library is global, so we override the
     // visual switch state without writing to the DB — flipping
@@ -179,6 +139,66 @@ fn rebuild_list(
         group.add(&row);
         rows.borrow_mut().push(row);
     }
+}
+
+/// Build the synthetic top row that creates a new interval bell with
+/// sensible defaults (every 5 min, no jitter, bundled bowl) and drills
+/// straight into the edit page so the user can dial it in immediately.
+fn build_create_row(
+    app: &MeditateApplication,
+    nav_view: &adw::NavigationView,
+    rebuilder: Rebuilder,
+    on_changed: impl Fn() + Clone + 'static,
+) -> adw::ActionRow {
+    let row = adw::ActionRow::builder()
+        .title(gettext("Create new interval bell…"))
+        .activatable(true)
+        .build();
+    let plus = gtk::Image::from_icon_name("list-add-symbolic");
+    plus.add_css_class("dim-label");
+    row.add_suffix(&plus);
+
+    let app_for_create = app.clone();
+    let nav_view_for_create = nav_view.clone();
+    let rebuilder_for_create = rebuilder.clone();
+    let on_changed_for_create = on_changed.clone();
+    row.connect_activated(move |_| {
+        let new_id = app_for_create.with_db_mut(|db| {
+            db.insert_interval_bell(
+                IntervalBellKind::Interval,
+                5,
+                0,
+                crate::db::BUNDLED_BOWL_UUID,
+            )
+        }).and_then(|r| r.ok());
+
+        if let Some(rb) = rebuilder_for_create.borrow().as_ref() {
+            rb();
+        }
+
+        // Look up the just-inserted row's uuid (insert returns the
+        // rowid, not the uuid) and drill into its edit page.
+        if let Some(rowid) = new_id {
+            let new_uuid = app_for_create
+                .with_db(|db| db.list_interval_bells())
+                .and_then(|r| r.ok())
+                .unwrap_or_default()
+                .into_iter()
+                .find(|b| b.id == rowid)
+                .map(|b| b.uuid);
+            if let Some(uuid) = new_uuid {
+                push_edit_page(
+                    &nav_view_for_create,
+                    &app_for_create,
+                    &uuid,
+                    rebuilder_for_create.clone(),
+                    on_changed_for_create.clone(),
+                );
+            }
+        }
+    });
+
+    row
 }
 
 fn build_bell_row(
@@ -310,7 +330,7 @@ fn empty_state_row() -> adw::ActionRow {
     // .dim-label styling we use elsewhere for in-context hints.
     let row = adw::ActionRow::builder()
         .title(gettext("No interval bells configured"))
-        .subtitle(gettext("Tap + to add one"))
+        .subtitle(gettext("Tap the row above to add one"))
         .activatable(false)
         .selectable(false)
         .build();
