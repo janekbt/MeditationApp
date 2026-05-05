@@ -27,6 +27,11 @@ pub struct PresetConfig {
 
 /// Mode-specific timing. Variant must match the column-level `mode`
 /// on the same `presets` row.
+///
+/// Both variants store the session duration in seconds (`duration_secs`)
+/// even though the UIs currently only set minute-aligned values —
+/// keeps the schema future-proof for sub-minute granularity later
+/// without another migration.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum PresetTiming {
@@ -36,7 +41,7 @@ pub enum PresetTiming {
         hold_full_secs: u32,
         exhale_secs: u32,
         hold_empty_secs: u32,
-        duration_minutes: u32,
+        duration_secs: u32,
     },
 }
 
@@ -145,7 +150,7 @@ mod tests {
                 hold_full_secs: 7,
                 exhale_secs: 8,
                 hold_empty_secs: 0,
-                duration_minutes: 10,
+                duration_secs: 600,
             },
         };
         let json = cfg.to_json();

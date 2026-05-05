@@ -207,7 +207,7 @@ pub struct TimerView {
     pub(super) breathing_pattern: Cell<BreathPattern>,
     /// Total session length in minutes, drives the hero label and the
     /// cycle-aligned stop condition.
-    breathing_session_mins: Cell<u32>,
+    breathing_session_secs: Cell<u32>,
     /// Per-phase stepper buttons + value labels, indexed 0..=3 (In, HoldIn,
     /// Out, HoldOut). Kept so `refresh_phase_tiles` can update the displayed
     /// values without rebuilding the DOM.
@@ -289,7 +289,7 @@ impl ObjectImpl for TimerView {
         self.breathing_pattern.set(BreathPattern {
             in_secs: 4, hold_in: 4, out_secs: 4, hold_out: 4,
         });
-        self.breathing_session_mins.set(5);
+        self.breathing_session_secs.set(5 * 60);
         self.setup_buttons();
         self.build_breathing_setup();
         self.configure_preparation_time_secs_row();
@@ -736,7 +736,7 @@ impl TimerView {
         // has no count-up mode); hide the row entirely under breath.
         self.stopwatch_mode_row.set_visible(mode == TimerMode::Timer);
         // Duration row stays visible in both modes — Timer reads
-        // countdown_target_secs, Box Breath reads breathing_session_mins.
+        // countdown_target_secs, Box Breath reads breathing_session_secs.
         // Refresh the value label from the appropriate Cell on every
         // mode switch so the suffix doesn't lag.
         self.refresh_duration_value_label();
@@ -786,12 +786,11 @@ impl TimerView {
     }
 
     /// Pull the right Cell into the shared Duration row's value label.
-    /// Timer mode reads countdown_target_secs (seconds), Box Breath
-    /// reads breathing_session_mins (minutes); both render as H:MM.
+    /// Both modes store seconds; divide by 60 here for the H:MM render.
     fn refresh_duration_value_label(&self) {
         let mins = match self.current_mode() {
             TimerMode::Timer     => self.countdown_target_secs.get() / 60,
-            TimerMode::Breathing => self.breathing_session_mins.get() as u64,
+            TimerMode::Breathing => self.breathing_session_secs.get() as u64 / 60,
         };
         let h = mins / 60;
         let m = mins % 60;
@@ -832,10 +831,10 @@ impl TimerView {
                 }
             }
             TimerMode::Breathing => {
-                // Breathing sessions are always sub-hour by construction
-                // (duration spinner caps at 60 min), but use the same
-                // hh:mm format for layout consistency.
-                let m = self.breathing_session_mins.get();
+                // Same hh:mm format as Timer for layout consistency.
+                // breathing_session_secs is the canonical store; divide
+                // by 60 to get minutes for the display computation.
+                let m = self.breathing_session_secs.get() / 60;
                 format!("{:02}:{:02}", m / 60, m % 60)
             }
         };
@@ -977,9 +976,9 @@ impl TimerView {
                 let pattern = self.breathing_pattern.get();
                 let cycle = pattern.cycle_secs().max(1) as u64;
                 // "Finish the breath" before stopping: round the requested
-                // minutes up to the next full cycle so the session always
+                // duration up to the next full cycle so the session always
                 // ends on an exhale/hold-out boundary.
-                let raw = self.breathing_session_mins.get() as u64 * 60;
+                let raw = self.breathing_session_secs.get() as u64;
                 let target = raw.div_ceil(cycle) * cycle;
                 self.start_boot_time.set(Some(boot_time_now()));
                 *self.breath_stopwatch.borrow_mut() =
@@ -1990,7 +1989,7 @@ impl TimerView {
                     hold_full_secs: p.hold_in,
                     exhale_secs:    p.out_secs,
                     hold_empty_secs:p.hold_out,
-                    duration_minutes: self.breathing_session_mins.get(),
+                    duration_secs:  self.breathing_session_secs.get(),
                 }
             }
         };
@@ -2121,7 +2120,7 @@ impl TimerView {
             }
             PresetTiming::BoxBreath {
                 inhale_secs, hold_full_secs, exhale_secs, hold_empty_secs,
-                duration_minutes,
+                duration_secs,
             } => {
                 self.breathing_pattern.set(BreathPattern {
                     in_secs:  inhale_secs,
@@ -2129,7 +2128,7 @@ impl TimerView {
                     out_secs: exhale_secs,
                     hold_out: hold_empty_secs,
                 });
-                self.set_breathing_duration_mins(duration_minutes);
+                self.set_breathing_duration_secs(duration_secs);
                 self.refresh_phase_tiles();
             }
         }
@@ -2241,9 +2240,10 @@ impl TimerView {
     }
 
     /// Show the H:M spin-button dialog; apply on Set. Same shape in
-    /// both modes — Timer writes countdown_target_secs, Box-Breath
-    /// writes breathing_session_mins. Both modes share the same 0-23
-    /// hour / 0-59 minute spinner ranges.
+    /// both modes — both store seconds internally; the H:M dialog
+    /// reads / writes minute-aligned values, multiplied by 60 on the
+    /// way in. Both modes share the same 0-23 hour / 0-59 minute
+    /// spinner ranges.
     fn show_custom_time_dialog(&self) {
         let mode = self.current_mode();
         let (cur_h, cur_m) = match mode {
@@ -2252,7 +2252,7 @@ impl TimerView {
                 ((s / 3600) as f64, ((s % 3600) / 60) as f64)
             }
             TimerMode::Breathing => {
-                let m = self.breathing_session_mins.get();
+                let m = self.breathing_session_secs.get() / 60;
                 ((m / 60) as f64, (m % 60) as f64)
             }
         };
@@ -2314,7 +2314,7 @@ impl TimerView {
                     obj.imp().set_countdown_target(total_mins * 60);
                 }
                 TimerMode::Breathing => {
-                    obj.imp().set_breathing_duration_mins(total_mins as u32);
+                    obj.imp().set_breathing_duration_secs((total_mins * 60) as u32);
                 }
             }
         });
@@ -2720,14 +2720,15 @@ fn preset_subtitle(
         }
         PresetTiming::BoxBreath {
             inhale_secs, hold_full_secs, exhale_secs, hold_empty_secs,
-            duration_minutes,
+            duration_secs,
         } => {
             parts.push(format!(
                 "{}-{}-{}-{}",
                 inhale_secs, hold_full_secs, exhale_secs, hold_empty_secs,
             ));
+            let mins = duration_secs / 60;
             parts.push(crate::i18n::gettext("{n} min")
-                .replace("{n}", &duration_minutes.to_string()));
+                .replace("{n}", &mins.to_string()));
         }
     }
     if cfg.label.enabled {
@@ -2883,15 +2884,17 @@ impl TimerView {
     /// Set the Box-Breath session-length cell, persist, refresh the
     /// hero label and the shared Duration row's value label. Used by
     /// both `load_breathing_settings` (initial visit) and the H:M
-    /// dialog. Clamps to 1..=1439 (23h59m) — same upper bound as
+    /// dialog. Stored as seconds (future-proof for sub-minute UI);
+    /// clamps to 60..=23h59m * 60 — same effective upper bound as
     /// Timer mode for consistency.
-    fn set_breathing_duration_mins(&self, mins: u32) {
-        let mins = mins.clamp(1, 23 * 60 + 59);
-        self.breathing_session_mins.set(mins);
+    fn set_breathing_duration_secs(&self, secs: u32) {
+        let secs = secs.clamp(60, 23 * 3600 + 59 * 60);
+        self.breathing_session_secs.set(secs);
         self.save_breathing_settings();
         // Duration row label is shared between modes; reflect the new
         // value here so a Box-Breath edit shows up immediately. H:MM
         // format matches Timer mode.
+        let mins = secs / 60;
         let h = mins / 60;
         let m = mins % 60;
         self.duration_value_label.set_label(&format!("{h:02}:{m:02}"));
@@ -2938,7 +2941,7 @@ impl TimerView {
     fn load_breathing_settings(&self) {
         let Some(app) = self.get_app() else { return; };
         self.breathing_populating.set(true);
-        let (p, mins) = app.with_db(|db| {
+        let (p, secs) = app.with_db(|db| {
             let read = |k: &str, default: u32| -> u32 {
                 db.get_setting(k, &default.to_string())
                     .ok()
@@ -2951,18 +2954,19 @@ impl TimerView {
                 out_secs: read("breathing_out", 4).clamp(1, PHASE_MAX_SECS),
                 hold_out: read("breathing_hold_out", 4).clamp(0, PHASE_MAX_SECS),
             };
-            let mins = read("breathing_session_mins", 5).clamp(1, 23 * 60 + 59);
-            (p, mins)
+            let secs = read("breathing_session_secs", 5 * 60).clamp(60, 23 * 3600 + 59 * 60);
+            (p, secs)
         }).unwrap_or((
             BreathPattern { in_secs: 4, hold_in: 4, out_secs: 4, hold_out: 4 },
-            5,
+            5 * 60,
         ));
         self.breathing_pattern.set(p);
-        self.breathing_session_mins.set(mins);
+        self.breathing_session_secs.set(secs);
         // The shared Duration row reflects whichever Cell the current
         // mode reads; reflect this load even if the user is currently
         // viewing Timer mode — switching to Box Breath later will
         // already have the right value visible.
+        let mins = secs / 60;
         let h = mins / 60;
         let m = mins % 60;
         self.duration_value_label.set_label(&format!("{h:02}:{m:02}"));
@@ -2973,13 +2977,13 @@ impl TimerView {
         if self.breathing_populating.get() { return; }
         let Some(app) = self.get_app() else { return; };
         let p = self.breathing_pattern.get();
-        let mins = self.breathing_session_mins.get();
+        let secs = self.breathing_session_secs.get();
         app.with_db_mut(|db| {
             let _ = db.set_setting("breathing_in", &p.in_secs.to_string());
             let _ = db.set_setting("breathing_hold_in", &p.hold_in.to_string());
             let _ = db.set_setting("breathing_out", &p.out_secs.to_string());
             let _ = db.set_setting("breathing_hold_out", &p.hold_out.to_string());
-            let _ = db.set_setting("breathing_session_mins", &mins.to_string());
+            let _ = db.set_setting("breathing_session_secs", &secs.to_string());
         });
     }
 

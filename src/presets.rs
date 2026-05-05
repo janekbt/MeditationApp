@@ -655,15 +655,14 @@ fn subtitle_for(p: &Preset, label_names: &HashMap<String, String>) -> String {
         }
         PresetTiming::BoxBreath {
             inhale_secs, hold_full_secs, exhale_secs, hold_empty_secs,
-            duration_minutes,
+            duration_secs,
         } => {
             parts.push(format!(
                 "{}-{}-{}-{}",
                 inhale_secs, hold_full_secs, exhale_secs, hold_empty_secs,
             ));
-            parts.push(
-                gettext("{n} min").replace("{n}", &duration_minutes.to_string()),
-            );
+            let mins = duration_secs / 60;
+            parts.push(gettext("{n} min").replace("{n}", &mins.to_string()));
         }
     }
     if cfg.label.enabled {

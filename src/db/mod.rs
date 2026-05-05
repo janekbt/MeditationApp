@@ -366,7 +366,7 @@ impl Database {
                 hold_full_secs: 4,
                 exhale_secs: 4,
                 hold_empty_secs: 4,
-                duration_minutes: 10,
+                duration_secs: 10 * 60,
             },
         };
         let box_4780 = PresetConfig {
@@ -375,7 +375,7 @@ impl Database {
                 hold_full_secs: 7,
                 exhale_secs: 8,
                 hold_empty_secs: 0,
-                duration_minutes: 10,
+                duration_secs: 10 * 60,
             },
             ..box_4444.clone()
         };
