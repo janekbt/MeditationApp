@@ -518,6 +518,7 @@ mod tests {
             notes: None,
             mode: SessionMode::Timer,
             uuid: String::new(),
+            guided_file_uuid: None,
         }).unwrap()
     }
 

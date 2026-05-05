@@ -216,6 +216,7 @@ fn insert_session(db: &Database, start_iso: &str, secs: u32, notes: Option<&str>
         notes: notes.map(|s| s.to_string()),
         mode: SessionMode::Timer,
         uuid: String::new(),
+        guided_file_uuid: None,
     }).unwrap()
 }
 
@@ -232,5 +233,6 @@ fn update_session_notes(db: &Database, id: i64, notes: &str) {
         notes: Some(notes.to_string()),
         mode: current.mode,
         uuid: String::new(),
+        guided_file_uuid: None,
     }).unwrap();
 }

@@ -157,6 +157,9 @@ pub struct Session {
     pub mode: SessionMode,
     pub label_id: Option<i64>,
     pub note: Option<String>,
+    /// Set on guided meditation rows that played a library-stored
+    /// file. None for non-Guided modes and transient one-off plays.
+    pub guided_file_uuid: Option<String>,
 }
 
 /// Parameters for creating or updating a session.
@@ -166,6 +169,7 @@ pub struct SessionData {
     pub mode: SessionMode,
     pub label_id: Option<i64>,
     pub note: Option<String>,
+    pub guided_file_uuid: Option<String>,
 }
 
 /// `SessionFilter` is the canonical core type — re-exported here so
@@ -188,6 +192,7 @@ fn session_data_to_core(s: &SessionData) -> meditate_core::db::Session {
         // Empty placeholder — core's `insert_session` overwrites this
         // with a freshly generated v4 uuid. Read paths see the real one.
         uuid: String::new(),
+        guided_file_uuid: s.guided_file_uuid.clone(),
     }
 }
 
@@ -202,6 +207,7 @@ fn session_from_core(id: i64, core: &meditate_core::db::Session) -> Session {
         mode: core.mode,
         label_id: core.label_id,
         note: core.notes.clone(),
+        guided_file_uuid: core.guided_file_uuid.clone(),
     }
 }
 
@@ -841,6 +847,7 @@ mod tests {
             mode: SessionMode::BoxBreath,
             label_id: Some(42),
             note: Some("hello".to_string()),
+            guided_file_uuid: None,
         };
         let core = session_data_to_core(&sd);
         assert_eq!(crate::time::local_iso_to_unix(&core.start_iso), 1_700_000_000);
@@ -858,6 +865,7 @@ mod tests {
             mode: SessionMode::Timer,
             label_id: None,
             note: None,
+            guided_file_uuid: None,
         };
         assert_eq!(session_data_to_core(&sd).duration_secs, 0);
     }
@@ -870,6 +878,7 @@ mod tests {
             mode: SessionMode::Timer,
             label_id: None,
             note: None,
+            guided_file_uuid: None,
         };
         assert_eq!(session_data_to_core(&sd).duration_secs, u32::MAX);
     }
@@ -886,6 +895,7 @@ mod tests {
             // Session doesn't carry one). This test pins the rest of the
             // mapping; uuid round-trip is covered in core's tests.
             uuid: "ignored-by-shell".to_string(),
+            guided_file_uuid: None,
         };
         let s = session_from_core(99, &core);
         assert_eq!(s.id, 99);
@@ -904,6 +914,7 @@ mod tests {
             mode: SessionMode::Timer,
             label_id: Some(11),
             note: Some("noted".to_string()),
+            guided_file_uuid: None,
         };
         let core = session_data_to_core(&original);
         let restored = session_from_core(123, &core);
@@ -941,6 +952,7 @@ mod tests {
             mode: SessionMode::Timer,
             label_id,
             note: None,
+            guided_file_uuid: None,
         }).unwrap();
     }
 

@@ -321,6 +321,7 @@ mod tests {
             notes: None,
             mode: SessionMode::Timer,
             uuid: String::new(),
+            guided_file_uuid: None,
         }).unwrap();
         db
     }
@@ -450,6 +451,7 @@ mod tests {
             notes: None,
             mode: SessionMode::Timer,
             uuid: String::new(),
+            guided_file_uuid: None,
         }).unwrap();
         let shared = FakeWebDav::new();
 

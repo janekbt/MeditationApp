@@ -1087,6 +1087,7 @@ impl LogView {
                     mode: SessionMode::Timer,
                     label_id,
                     note,
+                    guided_file_uuid: None,
                 };
 
                 if let Some(app) = imp.get_app() {

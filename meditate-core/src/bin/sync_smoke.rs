@@ -33,6 +33,7 @@ fn main() {
         notes: Some("clear and present".into()),
         mode: SessionMode::Timer,
         uuid: String::new(),
+        guided_file_uuid: None,
     }).unwrap();
     println!("Phone authored: 1 label (Morning), 1 session at 07:00 (600s)");
 
@@ -45,6 +46,7 @@ fn main() {
         notes: None,
         mode: SessionMode::Timer,
         uuid: String::new(),
+        guided_file_uuid: None,
     }).unwrap();
     println!("Laptop authored: 1 label (Evening), 1 session at 20:00 (1200s)");
 
@@ -101,6 +103,7 @@ fn main() {
         notes: Some("phone says: I extended this".into()),
         mode: SessionMode::Timer,
         uuid: String::new(),
+        guided_file_uuid: None,
     }).unwrap();
     println!("Phone updated session: notes='phone says: I extended this', lamport now {}",
         phone.lamport_clock().unwrap());
@@ -113,6 +116,7 @@ fn main() {
         notes: Some("laptop says: I went longer!".into()),
         mode: SessionMode::Timer,
         uuid: String::new(),
+        guided_file_uuid: None,
     }).unwrap();
     println!("Laptop updated session: notes='laptop says: I went longer!', lamport now {}",
         laptop.lamport_clock().unwrap());
@@ -195,6 +199,7 @@ fn main() {
         duration_secs: 600, label_id: None,
         notes: Some("from A".into()),
         mode: SessionMode::Timer, uuid: String::new(),
+        guided_file_uuid: None,
     }).unwrap();
     let from_a = drain(&device_a);
     device_b.replay_events(&from_a).unwrap();
@@ -210,6 +215,7 @@ fn main() {
         duration_secs: 1200, label_id: None,
         notes: Some("from B".into()),
         mode: SessionMode::Timer, uuid: String::new(),
+        guided_file_uuid: None,
     }).unwrap();
     let from_b_to_c = drain(&device_b);
     device_c.replay_events(&from_b_to_c).unwrap();
@@ -230,6 +236,7 @@ fn main() {
         duration_secs: 900, label_id: None,
         notes: Some("from C".into()),
         mode: SessionMode::Timer, uuid: String::new(),
+        guided_file_uuid: None,
     }).unwrap();
     let from_c = drain(&device_c);
     device_a.replay_events(&from_c).unwrap();
@@ -271,6 +278,7 @@ fn main() {
                 .iter().find(|l| l.name == "Persistent").map(|l| l.id),
             notes: Some("survives a restart".into()),
             mode: SessionMode::Timer, uuid: String::new(),
+            guided_file_uuid: None,
         }).unwrap();
         saved_session_uuid = db.list_sessions().unwrap()[0].1.uuid.clone();
         saved_lamport = db.lamport_clock().unwrap();

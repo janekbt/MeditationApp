@@ -40,6 +40,7 @@ fn main() {
         notes: None,
         mode: SessionMode::Timer,
         uuid: String::new(),
+        guided_file_uuid: None,
     };
     db.insert_session(&session).expect("insert session");
 

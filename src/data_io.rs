@@ -266,6 +266,7 @@ fn insert_sessions_with_labels(
             mode:          mode.clone(),
             label_id:      (*label_idx != usize::MAX).then(|| label_ids[*label_idx]),
             note:          note.clone(),
+            guided_file_uuid: None,
         })
         .collect();
     Ok(db.bulk_insert_sessions(&sessions)?)
@@ -345,6 +346,7 @@ mod tests {
                 label_id: Some(morning),
                 // Commas and a quote to exercise CSV escaping on the note column.
                 note: Some("first sit, \"nice\" focus".to_string()),
+                guided_file_uuid: None,
             },
             SessionData {
                 start_time: 1_712_086_400,
@@ -352,6 +354,7 @@ mod tests {
                 mode: SessionMode::Timer,
                 label_id: Some(evening),
                 note: None,
+                guided_file_uuid: None,
             },
             SessionData {
                 start_time: 1_712_172_800,
@@ -359,6 +362,7 @@ mod tests {
                 mode: SessionMode::Timer,
                 label_id: None,
                 note: Some("no label on this one".to_string()),
+                guided_file_uuid: None,
             },
         ];
         for s in &originals {

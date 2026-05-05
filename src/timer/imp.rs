@@ -1249,6 +1249,7 @@ impl TimerView {
             mode:          session_mode,
             label_id,
             note,
+            guided_file_uuid: None,
         };
 
         // Record the user's pick as the new persisted default for
