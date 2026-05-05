@@ -29,6 +29,8 @@
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use adw::prelude::*;
 
@@ -234,9 +236,11 @@ pub fn import_picked_file(
         }
     });
 
-    // The Import click drives the spawn_blocking worker. Keep the
-    // dialog open while the transcode runs (can_close=false) so the
-    // user can't dismiss mid-pipeline.
+    // The Import click drives the spawn_blocking worker. Cancel
+    // remains enabled during the transcode — the user can abort a
+    // long import (a 60-min stereo guide can take ~10 s on the
+    // Librem) by tapping it. The Cancel response flips a shared
+    // AtomicBool the worker checks every ~250 ms in its bus loop.
     let app_for_click = app.clone();
     let pick_for_click = pick.clone();
     let entry_for_click = entry.clone();
@@ -244,15 +248,27 @@ pub fn import_picked_file(
     let parent_for_click = parent_window.clone();
     let on_done = Rc::new(on_done);
     let on_done_for_click = on_done.clone();
+    // Set up the cancel flag once at dialog scope so the response
+    // handler (below) and the Import-button handler (here) share
+    // the same slot. `Arc<AtomicBool>` because the worker thread
+    // reads it across thread boundaries.
+    let cancel_flag: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+    let cancel_flag_for_dialog = cancel_flag.clone();
+    dialog.connect_response(None, move |_, id| {
+        if id == "cancel" {
+            cancel_flag_for_dialog.store(true, Ordering::Relaxed);
+        }
+    });
+
+    let cancel_flag_for_click = cancel_flag.clone();
     import_btn.connect_clicked(move |btn| {
         let trimmed = entry_for_click.text().trim().to_string();
         if trimmed.is_empty() {
             return;
         }
-        // Lock the dialog: Cancel disabled, entry frozen, Import
-        // greyed and showing a spinner.
-        dialog_for_click.set_can_close(false);
-        dialog_for_click.set_response_enabled("cancel", false);
+        // Freeze the form fields but leave Cancel responsive so the
+        // user can abort. The dialog stays open until the worker
+        // either completes (success / error) or honours cancel.
         entry_for_click.set_sensitive(false);
         btn.set_sensitive(false);
 
@@ -273,12 +289,22 @@ pub fn import_picked_file(
         let pick = pick_for_click.clone();
         let trimmed_for_done = trimmed.clone();
         let on_done = on_done_for_click.clone();
+        let cancel_flag = cancel_flag_for_click.clone();
         glib::MainContext::default().spawn_local(async move {
             let source = pick.source_path.clone();
+            let cancel_for_worker = cancel_flag.clone();
             let import_result = gtk::gio::spawn_blocking(move || {
-                do_import_io(&source)
+                do_import_io(&source, &cancel_for_worker)
             })
             .await;
+
+            // Cancellation path: the worker has already cleaned up
+            // its partial file; we just dismiss the dialog without
+            // inserting a row or firing on_done.
+            if cancel_flag.load(Ordering::Relaxed) {
+                dialog.force_close();
+                return;
+            }
 
             match import_result {
                 Ok(Ok((new_uuid, dest_path))) => {
@@ -331,9 +357,14 @@ pub fn import_picked_file(
 /// transcodes the source into `$XDG_DATA_HOME/meditate/guided/
 /// <uuid>.ogg` and returns the generated UUID + destination path.
 /// Mirrors `sounds::do_import_io` but always lands as OGG and
-/// preserves source channel layout (no `-ac 1` step).
+/// preserves source channel layout (no `-ac 1` step). `cancel` is
+/// checked at every coarse boundary (around the file copy + inside
+/// the transcode pipeline's bus loop); a triggered cancel cleans up
+/// the partial dest file before returning so the caller can ignore
+/// the result without leaking on-disk state.
 fn do_import_io(
     source: &Path,
+    cancel: &AtomicBool,
 ) -> std::result::Result<(String, PathBuf), String> {
     let source_ext = source
         .extension()
@@ -347,22 +378,44 @@ fn do_import_io(
     let dest_path = dest_dir.join(format!("{new_uuid}.ogg"));
 
     if source_ext == "ogg" {
+        // OGG passthrough: a plain copy. fs::copy is a single
+        // syscall — too quick to interrupt; we just check the flag
+        // before and after so a cancel before copy starts skips
+        // straight through.
+        if cancel.load(Ordering::Relaxed) {
+            return Err(CANCELLED.into());
+        }
         std::fs::copy(source, &dest_path).map_err(|e| e.to_string())?;
-    } else if let Err(e) = transcode_to_ogg_preserve_channels(source, &dest_path) {
+    } else if let Err(e) = transcode_to_ogg_preserve_channels(source, &dest_path, cancel) {
         let _ = std::fs::remove_file(&dest_path);
         return Err(e);
     }
+    if cancel.load(Ordering::Relaxed) {
+        let _ = std::fs::remove_file(&dest_path);
+        return Err(CANCELLED.into());
+    }
     Ok((new_uuid, dest_path))
 }
+
+/// Sentinel error string used by the cancel path. The caller branches
+/// on `cancel.load()` rather than the error string itself, but having
+/// a stable message keeps logs readable when an unexpected `Err` does
+/// surface.
+const CANCELLED: &str = "cancelled";
 
 /// Like `sounds::transcode_to_ogg`, but for guided meditations:
 /// preserves source channel layout (no forced mono) and skips
 /// `audioloudnorm` (preserves the artist's intentional voice-vs-music
 /// mix). Vorbis quality 0.4 is plenty for spoken-word + ambient
 /// content; a 30-min stereo guide lands ~25 MB.
+///
+/// `cancel` is polled inside the bus loop on a 250 ms timeout — when
+/// it flips to true the pipeline transitions to Null and the function
+/// returns Err with the CANCELLED sentinel.
 fn transcode_to_ogg_preserve_channels(
     source: &Path,
     dest: &Path,
+    cancel: &AtomicBool,
 ) -> std::result::Result<(), String> {
     use gst::prelude::*;
     use gstreamer as gst;
@@ -426,7 +479,21 @@ fn transcode_to_ogg_preserve_channels(
         .bus()
         .ok_or_else(|| "pipeline missing bus".to_string())?;
     let mut transcode_err: Option<String> = None;
-    for msg in bus.iter_timed(gst::ClockTime::NONE) {
+    // Bus poll loop with 250 ms timeout so the cancel flag is
+    // observed on a sub-second cadence. `iter_timed(NONE)` would
+    // block until the next message — fine for hands-off transcodes
+    // but useless for honouring user cancellation. 250 ms is
+    // imperceptible UX-side and barely measurable in throughput.
+    let timeout = gst::ClockTime::from_mseconds(250);
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            let _ = pipeline.set_state(gst::State::Null);
+            return Err(CANCELLED.into());
+        }
+        let Some(msg) = bus.timed_pop(timeout) else {
+            // Timeout — re-check cancel flag and keep polling.
+            continue;
+        };
         use gst::MessageView::*;
         match msg.view() {
             Eos(..) => break,
