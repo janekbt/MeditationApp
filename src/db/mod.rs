@@ -23,7 +23,7 @@ use std::path::Path;
 /// learning about meditate-core directly. Same for the bell-library
 /// types added in B.3.1, and the `mint_uuid` helper added in B.5.
 pub use meditate_core::db::{
-    mint_uuid, BellSound, IntervalBell, IntervalBellKind, Label, Preset, SessionMode,
+    mint_uuid, BellSound, GuidedFile, IntervalBell, IntervalBellKind, Label, Preset, SessionMode,
 };
 
 /// Bundled bell-sound seed: hardcoded (uuid, display name, GResource
@@ -118,6 +118,7 @@ pub const BUNDLED_GONG_UUID: &str = "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0003";
 /// default stays deleted instead of resurrecting from the next open.
 pub const DEFAULT_TIMER_LABEL_UUID: &str = "e2d5a4b8-7c91-4e3f-a826-d40f1c5b9001";
 pub const DEFAULT_BREATHING_LABEL_UUID: &str = "e2d5a4b8-7c91-4e3f-a826-d40f1c5b9002";
+pub const DEFAULT_GUIDED_LABEL_UUID: &str = "e2d5a4b8-7c91-4e3f-a826-d40f1c5b9003";
 
 /// Seed list mirrors `BUNDLED_BELL_SOUNDS` — uuid + display name.
 /// Append-only on UUID; the user can rename or delete the row from
@@ -125,6 +126,7 @@ pub const DEFAULT_BREATHING_LABEL_UUID: &str = "e2d5a4b8-7c91-4e3f-a826-d40f1c5b
 const DEFAULT_LABELS: &[(&str, &str)] = &[
     (DEFAULT_TIMER_LABEL_UUID, "Meditation"),
     (DEFAULT_BREATHING_LABEL_UUID, "Box-Breathing"),
+    (DEFAULT_GUIDED_LABEL_UUID, "Guided Meditation"),
 ];
 
 /// One-shot seed flags in the `settings` table. Set to "1" after the
@@ -232,6 +234,13 @@ fn map_core_err(e: meditate_core::db::DbError) -> rusqlite::Error {
                 extended_code: rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE,
             },
             Some(format!("UNIQUE constraint failed: presets.name (\"{name}\")")),
+        ),
+        DbError::DuplicateGuidedFile(name) => rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ErrorCode::ConstraintViolation,
+                extended_code: rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE,
+            },
+            Some(format!("UNIQUE constraint failed: guided_files.name (\"{name}\")")),
         ),
         DbError::Csv(s) => rusqlite::Error::ToSqlConversionFailure(Box::new(
             std::io::Error::new(std::io::ErrorKind::InvalidData, s),
@@ -598,6 +607,48 @@ impl Database {
 
     pub fn delete_preset(&self, uuid: &str) -> Result<()> {
         self.inner.delete_preset(uuid).map_err(map_core_err)
+    }
+
+    // ── GuidedFiles — pass-through wrappers ───────────────────────────────────
+    // Thin shells over the core CRUD; same Result = rusqlite::Result
+    // shape as everything else here (DuplicateGuidedFile maps to a
+    // synthesized UNIQUE-constraint failure via map_core_err).
+
+    pub fn list_guided_files(&self) -> Result<Vec<GuidedFile>> {
+        self.inner.list_guided_files().map_err(map_core_err)
+    }
+
+    pub fn insert_guided_file_with_uuid(
+        &self,
+        uuid: &str,
+        name: &str,
+        file_path: &str,
+        duration_secs: u32,
+        is_starred: bool,
+    ) -> Result<i64> {
+        self.inner
+            .insert_guided_file_with_uuid(uuid, name, file_path, duration_secs, is_starred)
+            .map_err(map_core_err)
+    }
+
+    pub fn find_guided_file_by_uuid(&self, uuid: &str) -> Result<Option<GuidedFile>> {
+        self.inner.find_guided_file_by_uuid(uuid).map_err(map_core_err)
+    }
+
+    pub fn is_guided_file_name_taken(&self, name: &str, except_uuid: &str) -> Result<bool> {
+        self.inner.is_guided_file_name_taken(name, except_uuid).map_err(map_core_err)
+    }
+
+    pub fn rename_guided_file(&self, uuid: &str, name: &str) -> Result<()> {
+        self.inner.rename_guided_file(uuid, name).map_err(map_core_err)
+    }
+
+    pub fn set_guided_file_starred(&self, uuid: &str, is_starred: bool) -> Result<()> {
+        self.inner.set_guided_file_starred(uuid, is_starred).map_err(map_core_err)
+    }
+
+    pub fn delete_guided_file(&self, uuid: &str) -> Result<()> {
+        self.inner.delete_guided_file(uuid).map_err(map_core_err)
     }
 
     // ── Sessions ──────────────────────────────────────────────────────────────
