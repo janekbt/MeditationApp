@@ -4,6 +4,7 @@ mod config;
 mod data_io;
 pub mod db;
 pub mod diag;
+pub mod guided;
 pub mod i18n;
 pub mod keychain;
 pub mod labels;
