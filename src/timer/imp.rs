@@ -73,7 +73,7 @@ pub enum TimerState {
 }
 
 /// Which of the two modes is currently selected. Encapsulates the
-/// countdown_btn/breathing_btn radio group in a single readable value
+/// mode_toggle_group's active-name in a single readable value
 /// so callers don't sprinkle `is_active()` checks.
 ///
 /// Within `Timer` mode, the Stopwatch-Mode SwitchRow toggles between
@@ -103,9 +103,7 @@ pub struct TimerView {
     // Template children
     #[template_child] pub view_stack:            TemplateChild<gtk::Stack>,
     #[template_child] pub streak_label:          TemplateChild<gtk::Label>,
-    #[template_child] pub countdown_btn:         TemplateChild<gtk::ToggleButton>,
-    #[template_child] pub guided_btn:             TemplateChild<gtk::ToggleButton>,
-    #[template_child] pub breathing_btn:         TemplateChild<gtk::ToggleButton>,
+    #[template_child] pub mode_toggle_group:     TemplateChild<adw::ToggleGroup>,
     #[template_child] pub big_time_label:         TemplateChild<gtk::Label>,
     #[template_child] pub countdown_inputs:       TemplateChild<gtk::Box>,
     #[template_child] pub stopwatch_mode_row:     TemplateChild<adw::SwitchRow>,
@@ -377,20 +375,14 @@ impl TimerView {
     fn setup_buttons(&self) {
         let obj = self.obj();
 
-        // Mode toggle — all three radios share a group, so exactly one
-        // emits `toggled` with `is_active() == true` on every switch.
-        // Route all three into one handler.
-        let mode_toggled = glib::clone!(
+        // Mode toggle — Adw.ToggleGroup is one-of-N, so one
+        // active-name change per switch. Single notify handler.
+        self.mode_toggle_group.connect_active_name_notify(glib::clone!(
             #[weak(rename_to = this)] obj,
-            move |btn: &gtk::ToggleButton| {
-                if btn.is_active() {
-                    this.imp().on_mode_switched();
-                }
+            move |_| {
+                this.imp().on_mode_switched();
             }
-        );
-        self.countdown_btn.connect_toggled(mode_toggled.clone());
-        self.guided_btn.connect_toggled(mode_toggled.clone());
-        self.breathing_btn.connect_toggled(mode_toggled);
+        ));
 
         // Stopwatch-Mode SwitchRow: persist state, mirror on the cell,
         // refresh the hero label + preset sensitivity. The
@@ -956,12 +948,10 @@ impl TimerView {
     /// Stopwatch-vs-countdown lives on `stopwatch_toggle_on` within
     /// the Timer branch.
     pub(crate) fn current_mode(&self) -> TimerMode {
-        if self.breathing_btn.is_active() {
-            TimerMode::Breathing
-        } else if self.guided_btn.is_active() {
-            TimerMode::Guided
-        } else {
-            TimerMode::Timer
+        match self.mode_toggle_group.active_name().as_deref() {
+            Some("guided")    => TimerMode::Guided,
+            Some("breathing") => TimerMode::Breathing,
+            _                 => TimerMode::Timer,
         }
     }
 
@@ -1049,9 +1039,7 @@ impl TimerView {
         self.duration_row.set_visible(mode != TimerMode::Guided);
         self.presets_section.set_visible(mode != TimerMode::Guided);
         self.refresh_duration_value_label();
-        self.countdown_btn.set_sensitive(true);
-        self.guided_btn.set_sensitive(true);
-        self.breathing_btn.set_sensitive(true);
+        self.mode_toggle_group.set_sensitive(true);
         self.session_group.set_sensitive(true);
         self.refresh_hero_for_idle();
     }
@@ -1084,8 +1072,7 @@ impl TimerView {
         self.view_stack.set_visible_child_name("setup");
         self.countdown_inputs.set_sensitive(false);
         self.boxbreath_inputs.set_sensitive(false);
-        self.countdown_btn.set_sensitive(false);
-        self.breathing_btn.set_sensitive(false);
+        self.mode_toggle_group.set_sensitive(false);
         self.session_group.set_sensitive(false);
         self.big_time_label.set_label(&format_time(display_secs));
         self.time_unit_label.set_label(&crate::i18n::gettext("Paused"));

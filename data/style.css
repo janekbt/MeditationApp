@@ -61,10 +61,10 @@ button.preset-chip {
     color: @accent_color;
 }
 
-/* Shared accent-fill for every "selected" state across the app's custom
-   toggles and pills. HIG pair: @accent_bg_color + @accent_fg_color. */
-button.mode-toggle-btn:checked,
-button.mode-toggle-btn:checked:hover,
+/* Shared accent-fill for the still-hand-rolled "selected" toggles on
+   the Stats tab. HIG pair: @accent_bg_color + @accent_fg_color. (The
+   mode toggle on the timer page is now AdwToggleGroup .round, which
+   handles its own active-state styling via @active_toggle_*_color.) */
 button.chart-type-btn:checked,
 button.chart-type-btn:checked:hover,
 button.period-pill:checked,
@@ -73,33 +73,6 @@ button.preset-chip.preset-chip-active,
 button.preset-chip.preset-chip-active:hover {
     background: @accent_bg_color;
     color: @accent_fg_color;
-}
-
-/* Countdown / Stopwatch / Box Breath segmented toggle. Inner corners
-   are explicitly squared so the three segments read as one linked
-   group rather than three pills with round edges touching — matches
-   the Bars/Line toggle on the Stats tab.
-   The outer `.linked` box already strips per-button borders; we just
-   need to suppress the inner corner radii. */
-button.mode-toggle-btn {
-    padding: 6px 12px;
-    background: alpha(currentColor, 0.04);
-}
-.linked > button.mode-toggle-btn:not(:first-child) {
-    border-top-left-radius: 0;
-    border-bottom-left-radius: 0;
-}
-.linked > button.mode-toggle-btn:not(:last-child) {
-    border-top-right-radius: 0;
-    border-bottom-right-radius: 0;
-}
-button.mode-toggle-btn:hover {
-    background: alpha(currentColor, 0.08);
-}
-button.mode-toggle-btn:checked {
-    /* Soft shadow on the checked mode only — it's the most prominent
-       accent fill on the page so it earns the lift. */
-    box-shadow: 0 1px 2px alpha(@accent_bg_color, 0.35);
 }
 
 /* Bars / Line linked segmented toggle inside the chart card header. */

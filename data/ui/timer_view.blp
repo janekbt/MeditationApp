@@ -51,40 +51,31 @@ template $TimerView : Gtk.Widget {
           }
 
           // ── Mode toggle ────────────────────────────────────────────
-          // Two-option segmented toggle — plain .linked Gtk.Box instead
-          // of a one-row Gtk.ListBox.boxed-list wrapper, which is the
-          // HIG-idiomatic pattern for a small exclusive toggle group.
+          // Three-option segmented toggle as Adw.ToggleGroup .round —
+          // the HIG-idiomatic pattern for an exclusive one-of-N choice.
           Adw.Clamp {
             maximum-size: 360;
             tightening-threshold: 300;
 
-            child: Gtk.Box {
-              css-classes: ["linked"];
-              spacing: 0;
-              // Force equal widths so the divider between the two
-              // segments sits exactly in the middle, regardless of
-              // label-text length differences ("Timer" vs "Box Breath").
+            child: Adw.ToggleGroup mode_toggle_group {
+              styles ["round"]
+              halign: fill;
+              hexpand: true;
               homogeneous: true;
 
-              Gtk.ToggleButton countdown_btn {
+              Adw.Toggle countdown_toggle {
+                name: "timer";
                 label: _("Timer");
-                hexpand: true;
-                active: true;
-                css-classes: ["mode-toggle-btn"];
               }
 
-              Gtk.ToggleButton guided_btn {
+              Adw.Toggle guided_toggle {
+                name: "guided";
                 label: _("Guided");
-                hexpand: true;
-                group: countdown_btn;
-                css-classes: ["mode-toggle-btn"];
               }
 
-              Gtk.ToggleButton breathing_btn {
+              Adw.Toggle breathing_toggle {
+                name: "breathing";
                 label: _("Box Breath");
-                hexpand: true;
-                group: countdown_btn;
-                css-classes: ["mode-toggle-btn"];
               }
             };
           }
