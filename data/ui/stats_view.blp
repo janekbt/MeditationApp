@@ -140,31 +140,28 @@ template $StatsView : Gtk.Widget {
           }
         }
 
-        // ── Period toggle row (outside the chart card, pill style) ───
-        Gtk.Box {
-          orientation: horizontal;
-          spacing: 6;
-          halign: start;
+        // ── Period toggle row ─────────────────────────────────────────
+        // Adw.ToggleGroup .round — 4-segment one-of-N. Native CSS
+        // (@active_toggle_*_color) handles the active-state styling.
+        Adw.ToggleGroup period_toggle_group {
+          styles ["round"]
+          halign: center;
 
-          Gtk.ToggleButton period_7d_btn {
+          Adw.Toggle {
+            name: "7d";
             label: _("Week");
-            active: true;
-            css-classes: ["period-pill"];
           }
-          Gtk.ToggleButton period_4w_btn {
+          Adw.Toggle {
+            name: "4w";
             label: _("Month");
-            group: period_7d_btn;
-            css-classes: ["period-pill"];
           }
-          Gtk.ToggleButton period_3m_btn {
+          Adw.Toggle {
+            name: "3m";
             label: _("3 Months");
-            group: period_7d_btn;
-            css-classes: ["period-pill"];
           }
-          Gtk.ToggleButton period_1y_btn {
+          Adw.Toggle {
+            name: "1y";
             label: _("Year");
-            group: period_7d_btn;
-            css-classes: ["period-pill"];
           }
         }
 
@@ -188,19 +185,17 @@ template $StatsView : Gtk.Widget {
               hexpand: true;
             }
 
-            Gtk.Box {
-              css-classes: ["linked"];
+            Adw.ToggleGroup chart_kind_toggle {
+              styles ["round"]
               halign: end;
 
-              Gtk.ToggleButton chart_bars_btn {
+              Adw.Toggle {
+                name: "bars";
                 label: _("Bars");
-                active: true;
-                css-classes: ["chart-type-btn"];
               }
-              Gtk.ToggleButton chart_line_btn {
+              Adw.Toggle {
+                name: "line";
                 label: _("Line");
-                group: chart_bars_btn;
-                css-classes: ["chart-type-btn"];
               }
             }
           }

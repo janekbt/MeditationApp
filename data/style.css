@@ -61,40 +61,14 @@ button.preset-chip {
     color: @accent_color;
 }
 
-/* Shared accent-fill for the still-hand-rolled "selected" toggles on
-   the Stats tab. HIG pair: @accent_bg_color + @accent_fg_color. (The
-   mode toggle on the timer page is now AdwToggleGroup .round, which
-   handles its own active-state styling via @active_toggle_*_color.) */
-button.chart-type-btn:checked,
-button.chart-type-btn:checked:hover,
-button.period-pill:checked,
-button.period-pill:checked:hover,
+/* Shared accent-fill for the still-hand-rolled .preset-chip toggles.
+   The mode / period / chart-kind toggles are now AdwToggleGroup .round,
+   which handles its own active-state styling via
+   @active_toggle_*_color and doesn't need this rule. */
 button.preset-chip.preset-chip-active,
 button.preset-chip.preset-chip-active:hover {
     background: @accent_bg_color;
     color: @accent_fg_color;
-}
-
-/* Bars / Line linked segmented toggle inside the chart card header. */
-button.chart-type-btn {
-    padding: 5px 14px;
-    min-height: 0;
-    font-size: 1rem;
-}
-
-/* Period-toggle pills above the bar chart. */
-button.period-pill {
-    border-radius: 9999px;
-    padding: 5px 14px;
-    min-height: 0;
-    font-size: 1rem;
-    background: alpha(currentColor, 0.06);
-}
-button.period-pill:hover {
-    background: alpha(currentColor, 0.1);
-}
-button.period-pill:checked {
-    font-weight: 600;
 }
 
 /* Percentage text rendered inside the goal ring on the Stats tab. */

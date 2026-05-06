@@ -27,12 +27,8 @@ pub struct StatsView {
     // Insights
     #[template_child] pub insights_list:        TemplateChild<gtk::ListBox>,
     // Chart
-    #[template_child] pub period_7d_btn:        TemplateChild<gtk::ToggleButton>,
-    #[template_child] pub period_4w_btn:        TemplateChild<gtk::ToggleButton>,
-    #[template_child] pub period_3m_btn:        TemplateChild<gtk::ToggleButton>,
-    #[template_child] pub period_1y_btn:        TemplateChild<gtk::ToggleButton>,
-    #[template_child] pub chart_bars_btn:       TemplateChild<gtk::ToggleButton>,
-    #[template_child] pub chart_line_btn:       TemplateChild<gtk::ToggleButton>,
+    #[template_child] pub period_toggle_group:  TemplateChild<adw::ToggleGroup>,
+    #[template_child] pub chart_kind_toggle:    TemplateChild<adw::ToggleGroup>,
     #[template_child] pub chart_container:      TemplateChild<gtk::Box>,
     // Mini-stats
     #[template_child] pub mini_streak_value:    TemplateChild<gtk::Label>,
@@ -88,16 +84,12 @@ impl WidgetImpl for StatsView {}
 impl StatsView {
     fn wire_signals(&self) {
         let obj = self.obj();
-        for btn in [
-            &*self.period_7d_btn, &*self.period_4w_btn,
-            &*self.period_3m_btn, &*self.period_1y_btn,
-            &*self.chart_bars_btn, &*self.chart_line_btn,
-        ] {
-            btn.connect_toggled(glib::clone!(
-                #[weak(rename_to = this)] obj,
-                move |b| if b.is_active() { this.imp().reload_chart(); }
-            ));
-        }
+        let reload = glib::clone!(
+            #[weak(rename_to = this)] obj,
+            move |_: &adw::ToggleGroup| this.imp().reload_chart()
+        );
+        self.period_toggle_group.connect_active_name_notify(reload.clone());
+        self.chart_kind_toggle.connect_active_name_notify(reload);
     }
 
     fn install_ring_draw(&self) {
@@ -558,7 +550,7 @@ impl StatsView {
             .height_request(bars_h)
             .hexpand(true)
             .build();
-        let is_line = self.chart_line_btn.is_active();
+        let is_line = self.chart_kind_toggle.active_name().as_deref() == Some("line");
         let values: Vec<i64> = data.iter().map(|(_, v)| *v).collect();
         let max_snap = max_val;
         plot.set_draw_func(move |_, cr, w, h| {
@@ -654,10 +646,12 @@ impl StatsView {
     }
 
     fn current_chart_days(&self) -> u32 {
-        if self.period_4w_btn.is_active() { return 28;  }
-        if self.period_3m_btn.is_active() { return 90;  }
-        if self.period_1y_btn.is_active() { return 365; }
-        7
+        match self.period_toggle_group.active_name().as_deref() {
+            Some("4w") => 28,
+            Some("3m") => 90,
+            Some("1y") => 365,
+            _          => 7,
+        }
     }
 }
 
