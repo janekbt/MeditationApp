@@ -980,6 +980,11 @@ impl Database {
             "guided_file_insert" | "guided_file_update" | "guided_file_delete" => {
                 self.recompute_guided_file(&event.target_id)?;
             }
+            "vibration_pattern_insert"
+            | "vibration_pattern_update"
+            | "vibration_pattern_delete" => {
+                self.recompute_vibration_pattern(&event.target_id)?;
+            }
             "setting_changed" => {
                 self.recompute_setting(&event.target_id)?;
             }
@@ -1381,6 +1386,72 @@ impl Database {
             self.conn.execute(
                 "DELETE FROM guided_files WHERE uuid = ?1",
                 params![file_uuid],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Recompute the `vibration_patterns` row for `pattern_uuid` from
+    /// the events table. Same precedence rules as guided_files /
+    /// presets / bell_sounds: tombstone wins on tie, else the highest-
+    /// (lamport, device_id) mutate event drives the row. Update events
+    /// carry every field so they self-suffice on out-of-order delivery.
+    fn recompute_vibration_pattern(&self, pattern_uuid: &str) -> Result<()> {
+        let delete_ts: Option<i64> = self.conn.query_row(
+            "SELECT MAX(lamport_ts) FROM events
+             WHERE target_id = ?1 AND kind = 'vibration_pattern_delete'",
+            params![pattern_uuid],
+            |row| row.get::<_, Option<i64>>(0),
+        )?;
+        let mutate: Option<(i64, String)> = self.conn.query_row(
+            "SELECT lamport_ts, payload FROM events
+             WHERE target_id = ?1
+               AND kind IN ('vibration_pattern_insert', 'vibration_pattern_update')
+             ORDER BY lamport_ts DESC, device_id DESC
+             LIMIT 1",
+            params![pattern_uuid],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+        ).optional()?;
+
+        let row_should_exist = match (mutate.as_ref(), delete_ts) {
+            (Some(_), None) => true,
+            (None, _) => false,
+            (Some((m_ts, _)), Some(d_ts)) => *m_ts > d_ts,
+        };
+
+        if let Some((_, payload)) = mutate.filter(|_| row_should_exist) {
+            let v: serde_json::Value = serde_json::from_str(&payload)
+                .map_err(|e| DbError::Csv(
+                    format!("vibration_pattern event payload not valid JSON: {e}")))?;
+            let name = v["name"].as_str().unwrap_or_default();
+            let duration_ms = v["duration_ms"].as_u64().unwrap_or(0) as u32;
+            let intensities_json = v["intensities_json"].as_str().unwrap_or("[]");
+            let chart_kind = v["chart_kind"].as_str().unwrap_or("line");
+            let is_bundled = v["is_bundled"].as_bool().unwrap_or(false);
+            let created_iso = v["created_iso"].as_str().unwrap_or_default();
+            let updated_iso = v["updated_iso"].as_str().unwrap_or(created_iso);
+            self.conn.execute(
+                "INSERT INTO vibration_patterns
+                    (uuid, name, duration_ms, intensities_json, chart_kind,
+                     is_bundled, created_iso, updated_iso)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                 ON CONFLICT(uuid) DO UPDATE SET
+                    name             = excluded.name,
+                    duration_ms      = excluded.duration_ms,
+                    intensities_json = excluded.intensities_json,
+                    chart_kind       = excluded.chart_kind,
+                    is_bundled       = excluded.is_bundled,
+                    created_iso      = excluded.created_iso,
+                    updated_iso      = excluded.updated_iso",
+                params![
+                    pattern_uuid, name, duration_ms, intensities_json,
+                    chart_kind, is_bundled as i64, created_iso, updated_iso,
+                ],
+            )?;
+        } else {
+            self.conn.execute(
+                "DELETE FROM vibration_patterns WHERE uuid = ?1",
+                params![pattern_uuid],
             )?;
         }
         Ok(())
@@ -10423,6 +10494,130 @@ mod tests {
         assert!(!db.is_vibration_pattern_name_taken("Pulse", "vp-1").unwrap());
         // Other UUIDs still collide.
         assert!(db.is_vibration_pattern_name_taken("Pulse", "vp-2").unwrap());
+    }
+
+    #[test]
+    fn apply_event_vibration_pattern_insert_creates_the_row_on_a_fresh_peer() {
+        let peer = Database::open_in_memory().unwrap();
+        let payload = serde_json::json!({
+            "uuid": "vp-1",
+            "name": "Wave",
+            "duration_ms": 2000,
+            "intensities_json": "[0.0,0.5,1.0,0.5,0.0]",
+            "chart_kind": "line",
+            "is_bundled": false,
+            "created_iso": "2026-05-06T20:00:00Z",
+            "updated_iso": "2026-05-06T20:00:00Z",
+        });
+        peer.apply_event(&synth_event(
+            "vibration_pattern_insert", "vp-1", 5, DEVICE_A, payload,
+        )).unwrap();
+        let rows = peer.list_vibration_patterns().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, "Wave");
+        assert_eq!(rows[0].duration_ms, 2000);
+        assert_eq!(rows[0].intensities, vec![0.0, 0.5, 1.0, 0.5, 0.0]);
+        assert_eq!(rows[0].chart_kind, ChartKind::Line);
+    }
+
+    #[test]
+    fn apply_event_vibration_pattern_update_overwrites_earlier_state() {
+        let peer = Database::open_in_memory().unwrap();
+        peer.apply_event(&synth_event(
+            "vibration_pattern_insert", "vp-1", 5, DEVICE_A,
+            serde_json::json!({
+                "uuid": "vp-1", "name": "Wave",
+                "duration_ms": 2000,
+                "intensities_json": "[0.0,1.0,0.0]",
+                "chart_kind": "line", "is_bundled": false,
+                "created_iso": "2026-05-06T20:00:00Z",
+                "updated_iso": "2026-05-06T20:00:00Z",
+            }),
+        )).unwrap();
+        peer.apply_event(&synth_event(
+            "vibration_pattern_update", "vp-1", 7, DEVICE_A,
+            serde_json::json!({
+                "uuid": "vp-1", "name": "Slow Wave",
+                "duration_ms": 3000,
+                "intensities_json": "[0.0,0.5,0.0]",
+                "chart_kind": "bar", "is_bundled": false,
+                "created_iso": "2026-05-06T20:00:00Z",
+                "updated_iso": "2026-05-06T20:05:00Z",
+            }),
+        )).unwrap();
+        let rows = peer.list_vibration_patterns().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, "Slow Wave");
+        assert_eq!(rows[0].duration_ms, 3000);
+        assert_eq!(rows[0].chart_kind, ChartKind::Bar);
+    }
+
+    #[test]
+    fn apply_event_vibration_pattern_delete_removes_the_row() {
+        let peer = Database::open_in_memory().unwrap();
+        peer.apply_event(&synth_event(
+            "vibration_pattern_insert", "vp-1", 5, DEVICE_A,
+            serde_json::json!({
+                "uuid": "vp-1", "name": "Wave",
+                "duration_ms": 2000,
+                "intensities_json": "[0.0,1.0,0.0]",
+                "chart_kind": "line", "is_bundled": false,
+                "created_iso": "2026-05-06T20:00:00Z",
+                "updated_iso": "2026-05-06T20:00:00Z",
+            }),
+        )).unwrap();
+        peer.apply_event(&synth_event(
+            "vibration_pattern_delete", "vp-1", 7, DEVICE_A,
+            serde_json::json!({ "uuid": "vp-1" }),
+        )).unwrap();
+        assert!(peer.list_vibration_patterns().unwrap().is_empty());
+    }
+
+    #[test]
+    fn apply_event_vibration_pattern_tombstone_resists_lower_lamport_insert() {
+        // Out-of-order arrival: delete event lands first (lamport 10),
+        // a stale insert (lamport 5) follows. Tombstone must win.
+        let peer = Database::open_in_memory().unwrap();
+        peer.apply_event(&synth_event(
+            "vibration_pattern_delete", "vp-1", 10, DEVICE_A,
+            serde_json::json!({ "uuid": "vp-1" }),
+        )).unwrap();
+        peer.apply_event(&synth_event(
+            "vibration_pattern_insert", "vp-1", 5, DEVICE_A,
+            serde_json::json!({
+                "uuid": "vp-1", "name": "Wave",
+                "duration_ms": 2000,
+                "intensities_json": "[0.0,1.0,0.0]",
+                "chart_kind": "line", "is_bundled": false,
+                "created_iso": "2026-05-06T20:00:00Z",
+                "updated_iso": "2026-05-06T20:00:00Z",
+            }),
+        )).unwrap();
+        assert!(peer.list_vibration_patterns().unwrap().is_empty(),
+            "tombstone with lamport 10 must beat insert with lamport 5");
+    }
+
+    #[test]
+    fn replay_vibration_pattern_events_round_trips_to_a_fresh_peer() {
+        let dev_a = Database::open_in_memory().unwrap();
+        dev_a.insert_vibration_pattern_with_uuid(
+            "vp-1", "Wave", 2000, &[0.0, 0.5, 1.0, 0.5, 0.0],
+            ChartKind::Line, false,
+        ).unwrap();
+        dev_a.update_vibration_pattern(
+            "vp-1", "Slow Wave", 3000, &[0.0, 0.3, 0.6, 0.3, 0.0],
+            ChartKind::Bar,
+        ).unwrap();
+        let events: Vec<Event> = dev_a.pending_events().unwrap()
+            .into_iter().map(|(_, e)| e).collect();
+
+        let dev_b = Database::open_in_memory().unwrap();
+        dev_b.replay_events(&events).unwrap();
+        let rows = dev_b.list_vibration_patterns().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, "Slow Wave");
+        assert_eq!(rows[0].chart_kind, ChartKind::Bar,
+            "the more recent update event must drive the chart_kind");
     }
 
     #[test]
