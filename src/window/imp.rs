@@ -430,11 +430,37 @@ impl MeditateWindow {
         let phase_sec_weak = phase_seconds_label.downgrade();
         let obj = self.obj().clone();
         let pattern_for_tick = pattern;
+        // Phase-boundary detection for cue firing. Seed with the
+        // initial phase so the very first tick (Phase::In at t=0)
+        // doesn't fire a duplicate of the starting bell.
+        let prev_phase: Rc<Cell<Option<Phase>>> = Rc::new(Cell::new(None));
         drawing_area.add_tick_callback(move |_, _clock| {
             let tv = obj.imp().timer_view.clone();
             let cur = tv.breath_elapsed().as_secs_f64();
 
             let (phase, phase_elapsed, phase_total) = phase_at(&pattern_for_tick, cur);
+
+            // Phase boundary: fire the new phase's cue. First tick
+            // seeds prev silently — the starting bell already played.
+            match prev_phase.get() {
+                None => prev_phase.set(Some(phase)),
+                Some(prev) if prev != phase => {
+                    prev_phase.set(Some(phase));
+                    if let Some(app) = obj.application()
+                        .and_then(|a| a.downcast::<crate::application::MeditateApplication>().ok())
+                    {
+                        let phase_id = match phase {
+                            Phase::In      => crate::db::BoxBreathPhaseId::In,
+                            Phase::HoldIn  => crate::db::BoxBreathPhaseId::HoldIn,
+                            Phase::Out     => crate::db::BoxBreathPhaseId::Out,
+                            Phase::HoldOut => crate::db::BoxBreathPhaseId::HoldOut,
+                        };
+                        tv.imp().fire_box_breath_phase_cue(&app, phase_id);
+                    }
+                }
+                _ => {}
+            }
+
             let phase_name = match phase {
                 Phase::In      => crate::i18n::gettext("Breathe in"),
                 Phase::HoldIn  => crate::i18n::gettext("Hold"),

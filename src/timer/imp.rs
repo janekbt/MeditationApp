@@ -4078,6 +4078,46 @@ impl TimerView {
         *self.current_vibration.borrow_mut() = handle;
     }
 
+    /// Fire the configured cue for a Box-Breath phase boundary.
+    /// Gated by the master `boxbreath_cues_active` switch and the
+    /// individual phase row's `enabled` flag — both must be on.
+    /// Resolution then matches every other bell: per-phase
+    /// signal_mode AND'd with the per-mode override
+    /// (`boxbreath_signal_mode`) for the sound + pattern channels.
+    pub(crate) fn fire_box_breath_phase_cue(
+        &self,
+        app: &crate::application::MeditateApplication,
+        phase: crate::db::BoxBreathPhaseId,
+    ) {
+        let master_on = app
+            .with_db(|db| db.get_setting("boxbreath_cues_active", "false"))
+            .and_then(|r| r.ok())
+            .map(|s| s == "true")
+            .unwrap_or(false);
+        if !master_on { return; }
+
+        let row = match app
+            .with_db(|db| db.get_box_breath_phase(phase))
+            .and_then(|r| r.ok())
+            .flatten()
+        {
+            Some(p) => p,
+            None => return,
+        };
+        if !row.enabled { return; }
+
+        let mode_key = "boxbreath_signal_mode";
+        if crate::vibration::should_fire_sound(app, row.signal_mode, mode_key) {
+            crate::sound::play_interval_sound(&row.sound_uuid, app);
+        }
+        let handle = crate::vibration::fire_pattern_if_allowed(
+            app, row.signal_mode, mode_key, &row.pattern_uuid,
+        );
+        if handle.is_some() {
+            *self.current_vibration.borrow_mut() = handle;
+        }
+    }
+
     pub(crate) fn refresh_end_bell_pattern_subtitle(&self) {
         let name = self.lookup_pattern_name_for_setting("end_bell_pattern");
         self.end_bell_pattern_row.set_subtitle(&name);
