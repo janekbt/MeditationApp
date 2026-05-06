@@ -1307,12 +1307,10 @@ that's its concern.
 
 ## Throwaway prototype location
 
-Bell-row UI prototypes — inline Sound/Vibration/Both ToggleGroup
-shells for Start, End, and Box Breath at the bottom of the timer
-setup. Stay in place until steps 6 (per-bell wiring) and 7 (Box
-Breath per-phase) graduate them; their `wire_signal_toggle` helper in
-`src/timer/imp.rs::setup_vibration_proto` is reusable verbatim for
-the real per-bell rows.
+Bell-row UI prototypes — only the **Box Breath phase prototype**
+remains at the bottom of the timer setup. Stays in place until step 7
+(Box Breath per-phase) graduates it. Start / End bell prototypes
+graduated in step 6.
 
 The pattern-editor prototype graduated in step 4: the editor itself
 moved to `src/vibration_editor.rs` with Save-to-DB wiring, and the
@@ -1320,11 +1318,14 @@ moved to `src/vibration_editor.rs` with Save-to-DB wiring, and the
 chooser's "Create custom pattern…" row and per-row Edit button are
 the real entry points now.
 
-To remove the bell-row prototypes when steps 6/7 land:
+To remove the remaining Box Breath phase prototype when step 7
+lands:
 
-- `data/ui/timer_view.blp`: search for "Vibration UI prototype" —
-  three contiguous `Adw.Clamp` blocks (Starting / End / Box Breath).
-- `src/timer/imp.rs`: search for `vibration_proto_` (template
-  children) and `setup_vibration_proto` (the wiring function and its
-  `wire_signal_toggle` helper). Helper logic is reusable as-is for
-  the real per-bell wiring.
+- `data/ui/timer_view.blp`: drop the lone `Adw.Clamp` block whose
+  child group is `vibration_proto_phase_group` ("Prototype: phase
+  vibrations").
+- `src/timer/imp.rs`: drop the five `vibration_proto_phase_*`
+  template_children and the `setup_vibration_proto` method (the
+  Start / End wiring helpers `build_signal_mode_toggle_widget` +
+  `apply_signal_mode_state` + `attach_revealer_row_click` stay —
+  step 7's per-phase rows reuse the same shape).

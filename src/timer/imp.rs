@@ -148,21 +148,6 @@ pub struct TimerView {
     #[template_child] pub end_bell_pattern_revealer: TemplateChild<gtk::Revealer>,
     #[template_child] pub end_bell_pattern_row:      TemplateChild<adw::ActionRow>,
     // Vibration UI prototype — see setup_vibration_proto. Throwaway.
-    #[template_child] pub vibration_proto_row:               TemplateChild<adw::ExpanderRow>,
-    #[template_child] pub vibration_proto_mode_row:          TemplateChild<adw::ActionRow>,
-    #[template_child] pub vibration_proto_toggle_host:       TemplateChild<gtk::Box>,
-    #[template_child] pub vibration_proto_sound_revealer:    TemplateChild<gtk::Revealer>,
-    #[template_child] pub vibration_proto_sound_row:         TemplateChild<adw::ActionRow>,
-    #[template_child] pub vibration_proto_pattern_revealer:  TemplateChild<gtk::Revealer>,
-    #[template_child] pub vibration_proto_pattern_row:       TemplateChild<adw::ActionRow>,
-    #[template_child] pub vibration_proto_start_row:                 TemplateChild<adw::ExpanderRow>,
-    #[template_child] pub vibration_proto_start_mode_row:            TemplateChild<adw::ActionRow>,
-    #[template_child] pub vibration_proto_start_toggle_host:         TemplateChild<gtk::Box>,
-    #[template_child] pub vibration_proto_start_sound_revealer:      TemplateChild<gtk::Revealer>,
-    #[template_child] pub vibration_proto_start_sound_row:           TemplateChild<adw::ActionRow>,
-    #[template_child] pub vibration_proto_start_pattern_revealer:    TemplateChild<gtk::Revealer>,
-    #[template_child] pub vibration_proto_start_pattern_row:         TemplateChild<adw::ActionRow>,
-    #[template_child] pub vibration_proto_start_prep_row:            TemplateChild<adw::ExpanderRow>,
     #[template_child] pub vibration_proto_phase_master_row:       TemplateChild<adw::ExpanderRow>,
     #[template_child] pub vibration_proto_phase_inhale_row:       TemplateChild<adw::ExpanderRow>,
     #[template_child] pub vibration_proto_phase_hold_in_row:      TemplateChild<adw::ExpanderRow>,
@@ -992,28 +977,14 @@ impl TimerView {
     }
 
     /// Throwaway: build the Sound / Vibration / Both AdwToggleGroup
-    /// inside the prototype rows' host Boxes and wire them to show/hide
-    /// the Bell Sound and Pattern rows. No DB persistence — purely a
-    /// UI feel test for the Starting and End Bell signal selectors.
+    /// Box Breath phase-vibrations prototype only — Start / End bell
+    /// prototypes graduated in step 6. The outer expander's
+    /// show-enable-switch handles reveal/hide of the four nested
+    /// phase rows for free; nothing here actually wires up — these
+    /// `let _` markers just signal that the template children are
+    /// owned (so the build doesn't drop them as dead code) until
+    /// step 7 graduates them into a real per-phase configurator.
     fn setup_vibration_proto(&self) {
-        // End Bell prototype.
-        wire_signal_toggle(
-            &self.vibration_proto_toggle_host,
-            &self.vibration_proto_sound_revealer,
-            &self.vibration_proto_pattern_revealer,
-        );
-
-        // Starting Bell prototype.
-        wire_signal_toggle(
-            &self.vibration_proto_start_toggle_host,
-            &self.vibration_proto_start_sound_revealer,
-            &self.vibration_proto_start_pattern_revealer,
-        );
-
-        // Box Breath phase-vibrations prototype: nothing to wire — the
-        // outer expander's show-enable-switch reveals/hides the four
-        // nested phase rows for free. Each phase row is itself a
-        // self-contained show-enable-switch + Pattern sub-row.
         let _ = &self.vibration_proto_phase_master_row;
         let _ = &self.vibration_proto_phase_inhale_row;
         let _ = &self.vibration_proto_phase_hold_in_row;
@@ -1023,59 +994,6 @@ impl TimerView {
 }
 
 /// Build a Sound / Vibration / Both AdwToggleGroup, append it into
-/// `host`, and wire its `active-name` signal to slide-reveal the
-/// appropriate config rows. Initial state is "sound" — sound row
-/// revealed, pattern row hidden — matching today's default that
-/// "Bell Sound" is the only thing the bell does.
-fn wire_signal_toggle(
-    host: &gtk::Box,
-    sound_revealer: &gtk::Revealer,
-    pattern_revealer: &gtk::Revealer,
-) {
-    let toggle_group = adw::ToggleGroup::builder()
-        .css_classes(["round"])
-        .valign(gtk::Align::Center)
-        .build();
-
-    let sound = adw::Toggle::builder()
-        .name("sound")
-        .label(crate::i18n::gettext("Sound"))
-        .build();
-    let vibration = adw::Toggle::builder()
-        .name("vibration")
-        .label(crate::i18n::gettext("Vibration"))
-        .build();
-    let both = adw::Toggle::builder()
-        .name("both")
-        .label(crate::i18n::gettext("Both"))
-        .build();
-    toggle_group.add(sound);
-    toggle_group.add(vibration);
-    toggle_group.add(both);
-    toggle_group.set_active_name(Some("sound"));
-
-    host.append(&toggle_group);
-
-    sound_revealer.set_reveal_child(true);
-    pattern_revealer.set_reveal_child(false);
-
-    let sound_revealer = sound_revealer.clone();
-    let pattern_revealer = pattern_revealer.clone();
-    toggle_group.connect_active_name_notify(move |tg| {
-        let active = tg.active_name();
-        let show_sound = matches!(
-            active.as_deref(),
-            Some("sound") | Some("both")
-        );
-        let show_pattern = matches!(
-            active.as_deref(),
-            Some("vibration") | Some("both")
-        );
-        sound_revealer.set_reveal_child(show_sound);
-        pattern_revealer.set_reveal_child(show_pattern);
-    });
-}
-
 /// Build the AdwToggleGroup for a Sound / Vibration / Both selector
 /// at construction time and append it to `host`. The notify handler
 /// resolves `app` lazily via `get_app` so the widget can be wired
