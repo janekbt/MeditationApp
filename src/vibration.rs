@@ -86,61 +86,73 @@ pub fn probe_haptic() -> bool {
 // Lives here so the playback driver further down can reuse it; tests
 // are laptop-runnable without any DBus or motor.
 
+/// feedbackd caps `Vibrate` at 10 (amplitude, duration_ms) tuples
+/// per call (silent truncation in `fbd-haptic-manager.c`'s
+/// `MAX_ITEMS = 10`). Anything past the tenth segment is dropped
+/// without an error reply, so a 40-segment 2-second envelope plays
+/// only the first ~500 ms. Cap our output here so the duration
+/// always matches what the user authored.
+const MAX_SEGMENTS: u32 = 10;
+/// Preferred Line-mode tick when the pattern is short enough to
+/// fit in MAX_SEGMENTS. For longer patterns the per-segment
+/// duration is stretched (the segment count is capped, the total
+/// duration is preserved).
 const LINE_TICK_MS: u32 = 50;
-/// Cap the segment count for very long Line-mode patterns to keep
-/// the array argument to Haptic.Vibrate from growing unbounded.
-/// 400 segments × 50 ms = 20 s of envelope — well past any sensible
-/// pattern duration; the cap protects us from pathological inputs.
-const LINE_MAX_SEGMENTS: u32 = 400;
 
 /// Translate a `VibrationPattern` into the `Vec<(f64, u32)>` tuple
-/// sequence the `Haptic.Vibrate(s, a(du))` DBus call expects.
+/// sequence `Haptic.Vibrate(s, a(du))` consumes.
 ///
-/// * `Bar` mode — N equal-duration segments at each control point's
-///   intensity. Duration divisibility remainder is added to the last
-///   segment so the sum matches `pattern.duration_ms` exactly.
-/// * `Line` mode — sample the linearly-interpolated envelope at
-///   50 ms ticks (capped at 400 segments). Each tick produces a
-///   single (amplitude, duration_ms) entry; the last tick absorbs
-///   the duration remainder.
+/// Both shape modes coalesce to at most `MAX_SEGMENTS` (= 10)
+/// tuples — feedbackd's hard limit — and the segment durations
+/// always sum to `pattern.duration_ms` exactly (remainder lands
+/// on the last segment).
+///
+/// * `Bar` mode emits min(N, 10) segments. When N > 10, adjacent
+///   control points are averaged into bins.
+/// * `Line` mode samples the linearly-interpolated envelope at
+///   the centre of each output segment.
 ///
 /// Returns an empty vec for empty / zero-duration inputs.
 pub fn sample_to_segments(p: &crate::db::VibrationPattern) -> Vec<(f64, u32)> {
-    let n = p.intensities.len();
-    if n == 0 || p.duration_ms == 0 {
+    let n_in = p.intensities.len();
+    if n_in == 0 || p.duration_ms == 0 {
         return Vec::new();
     }
-    match p.chart_kind {
-        crate::db::ChartKind::Bar => {
-            let n_u32 = n as u32;
-            let base = p.duration_ms / n_u32;
-            let remainder = p.duration_ms - base * n_u32;
-            p.intensities
-                .iter()
-                .enumerate()
-                .map(|(i, &v)| {
-                    let dur = if i == n - 1 { base + remainder } else { base };
-                    (v as f64, dur)
-                })
-                .collect()
-        }
+
+    let n_out: u32 = match p.chart_kind {
+        crate::db::ChartKind::Bar => (n_in as u32).min(MAX_SEGMENTS).max(1),
         crate::db::ChartKind::Line => {
             let raw_ticks = (p.duration_ms + LINE_TICK_MS - 1) / LINE_TICK_MS;
-            let n_ticks = raw_ticks.min(LINE_MAX_SEGMENTS).max(1);
-            (0..n_ticks)
-                .map(|i| {
-                    let t_ms = (i * LINE_TICK_MS).min(p.duration_ms);
-                    let mag = sample_line_at(p, t_ms) as f64;
-                    let dur = if i == n_ticks - 1 {
-                        p.duration_ms - i * LINE_TICK_MS
-                    } else {
-                        LINE_TICK_MS
-                    };
-                    (mag, dur)
-                })
-                .collect()
+            raw_ticks.max(1).min(MAX_SEGMENTS)
         }
-    }
+    };
+
+    let base = p.duration_ms / n_out;
+    let remainder = p.duration_ms - base * n_out;
+
+    (0..n_out)
+        .map(|i| {
+            let dur = if i == n_out - 1 { base + remainder } else { base };
+            let mag: f32 = match p.chart_kind {
+                crate::db::ChartKind::Bar => {
+                    let lo = (i as usize * n_in) / n_out as usize;
+                    let hi_raw = ((i as usize + 1) * n_in) / n_out as usize;
+                    let hi = hi_raw.max(lo + 1).min(n_in);
+                    let slice = &p.intensities[lo..hi];
+                    let sum: f32 = slice.iter().sum();
+                    sum / slice.len() as f32
+                }
+                crate::db::ChartKind::Line => {
+                    // Sample at the centre of segment i → t = (i + 0.5) * D / n_out.
+                    // Integer-clean: (2i + 1) * D / (2 * n_out). Both factors
+                    // fit in u32 for D ≤ 10 000 ms and n_out ≤ 10.
+                    let t_ms = ((2 * i + 1) * p.duration_ms) / (2 * n_out);
+                    sample_line_at(p, t_ms)
+                }
+            };
+            (mag as f64, dur)
+        })
+        .collect()
 }
 
 // ── Playback driver ──────────────────────────────────────────────────────
@@ -417,40 +429,70 @@ mod sampler_tests {
     }
 
     #[test]
-    fn line_mode_emits_50ms_ticks() {
-        // 1000 ms / 50 ms = 20 ticks.
+    fn line_mode_caps_at_max_segments_and_preserves_total_duration() {
+        // 1 000 ms / 50 ms = 20 ticks raw, capped at 10. Each
+        // segment then spans 100 ms.
         let p = pattern(1000, vec![0.0, 1.0], ChartKind::Line);
         let segments = sample_to_segments(&p);
-        assert_eq!(segments.len(), 20);
+        assert_eq!(segments.len(), 10, "feedbackd caps at 10 segments");
         for s in &segments[..segments.len() - 1] {
+            assert_eq!(s.1, 100);
+        }
+        let total: u32 = segments.iter().map(|s| s.1).sum();
+        assert_eq!(total, 1000, "durations sum to pattern duration");
+    }
+
+    #[test]
+    fn line_mode_short_pattern_uses_50ms_tick() {
+        // 300 ms < 10 × 50 ms → no capping, ticks stay at 50 ms.
+        let p = pattern(300, vec![0.0, 1.0], ChartKind::Line);
+        let segments = sample_to_segments(&p);
+        assert_eq!(segments.len(), 6);
+        for s in segments.iter() {
             assert_eq!(s.1, 50);
         }
-        // Last tick absorbs the remainder.
-        let total: u32 = segments.iter().map(|s| s.1).sum();
-        assert_eq!(total, 1000);
     }
 
     #[test]
-    fn line_mode_endpoints_match_first_and_last_intensity() {
-        let p = pattern(1000, vec![0.1, 0.5, 0.9], ChartKind::Line);
+    fn line_mode_samples_envelope_at_segment_centres() {
+        // Symmetric ramp from 0.0 to 1.0 with 10 output segments
+        // (each 100 ms). Sample centres land at 50, 150, 250, …,
+        // 950 ms → t/D = 0.05, 0.15, …, 0.95. With two control
+        // points (linear interp from 0 to 1), each amp = t/D.
+        let p = pattern(1000, vec![0.0, 1.0], ChartKind::Line);
         let segments = sample_to_segments(&p);
-        // The first sample sits at t=0 — exactly intensities[0].
-        assert!((segments[0].0 - 0.1).abs() < 1e-3);
-        // The very last sample sits at t = (n_ticks - 1) * 50 ms,
-        // which is < duration_ms, so it interpolates close to but
-        // not exactly intensities[N-1]. Check the midpoint instead.
-        let mid = segments[segments.len() / 2].0;
-        assert!(mid > 0.1 && mid < 0.9,
-            "midpoint should sit between endpoints: got {mid}");
+        for (i, s) in segments.iter().enumerate() {
+            let expected = (i as f64 * 100.0 + 50.0) / 1000.0;
+            assert!((s.0 - expected).abs() < 1e-3,
+                "segment {i}: got {}, expected {}", s.0, expected);
+        }
     }
 
     #[test]
-    fn line_mode_caps_segment_count_at_400() {
-        // 25 s pattern would naturally produce 500 ticks at 50 ms.
-        let p = pattern(25_000, vec![0.0, 1.0, 0.0], ChartKind::Line);
+    fn line_mode_caps_long_pattern_at_max_segments() {
+        // 5 s pattern: 100 ticks raw → capped at 10 × 500 ms.
+        let p = pattern(5_000, vec![0.0, 1.0, 0.0], ChartKind::Line);
         let segments = sample_to_segments(&p);
-        assert_eq!(segments.len(), 400, "cap at LINE_MAX_SEGMENTS");
+        assert_eq!(segments.len(), 10, "cap at MAX_SEGMENTS");
         let total: u32 = segments.iter().map(|s| s.1).sum();
-        assert_eq!(total, 25_000, "remainder still distributes onto the last segment");
+        assert_eq!(total, 5_000, "total duration preserved despite capping");
+    }
+
+    #[test]
+    fn bar_mode_coalesces_when_n_exceeds_max_segments() {
+        // 12 control points → 10 output bins. First 8 bins hold
+        // one input each, last 2 bins hold 2 inputs averaged.
+        let intensities: Vec<f32> = (0..12).map(|i| i as f32 / 11.0).collect();
+        let p = pattern(1_000, intensities.clone(), ChartKind::Bar);
+        let segments = sample_to_segments(&p);
+        assert_eq!(segments.len(), 10, "cap at MAX_SEGMENTS");
+        let total: u32 = segments.iter().map(|s| s.1).sum();
+        assert_eq!(total, 1_000, "total duration preserved");
+        // Bins are non-decreasing for a non-decreasing input.
+        let amps: Vec<f64> = segments.iter().map(|s| s.0).collect();
+        for w in amps.windows(2) {
+            assert!(w[0] <= w[1] + 1e-9,
+                "amplitudes should stay monotone: {:?}", amps);
+        }
     }
 }
