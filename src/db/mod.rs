@@ -738,6 +738,76 @@ impl Database {
         self.inner.delete_guided_file(uuid).map_err(map_core_err)
     }
 
+    // ── VibrationPatterns — pass-through wrappers ─────────────────────────────
+    // Thin shells over the core CRUD. DuplicateVibrationPattern maps
+    // to a synthesized UNIQUE-constraint failure via map_core_err so
+    // callers can treat the duplicate-name path uniformly with the
+    // other UNIQUE-NOCASE name fields (labels, presets, guided files).
+
+    pub fn list_vibration_patterns(&self) -> Result<Vec<VibrationPattern>> {
+        self.inner.list_vibration_patterns().map_err(map_core_err)
+    }
+
+    pub fn find_vibration_pattern_by_uuid(
+        &self, uuid: &str,
+    ) -> Result<Option<VibrationPattern>> {
+        self.inner.find_vibration_pattern_by_uuid(uuid).map_err(map_core_err)
+    }
+
+    pub fn insert_vibration_pattern(
+        &self,
+        name: &str,
+        duration_ms: u32,
+        intensities: &[f32],
+        chart_kind: ChartKind,
+        is_bundled: bool,
+    ) -> Result<String> {
+        self.inner
+            .insert_vibration_pattern(name, duration_ms, intensities, chart_kind, is_bundled)
+            .map_err(map_core_err)
+    }
+
+    pub fn insert_vibration_pattern_with_uuid(
+        &self,
+        uuid: &str,
+        name: &str,
+        duration_ms: u32,
+        intensities: &[f32],
+        chart_kind: ChartKind,
+        is_bundled: bool,
+    ) -> Result<i64> {
+        self.inner
+            .insert_vibration_pattern_with_uuid(
+                uuid, name, duration_ms, intensities, chart_kind, is_bundled,
+            )
+            .map_err(map_core_err)
+    }
+
+    pub fn update_vibration_pattern(
+        &self,
+        uuid: &str,
+        name: &str,
+        duration_ms: u32,
+        intensities: &[f32],
+        chart_kind: ChartKind,
+    ) -> Result<()> {
+        self.inner
+            .update_vibration_pattern(uuid, name, duration_ms, intensities, chart_kind)
+            .map_err(map_core_err)
+    }
+
+    pub fn delete_vibration_pattern(&self, uuid: &str) -> Result<()> {
+        self.inner.delete_vibration_pattern(uuid).map_err(map_core_err)
+    }
+
+    pub fn is_vibration_pattern_name_taken(
+        &self, name: &str, except_uuid: &str,
+    ) -> Result<bool> {
+        self.inner
+            .is_vibration_pattern_name_taken(name, except_uuid)
+            .map_err(map_core_err)
+    }
+
     // ── Sessions ──────────────────────────────────────────────────────────────
 
     pub fn create_session(&self, data: &SessionData) -> Result<Session> {
@@ -1607,6 +1677,57 @@ mod tests {
         db.seed_bundled_vibration_patterns().unwrap();
         assert_eq!(db.inner.list_vibration_patterns().unwrap().len(), 5,
             "second seed must not duplicate rows");
+    }
+
+    #[test]
+    fn shell_vibration_pattern_wrappers_round_trip() {
+        let db = test_db_in_memory();
+        // Insert via the auto-uuid wrapper, retrieve via find.
+        let uuid = db.insert_vibration_pattern(
+            "Custom Wave", 1000, &[0.0, 0.5, 1.0, 0.5, 0.0],
+            ChartKind::Line, false,
+        ).unwrap();
+        let row = db.find_vibration_pattern_by_uuid(&uuid).unwrap().unwrap();
+        assert_eq!(row.name, "Custom Wave");
+        assert_eq!(row.intensities, vec![0.0, 0.5, 1.0, 0.5, 0.0]);
+
+        // Update via the wrapper.
+        db.update_vibration_pattern(
+            &uuid, "Slow Wave", 2000, &[0.0, 0.3, 0.0],
+            ChartKind::Bar,
+        ).unwrap();
+        let row = db.find_vibration_pattern_by_uuid(&uuid).unwrap().unwrap();
+        assert_eq!(row.name, "Slow Wave");
+        assert_eq!(row.chart_kind, ChartKind::Bar);
+
+        // is_name_taken sees it.
+        assert!(db.is_vibration_pattern_name_taken("Slow Wave", "").unwrap());
+        // Self-rename-no-op excluded via except_uuid.
+        assert!(!db.is_vibration_pattern_name_taken("Slow Wave", &uuid).unwrap());
+
+        // Delete via wrapper.
+        db.delete_vibration_pattern(&uuid).unwrap();
+        assert!(db.find_vibration_pattern_by_uuid(&uuid).unwrap().is_none());
+    }
+
+    #[test]
+    fn shell_vibration_pattern_duplicate_name_maps_to_unique_constraint_err() {
+        // The core-side DuplicateVibrationPattern variant must surface
+        // through the shell as a synthesized UNIQUE-constraint failure
+        // (same shape callers handle for guided files / presets / labels).
+        let db = test_db_in_memory();
+        // "Pulse" is already in the seed set — inserting a custom row
+        // with the same name must fail through the wrapper.
+        let result = db.insert_vibration_pattern(
+            "Pulse", 500, &[0.0, 1.0, 0.0], ChartKind::Line, false,
+        );
+        let Err(rusqlite::Error::SqliteFailure(err, msg)) = result else {
+            panic!("expected SqliteFailure(UNIQUE), got {result:?}");
+        };
+        assert_eq!(err.code, rusqlite::ErrorCode::ConstraintViolation);
+        assert_eq!(err.extended_code, rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE);
+        assert!(msg.unwrap_or_default().contains("vibration_patterns.name"),
+            "error message should name the failing column");
     }
 
     #[test]
