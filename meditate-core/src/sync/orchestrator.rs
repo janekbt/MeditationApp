@@ -500,7 +500,7 @@ fn parse_batch_uuid_from_filename(name: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{Session, SessionMode};
+    use crate::db::{BellSoundCategory, Session, SessionMode};
     use crate::sync::fake::FakeWebDav;
     use crate::sync::webdav::WebDavResult;
 
@@ -1302,6 +1302,7 @@ mod tests {
             &format!("/some/source/path/{}.{}", uuid, ext),
             false,
             mime,
+            BellSoundCategory::General,
         ).unwrap();
         std::fs::create_dir_all(sounds_dir).unwrap();
         std::fs::write(sounds_dir.join(format!("{uuid}.{ext}")), body).unwrap();
@@ -1360,6 +1361,7 @@ mod tests {
             "/io/github/janekbt/Meditate/sounds/bowl.wav",
             true,
             "audio/wav",
+            BellSoundCategory::General,
         ).unwrap();
 
         Sync::new(&db, &fs, "Meditate", tmp.path().to_path_buf())
@@ -1388,6 +1390,7 @@ mod tests {
             "/peer/path/file.wav",
             false,
             "audio/wav",
+            BellSoundCategory::General,
         ).unwrap();
 
         Sync::new(&db, &fs, "Meditate", tmp.path().to_path_buf())
@@ -1473,6 +1476,7 @@ mod tests {
             "/io/github/janekbt/Meditate/sounds/bowl.wav",
             true,
             "audio/wav",
+            BellSoundCategory::General,
         ).unwrap();
         Sync::new(&db_src, &fs, "Meditate", tmp_src.path().to_path_buf())
             .push().unwrap();

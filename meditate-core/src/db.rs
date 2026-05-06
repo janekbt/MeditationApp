@@ -101,6 +101,13 @@ impl SessionMode {
 /// path under `$XDG_DATA_HOME`. Bundled rows ride sync (so a peer
 /// without the bundle inherits the same UUIDs from the seeding device)
 /// but the audio itself doesn't — peers compile in their own copy.
+///
+/// `category` partitions the library by usage context: General sounds
+/// (bells / gongs / chimes) feed the Starting / Interval / End bell
+/// choosers; BoxBreath sounds (voice cues / phase markers) feed the
+/// Box Breath per-phase chooser. Categories are mutually exclusive —
+/// no row sits in both — and the chooser filters by the category its
+/// caller passes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BellSound {
     pub id: i64,
@@ -109,7 +116,33 @@ pub struct BellSound {
     pub file_path: String,
     pub is_bundled: bool,
     pub mime_type: String,
+    pub category: BellSoundCategory,
     pub created_iso: String,
+}
+
+/// Usage-context partition for the `bell_sounds` library.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BellSoundCategory {
+    /// Bells, gongs, chimes — Starting / Interval / End bells.
+    General,
+    /// Voice cues / soft phase markers — Box Breath per-phase chooser.
+    BoxBreath,
+}
+
+impl BellSoundCategory {
+    pub fn as_db_str(self) -> &'static str {
+        match self {
+            BellSoundCategory::General   => "general",
+            BellSoundCategory::BoxBreath => "box_breath",
+        }
+    }
+    pub fn from_db_str(s: &str) -> Option<Self> {
+        match s {
+            "general"    => Some(BellSoundCategory::General),
+            "box_breath" => Some(BellSoundCategory::BoxBreath),
+            _            => None,
+        }
+    }
 }
 
 impl BellSound {
@@ -355,6 +388,8 @@ const SCHEMA: &str = "
         file_path   TEXT NOT NULL,
         is_bundled  INTEGER NOT NULL DEFAULT 0,
         mime_type   TEXT NOT NULL,
+        category    TEXT NOT NULL DEFAULT 'general'
+                    CHECK (category IN ('general', 'box_breath')),
         created_iso TEXT NOT NULL
     );
     -- User-managed library of bells fired during a Timer-mode session.
@@ -1494,16 +1529,21 @@ impl Database {
             let file_path = v["file_path"].as_str().unwrap_or_default();
             let is_bundled = v["is_bundled"].as_bool().unwrap_or(false);
             let mime_type = v["mime_type"].as_str().unwrap_or("audio/wav");
+            // Old payloads (pre-categories) won't carry this field;
+            // default to 'general' so peer rows materialise into the
+            // bell context they came from.
+            let category = v["category"].as_str().unwrap_or("general");
             let created_iso = v["created_iso"].as_str().unwrap_or_default();
             self.conn.execute(
                 "INSERT INTO bell_sounds
-                    (uuid, name, file_path, is_bundled, mime_type, created_iso)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                    (uuid, name, file_path, is_bundled, mime_type, category, created_iso)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                  ON CONFLICT(uuid) DO UPDATE SET
                     name        = excluded.name,
                     file_path   = excluded.file_path,
                     is_bundled  = excluded.is_bundled,
                     mime_type   = excluded.mime_type,
+                    category    = excluded.category,
                     created_iso = excluded.created_iso",
                 params![
                     sound_uuid,
@@ -1511,6 +1551,7 @@ impl Database {
                     file_path,
                     is_bundled as i64,
                     mime_type,
+                    category,
                     created_iso,
                 ],
             )?;
@@ -1921,6 +1962,7 @@ impl Database {
         file_path: &str,
         is_bundled: bool,
         mime_type: &str,
+        category: BellSoundCategory,
     ) -> Result<i64> {
         self.insert_bell_sound_with_uuid(
             &uuid::Uuid::new_v4().to_string(),
@@ -1928,6 +1970,7 @@ impl Database {
             file_path,
             is_bundled,
             mime_type,
+            category,
         )
     }
 
@@ -1943,6 +1986,7 @@ impl Database {
         file_path: &str,
         is_bundled: bool,
         mime_type: &str,
+        category: BellSoundCategory,
     ) -> Result<i64> {
         let tx = self.conn.unchecked_transaction()?;
         // Pre-check for an existing row with this uuid — return its
@@ -1956,14 +2000,16 @@ impl Database {
         }
         let created_iso = chrono::Utc::now().to_rfc3339();
         self.conn.execute(
-            "INSERT INTO bell_sounds (uuid, name, file_path, is_bundled, mime_type, created_iso)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO bell_sounds
+                (uuid, name, file_path, is_bundled, mime_type, category, created_iso)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 uuid_str,
                 name,
                 file_path,
                 is_bundled as i64,
                 mime_type,
+                category.as_db_str(),
                 created_iso,
             ],
         )?;
@@ -1974,6 +2020,7 @@ impl Database {
             "file_path": file_path,
             "is_bundled": is_bundled,
             "mime_type": mime_type,
+            "category": category.as_db_str(),
             "created_iso": created_iso,
         }).to_string();
         self.emit_event("bell_sound_insert", uuid_str, payload)?;
@@ -1989,8 +2036,8 @@ impl Database {
     /// materialise from this rename alone.
     pub fn rename_bell_sound(&self, uuid_str: &str, name: &str) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
-        let row: Option<(String, i64, String, String)> = self.conn.query_row(
-            "SELECT file_path, is_bundled, mime_type, created_iso
+        let row: Option<(String, i64, String, String, String)> = self.conn.query_row(
+            "SELECT file_path, is_bundled, mime_type, category, created_iso
                FROM bell_sounds WHERE uuid = ?1",
             params![uuid_str],
             |row| Ok((
@@ -1998,9 +2045,10 @@ impl Database {
                 row.get::<_, i64>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
             )),
         ).optional()?;
-        let Some((file_path, is_bundled, mime_type, created_iso)) = row else {
+        let Some((file_path, is_bundled, mime_type, category, created_iso)) = row else {
             return Ok(());
         };
         self.conn.execute(
@@ -2013,6 +2061,7 @@ impl Database {
             "file_path": file_path,
             "is_bundled": is_bundled != 0,
             "mime_type": mime_type,
+            "category": category,
             "created_iso": created_iso,
         }).to_string();
         self.emit_event("bell_sound_update", uuid_str, payload)?;
@@ -2054,12 +2103,13 @@ impl Database {
         // immediately under the import affordance instead of being
         // pushed to the bottom of a long bundled list.
         let mut stmt = self.conn.prepare(
-            "SELECT id, uuid, name, file_path, is_bundled, mime_type, created_iso
+            "SELECT id, uuid, name, file_path, is_bundled, mime_type, category, created_iso
              FROM bell_sounds
              ORDER BY is_bundled ASC, id ASC",
         )?;
         let rows = stmt
             .query_map([], |row| {
+                let cat_str: String = row.get(6)?;
                 Ok(BellSound {
                     id: row.get(0)?,
                     uuid: row.get(1)?,
@@ -2067,7 +2117,42 @@ impl Database {
                     file_path: row.get(3)?,
                     is_bundled: row.get::<_, i64>(4)? != 0,
                     mime_type: row.get(5)?,
-                    created_iso: row.get(6)?,
+                    category: BellSoundCategory::from_db_str(&cat_str)
+                        .unwrap_or(BellSoundCategory::General),
+                    created_iso: row.get(7)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Same as `list_bell_sounds`, but filters to a single category.
+    /// The chooser passes the category implied by its caller — bell
+    /// rows pass General, Box Breath phase rows pass BoxBreath — so
+    /// the user only sees sounds tailored to the slot they're filling.
+    pub fn list_bell_sounds_for_category(
+        &self,
+        category: BellSoundCategory,
+    ) -> Result<Vec<BellSound>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, uuid, name, file_path, is_bundled, mime_type, category, created_iso
+             FROM bell_sounds
+             WHERE category = ?1
+             ORDER BY is_bundled ASC, id ASC",
+        )?;
+        let rows = stmt
+            .query_map(params![category.as_db_str()], |row| {
+                let cat_str: String = row.get(6)?;
+                Ok(BellSound {
+                    id: row.get(0)?,
+                    uuid: row.get(1)?,
+                    name: row.get(2)?,
+                    file_path: row.get(3)?,
+                    is_bundled: row.get::<_, i64>(4)? != 0,
+                    mime_type: row.get(5)?,
+                    category: BellSoundCategory::from_db_str(&cat_str)
+                        .unwrap_or(BellSoundCategory::General),
+                    created_iso: row.get(7)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -6894,7 +6979,7 @@ mod tests {
             guided_file_uuid: None,
         }).unwrap();
         db.insert_interval_bell(IntervalBellKind::Interval, 5, 0, "bowl").unwrap();
-        db.insert_bell_sound("Custom", "/p/c.wav", false, "audio/wav").unwrap();
+        db.insert_bell_sound("Custom", "/p/c.wav", false, "audio/wav", BellSoundCategory::General).unwrap();
         db.record_known_remote_file("a").unwrap();
         db.record_known_remote_sound("bs-1").unwrap();
         // Sanity: rows present before wipe.
@@ -9166,6 +9251,7 @@ mod tests {
                 "/io/github/janekbt/Meditate/sounds/bowl.wav",
                 true,
                 "audio/wav",
+                BellSoundCategory::General,
             )
             .unwrap();
         assert!(rowid > 0);
@@ -9178,6 +9264,7 @@ mod tests {
         assert_eq!(s.file_path, "/io/github/janekbt/Meditate/sounds/bowl.wav");
         assert!(s.is_bundled);
         assert_eq!(s.mime_type, "audio/wav");
+        assert_eq!(s.category, BellSoundCategory::General);
         assert!(!s.created_iso.is_empty());
     }
 
@@ -9195,6 +9282,7 @@ mod tests {
                 "/io/github/janekbt/Meditate/sounds/bowl.wav",
                 true,
                 "audio/wav",
+                BellSoundCategory::General,
             )
             .unwrap();
         assert!(rowid > 0);
@@ -9211,9 +9299,11 @@ mod tests {
         let fixed = "22222222-2222-3333-4444-555555555555";
         let r1 = db.insert_bell_sound_with_uuid(
             fixed, "Bowl", "/path/bowl.wav", true, "audio/wav",
+            BellSoundCategory::General,
         ).unwrap();
         let r2 = db.insert_bell_sound_with_uuid(
             fixed, "Bowl", "/path/bowl.wav", true, "audio/wav",
+            BellSoundCategory::General,
         ).unwrap();
         assert_eq!(r1, r2, "second call returns the existing rowid");
         assert_eq!(db.list_bell_sounds().unwrap().len(), 1);
@@ -9226,9 +9316,75 @@ mod tests {
     }
 
     #[test]
+    fn bell_sound_category_round_trips_through_db_str() {
+        for c in [BellSoundCategory::General, BellSoundCategory::BoxBreath] {
+            assert_eq!(BellSoundCategory::from_db_str(c.as_db_str()), Some(c));
+        }
+        assert_eq!(BellSoundCategory::from_db_str("typo"), None);
+    }
+
+    #[test]
+    fn bell_sounds_category_check_constraint_rejects_unknown_value() {
+        let db = Database::open_in_memory().unwrap();
+        let bad = db.conn.execute(
+            "INSERT INTO bell_sounds
+                (uuid, name, file_path, is_bundled, mime_type, category, created_iso)
+             VALUES ('u', 'n', '/p', 0, 'audio/wav', 'spiral', 'now')",
+            [],
+        );
+        assert!(bad.is_err(),
+            "category = 'spiral' must be rejected by the CHECK constraint");
+    }
+
+    #[test]
+    fn list_bell_sounds_for_category_filters_by_category() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_bell_sound(
+            "Bowl", "/p/bowl.wav", true, "audio/wav",
+            BellSoundCategory::General,
+        ).unwrap();
+        db.insert_bell_sound(
+            "Inhale", "/p/inhale.ogg", false, "audio/ogg",
+            BellSoundCategory::BoxBreath,
+        ).unwrap();
+        db.insert_bell_sound(
+            "Hold", "/p/hold.ogg", false, "audio/ogg",
+            BellSoundCategory::BoxBreath,
+        ).unwrap();
+
+        let general = db.list_bell_sounds_for_category(BellSoundCategory::General).unwrap();
+        assert_eq!(general.len(), 1);
+        assert_eq!(general[0].name, "Bowl");
+
+        let box_breath = db
+            .list_bell_sounds_for_category(BellSoundCategory::BoxBreath)
+            .unwrap();
+        assert_eq!(box_breath.len(), 2);
+        let names: Vec<&str> = box_breath.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"Inhale"));
+        assert!(names.contains(&"Hold"));
+    }
+
+    #[test]
+    fn list_bell_sounds_unfiltered_returns_every_category() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_bell_sound(
+            "Bowl", "/p/bowl.wav", true, "audio/wav",
+            BellSoundCategory::General,
+        ).unwrap();
+        db.insert_bell_sound(
+            "Inhale", "/p/inhale.ogg", false, "audio/ogg",
+            BellSoundCategory::BoxBreath,
+        ).unwrap();
+        let all = db.list_bell_sounds().unwrap();
+        assert_eq!(all.len(), 2,
+            "unfiltered list spans every category — used by Manage Sounds in Preferences");
+    }
+
+    #[test]
     fn insert_bell_sound_emits_a_bell_sound_insert_event() {
         let db = Database::open_in_memory().unwrap();
-        db.insert_bell_sound("Zen Bell", "/path/zen.wav", true, "audio/wav").unwrap();
+        db.insert_bell_sound("Zen Bell", "/path/zen.wav", true, "audio/wav", BellSoundCategory::General).unwrap();
         let events = db.pending_events().unwrap();
         let inserts: Vec<_> = events
             .iter()
@@ -9252,10 +9408,10 @@ mod tests {
         // so the user doesn't have to scroll past the bundled set.
         // Within each group, insertion order is preserved.
         let db = Database::open_in_memory().unwrap();
-        db.insert_bell_sound("A", "/p/a.wav", true, "audio/wav").unwrap();
-        db.insert_bell_sound("B", "/p/b.wav", false, "audio/wav").unwrap();
-        db.insert_bell_sound("C", "/p/c.wav", true, "audio/wav").unwrap();
-        db.insert_bell_sound("D", "/p/d.wav", false, "audio/wav").unwrap();
+        db.insert_bell_sound("A", "/p/a.wav", true, "audio/wav", BellSoundCategory::General).unwrap();
+        db.insert_bell_sound("B", "/p/b.wav", false, "audio/wav", BellSoundCategory::General).unwrap();
+        db.insert_bell_sound("C", "/p/c.wav", true, "audio/wav", BellSoundCategory::General).unwrap();
+        db.insert_bell_sound("D", "/p/d.wav", false, "audio/wav", BellSoundCategory::General).unwrap();
         let s = db.list_bell_sounds().unwrap();
         let names: Vec<_> = s.iter().map(|r| r.name.as_str()).collect();
         assert_eq!(names, vec!["B", "D", "A", "C"]);
@@ -9273,7 +9429,7 @@ mod tests {
         // mime_type are immutable for the row's lifetime — bundled is
         // determined at seed time, custom file_path at import time.
         let db = Database::open_in_memory().unwrap();
-        db.insert_bell_sound("Bowl", "/p/bowl.wav", true, "audio/wav").unwrap();
+        db.insert_bell_sound("Bowl", "/p/bowl.wav", true, "audio/wav", BellSoundCategory::General).unwrap();
         let uuid = db.list_bell_sounds().unwrap()[0].uuid.clone();
         db.rename_bell_sound(&uuid, "Singing Bowl").unwrap();
         assert_eq!(db.list_bell_sounds().unwrap()[0].name, "Singing Bowl");
@@ -9309,7 +9465,7 @@ mod tests {
     #[test]
     fn delete_bell_sound_removes_the_row_and_emits_tombstone() {
         let db = Database::open_in_memory().unwrap();
-        db.insert_bell_sound("Bowl", "/p/bowl.wav", false, "audio/wav").unwrap();
+        db.insert_bell_sound("Bowl", "/p/bowl.wav", false, "audio/wav", BellSoundCategory::General).unwrap();
         let uuid = db.list_bell_sounds().unwrap()[0].uuid.clone();
         db.delete_bell_sound(&uuid).unwrap();
         assert!(db.list_bell_sounds().unwrap().is_empty());
@@ -9435,7 +9591,7 @@ mod tests {
     #[test]
     fn apply_event_bell_sound_replay_round_trip_across_peers() {
         let dev_a = Database::open_in_memory().unwrap();
-        dev_a.insert_bell_sound("Bowl", "/p/bowl.wav", true, "audio/wav").unwrap();
+        dev_a.insert_bell_sound("Bowl", "/p/bowl.wav", true, "audio/wav", BellSoundCategory::General).unwrap();
         let uuid = dev_a.list_bell_sounds().unwrap()[0].uuid.clone();
         dev_a.rename_bell_sound(&uuid, "Singing Bowl").unwrap();
 

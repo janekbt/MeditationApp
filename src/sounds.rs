@@ -522,7 +522,16 @@ fn present_import_confirm_dialog(
                     let mut insert_err: Option<String> = None;
                     app.with_db_mut(|db| {
                         if let Err(e) = db.insert_bell_sound_with_uuid(
-                            &new_uuid, &trimmed_for_done, &dest_str, false, mime,
+                            &new_uuid,
+                            &trimmed_for_done,
+                            &dest_str,
+                            false,
+                            mime,
+                            // Imports always land as General for now;
+                            // step 5's category-from-chooser-context
+                            // refinement threads the caller's chooser
+                            // category through this flow.
+                            crate::db::BellSoundCategory::General,
                         ) {
                             insert_err = Some(e.to_string());
                         }

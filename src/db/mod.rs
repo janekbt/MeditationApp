@@ -23,7 +23,7 @@ use std::path::Path;
 /// learning about meditate-core directly. Same for the bell-library
 /// types added in B.3.1, and the `mint_uuid` helper added in B.5.
 pub use meditate_core::db::{
-    mint_uuid, BellSound, ChartKind, GuidedFile, IntervalBell, IntervalBellKind, Label, Preset, SessionMode, VibrationPattern,
+    mint_uuid, BellSound, BellSoundCategory, ChartKind, GuidedFile, IntervalBell, IntervalBellKind, Label, Preset, SessionMode, VibrationPattern,
 };
 
 /// Bundled bell-sound seed: hardcoded (uuid, display name, GResource
@@ -360,8 +360,15 @@ impl Database {
             return Ok(());
         }
         for (uuid, name, path, mime) in BUNDLED_BELL_SOUNDS {
+            // Bundled rows ship as `general` — bells, gongs, chimes
+            // for the Starting / Interval / End bell choosers. Box
+            // Breath voice cues land via separate seeds when those
+            // ship (TODO entry: "Source bundled Box Breath voice-cue
+            // sounds").
             self.inner
-                .insert_bell_sound_with_uuid(uuid, name, path, true, mime)
+                .insert_bell_sound_with_uuid(
+                    uuid, name, path, true, mime, BellSoundCategory::General,
+                )
                 .map_err(map_core_err)?;
         }
         self.inner.set_setting(BELLS_SEEDED_KEY, "1").map_err(map_core_err)?;
@@ -598,15 +605,23 @@ impl Database {
         self.inner.list_bell_sounds().map_err(map_core_err)
     }
 
+    pub fn list_bell_sounds_for_category(
+        &self,
+        category: BellSoundCategory,
+    ) -> Result<Vec<BellSound>> {
+        self.inner.list_bell_sounds_for_category(category).map_err(map_core_err)
+    }
+
     pub fn insert_bell_sound(
         &self,
         name: &str,
         file_path: &str,
         is_bundled: bool,
         mime_type: &str,
+        category: BellSoundCategory,
     ) -> Result<i64> {
         self.inner
-            .insert_bell_sound(name, file_path, is_bundled, mime_type)
+            .insert_bell_sound(name, file_path, is_bundled, mime_type, category)
             .map_err(map_core_err)
     }
 
@@ -617,9 +632,10 @@ impl Database {
         file_path: &str,
         is_bundled: bool,
         mime_type: &str,
+        category: BellSoundCategory,
     ) -> Result<i64> {
         self.inner
-            .insert_bell_sound_with_uuid(uuid, name, file_path, is_bundled, mime_type)
+            .insert_bell_sound_with_uuid(uuid, name, file_path, is_bundled, mime_type, category)
             .map_err(map_core_err)
     }
 
