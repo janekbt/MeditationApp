@@ -68,6 +68,38 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
 
     general_page.add(&sound_group);
 
+    // ── Vibration group ───────────────────────────────────────────────────────
+    // Always-present "Manage vibration patterns" entry — works on
+    // laptop where per-bell vibration toggles are greyed (no haptic
+    // motor), so the user can still author and sync patterns. Tapping
+    // closes the Preferences dialog and pushes the chooser onto the
+    // main window's nav view.
+    let vibration_group = adw::PreferencesGroup::builder()
+        .title(gettext("Vibration"))
+        .build();
+    let manage_patterns_row = adw::ActionRow::builder()
+        .title(gettext("Manage vibration patterns"))
+        .activatable(true)
+        .build();
+    let chevron = gtk::Image::from_icon_name("go-next-symbolic");
+    chevron.add_css_class("dim-label");
+    manage_patterns_row.add_suffix(&chevron);
+    let app_for_row = app.clone();
+    let dialog_for_row = dialog.clone();
+    manage_patterns_row.connect_activated(move |_| {
+        dialog_for_row.close();
+        let Some(window) = app_for_row.active_window()
+            .and_then(|w| w.downcast::<crate::window::MeditateWindow>().ok())
+        else { return; };
+        window.push_vibrations_chooser(&app_for_row, None, |_uuid| {
+            // Manage-mode: nothing to do with the picked uuid
+            // (the chooser pops itself; the list page above will
+            // refresh from the rebuild fired by rename/delete).
+        });
+    });
+    vibration_group.add(&manage_patterns_row);
+    general_page.add(&vibration_group);
+
     // ── Statistics group ──────────────────────────────────────────────────────
 
     let stats_group = adw::PreferencesGroup::builder()

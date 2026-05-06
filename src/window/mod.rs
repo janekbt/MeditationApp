@@ -58,6 +58,25 @@ impl MeditateWindow {
         );
     }
 
+    /// Push the vibration-pattern chooser onto the navigation view.
+    /// Triggered by every per-bell Pattern row + each Box Breath
+    /// phase row. The caller's `on_selected` callback fires with
+    /// the chosen UUID and the page pops automatically.
+    pub fn push_vibrations_chooser(
+        &self,
+        app: &crate::application::MeditateApplication,
+        current_uuid: Option<String>,
+        on_selected: impl Fn(String) + 'static,
+    ) {
+        use glib::subclass::prelude::ObjectSubclassIsExt;
+        crate::vibrations::push_vibrations_chooser(
+            &self.imp().nav_view,
+            app,
+            current_uuid,
+            on_selected,
+        );
+    }
+
     /// Push the label chooser onto the navigation view. Triggered
     /// by both label-selection rows (Setup view + Done view). The
     /// caller's `on_selected` callback fires when the user taps a
