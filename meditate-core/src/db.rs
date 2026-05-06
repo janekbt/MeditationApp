@@ -2575,6 +2575,106 @@ impl Database {
         Ok(())
     }
 
+    // ── VibrationPatterns ─────────────────────────────────────────────
+    // CRUD onto `vibration_patterns`. Same idempotent-insert + UNIQUE-
+    // NOCASE-name shape as guided_files. Bundled-pattern seeding uses
+    // `_with_uuid` to insert under stable hardcoded UUIDs so peers
+    // don't end up with duplicate rows after sync.
+
+    /// Insert a row keyed on `uuid_str`. Idempotent — a second call
+    /// with the same uuid returns the existing rowid without touching
+    /// the row or emitting another event. Returns
+    /// `DuplicateVibrationPattern(name)` if a row with the same
+    /// case-insensitive `name` already exists under a different uuid.
+    pub fn insert_vibration_pattern_with_uuid(
+        &self,
+        uuid_str: &str,
+        name: &str,
+        duration_ms: u32,
+        intensities: &[f32],
+        chart_kind: ChartKind,
+        is_bundled: bool,
+    ) -> Result<i64> {
+        let tx = self.conn.unchecked_transaction()?;
+        if let Some(existing) = self.conn.query_row(
+            "SELECT id FROM vibration_patterns WHERE uuid = ?1",
+            params![uuid_str],
+            |row| row.get::<_, i64>(0),
+        ).optional()? {
+            return Ok(existing);
+        }
+        let intensities_json = serde_json::to_string(intensities)
+            .map_err(|e| DbError::Csv(format!("serialise intensities: {e}")))?;
+        let now_iso = chrono::Utc::now().to_rfc3339();
+        let result = self.conn.execute(
+            "INSERT INTO vibration_patterns
+                (uuid, name, duration_ms, intensities_json, chart_kind,
+                 is_bundled, created_iso, updated_iso)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+            params![
+                uuid_str,
+                name,
+                duration_ms,
+                intensities_json,
+                chart_kind.as_db_str(),
+                is_bundled as i64,
+                now_iso,
+            ],
+        );
+        match result {
+            Ok(_) => {}
+            Err(rusqlite::Error::SqliteFailure(err, _))
+                if err.code == rusqlite::ErrorCode::ConstraintViolation =>
+            {
+                return Err(DbError::DuplicateVibrationPattern(name.to_string()));
+            }
+            Err(e) => return Err(DbError::Sqlite(e)),
+        }
+        let rowid = self.conn.last_insert_rowid();
+        let payload = serde_json::json!({
+            "uuid": uuid_str,
+            "name": name,
+            "duration_ms": duration_ms,
+            "intensities_json": intensities_json,
+            "chart_kind": chart_kind.as_db_str(),
+            "is_bundled": is_bundled,
+            "created_iso": now_iso,
+            "updated_iso": now_iso,
+        }).to_string();
+        self.emit_event("vibration_pattern_insert", uuid_str, payload)?;
+        tx.commit()?;
+        Ok(rowid)
+    }
+
+    pub fn list_vibration_patterns(&self) -> Result<Vec<VibrationPattern>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, uuid, name, duration_ms, intensities_json,
+                    chart_kind, is_bundled, created_iso, updated_iso
+             FROM vibration_patterns
+             ORDER BY created_iso ASC, id ASC",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                let intensities_json: String = row.get(4)?;
+                let chart_str: String = row.get(5)?;
+                Ok(VibrationPattern {
+                    id: row.get(0)?,
+                    uuid: row.get(1)?,
+                    name: row.get(2)?,
+                    duration_ms: row.get::<_, i64>(3)? as u32,
+                    intensities: serde_json::from_str(&intensities_json)
+                        .unwrap_or_default(),
+                    chart_kind: ChartKind::from_db_str(&chart_str)
+                        .unwrap_or(ChartKind::Line),
+                    is_bundled: row.get::<_, i64>(6)? != 0,
+                    created_iso: row.get(7)?,
+                    updated_iso: row.get(8)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
     pub fn count_sessions(&self) -> Result<i64> {
         Ok(self
             .conn
@@ -9955,6 +10055,72 @@ mod tests {
             assert_eq!(ChartKind::from_db_str(k.as_db_str()), Some(k));
         }
         assert_eq!(ChartKind::from_db_str("typo"), None);
+    }
+
+    #[test]
+    fn list_vibration_patterns_is_empty_on_a_fresh_database() {
+        let db = Database::open_in_memory().unwrap();
+        assert!(db.list_vibration_patterns().unwrap().is_empty());
+    }
+
+    #[test]
+    fn insert_vibration_pattern_with_uuid_round_trips_through_list() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_vibration_pattern_with_uuid(
+            "vp-1", "Heartbeat", 1500, &[0.0, 0.6, 0.0, 0.0, 1.0, 0.0],
+            ChartKind::Line, false,
+        ).unwrap();
+        let rows = db.list_vibration_patterns().unwrap();
+        assert_eq!(rows.len(), 1);
+        let r = &rows[0];
+        assert_eq!(r.uuid, "vp-1");
+        assert_eq!(r.name, "Heartbeat");
+        assert_eq!(r.duration_ms, 1500);
+        assert_eq!(r.intensities, vec![0.0, 0.6, 0.0, 0.0, 1.0, 0.0]);
+        assert_eq!(r.chart_kind, ChartKind::Line);
+        assert!(!r.is_bundled);
+        assert!(!r.created_iso.is_empty());
+        assert_eq!(r.created_iso, r.updated_iso,
+            "fresh insert: updated_iso == created_iso");
+    }
+
+    #[test]
+    fn insert_vibration_pattern_with_existing_uuid_is_silent_noop() {
+        // Sync replay can land the same insert twice; the second call
+        // returns the existing rowid without changing the row or
+        // emitting a second event. Mirrors guided_files / bell_sounds.
+        let db = Database::open_in_memory().unwrap();
+        let id1 = db.insert_vibration_pattern_with_uuid(
+            "vp-1", "Pulse", 400, &[0.0, 1.0, 0.0],
+            ChartKind::Line, true,
+        ).unwrap();
+        let id2 = db.insert_vibration_pattern_with_uuid(
+            "vp-1", "Different Name", 999, &[0.5],
+            ChartKind::Bar, false,
+        ).unwrap();
+        assert_eq!(id1, id2);
+        let rows = db.list_vibration_patterns().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, "Pulse");
+        assert_eq!(rows[0].duration_ms, 400);
+    }
+
+    #[test]
+    fn insert_vibration_pattern_with_duplicate_name_returns_duplicate_error() {
+        // UNIQUE NOCASE on `name` prevents two rows that look the same
+        // in the chooser even under different uuids.
+        let db = Database::open_in_memory().unwrap();
+        db.insert_vibration_pattern_with_uuid(
+            "vp-1", "Pulse", 400, &[0.0, 1.0, 0.0],
+            ChartKind::Line, false,
+        ).unwrap();
+        match db.insert_vibration_pattern_with_uuid(
+            "vp-2", "PULSE", 400, &[0.0, 1.0, 0.0],
+            ChartKind::Line, false,
+        ) {
+            Err(DbError::DuplicateVibrationPattern(name)) => assert_eq!(name, "PULSE"),
+            other => panic!("expected DuplicateVibrationPattern, got {other:?}"),
+        }
     }
 
     #[test]
