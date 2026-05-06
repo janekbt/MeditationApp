@@ -60,6 +60,18 @@ pub fn push_vibrations_chooser(
 
     let rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>> = Rc::new(RefCell::new(None));
 
+    // Shared preview slot: each Play button replaces this, disarming
+    // the previous handle so feedbackd's per-app supersede swaps the
+    // pattern in-flight without the cancel-races-the-pattern bug.
+    // Dropping the chooser drops the slot, which fires the empty-array
+    // cancel for any in-flight preview.
+    let play_slot: Rc<RefCell<Option<crate::vibration::PatternPlayback>>> =
+        Rc::new(RefCell::new(None));
+    let preview: Rc<RefCell<PreviewState>> = Rc::new(RefCell::new(PreviewState {
+        active_uuid: None,
+        active_btn: None,
+    }));
+
     let group_for_rb = group.clone();
     let rows_for_rb = rows.clone();
     let app_for_rb = app.clone();
@@ -68,6 +80,8 @@ pub fn push_vibrations_chooser(
     let on_selected_for_rb = on_selected.clone();
     let toast_overlay_for_rb = toast_overlay.clone();
     let rebuilder_for_self = rebuilder.clone();
+    let play_slot_for_rb = play_slot.clone();
+    let preview_for_rb = preview.clone();
     *rebuilder.borrow_mut() = Some(Box::new(move || {
         rebuild_chooser_rows(
             &group_for_rb,
@@ -78,6 +92,8 @@ pub fn push_vibrations_chooser(
             on_selected_for_rb.clone(),
             rebuilder_for_self.clone(),
             &toast_overlay_for_rb,
+            play_slot_for_rb.clone(),
+            preview_for_rb.clone(),
         );
     }));
 
@@ -100,6 +116,8 @@ fn rebuild_chooser_rows(
     on_selected: Rc<dyn Fn(String)>,
     rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
     _toast_overlay: &adw::ToastOverlay,
+    play_slot: Rc<RefCell<Option<crate::vibration::PatternPlayback>>>,
+    preview: Rc<RefCell<PreviewState>>,
 ) {
     for row in rows.borrow_mut().drain(..) {
         group.remove(&row);
@@ -116,6 +134,8 @@ fn rebuild_chooser_rows(
         current_uuid: current_uuid.map(|s| s.to_string()),
         on_selected,
         nav_view: nav_view.clone(),
+        play_slot: play_slot.clone(),
+        preview: preview.clone(),
     };
 
     let patterns = app
@@ -131,11 +151,27 @@ fn rebuild_chooser_rows(
 
 /// Selection-mode parameters: tap-pick fires `on_selected` then pops
 /// the nav view; `current_uuid` decorates the matching row with a
-/// checkmark.
+/// checkmark. `play_slot` is shared across every row's Play button
+/// so a fresh tap supersedes any previous preview cleanly via
+/// disarm-on-replace, matching the bell-fire path. `preview` tracks
+/// which row is currently showing the Stop icon so a click on a
+/// different row (or on the same row again) can revert it.
 struct SelectionContext {
     current_uuid: Option<String>,
     on_selected: Rc<dyn Fn(String)>,
     nav_view: adw::NavigationView,
+    play_slot: Rc<RefCell<Option<crate::vibration::PatternPlayback>>>,
+    preview: Rc<RefCell<PreviewState>>,
+}
+
+/// Which pattern is currently previewing + the play-button widget
+/// showing the Stop icon. Used to flip the icon back to Play when
+/// the preview ends — either because the user tapped the Stop
+/// button, started a different pattern, or the natural duration
+/// timeout fired.
+struct PreviewState {
+    active_uuid: Option<String>,
+    active_btn: Option<gtk::Button>,
 }
 
 fn build_create_row(
@@ -191,6 +227,16 @@ fn build_pattern_row(
         row.add_suffix(&check);
     }
 
+    // Play button comes before edit/rename/delete so it's the
+    // leftmost suffix — primary "test this on the motor" affordance.
+    add_play_button(
+        &row,
+        pattern,
+        app,
+        selection.play_slot.clone(),
+        selection.preview.clone(),
+    );
+
     if pattern.is_bundled {
         // Bundled rows stay permanent — the seed re-creates them on
         // every open anyway, and an accidental tombstone could
@@ -214,6 +260,89 @@ fn build_pattern_row(
         nav_view.pop();
     });
     row
+}
+
+fn add_play_button(
+    row: &adw::ActionRow,
+    pattern: &VibrationPattern,
+    app: &MeditateApplication,
+    play_slot: Rc<RefCell<Option<crate::vibration::PatternPlayback>>>,
+    preview: Rc<RefCell<PreviewState>>,
+) {
+    let play_btn = gtk::Button::builder()
+        .icon_name("media-playback-start-symbolic")
+        .tooltip_text(gettext("Preview pattern"))
+        .css_classes(["flat", "circular"])
+        .valign(gtk::Align::Center)
+        .build();
+    let app = app.clone();
+    let pattern = pattern.clone();
+    let preview_for_click = preview.clone();
+    let btn_for_click = play_btn.clone();
+    play_btn.connect_clicked(move |_| {
+        let already_playing_this = preview_for_click
+            .borrow()
+            .active_uuid
+            .as_deref()
+            == Some(pattern.uuid.as_str());
+
+        // Always revert whichever button currently shows Stop —
+        // either we're toggling it off here, or we're switching to
+        // a different pattern.
+        if let Some(prev_btn) = preview_for_click.borrow_mut().active_btn.take() {
+            prev_btn.set_icon_name("media-playback-start-symbolic");
+            prev_btn.set_tooltip_text(Some(&gettext("Preview pattern")));
+        }
+        preview_for_click.borrow_mut().active_uuid = None;
+
+        if already_playing_this {
+            // Toggle off — clear the slot, its Drop fires the
+            // empty-array cancel at feedbackd.
+            *play_slot.borrow_mut() = None;
+            return;
+        }
+
+        // Start new preview. disarm-on-replace hands off cleanly to
+        // feedbackd's per-app supersede; no cancel race.
+        let new_handle = crate::vibration::PatternPlayback::play(&app, &pattern);
+        {
+            let mut slot = play_slot.borrow_mut();
+            if let Some(mut old) = slot.take() {
+                old.disarm();
+            }
+            *slot = Some(new_handle);
+        }
+
+        btn_for_click.set_icon_name("media-playback-stop-symbolic");
+        btn_for_click.set_tooltip_text(Some(&gettext("Stop preview")));
+        {
+            let mut state = preview_for_click.borrow_mut();
+            state.active_uuid = Some(pattern.uuid.clone());
+            state.active_btn = Some(btn_for_click.clone());
+        }
+
+        // Auto-revert on natural completion. The timeout fires after
+        // the pattern's full duration — if the same pattern is still
+        // active by then (no other Play tap in between), flip the
+        // icon back to Play. If another pattern took over in the
+        // meantime, this no-ops because active_uuid won't match.
+        let preview_for_timeout = preview_for_click.clone();
+        let uuid_for_timeout = pattern.uuid.clone();
+        glib::timeout_add_local_once(
+            std::time::Duration::from_millis(pattern.duration_ms as u64),
+            move || {
+                let mut state = preview_for_timeout.borrow_mut();
+                if state.active_uuid.as_deref() == Some(uuid_for_timeout.as_str()) {
+                    if let Some(btn) = state.active_btn.take() {
+                        btn.set_icon_name("media-playback-start-symbolic");
+                        btn.set_tooltip_text(Some(&gettext("Preview pattern")));
+                    }
+                    state.active_uuid = None;
+                }
+            },
+        );
+    });
+    row.add_suffix(&play_btn);
 }
 
 fn add_edit_button(
