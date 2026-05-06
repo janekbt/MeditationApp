@@ -24,6 +24,13 @@ mod imp {
         pub stats_dirty: std::cell::Cell<bool>,
         pub log_dirty:   std::cell::Cell<bool>,
 
+        /// Whether the device exposes feedbackd's `Haptic` interface
+        /// (i.e. has a vibration motor and feedbackd reachable on the
+        /// session bus). Set once at startup by the synchronous probe;
+        /// UI consumers read it via `app.has_haptic()` to gate
+        /// vibration affordances. `false` until the probe runs.
+        pub has_haptic: std::cell::Cell<bool>,
+
         /// Path to the SQLite file. Cached here so the sync worker
         /// thread can open its OWN connection (rusqlite::Connection
         /// is !Send so the main-thread DB can't be shared). `None`
@@ -50,6 +57,7 @@ mod imp {
                 db: Arc::default(),
                 stats_dirty: std::cell::Cell::new(true),
                 log_dirty:   std::cell::Cell::new(true),
+                has_haptic: std::cell::Cell::new(false),
                 db_path: Mutex::new(None),
                 sync_in_flight: Arc::new(AtomicBool::new(false)),
                 sync_re_trigger: Arc::new(AtomicBool::new(false)),
@@ -125,6 +133,14 @@ mod imp {
                 &provider,
                 gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
             );
+
+            // Probe whether feedbackd's Haptic interface is reachable
+            // before any UI assembles. Synchronous so app.has_haptic()
+            // returns the true answer the first time anything reads
+            // it. Worst-case 500 ms; typical <50 ms.
+            let has_haptic = crate::vibration::probe_haptic();
+            self.has_haptic.set(has_haptic);
+            crate::diag::log(&format!("haptic probe: {}", has_haptic));
 
             self.setup_actions();
             self.setup_accels();
@@ -244,6 +260,20 @@ impl Default for MeditateApplication {
 }
 
 impl MeditateApplication {
+    /// Whether the device exposes feedbackd's `Haptic` interface (set
+    /// by the synchronous probe in `startup`). UI consumers gate
+    /// vibration affordances on this — Vibrate / Both segments of
+    /// Sound/Vibration/Both ToggleGroups go insensitive when false,
+    /// the per-mode "what plays" toggle is forced to `'sound'`,
+    /// per-bell vibration playback short-circuits to a no-op.
+    /// `false` until `startup` finishes (probe runs synchronously
+    /// before any UI assembles, so any read after that point sees
+    /// the real answer).
+    pub fn has_haptic(&self) -> bool {
+        use glib::subclass::prelude::ObjectSubclassIsExt;
+        self.imp().has_haptic.get()
+    }
+
     /// Run a closure with a reference to the open database, on the current
     /// thread. Holds the DB mutex for the duration of the closure, so keep
     /// the work short — SQLite PRAGMAs tune this for single-writer use.
