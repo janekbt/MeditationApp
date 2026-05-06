@@ -444,6 +444,256 @@ template $TimerView : Gtk.Widget {
             };
           }
 
+          // ── Vibration UI prototype (throwaway) ───────────────────────
+          // Throwaway test of the Sound / Vibration / Both selector for
+          // the Starting and End Bells. Nothing here actually plays —
+          // the toggle groups just show/hide the relevant config rows.
+          // Once we pick a final shape these groups get ripped out and
+          // merged into starting_bell_row + end_bell_row directly.
+          Adw.Clamp {
+            maximum-size: 360;
+            tightening-threshold: 300;
+
+            child: Adw.PreferencesGroup vibration_proto_start_group {
+              title: _("Prototype: starting signal");
+              description: _("UI feel test — Preparation Time is the existing peer pattern.");
+
+              Adw.ExpanderRow vibration_proto_start_row {
+                title: _("Starting Signal");
+                subtitle: _("Play a signal when the session begins");
+                show-enable-switch: true;
+                enable-expansion: false;
+
+                Adw.ActionRow vibration_proto_start_mode_row {
+                  title: _("Type");
+
+                  [suffix]
+                  Gtk.Box vibration_proto_start_toggle_host {
+                    orientation: horizontal;
+                    valign: center;
+                  }
+                }
+
+                Gtk.Revealer vibration_proto_start_sound_revealer {
+                  transition-type: slide_down;
+                  transition-duration: 220;
+                  reveal-child: true;
+
+                  Adw.ActionRow vibration_proto_start_sound_row {
+                    title: _("Bell Sound");
+                    subtitle: _("Tibetan Bowl");
+                    activatable: true;
+
+                    [suffix]
+                    Gtk.Image {
+                      icon-name: "go-next-symbolic";
+                      styles ["dim-label"]
+                    }
+                  }
+                }
+
+                Gtk.Revealer vibration_proto_start_pattern_revealer {
+                  transition-type: slide_down;
+                  transition-duration: 220;
+                  reveal-child: false;
+
+                  Adw.ActionRow vibration_proto_start_pattern_row {
+                    title: _("Pattern");
+                    subtitle: _("Heartbeat");
+                    activatable: true;
+
+                    [suffix]
+                    Gtk.Image {
+                      icon-name: "go-next-symbolic";
+                      styles ["dim-label"]
+                    }
+                  }
+                }
+
+                Adw.ExpanderRow vibration_proto_start_prep_row {
+                  title: _("Preparation Time");
+                  subtitle: _("Silence before the starting bell");
+                  show-enable-switch: true;
+                  enable-expansion: false;
+
+                  Adw.SpinRow vibration_proto_start_prep_secs_row {
+                    title: _("Duration");
+                    subtitle: _("Seconds");
+                    adjustment: Gtk.Adjustment {
+                      lower: 5;
+                      upper: 120;
+                      value: 30;
+                      step-increment: 5;
+                      page-increment: 15;
+                    };
+                  }
+                }
+              }
+            };
+          }
+
+          Adw.Clamp {
+            maximum-size: 360;
+            tightening-threshold: 300;
+
+            child: Adw.PreferencesGroup vibration_proto_group {
+              title: _("Prototype: end signal");
+              description: _("UI feel test — no real sound or vibration plays here.");
+
+              Adw.ExpanderRow vibration_proto_row {
+                title: _("End Signal");
+                subtitle: _("Play a signal when the session ends");
+                show-enable-switch: true;
+                enable-expansion: false;
+
+                // Mode picker. Toggle group is built in Rust (Adw 1.7
+                // ToggleGroup isn't usable from Blueprint without a
+                // matching .ui parser version; building it imperatively
+                // sidesteps that and keeps this file editor-stable).
+                Adw.ActionRow vibration_proto_mode_row {
+                  title: _("Type");
+
+                  [suffix]
+                  Gtk.Box vibration_proto_toggle_host {
+                    orientation: horizontal;
+                    valign: center;
+                  }
+                }
+
+                Gtk.Revealer vibration_proto_sound_revealer {
+                  transition-type: slide_down;
+                  transition-duration: 220;
+                  reveal-child: true;
+
+                  Adw.ActionRow vibration_proto_sound_row {
+                    title: _("Bell Sound");
+                    subtitle: _("Tibetan Bowl");
+                    activatable: true;
+
+                    [suffix]
+                    Gtk.Image {
+                      icon-name: "go-next-symbolic";
+                      styles ["dim-label"]
+                    }
+                  }
+                }
+
+                Gtk.Revealer vibration_proto_pattern_revealer {
+                  transition-type: slide_down;
+                  transition-duration: 220;
+                  reveal-child: false;
+
+                  Adw.ActionRow vibration_proto_pattern_row {
+                    title: _("Pattern");
+                    subtitle: _("Heartbeat");
+                    activatable: true;
+
+                    [suffix]
+                    Gtk.Image {
+                      icon-name: "go-next-symbolic";
+                      styles ["dim-label"]
+                    }
+                  }
+                }
+              }
+            };
+          }
+
+          // Box Breath phase-vibrations prototype: master is the outer
+          // AdwExpanderRow (show-enable-switch). Its four child rows are
+          // each a per-phase AdwExpanderRow (show-enable-switch) with a
+          // Pattern sub-row. Reveal/hide is free from the outer expander.
+          // Three-level nesting — same chevron-override CSS the existing
+          // Starting Bell already relies on applies here too.
+          Adw.Clamp {
+            maximum-size: 360;
+            tightening-threshold: 300;
+
+            child: Adw.PreferencesGroup vibration_proto_phase_group {
+              title: _("Prototype: phase vibrations");
+              description: _("Master toggle reveals / hides the four phase rows");
+
+              Adw.ExpanderRow vibration_proto_phase_master_row {
+                title: _("Vibrate during phases");
+                subtitle: _("Different pattern per phase to feel the cycle");
+                show-enable-switch: true;
+                enable-expansion: false;
+
+                Adw.ExpanderRow vibration_proto_phase_inhale_row {
+                  title: _("Inhale");
+                  show-enable-switch: true;
+                  enable-expansion: false;
+
+                  Adw.ActionRow {
+                    title: _("Pattern");
+                    subtitle: _("Pulse");
+                    activatable: true;
+
+                    [suffix]
+                    Gtk.Image {
+                      icon-name: "go-next-symbolic";
+                      styles ["dim-label"]
+                    }
+                  }
+                }
+
+                Adw.ExpanderRow vibration_proto_phase_hold_in_row {
+                  title: _("Hold (in)");
+                  show-enable-switch: true;
+                  enable-expansion: false;
+
+                  Adw.ActionRow {
+                    title: _("Pattern");
+                    subtitle: _("None");
+                    activatable: true;
+
+                    [suffix]
+                    Gtk.Image {
+                      icon-name: "go-next-symbolic";
+                      styles ["dim-label"]
+                    }
+                  }
+                }
+
+                Adw.ExpanderRow vibration_proto_phase_exhale_row {
+                  title: _("Exhale");
+                  show-enable-switch: true;
+                  enable-expansion: false;
+
+                  Adw.ActionRow {
+                    title: _("Pattern");
+                    subtitle: _("Wave");
+                    activatable: true;
+
+                    [suffix]
+                    Gtk.Image {
+                      icon-name: "go-next-symbolic";
+                      styles ["dim-label"]
+                    }
+                  }
+                }
+
+                Adw.ExpanderRow vibration_proto_phase_hold_out_row {
+                  title: _("Hold (out)");
+                  show-enable-switch: true;
+                  enable-expansion: false;
+
+                  Adw.ActionRow {
+                    title: _("Pattern");
+                    subtitle: _("None");
+                    activatable: true;
+
+                    [suffix]
+                    Gtk.Image {
+                      icon-name: "go-next-symbolic";
+                      styles ["dim-label"]
+                    }
+                  }
+                }
+              }
+            };
+          }
+
         };
       };
     }
