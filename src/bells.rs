@@ -560,11 +560,16 @@ fn push_edit_page(
         let rebuilder = rebuilder_for_sound.clone();
         let on_changed = on_changed_for_sound.clone();
         let sound_row = sound_row_for_sub.clone();
-        window.push_sound_chooser(&app_outer, current, move |uuid| {
-            snap.borrow_mut().sound = uuid.clone();
-            sound_row.set_subtitle(&sound_label(&app_inner, &uuid));
-            write_back(&app_inner, &snap, &rebuilder, &on_changed);
-        });
+        window.push_sound_chooser(
+            &app_outer,
+            crate::db::BellSoundCategory::General,
+            current,
+            move |uuid| {
+                snap.borrow_mut().sound = uuid.clone();
+                sound_row.set_subtitle(&sound_label(&app_inner, &uuid));
+                write_back(&app_inner, &snap, &rebuilder, &on_changed);
+            },
+        );
     });
 
     // ── Delete ────────────────────────────────────────────────────

@@ -46,6 +46,7 @@ impl MeditateWindow {
     pub fn push_sound_chooser(
         &self,
         app: &crate::application::MeditateApplication,
+        category: crate::db::BellSoundCategory,
         current_uuid: Option<String>,
         on_selected: impl Fn(String) + 'static,
     ) {
@@ -53,6 +54,7 @@ impl MeditateWindow {
         crate::sounds::push_sounds_chooser(
             &self.imp().nav_view,
             app,
+            category,
             current_uuid,
             on_selected,
         );

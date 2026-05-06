@@ -15,7 +15,7 @@ use std::rc::Rc;
 use adw::prelude::*;
 
 use crate::application::MeditateApplication;
-use crate::db::BellSound;
+use crate::db::{BellSound, BellSoundCategory};
 use crate::i18n::gettext;
 
 /// Push the bell-sound chooser onto the navigation view in selection
@@ -27,6 +27,7 @@ use crate::i18n::gettext;
 pub fn push_sounds_chooser(
     nav_view: &adw::NavigationView,
     app: &MeditateApplication,
+    category: BellSoundCategory,
     current_uuid: Option<String>,
     on_selected: impl Fn(String) + 'static,
 ) {
@@ -72,6 +73,7 @@ pub fn push_sounds_chooser(
             &group_for_rb,
             &rows_for_rb,
             &app_for_rb,
+            category,
             current_uuid_for_rb.as_deref(),
             &nav_view_for_rb,
             on_selected_for_rb.clone(),
@@ -97,6 +99,7 @@ fn rebuild_chooser_rows(
     group: &adw::PreferencesGroup,
     rows: &Rc<std::cell::RefCell<Vec<gtk::Widget>>>,
     app: &MeditateApplication,
+    category: BellSoundCategory,
     current_uuid: Option<&str>,
     nav_view: &adw::NavigationView,
     on_selected: Rc<dyn Fn(String)>,
@@ -108,7 +111,9 @@ fn rebuild_chooser_rows(
 
     // "Choose your own…" — synthetic, always at the top, opens a
     // file picker. The closure borrows the same rebuilder so a
-    // successful import re-renders the list with the new row.
+    // successful import re-renders the list with the new row. The
+    // chooser's category flows through to the insert call so an
+    // import from a Box Breath phase chooser auto-tags BoxBreath.
     let import_row = adw::ActionRow::builder()
         .title(gettext("Choose your own…"))
         .activatable(true)
@@ -123,6 +128,7 @@ fn rebuild_chooser_rows(
         present_file_picker(
             row,
             &app_for_import,
+            category,
             Box::new(move || {
                 if let Some(rb) = rebuilder.borrow().as_ref() {
                     rb();
@@ -140,9 +146,25 @@ fn rebuild_chooser_rows(
     };
 
     let sounds = app
-        .with_db(|db| db.list_bell_sounds())
+        .with_db(|db| db.list_bell_sounds_for_category(category))
         .and_then(|r| r.ok())
         .unwrap_or_default();
+    if sounds.is_empty() && category == BellSoundCategory::BoxBreath {
+        // Phase chooser starts empty for new users until the
+        // bundled voice cues land (TODO: "Source bundled Box
+        // Breath voice-cue sounds"). Show a hint pointing at the
+        // import affordance directly above.
+        let empty = adw::ActionRow::builder()
+            .title(gettext("No sounds for this category yet"))
+            .subtitle(gettext("Tap \"Choose your own…\" above to import one"))
+            .activatable(false)
+            .selectable(false)
+            .build();
+        empty.add_css_class("dim-label");
+        group.add(&empty);
+        rows.borrow_mut().push(empty.upcast());
+        return;
+    }
     for sound in sounds {
         let row = build_sound_row(&sound, app, rebuilder.clone(), &selection);
         group.add(&row);
@@ -296,6 +318,7 @@ const MAX_CUSTOM_BELL_BYTES: u64 = 10 * 1024 * 1024;
 fn present_file_picker(
     anchor: &adw::ActionRow,
     app: &MeditateApplication,
+    category: BellSoundCategory,
     on_imported: Box<dyn Fn()>,
 ) {
     let file_dialog = gtk::FileDialog::builder()
@@ -332,6 +355,7 @@ fn present_file_picker(
             present_import_confirm_dialog(
                 &anchor,
                 &app,
+                category,
                 &path,
                 on_imported.clone(),
             );
@@ -356,6 +380,7 @@ fn present_size_toast(anchor: &adw::ActionRow) {
 fn present_import_confirm_dialog(
     anchor: &adw::ActionRow,
     app: &MeditateApplication,
+    category: BellSoundCategory,
     source_path: &std::path::Path,
     on_imported: Rc<Box<dyn Fn()>>,
 ) {
@@ -527,11 +552,7 @@ fn present_import_confirm_dialog(
                             &dest_str,
                             false,
                             mime,
-                            // Imports always land as General for now;
-                            // step 5's category-from-chooser-context
-                            // refinement threads the caller's chooser
-                            // category through this flow.
-                            crate::db::BellSoundCategory::General,
+                            category,
                         ) {
                             insert_err = Some(e.to_string());
                         }

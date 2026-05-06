@@ -650,11 +650,16 @@ impl TimerView {
                     .and_then(|r| r.ok());
                 let app_for_pick = app.clone();
                 let this_for_pick = this.clone();
-                window.push_sound_chooser(&app, current, move |uuid| {
-                    app_for_pick.with_db_mut(|db| db.set_setting("end_bell_sound", &uuid));
-                    crate::sound::preload_end_bell(&app_for_pick);
-                    this_for_pick.imp().refresh_end_bell_sound_subtitle();
-                });
+                window.push_sound_chooser(
+                    &app,
+                    crate::db::BellSoundCategory::General,
+                    current,
+                    move |uuid| {
+                        app_for_pick.with_db_mut(|db| db.set_setting("end_bell_sound", &uuid));
+                        crate::sound::preload_end_bell(&app_for_pick);
+                        this_for_pick.imp().refresh_end_bell_sound_subtitle();
+                    },
+                );
             }
         ));
 
@@ -739,10 +744,15 @@ impl TimerView {
                     .and_then(|r| r.ok());
                 let app_for_pick = app.clone();
                 let this_for_pick = this.clone();
-                window.push_sound_chooser(&app, current, move |uuid| {
-                    app_for_pick.with_db_mut(|db| db.set_setting("starting_bell_sound", &uuid));
-                    this_for_pick.imp().refresh_starting_bell_sound_subtitle();
-                });
+                window.push_sound_chooser(
+                    &app,
+                    crate::db::BellSoundCategory::General,
+                    current,
+                    move |uuid| {
+                        app_for_pick.with_db_mut(|db| db.set_setting("starting_bell_sound", &uuid));
+                        this_for_pick.imp().refresh_starting_bell_sound_subtitle();
+                    },
+                );
             }
         ));
 
