@@ -3912,12 +3912,17 @@ impl TimerView {
             }
             // Vibration channel — same two-gate AND. Replace any
             // previous handle so newest-wins on overlapping bells.
+            // install_vibration_handle disarms the old before
+            // replacing — feedbackd supersedes per-app, so the
+            // explicit cancel would race the new pattern.
             let handle = crate::vibration::fire_pattern_if_allowed(
                 &app, signal_mode, mode_key, &pattern_uuid,
             );
-            if handle.is_some() {
-                *self.current_vibration.borrow_mut() = handle;
-            }
+            crate::diag::log(&format!(
+                "fire_interval_bell: per_bell={} mode={} fired={}",
+                signal_mode.as_db_str(), mode_key, handle.is_some()
+            ));
+            self.install_vibration_handle(handle);
         }
     }
 
@@ -4028,9 +4033,11 @@ impl TimerView {
         let handle = crate::vibration::fire_pattern_if_allowed(
             app, per_bell, mode_key, &pattern_uuid,
         );
-        if handle.is_some() {
-            *self.current_vibration.borrow_mut() = handle;
-        }
+        crate::diag::log(&format!(
+            "fire_starting_bell: per_bell={} mode={} fired={}",
+            per_bell.as_db_str(), mode_key, handle.is_some()
+        ));
+        self.install_vibration_handle(handle);
     }
 
     /// Fire the End Bell's sound + vibration channels per the
@@ -4071,11 +4078,15 @@ impl TimerView {
         let handle = crate::vibration::fire_pattern_if_allowed(
             app, per_bell, mode_key, &pattern_uuid,
         );
-        // Replace any in-flight handle — its Drop fires the empty-
-        // array cancel for the previous pattern, so end-of-session
-        // vibration cleanly takes over from any interval-bell or
-        // phase pattern that was mid-playback.
-        *self.current_vibration.borrow_mut() = handle;
+        crate::diag::log(&format!(
+            "fire_end_bell: per_bell={} mode={} fired={}",
+            per_bell.as_db_str(), mode_key, handle.is_some()
+        ));
+        // Same-app Vibrate replaces in-flight, so disarm-then-replace
+        // (no explicit cancel) avoids the cancel-races-the-new-pattern
+        // bug. End-of-session pattern cleanly supersedes any
+        // interval-bell or phase pattern that was mid-playback.
+        self.install_vibration_handle(handle);
     }
 
     /// Fire the configured cue for a Box-Breath phase boundary.
@@ -4113,9 +4124,30 @@ impl TimerView {
         let handle = crate::vibration::fire_pattern_if_allowed(
             app, row.signal_mode, mode_key, &row.pattern_uuid,
         );
+        crate::diag::log(&format!(
+            "fire_box_breath_phase_cue: phase={} per_phase={} fired={}",
+            phase.as_db_str(), row.signal_mode.as_db_str(), handle.is_some()
+        ));
+        self.install_vibration_handle(handle);
+    }
+
+    /// Replace the current PatternPlayback handle. Disarms the old
+    /// handle's Drop-cancel — a same-app `Vibrate(...)` already
+    /// supersedes the previous in-flight pattern at feedbackd, so
+    /// the explicit cancel would race behind the new pattern's
+    /// call_future and silently kill it. Stash a None to clear the
+    /// slot WITH cancel (e.g. session stopped manually).
+    pub(crate) fn install_vibration_handle(
+        &self,
+        handle: Option<crate::vibration::PatternPlayback>,
+    ) {
+        let mut slot = self.current_vibration.borrow_mut();
         if handle.is_some() {
-            *self.current_vibration.borrow_mut() = handle;
+            if let Some(mut old) = slot.take() {
+                old.disarm();
+            }
         }
+        *slot = handle;
     }
 
     pub(crate) fn refresh_end_bell_pattern_subtitle(&self) {

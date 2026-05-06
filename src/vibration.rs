@@ -175,9 +175,17 @@ fn build_vibrate_args(segments: &[(f64, u32)]) -> glib::Variant {
 /// fires `Vibrate(app_id, [])` to cancel — feedbackd's documented
 /// no-op pattern. Spawned async on the GLib main context so the
 /// caller never blocks waiting for DBus.
+///
+/// `cancel_on_drop` defaults true. Setting it false via `disarm`
+/// skips the cancel — used when this handle is being replaced by
+/// a new `Vibrate(app_id, ...)` call from the same app, since
+/// feedbackd already replaces in-flight patterns per-app on each
+/// new Vibrate. Without disarm the cancel would race behind the
+/// new pattern's call_future and silently kill it.
 #[derive(Debug)]
 pub struct PatternPlayback {
     cancel: Arc<AtomicBool>,
+    cancel_on_drop: bool,
 }
 
 impl PatternPlayback {
@@ -191,11 +199,11 @@ impl PatternPlayback {
     ) -> Self {
         let cancel = Arc::new(AtomicBool::new(false));
         if !app.has_haptic() {
-            return Self { cancel };
+            return Self { cancel, cancel_on_drop: true };
         }
         let segments = sample_to_segments(pattern);
         if segments.is_empty() {
-            return Self { cancel };
+            return Self { cancel, cancel_on_drop: true };
         }
         let cancel_clone = cancel.clone();
         glib::MainContext::default().spawn_local(async move {
@@ -222,7 +230,15 @@ impl PatternPlayback {
                 )
                 .await;
         });
-        Self { cancel }
+        Self { cancel, cancel_on_drop: true }
+    }
+
+    /// Skip the Drop cancel. Use when this handle is being replaced
+    /// by another `Vibrate(...)` from the same app — feedbackd
+    /// already supersedes per-app, so an explicit cancel here would
+    /// race behind the replacement and silently kill it.
+    pub fn disarm(&mut self) {
+        self.cancel_on_drop = false;
     }
 
     /// Cancel the in-flight pattern. Sets the cancel flag (so the
@@ -254,7 +270,9 @@ impl PatternPlayback {
 
 impl Drop for PatternPlayback {
     fn drop(&mut self) {
-        self.stop();
+        if self.cancel_on_drop {
+            self.stop();
+        }
     }
 }
 
