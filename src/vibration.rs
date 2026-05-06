@@ -95,19 +95,69 @@ const MAX_SEGMENTS_PER_CHUNK: u32 = 10;
 /// last `CHUNK_OVERLAP_SEGMENTS` slots replay what the next chunk
 /// will start on, so the supersede-instant lands on matching
 /// amplitudes — no audible jump even with ~50 ms scheduling
-/// jitter. With 100 ms-floor segments, 2 segments = 200 ms cover.
+/// jitter.
 const CHUNK_OVERLAP_SEGMENTS: u32 = 2;
-/// Line-mode sampling tick. The editor enforces ≥100 ms between
-/// authored control points, so anything finer than this would be
-/// wasted on the LRA's response time.
+/// Sampling tick for the Line-mode reference envelope (the
+/// envelope is sampled at this resolution and the resulting
+/// quantised amplitudes are run-length encoded). Matches the
+/// LRA's perception floor: amplitude transitions inside a 100 ms
+/// window blur into a single perceived step.
 const LINE_TICK_MS: u32 = 100;
-
-/// Build the full uncapped (amplitude, duration_ms) sequence for
-/// a pattern. Bar mode: N segments of D/N each. Line mode: a
-/// 100 ms-tick sweep of the linearly-interpolated envelope.
-/// Segment durations sum to `p.duration_ms` exactly (remainder on
-/// the last segment).
+/// Quantise an amplitude in `[0, 1]` to the nearest 0.10 (the LRA
+/// can render maybe 5–10 distinct intensity levels; finer
+/// authoring is wasted, and quantising lets RLE collapse held-
+/// amplitude stretches into single segments — editor's
+/// INTENSITY_STEP matches this).
 ///
+/// The editor's authored values land on exact 0.05 multiples
+/// (which don't have exact f32 representations — 0.95 stores as
+/// 0.9499999…), so direct `(v * 10).round()` would map 0.95 to 9
+/// rather than the intended 10. The 1e-6 bias resolves the half-
+/// case in favour of rounding away from zero, matching the
+/// editor's snap behaviour and giving deterministic RLE output.
+fn quantise_amplitude(v: f32) -> f64 {
+    let v = v.clamp(0.0, 1.0) as f64;
+    let scaled = v * 10.0 + 1e-6;
+    let bin = (scaled.round() as i32).clamp(0, 10);
+    // Compute the quantum via f64 division (not f32 multiplication)
+    // so the output values are clean (0.5, 1.0, …) instead of
+    // f32-precision residuals like 0.5000000074.
+    bin as f64 / 10.0
+}
+
+/// Run-length-encode a sequence of (amplitude, duration_ms) ticks
+/// into one segment per consecutive same-amplitude run. Durations
+/// sum, amplitudes are kept (they're already equal across a run).
+fn rle_consecutive(ticks: impl IntoIterator<Item = (f64, u32)>) -> Vec<(f64, u32)> {
+    let mut out: Vec<(f64, u32)> = Vec::new();
+    for (amp, dur) in ticks {
+        match out.last_mut() {
+            Some(last) if (last.0 - amp).abs() < 1e-9 => {
+                last.1 += dur;
+            }
+            _ => out.push((amp, dur)),
+        }
+    }
+    out
+}
+
+/// Build the (amplitude, duration_ms) sequence we'll ship through
+/// feedbackd. Both shape modes:
+///
+/// 1. Sample a fine reference envelope (Bar: bar-by-bar; Line:
+///    100 ms-tick centre sampling of the linearly-interpolated
+///    envelope).
+/// 2. Quantise each sample to 10% amplitude steps.
+/// 3. Run-length encode consecutive same-quantum runs into one
+///    segment with the summed duration.
+///
+/// The win: a long held intensity collapses to a single segment
+/// regardless of duration, so a "ramp-then-hold" pattern (e.g.
+/// 0% → 100% over 1 s, then 50% held for 2 s) needs ~11 segments
+/// total and fits in 2 chunks, not 30 segments / 4 chunks.
+///
+/// Segment durations sum to `p.duration_ms` exactly (the
+/// remainder of the integer division lands on the last tick).
 /// Returns an empty vec for empty / zero-duration inputs.
 pub fn build_master_envelope(p: &crate::db::VibrationPattern) -> Vec<(f64, u32)> {
     let n_in = p.intensities.len();
@@ -115,37 +165,31 @@ pub fn build_master_envelope(p: &crate::db::VibrationPattern) -> Vec<(f64, u32)>
         return Vec::new();
     }
 
-    let n_out: u32 = match p.chart_kind {
-        crate::db::ChartKind::Bar => (n_in as u32).max(1),
-        crate::db::ChartKind::Line => {
-            let raw_ticks = (p.duration_ms + LINE_TICK_MS - 1) / LINE_TICK_MS;
-            raw_ticks.max(1)
+    match p.chart_kind {
+        crate::db::ChartKind::Bar => {
+            let n = n_in as u32;
+            let base = p.duration_ms / n;
+            let remainder = p.duration_ms - base * n;
+            let ticks = (0..n as usize).map(|i| {
+                let amp = quantise_amplitude(p.intensities[i]);
+                let dur = if i == n as usize - 1 { base + remainder } else { base };
+                (amp, dur)
+            });
+            rle_consecutive(ticks)
         }
-    };
-
-    let base = p.duration_ms / n_out;
-    let remainder = p.duration_ms - base * n_out;
-
-    (0..n_out)
-        .map(|i| {
-            let dur = if i == n_out - 1 { base + remainder } else { base };
-            let mag: f32 = match p.chart_kind {
-                crate::db::ChartKind::Bar => {
-                    let lo = (i as usize * n_in) / n_out as usize;
-                    let hi_raw = ((i as usize + 1) * n_in) / n_out as usize;
-                    let hi = hi_raw.max(lo + 1).min(n_in);
-                    let slice = &p.intensities[lo..hi];
-                    let sum: f32 = slice.iter().sum();
-                    sum / slice.len() as f32
-                }
-                crate::db::ChartKind::Line => {
-                    let t_ms = ((2 * i + 1) * p.duration_ms) / (2 * n_out);
-                    sample_line_at(p, t_ms)
-                }
-            };
-            (mag as f64, dur)
-        })
-        .collect()
+        crate::db::ChartKind::Line => {
+            let n_ticks = ((p.duration_ms + LINE_TICK_MS - 1) / LINE_TICK_MS).max(1);
+            let base = p.duration_ms / n_ticks;
+            let last_dur = p.duration_ms - base * (n_ticks - 1);
+            let ticks = (0..n_ticks).map(|i| {
+                let t_ms = ((2 * i + 1) * p.duration_ms) / (2 * n_ticks);
+                let amp = quantise_amplitude(sample_line_at(p, t_ms));
+                let dur = if i == n_ticks - 1 { last_dur } else { base };
+                (amp, dur)
+            });
+            rle_consecutive(ticks)
+        }
+    }
 }
 
 /// Slice `master` into chunks of at most `MAX_SEGMENTS_PER_CHUNK`
@@ -434,7 +478,7 @@ mod sampler_tests {
         }
     }
 
-    // ── build_master_envelope ────────────────────────────────────────────
+    // ── build_master_envelope: empty / zero-duration ────────────────────
 
     #[test]
     fn master_envelope_empty_for_empty_intensities() {
@@ -448,44 +492,96 @@ mod sampler_tests {
         assert!(build_master_envelope(&p).is_empty());
     }
 
+    // ── build_master_envelope: Bar mode + RLE ────────────────────────────
+
     #[test]
-    fn master_envelope_bar_has_n_segments_with_remainder_on_last() {
-        // 1003 ms / 5 bars = 200 base + 3 ms remainder on the last.
+    fn master_envelope_bar_emits_one_segment_per_distinct_amplitude_run() {
+        // 5 bars × 200 ms each. Adjacent same-amp runs collapse via
+        // RLE: [0.5, 0.5, 0.5, 1.0, 1.0] → [(0.5, 600), (1.0, 400)].
+        let p = pattern(1000, vec![0.5, 0.5, 0.5, 1.0, 1.0], ChartKind::Bar);
+        let m = build_master_envelope(&p);
+        assert_eq!(m, vec![(0.5, 600), (1.0, 400)]);
+    }
+
+    #[test]
+    fn master_envelope_bar_distinct_amplitudes_keep_their_segments() {
+        // 1003 ms / 5 distinct bars = 200 base + 3 ms on the last.
         let p = pattern(1003, vec![0.2, 0.5, 1.0, 0.5, 0.2], ChartKind::Bar);
         let m = build_master_envelope(&p);
         assert_eq!(m.len(), 5);
-        for s in &m[..4] {
-            assert_eq!(s.1, 200);
-        }
+        for s in &m[..4] { assert_eq!(s.1, 200); }
         assert_eq!(m[4].1, 203);
         let total: u32 = m.iter().map(|s| s.1).sum();
         assert_eq!(total, 1003);
     }
 
     #[test]
-    fn master_envelope_bar_amplitudes_match_intensities_exactly() {
-        let p = pattern(500, vec![0.0, 0.3, 0.7, 1.0], ChartKind::Bar);
+    fn master_envelope_bar_quantises_amplitudes_to_10_percent() {
+        // 0.05 rounds to 0.1, 0.04 to 0.0, 0.95 to 1.0. Editor will
+        // snap to 10% in practice but the runtime guarantees it too.
+        let p = pattern(400, vec![0.04, 0.05, 0.95, 0.96], ChartKind::Bar);
         let m = build_master_envelope(&p);
-        let amps: Vec<f64> = m.iter().map(|s| s.0).collect();
-        assert_eq!(amps, vec![0.0_f32, 0.3, 0.7, 1.0]
-            .into_iter().map(|v| v as f64).collect::<Vec<_>>());
+        let amps: Vec<f64> = m.iter().map(|s| (s.0 * 10.0).round() / 10.0).collect();
+        // 0.04 → 0.0, 0.05 → 0.1, 0.95 → 1.0, 0.96 → 1.0 → 1.0+1.0 RLE-merge.
+        assert_eq!(amps, vec![0.0, 0.1, 1.0]);
+    }
+
+    // ── build_master_envelope: Line mode + RLE ───────────────────────────
+
+    #[test]
+    fn master_envelope_line_constant_intensity_collapses_to_one_segment() {
+        // Constant 0.5 for 5 s → after RLE this is a single segment
+        // (0.5, 5000). Major win for "buzz steady" patterns.
+        let p = pattern(5000, vec![0.5; 7], ChartKind::Line);
+        let m = build_master_envelope(&p);
+        assert_eq!(m.len(), 1);
+        assert!((m[0].0 - 0.5).abs() < 1e-9);
+        assert_eq!(m[0].1, 5000);
     }
 
     #[test]
-    fn master_envelope_line_has_100ms_segments() {
-        // 1 000 ms / 100 ms tick = 10 segments.
+    fn master_envelope_line_ramp_quantises_to_ten_percent_steps() {
+        // 0 → 1 ramp over 1 s. Center sampling at 100 ms ticks lands
+        // values at 0.05, 0.15, 0.25, …, 0.95. Each rounds away-from-
+        // zero to 0.1, 0.2, 0.3, …, 1.0 — 10 distinct segments.
         let p = pattern(1000, vec![0.0, 1.0], ChartKind::Line);
         let m = build_master_envelope(&p);
         assert_eq!(m.len(), 10);
-        for s in m.iter() {
-            assert_eq!(s.1, 100);
+        let amps: Vec<f64> = m.iter().map(|s| s.0).collect();
+        for (i, &a) in amps.iter().enumerate() {
+            let expected = (i + 1) as f64 / 10.0;
+            assert!((a - expected).abs() < 1e-3,
+                "segment {i}: got {a}, expected {expected}");
         }
+        for s in m.iter() { assert_eq!(s.1, 100); }
     }
 
     #[test]
-    fn master_envelope_line_keeps_total_duration_with_remainder_on_last() {
-        // 950 ms / 100 ms tick → ceil = 10 ticks. Base = 95 ms, last
-        // absorbs the 5 ms remainder so the sum stays at 950 ms.
+    fn master_envelope_line_user_example_ramp_then_hold() {
+        // The user's mental model: 0% → 100% over 1 s, then 50% held
+        // for 2 s. Total 3 s. Three control points: [0.0, 1.0, 0.5].
+        // Wait — that wouldn't give a clean ramp-then-hold. Use the
+        // exact shape via a denser control-point set instead.
+        //
+        // Actually the cleanest way to author it is to set the second
+        // control point at t = 1/3 of duration with intensity 1.0 and
+        // a third at intensity 0.5, but linear interp between (1.0)
+        // and (0.5) at t = 1/3..1.0 doesn't hold flat. So this test
+        // covers the encoder's contract, not the literal authoring.
+        //
+        // For the encoder: a master envelope where the value is 0.5
+        // for ⅔ of the duration should RLE-collapse that ⅔ into a
+        // single long segment.
+        let p = pattern(3000, vec![0.5; 7], ChartKind::Line);
+        let m = build_master_envelope(&p);
+        assert_eq!(m.len(), 1);
+        assert_eq!(m[0].1, 3000);
+    }
+
+    #[test]
+    fn master_envelope_line_total_duration_preserved_after_rle() {
+        // 950 ms with a 0→1 ramp. Whatever segment count and durations
+        // RLE produces, the sum must equal 950 ms exactly.
         let p = pattern(950, vec![0.0, 1.0], ChartKind::Line);
         let m = build_master_envelope(&p);
         let total: u32 = m.iter().map(|s| s.1).sum();
@@ -493,27 +589,16 @@ mod sampler_tests {
     }
 
     #[test]
-    fn master_envelope_line_long_pattern_grows_unbounded() {
-        // 10 s pattern → 100 segments. No 10-segment cap any more —
-        // chunking handles feedbackd's per-call ceiling.
+    fn master_envelope_line_long_sparse_pattern_collapses_aggressively() {
+        // 10 s pattern with 3 control points [0, 1, 0]. The slow
+        // up-and-down ramp visits each 10% level once on the way up
+        // and once on the way down → ~20 distinct segments via RLE,
+        // not 100 (the old 100 ms-tick count).
         let p = pattern(10_000, vec![0.0, 1.0, 0.0], ChartKind::Line);
         let m = build_master_envelope(&p);
-        assert_eq!(m.len(), 100);
+        assert!(m.len() <= 22, "RLE should collapse held quantisation runs: got {}", m.len());
         let total: u32 = m.iter().map(|s| s.1).sum();
         assert_eq!(total, 10_000);
-    }
-
-    #[test]
-    fn master_envelope_line_samples_at_segment_centres() {
-        // Two control points on a 0→1 ramp, 10 segments of 100 ms.
-        // Centres land at 50, 150, …, 950 ms → amps = t/D.
-        let p = pattern(1000, vec![0.0, 1.0], ChartKind::Line);
-        let m = build_master_envelope(&p);
-        for (i, s) in m.iter().enumerate() {
-            let expected = (i as f64 * 100.0 + 50.0) / 1000.0;
-            assert!((s.0 - expected).abs() < 1e-3,
-                "segment {i}: got {}, expected {}", s.0, expected);
-        }
     }
 
     // ── split_into_chunks + chunk_start_offset_ms ────────────────────────

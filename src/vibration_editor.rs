@@ -48,7 +48,12 @@ const X_LABEL_H: f64              = 18.0;
 const PAD: f64                    = 10.0;
 
 // Snap to 5% increments.
-const INTENSITY_STEP: f32         = 0.05;
+/// Vertical-axis snap on the chart. Matches the runtime sampler's
+/// 10% amplitude quantisation, so what the user authors equals
+/// what feedbackd renders. Finer steps would be invisible to the
+/// LRA and would defeat the run-length encoder that collapses
+/// held-amplitude stretches into single segments.
+const INTENSITY_STEP: f32         = 0.10;
 
 // ── Linear-interpolating resample (free function — pure, testable) ───────
 
