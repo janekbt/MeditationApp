@@ -857,15 +857,23 @@ impl TimerView {
             &self.vibration_proto_start_pattern_revealer,
         );
 
-        // Pattern editor launcher.
+        // Pattern editor launcher (throwaway scaffold — graduates out
+        // when the chooser → editor wiring lands).
         self.vibration_proto_open_editor_btn.connect_clicked(glib::clone!(
             #[weak(rename_to = this)] self.obj(),
             move |_| {
+                let imp = this.imp();
+                let Some(app) = imp.get_app() else { return; };
                 let Some(window) = this.root()
                     .and_downcast::<crate::window::MeditateWindow>()
                 else { return; };
                 use glib::subclass::prelude::ObjectSubclassIsExt;
-                crate::vibration_proto::push_pattern_editor(&window.imp().nav_view);
+                crate::vibration_editor::push_pattern_editor(
+                    &window.imp().nav_view,
+                    &app,
+                    None,
+                    |_uuid| {},
+                );
             },
         ));
 

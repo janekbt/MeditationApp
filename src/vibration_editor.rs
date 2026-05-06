@@ -1,16 +1,21 @@
-//! Throwaway prototype of the vibration-pattern editor — a NavigationPage
-//! pushed from a launcher button in the timer setup. No DB persistence,
-//! no preview playback, just the layout + chart-drag interaction so Janek
-//! can feel whether the editor reads right before we wire it for real.
+//! Vibration-pattern editor — `Adw.NavigationPage` pushed when the
+//! user picks "Create custom pattern…" or "Edit" in the chooser. Drives
+//! the chart canvas (Cairo polyline / filled-bar rendering with
+//! Gtk.GestureDrag handles), Duration / Points spin rows, Line / Bar
+//! toggle, and Save → DB insert/update path.
 //!
-//! Gets ripped out alongside `setup_vibration_proto` once the real
-//! pattern-editor module lands.
+//! Drag is the only intensity input — handles snap to 5% increments
+//! and the Points spin row resamples the curve linearly when the
+//! point count changes. Save returns the saved pattern's UUID via
+//! the caller's `on_saved` callback so the chooser can re-select.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use adw::prelude::*;
 
+use crate::application::MeditateApplication;
+use crate::db::{ChartKind, VibrationPattern};
 use crate::i18n::gettext;
 
 // ── Tunables ──────────────────────────────────────────────────────────────
@@ -31,67 +36,100 @@ const X_LABEL_H: f64              = 18.0;
 const PAD: f64                    = 10.0;
 
 // Snap to 5% increments.
-const INTENSITY_STEP: f64         = 0.05;
+const INTENSITY_STEP: f32         = 0.05;
+
+// ── Linear-interpolating resample (free function — pure, testable) ───────
+
+/// Project `old` (an N-sample envelope) onto a new equally-spaced
+/// grid of `new_n` samples by linear interpolation. Preserves the
+/// curve shape across Points-spinner changes. Returns a fresh Vec.
+pub(crate) fn resample(old: &[f32], new_n: usize) -> Vec<f32> {
+    if new_n == 0 {
+        return Vec::new();
+    }
+    let old_n = old.len();
+    if old_n == 0 {
+        return vec![0.5; new_n];
+    }
+    if old_n == 1 {
+        return vec![old[0]; new_n];
+    }
+    if new_n == old_n {
+        return old.to_vec();
+    }
+    let mut out = Vec::with_capacity(new_n);
+    for i in 0..new_n {
+        let t = i as f32 / (new_n - 1).max(1) as f32;
+        let xf = t * (old_n - 1) as f32;
+        let lo = xf.floor() as usize;
+        let hi = (lo + 1).min(old_n - 1);
+        let frac = xf - lo as f32;
+        out.push(old[lo] * (1.0 - frac) + old[hi] * frac);
+    }
+    out
+}
 
 // ── State ────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ChartKind {
-    Line,
-    Bar,
-}
-
 struct Editor {
+    /// `None` = create-new (Save inserts), `Some(uuid)` = edit-existing
+    /// (Save updates that uuid in place).
+    edit_uuid: RefCell<Option<String>>,
     name: RefCell<String>,
     duration_s: Cell<f64>,
-    intensities: RefCell<Vec<f64>>,
+    intensities: RefCell<Vec<f32>>,
     selected: Cell<Option<usize>>,
     chart_kind: Cell<ChartKind>,
 }
 
 impl Editor {
-    fn new() -> Rc<Self> {
+    fn new(initial: Option<VibrationPattern>) -> Rc<Self> {
+        let (edit_uuid, name, duration_s, intensities, chart_kind) = match initial {
+            Some(p) => (
+                Some(p.uuid),
+                p.name,
+                p.duration_ms as f64 / 1000.0,
+                p.intensities,
+                p.chart_kind,
+            ),
+            None => (
+                None,
+                String::new(),
+                DEFAULT_DURATION_S,
+                vec![0.5; DEFAULT_POINTS],
+                ChartKind::Line,
+            ),
+        };
         Rc::new(Self {
-            name: RefCell::new(String::new()),
-            duration_s: Cell::new(DEFAULT_DURATION_S),
-            intensities: RefCell::new(vec![0.5; DEFAULT_POINTS]),
+            edit_uuid: RefCell::new(edit_uuid),
+            name: RefCell::new(name),
+            duration_s: Cell::new(duration_s),
+            intensities: RefCell::new(intensities),
             selected: Cell::new(None),
-            chart_kind: Cell::new(ChartKind::Line),
+            chart_kind: Cell::new(chart_kind),
         })
     }
 
-    /// Resample intensities onto a new equally-spaced grid of `new_n`
-    /// points, linearly interpolating between adjacent old samples.
-    /// Preserves the user's curve shape across Points-spinner changes.
     fn resample_to(&self, new_n: usize) {
         let old = self.intensities.borrow().clone();
-        let old_n = old.len();
-        if new_n == old_n || new_n == 0 {
-            return;
-        }
-        let mut out = Vec::with_capacity(new_n);
-        if old_n == 0 {
-            out.resize(new_n, 0.5);
-        } else if old_n == 1 {
-            out.resize(new_n, old[0]);
-        } else {
-            for i in 0..new_n {
-                let t = i as f64 / (new_n - 1).max(1) as f64;
-                let xf = t * (old_n - 1) as f64;
-                let lo = xf.floor() as usize;
-                let hi = (lo + 1).min(old_n - 1);
-                let frac = xf - lo as f64;
-                out.push(old[lo] * (1.0 - frac) + old[hi] * frac);
-            }
-        }
-        *self.intensities.borrow_mut() = out;
+        *self.intensities.borrow_mut() = resample(&old, new_n);
     }
 }
 
 // ── Public entry point ───────────────────────────────────────────────────
 
-pub fn push_pattern_editor(nav_view: &adw::NavigationView) {
-    let editor = Editor::new();
+/// Push the editor onto `nav_view`. `initial` populates the form for
+/// edit-existing flow (and routes Save through `update_vibration_pattern`);
+/// `None` is create-new (routes through `insert_vibration_pattern`).
+/// `on_saved` fires with the resulting uuid so the caller (the chooser)
+/// can rebuild and re-select.
+pub fn push_pattern_editor(
+    nav_view: &adw::NavigationView,
+    app: &MeditateApplication,
+    initial: Option<VibrationPattern>,
+    on_saved: impl Fn(String) + 'static,
+) {
+    let editor = Editor::new(initial);
 
     // ── Header ────────────────────────────────────────────────────────
     let header = adw::HeaderBar::builder()
@@ -103,6 +141,7 @@ pub fn push_pattern_editor(nav_view: &adw::NavigationView) {
     let cancel_btn = gtk::Button::with_label(&gettext("Cancel"));
     let save_btn = gtk::Button::with_label(&gettext("Save"));
     save_btn.add_css_class("suggested-action");
+    save_btn.set_sensitive(false);
 
     header.pack_start(&cancel_btn);
     header.pack_end(&save_btn);
@@ -117,7 +156,7 @@ pub fn push_pattern_editor(nav_view: &adw::NavigationView) {
         .margin_end(12)
         .build();
 
-    // Name field.
+    // Name field — pre-populated for edit, empty for create.
     let name_clamp = adw::Clamp::builder()
         .maximum_size(360)
         .tightening_threshold(300)
@@ -125,6 +164,7 @@ pub fn push_pattern_editor(nav_view: &adw::NavigationView) {
     let name_group = adw::PreferencesGroup::new();
     let name_row = adw::EntryRow::builder()
         .title(gettext("Name"))
+        .text(&*editor.name.borrow())
         .build();
     name_group.add(&name_row);
     name_clamp.set_child(Some(&name_group));
@@ -145,7 +185,7 @@ pub fn push_pattern_editor(nav_view: &adw::NavigationView) {
         .digits(1)
         .build();
     duration_row.set_adjustment(Some(&gtk::Adjustment::new(
-        DEFAULT_DURATION_S,
+        editor.duration_s.get(),
         DURATION_MIN_S,
         DURATION_MAX_S,
         0.1,
@@ -157,7 +197,7 @@ pub fn push_pattern_editor(nav_view: &adw::NavigationView) {
         .title(gettext("Points"))
         .build();
     points_row.set_adjustment(Some(&gtk::Adjustment::new(
-        DEFAULT_POINTS as f64,
+        editor.intensities.borrow().len() as f64,
         POINTS_MIN as f64,
         POINTS_MAX as f64,
         1.0,
@@ -181,8 +221,8 @@ pub fn push_pattern_editor(nav_view: &adw::NavigationView) {
         .build();
 
     // Header strip: "Pattern" heading on its own line, then a row with
-    // a dynamic subtitle (changes with the Line / Bar toggle) on the
-    // left and the toggle pill on the right.
+    // the static two-line subtitle on the left and the toggle pill on
+    // the right.
     let header_box = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(2)
@@ -235,7 +275,10 @@ pub fn push_pattern_editor(nav_view: &adw::NavigationView) {
             .label(gettext("Bar"))
             .build(),
     );
-    chart_kind_toggle.set_active_name(Some("line"));
+    chart_kind_toggle.set_active_name(Some(match editor.chart_kind.get() {
+        ChartKind::Line => "line",
+        ChartKind::Bar  => "bar",
+    }));
     header_row.append(&chart_kind_toggle);
 
     header_box.append(&header_row);
@@ -253,7 +296,7 @@ pub fn push_pattern_editor(nav_view: &adw::NavigationView) {
     chart_clamp.set_child(Some(&chart_card));
     body.append(&chart_clamp);
 
-    // Preview button (placeholder — no playback in prototype).
+    // Preview button (placeholder — playback driver lands in step 9).
     let preview_clamp = adw::Clamp::builder()
         .maximum_size(360)
         .tightening_threshold(300)
@@ -267,23 +310,25 @@ pub fn push_pattern_editor(nav_view: &adw::NavigationView) {
     preview_clamp.set_child(Some(&preview_btn));
     body.append(&preview_clamp);
 
-    // Banner for laptop / no-haptic devices. Always visible in the
-    // prototype since we haven't wired capability detection yet.
-    let banner_clamp = adw::Clamp::builder()
-        .maximum_size(360)
-        .tightening_threshold(300)
-        .build();
-    let banner = gtk::Label::builder()
-        .label(gettext(
-            "Prototype: drag handles up/down. Preview is a no-op here.",
-        ))
-        .css_classes(["dim-label", "caption"])
-        .wrap(true)
-        .justify(gtk::Justification::Center)
-        .halign(gtk::Align::Center)
-        .build();
-    banner_clamp.set_child(Some(&banner));
-    body.append(&banner_clamp);
+    // No-haptic banner — only shown when the device can't actually
+    // play the pattern (laptop authoring path).
+    if !app.has_haptic() {
+        let banner_clamp = adw::Clamp::builder()
+            .maximum_size(360)
+            .tightening_threshold(300)
+            .build();
+        let banner = gtk::Label::builder()
+            .label(gettext(
+                "This device doesn't support vibration. Patterns sync to phones.",
+            ))
+            .css_classes(["dim-label", "caption"])
+            .wrap(true)
+            .justify(gtk::Justification::Center)
+            .halign(gtk::Align::Center)
+            .build();
+        banner_clamp.set_child(Some(&banner));
+        body.append(&banner_clamp);
+    }
 
     // ── Page chrome ───────────────────────────────────────────────────
     let scrolled = gtk::ScrolledWindow::builder()
@@ -297,7 +342,11 @@ pub fn push_pattern_editor(nav_view: &adw::NavigationView) {
 
     let page = adw::NavigationPage::builder()
         .tag("vibration-pattern-editor")
-        .title(gettext("Pattern editor"))
+        .title(if editor.edit_uuid.borrow().is_some() {
+            gettext("Edit pattern")
+        } else {
+            gettext("New pattern")
+        })
         .child(&toolbar)
         .build();
 
@@ -311,7 +360,7 @@ pub fn push_pattern_editor(nav_view: &adw::NavigationView) {
     let drag = gtk::GestureDrag::new();
     drawing_area.add_controller(drag.clone());
 
-    let drag_start_intensity = Rc::new(Cell::new(0.0_f64));
+    let drag_start_intensity = Rc::new(Cell::new(0.0_f32));
 
     let editor_for_begin = editor.clone();
     let area_for_begin = drawing_area.clone();
@@ -332,7 +381,7 @@ pub fn push_pattern_editor(nav_view: &adw::NavigationView) {
         let mut best_dist = f64::MAX;
         for i in 0..n {
             let px = cx + (i as f64 / denom) * cw;
-            let py = cy + (1.0 - intensities[i]) * ch;
+            let py = cy + (1.0 - intensities[i] as f64) * ch;
             let dist = ((px - x).powi(2) + (py - y).powi(2)).sqrt();
             if dist < best_dist {
                 best_dist = dist;
@@ -360,7 +409,7 @@ pub fn push_pattern_editor(nav_view: &adw::NavigationView) {
         // Negative oy = drag up = higher intensity. Map drag distance
         // to an intensity delta proportional to chart height, snap to
         // 5%, clamp to [0, 1].
-        let raw = dsi_update.get() + (-oy / ch);
+        let raw = dsi_update.get() + (-oy / ch) as f32;
         let snapped = (raw / INTENSITY_STEP).round() * INTENSITY_STEP;
         let clamped = snapped.clamp(0.0, 1.0);
         let mut intensities = editor_for_update.intensities.borrow_mut();
@@ -406,10 +455,34 @@ pub fn push_pattern_editor(nav_view: &adw::NavigationView) {
         area_for_kind.queue_draw();
     });
 
+    // Live name validation — Save button gates on (non-empty trimmed)
+    // && (no other row holds the same name, case-insensitive).
+    let revalidate: Rc<dyn Fn()> = {
+        let app = app.clone();
+        let editor = editor.clone();
+        let save_btn = save_btn.clone();
+        Rc::new(move || {
+            let name = editor.name.borrow().trim().to_string();
+            if name.is_empty() {
+                save_btn.set_sensitive(false);
+                return;
+            }
+            let except = editor.edit_uuid.borrow().clone().unwrap_or_default();
+            let collision = app
+                .with_db(|db| db.is_vibration_pattern_name_taken(&name, &except))
+                .and_then(|r| r.ok())
+                .unwrap_or(false);
+            save_btn.set_sensitive(!collision);
+        })
+    };
+
     let editor_for_name = editor.clone();
+    let revalidate_for_name = revalidate.clone();
     name_row.connect_changed(move |row| {
         *editor_for_name.name.borrow_mut() = row.text().to_string();
+        revalidate_for_name();
     });
+    revalidate();
 
     // ── Cancel / Save / Preview wiring ────────────────────────────────
     let nav_for_cancel = nav_view.clone();
@@ -418,14 +491,45 @@ pub fn push_pattern_editor(nav_view: &adw::NavigationView) {
     });
 
     let nav_for_save = nav_view.clone();
+    let app_for_save = app.clone();
+    let editor_for_save = editor.clone();
+    let on_saved = Rc::new(on_saved);
+    let on_saved_for_save = on_saved.clone();
     save_btn.connect_clicked(move |_| {
-        // Prototype: no DB write. Just pop.
+        let name = editor_for_save.name.borrow().trim().to_string();
+        if name.is_empty() {
+            return;
+        }
+        let duration_ms = (editor_for_save.duration_s.get() * 1000.0).round() as u32;
+        let intensities = editor_for_save.intensities.borrow().clone();
+        let chart_kind = editor_for_save.chart_kind.get();
+
+        let saved_uuid = match editor_for_save.edit_uuid.borrow().clone() {
+            None => app_for_save
+                .with_db_mut(|db| {
+                    db.insert_vibration_pattern(
+                        &name, duration_ms, &intensities, chart_kind, false,
+                    )
+                })
+                .and_then(|r| r.ok()),
+            Some(uuid) => app_for_save
+                .with_db_mut(|db| {
+                    db.update_vibration_pattern(
+                        &uuid, &name, duration_ms, &intensities, chart_kind,
+                    )
+                })
+                .and_then(|r| r.ok())
+                .map(|()| uuid),
+        };
+        if let Some(uuid) = saved_uuid {
+            on_saved_for_save(uuid);
+        }
         nav_for_save.pop();
     });
 
     preview_btn.connect_clicked(|_| {
-        // No-op for prototype. Real implementation will sweep a
-        // playhead and (on phone) drive feedbackd.
+        // No-op for now — the playback driver in step 9 wires this up
+        // to a one-shot Vibrate(app_id, segments) call.
     });
 
     nav_view.push(&page);
@@ -466,14 +570,12 @@ fn draw_chart(
     let levels = [(1.0, "100%"), (0.5, "50%"), (0.0, "0%")];
     for (frac, label) in levels {
         let y = cy + (1.0 - frac) * ch;
-        // Right-aligned label.
         cr.set_source_rgba(0.55, 0.55, 0.55, 1.0);
         let extents = cr.text_extents(label).ok();
         let lw = extents.map(|e| e.width()).unwrap_or(0.0);
         cr.move_to(Y_LABEL_W - lw - 4.0, y + 3.5);
         let _ = cr.show_text(label);
 
-        // Faint horizontal gridline.
         cr.set_source_rgba(0.55, 0.55, 0.55, 0.15);
         cr.set_line_width(0.5);
         cr.move_to(cx, y);
@@ -483,12 +585,11 @@ fn draw_chart(
 
     // ── Geometry ──────────────────────────────────────────────────────
     let xs: Vec<f64> = (0..n).map(|i| cx + (i as f64 / denom) * cw).collect();
-    let ys: Vec<f64> = intensities.iter().map(|&v| cy + (1.0 - v) * ch).collect();
+    let ys: Vec<f64> = intensities.iter().map(|&v| cy + (1.0 - v as f64) * ch).collect();
 
     // ── Curve ─────────────────────────────────────────────────────────
     match editor.chart_kind.get() {
         ChartKind::Line => {
-            // Filled area under the polyline.
             cr.set_source_rgba(ar, ag, ab, 0.22);
             cr.move_to(xs[0], cy + ch);
             for i in 0..n {
@@ -498,7 +599,6 @@ fn draw_chart(
             cr.close_path();
             let _ = cr.fill();
 
-            // Polyline stroke.
             cr.set_source_rgba(ar, ag, ab, 1.0);
             cr.set_line_width(2.0);
             cr.set_line_join(gtk::cairo::LineJoin::Round);
@@ -516,17 +616,9 @@ fn draw_chart(
             cr.set_source_rgba(ar, ag, ab, 0.55);
             for i in 0..n {
                 let center = xs[i];
-                let left = if i == 0 {
-                    cx
-                } else {
-                    center - step / 2.0
-                };
-                let right = if i == n - 1 {
-                    cx + cw
-                } else {
-                    center + step / 2.0
-                };
-                let height = intensities[i] * ch;
+                let left = if i == 0 { cx } else { center - step / 2.0 };
+                let right = if i == n - 1 { cx + cw } else { center + step / 2.0 };
+                let height = intensities[i] as f64 * ch;
                 let top = cy + ch - height;
                 cr.rectangle(left, top, (right - left).max(0.0), height);
             }
@@ -542,17 +634,14 @@ fn draw_chart(
         } else {
             HANDLE_R
         };
-        // Halo for selected.
         if Some(i) == selected {
             cr.set_source_rgba(ar, ag, ab, 0.30);
             cr.arc(xs[i], ys[i], r + 4.0, 0.0, 2.0 * std::f64::consts::PI);
             let _ = cr.fill();
         }
-        // White outer ring (so handle reads on the filled background).
         cr.set_source_rgba(1.0, 1.0, 1.0, 1.0);
         cr.arc(xs[i], ys[i], r + 1.5, 0.0, 2.0 * std::f64::consts::PI);
         let _ = cr.fill();
-        // Accent core.
         cr.set_source_rgba(ar, ag, ab, 1.0);
         cr.arc(xs[i], ys[i], r, 0.0, 2.0 * std::f64::consts::PI);
         let _ = cr.fill();
@@ -574,9 +663,64 @@ fn draw_chart(
     }
 }
 
-/// Format a time in seconds with one decimal place and an "s" suffix:
-/// `0.0s`, `0.5s`, `2.0s`. Keeps every label the same width so the row
-/// of X-axis ticks stays visually evenly-spaced.
 fn format_seconds(secs: f64) -> String {
     format!("{:.1}s", secs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resample_passes_through_when_n_unchanged() {
+        let v = vec![0.0, 0.5, 1.0, 0.5, 0.0];
+        assert_eq!(resample(&v, 5), v);
+    }
+
+    #[test]
+    fn resample_keeps_endpoints_anchored() {
+        // Linear interpolation must preserve the first and last
+        // sample exactly, regardless of the new N.
+        let v = vec![0.0, 1.0];
+        let up = resample(&v, 7);
+        assert_eq!(up.len(), 7);
+        assert!((up[0] - 0.0).abs() < 1e-6);
+        assert!((up[6] - 1.0).abs() < 1e-6);
+        // Midpoint of a 0..1 ramp should be ~0.5.
+        assert!((up[3] - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn resample_shortens_a_curve_by_picking_grid_samples() {
+        // Source has 5 samples 0, 0.25, 0.5, 0.75, 1.0; downsample to 3.
+        // Grid points land at indices 0, 2, 4 in the original.
+        let v = vec![0.0, 0.25, 0.5, 0.75, 1.0];
+        let down = resample(&v, 3);
+        assert_eq!(down.len(), 3);
+        for (got, want) in down.iter().zip([0.0, 0.5, 1.0].iter()) {
+            assert!((got - want).abs() < 1e-6, "got {got}, want {want}");
+        }
+    }
+
+    #[test]
+    fn resample_handles_single_sample_input() {
+        // Pathological input — fill out to N with the same value.
+        let v = vec![0.7];
+        let up = resample(&v, 4);
+        assert_eq!(up, vec![0.7, 0.7, 0.7, 0.7]);
+    }
+
+    #[test]
+    fn resample_handles_empty_input() {
+        // Pathological — return a default-filled vec, never panic.
+        let v: Vec<f32> = vec![];
+        let up = resample(&v, 3);
+        assert_eq!(up, vec![0.5, 0.5, 0.5]);
+    }
+
+    #[test]
+    fn resample_to_zero_returns_empty() {
+        let v = vec![0.0, 1.0];
+        assert!(resample(&v, 0).is_empty());
+    }
 }

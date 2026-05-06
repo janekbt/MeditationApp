@@ -21,7 +21,7 @@ pub mod sync_settings;
 pub mod time;
 pub mod timer;
 pub mod vibration;
-pub mod vibration_proto;
+pub mod vibration_editor;
 pub mod vibrations;
 mod window;
 
