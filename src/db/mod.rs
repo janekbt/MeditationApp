@@ -442,6 +442,14 @@ impl Database {
         }
 
         use crate::preset_config::*;
+        let default_starting_bell_off = || PresetStartingBell {
+            enabled: false,
+            sound_uuid: BUNDLED_BOWL_UUID.to_string(),
+            prep_time_enabled: false,
+            prep_time_secs: 5,
+            signal_mode: "sound".to_string(),
+            vibration_pattern_uuid: BUNDLED_PATTERN_PULSE_UUID.to_string(),
+        };
         let sitting = PresetConfig {
             label: PresetLabel {
                 enabled: true,
@@ -449,27 +457,32 @@ impl Database {
             },
             starting_bell: PresetStartingBell {
                 enabled: true,
-                sound_uuid: BUNDLED_BOWL_UUID.to_string(),
-                prep_time_enabled: false,
-                prep_time_secs: 5,
+                ..default_starting_bell_off()
             },
             interval_bells: PresetIntervalBells::default(),
             end_bell: PresetEndBell {
                 enabled: true,
                 sound_uuid: BUNDLED_BELL_UUID.to_string(),
+                signal_mode: "sound".to_string(),
+                vibration_pattern_uuid: BUNDLED_PATTERN_PULSE_UUID.to_string(),
             },
             timing: PresetTiming::Timer { stopwatch: false, duration_secs: 15 * 60 },
+            cues_signal_mode: "both".to_string(),
+            keep_screen_awake: false,
+            box_breath_cues: PresetBoxBreathCues::default(),
         };
         let box_4444 = PresetConfig {
             label: PresetLabel {
                 enabled: true,
                 uuid: Some(DEFAULT_BREATHING_LABEL_UUID.to_string()),
             },
-            starting_bell: PresetStartingBell::default(),
+            starting_bell: default_starting_bell_off(),
             interval_bells: PresetIntervalBells::default(),
             end_bell: PresetEndBell {
                 enabled: true,
                 sound_uuid: BUNDLED_BELL_UUID.to_string(),
+                signal_mode: "sound".to_string(),
+                vibration_pattern_uuid: BUNDLED_PATTERN_PULSE_UUID.to_string(),
             },
             timing: PresetTiming::BoxBreath {
                 inhale_secs: 4,
@@ -478,6 +491,9 @@ impl Database {
                 hold_empty_secs: 4,
                 duration_secs: 10 * 60,
             },
+            cues_signal_mode: "both".to_string(),
+            keep_screen_awake: false,
+            box_breath_cues: PresetBoxBreathCues::default(),
         };
         let box_4780 = PresetConfig {
             timing: PresetTiming::BoxBreath {

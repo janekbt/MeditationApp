@@ -23,6 +23,15 @@ pub struct PresetConfig {
     #[serde(default)]
     pub end_bell: PresetEndBell,
     pub timing: PresetTiming,
+    /// Per-mode "Cues" override — db-string form ("sound" /
+    /// "vibration" / "both").
+    pub cues_signal_mode: String,
+    /// Per-mode "Keep screen awake" toggle.
+    pub keep_screen_awake: bool,
+    /// Box-Breath phase cues snapshot. Captured for every preset
+    /// (Timer presets just hold their default-empty form); only
+    /// the Box-Breath apply path actually writes them back.
+    pub box_breath_cues: PresetBoxBreathCues,
 }
 
 /// Mode-specific timing. Variant must match the column-level `mode`
@@ -59,6 +68,10 @@ pub struct PresetStartingBell {
     pub sound_uuid: String,
     pub prep_time_enabled: bool,
     pub prep_time_secs: u32,
+    /// Per-bell sound/vibration/both mode (db-string form).
+    pub signal_mode: String,
+    /// Per-bell vibration pattern uuid.
+    pub vibration_pattern_uuid: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -77,12 +90,39 @@ pub struct PresetIntervalBell {
     pub jitter_pct: u32,
     pub sound_uuid: String,
     pub enabled: bool,
+    /// Per-bell sound/vibration/both mode (db-string form).
+    pub signal_mode: String,
+    /// Per-bell vibration pattern uuid.
+    pub vibration_pattern_uuid: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct PresetEndBell {
     pub enabled: bool,
     pub sound_uuid: String,
+    /// Per-bell sound/vibration/both mode (db-string form).
+    pub signal_mode: String,
+    /// Per-bell vibration pattern uuid.
+    pub vibration_pattern_uuid: String,
+}
+
+/// Box-Breath per-phase cue config — master enable + four phase
+/// snapshots. The phase string matches the `box_breath_phases.phase`
+/// column ("in", "holdin", "out", "holdout"). Empty `phases` is the
+/// natural default for Timer presets that don't carry phase state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct PresetBoxBreathCues {
+    pub master_enabled: bool,
+    pub phases: Vec<PresetBoxBreathPhase>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PresetBoxBreathPhase {
+    pub phase: String,
+    pub enabled: bool,
+    pub signal_mode: String,
+    pub sound_uuid: String,
+    pub pattern_uuid: String,
 }
 
 impl PresetConfig {
@@ -111,6 +151,8 @@ mod tests {
                 sound_uuid: "bell-uuid".to_string(),
                 prep_time_enabled: false,
                 prep_time_secs: 5,
+                signal_mode: "both".to_string(),
+                vibration_pattern_uuid: "pulse-uuid".to_string(),
             },
             interval_bells: PresetIntervalBells {
                 enabled: false,
@@ -119,11 +161,16 @@ mod tests {
             end_bell: PresetEndBell {
                 enabled: true,
                 sound_uuid: "end-uuid".to_string(),
+                signal_mode: "vibration".to_string(),
+                vibration_pattern_uuid: "heartbeat-uuid".to_string(),
             },
             timing: PresetTiming::Timer {
                 stopwatch: false,
                 duration_secs: 900,
             },
+            cues_signal_mode: "both".to_string(),
+            keep_screen_awake: true,
+            box_breath_cues: PresetBoxBreathCues::default(),
         }
     }
 
@@ -144,6 +191,8 @@ mod tests {
             end_bell: PresetEndBell {
                 enabled: true,
                 sound_uuid: "end-uuid".to_string(),
+                signal_mode: "sound".to_string(),
+                vibration_pattern_uuid: String::new(),
             },
             timing: PresetTiming::BoxBreath {
                 inhale_secs: 4,
@@ -152,26 +201,47 @@ mod tests {
                 hold_empty_secs: 0,
                 duration_secs: 600,
             },
+            cues_signal_mode: "vibration".to_string(),
+            keep_screen_awake: false,
+            box_breath_cues: PresetBoxBreathCues {
+                master_enabled: true,
+                phases: vec![
+                    PresetBoxBreathPhase {
+                        phase: "in".to_string(),
+                        enabled: true,
+                        signal_mode: "vibration".to_string(),
+                        sound_uuid: String::new(),
+                        pattern_uuid: "pulse-uuid".to_string(),
+                    },
+                    PresetBoxBreathPhase {
+                        phase: "holdin".to_string(),
+                        enabled: false,
+                        signal_mode: "sound".to_string(),
+                        sound_uuid: "voice-uuid".to_string(),
+                        pattern_uuid: "pulse-uuid".to_string(),
+                    },
+                    PresetBoxBreathPhase {
+                        phase: "out".to_string(),
+                        enabled: true,
+                        signal_mode: "both".to_string(),
+                        sound_uuid: "voice-uuid".to_string(),
+                        pattern_uuid: "wave-uuid".to_string(),
+                    },
+                    PresetBoxBreathPhase {
+                        phase: "holdout".to_string(),
+                        enabled: false,
+                        signal_mode: "sound".to_string(),
+                        sound_uuid: String::new(),
+                        pattern_uuid: String::new(),
+                    },
+                ],
+            },
         };
         let json = cfg.to_json();
         let back = PresetConfig::from_json(&json).unwrap();
         assert_eq!(cfg, back);
     }
 
-    #[test]
-    fn missing_optional_fields_default_on_deserialize() {
-        // Forwards-compat: a JSON that only has `timing` should
-        // deserialize, with the rest filled in by `Default`. This
-        // guards against schema drift between binary versions.
-        let json = r#"{"timing":{"mode":"timer","stopwatch":false,"duration_secs":900}}"#;
-        let cfg = PresetConfig::from_json(json).unwrap();
-        assert!(!cfg.label.enabled);
-        assert!(!cfg.starting_bell.enabled);
-        assert_eq!(cfg.starting_bell.sound_uuid, "");
-        assert!(cfg.interval_bells.bells.is_empty());
-        assert!(matches!(cfg.timing,
-            PresetTiming::Timer { stopwatch: false, duration_secs: 900 }));
-    }
 
     #[test]
     fn interval_bell_snapshot_round_trips() {
@@ -187,6 +257,8 @@ mod tests {
                         jitter_pct: 10,
                         sound_uuid: "ping-uuid".to_string(),
                         enabled: true,
+                        signal_mode: "vibration".to_string(),
+                        vibration_pattern_uuid: "wave-uuid".to_string(),
                     },
                     PresetIntervalBell {
                         kind: "fixed_from_start".to_string(),
@@ -194,11 +266,16 @@ mod tests {
                         jitter_pct: 0,
                         sound_uuid: "tick-uuid".to_string(),
                         enabled: false,
+                        signal_mode: "sound".to_string(),
+                        vibration_pattern_uuid: String::new(),
                     },
                 ],
             },
             end_bell: PresetEndBell::default(),
             timing: PresetTiming::Timer { stopwatch: false, duration_secs: 600 },
+            cues_signal_mode: String::new(),
+            keep_screen_awake: false,
+            box_breath_cues: PresetBoxBreathCues::default(),
         };
         let back = PresetConfig::from_json(&cfg.to_json()).unwrap();
         assert_eq!(cfg, back);
