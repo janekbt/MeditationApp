@@ -365,6 +365,7 @@ pub fn push_pattern_editor(
     let editor_for_begin = editor.clone();
     let area_for_begin = drawing_area.clone();
     let dsi_begin = drag_start_intensity.clone();
+    let drag_for_begin = drag.clone();
     drag.connect_drag_begin(move |_, x, y| {
         let (cx, cy, cw, ch) = chart_rect(
             area_for_begin.width() as f64,
@@ -392,6 +393,12 @@ pub fn push_pattern_editor(
             editor_for_begin.selected.set(Some(best_i));
             dsi_begin.set(intensities[best_i]);
             area_for_begin.queue_draw();
+            // Claim the touch sequence so the surrounding ScrolledWindow
+            // doesn't steal the vertical drag once it crosses ITS scroll
+            // threshold. Without this, dragging a handle up by ~1 step
+            // hands the pointer to the scrolled view and the editor
+            // never sees subsequent motion events.
+            drag_for_begin.set_state(gtk::EventSequenceState::Claimed);
         }
     });
 
@@ -527,9 +534,35 @@ pub fn push_pattern_editor(
         nav_for_save.pop();
     });
 
-    preview_btn.connect_clicked(|_| {
-        // No-op for now — the playback driver in step 9 wires this up
-        // to a one-shot Vibrate(app_id, segments) call.
+    // Preview slot: replacing the previous handle disarms its Drop
+    // cancel, so feedbackd's per-app supersede on the new Vibrate is
+    // what stops the old preview. A bare drop here would race the
+    // new pattern's call_future and silently kill it.
+    let preview_slot: Rc<RefCell<Option<crate::vibration::PatternPlayback>>> =
+        Rc::new(RefCell::new(None));
+    let editor_for_preview = editor.clone();
+    let app_for_preview = app.clone();
+    preview_btn.connect_clicked(move |_| {
+        let intensities = editor_for_preview.intensities.borrow().clone();
+        let duration_ms = (editor_for_preview.duration_s.get() * 1000.0) as u32;
+        let chart_kind = editor_for_preview.chart_kind.get();
+        let pattern = crate::db::VibrationPattern {
+            id: 0,
+            uuid: String::new(),
+            name: String::new(),
+            duration_ms,
+            intensities,
+            chart_kind,
+            is_bundled: false,
+            created_iso: String::new(),
+            updated_iso: String::new(),
+        };
+        let new_handle = crate::vibration::PatternPlayback::play(&app_for_preview, &pattern);
+        let mut slot = preview_slot.borrow_mut();
+        if let Some(mut old) = slot.take() {
+            old.disarm();
+        }
+        *slot = Some(new_handle);
     });
 
     nav_view.push(&page);
