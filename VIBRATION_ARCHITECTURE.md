@@ -1193,40 +1193,98 @@ that's its concern.
 
 ## Phasing
 
-1. **`vibration_patterns` CRUD + bundled seeds** — `meditate-core` + db
-   wrapper, full TDD coverage. No UI yet.
-2. **Pattern chooser NavigationPage** — list of patterns, synthetic
-   "Create custom pattern…" top row, rename / delete / star toasts.
-   Mirrors the guided-files chooser.
-3. **Pattern editor NavigationPage** — line-chart canvas, sliders, header
-   Cancel / Save. Save returns the new pattern's UUID to the chooser.
-4. **Per-bell wiring** — Sound/Vibration/Both toggle on Starting / Interval
-   (edit page) / End Bell rows; schema column on `bell_sounds`; events.
-   Reuses the prototype's `wire_signal_toggle` helper.
+1. **`vibration_patterns` CRUD + bundled seeds** — new table in
+   `meditate-core` (`uuid` / `name` / `duration_ms` / `intensities_json`
+   / `chart_kind` with CHECK / `is_bundled` / `created_iso` /
+   `updated_iso`), `meditate-core` Rust struct + the db.rs CRUD pair,
+   `src/db/mod.rs` re-exports, recompute path on the event log
+   (`vibration_pattern_insert / _update / _delete`). Five bundled rows
+   seeded under the `7e9c4d2f-…-2d6f7a8b00XX` UUID family — Pulse,
+   Heartbeat, Wave, Ripple (line) and Pyramid (bar). Full TDD coverage.
+   No UI yet.
+2. **Capability probe + `app.has_haptic()` getter** — synchronous DBus
+   call to `org.sigxcpu.Feedback.Haptic.Vibrate(app_id, [])` at app
+   startup with a 500 ms timeout, result cached on
+   `MeditateApplication`. Empty-array form is the documented no-op
+   cancel, so the probe doesn't actually buzz. The Haptic interface
+   is exposed only when a haptic motor is present, so the probe
+   correctly distinguishes "feedbackd present, no motor" from
+   "feedbackd present, motor present". Lands before any UI step that
+   gates on it. No new dependencies — reuses the gio bus pattern from
+   the existing `src/vibration.rs`.
+3. **Pattern chooser NavigationPage** — list of patterns, synthetic
+   "Create custom pattern…" top row, rename / delete toasts (no star —
+   patterns don't have a quick-pick affordance). Mirrors the
+   guided-files chooser shape. Always-present **"Manage vibration
+   patterns"** entry in Preferences (works on laptop; the only entry
+   point when per-bell vibration toggles are greyed out).
+4. **Pattern editor NavigationPage** — `Adw.NavigationPage` with
+   `Adw.HeaderBar` (Cancel / Save), `Adw.EntryRow` for Name,
+   `Adw.PreferencesGroup` "Shape" with Duration + Points
+   `Adw.SpinRow`s, chart card (Pattern heading + static two-line
+   "Line: Continuous transitions / Bar: Abrupt transitions" subtitle +
+   Line/Bar `Adw.ToggleGroup`), `Gtk.DrawingArea` with Cairo polyline /
+   filled-bar rendering and `Gtk.GestureDrag`-driven handles (5% snap),
+   resample-on-Points-change, Preview button (visual-only on laptop),
+   laptop banner. **Drag is the only intensity input** — no per-point
+   slider. Save returns the new pattern's UUID to the chooser.
 5. **Bell-sound categories** — `category` column on `bell_sounds` with
-   CHECK constraint, chooser filter argument, import auto-categorization.
-   Bundled rows seed as `'general'`. Phase chooser starts empty for new
-   users until voice-cue bundled sounds land (separate TODO).
-6. **Box Breath per-phase** — outer "Cues during phases" expander with
-   four nested phase expanders, each carrying the same
-   Sound/Vibration/Both ToggleGroup as bells; new `box_breath_phases`
-   table; `boxbreath_cues_active` master setting; phase chooser filtered
-   to `category = 'box_breath'`; playback hook.
-7. **Per-mode "what plays" toggle** — three settings keys
-   (`timer_signal_mode` / `guided_signal_mode` / `boxbreath_signal_mode`,
-   default `'both'`); UI placement deferred until the Session-group
-   split TODO lands.
-8. **feedbackd playback driver** — `PatternPlayback` struct around the
+   `CHECK (category IN ('general', 'box_breath'))`, chooser filter
+   argument (`list_bell_sounds_for_category`), import auto-
+   categorization from the calling chooser context. All currently-
+   bundled rows re-seed as `'general'`. Empty-state copy on the Box
+   Breath chooser. Lands **before** step 7 so the phase chooser has a
+   filter to apply. Phase chooser starts empty for new users until
+   voice-cue bundled sounds land (separate `TODO.md` entry: "Source
+   bundled Box Breath voice-cue sounds").
+6. **Per-bell wiring** — Sound / Vibration / Both `Adw.ToggleGroup` on
+   Starting / Interval-edit-page / End Bell rows. Reuses the
+   prototype's `wire_signal_toggle` helper from
+   `src/timer/imp.rs`. Schema changes: new columns
+   `vibration_pattern_uuid` (default Pulse) and `signal_mode` (default
+   `'sound'`, with `CHECK (signal_mode IN ('sound', 'vibration',
+   'both'))`) on **`interval_bells`**; new settings keys
+   `starting_bell_pattern` / `starting_bell_signal_mode` /
+   `end_bell_pattern` / `end_bell_signal_mode`. Vibration / Both
+   ToggleGroup segments insensitive when `app.has_haptic() = false`.
+   Drops the `vibrate_on_end` setting and its consumer in
+   `src/preferences.rs`. Stale-reference UX inherits the pattern from
+   the bell-sound TODO when that lands.
+7. **Box Breath per-phase** — outer "Cues during phases"
+   `Adw.ExpanderRow` (renamed from the prototype's "Vibrate during
+   phases"), four nested phase expanders, each carrying the same
+   Sound / Vibration / Both ToggleGroup as bells. New
+   `box_breath_phases` table (`phase` PK with CHECK / `enabled` /
+   `signal_mode` with CHECK / `sound_uuid` / `pattern_uuid`), four rows
+   seeded by phase via `INSERT OR IGNORE`. New
+   `box_breath_phase_update` event kind for sync. New
+   `boxbreath_cues_active` setting (master toggle). Phase chooser
+   filtered to `category = 'box_breath'` (step 5 prerequisite).
+   Playback hook fires per-phase patterns at phase boundaries.
+8. **Per-mode "what plays" toggle** — three settings keys
+   (`timer_signal_mode` / `guided_signal_mode` /
+   `boxbreath_signal_mode`, default `'both'`). At read-time, forced
+   to `'sound'` when `has_haptic = false` (UI shows a static dimmed
+   label "Sound only — no haptic device"; persisted setting
+   untouched so syncing to a phone restores intent). UI placement
+   deferred until the Session-group split TODO lands so we don't
+   prototype it twice.
+9. **feedbackd playback driver** — `PatternPlayback` struct around the
    single `org.sigxcpu.Feedback.Haptic.Vibrate` call. Sampler converts
-   `VibrationPattern` to `Vec<(f64, u32)>` (Bar = N equal segments,
-   Line = 50 ms ticks capped at 400). Cancel via `Vibrate(app_id, [])`.
-   Replaces `src/vibration.rs::trigger_if_enabled`. Sampler is laptop-
-   testable in isolation; the DBus call is a no-op stub when
-   `has_haptic = false`.
-9. **On-device test pass + tuning** — Janek's day, not mine. Verify
-   amplitude feel at 1.0, that empty-array cancel actually stops a
-   long pattern mid-flight, and that newest-wins overlap behaves on
-   the device.
+   `VibrationPattern` to `Vec<(f64, u32)>` (Bar = N equal segments
+   distributing the divisibility remainder onto the last segment;
+   Line = 50 ms ticks capped at 400). Cancel via
+   `Vibrate(app_id, [])`. Replaces
+   `src/vibration.rs::trigger_if_enabled` entirely. Newest-wins on
+   overlap (Drop fires cancel, then new playback fires its sequence).
+   Sampler is laptop-testable in isolation; the DBus call is a no-op
+   stub when `has_haptic = false`.
+10. **On-device test pass + tuning** — Janek's day, not mine. Verify
+    amplitude feel at `1.0`, empty-array cancel actually stops a long
+    pattern mid-flight, newest-wins overlap behaves, all five bundled
+    patterns play distinguishably, per-mode `'sound'` override
+    silences phase vibrations, per-mode `'vibration'` silences phase
+    sounds.
 
 ---
 
