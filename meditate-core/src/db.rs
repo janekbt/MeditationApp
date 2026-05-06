@@ -2757,6 +2757,46 @@ impl Database {
         Ok(())
     }
 
+    /// True iff a row other than `except_uuid` already holds `name`
+    /// (case-insensitive). The editor and chooser use this for live
+    /// validation; `except_uuid` is the row currently being renamed
+    /// (or "" for fresh inserts) so the user's own case-only renames
+    /// don't false-positive.
+    pub fn is_vibration_pattern_name_taken(
+        &self,
+        name: &str,
+        except_uuid: &str,
+    ) -> Result<bool> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM vibration_patterns
+              WHERE name = ?1 COLLATE NOCASE AND uuid != ?2",
+            params![name, except_uuid],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    /// Drop a vibration-pattern row. Unknown uuids are silent no-ops
+    /// AND emit no event — peers would otherwise see a tombstone for
+    /// a row they never knew existed. Mirrors guided_file delete.
+    pub fn delete_vibration_pattern(&self, uuid_str: &str) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        let exists: bool = self.conn.query_row(
+            "SELECT 1 FROM vibration_patterns WHERE uuid = ?1",
+            params![uuid_str],
+            |_| Ok(true),
+        ).optional()?.unwrap_or(false);
+        if !exists { return Ok(()); }
+        self.conn.execute(
+            "DELETE FROM vibration_patterns WHERE uuid = ?1",
+            params![uuid_str],
+        )?;
+        let payload = serde_json::json!({ "uuid": uuid_str }).to_string();
+        self.emit_event("vibration_pattern_delete", uuid_str, payload)?;
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn list_vibration_patterns(&self) -> Result<Vec<VibrationPattern>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, uuid, name, duration_ms, intensities_json,
@@ -10322,6 +10362,67 @@ mod tests {
             Err(DbError::DuplicateVibrationPattern(name)) => assert_eq!(name, "PULSE"),
             other => panic!("expected DuplicateVibrationPattern, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn delete_vibration_pattern_removes_row_and_emits_event() {
+        let db = Database::open_in_memory().unwrap();
+        let uuid_str = db.insert_vibration_pattern(
+            "Wave", 2000, &[0.0, 1.0, 0.0], ChartKind::Line, false,
+        ).unwrap();
+        db.delete_vibration_pattern(&uuid_str).unwrap();
+        assert!(db.list_vibration_patterns().unwrap().is_empty());
+        assert!(db.find_vibration_pattern_by_uuid(&uuid_str).unwrap().is_none());
+        let deletes: Vec<_> = db.pending_events().unwrap()
+            .into_iter()
+            .filter(|(_, e)| e.kind == "vibration_pattern_delete")
+            .collect();
+        assert_eq!(deletes.len(), 1);
+    }
+
+    #[test]
+    fn delete_vibration_pattern_unknown_uuid_is_silent_noop() {
+        let db = Database::open_in_memory().unwrap();
+        db.delete_vibration_pattern("never-existed").unwrap();
+        let deletes: Vec<_> = db.pending_events().unwrap()
+            .into_iter()
+            .filter(|(_, e)| e.kind == "vibration_pattern_delete")
+            .collect();
+        assert!(deletes.is_empty(),
+            "no tombstone for a row peers never knew about");
+    }
+
+    #[test]
+    fn is_vibration_pattern_name_taken_returns_true_for_existing_other_row() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_vibration_pattern_with_uuid(
+            "vp-1", "Pulse", 400, &[0.0, 1.0, 0.0],
+            ChartKind::Line, false,
+        ).unwrap();
+        assert!(db.is_vibration_pattern_name_taken("Pulse", "").unwrap());
+        // Case-insensitive match.
+        assert!(db.is_vibration_pattern_name_taken("PULSE", "").unwrap());
+        assert!(db.is_vibration_pattern_name_taken("pulse", "").unwrap());
+    }
+
+    #[test]
+    fn is_vibration_pattern_name_taken_returns_false_for_missing_name() {
+        let db = Database::open_in_memory().unwrap();
+        assert!(!db.is_vibration_pattern_name_taken("Anything", "").unwrap());
+    }
+
+    #[test]
+    fn is_vibration_pattern_name_taken_excludes_self_via_except_uuid() {
+        // Rename-no-op (same name as before): the row being renamed
+        // should not collide with itself.
+        let db = Database::open_in_memory().unwrap();
+        db.insert_vibration_pattern_with_uuid(
+            "vp-1", "Pulse", 400, &[0.0, 1.0, 0.0],
+            ChartKind::Line, false,
+        ).unwrap();
+        assert!(!db.is_vibration_pattern_name_taken("Pulse", "vp-1").unwrap());
+        // Other UUIDs still collide.
+        assert!(db.is_vibration_pattern_name_taken("Pulse", "vp-2").unwrap());
     }
 
     #[test]
