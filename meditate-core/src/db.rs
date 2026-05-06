@@ -182,6 +182,8 @@ pub struct IntervalBell {
     pub minutes: u32,
     pub jitter_pct: u32,
     pub sound: String,
+    pub vibration_pattern_uuid: String,
+    pub signal_mode: SignalMode,
     pub enabled: bool,
     pub created_iso: String,
 }
@@ -191,6 +193,36 @@ pub enum IntervalBellKind {
     Interval,
     FixedFromStart,
     FixedFromEnd,
+}
+
+/// What channels a bell or phase plays through. Mirrors the
+/// Sound / Vibration / Both `Adw.ToggleGroup` segments in the
+/// timer setup. Used as the persisted enum behind every per-bell
+/// signal-mode setting key + the `interval_bells.signal_mode`
+/// column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SignalMode {
+    Sound,
+    Vibration,
+    Both,
+}
+
+impl SignalMode {
+    pub fn as_db_str(self) -> &'static str {
+        match self {
+            SignalMode::Sound     => "sound",
+            SignalMode::Vibration => "vibration",
+            SignalMode::Both      => "both",
+        }
+    }
+    pub fn from_db_str(s: &str) -> Option<Self> {
+        match s {
+            "sound"     => Some(SignalMode::Sound),
+            "vibration" => Some(SignalMode::Vibration),
+            "both"      => Some(SignalMode::Both),
+            _           => None,
+        }
+    }
 }
 
 impl IntervalBellKind {
@@ -402,14 +434,21 @@ const SCHEMA: &str = "
     -- list views sort newest-first or oldest-first without an extra
     -- column on the row.
     CREATE TABLE IF NOT EXISTS interval_bells (
-        id          INTEGER PRIMARY KEY AUTOINCREMENT,
-        uuid        TEXT NOT NULL UNIQUE,
-        kind        TEXT NOT NULL CHECK (kind IN ('interval', 'fixed_from_start', 'fixed_from_end')),
-        minutes     INTEGER NOT NULL,
-        jitter_pct  INTEGER NOT NULL DEFAULT 0,
-        sound       TEXT NOT NULL DEFAULT 'bowl',
-        enabled     INTEGER NOT NULL DEFAULT 1,
-        created_iso TEXT NOT NULL
+        id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+        uuid                   TEXT NOT NULL UNIQUE,
+        kind                   TEXT NOT NULL CHECK (kind IN ('interval', 'fixed_from_start', 'fixed_from_end')),
+        minutes                INTEGER NOT NULL,
+        jitter_pct             INTEGER NOT NULL DEFAULT 0,
+        sound                  TEXT NOT NULL DEFAULT 'bowl',
+        -- Default uses the bundled Pulse pattern's stable UUID
+        -- (BUNDLED_PATTERN_PULSE_UUID in src/db/mod.rs). Kept literal
+        -- here to avoid plumbing a shell-side const into the core
+        -- schema string.
+        vibration_pattern_uuid TEXT NOT NULL DEFAULT '7e9c4d2f-5a8b-4f1d-9e3c-2d6f7a8b0001',
+        signal_mode            TEXT NOT NULL DEFAULT 'sound'
+                               CHECK (signal_mode IN ('sound', 'vibration', 'both')),
+        enabled                INTEGER NOT NULL DEFAULT 1,
+        created_iso            TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS sessions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1255,25 +1294,38 @@ impl Database {
             let minutes = v["minutes"].as_u64().unwrap_or(0) as u32;
             let jitter_pct = v["jitter_pct"].as_u64().unwrap_or(0) as u32;
             let sound = v["sound"].as_str().unwrap_or("bowl");
+            // Old payloads (pre-vibration columns) won't carry these
+            // fields; default vibration_pattern_uuid to bundled Pulse,
+            // signal_mode to 'sound' so peer rows materialise into
+            // today's silent-vibration default.
+            let vibration_pattern_uuid = v["vibration_pattern_uuid"]
+                .as_str()
+                .unwrap_or("7e9c4d2f-5a8b-4f1d-9e3c-2d6f7a8b0001");
+            let signal_mode = v["signal_mode"].as_str().unwrap_or("sound");
             let enabled = v["enabled"].as_bool().unwrap_or(true);
             let created_iso = v["created_iso"].as_str().unwrap_or_default();
             self.conn.execute(
                 "INSERT INTO interval_bells
-                    (uuid, kind, minutes, jitter_pct, sound, enabled, created_iso)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                    (uuid, kind, minutes, jitter_pct, sound,
+                     vibration_pattern_uuid, signal_mode, enabled, created_iso)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
                  ON CONFLICT(uuid) DO UPDATE SET
-                    kind        = excluded.kind,
-                    minutes     = excluded.minutes,
-                    jitter_pct  = excluded.jitter_pct,
-                    sound       = excluded.sound,
-                    enabled     = excluded.enabled,
-                    created_iso = excluded.created_iso",
+                    kind                   = excluded.kind,
+                    minutes                = excluded.minutes,
+                    jitter_pct             = excluded.jitter_pct,
+                    sound                  = excluded.sound,
+                    vibration_pattern_uuid = excluded.vibration_pattern_uuid,
+                    signal_mode            = excluded.signal_mode,
+                    enabled                = excluded.enabled,
+                    created_iso            = excluded.created_iso",
                 params![
                     bell_uuid,
                     kind,
                     minutes,
                     jitter_pct,
                     sound,
+                    vibration_pattern_uuid,
+                    signal_mode,
                     enabled as i64,
                     created_iso,
                 ],
@@ -1783,20 +1835,25 @@ impl Database {
         minutes: u32,
         jitter_pct: u32,
         sound: &str,
+        vibration_pattern_uuid: &str,
+        signal_mode: SignalMode,
     ) -> Result<i64> {
         let tx = self.conn.unchecked_transaction()?;
         let bell_uuid = uuid::Uuid::new_v4().to_string();
         let created_iso = chrono::Utc::now().to_rfc3339();
         self.conn.execute(
             "INSERT INTO interval_bells
-                (uuid, kind, minutes, jitter_pct, sound, enabled, created_iso)
-             VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6)",
+                (uuid, kind, minutes, jitter_pct, sound,
+                 vibration_pattern_uuid, signal_mode, enabled, created_iso)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, ?8)",
             params![
                 bell_uuid,
                 kind.as_db_str(),
                 minutes,
                 jitter_pct,
                 sound,
+                vibration_pattern_uuid,
+                signal_mode.as_db_str(),
                 created_iso,
             ],
         )?;
@@ -1807,6 +1864,8 @@ impl Database {
             "minutes": minutes,
             "jitter_pct": jitter_pct,
             "sound": sound,
+            "vibration_pattern_uuid": vibration_pattern_uuid,
+            "signal_mode": signal_mode.as_db_str(),
             "enabled": true,
             "created_iso": created_iso,
         }).to_string();
@@ -1827,6 +1886,8 @@ impl Database {
         minutes: u32,
         jitter_pct: u32,
         sound: &str,
+        vibration_pattern_uuid: &str,
+        signal_mode: SignalMode,
         enabled: bool,
     ) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
@@ -1844,13 +1905,16 @@ impl Database {
         };
         self.conn.execute(
             "UPDATE interval_bells
-                SET kind = ?1, minutes = ?2, jitter_pct = ?3, sound = ?4, enabled = ?5
-              WHERE uuid = ?6",
+                SET kind = ?1, minutes = ?2, jitter_pct = ?3, sound = ?4,
+                    vibration_pattern_uuid = ?5, signal_mode = ?6, enabled = ?7
+              WHERE uuid = ?8",
             params![
                 kind.as_db_str(),
                 minutes,
                 jitter_pct,
                 sound,
+                vibration_pattern_uuid,
+                signal_mode.as_db_str(),
                 enabled as i64,
                 uuid,
             ],
@@ -1861,6 +1925,8 @@ impl Database {
             "minutes": minutes,
             "jitter_pct": jitter_pct,
             "sound": sound,
+            "vibration_pattern_uuid": vibration_pattern_uuid,
+            "signal_mode": signal_mode.as_db_str(),
             "enabled": enabled,
             "created_iso": created_iso,
         }).to_string();
@@ -1874,8 +1940,9 @@ impl Database {
     /// `interval_bell_update` event as a full-fields update so the
     /// sync replay code only has to handle one update kind.
     pub fn set_interval_bell_enabled(&self, uuid: &str, enabled: bool) -> Result<()> {
-        let row: Option<(String, u32, u32, String)> = self.conn.query_row(
-            "SELECT kind, minutes, jitter_pct, sound
+        let row: Option<(String, u32, u32, String, String, String)> = self.conn.query_row(
+            "SELECT kind, minutes, jitter_pct, sound,
+                    vibration_pattern_uuid, signal_mode
                FROM interval_bells WHERE uuid = ?1",
             params![uuid],
             |row| Ok((
@@ -1883,14 +1950,22 @@ impl Database {
                 row.get::<_, i64>(1)? as u32,
                 row.get::<_, i64>(2)? as u32,
                 row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
             )),
         ).optional()?;
-        let Some((kind_str, minutes, jitter_pct, sound)) = row else {
+        let Some((kind_str, minutes, jitter_pct, sound,
+                  vibration_pattern_uuid, signal_mode_str)) = row else {
             return Ok(());
         };
         let kind = IntervalBellKind::from_db_str(&kind_str)
             .expect("interval_bells.kind violates CHECK constraint");
-        self.update_interval_bell(uuid, kind, minutes, jitter_pct, &sound, enabled)
+        let signal_mode = SignalMode::from_db_str(&signal_mode_str)
+            .expect("interval_bells.signal_mode violates CHECK constraint");
+        self.update_interval_bell(
+            uuid, kind, minutes, jitter_pct, &sound,
+            &vibration_pattern_uuid, signal_mode, enabled,
+        )
     }
 
     /// Remove the bell row with `uuid` and emit a tombstone event.
@@ -1922,13 +1997,15 @@ impl Database {
     /// added is at the top".
     pub fn list_interval_bells(&self) -> Result<Vec<IntervalBell>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, uuid, kind, minutes, jitter_pct, sound, enabled, created_iso
+            "SELECT id, uuid, kind, minutes, jitter_pct, sound,
+                    vibration_pattern_uuid, signal_mode, enabled, created_iso
              FROM interval_bells
              ORDER BY id ASC",
         )?;
         let rows = stmt
             .query_map([], |row| {
                 let kind_str: String = row.get(2)?;
+                let signal_mode_str: String = row.get(7)?;
                 Ok(IntervalBell {
                     id: row.get(0)?,
                     uuid: row.get(1)?,
@@ -1940,8 +2017,11 @@ impl Database {
                     minutes: row.get::<_, i64>(3)? as u32,
                     jitter_pct: row.get::<_, i64>(4)? as u32,
                     sound: row.get(5)?,
-                    enabled: row.get::<_, i64>(6)? != 0,
-                    created_iso: row.get(7)?,
+                    vibration_pattern_uuid: row.get(6)?,
+                    signal_mode: SignalMode::from_db_str(&signal_mode_str)
+                        .expect("interval_bells.signal_mode violates CHECK constraint"),
+                    enabled: row.get::<_, i64>(8)? != 0,
+                    created_iso: row.get(9)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -6978,7 +7058,7 @@ mod tests {
             uuid: String::new(),
             guided_file_uuid: None,
         }).unwrap();
-        db.insert_interval_bell(IntervalBellKind::Interval, 5, 0, "bowl").unwrap();
+        db.insert_interval_bell(IntervalBellKind::Interval, 5, 0, "bowl", BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound).unwrap();
         db.insert_bell_sound("Custom", "/p/c.wav", false, "audio/wav", BellSoundCategory::General).unwrap();
         db.record_known_remote_file("a").unwrap();
         db.record_known_remote_sound("bs-1").unwrap();
@@ -8108,6 +8188,11 @@ mod tests {
     const DEVICE_A: &str = "00000000-0000-4000-8000-aaaaaaaaaaaa";
     const DEVICE_B: &str = "00000000-0000-4000-8000-bbbbbbbbbbbb";
     const SESSION_X: &str = "11111111-1111-4111-8111-111111111111";
+    /// Mirror of the shell-side BUNDLED_PATTERN_PULSE_UUID const.
+    /// Kept literal here so the core tests don't need to plumb in the
+    /// shell module — every interval-bell insert in the test suite
+    /// passes this as the default pattern uuid.
+    const BUNDLED_PATTERN_PULSE_UUID: &str = "7e9c4d2f-5a8b-4f1d-9e3c-2d6f7a8b0001";
 
     #[test]
     fn apply_event_session_insert_creates_the_row() {
@@ -8883,7 +8968,10 @@ mod tests {
     fn insert_interval_bell_inserts_a_row_with_uuid_and_returns_rowid() {
         let db = Database::open_in_memory().unwrap();
         let rowid = db
-            .insert_interval_bell(IntervalBellKind::Interval, 9, 30, "bowl")
+            .insert_interval_bell(
+                IntervalBellKind::Interval, 9, 30, "bowl",
+                BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound,
+            )
             .unwrap();
         assert!(rowid > 0);
         let bells = db.list_interval_bells().unwrap();
@@ -8902,8 +8990,10 @@ mod tests {
     #[test]
     fn insert_interval_bell_emits_an_interval_bell_insert_event() {
         let db = Database::open_in_memory().unwrap();
-        db.insert_interval_bell(IntervalBellKind::FixedFromStart, 10, 0, "bell")
-            .unwrap();
+        db.insert_interval_bell(
+            IntervalBellKind::FixedFromStart, 10, 0, "bell",
+            BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound,
+        ).unwrap();
         let events = db.pending_events().unwrap();
         // Schema-init may pre-record device-init events; filter to our kind.
         let mine: Vec<_> = events
@@ -8925,9 +9015,9 @@ mod tests {
     #[test]
     fn list_interval_bells_returns_rows_in_insert_order() {
         let db = Database::open_in_memory().unwrap();
-        db.insert_interval_bell(IntervalBellKind::Interval, 5, 0, "bowl").unwrap();
-        db.insert_interval_bell(IntervalBellKind::FixedFromStart, 10, 0, "bell").unwrap();
-        db.insert_interval_bell(IntervalBellKind::FixedFromEnd, 5, 0, "gong").unwrap();
+        db.insert_interval_bell(IntervalBellKind::Interval, 5, 0, "bowl", BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound).unwrap();
+        db.insert_interval_bell(IntervalBellKind::FixedFromStart, 10, 0, "bell", BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound).unwrap();
+        db.insert_interval_bell(IntervalBellKind::FixedFromEnd, 5, 0, "gong", BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound).unwrap();
         let bells = db.list_interval_bells().unwrap();
         assert_eq!(bells.len(), 3);
         // Insert order — rowid ASC, deterministic.
@@ -8945,7 +9035,7 @@ mod tests {
     #[test]
     fn update_interval_bell_overwrites_every_mutable_field() {
         let db = Database::open_in_memory().unwrap();
-        db.insert_interval_bell(IntervalBellKind::Interval, 5, 0, "bowl").unwrap();
+        db.insert_interval_bell(IntervalBellKind::Interval, 5, 0, "bowl", BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound).unwrap();
         let uuid = db.list_interval_bells().unwrap()[0].uuid.clone();
 
         db.update_interval_bell(
@@ -8954,6 +9044,8 @@ mod tests {
             12,
             25,
             "bell",
+            BUNDLED_PATTERN_PULSE_UUID,
+            SignalMode::Sound,
             false,
         ).unwrap();
 
@@ -8970,7 +9062,7 @@ mod tests {
     #[test]
     fn update_interval_bell_emits_an_interval_bell_update_event() {
         let db = Database::open_in_memory().unwrap();
-        db.insert_interval_bell(IntervalBellKind::Interval, 5, 0, "bowl").unwrap();
+        db.insert_interval_bell(IntervalBellKind::Interval, 5, 0, "bowl", BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound).unwrap();
         let uuid = db.list_interval_bells().unwrap()[0].uuid.clone();
 
         db.update_interval_bell(
@@ -8979,6 +9071,8 @@ mod tests {
             9,
             30,
             "gong",
+            BUNDLED_PATTERN_PULSE_UUID,
+            SignalMode::Sound,
             true,
         ).unwrap();
 
@@ -9009,6 +9103,8 @@ mod tests {
             5,
             0,
             "bowl",
+            BUNDLED_PATTERN_PULSE_UUID,
+            SignalMode::Sound,
             true,
         ).unwrap();
         let updates: Vec<_> = db.pending_events().unwrap()
@@ -9021,7 +9117,7 @@ mod tests {
     #[test]
     fn delete_interval_bell_removes_the_row() {
         let db = Database::open_in_memory().unwrap();
-        db.insert_interval_bell(IntervalBellKind::Interval, 5, 0, "bowl").unwrap();
+        db.insert_interval_bell(IntervalBellKind::Interval, 5, 0, "bowl", BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound).unwrap();
         let uuid = db.list_interval_bells().unwrap()[0].uuid.clone();
         db.delete_interval_bell(&uuid).unwrap();
         assert!(db.list_interval_bells().unwrap().is_empty());
@@ -9030,7 +9126,7 @@ mod tests {
     #[test]
     fn delete_interval_bell_emits_a_delete_event_with_uuid_target() {
         let db = Database::open_in_memory().unwrap();
-        db.insert_interval_bell(IntervalBellKind::Interval, 5, 0, "bowl").unwrap();
+        db.insert_interval_bell(IntervalBellKind::Interval, 5, 0, "bowl", BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound).unwrap();
         let uuid = db.list_interval_bells().unwrap()[0].uuid.clone();
         db.delete_interval_bell(&uuid).unwrap();
         let deletes: Vec<_> = db.pending_events().unwrap()
@@ -9060,7 +9156,7 @@ mod tests {
         // Convenience helper for the common path: SwitchRow toggle flips
         // enabled without the UI having to round-trip the other fields.
         let db = Database::open_in_memory().unwrap();
-        db.insert_interval_bell(IntervalBellKind::Interval, 9, 30, "bell").unwrap();
+        db.insert_interval_bell(IntervalBellKind::Interval, 9, 30, "bell", BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound).unwrap();
         let uuid = db.list_interval_bells().unwrap()[0].uuid.clone();
 
         db.set_interval_bell_enabled(&uuid, false).unwrap();
@@ -9082,7 +9178,7 @@ mod tests {
         // update — peers reconstruct state by replaying events, so a
         // discrete "enabled flipped" event would just complicate apply.
         let db = Database::open_in_memory().unwrap();
-        db.insert_interval_bell(IntervalBellKind::Interval, 9, 30, "bell").unwrap();
+        db.insert_interval_bell(IntervalBellKind::Interval, 9, 30, "bell", BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound).unwrap();
         let uuid = db.list_interval_bells().unwrap()[0].uuid.clone();
         db.set_interval_bell_enabled(&uuid, false).unwrap();
 
@@ -9616,10 +9712,11 @@ mod tests {
         // Device A creates + updates; device B replays the event log and
         // arrives at exactly the same row state.
         let dev_a = Database::open_in_memory().unwrap();
-        dev_a.insert_interval_bell(IntervalBellKind::Interval, 9, 30, "bell").unwrap();
+        dev_a.insert_interval_bell(IntervalBellKind::Interval, 9, 30, "bell", BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound).unwrap();
         let uuid = dev_a.list_interval_bells().unwrap()[0].uuid.clone();
         dev_a.update_interval_bell(
-            &uuid, IntervalBellKind::FixedFromStart, 10, 0, "gong", true,
+            &uuid, IntervalBellKind::FixedFromStart, 10, 0, "gong",
+            BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound, true,
         ).unwrap();
 
         let events: Vec<Event> = dev_a.pending_events().unwrap()

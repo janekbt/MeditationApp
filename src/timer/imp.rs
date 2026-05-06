@@ -2898,6 +2898,8 @@ impl TimerView {
                 };
                 let rowid = match db.insert_interval_bell(
                     kind, s.minutes, s.jitter_pct, &s.sound_uuid,
+                    crate::db::BUNDLED_PATTERN_PULSE_UUID,
+                    crate::db::SignalMode::Sound,
                 ) {
                     Ok(id) => id,
                     Err(_) => continue,

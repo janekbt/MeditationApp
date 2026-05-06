@@ -169,6 +169,8 @@ fn build_create_row(
                 5,
                 0,
                 crate::db::BUNDLED_BOWL_UUID,
+                crate::db::BUNDLED_PATTERN_PULSE_UUID,
+                crate::db::SignalMode::Sound,
             )
         }).and_then(|r| r.ok());
 
@@ -491,7 +493,14 @@ fn push_edit_page(
         let s = snap.borrow();
         app.with_db_mut(|db| {
             db.update_interval_bell(
-                &s.uuid, s.kind, s.minutes, s.jitter_pct, &s.sound, s.enabled,
+                &s.uuid,
+                s.kind,
+                s.minutes,
+                s.jitter_pct,
+                &s.sound,
+                &s.vibration_pattern_uuid,
+                s.signal_mode,
+                s.enabled,
             )
         });
         if let Some(rb) = rebuilder.borrow().as_ref() {
@@ -641,6 +650,8 @@ mod tests {
             minutes,
             jitter_pct,
             sound: sound.into(),
+            vibration_pattern_uuid: crate::db::BUNDLED_PATTERN_PULSE_UUID.into(),
+            signal_mode: crate::db::SignalMode::Sound,
             enabled: true,
             created_iso: "2026-05-03T00:00:00Z".into(),
         }

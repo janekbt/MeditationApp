@@ -23,7 +23,7 @@ use std::path::Path;
 /// learning about meditate-core directly. Same for the bell-library
 /// types added in B.3.1, and the `mint_uuid` helper added in B.5.
 pub use meditate_core::db::{
-    mint_uuid, BellSound, BellSoundCategory, ChartKind, GuidedFile, IntervalBell, IntervalBellKind, Label, Preset, SessionMode, VibrationPattern,
+    mint_uuid, BellSound, BellSoundCategory, ChartKind, GuidedFile, IntervalBell, IntervalBellKind, Label, Preset, SessionMode, SignalMode, VibrationPattern,
 };
 
 /// Bundled bell-sound seed: hardcoded (uuid, display name, GResource
@@ -567,9 +567,14 @@ impl Database {
         minutes: u32,
         jitter_pct: u32,
         sound: &str,
+        vibration_pattern_uuid: &str,
+        signal_mode: meditate_core::db::SignalMode,
     ) -> Result<i64> {
         self.inner
-            .insert_interval_bell(kind, minutes, jitter_pct, sound)
+            .insert_interval_bell(
+                kind, minutes, jitter_pct, sound,
+                vibration_pattern_uuid, signal_mode,
+            )
             .map_err(map_core_err)
     }
 
@@ -580,10 +585,15 @@ impl Database {
         minutes: u32,
         jitter_pct: u32,
         sound: &str,
+        vibration_pattern_uuid: &str,
+        signal_mode: meditate_core::db::SignalMode,
         enabled: bool,
     ) -> Result<()> {
         self.inner
-            .update_interval_bell(uuid, kind, minutes, jitter_pct, sound, enabled)
+            .update_interval_bell(
+                uuid, kind, minutes, jitter_pct, sound,
+                vibration_pattern_uuid, signal_mode, enabled,
+            )
             .map_err(map_core_err)
     }
 
