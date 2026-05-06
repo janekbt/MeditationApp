@@ -2646,6 +2646,56 @@ impl Database {
         Ok(rowid)
     }
 
+    /// Insert a row with a freshly-minted UUID. Returns the new uuid
+    /// so the caller (typically the editor's Save handler) can use it
+    /// to drive selection in the chooser. Mirrors bell_sound's two-
+    /// variant pattern, but returns the uuid (more useful for the
+    /// editor flow) rather than the rowid.
+    pub fn insert_vibration_pattern(
+        &self,
+        name: &str,
+        duration_ms: u32,
+        intensities: &[f32],
+        chart_kind: ChartKind,
+        is_bundled: bool,
+    ) -> Result<String> {
+        let uuid_str = uuid::Uuid::new_v4().to_string();
+        self.insert_vibration_pattern_with_uuid(
+            &uuid_str, name, duration_ms, intensities, chart_kind, is_bundled,
+        )?;
+        Ok(uuid_str)
+    }
+
+    pub fn find_vibration_pattern_by_uuid(
+        &self,
+        uuid_str: &str,
+    ) -> Result<Option<VibrationPattern>> {
+        let row = self.conn.query_row(
+            "SELECT id, uuid, name, duration_ms, intensities_json,
+                    chart_kind, is_bundled, created_iso, updated_iso
+             FROM vibration_patterns WHERE uuid = ?1",
+            params![uuid_str],
+            |row| {
+                let intensities_json: String = row.get(4)?;
+                let chart_str: String = row.get(5)?;
+                Ok(VibrationPattern {
+                    id: row.get(0)?,
+                    uuid: row.get(1)?,
+                    name: row.get(2)?,
+                    duration_ms: row.get::<_, i64>(3)? as u32,
+                    intensities: serde_json::from_str(&intensities_json)
+                        .unwrap_or_default(),
+                    chart_kind: ChartKind::from_db_str(&chart_str)
+                        .unwrap_or(ChartKind::Line),
+                    is_bundled: row.get::<_, i64>(6)? != 0,
+                    created_iso: row.get(7)?,
+                    updated_iso: row.get(8)?,
+                })
+            },
+        ).optional()?;
+        Ok(row)
+    }
+
     pub fn list_vibration_patterns(&self) -> Result<Vec<VibrationPattern>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, uuid, name, duration_ms, intensities_json,
@@ -10121,6 +10171,28 @@ mod tests {
             Err(DbError::DuplicateVibrationPattern(name)) => assert_eq!(name, "PULSE"),
             other => panic!("expected DuplicateVibrationPattern, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn insert_vibration_pattern_returns_a_fresh_uuid() {
+        let db = Database::open_in_memory().unwrap();
+        let uuid_str = db.insert_vibration_pattern(
+            "Custom Wave", 1000, &[0.0, 0.5, 1.0, 0.5, 0.0],
+            ChartKind::Line, false,
+        ).unwrap();
+        // Returned string parses as a real UUID, not just any string.
+        assert!(uuid::Uuid::parse_str(&uuid_str).is_ok(),
+            "returned uuid should be parseable: {uuid_str}");
+        // And points at the freshly-inserted row.
+        let row = db.find_vibration_pattern_by_uuid(&uuid_str).unwrap()
+            .expect("row should exist under the returned uuid");
+        assert_eq!(row.name, "Custom Wave");
+    }
+
+    #[test]
+    fn find_vibration_pattern_by_uuid_returns_none_for_unknown_uuid() {
+        let db = Database::open_in_memory().unwrap();
+        assert!(db.find_vibration_pattern_by_uuid("nope").unwrap().is_none());
     }
 
     #[test]
