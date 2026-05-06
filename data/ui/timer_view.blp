@@ -299,11 +299,30 @@ template $TimerView : Gtk.Widget {
             child: Adw.PreferencesGroup session_group {
               title: _("Session");
 
-              // Stopwatch toggle — top of the Session group. Visible
-              // in Timer mode only; flipping on greys out the Duration
-              // row (the planned-duration concept doesn't apply when
-              // counting up from zero). Box Breath has no stopwatch
-              // analogue so the row hides under that mode.
+              // Per-mode "what plays" toggle. Acts as a runtime
+              // override on top of per-bell + per-phase signal_mode:
+              // 'sound' silences all vibration in this mode, 'vibration'
+              // silences all sound, 'both' honours per-row intent.
+              // Persists to a mode-specific setting key
+              // (timer_signal_mode / guided_signal_mode /
+              // boxbreath_signal_mode). Toggle group is built in
+              // Rust; refresh on mode switch + on visit reloads the
+              // active value from the new mode's setting.
+              Adw.ActionRow cues_signal_mode_row {
+                title: _("Cues");
+
+                [suffix]
+                Gtk.Box cues_signal_toggle_host {
+                  orientation: horizontal;
+                  valign: center;
+                }
+              }
+
+              // Stopwatch toggle. Visible in Timer mode only; flipping
+              // on greys out the Duration row (the planned-duration
+              // concept doesn't apply when counting up from zero).
+              // Box Breath has no stopwatch analogue so the row hides
+              // under that mode.
               Adw.SwitchRow stopwatch_mode_row {
                 title: _("Stopwatch Mode");
                 subtitle: _("Count up from zero");

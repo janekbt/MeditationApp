@@ -125,6 +125,8 @@ pub struct TimerView {
     #[template_child] pub resume_btn:            TemplateChild<gtk::Button>,
     #[template_child] pub stop_from_pause_btn:   TemplateChild<gtk::Button>,
     #[template_child] pub session_group:          TemplateChild<adw::PreferencesGroup>,
+    #[template_child] pub cues_signal_mode_row:    TemplateChild<adw::ActionRow>,
+    #[template_child] pub cues_signal_toggle_host: TemplateChild<gtk::Box>,
     #[template_child] pub duration_row:            TemplateChild<adw::ActionRow>,
     #[template_child] pub duration_value_label:    TemplateChild<gtk::Label>,
     #[template_child] pub setup_label_enabled_row: TemplateChild<adw::ExpanderRow>,
@@ -720,6 +722,7 @@ impl TimerView {
         // .ui parser version. Toggle changes persist end_bell_signal_mode
         // and reveal/hide the Bell Sound + Pattern rows accordingly.
         self.setup_end_bell_signal_mode_toggle();
+        self.setup_cues_signal_mode_toggle();
 
         // ── Setup-page label expander ───────────────────────────────
         // Master toggle persists `label_active_<mode>`; the inner
@@ -995,6 +998,66 @@ impl TimerView {
             &app,
             "end_bell_signal_mode",
         );
+    }
+
+    /// Build the per-mode Cues toggle (Sound / Vibration / Both) at
+    /// the top of the Session group. Persists to whichever mode's
+    /// signal-mode setting is current at click time. State load +
+    /// capability gating happen later from
+    /// `refresh_cues_signal_mode_state` once the widget is attached.
+    fn setup_cues_signal_mode_toggle(&self) {
+        let obj = self.obj();
+        build_per_mode_signal_toggle_widget(
+            &self.cues_signal_toggle_host,
+            glib::clone!(
+                #[weak] obj,
+                #[upgrade_or] None,
+                move || obj.imp().get_app()
+            ),
+            glib::clone!(
+                #[weak] obj,
+                #[upgrade_or] TimerMode::Timer,
+                move || obj.imp().current_mode()
+            ),
+        );
+    }
+
+    /// Apply the saved per-mode signal_mode + capability gating to
+    /// the Cues toggle. Reads the setting key matching `current_mode()`,
+    /// so this is also called from `on_mode_switched` to sync the
+    /// displayed value when the user flips between modes.
+    pub(crate) fn refresh_cues_signal_mode_state(&self) {
+        let Some(app) = self.get_app() else { return; };
+        let Some(toggle_group) =
+            first_toggle_group_in(&self.cues_signal_toggle_host)
+        else { return; };
+        if !app.has_haptic() {
+            if let Some(t) = toggle_group.toggle_by_name("vibration") {
+                t.set_enabled(false);
+            }
+            if let Some(t) = toggle_group.toggle_by_name("both") {
+                t.set_enabled(false);
+            }
+        }
+        let setting_key = setting_key_for_mode(self.current_mode());
+        let saved = app
+            .with_db(|db| db.get_setting(setting_key, "both"))
+            .and_then(|r| r.ok())
+            .unwrap_or_else(|| "both".to_string());
+        let initial = if !app.has_haptic() {
+            "sound"
+        } else {
+            match saved.as_str() {
+                "sound"     => "sound",
+                "vibration" => "vibration",
+                _           => "both",
+            }
+        };
+        // Set populating flag so the active-name notify handler
+        // doesn't write the just-loaded value back to the DB.
+        self.bells_loading.set(true);
+        toggle_group.set_active_name(Some(initial));
+        self.bells_loading.set(false);
     }
 
     /// Throwaway: build the Sound / Vibration / Both AdwToggleGroup
@@ -1532,6 +1595,53 @@ pub(crate) fn apply_phase_signal_mode_state(
     ));
 }
 
+/// Per-mode "what plays" Cues toggle. The persistence handler
+/// resolves the active mode + app lazily at click time and writes
+/// to the matching setting key — `timer_signal_mode`,
+/// `guided_signal_mode`, or `boxbreath_signal_mode` — so the same
+/// widget serves all three modes. State load + capability gating
+/// run later via `refresh_cues_signal_mode_state`.
+pub(crate) fn build_per_mode_signal_toggle_widget(
+    host: &gtk::Box,
+    get_app: impl Fn() -> Option<crate::application::MeditateApplication> + 'static,
+    get_mode: impl Fn() -> TimerMode + 'static,
+) {
+    let toggle_group = adw::ToggleGroup::builder()
+        .css_classes(["round"])
+        .valign(gtk::Align::Center)
+        .build();
+    toggle_group.add(adw::Toggle::builder()
+        .name("sound").label(crate::i18n::gettext("Sound")).build());
+    toggle_group.add(adw::Toggle::builder()
+        .name("vibration").label(crate::i18n::gettext("Vibration")).build());
+    toggle_group.add(adw::Toggle::builder()
+        .name("both").label(crate::i18n::gettext("Both")).build());
+    toggle_group.set_active_name(Some("both"));
+
+    host.append(&toggle_group);
+
+    toggle_group.connect_active_name_notify(move |tg| {
+        let Some(name) = tg.active_name() else { return; };
+        let value = match name.as_str() {
+            "sound"     => "sound",
+            "vibration" => "vibration",
+            _           => "both",
+        };
+        let Some(app) = get_app() else { return; };
+        let setting_key = setting_key_for_mode(get_mode());
+        app.with_db_mut(|db| db.set_setting(setting_key, value));
+    });
+}
+
+/// Map a TimerMode to its per-mode signal-mode setting key.
+pub(crate) fn setting_key_for_mode(mode: TimerMode) -> &'static str {
+    match mode {
+        TimerMode::Timer     => "timer_signal_mode",
+        TimerMode::Guided    => "guided_signal_mode",
+        TimerMode::Breathing => "boxbreath_signal_mode",
+    }
+}
+
 /// Walk a Gtk.Box and return the first AdwToggleGroup child, or
 /// None if the host doesn't have one yet.
 fn first_toggle_group_in(host: &gtk::Box) -> Option<adw::ToggleGroup> {
@@ -1626,6 +1736,8 @@ impl TimerView {
         // Refresh the duration label from the appropriate Cell on every
         // mode switch so the suffix doesn't lag.
         self.refresh_duration_value_label();
+        // Per-mode Cues toggle reflects the new mode's saved value.
+        self.refresh_cues_signal_mode_state();
         // Visible-list contents are mode-strict (Timer presets only
         // appear in Timer mode, Box-Breath presets in Box Breath mode)
         // — rebuild on every switch. Guided mode rebuilds its own
@@ -2849,6 +2961,9 @@ impl TimerView {
         // toggle-group active state + every Bell Sound / Pattern
         // subtitle.
         self.refresh_boxbreath_phase_state();
+
+        // Per-mode Cues toggle.
+        self.refresh_cues_signal_mode_state();
 
         // Update streak label. .streak-chip applies text-transform:
         // uppercase, so we keep the source text sentence-case here.
