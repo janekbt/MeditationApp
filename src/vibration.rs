@@ -73,59 +73,12 @@ pub fn probe_haptic() -> bool {
     .is_ok()
 }
 
-/// Fire a one-shot haptic if the user enabled it. The D-Bus call is fully
-/// async (spawned on the GLib main context) so it never blocks the UI —
-/// previously this used `call_sync` with a 2-second timeout, which would
-/// freeze the main thread at session end if feedbackd was slow to reply.
-pub fn trigger_if_enabled(app: &crate::application::MeditateApplication) {
-    let enabled = app
-        .with_db(|db| db.get_setting("vibrate_on_end", "false"))
-        .and_then(|r| r.ok())
-        .map(|s| s == "true")
-        .unwrap_or(false);
-    if !enabled { return; }
-
-    glib::MainContext::default().spawn_local(async {
-        // Build the method arguments explicitly so the wire signature is
-        // unambiguously (ssa{sv}i). Folding a &Variant into a Rust tuple
-        // literal and calling .to_variant() on the whole tuple can, in some
-        // gtk-rs versions, produce (ssvi) — which feedbackd silently rejects.
-        //
-        // hints: {"profile": "quiet"} restricts this one event to haptic-
-        // only feedback. The "alarm-clock-elapsed" event normally includes
-        // an audible tone in feedbackd's default theme, which would collide
-        // with the app's own meditation-bell end sound.
-        let hints_dict = glib::VariantDict::new(None);
-        hints_dict.insert("profile", "quiet");
-        let hints = hints_dict.end();
-        let args = glib::Variant::tuple_from_iter([
-            crate::config::APP_ID.to_variant(),
-            "alarm-clock-elapsed".to_variant(),
-            hints,
-            (-1i32).to_variant(),
-        ]);
-
-        let Ok(conn) = gio::bus_get_future(gio::BusType::Session).await else {
-            return;
-        };
-
-        // DBusCallFlags::NONE (not NO_AUTO_START): if feedbackd isn't
-        // running yet, D-Bus activates it via its .service file. We're
-        // already async, so the activation latency doesn't hurt anything.
-        let _ = conn
-            .call_future(
-                Some("org.sigxcpu.Feedback"),
-                "/org/sigxcpu/Feedback",
-                "org.sigxcpu.Feedback",
-                "TriggerFeedback",
-                Some(&args),
-                None,
-                gio::DBusCallFlags::NONE,
-                -1,
-            )
-            .await;
-    });
-}
+// trigger_if_enabled used to be the entire vibration system: a single
+// fire-and-forget haptic at session end, gated by a vibrate_on_end
+// boolean. Replaced in step 9 by per-bell + per-phase + per-mode
+// pattern-driven playback through PatternPlayback below. The old
+// vibrate_on_end setting + the Preferences toggle that drove it are
+// also gone.
 
 // ── Pattern sampler ──────────────────────────────────────────────────────
 // Pure-Rust translation from VibrationPattern → the (amplitude,
@@ -222,6 +175,7 @@ fn build_vibrate_args(segments: &[(f64, u32)]) -> glib::Variant {
 /// fires `Vibrate(app_id, [])` to cancel — feedbackd's documented
 /// no-op pattern. Spawned async on the GLib main context so the
 /// caller never blocks waiting for DBus.
+#[derive(Debug)]
 pub struct PatternPlayback {
     cancel: Arc<AtomicBool>,
 }
@@ -302,6 +256,63 @@ impl Drop for PatternPlayback {
     fn drop(&mut self) {
         self.stop();
     }
+}
+
+// ── Channel-resolution helpers ───────────────────────────────────────────
+// Whether sound / vibration should fire for a given bell or phase
+// is the AND of two gates: the per-bell (or per-phase) signal_mode
+// (intent for this row), and the per-mode "what plays" toggle
+// (override for this session-mode). Both have three values —
+// Sound / Vibration / Both — so the resolution is the intersection
+// of the two.
+
+/// Read a per-mode `signal_mode` setting key, defaulting to Both
+/// when the value is missing or unparseable.
+fn read_mode_signal_mode(
+    app: &crate::application::MeditateApplication,
+    setting_key: &'static str,
+) -> crate::db::SignalMode {
+    let raw = app
+        .with_db(|db| db.get_setting(setting_key, "both"))
+        .and_then(|r| r.ok())
+        .unwrap_or_else(|| "both".to_string());
+    crate::db::SignalMode::from_db_str(&raw).unwrap_or(crate::db::SignalMode::Both)
+}
+
+/// True if the sound channel should fire given per-bell intent +
+/// the per-mode override.
+pub fn should_fire_sound(
+    app: &crate::application::MeditateApplication,
+    per_bell: crate::db::SignalMode,
+    mode_setting_key: &'static str,
+) -> bool {
+    use crate::db::SignalMode::*;
+    let mode = read_mode_signal_mode(app, mode_setting_key);
+    matches!(per_bell, Sound | Both) && matches!(mode, Sound | Both)
+}
+
+/// Fire the configured vibration pattern for a bell or phase if
+/// every gate allows: device has haptic, per-bell signal_mode
+/// includes vibration, per-mode override includes vibration. Looks
+/// up the pattern by uuid and returns a `PatternPlayback` handle —
+/// the caller MUST stash the handle to keep the pattern alive
+/// through its natural duration (drop fires cancel).
+pub fn fire_pattern_if_allowed(
+    app: &crate::application::MeditateApplication,
+    per_bell: crate::db::SignalMode,
+    mode_setting_key: &'static str,
+    pattern_uuid: &str,
+) -> Option<PatternPlayback> {
+    use crate::db::SignalMode::*;
+    if !app.has_haptic() { return None; }
+    if !matches!(per_bell, Vibration | Both) { return None; }
+    let mode = read_mode_signal_mode(app, mode_setting_key);
+    if !matches!(mode, Vibration | Both) { return None; }
+    let pattern = app
+        .with_db(|db| db.find_vibration_pattern_by_uuid(pattern_uuid))
+        .and_then(|r| r.ok())
+        .flatten()?;
+    Some(PatternPlayback::play(app, &pattern))
 }
 
 /// Linearly interpolate the Line-mode envelope at time `t_ms`.

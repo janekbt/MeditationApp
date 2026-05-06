@@ -33,6 +33,8 @@ fn boot_time_now() -> std::time::Duration {
 #[derive(Debug, Clone)]
 struct ActiveBell {
     sound: String,
+    vibration_pattern_uuid: String,
+    signal_mode: crate::db::SignalMode,
     schedule: BellSchedule,
 }
 
@@ -197,6 +199,13 @@ pub struct TimerView {
 
     /// Active glib timeout handle (at most one mode runs at a time).
     tick_source: RefCell<Option<glib::SourceId>>,
+
+    /// Held PatternPlayback handle for the most recent bell or
+    /// phase-cue vibration. Replacing it with a new handle drops the
+    /// previous one — the Drop impl fires `Vibrate(app_id, [])` to
+    /// cancel any pattern still playing — so newest-wins overlap
+    /// behaviour is automatic.
+    current_vibration: RefCell<Option<crate::vibration::PatternPlayback>>,
     /// Weak ref to the running-page time label for live updates.
     running_label: RefCell<Option<gtk::Label>>,
     /// Refs to the running-page buttons so the Overtime transition
@@ -2088,7 +2097,7 @@ impl TimerView {
         // Box Breathing never plays the starting bell (Timer-only).
         if mode == TimerMode::Timer && prep.is_none() {
             if let Some(app) = self.get_app() {
-                crate::sound::play_starting_sound(&app);
+                self.fire_starting_bell(&app);
             }
         }
 
@@ -2609,8 +2618,7 @@ impl TimerView {
         *self.guided_playback.borrow_mut() = None;
 
         if let Some(app) = self.get_app() {
-            crate::sound::play_end_bell(&app);
-            crate::vibration::trigger_if_enabled(&app);
+            self.fire_end_bell(&app);
             // Only send a system notification when the app isn't
             // focused — the in-app overtime UI already signals
             // completion.
@@ -2735,7 +2743,7 @@ impl TimerView {
         *self.prep_stopwatch.borrow_mut() = None;
 
         if let Some(app) = self.get_app() {
-            crate::sound::play_starting_sound(&app);
+            self.fire_starting_bell(&app);
         }
 
         // Re-anchor so the running cores see elapsed starting at zero,
@@ -2769,8 +2777,7 @@ impl TimerView {
         self.obj().emit_by_name::<()>("timer-stopped", &[]);
         self.show_done(elapsed);
         if let Some(app) = self.get_app() {
-            crate::sound::play_end_bell(&app);
-            crate::vibration::trigger_if_enabled(&app);
+            self.fire_end_bell(&app);
             if !app.active_window().map(|w| w.is_active()).unwrap_or(false) {
                 let n = gtk::gio::Notification::new("Meditation Complete");
                 n.set_body(Some(&format!("Session: {}", format_time(elapsed))));
@@ -3843,7 +3850,12 @@ impl TimerView {
                     }
                 }
             };
-            new_bells.push(ActiveBell { sound: b.sound, schedule });
+            new_bells.push(ActiveBell {
+                sound: b.sound,
+                vibration_pattern_uuid: b.vibration_pattern_uuid,
+                signal_mode: b.signal_mode,
+                schedule,
+            });
         }
         *self.active_bells.borrow_mut() = new_bells;
     }
@@ -3861,13 +3873,14 @@ impl TimerView {
         // borrowed across the play_interval_sound call (sound.rs uses
         // its own thread-locals; no recursion expected, but the
         // collect is also clearer).
-        let mut to_play: Vec<String> = Vec::new();
+        let mut to_play: Vec<(String, String, crate::db::SignalMode)> = Vec::new();
         let mut bells = self.active_bells.borrow_mut();
         for bell in bells.iter_mut() {
+            let mut should_fire = false;
             match &mut bell.schedule {
                 BellSchedule::Interval { base_min, jitter_pct, next_ring_secs } => {
                     if elapsed_secs >= *next_ring_secs {
-                        to_play.push(bell.sound.clone());
+                        should_fire = true;
                         let r = self.next_random_unit();
                         *next_ring_secs = meditate_core::format::next_interval_ring_secs(
                             *next_ring_secs, *base_min, *jitter_pct, r,
@@ -3876,16 +3889,35 @@ impl TimerView {
                 }
                 BellSchedule::Fixed { target_secs, fired } => {
                     if !*fired && elapsed_secs >= *target_secs {
-                        to_play.push(bell.sound.clone());
+                        should_fire = true;
                         *fired = true;
                     }
                 }
             }
+            if should_fire {
+                to_play.push((
+                    bell.sound.clone(),
+                    bell.vibration_pattern_uuid.clone(),
+                    bell.signal_mode,
+                ));
+            }
         }
         drop(bells);
         let Some(app) = self.get_app() else { return; };
-        for sound_uuid in to_play {
-            crate::sound::play_interval_sound(&sound_uuid, &app);
+        let mode_key = setting_key_for_mode(self.current_mode());
+        for (sound_uuid, pattern_uuid, signal_mode) in to_play {
+            // Sound channel — gate by per-bell + per-mode signal_mode.
+            if crate::vibration::should_fire_sound(&app, signal_mode, mode_key) {
+                crate::sound::play_interval_sound(&sound_uuid, &app);
+            }
+            // Vibration channel — same two-gate AND. Replace any
+            // previous handle so newest-wins on overlapping bells.
+            let handle = crate::vibration::fire_pattern_if_allowed(
+                &app, signal_mode, mode_key, &pattern_uuid,
+            );
+            if handle.is_some() {
+                *self.current_vibration.borrow_mut() = handle;
+            }
         }
     }
 
@@ -3958,6 +3990,94 @@ impl TimerView {
     /// End-bell pattern row's subtitle reflects whichever
     /// vibration_patterns row the end_bell_pattern setting points at.
     /// Defaults to bundled Pulse on first ever read.
+    /// Same dual-channel firing for the Starting Bell. Reads
+    /// starting_bell_active + starting_bell_signal_mode +
+    /// starting_bell_pattern + the per-mode override; ignores the
+    /// row in modes where Starting Bell isn't shown (Box Breath /
+    /// Guided — the caller already gates by mode before calling
+    /// this, but defensive double-check is cheap).
+    pub(crate) fn fire_starting_bell(
+        &self,
+        app: &crate::application::MeditateApplication,
+    ) {
+        let active = app
+            .with_db(|db| db.get_setting("starting_bell_active", "false"))
+            .and_then(|r| r.ok())
+            .map(|s| s == "true")
+            .unwrap_or(false);
+        if !active { return; }
+
+        let raw = app
+            .with_db(|db| db.get_setting("starting_bell_signal_mode", "sound"))
+            .and_then(|r| r.ok())
+            .unwrap_or_else(|| "sound".to_string());
+        let per_bell = crate::db::SignalMode::from_db_str(&raw)
+            .unwrap_or(crate::db::SignalMode::Sound);
+        let mode_key = setting_key_for_mode(self.current_mode());
+
+        if crate::vibration::should_fire_sound(app, per_bell, mode_key) {
+            crate::sound::play_starting_sound(app);
+        }
+        let pattern_uuid = app
+            .with_db(|db| db.get_setting(
+                "starting_bell_pattern",
+                crate::db::BUNDLED_PATTERN_PULSE_UUID,
+            ))
+            .and_then(|r| r.ok())
+            .unwrap_or_else(|| crate::db::BUNDLED_PATTERN_PULSE_UUID.to_string());
+        let handle = crate::vibration::fire_pattern_if_allowed(
+            app, per_bell, mode_key, &pattern_uuid,
+        );
+        if handle.is_some() {
+            *self.current_vibration.borrow_mut() = handle;
+        }
+    }
+
+    /// Fire the End Bell's sound + vibration channels per the
+    /// current per-bell signal_mode + per-mode override. Both gates
+    /// ANDed: per-bell intent (end_bell_signal_mode) AND per-mode
+    /// override (timer / guided / boxbreath signal_mode setting).
+    /// The vibration handle stashes onto `current_vibration` so the
+    /// pattern plays out (drop fires cancel).
+    pub(crate) fn fire_end_bell(
+        &self,
+        app: &crate::application::MeditateApplication,
+    ) {
+        let active = app
+            .with_db(|db| db.get_setting("end_bell_active", "true"))
+            .and_then(|r| r.ok())
+            .map(|s| s == "true")
+            .unwrap_or(true);
+        if !active { return; }
+
+        let raw = app
+            .with_db(|db| db.get_setting("end_bell_signal_mode", "sound"))
+            .and_then(|r| r.ok())
+            .unwrap_or_else(|| "sound".to_string());
+        let per_bell = crate::db::SignalMode::from_db_str(&raw)
+            .unwrap_or(crate::db::SignalMode::Sound);
+        let mode_key = setting_key_for_mode(self.current_mode());
+
+        if crate::vibration::should_fire_sound(app, per_bell, mode_key) {
+            crate::sound::play_end_bell(app);
+        }
+        let pattern_uuid = app
+            .with_db(|db| db.get_setting(
+                "end_bell_pattern",
+                crate::db::BUNDLED_PATTERN_PULSE_UUID,
+            ))
+            .and_then(|r| r.ok())
+            .unwrap_or_else(|| crate::db::BUNDLED_PATTERN_PULSE_UUID.to_string());
+        let handle = crate::vibration::fire_pattern_if_allowed(
+            app, per_bell, mode_key, &pattern_uuid,
+        );
+        // Replace any in-flight handle — its Drop fires the empty-
+        // array cancel for the previous pattern, so end-of-session
+        // vibration cleanly takes over from any interval-bell or
+        // phase pattern that was mid-playback.
+        *self.current_vibration.borrow_mut() = handle;
+    }
+
     pub(crate) fn refresh_end_bell_pattern_subtitle(&self) {
         let name = self.lookup_pattern_name_for_setting("end_bell_pattern");
         self.end_bell_pattern_row.set_subtitle(&name);

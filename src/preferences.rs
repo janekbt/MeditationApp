@@ -33,40 +33,13 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
         .icon_name("preferences-system-symbolic")
         .build();
 
-    // ── Sound group ───────────────────────────────────────────────────────────
-    // The legacy "End sound" ComboRow + custom-file picker lived here
-    // before B.4. Sound choice now lives on the timer setup's End Bell
-    // row, which drills into the bell-sound chooser. Only the
-    // vibrate-on-end toggle remains in Preferences for now; B.4.5
-    // adds a "Sounds" tab for managing the bell-sound library.
-
-    let sound_group = adw::PreferencesGroup::builder()
-        .title(gettext("Sound"))
-        .build();
-
-    // Vibrate-on-end toggle. Routed through feedbackd on mobile; a no-op on
-    // systems without it, so desktop users with this accidentally enabled
-    // just notice nothing extra.
-    let vibrate_on = app
-        .with_db(|db| db.get_setting("vibrate_on_end", "false"))
-        .and_then(|r| r.ok())
-        .map(|s| s == "true")
-        .unwrap_or(false);
-    let vibrate_row = adw::SwitchRow::builder()
-        .title(gettext("Vibrate on session end"))
-        .subtitle(gettext("Haptic feedback when the timer finishes (mobile only)"))
-        .active(vibrate_on)
-        .build();
-    vibrate_row.connect_active_notify(glib::clone!(
-        #[weak] app,
-        move |row| {
-            let v = if row.is_active() { "true" } else { "false" };
-            app.with_db_mut(|db| db.set_setting("vibrate_on_end", v));
-        }
-    ));
-    sound_group.add(&vibrate_row);
-
-    general_page.add(&sound_group);
+    // The legacy Sound group held a "Vibrate on session end" toggle
+    // (vibrate_on_end setting). The full vibration system that
+    // replaced it lives on the timer setup's per-bell rows + the
+    // per-phase Box Breath rows + the per-mode Cues toggle, so
+    // there's nothing in Preferences to wire here anymore. The
+    // group disappears entirely; the "Manage vibration patterns"
+    // entry on its own (in the Vibration group below) is enough.
 
     // ── Vibration group ───────────────────────────────────────────────────────
     // Always-present "Manage vibration patterns" entry — works on
