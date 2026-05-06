@@ -247,12 +247,13 @@ pub fn push_pattern_editor(
         .css_classes(["card"])
         .build();
 
-    // Header strip: "Pattern" heading on its own line, then a row with
-    // the static two-line subtitle on the left and the toggle pill on
-    // the right.
-    let header_box = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .spacing(2)
+    // Header strip: "Pattern" heading on the left, Preview button +
+    // Bar/Line toggle on the right. Single row keeps the chart card
+    // compact — the previous descriptive subtitle was redundant once
+    // users understood the toggle.
+    let header_row = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(8)
         .margin_top(10)
         .margin_start(12)
         .margin_end(8)
@@ -263,28 +264,18 @@ pub fn push_pattern_editor(
         .label(gettext("Pattern"))
         .css_classes(["heading"])
         .halign(gtk::Align::Start)
-        .build();
-    header_box.append(&header_title);
-
-    let header_row = gtk::Box::builder()
-        .orientation(gtk::Orientation::Horizontal)
-        .spacing(8)
-        .build();
-
-    let chart_kind_subtitle = gtk::Label::builder()
-        .label(format!(
-            "{}\n{}",
-            gettext("Line: Continuous transitions"),
-            gettext("Bar: Abrupt transitions"),
-        ))
-        .css_classes(["dim-label", "caption"])
-        .halign(gtk::Align::Start)
         .hexpand(true)
         .xalign(0.0)
-        .wrap(true)
-        .wrap_mode(gtk::pango::WrapMode::WordChar)
         .build();
-    header_row.append(&chart_kind_subtitle);
+    header_row.append(&header_title);
+
+    let preview_btn = gtk::Button::builder()
+        .icon_name("media-playback-start-symbolic")
+        .tooltip_text(gettext("Preview"))
+        .css_classes(["circular"])
+        .valign(gtk::Align::Center)
+        .build();
+    header_row.append(&preview_btn);
 
     let chart_kind_toggle = adw::ToggleGroup::builder()
         .css_classes(["round"])
@@ -308,8 +299,7 @@ pub fn push_pattern_editor(
     }));
     header_row.append(&chart_kind_toggle);
 
-    header_box.append(&header_row);
-    chart_card.append(&header_box);
+    chart_card.append(&header_row);
 
     let drawing_area = gtk::DrawingArea::builder()
         .content_height(CHART_HEIGHT)
@@ -322,20 +312,6 @@ pub fn push_pattern_editor(
     chart_card.append(&drawing_area);
     chart_clamp.set_child(Some(&chart_card));
     body.append(&chart_clamp);
-
-    // Preview button (placeholder — playback driver lands in step 9).
-    let preview_clamp = adw::Clamp::builder()
-        .maximum_size(360)
-        .tightening_threshold(300)
-        .build();
-    let preview_btn = gtk::Button::builder()
-        .label(gettext("Preview"))
-        .css_classes(["pill"])
-        .halign(gtk::Align::Center)
-        .margin_top(8)
-        .build();
-    preview_clamp.set_child(Some(&preview_btn));
-    body.append(&preview_clamp);
 
     // No-haptic banner — only shown when the device can't actually
     // play the pattern (laptop authoring path).
@@ -587,9 +563,28 @@ pub fn push_pattern_editor(
     // new pattern's call_future and silently kill it.
     let preview_slot: Rc<RefCell<Option<crate::vibration::PatternPlayback>>> =
         Rc::new(RefCell::new(None));
+    // Toggle state: Play ↔ Stop. The generation counter invalidates
+    // pending auto-revert timeouts whenever the user re-taps (so a
+    // stop, start, stop sequence doesn't get its second-stop undone
+    // by the first-start's leftover timeout).
+    let is_playing: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+    let play_gen: Rc<Cell<u64>> = Rc::new(Cell::new(0));
     let editor_for_preview = editor.clone();
     let app_for_preview = app.clone();
+    let btn_for_preview = preview_btn.clone();
     preview_btn.connect_clicked(move |_| {
+        if is_playing.get() {
+            // Stop. Drop the slot to fire the empty-array cancel.
+            *preview_slot.borrow_mut() = None;
+            is_playing.set(false);
+            // Bump generation so the previous play's revert-timeout
+            // no-ops if it was about to fire.
+            play_gen.set(play_gen.get().wrapping_add(1));
+            btn_for_preview.set_icon_name("media-playback-start-symbolic");
+            btn_for_preview.set_tooltip_text(Some(&gettext("Preview")));
+            return;
+        }
+
         let intensities = editor_for_preview.intensities.borrow().clone();
         let duration_ms = (editor_for_preview.duration_s.get() * 1000.0) as u32;
         let chart_kind = editor_for_preview.chart_kind.get();
@@ -605,11 +600,35 @@ pub fn push_pattern_editor(
             updated_iso: String::new(),
         };
         let new_handle = crate::vibration::PatternPlayback::play(&app_for_preview, &pattern);
-        let mut slot = preview_slot.borrow_mut();
-        if let Some(mut old) = slot.take() {
-            old.disarm();
+        {
+            let mut slot = preview_slot.borrow_mut();
+            if let Some(mut old) = slot.take() {
+                old.disarm();
+            }
+            *slot = Some(new_handle);
         }
-        *slot = Some(new_handle);
+        is_playing.set(true);
+        let this_gen = play_gen.get().wrapping_add(1);
+        play_gen.set(this_gen);
+        btn_for_preview.set_icon_name("media-playback-stop-symbolic");
+        btn_for_preview.set_tooltip_text(Some(&gettext("Stop preview")));
+
+        // Auto-revert when the pattern finishes naturally. The
+        // generation check no-ops the timeout if the user already
+        // tapped Stop or restarted before this fires.
+        let is_playing_for_t = is_playing.clone();
+        let play_gen_for_t = play_gen.clone();
+        let btn_for_t = btn_for_preview.clone();
+        glib::timeout_add_local_once(
+            std::time::Duration::from_millis(duration_ms as u64),
+            move || {
+                if play_gen_for_t.get() == this_gen && is_playing_for_t.get() {
+                    is_playing_for_t.set(false);
+                    btn_for_t.set_icon_name("media-playback-start-symbolic");
+                    btn_for_t.set_tooltip_text(Some(&gettext("Preview")));
+                }
+            },
+        );
     });
 
     nav_view.push(&page);
