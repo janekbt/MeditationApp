@@ -280,36 +280,233 @@ of the bells subsection. Defer detail until we get to that plan item.
 ## Vibration pattern editor
 
 Mockup at `/home/janek/Downloads/vibration_pattern_editor_mockup.html`.
+Working prototype at `src/vibration_proto.rs` (functional enough to feel
+the page; no DB write, no playback).
 
-Confirmed deviations from the mockup:
-- **Drop the presets row** at top (bundled patterns live in the chooser
-  page, not the editor).
-- **Drop the "tap and hold to record" pad** at the bottom.
-- **Drop the "loop every 5 min" checkbox.**
-- **Replace the bar-chart pulse-train** with an **envelope** rendered as a
-  line chart.
+### Page layout — confirmed
 
-New / changed knobs:
-- **Window length** — `Adw.SpinRow` "Duration" in seconds (range e.g.
-  0.5–10.0 s, step 0.1). Replaces the hardcoded 2.0 s.
-- **Resolution** — `Adw.SpinRow` "Points" (range e.g. 3–24, step 1). Spacing
-  is `duration / (points - 1)`. When resolution changes, **resample** the
-  existing curve onto the new grid (linear interpolate) — don't reset.
-- **Line chart canvas** — custom `Gtk.DrawingArea` (Cairo). Renders the
-  polyline through the N equally-spaced control points. Each point is a
-  draggable handle; drag y maps to intensity (clamped 0–100%).
-- **Tap-to-select** — selecting a point highlights it; sliders below edit
-  intensity precisely.
-- **Snap** — default to 5% intensity steps when dragging. Flag for review.
-- **Preview button** — bottom-right; plays the envelope through feedbackd
-  at the device's max sample rate (laptop: visual-only, no haptic).
+Own `Adw.NavigationPage` pushed from the chooser, with `Adw.HeaderBar`
+carrying Cancel / Save. Body is a vertical `Gtk.Box` of `Adw.Clamp`s (NOT
+a single `Adw.PreferencesPage` — we needed flexibility to drop a
+`Gtk.DrawingArea` and a non-row banner alongside `PreferencesGroup`s):
 
-Header bar: Cancel / Save (own NavigationPage with `Adw.HeaderBar`).
+```
+[ HeaderBar: Cancel    Pattern editor    Save ]
 
-Keyboard:
-- `Tab` cycles points
-- `Up/Down` nudges intensity by 5% (1% with `Shift`)
-- `Enter` confirms
+  ┌─[card] Name ─────────────────────┐         Adw.EntryRow (no popup)
+  │  <name>                          │
+  └──────────────────────────────────┘
+
+  ┌─[card] Shape ────────────────────┐
+  │  Duration   <2.0 s>           ⌃⌄ │         Adw.SpinRow, 0.5–10.0 s
+  │  Points     <7>               ⌃⌄ │         Adw.SpinRow, 3–24
+  └──────────────────────────────────┘
+
+  ┌─[card] ──────────────────────────┐
+  │  Pattern                          │        bold heading
+  │  Line: Continuous transitions     │        static 2-line subtitle
+  │  Bar: Abrupt transitions  [Line|Bar]
+  │                                   │
+  │  [chart canvas]                   │
+  └──────────────────────────────────┘
+
+  [ Preview ]                                  pill, .suggested-action
+
+  prototype banner (placeholder for the laptop / no-haptic banner)
+```
+
+Decisions baked in:
+- **Name as `Adw.EntryRow`** — inline edit, no popup; matches how guided
+  files / labels rename.
+- **No per-point Duration field** — points are equally-spaced; spacing is
+  `Duration / (Points - 1)`, implicit from the two SpinRows.
+- **No tap-to-add on canvas** — point count is changed via the Points
+  SpinRow, which resamples the curve linearly. Trade-off: can't place a
+  point at an arbitrary time; gain: clean equal spacing.
+- **Selected-point Intensity slider — DROPPED.** Drag handles directly on
+  the chart is the only intensity input. Saves a row, page reads shorter.
+- **Preview button at the bottom**, not floating in the chart card.
+
+### Chart canvas — confirmed
+
+- **`Gtk.DrawingArea`** with Cairo.
+- **Y axis**: `0%` / `50%` / `100%` labels, right-aligned in a 38 px
+  gutter. Faint horizontal gridlines at each level. **No rotated
+  "Intensity" title** — implicit from the heading and labels.
+- **X axis**: actual seconds at each control point, formatted with one
+  decimal place: `0.0s`, `0.3s`, `0.7s`, ... `2.0s`. Updates live as
+  Duration / Points changes.
+- **Line / Bar `Adw.ToggleGroup` `.round`** at the top-right of the
+  chart card with two segments. Default Line.
+  - **Line**: filled area under the polyline (accent at 22% opacity) +
+    polyline stroke (accent solid, 2 px, round joins).
+  - **Bar**: filled rectangles, one per control point, centered on each
+    handle's x-position. Adjacent bars touch (each is `step / 2` wide on
+    either side; first/last bar clamps to the chart edge). Reads as a
+    sample-and-hold envelope. Accent at 55% opacity (denser than line
+    fill since bars are discrete).
+  - The two modes share the same N intensity values; switching is purely
+    a render flip.
+- **Handles**: dot per control point, sized 6 px (8 px when selected).
+  White outer ring (1.5 px) for separation from the filled background.
+  Selected handle gets a halo (accent at 30% opacity, 4 px wider).
+- **Drag**: `Gtk.GestureDrag` on the canvas. Drag-begin finds the closest
+  handle within a 28 px hit radius and selects it. Drag-update maps drag
+  Y to an intensity delta (`-oy / chart_height`), snaps to 5%, clamps to
+  [0, 1]. Drag-only — no precise slider beneath.
+- **Resampling on Points change**: linear interpolation between adjacent
+  old samples onto the new equally-spaced grid. Selected index is
+  cleared if it falls out of bounds.
+
+### Code reference — chart drawing
+
+```rust
+match editor.chart_kind.get() {
+    ChartKind::Line => {
+        // Filled area under the polyline.
+        cr.set_source_rgba(ar, ag, ab, 0.22);
+        cr.move_to(xs[0], cy + ch);
+        for i in 0..n { cr.line_to(xs[i], ys[i]); }
+        cr.line_to(xs[n - 1], cy + ch);
+        cr.close_path();
+        let _ = cr.fill();
+
+        // Polyline stroke.
+        cr.set_source_rgba(ar, ag, ab, 1.0);
+        cr.set_line_width(2.0);
+        cr.set_line_join(gtk::cairo::LineJoin::Round);
+        cr.move_to(xs[0], ys[0]);
+        for i in 1..n { cr.line_to(xs[i], ys[i]); }
+        let _ = cr.stroke();
+    }
+    ChartKind::Bar => {
+        // Filled bars centered on each control point. Adjacent bars
+        // touch; first/last clamps to the chart edge.
+        let step = if n > 1 { cw / (n - 1) as f64 } else { cw };
+        cr.set_source_rgba(ar, ag, ab, 0.55);
+        for i in 0..n {
+            let center = xs[i];
+            let left  = if i == 0     { cx        } else { center - step / 2.0 };
+            let right = if i == n - 1 { cx + cw   } else { center + step / 2.0 };
+            let h = intensities[i] * ch;
+            cr.rectangle(left, cy + ch - h, (right - left).max(0.0), h);
+        }
+        let _ = cr.fill();
+    }
+}
+```
+
+### Code reference — resampling
+
+When Points (`new_n`) changes, project old intensities onto the new grid
+by linearly interpolating each new sample's position in the old curve:
+
+```rust
+fn resample_to(&self, new_n: usize) {
+    let old = self.intensities.borrow().clone();
+    let old_n = old.len();
+    if new_n == old_n || new_n == 0 { return; }
+    let mut out = Vec::with_capacity(new_n);
+    if old_n <= 1 {
+        out.resize(new_n, old.first().copied().unwrap_or(0.5));
+    } else {
+        for i in 0..new_n {
+            let t  = i as f64 / (new_n - 1).max(1) as f64;
+            let xf = t * (old_n - 1) as f64;
+            let lo = xf.floor() as usize;
+            let hi = (lo + 1).min(old_n - 1);
+            let frac = xf - lo as f64;
+            out.push(old[lo] * (1.0 - frac) + old[hi] * frac);
+        }
+    }
+    *self.intensities.borrow_mut() = out;
+}
+```
+
+### Code reference — drag interaction
+
+```rust
+let drag = gtk::GestureDrag::new();
+drawing_area.add_controller(drag.clone());
+let drag_start_intensity = Rc::new(Cell::new(0.0_f64));
+
+// Drag-begin: select the closest handle within the hit radius.
+drag.connect_drag_begin(move |_, x, y| {
+    let (cx, cy, cw, ch) = chart_rect(area.width() as f64, area.height() as f64);
+    let intensities = editor.intensities.borrow();
+    let n = intensities.len();
+    let denom = (n - 1).max(1) as f64;
+    let mut best_i = 0usize;
+    let mut best_dist = f64::MAX;
+    for i in 0..n {
+        let px = cx + (i as f64 / denom) * cw;
+        let py = cy + (1.0 - intensities[i]) * ch;
+        let d  = ((px - x).powi(2) + (py - y).powi(2)).sqrt();
+        if d < best_dist { best_dist = d; best_i = i; }
+    }
+    if best_dist < HIT_RADIUS_PX {
+        editor.selected.set(Some(best_i));
+        drag_start_intensity.set(intensities[best_i]);
+        area.queue_draw();
+    }
+});
+
+// Drag-update: snap to 5%, clamp 0..=1, update + redraw.
+drag.connect_drag_update(move |_, _ox, oy| {
+    let Some(i) = editor.selected.get() else { return; };
+    let (_, _, _, ch) = chart_rect(area.width() as f64, area.height() as f64);
+    let raw     = drag_start_intensity.get() + (-oy / ch);
+    let snapped = (raw / 0.05).round() * 0.05;
+    let clamped = snapped.clamp(0.0, 1.0);
+    editor.intensities.borrow_mut()[i] = clamped;
+    area.queue_draw();
+});
+```
+
+### Tunables
+
+```rust
+const DEFAULT_POINTS: usize       = 7;
+const DEFAULT_DURATION_S: f64     = 2.0;
+const POINTS_MIN: u32             = 3;
+const POINTS_MAX: u32             = 24;
+const DURATION_MIN_S: f64         = 0.5;
+const DURATION_MAX_S: f64         = 10.0;
+
+const HANDLE_R: f64               = 6.0;
+const HANDLE_R_SELECTED: f64      = 8.0;
+const HIT_RADIUS_PX: f64          = 28.0;
+const INTENSITY_STEP: f64         = 0.05;   // 5% snap
+
+const CHART_HEIGHT: i32           = 220;
+const Y_LABEL_W: f64              = 38.0;
+const X_LABEL_H: f64              = 18.0;
+const PAD: f64                    = 10.0;
+```
+
+### Keyboard accessibility (deferred to real implementation)
+
+- `Tab` cycles handles
+- `Up` / `Down` nudge intensity by 5% (1% with `Shift`)
+- `Enter` commits
+
+Not in the prototype — drag is the only input there.
+
+### Laptop / no-haptic device handling — confirmed
+
+- **Show the chooser and editor on laptop** — pattern *authoring* benefits
+  from a precise pointer and a big screen, both of which the laptop has and
+  the phone doesn't.
+- **Per-bell vibration toggles greyed out** when no haptic is detected.
+  They'd be no-ops on this device anyway.
+- **Entry point: a "Manage vibration patterns" row in Preferences** that
+  always opens the chooser, regardless of capability detection. Reachable
+  on laptop where per-bell toggles are unavailable.
+- **Editor banner**: "This device doesn't support vibration. Patterns sync
+  to phones." Stays visible while editing on laptop.
+- **Preview on laptop**: visual-only — sweep a playhead across the chart,
+  pulse a coloured dot at the bottom, intensity-modulated by the envelope.
+  No actual haptic call.
 
 ---
 
@@ -367,13 +564,18 @@ fetch its supported events list. Available on Phosh-based devices (Librem
 → no haptic.
 
 When `has_haptic = false`:
-- Hide every "Vibrate" / Pattern row entirely (cleaner than greying — they
-  don't apply at all on this device).
-- The per-mode "what plays" toggle collapses to no-op or reads as
-  "Sound only" with no segmented choice.
-- Pattern editor is still reachable (you might be authoring patterns to
-  sync to a phone) — top-level banner: "This device doesn't support
+- **Per-bell "Vibrate" / Pattern rows are greyed out** (insensitive,
+  visible). They'd be no-ops on this device but stay readable so the user
+  knows what's available.
+- **Per-mode "what plays" toggle** is forced to "Sound only" and locked
+  (or collapses to a single static label — defer).
+- **Pattern chooser and editor remain fully interactive** — you might be
+  authoring patterns to sync to a phone. Reachable via a "Manage vibration
+  patterns" row in Preferences (always present, regardless of capability).
+- **Editor shows a top-level banner**: "This device doesn't support
   vibration. Patterns sync to phones."
+- **Preview on laptop** is visual-only — playhead sweep + accent dot pulse
+  modulated by intensity. No actual feedbackd call.
 
 The existing `src/vibration.rs` is already a no-op-on-failure shape; the
 new playback path inherits that.
@@ -422,11 +624,24 @@ new playback path inherits that.
 
 ## Throwaway prototype location
 
-The Start / End / Box-Breath prototypes live at the bottom of the timer
-setup page. To remove them when the real implementation lands:
+Two layers of prototype, both at the bottom of the timer setup page:
+
+**Bell-row UI prototypes** (Start / End / Box Breath) — inline expander
+shells with the Sound / Vibration / Both ToggleGroup + Revealer-wrapped
+rows.
+
+**Pattern editor prototype** — full NavigationPage with chart canvas,
+drag interaction, Line/Bar toggle, header subtitle, Duration / Points
+SpinRows. Launched from the "Open pattern editor (prototype)" button.
+
+To remove all of it when the real implementation lands:
 
 - `data/ui/timer_view.blp`: search for "Vibration UI prototype" — three
-  contiguous `Adw.Clamp` blocks.
+  contiguous `Adw.Clamp` blocks plus the launcher-button clamp.
 - `src/timer/imp.rs`: search for `vibration_proto_` (template children) and
   `setup_vibration_proto` (the wiring function and its `wire_signal_toggle`
   helper). Helper logic is reusable as-is for the real per-bell wiring.
+- `src/vibration_proto.rs`: entire file. The chart-drawing,
+  resampling, and drag-handler patterns are reusable verbatim in the real
+  module — see the code-reference blocks earlier in this doc.
+- `src/main.rs`: drop the `pub mod vibration_proto;` line.

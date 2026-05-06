@@ -599,6 +599,17 @@ template $TimerView : Gtk.Widget {
             };
           }
 
+          // Throwaway launcher for the pattern editor prototype
+          // (src/vibration_proto.rs). Pushed onto the window's nav view.
+          Adw.Clamp {
+            maximum-size: 360;
+            tightening-threshold: 300;
+
+            child: Gtk.Button vibration_proto_open_editor_btn {
+              label: _("Open pattern editor (prototype)");
+            };
+          }
+
           // Box Breath phase-vibrations prototype: master is the outer
           // AdwExpanderRow (show-enable-switch). Its four child rows are
           // each a per-phase AdwExpanderRow (show-enable-switch) with a
