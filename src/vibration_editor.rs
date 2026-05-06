@@ -114,7 +114,7 @@ impl Editor {
                 String::new(),
                 DEFAULT_DURATION_S,
                 vec![0.5; DEFAULT_POINTS],
-                ChartKind::Line,
+                ChartKind::Bar,
             ),
         };
         Rc::new(Self {
@@ -292,14 +292,14 @@ pub fn push_pattern_editor(
         .build();
     chart_kind_toggle.add(
         adw::Toggle::builder()
-            .name("line")
-            .label(gettext("Line"))
+            .name("bar")
+            .label(gettext("Bar"))
             .build(),
     );
     chart_kind_toggle.add(
         adw::Toggle::builder()
-            .name("bar")
-            .label(gettext("Bar"))
+            .name("line")
+            .label(gettext("Line"))
             .build(),
     );
     chart_kind_toggle.set_active_name(Some(match editor.chart_kind.get() {
