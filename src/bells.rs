@@ -374,6 +374,18 @@ fn sound_label(app: &MeditateApplication, uuid: &str) -> String {
         .unwrap_or_default()
 }
 
+/// Same as sound_label but for vibration_patterns.
+fn pattern_label(app: &MeditateApplication, uuid: &str) -> String {
+    if uuid.is_empty() {
+        return String::new();
+    }
+    app.with_db(|db| db.find_vibration_pattern_by_uuid(uuid))
+        .and_then(|r| r.ok())
+        .flatten()
+        .map(|p| p.name)
+        .unwrap_or_default()
+}
+
 /// Edit page for one bell — pushed when the user taps a row in the
 /// list. Save-as-you-go: every field change persists immediately
 /// (with a populating-style guard during the initial load) and fires
@@ -439,6 +451,53 @@ fn push_edit_page(
         .build();
     form.add(&jitter_row);
 
+    // Type — Sound / Vibration / Both AdwToggleGroup. Determines
+    // which of Bell Sound / Pattern rows are shown below.
+    let signal_mode_row = adw::ActionRow::builder()
+        .title(gettext("Type"))
+        .build();
+    let signal_toggle_host = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .valign(gtk::Align::Center)
+        .build();
+    signal_mode_row.add_suffix(&signal_toggle_host);
+    form.add(&signal_mode_row);
+
+    let signal_toggle = adw::ToggleGroup::builder()
+        .css_classes(["round"])
+        .valign(gtk::Align::Center)
+        .build();
+    let toggle_sound = adw::Toggle::builder()
+        .name("sound")
+        .label(gettext("Sound"))
+        .build();
+    let toggle_vibration = adw::Toggle::builder()
+        .name("vibration")
+        .label(gettext("Vibration"))
+        .build();
+    let toggle_both = adw::Toggle::builder()
+        .name("both")
+        .label(gettext("Both"))
+        .build();
+    if !app.has_haptic() {
+        toggle_vibration.set_enabled(false);
+        toggle_both.set_enabled(false);
+    }
+    signal_toggle.add(toggle_sound);
+    signal_toggle.add(toggle_vibration);
+    signal_toggle.add(toggle_both);
+    let initial_mode = if !app.has_haptic() {
+        crate::db::SignalMode::Sound
+    } else {
+        bell.signal_mode
+    };
+    signal_toggle.set_active_name(Some(match initial_mode {
+        crate::db::SignalMode::Sound     => "sound",
+        crate::db::SignalMode::Vibration => "vibration",
+        crate::db::SignalMode::Both      => "both",
+    }));
+    signal_toggle_host.append(&signal_toggle);
+
     // Sound row — taps push the bell-sound chooser. Subtitle shows the
     // currently-selected sound's name (looked up by uuid).
     let sound_row = adw::ActionRow::builder()
@@ -452,6 +511,29 @@ fn push_edit_page(
         sound_row.add_suffix(&chevron);
     }
     form.add(&sound_row);
+
+    // Pattern row — taps push the vibration-pattern chooser.
+    let pattern_row = adw::ActionRow::builder()
+        .title(gettext("Pattern"))
+        .subtitle(pattern_label(app, &bell.vibration_pattern_uuid))
+        .activatable(true)
+        .build();
+    {
+        let chevron = gtk::Image::from_icon_name("go-next-symbolic");
+        chevron.add_css_class("dim-label");
+        pattern_row.add_suffix(&chevron);
+    }
+    form.add(&pattern_row);
+
+    // Initial visibility based on the saved signal mode.
+    sound_row.set_visible(matches!(
+        initial_mode,
+        crate::db::SignalMode::Sound | crate::db::SignalMode::Both,
+    ));
+    pattern_row.set_visible(matches!(
+        initial_mode,
+        crate::db::SignalMode::Vibration | crate::db::SignalMode::Both,
+    ));
 
     prefs_page.add(&form);
 
@@ -579,6 +661,61 @@ fn push_edit_page(
                 write_back(&app_inner, &snap, &rebuilder, &on_changed);
             },
         );
+    });
+
+    // Pattern row — taps push the vibration-pattern chooser.
+    let snap_for_pat = snapshot.clone();
+    let app_for_pat = app.clone();
+    let rebuilder_for_pat = rebuilder.clone();
+    let on_changed_for_pat = on_changed.clone();
+    let pattern_row_for_sub = pattern_row.clone();
+    pattern_row.connect_activated(move |row| {
+        let Some(window) = row.root()
+            .and_then(|r| r.downcast::<crate::window::MeditateWindow>().ok())
+        else { return; };
+        let current = Some(snap_for_pat.borrow().vibration_pattern_uuid.clone());
+        let snap = snap_for_pat.clone();
+        let app_outer = app_for_pat.clone();
+        let app_inner = app_for_pat.clone();
+        let rebuilder = rebuilder_for_pat.clone();
+        let on_changed = on_changed_for_pat.clone();
+        let pattern_row = pattern_row_for_sub.clone();
+        window.push_vibrations_chooser(&app_outer, current, move |uuid| {
+            snap.borrow_mut().vibration_pattern_uuid = uuid.clone();
+            pattern_row.set_subtitle(&pattern_label(&app_inner, &uuid));
+            write_back(&app_inner, &snap, &rebuilder, &on_changed);
+        });
+    });
+
+    // Signal-mode toggle: persists into the snap + drives row
+    // visibility. Sound / Both reveals Bell Sound; Vibration / Both
+    // reveals Pattern. On no-haptic devices the Vibration / Both
+    // segments are insensitive (set above) but the persisted value
+    // is preserved so a sync to a phone restores intent.
+    let snap_for_sig = snapshot.clone();
+    let app_for_sig = app.clone();
+    let rebuilder_for_sig = rebuilder.clone();
+    let on_changed_for_sig = on_changed.clone();
+    let sound_row_for_sig = sound_row.clone();
+    let pattern_row_for_sig = pattern_row.clone();
+    let populating_for_sig = populating.clone();
+    signal_toggle.connect_active_name_notify(move |tg| {
+        if populating_for_sig.get() { return; }
+        let mode = match tg.active_name().as_deref() {
+            Some("vibration") => crate::db::SignalMode::Vibration,
+            Some("both")      => crate::db::SignalMode::Both,
+            _                 => crate::db::SignalMode::Sound,
+        };
+        snap_for_sig.borrow_mut().signal_mode = mode;
+        sound_row_for_sig.set_visible(matches!(
+            mode,
+            crate::db::SignalMode::Sound | crate::db::SignalMode::Both,
+        ));
+        pattern_row_for_sig.set_visible(matches!(
+            mode,
+            crate::db::SignalMode::Vibration | crate::db::SignalMode::Both,
+        ));
+        write_back(&app_for_sig, &snap_for_sig, &rebuilder_for_sig, &on_changed_for_sig);
     });
 
     // ── Delete ────────────────────────────────────────────────────
