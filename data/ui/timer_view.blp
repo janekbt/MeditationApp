@@ -504,94 +504,178 @@ template $TimerView : Gtk.Widget {
             };
           }
 
-          // Box Breath phase-vibrations prototype: master is the outer
-          // AdwExpanderRow (show-enable-switch). Its four child rows are
-          // each a per-phase AdwExpanderRow (show-enable-switch) with a
-          // Pattern sub-row. Reveal/hide is free from the outer expander.
-          // Three-level nesting — same chevron-override CSS the existing
-          // Starting Bell already relies on applies here too.
+          // ── Box Breath phase cues ─────────────────────────────────────
+          // Outer "Cues during phases" master expander (show-enable-switch
+          // wired to boxbreath_cues_active setting) wrapping four nested
+          // phase expanders, each with its own Sound / Vibration / Both
+          // ToggleGroup + Revealer-wrapped Bell Sound / Pattern rows.
+          // Bell Sound chooser is filtered to BellSoundCategory::BoxBreath
+          // (voice cues / phase markers, not bells).
           Adw.Clamp {
             maximum-size: 360;
             tightening-threshold: 300;
 
-            child: Adw.PreferencesGroup vibration_proto_phase_group {
-              title: _("Prototype: phase vibrations");
-              description: _("Master toggle reveals / hides the four phase rows");
+            child: Adw.PreferencesGroup boxbreath_phase_group {
+              title: _("Box Breath cues");
 
-              Adw.ExpanderRow vibration_proto_phase_master_row {
-                title: _("Vibrate during phases");
-                subtitle: _("Different pattern per phase to feel the cycle");
+              Adw.ExpanderRow boxbreath_master_row {
+                title: _("Cues during phases");
+                subtitle: _("Different cue per phase to feel the cycle");
                 show-enable-switch: true;
                 enable-expansion: false;
 
-                Adw.ExpanderRow vibration_proto_phase_inhale_row {
+                Adw.ExpanderRow boxbreath_phase_in_row {
                   title: _("Inhale");
                   show-enable-switch: true;
                   enable-expansion: false;
 
-                  Adw.ActionRow {
-                    title: _("Pattern");
-                    subtitle: _("Pulse");
-                    activatable: true;
-
+                  Adw.ActionRow boxbreath_phase_in_signal_mode_row {
+                    title: _("Type");
                     [suffix]
-                    Gtk.Image {
-                      icon-name: "go-next-symbolic";
-                      styles ["dim-label"]
+                    Gtk.Box boxbreath_phase_in_signal_toggle_host {
+                      orientation: horizontal;
+                      valign: center;
+                    }
+                  }
+
+                  Gtk.Revealer boxbreath_phase_in_sound_revealer {
+                    transition-type: slide_down;
+                    transition-duration: 220;
+                    reveal-child: true;
+                    Adw.ActionRow boxbreath_phase_in_sound_row {
+                      title: _("Sound");
+                      activatable: true;
+                      [suffix]
+                      Gtk.Image { icon-name: "go-next-symbolic"; styles ["dim-label"] }
+                    }
+                  }
+
+                  Gtk.Revealer boxbreath_phase_in_pattern_revealer {
+                    transition-type: slide_down;
+                    transition-duration: 220;
+                    reveal-child: false;
+                    Adw.ActionRow boxbreath_phase_in_pattern_row {
+                      title: _("Pattern");
+                      activatable: true;
+                      [suffix]
+                      Gtk.Image { icon-name: "go-next-symbolic"; styles ["dim-label"] }
                     }
                   }
                 }
 
-                Adw.ExpanderRow vibration_proto_phase_hold_in_row {
+                Adw.ExpanderRow boxbreath_phase_holdin_row {
                   title: _("Hold (in)");
                   show-enable-switch: true;
                   enable-expansion: false;
 
-                  Adw.ActionRow {
-                    title: _("Pattern");
-                    subtitle: _("None");
-                    activatable: true;
-
+                  Adw.ActionRow boxbreath_phase_holdin_signal_mode_row {
+                    title: _("Type");
                     [suffix]
-                    Gtk.Image {
-                      icon-name: "go-next-symbolic";
-                      styles ["dim-label"]
+                    Gtk.Box boxbreath_phase_holdin_signal_toggle_host {
+                      orientation: horizontal;
+                      valign: center;
+                    }
+                  }
+
+                  Gtk.Revealer boxbreath_phase_holdin_sound_revealer {
+                    transition-type: slide_down;
+                    transition-duration: 220;
+                    reveal-child: true;
+                    Adw.ActionRow boxbreath_phase_holdin_sound_row {
+                      title: _("Sound");
+                      activatable: true;
+                      [suffix]
+                      Gtk.Image { icon-name: "go-next-symbolic"; styles ["dim-label"] }
+                    }
+                  }
+
+                  Gtk.Revealer boxbreath_phase_holdin_pattern_revealer {
+                    transition-type: slide_down;
+                    transition-duration: 220;
+                    reveal-child: false;
+                    Adw.ActionRow boxbreath_phase_holdin_pattern_row {
+                      title: _("Pattern");
+                      activatable: true;
+                      [suffix]
+                      Gtk.Image { icon-name: "go-next-symbolic"; styles ["dim-label"] }
                     }
                   }
                 }
 
-                Adw.ExpanderRow vibration_proto_phase_exhale_row {
+                Adw.ExpanderRow boxbreath_phase_out_row {
                   title: _("Exhale");
                   show-enable-switch: true;
                   enable-expansion: false;
 
-                  Adw.ActionRow {
-                    title: _("Pattern");
-                    subtitle: _("Wave");
-                    activatable: true;
-
+                  Adw.ActionRow boxbreath_phase_out_signal_mode_row {
+                    title: _("Type");
                     [suffix]
-                    Gtk.Image {
-                      icon-name: "go-next-symbolic";
-                      styles ["dim-label"]
+                    Gtk.Box boxbreath_phase_out_signal_toggle_host {
+                      orientation: horizontal;
+                      valign: center;
+                    }
+                  }
+
+                  Gtk.Revealer boxbreath_phase_out_sound_revealer {
+                    transition-type: slide_down;
+                    transition-duration: 220;
+                    reveal-child: true;
+                    Adw.ActionRow boxbreath_phase_out_sound_row {
+                      title: _("Sound");
+                      activatable: true;
+                      [suffix]
+                      Gtk.Image { icon-name: "go-next-symbolic"; styles ["dim-label"] }
+                    }
+                  }
+
+                  Gtk.Revealer boxbreath_phase_out_pattern_revealer {
+                    transition-type: slide_down;
+                    transition-duration: 220;
+                    reveal-child: false;
+                    Adw.ActionRow boxbreath_phase_out_pattern_row {
+                      title: _("Pattern");
+                      activatable: true;
+                      [suffix]
+                      Gtk.Image { icon-name: "go-next-symbolic"; styles ["dim-label"] }
                     }
                   }
                 }
 
-                Adw.ExpanderRow vibration_proto_phase_hold_out_row {
+                Adw.ExpanderRow boxbreath_phase_holdout_row {
                   title: _("Hold (out)");
                   show-enable-switch: true;
                   enable-expansion: false;
 
-                  Adw.ActionRow {
-                    title: _("Pattern");
-                    subtitle: _("None");
-                    activatable: true;
-
+                  Adw.ActionRow boxbreath_phase_holdout_signal_mode_row {
+                    title: _("Type");
                     [suffix]
-                    Gtk.Image {
-                      icon-name: "go-next-symbolic";
-                      styles ["dim-label"]
+                    Gtk.Box boxbreath_phase_holdout_signal_toggle_host {
+                      orientation: horizontal;
+                      valign: center;
+                    }
+                  }
+
+                  Gtk.Revealer boxbreath_phase_holdout_sound_revealer {
+                    transition-type: slide_down;
+                    transition-duration: 220;
+                    reveal-child: true;
+                    Adw.ActionRow boxbreath_phase_holdout_sound_row {
+                      title: _("Sound");
+                      activatable: true;
+                      [suffix]
+                      Gtk.Image { icon-name: "go-next-symbolic"; styles ["dim-label"] }
+                    }
+                  }
+
+                  Gtk.Revealer boxbreath_phase_holdout_pattern_revealer {
+                    transition-type: slide_down;
+                    transition-duration: 220;
+                    reveal-child: false;
+                    Adw.ActionRow boxbreath_phase_holdout_pattern_row {
+                      title: _("Pattern");
+                      activatable: true;
+                      [suffix]
+                      Gtk.Image { icon-name: "go-next-symbolic"; styles ["dim-label"] }
                     }
                   }
                 }

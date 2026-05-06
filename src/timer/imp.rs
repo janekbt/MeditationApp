@@ -148,11 +148,31 @@ pub struct TimerView {
     #[template_child] pub end_bell_pattern_revealer: TemplateChild<gtk::Revealer>,
     #[template_child] pub end_bell_pattern_row:      TemplateChild<adw::ActionRow>,
     // Vibration UI prototype — see setup_vibration_proto. Throwaway.
-    #[template_child] pub vibration_proto_phase_master_row:       TemplateChild<adw::ExpanderRow>,
-    #[template_child] pub vibration_proto_phase_inhale_row:       TemplateChild<adw::ExpanderRow>,
-    #[template_child] pub vibration_proto_phase_hold_in_row:      TemplateChild<adw::ExpanderRow>,
-    #[template_child] pub vibration_proto_phase_exhale_row:       TemplateChild<adw::ExpanderRow>,
-    #[template_child] pub vibration_proto_phase_hold_out_row:     TemplateChild<adw::ExpanderRow>,
+    #[template_child] pub boxbreath_master_row:           TemplateChild<adw::ExpanderRow>,
+    #[template_child] pub boxbreath_phase_in_row:                  TemplateChild<adw::ExpanderRow>,
+    #[template_child] pub boxbreath_phase_in_signal_toggle_host:   TemplateChild<gtk::Box>,
+    #[template_child] pub boxbreath_phase_in_sound_revealer:       TemplateChild<gtk::Revealer>,
+    #[template_child] pub boxbreath_phase_in_sound_row:            TemplateChild<adw::ActionRow>,
+    #[template_child] pub boxbreath_phase_in_pattern_revealer:     TemplateChild<gtk::Revealer>,
+    #[template_child] pub boxbreath_phase_in_pattern_row:          TemplateChild<adw::ActionRow>,
+    #[template_child] pub boxbreath_phase_holdin_row:                  TemplateChild<adw::ExpanderRow>,
+    #[template_child] pub boxbreath_phase_holdin_signal_toggle_host:   TemplateChild<gtk::Box>,
+    #[template_child] pub boxbreath_phase_holdin_sound_revealer:       TemplateChild<gtk::Revealer>,
+    #[template_child] pub boxbreath_phase_holdin_sound_row:            TemplateChild<adw::ActionRow>,
+    #[template_child] pub boxbreath_phase_holdin_pattern_revealer:     TemplateChild<gtk::Revealer>,
+    #[template_child] pub boxbreath_phase_holdin_pattern_row:          TemplateChild<adw::ActionRow>,
+    #[template_child] pub boxbreath_phase_out_row:                  TemplateChild<adw::ExpanderRow>,
+    #[template_child] pub boxbreath_phase_out_signal_toggle_host:   TemplateChild<gtk::Box>,
+    #[template_child] pub boxbreath_phase_out_sound_revealer:       TemplateChild<gtk::Revealer>,
+    #[template_child] pub boxbreath_phase_out_sound_row:            TemplateChild<adw::ActionRow>,
+    #[template_child] pub boxbreath_phase_out_pattern_revealer:     TemplateChild<gtk::Revealer>,
+    #[template_child] pub boxbreath_phase_out_pattern_row:          TemplateChild<adw::ActionRow>,
+    #[template_child] pub boxbreath_phase_holdout_row:                  TemplateChild<adw::ExpanderRow>,
+    #[template_child] pub boxbreath_phase_holdout_signal_toggle_host:   TemplateChild<gtk::Box>,
+    #[template_child] pub boxbreath_phase_holdout_sound_revealer:       TemplateChild<gtk::Revealer>,
+    #[template_child] pub boxbreath_phase_holdout_sound_row:            TemplateChild<adw::ActionRow>,
+    #[template_child] pub boxbreath_phase_holdout_pattern_revealer:     TemplateChild<gtk::Revealer>,
+    #[template_child] pub boxbreath_phase_holdout_pattern_row:          TemplateChild<adw::ActionRow>,
     #[template_child] pub time_unit_label:        TemplateChild<gtk::Label>,
     #[template_child] pub done_duration_label:   TemplateChild<gtk::Label>,
     #[template_child] pub note_view:             TemplateChild<gtk::TextView>,
@@ -346,7 +366,7 @@ impl ObjectImpl for TimerView {
         self.setup_buttons();
         self.build_breathing_setup();
         self.configure_preparation_time_secs_row();
-        self.setup_vibration_proto();
+        self.setup_boxbreath_phase_cues();
 
         // Tell screen readers that the free-text editor is labelled by
         // its caption, matching the Log add/edit dialog.
@@ -982,18 +1002,336 @@ impl TimerView {
     /// show-enable-switch handles reveal/hide of the four nested
     /// phase rows for free; nothing here actually wires up — these
     /// `let _` markers just signal that the template children are
-    /// owned (so the build doesn't drop them as dead code) until
-    /// step 7 graduates them into a real per-phase configurator.
-    fn setup_vibration_proto(&self) {
-        let _ = &self.vibration_proto_phase_master_row;
-        let _ = &self.vibration_proto_phase_inhale_row;
-        let _ = &self.vibration_proto_phase_hold_in_row;
-        let _ = &self.vibration_proto_phase_exhale_row;
-        let _ = &self.vibration_proto_phase_hold_out_row;
+    /// Wire all Box Breath phase-cue widgetry: master expander +
+    /// four phase expanders + the per-phase Sound/Vibration/Both
+    /// toggle groups, Bell Sound and Pattern click handlers, and the
+    /// click-gesture workarounds for the Revealer-wrapped rows. State
+    /// load + capability gating run later from
+    /// `refresh_boxbreath_phase_state`.
+    fn setup_boxbreath_phase_cues(&self) {
+        let obj = self.obj();
+
+        // Master "Cues during phases" enable-switch. Persists to
+        // boxbreath_cues_active. We use enable_expansion notify
+        // (not the row's expansion state itself) so the user's
+        // toggling reads as on/off, not collapse/expand.
+        self.boxbreath_master_row.connect_enable_expansion_notify(glib::clone!(
+            #[weak(rename_to = this)] obj,
+            move |row| {
+                let imp = this.imp();
+                if imp.bells_loading.get() { return; }
+                let on = row.enables_expansion();
+                if let Some(app) = imp.get_app() {
+                    app.with_db_mut(|db| db.set_setting(
+                        "boxbreath_cues_active",
+                        if on { "true" } else { "false" },
+                    ));
+                }
+            }
+        ));
+
+        // Per-phase wiring. Each phase has identical structure but
+        // distinct template-children — call a small helper four times.
+        use crate::db::BoxBreathPhaseId as P;
+        self.wire_boxbreath_phase(
+            P::In,
+            &self.boxbreath_phase_in_row,
+            &self.boxbreath_phase_in_signal_toggle_host,
+            &self.boxbreath_phase_in_sound_revealer,
+            &self.boxbreath_phase_in_sound_row,
+            &self.boxbreath_phase_in_pattern_revealer,
+            &self.boxbreath_phase_in_pattern_row,
+        );
+        self.wire_boxbreath_phase(
+            P::HoldIn,
+            &self.boxbreath_phase_holdin_row,
+            &self.boxbreath_phase_holdin_signal_toggle_host,
+            &self.boxbreath_phase_holdin_sound_revealer,
+            &self.boxbreath_phase_holdin_sound_row,
+            &self.boxbreath_phase_holdin_pattern_revealer,
+            &self.boxbreath_phase_holdin_pattern_row,
+        );
+        self.wire_boxbreath_phase(
+            P::Out,
+            &self.boxbreath_phase_out_row,
+            &self.boxbreath_phase_out_signal_toggle_host,
+            &self.boxbreath_phase_out_sound_revealer,
+            &self.boxbreath_phase_out_sound_row,
+            &self.boxbreath_phase_out_pattern_revealer,
+            &self.boxbreath_phase_out_pattern_row,
+        );
+        self.wire_boxbreath_phase(
+            P::HoldOut,
+            &self.boxbreath_phase_holdout_row,
+            &self.boxbreath_phase_holdout_signal_toggle_host,
+            &self.boxbreath_phase_holdout_sound_revealer,
+            &self.boxbreath_phase_holdout_sound_row,
+            &self.boxbreath_phase_holdout_pattern_revealer,
+            &self.boxbreath_phase_holdout_pattern_row,
+        );
+    }
+
+    /// Wire one Box Breath phase row's interactive widgets:
+    ///   * The phase's enable-switch persists to its row's `enabled`
+    ///     column via set_box_breath_phase.
+    ///   * The Sound/Vibration/Both toggle group persists to the
+    ///     row's `signal_mode` column + reveals the right config rows.
+    ///   * Bell Sound row pushes the bell-sound chooser
+    ///     (BellSoundCategory::BoxBreath); on pick, persists
+    ///     `sound_uuid` and refreshes subtitles.
+    ///   * Pattern row pushes the vibration-pattern chooser; on pick,
+    ///     persists `pattern_uuid` and refreshes subtitles.
+    ///   * GestureClicks on the wrapped rows re-fire `activated` so
+    ///     the listbox-row-activated chain works through the Revealer.
+    fn wire_boxbreath_phase(
+        &self,
+        phase: crate::db::BoxBreathPhaseId,
+        phase_row: &adw::ExpanderRow,
+        toggle_host: &gtk::Box,
+        sound_revealer: &gtk::Revealer,
+        sound_row: &adw::ActionRow,
+        pattern_revealer: &gtk::Revealer,
+        pattern_row: &adw::ActionRow,
+    ) {
+        let obj = self.obj();
+
+        // Phase enable-switch persists to the row's enabled column.
+        phase_row.connect_enable_expansion_notify(glib::clone!(
+            #[weak(rename_to = this)] obj,
+            move |row| {
+                let imp = this.imp();
+                if imp.bells_loading.get() { return; }
+                let on = row.enables_expansion();
+                if let Some(app) = imp.get_app() {
+                    if let Some(p) = app
+                        .with_db(|db| db.get_box_breath_phase(phase))
+                        .and_then(|r| r.ok())
+                        .flatten()
+                    {
+                        app.with_db_mut(|db| db.set_box_breath_phase(
+                            phase, on, p.signal_mode, &p.sound_uuid, &p.pattern_uuid,
+                        ));
+                    }
+                }
+            }
+        ));
+
+        // Re-emit `activated` on the wrapped rows.
+        attach_revealer_row_click(sound_row);
+        attach_revealer_row_click(pattern_row);
+
+        // Bell Sound row -> push sound chooser (BoxBreath category).
+        let phase_for_sound = phase;
+        sound_row.connect_activated(glib::clone!(
+            #[weak(rename_to = this)] obj,
+            move |_| {
+                let imp = this.imp();
+                let Some(app) = imp.get_app() else { return; };
+                let Some(window) = this.root()
+                    .and_then(|r| r.downcast::<crate::window::MeditateWindow>().ok())
+                else { return; };
+                let p = match app
+                    .with_db(|db| db.get_box_breath_phase(phase_for_sound))
+                    .and_then(|r| r.ok())
+                    .flatten()
+                {
+                    Some(p) => p,
+                    None => return,
+                };
+                let app_for_pick = app.clone();
+                let this_for_pick = this.clone();
+                let p_for_pick = p.clone();
+                window.push_sound_chooser(
+                    &app,
+                    crate::db::BellSoundCategory::BoxBreath,
+                    Some(p.sound_uuid.clone()),
+                    move |uuid| {
+                        app_for_pick.with_db_mut(|db| db.set_box_breath_phase(
+                            phase_for_sound,
+                            p_for_pick.enabled,
+                            p_for_pick.signal_mode,
+                            &uuid,
+                            &p_for_pick.pattern_uuid,
+                        ));
+                        this_for_pick.imp().refresh_boxbreath_phase_subtitles(phase_for_sound);
+                    },
+                );
+            }
+        ));
+
+        // Pattern row -> push vibration-pattern chooser.
+        let phase_for_pattern = phase;
+        pattern_row.connect_activated(glib::clone!(
+            #[weak(rename_to = this)] obj,
+            move |_| {
+                let imp = this.imp();
+                let Some(app) = imp.get_app() else { return; };
+                let Some(window) = this.root()
+                    .and_then(|r| r.downcast::<crate::window::MeditateWindow>().ok())
+                else { return; };
+                let p = match app
+                    .with_db(|db| db.get_box_breath_phase(phase_for_pattern))
+                    .and_then(|r| r.ok())
+                    .flatten()
+                {
+                    Some(p) => p,
+                    None => return,
+                };
+                let app_for_pick = app.clone();
+                let this_for_pick = this.clone();
+                let p_for_pick = p.clone();
+                window.push_vibrations_chooser(
+                    &app,
+                    Some(p.pattern_uuid.clone()),
+                    move |uuid| {
+                        app_for_pick.with_db_mut(|db| db.set_box_breath_phase(
+                            phase_for_pattern,
+                            p_for_pick.enabled,
+                            p_for_pick.signal_mode,
+                            &p_for_pick.sound_uuid,
+                            &uuid,
+                        ));
+                        this_for_pick.imp().refresh_boxbreath_phase_subtitles(phase_for_pattern);
+                    },
+                );
+            }
+        ));
+
+        // Sound/Vibration/Both AdwToggleGroup. Built imperatively
+        // (no app at construction time); persistence resolves app
+        // lazily and writes through set_box_breath_phase.
+        build_phase_signal_mode_toggle_widget(
+            toggle_host,
+            sound_revealer,
+            pattern_revealer,
+            phase,
+            glib::clone!(
+                #[weak] obj,
+                #[upgrade_or] None,
+                move || obj.imp().get_app()
+            ),
+        );
+    }
+
+    /// Apply the saved state + capability gating to all four phase
+    /// rows + the master toggle. Called from refresh-on-visit once
+    /// the widget is attached.
+    pub(crate) fn refresh_boxbreath_phase_state(&self) {
+        let Some(app) = self.get_app() else { return; };
+
+        self.bells_loading.set(true);
+
+        // Master row.
+        let master_on = app
+            .with_db(|db| db.get_setting("boxbreath_cues_active", "false"))
+            .and_then(|r| r.ok())
+            .map(|s| s == "true")
+            .unwrap_or(false);
+        self.boxbreath_master_row.set_enable_expansion(master_on);
+        self.boxbreath_master_row.set_expanded(master_on);
+
+        // Per-phase: enable + toggle + revealers + subtitles.
+        use crate::db::BoxBreathPhaseId as P;
+        self.refresh_boxbreath_phase_row(
+            P::In,
+            &self.boxbreath_phase_in_row,
+            &self.boxbreath_phase_in_signal_toggle_host,
+            &self.boxbreath_phase_in_sound_revealer,
+            &self.boxbreath_phase_in_pattern_revealer,
+            &app,
+        );
+        self.refresh_boxbreath_phase_row(
+            P::HoldIn,
+            &self.boxbreath_phase_holdin_row,
+            &self.boxbreath_phase_holdin_signal_toggle_host,
+            &self.boxbreath_phase_holdin_sound_revealer,
+            &self.boxbreath_phase_holdin_pattern_revealer,
+            &app,
+        );
+        self.refresh_boxbreath_phase_row(
+            P::Out,
+            &self.boxbreath_phase_out_row,
+            &self.boxbreath_phase_out_signal_toggle_host,
+            &self.boxbreath_phase_out_sound_revealer,
+            &self.boxbreath_phase_out_pattern_revealer,
+            &app,
+        );
+        self.refresh_boxbreath_phase_row(
+            P::HoldOut,
+            &self.boxbreath_phase_holdout_row,
+            &self.boxbreath_phase_holdout_signal_toggle_host,
+            &self.boxbreath_phase_holdout_sound_revealer,
+            &self.boxbreath_phase_holdout_pattern_revealer,
+            &app,
+        );
+        for phase in P::all() {
+            self.refresh_boxbreath_phase_subtitles(*phase);
+        }
+
+        self.bells_loading.set(false);
+    }
+
+    fn refresh_boxbreath_phase_row(
+        &self,
+        phase: crate::db::BoxBreathPhaseId,
+        phase_row: &adw::ExpanderRow,
+        toggle_host: &gtk::Box,
+        sound_revealer: &gtk::Revealer,
+        pattern_revealer: &gtk::Revealer,
+        app: &crate::application::MeditateApplication,
+    ) {
+        let p = match app
+            .with_db(|db| db.get_box_breath_phase(phase))
+            .and_then(|r| r.ok())
+            .flatten()
+        {
+            Some(p) => p,
+            None => return,
+        };
+        phase_row.set_enable_expansion(p.enabled);
+        phase_row.set_expanded(p.enabled);
+        apply_phase_signal_mode_state(
+            toggle_host, sound_revealer, pattern_revealer,
+            app, p.signal_mode,
+        );
+    }
+
+    pub(crate) fn refresh_boxbreath_phase_subtitles(
+        &self,
+        phase: crate::db::BoxBreathPhaseId,
+    ) {
+        let Some(app) = self.get_app() else { return; };
+        let Some(p) = app
+            .with_db(|db| db.get_box_breath_phase(phase))
+            .and_then(|r| r.ok())
+            .flatten()
+        else { return; };
+        let sound_name = app
+            .with_db(|db| db.list_bell_sounds())
+            .and_then(|r| r.ok())
+            .unwrap_or_default()
+            .into_iter()
+            .find(|s| s.uuid == p.sound_uuid)
+            .map(|s| s.name)
+            .unwrap_or_default();
+        let pattern_name = app
+            .with_db(|db| db.find_vibration_pattern_by_uuid(&p.pattern_uuid))
+            .and_then(|r| r.ok())
+            .flatten()
+            .map(|p| p.name)
+            .unwrap_or_default();
+        use crate::db::BoxBreathPhaseId as PP;
+        let (sound_row, pattern_row): (&adw::ActionRow, &adw::ActionRow) = match phase {
+            PP::In      => (&self.boxbreath_phase_in_sound_row,      &self.boxbreath_phase_in_pattern_row),
+            PP::HoldIn  => (&self.boxbreath_phase_holdin_sound_row,  &self.boxbreath_phase_holdin_pattern_row),
+            PP::Out     => (&self.boxbreath_phase_out_sound_row,     &self.boxbreath_phase_out_pattern_row),
+            PP::HoldOut => (&self.boxbreath_phase_holdout_sound_row, &self.boxbreath_phase_holdout_pattern_row),
+        };
+        sound_row.set_subtitle(&sound_name);
+        pattern_row.set_subtitle(&pattern_name);
     }
 }
 
-/// Build a Sound / Vibration / Both AdwToggleGroup, append it into
 /// Build the AdwToggleGroup for a Sound / Vibration / Both selector
 /// at construction time and append it to `host`. The notify handler
 /// resolves `app` lazily via `get_app` so the widget can be wired
@@ -1096,6 +1434,101 @@ pub(crate) fn apply_signal_mode_state(
     let show_pattern = matches!(initial, "vibration" | "both");
     sound_revealer.set_reveal_child(show_sound);
     pattern_revealer.set_reveal_child(show_pattern);
+}
+
+/// Phase-config variant of `build_signal_mode_toggle_widget`. The
+/// notify handler resolves app lazily (via `get_app`) and persists
+/// the new mode through `set_box_breath_phase` instead of writing
+/// to a settings key. Initial state is sound-revealed / pattern-
+/// hidden; refresh-on-visit applies the saved column value.
+pub(crate) fn build_phase_signal_mode_toggle_widget(
+    host: &gtk::Box,
+    sound_revealer: &gtk::Revealer,
+    pattern_revealer: &gtk::Revealer,
+    phase: crate::db::BoxBreathPhaseId,
+    get_app: impl Fn() -> Option<crate::application::MeditateApplication> + 'static,
+) {
+    let toggle_group = adw::ToggleGroup::builder()
+        .css_classes(["round"])
+        .valign(gtk::Align::Center)
+        .build();
+    toggle_group.add(adw::Toggle::builder()
+        .name("sound").label(crate::i18n::gettext("Sound")).build());
+    toggle_group.add(adw::Toggle::builder()
+        .name("vibration").label(crate::i18n::gettext("Vibration")).build());
+    toggle_group.add(adw::Toggle::builder()
+        .name("both").label(crate::i18n::gettext("Both")).build());
+    toggle_group.set_active_name(Some("sound"));
+    sound_revealer.set_reveal_child(true);
+    pattern_revealer.set_reveal_child(false);
+
+    host.append(&toggle_group);
+
+    let sound_revealer = sound_revealer.clone();
+    let pattern_revealer = pattern_revealer.clone();
+    toggle_group.connect_active_name_notify(move |tg| {
+        let Some(name) = tg.active_name() else { return; };
+        let mode = match name.as_str() {
+            "vibration" => crate::db::SignalMode::Vibration,
+            "both"      => crate::db::SignalMode::Both,
+            _           => crate::db::SignalMode::Sound,
+        };
+        if let Some(app) = get_app() {
+            if let Some(p) = app
+                .with_db(|db| db.get_box_breath_phase(phase))
+                .and_then(|r| r.ok())
+                .flatten()
+            {
+                app.with_db_mut(|db| db.set_box_breath_phase(
+                    phase, p.enabled, mode, &p.sound_uuid, &p.pattern_uuid,
+                ));
+            }
+        }
+        sound_revealer.set_reveal_child(matches!(
+            mode,
+            crate::db::SignalMode::Sound | crate::db::SignalMode::Both
+        ));
+        pattern_revealer.set_reveal_child(matches!(
+            mode,
+            crate::db::SignalMode::Vibration | crate::db::SignalMode::Both
+        ));
+    });
+}
+
+/// Apply the saved phase-row signal_mode + capability gating. Called
+/// from refresh-on-visit. Force-displays Sound when has_haptic is
+/// false, leaving the saved column value untouched.
+pub(crate) fn apply_phase_signal_mode_state(
+    host: &gtk::Box,
+    sound_revealer: &gtk::Revealer,
+    pattern_revealer: &gtk::Revealer,
+    app: &crate::application::MeditateApplication,
+    saved: crate::db::SignalMode,
+) {
+    let Some(toggle_group) = first_toggle_group_in(host) else { return; };
+    if !app.has_haptic() {
+        if let Some(t) = toggle_group.toggle_by_name("vibration") { t.set_enabled(false); }
+        if let Some(t) = toggle_group.toggle_by_name("both")      { t.set_enabled(false); }
+    }
+    let initial = if !app.has_haptic() {
+        crate::db::SignalMode::Sound
+    } else {
+        saved
+    };
+    let name = match initial {
+        crate::db::SignalMode::Sound     => "sound",
+        crate::db::SignalMode::Vibration => "vibration",
+        crate::db::SignalMode::Both      => "both",
+    };
+    toggle_group.set_active_name(Some(name));
+    sound_revealer.set_reveal_child(matches!(
+        initial,
+        crate::db::SignalMode::Sound | crate::db::SignalMode::Both
+    ));
+    pattern_revealer.set_reveal_child(matches!(
+        initial,
+        crate::db::SignalMode::Vibration | crate::db::SignalMode::Both
+    ));
 }
 
 /// Walk a Gtk.Box and return the first AdwToggleGroup child, or
@@ -2408,6 +2841,11 @@ impl TimerView {
         self.interval_bells_enabled_row.set_expanded(intervals_on);
         self.interval_bells_row.set_subtitle(&intervals_count_subtitle(intervals_enabled_count));
         self.bells_loading.set(false);
+
+        // Box Breath phase cues — master + four phase rows + every
+        // toggle-group active state + every Bell Sound / Pattern
+        // subtitle.
+        self.refresh_boxbreath_phase_state();
 
         // Update streak label. .streak-chip applies text-transform:
         // uppercase, so we keep the source text sentence-case here.
