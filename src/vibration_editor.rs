@@ -728,18 +728,54 @@ fn draw_chart(
     }
 
     // ── X axis labels — actual seconds at each control point ─────────
+    // Thin out interior labels so they don't overlap. First and last
+    // are always drawn so the user sees the time range at a glance;
+    // interior labels are picked greedily left-to-right with a
+    // minimum gap. A label that would collide with the forced last
+    // is skipped so the right anchor stays unobstructed.
     cr.set_source_rgba(0.55, 0.55, 0.55, 1.0);
     cr.set_font_size(10.0);
     let label_y = cy + ch + X_LABEL_H - 4.0;
     let duration_s = editor.duration_s.get();
-    for i in 0..n {
+    const X_LABEL_MIN_GAP: f64 = 6.0;
+
+    struct LabelLayout { lx: f64, lw: f64, text: String }
+    let layouts: Vec<LabelLayout> = (0..n).map(|i| {
         let t = duration_s * (i as f64) / denom;
-        let label = format_seconds(t);
-        let extents = cr.text_extents(&label).ok();
+        let text = format_seconds(t);
+        let extents = cr.text_extents(&text).ok();
         let lw = extents.map(|e| e.width()).unwrap_or(0.0);
         let lx = (xs[i] - lw / 2.0).clamp(cx, cx + cw - lw);
-        cr.move_to(lx, label_y);
-        let _ = cr.show_text(&label);
+        LabelLayout { lx, lw, text }
+    }).collect();
+
+    let draw_label = |cr: &gtk::cairo::Context, l: &LabelLayout| {
+        cr.move_to(l.lx, label_y);
+        let _ = cr.show_text(&l.text);
+    };
+
+    if !layouts.is_empty() {
+        draw_label(cr, &layouts[0]);
+        let mut last_right = layouts[0].lx + layouts[0].lw;
+        let last_idx = layouts.len() - 1;
+        if last_idx >= 1 {
+            let last = &layouts[last_idx];
+            for li in &layouts[1..last_idx] {
+                if li.lx <= last_right + X_LABEL_MIN_GAP {
+                    continue;
+                }
+                if li.lx + li.lw + X_LABEL_MIN_GAP > last.lx {
+                    continue;
+                }
+                draw_label(cr, li);
+                last_right = li.lx + li.lw;
+            }
+            // Force-draw the last anchor unless it's literally on
+            // top of the first (degenerate chart_rect).
+            if last.lx > last_right + X_LABEL_MIN_GAP {
+                draw_label(cr, last);
+            }
+        }
     }
 }
 
