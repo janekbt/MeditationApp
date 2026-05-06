@@ -2869,11 +2869,15 @@ impl Database {
     }
 
     pub fn list_vibration_patterns(&self) -> Result<Vec<VibrationPattern>> {
+        // Custom rows first (is_bundled = 0), then the bundled seed
+        // set. Mirrors list_bell_sounds — a freshly authored custom
+        // pattern lives at the top of the chooser instead of being
+        // pushed to the bottom of the bundled list.
         let mut stmt = self.conn.prepare(
             "SELECT id, uuid, name, duration_ms, intensities_json,
                     chart_kind, is_bundled, created_iso, updated_iso
              FROM vibration_patterns
-             ORDER BY created_iso ASC, id ASC",
+             ORDER BY is_bundled ASC, id ASC",
         )?;
         let rows = stmt
             .query_map([], |row| {
@@ -10283,6 +10287,30 @@ mod tests {
     fn list_vibration_patterns_is_empty_on_a_fresh_database() {
         let db = Database::open_in_memory().unwrap();
         assert!(db.list_vibration_patterns().unwrap().is_empty());
+    }
+
+    #[test]
+    fn list_vibration_patterns_returns_custom_rows_before_bundled() {
+        // Chooser UX: a freshly-saved custom pattern lives at the top
+        // of the list, so the user can see + pick it without scrolling
+        // past the curated bundled set every time. Mirrors the
+        // bell_sounds ordering rule.
+        let db = Database::open_in_memory().unwrap();
+        // Seed-style insert (is_bundled = true) lands first…
+        db.insert_vibration_pattern_with_uuid(
+            "vp-bundled", "Pulse", 400, &[0.0, 1.0, 0.0],
+            ChartKind::Line, true,
+        ).unwrap();
+        // …but a later custom row should sort above it.
+        db.insert_vibration_pattern_with_uuid(
+            "vp-custom", "My Wave", 1000, &[0.0, 0.5, 0.0],
+            ChartKind::Line, false,
+        ).unwrap();
+        let rows = db.list_vibration_patterns().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].uuid, "vp-custom",
+            "custom rows must precede bundled in the chooser order");
+        assert_eq!(rows[1].uuid, "vp-bundled");
     }
 
     #[test]

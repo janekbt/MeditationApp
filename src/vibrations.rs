@@ -99,16 +99,16 @@ fn rebuild_chooser_rows(
     nav_view: &adw::NavigationView,
     on_selected: Rc<dyn Fn(String)>,
     rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
-    toast_overlay: &adw::ToastOverlay,
+    _toast_overlay: &adw::ToastOverlay,
 ) {
     for row in rows.borrow_mut().drain(..) {
         group.remove(&row);
     }
 
-    // "Create custom pattern…" — synthetic, always at the top. Will
-    // drill into the pattern editor once that lands; until then,
-    // present a toast pointing at the prototype.
-    let create_row = build_create_row(toast_overlay);
+    // "Create custom pattern…" — synthetic, always at the top.
+    // Pushes the editor in create-new mode; on_saved triggers a
+    // chooser rebuild so the new row appears immediately.
+    let create_row = build_create_row(app, nav_view, rebuilder.clone());
     group.add(&create_row);
     rows.borrow_mut().push(create_row.upcast());
 
@@ -138,7 +138,11 @@ struct SelectionContext {
     nav_view: adw::NavigationView,
 }
 
-fn build_create_row(toast_overlay: &adw::ToastOverlay) -> adw::ActionRow {
+fn build_create_row(
+    app: &MeditateApplication,
+    nav_view: &adw::NavigationView,
+    rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+) -> adw::ActionRow {
     let row = adw::ActionRow::builder()
         .title(gettext("Create custom pattern…"))
         .activatable(true)
@@ -147,18 +151,19 @@ fn build_create_row(toast_overlay: &adw::ToastOverlay) -> adw::ActionRow {
     plus.add_css_class("dim-label");
     row.add_suffix(&plus);
 
-    // Editor lands in the next step. For now, point the user at the
-    // prototype in the timer setup so they can still feel the editing
-    // flow without it persisting.
-    let toast_overlay = toast_overlay.clone();
+    let app = app.clone();
+    let nav_view = nav_view.clone();
     row.connect_activated(move |_| {
-        toast_overlay.add_toast(
-            adw::Toast::builder()
-                .title(gettext(
-                    "Pattern editor lands in the next step — use the prototype at the bottom of the timer setup for now.",
-                ))
-                .timeout(4)
-                .build(),
+        let rebuilder = rebuilder.clone();
+        crate::vibration_editor::push_pattern_editor(
+            &nav_view,
+            &app,
+            None,
+            move |_uuid| {
+                if let Some(rb) = rebuilder.borrow().as_ref() {
+                    rb();
+                }
+            },
         );
     });
     row
@@ -186,11 +191,18 @@ fn build_pattern_row(
         row.add_suffix(&check);
     }
 
-    add_rename_button(&row, pattern, app, rebuilder.clone());
-    if !pattern.is_bundled {
+    if pattern.is_bundled {
         // Bundled rows stay permanent — the seed re-creates them on
         // every open anyway, and an accidental tombstone could
-        // confuse a peer that hasn't seeded yet.
+        // confuse a peer that hasn't seeded yet. Rename is the only
+        // mutation we let through; the curve, duration, and kind are
+        // the seed's identity.
+        add_rename_button(&row, pattern, app, rebuilder);
+    } else {
+        // Edit covers rename + curve + duration + chart kind, so we
+        // skip the standalone rename button here to avoid two
+        // overlapping affordances.
+        add_edit_button(&row, pattern, app, &selection.nav_view, rebuilder.clone());
         add_delete_button(&row, pattern, app, rebuilder);
     }
 
@@ -202,6 +214,38 @@ fn build_pattern_row(
         nav_view.pop();
     });
     row
+}
+
+fn add_edit_button(
+    row: &adw::ActionRow,
+    pattern: &VibrationPattern,
+    app: &MeditateApplication,
+    nav_view: &adw::NavigationView,
+    rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+) {
+    let edit_btn = gtk::Button::builder()
+        .icon_name("document-edit-symbolic")
+        .tooltip_text(gettext("Edit pattern"))
+        .css_classes(["flat", "circular"])
+        .valign(gtk::Align::Center)
+        .build();
+    let app = app.clone();
+    let nav_view = nav_view.clone();
+    let pattern = pattern.clone();
+    edit_btn.connect_clicked(move |_| {
+        let rebuilder = rebuilder.clone();
+        crate::vibration_editor::push_pattern_editor(
+            &nav_view,
+            &app,
+            Some(pattern.clone()),
+            move |_uuid| {
+                if let Some(rb) = rebuilder.borrow().as_ref() {
+                    rb();
+                }
+            },
+        );
+    });
+    row.add_suffix(&edit_btn);
 }
 
 fn add_rename_button(
