@@ -87,22 +87,27 @@ follow-up, not required.
 
 ### Box Breath — confirmed
 
-No "bell" concept here. End chime exists (single shared end bell, configured
-in the Session group like the others). Phase vibrations are net-new; they're
-the only signal a phase has, so the Sound/Vibration/Both selector doesn't
-apply. Just per-phase enable + pattern.
+No "bell" concept here. End chime exists (single shared end bell,
+configured in the Session group like the others). Phase cues are net-new
+and now carry **both sound and vibration** (per the data-model decision
+to add `sound_uuid` to phases for the voice-cue use case — see
+"Box Breath per-phase storage" further down). Each phase row uses the
+**same Sound / Vibration / Both ToggleGroup** the bells use, with the
+same conditional Bell-Sound and Pattern rows beneath it.
 
 ```
-Phase Vibrations  [PreferencesGroup]
-  └── Vibrate during phases  [show-enable-switch]   ← outer ExpanderRow / master
+Phase Cues  [PreferencesGroup]
+  └── Cues during phases  [show-enable-switch]      ← outer ExpanderRow / master
         ├── Inhale       [show-enable-switch]
-        │     └── Pattern: <name>  ›
+        │     ├── Type: [Sound | Vibration | Both]
+        │     ├── Bell Sound: <name>  ›             (revealed conditionally)
+        │     └── Pattern: <name>     ›             (revealed conditionally)
         ├── Hold (in)    [show-enable-switch]
-        │     └── Pattern: <name>  ›
+        │     └── …same shape…
         ├── Exhale       [show-enable-switch]
-        │     └── Pattern: <name>  ›
+        │     └── …same shape…
         └── Hold (out)   [show-enable-switch]
-              └── Pattern: <name>  ›
+              └── …same shape…
 ```
 
 Master is the outer expander itself — flipping it reveals/hides the four
@@ -110,7 +115,12 @@ phase rows with the native expander animation (no extra GtkRevealer
 wrapping). Three-level nesting; same chevron CSS override the existing
 Starting Bell already relies on covers it.
 
-Defaults: master off, all four phase switches off.
+The Bell Sound chooser opened from a phase row is **filtered to
+`category = 'box_breath'`** (see "Bell-sound categories" below) so the
+user sees voice cues / phase markers, not bells.
+
+Defaults: master off, all four phase switches off, each phase
+`signal_mode='sound'`, Pulse pattern, Bowl sound.
 
 Phase order: Inhale → Hold (in) → Exhale → Hold (out). Match whatever
 labels the existing `phase_tiles_grid` already uses.
@@ -264,16 +274,16 @@ Gtk.Revealer <pattern_revealer> {
 
 ## Per-mode "what plays" toggle — scoped, not app-wide
 
-User confirmed: the toggle is per-mode (Timer / Guided / Box Breath). Each
-mode's setup view gets its own toggle that overrides per-bell intent for
-that mode's session.
+The toggle is per-mode (Timer / Guided / Box Breath); each mode's setup
+view gets its own. Acts as a runtime override on top of per-bell and
+per-phase intent — see "Per-mode 'what plays' toggle storage" further
+down for the storage shape, semantics, defaults, capability gating, and
+UI placement.
 
-For Box Breath specifically, the master "Vibrate during phases" already
-serves the gating role for phase vibrations; the per-mode toggle would only
-apply to the End Bell (and any other shared bells visible in that mode).
-
-Open: where exactly the toggle sits in each mode's setup view. Probably top
-of the bells subsection. Defer detail until we get to that plan item.
+For Box Breath specifically, the master `boxbreath_cues_active` already
+gates per-phase cues entirely; the per-mode toggle layers on top of that
+to silence one channel (sound or vibration) across both the phase cues
+*and* the End Bell.
 
 ---
 
@@ -512,45 +522,363 @@ Not in the prototype — drag is the only input there.
 
 ## Data model
 
+### `vibration_patterns` library table — confirmed
+
 ```sql
-CREATE TABLE vibration_patterns (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    uuid TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
-    duration_ms INTEGER NOT NULL,
-    intensities_json TEXT NOT NULL,   -- e.g. "[0.0, 0.4, 0.9, 0.4, 0.0]"
-    is_bundled INTEGER NOT NULL DEFAULT 0,
-    created_iso TEXT NOT NULL,
-    updated_iso TEXT NOT NULL
+CREATE TABLE IF NOT EXISTS vibration_patterns (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    uuid             TEXT NOT NULL UNIQUE,
+    name             TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    duration_ms      INTEGER NOT NULL,
+    intensities_json TEXT NOT NULL,           -- "[0.0, 0.4, 0.9, 0.4, 0.0]"
+    chart_kind       TEXT NOT NULL DEFAULT 'line'
+                     CHECK (chart_kind IN ('line', 'bar')),
+    is_bundled       INTEGER NOT NULL DEFAULT 0,
+    created_iso      TEXT NOT NULL,
+    updated_iso      TEXT NOT NULL
 );
 ```
 
-`intensities_json` is a JSON array of floats in [0, 1]. N is implicit from
-the array length. Sampling at playback time uses linear interpolation
-between consecutive points.
+Per-column reasoning:
+- **`name UNIQUE NOCASE`** — pattern picker shows names; "heartbeat" and
+  "Heartbeat" should collide. (Bell sounds aren't unique because their
+  filenames disambiguate; patterns have no filename.)
+- **`intensities_json`** — JSON array of floats in `[0, 1]`. N is implicit
+  from array length. Avoids a `pattern_points` child table.
+- **`chart_kind`** — *persisted* because Line and Bar describe two
+  different playback semantics: linear interpolation vs. sample-and-hold
+  step. Same data shape, different output curve.
+- **`updated_iso`** — patterns are user-editable, so timestamp-of-last-edit
+  is useful for chooser sorting. (`bell_sounds` doesn't need this since
+  sounds are immutable files.)
 
-Bundled seeds (4 patterns under stable UUIDs, like `bell_sounds`):
-- **Pulse** — single short bump.
-- **Heartbeat** — double-thud.
-- **Wave** — slow rise-and-fall.
-- **Ripple** — decaying succession.
+Rust mirror:
 
-Foreign references:
-- `bell_sounds` gains `vibration_pattern_uuid TEXT NULL`.
-- Box Breath per-phase: either four new settings keys
-  (`boxbreath_vibration_inhale_uuid` etc.) or a tiny `box_breath_phases`
-  table. Lean toward settings keys to avoid a new table for four rows.
+```rust
+pub struct VibrationPattern {
+    pub id: i64,
+    pub uuid: String,
+    pub name: String,
+    pub duration_ms: u32,
+    pub intensities: Vec<f32>,
+    pub chart_kind: ChartKind,
+    pub is_bundled: bool,
+    pub created_iso: String,
+    pub updated_iso: String,
+}
+```
 
-Sync via the existing event log:
-`vibration_pattern_insert / _update / _delete`. Bell-row updates are already
-covered by `bell_sound_update`. Box-breath phase choices ride the
-settings-event channel.
+### Bundled seeds — confirmed
 
-Drop on schema land:
-- `vibrate_on_end` setting — replaced by per-bell vibration on End Bell + the
-  per-mode "what plays" toggle.
-- `src/vibration.rs` — the existing 60-line one-shot feedbackd trigger gets
-  rewritten as a pattern-driven playback driver during the playback phase.
+Fresh UUID family `7e9c4d2f-5a8b-4f1d-9e3c-2d6f7a8b00XX`, separate from
+the bell-sounds family for visual disambiguation in DB inspection. Five
+patterns; `Pyramid` ships in `bar` mode to demo that variant out of the
+box.
+
+| Const | UUID suffix | Kind | Duration | Intensities |
+|---|---|---|---|---|
+| `BUNDLED_PATTERN_PULSE_UUID` | `…0001` | line | 0.4 s | `[0.0, 1.0, 0.0]` |
+| `BUNDLED_PATTERN_HEARTBEAT_UUID` | `…0002` | line | 1.5 s | `[0.0, 0.6, 0.0, 0.0, 1.0, 0.0]` |
+| `BUNDLED_PATTERN_WAVE_UUID` | `…0003` | line | 2.0 s | `[0.0, 0.4, 0.7, 1.0, 0.7, 0.4, 0.0]` |
+| `BUNDLED_PATTERN_RIPPLE_UUID` | `…0004` | line | 2.5 s | `[1.0, 0.7, 0.5, 0.3, 0.15, 0.0]` |
+| `BUNDLED_PATTERN_PYRAMID_UUID` | `…0005` | **bar** | 3.0 s | `[0.2, 0.5, 1.0, 0.5, 0.2]` |
+
+Bundled rows are deletable at the DB level (mirroring `bell_sounds`); the
+chooser UI hides their delete buttons. Seeded via
+`INSERT OR IGNORE INTO vibration_patterns (...)` so re-seeds are idempotent.
+
+### Per-bell config storage — confirmed
+
+Same logical shape (`sound_uuid + pattern_uuid + signal_mode`) at three
+storage locations because the existing bells live in different places.
+
+#### Starting Bell — `settings` keys
+
+```
+starting_bell_active        existing  bool, default false
+starting_bell_sound         existing  UUID, default BUNDLED_BOWL_UUID
+starting_bell_pattern       NEW       UUID, default BUNDLED_PATTERN_PULSE_UUID
+starting_bell_signal_mode   NEW       text, default 'sound'
+```
+
+#### End Bell — `settings` keys
+
+```
+end_bell_active        existing  bool, default true
+end_bell_sound         existing  UUID, default BUNDLED_BOWL_UUID
+end_bell_pattern       NEW       UUID, default BUNDLED_PATTERN_PULSE_UUID
+end_bell_signal_mode   NEW       text, default 'sound'
+```
+
+(Settings keys aren't constrained at the DB level — settings is a generic
+k/v store. `signal_mode` validation lives in Rust at parse time.)
+
+#### Interval Bells — `interval_bells` table columns
+
+```sql
+-- Final shape after the bump (no ALTER — wipe-and-reimport is the
+-- migration path):
+CREATE TABLE IF NOT EXISTS interval_bells (
+    id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+    uuid                   TEXT NOT NULL UNIQUE,
+    kind                   TEXT NOT NULL,    -- existing, with its own CHECK
+    minutes                INTEGER NOT NULL,
+    jitter_pct             INTEGER NOT NULL DEFAULT 0,
+    sound                  TEXT NOT NULL,
+    vibration_pattern_uuid TEXT NOT NULL DEFAULT '<PULSE_UUID>',  -- NEW
+    signal_mode            TEXT NOT NULL DEFAULT 'sound'           -- NEW
+                           CHECK (signal_mode IN ('sound', 'vibration', 'both')),
+    enabled                INTEGER NOT NULL DEFAULT 1,
+    created_iso            TEXT NOT NULL
+);
+```
+
+CHECK constraint **kept and extended** when a new `signal_mode` value is
+ever needed — same precedent as `sessions.mode`'s
+`CHECK (mode IN ('timer', 'box_breath', 'guided'))`.
+
+### Per-bell config decisions
+
+- **`signal_mode` as TEXT (not int enum)** — readable in DB inspection,
+  easy to extend if a fourth mode appears.
+- **Pattern UUID always populated**, default to bundled `Pulse`. Toggling
+  to vibration mode "just works" without a chooser detour. User's
+  previously-picked pattern is preserved when flipping back to `'sound'`.
+- **Default `'sound'` signal mode** for all bells out of the box —
+  matches today's behaviour where bells just ring.
+- **Default Pulse pattern everywhere** — neutral, user customizes.
+
+### Box Breath per-phase storage — confirmed
+
+Per-phase cues now mirror the per-bell shape: each phase carries
+`signal_mode + sound_uuid + pattern_uuid + enabled`. Reasons for adding
+sound to phases:
+1. **Symmetry** with the bell rows.
+2. **Voice-cue use case**: an "Inhale" recording for the inhale phase,
+   "Hold" for the hold phases, "Exhale" for the exhale phase. Useful for
+   visually-impaired users (vibration alone) *and* for users who'd
+   benefit from spoken phase markers.
+
+With four fields per phase plus the master, a flat settings-keys layout
+would be 17 keys. Promoting to a small table keeps the column count
+manageable and lets us reuse the CHECK-constraint pattern.
+
+```sql
+CREATE TABLE IF NOT EXISTS box_breath_phases (
+    phase        TEXT PRIMARY KEY
+                 CHECK (phase IN ('in', 'holdin', 'out', 'holdout')),
+    enabled      INTEGER NOT NULL DEFAULT 0,
+    signal_mode  TEXT NOT NULL DEFAULT 'sound'
+                 CHECK (signal_mode IN ('sound', 'vibration', 'both')),
+    sound_uuid   TEXT NOT NULL DEFAULT '<BUNDLED_BOWL_UUID>',
+    pattern_uuid TEXT NOT NULL DEFAULT '<BUNDLED_PATTERN_PULSE_UUID>'
+);
+```
+
+Phase names mirror the existing `Phase` enum (`In / HoldIn / Out /
+HoldOut`). Four rows seeded at DB init via `INSERT OR IGNORE` keyed by
+`phase`, like the bundled bell-sounds rows.
+
+Plus one master setting key (renamed — was "vibration", now covers both
+sound and vibration since phases get both):
+
+```
+boxbreath_cues_active   bool, default false   (master toggle)
+```
+
+UI rename to match: outer expander reads **"Cues during phases"** (was
+"Vibrate during phases" in the prototype). Each phase row inside expands
+to the same Sound/Vibration/Both ToggleGroup we use on bells, with
+conditional Bell Sound + Pattern rows beneath.
+
+Why a table over 17 settings keys:
+- CHECK constraints on `phase` and `signal_mode` enforced at DB level —
+  same precedent as `interval_bells.signal_mode` and `sessions.mode`.
+- Symmetry with `interval_bells` — they're conceptually parallel
+  ("a tiny library of cues, one per fixed key") and now have nearly the
+  same column shape.
+- Adding a new per-phase property later (e.g., a per-phase volume) is
+  one column, not four new keys.
+
+Trade-off: one new event kind (`box_breath_phase_update`) and a
+`recompute_box_breath_phase` function. Settings-keys path would ride the
+existing `setting_update` events with no new code — but the column
+count tips the balance.
+
+### Bell-sound categories — confirmed
+
+`bell_sounds` gains a `category` column so the chooser can filter by
+context. Bells (Starting / Interval / End) want general bell / gong /
+chime sounds. Box Breath phases want voice cues or other sounds tailored
+to the in / hold / out / hold cycle. No one wants a temple bell to ring
+mid-inhalation, and a soft-spoken "Hold" doesn't fit a session-end cue.
+
+```sql
+-- Final shape of bell_sounds after the bump:
+CREATE TABLE IF NOT EXISTS bell_sounds (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    uuid        TEXT NOT NULL UNIQUE,
+    name        TEXT NOT NULL,
+    file_path   TEXT NOT NULL,
+    is_bundled  INTEGER NOT NULL DEFAULT 0,
+    mime_type   TEXT NOT NULL,
+    category    TEXT NOT NULL DEFAULT 'general'                -- NEW
+                CHECK (category IN ('general', 'box_breath')),
+    created_iso TEXT NOT NULL
+);
+```
+
+Rust mirror:
+
+```rust
+pub enum BellSoundCategory {
+    General,    // Bells / gongs / chimes — Start / Interval / End bells
+    BoxBreath,  // Voice cues / soft phase markers — Box Breath phases
+}
+```
+
+Categories are **mutually exclusive** (no `'both'` catch-all). Per
+Janek: "no one will use a bell inside a box breath." If a real
+"applies-to-both" use case shows up, extend the CHECK list later.
+
+### Bell-sound category — chooser API
+
+Sound chooser gains a category argument:
+
+```rust
+pub fn push_sound_chooser(
+    &self,
+    app: &MeditateApplication,
+    current_uuid: Option<String>,
+    category: BellSoundCategory,            // NEW
+    on_selected: impl Fn(String) + 'static,
+);
+```
+
+DB-layer filter:
+
+```rust
+fn list_bell_sounds_for_category(
+    &self,
+    category: BellSoundCategory,
+) -> Result<Vec<BellSound>>;
+```
+
+Chooser callers pass the category implied by their context — bell rows
+pass `General`, Box Breath phase rows pass `BoxBreath`. Empty-state in
+the Box Breath chooser (when no `category = 'box_breath'` rows exist
+yet) reads:
+
+> No sounds for this category yet.
+> Tap "Import file" to add one.
+
+We **don't** fall back to `'general'` sounds in the Box Breath chooser
+— that defeats the filter's purpose.
+
+### Bell-sound import auto-categorization
+
+The existing import flow takes a category argument from the calling
+chooser context — no UI for picking. So importing a file from the Box
+Breath phase chooser auto-tags it `category = 'box_breath'`; importing
+from a bell row auto-tags `'general'`. Per-row category-edit UI (e.g.,
+moving a sound from one category to the other after the fact) is a
+deferrable extension.
+
+### Bundled bell-sound categories
+
+All currently-bundled rows (Tibetan Bowl, Bell, Gong, Inkin, Kanshō)
+seed with `category = 'general'`. No `'box_breath'` bundled rows exist
+yet — sourcing voice cues ("Inhale" / "Hold" / "Exhale" / "Hold") is a
+follow-up TODO entry; until those land, the phase chooser ships empty
+for new users and they import their own audio.
+
+### Per-mode "what plays" toggle storage — confirmed
+
+Three settings keys, mirroring the per-bell `signal_mode` enum:
+
+```
+timer_signal_mode         text 'sound'|'vibration'|'both', default 'both'
+guided_signal_mode        text 'sound'|'vibration'|'both', default 'both'
+boxbreath_signal_mode     text 'sound'|'vibration'|'both', default 'both'
+```
+
+Settings keys, no DB-level CHECK (settings is a generic k/v store);
+validation in Rust at parse time — same as the per-bell `_signal_mode`
+keys.
+
+**Playback semantics** — the per-mode toggle is a runtime override on
+top of per-bell intent:
+
+| Mode toggle    | Bell `signal_mode='sound'` | `'vibration'` | `'both'` | Box Breath phase cues |
+|---|---|---|---|---|
+| `'both'`       | sound only                  | vibration only | both     | honoured per-phase |
+| `'sound'`      | sound only                  | suppressed     | sound only | sounds honoured; vibrations suppressed |
+| `'vibration'`  | suppressed                  | vibration only | vibration only | vibrations honoured; sounds suppressed |
+
+For Box Breath specifically: phase **vibrations** are silenced under
+mode `'sound'`, phase **sounds** are silenced under mode `'vibration'` —
+phases obey the per-mode toggle just like bells. Per-phase
+`signal_mode` plus per-phase `enabled` plus the master
+`boxbreath_cues_active` are finer-grained gates *underneath* the mode
+toggle.
+
+**Defaults**: `'both'` everywhere. New installs start with all bells at
+`signal_mode='sound'` (today's behaviour), so `'both'` at the mode level
+just respects whatever the bell-level config says. Defaulting to
+`'sound'` at the mode level would force the user to flip *two* toggles
+to enable vibration anywhere — friction.
+
+**Capability gating** (when `has_haptic = false`): all three keys are
+*forced* to `'sound'` at read-time and the UI presents the toggle as a
+static dimmed label "Sound only — no haptic device". The persisted
+setting is left untouched so syncing to a phone restores the user's
+intended mode.
+
+**UI placement**: top of each mode's Bells subsection — but **defer**
+prototyping until the Session-group split TODO lands (placement reads
+weird inside the current monolithic Session group, prototyping it
+twice is wasted work).
+
+### Stale-reference handling — confirmed
+
+If a bell's `sound` / `vibration_pattern_uuid`, or a Box Breath phase's
+`sound_uuid` / `pattern_uuid`, references a row that no longer resolves
+(deleted, never seeded, sync removed it):
+- **Refuse to play** that bell or phase cue at session start, AND
+- **Surface in setup**: red `.warning` chip on the row's subtitle
+  ("Sound missing — pick another"), error banner on the setup page
+  summarising affected bells / phases, **block Start Session** if any
+  active row has a stale reference.
+
+A separate TODO entry tracks landing this for the *existing*
+bell-sound case first — establishes the pattern before vibration and
+Box Breath inherit it. (`TODO.md`: "Surface stale / missing bell-sound
+references at setup time…")
+
+### Sync events — confirmed
+
+All vibration / cue data rides event-log channels:
+- New library table → `vibration_pattern_insert / _update / _delete`.
+- Per-bell config (settings keys + `interval_bells` columns) rides the
+  existing `setting_update` and `interval_bell_insert / _update` events
+  — extend their payload JSON with the new fields, no new event kinds.
+- Box Breath phase rows → new event kind
+  `box_breath_phase_update` (PK is `phase`; payload carries the four
+  mutable columns). Master toggle rides the existing `setting_update`
+  channel.
+- Per-mode "what plays" toggle (three settings keys) rides
+  `setting_update`.
+- Bell-sound category extension to `bell_sound_update` payload — no new
+  event kind.
+
+### Drop on schema land — confirmed
+
+Per the no-compat rule (Janek is the single user; wipe-and-reimport is
+the accepted migration path):
+- `vibrate_on_end` setting — replaced by per-bell vibration on End Bell.
+- `src/vibration.rs::trigger_if_enabled` body — replaced by the
+  pattern-driven feedbackd playback driver during the playback phase.
+  The 60-line file shape (no-op-on-failure) is reused by the new driver.
 
 ---
 
@@ -594,14 +922,23 @@ new playback path inherits that.
 4. **Per-bell wiring** — Sound/Vibration/Both toggle on Starting / Interval
    (edit page) / End Bell rows; schema column on `bell_sounds`; events.
    Reuses the prototype's `wire_signal_toggle` helper.
-5. **Box Breath per-phase** — outer "Vibrate during phases" expander with
-   four nested phase expanders; settings keys; playback hook.
-6. **Per-mode "what plays" toggle** — placed at the top of each mode's
-   bells subsection.
-7. **feedbackd playback driver** — pattern → tick stream → DBus calls.
+5. **Bell-sound categories** — `category` column on `bell_sounds` with
+   CHECK constraint, chooser filter argument, import auto-categorization.
+   Bundled rows seed as `'general'`. Phase chooser starts empty for new
+   users until voice-cue bundled sounds land (separate TODO).
+6. **Box Breath per-phase** — outer "Cues during phases" expander with
+   four nested phase expanders, each carrying the same
+   Sound/Vibration/Both ToggleGroup as bells; new `box_breath_phases`
+   table; `boxbreath_cues_active` master setting; phase chooser filtered
+   to `category = 'box_breath'`; playback hook.
+7. **Per-mode "what plays" toggle** — three settings keys
+   (`timer_signal_mode` / `guided_signal_mode` / `boxbreath_signal_mode`,
+   default `'both'`); UI placement deferred until the Session-group
+   split TODO lands.
+8. **feedbackd playback driver** — pattern → tick stream → DBus calls.
    Replaces the existing one-shot vibration.rs. Phone-side; laptop is the
    no-op stub.
-8. **On-device test pass + tuning** — Janek's day, not mine.
+9. **On-device test pass + tuning** — Janek's day, not mine.
 
 ---
 
