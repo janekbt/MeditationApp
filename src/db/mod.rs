@@ -23,7 +23,7 @@ use std::path::Path;
 /// learning about meditate-core directly. Same for the bell-library
 /// types added in B.3.1, and the `mint_uuid` helper added in B.5.
 pub use meditate_core::db::{
-    mint_uuid, BellSound, GuidedFile, IntervalBell, IntervalBellKind, Label, Preset, SessionMode,
+    mint_uuid, BellSound, ChartKind, GuidedFile, IntervalBell, IntervalBellKind, Label, Preset, SessionMode, VibrationPattern,
 };
 
 /// Bundled bell-sound seed: hardcoded (uuid, display name, GResource
@@ -137,6 +137,59 @@ const DEFAULT_LABELS: &[(&str, &str)] = &[
 const LABELS_SEEDED_KEY: &str = "default_labels_seeded";
 const BELLS_SEEDED_KEY: &str = "bundled_bell_sounds_seeded";
 const PRESETS_SEEDED_KEY: &str = "default_presets_seeded";
+const VIBRATION_PATTERNS_SEEDED_KEY: &str = "bundled_vibration_patterns_seeded";
+
+// ── Bundled vibration patterns ─────────────────────────────────────
+// Stable hardcoded UUIDs in their own family (separate from the
+// bell-sounds family for visual disambiguation in DB inspection) so
+// that peers seeded independently end up with the same row identity
+// per pattern and don't accumulate duplicates after sync.
+pub const BUNDLED_PATTERN_PULSE_UUID:     &str = "7e9c4d2f-5a8b-4f1d-9e3c-2d6f7a8b0001";
+pub const BUNDLED_PATTERN_HEARTBEAT_UUID: &str = "7e9c4d2f-5a8b-4f1d-9e3c-2d6f7a8b0002";
+pub const BUNDLED_PATTERN_WAVE_UUID:      &str = "7e9c4d2f-5a8b-4f1d-9e3c-2d6f7a8b0003";
+pub const BUNDLED_PATTERN_RIPPLE_UUID:    &str = "7e9c4d2f-5a8b-4f1d-9e3c-2d6f7a8b0004";
+pub const BUNDLED_PATTERN_PYRAMID_UUID:   &str = "7e9c4d2f-5a8b-4f1d-9e3c-2d6f7a8b0005";
+
+/// Seed list: (uuid, name, duration_ms, intensities, chart_kind).
+/// Pulse/Heartbeat/Wave/Ripple are line patterns; Pyramid ships in
+/// bar mode to demo the abrupt-step variant out of the box.
+const BUNDLED_VIBRATION_PATTERNS: &[(&str, &str, u32, &[f32], ChartKind)] = &[
+    (
+        BUNDLED_PATTERN_PULSE_UUID,
+        "Pulse",
+        400,
+        &[0.0, 1.0, 0.0],
+        ChartKind::Line,
+    ),
+    (
+        BUNDLED_PATTERN_HEARTBEAT_UUID,
+        "Heartbeat",
+        1500,
+        &[0.0, 0.6, 0.0, 0.0, 1.0, 0.0],
+        ChartKind::Line,
+    ),
+    (
+        BUNDLED_PATTERN_WAVE_UUID,
+        "Wave",
+        2000,
+        &[0.0, 0.4, 0.7, 1.0, 0.7, 0.4, 0.0],
+        ChartKind::Line,
+    ),
+    (
+        BUNDLED_PATTERN_RIPPLE_UUID,
+        "Ripple",
+        2500,
+        &[1.0, 0.7, 0.5, 0.3, 0.15, 0.0],
+        ChartKind::Line,
+    ),
+    (
+        BUNDLED_PATTERN_PYRAMID_UUID,
+        "Pyramid",
+        3000,
+        &[0.2, 0.5, 1.0, 0.5, 0.2],
+        ChartKind::Bar,
+    ),
+];
 
 /// Stable UUIDs for the three seeded default presets. Bundled rows
 /// have no special property at the schema level — they're regular
@@ -289,6 +342,7 @@ impl Database {
         db.seed_bundled_bell_sounds()?;
         db.seed_default_labels()?;
         db.seed_default_presets()?;
+        db.seed_bundled_vibration_patterns()?;
         Ok(db)
     }
 
@@ -311,6 +365,32 @@ impl Database {
                 .map_err(map_core_err)?;
         }
         self.inner.set_setting(BELLS_SEEDED_KEY, "1").map_err(map_core_err)?;
+        Ok(())
+    }
+
+    /// Seed the five bundled vibration patterns (Pulse / Heartbeat /
+    /// Wave / Ripple / Pyramid) under stable UUIDs. Same one-shot
+    /// flag pattern as the other seeds — a deleted bundled pattern
+    /// stays deleted instead of resurrecting on the next open.
+    fn seed_bundled_vibration_patterns(&self) -> Result<()> {
+        if self
+            .inner
+            .get_setting(VIBRATION_PATTERNS_SEEDED_KEY, "0")
+            .map_err(map_core_err)?
+            == "1"
+        {
+            return Ok(());
+        }
+        for &(uuid, name, duration_ms, intensities, chart_kind) in BUNDLED_VIBRATION_PATTERNS {
+            self.inner
+                .insert_vibration_pattern_with_uuid(
+                    uuid, name, duration_ms, intensities, chart_kind, true,
+                )
+                .map_err(map_core_err)?;
+        }
+        self.inner
+            .set_setting(VIBRATION_PATTERNS_SEEDED_KEY, "1")
+            .map_err(map_core_err)?;
         Ok(())
     }
 
@@ -888,6 +968,7 @@ pub(crate) fn test_db_in_memory() -> Database {
     db.seed_bundled_bell_sounds().unwrap();
     db.seed_default_labels().unwrap();
     db.seed_default_presets().unwrap();
+    db.seed_bundled_vibration_patterns().unwrap();
     db
 }
 
@@ -1488,5 +1569,60 @@ mod tests {
             "deleted seed preset must stay deleted across reopen",
         );
         assert_eq!(presets.len(), 2, "the other two seeds remain");
+    }
+
+    // ── Bundled vibration patterns ────────────────────────────────────
+
+    #[test]
+    fn bundled_vibration_patterns_are_seeded_on_first_open() {
+        let db = test_db_in_memory();
+        let mut rows = db.inner.list_vibration_patterns().unwrap();
+        // Stable order — sort by uuid so the assertion doesn't depend
+        // on the seed-list ordering inside test_db_in_memory.
+        rows.sort_by(|a, b| a.uuid.cmp(&b.uuid));
+        let expected = [
+            (BUNDLED_PATTERN_PULSE_UUID,     "Pulse",     400u32,  ChartKind::Line, 3),
+            (BUNDLED_PATTERN_HEARTBEAT_UUID, "Heartbeat", 1500u32, ChartKind::Line, 6),
+            (BUNDLED_PATTERN_WAVE_UUID,      "Wave",      2000u32, ChartKind::Line, 7),
+            (BUNDLED_PATTERN_RIPPLE_UUID,    "Ripple",    2500u32, ChartKind::Line, 6),
+            (BUNDLED_PATTERN_PYRAMID_UUID,   "Pyramid",   3000u32, ChartKind::Bar,  5),
+        ];
+        let mut expected_sorted: Vec<_> = expected.into_iter().collect();
+        expected_sorted.sort_by(|a, b| a.0.cmp(b.0));
+        assert_eq!(rows.len(), expected_sorted.len());
+        for (row, (uuid, name, dur, kind, n)) in rows.iter().zip(expected_sorted.iter()) {
+            assert_eq!(row.uuid, *uuid);
+            assert_eq!(row.name, *name);
+            assert_eq!(row.duration_ms, *dur);
+            assert_eq!(row.chart_kind, *kind);
+            assert_eq!(row.intensities.len(), *n,
+                "{} should have {} intensity samples", name, n);
+            assert!(row.is_bundled, "{} must be flagged as bundled", name);
+        }
+    }
+
+    #[test]
+    fn seeding_bundled_vibration_patterns_twice_is_idempotent() {
+        let db = test_db_in_memory();
+        db.seed_bundled_vibration_patterns().unwrap();
+        assert_eq!(db.inner.list_vibration_patterns().unwrap().len(), 5,
+            "second seed must not duplicate rows");
+    }
+
+    #[test]
+    fn deleted_bundled_vibration_pattern_stays_deleted_after_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meditate.db");
+        let db = Database::open(&path).unwrap();
+        db.inner.delete_vibration_pattern(BUNDLED_PATTERN_PULSE_UUID).unwrap();
+        drop(db);
+
+        let db2 = Database::open(&path).unwrap();
+        let rows = db2.inner.list_vibration_patterns().unwrap();
+        assert!(
+            !rows.iter().any(|p| p.uuid == BUNDLED_PATTERN_PULSE_UUID),
+            "deleted bundled pattern must stay deleted across reopen",
+        );
+        assert_eq!(rows.len(), 4, "the other four seeds remain");
     }
 }
