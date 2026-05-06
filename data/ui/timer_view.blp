@@ -367,6 +367,19 @@ template $TimerView : Gtk.Widget {
                   }
                 }
               }
+
+              // Inhibits idle / display-off via gtk_application_inhibit
+              // for the duration of a running session. Released on any
+              // timer-stopped emission (user-stop, countdown finish,
+              // breath-session finish). Per-mode setting key so the
+              // user can keep the screen awake for Timer but not for
+              // Guided (or vice versa) — Rust resolves the right key
+              // (timer_keep_screen_awake / guided_keep_screen_awake /
+              // boxbreath_keep_screen_awake) on visit and on toggle.
+              Adw.SwitchRow keep_screen_awake_row {
+                title: _("Keep Screen Awake");
+                subtitle: _("Prevent display sleep during a session");
+              }
             };
           }
 

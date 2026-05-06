@@ -109,6 +109,7 @@ pub struct TimerView {
     #[template_child] pub big_time_label:         TemplateChild<gtk::Label>,
     #[template_child] pub countdown_inputs:       TemplateChild<gtk::Box>,
     #[template_child] pub stopwatch_mode_row:     TemplateChild<adw::SwitchRow>,
+    #[template_child] pub keep_screen_awake_row:  TemplateChild<adw::SwitchRow>,
     #[template_child] pub presets_section:       TemplateChild<adw::Clamp>,
     #[template_child] pub presets_group:         TemplateChild<adw::PreferencesGroup>,
     #[template_child] pub save_settings_btn:     TemplateChild<gtk::Button>,
@@ -206,6 +207,11 @@ pub struct TimerView {
     /// cancel any pattern still playing — so newest-wins overlap
     /// behaviour is automatic.
     current_vibration: RefCell<Option<crate::vibration::PatternPlayback>>,
+    /// Cookie returned by `gtk::Application::inhibit` while a session
+    /// is running and the active mode's keep-screen-awake toggle is
+    /// on. 0 means "no inhibit held". Released on every `timer-stopped`
+    /// emit site (user-stop, countdown finish, breath finish).
+    screen_awake_cookie: Cell<u32>,
     /// Weak ref to the running-page time label for live updates.
     running_label: RefCell<Option<gtk::Label>>,
     /// Refs to the running-page buttons so the Overtime transition
@@ -430,6 +436,29 @@ impl TimerView {
                     });
                 }
                 imp.refresh_stopwatch_dependent_ui();
+            }
+        ));
+
+        // Keep-Screen-Awake SwitchRow: persists per-mode (timer /
+        // guided / boxbreath_keep_screen_awake) so each mode can have
+        // its own preference. The bells_loading guard reuses the
+        // existing on-visit suppression flag, since the row is loaded
+        // alongside the bell rows on every page-visit + mode switch.
+        self.keep_screen_awake_row.connect_active_notify(glib::clone!(
+            #[weak(rename_to = this)] obj,
+            move |row| {
+                let imp = this.imp();
+                if imp.bells_loading.get() { return; }
+                let on = row.is_active();
+                if let Some(app) = imp.get_app() {
+                    let key = keep_screen_awake_key_for_mode(imp.current_mode());
+                    app.with_db_mut(|db| {
+                        let _ = db.set_setting(
+                            key,
+                            if on { "true" } else { "false" },
+                        );
+                    });
+                }
             }
         ));
 
@@ -1069,6 +1098,60 @@ impl TimerView {
         self.bells_loading.set(false);
     }
 
+    /// Sync the Keep-Screen-Awake switch row with the current mode's
+    /// stored value. Called on visit and on every mode switch so the
+    /// switch reflects the key the runtime will read on session start.
+    pub(crate) fn refresh_keep_screen_awake_state(&self) {
+        let Some(app) = self.get_app() else { return; };
+        let key = keep_screen_awake_key_for_mode(self.current_mode());
+        let on = app
+            .with_db(|db| db.get_setting(key, "false"))
+            .and_then(|r| r.ok())
+            .map(|s| s == "true")
+            .unwrap_or(false);
+        self.bells_loading.set(true);
+        self.keep_screen_awake_row.set_active(on);
+        self.bells_loading.set(false);
+    }
+
+    /// If the active mode's keep-screen-awake setting is on, hold an
+    /// idle inhibit for the duration of the session. Cookie is stashed
+    /// on `screen_awake_cookie`; calling release_screen_awake_lock
+    /// uninhibits and clears it. No-op if no mode requested it or if
+    /// the cookie is already held (idempotent).
+    pub(crate) fn acquire_screen_awake_lock(
+        &self,
+        app: &crate::application::MeditateApplication,
+    ) {
+        if self.screen_awake_cookie.get() != 0 { return; }
+        let key = keep_screen_awake_key_for_mode(self.current_mode());
+        let active = app
+            .with_db(|db| db.get_setting(key, "false"))
+            .and_then(|r| r.ok())
+            .map(|s| s == "true")
+            .unwrap_or(false);
+        if !active { return; }
+        let window = app.active_window();
+        let cookie = app.inhibit(
+            window.as_ref(),
+            gtk::ApplicationInhibitFlags::IDLE,
+            Some(&crate::i18n::gettext("Meditation session running")),
+        );
+        self.screen_awake_cookie.set(cookie);
+    }
+
+    /// Release the idle-inhibit cookie acquired at session start, if
+    /// any. Idempotent.
+    pub(crate) fn release_screen_awake_lock(
+        &self,
+        app: &crate::application::MeditateApplication,
+    ) {
+        let cookie = self.screen_awake_cookie.get();
+        if cookie == 0 { return; }
+        app.uninhibit(cookie);
+        self.screen_awake_cookie.set(0);
+    }
+
     /// Throwaway: build the Sound / Vibration / Both AdwToggleGroup
     /// Box Breath phase-vibrations prototype only — Start / End bell
     /// prototypes graduated in step 6. The outer expander's
@@ -1651,6 +1734,15 @@ pub(crate) fn setting_key_for_mode(mode: TimerMode) -> &'static str {
     }
 }
 
+/// Map a TimerMode to its per-mode keep-screen-awake setting key.
+pub(crate) fn keep_screen_awake_key_for_mode(mode: TimerMode) -> &'static str {
+    match mode {
+        TimerMode::Timer     => "timer_keep_screen_awake",
+        TimerMode::Guided    => "guided_keep_screen_awake",
+        TimerMode::Breathing => "boxbreath_keep_screen_awake",
+    }
+}
+
 /// Walk a Gtk.Box and return the first AdwToggleGroup child, or
 /// None if the host doesn't have one yet.
 fn first_toggle_group_in(host: &gtk::Box) -> Option<adw::ToggleGroup> {
@@ -1747,6 +1839,8 @@ impl TimerView {
         self.refresh_duration_value_label();
         // Per-mode Cues toggle reflects the new mode's saved value.
         self.refresh_cues_signal_mode_state();
+        // Same for the Keep-Screen-Awake switch.
+        self.refresh_keep_screen_awake_state();
         // Visible-list contents are mode-strict (Timer presets only
         // appear in Timer mode, Box-Breath presets in Box Breath mode)
         // — rebuild on every switch. Guided mode rebuilds its own
@@ -2092,6 +2186,13 @@ impl TimerView {
 
         self.session_start_time.set(unix_now());
 
+        // Inhibit display sleep if the active mode requested it. Cookie
+        // released at every timer-stopped emit site (user-stop,
+        // countdown finish, breath finish).
+        if let Some(app) = self.get_app() {
+            self.acquire_screen_awake_lock(&app);
+        }
+
         // Starting bell at session start — only when there's no prep.
         // With prep, the bell fires at the prep→Running transition.
         // Box Breathing never plays the starting bell (Timer-only).
@@ -2265,6 +2366,11 @@ impl TimerView {
         *self.running_pause_btn.borrow_mut() = None;
         *self.running_stop_btn.borrow_mut() = None;
         *self.overtime_add_btn.borrow_mut() = None;
+
+        // Release the keep-screen-awake inhibit (no-op if none held).
+        if let Some(app) = self.get_app() {
+            self.release_screen_awake_lock(&app);
+        }
 
         self.obj().emit_by_name::<()>("timer-stopped", &[]);
         self.show_done(elapsed);
@@ -2730,6 +2836,9 @@ impl TimerView {
         *self.running_stop_btn.borrow_mut() = None;
         *self.overtime_add_btn.borrow_mut() = None;
         self.timer_state.set(TimerState::Done);
+        if let Some(app) = self.get_app() {
+            self.release_screen_awake_lock(&app);
+        }
         self.obj().emit_by_name::<()>("timer-stopped", &[]);
         self.show_done(elapsed_secs);
     }
@@ -2774,6 +2883,9 @@ impl TimerView {
         // Release running-page widget refs — the page pops next.
         *self.running_label.borrow_mut() = None;
         *self.running_pause_btn.borrow_mut() = None;
+        if let Some(app) = self.get_app() {
+            self.release_screen_awake_lock(&app);
+        }
         self.obj().emit_by_name::<()>("timer-stopped", &[]);
         self.show_done(elapsed);
         if let Some(app) = self.get_app() {
@@ -2971,6 +3083,9 @@ impl TimerView {
 
         // Per-mode Cues toggle.
         self.refresh_cues_signal_mode_state();
+
+        // Per-mode Keep-Screen-Awake switch.
+        self.refresh_keep_screen_awake_state();
 
         // Update streak label. .streak-chip applies text-transform:
         // uppercase, so we keep the source text sentence-case here.
@@ -4605,5 +4720,44 @@ mod tests {
         assert_eq!(format_time(3661), "1:01:01");
         assert_eq!(format_time(2 * 3600 + 5 * 60 + 9), "2:05:09");
         assert_eq!(format_time(10 * 3600), "10:00:00");
+    }
+
+    // ── Per-mode setting-key helpers ─────────────────────────────────────
+
+    #[test]
+    fn setting_key_for_mode_uses_distinct_keys_per_mode() {
+        // The whole point of these helpers is that no two modes
+        // share a key — otherwise the per-mode toggles would leak
+        // into each other.
+        let timer = setting_key_for_mode(TimerMode::Timer);
+        let guided = setting_key_for_mode(TimerMode::Guided);
+        let breath = setting_key_for_mode(TimerMode::Breathing);
+        assert_ne!(timer, guided);
+        assert_ne!(timer, breath);
+        assert_ne!(guided, breath);
+    }
+
+    #[test]
+    fn keep_screen_awake_key_for_mode_uses_distinct_keys_per_mode() {
+        let timer = keep_screen_awake_key_for_mode(TimerMode::Timer);
+        let guided = keep_screen_awake_key_for_mode(TimerMode::Guided);
+        let breath = keep_screen_awake_key_for_mode(TimerMode::Breathing);
+        assert_ne!(timer, guided);
+        assert_ne!(timer, breath);
+        assert_ne!(guided, breath);
+    }
+
+    #[test]
+    fn keep_screen_awake_key_does_not_collide_with_signal_mode_key() {
+        // signal-mode and keep-screen-awake are independent per-mode
+        // settings; sharing a key would mean toggling one writes the
+        // other's value.
+        for mode in [TimerMode::Timer, TimerMode::Guided, TimerMode::Breathing] {
+            assert_ne!(
+                setting_key_for_mode(mode),
+                keep_screen_awake_key_for_mode(mode),
+                "{mode:?}: signal-mode and keep-awake keys must differ",
+            );
+        }
     }
 }
