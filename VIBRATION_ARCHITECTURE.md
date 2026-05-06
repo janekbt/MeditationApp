@@ -882,31 +882,94 @@ the accepted migration path):
 
 ---
 
-## Capability detection
+## Capability detection — confirmed
 
-Probe at app startup, cache the result globally.
+### Probe mechanism
 
-Approach: try to connect to `org.sigxcpu.Feedback` on the session bus and
-fetch its supported events list. Available on Phosh-based devices (Librem
-5, Pinephone). On a laptop, the service isn't present — connection fails
-→ no haptic.
+Synchronous DBus call at app startup, before UI assembly. The probe
+calls `org.sigxcpu.Feedback.GetEventsTheme` on the session bus — any
+cheap real method works; this one returns the active feedback theme
+name and is universally implemented by feedbackd. Auto-activation is
+allowed (DBus launches feedbackd if it's installed but not running).
+
+```rust
+pub fn probe_haptic() -> bool {
+    let Ok(conn) = gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE) else {
+        return false;
+    };
+    conn.call_sync(
+        Some("org.sigxcpu.Feedback"),
+        "/org/sigxcpu/Feedback",
+        "org.sigxcpu.Feedback",
+        "GetEventsTheme",
+        None,
+        None,
+        gio::DBusCallFlags::NONE,    // allow auto-start
+        500,                          // 500 ms ceiling
+        gio::Cancellable::NONE,
+    )
+    .is_ok()
+}
+```
+
+Why `GetEventsTheme` over alternatives:
+- `NameHasOwner` would skip auto-start, so a phone with lazily-started
+  feedbackd would falsely report `false` on first launch after boot.
+- `GetCapabilities` isn't a feedbackd method.
+- `Introspect` works but is heavier than necessary.
+
+### Performance
+
+Typical perceived freeze: **< 50 ms** (imperceptible).
+- Phone: feedbackd is local on the session bus, call returns in tens of ms.
+- Laptop: no service file matches, DBus returns `ServiceUnknown` near-
+  instantly (a few ms).
+
+The 500 ms timeout is the worst-case ceiling for a hung DBus daemon —
+not the expected wait. Synchronous is fine: the probe runs once at
+startup, well below any "slow startup" threshold.
+
+### Caching
+
+Probe runs once at startup. Result cached on `MeditateApplication`:
+
+```rust
+impl MeditateApplication {
+    pub fn has_haptic(&self) -> bool {
+        self.imp().has_haptic.get()
+    }
+}
+```
+
+UI consumers read `app.has_haptic()` when constructing rows. No
+re-probing — devices don't grow vibration motors at runtime.
+
+### UI gating — confirmed
 
 When `has_haptic = false`:
-- **Per-bell "Vibrate" / Pattern rows are greyed out** (insensitive,
-  visible). They'd be no-ops on this device but stay readable so the user
-  knows what's available.
-- **Per-mode "what plays" toggle** is forced to "Sound only" and locked
-  (or collapses to a single static label — defer).
-- **Pattern chooser and editor remain fully interactive** — you might be
-  authoring patterns to sync to a phone. Reachable via a "Manage vibration
-  patterns" row in Preferences (always present, regardless of capability).
-- **Editor shows a top-level banner**: "This device doesn't support
+- **Bell + Box-Breath-phase Sound/Vibration/Both ToggleGroups**: the
+  `Vibration` and `Both` `Adw.Toggle` segments go insensitive
+  (`set_sensitive(false)`); the `Sound` segment stays interactive.
+  Affordance stays visible so the user understands what's available
+  on a different device.
+- **Pattern Adw.ActionRow** (revealed when Vibration / Both is
+  selected): irrelevant since Vibration / Both can't be selected; the
+  Revealer simply never reveals.
+- **Per-mode "what plays" toggle**: read-time forced to `'sound'` and
+  shown as a dimmed static label "Sound only — no haptic device". The
+  persisted setting key is left untouched so syncing to a phone
+  restores the user's intended mode.
+- **Pattern chooser and editor**: fully interactive (laptop authoring
+  path). Reachable via a "Manage vibration patterns" row in
+  Preferences that is always present.
+- **Editor banner** at top of the page: "This device doesn't support
   vibration. Patterns sync to phones."
-- **Preview on laptop** is visual-only — playhead sweep + accent dot pulse
-  modulated by intensity. No actual feedbackd call.
+- **Preview button** in the editor: visual-only — playhead sweep +
+  accent dot pulse modulated by intensity. No feedbackd call.
 
-The existing `src/vibration.rs` is already a no-op-on-failure shape; the
-new playback path inherits that.
+The existing `src/vibration.rs` is already a no-op-on-failure shape;
+the new pattern-driven playback driver inherits that, and never even
+gets called when `has_haptic = false`.
 
 ---
 
