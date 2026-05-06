@@ -148,6 +148,7 @@ pub struct TimerView {
     #[template_child] pub end_bell_pattern_revealer: TemplateChild<gtk::Revealer>,
     #[template_child] pub end_bell_pattern_row:      TemplateChild<adw::ActionRow>,
     // Vibration UI prototype — see setup_vibration_proto. Throwaway.
+    #[template_child] pub boxbreath_phase_section:         TemplateChild<adw::Clamp>,
     #[template_child] pub boxbreath_master_row:           TemplateChild<adw::ExpanderRow>,
     #[template_child] pub boxbreath_phase_in_row:                  TemplateChild<adw::ExpanderRow>,
     #[template_child] pub boxbreath_phase_in_signal_toggle_host:   TemplateChild<gtk::Box>,
@@ -1602,6 +1603,7 @@ impl TimerView {
         self.countdown_inputs.set_visible(mode == TimerMode::Timer);
         self.boxbreath_inputs.set_visible(mode == TimerMode::Breathing);
         self.guided_section.set_visible(mode == TimerMode::Guided);
+        self.boxbreath_phase_section.set_visible(mode == TimerMode::Breathing);
         // Starting Bell + Preparation Time + Interval Bells apply to
         // Timer mode only — Box Breathing has its own independent
         // rhythm + start-cue model, and Guided mode's "start cue" is
@@ -1667,6 +1669,7 @@ impl TimerView {
         self.countdown_inputs.set_visible(mode == TimerMode::Timer);
         self.boxbreath_inputs.set_visible(mode == TimerMode::Breathing);
         self.guided_section.set_visible(mode == TimerMode::Guided);
+        self.boxbreath_phase_section.set_visible(mode == TimerMode::Breathing);
         self.starting_bell_row.set_visible(mode == TimerMode::Timer);
         self.interval_bells_enabled_row.set_visible(mode == TimerMode::Timer);
         self.stopwatch_mode_row.set_visible(mode == TimerMode::Timer);

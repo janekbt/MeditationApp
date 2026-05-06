@@ -348,6 +348,23 @@ template $TimerView : Gtk.Widget {
                   }
                 }
               }
+            };
+          }
+
+          // ── Bells group ────────────────────────────────────────────
+          // Starting Bell + Interval Bells + End Bell live in their own
+          // group so the Session group above stays a tight three-row
+          // block (Stopwatch / Duration / Label). Mode-switching toggles
+          // the same per-row visibility; the group's empty state in Box
+          // Breath / Guided is just an empty group header, which the
+          // PreferencesGroup hides automatically when all rows go
+          // invisible.
+          Adw.Clamp {
+            maximum-size: 360;
+            tightening-threshold: 300;
+
+            child: Adw.PreferencesGroup bells_group {
+              title: _("Bells");
 
               // ── Starting bell + preparation time ───────────────────
               // Progressive disclosure via nested Adw.ExpanderRow: the
@@ -510,10 +527,17 @@ template $TimerView : Gtk.Widget {
           // phase expanders, each with its own Sound / Vibration / Both
           // ToggleGroup + Revealer-wrapped Bell Sound / Pattern rows.
           // Bell Sound chooser is filtered to BellSoundCategory::BoxBreath
-          // (voice cues / phase markers, not bells).
-          Adw.Clamp {
+          // (voice cues / phase markers, not bells). The whole clamp is
+          // named so on_mode_switched can hide it outside Box Breath
+          // mode — otherwise the group's heading + master row leak into
+          // Timer / Guided setup.
+          Adw.Clamp boxbreath_phase_section {
             maximum-size: 360;
             tightening-threshold: 300;
+            // Default-hidden; on_mode_switched flips visibility based
+            // on the active mode. Same pattern as boxbreath_inputs +
+            // guided_section.
+            visible: false;
 
             child: Adw.PreferencesGroup boxbreath_phase_group {
               title: _("Box Breath cues");
