@@ -86,44 +86,40 @@ pub fn probe_haptic() -> bool {
 // Lives here so the playback driver further down can reuse it; tests
 // are laptop-runnable without any DBus or motor.
 
-/// feedbackd caps `Vibrate` at 10 (amplitude, duration_ms) tuples
-/// per call (silent truncation in `fbd-haptic-manager.c`'s
-/// `MAX_ITEMS = 10`). Anything past the tenth segment is dropped
-/// without an error reply, so a 40-segment 2-second envelope plays
-/// only the first ~500 ms. Cap our output here so the duration
-/// always matches what the user authored.
-const MAX_SEGMENTS: u32 = 10;
-/// Preferred Line-mode tick when the pattern is short enough to
-/// fit in MAX_SEGMENTS. For longer patterns the per-segment
-/// duration is stretched (the segment count is capped, the total
-/// duration is preserved).
-const LINE_TICK_MS: u32 = 50;
+/// feedbackd's `Vibrate` accepts up to 10 (amplitude, duration_ms)
+/// tuples per call (silent truncation past `MAX_ITEMS = 10` in
+/// `fbd-haptic-manager.c`). Patterns longer than that are split
+/// into chained calls; this is the per-call ceiling.
+const MAX_SEGMENTS_PER_CHUNK: u32 = 10;
+/// Adjacent chunks overlap by this many segments. Each chunk's
+/// last `CHUNK_OVERLAP_SEGMENTS` slots replay what the next chunk
+/// will start on, so the supersede-instant lands on matching
+/// amplitudes — no audible jump even with ~50 ms scheduling
+/// jitter. With 100 ms-floor segments, 2 segments = 200 ms cover.
+const CHUNK_OVERLAP_SEGMENTS: u32 = 2;
+/// Line-mode sampling tick. The editor enforces ≥100 ms between
+/// authored control points, so anything finer than this would be
+/// wasted on the LRA's response time.
+const LINE_TICK_MS: u32 = 100;
 
-/// Translate a `VibrationPattern` into the `Vec<(f64, u32)>` tuple
-/// sequence `Haptic.Vibrate(s, a(du))` consumes.
-///
-/// Both shape modes coalesce to at most `MAX_SEGMENTS` (= 10)
-/// tuples — feedbackd's hard limit — and the segment durations
-/// always sum to `pattern.duration_ms` exactly (remainder lands
-/// on the last segment).
-///
-/// * `Bar` mode emits min(N, 10) segments. When N > 10, adjacent
-///   control points are averaged into bins.
-/// * `Line` mode samples the linearly-interpolated envelope at
-///   the centre of each output segment.
+/// Build the full uncapped (amplitude, duration_ms) sequence for
+/// a pattern. Bar mode: N segments of D/N each. Line mode: a
+/// 100 ms-tick sweep of the linearly-interpolated envelope.
+/// Segment durations sum to `p.duration_ms` exactly (remainder on
+/// the last segment).
 ///
 /// Returns an empty vec for empty / zero-duration inputs.
-pub fn sample_to_segments(p: &crate::db::VibrationPattern) -> Vec<(f64, u32)> {
+pub fn build_master_envelope(p: &crate::db::VibrationPattern) -> Vec<(f64, u32)> {
     let n_in = p.intensities.len();
     if n_in == 0 || p.duration_ms == 0 {
         return Vec::new();
     }
 
     let n_out: u32 = match p.chart_kind {
-        crate::db::ChartKind::Bar => (n_in as u32).min(MAX_SEGMENTS).max(1),
+        crate::db::ChartKind::Bar => (n_in as u32).max(1),
         crate::db::ChartKind::Line => {
             let raw_ticks = (p.duration_ms + LINE_TICK_MS - 1) / LINE_TICK_MS;
-            raw_ticks.max(1).min(MAX_SEGMENTS)
+            raw_ticks.max(1)
         }
     };
 
@@ -143,9 +139,6 @@ pub fn sample_to_segments(p: &crate::db::VibrationPattern) -> Vec<(f64, u32)> {
                     sum / slice.len() as f32
                 }
                 crate::db::ChartKind::Line => {
-                    // Sample at the centre of segment i → t = (i + 0.5) * D / n_out.
-                    // Integer-clean: (2i + 1) * D / (2 * n_out). Both factors
-                    // fit in u32 for D ≤ 10 000 ms and n_out ≤ 10.
                     let t_ms = ((2 * i + 1) * p.duration_ms) / (2 * n_out);
                     sample_line_at(p, t_ms)
                 }
@@ -153,6 +146,44 @@ pub fn sample_to_segments(p: &crate::db::VibrationPattern) -> Vec<(f64, u32)> {
             (mag as f64, dur)
         })
         .collect()
+}
+
+/// Slice `master` into chunks of at most `MAX_SEGMENTS_PER_CHUNK`
+/// segments each, with `CHUNK_OVERLAP_SEGMENTS` segments shared
+/// between adjacent chunks. Returns one chunk for masters that
+/// already fit in a single Vibrate call.
+fn split_into_chunks(master: &[(f64, u32)]) -> Vec<Vec<(f64, u32)>> {
+    let s = master.len();
+    if s == 0 {
+        return Vec::new();
+    }
+    if s <= MAX_SEGMENTS_PER_CHUNK as usize {
+        return vec![master.to_vec()];
+    }
+    let chunk_len = MAX_SEGMENTS_PER_CHUNK as usize;
+    let stride = chunk_len - CHUNK_OVERLAP_SEGMENTS as usize;
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    while start < s {
+        let end = (start + chunk_len).min(s);
+        out.push(master[start..end].to_vec());
+        if end == s {
+            break;
+        }
+        start += stride;
+    }
+    out
+}
+
+/// Master-time at which chunk `k` should fire — the cumulative
+/// duration of the segments preceding the chunk's first segment.
+fn chunk_start_offset_ms(master: &[(f64, u32)], k: usize) -> u32 {
+    if k == 0 {
+        return 0;
+    }
+    let stride = (MAX_SEGMENTS_PER_CHUNK - CHUNK_OVERLAP_SEGMENTS) as usize;
+    let first_seg = (k * stride).min(master.len());
+    master[..first_seg].iter().map(|(_, d)| *d).sum()
 }
 
 // ── Playback driver ──────────────────────────────────────────────────────
@@ -213,35 +244,57 @@ impl PatternPlayback {
         if !app.has_haptic() {
             return Self { cancel, cancel_on_drop: true };
         }
-        let segments = sample_to_segments(pattern);
-        if segments.is_empty() {
+        let master = build_master_envelope(pattern);
+        if master.is_empty() {
             return Self { cancel, cancel_on_drop: true };
         }
-        let cancel_clone = cancel.clone();
-        glib::MainContext::default().spawn_local(async move {
-            if cancel_clone.load(Ordering::Relaxed) { return; }
-            let Ok(conn) = gio::bus_get_future(gio::BusType::Session).await else {
-                return;
+        let chunks = split_into_chunks(&master);
+
+        // Fire chunk 0 immediately. Each subsequent chunk is
+        // scheduled to fire shortly *before* the previous one
+        // ends — feedbackd's per-app supersede swaps it in mid-
+        // playback, and the 2-segment overlap means both chunks
+        // describe the same amplitude at the supersede instant
+        // so the swap is inaudible.
+        for (k, chunk) in chunks.iter().enumerate() {
+            let segments = chunk.clone();
+            let cancel_clone = cancel.clone();
+            let fire = move || {
+                if cancel_clone.load(Ordering::Relaxed) { return; }
+                let cancel_inner = cancel_clone.clone();
+                glib::MainContext::default().spawn_local(async move {
+                    if cancel_inner.load(Ordering::Relaxed) { return; }
+                    let Ok(conn) = gio::bus_get_future(gio::BusType::Session).await else {
+                        return;
+                    };
+                    if cancel_inner.load(Ordering::Relaxed) { return; }
+                    let args = build_vibrate_args(&segments);
+                    let _ = conn
+                        .call_future(
+                            Some("org.sigxcpu.Feedback"),
+                            "/org/sigxcpu/Feedback",
+                            "org.sigxcpu.Feedback.Haptic",
+                            "Vibrate",
+                            Some(&args),
+                            None,
+                            gio::DBusCallFlags::NONE,
+                            -1,
+                        )
+                        .await;
+                });
             };
-            if cancel_clone.load(Ordering::Relaxed) { return; }
-            let args = build_vibrate_args(&segments);
-            // success out-arg is parsed from the returned tuple but we
-            // ignore it — feedbackd may refuse if a higher-priority
-            // event is mid-flight, which is fine. No-op-on-failure
-            // matches the existing trigger_if_enabled shape.
-            let _ = conn
-                .call_future(
-                    Some("org.sigxcpu.Feedback"),
-                    "/org/sigxcpu/Feedback",
-                    "org.sigxcpu.Feedback.Haptic",
-                    "Vibrate",
-                    Some(&args),
-                    None,
-                    gio::DBusCallFlags::NONE,
-                    -1,
-                )
-                .await;
-        });
+
+            if k == 0 {
+                fire();
+            } else {
+                let delay_ms = chunk_start_offset_ms(&master, k);
+                glib::timeout_add_local_once(
+                    std::time::Duration::from_millis(delay_ms as u64),
+                    fire,
+                );
+            }
+        }
+
         Self { cancel, cancel_on_drop: true }
     }
 
@@ -381,118 +434,163 @@ mod sampler_tests {
         }
     }
 
+    // ── build_master_envelope ────────────────────────────────────────────
+
     #[test]
-    fn empty_intensities_yields_empty_segments() {
+    fn master_envelope_empty_for_empty_intensities() {
         let p = pattern(1000, vec![], ChartKind::Line);
-        assert!(sample_to_segments(&p).is_empty());
+        assert!(build_master_envelope(&p).is_empty());
     }
 
     #[test]
-    fn zero_duration_yields_empty_segments() {
+    fn master_envelope_empty_for_zero_duration() {
         let p = pattern(0, vec![0.5, 1.0], ChartKind::Line);
-        assert!(sample_to_segments(&p).is_empty());
+        assert!(build_master_envelope(&p).is_empty());
     }
 
     #[test]
-    fn bar_mode_emits_n_equal_segments_with_remainder_on_last() {
-        // 1003 ms / 5 segments = 200 base + 3 ms remainder on last.
-        let p = pattern(
-            1003,
-            vec![0.2, 0.5, 1.0, 0.5, 0.2],
-            ChartKind::Bar,
-        );
-        let segments = sample_to_segments(&p);
-        assert_eq!(segments.len(), 5);
-        for (i, s) in segments.iter().take(4).enumerate() {
-            assert_eq!(s.1, 200, "segment {i} should be 200ms");
+    fn master_envelope_bar_has_n_segments_with_remainder_on_last() {
+        // 1003 ms / 5 bars = 200 base + 3 ms remainder on the last.
+        let p = pattern(1003, vec![0.2, 0.5, 1.0, 0.5, 0.2], ChartKind::Bar);
+        let m = build_master_envelope(&p);
+        assert_eq!(m.len(), 5);
+        for s in &m[..4] {
+            assert_eq!(s.1, 200);
         }
-        assert_eq!(segments[4].1, 203, "last segment absorbs the 3ms remainder");
-        let total: u32 = segments.iter().map(|s| s.1).sum();
-        assert_eq!(total, 1003, "segment durations sum to pattern duration");
+        assert_eq!(m[4].1, 203);
+        let total: u32 = m.iter().map(|s| s.1).sum();
+        assert_eq!(total, 1003);
     }
 
     #[test]
-    fn bar_mode_amplitudes_match_intensities() {
-        let p = pattern(
-            500,
-            vec![0.0, 0.3, 0.7, 1.0],
-            ChartKind::Bar,
-        );
-        let segments = sample_to_segments(&p);
-        assert_eq!(
-            segments.iter().map(|s| s.0).collect::<Vec<_>>(),
-            vec![0.0, 0.3, 0.7, 1.0]
-                .into_iter()
-                .map(|v: f32| v as f64)
-                .collect::<Vec<_>>()
-        );
+    fn master_envelope_bar_amplitudes_match_intensities_exactly() {
+        let p = pattern(500, vec![0.0, 0.3, 0.7, 1.0], ChartKind::Bar);
+        let m = build_master_envelope(&p);
+        let amps: Vec<f64> = m.iter().map(|s| s.0).collect();
+        assert_eq!(amps, vec![0.0_f32, 0.3, 0.7, 1.0]
+            .into_iter().map(|v| v as f64).collect::<Vec<_>>());
     }
 
     #[test]
-    fn line_mode_caps_at_max_segments_and_preserves_total_duration() {
-        // 1 000 ms / 50 ms = 20 ticks raw, capped at 10. Each
-        // segment then spans 100 ms.
+    fn master_envelope_line_has_100ms_segments() {
+        // 1 000 ms / 100 ms tick = 10 segments.
         let p = pattern(1000, vec![0.0, 1.0], ChartKind::Line);
-        let segments = sample_to_segments(&p);
-        assert_eq!(segments.len(), 10, "feedbackd caps at 10 segments");
-        for s in &segments[..segments.len() - 1] {
+        let m = build_master_envelope(&p);
+        assert_eq!(m.len(), 10);
+        for s in m.iter() {
             assert_eq!(s.1, 100);
         }
-        let total: u32 = segments.iter().map(|s| s.1).sum();
-        assert_eq!(total, 1000, "durations sum to pattern duration");
     }
 
     #[test]
-    fn line_mode_short_pattern_uses_50ms_tick() {
-        // 300 ms < 10 × 50 ms → no capping, ticks stay at 50 ms.
-        let p = pattern(300, vec![0.0, 1.0], ChartKind::Line);
-        let segments = sample_to_segments(&p);
-        assert_eq!(segments.len(), 6);
-        for s in segments.iter() {
-            assert_eq!(s.1, 50);
-        }
+    fn master_envelope_line_keeps_total_duration_with_remainder_on_last() {
+        // 950 ms / 100 ms tick → ceil = 10 ticks. Base = 95 ms, last
+        // absorbs the 5 ms remainder so the sum stays at 950 ms.
+        let p = pattern(950, vec![0.0, 1.0], ChartKind::Line);
+        let m = build_master_envelope(&p);
+        let total: u32 = m.iter().map(|s| s.1).sum();
+        assert_eq!(total, 950);
     }
 
     #[test]
-    fn line_mode_samples_envelope_at_segment_centres() {
-        // Symmetric ramp from 0.0 to 1.0 with 10 output segments
-        // (each 100 ms). Sample centres land at 50, 150, 250, …,
-        // 950 ms → t/D = 0.05, 0.15, …, 0.95. With two control
-        // points (linear interp from 0 to 1), each amp = t/D.
+    fn master_envelope_line_long_pattern_grows_unbounded() {
+        // 10 s pattern → 100 segments. No 10-segment cap any more —
+        // chunking handles feedbackd's per-call ceiling.
+        let p = pattern(10_000, vec![0.0, 1.0, 0.0], ChartKind::Line);
+        let m = build_master_envelope(&p);
+        assert_eq!(m.len(), 100);
+        let total: u32 = m.iter().map(|s| s.1).sum();
+        assert_eq!(total, 10_000);
+    }
+
+    #[test]
+    fn master_envelope_line_samples_at_segment_centres() {
+        // Two control points on a 0→1 ramp, 10 segments of 100 ms.
+        // Centres land at 50, 150, …, 950 ms → amps = t/D.
         let p = pattern(1000, vec![0.0, 1.0], ChartKind::Line);
-        let segments = sample_to_segments(&p);
-        for (i, s) in segments.iter().enumerate() {
+        let m = build_master_envelope(&p);
+        for (i, s) in m.iter().enumerate() {
             let expected = (i as f64 * 100.0 + 50.0) / 1000.0;
             assert!((s.0 - expected).abs() < 1e-3,
                 "segment {i}: got {}, expected {}", s.0, expected);
         }
     }
 
-    #[test]
-    fn line_mode_caps_long_pattern_at_max_segments() {
-        // 5 s pattern: 100 ticks raw → capped at 10 × 500 ms.
-        let p = pattern(5_000, vec![0.0, 1.0, 0.0], ChartKind::Line);
-        let segments = sample_to_segments(&p);
-        assert_eq!(segments.len(), 10, "cap at MAX_SEGMENTS");
-        let total: u32 = segments.iter().map(|s| s.1).sum();
-        assert_eq!(total, 5_000, "total duration preserved despite capping");
+    // ── split_into_chunks + chunk_start_offset_ms ────────────────────────
+
+    fn flat_master(n: usize, seg_dur_ms: u32) -> Vec<(f64, u32)> {
+        (0..n).map(|i| (i as f64 / 100.0, seg_dur_ms)).collect()
     }
 
     #[test]
-    fn bar_mode_coalesces_when_n_exceeds_max_segments() {
-        // 12 control points → 10 output bins. First 8 bins hold
-        // one input each, last 2 bins hold 2 inputs averaged.
-        let intensities: Vec<f32> = (0..12).map(|i| i as f32 / 11.0).collect();
-        let p = pattern(1_000, intensities.clone(), ChartKind::Bar);
-        let segments = sample_to_segments(&p);
-        assert_eq!(segments.len(), 10, "cap at MAX_SEGMENTS");
-        let total: u32 = segments.iter().map(|s| s.1).sum();
-        assert_eq!(total, 1_000, "total duration preserved");
-        // Bins are non-decreasing for a non-decreasing input.
-        let amps: Vec<f64> = segments.iter().map(|s| s.0).collect();
-        for w in amps.windows(2) {
-            assert!(w[0] <= w[1] + 1e-9,
-                "amplitudes should stay monotone: {:?}", amps);
+    fn split_returns_empty_for_empty_master() {
+        assert!(split_into_chunks(&[]).is_empty());
+    }
+
+    #[test]
+    fn split_returns_single_chunk_when_master_fits() {
+        let m = flat_master(10, 100);
+        let chunks = split_into_chunks(&m);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].len(), 10);
+    }
+
+    #[test]
+    fn split_emits_two_chunks_with_two_segment_overlap_for_s_eq_18() {
+        // S=18: chunk 0 [0..10), chunk 1 [8..18). Overlap = master[8..10].
+        let m = flat_master(18, 100);
+        let chunks = split_into_chunks(&m);
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].len(), 10);
+        assert_eq!(chunks[1].len(), 10);
+        assert_eq!(chunks[0][8], chunks[1][0], "overlap segment 0");
+        assert_eq!(chunks[0][9], chunks[1][1], "overlap segment 1");
+    }
+
+    #[test]
+    fn split_handles_partial_last_chunk() {
+        // S=12: chunk 0 [0..10), chunk 1 [8..12) → 4 segments.
+        let m = flat_master(12, 100);
+        let chunks = split_into_chunks(&m);
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].len(), 10);
+        assert_eq!(chunks[1].len(), 4);
+        assert_eq!(chunks[0][8], chunks[1][0]);
+        assert_eq!(chunks[0][9], chunks[1][1]);
+    }
+
+    #[test]
+    fn split_thirteen_chunks_for_full_10s_envelope() {
+        // S=100 → 1 + ceil((100 - 10) / 8) = 13 chunks.
+        let m = flat_master(100, 100);
+        let chunks = split_into_chunks(&m);
+        assert_eq!(chunks.len(), 13);
+        // Every adjacent chunk pair shares 2 segments.
+        for w in chunks.windows(2) {
+            let prev = &w[0];
+            let next = &w[1];
+            assert_eq!(prev[prev.len() - 2], next[0]);
+            assert_eq!(prev[prev.len() - 1], next[1]);
         }
+    }
+
+    #[test]
+    fn chunk_start_offset_aligns_with_supersede_intent() {
+        // Uniform 100 ms segments. Stride = 8 → chunk K fires at
+        // 8 * K * 100 ms in master time.
+        let m = flat_master(100, 100);
+        for k in 0..13 {
+            assert_eq!(chunk_start_offset_ms(&m, k), (k * 8 * 100) as u32);
+        }
+    }
+
+    #[test]
+    fn chunk_start_offset_handles_variable_segment_durations() {
+        // Bar-style master: first three at 200 ms, rest at 50 ms.
+        // Stride = 8. Chunk 1 starts at master[8].
+        let mut m = vec![(0.5, 200u32); 3];
+        m.extend(std::iter::repeat((0.5, 50u32)).take(20));
+        // master[0..8] = 3 × 200 + 5 × 50 = 850 ms.
+        assert_eq!(chunk_start_offset_ms(&m, 1), 850);
     }
 }

@@ -23,6 +23,18 @@ const DEFAULT_POINTS: usize       = 7;
 const DEFAULT_DURATION_S: f64     = 2.0;
 const POINTS_MIN: u32             = 3;
 const POINTS_MAX: u32             = 24;
+/// Minimum spacing between authored control points, in
+/// milliseconds. Below this the LRA can't render the steps as
+/// distinct, and feedbackd's chunking math (200 ms overlap, 10
+/// segments per chunk) starts to wobble. The Points spin row's
+/// upper bound is recomputed on every Duration change to enforce
+/// it: `max_points = min(POINTS_MAX, floor(D_secs * 10))`.
+const MIN_POINT_SPACING_MS: u32   = 100;
+
+fn max_points_for_duration_s(duration_s: f64) -> u32 {
+    let by_spacing = (duration_s * 1000.0 / MIN_POINT_SPACING_MS as f64).floor() as u32;
+    POINTS_MAX.min(by_spacing).max(POINTS_MIN)
+}
 const DURATION_MIN_S: f64         = 0.5;
 const DURATION_MAX_S: f64         = 10.0;
 
@@ -196,14 +208,24 @@ pub fn push_pattern_editor(
     let points_row = adw::SpinRow::builder()
         .title(gettext("Points"))
         .build();
+    let initial_max_points = max_points_for_duration_s(editor.duration_s.get());
     points_row.set_adjustment(Some(&gtk::Adjustment::new(
         editor.intensities.borrow().len() as f64,
         POINTS_MIN as f64,
-        POINTS_MAX as f64,
+        initial_max_points as f64,
         1.0,
         1.0,
         0.0,
     )));
+    // Subtitle communicates the dynamic cap. Adjustment refuses
+    // values past it, but the user needs to see *why*.
+    let points_subtitle_for = |max: u32| {
+        format!("{} (up to {} for this duration)",
+            gettext("Min 100 ms between points"),
+            max,
+        )
+    };
+    points_row.set_subtitle(&points_subtitle_for(initial_max_points));
 
     shape_group.add(&duration_row);
     shape_group.add(&points_row);
@@ -431,15 +453,35 @@ pub fn push_pattern_editor(
     // ── Spin row wiring ───────────────────────────────────────────────
     let editor_for_dur = editor.clone();
     let area_for_dur = drawing_area.clone();
+    let points_row_for_dur = points_row.clone();
     duration_row.connect_notify_local(Some("value"), move |row, _| {
-        editor_for_dur.duration_s.set(row.value());
+        let d = row.value();
+        editor_for_dur.duration_s.set(d);
+
+        // Update the Points cap. If the new cap is below the
+        // current point count, clamp + resample so the chart stays
+        // consistent. Otherwise just bump the upper bound.
+        let new_max = max_points_for_duration_s(d);
+        let adj = points_row_for_dur.adjustment();
+        adj.set_upper(new_max as f64);
+        if adj.value() > new_max as f64 {
+            adj.set_value(new_max as f64);
+        }
+        points_row_for_dur.set_subtitle(&format!(
+            "{} (up to {} for this duration)",
+            gettext("Min 100 ms between points"),
+            new_max,
+        ));
         area_for_dur.queue_draw();
     });
 
     let editor_for_pts = editor.clone();
     let area_for_pts = drawing_area.clone();
     points_row.connect_notify_local(Some("value"), move |row, _| {
-        let new_n = row.value().round().clamp(POINTS_MIN as f64, POINTS_MAX as f64) as usize;
+        let max_for_dur = max_points_for_duration_s(editor_for_pts.duration_s.get());
+        let new_n = row.value()
+            .round()
+            .clamp(POINTS_MIN as f64, max_for_dur as f64) as usize;
         editor_for_pts.resample_to(new_n);
         // Selected index may now be out of range — clear it.
         if let Some(idx) = editor_for_pts.selected.get() {
@@ -703,6 +745,28 @@ fn format_seconds(secs: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn max_points_floors_to_100ms_spacing() {
+        // 0.5 s → 5 max (5 × 100 ms). 0.4 s would round to 4 but the
+        // editor's DURATION_MIN is 0.5, so this is the smallest case.
+        assert_eq!(max_points_for_duration_s(0.5), 5);
+        // 1.0 s → 10 max. 1.5 s → 15. 2.4 s → 24 (the absolute cap).
+        assert_eq!(max_points_for_duration_s(1.0), 10);
+        assert_eq!(max_points_for_duration_s(1.5), 15);
+        assert_eq!(max_points_for_duration_s(2.4), 24);
+        // Above 2.4 s, the absolute POINTS_MAX cap kicks in.
+        assert_eq!(max_points_for_duration_s(5.0), 24);
+        assert_eq!(max_points_for_duration_s(10.0), 24);
+    }
+
+    #[test]
+    fn max_points_never_drops_below_min() {
+        // Floor of 0.5 × 10 = 5, which is above POINTS_MIN=3 — but
+        // the math could underflow on shorter durations. Guard.
+        assert!(max_points_for_duration_s(0.5) >= POINTS_MIN);
+        assert!(max_points_for_duration_s(0.0) >= POINTS_MIN);
+    }
 
     #[test]
     fn resample_passes_through_when_n_unchanged() {
