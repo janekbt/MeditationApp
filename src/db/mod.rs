@@ -23,7 +23,7 @@ use std::path::Path;
 /// learning about meditate-core directly. Same for the bell-library
 /// types added in B.3.1, and the `mint_uuid` helper added in B.5.
 pub use meditate_core::db::{
-    mint_uuid, BellSound, BellSoundCategory, ChartKind, GuidedFile, IntervalBell, IntervalBellKind, Label, Preset, SessionMode, SignalMode, VibrationPattern,
+    mint_uuid, BellSound, BellSoundCategory, BoxBreathPhase, BoxBreathPhaseId, ChartKind, GuidedFile, IntervalBell, IntervalBellKind, Label, Preset, SessionMode, SignalMode, VibrationPattern,
 };
 
 /// Bundled bell-sound seed: hardcoded (uuid, display name, GResource
@@ -343,6 +343,7 @@ impl Database {
         db.seed_default_labels()?;
         db.seed_default_presets()?;
         db.seed_bundled_vibration_patterns()?;
+        db.inner.seed_box_breath_phases().map_err(map_core_err)?;
         Ok(db)
     }
 
@@ -834,6 +835,33 @@ impl Database {
             .map_err(map_core_err)
     }
 
+    // ── BoxBreath phases — pass-through wrappers ──────────────────────────────
+    // Always-existing fixed-key rows (seeded in open). Only updates,
+    // no insert / delete.
+
+    pub fn list_box_breath_phases(&self) -> Result<Vec<BoxBreathPhase>> {
+        self.inner.list_box_breath_phases().map_err(map_core_err)
+    }
+
+    pub fn get_box_breath_phase(
+        &self, phase: BoxBreathPhaseId,
+    ) -> Result<Option<BoxBreathPhase>> {
+        self.inner.get_box_breath_phase(phase).map_err(map_core_err)
+    }
+
+    pub fn set_box_breath_phase(
+        &self,
+        phase: BoxBreathPhaseId,
+        enabled: bool,
+        signal_mode: SignalMode,
+        sound_uuid: &str,
+        pattern_uuid: &str,
+    ) -> Result<()> {
+        self.inner
+            .set_box_breath_phase(phase, enabled, signal_mode, sound_uuid, pattern_uuid)
+            .map_err(map_core_err)
+    }
+
     // ── Sessions ──────────────────────────────────────────────────────────────
 
     pub fn create_session(&self, data: &SessionData) -> Result<Session> {
@@ -1065,6 +1093,7 @@ pub(crate) fn test_db_in_memory() -> Database {
     db.seed_default_labels().unwrap();
     db.seed_default_presets().unwrap();
     db.seed_bundled_vibration_patterns().unwrap();
+    db.inner.seed_box_breath_phases().unwrap();
     db
 }
 
