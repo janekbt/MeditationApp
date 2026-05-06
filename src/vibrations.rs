@@ -115,7 +115,7 @@ fn rebuild_chooser_rows(
     nav_view: &adw::NavigationView,
     on_selected: Rc<dyn Fn(String)>,
     rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
-    _toast_overlay: &adw::ToastOverlay,
+    toast_overlay: &adw::ToastOverlay,
     play_slot: Rc<RefCell<Option<crate::vibration::PatternPlayback>>>,
     preview: Rc<RefCell<PreviewState>>,
 ) {
@@ -136,6 +136,7 @@ fn rebuild_chooser_rows(
         nav_view: nav_view.clone(),
         play_slot: play_slot.clone(),
         preview: preview.clone(),
+        toast_overlay: toast_overlay.clone(),
     };
 
     let patterns = app
@@ -162,6 +163,7 @@ struct SelectionContext {
     nav_view: adw::NavigationView,
     play_slot: Rc<RefCell<Option<crate::vibration::PatternPlayback>>>,
     preview: Rc<RefCell<PreviewState>>,
+    toast_overlay: adw::ToastOverlay,
 }
 
 /// Which pattern is currently previewing + the play-button widget
@@ -243,13 +245,20 @@ fn build_pattern_row(
         // confuse a peer that hasn't seeded yet. Rename is the only
         // mutation we let through; the curve, duration, and kind are
         // the seed's identity.
-        add_rename_button(&row, pattern, app, rebuilder);
+        add_rename_button(&row, pattern, app, rebuilder, &selection.toast_overlay);
     } else {
         // Edit covers rename + curve + duration + chart kind, so we
         // skip the standalone rename button here to avoid two
         // overlapping affordances.
-        add_edit_button(&row, pattern, app, &selection.nav_view, rebuilder.clone());
-        add_delete_button(&row, pattern, app, rebuilder);
+        add_edit_button(
+            &row,
+            pattern,
+            app,
+            &selection.nav_view,
+            rebuilder.clone(),
+            &selection.toast_overlay,
+        );
+        add_delete_button(&row, pattern, app, rebuilder, &selection.toast_overlay);
     }
 
     let uuid = pattern.uuid.clone();
@@ -351,6 +360,7 @@ fn add_edit_button(
     app: &MeditateApplication,
     nav_view: &adw::NavigationView,
     rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+    toast_overlay: &adw::ToastOverlay,
 ) {
     let edit_btn = gtk::Button::builder()
         .icon_name("document-edit-symbolic")
@@ -361,15 +371,40 @@ fn add_edit_button(
     let app = app.clone();
     let nav_view = nav_view.clone();
     let pattern = pattern.clone();
+    let toast_overlay = toast_overlay.clone();
     edit_btn.connect_clicked(move |_| {
         let rebuilder = rebuilder.clone();
+        // Snapshot the pre-edit state — passed into the editor as
+        // `initial`, recovered here for the Undo toast.
+        let before = pattern.clone();
+        let app_for_saved = app.clone();
+        let toast_for_saved = toast_overlay.clone();
+        let rebuilder_for_saved = rebuilder.clone();
         crate::vibration_editor::push_pattern_editor(
             &nav_view,
             &app,
-            Some(pattern.clone()),
-            move |_uuid| {
-                if let Some(rb) = rebuilder.borrow().as_ref() {
+            Some(before.clone()),
+            move |saved_uuid| {
+                if let Some(rb) = rebuilder_for_saved.borrow().as_ref() {
                     rb();
+                }
+                // Skip the Undo toast when nothing actually changed
+                // (the editor's Save button stays sensitive even if
+                // the user just opened/closed) — comparing the field
+                // tuple is enough; we don't have a "dirty" flag.
+                let after = app_for_saved
+                    .with_db(|db| db.find_vibration_pattern_by_uuid(&saved_uuid))
+                    .and_then(|r| r.ok())
+                    .flatten();
+                if let Some(after) = after {
+                    if !patterns_equivalent(&before, &after) {
+                        show_undo_edit_toast(
+                            &toast_for_saved,
+                            &app_for_saved,
+                            before.clone(),
+                            rebuilder_for_saved.clone(),
+                        );
+                    }
                 }
             },
         );
@@ -382,6 +417,7 @@ fn add_rename_button(
     pattern: &VibrationPattern,
     app: &MeditateApplication,
     rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+    toast_overlay: &adw::ToastOverlay,
 ) {
     let rename_btn = gtk::Button::builder()
         .icon_name("document-edit-symbolic")
@@ -392,8 +428,16 @@ fn add_rename_button(
     let app = app.clone();
     let uuid = pattern.uuid.clone();
     let row_clone = row.clone();
+    let toast_overlay = toast_overlay.clone();
     rename_btn.connect_clicked(move |btn| {
-        present_rename_dialog(btn, &app, &uuid, &row_clone.title(), rebuilder.clone());
+        present_rename_dialog(
+            btn,
+            &app,
+            &uuid,
+            &row_clone.title(),
+            rebuilder.clone(),
+            &toast_overlay,
+        );
     });
     row.add_suffix(&rename_btn);
 }
@@ -403,6 +447,7 @@ fn add_delete_button(
     pattern: &VibrationPattern,
     app: &MeditateApplication,
     rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+    toast_overlay: &adw::ToastOverlay,
 ) {
     let delete_btn = gtk::Button::builder()
         .icon_name("user-trash-symbolic")
@@ -412,10 +457,89 @@ fn add_delete_button(
         .build();
     let app = app.clone();
     let uuid = pattern.uuid.clone();
+    let toast_overlay = toast_overlay.clone();
     delete_btn.connect_clicked(move |btn| {
-        present_delete_dialog(btn, &app, &uuid, rebuilder.clone());
+        present_delete_dialog(btn, &app, &uuid, rebuilder.clone(), &toast_overlay);
     });
     row.add_suffix(&delete_btn);
+}
+
+fn patterns_equivalent(a: &VibrationPattern, b: &VibrationPattern) -> bool {
+    a.name == b.name
+        && a.duration_ms == b.duration_ms
+        && a.chart_kind == b.chart_kind
+        && a.intensities.len() == b.intensities.len()
+        && a.intensities.iter()
+            .zip(b.intensities.iter())
+            .all(|(x, y)| (x - y).abs() < 1e-6)
+}
+
+/// Show an Undo toast for an edit/rename. Clicking Undo restores
+/// the pre-edit name + duration + curve + chart kind by routing
+/// through the same update_vibration_pattern call.
+fn show_undo_edit_toast(
+    overlay: &adw::ToastOverlay,
+    app: &MeditateApplication,
+    before: VibrationPattern,
+    rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+) {
+    let toast = adw::Toast::builder()
+        .title(format!("{} {}", gettext("Updated"), &before.name))
+        .button_label(gettext("Undo"))
+        .timeout(5)
+        .build();
+    let app = app.clone();
+    toast.connect_button_clicked(move |t| {
+        let _ = app.with_db_mut(|db| {
+            db.update_vibration_pattern(
+                &before.uuid,
+                &before.name,
+                before.duration_ms,
+                &before.intensities,
+                before.chart_kind,
+            )
+        });
+        if let Some(rb) = rebuilder.borrow().as_ref() {
+            rb();
+        }
+        t.dismiss();
+    });
+    overlay.add_toast(toast);
+}
+
+/// Show an Undo toast for a delete. Clicking Undo re-inserts the
+/// pattern with its original UUID — bells / phases that referenced
+/// it (and started rendering as the bundled Pulse fallback the
+/// moment we deleted) resolve back to it on the next refresh.
+fn show_undo_delete_toast(
+    overlay: &adw::ToastOverlay,
+    app: &MeditateApplication,
+    snapshot: VibrationPattern,
+    rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+) {
+    let toast = adw::Toast::builder()
+        .title(format!("{} {}", gettext("Deleted"), &snapshot.name))
+        .button_label(gettext("Undo"))
+        .timeout(5)
+        .build();
+    let app = app.clone();
+    toast.connect_button_clicked(move |t| {
+        let _ = app.with_db_mut(|db| {
+            db.insert_vibration_pattern_with_uuid(
+                &snapshot.uuid,
+                &snapshot.name,
+                snapshot.duration_ms,
+                &snapshot.intensities,
+                snapshot.chart_kind,
+                snapshot.is_bundled,
+            )
+        });
+        if let Some(rb) = rebuilder.borrow().as_ref() {
+            rb();
+        }
+        t.dismiss();
+    });
+    overlay.add_toast(toast);
 }
 
 fn present_rename_dialog(
@@ -424,6 +548,7 @@ fn present_rename_dialog(
     uuid: &str,
     current_name: &str,
     rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+    toast_overlay: &adw::ToastOverlay,
 ) {
     let entry = gtk::Entry::builder()
         .text(current_name)
@@ -468,6 +593,7 @@ fn present_rename_dialog(
     let app = app.clone();
     let uuid = uuid.to_string();
     let entry_for_response = entry.clone();
+    let toast_overlay = toast_overlay.clone();
     dialog.connect_response(None, move |_, id| {
         if id != "rename" {
             return;
@@ -480,11 +606,14 @@ fn present_rename_dialog(
         // Read the current row to round-trip duration / intensities /
         // chart_kind through the update — those don't change on a
         // rename, but update_vibration_pattern wants every field.
-        let snapshot = app
+        let before = app
             .with_db(|db| db.find_vibration_pattern_by_uuid(&uuid))
             .and_then(|r| r.ok())
             .flatten();
-        if let Some(p) = snapshot {
+        if let Some(ref p) = before {
+            if p.name == trimmed {
+                return; // No-op rename — skip the toast.
+            }
             app.with_db_mut(|db| {
                 db.update_vibration_pattern(
                     &uuid, trimmed, p.duration_ms, &p.intensities, p.chart_kind,
@@ -493,6 +622,9 @@ fn present_rename_dialog(
         }
         if let Some(rb) = rebuilder.borrow().as_ref() {
             rb();
+        }
+        if let Some(before) = before {
+            show_undo_edit_toast(&toast_overlay, &app, before, rebuilder.clone());
         }
     });
 
@@ -509,6 +641,7 @@ fn present_delete_dialog(
     app: &MeditateApplication,
     uuid: &str,
     rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+    toast_overlay: &adw::ToastOverlay,
 ) {
     let dialog = adw::AlertDialog::builder()
         .heading(gettext("Delete Pattern?"))
@@ -524,13 +657,23 @@ fn present_delete_dialog(
 
     let app = app.clone();
     let uuid = uuid.to_string();
+    let toast_overlay = toast_overlay.clone();
     dialog.connect_response(None, move |_, id| {
         if id != "delete" {
             return;
         }
+        // Snapshot before deleting so the Undo toast can re-insert
+        // with the same UUID.
+        let snapshot = app
+            .with_db(|db| db.find_vibration_pattern_by_uuid(&uuid))
+            .and_then(|r| r.ok())
+            .flatten();
         app.with_db_mut(|db| db.delete_vibration_pattern(&uuid));
         if let Some(rb) = rebuilder.borrow().as_ref() {
             rb();
+        }
+        if let Some(snapshot) = snapshot {
+            show_undo_delete_toast(&toast_overlay, &app, snapshot, rebuilder.clone());
         }
     });
 
