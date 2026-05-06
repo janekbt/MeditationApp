@@ -2696,6 +2696,67 @@ impl Database {
         Ok(row)
     }
 
+    /// Update the four mutable fields on an existing pattern. Bumps
+    /// `updated_iso` so the recompute helper can resolve concurrent
+    /// edits by lamport timestamp. Unknown uuids are silent no-ops AND
+    /// emit no event (mirrors guided_file rename / bell_sound rename).
+    /// Returns `DuplicateVibrationPattern(name)` if another row already
+    /// holds the new name (case-insensitive).
+    pub fn update_vibration_pattern(
+        &self,
+        uuid_str: &str,
+        name: &str,
+        duration_ms: u32,
+        intensities: &[f32],
+        chart_kind: ChartKind,
+    ) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        let row: Option<(String, i64)> = self.conn.query_row(
+            "SELECT created_iso, is_bundled FROM vibration_patterns WHERE uuid = ?1",
+            params![uuid_str],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).optional()?;
+        let Some((created_iso, is_bundled_int)) = row else {
+            return Ok(());
+        };
+        let is_bundled = is_bundled_int != 0;
+        let intensities_json = serde_json::to_string(intensities)
+            .map_err(|e| DbError::Csv(format!("serialise intensities: {e}")))?;
+        let now_iso = chrono::Utc::now().to_rfc3339();
+        let result = self.conn.execute(
+            "UPDATE vibration_patterns
+             SET name = ?1, duration_ms = ?2, intensities_json = ?3,
+                 chart_kind = ?4, updated_iso = ?5
+             WHERE uuid = ?6",
+            params![
+                name, duration_ms, intensities_json,
+                chart_kind.as_db_str(), now_iso, uuid_str,
+            ],
+        );
+        match result {
+            Ok(_) => {}
+            Err(rusqlite::Error::SqliteFailure(err, _))
+                if err.code == rusqlite::ErrorCode::ConstraintViolation =>
+            {
+                return Err(DbError::DuplicateVibrationPattern(name.to_string()));
+            }
+            Err(e) => return Err(DbError::Sqlite(e)),
+        }
+        let payload = serde_json::json!({
+            "uuid": uuid_str,
+            "name": name,
+            "duration_ms": duration_ms,
+            "intensities_json": intensities_json,
+            "chart_kind": chart_kind.as_db_str(),
+            "is_bundled": is_bundled,
+            "created_iso": created_iso,
+            "updated_iso": now_iso,
+        }).to_string();
+        self.emit_event("vibration_pattern_update", uuid_str, payload)?;
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn list_vibration_patterns(&self) -> Result<Vec<VibrationPattern>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, uuid, name, duration_ms, intensities_json,
@@ -10193,6 +10254,74 @@ mod tests {
     fn find_vibration_pattern_by_uuid_returns_none_for_unknown_uuid() {
         let db = Database::open_in_memory().unwrap();
         assert!(db.find_vibration_pattern_by_uuid("nope").unwrap().is_none());
+    }
+
+    #[test]
+    fn update_vibration_pattern_round_trips_changes() {
+        let db = Database::open_in_memory().unwrap();
+        let uuid_str = db.insert_vibration_pattern(
+            "Wave", 2000, &[0.0, 0.5, 1.0, 0.5, 0.0],
+            ChartKind::Line, false,
+        ).unwrap();
+        db.update_vibration_pattern(
+            &uuid_str, "Slow Wave", 3000, &[0.0, 0.3, 0.6, 0.3, 0.0, 0.0, 0.0],
+            ChartKind::Bar,
+        ).unwrap();
+        let row = db.find_vibration_pattern_by_uuid(&uuid_str).unwrap().unwrap();
+        assert_eq!(row.name, "Slow Wave");
+        assert_eq!(row.duration_ms, 3000);
+        assert_eq!(row.intensities, vec![0.0, 0.3, 0.6, 0.3, 0.0, 0.0, 0.0]);
+        assert_eq!(row.chart_kind, ChartKind::Bar);
+    }
+
+    #[test]
+    fn update_vibration_pattern_bumps_updated_iso() {
+        let db = Database::open_in_memory().unwrap();
+        let uuid_str = db.insert_vibration_pattern(
+            "Wave", 2000, &[0.0, 1.0, 0.0], ChartKind::Line, false,
+        ).unwrap();
+        let before = db.find_vibration_pattern_by_uuid(&uuid_str).unwrap().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        db.update_vibration_pattern(
+            &uuid_str, "Wave", 2500, &[0.0, 1.0, 0.0], ChartKind::Line,
+        ).unwrap();
+        let after = db.find_vibration_pattern_by_uuid(&uuid_str).unwrap().unwrap();
+        assert_eq!(after.created_iso, before.created_iso,
+            "created_iso must not move on update");
+        assert!(after.updated_iso > before.updated_iso,
+            "updated_iso must bump forward on update");
+    }
+
+    #[test]
+    fn update_vibration_pattern_unknown_uuid_is_silent_noop() {
+        let db = Database::open_in_memory().unwrap();
+        db.update_vibration_pattern(
+            "never-existed", "anything", 1000, &[0.0, 1.0], ChartKind::Line,
+        ).unwrap();
+        let updates: Vec<_> = db.pending_events().unwrap()
+            .into_iter()
+            .filter(|(_, e)| e.kind == "vibration_pattern_update")
+            .collect();
+        assert!(updates.is_empty(),
+            "no event for unknown uuid — peers would otherwise update a row they don't have");
+    }
+
+    #[test]
+    fn update_vibration_pattern_to_existing_name_returns_duplicate_error() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_vibration_pattern_with_uuid(
+            "vp-1", "Pulse", 400, &[0.0, 1.0, 0.0],
+            ChartKind::Line, false,
+        ).unwrap();
+        let other = db.insert_vibration_pattern(
+            "Wave", 1000, &[0.0, 1.0, 0.0], ChartKind::Line, false,
+        ).unwrap();
+        match db.update_vibration_pattern(
+            &other, "PULSE", 1000, &[0.0, 1.0, 0.0], ChartKind::Line,
+        ) {
+            Err(DbError::DuplicateVibrationPattern(name)) => assert_eq!(name, "PULSE"),
+            other => panic!("expected DuplicateVibrationPattern, got {other:?}"),
+        }
     }
 
     #[test]
