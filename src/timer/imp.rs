@@ -153,7 +153,6 @@ pub struct TimerView {
     #[template_child] pub vibration_proto_start_pattern_revealer:    TemplateChild<gtk::Revealer>,
     #[template_child] pub vibration_proto_start_pattern_row:         TemplateChild<adw::ActionRow>,
     #[template_child] pub vibration_proto_start_prep_row:            TemplateChild<adw::ExpanderRow>,
-    #[template_child] pub vibration_proto_open_editor_btn:        TemplateChild<gtk::Button>,
     #[template_child] pub vibration_proto_phase_master_row:       TemplateChild<adw::ExpanderRow>,
     #[template_child] pub vibration_proto_phase_inhale_row:       TemplateChild<adw::ExpanderRow>,
     #[template_child] pub vibration_proto_phase_hold_in_row:      TemplateChild<adw::ExpanderRow>,
@@ -856,26 +855,6 @@ impl TimerView {
             &self.vibration_proto_start_sound_revealer,
             &self.vibration_proto_start_pattern_revealer,
         );
-
-        // Pattern editor launcher (throwaway scaffold — graduates out
-        // when the chooser → editor wiring lands).
-        self.vibration_proto_open_editor_btn.connect_clicked(glib::clone!(
-            #[weak(rename_to = this)] self.obj(),
-            move |_| {
-                let imp = this.imp();
-                let Some(app) = imp.get_app() else { return; };
-                let Some(window) = this.root()
-                    .and_downcast::<crate::window::MeditateWindow>()
-                else { return; };
-                use glib::subclass::prelude::ObjectSubclassIsExt;
-                crate::vibration_editor::push_pattern_editor(
-                    &window.imp().nav_view,
-                    &app,
-                    None,
-                    |_uuid| {},
-                );
-            },
-        ));
 
         // Box Breath phase-vibrations prototype: nothing to wire — the
         // outer expander's show-enable-switch reveals/hides the four

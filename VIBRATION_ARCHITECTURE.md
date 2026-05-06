@@ -1307,24 +1307,24 @@ that's its concern.
 
 ## Throwaway prototype location
 
-Two layers of prototype, both at the bottom of the timer setup page:
+Bell-row UI prototypes — inline Sound/Vibration/Both ToggleGroup
+shells for Start, End, and Box Breath at the bottom of the timer
+setup. Stay in place until steps 6 (per-bell wiring) and 7 (Box
+Breath per-phase) graduate them; their `wire_signal_toggle` helper in
+`src/timer/imp.rs::setup_vibration_proto` is reusable verbatim for
+the real per-bell rows.
 
-**Bell-row UI prototypes** (Start / End / Box Breath) — inline expander
-shells with the Sound / Vibration / Both ToggleGroup + Revealer-wrapped
-rows.
+The pattern-editor prototype graduated in step 4: the editor itself
+moved to `src/vibration_editor.rs` with Save-to-DB wiring, and the
+"Open pattern editor (prototype)" launcher button is gone — the
+chooser's "Create custom pattern…" row and per-row Edit button are
+the real entry points now.
 
-**Pattern editor prototype** — full NavigationPage with chart canvas,
-drag interaction, Line/Bar toggle, header subtitle, Duration / Points
-SpinRows. Launched from the "Open pattern editor (prototype)" button.
+To remove the bell-row prototypes when steps 6/7 land:
 
-To remove all of it when the real implementation lands:
-
-- `data/ui/timer_view.blp`: search for "Vibration UI prototype" — three
-  contiguous `Adw.Clamp` blocks plus the launcher-button clamp.
-- `src/timer/imp.rs`: search for `vibration_proto_` (template children) and
-  `setup_vibration_proto` (the wiring function and its `wire_signal_toggle`
-  helper). Helper logic is reusable as-is for the real per-bell wiring.
-- `src/vibration_proto.rs`: entire file. The chart-drawing,
-  resampling, and drag-handler patterns are reusable verbatim in the real
-  module — see the code-reference blocks earlier in this doc.
-- `src/main.rs`: drop the `pub mod vibration_proto;` line.
+- `data/ui/timer_view.blp`: search for "Vibration UI prototype" —
+  three contiguous `Adw.Clamp` blocks (Starting / End / Box Breath).
+- `src/timer/imp.rs`: search for `vibration_proto_` (template
+  children) and `setup_vibration_proto` (the wiring function and its
+  `wire_signal_toggle` helper). Helper logic is reusable as-is for
+  the real per-bell wiring.
