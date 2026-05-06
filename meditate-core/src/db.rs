@@ -7,6 +7,7 @@ pub enum DbError {
     DuplicateLabel(String),
     DuplicatePreset(String),
     DuplicateGuidedFile(String),
+    DuplicateVibrationPattern(String),
     Sqlite(rusqlite::Error),
     Csv(String),
 }
@@ -201,6 +202,57 @@ pub struct Preset {
     pub updated_iso: String,
 }
 
+/// One vibration pattern in the user's library. The pattern itself is
+/// an envelope of N equally-spaced amplitude samples played back over
+/// `duration_ms`; `chart_kind` selects how playback interpolates
+/// between samples — `Line` linear-interpolates (smooth ramp), `Bar`
+/// holds each sample (sample-and-hold step). Bundled rows ship with
+/// the app under stable UUIDs so a peer device that already has the
+/// bundle doesn't end up with duplicate rows after a sync round-trip.
+/// `updated_iso` advances on every edit so chooser sorts by recency.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VibrationPattern {
+    pub id: i64,
+    pub uuid: String,
+    pub name: String,
+    pub duration_ms: u32,
+    /// Equally-spaced amplitude samples in `[0.0, 1.0]`. Length is the
+    /// pattern's "Points" count from the editor; spacing between
+    /// samples is `duration_ms / (intensities.len() - 1)`.
+    pub intensities: Vec<f32>,
+    pub chart_kind: ChartKind,
+    pub is_bundled: bool,
+    pub created_iso: String,
+    pub updated_iso: String,
+}
+
+/// How playback interpolates between adjacent envelope samples.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChartKind {
+    /// Linear interpolation between adjacent samples — produces a
+    /// continuous, smoothly-ramping intensity curve.
+    Line,
+    /// Sample-and-hold — each sample's value is held for its segment
+    /// length, producing abrupt step transitions at sample boundaries.
+    Bar,
+}
+
+impl ChartKind {
+    pub fn as_db_str(self) -> &'static str {
+        match self {
+            ChartKind::Line => "line",
+            ChartKind::Bar  => "bar",
+        }
+    }
+    pub fn from_db_str(s: &str) -> Option<Self> {
+        match s {
+            "line" => Some(ChartKind::Line),
+            "bar"  => Some(ChartKind::Bar),
+            _      => None,
+        }
+    }
+}
+
 /// One entry in the user's guided-meditation file library — an audio
 /// track imported via the file picker, transcoded to OGG, and stored
 /// under the app's data dir. Referenced by `sessions.guided_file_uuid`
@@ -375,6 +427,28 @@ const SCHEMA: &str = "
         is_starred    INTEGER NOT NULL DEFAULT 0,
         created_iso   TEXT NOT NULL,
         updated_iso   TEXT NOT NULL
+    );
+    -- User-managed library of vibration patterns. Each row is a full
+    -- envelope (duration + N equally-spaced amplitude samples + chart
+    -- kind) referenced by per-bell signal config and box-breath phase
+    -- rows. Bundled rows ship with the app under stable UUIDs so peer
+    -- devices with the bundle don't end up with duplicate rows after a
+    -- sync round-trip. `name` is COLLATE NOCASE UNIQUE so the chooser
+    -- can't show two visually identical entries. `chart_kind` is
+    -- persisted because Line and Bar describe two different playback
+    -- semantics (linear interpolation vs. sample-and-hold step) — same
+    -- intensities, different output curve.
+    CREATE TABLE IF NOT EXISTS vibration_patterns (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        uuid             TEXT NOT NULL UNIQUE,
+        name             TEXT NOT NULL COLLATE NOCASE UNIQUE,
+        duration_ms      INTEGER NOT NULL,
+        intensities_json TEXT NOT NULL,
+        chart_kind       TEXT NOT NULL DEFAULT 'line'
+                         CHECK (chart_kind IN ('line', 'bar')),
+        is_bundled       INTEGER NOT NULL DEFAULT 0,
+        created_iso      TEXT NOT NULL,
+        updated_iso      TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS settings (
         key   TEXT PRIMARY KEY,
@@ -9871,5 +9945,40 @@ mod tests {
         assert_eq!(rows[0].name, "Body Scan");
         assert!(!rows[0].is_starred,
             "the more recent star=false update must win on the replay");
+    }
+
+    // ── VibrationPatterns ─────────────────────────────────────────────
+
+    #[test]
+    fn chart_kind_round_trips_through_db_str() {
+        for k in [ChartKind::Line, ChartKind::Bar] {
+            assert_eq!(ChartKind::from_db_str(k.as_db_str()), Some(k));
+        }
+        assert_eq!(ChartKind::from_db_str("typo"), None);
+    }
+
+    #[test]
+    fn vibration_patterns_table_is_created_on_fresh_open() {
+        // Schema is wired into SCHEMA — opening a fresh DB lands the
+        // table without any explicit setup. The CHECK constraint is
+        // exercised by inserting a bad chart_kind directly.
+        let db = Database::open_in_memory().unwrap();
+        let count: i64 = db.conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master \
+             WHERE type = 'table' AND name = 'vibration_patterns'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 1);
+
+        // CHECK (chart_kind IN ('line','bar')) rejects everything else.
+        let bad = db.conn.execute(
+            "INSERT INTO vibration_patterns
+                (uuid, name, duration_ms, intensities_json, chart_kind,
+                 is_bundled, created_iso, updated_iso)
+             VALUES ('u', 'n', 100, '[]', 'spiral', 0, 'now', 'now')",
+            [],
+        );
+        assert!(bad.is_err(),
+            "chart_kind = 'spiral' must be rejected by the CHECK constraint");
     }
 }
