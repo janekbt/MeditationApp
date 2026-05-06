@@ -360,18 +360,51 @@ template $TimerView : Gtk.Widget {
               // full story.
               Adw.ExpanderRow starting_bell_row {
                 title: _("Starting Bell");
-                subtitle: _("Play a bell when the session begins");
+                subtitle: _("Play a signal when the session begins");
                 show-enable-switch: true;
                 enable-expansion: false;
 
-                Adw.ActionRow starting_bell_sound_row {
-                  title: _("Bell Sound");
-                  activatable: true;
+                Adw.ActionRow starting_bell_signal_mode_row {
+                  title: _("Type");
 
                   [suffix]
-                  Gtk.Image {
-                    icon-name: "go-next-symbolic";
-                    styles ["dim-label"]
+                  Gtk.Box starting_bell_signal_toggle_host {
+                    orientation: horizontal;
+                    valign: center;
+                  }
+                }
+
+                Gtk.Revealer starting_bell_sound_revealer {
+                  transition-type: slide_down;
+                  transition-duration: 220;
+                  reveal-child: true;
+
+                  Adw.ActionRow starting_bell_sound_row {
+                    title: _("Bell Sound");
+                    activatable: true;
+
+                    [suffix]
+                    Gtk.Image {
+                      icon-name: "go-next-symbolic";
+                      styles ["dim-label"]
+                    }
+                  }
+                }
+
+                Gtk.Revealer starting_bell_pattern_revealer {
+                  transition-type: slide_down;
+                  transition-duration: 220;
+                  reveal-child: false;
+
+                  Adw.ActionRow starting_bell_pattern_row {
+                    title: _("Pattern");
+                    activatable: true;
+
+                    [suffix]
+                    Gtk.Image {
+                      icon-name: "go-next-symbolic";
+                      styles ["dim-label"]
+                    }
                   }
                 }
 

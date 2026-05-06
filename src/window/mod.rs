@@ -51,6 +51,7 @@ impl MeditateWindow {
         on_selected: impl Fn(String) + 'static,
     ) {
         use glib::subclass::prelude::ObjectSubclassIsExt;
+        clear_focus_before_push(self);
         crate::sounds::push_sounds_chooser(
             &self.imp().nav_view,
             app,
@@ -71,6 +72,7 @@ impl MeditateWindow {
         on_selected: impl Fn(String) + 'static,
     ) {
         use glib::subclass::prelude::ObjectSubclassIsExt;
+        clear_focus_before_push(self);
         crate::vibrations::push_vibrations_chooser(
             &self.imp().nav_view,
             app,
@@ -139,4 +141,19 @@ impl MeditateWindow {
             on_changed,
         );
     }
+}
+
+/// Drop the window's currently-focused widget before pushing a
+/// chooser onto the nav view. Otherwise GtkScrolledWindow's built-in
+/// scroll-into-view-on-focus-change behaviour will, on the chooser's
+/// pop, scroll the previously-focused row back into view — and when
+/// that row is wrapped in a Gtk.Revealer (the End Bell / Starting
+/// Bell signal-mode revealers), the calculation shifts the page
+/// downward by a few px every time. Clearing focus before the push
+/// removes the focused-target the scrolled window would otherwise
+/// chase. Keyboard navigation isn't affected; the user's next Tab
+/// re-establishes focus from scratch.
+fn clear_focus_before_push(window: &MeditateWindow) {
+    use gtk::prelude::GtkWindowExt;
+    window.set_focus(None::<&gtk::Widget>);
 }

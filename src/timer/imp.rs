@@ -130,7 +130,12 @@ pub struct TimerView {
     #[template_child] pub setup_label_enabled_row: TemplateChild<adw::ExpanderRow>,
     #[template_child] pub setup_label_chooser_row: TemplateChild<adw::ActionRow>,
     #[template_child] pub starting_bell_row:        TemplateChild<adw::ExpanderRow>,
+    #[template_child] pub starting_bell_signal_mode_row:    TemplateChild<adw::ActionRow>,
+    #[template_child] pub starting_bell_signal_toggle_host: TemplateChild<gtk::Box>,
+    #[template_child] pub starting_bell_sound_revealer:     TemplateChild<gtk::Revealer>,
     #[template_child] pub starting_bell_sound_row:  TemplateChild<adw::ActionRow>,
+    #[template_child] pub starting_bell_pattern_revealer:   TemplateChild<gtk::Revealer>,
+    #[template_child] pub starting_bell_pattern_row:        TemplateChild<adw::ActionRow>,
     #[template_child] pub preparation_time_row:     TemplateChild<adw::ExpanderRow>,
     #[template_child] pub preparation_time_secs_row:TemplateChild<adw::SpinRow>,
     #[template_child] pub interval_bells_enabled_row: TemplateChild<adw::ExpanderRow>,
@@ -641,6 +646,17 @@ impl TimerView {
             }
         ));
 
+        // The Bell Sound + Pattern rows are wrapped in Gtk.Revealers
+        // for the slide-down animation when the user flips Sound /
+        // Vibration / Both. That wrapping breaks the listbox row-
+        // activated signal chain that AdwActionRow.connect_activated
+        // normally hooks — so we re-emit `activated` from an explicit
+        // GestureClick on each wrapped row.
+        attach_revealer_row_click(&self.end_bell_sound_row);
+        attach_revealer_row_click(&self.end_bell_pattern_row);
+        attach_revealer_row_click(&self.starting_bell_sound_row);
+        attach_revealer_row_click(&self.starting_bell_pattern_row);
+
         // End Bell sound row — tap pushes the bell-sound chooser.
         self.end_bell_sound_row.connect_activated(glib::clone!(
             #[weak(rename_to = this)] obj,
@@ -792,6 +808,33 @@ impl TimerView {
             }
         ));
 
+        // Starting Bell pattern row — drills into the vibrations chooser.
+        self.starting_bell_pattern_row.connect_activated(glib::clone!(
+            #[weak(rename_to = this)] obj,
+            move |_| {
+                let imp = this.imp();
+                let Some(app) = imp.get_app() else { return; };
+                let Some(window) = this.root()
+                    .and_then(|r| r.downcast::<crate::window::MeditateWindow>().ok())
+                else { return; };
+                let current = app
+                    .with_db(|db| db.get_setting(
+                        "starting_bell_pattern",
+                        crate::db::BUNDLED_PATTERN_PULSE_UUID,
+                    ))
+                    .and_then(|r| r.ok());
+                let app_for_pick = app.clone();
+                let this_for_pick = this.clone();
+                window.push_vibrations_chooser(&app, current, move |uuid| {
+                    app_for_pick.with_db_mut(|db| db.set_setting("starting_bell_pattern", &uuid));
+                    this_for_pick.imp().refresh_starting_bell_pattern_subtitle();
+                });
+            }
+        ));
+
+        // Starting Bell signal-mode AdwToggleGroup.
+        self.setup_starting_bell_signal_mode_toggle();
+
         // Preparation Time expander — nested inside the Starting Bell
         // expander, animates the seconds spin in and out the same way.
         self.preparation_time_row.connect_enable_expansion_notify(glib::clone!(
@@ -881,6 +924,37 @@ impl TimerView {
             5.0, 15.0, 0.0,
         );
         self.preparation_time_secs_row.set_adjustment(Some(&adj));
+    }
+
+    /// Build the Starting Bell's Sound / Vibration / Both selector at
+    /// construction time. Mirrors the End Bell setup — see
+    /// `setup_end_bell_signal_mode_toggle` for the construction-time /
+    /// refresh-time split rationale.
+    fn setup_starting_bell_signal_mode_toggle(&self) {
+        let obj = self.obj();
+        build_signal_mode_toggle_widget(
+            &self.starting_bell_signal_toggle_host,
+            &self.starting_bell_sound_revealer,
+            &self.starting_bell_pattern_revealer,
+            "starting_bell_signal_mode",
+            glib::clone!(
+                #[weak] obj,
+                #[upgrade_or] None,
+                move || obj.imp().get_app()
+            ),
+        );
+    }
+
+    /// Apply the saved starting_bell_signal_mode + capability gating.
+    pub(crate) fn refresh_starting_bell_signal_mode_state(&self) {
+        let Some(app) = self.get_app() else { return; };
+        apply_signal_mode_state(
+            &self.starting_bell_signal_toggle_host,
+            &self.starting_bell_sound_revealer,
+            &self.starting_bell_pattern_revealer,
+            &app,
+            "starting_bell_signal_mode",
+        );
     }
 
     /// Build the End Bell's Sound / Vibration / Both selector at
@@ -1118,6 +1192,30 @@ fn first_toggle_group_in(host: &gtk::Box) -> Option<adw::ToggleGroup> {
         child = w.next_sibling();
     }
     None
+}
+
+/// AdwActionRow's `activated` signal only fires when the row is a
+/// direct GtkListBox child — wrapping it in a Gtk.Revealer breaks
+/// the chain. Attach a primary-button click gesture that calls
+/// `widget.activate()` on the row, re-firing the activated signal
+/// so existing `connect_activated` handlers still work.
+fn attach_revealer_row_click(row: &adw::ActionRow) {
+    use gtk::prelude::WidgetExt;
+    let click = gtk::GestureClick::new();
+    click.set_button(gtk::gdk::BUTTON_PRIMARY);
+    let row_weak = row.downgrade();
+    click.connect_released(move |gesture, _n_press, _x, _y| {
+        if let Some(row) = row_weak.upgrade() {
+            // ActionRowExt::activate (NOT WidgetExt::activate) is what
+            // emits the row's "activated" signal — the listbox-driven
+            // path that connect_activated hooks. WidgetExt::activate
+            // calls the generic activate-default handler instead and
+            // wouldn't reach our listener.
+            adw::prelude::ActionRowExt::activate(&row);
+        }
+        gesture.set_state(gtk::EventSequenceState::Claimed);
+    });
+    row.add_controller(click);
 }
 
 // ── Mode switching ────────────────────────────────────────────────────────────
@@ -2381,6 +2479,8 @@ impl TimerView {
         // by uuid. Empty subtitle if the persisted uuid is stale (e.g.,
         // a wiped DB seed) — the user re-picks via the chooser.
         self.refresh_starting_bell_sound_subtitle();
+        self.refresh_starting_bell_pattern_subtitle();
+        self.refresh_starting_bell_signal_mode_state();
         self.preparation_time_row.set_enable_expansion(prep_on);
         self.preparation_time_row.set_expanded(prep_on);
         self.preparation_time_secs_row.set_value(prep_secs as f64);
@@ -3385,6 +3485,12 @@ impl TimerView {
     pub(crate) fn refresh_end_bell_pattern_subtitle(&self) {
         let name = self.lookup_pattern_name_for_setting("end_bell_pattern");
         self.end_bell_pattern_row.set_subtitle(&name);
+    }
+
+    /// Same for Starting Bell pattern row.
+    pub(crate) fn refresh_starting_bell_pattern_subtitle(&self) {
+        let name = self.lookup_pattern_name_for_setting("starting_bell_pattern");
+        self.starting_bell_pattern_row.set_subtitle(&name);
     }
 
     fn lookup_sound_name_for_setting(&self, setting_key: &str) -> String {
