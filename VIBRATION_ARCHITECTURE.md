@@ -887,9 +887,9 @@ the accepted migration path):
 ### Probe mechanism
 
 Synchronous DBus call at app startup, before UI assembly. The probe
-calls `org.sigxcpu.Feedback.GetEventsTheme` on the session bus — any
-cheap real method works; this one returns the active feedback theme
-name and is universally implemented by feedbackd. Auto-activation is
+calls `org.sigxcpu.Feedback.Haptic.Vibrate` with an **empty pattern
+array** — feedbackd documents this exact form as a no-op-cancel, so
+firing it as a probe is safe (no actual buzz). Auto-activation is
 allowed (DBus launches feedbackd if it's installed but not running).
 
 ```rust
@@ -897,26 +897,39 @@ pub fn probe_haptic() -> bool {
     let Ok(conn) = gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE) else {
         return false;
     };
+    let args = glib::Variant::tuple_from_iter([
+        crate::config::APP_ID.to_variant(),
+        empty_du_array_variant(),  // a(du) — empty
+    ]);
     conn.call_sync(
         Some("org.sigxcpu.Feedback"),
         "/org/sigxcpu/Feedback",
-        "org.sigxcpu.Feedback",
-        "GetEventsTheme",
+        "org.sigxcpu.Feedback.Haptic",   // separate interface, exposed
+                                         // only when a haptic motor exists
+        "Vibrate",
+        Some(&args),
         None,
-        None,
-        gio::DBusCallFlags::NONE,    // allow auto-start
-        500,                          // 500 ms ceiling
+        gio::DBusCallFlags::NONE,        // allow auto-start
+        500,                              // 500 ms ceiling
         gio::Cancellable::NONE,
     )
     .is_ok()
 }
 ```
 
-Why `GetEventsTheme` over alternatives:
-- `NameHasOwner` would skip auto-start, so a phone with lazily-started
-  feedbackd would falsely report `false` on first launch after boot.
-- `GetCapabilities` isn't a feedbackd method.
-- `Introspect` works but is heavier than necessary.
+Why probing `Haptic.Vibrate([])` over alternatives:
+- It targets the **Haptic interface**, which feedbackd exposes
+  *only when the device has a haptic motor* — so a hypothetical phone
+  with feedbackd but no vibrator (rare but possible) correctly
+  reports `false`. A probe against the parent `Feedback` interface
+  (e.g., `GetEventsTheme`) would misreport such a device as haptic-
+  capable.
+- Auto-start works — DBus launches feedbackd if it's installed but
+  not running, so a freshly-booted phone with lazily-started
+  feedbackd doesn't falsely report `false`.
+- Empty `a(du)` is the documented cancel primitive — guaranteed
+  no-buzz.
+- One round-trip; no introspection overhead.
 
 ### Performance
 
@@ -973,6 +986,211 @@ gets called when `has_haptic = false`.
 
 ---
 
+## Playback driver — confirmed
+
+### Interface — `org.sigxcpu.Feedback.Haptic`
+
+Authoritative spec from upstream
+([`data/org.sigxcpu.Feedback.Haptic.xml`](https://github.com/PhoshMobi/feedbackd/blob/main/data/org.sigxcpu.Feedback.Haptic.xml)):
+
+```
+method Vibrate(in s app_id, in a(du) pattern, out b success);
+```
+
+- **`app_id`** — reverse-DNS string (use `crate::config::APP_ID`).
+- **`pattern`** — array of `(double amplitude, uint32 duration_ms)` tuples.
+- **Amplitude** must be in **`[0.0, 1.0]`** — straight pass-through from
+  our intensity values, no scaling.
+- **Empty array** is the documented cancel primitive — call `Vibrate`
+  again with `[]` to abort an in-flight pattern.
+- **`success`** out-arg — false means feedbackd refused (e.g.,
+  conflicting higher-priority haptic event in flight). Log on false but
+  don't fail loudly.
+
+This single method is the *entire* interface — no separate
+`StopVibrate`, no theme registration, no event lookup, no quantum
+buckets. The pipeline reduces to: sample the envelope into
+`(amplitude, duration_ms)` tuples and dispatch one DBus call.
+
+### Driver API
+
+```rust
+// In a rewritten src/vibration.rs (replaces the current
+// trigger_if_enabled).
+
+pub struct PatternPlayback {
+    cancel: Arc<AtomicBool>,
+}
+
+impl PatternPlayback {
+    /// Fire a pattern through feedbackd. Returns a handle whose Drop /
+    /// stop() cancels mid-playback. No-op when has_haptic is false.
+    pub fn play(app: &MeditateApplication, pattern: &VibrationPattern) -> Self {
+        let cancel = Arc::new(AtomicBool::new(false));
+        if !app.has_haptic() { return Self { cancel }; }
+
+        let segments = sample_to_segments(pattern);
+        let cancel_clone = cancel.clone();
+        glib::MainContext::default().spawn_local(async move {
+            if cancel_clone.load(Ordering::Relaxed) { return; }
+            let Ok(conn) = gio::bus_get_future(gio::BusType::Session).await else { return; };
+            let args = glib::Variant::tuple_from_iter([
+                crate::config::APP_ID.to_variant(),
+                segments_to_du_array_variant(&segments),
+            ]);
+            // Note: Vibrate's `success` out-arg is parsed from the
+            // returned tuple; log when false but don't escalate —
+            // feedbackd may have refused due to a higher-priority
+            // event, which is fine.
+            let _ = conn.call_future(
+                Some("org.sigxcpu.Feedback"),
+                "/org/sigxcpu/Feedback",
+                "org.sigxcpu.Feedback.Haptic",
+                "Vibrate",
+                Some(&args),
+                None,
+                gio::DBusCallFlags::NONE,
+                -1,
+            ).await;
+        });
+        Self { cancel }
+    }
+
+    /// Cancels the in-flight pattern via Vibrate(app_id, []).
+    /// Latency = one DBus round-trip, ~10–30 ms.
+    pub fn stop(&self) {
+        self.cancel.store(true, Ordering::Relaxed);
+        glib::MainContext::default().spawn_local(async {
+            let Ok(conn) = gio::bus_get_future(gio::BusType::Session).await else { return; };
+            let args = glib::Variant::tuple_from_iter([
+                crate::config::APP_ID.to_variant(),
+                empty_du_array_variant(),
+            ]);
+            let _ = conn.call_future(
+                Some("org.sigxcpu.Feedback"),
+                "/org/sigxcpu/Feedback",
+                "org.sigxcpu.Feedback.Haptic",
+                "Vibrate",
+                Some(&args),
+                None,
+                gio::DBusCallFlags::NONE,
+                -1,
+            ).await;
+        });
+    }
+}
+
+impl Drop for PatternPlayback {
+    fn drop(&mut self) { self.stop(); }
+}
+```
+
+Caller pattern: each bell / phase trigger creates a new
+`PatternPlayback`. Session cancellation drops the handle (which fires
+`stop` via Drop). Rapid re-fires (e.g., interval bell ringing while a
+previous pattern is still playing) drop the old handle then create a
+new one — newest-wins on overlap.
+
+### Sampling
+
+Two sampling strategies, one per chart kind. Both produce the
+`Vec<(f64 amplitude, u32 duration_ms)>` that `Vibrate` consumes.
+
+```rust
+fn sample_to_segments(p: &VibrationPattern) -> Vec<(f64, u32)> {
+    let n = p.intensities.len();
+    if n == 0 { return vec![]; }
+
+    match p.chart_kind {
+        ChartKind::Bar => {
+            // Each control point is its own segment, equal-width.
+            // No sampling, no resolution loss — feedbackd's
+            // step-playback model matches Bar's semantics exactly.
+            // Distribute the divisibility remainder so total time
+            // matches duration_ms exactly: the last segment absorbs
+            // the leftover.
+            let base = p.duration_ms / n as u32;
+            let remainder = p.duration_ms - base * n as u32;
+            p.intensities.iter().enumerate().map(|(i, &v)| {
+                let dur = if i == n - 1 { base + remainder } else { base };
+                (v as f64, dur)
+            }).collect()
+        }
+        ChartKind::Line => {
+            // Approximate the smooth curve at 50 ms granularity. Below
+            // human haptic perception of micro-changes (< 100 ms),
+            // well above any reasonable feedbackd throughput limit.
+            // 2.0 s pattern → ~40 segments; 10 s pattern → 200; cap
+            // at 400 to keep the array-arg DBus call comfortable.
+            const TICK_MS: u32 = 50;
+            let n_ticks = ((p.duration_ms + TICK_MS - 1) / TICK_MS).min(400);
+            (0..n_ticks).map(|i| {
+                let t_ms = (i * TICK_MS).min(p.duration_ms);
+                let mag = sample_line_at(p, t_ms) as f64;
+                let dur = if i == n_ticks - 1 {
+                    p.duration_ms - i * TICK_MS
+                } else {
+                    TICK_MS
+                };
+                (mag, dur)
+            }).collect()
+        }
+    }
+}
+
+fn sample_line_at(p: &VibrationPattern, t_ms: u32) -> f32 {
+    let n = p.intensities.len();
+    let denom = (n - 1).max(1) as f32;
+    let xf = (t_ms as f32 / p.duration_ms as f32) * denom;
+    let lo = xf.floor() as usize;
+    let hi = (lo + 1).min(n - 1);
+    let frac = xf - lo as f32;
+    p.intensities[lo] * (1.0 - frac) + p.intensities[hi] * frac
+}
+```
+
+### File layout
+
+Rewritten `src/vibration.rs`:
+
+```rust
+mod sampler;        // sample_to_segments / sample_line_at — TDD-able
+                    // in isolation against fixed VibrationPatterns.
+mod variant;        // segments_to_du_array_variant / empty_du_array_variant
+                    // glib::Variant builders for the a(du) signature.
+
+pub fn probe_haptic() -> bool { /* capability detection */ }
+
+pub struct PatternPlayback { ... }
+```
+
+The sampler module is the only computation-heavy piece and is fully
+unit-testable from the laptop without a haptic motor — fixed
+`VibrationPattern` inputs produce deterministic
+`Vec<(f64, u32)>` outputs.
+
+### Concurrency / overlap
+
+Newest-wins. If a phase vibration is mid-playback when an interval
+bell triggers a new one:
+- Caller drops the previous `PatternPlayback` handle → its `Drop`
+  fires `Vibrate(app_id, [])` to cancel.
+- Caller creates a new `PatternPlayback` → fires `Vibrate(app_id, new_pattern)`.
+
+Two DBus round-trips, both fast. No application-side queue; if
+feedbackd internally serializes overlapping requests differently,
+that's its concern.
+
+### What dropped from the earlier design
+
+- ❌ Custom feedbackd theme JSON (no longer needed)
+- ❌ 6-bucket quantization (no longer needed — direct 0..1 amplitudes)
+- ❌ Adjacent-bucket coalescing (irrelevant — one DBus call, not many)
+- ❌ Per-span `TriggerFeedback` dispatch loop (replaced by single `Vibrate` call)
+- ❌ Theme-installation step at first run (no theme exists)
+
+---
+
 ## Phasing
 
 1. **`vibration_patterns` CRUD + bundled seeds** — `meditate-core` + db
@@ -998,10 +1216,17 @@ gets called when `has_haptic = false`.
    (`timer_signal_mode` / `guided_signal_mode` / `boxbreath_signal_mode`,
    default `'both'`); UI placement deferred until the Session-group
    split TODO lands.
-8. **feedbackd playback driver** — pattern → tick stream → DBus calls.
-   Replaces the existing one-shot vibration.rs. Phone-side; laptop is the
-   no-op stub.
-9. **On-device test pass + tuning** — Janek's day, not mine.
+8. **feedbackd playback driver** — `PatternPlayback` struct around the
+   single `org.sigxcpu.Feedback.Haptic.Vibrate` call. Sampler converts
+   `VibrationPattern` to `Vec<(f64, u32)>` (Bar = N equal segments,
+   Line = 50 ms ticks capped at 400). Cancel via `Vibrate(app_id, [])`.
+   Replaces `src/vibration.rs::trigger_if_enabled`. Sampler is laptop-
+   testable in isolation; the DBus call is a no-op stub when
+   `has_haptic = false`.
+9. **On-device test pass + tuning** — Janek's day, not mine. Verify
+   amplitude feel at 1.0, that empty-array cancel actually stops a
+   long pattern mid-flight, and that newest-wins overlap behaves on
+   the device.
 
 ---
 
