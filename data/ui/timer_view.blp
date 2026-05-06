@@ -412,23 +412,59 @@ template $TimerView : Gtk.Widget {
                 }
               }
 
-              // End-bell master toggle + drill-to-chooser. Same shape as
-              // Starting Bell so the two read as siblings — flipping
-              // between them in setup is visually symmetric.
+              // End-bell master toggle + Sound/Vibration/Both selector.
+              // The toggle group is built in Rust (Adw.ToggleGroup
+              // + Adw.Toggle aren't ergonomic from Blueprint without a
+              // matching .ui parser version). Bell Sound and Pattern
+              // rows live inside Gtk.Revealers so they slide in/out
+              // when the user flips between Sound / Vibration / Both.
               Adw.ExpanderRow end_bell_row {
                 title: _("End Bell");
-                subtitle: _("Play a bell when the session ends");
+                subtitle: _("Play a signal when the session ends");
                 show-enable-switch: true;
                 enable-expansion: true;
 
-                Adw.ActionRow end_bell_sound_row {
-                  title: _("Bell Sound");
-                  activatable: true;
+                Adw.ActionRow end_bell_signal_mode_row {
+                  title: _("Type");
 
                   [suffix]
-                  Gtk.Image {
-                    icon-name: "go-next-symbolic";
-                    styles ["dim-label"]
+                  Gtk.Box end_bell_signal_toggle_host {
+                    orientation: horizontal;
+                    valign: center;
+                  }
+                }
+
+                Gtk.Revealer end_bell_sound_revealer {
+                  transition-type: slide_down;
+                  transition-duration: 220;
+                  reveal-child: true;
+
+                  Adw.ActionRow end_bell_sound_row {
+                    title: _("Bell Sound");
+                    activatable: true;
+
+                    [suffix]
+                    Gtk.Image {
+                      icon-name: "go-next-symbolic";
+                      styles ["dim-label"]
+                    }
+                  }
+                }
+
+                Gtk.Revealer end_bell_pattern_revealer {
+                  transition-type: slide_down;
+                  transition-duration: 220;
+                  reveal-child: false;
+
+                  Adw.ActionRow end_bell_pattern_row {
+                    title: _("Pattern");
+                    activatable: true;
+
+                    [suffix]
+                    Gtk.Image {
+                      icon-name: "go-next-symbolic";
+                      styles ["dim-label"]
+                    }
                   }
                 }
               }

@@ -136,7 +136,12 @@ pub struct TimerView {
     #[template_child] pub interval_bells_enabled_row: TemplateChild<adw::ExpanderRow>,
     #[template_child] pub interval_bells_row:       TemplateChild<adw::ActionRow>,
     #[template_child] pub end_bell_row:            TemplateChild<adw::ExpanderRow>,
+    #[template_child] pub end_bell_signal_mode_row:  TemplateChild<adw::ActionRow>,
+    #[template_child] pub end_bell_signal_toggle_host: TemplateChild<gtk::Box>,
+    #[template_child] pub end_bell_sound_revealer:   TemplateChild<gtk::Revealer>,
     #[template_child] pub end_bell_sound_row:      TemplateChild<adw::ActionRow>,
+    #[template_child] pub end_bell_pattern_revealer: TemplateChild<gtk::Revealer>,
+    #[template_child] pub end_bell_pattern_row:      TemplateChild<adw::ActionRow>,
     // Vibration UI prototype — see setup_vibration_proto. Throwaway.
     #[template_child] pub vibration_proto_row:               TemplateChild<adw::ExpanderRow>,
     #[template_child] pub vibration_proto_mode_row:          TemplateChild<adw::ActionRow>,
@@ -663,6 +668,37 @@ impl TimerView {
             }
         ));
 
+        // End Bell pattern row — tap pushes the vibration-pattern
+        // chooser. Persists end_bell_pattern setting on pick.
+        self.end_bell_pattern_row.connect_activated(glib::clone!(
+            #[weak(rename_to = this)] obj,
+            move |_| {
+                let imp = this.imp();
+                let Some(app) = imp.get_app() else { return; };
+                let Some(window) = this.root()
+                    .and_then(|r| r.downcast::<crate::window::MeditateWindow>().ok())
+                else { return; };
+                let current = app
+                    .with_db(|db| db.get_setting(
+                        "end_bell_pattern",
+                        crate::db::BUNDLED_PATTERN_PULSE_UUID,
+                    ))
+                    .and_then(|r| r.ok());
+                let app_for_pick = app.clone();
+                let this_for_pick = this.clone();
+                window.push_vibrations_chooser(&app, current, move |uuid| {
+                    app_for_pick.with_db_mut(|db| db.set_setting("end_bell_pattern", &uuid));
+                    this_for_pick.imp().refresh_end_bell_pattern_subtitle();
+                });
+            }
+        ));
+
+        // End Bell signal-mode AdwToggleGroup — built in Rust because
+        // Adw.Toggle isn't ergonomic from Blueprint without a matching
+        // .ui parser version. Toggle changes persist end_bell_signal_mode
+        // and reveal/hide the Bell Sound + Pattern rows accordingly.
+        self.setup_end_bell_signal_mode_toggle();
+
         // ── Setup-page label expander ───────────────────────────────
         // Master toggle persists `label_active_<mode>`; the inner
         // chooser-row pushes the label chooser and persists the
@@ -847,6 +883,40 @@ impl TimerView {
         self.preparation_time_secs_row.set_adjustment(Some(&adj));
     }
 
+    /// Build the End Bell's Sound / Vibration / Both selector at
+    /// construction time. The widget structure goes in synchronously;
+    /// the saved-state load + capability gating run later from
+    /// `refresh_end_bell_signal_mode_state` once the widget is
+    /// attached and `get_app()` resolves.
+    fn setup_end_bell_signal_mode_toggle(&self) {
+        let obj = self.obj();
+        build_signal_mode_toggle_widget(
+            &self.end_bell_signal_toggle_host,
+            &self.end_bell_sound_revealer,
+            &self.end_bell_pattern_revealer,
+            "end_bell_signal_mode",
+            glib::clone!(
+                #[weak] obj,
+                #[upgrade_or] None,
+                move || obj.imp().get_app()
+            ),
+        );
+    }
+
+    /// Apply the saved end_bell_signal_mode + capability gating to
+    /// the toggle group. Called from refresh-on-visit once the
+    /// widget is attached and `get_app()` resolves.
+    pub(crate) fn refresh_end_bell_signal_mode_state(&self) {
+        let Some(app) = self.get_app() else { return; };
+        apply_signal_mode_state(
+            &self.end_bell_signal_toggle_host,
+            &self.end_bell_sound_revealer,
+            &self.end_bell_pattern_revealer,
+            &app,
+            "end_bell_signal_mode",
+        );
+    }
+
     /// Throwaway: build the Sound / Vibration / Both AdwToggleGroup
     /// inside the prototype rows' host Boxes and wire them to show/hide
     /// the Bell Sound and Pattern rows. No DB persistence — purely a
@@ -930,6 +1000,124 @@ fn wire_signal_toggle(
         sound_revealer.set_reveal_child(show_sound);
         pattern_revealer.set_reveal_child(show_pattern);
     });
+}
+
+/// Build the AdwToggleGroup for a Sound / Vibration / Both selector
+/// at construction time and append it to `host`. The notify handler
+/// resolves `app` lazily via `get_app` so the widget can be wired
+/// before the timer view has a root. Saved-state load + capability
+/// gating run later via `apply_signal_mode_state`.
+pub(crate) fn build_signal_mode_toggle_widget(
+    host: &gtk::Box,
+    sound_revealer: &gtk::Revealer,
+    pattern_revealer: &gtk::Revealer,
+    setting_key: &'static str,
+    get_app: impl Fn() -> Option<crate::application::MeditateApplication> + 'static,
+) {
+    let toggle_group = adw::ToggleGroup::builder()
+        .css_classes(["round"])
+        .valign(gtk::Align::Center)
+        .build();
+
+    let sound_toggle = adw::Toggle::builder()
+        .name("sound")
+        .label(crate::i18n::gettext("Sound"))
+        .build();
+    let vibration_toggle = adw::Toggle::builder()
+        .name("vibration")
+        .label(crate::i18n::gettext("Vibration"))
+        .build();
+    let both_toggle = adw::Toggle::builder()
+        .name("both")
+        .label(crate::i18n::gettext("Both"))
+        .build();
+
+    toggle_group.add(sound_toggle);
+    toggle_group.add(vibration_toggle);
+    toggle_group.add(both_toggle);
+    toggle_group.set_active_name(Some("sound"));
+    sound_revealer.set_reveal_child(true);
+    pattern_revealer.set_reveal_child(false);
+
+    host.append(&toggle_group);
+
+    let sound_revealer = sound_revealer.clone();
+    let pattern_revealer = pattern_revealer.clone();
+    toggle_group.connect_active_name_notify(move |tg| {
+        let Some(name) = tg.active_name() else { return; };
+        let value = match name.as_str() {
+            "vibration" => "vibration",
+            "both"      => "both",
+            _           => "sound",
+        };
+        if let Some(app) = get_app() {
+            app.with_db_mut(|db| db.set_setting(setting_key, value));
+        }
+        let show_sound = matches!(value, "sound" | "both");
+        let show_pattern = matches!(value, "vibration" | "both");
+        sound_revealer.set_reveal_child(show_sound);
+        pattern_revealer.set_reveal_child(show_pattern);
+    });
+}
+
+/// Apply the saved signal_mode setting to a previously-built toggle
+/// group, plus capability gating: when `app.has_haptic()` is false,
+/// the Vibration / Both segments go insensitive and the active state
+/// is forced to 'sound' (without touching the persisted setting, so
+/// syncing to a phone restores intent).
+pub(crate) fn apply_signal_mode_state(
+    host: &gtk::Box,
+    sound_revealer: &gtk::Revealer,
+    pattern_revealer: &gtk::Revealer,
+    app: &crate::application::MeditateApplication,
+    setting_key: &'static str,
+) {
+    let Some(toggle_group) = first_toggle_group_in(host) else { return; };
+
+    if !app.has_haptic() {
+        if let Some(t) = toggle_group.toggle_by_name("vibration") {
+            t.set_enabled(false);
+        }
+        if let Some(t) = toggle_group.toggle_by_name("both") {
+            t.set_enabled(false);
+        }
+    }
+
+    let saved = app
+        .with_db(|db| db.get_setting(setting_key, "sound"))
+        .and_then(|r| r.ok())
+        .unwrap_or_else(|| "sound".to_string());
+    let initial = if !app.has_haptic() {
+        // Force-display 'sound' on no-haptic devices, regardless of
+        // saved value. Persisted setting stays untouched so a sync
+        // to a phone restores the user's intent.
+        "sound"
+    } else {
+        match saved.as_str() {
+            "vibration" => "vibration",
+            "both"      => "both",
+            _           => "sound",
+        }
+    };
+    toggle_group.set_active_name(Some(initial));
+    let show_sound = matches!(initial, "sound" | "both");
+    let show_pattern = matches!(initial, "vibration" | "both");
+    sound_revealer.set_reveal_child(show_sound);
+    pattern_revealer.set_reveal_child(show_pattern);
+}
+
+/// Walk a Gtk.Box and return the first AdwToggleGroup child, or
+/// None if the host doesn't have one yet.
+fn first_toggle_group_in(host: &gtk::Box) -> Option<adw::ToggleGroup> {
+    use gtk::prelude::WidgetExt;
+    let mut child = host.first_child();
+    while let Some(w) = child {
+        if let Ok(tg) = w.clone().downcast::<adw::ToggleGroup>() {
+            return Some(tg);
+        }
+        child = w.next_sibling();
+    }
+    None
 }
 
 // ── Mode switching ────────────────────────────────────────────────────────────
@@ -2224,8 +2412,11 @@ impl TimerView {
         // dependent_ui above (it calls refresh_end_bell_dependent_ui,
         // which reads end_bell_active and either applies it or
         // overrides to off when stopwatch mode is on). Just refresh
-        // the sound-row subtitle here.
+        // the sound-row subtitle, the pattern-row subtitle, and the
+        // signal-mode toggle group's saved state + capability gating.
         self.refresh_end_bell_sound_subtitle();
+        self.refresh_end_bell_pattern_subtitle();
+        self.refresh_end_bell_signal_mode_state();
 
         // Rebuild the Setup view's label chooser-row + master toggle
         // from the per-mode persisted state.
@@ -3188,6 +3379,14 @@ impl TimerView {
         self.end_bell_sound_row.set_subtitle(&name);
     }
 
+    /// End-bell pattern row's subtitle reflects whichever
+    /// vibration_patterns row the end_bell_pattern setting points at.
+    /// Defaults to bundled Pulse on first ever read.
+    pub(crate) fn refresh_end_bell_pattern_subtitle(&self) {
+        let name = self.lookup_pattern_name_for_setting("end_bell_pattern");
+        self.end_bell_pattern_row.set_subtitle(&name);
+    }
+
     fn lookup_sound_name_for_setting(&self, setting_key: &str) -> String {
         let Some(app) = self.get_app() else { return String::new(); };
         let uuid = app
@@ -3203,6 +3402,25 @@ impl TimerView {
             .into_iter()
             .find(|s| s.uuid == uuid)
             .map(|s| s.name)
+            .unwrap_or_default()
+    }
+
+    fn lookup_pattern_name_for_setting(&self, setting_key: &str) -> String {
+        let Some(app) = self.get_app() else { return String::new(); };
+        let uuid = app
+            .with_db(|db| db.get_setting(
+                setting_key,
+                crate::db::BUNDLED_PATTERN_PULSE_UUID,
+            ))
+            .and_then(|r| r.ok())
+            .unwrap_or_default();
+        if uuid.is_empty() {
+            return String::new();
+        }
+        app.with_db(|db| db.find_vibration_pattern_by_uuid(&uuid))
+            .and_then(|r| r.ok())
+            .flatten()
+            .map(|p| p.name)
             .unwrap_or_default()
     }
 }
