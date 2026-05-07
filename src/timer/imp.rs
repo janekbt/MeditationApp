@@ -243,11 +243,11 @@ pub struct TimerView {
     /// chips or the "Custom" dialog. Default 10 min; used as the target
     /// when the user taps Start (and Stopwatch Mode is off).
     countdown_target_secs: Cell<u64>,
-    /// Live mirror of the persisted "stopwatch_mode_active" setting and
+    /// Live mirror of the active mode's persisted stopwatch flag and
     /// of `stopwatch_mode_row`'s active state. `true` means count up
     /// from zero with no target; `false` means count down to
     /// `countdown_target_secs`.
-    stopwatch_toggle_on: Cell<bool>,
+    pub(super) stopwatch_toggle_on: Cell<bool>,
     /// Suppress the SwitchRow's notify::active handler while
     /// `refresh_streak` is loading the persisted setting on visit.
     stopwatch_loading: Cell<bool>,
@@ -428,9 +428,10 @@ impl TimerView {
                 let on = row.is_active();
                 imp.stopwatch_toggle_on.set(on);
                 if let Some(app) = imp.get_app() {
+                    let key = stopwatch_key_for_mode(imp.current_mode());
                     app.with_db_mut(|db| {
                         let _ = db.set_setting(
-                            "stopwatch_mode_active",
+                            key,
                             if on { "true" } else { "false" },
                         );
                     });
@@ -1743,6 +1744,18 @@ pub(crate) fn keep_screen_awake_key_for_mode(mode: TimerMode) -> &'static str {
     }
 }
 
+/// Map a TimerMode to its per-mode stopwatch-active setting key.
+/// Each mode has its own stopwatch concept (Timer counts up, Box
+/// Breath runs without a target, Guided plays without an
+/// auto-end-bell at file EOS), so they don't share a flag.
+pub(crate) fn stopwatch_key_for_mode(mode: TimerMode) -> &'static str {
+    match mode {
+        TimerMode::Timer     => "timer_stopwatch_active",
+        TimerMode::Guided    => "guided_stopwatch_active",
+        TimerMode::Breathing => "boxbreath_stopwatch_active",
+    }
+}
+
 /// Walk a Gtk.Box and return the first AdwToggleGroup child, or
 /// None if the host doesn't have one yet.
 fn first_toggle_group_in(host: &gtk::Box) -> Option<adw::ToggleGroup> {
@@ -1822,10 +1835,10 @@ impl TimerView {
         // goes away outside Timer.
         self.starting_bell_row.set_visible(mode == TimerMode::Timer);
         self.interval_bells_enabled_row.set_visible(mode == TimerMode::Timer);
-        // Stopwatch toggle only makes sense in Timer mode (Box Breath
-        // has no count-up mode; Guided mode's duration comes from the
-        // file). Hide the row entirely outside Timer.
-        self.stopwatch_mode_row.set_visible(mode == TimerMode::Timer);
+        // Stopwatch is per-mode now: in Timer it counts up, in Box
+        // Breath it runs without a target (user stops manually),
+        // in Guided it suppresses the natural-end bell.
+        self.stopwatch_mode_row.set_visible(true);
         // Duration row hides in Guided mode — the duration is read
         // from the picked file's metadata, the user can't dial it in.
         self.duration_row.set_visible(mode != TimerMode::Guided);
@@ -1858,10 +1871,22 @@ impl TimerView {
         // "Meditation" for Timer) and apply it to the setup combo.
         self.apply_preferred_label_for_mode(mode);
 
-        // Re-evaluate Duration-row sensitivity for the new mode. The
-        // greyed-out state is Timer-only; flipping to Box Breath or
-        // Guided while stopwatch is on has to un-grey the row even
-        // though the stopwatch toggle didn't move.
+        // Stopwatch is per-mode now: each of Timer / Guided /
+        // Box Breath has its own active flag. Reload the live
+        // mirror + the row UI from the new mode's setting before
+        // running the dependent refresh.
+        if let Some(app) = self.get_app() {
+            let key = stopwatch_key_for_mode(mode);
+            let on = app
+                .with_db(|db| db.get_setting(key, "false"))
+                .and_then(|r| r.ok())
+                .map(|s| s == "true")
+                .unwrap_or(false);
+            self.stopwatch_loading.set(true);
+            self.stopwatch_mode_row.set_active(on);
+            self.stopwatch_toggle_on.set(on);
+            self.stopwatch_loading.set(false);
+        }
         self.refresh_stopwatch_dependent_ui();
 
         match self.timer_state.get() {
@@ -1893,7 +1918,7 @@ impl TimerView {
         self.boxbreath_phase_section.set_visible(mode == TimerMode::Breathing);
         self.starting_bell_row.set_visible(mode == TimerMode::Timer);
         self.interval_bells_enabled_row.set_visible(mode == TimerMode::Timer);
-        self.stopwatch_mode_row.set_visible(mode == TimerMode::Timer);
+        self.stopwatch_mode_row.set_visible(true);
         self.duration_row.set_visible(mode != TimerMode::Guided);
         self.presets_section.set_visible(mode != TimerMode::Guided);
         self.refresh_duration_value_label();
@@ -1940,38 +1965,42 @@ impl TimerView {
     /// Set the hero time display + subtitle to their idle-state values for
     /// whichever mode is currently active.
     fn refresh_hero_for_idle(&self) {
-        let label = match self.current_mode() {
-            TimerMode::Timer => {
-                if self.stopwatch_toggle_on.get() {
-                    "00:00".to_string()
-                } else {
+        // Stopwatch flips the hero to "00:00" in any mode — there's
+        // no target to display, the running tick will count up from
+        // zero. When stopwatch is off the mode-specific target shows
+        // (Timer's countdown, Box Breath's session duration, Guided's
+        // picked file length).
+        let label = if self.stopwatch_toggle_on.get() {
+            "00:00".to_string()
+        } else {
+            match self.current_mode() {
+                TimerMode::Timer => {
                     let secs = self.countdown_target_secs.get();
                     let h = secs / 3600;
                     let m = (secs % 3600) / 60;
                     format!("{h:02}:{m:02}")
                 }
-            }
-            TimerMode::Breathing => {
-                // Same hh:mm format as Timer for layout consistency.
-                // breathing_session_secs is the canonical store; divide
-                // by 60 to get minutes for the display computation.
-                let m = self.breathing_session_secs.get() / 60;
-                format!("{:02}:{:02}", m / 60, m % 60)
-            }
-            TimerMode::Guided => {
-                // Hero shows the picked file's natural duration — the
-                // session length is whatever the audio runs for. Empty
-                // state (no file selected) reads 00:00 so the layout
-                // doesn't shift when the user picks something.
-                let secs = self
-                    .guided_pick
-                    .borrow()
-                    .as_ref()
-                    .map(|p| p.duration_secs)
-                    .unwrap_or(0) as u64;
-                let h = secs / 3600;
-                let m = (secs % 3600) / 60;
-                format!("{h:02}:{m:02}")
+                TimerMode::Breathing => {
+                    // Same hh:mm format as Timer for layout
+                    // consistency. breathing_session_secs is the
+                    // canonical store; divide by 60 to get minutes.
+                    let m = self.breathing_session_secs.get() / 60;
+                    format!("{:02}:{:02}", m / 60, m % 60)
+                }
+                TimerMode::Guided => {
+                    // Hero shows the picked file's natural duration.
+                    // Empty state (no file selected) reads 00:00 so
+                    // the layout doesn't shift when the user picks.
+                    let secs = self
+                        .guided_pick
+                        .borrow()
+                        .as_ref()
+                        .map(|p| p.duration_secs)
+                        .unwrap_or(0) as u64;
+                    let h = secs / 3600;
+                    let m = (secs % 3600) / 60;
+                    format!("{h:02}:{m:02}")
+                }
             }
         };
         self.big_time_label.set_label(&label);
@@ -1984,21 +2013,20 @@ impl TimerView {
     /// the Quick Presets card greys out so the user can't tap a chip
     /// while the toggle is on.
     fn refresh_stopwatch_dependent_ui(&self) {
-        if self.timer_state.get() == TimerState::Idle
-            && self.current_mode() == TimerMode::Timer
-        {
+        // Hero refresh: stopwatch flips the hero between "00:00"
+        // and the mode's target reading in every mode (Timer,
+        // Box Breath, Guided), not just Timer.
+        if self.timer_state.get() == TimerState::Idle {
             self.refresh_hero_for_idle();
         }
         // Stopwatch on ⇒ planned-duration concept inert; grey out
         // the Duration row only. The presets list stays interactive —
         // tapping a preset is a higher-level action that legitimately
         // re-arms the duration (and resets the stopwatch toggle as
-        // part of its config). The greyed-out state only applies in
-        // Timer mode — Box Breath / Guided share the row but have no
-        // stopwatch concept of their own, so the row stays interactive
-        // there even when the Timer-mode stopwatch toggle is on.
-        let duration_active = self.current_mode() != TimerMode::Timer
-            || !self.stopwatch_toggle_on.get();
+        // part of its config). `stopwatch_toggle_on` mirrors the
+        // *current mode's* persisted stopwatch flag, so this gate
+        // applies uniformly across Timer / Guided / Box Breath.
+        let duration_active = !self.stopwatch_toggle_on.get();
         self.duration_row.set_sensitive(duration_active);
         // Fixed-from-end bells become inert when stopwatch flips on,
         // active again when it flips off — refresh the Manage Bells
@@ -2018,6 +2046,11 @@ impl TimerView {
     /// bells_loading guard suppresses the row's own notify handler
     /// during the programmatic state change.
     fn refresh_end_bell_dependent_ui(&self) {
+        // Stopwatch is a per-mode concept; the cell always reflects
+        // the current mode's persisted state, so the gate applies
+        // uniformly. The persisted `end_bell_active` setting stays
+        // as the user left it — flipping stopwatch off in any mode
+        // brings the previous state back.
         let stopwatch_on = self.stopwatch_toggle_on.get();
         let persisted_on = self
             .get_app()
@@ -2952,6 +2985,11 @@ impl TimerView {
     }
 
     pub(super) fn breath_is_finished(&self) -> bool {
+        // Stopwatch mode runs Box Breath without a fixed target —
+        // user must press Stop. Natural completion never fires.
+        if self.stopwatch_toggle_on.get() {
+            return false;
+        }
         self.breath_elapsed() >= self.breath_target.get()
     }
 
@@ -2987,11 +3025,12 @@ impl TimerView {
         // of as many separate calls. The bells block also rides along —
         // four extra get_setting() calls are cheap next to the existing
         // streak / labels SQL we're already running.
+        let stopwatch_key = stopwatch_key_for_mode(self.current_mode());
         let (streak, stopwatch_on, bells, intervals) = app
             .with_db(|db| {
                 let streak  = db.get_streak().unwrap_or(0);
                 let stopwatch_on = db
-                    .get_setting("stopwatch_mode_active", "false")
+                    .get_setting(stopwatch_key, "false")
                     .map(|v| v == "true")
                     .unwrap_or(false);
                 let starting_bell_on = db
@@ -3429,6 +3468,7 @@ impl TimerView {
             TimerMode::Breathing => {
                 let p = self.breathing_pattern.get();
                 PresetTiming::BoxBreath {
+                    stopwatch:      self.stopwatch_toggle_on.get(),
                     inhale_secs:    p.in_secs,
                     hold_full_secs: p.hold_in,
                     exhale_secs:    p.out_secs,
@@ -3521,9 +3561,10 @@ impl TimerView {
         }
 
         let mode = self.current_mode();
-        let stopwatch_active = matches!(
-            cfg.timing, PresetTiming::Timer { stopwatch: true, .. }
-        );
+        let stopwatch_active = match cfg.timing {
+            PresetTiming::Timer { stopwatch, .. } => stopwatch,
+            PresetTiming::BoxBreath { stopwatch, .. } => stopwatch,
+        };
 
         // Persist settings
         let label_uuid_opt = cfg.label.uuid.clone();
@@ -3564,7 +3605,7 @@ impl TimerView {
                 let _ = db.set_setting("end_bell_sound", &cfg_owned.end_bell.sound_uuid);
             }
             let _ = db.set_setting(
-                "stopwatch_mode_active",
+                stopwatch_key_for_mode(mode),
                 if stopwatch_active { "true" } else { "false" },
             );
 
@@ -3673,6 +3714,7 @@ impl TimerView {
                 self.stopwatch_loading.set(false);
             }
             PresetTiming::BoxBreath {
+                stopwatch,
                 inhale_secs, hold_full_secs, exhale_secs, hold_empty_secs,
                 duration_secs,
             } => {
@@ -3684,6 +3726,10 @@ impl TimerView {
                 });
                 self.set_breathing_duration_secs(duration_secs);
                 self.refresh_phase_tiles();
+                self.stopwatch_loading.set(true);
+                self.stopwatch_mode_row.set_active(stopwatch);
+                self.stopwatch_toggle_on.set(stopwatch);
+                self.stopwatch_loading.set(false);
             }
         }
 
@@ -3991,6 +4037,9 @@ impl TimerView {
             return remaining.as_secs() + (remaining.subsec_nanos() > 0) as u64;
         }
         // Return the display value for whichever mode is about to go running.
+        // Stopwatch in any mode counts up from 0 via stopwatch_elapsed_secs;
+        // when off, each mode falls back to its natural readout (Timer
+        // countdown / Box Breath elapsed / Guided countdown).
         match self.tick_mode.get() {
             TimerMode::Timer => {
                 if self.stopwatch_toggle_on.get() {
@@ -4000,9 +4049,17 @@ impl TimerView {
                 }
             }
             TimerMode::Breathing => self.breath_elapsed().as_secs(),
-            // Guided mode counts down from the file's natural length;
-            // same shape as Timer countdown.
-            TimerMode::Guided => self.countdown_remaining_secs(),
+            TimerMode::Guided => {
+                // Guided always uses a countdown core (file's natural
+                // length). Stopwatch shows the same core's elapsed
+                // reading instead of the remaining — file plays out,
+                // hero counts up.
+                if self.stopwatch_toggle_on.get() {
+                    self.countdown_elapsed_secs()
+                } else {
+                    self.countdown_remaining_secs()
+                }
+            }
         }
     }
 
@@ -4223,12 +4280,13 @@ impl TimerView {
     /// without us having to invalidate the whole streak/presets/labels
     /// read in refresh_streak.
     pub(crate) fn refresh_interval_bells_count(&self) {
+        let mode = self.current_mode();
         let count = self
             .get_app()
             .and_then(|app| {
                 app.with_db(|db| {
                     let stopwatch_on = db
-                        .get_setting("stopwatch_mode_active", "false")
+                        .get_setting(stopwatch_key_for_mode(mode), "false")
                         .map(|v| v == "true")
                         .unwrap_or(false);
                     db.list_interval_bells()
@@ -4317,6 +4375,12 @@ impl TimerView {
         &self,
         app: &crate::application::MeditateApplication,
     ) {
+        // Stopwatch on for the active mode mutes the end bell —
+        // matches the UI, where the End Bell row is greyed-out and
+        // shown as off whenever stopwatch is on. The persisted
+        // `end_bell_active` setting stays as the user left it, so
+        // flipping stopwatch off restores the bell next session.
+        if self.stopwatch_toggle_on.get() { return; }
         let active = app
             .with_db(|db| db.get_setting("end_bell_active", "true"))
             .and_then(|r| r.ok())
@@ -4505,6 +4569,7 @@ fn preset_subtitle(
                 .replace("{n}", &mins.to_string()));
         }
         PresetTiming::BoxBreath {
+            stopwatch,
             inhale_secs, hold_full_secs, exhale_secs, hold_empty_secs,
             duration_secs,
         } => {
@@ -4512,9 +4577,13 @@ fn preset_subtitle(
                 "{}-{}-{}-{}",
                 inhale_secs, hold_full_secs, exhale_secs, hold_empty_secs,
             ));
-            let mins = duration_secs / 60;
-            parts.push(crate::i18n::gettext("{n} min")
-                .replace("{n}", &mins.to_string()));
+            if stopwatch {
+                parts.push(crate::i18n::gettext("Stopwatch"));
+            } else {
+                let mins = duration_secs / 60;
+                parts.push(crate::i18n::gettext("{n} min")
+                    .replace("{n}", &mins.to_string()));
+            }
         }
     }
     if cfg.label.enabled {
@@ -4920,6 +4989,31 @@ mod tests {
                 keep_screen_awake_key_for_mode(mode),
                 "{mode:?}: signal-mode and keep-awake keys must differ",
             );
+        }
+    }
+
+    #[test]
+    fn stopwatch_key_for_mode_uses_distinct_keys_per_mode() {
+        let timer = stopwatch_key_for_mode(TimerMode::Timer);
+        let guided = stopwatch_key_for_mode(TimerMode::Guided);
+        let breath = stopwatch_key_for_mode(TimerMode::Breathing);
+        assert_ne!(timer, guided);
+        assert_ne!(timer, breath);
+        assert_ne!(guided, breath);
+    }
+
+    #[test]
+    fn stopwatch_key_does_not_collide_with_other_per_mode_keys() {
+        // signal-mode, keep-screen-awake, and stopwatch are three
+        // independent per-mode flags. Any collision would mean
+        // toggling one persists into another, scrambling the
+        // remembered settings across pageloads.
+        for mode in [TimerMode::Timer, TimerMode::Guided, TimerMode::Breathing] {
+            let sw = stopwatch_key_for_mode(mode);
+            assert_ne!(sw, setting_key_for_mode(mode),
+                "{mode:?}: stopwatch and signal-mode keys must differ");
+            assert_ne!(sw, keep_screen_awake_key_for_mode(mode),
+                "{mode:?}: stopwatch and keep-awake keys must differ");
         }
     }
 }

@@ -46,6 +46,7 @@ pub struct PresetConfig {
 pub enum PresetTiming {
     Timer { stopwatch: bool, duration_secs: u32 },
     BoxBreath {
+        stopwatch: bool,
         inhale_secs: u32,
         hold_full_secs: u32,
         exhale_secs: u32,
@@ -195,6 +196,7 @@ mod tests {
                 vibration_pattern_uuid: String::new(),
             },
             timing: PresetTiming::BoxBreath {
+                stopwatch: false,
                 inhale_secs: 4,
                 hold_full_secs: 7,
                 exhale_secs: 8,

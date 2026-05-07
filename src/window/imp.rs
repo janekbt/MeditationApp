@@ -252,15 +252,23 @@ impl MeditateWindow {
 
         let pattern = self.timer_view.breathing_pattern();
         let target_secs = self.timer_view.breathing_target_secs();
+        let stopwatch_active = self.timer_view.stopwatch_active();
 
-        // ── Top strip: "BOX BREATHING" eyebrow + "1:24 / 5:00" counter ──
+        // ── Top strip: "BOX BREATHING" eyebrow + counter ──
+        // Counter shows "elapsed / target" when stopwatch is off
+        // and just "elapsed" when on (no fixed end).
         let eyebrow = gtk::Label::builder()
             .label(&crate::i18n::gettext("Box Breathing"))
             .css_classes(["caption", "dimmed"])
             .halign(gtk::Align::Center)
             .build();
+        let initial_counter = if stopwatch_active {
+            "0:00".to_string()
+        } else {
+            format!("0:00 / {}", format_time(target_secs))
+        };
         let counter_label = gtk::Label::builder()
-            .label(&format!("0:00 / {}", format_time(target_secs)))
+            .label(&initial_counter)
             .css_classes(["title-3", "numeric"])
             .halign(gtk::Align::Center)
             .build();
@@ -475,8 +483,12 @@ impl MeditateWindow {
                 l.set_label(&remaining.to_string());
             }
             if let Some(l) = counter_weak.upgrade() {
-                l.set_label(&format!("{} / {}",
-                    format_time(cur as u64), format_time(target_secs)));
+                if stopwatch_active {
+                    l.set_label(&format_time(cur as u64));
+                } else {
+                    l.set_label(&format!("{} / {}",
+                        format_time(cur as u64), format_time(target_secs)));
+                }
             }
             if let Some(da) = da_weak.upgrade() {
                 da.queue_draw();

@@ -485,6 +485,7 @@ impl Database {
                 vibration_pattern_uuid: BUNDLED_PATTERN_PULSE_UUID.to_string(),
             },
             timing: PresetTiming::BoxBreath {
+                stopwatch: false,
                 inhale_secs: 4,
                 hold_full_secs: 4,
                 exhale_secs: 4,
@@ -497,6 +498,7 @@ impl Database {
         };
         let box_4780 = PresetConfig {
             timing: PresetTiming::BoxBreath {
+                stopwatch: false,
                 inhale_secs: 4,
                 hold_full_secs: 7,
                 exhale_secs: 8,
