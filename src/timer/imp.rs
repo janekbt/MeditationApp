@@ -2698,8 +2698,17 @@ impl TimerView {
         let (new_secs, done) = {
             if is_stopwatch {
                 // Stopwatch: floor seconds (display "0:01" once we
-                // cross 1.0s, "0:00" otherwise).
-                (self.stopwatch_elapsed_secs(), false)
+                // cross 1.0s, "0:00" otherwise). Source depends on
+                // mode: Timer's stopwatch path uses stopwatch_core
+                // (no countdown alongside), Guided's uses the
+                // countdown core's internal stopwatch (the file
+                // still drives a target — only the display switches
+                // to count-up).
+                let elapsed = match self.tick_mode.get() {
+                    TimerMode::Guided => self.countdown_elapsed_secs(),
+                    _ => self.stopwatch_elapsed_secs(),
+                };
+                (elapsed, false)
             } else {
                 // Countdown: ceiling seconds (while remaining is in
                 // (k-1, k], show k — avoids skipping "0:59" on the
