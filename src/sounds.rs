@@ -58,7 +58,7 @@ pub fn push_sounds_chooser(
     let rows: Rc<std::cell::RefCell<Vec<gtk::Widget>>> =
         Rc::new(std::cell::RefCell::new(Vec::new()));
 
-    let rebuilder: Rc<std::cell::RefCell<Option<Box<dyn Fn()>>>> =
+    let rebuilder: crate::Rebuilder =
         Rc::new(std::cell::RefCell::new(None));
 
     let group_for_rb = group.clone();
@@ -103,7 +103,7 @@ fn rebuild_chooser_rows(
     current_uuid: Option<&str>,
     nav_view: &adw::NavigationView,
     on_selected: Rc<dyn Fn(String)>,
-    rebuilder: Rc<std::cell::RefCell<Option<Box<dyn Fn()>>>>,
+    rebuilder: crate::Rebuilder,
 ) {
     for row in rows.borrow_mut().drain(..) {
         group.remove(&row);
@@ -187,7 +187,7 @@ pub struct SelectionContext {
 fn build_sound_row(
     sound: &BellSound,
     app: &MeditateApplication,
-    rebuilder: Rc<std::cell::RefCell<Option<Box<dyn Fn()>>>>,
+    rebuilder: crate::Rebuilder,
     selection: &SelectionContext,
 ) -> adw::ActionRow {
     let row = adw::ActionRow::builder()
@@ -270,7 +270,7 @@ fn add_rename_button(
     row: &adw::ActionRow,
     sound: &BellSound,
     app: &MeditateApplication,
-    rebuilder: Rc<std::cell::RefCell<Option<Box<dyn Fn()>>>>,
+    rebuilder: crate::Rebuilder,
 ) {
     let rename_btn = gtk::Button::builder()
         .icon_name("document-edit-symbolic")
@@ -291,7 +291,7 @@ fn add_delete_button(
     row: &adw::ActionRow,
     sound: &BellSound,
     app: &MeditateApplication,
-    rebuilder: Rc<std::cell::RefCell<Option<Box<dyn Fn()>>>>,
+    rebuilder: crate::Rebuilder,
 ) {
     let delete_btn = gtk::Button::builder()
         .icon_name("user-trash-symbolic")
@@ -769,7 +769,7 @@ fn present_rename_dialog(
     app: &MeditateApplication,
     uuid: &str,
     current_name: &str,
-    rebuilder: Rc<std::cell::RefCell<Option<Box<dyn Fn()>>>>,
+    rebuilder: crate::Rebuilder,
 ) {
     let entry = gtk::Entry::builder()
         .text(current_name)
@@ -841,7 +841,7 @@ fn present_delete_dialog(
     anchor: &gtk::Button,
     app: &MeditateApplication,
     uuid: &str,
-    rebuilder: Rc<std::cell::RefCell<Option<Box<dyn Fn()>>>>,
+    rebuilder: crate::Rebuilder,
 ) {
     let dialog = adw::AlertDialog::builder()
         .heading(gettext("Delete Sound?"))

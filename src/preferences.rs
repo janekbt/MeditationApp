@@ -206,7 +206,7 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
     // Pre-fill from previously-saved values. Password stays blank by
     // design — we don't echo what's in the keychain.
     if let Some(account) = app
-        .with_db(|db| crate::sync_settings::get_nextcloud_account(db))
+        .with_db(crate::sync_settings::get_nextcloud_account)
         .and_then(|r| r.ok())
         .flatten()
     {

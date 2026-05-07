@@ -58,7 +58,7 @@ pub fn push_vibrations_chooser(
     // wouldn't return the rows we added.
     let rows: Rc<RefCell<Vec<gtk::Widget>>> = Rc::new(RefCell::new(Vec::new()));
 
-    let rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>> = Rc::new(RefCell::new(None));
+    let rebuilder: crate::Rebuilder = Rc::new(RefCell::new(None));
 
     // Shared preview slot: each Play button replaces this, disarming
     // the previous handle so feedbackd's per-app supersede swaps the
@@ -114,7 +114,7 @@ fn rebuild_chooser_rows(
     current_uuid: Option<&str>,
     nav_view: &adw::NavigationView,
     on_selected: Rc<dyn Fn(String)>,
-    rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+    rebuilder: crate::Rebuilder,
     toast_overlay: &adw::ToastOverlay,
     play_slot: Rc<RefCell<Option<crate::vibration::PatternPlayback>>>,
     preview: Rc<RefCell<PreviewState>>,
@@ -179,7 +179,7 @@ struct PreviewState {
 fn build_create_row(
     app: &MeditateApplication,
     nav_view: &adw::NavigationView,
-    rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+    rebuilder: crate::Rebuilder,
 ) -> adw::ActionRow {
     let row = adw::ActionRow::builder()
         .title(gettext("Create custom pattern…"))
@@ -210,7 +210,7 @@ fn build_create_row(
 fn build_pattern_row(
     pattern: &VibrationPattern,
     app: &MeditateApplication,
-    rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+    rebuilder: crate::Rebuilder,
     selection: &SelectionContext,
 ) -> adw::ActionRow {
     let row = adw::ActionRow::builder()
@@ -359,7 +359,7 @@ fn add_edit_button(
     pattern: &VibrationPattern,
     app: &MeditateApplication,
     nav_view: &adw::NavigationView,
-    rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+    rebuilder: crate::Rebuilder,
     toast_overlay: &adw::ToastOverlay,
 ) {
     let edit_btn = gtk::Button::builder()
@@ -416,7 +416,7 @@ fn add_rename_button(
     row: &adw::ActionRow,
     pattern: &VibrationPattern,
     app: &MeditateApplication,
-    rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+    rebuilder: crate::Rebuilder,
     toast_overlay: &adw::ToastOverlay,
 ) {
     let rename_btn = gtk::Button::builder()
@@ -446,7 +446,7 @@ fn add_delete_button(
     row: &adw::ActionRow,
     pattern: &VibrationPattern,
     app: &MeditateApplication,
-    rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+    rebuilder: crate::Rebuilder,
     toast_overlay: &adw::ToastOverlay,
 ) {
     let delete_btn = gtk::Button::builder()
@@ -481,7 +481,7 @@ fn show_undo_edit_toast(
     overlay: &adw::ToastOverlay,
     app: &MeditateApplication,
     before: VibrationPattern,
-    rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+    rebuilder: crate::Rebuilder,
 ) {
     let toast = adw::Toast::builder()
         .title(format!("{} {}", gettext("Updated"), &before.name))
@@ -515,7 +515,7 @@ fn show_undo_delete_toast(
     overlay: &adw::ToastOverlay,
     app: &MeditateApplication,
     snapshot: VibrationPattern,
-    rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+    rebuilder: crate::Rebuilder,
 ) {
     let toast = adw::Toast::builder()
         .title(format!("{} {}", gettext("Deleted"), &snapshot.name))
@@ -547,7 +547,7 @@ fn present_rename_dialog(
     app: &MeditateApplication,
     uuid: &str,
     current_name: &str,
-    rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+    rebuilder: crate::Rebuilder,
     toast_overlay: &adw::ToastOverlay,
 ) {
     let entry = gtk::Entry::builder()
@@ -640,7 +640,7 @@ fn present_delete_dialog(
     anchor: &gtk::Button,
     app: &MeditateApplication,
     uuid: &str,
-    rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+    rebuilder: crate::Rebuilder,
     toast_overlay: &adw::ToastOverlay,
 ) {
     let dialog = adw::AlertDialog::builder()

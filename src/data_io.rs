@@ -263,7 +263,7 @@ fn insert_sessions_with_labels(
         .map(|(start_time, duration_secs, mode, note, label_idx)| SessionData {
             start_time:    *start_time,
             duration_secs: *duration_secs,
-            mode:          mode.clone(),
+            mode:          *mode,
             label_id:      (*label_idx != usize::MAX).then(|| label_ids[*label_idx]),
             note:          note.clone(),
             guided_file_uuid: None,

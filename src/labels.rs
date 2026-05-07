@@ -61,7 +61,7 @@ pub fn push_labels_chooser(
     // rows, so iterating it spins).
     let rows: Rc<RefCell<Vec<gtk::Widget>>> = Rc::new(RefCell::new(Vec::new()));
 
-    let rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>> =
+    let rebuilder: crate::Rebuilder =
         Rc::new(RefCell::new(None));
 
     let group_for_rb = group.clone();
@@ -96,7 +96,7 @@ fn rebuild_chooser_rows(
     current_label_id: Option<i64>,
     nav_view: &adw::NavigationView,
     on_selected: Rc<dyn Fn(Label)>,
-    rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+    rebuilder: crate::Rebuilder,
 ) {
     for row in rows.borrow_mut().drain(..) {
         group.remove(&row);
@@ -156,7 +156,7 @@ fn rebuild_chooser_rows(
 fn build_label_row(
     label: &Label,
     app: &MeditateApplication,
-    rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+    rebuilder: crate::Rebuilder,
     selection: &SelectionContext,
 ) -> adw::ActionRow {
     let row = adw::ActionRow::builder()
@@ -187,7 +187,7 @@ fn add_rename_button(
     row: &adw::ActionRow,
     label: &Label,
     app: &MeditateApplication,
-    rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+    rebuilder: crate::Rebuilder,
 ) {
     let rename_btn = gtk::Button::builder()
         .icon_name("document-edit-symbolic")
@@ -209,7 +209,7 @@ fn add_delete_button(
     row: &adw::ActionRow,
     label: &Label,
     app: &MeditateApplication,
-    rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+    rebuilder: crate::Rebuilder,
 ) {
     let delete_btn = gtk::Button::builder()
         .icon_name("user-trash-symbolic")
@@ -295,7 +295,7 @@ fn present_rename_label_dialog(
     app: &MeditateApplication,
     label_id: i64,
     current_name: &str,
-    rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+    rebuilder: crate::Rebuilder,
 ) {
     let entry = gtk::Entry::builder()
         .text(current_name)
@@ -354,7 +354,7 @@ fn present_delete_label_dialog(
     anchor: &gtk::Button,
     app: &MeditateApplication,
     label_id: i64,
-    rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+    rebuilder: crate::Rebuilder,
 ) {
     // Show how many sessions still point at this label so the user
     // can decide knowingly. delete_label() un-labels each affected

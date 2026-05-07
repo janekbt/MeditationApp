@@ -36,9 +36,10 @@ type ToastSlot = Rc<RefCell<Option<adw::Toast>>>;
 
 /// Two-mode chooser parameter. The `Save` variant carries the live
 /// Setup snapshot the caller wants to persist; the `Manage` variant
-/// has no payload.
+/// has no payload. The snapshot is boxed so the enum's footprint
+/// doesn't pay the full PresetConfig size on every Manage-mode push.
 pub enum ChooserMode {
-    Save { snapshot: PresetConfig },
+    Save { snapshot: Box<PresetConfig> },
     Manage,
 }
 
@@ -92,7 +93,7 @@ pub fn push_presets_chooser(
     let rows: Rc<RefCell<Vec<gtk::Widget>>> = Rc::new(RefCell::new(Vec::new()));
     let toast_slot: ToastSlot = Rc::new(RefCell::new(None));
 
-    let rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>> =
+    let rebuilder: crate::Rebuilder =
         Rc::new(RefCell::new(None));
 
     let group_for_rb = group.clone();
@@ -136,7 +137,7 @@ fn rebuild_chooser_rows(
     chooser_mode: Rc<ChooserMode>,
     on_changed: Rc<dyn Fn()>,
     toast_slot: ToastSlot,
-    rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+    rebuilder: crate::Rebuilder,
 ) {
     for row in rows.borrow_mut().drain(..) {
         group.remove(&row);
@@ -169,7 +170,7 @@ fn rebuild_chooser_rows(
         let on_changed_for_create = on_changed.clone();
         create_row.connect_activated(move |row| {
             let snapshot = match &*chooser_mode_for_create {
-                ChooserMode::Save { snapshot } => snapshot.clone(),
+                ChooserMode::Save { snapshot } => (**snapshot).clone(),
                 ChooserMode::Manage => return,
             };
             let app = app_for_create.clone();
@@ -221,11 +222,11 @@ fn build_preset_row(
     on_changed: Rc<dyn Fn()>,
     toast_slot: ToastSlot,
     label_names: &HashMap<String, String>,
-    rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+    rebuilder: crate::Rebuilder,
 ) -> adw::ActionRow {
     let row = adw::ActionRow::builder()
         .title(&preset.name)
-        .subtitle(&subtitle_for(preset, label_names))
+        .subtitle(subtitle_for(preset, label_names))
         .activatable(matches!(**chooser_mode, ChooserMode::Save { .. }))
         .build();
 
@@ -322,7 +323,7 @@ fn build_star_button(
     app: &MeditateApplication,
     on_changed: Rc<dyn Fn()>,
     toast_slot: ToastSlot,
-    rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+    rebuilder: crate::Rebuilder,
 ) -> gtk::Button {
     let icon_name = if preset.is_starred {
         "starred-symbolic"
@@ -365,7 +366,7 @@ fn add_rename_button(
     row: &adw::ActionRow,
     preset: &Preset,
     app: &MeditateApplication,
-    rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+    rebuilder: crate::Rebuilder,
     on_changed: Rc<dyn Fn()>,
 ) {
     let rename_btn = gtk::Button::builder()
@@ -390,7 +391,7 @@ fn add_delete_button(
     row: &adw::ActionRow,
     preset: &Preset,
     app: &MeditateApplication,
-    rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+    rebuilder: crate::Rebuilder,
     on_changed: Rc<dyn Fn()>,
     toast_slot: ToastSlot,
     toast_overlay: &adw::ToastOverlay,
@@ -480,7 +481,7 @@ fn present_rename_preset_dialog(
     app: &MeditateApplication,
     preset_uuid: &str,
     current_name: &str,
-    rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+    rebuilder: crate::Rebuilder,
     on_changed: Rc<dyn Fn()>,
 ) {
     let entry = gtk::Entry::builder()
@@ -541,7 +542,7 @@ fn present_delete_preset_dialog(
     anchor: &gtk::Button,
     app: &MeditateApplication,
     preset: &Preset,
-    rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+    rebuilder: crate::Rebuilder,
     on_changed: Rc<dyn Fn()>,
     toast_slot: ToastSlot,
     toast_overlay: &adw::ToastOverlay,

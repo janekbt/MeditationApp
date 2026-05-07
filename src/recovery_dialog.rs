@@ -65,8 +65,7 @@ pub fn show(app: &MeditateApplication) {
 /// sync trigger; the underlying `prepare_push_local_recovery`
 /// primitive is unit-tested in `sync_settings`.
 fn run_push_local_recovery(app: &MeditateApplication) {
-    let prep = app.with_db(|db|
-        crate::sync_settings::prepare_push_local_recovery(db));
+    let prep = app.with_db(crate::sync_settings::prepare_push_local_recovery);
     match prep {
         Some(Ok(())) => {
             crate::diag::log("recovery: push local — prepared, triggering sync");
@@ -115,8 +114,7 @@ fn confirm_wipe_local(app: &MeditateApplication) {
 /// invalidate cached UI state across views, kick a fresh sync.
 /// `prepare_wipe_local_recovery` is unit-tested separately.
 fn run_wipe_local_recovery(app: &MeditateApplication) {
-    let prep = app.with_db_mut(|db|
-        crate::sync_settings::prepare_wipe_local_recovery(db));
+    let prep = app.with_db_mut(crate::sync_settings::prepare_wipe_local_recovery);
     match prep {
         Some(Ok(())) => {
             crate::diag::log("recovery: wipe local — purged, triggering sync");

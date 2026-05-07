@@ -27,6 +27,18 @@ mod window;
 
 use gtk::gio;
 use gtk::prelude::*;
+use std::cell::RefCell;
+use std::rc::Rc;
+
+/// Shared rebuilder slot used by the chooser pages (presets, labels,
+/// sounds, vibrations, bells, guided): a closure that drains and
+/// rebuilds the row list. Wrapped in Rc<RefCell<Option<…>>> so the
+/// closure can capture an Rc clone of itself for callbacks that
+/// need to re-trigger after a mutation (e.g. the Save handler in a
+/// row's edit dialog rebuilds the list once the DB write lands).
+/// Single alias keeps the chooser code from drowning in a 5-deep
+/// nested generic at every function signature.
+pub(crate) type Rebuilder = Rc<RefCell<Option<Box<dyn Fn()>>>>;
 
 fn main() -> glib::ExitCode {
     // Diag comes up first so a panic anywhere below still lands in the log.

@@ -132,9 +132,9 @@ impl TimerView {
         self.imp().breath_elapsed()
     }
 
-    /// Active mode's stopwatch flag (set on visit + on mode switch
-    /// + on toggle). Used by the running pages to render the counter
-    /// as elapsed-only instead of elapsed/target when on.
+    /// Active mode's stopwatch flag (refreshed on visit, on mode
+    /// switch, and on toggle). Used by the running pages to render
+    /// the counter as elapsed-only instead of elapsed/target when on.
     pub fn stopwatch_active(&self) -> bool {
         self.imp().stopwatch_toggle_on.get()
     }

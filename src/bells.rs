@@ -52,7 +52,7 @@ where F: Fn() + Clone + 'static,
     // both the synthetic create-row and the edit-page callback can fire
     // it without us having to thread Clone through a self-referential
     // type. Set once below after the per-row handlers are built.
-    let rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>> =
+    let rebuilder: crate::Rebuilder =
         Rc::new(RefCell::new(None));
 
     let rebuilder_for_init = rebuilder.clone();
@@ -81,7 +81,7 @@ where F: Fn() + Clone + 'static,
 /// state. Called on initial push and after an add. Per-row Switch
 /// toggles call `set_interval_bell_enabled` directly so they don't
 /// need a rebuild.
-type Rebuilder = Rc<RefCell<Option<Box<dyn Fn()>>>>;
+type Rebuilder = crate::Rebuilder;
 
 fn rebuild_list(
     group: &adw::PreferencesGroup,

@@ -178,7 +178,7 @@ pub fn build_master_envelope(p: &crate::db::VibrationPattern) -> Vec<(f64, u32)>
             rle_consecutive(ticks)
         }
         crate::db::ChartKind::Line => {
-            let n_ticks = ((p.duration_ms + LINE_TICK_MS - 1) / LINE_TICK_MS).max(1);
+            let n_ticks = p.duration_ms.div_ceil(LINE_TICK_MS).max(1);
             let base = p.duration_ms / n_ticks;
             let last_dur = p.duration_ms - base * (n_ticks - 1);
             let ticks = (0..n_ticks).map(|i| {
@@ -249,7 +249,7 @@ fn build_vibrate_args(segments: &[(f64, u32)]) -> glib::Variant {
         })
         .collect();
     let pattern_variant = glib::Variant::array_from_iter_with_type(
-        &glib::VariantTy::new("(du)").expect("(du) is a valid variant type"),
+        glib::VariantTy::new("(du)").expect("(du) is a valid variant type"),
         inner.iter().cloned(),
     );
     glib::Variant::tuple_from_iter([

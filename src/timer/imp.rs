@@ -515,7 +515,7 @@ impl TimerView {
                     // a Save Preset flow against a non-preset mode.
                     TimerMode::Guided    => return,
                 };
-                let snapshot = imp.snapshot_current_setup();
+                let snapshot = Box::new(imp.snapshot_current_setup());
                 let this_for_changed = this.clone();
                 window.push_presets_chooser(
                     &app,
@@ -3228,7 +3228,7 @@ impl TimerView {
         for p in presets {
             let row = adw::ActionRow::builder()
                 .title(&p.name)
-                .subtitle(&preset_subtitle(&p, &label_names))
+                .subtitle(preset_subtitle(&p, &label_names))
                 .activatable(true)
                 .build();
             let uuid = p.uuid.clone();

@@ -258,7 +258,7 @@ impl MeditateWindow {
         // Counter shows "elapsed / target" when stopwatch is off
         // and just "elapsed" when on (no fixed end).
         let eyebrow = gtk::Label::builder()
-            .label(&crate::i18n::gettext("Box Breathing"))
+            .label(crate::i18n::gettext("Box Breathing"))
             .css_classes(["caption", "dimmed"])
             .halign(gtk::Align::Center)
             .build();
@@ -386,14 +386,14 @@ impl MeditateWindow {
 
         // ── Pause / Stop buttons ──────────────────────────────────────
         let pause_btn = gtk::Button::builder()
-            .label(&crate::i18n::gettext("Pause"))
+            .label(crate::i18n::gettext("Pause"))
             .css_classes(["pill"])
-            .tooltip_text(&crate::i18n::gettext("Pause Timer"))
+            .tooltip_text(crate::i18n::gettext("Pause Timer"))
             .build();
         let stop_btn = gtk::Button::builder()
-            .label(&crate::i18n::gettext("Stop"))
+            .label(crate::i18n::gettext("Stop"))
             .css_classes(["pill", "destructive-action"])
-            .tooltip_text(&crate::i18n::gettext("Stop and Save Session"))
+            .tooltip_text(crate::i18n::gettext("Stop and Save Session"))
             .build();
 
         let btn_box = gtk::Box::builder()

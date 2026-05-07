@@ -547,7 +547,7 @@ pub fn push_guided_files_chooser<F>(
     // Self-referential rebuilder closure: per-row buttons + the
     // synthetic create-row need to fire it after a DB write. RefCell-
     // wrapped Box<dyn Fn()> matches the bells.rs / labels.rs idiom.
-    let rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>> = Rc::new(RefCell::new(None));
+    let rebuilder: crate::Rebuilder = Rc::new(RefCell::new(None));
 
     // One slot for the chooser's most-recently-shown undo toast.
     // Subsequent rename/delete actions dismiss whichever toast is in
@@ -587,7 +587,7 @@ fn rebuild_chooser_rows(
     rows: &Rc<RefCell<Vec<adw::ActionRow>>>,
     app: &MeditateApplication,
     nav_view: &adw::NavigationView,
-    rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+    rebuilder: crate::Rebuilder,
     on_changed: impl Fn() + Clone + 'static,
     toast_overlay: &adw::ToastOverlay,
     toast_slot: ToastSlot,
@@ -627,7 +627,7 @@ fn rebuild_chooser_rows(
 fn build_create_row(
     app: &MeditateApplication,
     nav_view: &adw::NavigationView,
-    rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+    rebuilder: crate::Rebuilder,
     on_changed: impl Fn() + Clone + 'static,
 ) -> adw::ActionRow {
     let row = adw::ActionRow::builder()
@@ -672,7 +672,7 @@ fn build_create_row(
 fn build_guided_file_row(
     file: &GuidedFile,
     app: &MeditateApplication,
-    rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+    rebuilder: crate::Rebuilder,
     on_changed: impl Fn() + Clone + 'static,
     toast_overlay: &adw::ToastOverlay,
     toast_slot: ToastSlot,
@@ -798,7 +798,7 @@ fn present_rename_dialog(
     app: &MeditateApplication,
     uuid: &str,
     current_name: &str,
-    rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+    rebuilder: crate::Rebuilder,
     on_changed: impl Fn() + Clone + 'static,
     toast_overlay: &adw::ToastOverlay,
     toast_slot: ToastSlot,
@@ -918,7 +918,7 @@ fn present_delete_dialog(
     app: &MeditateApplication,
     uuid: &str,
     display_name: &str,
-    rebuilder: Rc<RefCell<Option<Box<dyn Fn()>>>>,
+    rebuilder: crate::Rebuilder,
     on_changed: impl Fn() + Clone + 'static,
     toast_overlay: &adw::ToastOverlay,
     toast_slot: ToastSlot,
