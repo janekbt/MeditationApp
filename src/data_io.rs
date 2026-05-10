@@ -79,8 +79,8 @@ pub fn export_csv(app: &MeditateApplication, path: &Path) -> Result<usize, DataI
     let result = app.with_db(|db| export_csv_to_db(db, path))
         .ok_or(DataIoError::NoDatabase)?;
     match &result {
-        Ok(n) => crate::diag::log(&format!("export_csv: wrote {n} sessions to {}", path.display())),
-        Err(e) => crate::diag::log(&format!("export_csv FAILED to {}: {e}", path.display())),
+        Ok(n) => meditate_core::diag::log(&format!("export_csv: wrote {n} sessions to {}", path.display())),
+        Err(e) => meditate_core::diag::log(&format!("export_csv FAILED to {}: {e}", path.display())),
     }
     result
 }
@@ -127,8 +127,8 @@ pub fn import_csv(app: &MeditateApplication, path: &Path) -> Result<usize, DataI
     let result = app.with_db_mut(|db| import_csv_to_db(db, path))
         .ok_or(DataIoError::NoDatabase)?;
     match &result {
-        Ok(n) => crate::diag::log(&format!("import_csv: read {n} sessions from {}", path.display())),
-        Err(e) => crate::diag::log(&format!("import_csv FAILED from {}: {e}", path.display())),
+        Ok(n) => meditate_core::diag::log(&format!("import_csv: read {n} sessions from {}", path.display())),
+        Err(e) => meditate_core::diag::log(&format!("import_csv FAILED from {}: {e}", path.display())),
     }
     result
 }
@@ -189,8 +189,8 @@ pub fn import_insighttimer(app: &MeditateApplication, path: &Path) -> Result<usi
     let result = app.with_db_mut(|db| import_insighttimer_to_db(db, path))
         .ok_or(DataIoError::NoDatabase)?;
     match &result {
-        Ok(n) => crate::diag::log(&format!("import_insighttimer: read {n} sessions from {}", path.display())),
-        Err(e) => crate::diag::log(&format!("import_insighttimer FAILED from {}: {e}", path.display())),
+        Ok(n) => meditate_core::diag::log(&format!("import_insighttimer: read {n} sessions from {}", path.display())),
+        Err(e) => meditate_core::diag::log(&format!("import_insighttimer FAILED from {}: {e}", path.display())),
     }
     result
 }

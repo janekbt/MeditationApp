@@ -692,7 +692,7 @@ fn transcode_to_ogg(
         .build()
         .ok();
     if audioloudnorm.is_none() {
-        crate::diag::log(
+        meditate_core::diag::log(
             "transcode_to_ogg: audioloudnorm element not registered — \
              skipping loudness-normalisation step",
         );

@@ -68,15 +68,15 @@ fn run_push_local_recovery(app: &MeditateApplication) {
     let prep = app.with_db(crate::sync_settings::prepare_push_local_recovery);
     match prep {
         Some(Ok(())) => {
-            crate::diag::log("recovery: push local — prepared, triggering sync");
+            meditate_core::diag::log("recovery: push local — prepared, triggering sync");
             app.trigger_sync();
         }
         Some(Err(e)) => {
-            crate::diag::log(&format!(
+            meditate_core::diag::log(&format!(
                 "recovery: push local — prepare failed: {e:?}"));
         }
         None => {
-            crate::diag::log("recovery: push local — DB unavailable");
+            meditate_core::diag::log("recovery: push local — DB unavailable");
         }
     }
 }
@@ -117,7 +117,7 @@ fn run_wipe_local_recovery(app: &MeditateApplication) {
     let prep = app.with_db_mut(crate::sync_settings::prepare_wipe_local_recovery);
     match prep {
         Some(Ok(())) => {
-            crate::diag::log("recovery: wipe local — purged, triggering sync");
+            meditate_core::diag::log("recovery: wipe local — purged, triggering sync");
             // Force every cached view to re-read from the (empty) DB.
             // with_db_mut already bumps the invalidate-all flag, but
             // a manual ALL invalidate ensures even non-mutating views
@@ -126,11 +126,11 @@ fn run_wipe_local_recovery(app: &MeditateApplication) {
             app.trigger_sync();
         }
         Some(Err(e)) => {
-            crate::diag::log(&format!(
+            meditate_core::diag::log(&format!(
                 "recovery: wipe local — prepare failed: {e:?}"));
         }
         None => {
-            crate::diag::log("recovery: wipe local — DB unavailable");
+            meditate_core::diag::log("recovery: wipe local — DB unavailable");
         }
     }
 }

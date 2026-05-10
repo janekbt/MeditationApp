@@ -66,17 +66,14 @@ pub fn read_all() -> String {
 }
 
 fn timestamp() -> String {
-    glib::DateTime::now_local()
-        .and_then(|dt| dt.format("%Y-%m-%d %H:%M:%S"))
-        .map(|s| s.to_string())
-        .unwrap_or_else(|_| {
-            // Last-resort fallback when tzdata is missing / clock is broken:
-            // raw unix seconds. Better to keep the line than skip it.
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| format!("@{}", d.as_secs()))
-                .unwrap_or_else(|_| "?".to_string())
-        })
+    // chrono's `Local::now()` is infallible (silently falls back to UTC
+    // when tzdata is missing rather than erroring), so the explicit
+    // "@<unix-secs>" last-resort branch the glib version had can't be
+    // reached and was dropped. Format string and resulting layout are
+    // unchanged.
+    chrono::Local::now()
+        .format("%Y-%m-%d %H:%M:%S")
+        .to_string()
 }
 
 /// Rewrite `path` to contain only its last `max_lines` lines. No-op if

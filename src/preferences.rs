@@ -269,7 +269,7 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
                     }
                     Err(e) => {
                         // Full error to diag log; toast stays narrow.
-                        crate::diag::log(&format!(
+                        meditate_core::diag::log(&format!(
                             "test_connection: keychain read failed: {e:?}"));
                         data_toast(&dialog, &gettext("Keyring read failed"));
                         return;
@@ -308,7 +308,7 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
                             (m.clone(), "worker thread panicked".to_string())
                         }
                     };
-                    crate::diag::log(&format!("test_connection: {detail}"));
+                    meditate_core::diag::log(&format!("test_connection: {detail}"));
                     dialog.add_toast(adw::Toast::builder()
                         .title(&toast).timeout(4).build());
                 }
@@ -374,7 +374,7 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
                         // gets cut off in narrow viewports (Librem 5,
                         // GNOME Shell), but the diagnostics file is
                         // uncapped and visible via About → Troubleshooting.
-                        crate::diag::log(&format!("keychain store failed: {e:?}"));
+                        meditate_core::diag::log(&format!("keychain store failed: {e:?}"));
                         data_toast(&dialog, &gettext("Keyring write failed"));
                         return;
                     }
@@ -390,7 +390,7 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
             match account_result {
                 Some(Ok(())) => {}
                 Some(Err(e)) => {
-                    crate::diag::log(&format!(
+                    meditate_core::diag::log(&format!(
                         "sync settings save failed: {e:?}"));
                     data_toast(&dialog, &gettext("Save failed"));
                     return;

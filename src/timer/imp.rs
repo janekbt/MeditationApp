@@ -4251,7 +4251,7 @@ impl TimerView {
             let handle = crate::vibration::fire_pattern_if_allowed(
                 &app, signal_mode, mode_key, &pattern_uuid,
             );
-            crate::diag::log(&format!(
+            meditate_core::diag::log(&format!(
                 "fire_interval_bell: per_bell={} mode={} fired={}",
                 signal_mode.as_db_str(), mode_key, handle.is_some()
             ));
@@ -4367,7 +4367,7 @@ impl TimerView {
         let handle = crate::vibration::fire_pattern_if_allowed(
             app, per_bell, mode_key, &pattern_uuid,
         );
-        crate::diag::log(&format!(
+        meditate_core::diag::log(&format!(
             "fire_starting_bell: per_bell={} mode={} fired={}",
             per_bell.as_db_str(), mode_key, handle.is_some()
         ));
@@ -4418,7 +4418,7 @@ impl TimerView {
         let handle = crate::vibration::fire_pattern_if_allowed(
             app, per_bell, mode_key, &pattern_uuid,
         );
-        crate::diag::log(&format!(
+        meditate_core::diag::log(&format!(
             "fire_end_bell: per_bell={} mode={} fired={}",
             per_bell.as_db_str(), mode_key, handle.is_some()
         ));
@@ -4464,7 +4464,7 @@ impl TimerView {
         let handle = crate::vibration::fire_pattern_if_allowed(
             app, row.signal_mode, mode_key, &row.pattern_uuid,
         );
-        crate::diag::log(&format!(
+        meditate_core::diag::log(&format!(
             "fire_box_breath_phase_cue: phase={} per_phase={} fired={}",
             phase.as_db_str(), row.signal_mode.as_db_str(), handle.is_some()
         ));

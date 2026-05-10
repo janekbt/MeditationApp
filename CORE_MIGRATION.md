@@ -53,7 +53,7 @@ imports in `src/{presets.rs, timer/imp.rs, db/mod.rs,
 sync_runner.rs}` with `use meditate_core::preset_config::*`.
 **Risk:** trivial.
 
-### [ ] 2. `diag.rs` ring-buffer log → `meditate_core::diag`
+### [x] 2. `diag.rs` ring-buffer log → `meditate_core::diag`
 
 **From:** `src/diag.rs` (164 lines + tests).
 **Pulls along:** `init`, `log`, `read_all`, the `MAX_LINES` cap, and

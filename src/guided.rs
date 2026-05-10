@@ -1199,7 +1199,7 @@ impl GuidedPlayback {
                 match msg.view() {
                     MessageView::Eos(_) => on_eos(),
                     MessageView::Error(err) => {
-                        crate::diag::log(&format!(
+                        meditate_core::diag::log(&format!(
                             "guided playback error: {} ({})",
                             err.error(),
                             err.debug().unwrap_or_default()

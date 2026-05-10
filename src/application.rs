@@ -105,11 +105,11 @@ mod imp {
             match Database::open(&db_path) {
                 Ok(db) => {
                     *self.db.lock().unwrap() = Some(db);
-                    crate::diag::log(&format!("db open ok: {}", db_path.display()));
+                    meditate_core::diag::log(&format!("db open ok: {}", db_path.display()));
                 }
                 Err(e) => {
                     eprintln!("Failed to open database: {e}");
-                    crate::diag::log(&format!("db open FAILED at {}: {e}", db_path.display()));
+                    meditate_core::diag::log(&format!("db open FAILED at {}: {e}", db_path.display()));
                 }
             }
             // Cache the path so the sync worker thread can open its own
@@ -140,7 +140,7 @@ mod imp {
             // it. Worst-case 500 ms; typical <50 ms.
             let has_haptic = crate::vibration::probe_haptic();
             self.has_haptic.set(has_haptic);
-            crate::diag::log(&format!("haptic probe: {}", has_haptic));
+            meditate_core::diag::log(&format!("haptic probe: {}", has_haptic));
 
             self.setup_actions();
             self.setup_accels();
@@ -200,7 +200,7 @@ mod imp {
                         // Debug Info view in AdwAboutDialog has built-in
                         // Copy + Save buttons, so wiring the diag log here
                         // gives us the "Copy diagnostics" UX for free.
-                        .debug_info(crate::diag::read_all())
+                        .debug_info(meditate_core::diag::read_all())
                         .debug_info_filename("meditate-diagnostics.log")
                         .build();
 
@@ -436,7 +436,7 @@ impl MeditateApplication {
                 re_trigger.store(false, Ordering::SeqCst);
                 let result = crate::sync_runner::run_sync_attempt(&db_path);
                 if let Err(e) = &result {
-                    crate::diag::log(&format!("sync: {e}"));
+                    meditate_core::diag::log(&format!("sync: {e}"));
                 }
                 if !re_trigger.load(Ordering::SeqCst) {
                     break;

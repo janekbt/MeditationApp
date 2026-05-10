@@ -123,7 +123,7 @@ pub fn run_sync_attempt(db_path: &Path) -> Result<SyncStats, SyncRunnerError> {
 
     let started = std::time::Instant::now();
     let pending_at_start = db.pending_events().map(|v| v.len()).unwrap_or(0);
-    crate::diag::log(&format!(
+    meditate_core::diag::log(&format!(
         "sync attempt starting: {pending_at_start} events pending",
     ));
 
@@ -133,7 +133,7 @@ pub fn run_sync_attempt(db_path: &Path) -> Result<SyncStats, SyncRunnerError> {
     // per-N-event throttle needed any more.
     let progress = |pushed: usize, total: usize| {
         let secs = started.elapsed().as_secs_f64().max(0.001);
-        crate::diag::log(&format!(
+        meditate_core::diag::log(&format!(
             "sync push progress: {pushed}/{total} in {secs:.1}s ({:.1}/s)",
             pushed as f64 / secs,
         ));
@@ -151,7 +151,7 @@ pub fn run_sync_attempt(db_path: &Path) -> Result<SyncStats, SyncRunnerError> {
         let total = stats.pulled + stats.pushed;
         if total > 0 {
             let secs = elapsed.as_secs_f64().max(0.001);
-            crate::diag::log(&format!(
+            meditate_core::diag::log(&format!(
                 "sync: pulled {} pushed {} in {:.2}s ({:.1}/s)",
                 stats.pulled, stats.pushed, secs, total as f64 / secs,
             ));
