@@ -86,25 +86,25 @@ Installed by `build-aux/setup-android.sh` (idempotent, Debian/Ubuntu only):
 | Android platform-tools (`adb`, `fastboot`) | `sdkmanager "platform-tools"` | latest |
 | Android NDK | `sdkmanager "ndk;27.2.12479018"` | r27 |
 | Rust targets | `rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android` | per current toolchain |
-| `cargo-apk` | `cargo install --locked cargo-apk` | pinned in script |
+| `xbuild` (`x` CLI) | `cargo install --git https://github.com/rust-mobile/xbuild.git` | pinned by git rev in script |
 
 No Android Studio. No emulator image (opt-in via `--with-emulator`
 flag — uses `sdkmanager "system-images;android-35;google_apis;x86_64"`
-plus AVD creation). On-device testing via `adb install` over USB or
-local network, mirroring the Librem 5 cycle.
+plus AVD creation). On-device testing via `x run --device adb:<id>`
+over USB or local network, mirroring the Librem 5 cycle.
 
-`~/.cargo/config.toml` gets the cross-linker stanza:
+We deliberately do *not* write `~/.cargo/config.toml` cross-linker
+entries: `xbuild` invokes the NDK linker itself via `ANDROID_NDK_ROOT`
+detection. Adding global Cargo target stanzas would only matter for
+direct `cargo build --target aarch64-linux-android` invocations
+outside `x run`, which is not part of the documented Slint-on-Android
+flow. Skip until proven necessary.
 
-```toml
-[target.aarch64-linux-android]
-linker = "$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang"
-ar    = "$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"
-```
-
-(plus `armv7` and `x86_64` mirrors). Env vars
-(`ANDROID_HOME`, `ANDROID_NDK_ROOT`, `JAVA_HOME`) go into a sourced
-file at `~/.profile.d/android-sdk.sh` rather than `~/.bashrc` so the
-script can rewrite it idempotently.
+Env vars (`ANDROID_HOME`, `ANDROID_NDK_ROOT`, `JAVA_HOME`, plus
+`PATH` extensions for `sdkmanager`, `adb`, etc.) live in a single
+sourced file at `~/.config/meditate-android/env.sh` so the script
+owns the file outright and can rewrite it idempotently. A tiny
+marker-bracketed block in `~/.bashrc` sources it.
 
 ### Setup-script contract
 
