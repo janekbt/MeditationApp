@@ -2322,12 +2322,18 @@ impl TimerView {
         self.cancel_tick();
 
         let now = self.elapsed_since_start();
-        // The Session pauses uniformly across phase (Prep / Running /
-        // Overtime / Box-Breath); the gtk shell's only pause-side
-        // wrinkle left is the gst playbin for Guided mode.
-        if let Some(s) = self.core_session.borrow_mut().as_mut() {
-            s.pause(now);
-        }
+        // Session decides whether pause is meaningful + what side
+        // effects (StopActiveSignals on the leading edge) the shell
+        // should run; we just dispatch. The gst playbin pause for
+        // Guided is purely a shell mechanism — no Session-level
+        // analogue.
+        let effects = self
+            .core_session
+            .borrow_mut()
+            .as_mut()
+            .map(|s| s.pause(now))
+            .unwrap_or_default();
+        self.dispatch_session_effects(&effects);
         if self.tick_mode.get() == TimerMode::Guided {
             if let Some(p) = self.guided_playback.borrow().as_ref() {
                 p.pause();
@@ -2429,7 +2435,7 @@ impl TimerView {
     }
 
     fn on_save(&self) {
-        crate::sound::stop_all();
+        self.stop_active_signals();
         let mode = self.current_mode();
 
         let elapsed = self.elapsed_secs_for_mode();
@@ -2526,7 +2532,7 @@ impl TimerView {
     }
 
     fn on_discard(&self) {
-        crate::sound::stop_all();
+        self.stop_active_signals();
         let buffer = self.note_view.buffer();
         let (start, end) = buffer.bounds();
         let note = buffer.text(&start, &end, false);
@@ -2853,32 +2859,33 @@ impl TimerView {
         self.end_overtime_session(elapsed);
     }
 
-    /// Run a terminating call against the in-flight Session and
-    /// extract the EndSession.duration_secs from the returned
-    /// effects. `None` when no Session is alive (Guided mode in the
-    /// pre-Guided-migration era, or any race where the Session was
-    /// already dropped). Centralised so on_stop / add_overtime_and_
-    /// finish / finish_overtime_session all read durations through
-    /// the same channel.
+    /// Run a terminating call against the in-flight Session,
+    /// dispatch any portable side effects (StopActiveSignals etc.)
+    /// to their shell handlers, and extract the
+    /// EndSession.duration_secs for callers that need to pin the
+    /// saved duration. Returns `None` when no Session is alive.
     fn core_session_end<F>(&self, f: F) -> Option<u64>
     where
         F: FnOnce(&mut CoreSession, Duration) -> Vec<CoreSessionEffect>,
     {
         let now = self.elapsed_since_start();
-        let mut slot = self.core_session.borrow_mut();
-        let s = slot.as_mut()?;
-        f(s, now).into_iter().find_map(|e| match e {
-            CoreSessionEffect::EndSession { duration_secs } => Some(duration_secs),
+        let effects = {
+            let mut slot = self.core_session.borrow_mut();
+            let s = slot.as_mut()?;
+            f(s, now)
+        };
+        let duration = effects.iter().find_map(|e| match e {
+            CoreSessionEffect::EndSession { duration_secs } => Some(*duration_secs),
             _ => None,
-        })
+        });
+        self.dispatch_session_effects(&effects);
+        duration
     }
 
     fn end_overtime_session(&self, elapsed_secs: u64) {
-        // The end bell started ringing at the running→overtime
-        // transition; once the user picks Finish or Add they've
-        // acknowledged the session, so cut any still-playing bell
-        // (end + interval) before the Done page comes up.
-        crate::sound::stop_all();
+        // Cutting in-flight signals is Session's call — it fires
+        // StopActiveSignals from finish_overtime / add_overtime_
+        // and_finish, dispatched via core_session_end above.
         self.cancel_tick();
         *self.running_label.borrow_mut() = None;
         *self.running_pause_btn.borrow_mut() = None;
@@ -4241,6 +4248,32 @@ impl TimerView {
             }
         }
         *slot = handle;
+    }
+
+    /// Cut any in-flight bell sound + vibration pattern. Sole shell-
+    /// side implementation of `Effect::StopActiveSignals`; only
+    /// called from `dispatch_session_effects` and from `on_save` /
+    /// `on_discard` (which are pure shell flows with no Session
+    /// alive). The decision *when* to stop signals belongs to
+    /// Session — see the variant's doc-comment in core.
+    fn stop_active_signals(&self) {
+        crate::sound::stop_all();
+        self.install_vibration_handle(None);
+    }
+
+    /// Run portable Session effects through their gtk-shell native
+    /// dispatchers. Currently only `StopActiveSignals` flows through
+    /// here — the other effects (UpdateDisplay / EnterOvertime /
+    /// FireBoxBreathCue / FireBell / EndSession / EndPrep /
+    /// UpdateOvertimeLabel / EndBoxBreath) are consumed at their
+    /// tick callsites where the surrounding context is needed for
+    /// dispatch.
+    fn dispatch_session_effects(&self, effects: &[CoreSessionEffect]) {
+        for effect in effects {
+            if let CoreSessionEffect::StopActiveSignals = effect {
+                self.stop_active_signals();
+            }
+        }
     }
 
     pub(crate) fn refresh_end_bell_pattern_subtitle(&self) {

@@ -140,6 +140,16 @@ pub enum Effect {
     /// playback, releases screen-awake, transitions to the Done UI
     /// with this duration.
     EndSession { duration_secs: u64 },
+    /// Any in-flight bell sound / vibration / phase cue should be
+    /// cut immediately. Emitted by Session lifecycle calls that
+    /// represent a user-driven boundary — pause (the user wants
+    /// everything to stop), stop (session ends), finish_overtime /
+    /// add_overtime_and_finish (user acknowledges the session is
+    /// over). Mechanics are shell-specific (gtk: MediaFile +
+    /// feedbackd DBus cancel; Android: equivalent native calls)
+    /// but the *rule* — that these lifecycle moments cut the user's
+    /// in-flight feedback — lives in core.
+    StopActiveSignals,
 }
 
 /// In-flight session. Created by `start_prep` (when prep silence is
@@ -217,20 +227,23 @@ impl Session {
         }
     }
 
-    /// Freeze the session's elapsed clock at `now`. Subsequent
-    /// `tick()` calls return no effects. The phase is preserved —
-    /// resume continues from whatever phase pause was called from.
+    /// Freeze the session's elapsed clock at `now`. Returns a
+    /// `StopActiveSignals` effect on the leading edge so the shell
+    /// cuts in-flight bells/vibration; subsequent `tick()` calls
+    /// return no effects. The phase is preserved — resume
+    /// continues from whatever phase pause was called from.
     /// Idempotent: calling pause on an already-paused session is a
-    /// no-op (won't double-count paused time).
-    pub fn pause(&mut self, now: Duration) {
+    /// no-op (won't double-count paused time, returns empty Vec).
+    pub fn pause(&mut self, now: Duration) -> Vec<Effect> {
         if self.is_paused {
-            return;
+            return Vec::new();
         }
         // Stopwatch::paused_at consumes self; swap-and-replace.
         let dummy = Stopwatch::started_at(Duration::ZERO);
         let s = std::mem::replace(&mut self.phase_clock, dummy);
         self.phase_clock = s.paused_at(now);
         self.is_paused = true;
+        vec![Effect::StopActiveSignals]
     }
 
     /// Unfreeze the session. Subsequent ticks resume producing
@@ -277,7 +290,10 @@ impl Session {
         }
         let duration_secs = self.phase_clock.elapsed(now).as_secs();
         self.phase = SessionPhase::Stopped;
-        vec![Effect::EndSession { duration_secs }]
+        vec![
+            Effect::StopActiveSignals,
+            Effect::EndSession { duration_secs },
+        ]
     }
 
     /// Overtime "Finish" — record exactly the planned countdown
@@ -296,7 +312,10 @@ impl Session {
             .target_secs
             .expect("Overtime requires a target") as u64;
         self.phase = SessionPhase::Stopped;
-        vec![Effect::EndSession { duration_secs: target_secs }]
+        vec![
+            Effect::StopActiveSignals,
+            Effect::EndSession { duration_secs: target_secs },
+        ]
     }
 
     /// Overtime "Add" — record the running+overtime elapsed
@@ -309,7 +328,10 @@ impl Session {
         }
         let duration_secs = self.phase_clock.elapsed(now).as_secs();
         self.phase = SessionPhase::Stopped;
-        vec![Effect::EndSession { duration_secs }]
+        vec![
+            Effect::StopActiveSignals,
+            Effect::EndSession { duration_secs },
+        ]
     }
 
     /// Force the Running→Overtime transition externally. Used when
@@ -1003,7 +1025,7 @@ mod tests {
         );
         let _ = s.tick(Duration::from_secs(160)); // EnterOvertime
         let _ = s.tick(Duration::from_secs(170)); // 10 s of overtime
-        s.pause(Duration::from_secs(170));
+        let _ = s.pause(Duration::from_secs(170));
         // 100 s of host time pass while paused, then resume.
         s.resume(Duration::from_secs(270));
         // Active elapsed should still report 70 s total (60 target +
@@ -1158,10 +1180,23 @@ mod tests {
             Duration::from_secs(100),
         );
         let _ = s.tick(Duration::from_secs(110)); // 10 s in
-        s.pause(Duration::from_secs(110));
+        let _ = s.pause(Duration::from_secs(110));
         // 60 s of host time pass while paused.
         assert_eq!(s.elapsed(Duration::from_secs(170)), Duration::from_secs(10));
         assert!(s.is_paused());
+    }
+
+    #[test]
+    fn pause_emits_stop_active_signals_on_leading_edge() {
+        let mut s = Session::start_running(
+            timer_countdown_settings(600),
+            Duration::from_secs(100),
+        );
+        let first = s.pause(Duration::from_secs(110));
+        assert_eq!(first, vec![Effect::StopActiveSignals]);
+        // Idempotent re-pause emits nothing.
+        let second = s.pause(Duration::from_secs(115));
+        assert!(second.is_empty(), "redundant pause must emit nothing: {:?}", second);
     }
 
     #[test]
@@ -1170,7 +1205,7 @@ mod tests {
             timer_countdown_settings(600),
             Duration::from_secs(100),
         );
-        s.pause(Duration::from_secs(110)); // 10 s in
+        let _ = s.pause(Duration::from_secs(110)); // 10 s in
         s.resume(Duration::from_secs(170)); // 60 s pause window
         // Active elapsed is still 10 s right after resume.
         assert_eq!(s.elapsed(Duration::from_secs(170)), Duration::from_secs(10));
@@ -1184,7 +1219,7 @@ mod tests {
             timer_countdown_settings(600),
             Duration::from_secs(100),
         );
-        s.pause(Duration::from_secs(110));
+        let _ = s.pause(Duration::from_secs(110));
         // Tick is a no-op while paused — caller should usually not
         // call it (the gtk shell stops the tick loop on pause), but
         // if it does, we don't update display or fire transitions.
@@ -1195,7 +1230,7 @@ mod tests {
     #[test]
     fn pause_during_prep_works() {
         let mut s = Session::start_prep(timer_settings_with_prep(30), Duration::from_secs(100));
-        s.pause(Duration::from_secs(105)); // 5 s into prep
+        let _ = s.pause(Duration::from_secs(105)); // 5 s into prep
         s.resume(Duration::from_secs(200));
         // Active prep elapsed is 5 s — first tick after resume
         // should still report 25 s remaining (not the 95 s of host
@@ -1213,7 +1248,7 @@ mod tests {
         let _ = s.tick(Duration::from_millis(100_500)); // seed In
         // 6 s in → still HoldIn (phase was at t=4 boundary).
         let _ = s.tick(Duration::from_secs(106));
-        s.pause(Duration::from_secs(106));
+        let _ = s.pause(Duration::from_secs(106));
         // 1000 s of host time pass; resume.
         s.resume(Duration::from_secs(1106));
         // Active elapsed is still 6 s → phase is HoldIn.
@@ -1228,8 +1263,8 @@ mod tests {
             Duration::from_secs(100),
         );
         // 5 s elapsed, pause twice (second is a no-op).
-        s.pause(Duration::from_secs(105));
-        s.pause(Duration::from_secs(150)); // would over-pause if not idempotent
+        let _ = s.pause(Duration::from_secs(105));
+        let _ = s.pause(Duration::from_secs(150)); // would over-pause if not idempotent
         // 100 s of host time, then resume twice (second no-op).
         s.resume(Duration::from_secs(205));
         s.resume(Duration::from_secs(210)); // idempotent
@@ -1306,7 +1341,13 @@ mod tests {
         );
         // 12 s into prep: stop returns 12 s.
         let effects = s.stop(Duration::from_secs(112));
-        assert_eq!(effects, vec![Effect::EndSession { duration_secs: 12 }]);
+        assert_eq!(
+            effects,
+            vec![
+                Effect::StopActiveSignals,
+                Effect::EndSession { duration_secs: 12 },
+            ]
+        );
         assert_eq!(s.phase(), SessionPhase::Stopped);
     }
 
@@ -1317,7 +1358,13 @@ mod tests {
             Duration::from_secs(100),
         );
         let effects = s.stop(Duration::from_secs(245));
-        assert_eq!(effects, vec![Effect::EndSession { duration_secs: 145 }]);
+        assert_eq!(
+            effects,
+            vec![
+                Effect::StopActiveSignals,
+                Effect::EndSession { duration_secs: 145 },
+            ]
+        );
         assert_eq!(s.phase(), SessionPhase::Stopped);
     }
 
@@ -1332,7 +1379,13 @@ mod tests {
         assert_eq!(s.phase(), SessionPhase::Overtime);
         // Stop 30 s into overtime: total elapsed 90 s.
         let effects = s.stop(Duration::from_secs(190));
-        assert_eq!(effects, vec![Effect::EndSession { duration_secs: 90 }]);
+        assert_eq!(
+            effects,
+            vec![
+                Effect::StopActiveSignals,
+                Effect::EndSession { duration_secs: 90 },
+            ]
+        );
         assert_eq!(s.phase(), SessionPhase::Stopped);
     }
 
@@ -1342,10 +1395,16 @@ mod tests {
             timer_countdown_settings(600),
             Duration::from_secs(100),
         );
-        s.pause(Duration::from_secs(150)); // 50 s elapsed
+        let _ = s.pause(Duration::from_secs(150)); // 50 s elapsed
         // Stop later — duration should be 50, not 50+anything.
         let effects = s.stop(Duration::from_secs(300));
-        assert_eq!(effects, vec![Effect::EndSession { duration_secs: 50 }]);
+        assert_eq!(
+            effects,
+            vec![
+                Effect::StopActiveSignals,
+                Effect::EndSession { duration_secs: 50 },
+            ]
+        );
         assert_eq!(s.phase(), SessionPhase::Stopped);
     }
 
@@ -1356,7 +1415,13 @@ mod tests {
             Duration::from_secs(100),
         );
         let first = s.stop(Duration::from_secs(120));
-        assert_eq!(first, vec![Effect::EndSession { duration_secs: 20 }]);
+        assert_eq!(
+            first,
+            vec![
+                Effect::StopActiveSignals,
+                Effect::EndSession { duration_secs: 20 },
+            ]
+        );
         let second = s.stop(Duration::from_secs(140));
         assert!(
             second.is_empty(),
@@ -1387,7 +1452,13 @@ mod tests {
         let _ = s.tick(Duration::from_secs(190));
         let effects = s.finish_overtime();
         // Overtime discarded — saved duration is the planned target.
-        assert_eq!(effects, vec![Effect::EndSession { duration_secs: 60 }]);
+        assert_eq!(
+            effects,
+            vec![
+                Effect::StopActiveSignals,
+                Effect::EndSession { duration_secs: 60 },
+            ]
+        );
         assert_eq!(s.phase(), SessionPhase::Stopped);
     }
 
@@ -1413,7 +1484,13 @@ mod tests {
         let _ = s.tick(Duration::from_secs(195)); // 35 s of overtime
         let effects = s.add_overtime_and_finish(Duration::from_secs(195));
         // 60 s target + 35 s overtime = 95 s saved.
-        assert_eq!(effects, vec![Effect::EndSession { duration_secs: 95 }]);
+        assert_eq!(
+            effects,
+            vec![
+                Effect::StopActiveSignals,
+                Effect::EndSession { duration_secs: 95 },
+            ]
+        );
         assert_eq!(s.phase(), SessionPhase::Stopped);
     }
 
