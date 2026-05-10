@@ -25,7 +25,7 @@ use adw::prelude::*;
 use crate::application::MeditateApplication;
 use crate::db::{Preset, SessionMode};
 use crate::i18n::gettext;
-use crate::preset_config::PresetConfig;
+use meditate_core::preset_config::PresetConfig;
 
 /// Tracker for the most-recently-shown chooser-action toast. Used to
 /// dismiss a prior toast when the user fires a second action quickly
@@ -640,7 +640,7 @@ fn present_override_dialog(
 /// `label_names` is a uuid → name map already resolved by the
 /// caller (one DB roundtrip per rebuild instead of per row).
 fn subtitle_for(p: &Preset, label_names: &HashMap<String, String>) -> String {
-    use crate::preset_config::PresetTiming;
+    use meditate_core::preset_config::PresetTiming;
     let cfg = match PresetConfig::from_json(&p.config_json) {
         Ok(c) => c,
         Err(_) => return String::new(),

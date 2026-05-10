@@ -441,7 +441,7 @@ impl Database {
             return Ok(());
         }
 
-        use crate::preset_config::*;
+        use meditate_core::preset_config::*;
         let default_starting_bell_off = || PresetStartingBell {
             enabled: false,
             sound_uuid: BUNDLED_BOWL_UUID.to_string(),
@@ -1671,7 +1671,7 @@ mod tests {
     fn seeded_preset_configs_round_trip_through_preset_config_schema() {
         let db = test_db_in_memory();
         for p in db.list_presets().unwrap() {
-            let cfg = crate::preset_config::PresetConfig::from_json(&p.config_json)
+            let cfg = meditate_core::preset_config::PresetConfig::from_json(&p.config_json)
                 .unwrap_or_else(|e| panic!(
                     "preset '{}' config_json must round-trip: {e} — json={}",
                     p.name, p.config_json,
@@ -1679,9 +1679,9 @@ mod tests {
             // Mode invariant: column-level mode and timing variant agree.
             match (&p.mode, &cfg.timing) {
                 (SessionMode::Timer,
-                    crate::preset_config::PresetTiming::Timer { .. }) => {},
+                    meditate_core::preset_config::PresetTiming::Timer { .. }) => {},
                 (SessionMode::BoxBreath,
-                    crate::preset_config::PresetTiming::BoxBreath { .. }) => {},
+                    meditate_core::preset_config::PresetTiming::BoxBreath { .. }) => {},
                 _ => panic!("preset '{}' column mode {:?} disagrees with timing variant",
                     p.name, p.mode),
             }

@@ -3364,8 +3364,8 @@ impl TimerView {
     /// preset-tap (capture pre-apply state) and the future "Save
     /// Settings" chooser flow (capture state to write into a new or
     /// overwritten preset).
-    fn snapshot_current_setup(&self) -> crate::preset_config::PresetConfig {
-        use crate::preset_config::*;
+    fn snapshot_current_setup(&self) -> meditate_core::preset_config::PresetConfig {
+        use meditate_core::preset_config::*;
         let mode = self.current_mode();
 
         let label = PresetLabel {
@@ -3515,8 +3515,8 @@ impl TimerView {
     /// Returns true iff the apply happened. Returns false when a
     /// referenced bell sound hasn't arrived locally yet (sync-pending);
     /// callers can decide how to surface that to the user.
-    fn apply_config(&self, cfg: &crate::preset_config::PresetConfig) -> bool {
-        use crate::preset_config::PresetTiming;
+    fn apply_config(&self, cfg: &meditate_core::preset_config::PresetConfig) -> bool {
+        use meditate_core::preset_config::PresetTiming;
         let Some(app) = self.get_app() else { return false; };
 
         // Sync sound-uuid lookups: a preset synced from another
@@ -3654,7 +3654,7 @@ impl TimerView {
             // touch phases when the preset itself is Box Breath.
             let preset_is_box_breath = matches!(
                 cfg_owned.timing,
-                crate::preset_config::PresetTiming::BoxBreath { .. },
+                meditate_core::preset_config::PresetTiming::BoxBreath { .. },
             );
             if preset_is_box_breath {
                 let _ = db.set_setting(
@@ -3754,7 +3754,7 @@ impl TimerView {
     /// a sync race could still surface a stale row); the mode toggle
     /// is never side-effected from a tap.
     fn on_preset_row_activated(&self, uuid: &str) {
-        use crate::preset_config::PresetConfig;
+        use meditate_core::preset_config::PresetConfig;
 
         let Some(app) = self.get_app() else { return; };
         let preset = match app.with_db(|db| db.find_preset_by_uuid(uuid)) {
@@ -4562,7 +4562,7 @@ fn preset_subtitle(
     p: &meditate_core::db::Preset,
     label_names: &std::collections::HashMap<String, String>,
 ) -> String {
-    use crate::preset_config::{PresetConfig, PresetTiming};
+    use meditate_core::preset_config::{PresetConfig, PresetTiming};
     let cfg = match PresetConfig::from_json(&p.config_json) {
         Ok(c) => c,
         Err(_) => return String::new(),
