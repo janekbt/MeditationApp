@@ -16,31 +16,7 @@ use meditate_core::timer::{
     Stopwatch as CoreStopwatch,
 };
 
-/// Per-bell schedule used by the running tick. Built once at the
-/// moment the session enters Running (after prep, if any) from the
-/// enabled rows of `interval_bells`. Mutated in place each tick:
-/// interval bells reroll their next ring after firing; fixed bells
-/// flip their `fired` flag.
-#[derive(Debug, Clone)]
-struct ActiveBell {
-    sound: String,
-    vibration_pattern_uuid: String,
-    signal_mode: crate::db::SignalMode,
-    schedule: BellSchedule,
-}
-
-#[derive(Debug, Clone)]
-enum BellSchedule {
-    Interval {
-        base_min: u32,
-        jitter_pct: u32,
-        next_ring_secs: u64,
-    },
-    Fixed {
-        target_secs: u64,
-        fired: bool,
-    },
-}
+use meditate_core::bells::{ActiveBell, BellSchedule};
 
 // ── Per-mode independent state ────────────────────────────────────────────────
 
@@ -4185,10 +4161,11 @@ impl TimerView {
     }
 
     /// Per-tick check: fire any bell whose ring boundary has been
-    /// crossed since the previous tick. Interval bells reroll their
-    /// next ring; fixed bells flip their fired flag so they don't
-    /// re-fire on subsequent ticks. `elapsed_secs` is the running
-    /// session's elapsed-secs (post-prep).
+    /// crossed since the previous tick. The decision (and the
+    /// schedule mutation) lives in `meditate_core::bells::ActiveBell::tick`;
+    /// this loop is the gtk-side dispatcher that routes each fired
+    /// bell's sound + vibration through feedbackd / gstreamer.
+    /// `elapsed_secs` is the running session's elapsed-secs (post-prep).
     fn fire_due_bells_at(&self, elapsed_secs: u64) {
         if self.active_bells.borrow().is_empty() {
             return;
@@ -4200,25 +4177,8 @@ impl TimerView {
         let mut to_play: Vec<(String, String, crate::db::SignalMode)> = Vec::new();
         let mut bells = self.active_bells.borrow_mut();
         for bell in bells.iter_mut() {
-            let mut should_fire = false;
-            match &mut bell.schedule {
-                BellSchedule::Interval { base_min, jitter_pct, next_ring_secs } => {
-                    if elapsed_secs >= *next_ring_secs {
-                        should_fire = true;
-                        let r = self.next_random_unit();
-                        *next_ring_secs = meditate_core::format::next_interval_ring_secs(
-                            *next_ring_secs, *base_min, *jitter_pct, r,
-                        );
-                    }
-                }
-                BellSchedule::Fixed { target_secs, fired } => {
-                    if !*fired && elapsed_secs >= *target_secs {
-                        should_fire = true;
-                        *fired = true;
-                    }
-                }
-            }
-            if should_fire {
+            let mut rng = || self.next_random_unit();
+            if bell.tick(elapsed_secs, &mut rng) {
                 to_play.push((
                     bell.sound.clone(),
                     bell.vibration_pattern_uuid.clone(),

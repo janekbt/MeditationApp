@@ -165,7 +165,7 @@ item 14's deliverable (`unix_to_local_iso` / `local_iso_to_unix` from
 importer in particular also wants item 14 to drop its glib::DateTime
 dependency.
 
-### [ ] 8. Bell-scheduling tick logic + `BellSchedule` struct
+### [x] 8. Bell-scheduling tick logic + `BellSchedule` struct
 
 **From:** `src/timer/imp.rs` (~5028 LOC monster).
 **Move:** the `BellSchedule` struct + its `next_due_at` / `tick`
