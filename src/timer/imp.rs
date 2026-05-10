@@ -2439,7 +2439,12 @@ impl TimerView {
 
         let mode = self.current_mode();
 
-        let elapsed = self.elapsed_secs_for_mode(mode);
+        // Stage 5 of item 13: drive the stop decision through Session
+        // when one's alive (Timer + Box Breath); fall back to the
+        // legacy mode-aware elapsed read for Guided.
+        let elapsed = self
+            .core_session_end(|s, now| s.stop(now))
+            .unwrap_or_else(|| self.elapsed_secs_for_mode(mode));
         // Pin the elapsed we just computed so on_save reads the same
         // value the Done page is about to show. Without this, a stop
         // during prep loses the session: on_save recomputes elapsed
@@ -2968,7 +2973,11 @@ impl TimerView {
         if self.timer_state.get() != TimerState::Overtime {
             return;
         }
-        let elapsed = self.countdown_elapsed_secs();
+        // Stage 5: Session drives the duration; Guided falls back to
+        // the legacy countdown-core read.
+        let elapsed = self
+            .core_session_end(|s, now| s.add_overtime_and_finish(now))
+            .unwrap_or_else(|| self.countdown_elapsed_secs());
         self.end_overtime_session(elapsed);
     }
 
@@ -2982,7 +2991,32 @@ impl TimerView {
         }
         let target = self.countdown_target_secs.get();
         self.final_duration_secs.set(Some(target));
-        self.end_overtime_session(target);
+        // Stage 5: Session emits EndSession with target_secs (overtime
+        // discarded); Guided still uses the legacy target read.
+        let elapsed = self
+            .core_session_end(|s, _now| s.finish_overtime())
+            .unwrap_or(target);
+        self.end_overtime_session(elapsed);
+    }
+
+    /// Run a terminating call against the in-flight Session and
+    /// extract the EndSession.duration_secs from the returned
+    /// effects. `None` when no Session is alive (Guided mode in the
+    /// pre-Guided-migration era, or any race where the Session was
+    /// already dropped). Centralised so on_stop / add_overtime_and_
+    /// finish / finish_overtime_session all read durations through
+    /// the same channel.
+    fn core_session_end<F>(&self, f: F) -> Option<u64>
+    where
+        F: FnOnce(&mut CoreSession, Duration) -> Vec<CoreSessionEffect>,
+    {
+        let now = self.elapsed_since_start();
+        let mut slot = self.core_session.borrow_mut();
+        let s = slot.as_mut()?;
+        f(s, now).into_iter().find_map(|e| match e {
+            CoreSessionEffect::EndSession { duration_secs } => Some(duration_secs),
+            _ => None,
+        })
     }
 
     fn end_overtime_session(&self, elapsed_secs: u64) {
