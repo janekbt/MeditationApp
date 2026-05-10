@@ -381,6 +381,18 @@ pub fn running_text(target: Option<Duration>, elapsed: Duration) -> String {
     }
 }
 
+/// Stable-per-name 0..8 colour-class index for a label name. The
+/// shell maps the index to its native palette (gtk's log view uses
+/// the `log-c0`..`log-c7` CSS classes). DJB-ish string hash so the
+/// mapping survives restarts without a per-label column.
+pub fn label_color_class_index(name: &str) -> usize {
+    let mut h: u32 = 5381;
+    for b in name.bytes() {
+        h = h.wrapping_mul(33).wrapping_add(b as u32);
+    }
+    (h as usize) % 8
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1064,5 +1076,39 @@ mod tests {
         // Bell would land at or before session start — drop it.
         assert_eq!(fixed_from_end_target_secs(30, 1800), None);
         assert_eq!(fixed_from_end_target_secs(45, 1800), None);
+    }
+
+    #[test]
+    fn label_color_index_stays_in_zero_to_seven_inclusive() {
+        for name in &["", "a", "Meditation", "Box Breath", "🍵", "x".repeat(200).as_str()] {
+            let idx = label_color_class_index(name);
+            assert!(idx < 8, "label_color_class_index out of range for {name:?}: {idx}");
+        }
+    }
+
+    #[test]
+    fn label_color_index_is_deterministic_per_name() {
+        assert_eq!(
+            label_color_class_index("Meditation"),
+            label_color_class_index("Meditation"),
+        );
+        assert_eq!(
+            label_color_class_index("Box Breath"),
+            label_color_class_index("Box Breath"),
+        );
+    }
+
+    #[test]
+    fn label_color_index_differs_across_some_names() {
+        // Not a strict requirement (hash collisions in 8 slots are
+        // expected), but a spot-check that the function isn't a
+        // constant.
+        use std::collections::HashSet;
+        let names = ["Meditation", "Box Breath", "Guided", "Sit", "Pranayama"];
+        let indices: HashSet<usize> = names
+            .iter()
+            .map(|n| label_color_class_index(n))
+            .collect();
+        assert!(indices.len() >= 2, "expected at least 2 distinct indices for {names:?}");
     }
 }

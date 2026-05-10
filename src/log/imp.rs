@@ -552,18 +552,14 @@ fn build_label_chip(name: &str, color_cls: &str) -> gtk::Box {
 }
 
 /// Stable-per-name color class. We cycle through 8 HIG palette accents
-/// (defined in CSS as `.log-c0`..`.log-c7`). A DJB-ish string hash keeps
-/// the mapping stable across restarts without needing a per-label column.
+/// (defined in CSS as `.log-c0`..`.log-c7`). The deterministic 0..8
+/// index lives in core; the CSS-class mapping is gtk-side.
 fn label_color_class(name: &str) -> &'static str {
     const CLASSES: &[&str] = &[
         "log-c0", "log-c1", "log-c2", "log-c3",
         "log-c4", "log-c5", "log-c6", "log-c7",
     ];
-    let mut h: u32 = 5381;
-    for b in name.bytes() {
-        h = h.wrapping_mul(33).wrapping_add(b as u32);
-    }
-    CLASSES[(h as usize) % CLASSES.len()]
+    CLASSES[meditate_core::format::label_color_class_index(name)]
 }
 
 /// Local `YYYY-MM-DD` — used as a grouping key. Not shown to the user.

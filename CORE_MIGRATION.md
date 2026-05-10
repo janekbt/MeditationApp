@@ -420,7 +420,7 @@ that does the actual ogg conversion.
 ~20–30 LOC + tests.
 **Risk:** trivial.
 
-### [ ] 20. Bell display formatters → `meditate_core::db` extension
+### [x] 20. Bell display formatters → `meditate_core::db` extension
 
 **From:** `src/bells.rs`:
 - `bell_title(kind: IntervalBellKind)` (lines 346–358) — pattern-match

@@ -341,49 +341,44 @@ fn empty_state_row() -> adw::ActionRow {
 }
 
 /// Concise human-readable summary of a bell — fits on a single
-/// AdwActionRow title line on the Librem 5 portrait. Subtitle carries
-/// the sound name; we don't pack everything into the title.
+/// AdwActionRow title line on the Librem 5 portrait. Maps the
+/// typed key from core to the user-facing translated string.
 fn bell_title(bell: &IntervalBell) -> String {
-    match bell.kind {
-        IntervalBellKind::Interval => {
-            if bell.jitter_pct == 0 {
-                format!("Every {} min", bell.minutes)
-            } else {
-                format!("Every {} min ±{}%", bell.minutes, bell.jitter_pct)
-            }
+    use meditate_core::bells::BellTitleKey;
+    match meditate_core::bells::bell_title_key(bell) {
+        BellTitleKey::EveryNMin { minutes } => gettext("Every {n} min")
+            .replace("{n}", &minutes.to_string()),
+        BellTitleKey::EveryNMinWithJitter { minutes, jitter_pct } => {
+            gettext("Every {n} min ±{j}%")
+                .replace("{n}", &minutes.to_string())
+                .replace("{j}", &jitter_pct.to_string())
         }
-        IntervalBellKind::FixedFromStart => format!("At {} min", bell.minutes),
-        IntervalBellKind::FixedFromEnd => format!("{} min before end", bell.minutes),
+        BellTitleKey::AtNMin { minutes } => gettext("At {n} min")
+            .replace("{n}", &minutes.to_string()),
+        BellTitleKey::NMinBeforeEnd { minutes } => gettext("{n} min before end")
+            .replace("{n}", &minutes.to_string()),
     }
 }
 
 /// Look up a bell-sound's display name from the bell_sounds library.
-/// Empty string if the uuid is empty or stale (post-wipe legacy
-/// values point at no row); the row will just have no subtitle until
-/// the user re-picks via the chooser.
+/// Pulls the library from the DB and delegates the lookup to core
+/// so the Android shell shares the same "empty string when missing"
+/// contract.
 fn sound_label(app: &MeditateApplication, uuid: &str) -> String {
-    if uuid.is_empty() {
-        return String::new();
-    }
-    app.with_db(|db| db.list_bell_sounds())
+    let library = app
+        .with_db(|db| db.list_bell_sounds())
         .and_then(|r| r.ok())
-        .unwrap_or_default()
-        .into_iter()
-        .find(|s| s.uuid == uuid)
-        .map(|s| s.name)
-        .unwrap_or_default()
+        .unwrap_or_default();
+    meditate_core::bells::sound_label(uuid, &library)
 }
 
 /// Same as sound_label but for vibration_patterns.
 fn pattern_label(app: &MeditateApplication, uuid: &str) -> String {
-    if uuid.is_empty() {
-        return String::new();
-    }
-    app.with_db(|db| db.find_vibration_pattern_by_uuid(uuid))
+    let library = app
+        .with_db(|db| db.list_vibration_patterns())
         .and_then(|r| r.ok())
-        .flatten()
-        .map(|p| p.name)
-        .unwrap_or_default()
+        .unwrap_or_default();
+    meditate_core::bells::pattern_label(uuid, &library)
 }
 
 /// Edit page for one bell — pushed when the user taps a row in the
@@ -486,11 +481,10 @@ fn push_edit_page(
     signal_toggle.add(toggle_sound);
     signal_toggle.add(toggle_vibration);
     signal_toggle.add(toggle_both);
-    let initial_mode = if !app.has_haptic() {
-        crate::db::SignalMode::Sound
-    } else {
-        bell.signal_mode
-    };
+    let initial_mode = meditate_core::bells::clamp_signal_mode_for_haptic(
+        bell.signal_mode,
+        app.has_haptic(),
+    );
     signal_toggle.set_active_name(Some(match initial_mode {
         crate::db::SignalMode::Sound     => "sound",
         crate::db::SignalMode::Vibration => "vibration",

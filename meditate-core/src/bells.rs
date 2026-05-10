@@ -12,7 +12,7 @@
 //! the schedule doesn't carry its own state — so the shell stays
 //! free to pick its own deterministic source for tests / replay.
 
-use crate::db::{IntervalBell, IntervalBellKind, SignalMode};
+use crate::db::{BellSound, IntervalBell, IntervalBellKind, SignalMode, VibrationPattern};
 use crate::format::{
     fixed_from_end_target_secs, fixed_from_start_target_secs, next_interval_ring_secs,
 };
@@ -86,6 +86,81 @@ impl ActiveBell {
             }
         }
     }
+}
+
+/// Typed key identifying which translated string the shell should
+/// render for an interval-bell row's title. Variants carry the
+/// numbers to substitute into the gettext template at the call
+/// site — keeps the english string fragments out of core (the
+/// gettext catalogue lives in the shell) while letting the shell
+/// match exhaustively on the variants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BellTitleKey {
+    /// Recurring bell with no jitter. e.g. "Every 5 min".
+    EveryNMin { minutes: u32 },
+    /// Recurring bell with jitter. e.g. "Every 5 min ±20%".
+    EveryNMinWithJitter { minutes: u32, jitter_pct: u32 },
+    /// One-shot bell at a fixed offset from start. e.g. "At 10 min".
+    AtNMin { minutes: u32 },
+    /// One-shot bell at a fixed offset before end. e.g. "5 min before end".
+    NMinBeforeEnd { minutes: u32 },
+}
+
+/// Pick the right typed title key for an interval-bell row.
+/// The shell maps each variant to a translated string at the call
+/// site (see `feedback_meditate_i18n_typed_keys.md`).
+pub fn bell_title_key(bell: &IntervalBell) -> BellTitleKey {
+    match bell.kind {
+        IntervalBellKind::Interval => {
+            if bell.jitter_pct == 0 {
+                BellTitleKey::EveryNMin { minutes: bell.minutes }
+            } else {
+                BellTitleKey::EveryNMinWithJitter {
+                    minutes: bell.minutes,
+                    jitter_pct: bell.jitter_pct,
+                }
+            }
+        }
+        IntervalBellKind::FixedFromStart => BellTitleKey::AtNMin { minutes: bell.minutes },
+        IntervalBellKind::FixedFromEnd => BellTitleKey::NMinBeforeEnd { minutes: bell.minutes },
+    }
+}
+
+/// Look up a bell-sound's display name from a library snapshot.
+/// Empty string when the uuid is empty or stale (post-wipe or
+/// post-sync the stored uuid may point at no row) — the caller
+/// renders a missing subtitle which is the desired "user re-picks"
+/// affordance.
+pub fn sound_label(uuid: &str, library: &[BellSound]) -> String {
+    if uuid.is_empty() {
+        return String::new();
+    }
+    library
+        .iter()
+        .find(|s| s.uuid == uuid)
+        .map(|s| s.name.clone())
+        .unwrap_or_default()
+}
+
+/// Same as `sound_label` but for vibration patterns.
+pub fn pattern_label(uuid: &str, library: &[VibrationPattern]) -> String {
+    if uuid.is_empty() {
+        return String::new();
+    }
+    library
+        .iter()
+        .find(|p| p.uuid == uuid)
+        .map(|p| p.name.clone())
+        .unwrap_or_default()
+}
+
+/// Clamp a persisted `SignalMode` down to `Sound` when the runtime
+/// has no haptic capability. Mirrors the gtk-side UI behaviour:
+/// the user can author Vibration/Both modes in setups they share
+/// across devices, but a sound-only device must not silently fire
+/// nothing for a "Vibration" row. Pure boolean fold.
+pub fn clamp_signal_mode_for_haptic(mode: SignalMode, haptic_available: bool) -> SignalMode {
+    if haptic_available { mode } else { SignalMode::Sound }
 }
 
 /// Build per-session bell schedules from raw `interval_bells` DB
@@ -313,6 +388,95 @@ mod tests {
     }
 
     // ── Cross-shape ────────────────────────────────────────────────────
+
+    // ── bell_title_key + label lookups ────────────────────────────────
+
+    fn interval_row(kind: IntervalBellKind, minutes: u32, jitter_pct: u32) -> IntervalBell {
+        IntervalBell {
+            id: 0,
+            uuid: "row".into(),
+            kind,
+            minutes,
+            jitter_pct,
+            sound: "s".into(),
+            vibration_pattern_uuid: "p".into(),
+            signal_mode: SignalMode::Sound,
+            enabled: true,
+            created_iso: "1970-01-01T00:00:00".into(),
+        }
+    }
+
+    #[test]
+    fn bell_title_key_interval_no_jitter() {
+        let key = bell_title_key(&interval_row(IntervalBellKind::Interval, 5, 0));
+        assert_eq!(key, BellTitleKey::EveryNMin { minutes: 5 });
+    }
+
+    #[test]
+    fn bell_title_key_interval_with_jitter() {
+        let key = bell_title_key(&interval_row(IntervalBellKind::Interval, 10, 20));
+        assert_eq!(
+            key,
+            BellTitleKey::EveryNMinWithJitter { minutes: 10, jitter_pct: 20 }
+        );
+    }
+
+    #[test]
+    fn bell_title_key_fixed_from_start() {
+        let key = bell_title_key(&interval_row(IntervalBellKind::FixedFromStart, 7, 0));
+        assert_eq!(key, BellTitleKey::AtNMin { minutes: 7 });
+    }
+
+    #[test]
+    fn bell_title_key_fixed_from_end() {
+        let key = bell_title_key(&interval_row(IntervalBellKind::FixedFromEnd, 3, 0));
+        assert_eq!(key, BellTitleKey::NMinBeforeEnd { minutes: 3 });
+    }
+
+    #[test]
+    fn sound_label_finds_match_by_uuid() {
+        use crate::db::BellSoundCategory;
+        let lib = vec![BellSound {
+            id: 0,
+            uuid: "u1".into(),
+            name: "Bowl".into(),
+            file_path: "s1.ogg".into(),
+            is_bundled: true,
+            mime_type: "audio/ogg".into(),
+            category: BellSoundCategory::General,
+            created_iso: "1970-01-01T00:00:00".into(),
+        }];
+        assert_eq!(sound_label("u1", &lib), "Bowl");
+    }
+
+    #[test]
+    fn sound_label_returns_empty_on_miss_or_empty_uuid() {
+        assert_eq!(sound_label("", &[]), "");
+        assert_eq!(sound_label("missing", &[]), "");
+    }
+
+    #[test]
+    fn clamp_signal_mode_for_haptic_collapses_to_sound_when_unavailable() {
+        assert_eq!(
+            clamp_signal_mode_for_haptic(SignalMode::Vibration, false),
+            SignalMode::Sound,
+        );
+        assert_eq!(
+            clamp_signal_mode_for_haptic(SignalMode::Both, false),
+            SignalMode::Sound,
+        );
+        assert_eq!(
+            clamp_signal_mode_for_haptic(SignalMode::Sound, false),
+            SignalMode::Sound,
+        );
+    }
+
+    #[test]
+    fn clamp_signal_mode_for_haptic_passes_through_when_available() {
+        for m in [SignalMode::Sound, SignalMode::Vibration, SignalMode::Both] {
+            assert_eq!(clamp_signal_mode_for_haptic(m, true), m);
+        }
+    }
 
     // ── build_active_bells ─────────────────────────────────────────────
 
