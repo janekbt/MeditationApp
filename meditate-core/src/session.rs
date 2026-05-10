@@ -509,6 +509,21 @@ impl Session {
     pub fn mode(&self) -> SessionMode {
         self.settings.mode
     }
+
+    /// Ceiling-rounded remaining seconds of prep silence. `None`
+    /// outside the Prep phase. Used by the gtk shell's hero-label
+    /// readout when re-entering the running page mid-prep (e.g.,
+    /// from the paused screen) — same `(k-1, k] → k` rule as the
+    /// per-tick UpdateDisplay.
+    pub fn prep_remaining_secs(&self, now: Duration) -> Option<u64> {
+        if self.phase != SessionPhase::Prep {
+            return None;
+        }
+        let target_secs = self.settings.prep_secs?;
+        let target = Duration::from_secs(target_secs as u64);
+        let remaining = target.saturating_sub(self.phase_clock.elapsed(now));
+        Some(remaining.as_secs() + u64::from(remaining.subsec_nanos() > 0))
+    }
 }
 
 fn phase_to_id(phase: Phase) -> BoxBreathPhaseId {
@@ -1232,6 +1247,37 @@ mod tests {
             s.tick(Duration::from_secs(190)),
             vec![Effect::UpdateDisplay { secs: 540 }]
         );
+    }
+
+    // ── prep_remaining_secs ──────────────────────────────────────────
+
+    #[test]
+    fn prep_remaining_secs_during_prep_returns_ceiling_remaining() {
+        let s = Session::start_prep(
+            timer_settings_with_prep(30),
+            Duration::from_secs(100),
+        );
+        // 12 s into prep: 18 s remaining.
+        assert_eq!(s.prep_remaining_secs(Duration::from_secs(112)), Some(18));
+    }
+
+    #[test]
+    fn prep_remaining_secs_ceils_subsecond_remainder() {
+        let s = Session::start_prep(
+            timer_settings_with_prep(30),
+            Duration::from_secs(100),
+        );
+        // 12.4 s elapsed → 17.6 s remaining → ceil to 18.
+        assert_eq!(s.prep_remaining_secs(Duration::from_millis(112_400)), Some(18));
+    }
+
+    #[test]
+    fn prep_remaining_secs_outside_prep_is_none() {
+        let s = Session::start_running(
+            timer_countdown_settings(600),
+            Duration::from_secs(100),
+        );
+        assert_eq!(s.prep_remaining_secs(Duration::from_secs(110)), None);
     }
 
     // ── Stop / Finish-overtime / Add-overtime ────────────────────────

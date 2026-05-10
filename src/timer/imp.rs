@@ -11,13 +11,14 @@ use std::time::Duration;
 use meditate_core::breath::BreathPattern;
 use meditate_core::format::format_time;
 use meditate_core::time::boot_time_now;
-use meditate_core::timer::{
-    Countdown as CoreCountdown, CountdownTimer as CoreCountdownTimer,
-    Stopwatch as CoreStopwatch,
-};
 
 use meditate_core::bells::{ActiveBell, BellSchedule};
-use meditate_core::session::{Effect as CoreSessionEffect, Session as CoreSession, SessionSettings as CoreSessionSettings};
+use meditate_core::session::{
+    Effect as CoreSessionEffect,
+    Session as CoreSession,
+    SessionPhase as CoreSessionPhase,
+    SessionSettings as CoreSessionSettings,
+};
 
 // ── Per-mode independent state ────────────────────────────────────────────────
 
@@ -288,23 +289,6 @@ pub struct TimerView {
     /// Suppress persistence side-effects while `load_breathing_settings`
     /// is setting initial values from the DB.
     breathing_populating: Cell<bool>,
-    /// Source of truth for countdown / stopwatch timing (graduation step 2/3).
-    /// `start_instant` anchors monotonic time at on_start; the `*_core` fields
-    /// are queried each tick and updated on pause/resume. Legacy `display_secs`
-    /// is kept in sync as a derived shadow until callers are migrated.
-    countdown_core: RefCell<Option<CoreCountdown>>,
-    stopwatch_core: RefCell<Option<CoreStopwatch>>,
-    /// Box-breath uses a Stopwatch + a separate target duration; the
-    /// per-frame tick reads elapsed via wall-clock and checks done.
-    breath_stopwatch: RefCell<Option<CoreStopwatch>>,
-    breath_target: Cell<std::time::Duration>,
-    /// Timer-mode preparation-interval state. `prep_stopwatch` is
-    /// `Some` while we're in (or paused-from) the Preparing state and
-    /// gets cleared at the prep→Running transition. The tick reads
-    /// elapsed against `prep_target` to decide when to play the bell
-    /// and swap in the real countdown/stopwatch core.
-    prep_stopwatch: RefCell<Option<CoreStopwatch>>,
-    prep_target: Cell<std::time::Duration>,
     /// Snapshot of every interval/fixed bell that should fire during
     /// the current Timer-mode session. Built once at the moment the
     /// session enters Running (either directly from on_start with no
@@ -323,12 +307,11 @@ pub struct TimerView {
     /// Boot-time anchor at session start. Suspend-resilient (see boot_time_now).
     start_boot_time: Cell<Option<std::time::Duration>>,
     /// `meditate_core::session::Session` — the portable state machine
-    /// that owns prep/running/overtime/box-breath/bells/pause logic.
-    /// Migrating in stages (see CORE_MIGRATION.md item 13). Stage 1
-    /// drives only `tick_prep`; subsequent stages take over the
-    /// running, overtime, box-breath, and pause/stop paths. The
-    /// existing per-mode Cells (`prep_stopwatch`, `countdown_core`,
-    /// etc.) stay live in parallel until Stage 6 cleanup.
+    /// that owns prep / running / overtime / box-breath / bells /
+    /// pause logic. Sole source of truth for elapsed time across
+    /// every mode and phase post Stage 6 of CORE_MIGRATION item 13.
+    /// `Some` between start_session and on_stop / finish_overtime /
+    /// add_overtime_and_finish; `None` while idle.
     core_session: RefCell<Option<CoreSession>>,
 }
 
@@ -1774,7 +1757,14 @@ fn attach_revealer_row_click(row: &adw::ActionRow) {
 
 impl TimerView {
     pub(super) fn breathing_target_secs(&self) -> u64 {
-        self.breath_target.get().as_secs()
+        // Cycle-aligned target: round the user-set duration up to
+        // the next full cycle so a Box-Breath session always ends on
+        // an exhale/hold-out boundary. Same shape as the round-up
+        // start_session does when building the Session.
+        let pattern = self.breathing_pattern.get();
+        let cycle = pattern.cycle().as_secs().max(1);
+        let raw = self.breathing_session_secs.get() as u64;
+        raw.div_ceil(cycle) * cycle
     }
 
 
@@ -2093,32 +2083,18 @@ impl TimerView {
 
         match mode {
             TimerMode::Timer => {
-                if prep.is_none() {
-                    self.start_boot_time.set(Some(boot_time_now()));
-                    if self.stopwatch_toggle_on.get() {
-                        *self.stopwatch_core.borrow_mut() =
-                            Some(CoreStopwatch::started_at(std::time::Duration::ZERO));
-                    } else {
-                        let target = self.countdown_target_secs.get();
-                        if target == 0 {
-                            return;
-                        }
-                        let timer =
-                            CoreCountdownTimer::new(std::time::Duration::from_secs(target));
-                        let sw = CoreStopwatch::started_at(std::time::Duration::ZERO);
-                        *self.countdown_core.borrow_mut() =
-                            Some(CoreCountdown::new(timer, sw));
-                    }
-                }
-                // Else: cores stay None until transition_prep_to_running.
                 // Validate countdown target up front so a 0-target
-                // countdown doesn't enter prep just to land on an
-                // un-startable session.
-                if prep.is_some()
-                    && !self.stopwatch_toggle_on.get()
+                // countdown doesn't even start (regardless of prep).
+                if !self.stopwatch_toggle_on.get()
                     && self.countdown_target_secs.get() == 0
                 {
                     return;
+                }
+                // Anchor the boot time once. Without prep the Session
+                // is built directly in the no-prep arm below; with
+                // prep it's built in the prep-setup arm further down.
+                if prep.is_none() {
+                    self.start_boot_time.set(Some(boot_time_now()));
                 }
             }
             TimerMode::Breathing => {
@@ -2130,13 +2106,8 @@ impl TimerView {
                 let raw = self.breathing_session_secs.get() as u64;
                 let target = raw.div_ceil(cycle) * cycle;
                 self.start_boot_time.set(Some(boot_time_now()));
-                *self.breath_stopwatch.borrow_mut() =
-                    Some(CoreStopwatch::started_at(std::time::Duration::ZERO));
-                self.breath_target.set(std::time::Duration::from_secs(target));
-                // Stage 4 of item 13: portable Session drives box-
-                // breath phase-cue firing + cycle-aligned end. No
-                // target_secs → stopwatch-only Box Breath never auto-
-                // ends (matches breath_is_finished returning false).
+                // No target_secs → stopwatch-only Box Breath never
+                // auto-ends; user must press Stop.
                 let core_target = if self.stopwatch_toggle_on.get() {
                     None
                 } else {
@@ -2200,13 +2171,10 @@ impl TimerView {
                 }
 
                 self.start_boot_time.set(Some(boot_time_now()));
-                let timer = CoreCountdownTimer::new(std::time::Duration::from_secs(target));
-                let sw = CoreStopwatch::started_at(std::time::Duration::ZERO);
-                *self.countdown_core.borrow_mut() = Some(CoreCountdown::new(timer, sw));
-                // Stage 6 of item 13: Guided through Session. Always
-                // has a target (the file's probed duration); the
-                // stopwatch toggle only affects the running display
-                // (count-up vs count-down), not the Session's target.
+                // Always carries a target (the file's probed
+                // duration); the stopwatch toggle only affects the
+                // running display (count-up vs count-down), not the
+                // Session's target.
                 let core_settings = CoreSessionSettings {
                     mode: SessionMode::Guided,
                     prep_secs: None,
@@ -2222,18 +2190,11 @@ impl TimerView {
             }
         }
 
-        // Prep-mode setup: anchor the boot time, install the prep
-        // stopwatch + target, and the tick will count down before
-        // playing the bell + setting up the real cores.
+        // Prep-mode setup: anchor the boot time and hand the prep
+        // duration to Session — it owns prep ticking + the prep→
+        // Running transition internally.
         if let Some(prep_dur) = prep {
             self.start_boot_time.set(Some(boot_time_now()));
-            *self.prep_stopwatch.borrow_mut() =
-                Some(CoreStopwatch::started_at(std::time::Duration::ZERO));
-            self.prep_target.set(prep_dur);
-            // Migration stages 1+2: portable state machine drives
-            // prep + running ticks. Built here for prep; rebuilt at
-            // the prep→running transition so the phase_clock anchors
-            // align with the gtk-side boot-time re-anchor.
             let target_secs = if self.stopwatch_toggle_on.get() {
                 None
             } else {
@@ -2313,51 +2274,19 @@ impl TimerView {
         let mode = self.current_mode();
 
         let now = self.elapsed_since_start();
-        // If the user paused during prep, the prep stopwatch is the
-        // one to resume — the real cores haven't been built yet.
-        let resuming_prep = self.prep_stopwatch.borrow().is_some();
-        if resuming_prep {
-            let mut slot = self.prep_stopwatch.borrow_mut();
-            *slot = slot.take().map(|s| s.resumed_at(now));
-            if let Some(s) = self.core_session.borrow_mut().as_mut() {
-                s.resume(now);
-            }
-        } else {
-            match mode {
-                TimerMode::Timer => {
-                    if self.stopwatch_toggle_on.get() {
-                        let mut slot = self.stopwatch_core.borrow_mut();
-                        *slot = slot.take().map(|s| s.resumed_at(now));
-                    } else {
-                        let mut slot = self.countdown_core.borrow_mut();
-                        *slot = slot.take().map(|c| c.resume(now));
-                    }
-                    if let Some(s) = self.core_session.borrow_mut().as_mut() {
-                        s.resume(now);
-                    }
-                }
-                TimerMode::Breathing => {
-                    let mut slot = self.breath_stopwatch.borrow_mut();
-                    *slot = slot.take().map(|s| s.resumed_at(now));
-                    if let Some(s) = self.core_session.borrow_mut().as_mut() {
-                        s.resume(now);
-                    }
-                }
-                TimerMode::Guided => {
-                    // Guided mode reuses the countdown_core for elapsed
-                    // tracking AND drives a gst playbin alongside it.
-                    // Resume both — the playbin picks up at the same
-                    // position the user paused at; the countdown core
-                    // resumes from its frozen elapsed value.
-                    let mut slot = self.countdown_core.borrow_mut();
-                    *slot = slot.take().map(|c| c.resume(now));
-                    if let Some(p) = self.guided_playback.borrow().as_ref() {
-                        p.resume();
-                    }
-                    if let Some(s) = self.core_session.borrow_mut().as_mut() {
-                        s.resume(now);
-                    }
-                }
+        // Session resumes uniformly; phase is preserved across the
+        // pause window so the post-resume timer_state mirrors the
+        // pre-pause one (Preparing or Running). The gst playbin is
+        // the only gtk-side side-resume left.
+        let resuming_prep = self.core_session.borrow().as_ref()
+            .map(|s| s.phase() == CoreSessionPhase::Prep)
+            .unwrap_or(false);
+        if let Some(s) = self.core_session.borrow_mut().as_mut() {
+            s.resume(now);
+        }
+        if mode == TimerMode::Guided {
+            if let Some(p) = self.guided_playback.borrow().as_ref() {
+                p.resume();
             }
         }
         self.timer_state.set(if resuming_prep {
@@ -2393,51 +2322,16 @@ impl TimerView {
     pub fn on_pause(&self) {
         self.cancel_tick();
 
-        let mode = self.tick_mode.get();
         let now = self.elapsed_since_start();
-        // Prep gets paused on its own stopwatch; the real cores
-        // haven't been set up yet during prep.
-        if self.prep_stopwatch.borrow().is_some() {
-            let mut slot = self.prep_stopwatch.borrow_mut();
-            *slot = slot.take().map(|s| s.paused_at(now));
-            // Stage 1: keep the portable Session in lockstep so the
-            // post-resume tick reads the same elapsed.
-            if let Some(s) = self.core_session.borrow_mut().as_mut() {
-                s.pause(now);
-            }
-        } else {
-            match mode {
-                TimerMode::Timer => {
-                    if self.stopwatch_toggle_on.get() {
-                        let mut slot = self.stopwatch_core.borrow_mut();
-                        *slot = slot.take().map(|s| s.paused_at(now));
-                    } else {
-                        let mut slot = self.countdown_core.borrow_mut();
-                        *slot = slot.take().map(|c| c.pause(now));
-                    }
-                    // Stage 2: Session pauses in lockstep so post-
-                    // resume elapsed reads match the legacy core.
-                    if let Some(s) = self.core_session.borrow_mut().as_mut() {
-                        s.pause(now);
-                    }
-                }
-                TimerMode::Breathing => {
-                    let mut slot = self.breath_stopwatch.borrow_mut();
-                    *slot = slot.take().map(|s| s.paused_at(now));
-                    if let Some(s) = self.core_session.borrow_mut().as_mut() {
-                        s.pause(now);
-                    }
-                }
-                TimerMode::Guided => {
-                    let mut slot = self.countdown_core.borrow_mut();
-                    *slot = slot.take().map(|c| c.pause(now));
-                    if let Some(p) = self.guided_playback.borrow().as_ref() {
-                        p.pause();
-                    }
-                    if let Some(s) = self.core_session.borrow_mut().as_mut() {
-                        s.pause(now);
-                    }
-                }
+        // The Session pauses uniformly across phase (Prep / Running /
+        // Overtime / Box-Breath); the gtk shell's only pause-side
+        // wrinkle left is the gst playbin for Guided mode.
+        if let Some(s) = self.core_session.borrow_mut().as_mut() {
+            s.pause(now);
+        }
+        if self.tick_mode.get() == TimerMode::Guided {
+            if let Some(p) = self.guided_playback.borrow().as_ref() {
+                p.pause();
             }
         }
         self.timer_state.set(TimerState::Paused);
@@ -2459,30 +2353,23 @@ impl TimerView {
     pub fn on_stop(&self) {
         self.cancel_tick();
 
-        let mode = self.current_mode();
-
-        // Stage 5 of item 13: drive the stop decision through Session
-        // when one's alive (Timer + Box Breath); fall back to the
-        // legacy mode-aware elapsed read for Guided.
+        // Drive the stop decision through Session: returns the
+        // duration to save regardless of phase (prep elapsed for
+        // stop-during-prep, running elapsed mid-Running, running+
+        // overtime elapsed mid-Overtime, paused-at value if paused).
         let elapsed = self
             .core_session_end(|s, now| s.stop(now))
-            .unwrap_or_else(|| self.elapsed_secs_for_mode(mode));
+            .unwrap_or(0);
         // Pin the elapsed we just computed so on_save reads the same
-        // value the Done page is about to show. Without this, a stop
-        // during prep loses the session: on_save recomputes elapsed
-        // through `elapsed_secs_for_mode`, but by then prep_stopwatch
-        // has been cleared (line below) and no running core exists
-        // (transition_prep_to_running never ran), so the fallback
-        // returns 0 and on_save silently drops the row. Mirrors the
-        // Overtime Finish path which uses the same slot.
+        // value the Done page is about to show. Mirrors the Overtime
+        // Finish path which uses the same slot.
         self.final_duration_secs.set(Some(elapsed));
         self.timer_state.set(TimerState::Done);
         // Drop any prep state — the user stopped during prep, the
-        // session's "elapsed" came from the prep stopwatch above.
+        // session's "elapsed" came from Session's stop() above.
         // Active bells stop firing the moment we leave Running, but
         // the schedule is also dropped here so a quick re-Start
         // rebuilds it from current settings.
-        *self.prep_stopwatch.borrow_mut() = None;
         *self.core_session.borrow_mut() = None;
         self.active_bells.borrow_mut().clear();
         // Guided playback stops the moment the user picks Stop —
@@ -2506,35 +2393,17 @@ impl TimerView {
         self.show_done(elapsed);
     }
 
-    /// Elapsed seconds for the active session, dispatching on mode +
-    /// stopwatch toggle. Used by on_stop / on_save (both produce a
-    /// session row whose `duration_secs` is what we return here).
-    /// During (or paused-from) prep, the cores haven't been set up
-    /// yet — fall back to the prep stopwatch so a "stop during prep"
-    /// still saves a real session row with the time the user spent.
-    fn elapsed_secs_for_mode(&self, mode: TimerMode) -> u64 {
-        // Overtime "Finish" sets this so the saved duration is the
-        // planned countdown instead of countdown + overtime. Add's
-        // path leaves it unset and falls through to natural elapsed.
+    /// Elapsed seconds for the active session. Used by on_stop /
+    /// on_save (both produce a session row whose `duration_secs` is
+    /// what we return here). `final_duration_secs` short-circuits
+    /// when set (Overtime "Finish" pins the planned target there);
+    /// otherwise reads from Session, which has uniform elapsed
+    /// semantics across Prep / Running / Overtime / Box-Breath.
+    fn elapsed_secs_for_mode(&self) -> u64 {
         if let Some(forced) = self.final_duration_secs.get() {
             return forced;
         }
-        if let Some(prep) = self.prep_stopwatch.borrow().as_ref() {
-            return prep.elapsed(self.elapsed_since_start()).as_secs();
-        }
-        match mode {
-            TimerMode::Timer => {
-                if self.stopwatch_toggle_on.get() {
-                    self.stopwatch_elapsed_secs()
-                } else {
-                    self.countdown_elapsed_secs()
-                }
-            }
-            TimerMode::Breathing => self.breath_elapsed().as_secs(),
-            // Guided uses the countdown_core for elapsed tracking
-            // (set up in start_session). Same shape as Timer countdown.
-            TimerMode::Guided => self.countdown_elapsed_secs(),
-        }
+        self.session_elapsed().as_secs()
     }
 
     fn show_done(&self, elapsed_secs: u64) {
@@ -2566,7 +2435,7 @@ impl TimerView {
         crate::sound::stop_all();
         let mode = self.current_mode();
 
-        let elapsed = self.elapsed_secs_for_mode(mode);
+        let elapsed = self.elapsed_secs_for_mode();
         let start_time = self.session_start_time.get();
 
         if elapsed == 0 {
@@ -2699,33 +2568,22 @@ impl TimerView {
 
     /// Reset a single mode back to Idle and update the UI if it's currently shown.
     fn reset_mode(&self, mode: TimerMode) {
+        // Session is the sole owner of session timing state; drop
+        // it once, regardless of mode. Bells and the gst playbin
+        // are mode-specific gtk-side artefacts that still need
+        // explicit teardown.
+        *self.core_session.borrow_mut() = None;
         match mode {
             TimerMode::Timer => {
-                // Clear whichever core was running — at most one is Some
-                // per session, but blanking both is safe and saves the
-                // toggle-state read. The prep stopwatch is also Timer-
-                // mode only and gets reset alongside, as is the active
-                // bell schedule built at session start.
-                *self.stopwatch_core.borrow_mut() = None;
-                *self.countdown_core.borrow_mut() = None;
-                *self.prep_stopwatch.borrow_mut() = None;
-                *self.core_session.borrow_mut() = None;
                 self.active_bells.borrow_mut().clear();
             }
-            TimerMode::Breathing => {
-                *self.breath_stopwatch.borrow_mut() = None;
-                *self.core_session.borrow_mut() = None;
-            }
+            TimerMode::Breathing => {}
             TimerMode::Guided => {
-                // Same countdown_core slot as Timer countdown. Plus
-                // tear down the gst playbin (Drop runs set_state(Null)
-                // + removes the bus signal-watch). The playback might
-                // already be None if a prior on_stop / overtime path
-                // dropped it; the borrow_mut + None assignment is
-                // idempotent.
-                *self.countdown_core.borrow_mut() = None;
+                // Drop runs set_state(Null) + removes the bus
+                // signal-watch. The playback might already be None
+                // if a prior on_stop / overtime path dropped it;
+                // borrow_mut + None assignment is idempotent.
                 *self.guided_playback.borrow_mut() = None;
-                *self.core_session.borrow_mut() = None;
             }
         }
         self.timer_state.set(TimerState::Idle);
@@ -3048,37 +2906,18 @@ impl TimerView {
         self.show_done(elapsed_secs);
     }
 
-    /// Prep finished — drop the prep stopwatch, play the starting
-    /// bell, set up the real countdown/stopwatch core, re-anchor the
-    /// boot time so the running session counts from zero, and flip
-    /// the state to Running. The same tick will pick up where this
-    /// left off on its next iteration.
+    /// Prep finished — play the starting bell, swap in a fresh
+    /// running Session, and flip the state to Running. The 1 Hz
+    /// tick will pick up where this left off on its next iteration.
     fn transition_prep_to_running(&self) {
-        *self.prep_stopwatch.borrow_mut() = None;
-
         if let Some(app) = self.get_app() {
             self.fire_starting_bell(&app);
         }
 
-        // Re-anchor so the running cores see elapsed starting at zero,
-        // not at prep_target.
-        self.start_boot_time.set(Some(boot_time_now()));
-        if self.stopwatch_toggle_on.get() {
-            *self.stopwatch_core.borrow_mut() =
-                Some(CoreStopwatch::started_at(std::time::Duration::ZERO));
-        } else {
-            let target = self.countdown_target_secs.get();
-            let timer = CoreCountdownTimer::new(std::time::Duration::from_secs(target));
-            let sw = CoreStopwatch::started_at(std::time::Duration::ZERO);
-            *self.countdown_core.borrow_mut() = Some(CoreCountdown::new(timer, sw));
-        }
-
-        // Stage 2: rebuild Session::start_running so its phase_clock
-        // anchors at the same Duration::ZERO origin the freshly-built
-        // countdown/stopwatch cores do — boot_time was just re-
-        // anchored. The internal Prep→Running transition Session ran
-        // already emitted EndPrep on the previous tick; this rebuild
-        // is the equivalent of the gtk-side core swap.
+        // Rebuild Session in Running phase, anchored at the current
+        // boot-relative time. The previous prep Session already
+        // emitted EndPrep on the tick that called us; this swap is
+        // the equivalent of the bygone countdown_core construction.
         let target_secs = if self.stopwatch_toggle_on.get() {
             None
         } else {
@@ -3092,9 +2931,10 @@ impl TimerView {
             bells: Vec::new(),
             bell_rng_seed: 1,
         };
+        let now = self.elapsed_since_start();
         *self.core_session.borrow_mut() = Some(CoreSession::start_running(
             core_settings,
-            std::time::Duration::ZERO,
+            now,
         ));
 
         self.timer_state.set(TimerState::Running);
@@ -3131,55 +2971,38 @@ impl TimerView {
     }
 
     /// Countdown remaining seconds (ceiling), 0 if no session running.
-    fn countdown_remaining_secs(&self) -> u64 {
+    /// Wall-clock-anchored, pause-frozen elapsed of the in-flight
+    /// session. Returns ZERO if no session is running. Sole gtk-side
+    /// reader of session elapsed post Stage 6 — every per-mode
+    /// helper that used to dispatch into a Cell now collapses here.
+    fn session_elapsed(&self) -> Duration {
         let now = self.elapsed_since_start();
-        self.countdown_core
-            .borrow()
-            .as_ref()
-            .map(|c| {
-                let r = c.remaining(now);
-                r.as_secs() + (r.subsec_nanos() > 0) as u64
-            })
-            .unwrap_or(0)
-    }
-
-    /// Countdown elapsed seconds (target - remaining, capped at target).
-    fn countdown_elapsed_secs(&self) -> u64 {
-        let now = self.elapsed_since_start();
-        self.countdown_core
-            .borrow()
-            .as_ref()
-            .map(|c| c.elapsed(now).as_secs())
-            .unwrap_or(0)
-    }
-
-    fn stopwatch_elapsed_secs(&self) -> u64 {
-        let now = self.elapsed_since_start();
-        self.stopwatch_core
-            .borrow()
-            .as_ref()
-            .map(|s| s.elapsed(now).as_secs())
-            .unwrap_or(0)
-    }
-
-    /// Wall-clock-anchored elapsed time of the active breath session.
-    /// Returns ZERO if no session is running. Pause freezes this value.
-    pub(super) fn breath_elapsed(&self) -> std::time::Duration {
-        let now = self.elapsed_since_start();
-        self.breath_stopwatch
+        self.core_session
             .borrow()
             .as_ref()
             .map(|s| s.elapsed(now))
             .unwrap_or_default()
     }
 
-    pub(super) fn breath_is_finished(&self) -> bool {
-        // Stopwatch mode runs Box Breath without a fixed target —
-        // user must press Stop. Natural completion never fires.
-        if self.stopwatch_toggle_on.get() {
-            return false;
-        }
-        self.breath_elapsed() >= self.breath_target.get()
+    fn countdown_remaining_secs(&self) -> u64 {
+        let target = Duration::from_secs(self.countdown_target_secs.get());
+        let r = target.saturating_sub(self.session_elapsed());
+        r.as_secs() + (r.subsec_nanos() > 0) as u64
+    }
+
+    /// Countdown elapsed seconds (target - remaining, capped at target).
+    fn countdown_elapsed_secs(&self) -> u64 {
+        self.session_elapsed().as_secs()
+    }
+
+    fn stopwatch_elapsed_secs(&self) -> u64 {
+        self.session_elapsed().as_secs()
+    }
+
+    /// Wall-clock-anchored elapsed time of the active breath session.
+    /// Returns ZERO if no session is running. Pause freezes this value.
+    pub(super) fn breath_elapsed(&self) -> std::time::Duration {
+        self.session_elapsed()
     }
 
     /// Tick the portable Session against the current boot-anchored
@@ -3961,16 +3784,21 @@ impl TimerView {
 
     pub fn current_display_secs(&self) -> u64 {
         // While in (or paused from) prep, the hero shows the prep
-        // remaining — the real cores haven't been wired up yet.
-        if let Some(prep) = self.prep_stopwatch.borrow().as_ref() {
-            let elapsed = prep.elapsed(self.elapsed_since_start());
-            let remaining = self.prep_target.get().saturating_sub(elapsed);
-            return remaining.as_secs() + (remaining.subsec_nanos() > 0) as u64;
+        // remaining. Session knows its phase + prep target, so the
+        // gtk shell just asks for the ceiling-rounded remaining.
+        let now = self.elapsed_since_start();
+        if let Some(remaining) = self
+            .core_session
+            .borrow()
+            .as_ref()
+            .and_then(|s| s.prep_remaining_secs(now))
+        {
+            return remaining;
         }
-        // Return the display value for whichever mode is about to go running.
-        // Stopwatch in any mode counts up from 0 via stopwatch_elapsed_secs;
-        // when off, each mode falls back to its natural readout (Timer
-        // countdown / Box Breath elapsed / Guided countdown).
+        // Otherwise: the running readout for the active mode.
+        // Stopwatch in any mode counts up from 0; when off, each
+        // mode shows its natural readout (Timer countdown / Box
+        // Breath elapsed / Guided countdown).
         match self.tick_mode.get() {
             TimerMode::Timer => {
                 if self.stopwatch_toggle_on.get() {
@@ -3981,10 +3809,6 @@ impl TimerView {
             }
             TimerMode::Breathing => self.breath_elapsed().as_secs(),
             TimerMode::Guided => {
-                // Guided always uses a countdown core (file's natural
-                // length). Stopwatch shows the same core's elapsed
-                // reading instead of the remaining — file plays out,
-                // hero counts up.
                 if self.stopwatch_toggle_on.get() {
                     self.countdown_elapsed_secs()
                 } else {

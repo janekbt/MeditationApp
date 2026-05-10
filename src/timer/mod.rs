@@ -138,10 +138,6 @@ impl TimerView {
         self.imp().stopwatch_toggle_on.get()
     }
 
-    pub fn breath_is_finished(&self) -> bool {
-        self.imp().breath_is_finished()
-    }
-
     pub fn finish_breath_session(&self) {
         self.imp().finish_breath_session();
     }

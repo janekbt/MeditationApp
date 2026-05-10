@@ -249,7 +249,7 @@ the walker logic moves over verbatim.
 **Risk:** medium. The trait shape is the design call here — discuss
 before coding.
 
-### [ ] 13. Session-tick decision logic
+### [x] 13. Session-tick decision logic
 
 **From:** the pure-decision part of `tick_running` (2696),
 `tick_prep` (2674), and `tick_overtime` (2838) in `timer/imp.rs`,
