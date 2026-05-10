@@ -400,7 +400,7 @@ envelope code. The label-thinning becomes a pure function returning
 the indices to render. Cairo glue stays in `vibration_editor.rs`.
 **Risk:** small.
 
-### [ ] 19. Sound-import validation helpers → `meditate_core::db` or new `core::sound`
+### [x] 19. Sound-import validation helpers → `meditate_core::db` or new `core::sound`
 
 **From:** `src/sounds.rs`:
 - File-extension → output-extension/MIME mapping (lines 619–623) —

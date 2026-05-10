@@ -307,10 +307,11 @@ fn add_delete_button(
     row.add_suffix(&delete_btn);
 }
 
-/// 10 MB cap matches the locked B.5 spec — same number is enforced
-/// on the inbound sync side in B.6 so a peer can't push a file
-/// bigger than what the local UI would accept.
-const MAX_CUSTOM_BELL_BYTES: u64 = 10 * 1024 * 1024;
+// 10 MB cap matches the locked B.5 spec — same number is enforced
+// on the inbound sync side in B.6 so a peer can't push a file bigger
+// than what the local UI would accept. Source of truth lives in
+// `meditate_core::sound::MAX_CUSTOM_BELL_BYTES` so the Android shell
+// + the sync gate read the same constant.
 
 /// Open a file picker, validate the chosen file, and (on confirm)
 /// import it into the bell-sound library. Calls `on_imported` after
@@ -347,7 +348,7 @@ fn present_file_picker(
 
             // Size cap.
             let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-            if size > MAX_CUSTOM_BELL_BYTES {
+            if !meditate_core::sound::is_within_size_limit(size) {
                 present_size_toast(&anchor);
                 return;
             }
@@ -384,11 +385,7 @@ fn present_import_confirm_dialog(
     source_path: &std::path::Path,
     on_imported: Rc<Box<dyn Fn()>>,
 ) {
-    let stem = source_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("Custom sound")
-        .to_string();
+    let stem = meditate_core::sound::display_name_from_path(source_path);
     let filename = source_path
         .file_name()
         .and_then(|s| s.to_str())
@@ -463,13 +460,11 @@ fn present_import_confirm_dialog(
         Rc::new(move || {
             let text = entry.text();
             let trimmed = text.trim();
-            let lower = trimmed.to_lowercase();
-            let collision = app
+            let library = app
                 .with_db(|db| db.list_bell_sounds())
                 .and_then(|r| r.ok())
-                .unwrap_or_default()
-                .into_iter()
-                .any(|s| s.name.to_lowercase() == lower);
+                .unwrap_or_default();
+            let collision = meditate_core::sound::name_collides(trimmed, &library);
             let valid = !trimmed.is_empty() && !collision;
             import_btn.set_sensitive(valid);
             // Only show the collision message when the user has
@@ -611,16 +606,10 @@ fn do_import_io(
         .map(|s| s.to_ascii_lowercase())
         .unwrap_or_else(|| "wav".to_string());
 
-    // wav and ogg pass through gtk::MediaFile cleanly on every runtime
-    // we ship to. Everything else (mp3, m4a, opus, flac, …) becomes
-    // OGG/Vorbis on the way in. Vorbis at quality 0.4 (~128 kbps) is
-    // far below the 10 MB cap for any reasonable bell-length input
-    // and is plenty for short transient sounds.
-    let (dest_ext, mime): (&str, &'static str) = match source_ext.as_str() {
-        "wav" => ("wav", "audio/wav"),
-        "ogg" => ("ogg", "audio/ogg"),
-        _ => ("ogg", "audio/ogg"),
-    };
+    // wav and ogg pass through; everything else transcodes to
+    // OGG/Vorbis on import. Mapping lives in core so the Android
+    // shell's importer shares it.
+    let (dest_ext, mime) = meditate_core::sound::target_extension_and_mime(&source_ext);
 
     let new_uuid = crate::db::mint_uuid();
     let dest_dir = gtk::glib::user_data_dir()
@@ -798,13 +787,13 @@ fn present_rename_dialog(
         Rc::new(move || {
             let text = entry.text();
             let trimmed = text.trim();
-            let lower = trimmed.to_lowercase();
-            let collision = app
+            let library = app
                 .with_db(|db| db.list_bell_sounds())
                 .and_then(|r| r.ok())
-                .unwrap_or_default()
-                .into_iter()
-                .any(|s| s.uuid != uuid && s.name.to_lowercase() == lower);
+                .unwrap_or_default();
+            let collision = meditate_core::sound::name_collides_excluding(
+                trimmed, &library, &uuid,
+            );
             let valid = !trimmed.is_empty() && !collision;
             dialog.set_response_enabled("rename", valid);
         })

@@ -8,6 +8,7 @@ pub mod preset_config;
 pub mod rng;
 pub mod seeds;
 pub mod session;
+pub mod sound;
 pub mod settings_keys;
 pub mod sync;
 pub mod time;
