@@ -37,6 +37,18 @@ pub fn unix_now() -> i64 {
         .as_secs() as i64
 }
 
+/// Wall-clock nanos as a `u64`, suitable as an xorshift64 seed for
+/// per-session bell jitter. Always returns ≥ 1 (xorshift64 outputs
+/// 0 forever from a 0 seed, so we collapse a clock that somehow
+/// reports the unix epoch to 1).
+pub fn seed_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(1)
+        .max(1)
+}
+
 /// Format a unix timestamp (UTC seconds since epoch) as a local-naive
 /// ISO 8601 string `YYYY-MM-DDTHH:MM:SS`. The string represents the
 /// wall-clock time the user would see on their device — no timezone

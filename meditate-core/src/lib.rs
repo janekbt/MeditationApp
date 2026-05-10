@@ -5,6 +5,7 @@ pub mod db;
 pub mod diag;
 pub mod format;
 pub mod preset_config;
+pub mod rng;
 pub mod seeds;
 pub mod session;
 pub mod settings_keys;

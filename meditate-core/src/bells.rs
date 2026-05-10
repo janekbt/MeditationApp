@@ -12,8 +12,10 @@
 //! the schedule doesn't carry its own state — so the shell stays
 //! free to pick its own deterministic source for tests / replay.
 
-use crate::db::SignalMode;
-use crate::format::next_interval_ring_secs;
+use crate::db::{IntervalBell, IntervalBellKind, SignalMode};
+use crate::format::{
+    fixed_from_end_target_secs, fixed_from_start_target_secs, next_interval_ring_secs,
+};
 
 /// One bell's per-session schedule. Built once at the moment a session
 /// enters Running (after prep, if any) and mutated in place by
@@ -84,6 +86,70 @@ impl ActiveBell {
             }
         }
     }
+}
+
+/// Build per-session bell schedules from raw `interval_bells` DB
+/// rows. Skips disabled rows; also skips `FixedFromEnd` rows when
+/// `stopwatch_on` is true (no end to count backwards from).
+/// Interval rows get an initial jittered roll for `next_ring_secs`
+/// using xorshift64 seeded from `seed`; the advanced state is
+/// returned so the caller (typically `Session`) can continue the
+/// same deterministic sequence on subsequent reroll draws.
+///
+/// `total_target_secs` is the planned session duration: required for
+/// `FixedFromEnd` resolution, ignored otherwise.
+pub fn build_active_bells(
+    rows: &[IntervalBell],
+    total_target_secs: Option<u64>,
+    stopwatch_on: bool,
+    seed: u64,
+) -> (Vec<ActiveBell>, u64) {
+    let mut state = seed.max(1);
+    let mut bells = Vec::new();
+    for row in rows {
+        if !row.enabled {
+            continue;
+        }
+        // Stopwatch sessions mute fixed-from-end bells — there's
+        // no end to count backwards from. Mirrors the gtk UI's
+        // grey-out at the same condition.
+        if stopwatch_on && row.kind == IntervalBellKind::FixedFromEnd {
+            continue;
+        }
+        let schedule = match row.kind {
+            IntervalBellKind::Interval => {
+                let (r, next) = crate::rng::xorshift64(state);
+                state = next;
+                let next_ring =
+                    next_interval_ring_secs(0, row.minutes, row.jitter_pct, r);
+                BellSchedule::Interval {
+                    base_min: row.minutes,
+                    jitter_pct: row.jitter_pct,
+                    next_ring_secs: next_ring,
+                }
+            }
+            IntervalBellKind::FixedFromStart => {
+                match fixed_from_start_target_secs(row.minutes, total_target_secs) {
+                    Some(t) => BellSchedule::Fixed { target_secs: t, fired: false },
+                    None => continue,
+                }
+            }
+            IntervalBellKind::FixedFromEnd => {
+                let Some(total) = total_target_secs else { continue; };
+                match fixed_from_end_target_secs(row.minutes, total) {
+                    Some(t) => BellSchedule::Fixed { target_secs: t, fired: false },
+                    None => continue,
+                }
+            }
+        };
+        bells.push(ActiveBell {
+            sound: row.sound.clone(),
+            vibration_pattern_uuid: row.vibration_pattern_uuid.clone(),
+            signal_mode: row.signal_mode,
+            schedule,
+        });
+    }
+    (bells, state)
 }
 
 #[cfg(test)]
@@ -247,6 +313,100 @@ mod tests {
     }
 
     // ── Cross-shape ────────────────────────────────────────────────────
+
+    // ── build_active_bells ─────────────────────────────────────────────
+
+    fn row(
+        kind: IntervalBellKind,
+        minutes: u32,
+        jitter_pct: u32,
+        enabled: bool,
+    ) -> IntervalBell {
+        IntervalBell {
+            id: 0,
+            uuid: "row-uuid".into(),
+            kind,
+            minutes,
+            jitter_pct,
+            sound: "row-sound".into(),
+            vibration_pattern_uuid: "row-pattern".into(),
+            signal_mode: SignalMode::Sound,
+            enabled,
+            created_iso: "1970-01-01T00:00:00".into(),
+        }
+    }
+
+    #[test]
+    fn build_skips_disabled_rows() {
+        let rows = vec![
+            row(IntervalBellKind::Interval, 5, 0, false),
+            row(IntervalBellKind::Interval, 10, 0, true),
+        ];
+        let (bells, _) = build_active_bells(&rows, Some(1800), false, 42);
+        assert_eq!(bells.len(), 1);
+        assert!(matches!(
+            bells[0].schedule,
+            BellSchedule::Interval { base_min: 10, .. }
+        ));
+    }
+
+    #[test]
+    fn build_skips_fixed_from_end_when_stopwatch_on() {
+        let rows = vec![
+            row(IntervalBellKind::FixedFromEnd, 2, 0, true),
+            row(IntervalBellKind::FixedFromStart, 5, 0, true),
+        ];
+        let (bells, _) = build_active_bells(&rows, None, true, 42);
+        // FixedFromEnd dropped; FixedFromStart survives (it doesn't
+        // need a session target).
+        assert_eq!(bells.len(), 1);
+        assert!(matches!(
+            bells[0].schedule,
+            BellSchedule::Fixed { target_secs: 300, .. }
+        ));
+    }
+
+    #[test]
+    fn build_advances_seed_for_each_interval_row() {
+        let rows = vec![
+            row(IntervalBellKind::Interval, 5, 50, true),
+            row(IntervalBellKind::Interval, 10, 50, true),
+            row(IntervalBellKind::Interval, 15, 50, true),
+        ];
+        let (_, seed_after) = build_active_bells(&rows, Some(3600), false, 42);
+        // Three interval rows → three xorshift draws → state must
+        // have moved off the seed.
+        assert_ne!(seed_after, 42);
+    }
+
+    #[test]
+    fn build_same_seed_yields_same_initial_schedules() {
+        let rows = vec![
+            row(IntervalBellKind::Interval, 5, 50, true),
+            row(IntervalBellKind::Interval, 10, 50, true),
+        ];
+        let (a, sa) = build_active_bells(&rows, Some(3600), false, 12345);
+        let (b, sb) = build_active_bells(&rows, Some(3600), false, 12345);
+        assert_eq!(sa, sb);
+        for (x, y) in a.iter().zip(b.iter()) {
+            assert_eq!(x.schedule, y.schedule);
+        }
+    }
+
+    #[test]
+    fn build_fixed_rows_consume_no_rng_state() {
+        let interval_only = vec![row(IntervalBellKind::Interval, 5, 0, true)];
+        let mixed = vec![
+            row(IntervalBellKind::FixedFromStart, 2, 0, true),
+            row(IntervalBellKind::Interval, 5, 0, true),
+            row(IntervalBellKind::FixedFromEnd, 1, 0, true),
+        ];
+        let (_, sa) = build_active_bells(&interval_only, Some(600), false, 7);
+        let (_, sb) = build_active_bells(&mixed, Some(600), false, 7);
+        // The Interval row is the only consumer of rng — both runs
+        // must end at the same state.
+        assert_eq!(sa, sb);
+    }
 
     #[test]
     fn no_fire_consumes_no_rng_draw() {

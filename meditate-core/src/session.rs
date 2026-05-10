@@ -573,17 +573,6 @@ fn phase_to_id(phase: Phase) -> BoxBreathPhaseId {
     }
 }
 
-/// One xorshift64 step. Same algorithm the GTK shell's
-/// `next_random_unit` used; kept here so a Session's bell-jitter
-/// sequence is fully reproducible from the seed.
-fn xorshift64_step(state: u64) -> u64 {
-    let mut s = state;
-    s ^= s << 13;
-    s ^= s >> 7;
-    s ^= s << 17;
-    s
-}
-
 /// Iterate over the session's bells, tick each against `elapsed`,
 /// and emit `FireBell` effects for every bell that crosses its
 /// ring boundary this tick. Mutates `bells` (Interval bells reroll
@@ -602,9 +591,9 @@ fn fire_due_bells(
     let elapsed_secs = elapsed.as_secs();
     for bell in bells.iter_mut() {
         let mut rng = || -> f64 {
-            *rng_state = xorshift64_step(*rng_state);
-            // Top 53 bits → f64 in [0, 1) without losing precision.
-            (*rng_state >> 11) as f64 / (1u64 << 53) as f64
+            let (unit, next) = crate::rng::xorshift64(*rng_state);
+            *rng_state = next;
+            unit
         };
         if bell.tick(elapsed_secs, &mut rng) {
             effects.push(Effect::FireBell {
