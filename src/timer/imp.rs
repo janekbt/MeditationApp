@@ -2193,13 +2193,19 @@ impl TimerView {
             *self.prep_stopwatch.borrow_mut() =
                 Some(CoreStopwatch::started_at(std::time::Duration::ZERO));
             self.prep_target.set(prep_dur);
-            // Migration stage 1: drive prep ticks through the
-            // portable state machine. Other phases still run on
-            // the legacy Cells until later stages.
+            // Migration stages 1+2: portable state machine drives
+            // prep + running ticks. Built here for prep; rebuilt at
+            // the prep→running transition so the phase_clock anchors
+            // align with the gtk-side boot-time re-anchor.
+            let target_secs = if self.stopwatch_toggle_on.get() {
+                None
+            } else {
+                Some(self.countdown_target_secs.get() as u32)
+            };
             let core_settings = CoreSessionSettings {
                 mode: SessionMode::Timer,
                 prep_secs: Some(prep_dur.as_secs() as u32),
-                target_secs: None,
+                target_secs,
                 breath_pattern: None,
                 bells: Vec::new(),
                 bell_rng_seed: 1,
@@ -2215,6 +2221,25 @@ impl TimerView {
             // prep, the same call lives in transition_prep_to_running.
             if mode == TimerMode::Timer {
                 self.load_active_bells_for_running();
+                // Stage 2 of item 13: portable Session drives the
+                // running tick for Timer mode (countdown + stopwatch).
+                let target_secs = if self.stopwatch_toggle_on.get() {
+                    None
+                } else {
+                    Some(self.countdown_target_secs.get() as u32)
+                };
+                let core_settings = CoreSessionSettings {
+                    mode: SessionMode::Timer,
+                    prep_secs: None,
+                    target_secs,
+                    breath_pattern: None,
+                    bells: Vec::new(),
+                    bell_rng_seed: 1,
+                };
+                *self.core_session.borrow_mut() = Some(CoreSession::start_running(
+                    core_settings,
+                    std::time::Duration::ZERO,
+                ));
             }
         }
 
@@ -2269,6 +2294,9 @@ impl TimerView {
                     } else {
                         let mut slot = self.countdown_core.borrow_mut();
                         *slot = slot.take().map(|c| c.resume(now));
+                    }
+                    if let Some(s) = self.core_session.borrow_mut().as_mut() {
+                        s.resume(now);
                     }
                 }
                 TimerMode::Breathing => {
@@ -2343,6 +2371,11 @@ impl TimerView {
                     } else {
                         let mut slot = self.countdown_core.borrow_mut();
                         *slot = slot.take().map(|c| c.pause(now));
+                    }
+                    // Stage 2: Session pauses in lockstep so post-
+                    // resume elapsed reads match the legacy core.
+                    if let Some(s) = self.core_session.borrow_mut().as_mut() {
+                        s.pause(now);
                     }
                 }
                 TimerMode::Breathing => {
@@ -2704,37 +2737,49 @@ impl TimerView {
     }
 
     fn tick_running(&self, _obj: &super::TimerView) -> glib::ControlFlow {
+        let mode = self.tick_mode.get();
         let is_stopwatch = self.stopwatch_toggle_on.get();
-        let (new_secs, done) = {
-            if is_stopwatch {
-                // Stopwatch: floor seconds (display "0:01" once we
-                // cross 1.0s, "0:00" otherwise). Source depends on
-                // mode: Timer's stopwatch path uses stopwatch_core
-                // (no countdown alongside), Guided's uses the
-                // countdown core's internal stopwatch (the file
-                // still drives a target — only the display switches
-                // to count-up).
-                let elapsed = match self.tick_mode.get() {
-                    TimerMode::Guided => self.countdown_elapsed_secs(),
-                    _ => self.stopwatch_elapsed_secs(),
-                };
-                (elapsed, false)
-            } else {
-                // Countdown: ceiling seconds (while remaining is in
-                // (k-1, k], show k — avoids skipping "0:59" on the
-                // first tick which fires slightly past 1.0s).
-                let now = self.elapsed_since_start();
-                let core = self.countdown_core.borrow();
-                let Some(c) = core.as_ref() else {
-                    return glib::ControlFlow::Break;
-                };
-                if c.is_finished(now) {
-                    self.timer_state.set(TimerState::Done);
-                    (c.elapsed(now).as_secs(), true)
-                } else {
-                    let r = c.remaining(now);
-                    (r.as_secs() + (r.subsec_nanos() > 0) as u64, false)
+        // Stage 2 of item 13: Timer mode delegates the per-tick
+        // display + countdown→overtime decision to the portable
+        // Session. Guided still uses the legacy countdown_core path
+        // until a later stage migrates it. The bell-firing block
+        // and the running-label update below are shared (gtk owns
+        // bells until a later stage too).
+        let (new_secs, done) = if mode == TimerMode::Timer {
+            let now = self.elapsed_since_start();
+            let mut session = self.core_session.borrow_mut();
+            let Some(s) = session.as_mut() else {
+                return glib::ControlFlow::Break;
+            };
+            let mut display: u64 = 0;
+            let mut entered_overtime = false;
+            for effect in s.tick(now) {
+                match effect {
+                    CoreSessionEffect::UpdateDisplay { secs } => display = secs,
+                    CoreSessionEffect::EnterOvertime => entered_overtime = true,
+                    _ => {}
                 }
+            }
+            (display, entered_overtime)
+        } else if is_stopwatch {
+            // Guided stopwatch: countdown_core's internal stopwatch
+            // drives the count-up display.
+            (self.countdown_elapsed_secs(), false)
+        } else {
+            // Guided countdown: ceiling seconds (while remaining is
+            // in (k-1, k], show k — avoids skipping "0:59" on the
+            // first tick which fires slightly past 1.0s).
+            let now = self.elapsed_since_start();
+            let core = self.countdown_core.borrow();
+            let Some(c) = core.as_ref() else {
+                return glib::ControlFlow::Break;
+            };
+            if c.is_finished(now) {
+                self.timer_state.set(TimerState::Done);
+                (c.elapsed(now).as_secs(), true)
+            } else {
+                let r = c.remaining(now);
+                (r.as_secs() + (r.subsec_nanos() > 0) as u64, false)
             }
         };
 
@@ -2777,6 +2822,9 @@ impl TimerView {
     /// keeps running.
     fn transition_running_to_overtime(&self) {
         self.timer_state.set(TimerState::Overtime);
+        // Stage 2: Session handed off — legacy tick_overtime takes
+        // over from here until Stage 3 wires Overtime into Session.
+        *self.core_session.borrow_mut() = None;
 
         // Guided mode: drop the playbin BEFORE play_end_bell so the
         // end bell isn't competing with a few last frames of audio
@@ -2910,10 +2958,6 @@ impl TimerView {
     /// left off on its next iteration.
     fn transition_prep_to_running(&self) {
         *self.prep_stopwatch.borrow_mut() = None;
-        // Stage 1: the Session was constructed only to drive the
-        // prep tick; later stages will keep it alive across the
-        // prep→running boundary and through the rest of the session.
-        *self.core_session.borrow_mut() = None;
 
         if let Some(app) = self.get_app() {
             self.fire_starting_bell(&app);
@@ -2931,6 +2975,30 @@ impl TimerView {
             let sw = CoreStopwatch::started_at(std::time::Duration::ZERO);
             *self.countdown_core.borrow_mut() = Some(CoreCountdown::new(timer, sw));
         }
+
+        // Stage 2: rebuild Session::start_running so its phase_clock
+        // anchors at the same Duration::ZERO origin the freshly-built
+        // countdown/stopwatch cores do — boot_time was just re-
+        // anchored. The internal Prep→Running transition Session ran
+        // already emitted EndPrep on the previous tick; this rebuild
+        // is the equivalent of the gtk-side core swap.
+        let target_secs = if self.stopwatch_toggle_on.get() {
+            None
+        } else {
+            Some(self.countdown_target_secs.get() as u32)
+        };
+        let core_settings = CoreSessionSettings {
+            mode: SessionMode::Timer,
+            prep_secs: None,
+            target_secs,
+            breath_pattern: None,
+            bells: Vec::new(),
+            bell_rng_seed: 1,
+        };
+        *self.core_session.borrow_mut() = Some(CoreSession::start_running(
+            core_settings,
+            std::time::Duration::ZERO,
+        ));
 
         self.timer_state.set(TimerState::Running);
         // Now that Running has started, build the bell schedule.
