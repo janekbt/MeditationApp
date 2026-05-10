@@ -118,6 +118,24 @@ pub fn format_time(d: Duration) -> String {
     }
 }
 
+/// How much past the planned countdown the user has gone.
+/// `target.saturating_sub(elapsed)` semantics: 0 before they reach the
+/// target, the difference once they've crossed it. Used by the
+/// running-page "Add MM:SS ?" button to show the bonus duration that
+/// would be committed if the user taps it.
+pub fn overtime(target: Duration, elapsed: Duration) -> Duration {
+    elapsed.saturating_sub(target)
+}
+
+/// Build the dynamic label for the running-page "Add" button. Caller
+/// supplies the localized prefix word ("Add" in English, "Hinzufügen"
+/// in German, etc. — gettext-translated on the gtk side); the format
+/// itself is `"<prefix> <MM:SS> ?"`. Trailing space + question mark
+/// match the existing GTK shell rendering.
+pub fn overtime_button_label(prefix: &str, overtime: Duration) -> String {
+    format!("{prefix} {} ?", format_time(overtime))
+}
+
 /// Bounds + default for the preparation-time silence in seconds.
 ///
 /// Min 5 s — anything shorter feels accidental. Max 5 min — keeps the
@@ -241,6 +259,71 @@ mod tests {
     #[test]
     fn format_time_zero_shows_double_zero() {
         assert_eq!(format_time(Duration::ZERO), "00:00");
+    }
+
+    // ── overtime ──────────────────────────────────────────────────────
+
+    #[test]
+    fn overtime_is_zero_before_target() {
+        assert_eq!(
+            overtime(Duration::from_secs(600), Duration::from_secs(0)),
+            Duration::ZERO
+        );
+        assert_eq!(
+            overtime(Duration::from_secs(600), Duration::from_secs(599)),
+            Duration::ZERO
+        );
+    }
+
+    #[test]
+    fn overtime_is_zero_at_exact_target() {
+        // Hitting the target is "session complete", not "1 second over".
+        // The transition into Overtime state happens here too.
+        assert_eq!(
+            overtime(Duration::from_secs(600), Duration::from_secs(600)),
+            Duration::ZERO
+        );
+    }
+
+    #[test]
+    fn overtime_is_difference_past_target() {
+        assert_eq!(
+            overtime(Duration::from_secs(600), Duration::from_secs(630)),
+            Duration::from_secs(30)
+        );
+    }
+
+    #[test]
+    fn overtime_button_label_uses_supplied_prefix() {
+        // Prefix passed in as a translated word; format itself is fixed.
+        assert_eq!(
+            overtime_button_label("Add", Duration::from_secs(45)),
+            "Add 00:45 ?"
+        );
+        assert_eq!(
+            overtime_button_label("Hinzufügen", Duration::from_secs(45)),
+            "Hinzufügen 00:45 ?"
+        );
+    }
+
+    #[test]
+    fn overtime_button_label_at_zero_overtime_reads_double_zero() {
+        // The label shows the moment-of-transition: just hit the
+        // target, no bonus accumulated yet, button is "Add 00:00 ?".
+        assert_eq!(
+            overtime_button_label("Add", Duration::ZERO),
+            "Add 00:00 ?"
+        );
+    }
+
+    #[test]
+    fn overtime_button_label_carries_through_to_hours() {
+        // Sub-hour vs hour-or-more — same formatter as format_time
+        // which uses two-digit hours per item 4's consolidation.
+        assert_eq!(
+            overtime_button_label("Add", Duration::from_secs(3661)),
+            "Add 01:01:01 ?"
+        );
     }
 
     // ── running_text ──────────────────────────────────────────────────

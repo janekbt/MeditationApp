@@ -2776,10 +2776,9 @@ impl TimerView {
             )));
         }
         if let Some(add_btn) = self.overtime_add_btn.borrow().as_ref() {
-            add_btn.set_label(&format!(
-                "{} {} ?",
-                crate::i18n::gettext("Add"),
-                format_time(Duration::ZERO),
+            add_btn.set_label(&meditate_core::format::overtime_button_label(
+                &crate::i18n::gettext("Add"),
+                Duration::ZERO,
             ));
             // Visibility is owned by the Clamp wrapper that the
             // window builder put around the button — flipping the
@@ -2803,17 +2802,16 @@ impl TimerView {
     /// on the original session timeline. The hero readout stays
     /// frozen at the planned duration.
     fn tick_overtime(&self, _obj: &super::TimerView) -> glib::ControlFlow {
-        let target = self.countdown_target_secs.get();
-        let total_elapsed = self.countdown_elapsed_secs();
-        let overtime = total_elapsed.saturating_sub(target);
+        let target = Duration::from_secs(self.countdown_target_secs.get());
+        let total_elapsed = Duration::from_secs(self.countdown_elapsed_secs());
+        let overtime = meditate_core::format::overtime(target, total_elapsed);
 
-        self.fire_due_bells_at(total_elapsed);
+        self.fire_due_bells_at(total_elapsed.as_secs());
 
         if let Some(add_btn) = self.overtime_add_btn.borrow().as_ref() {
-            add_btn.set_label(&format!(
-                "{} {} ?",
-                crate::i18n::gettext("Add"),
-                format_time(Duration::from_secs(overtime)),
+            add_btn.set_label(&meditate_core::format::overtime_button_label(
+                &crate::i18n::gettext("Add"),
+                overtime,
             ));
         }
         glib::ControlFlow::Continue

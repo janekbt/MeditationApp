@@ -186,7 +186,7 @@ GTK-only — split per row or strip the path field at the boundary).
 **Triggered by:** any Android milestone that needs to write to the
 bundled-bell or default-preset rows. Probably milestone 7.
 
-### [ ] 10. Sit-longer overtime math + add-button label generation
+### [x] 10. Sit-longer overtime math + add-button label generation
 
 **From:** scattered in `src/timer/imp.rs` (the
 `add_overtime_and_finish`, `Add MM:SS ?` button label, overshoot-detection
