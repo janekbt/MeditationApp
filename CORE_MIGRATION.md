@@ -195,7 +195,7 @@ predicate).
 **Triggered by:** an Android milestone that re-implements the
 overshoot-then-add UX.
 
-### [ ] 11. Small pure helpers in `timer/imp.rs`
+### [x] 11. Small pure helpers in `timer/imp.rs`
 
 **From:**
 - Per-mode setting-key dispatchers: `setting_key_for_mode`,
@@ -215,6 +215,21 @@ overshoot-then-add UX.
 `meditate_core::time` (for `unix_now`) + `meditate_core::format`
 (for the subtitle helpers). All micro-tests carry along.
 **Risk:** trivial. Each is a self-contained move.
+
+**Done in two-thirds:** the per-mode key dispatchers all live in
+`meditate_core::settings_keys` keyed by `SessionMode`; gtk gained a
+`From<TimerMode> for SessionMode` impl so existing call sites that
+pass `TimerMode` keep working through thin one-line wrappers.
+`unix_now()` lives in `meditate_core::time` next to `boot_time_now`.
+
+**Subtitle formatters deferred:** `intervals_count_subtitle` and
+`preset_subtitle` are entangled with `gettext()` calls (every branch
+returns a translated string). The keep-i18n rule
+(`feedback_meditate_keep_i18n` memory) says don't drop translations
+during refactor; either we move them with a translator-callback
+parameter that each shell supplies (Android would substitute its
+own runtime translator) or we leave them shell-side. Surface to
+Janek before doing either; not blocking other items.
 
 ### [ ] 12. Preset snapshot / apply walkers
 

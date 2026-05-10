@@ -26,6 +26,17 @@ pub fn boot_time_now() -> std::time::Duration {
     std::time::Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32)
 }
 
+/// Current wall-clock time as unix seconds (UTC). Defensive: a
+/// system clock that reports a timestamp before the unix epoch
+/// (theoretically possible on a misconfigured RTC) collapses to 0
+/// rather than panicking.
+pub fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
+}
+
 /// Format a unix timestamp (UTC seconds since epoch) as a local-naive
 /// ISO 8601 string `YYYY-MM-DDTHH:MM:SS`. The string represents the
 /// wall-clock time the user would see on their device — no timezone
@@ -87,6 +98,30 @@ mod tests {
         assert!(
             after.saturating_sub(before) >= std::time::Duration::from_millis(5),
             "did not advance across a 10ms sleep: before={before:?} after={after:?}"
+        );
+    }
+
+    // ── unix_now ───────────────────────────────────────────────────────
+
+    #[test]
+    fn unix_now_is_in_the_plausible_present() {
+        // If the host clock is sane this is somewhere between 2024-01-01
+        // and 2100-01-01 unix seconds. Loose bounds because the test
+        // can run any time and we only want to catch "clock returned
+        // 0 / negative" garbage.
+        let now = unix_now();
+        assert!(now > 1_700_000_000, "unix_now reported {now}, before 2023-11-14");
+        assert!(now < 4_000_000_000, "unix_now reported {now}, past 2096");
+    }
+
+    #[test]
+    fn unix_now_is_monotonic_across_a_real_sleep() {
+        let before = unix_now();
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        let after = unix_now();
+        assert!(
+            after >= before + 1,
+            "unix_now did not advance across a 1s sleep: before={before} after={after}"
         );
     }
 

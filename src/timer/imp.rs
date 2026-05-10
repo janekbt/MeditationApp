@@ -63,6 +63,20 @@ pub enum TimerMode {
     Guided,
 }
 
+/// Bridge to core's `SessionMode` for the per-mode helpers in
+/// `meditate_core::settings_keys` (which expect `SessionMode`).
+/// `Breathing` ↔ `BoxBreath` is the only naming difference; the
+/// variants are otherwise 1:1.
+impl From<TimerMode> for meditate_core::db::SessionMode {
+    fn from(m: TimerMode) -> Self {
+        match m {
+            TimerMode::Timer => meditate_core::db::SessionMode::Timer,
+            TimerMode::Breathing => meditate_core::db::SessionMode::BoxBreath,
+            TimerMode::Guided => meditate_core::db::SessionMode::Guided,
+        }
+    }
+}
+
 
 // ── GObject impl ──────────────────────────────────────────────────────────────
 
@@ -1694,33 +1708,19 @@ pub(crate) fn build_per_mode_signal_toggle_widget(
 }
 
 /// Map a TimerMode to its per-mode signal-mode setting key.
+/// TimerMode-keyed wrappers around `meditate_core::settings_keys::*`.
+/// Call sites pass `TimerMode`; the `From` impl above hands the
+/// canonical `SessionMode` to core.
 pub(crate) fn setting_key_for_mode(mode: TimerMode) -> &'static str {
-    match mode {
-        TimerMode::Timer     => "timer_signal_mode",
-        TimerMode::Guided    => "guided_signal_mode",
-        TimerMode::Breathing => "boxbreath_signal_mode",
-    }
+    meditate_core::settings_keys::signal_mode_key_for_mode(mode.into())
 }
 
-/// Map a TimerMode to its per-mode keep-screen-awake setting key.
 pub(crate) fn keep_screen_awake_key_for_mode(mode: TimerMode) -> &'static str {
-    match mode {
-        TimerMode::Timer     => "timer_keep_screen_awake",
-        TimerMode::Guided    => "guided_keep_screen_awake",
-        TimerMode::Breathing => "boxbreath_keep_screen_awake",
-    }
+    meditate_core::settings_keys::keep_screen_awake_key_for_mode(mode.into())
 }
 
-/// Map a TimerMode to its per-mode stopwatch-active setting key.
-/// Each mode has its own stopwatch concept (Timer counts up, Box
-/// Breath runs without a target, Guided plays without an
-/// auto-end-bell at file EOS), so they don't share a flag.
 pub(crate) fn stopwatch_key_for_mode(mode: TimerMode) -> &'static str {
-    match mode {
-        TimerMode::Timer     => "timer_stopwatch_active",
-        TimerMode::Guided    => "guided_stopwatch_active",
-        TimerMode::Breathing => "boxbreath_stopwatch_active",
-    }
+    meditate_core::settings_keys::stopwatch_key_for_mode(mode.into())
 }
 
 /// Walk a Gtk.Box and return the first AdwToggleGroup child, or
@@ -4562,12 +4562,7 @@ fn preset_subtitle(
     parts.join(" · ")
 }
 
-fn unix_now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64
-}
+use meditate_core::time::unix_now;
 
 // ── Breathing (Box Breath) setup wiring ───────────────────────────────────────
 
@@ -4849,28 +4844,16 @@ impl TimerView {
     /// in Box Breath, Guided Meditation in Guided. Resolves through
     /// the seeded rows (`crate::db::DEFAULT_*_LABEL_UUID`).
     fn mode_default_label_uuid(&self, mode: TimerMode) -> &'static str {
-        match mode {
-            TimerMode::Timer => crate::db::DEFAULT_TIMER_LABEL_UUID,
-            TimerMode::Breathing => crate::db::DEFAULT_BREATHING_LABEL_UUID,
-            TimerMode::Guided => crate::db::DEFAULT_GUIDED_LABEL_UUID,
-        }
+        meditate_core::settings_keys::default_label_uuid_for_mode(mode.into())
     }
 }
 
 fn label_active_setting_key(mode: TimerMode) -> &'static str {
-    match mode {
-        TimerMode::Timer => "label_active_timer",
-        TimerMode::Breathing => "label_active_breathing",
-        TimerMode::Guided => "label_active_guided",
-    }
+    meditate_core::settings_keys::label_active_key_for_mode(mode.into())
 }
 
 fn label_uuid_setting_key(mode: TimerMode) -> &'static str {
-    match mode {
-        TimerMode::Timer => "default_label_uuid_timer",
-        TimerMode::Breathing => "default_label_uuid_breathing",
-        TimerMode::Guided => "default_label_uuid_guided",
-    }
+    meditate_core::settings_keys::label_uuid_key_for_mode(mode.into())
 }
 
 
