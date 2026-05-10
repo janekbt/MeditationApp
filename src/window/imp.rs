@@ -1,12 +1,15 @@
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{glib, CompositeTemplate};
+use std::time::Duration;
 
 use gtk::gio;
 
+use meditate_core::format::format_time;
+
 use crate::log::LogView;
 use crate::stats::StatsView;
-use crate::timer::{format_time, TimerView};
+use crate::timer::TimerView;
 
 #[derive(Debug, Default, CompositeTemplate)]
 #[template(resource = "/io/github/janekbt/Meditate/ui/window.ui")]
@@ -166,7 +169,7 @@ impl MeditateWindow {
 
     fn push_time_running_page(&self) {
         let time_label = gtk::Label::builder()
-            .label(format_time(self.timer_view.current_display_secs()))
+            .label(format_time(Duration::from_secs(self.timer_view.current_display_secs())))
             .css_classes(["timer-setup-display"])
             .halign(gtk::Align::Center)
             .build();
@@ -265,7 +268,7 @@ impl MeditateWindow {
         let initial_counter = if stopwatch_active {
             "0:00".to_string()
         } else {
-            format!("0:00 / {}", format_time(target_secs))
+            format!("0:00 / {}", format_time(Duration::from_secs(target_secs)))
         };
         let counter_label = gtk::Label::builder()
             .label(&initial_counter)
@@ -484,10 +487,10 @@ impl MeditateWindow {
             }
             if let Some(l) = counter_weak.upgrade() {
                 if stopwatch_active {
-                    l.set_label(&format_time(cur as u64));
+                    l.set_label(&format_time(Duration::from_secs(cur as u64)));
                 } else {
                     l.set_label(&format!("{} / {}",
-                        format_time(cur as u64), format_time(target_secs)));
+                        format_time(Duration::from_secs(cur as u64)), format_time(Duration::from_secs(target_secs))));
                 }
             }
             if let Some(da) = da_weak.upgrade() {

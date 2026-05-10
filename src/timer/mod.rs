@@ -1,7 +1,7 @@
 mod imp;
 pub mod breathing;
 
-pub use imp::{format_time, TimerMode, TimerState};
+pub use imp::{TimerMode, TimerState};
 
 use gtk::glib;
 use gtk::glib::prelude::*;

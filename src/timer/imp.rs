@@ -8,6 +8,8 @@ use std::sync::OnceLock;
 use crate::db::{Label, SessionData, SessionMode};
 use super::breathing::Pattern as BreathPattern;
 
+use std::time::Duration;
+use meditate_core::format::format_time;
 use meditate_core::time::boot_time_now;
 use meditate_core::timer::{
     Countdown as CoreCountdown, CountdownTimer as CoreCountdownTimer,
@@ -1946,7 +1948,7 @@ impl TimerView {
         self.boxbreath_inputs.set_sensitive(false);
         self.mode_toggle_group.set_sensitive(false);
         self.session_group.set_sensitive(false);
-        self.big_time_label.set_label(&format_time(display_secs));
+        self.big_time_label.set_label(&format_time(Duration::from_secs(display_secs)));
         self.time_unit_label.set_label(&crate::i18n::gettext("Paused"));
         self.time_unit_label.set_visible(true);
     }
@@ -2308,7 +2310,7 @@ impl TimerView {
         // update land >1s after the click and the user perceives a
         // skipped second.
         if let Some(label) = self.running_label.borrow().as_ref() {
-            label.set_label(&format_time(self.current_display_secs()));
+            label.set_label(&format_time(Duration::from_secs(self.current_display_secs())));
         }
         self.obj().emit_by_name::<()>("timer-started", &[]);
     }
@@ -2440,7 +2442,7 @@ impl TimerView {
     }
 
     fn show_done(&self, elapsed_secs: u64) {
-        self.done_duration_label.set_label(&format_time(elapsed_secs));
+        self.done_duration_label.set_label(&format_time(Duration::from_secs(elapsed_secs)));
         self.note_view.buffer().set_text("");
         // Mirror the Setup view's currently-active label into the
         // Done page's per-session pick. The user can flip the toggle
@@ -2677,7 +2679,7 @@ impl TimerView {
         // tick_running's countdown branch.
         let display = remaining.as_secs() + (remaining.subsec_nanos() > 0) as u64;
         if let Some(label) = self.running_label.borrow().as_ref() {
-            label.set_label(&format_time(display));
+            label.set_label(&format_time(Duration::from_secs(display)));
         }
         glib::ControlFlow::Continue
     }
@@ -2743,7 +2745,7 @@ impl TimerView {
         self.fire_due_bells_at(elapsed_for_bells);
 
         if let Some(label) = self.running_label.borrow().as_ref() {
-            label.set_label(&format_time(new_secs));
+            label.set_label(&format_time(Duration::from_secs(new_secs)));
         }
 
         glib::ControlFlow::Continue
@@ -2783,7 +2785,7 @@ impl TimerView {
                         .unwrap_or(0),
                     _ => self.countdown_target_secs.get(),
                 };
-                n.set_body(Some(&format!("Session: {}", format_time(target))));
+                n.set_body(Some(&format!("Session: {}", format_time(Duration::from_secs(target)))));
                 app.send_notification(Some("timer-done"), &n);
             }
         }
@@ -2801,7 +2803,7 @@ impl TimerView {
             add_btn.set_label(&format!(
                 "{} {} ?",
                 crate::i18n::gettext("Add"),
-                format_time(0),
+                format_time(Duration::ZERO),
             ));
             // Visibility is owned by the Clamp wrapper that the
             // window builder put around the button — flipping the
@@ -2816,7 +2818,7 @@ impl TimerView {
         // surfacing how much extra time they've accumulated.
         if let Some(label) = self.running_label.borrow().as_ref() {
             let target = self.countdown_target_secs.get();
-            label.set_label(&format_time(target));
+            label.set_label(&format_time(Duration::from_secs(target)));
         }
     }
 
@@ -2835,7 +2837,7 @@ impl TimerView {
             add_btn.set_label(&format!(
                 "{} {} ?",
                 crate::i18n::gettext("Add"),
-                format_time(overtime),
+                format_time(Duration::from_secs(overtime)),
             ));
         }
         glib::ControlFlow::Continue
@@ -2933,7 +2935,7 @@ impl TimerView {
             self.fire_end_bell(&app);
             if !app.active_window().map(|w| w.is_active()).unwrap_or(false) {
                 let n = gtk::gio::Notification::new("Meditation Complete");
-                n.set_body(Some(&format!("Session: {}", format_time(elapsed))));
+                n.set_body(Some(&format!("Session: {}", format_time(Duration::from_secs(elapsed)))));
                 app.send_notification(Some("timer-done"), &n);
             }
         }
@@ -4602,17 +4604,6 @@ fn preset_subtitle(
     parts.join(" · ")
 }
 
-pub fn format_time(secs: u64) -> String {
-    let h = secs / 3600;
-    let m = (secs % 3600) / 60;
-    let s = secs % 60;
-    if h > 0 {
-        format!("{h}:{m:02}:{s:02}")
-    } else {
-        format!("{m:02}:{s:02}")
-    }
-}
-
 fn unix_now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -4928,28 +4919,6 @@ fn label_uuid_setting_key(mode: TimerMode) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn format_time_sub_hour_pads_to_two_digits() {
-        assert_eq!(format_time(0), "00:00");
-        assert_eq!(format_time(1), "00:01");
-        assert_eq!(format_time(59), "00:59");
-        assert_eq!(format_time(60), "01:00");
-        assert_eq!(format_time(61), "01:01");
-        assert_eq!(format_time(10 * 60), "10:00");
-        assert_eq!(format_time(59 * 60 + 59), "59:59");
-    }
-
-    #[test]
-    fn format_time_hour_mark_switches_format() {
-        // At one hour the formatter switches from MM:SS to H:MM:SS.
-        assert_eq!(format_time(3600), "1:00:00");
-        assert_eq!(format_time(3600 + 1), "1:00:01");
-        assert_eq!(format_time(3600 + 60), "1:01:00");
-        assert_eq!(format_time(3661), "1:01:01");
-        assert_eq!(format_time(2 * 3600 + 5 * 60 + 9), "2:05:09");
-        assert_eq!(format_time(10 * 3600), "10:00:00");
-    }
 
     // ── Per-mode setting-key helpers ─────────────────────────────────────
 

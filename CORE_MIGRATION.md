@@ -81,7 +81,7 @@ helper with `use meditate_core::time::boot_time_now`.
 **Risk:** trivial. `libc` is already a top-level dep of the GTK shell
 crate (`Cargo.toml`); add it to `meditate-core/Cargo.toml`.
 
-### [ ] 4. `format_time(secs: u64)` consolidation
+### [x] 4. `format_time(secs: u64)` consolidation
 
 **From:** `src/timer/imp.rs:4616` (~10 LOC pub fn that
 takes `u64` seconds).
