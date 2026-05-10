@@ -16,8 +16,9 @@
 //! MediaPlayer / etc.). The gtk-side reactive plumbing collapses to
 //! a thin pump.
 
+use crate::bells::ActiveBell;
 use crate::breath::{BreathPattern, Phase, PhaseInfo};
-use crate::db::{BoxBreathPhaseId, SessionMode};
+use crate::db::{BoxBreathPhaseId, SessionMode, SignalMode};
 use crate::timer::Stopwatch;
 use std::time::Duration;
 
@@ -68,7 +69,17 @@ pub struct SessionSettings {
     /// rather than mid-phase, so the user finishes on a natural
     /// hold-out).
     pub breath_pattern: Option<BreathPattern>,
-    // More fields land in later stages: bells, etc.
+    /// Per-session bell schedule. Pre-built by the shell (typically
+    /// from the `interval_bells` table filtered by enabled-flag and
+    /// the active mode's stopwatch toggle); moves into Session at
+    /// construction. Empty Vec is fine — means no interval bells.
+    pub bells: Vec<ActiveBell>,
+    /// Seed for the xorshift64 used by interval bells' jitter draws.
+    /// Caller picks: production usually seeds from wall-clock nanos,
+    /// tests pass a fixed value for determinism. Zero is replaced
+    /// with 1 internally (xorshift64 outputs 0 forever from a 0
+    /// seed).
+    pub bell_rng_seed: u64,
 }
 
 /// Side effect the shell should dispatch this tick. The shell
@@ -95,6 +106,15 @@ pub enum Effect {
     /// done view with this duration. Never fired in stopwatch-only
     /// box-breath mode (no target; user must press Stop).
     EndBoxBreath { duration_secs: u64 },
+    /// Interval / fixed bell crossed its ring boundary this tick.
+    /// Shell dispatches sound + vibration, AND-combining this
+    /// bell's `signal_mode` with the active mode's override
+    /// (read from `db.get_setting(signal_mode_key_for_mode(mode), …)`).
+    FireBell {
+        sound_uuid: String,
+        vibration_pattern_uuid: String,
+        signal_mode: SignalMode,
+    },
     /// Timer/Guided countdown crossed zero. Shell: morphs Pause →
     /// Finish, hides Stop, reveals the Add button, freezes the
     /// hero at the planned duration, fires the end bell, and sends
@@ -133,23 +153,35 @@ pub struct Session {
     /// `phase_at(elapsed) != p` and fires `FireBoxBreathCue`.
     /// Always `None` outside Box Breath mode.
     last_breath_phase: Option<Phase>,
+    /// Per-session bell schedule. Mutated each tick: Interval
+    /// bells reroll their `next_ring_secs`; Fixed bells flip their
+    /// `fired` flag.
+    bells: Vec<ActiveBell>,
+    /// Xorshift64 state for bell-jitter rolls. Initialized from
+    /// `SessionSettings::bell_rng_seed` (zero → 1 to avoid the
+    /// degenerate xorshift seed).
+    bell_rng_state: u64,
 }
 
 impl Session {
     /// Start a session in Prep phase. `prep_secs` must be set in
     /// `settings` — caller ensures (an `assert!` would be friendlier
     /// than a silent skip; debug-asserted here).
-    pub fn start_prep(settings: SessionSettings, now: Duration) -> Self {
+    pub fn start_prep(mut settings: SessionSettings, now: Duration) -> Self {
         debug_assert!(
             settings.prep_secs.is_some(),
             "start_prep called without prep_secs in settings",
         );
+        let bells = std::mem::take(&mut settings.bells);
+        let bell_rng_state = settings.bell_rng_seed.max(1);
         Self {
             settings,
             phase: SessionPhase::Prep,
             phase_clock: Stopwatch::started_at(now),
             is_paused: false,
             last_breath_phase: None,
+            bells,
+            bell_rng_state,
         }
     }
 
@@ -157,13 +189,17 @@ impl Session {
     /// silence. Used when `prep_secs` is `None` or the user has
     /// `preparation_time_active = false`. The Running stopwatch
     /// anchors at `now`.
-    pub fn start_running(settings: SessionSettings, now: Duration) -> Self {
+    pub fn start_running(mut settings: SessionSettings, now: Duration) -> Self {
+        let bells = std::mem::take(&mut settings.bells);
+        let bell_rng_state = settings.bell_rng_seed.max(1);
         Self {
             settings,
             phase: SessionPhase::Running,
             phase_clock: Stopwatch::started_at(now),
             is_paused: false,
             last_breath_phase: None,
+            bells,
+            bell_rng_state,
         }
     }
 
@@ -266,7 +302,9 @@ impl Session {
                     // elapsed (target + overtime) stays correct, and
                     // the shell takes over with end-bell + button-
                     // morph + notification ceremony in response to
-                    // EnterOvertime.
+                    // EnterOvertime. Bells skip this tick — gtk's
+                    // historical behaviour is "transition first,
+                    // bells fire on the next tick."
                     self.phase = SessionPhase::Overtime;
                     return vec![Effect::EnterOvertime];
                 }
@@ -276,14 +314,23 @@ impl Session {
             // 1.0 s crosses, "0:01" thereafter.
             None => elapsed.as_secs(),
         };
-        vec![Effect::UpdateDisplay { secs: display_secs }]
+        let mut effects = vec![Effect::UpdateDisplay { secs: display_secs }];
+        effects.extend(fire_due_bells(
+            &mut self.bells,
+            &mut self.bell_rng_state,
+            elapsed,
+        ));
+        effects
     }
 
     fn tick_overtime(&mut self, now: Duration) -> Vec<Effect> {
         // Overtime keeps the same phase_clock ticking that drove
         // Running — total elapsed = target + overtime. The shell
         // freezes the hero label at the planned duration; only the
-        // Add button's label updates each tick.
+        // Add button's label updates each tick. Interval bells
+        // keep firing on the original session timeline because
+        // their `next_ring_secs` was rolled against `elapsed` from
+        // the Running phase, which continues to accumulate.
         let target_secs = self
             .settings
             .target_secs
@@ -291,7 +338,13 @@ impl Session {
         let target = Duration::from_secs(target_secs as u64);
         let elapsed = self.phase_clock.elapsed(now);
         let overtime = elapsed.saturating_sub(target);
-        vec![Effect::UpdateOvertimeLabel { overtime }]
+        let mut effects = vec![Effect::UpdateOvertimeLabel { overtime }];
+        effects.extend(fire_due_bells(
+            &mut self.bells,
+            &mut self.bell_rng_state,
+            elapsed,
+        ));
+        effects
     }
 
     fn tick_box_breath(&mut self, elapsed: Duration) -> Vec<Effect> {
@@ -339,6 +392,13 @@ impl Session {
         effects.push(Effect::UpdateDisplay {
             secs: elapsed.as_secs(),
         });
+        // Box Breath sessions can have interval bells too; same
+        // tick semantics as Timer/Guided Running.
+        effects.extend(fire_due_bells(
+            &mut self.bells,
+            &mut self.bell_rng_state,
+            elapsed,
+        ));
         effects
     }
 
@@ -380,6 +440,50 @@ fn phase_to_id(phase: Phase) -> BoxBreathPhaseId {
     }
 }
 
+/// One xorshift64 step. Same algorithm the GTK shell's
+/// `next_random_unit` used; kept here so a Session's bell-jitter
+/// sequence is fully reproducible from the seed.
+fn xorshift64_step(state: u64) -> u64 {
+    let mut s = state;
+    s ^= s << 13;
+    s ^= s >> 7;
+    s ^= s << 17;
+    s
+}
+
+/// Iterate over the session's bells, tick each against `elapsed`,
+/// and emit `FireBell` effects for every bell that crosses its
+/// ring boundary this tick. Mutates `bells` (Interval bells reroll
+/// their next_ring_secs; Fixed bells flip their fired flag) and
+/// the xorshift state (one draw per Interval-bell fire).
+///
+/// Free function rather than a method so the borrow checker sees
+/// the disjoint `&mut Vec<ActiveBell>` and `&mut u64` borrows
+/// without complaining about overlapping borrows of `&mut Session`.
+fn fire_due_bells(
+    bells: &mut [ActiveBell],
+    rng_state: &mut u64,
+    elapsed: Duration,
+) -> Vec<Effect> {
+    let mut effects = Vec::new();
+    let elapsed_secs = elapsed.as_secs();
+    for bell in bells.iter_mut() {
+        let mut rng = || -> f64 {
+            *rng_state = xorshift64_step(*rng_state);
+            // Top 53 bits → f64 in [0, 1) without losing precision.
+            (*rng_state >> 11) as f64 / (1u64 << 53) as f64
+        };
+        if bell.tick(elapsed_secs, &mut rng) {
+            effects.push(Effect::FireBell {
+                sound_uuid: bell.sound.clone(),
+                vibration_pattern_uuid: bell.vibration_pattern_uuid.clone(),
+                signal_mode: bell.signal_mode,
+            });
+        }
+    }
+    effects
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -390,6 +494,8 @@ mod tests {
             prep_secs: Some(prep_secs),
             target_secs: Some(600),
             breath_pattern: None,
+            bells: Vec::new(),
+            bell_rng_seed: 1,
         }
     }
 
@@ -399,6 +505,8 @@ mod tests {
             prep_secs: None,
             target_secs: Some(target_secs),
             breath_pattern: None,
+            bells: Vec::new(),
+            bell_rng_seed: 1,
         }
     }
 
@@ -408,6 +516,8 @@ mod tests {
             prep_secs: None,
             target_secs: None,
             breath_pattern: None,
+            bells: Vec::new(),
+            bell_rng_seed: 1,
         }
     }
 
@@ -417,6 +527,32 @@ mod tests {
             prep_secs: None,
             target_secs,
             breath_pattern: Some(BreathPattern::box_breath()),
+            bells: Vec::new(),
+            bell_rng_seed: 1,
+        }
+    }
+
+    fn fixed_bell(target_secs: u64, sound: &str) -> ActiveBell {
+        use crate::bells::BellSchedule;
+        ActiveBell {
+            sound: sound.to_string(),
+            vibration_pattern_uuid: "pattern".to_string(),
+            signal_mode: SignalMode::Sound,
+            schedule: BellSchedule::Fixed { target_secs, fired: false },
+        }
+    }
+
+    fn interval_bell(base_min: u32, sound: &str) -> ActiveBell {
+        use crate::bells::BellSchedule;
+        ActiveBell {
+            sound: sound.to_string(),
+            vibration_pattern_uuid: "pattern".to_string(),
+            signal_mode: SignalMode::Sound,
+            schedule: BellSchedule::Interval {
+                base_min,
+                jitter_pct: 0,
+                next_ring_secs: (base_min as u64) * 60,
+            },
         }
     }
 
@@ -768,6 +904,138 @@ mod tests {
                 overtime: Duration::from_secs(10)
             }]
         );
+    }
+
+    // ── Bells ────────────────────────────────────────────────────────
+
+    #[test]
+    fn fixed_bell_fires_at_its_target_during_running() {
+        let mut settings = timer_countdown_settings(600);
+        settings.bells = vec![fixed_bell(60, "halftime")];
+        let mut s = Session::start_running(settings, Duration::from_secs(100));
+        // Tick 60 s in — the fixed bell fires.
+        let effects = s.tick(Duration::from_secs(160));
+        assert!(
+            effects.iter().any(|e| matches!(
+                e,
+                Effect::FireBell { sound_uuid, .. } if sound_uuid == "halftime"
+            )),
+            "expected FireBell for 'halftime', got {:?}",
+            effects
+        );
+    }
+
+    #[test]
+    fn fixed_bell_does_not_re_fire_after_initial() {
+        let mut settings = timer_countdown_settings(600);
+        settings.bells = vec![fixed_bell(60, "halftime")];
+        let mut s = Session::start_running(settings, Duration::from_secs(100));
+        let _ = s.tick(Duration::from_secs(160)); // fires
+        let effects = s.tick(Duration::from_secs(180)); // shouldn't re-fire
+        assert!(
+            !effects.iter().any(|e| matches!(e, Effect::FireBell { .. })),
+            "fixed bell must not re-fire: {:?}",
+            effects
+        );
+    }
+
+    #[test]
+    fn interval_bell_fires_periodically_and_rerolls() {
+        // Interval bell at 5 min (300 s), no jitter. Should fire at
+        // 300 s, then reroll to 600 s, fire again, and so on.
+        let mut settings = timer_stopwatch_settings();
+        settings.bells = vec![interval_bell(5, "ding")];
+        let mut s = Session::start_running(settings, Duration::from_secs(100));
+        // Just before — no fire.
+        let effects = s.tick(Duration::from_secs(399));
+        assert!(!effects.iter().any(|e| matches!(e, Effect::FireBell { .. })));
+        // At 300 s in — fires, reroll to 600.
+        let effects = s.tick(Duration::from_secs(400));
+        assert!(effects.iter().any(|e| matches!(e, Effect::FireBell { .. })));
+        // At 599 s in — no fire yet.
+        let effects = s.tick(Duration::from_secs(699));
+        assert!(!effects.iter().any(|e| matches!(e, Effect::FireBell { .. })));
+        // At 600 s in — fires.
+        let effects = s.tick(Duration::from_secs(700));
+        assert!(effects.iter().any(|e| matches!(e, Effect::FireBell { .. })));
+    }
+
+    #[test]
+    fn bells_do_not_fire_during_prep() {
+        // Bells are loaded at session construction but mustn't fire
+        // during the prep silence — only when Running starts.
+        let mut settings = timer_settings_with_prep(30);
+        settings.bells = vec![fixed_bell(5, "early")]; // would fire if checked during prep
+        let mut s = Session::start_prep(settings, Duration::from_secs(100));
+        let effects = s.tick(Duration::from_secs(110));
+        assert!(
+            !effects.iter().any(|e| matches!(e, Effect::FireBell { .. })),
+            "bells must not fire during prep: {:?}",
+            effects
+        );
+    }
+
+    #[test]
+    fn bells_continue_firing_through_overtime() {
+        // Interval bell at 5 min in a 60 s timer — the bell would
+        // ring at the 5-min mark, well into overtime. The Running→
+        // Overtime transition mustn't reset the bell schedule.
+        let mut settings = timer_countdown_settings(60);
+        settings.bells = vec![fixed_bell(300, "later")];
+        let mut s = Session::start_running(settings, Duration::from_secs(100));
+        let _ = s.tick(Duration::from_secs(160)); // EnterOvertime
+        let _ = s.tick(Duration::from_secs(200)); // 100 s elapsed, still no fire
+        let effects = s.tick(Duration::from_secs(400)); // 300 s elapsed
+        assert!(
+            effects.iter().any(|e| matches!(e, Effect::FireBell { .. })),
+            "bell at 5-min mark should fire even through overtime"
+        );
+    }
+
+    #[test]
+    fn box_breath_session_fires_interval_bells() {
+        let mut settings = box_breath_settings(None);
+        settings.bells = vec![fixed_bell(60, "midbreath")];
+        let mut s = Session::start_running(settings, Duration::from_secs(100));
+        let _ = s.tick(Duration::from_millis(100_500)); // seed phase
+        let effects = s.tick(Duration::from_secs(160));
+        assert!(
+            effects.iter().any(|e| matches!(e, Effect::FireBell { .. })),
+            "Box-Breath running ticks must dispatch interval bells"
+        );
+    }
+
+    #[test]
+    fn bell_rng_state_advances_deterministically_from_seed() {
+        // Same seed + same bell schedule → same fire times across
+        // two independent sessions. Pin determinism.
+        let mut a_settings = timer_stopwatch_settings();
+        a_settings.bells = vec![interval_bell(5, "a")];
+        a_settings.bell_rng_seed = 42;
+        let mut a = Session::start_running(a_settings, Duration::from_secs(100));
+
+        let mut b_settings = timer_stopwatch_settings();
+        b_settings.bells = vec![interval_bell(5, "b")];
+        b_settings.bell_rng_seed = 42;
+        let mut b = Session::start_running(b_settings, Duration::from_secs(100));
+
+        // Run both for 30 minutes; collect tick offsets where each fires.
+        let mut a_fires: Vec<u64> = Vec::new();
+        let mut b_fires: Vec<u64> = Vec::new();
+        for offset in 1..=1800 {
+            let now = Duration::from_secs(100 + offset);
+            for e in a.tick(now) {
+                if matches!(e, Effect::FireBell { .. }) {
+                    a_fires.push(offset);
+                }
+            }
+            for e in b.tick(now) {
+                if matches!(e, Effect::FireBell { .. }) {
+                    b_fires.push(offset);
+                }
+            }
+        }
+        assert_eq!(a_fires, b_fires, "same seed must give same fire schedule");
     }
 
     // ── Pause / Resume ───────────────────────────────────────────────
