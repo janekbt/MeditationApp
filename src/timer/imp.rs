@@ -17,6 +17,7 @@ use meditate_core::timer::{
 };
 
 use meditate_core::bells::{ActiveBell, BellSchedule};
+use meditate_core::session::{Effect as CoreSessionEffect, Session as CoreSession, SessionSettings as CoreSessionSettings};
 
 // ── Per-mode independent state ────────────────────────────────────────────────
 
@@ -321,6 +322,14 @@ pub struct TimerView {
     bell_rng_state: Cell<u64>,
     /// Boot-time anchor at session start. Suspend-resilient (see boot_time_now).
     start_boot_time: Cell<Option<std::time::Duration>>,
+    /// `meditate_core::session::Session` — the portable state machine
+    /// that owns prep/running/overtime/box-breath/bells/pause logic.
+    /// Migrating in stages (see CORE_MIGRATION.md item 13). Stage 1
+    /// drives only `tick_prep`; subsequent stages take over the
+    /// running, overtime, box-breath, and pause/stop paths. The
+    /// existing per-mode Cells (`prep_stopwatch`, `countdown_core`,
+    /// etc.) stay live in parallel until Stage 6 cleanup.
+    core_session: RefCell<Option<CoreSession>>,
 }
 
 #[glib::object_subclass]
@@ -2184,6 +2193,21 @@ impl TimerView {
             *self.prep_stopwatch.borrow_mut() =
                 Some(CoreStopwatch::started_at(std::time::Duration::ZERO));
             self.prep_target.set(prep_dur);
+            // Migration stage 1: drive prep ticks through the
+            // portable state machine. Other phases still run on
+            // the legacy Cells until later stages.
+            let core_settings = CoreSessionSettings {
+                mode: SessionMode::Timer,
+                prep_secs: Some(prep_dur.as_secs() as u32),
+                target_secs: None,
+                breath_pattern: None,
+                bells: Vec::new(),
+                bell_rng_seed: 1,
+            };
+            *self.core_session.borrow_mut() = Some(CoreSession::start_prep(
+                core_settings,
+                std::time::Duration::ZERO,
+            ));
             self.timer_state.set(TimerState::Preparing);
         } else {
             self.timer_state.set(TimerState::Running);
@@ -2233,6 +2257,9 @@ impl TimerView {
         if resuming_prep {
             let mut slot = self.prep_stopwatch.borrow_mut();
             *slot = slot.take().map(|s| s.resumed_at(now));
+            if let Some(s) = self.core_session.borrow_mut().as_mut() {
+                s.resume(now);
+            }
         } else {
             match mode {
                 TimerMode::Timer => {
@@ -2302,6 +2329,11 @@ impl TimerView {
         if self.prep_stopwatch.borrow().is_some() {
             let mut slot = self.prep_stopwatch.borrow_mut();
             *slot = slot.take().map(|s| s.paused_at(now));
+            // Stage 1: keep the portable Session in lockstep so the
+            // post-resume tick reads the same elapsed.
+            if let Some(s) = self.core_session.borrow_mut().as_mut() {
+                s.pause(now);
+            }
         } else {
             match mode {
                 TimerMode::Timer => {
@@ -2364,6 +2396,7 @@ impl TimerView {
         // the schedule is also dropped here so a quick re-Start
         // rebuilds it from current settings.
         *self.prep_stopwatch.borrow_mut() = None;
+        *self.core_session.borrow_mut() = None;
         self.active_bells.borrow_mut().clear();
         // Guided playback stops the moment the user picks Stop —
         // Drop runs set_state(Null) + drops the bus signal-watch.
@@ -2589,6 +2622,7 @@ impl TimerView {
                 *self.stopwatch_core.borrow_mut() = None;
                 *self.countdown_core.borrow_mut() = None;
                 *self.prep_stopwatch.borrow_mut() = None;
+                *self.core_session.borrow_mut() = None;
                 self.active_bells.borrow_mut().clear();
             }
             TimerMode::Breathing => *self.breath_stopwatch.borrow_mut() = None,
@@ -2640,22 +2674,31 @@ impl TimerView {
     /// branch.
     fn tick_prep(&self, _obj: &super::TimerView) -> glib::ControlFlow {
         let now = self.elapsed_since_start();
-        let target = self.prep_target.get();
-        let elapsed = self.prep_stopwatch
-            .borrow()
-            .as_ref()
-            .map(|s| s.elapsed(now))
+        // Stage 1 of item 13: prep ticking is owned by the portable
+        // state machine. The Session is constructed in start_session
+        // and dropped in transition_prep_to_running / on_stop /
+        // reset_mode.
+        let effects: Vec<CoreSessionEffect> = self
+            .core_session
+            .borrow_mut()
+            .as_mut()
+            .map(|s| s.tick(now))
             .unwrap_or_default();
-        if elapsed >= target {
-            self.transition_prep_to_running();
-            return glib::ControlFlow::Continue;
-        }
-        let remaining = target.saturating_sub(elapsed);
-        // Ceiling — when (k-1, k] remaining, show k. Same trick as
-        // tick_running's countdown branch.
-        let display = remaining.as_secs() + (remaining.subsec_nanos() > 0) as u64;
-        if let Some(label) = self.running_label.borrow().as_ref() {
-            label.set_label(&format_time(Duration::from_secs(display)));
+        for effect in effects {
+            match effect {
+                CoreSessionEffect::UpdateDisplay { secs } => {
+                    if let Some(label) = self.running_label.borrow().as_ref() {
+                        label.set_label(&format_time(Duration::from_secs(secs)));
+                    }
+                }
+                CoreSessionEffect::EndPrep => {
+                    self.transition_prep_to_running();
+                }
+                // No other effects can fire from a Prep tick. Future
+                // stages route the rest of these into their own gtk
+                // dispatchers; for now the catch-all is dead.
+                _ => {}
+            }
         }
         glib::ControlFlow::Continue
     }
@@ -2867,6 +2910,10 @@ impl TimerView {
     /// left off on its next iteration.
     fn transition_prep_to_running(&self) {
         *self.prep_stopwatch.borrow_mut() = None;
+        // Stage 1: the Session was constructed only to drive the
+        // prep tick; later stages will keep it alive across the
+        // prep→running boundary and through the rest of the session.
+        *self.core_session.borrow_mut() = None;
 
         if let Some(app) = self.get_app() {
             self.fire_starting_bell(&app);
