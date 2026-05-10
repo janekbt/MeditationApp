@@ -3512,6 +3512,7 @@ dependencies = [
 name = "meditate-android"
 version = "0.0.0"
 dependencies = [
+ "meditate-core",
  "slint",
  "slint-build",
 ]

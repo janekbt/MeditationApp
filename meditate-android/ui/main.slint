@@ -1,22 +1,77 @@
-// Milestone-3 placeholder: one screen, one button. Confirms that
-// the Slint + Material 3 toolchain renders on the device. No app
-// logic yet — meditate-core integration arrives in milestone 4.
+// Milestone-4 Timer screen — mirrors the GTK timer setup + running
+// pages (`meditate-gtk/data/ui/timer_view.blp` and the running page
+// built in `meditate-gtk/src/window/imp.rs::push_time_running_page`).
+// Setup shows the configured duration and a Start button; running
+// shows the live countdown plus Pause / Stop. No mode toggle, no
+// presets, no inputs yet — those land in later milestones.
 
-import { FilledButton, ElevatedCard } from "@material";
+import { FilledButton, OutlineButton } from "@material";
 export { MaterialWindowAdapter } from "@material";
 
 export component MainWindow inherits Window {
     title: "Meditate";
-    property <int> taps: 0;
 
-    ElevatedCard {
-        width: 90%;
-        height: 90%;
+    // The big mm:ss readout, formatted in Rust (handles ceiling
+    // rounding so a fresh "10:00" doesn't briefly flicker to "09:59").
+    in property <string> remaining-text: "00:00";
+    // Primary action button label: "Start Session" / "Pause" / "Resume".
+    in property <string> action-label: "Start Session";
+    // True once the session has started — switches between the
+    // setup-page chrome (caption + single button) and the running-page
+    // chrome (Pause + Stop). Idle is the only state that hides Stop.
+    in property <bool> running-page: false;
+    // Stop is visible whenever the user has something to stop —
+    // Running, Paused, or Finished (so they can reset the screen).
+    in property <bool> stop-visible: false;
 
-        FilledButton {
-            text: "Hello, Meditate — taps: " + taps;
-            clicked => {
-                taps += 1;
+    callback action-tap();
+    callback stop-tap();
+
+    VerticalLayout {
+        padding: 24px;
+        spacing: 24px;
+        alignment: center;
+
+        // Hero: streak chip placeholder + big mm:ss + caption.
+        // Streak chip is empty in milestone 4 (DB integration arrives
+        // in milestone 6); kept in the layout so the spacing matches
+        // the GTK setup-page hero the moment streaks land.
+        VerticalLayout {
+            alignment: center;
+            spacing: 4px;
+
+            if !running-page : Text {
+                text: "";
+                font-size: 14px;
+                horizontal-alignment: center;
+            }
+
+            Text {
+                text: remaining-text;
+                font-size: 80px;
+                horizontal-alignment: center;
+            }
+
+            if !running-page : Text {
+                text: "Hours · Minutes";
+                font-size: 12px;
+                color: #888;
+                horizontal-alignment: center;
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 12px;
+            alignment: center;
+
+            FilledButton {
+                text: action-label;
+                clicked => { action-tap(); }
+            }
+
+            if stop-visible : OutlineButton {
+                text: "Stop";
+                clicked => { stop-tap(); }
             }
         }
     }

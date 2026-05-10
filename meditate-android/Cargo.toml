@@ -32,6 +32,14 @@ name = "meditate-android"
 # Slint falls through to its default backend (winit + skia).
 slint = { version = "1.13", features = ["backend-android-activity-06"] }
 
+# Shared logic crate (timer, breath, db, sync, format). Milestone 4
+# uses only `meditate_core::timer::Countdown`; later milestones bring
+# in db / sync / breath. We depend on the whole crate rather than
+# feature-gating individual modules — the compile-time hit is real
+# but small relative to the slint stack, and per-module gates would
+# turn meditate-core into a maintenance burden.
+meditate-core = { path = "../meditate-core" }
+
 [build-dependencies]
 slint-build = "1.13"
 
