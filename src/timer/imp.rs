@@ -173,7 +173,10 @@ pub struct TimerView {
 
     // ── Active session state ─────────────────────────────────────────
     // Only one session runs at a time across the three modes.
-    timer_state: Cell<TimerState>,
+    // The high-level state (Idle / Preparing / Running / Overtime /
+    // Paused / Done) is derived from `core_session` + `is_paused()`
+    // + `final_duration_secs` via the `timer_state()` method below
+    // — no separate Cell to keep in sync.
     /// Unix timestamp when the active session started (for DB save).
     session_start_time: Cell<i64>,
 
@@ -1855,7 +1858,7 @@ impl TimerView {
         }
         self.refresh_stopwatch_dependent_ui();
 
-        match self.timer_state.get() {
+        match self.timer_state() {
             TimerState::Idle      => self.show_idle_ui(),
             TimerState::Paused    => self.show_paused_ui(self.current_display_secs()),
             TimerState::Done      => self.view_stack.set_visible_child_name("done"),
@@ -1982,7 +1985,7 @@ impl TimerView {
         // Hero refresh: stopwatch flips the hero between "00:00"
         // and the mode's target reading in every mode (Timer,
         // Box Breath, Guided), not just Timer.
-        if self.timer_state.get() == TimerState::Idle {
+        if self.timer_state() == TimerState::Idle {
             self.refresh_hero_for_idle();
         }
         // Stopwatch on ⇒ planned-duration concept inert; grey out
@@ -2150,11 +2153,17 @@ impl TimerView {
                     move |/* on_eos */| {
                         // EOS arrives on the GTK main thread thanks
                         // to the bus signal watch + glib's default
-                        // MainContext. Slide into Overtime if Running;
-                        // a no-op if we've already transitioned.
+                        // MainContext. Ask Session to force-transition
+                        // into Overtime; idempotent if we already
+                        // crossed the boundary via tick_running.
                         let imp = obj_for_eos.imp();
-                        if imp.timer_state.get() == TimerState::Running {
-                            imp.transition_running_to_overtime();
+                        let effects = imp.core_session.borrow_mut().as_mut()
+                            .map(|s| s.enter_overtime())
+                            .unwrap_or_default();
+                        for e in effects {
+                            if matches!(e, CoreSessionEffect::EnterOvertime) {
+                                imp.transition_running_to_overtime();
+                            }
                         }
                     },
                 ) {
@@ -2212,9 +2221,7 @@ impl TimerView {
                 core_settings,
                 std::time::Duration::ZERO,
             ));
-            self.timer_state.set(TimerState::Preparing);
         } else {
-            self.timer_state.set(TimerState::Running);
             // Bell-library schedule is built when Running starts. With
             // prep, the same call lives in transition_prep_to_running.
             if mode == TimerMode::Timer {
@@ -2275,12 +2282,9 @@ impl TimerView {
 
         let now = self.elapsed_since_start();
         // Session resumes uniformly; phase is preserved across the
-        // pause window so the post-resume timer_state mirrors the
-        // pre-pause one (Preparing or Running). The gst playbin is
-        // the only gtk-side side-resume left.
-        let resuming_prep = self.core_session.borrow().as_ref()
-            .map(|s| s.phase() == CoreSessionPhase::Prep)
-            .unwrap_or(false);
+        // pause window so the post-resume timer_state() automatically
+        // returns to Preparing or Running based on Session.phase.
+        // The gst playbin is the only gtk-side side-resume left.
         if let Some(s) = self.core_session.borrow_mut().as_mut() {
             s.resume(now);
         }
@@ -2289,11 +2293,6 @@ impl TimerView {
                 p.resume();
             }
         }
-        self.timer_state.set(if resuming_prep {
-            TimerState::Preparing
-        } else {
-            TimerState::Running
-        });
 
         self.tick_mode.set(mode);
         if mode != TimerMode::Breathing {
@@ -2334,7 +2333,6 @@ impl TimerView {
                 p.pause();
             }
         }
-        self.timer_state.set(TimerState::Paused);
 
         // Stay on the running page — morph the running pause-button
         // to "Resume" so the user can pick up without first popping
@@ -2364,7 +2362,6 @@ impl TimerView {
         // value the Done page is about to show. Mirrors the Overtime
         // Finish path which uses the same slot.
         self.final_duration_secs.set(Some(elapsed));
-        self.timer_state.set(TimerState::Done);
         // Drop any prep state — the user stopped during prep, the
         // session's "elapsed" came from Session's stop() above.
         // Active bells stop firing the moment we leave Running, but
@@ -2586,7 +2583,8 @@ impl TimerView {
                 *self.guided_playback.borrow_mut() = None;
             }
         }
-        self.timer_state.set(TimerState::Idle);
+        // core_session=None + final_duration_secs=None → timer_state()
+        // returns Idle automatically.
         self.session_start_time.set(0);
         self.final_duration_secs.set(None);
 
@@ -2605,7 +2603,7 @@ impl TimerView {
             std::time::Duration::from_secs(1),
             move || {
                 let imp = obj.imp();
-                match imp.timer_state.get() {
+                match imp.timer_state() {
                     TimerState::Preparing => imp.tick_prep(&obj),
                     TimerState::Running => imp.tick_running(&obj),
                     TimerState::Overtime => imp.tick_overtime(&obj),
@@ -2721,15 +2719,12 @@ impl TimerView {
 
     /// One-shot at zero-crossing: ring the end bell + vibrate +
     /// notify, morph the running buttons into the Finish/Add
-    /// layout, and flip state to Overtime so subsequent ticks
-    /// dispatch through `tick_overtime`. The 1 Hz tick itself
-    /// keeps running.
+    /// layout. Session.phase is already Overtime by the time we're
+    /// called (either tick_running transitioned internally before
+    /// dispatching EnterOvertime, or the gst EOS callback forced
+    /// the transition via Session.enter_overtime); the 1 Hz tick
+    /// itself keeps running and now dispatches tick_overtime.
     fn transition_running_to_overtime(&self) {
-        self.timer_state.set(TimerState::Overtime);
-        // Stage 3: Session keeps ticking past the boundary — its
-        // phase_clock is preserved across the internal Running→
-        // Overtime transition, so tick_overtime can read overtime
-        // delta straight off it. Dropped at end_overtime_session.
 
         // Guided mode: drop the playbin BEFORE play_end_bell so the
         // end bell isn't competing with a few last frames of audio
@@ -2834,14 +2829,12 @@ impl TimerView {
     /// duration *plus* the elapsed overtime as the session length,
     /// pop the running page, surface the Done screen.
     pub(super) fn add_overtime_and_finish(&self) {
-        if self.timer_state.get() != TimerState::Overtime {
+        if self.timer_state() != TimerState::Overtime {
             return;
         }
-        // Stage 5: Session drives the duration; Guided falls back to
-        // the legacy countdown-core read.
         let elapsed = self
             .core_session_end(|s, now| s.add_overtime_and_finish(now))
-            .unwrap_or_else(|| self.countdown_elapsed_secs());
+            .unwrap_or(0);
         self.end_overtime_session(elapsed);
     }
 
@@ -2850,13 +2843,10 @@ impl TimerView {
     /// overrides the natural elapsed reading in `elapsed_secs_for_mode`
     /// so the Save path stores the same value the Done screen shows.
     pub(super) fn finish_overtime_session(&self) {
-        if self.timer_state.get() != TimerState::Overtime {
+        if self.timer_state() != TimerState::Overtime {
             return;
         }
         let target = self.countdown_target_secs.get();
-        self.final_duration_secs.set(Some(target));
-        // Stage 5: Session emits EndSession with target_secs (overtime
-        // discarded); Guided still uses the legacy target read.
         let elapsed = self
             .core_session_end(|s, _now| s.finish_overtime())
             .unwrap_or(target);
@@ -2894,11 +2884,10 @@ impl TimerView {
         *self.running_pause_btn.borrow_mut() = None;
         *self.running_stop_btn.borrow_mut() = None;
         *self.overtime_add_btn.borrow_mut() = None;
-        // Stage 3: Session is terminal at this point; the user just
-        // accepted the session via Finish or Add. Drop so the next
-        // session starts fresh.
+        // Pin the elapsed and drop the Session — together these flip
+        // `timer_state()` to Done.
+        self.final_duration_secs.set(Some(elapsed_secs));
         *self.core_session.borrow_mut() = None;
-        self.timer_state.set(TimerState::Done);
         if let Some(app) = self.get_app() {
             self.release_screen_awake_lock(&app);
         }
@@ -2937,8 +2926,9 @@ impl TimerView {
             now,
         ));
 
-        self.timer_state.set(TimerState::Running);
-        // Now that Running has started, build the bell schedule.
+        // Session is already in Running phase post-rebuild; timer_
+        // state() picks that up directly. Now that Running has
+        // started, build the bell schedule.
         self.load_active_bells_for_running();
     }
 
@@ -2947,10 +2937,11 @@ impl TimerView {
     /// Mirrors the countdown's done branch (timer.imp at the 1 Hz tick).
     /// Distinct from `on_stop` (user-initiated), which is silent.
     pub(super) fn finish_breath_session(&self) {
-        self.timer_state.set(TimerState::Done);
         let elapsed = self.breath_elapsed().as_secs();
-        // Stage 4: Session reached its cycle-aligned end and is
-        // terminal. Drop so the next session starts fresh.
+        // Pin elapsed before dropping the Session — without this,
+        // session_elapsed reads 0 by the time on_save runs and the
+        // saved row would record a 0-second session.
+        self.final_duration_secs.set(Some(elapsed));
         *self.core_session.borrow_mut() = None;
         // Release running-page widget refs — the page pops next.
         *self.running_label.borrow_mut() = None;
@@ -2982,6 +2973,38 @@ impl TimerView {
             .as_ref()
             .map(|s| s.elapsed(now))
             .unwrap_or_default()
+    }
+
+    /// High-level UI state derived from Session.phase / is_paused
+    /// + `final_duration_secs`. Replaces the old `timer_state` Cell
+    /// — see the field-comment above for the mapping rationale.
+    /// Cheap: one RefCell borrow + a few comparisons per call.
+    pub(crate) fn timer_state(&self) -> TimerState {
+        let session = self.core_session.borrow();
+        let Some(s) = session.as_ref() else {
+            return if self.final_duration_secs.get().is_some() {
+                TimerState::Done
+            } else {
+                TimerState::Idle
+            };
+        };
+        if s.is_paused() {
+            return TimerState::Paused;
+        }
+        match s.phase() {
+            CoreSessionPhase::Prep => TimerState::Preparing,
+            CoreSessionPhase::Running => TimerState::Running,
+            CoreSessionPhase::Overtime => TimerState::Overtime,
+            // `Paused` phase is reserved and never set in practice —
+            // is_paused() covers the pause state orthogonally. Map
+            // anyway for completeness.
+            CoreSessionPhase::Paused => TimerState::Paused,
+            // `Stopped` is the brief window between Session.stop()
+            // and core_session being dropped at the call site; both
+            // happen in the same gtk method so it's not externally
+            // observed, but map for safety.
+            CoreSessionPhase::Stopped => TimerState::Done,
+        }
     }
 
     fn countdown_remaining_secs(&self) -> u64 {
@@ -3840,7 +3863,7 @@ impl TimerView {
     }
 
     pub fn toggle_playback(&self) {
-        match self.timer_state.get() {
+        match self.timer_state() {
             TimerState::Idle      => self.on_start(),
             TimerState::Preparing => self.on_pause(),
             TimerState::Running   => self.on_pause(),

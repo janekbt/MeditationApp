@@ -312,6 +312,22 @@ impl Session {
         vec![Effect::EndSession { duration_secs }]
     }
 
+    /// Force the Running→Overtime transition externally. Used when
+    /// the shell observes the countdown crossing zero before the
+    /// next `tick(now)` would — e.g. the gtk shell's gst EOS
+    /// callback in Guided mode, which fires when the audio file
+    /// ends slightly before the probed duration. Returns a single
+    /// `EnterOvertime` effect on the transition; idempotent — no-op
+    /// (empty Vec) from any other phase, so callers can dispatch
+    /// unconditionally.
+    pub fn enter_overtime(&mut self) -> Vec<Effect> {
+        if self.phase != SessionPhase::Running {
+            return Vec::new();
+        }
+        self.phase = SessionPhase::Overtime;
+        vec![Effect::EnterOvertime]
+    }
+
     /// Drive the session forward by one tick. Returns the effects
     /// the shell should dispatch this tick. Internal phase
     /// transitions (Prep→Running, Running→Overtime, etc.) emit
@@ -1410,5 +1426,54 @@ mod tests {
         let effects = s.add_overtime_and_finish(Duration::from_secs(200));
         assert!(effects.is_empty());
         assert_eq!(s.phase(), SessionPhase::Running);
+    }
+
+    // ── enter_overtime (external force-transition) ───────────────────
+
+    #[test]
+    fn enter_overtime_from_running_transitions_and_emits_effect() {
+        let mut s = Session::start_running(
+            timer_countdown_settings(600),
+            Duration::from_secs(100),
+        );
+        let effects = s.enter_overtime();
+        assert_eq!(effects, vec![Effect::EnterOvertime]);
+        assert_eq!(s.phase(), SessionPhase::Overtime);
+    }
+
+    #[test]
+    fn enter_overtime_is_idempotent_in_overtime() {
+        let mut s = Session::start_running(
+            timer_countdown_settings(60),
+            Duration::from_secs(100),
+        );
+        let _ = s.tick(Duration::from_secs(160)); // transition Running → Overtime
+        assert_eq!(s.phase(), SessionPhase::Overtime);
+        let effects = s.enter_overtime();
+        assert!(effects.is_empty());
+        assert_eq!(s.phase(), SessionPhase::Overtime);
+    }
+
+    #[test]
+    fn enter_overtime_during_prep_is_a_noop() {
+        let mut s = Session::start_prep(
+            timer_settings_with_prep(30),
+            Duration::from_secs(100),
+        );
+        let effects = s.enter_overtime();
+        assert!(effects.is_empty());
+        assert_eq!(s.phase(), SessionPhase::Prep);
+    }
+
+    #[test]
+    fn enter_overtime_after_stop_is_a_noop() {
+        let mut s = Session::start_running(
+            timer_countdown_settings(600),
+            Duration::from_secs(100),
+        );
+        let _ = s.stop(Duration::from_secs(120));
+        let effects = s.enter_overtime();
+        assert!(effects.is_empty());
+        assert_eq!(s.phase(), SessionPhase::Stopped);
     }
 }
