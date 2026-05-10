@@ -66,7 +66,7 @@ sites that call `crate::diag::*`.
 **Risk:** trivial. The panic hook installs once at startup; verify
 ordering still works after the move.
 
-### [ ] 3. `boot_time_now()` → `meditate_core::time::boot_time_now`
+### [x] 3. `boot_time_now()` → `meditate_core::time::boot_time_now`
 
 **From:** `src/timer/imp.rs` (~5 LOC private fn).
 **Pulls along:** the libc dependency for the `clock_gettime` call.

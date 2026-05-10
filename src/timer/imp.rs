@@ -8,22 +8,11 @@ use std::sync::OnceLock;
 use crate::db::{Label, SessionData, SessionMode};
 use super::breathing::Pattern as BreathPattern;
 
+use meditate_core::time::boot_time_now;
 use meditate_core::timer::{
     Countdown as CoreCountdown, CountdownTimer as CoreCountdownTimer,
     Stopwatch as CoreStopwatch,
 };
-
-/// Suspend-resilient monotonic time. Linux's `std::time::Instant` uses
-/// CLOCK_MONOTONIC, which freezes during system suspend — a 30s suspend
-/// in the middle of a session would silently lose 30s of countdown.
-/// CLOCK_BOOTTIME counts time including suspend, which is what a meditation
-/// timer wants: real wall-clock progress regardless of OS power state.
-fn boot_time_now() -> std::time::Duration {
-    let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
-    let rc = unsafe { libc::clock_gettime(libc::CLOCK_BOOTTIME, &mut ts) };
-    debug_assert_eq!(rc, 0, "clock_gettime(CLOCK_BOOTTIME) failed");
-    std::time::Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32)
-}
 
 /// Per-bell schedule used by the running tick. Built once at the
 /// moment the session enters Running (after prep, if any) from the
