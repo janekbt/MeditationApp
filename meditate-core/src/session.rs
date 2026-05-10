@@ -16,7 +16,8 @@
 //! MediaPlayer / etc.). The gtk-side reactive plumbing collapses to
 //! a thin pump.
 
-use crate::db::SessionMode;
+use crate::breath::{BreathPattern, Phase, PhaseInfo};
+use crate::db::{BoxBreathPhaseId, SessionMode};
 use std::time::Duration;
 
 /// Which lifecycle phase the in-flight session is currently in.
@@ -57,9 +58,16 @@ pub struct SessionSettings {
     /// set). `None` for stopwatch-only (Timer-stopwatch /
     /// Guided-stopwatch / Box-Breath-stopwatch). Decides whether the
     /// running display reads as ceiling-rounded remaining or
-    /// floor-rounded elapsed.
+    /// floor-rounded elapsed in Timer/Guided, and whether Box Breath
+    /// auto-ends on a cycle-aligned boundary.
     pub target_secs: Option<u32>,
-    // More fields land in later stages: breath_pattern, bells, etc.
+    /// `Some` only in Box Breath mode. The pattern drives phase
+    /// boundary detection (for cue firing) and cycle-aligned session
+    /// completion (Box Breath always ends on a full-cycle boundary
+    /// rather than mid-phase, so the user finishes on a natural
+    /// hold-out).
+    pub breath_pattern: Option<BreathPattern>,
+    // More fields land in later stages: bells, etc.
 }
 
 /// Side effect the shell should dispatch this tick. The shell
@@ -68,12 +76,24 @@ pub struct SessionSettings {
 pub enum Effect {
     /// Update the running-page big time display. `secs` is the
     /// already-rounded display value (ceiling for prep/countdown,
-    /// floor for stopwatch). Shell formats via `format::format_time`.
+    /// floor for stopwatch / box-breath elapsed). Shell formats via
+    /// `format::format_time`.
     UpdateDisplay { secs: u64 },
     /// Prep silence elapsed; transition to Running. Shell:
     /// constructs the countdown core for Timer mode, plays the
     /// starting bell, refreshes the running button row.
     EndPrep,
+    /// Box Breath: a phase boundary was just crossed. Shell fires
+    /// the per-phase cue (sound + vibration as configured for that
+    /// phase). The first tick of a box-breath session seeds the
+    /// `last_phase` silently (the starting bell already fired); only
+    /// subsequent transitions emit this effect.
+    FireBoxBreathCue(BoxBreathPhaseId),
+    /// Box Breath: the cycle-aligned target was reached, ending the
+    /// session naturally. Shell drops the session and shows the
+    /// done view with this duration. Never fired in stopwatch-only
+    /// box-breath mode (no target; user must press Stop).
+    EndBoxBreath { duration_secs: u64 },
 }
 
 /// In-flight session. Created by `start_prep` (when prep silence is
@@ -89,6 +109,12 @@ pub struct Session {
     /// transitions to Running (so Running's elapsed counts from
     /// the post-prep moment).
     phase_started_at: Duration,
+    /// Box-Breath phase boundary tracking. `None` until the first
+    /// Running tick (which seeds it silently — the starting bell
+    /// already fired). `Some(p)` thereafter; a tick observes
+    /// `phase_at(elapsed) != p` and fires `FireBoxBreathCue`.
+    /// Always `None` outside Box Breath mode.
+    last_breath_phase: Option<Phase>,
 }
 
 impl Session {
@@ -104,6 +130,7 @@ impl Session {
             settings,
             phase: SessionPhase::Prep,
             phase_started_at: now,
+            last_breath_phase: None,
         }
     }
 
@@ -116,6 +143,7 @@ impl Session {
             settings,
             phase: SessionPhase::Running,
             phase_started_at: now,
+            last_breath_phase: None,
         }
     }
 
@@ -158,6 +186,13 @@ impl Session {
 
     fn tick_running(&mut self, now: Duration) -> Vec<Effect> {
         let elapsed = now.saturating_sub(self.phase_started_at);
+
+        // Box Breath running has its own tick shape: phase-boundary
+        // detection + cycle-aligned end + elapsed counter.
+        if self.settings.breath_pattern.is_some() {
+            return self.tick_box_breath(elapsed);
+        }
+
         let display_secs = match self.settings.target_secs {
             // Countdown: ceiling-rounded remaining. (k-1, k] → k.
             // Avoids skipping "0:59" on the very first tick that
@@ -181,6 +216,68 @@ impl Session {
         vec![Effect::UpdateDisplay { secs: display_secs }]
     }
 
+    fn tick_box_breath(&mut self, elapsed: Duration) -> Vec<Effect> {
+        let pattern = self
+            .settings
+            .breath_pattern
+            .as_ref()
+            .expect("tick_box_breath called without breath_pattern");
+        let mut effects: Vec<Effect> = Vec::new();
+
+        // Phase boundary detection. The first Running tick seeds
+        // `last_breath_phase` silently — the starting bell already
+        // fired at on_start so we don't double-cue Phase::In at t=0.
+        let info = pattern.phase_at(elapsed);
+        match self.last_breath_phase {
+            None => {
+                self.last_breath_phase = Some(info.phase);
+            }
+            Some(prev) if prev != info.phase => {
+                self.last_breath_phase = Some(info.phase);
+                effects.push(Effect::FireBoxBreathCue(phase_to_id(info.phase)));
+            }
+            _ => {}
+        }
+
+        // Cycle-aligned end: the gtk shell rounds the chosen
+        // duration UP to the next full cycle at start time, so
+        // `elapsed >= target` already lands exactly on a cycle
+        // boundary. Box Breath is finished when that crossing
+        // happens. Stopwatch-only Box Breath (target_secs None)
+        // never auto-ends.
+        if let Some(target_secs) = self.settings.target_secs {
+            let target = Duration::from_secs(target_secs as u64);
+            if elapsed >= target {
+                effects.push(Effect::EndBoxBreath {
+                    duration_secs: elapsed.as_secs(),
+                });
+                return effects;
+            }
+        }
+
+        // Counter readout for the running-page top strip. Floor-
+        // rounded elapsed; the shell composes "elapsed / target" or
+        // just "elapsed" in stopwatch-only mode using settings.
+        effects.push(Effect::UpdateDisplay {
+            secs: elapsed.as_secs(),
+        });
+        effects
+    }
+
+    /// Box-breath phase / progress at `now`. Used by the shell's
+    /// frame-rate redraw of the dot + per-phase countdown overlay
+    /// (independent of the 1 Hz tick that drives effects). Returns
+    /// `None` when the session isn't a Box-Breath running session
+    /// (no pattern, or not in Running phase).
+    pub fn box_breath_phase_info(&self, now: Duration) -> Option<PhaseInfo> {
+        if self.phase != SessionPhase::Running {
+            return None;
+        }
+        let pattern = self.settings.breath_pattern.as_ref()?;
+        let elapsed = now.saturating_sub(self.phase_started_at);
+        Some(pattern.phase_at(elapsed))
+    }
+
     pub fn phase(&self) -> SessionPhase {
         self.phase
     }
@@ -196,6 +293,15 @@ impl Session {
     }
 }
 
+fn phase_to_id(phase: Phase) -> BoxBreathPhaseId {
+    match phase {
+        Phase::In => BoxBreathPhaseId::In,
+        Phase::HoldIn => BoxBreathPhaseId::HoldIn,
+        Phase::Out => BoxBreathPhaseId::Out,
+        Phase::HoldOut => BoxBreathPhaseId::HoldOut,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -205,6 +311,7 @@ mod tests {
             mode: SessionMode::Timer,
             prep_secs: Some(prep_secs),
             target_secs: Some(600),
+            breath_pattern: None,
         }
     }
 
@@ -213,6 +320,7 @@ mod tests {
             mode: SessionMode::Timer,
             prep_secs: None,
             target_secs: Some(target_secs),
+            breath_pattern: None,
         }
     }
 
@@ -221,6 +329,16 @@ mod tests {
             mode: SessionMode::Timer,
             prep_secs: None,
             target_secs: None,
+            breath_pattern: None,
+        }
+    }
+
+    fn box_breath_settings(target_secs: Option<u32>) -> SessionSettings {
+        SessionSettings {
+            mode: SessionMode::BoxBreath,
+            prep_secs: None,
+            target_secs,
+            breath_pattern: Some(BreathPattern::box_breath()),
         }
     }
 
@@ -370,6 +488,123 @@ mod tests {
         assert_eq!(effects, vec![Effect::UpdateDisplay { secs: 5 }]);
         let effects = s.tick(Duration::from_millis(100_000 + 6_000));
         assert_eq!(effects, vec![Effect::UpdateDisplay { secs: 6 }]);
+    }
+
+    // ── Box Breath running ───────────────────────────────────────────
+
+    #[test]
+    fn first_box_breath_tick_seeds_phase_silently() {
+        // First tick into a Box-Breath running session must NOT
+        // emit FireBoxBreathCue — the starting bell already played
+        // at on_start; emitting a Phase::In cue here would be a
+        // duplicate.
+        let mut s = Session::start_running(box_breath_settings(None), Duration::from_secs(100));
+        let effects = s.tick(Duration::from_millis(100_500)); // 0.5 s in, still Phase::In
+        assert!(
+            !effects.iter().any(|e| matches!(e, Effect::FireBoxBreathCue(_))),
+            "first tick must not fire a phase cue: {:?}",
+            effects
+        );
+        // Should produce a UpdateDisplay though.
+        assert_eq!(effects, vec![Effect::UpdateDisplay { secs: 0 }]);
+    }
+
+    #[test]
+    fn box_breath_tick_at_phase_boundary_fires_cue() {
+        // Box pattern: In [0..4), HoldIn [4..8), Out [8..12), HoldOut [12..16).
+        // Start at t=100, seed Phase::In on first tick at t=100.5.
+        // At t=104 we're in HoldIn → should fire HoldIn cue.
+        let mut s = Session::start_running(box_breath_settings(None), Duration::from_secs(100));
+        let _ = s.tick(Duration::from_millis(100_500)); // seed In
+        let effects = s.tick(Duration::from_secs(104));
+        assert!(
+            effects.contains(&Effect::FireBoxBreathCue(BoxBreathPhaseId::HoldIn)),
+            "expected HoldIn cue, got {:?}",
+            effects
+        );
+    }
+
+    #[test]
+    fn box_breath_tick_within_same_phase_does_not_re_fire_cue() {
+        // Two ticks both in Phase::In must produce only one
+        // (silent) seed and no extra cue.
+        let mut s = Session::start_running(box_breath_settings(None), Duration::from_secs(100));
+        let _ = s.tick(Duration::from_millis(100_500)); // seed In
+        let effects = s.tick(Duration::from_millis(101_500)); // still In
+        assert!(
+            !effects.iter().any(|e| matches!(e, Effect::FireBoxBreathCue(_))),
+            "no cue for same-phase tick"
+        );
+    }
+
+    #[test]
+    fn box_breath_tick_through_full_cycle_fires_each_boundary() {
+        let mut s = Session::start_running(box_breath_settings(None), Duration::from_secs(100));
+        let _ = s.tick(Duration::from_millis(100_500)); // seed In
+        // HoldIn boundary at t=104
+        assert!(s
+            .tick(Duration::from_secs(104))
+            .contains(&Effect::FireBoxBreathCue(BoxBreathPhaseId::HoldIn)));
+        // Out boundary at t=108
+        assert!(s
+            .tick(Duration::from_secs(108))
+            .contains(&Effect::FireBoxBreathCue(BoxBreathPhaseId::Out)));
+        // HoldOut boundary at t=112
+        assert!(s
+            .tick(Duration::from_secs(112))
+            .contains(&Effect::FireBoxBreathCue(BoxBreathPhaseId::HoldOut)));
+        // Wrap to In at t=116
+        assert!(s
+            .tick(Duration::from_secs(116))
+            .contains(&Effect::FireBoxBreathCue(BoxBreathPhaseId::In)));
+    }
+
+    #[test]
+    fn box_breath_with_target_emits_end_at_target_boundary() {
+        // 16 s target = exactly 1 cycle. End at t=116 (16 s after
+        // session start at t=100).
+        let mut s = Session::start_running(
+            box_breath_settings(Some(16)),
+            Duration::from_secs(100),
+        );
+        let _ = s.tick(Duration::from_millis(100_500)); // seed
+        let effects = s.tick(Duration::from_secs(116));
+        assert!(
+            effects.contains(&Effect::EndBoxBreath { duration_secs: 16 }),
+            "expected EndBoxBreath, got {:?}",
+            effects
+        );
+    }
+
+    #[test]
+    fn box_breath_stopwatch_never_emits_end() {
+        // No target → never auto-ends regardless of elapsed.
+        let mut s = Session::start_running(box_breath_settings(None), Duration::from_secs(100));
+        let _ = s.tick(Duration::from_millis(100_500));
+        let effects = s.tick(Duration::from_secs(100 + 16 * 100)); // many cycles
+        assert!(
+            !effects.iter().any(|e| matches!(e, Effect::EndBoxBreath { .. })),
+            "stopwatch box-breath must never auto-end"
+        );
+    }
+
+    #[test]
+    fn box_breath_phase_info_reflects_current_phase() {
+        // Frame-rate inspector — shell uses this for the dot's
+        // perimeter position + the per-phase countdown overlay.
+        let s = Session::start_running(box_breath_settings(None), Duration::from_secs(100));
+        let info = s.box_breath_phase_info(Duration::from_secs(102)).unwrap();
+        assert_eq!(info.phase, Phase::In);
+        assert_eq!(info.elapsed_in_phase, Duration::from_secs(2));
+
+        let info = s.box_breath_phase_info(Duration::from_secs(105)).unwrap();
+        assert_eq!(info.phase, Phase::HoldIn);
+    }
+
+    #[test]
+    fn box_breath_phase_info_is_none_for_non_box_breath_session() {
+        let s = Session::start_running(timer_countdown_settings(600), Duration::from_secs(100));
+        assert!(s.box_breath_phase_info(Duration::from_secs(105)).is_none());
     }
 
     #[test]
