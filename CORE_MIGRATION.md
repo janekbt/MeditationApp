@@ -37,7 +37,7 @@ that intent and reality, surfaced during the Android port.
 
 ## Quick wins (do first — pure moves, near-zero risk)
 
-### [ ] 1. `PresetConfig` + sibling structs → `meditate_core::preset_config`
+### [x] 1. `PresetConfig` + sibling structs → `meditate_core::preset_config`
 
 **From:** `src/preset_config.rs` (285 lines).
 **Pulls along:** the 10 pub structs/enums (`PresetConfig`,
