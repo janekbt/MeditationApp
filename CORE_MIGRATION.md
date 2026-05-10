@@ -151,7 +151,7 @@ running page on the Librem 5 after landing.
 
 ## Larger / structural (do as the relevant Android milestone surfaces them)
 
-### [ ] 7. CSV import/export logic
+### [x] 7. CSV import/export logic
 
 **From:** `src/data_io.rs` (401 LOC, tests included).
 **Move:** the parsing/writing logic that operates on `&Database` + a

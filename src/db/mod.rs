@@ -328,6 +328,15 @@ impl std::fmt::Debug for Database {
 }
 
 impl Database {
+    /// Borrow the underlying core handle. Used by sibling modules in
+    /// the gtk crate (e.g. `data_io`) that delegate work to functions
+    /// in `meditate_core::*` taking a `&meditate_core::db::Database`.
+    /// `pub(crate)` rather than `pub` so the inner handle never
+    /// escapes the crate's wrapper layer.
+    pub(crate) fn core(&self) -> &meditate_core::db::Database {
+        &self.inner
+    }
+
     /// Open (or create) the database at `path`. Schema is core's; any
     /// pre-existing DB file written by an older version of this app
     /// will need to be deleted first (the user opted into that on
