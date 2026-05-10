@@ -105,103 +105,31 @@ const BUNDLED_BELL_SOUNDS: &[(&str, &str, &str, &str)] = &[
     ),
 ];
 
-/// Public so callers (B.4.4 migration site, etc.) can map old
-/// "bowl" / "bell" / "gong" string keys to their bundled UUIDs
-/// without re-deriving the table here.
-pub const BUNDLED_BOWL_UUID: &str = "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0001";
-pub const BUNDLED_BELL_UUID: &str = "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0002";
-pub const BUNDLED_GONG_UUID: &str = "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0003";
-
-/// Stable UUIDs for the two seeded default labels. The seed runs once
-/// on first open (gated by `LABELS_SEEDED_KEY`) and never again — a
-/// renamed default still resolves through the UUID, and a *deleted*
-/// default stays deleted instead of resurrecting from the next open.
-pub const DEFAULT_TIMER_LABEL_UUID: &str = "e2d5a4b8-7c91-4e3f-a826-d40f1c5b9001";
-pub const DEFAULT_BREATHING_LABEL_UUID: &str = "e2d5a4b8-7c91-4e3f-a826-d40f1c5b9002";
-pub const DEFAULT_GUIDED_LABEL_UUID: &str = "e2d5a4b8-7c91-4e3f-a826-d40f1c5b9003";
-
-/// Seed list mirrors `BUNDLED_BELL_SOUNDS` — uuid + display name.
-/// Append-only on UUID; the user can rename or delete the row from
-/// the chooser like any other label.
-const DEFAULT_LABELS: &[(&str, &str)] = &[
-    (DEFAULT_TIMER_LABEL_UUID, "Meditation"),
-    (DEFAULT_BREATHING_LABEL_UUID, "Box-Breathing"),
-    (DEFAULT_GUIDED_LABEL_UUID, "Guided Meditation"),
-];
-
-/// One-shot seed flags in the `settings` table. Set to "1" after the
-/// first successful seed; subsequent `open()` calls early-return
-/// from the seed function. Without these, a deleted seed row would
-/// resurrect on the next open (and re-emit an `*_insert` event that
-/// overrides the user's delete on every synced peer).
-const LABELS_SEEDED_KEY: &str = "default_labels_seeded";
-const BELLS_SEEDED_KEY: &str = "bundled_bell_sounds_seeded";
-const PRESETS_SEEDED_KEY: &str = "default_presets_seeded";
-const VIBRATION_PATTERNS_SEEDED_KEY: &str = "bundled_vibration_patterns_seeded";
-
-// ── Bundled vibration patterns ─────────────────────────────────────
-// Stable hardcoded UUIDs in their own family (separate from the
-// bell-sounds family for visual disambiguation in DB inspection) so
-// that peers seeded independently end up with the same row identity
-// per pattern and don't accumulate duplicates after sync.
-pub const BUNDLED_PATTERN_PULSE_UUID:     &str = "7e9c4d2f-5a8b-4f1d-9e3c-2d6f7a8b0001";
-pub const BUNDLED_PATTERN_HEARTBEAT_UUID: &str = "7e9c4d2f-5a8b-4f1d-9e3c-2d6f7a8b0002";
-pub const BUNDLED_PATTERN_WAVE_UUID:      &str = "7e9c4d2f-5a8b-4f1d-9e3c-2d6f7a8b0003";
-pub const BUNDLED_PATTERN_RIPPLE_UUID:    &str = "7e9c4d2f-5a8b-4f1d-9e3c-2d6f7a8b0004";
-pub const BUNDLED_PATTERN_PYRAMID_UUID:   &str = "7e9c4d2f-5a8b-4f1d-9e3c-2d6f7a8b0005";
-
-/// Seed list: (uuid, name, duration_ms, intensities, chart_kind).
-/// Pulse/Heartbeat/Wave/Ripple are line patterns; Pyramid ships in
-/// bar mode to demo the abrupt-step variant out of the box.
-const BUNDLED_VIBRATION_PATTERNS: &[(&str, &str, u32, &[f32], ChartKind)] = &[
-    (
-        BUNDLED_PATTERN_PULSE_UUID,
-        "Pulse",
-        400,
-        &[0.0, 1.0, 0.0],
-        ChartKind::Line,
-    ),
-    (
-        BUNDLED_PATTERN_HEARTBEAT_UUID,
-        "Heartbeat",
-        1500,
-        &[0.0, 0.6, 0.0, 0.0, 1.0, 0.0],
-        ChartKind::Line,
-    ),
-    (
-        BUNDLED_PATTERN_WAVE_UUID,
-        "Wave",
-        2000,
-        &[0.0, 0.4, 0.7, 1.0, 0.7, 0.4, 0.0],
-        ChartKind::Line,
-    ),
-    (
-        BUNDLED_PATTERN_RIPPLE_UUID,
-        "Ripple",
-        2500,
-        &[1.0, 0.7, 0.5, 0.3, 0.15, 0.0],
-        ChartKind::Line,
-    ),
-    (
-        BUNDLED_PATTERN_PYRAMID_UUID,
-        "Pyramid",
-        3000,
-        &[0.2, 0.5, 1.0, 0.5, 0.2],
-        ChartKind::Bar,
-    ),
-];
-
-/// Stable UUIDs for the three seeded default presets. Bundled rows
-/// have no special property at the schema level — they're regular
-/// presets that the user can rename, restar, or delete just like
-/// their own. The UUIDs let the one-shot seed know "we already did
-/// this" without scanning by name.
-pub const DEFAULT_SITTING_PRESET_UUID: &str
-    = "b9e1c5a4-2d3f-4d8b-9c70-7a0e1d2c3001";
-pub const DEFAULT_BOX_BREATH_4444_UUID: &str
-    = "b9e1c5a4-2d3f-4d8b-9c70-7a0e1d2c3002";
-pub const DEFAULT_BOX_BREATH_4780_UUID: &str
-    = "b9e1c5a4-2d3f-4d8b-9c70-7a0e1d2c3003";
+// Bundled UUIDs + portable seed lists live in core so every shell
+// agrees on canonical row identity. Re-exported here so existing
+// callers continue importing them from `crate::db::*` unchanged.
+pub use meditate_core::seeds::{
+    BELLS_SEEDED_KEY,
+    BUNDLED_BELL_UUID,
+    BUNDLED_BOWL_UUID,
+    BUNDLED_GONG_UUID,
+    BUNDLED_PATTERN_HEARTBEAT_UUID,
+    BUNDLED_PATTERN_PULSE_UUID,
+    BUNDLED_PATTERN_PYRAMID_UUID,
+    BUNDLED_PATTERN_RIPPLE_UUID,
+    BUNDLED_PATTERN_WAVE_UUID,
+    BUNDLED_VIBRATION_PATTERNS,
+    DEFAULT_BOX_BREATH_4444_UUID,
+    DEFAULT_BOX_BREATH_4780_UUID,
+    DEFAULT_BREATHING_LABEL_UUID,
+    DEFAULT_GUIDED_LABEL_UUID,
+    DEFAULT_LABELS,
+    DEFAULT_SITTING_PRESET_UUID,
+    DEFAULT_TIMER_LABEL_UUID,
+    LABELS_SEEDED_KEY,
+    PRESETS_SEEDED_KEY,
+    VIBRATION_PATTERNS_SEEDED_KEY,
+};
 
 #[derive(Debug, Clone)]
 pub struct Session {

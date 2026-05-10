@@ -5,6 +5,7 @@ pub mod db;
 pub mod diag;
 pub mod format;
 pub mod preset_config;
+pub mod seeds;
 pub mod sync;
 pub mod time;
 pub mod timer;

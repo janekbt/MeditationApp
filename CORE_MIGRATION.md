@@ -176,7 +176,7 @@ tick.
 into `MeditateApplication`. Plan for a `&meditate_core::db::Database`
 parameter instead.
 
-### [ ] 9. Bundled UUID constants + bundled seed lists
+### [x] 9. Bundled UUID constants + bundled seed lists
 
 **From:** top of `src/db/mod.rs`.
 **Move:** the `BUNDLED_*_UUID`, `DEFAULT_*_LABEL_UUID`, and
