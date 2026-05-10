@@ -378,7 +378,7 @@ replaces `glib::DateTime`. Android's log view needs identical grouping.
 formatting strings come from a small format helper.
 **Risk:** low — straight chrono port.
 
-### [ ] 18. Vibration-editor pure helpers → `meditate_core::vibration` (extends item 5)
+### [x] 18. Vibration-editor pure helpers → `meditate_core::vibration` (extends item 5)
 
 **From:** `src/vibration_editor.rs`:
 - `max_points_for_duration_s()` (lines 34–37) — point-count constraint

@@ -186,6 +186,117 @@ pub fn patterns_equivalent(a: &VibrationPattern, b: &VibrationPattern) -> bool {
             .all(|(x, y)| (x - y).abs() < 1e-6)
 }
 
+// ── Vibration-editor invariants ──────────────────────────────────────
+
+/// Default number of control points for a fresh pattern.
+pub const EDITOR_DEFAULT_POINTS: usize = 7;
+/// Default pattern duration in seconds.
+pub const EDITOR_DEFAULT_DURATION_S: f64 = 2.0;
+/// Lower bound on control-point count (UI clamp).
+pub const EDITOR_POINTS_MIN: u32 = 3;
+/// Upper bound on control-point count regardless of duration.
+pub const EDITOR_POINTS_MAX: u32 = 24;
+/// Minimum spacing between authored control points, in
+/// milliseconds. Below this the LRA can't render the steps as
+/// distinct, and feedbackd's chunking math (200 ms overlap, 10
+/// segments per chunk) starts to wobble. The Points spinner's
+/// upper bound is recomputed on every Duration change to enforce
+/// it: `max_points = min(POINTS_MAX, floor(D_secs * 10))`.
+pub const EDITOR_MIN_POINT_SPACING_MS: u32 = 100;
+/// Vertical-axis snap on the chart. Matches the runtime sampler's
+/// 10% amplitude quantisation, so what the user authors equals
+/// what feedbackd renders. Finer steps would be invisible to the
+/// LRA and would defeat the run-length encoder that collapses
+/// held-amplitude stretches into single segments.
+pub const EDITOR_INTENSITY_STEP: f32 = 0.10;
+
+/// Max number of control points allowed at a given duration,
+/// respecting both the absolute POINTS_MAX cap and the
+/// MIN_POINT_SPACING_MS floor. Returns at least `EDITOR_POINTS_MIN`
+/// so very short patterns still have something to author.
+pub fn max_points_for_duration_s(duration_s: f64) -> u32 {
+    let by_spacing =
+        (duration_s * 1000.0 / EDITOR_MIN_POINT_SPACING_MS as f64).floor() as u32;
+    EDITOR_POINTS_MAX.min(by_spacing).max(EDITOR_POINTS_MIN)
+}
+
+/// Project `old` (an N-sample envelope) onto a new equally-spaced
+/// grid of `new_n` samples by linear interpolation. Preserves the
+/// curve shape across Points-spinner changes. Returns a fresh Vec.
+pub fn resample_envelope(old: &[f32], new_n: usize) -> Vec<f32> {
+    if new_n == 0 {
+        return Vec::new();
+    }
+    let old_n = old.len();
+    if old_n == 0 {
+        return vec![0.5; new_n];
+    }
+    if old_n == 1 {
+        return vec![old[0]; new_n];
+    }
+    if new_n == old_n {
+        return old.to_vec();
+    }
+    let mut out = Vec::with_capacity(new_n);
+    for i in 0..new_n {
+        let t = i as f32 / (new_n - 1).max(1) as f32;
+        let xf = t * (old_n - 1) as f32;
+        let lo = xf.floor() as usize;
+        let hi = (lo + 1).min(old_n - 1);
+        let frac = xf - lo as f32;
+        out.push(old[lo] * (1.0 - frac) + old[hi] * frac);
+    }
+    out
+}
+
+/// One pre-laid-out x-axis label for the editor chart. Caller
+/// passes its native cairo / canvas extents; this struct is the
+/// shell-agnostic input to `select_xlabel_indices`.
+#[derive(Debug, Clone, Copy)]
+pub struct XLabelLayout {
+    /// Left x-position of the label box, in chart-coordinates.
+    pub lx: f64,
+    /// Label width, in chart-coordinates.
+    pub lw: f64,
+}
+
+/// Greedy left-to-right "minimum gap" interior-label selection.
+/// Always includes the first and last layout (provided
+/// `layouts.len() >= 2`); interior layouts are kept only if they
+/// fit without overlapping either the running last-drawn label
+/// (left side) or the final anchor (right side), with `min_gap`
+/// breathing room on both sides.
+///
+/// Returns the indices to render, in left-to-right order. Pure —
+/// no cairo, no glib, no widget refs.
+pub fn select_xlabel_indices(layouts: &[XLabelLayout], min_gap: f64) -> Vec<usize> {
+    let n = layouts.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    if n == 1 {
+        return vec![0];
+    }
+    let last = &layouts[n - 1];
+    let mut selected = Vec::with_capacity(n);
+    selected.push(0);
+    let mut last_right = layouts[0].lx + layouts[0].lw;
+    for (i, li) in layouts.iter().enumerate().take(n - 1).skip(1) {
+        if li.lx <= last_right + min_gap {
+            continue;
+        }
+        if li.lx + li.lw + min_gap > last.lx {
+            continue;
+        }
+        selected.push(i);
+        last_right = li.lx + li.lw;
+    }
+    if last.lx > last_right + min_gap {
+        selected.push(n - 1);
+    }
+    selected
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -474,5 +585,91 @@ mod tests {
         a.name = "old".to_string();
         b.name = "new".to_string();
         assert!(!patterns_equivalent(&a, &b));
+    }
+
+    // ── Editor helpers ────────────────────────────────────────────
+
+    #[test]
+    fn max_points_floors_to_min_spacing() {
+        // 1.0 s → 1000 ms / 100 ms = 10 → clamped by POINTS_MAX (24).
+        assert_eq!(max_points_for_duration_s(1.0), 10);
+        // 2.4 s → 24 → exactly POINTS_MAX.
+        assert_eq!(max_points_for_duration_s(2.4), 24);
+        // 3.0 s → would be 30 → clamped at 24.
+        assert_eq!(max_points_for_duration_s(3.0), 24);
+    }
+
+    #[test]
+    fn max_points_never_drops_below_min() {
+        // 0.1 s → by_spacing = 1 → clamped up to POINTS_MIN (3).
+        assert_eq!(max_points_for_duration_s(0.1), 3);
+        assert_eq!(max_points_for_duration_s(0.0), 3);
+    }
+
+    #[test]
+    fn resample_handles_empty_inputs() {
+        assert!(resample_envelope(&[], 0).is_empty());
+        // Empty input but non-zero output → 0.5 default fill.
+        assert_eq!(resample_envelope(&[], 4), vec![0.5; 4]);
+    }
+
+    #[test]
+    fn resample_preserves_endpoints() {
+        let old: Vec<f32> = vec![0.0, 1.0];
+        let new = resample_envelope(&old, 5);
+        assert_eq!(new.len(), 5);
+        assert!((new[0] - 0.0).abs() < 1e-6);
+        assert!((new[4] - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn resample_identity_when_lengths_match() {
+        let old: Vec<f32> = vec![0.1, 0.3, 0.5, 0.7];
+        let new = resample_envelope(&old, 4);
+        assert_eq!(new, old);
+    }
+
+    #[test]
+    fn select_xlabels_keeps_first_and_last() {
+        // Two well-spaced labels — both kept.
+        let layouts = vec![
+            XLabelLayout { lx: 0.0, lw: 10.0 },
+            XLabelLayout { lx: 100.0, lw: 10.0 },
+        ];
+        assert_eq!(select_xlabel_indices(&layouts, 6.0), vec![0, 1]);
+    }
+
+    #[test]
+    fn select_xlabels_drops_overlapping_interior() {
+        let layouts = vec![
+            XLabelLayout { lx: 0.0, lw: 10.0 },   // 0
+            XLabelLayout { lx: 12.0, lw: 10.0 },  // 1: collides with 0 (right of 0 is 10, gap=6 → need >= 16)
+            XLabelLayout { lx: 50.0, lw: 10.0 },  // 2: ok between
+            XLabelLayout { lx: 100.0, lw: 10.0 }, // 3: last anchor
+        ];
+        let selected = select_xlabel_indices(&layouts, 6.0);
+        assert_eq!(selected, vec![0, 2, 3]);
+    }
+
+    #[test]
+    fn select_xlabels_drops_interior_too_close_to_last_anchor() {
+        let layouts = vec![
+            XLabelLayout { lx: 0.0, lw: 10.0 },
+            XLabelLayout { lx: 90.0, lw: 10.0 },  // would collide with last anchor's left edge
+            XLabelLayout { lx: 100.0, lw: 10.0 }, // last anchor at 100..110
+        ];
+        let selected = select_xlabel_indices(&layouts, 6.0);
+        assert_eq!(selected, vec![0, 2]);
+    }
+
+    #[test]
+    fn select_xlabels_single_input_keeps_only_that_one() {
+        let layouts = vec![XLabelLayout { lx: 0.0, lw: 10.0 }];
+        assert_eq!(select_xlabel_indices(&layouts, 6.0), vec![0]);
+    }
+
+    #[test]
+    fn select_xlabels_empty_input_is_empty() {
+        assert!(select_xlabel_indices(&[], 6.0).is_empty());
     }
 }

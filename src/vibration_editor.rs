@@ -19,22 +19,18 @@ use crate::db::{ChartKind, VibrationPattern};
 use crate::i18n::gettext;
 
 // ── Tunables ──────────────────────────────────────────────────────────────
-const DEFAULT_POINTS: usize       = 7;
-const DEFAULT_DURATION_S: f64     = 2.0;
-const POINTS_MIN: u32             = 3;
-const POINTS_MAX: u32             = 24;
-/// Minimum spacing between authored control points, in
-/// milliseconds. Below this the LRA can't render the steps as
-/// distinct, and feedbackd's chunking math (200 ms overlap, 10
-/// segments per chunk) starts to wobble. The Points spin row's
-/// upper bound is recomputed on every Duration change to enforce
-/// it: `max_points = min(POINTS_MAX, floor(D_secs * 10))`.
-const MIN_POINT_SPACING_MS: u32   = 100;
-
-fn max_points_for_duration_s(duration_s: f64) -> u32 {
-    let by_spacing = (duration_s * 1000.0 / MIN_POINT_SPACING_MS as f64).floor() as u32;
-    POINTS_MAX.min(by_spacing).max(POINTS_MIN)
-}
+// Editor invariants live in `meditate_core::vibration` so the Android
+// shell's editor inherits the same caps + snapping behaviour. These
+// thin aliases keep call-site readability identical to the pre-
+// migration code.
+use meditate_core::vibration::{
+    max_points_for_duration_s,
+    EDITOR_DEFAULT_DURATION_S as DEFAULT_DURATION_S,
+    EDITOR_DEFAULT_POINTS as DEFAULT_POINTS,
+    EDITOR_INTENSITY_STEP as INTENSITY_STEP,
+    EDITOR_POINTS_MAX as POINTS_MAX,
+    EDITOR_POINTS_MIN as POINTS_MIN,
+};
 const DURATION_MIN_S: f64         = 0.5;
 const DURATION_MAX_S: f64         = 10.0;
 
@@ -47,44 +43,10 @@ const Y_LABEL_W: f64              = 38.0;
 const X_LABEL_H: f64              = 18.0;
 const PAD: f64                    = 10.0;
 
-// Snap to 5% increments.
-/// Vertical-axis snap on the chart. Matches the runtime sampler's
-/// 10% amplitude quantisation, so what the user authors equals
-/// what feedbackd renders. Finer steps would be invisible to the
-/// LRA and would defeat the run-length encoder that collapses
-/// held-amplitude stretches into single segments.
-const INTENSITY_STEP: f32         = 0.10;
-
-// ── Linear-interpolating resample (free function — pure, testable) ───────
-
-/// Project `old` (an N-sample envelope) onto a new equally-spaced
-/// grid of `new_n` samples by linear interpolation. Preserves the
-/// curve shape across Points-spinner changes. Returns a fresh Vec.
-pub(crate) fn resample(old: &[f32], new_n: usize) -> Vec<f32> {
-    if new_n == 0 {
-        return Vec::new();
-    }
-    let old_n = old.len();
-    if old_n == 0 {
-        return vec![0.5; new_n];
-    }
-    if old_n == 1 {
-        return vec![old[0]; new_n];
-    }
-    if new_n == old_n {
-        return old.to_vec();
-    }
-    let mut out = Vec::with_capacity(new_n);
-    for i in 0..new_n {
-        let t = i as f32 / (new_n - 1).max(1) as f32;
-        let xf = t * (old_n - 1) as f32;
-        let lo = xf.floor() as usize;
-        let hi = (lo + 1).min(old_n - 1);
-        let frac = xf - lo as f32;
-        out.push(old[lo] * (1.0 - frac) + old[hi] * frac);
-    }
-    out
-}
+// Resampling helper lives in `meditate_core::vibration` (the
+// Android shell's editor uses it too). Re-exported so the call
+// sites in this file stay unprefixed.
+pub(crate) use meditate_core::vibration::resample_envelope as resample;
 
 // ── State ────────────────────────────────────────────────────────────────
 
@@ -773,28 +735,16 @@ fn draw_chart(
         let _ = cr.show_text(&l.text);
     };
 
-    if !layouts.is_empty() {
-        draw_label(cr, &layouts[0]);
-        let mut last_right = layouts[0].lx + layouts[0].lw;
-        let last_idx = layouts.len() - 1;
-        if last_idx >= 1 {
-            let last = &layouts[last_idx];
-            for li in &layouts[1..last_idx] {
-                if li.lx <= last_right + X_LABEL_MIN_GAP {
-                    continue;
-                }
-                if li.lx + li.lw + X_LABEL_MIN_GAP > last.lx {
-                    continue;
-                }
-                draw_label(cr, li);
-                last_right = li.lx + li.lw;
-            }
-            // Force-draw the last anchor unless it's literally on
-            // top of the first (degenerate chart_rect).
-            if last.lx > last_right + X_LABEL_MIN_GAP {
-                draw_label(cr, last);
-            }
-        }
+    // Greedy "minimum gap" interior-label selection lives in core
+    // so the Android shell's editor inherits the same overlap
+    // behaviour. Map our local layouts to the portable struct, pick
+    // the indices, dispatch cairo for those.
+    let core_layouts: Vec<meditate_core::vibration::XLabelLayout> = layouts
+        .iter()
+        .map(|l| meditate_core::vibration::XLabelLayout { lx: l.lx, lw: l.lw })
+        .collect();
+    for i in meditate_core::vibration::select_xlabel_indices(&core_layouts, X_LABEL_MIN_GAP) {
+        draw_label(cr, &layouts[i]);
     }
 }
 
