@@ -1,5 +1,4 @@
 mod imp;
-pub mod breathing;
 
 pub use imp::{TimerMode, TimerState};
 
@@ -120,7 +119,7 @@ impl TimerView {
         self.imp().current_mode() == TimerMode::Breathing
     }
 
-    pub fn breathing_pattern(&self) -> breathing::Pattern {
+    pub fn breathing_pattern(&self) -> meditate_core::breath::BreathPattern {
         self.imp().breathing_pattern.get()
     }
 

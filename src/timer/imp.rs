@@ -6,9 +6,9 @@ use glib::subclass::Signal;
 use std::sync::OnceLock;
 
 use crate::db::{Label, SessionData, SessionMode};
-use super::breathing::Pattern as BreathPattern;
 
 use std::time::Duration;
+use meditate_core::breath::BreathPattern;
 use meditate_core::format::format_time;
 use meditate_core::time::boot_time_now;
 use meditate_core::timer::{
@@ -2138,7 +2138,7 @@ impl TimerView {
             }
             TimerMode::Breathing => {
                 let pattern = self.breathing_pattern.get();
-                let cycle = pattern.cycle_secs().max(1) as u64;
+                let cycle = pattern.cycle().as_secs().max(1);
                 // "Finish the breath" before stopping: round the requested
                 // duration up to the next full cycle so the session always
                 // ends on an exhale/hold-out boundary.
@@ -4761,7 +4761,7 @@ impl TimerView {
             return;
         }
         *slot = new_val;
-        if p.cycle_secs() < MIN_CYCLE_SECS {
+        if p.cycle().as_secs() < MIN_CYCLE_SECS as u64 {
             // Defence in depth; shouldn't fire given the per-slot minimums
             // above enforce at least inhale=1 + exhale=1.
             return;

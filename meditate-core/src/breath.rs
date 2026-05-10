@@ -1,66 +1,180 @@
+//! Box-breath / 4-7-8 / arbitrary 4-phase breath patterns.
+//!
+//! Single source of truth shared by every shell. Phase variants and
+//! struct shape match the GTK shell's prior `Pattern` (the canonical
+//! visual reference); the API exposes a unified
+//! `phase_at(elapsed) -> PhaseInfo` so callers don't have to chain
+//! `phase_at` + `phase_progress` + `phase_total` + `phase_remaining`.
+//!
+//! Zero-length phases are skipped — a 4-7-8-0 pattern with no final
+//! hold cycles through three active phases without ever returning
+//! `Phase::HoldOut`.
+
 use crate::timer::Stopwatch;
 use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
-    Inhale,
-    HoldAfterInhale,
-    Exhale,
-    HoldAfterExhale,
+    In,
+    HoldIn,
+    Out,
+    HoldOut,
 }
 
+impl Phase {
+    pub fn index(self) -> usize {
+        match self {
+            Phase::In => 0,
+            Phase::HoldIn => 1,
+            Phase::Out => 2,
+            Phase::HoldOut => 3,
+        }
+    }
+}
+
+/// Four-phase breath pattern. Durations are seconds (matches the
+/// GTK shell's settings-key persistence and editor SpinRow ranges).
+/// `0` for any field skips that phase entirely.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct BreathPattern {
-    phases: Vec<(Phase, Duration)>,
+    pub in_secs: u32,
+    pub hold_in: u32,
+    pub out_secs: u32,
+    pub hold_out: u32,
+}
+
+/// Where a given moment lands inside one breath cycle. All four
+/// fields together give the running page everything it needs:
+/// the active phase to label, how far through it we are (for the
+/// dot's perimeter position or a progress bar), the phase's full
+/// duration (denominator for "M / N" displays), and the remaining
+/// time in this phase (the big seconds digit overlaid on the
+/// square in the GTK box-breath running page).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PhaseInfo {
+    pub phase: Phase,
+    pub elapsed_in_phase: Duration,
+    pub total: Duration,
+    pub remaining: Duration,
 }
 
 impl BreathPattern {
+    pub fn from_durations(in_secs: u32, hold_in: u32, out_secs: u32, hold_out: u32) -> Self {
+        Self { in_secs, hold_in, out_secs, hold_out }
+    }
+
+    /// Box breath: 4-4-4-4.
     pub fn box_breath() -> Self {
-        let four_secs = Duration::from_secs(4);
-        Self {
-            phases: vec![
-                (Phase::Inhale, four_secs),
-                (Phase::HoldAfterInhale, four_secs),
-                (Phase::Exhale, four_secs),
-                (Phase::HoldAfterExhale, four_secs),
-            ],
-        }
+        Self { in_secs: 4, hold_in: 4, out_secs: 4, hold_out: 4 }
     }
 
+    /// 4-7-8 (Weil) — inhale 4, hold 7, exhale 8, no final hold.
     pub fn four_seven_eight() -> Self {
-        Self {
-            phases: vec![
-                (Phase::Inhale, Duration::from_secs(4)),
-                (Phase::HoldAfterInhale, Duration::from_secs(7)),
-                (Phase::Exhale, Duration::from_secs(8)),
-            ],
-        }
+        Self { in_secs: 4, hold_in: 7, out_secs: 8, hold_out: 0 }
     }
 
-    pub fn phase_at(&self, elapsed: Duration) -> Phase {
-        self.locate(elapsed).0
+    /// Total cycle length. Sum of the four phase durations.
+    pub fn cycle(&self) -> Duration {
+        Duration::from_secs(
+            (self.in_secs + self.hold_in + self.out_secs + self.hold_out) as u64,
+        )
     }
 
-    pub fn phase_progress(&self, elapsed: Duration) -> f64 {
-        let (_, into_phase_nanos, phase_duration_nanos) = self.locate(elapsed);
-        into_phase_nanos as f64 / phase_duration_nanos as f64
+    pub fn duration_for(&self, phase: Phase) -> Duration {
+        let secs = match phase {
+            Phase::In => self.in_secs,
+            Phase::HoldIn => self.hold_in,
+            Phase::Out => self.out_secs,
+            Phase::HoldOut => self.hold_out,
+        };
+        Duration::from_secs(secs as u64)
     }
 
-    fn locate(&self, elapsed: Duration) -> (Phase, u128, u128) {
-        let cycle_nanos: u128 = self.phases.iter().map(|(_, d)| d.as_nanos()).sum();
-        let offset_nanos = elapsed.as_nanos() % cycle_nanos;
+    /// The four phases paired with their durations, in cycle order.
+    /// Zero-duration phases stay in the array so callers can iterate
+    /// positionally (`phase_at` is what skips them).
+    pub fn phases(&self) -> [(Phase, u32); 4] {
+        [
+            (Phase::In, self.in_secs),
+            (Phase::HoldIn, self.hold_in),
+            (Phase::Out, self.out_secs),
+            (Phase::HoldOut, self.hold_out),
+        ]
+    }
 
-        let mut accumulated: u128 = 0;
-        for (phase, duration) in &self.phases {
-            let phase_end = accumulated + duration.as_nanos();
-            if offset_nanos < phase_end {
-                return (*phase, offset_nanos - accumulated, duration.as_nanos());
+    /// The active phase + how far into it we are at `elapsed`. Wraps
+    /// past one cycle (so a session running ten minutes through a
+    /// 16-second box-breath cycle keeps cycling). Zero-length phases
+    /// are skipped — a 4-7-8-0 pattern's `phase_at` never returns
+    /// `Phase::HoldOut`.
+    ///
+    /// Panics in debug builds if the pattern has a zero cycle (every
+    /// phase is 0). That's user-input validation territory; the
+    /// editor / setup screen must enforce a non-zero cycle before
+    /// starting a session.
+    pub fn phase_at(&self, elapsed: Duration) -> PhaseInfo {
+        let cycle = self.cycle();
+        debug_assert!(!cycle.is_zero(), "phase_at: zero-length cycle");
+
+        let cycle_nanos = cycle.as_nanos();
+        let t_nanos = elapsed.as_nanos() % cycle_nanos;
+
+        let mut acc: u128 = 0;
+        for (phase, dur_secs) in self.phases() {
+            if dur_secs == 0 {
+                continue;
             }
-            accumulated = phase_end;
+            let dur_nanos: u128 = (dur_secs as u128) * 1_000_000_000;
+            let next = acc + dur_nanos;
+            if t_nanos < next {
+                let into = t_nanos - acc;
+                return PhaseInfo {
+                    phase,
+                    elapsed_in_phase: Duration::from_nanos(into as u64),
+                    total: Duration::from_nanos(dur_nanos as u64),
+                    remaining: Duration::from_nanos((dur_nanos - into) as u64),
+                };
+            }
+            acc = next;
         }
-        unreachable!("phase table exhausted despite offset < cycle")
+        // After `% cycle_nanos` the loop above always returns. Defensive
+        // tail in case of a pattern with zero-duration trailing phases —
+        // return the last non-zero phase at its end.
+        let last = self
+            .phases()
+            .into_iter()
+            .rev()
+            .find(|(_, d)| *d > 0)
+            .expect("phase_at: zero-length cycle");
+        let dur = Duration::from_secs(last.1 as u64);
+        PhaseInfo {
+            phase: last.0,
+            elapsed_in_phase: dur,
+            total: dur,
+            remaining: Duration::ZERO,
+        }
+    }
+
+    /// The phase that represents the end of a cycle — the one we
+    /// align session completion to. Prefers `HoldOut` if non-zero,
+    /// then `Out`, then `HoldIn`, then `In` (matches 4-7-8-0 style
+    /// patterns where the trailing hold is skipped).
+    pub fn last_phase(&self) -> Phase {
+        if self.hold_out > 0 {
+            Phase::HoldOut
+        } else if self.out_secs > 0 {
+            Phase::Out
+        } else if self.hold_in > 0 {
+            Phase::HoldIn
+        } else {
+            Phase::In
+        }
     }
 }
 
+/// Pattern + Stopwatch wrapper. Convenient when a shell wants
+/// "session" semantics — pause/resume freezes/continues the
+/// elapsed time without the caller plumbing the `now` arithmetic.
 pub struct BreathSession {
     pattern: BreathPattern,
     stopwatch: Stopwatch,
@@ -71,12 +185,8 @@ impl BreathSession {
         Self { pattern, stopwatch }
     }
 
-    pub fn current_phase(&self, now: Duration) -> Phase {
+    pub fn phase_info(&self, now: Duration) -> PhaseInfo {
         self.pattern.phase_at(self.stopwatch.elapsed(now))
-    }
-
-    pub fn current_progress(&self, now: Duration) -> f64 {
-        self.pattern.phase_progress(self.stopwatch.elapsed(now))
     }
 
     pub fn pause(self, now: Duration) -> Self {
@@ -100,115 +210,189 @@ impl BreathSession {
 mod tests {
     use super::*;
 
+    fn box_pattern() -> BreathPattern {
+        BreathPattern::box_breath()
+    }
+
+    fn four_seven_eight() -> BreathPattern {
+        BreathPattern::four_seven_eight()
+    }
+
+    // ── BreathPattern: cycle / from_durations ──────────────────────────
+
     #[test]
-    fn box_breath_starts_in_inhale_phase() {
-        let pattern = BreathPattern::box_breath();
-        assert_eq!(pattern.phase_at(Duration::ZERO), Phase::Inhale);
+    fn cycle_sums_all_four_phases() {
+        assert_eq!(box_pattern().cycle(), Duration::from_secs(16));
+        assert_eq!(four_seven_eight().cycle(), Duration::from_secs(19));
     }
 
     #[test]
-    fn box_breath_holds_after_inhale_at_4s() {
-        let pattern = BreathPattern::box_breath();
-        assert_eq!(
-            pattern.phase_at(Duration::from_secs(4)),
-            Phase::HoldAfterInhale
-        );
+    fn from_durations_assembles_an_arbitrary_pattern() {
+        let p = BreathPattern::from_durations(5, 5, 5, 5);
+        assert_eq!(p.cycle(), Duration::from_secs(20));
     }
 
     #[test]
-    fn box_breath_exhales_at_8s() {
-        let pattern = BreathPattern::box_breath();
-        assert_eq!(pattern.phase_at(Duration::from_secs(8)), Phase::Exhale);
+    fn duration_for_returns_per_phase_duration() {
+        let p = four_seven_eight();
+        assert_eq!(p.duration_for(Phase::In), Duration::from_secs(4));
+        assert_eq!(p.duration_for(Phase::HoldIn), Duration::from_secs(7));
+        assert_eq!(p.duration_for(Phase::Out), Duration::from_secs(8));
+        assert_eq!(p.duration_for(Phase::HoldOut), Duration::ZERO);
+    }
+
+    // ── phase_at: box pattern ──────────────────────────────────────────
+
+    #[test]
+    fn phase_at_start_is_in_at_zero() {
+        let info = box_pattern().phase_at(Duration::ZERO);
+        assert_eq!(info.phase, Phase::In);
+        assert_eq!(info.elapsed_in_phase, Duration::ZERO);
+        assert_eq!(info.total, Duration::from_secs(4));
+        assert_eq!(info.remaining, Duration::from_secs(4));
     }
 
     #[test]
-    fn box_breath_holds_after_exhale_at_12s() {
-        let pattern = BreathPattern::box_breath();
-        assert_eq!(
-            pattern.phase_at(Duration::from_secs(12)),
-            Phase::HoldAfterExhale
-        );
+    fn phase_at_boundary_picks_next_phase() {
+        // Exactly-at-boundary: 4.0 into a 4-second inhale is the start of
+        // hold-in, not the end of inhale — the boundary belongs to the
+        // next phase.
+        let info = box_pattern().phase_at(Duration::from_secs(4));
+        assert_eq!(info.phase, Phase::HoldIn);
+        assert_eq!(info.elapsed_in_phase, Duration::ZERO);
+        assert_eq!(info.remaining, Duration::from_secs(4));
+
+        assert_eq!(box_pattern().phase_at(Duration::from_secs(8)).phase, Phase::Out);
+        assert_eq!(box_pattern().phase_at(Duration::from_secs(12)).phase, Phase::HoldOut);
     }
 
     #[test]
-    fn box_breath_cycle_wraps_after_16s() {
-        let pattern = BreathPattern::box_breath();
-        assert_eq!(pattern.phase_at(Duration::from_secs(16)), Phase::Inhale);
-        assert_eq!(
-            pattern.phase_at(Duration::from_secs(20)),
-            Phase::HoldAfterInhale
-        );
+    fn phase_at_fractional_within_phase() {
+        let info = box_pattern().phase_at(Duration::from_millis(2_500));
+        assert_eq!(info.phase, Phase::In);
+        assert_eq!(info.elapsed_in_phase, Duration::from_millis(2_500));
+        assert_eq!(info.total, Duration::from_secs(4));
+        assert_eq!(info.remaining, Duration::from_millis(1_500));
     }
 
     #[test]
-    fn four_seven_eight_cycles_through_uneven_phase_durations() {
-        let pattern = BreathPattern::four_seven_eight();
-        assert_eq!(pattern.phase_at(Duration::ZERO), Phase::Inhale);
-        assert_eq!(
-            pattern.phase_at(Duration::from_secs(4)),
-            Phase::HoldAfterInhale
-        );
-        assert_eq!(pattern.phase_at(Duration::from_secs(11)), Phase::Exhale);
-        // Cycle is 4+7+8 = 19s; wraps back to Inhale.
-        assert_eq!(pattern.phase_at(Duration::from_secs(19)), Phase::Inhale);
+    fn phase_at_wraps_past_cycle_end() {
+        // 17.5 s into a 16 s cycle = 1.5 s into the next inhale.
+        let info = box_pattern().phase_at(Duration::from_millis(17_500));
+        assert_eq!(info.phase, Phase::In);
+        assert_eq!(info.elapsed_in_phase, Duration::from_millis(1_500));
+        assert_eq!(info.remaining, Duration::from_millis(2_500));
     }
 
     #[test]
-    fn phase_progress_starts_at_zero() {
-        let pattern = BreathPattern::box_breath();
-        assert_eq!(pattern.phase_progress(Duration::ZERO), 0.0);
+    fn phase_at_wraps_far_past_cycle() {
+        // 100 cycles + 5 s offset = mid-HoldIn.
+        let info = box_pattern().phase_at(Duration::from_secs(16 * 100 + 5));
+        assert_eq!(info.phase, Phase::HoldIn);
+        assert_eq!(info.elapsed_in_phase, Duration::from_secs(1));
+    }
+
+    // ── phase_at: 4-7-8-0 (skipped final hold) ─────────────────────────
+
+    #[test]
+    fn phase_at_skips_zero_duration_phase() {
+        // 4-7-8-0: after In (0..4) + HoldIn (4..11) + Out (11..19) the
+        // cycle wraps back to In — the 0-second HoldOut never appears.
+        let info = four_seven_eight().phase_at(Duration::from_secs(12));
+        assert_eq!(info.phase, Phase::Out);
+        assert_eq!(info.elapsed_in_phase, Duration::from_secs(1));
+        assert_eq!(info.total, Duration::from_secs(8));
+
+        // At the boundary where HoldOut would start (t=19), wrap back to In at 0.
+        let info = four_seven_eight().phase_at(Duration::from_secs(19));
+        assert_eq!(info.phase, Phase::In);
+        assert_eq!(info.elapsed_in_phase, Duration::ZERO);
     }
 
     #[test]
-    fn phase_progress_is_half_at_phase_midpoint() {
-        let pattern = BreathPattern::box_breath();
-        // Inhale lasts 4s; at t=2s we're halfway through it.
-        assert_eq!(pattern.phase_progress(Duration::from_secs(2)), 0.5);
+    fn phase_at_4_7_8_through_full_cycle() {
+        let p = four_seven_eight();
+        assert_eq!(p.phase_at(Duration::ZERO).phase, Phase::In);
+        assert_eq!(p.phase_at(Duration::from_secs(4)).phase, Phase::HoldIn);
+        assert_eq!(p.phase_at(Duration::from_secs(11)).phase, Phase::Out);
+    }
+
+    // ── PhaseInfo: total + remaining invariants ───────────────────────
+
+    #[test]
+    fn phase_info_total_equals_phase_duration() {
+        let p = four_seven_eight();
+        assert_eq!(p.phase_at(Duration::from_secs(0)).total, Duration::from_secs(4));
+        assert_eq!(p.phase_at(Duration::from_secs(4)).total, Duration::from_secs(7));
+        assert_eq!(p.phase_at(Duration::from_secs(11)).total, Duration::from_secs(8));
     }
 
     #[test]
-    fn phase_progress_resets_at_phase_boundary() {
-        let pattern = BreathPattern::box_breath();
-        // t=4s is the start of HoldAfterInhale, so progress within it is 0.0.
-        assert_eq!(pattern.phase_progress(Duration::from_secs(4)), 0.0);
+    fn phase_info_remaining_decreases_through_phase() {
+        let info_a = box_pattern().phase_at(Duration::from_secs(1));
+        let info_b = box_pattern().phase_at(Duration::from_secs(3));
+        assert_eq!(info_a.remaining, Duration::from_secs(3));
+        assert_eq!(info_b.remaining, Duration::from_secs(1));
     }
 
     #[test]
-    fn breath_session_reports_current_phase_via_stopwatch() {
+    fn phase_info_elapsed_plus_remaining_equals_total() {
+        let info = box_pattern().phase_at(Duration::from_millis(500));
+        assert_eq!(info.elapsed_in_phase + info.remaining, info.total);
+    }
+
+    #[test]
+    fn phase_info_remaining_resets_at_phase_boundary() {
+        // t=4 starts HoldIn — remaining should be the full HoldIn duration.
+        let info = box_pattern().phase_at(Duration::from_secs(4));
+        assert_eq!(info.remaining, Duration::from_secs(4));
+    }
+
+    // ── last_phase ─────────────────────────────────────────────────────
+
+    #[test]
+    fn last_phase_prefers_trailing_nonzero() {
+        assert_eq!(box_pattern().last_phase(), Phase::HoldOut);
+        assert_eq!(four_seven_eight().last_phase(), Phase::Out);
+        let only_in = BreathPattern::from_durations(5, 0, 0, 0);
+        assert_eq!(only_in.last_phase(), Phase::In);
+    }
+
+    // ── BreathSession ──────────────────────────────────────────────────
+
+    #[test]
+    fn breath_session_phase_info_via_stopwatch_elapsed() {
         let session = BreathSession::new(
-            BreathPattern::box_breath(),
+            box_pattern(),
             Stopwatch::started_at(Duration::from_secs(100)),
         );
-        // 4s after start → HoldAfterInhale.
-        assert_eq!(
-            session.current_phase(Duration::from_secs(104)),
-            Phase::HoldAfterInhale
-        );
+        // 4 s after start → HoldIn at 0 elapsed-into-phase.
+        let info = session.phase_info(Duration::from_secs(104));
+        assert_eq!(info.phase, Phase::HoldIn);
+        assert_eq!(info.elapsed_in_phase, Duration::ZERO);
     }
 
     #[test]
-    fn breath_session_reports_current_progress_via_stopwatch() {
+    fn breath_session_pause_then_resume_freezes_then_continues() {
         let session = BreathSession::new(
-            BreathPattern::box_breath(),
-            Stopwatch::started_at(Duration::from_secs(100)),
-        );
-        // 2s after start = halfway through Inhale.
-        assert_eq!(session.current_progress(Duration::from_secs(102)), 0.5);
-    }
-
-    #[test]
-    fn breath_session_pause_and_resume_freeze_then_continue_phase() {
-        let session = BreathSession::new(
-            BreathPattern::box_breath(),
+            box_pattern(),
             Stopwatch::started_at(Duration::from_secs(100)),
         )
-        .pause(Duration::from_secs(102)) // 2s into Inhale, paused
-        .resume(Duration::from_secs(200)); // 98s of wall time skipped
-        // Active elapsed is 2s + (210-200) = 12s. Box breath:
-        // Inhale [0-4), HoldAfterInhale [4-8), Exhale [8-12), HoldAfterExhale [12-16).
-        assert_eq!(
-            session.current_phase(Duration::from_secs(210)),
-            Phase::HoldAfterExhale
-        );
+        .pause(Duration::from_secs(102)) // 2 s into Inhale, paused
+        .resume(Duration::from_secs(200)); // 98 s of wall time skipped
+        // Active elapsed at t=210 = 2 s + (210-200) = 12 s. Box breath:
+        // In [0-4), HoldIn [4-8), Out [8-12), HoldOut [12-16).
+        let info = session.phase_info(Duration::from_secs(210));
+        assert_eq!(info.phase, Phase::HoldOut);
+    }
+
+    // ── Phase::index ───────────────────────────────────────────────────
+
+    #[test]
+    fn phase_index_matches_cycle_order() {
+        assert_eq!(Phase::In.index(), 0);
+        assert_eq!(Phase::HoldIn.index(), 1);
+        assert_eq!(Phase::Out.index(), 2);
+        assert_eq!(Phase::HoldOut.index(), 3);
     }
 }

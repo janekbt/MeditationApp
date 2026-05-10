@@ -16,11 +16,11 @@ fn main() {
     println!();
 
     while now() < Duration::from_secs(17) {
-        let phase = session.current_phase(now());
-        let progress = session.current_progress(now());
+        let info = session.phase_info(now());
+        let progress = info.elapsed_in_phase.as_secs_f64() / info.total.as_secs_f64();
         println!(
-            "{:18?}  {:5.1}%  {}",
-            phase,
+            "{:8?}  {:5.1}%  {}",
+            info.phase,
             progress * 100.0,
             render_bar(progress, 20)
         );

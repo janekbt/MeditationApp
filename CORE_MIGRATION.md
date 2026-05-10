@@ -129,7 +129,7 @@ tests, leave `vibration.rs` in gtk with just the transport.
 **Risk:** medium. The tests carry the invariants; if any test fails
 at the new address it's a real regression to chase.
 
-### [ ] 6. Breath module consolidation (option C)
+### [x] 6. Breath module consolidation (option C)
 
 **From:** `src/timer/breathing.rs` (192 LOC + ~25 tests)
 ↔ `meditate-core/src/breath.rs` (current slim API).

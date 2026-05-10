@@ -249,7 +249,7 @@ impl MeditateWindow {
     /// animated square frame in the middle (cairo-drawn frame + perimeter
     /// dot), phase label + per-phase countdown inside, Pause/Stop below.
     fn push_breathing_running_page(&self) {
-        use crate::timer::breathing::{phase_at, Pattern, Phase};
+        use meditate_core::breath::{BreathPattern, Phase};
         use std::cell::Cell;
         use std::rc::Rc;
 
@@ -320,7 +320,7 @@ impl MeditateWindow {
         // and a single white-filled dot with accent halo travelling the
         // perimeter. Per user request the progress-stroke trail is omitted —
         // only the dot moves.
-        let pattern_cell: Rc<Cell<Pattern>> = Rc::new(Cell::new(pattern));
+        let pattern_cell: Rc<Cell<BreathPattern>> = Rc::new(Cell::new(pattern));
         {
             let pattern_cell = pattern_cell.clone();
             let obj = self.obj().clone();
@@ -351,12 +351,14 @@ impl MeditateWindow {
                 // frame (which is what the user sees for a split-second at
                 // start-of-session before the tick fires).
                 let p = pattern_cell.get();
-                if p.cycle_secs() == 0 {
+                if p.cycle().is_zero() {
                     return;
                 }
-                let elapsed = obj.imp().timer_view.breath_elapsed().as_secs_f64();
-                let (phase, phase_elapsed, phase_total) = phase_at(&p, elapsed);
-                let t = (phase_elapsed / phase_total as f64).clamp(0.0, 1.0);
+                let elapsed = obj.imp().timer_view.breath_elapsed();
+                let info = p.phase_at(elapsed);
+                let phase = info.phase;
+                let t = (info.elapsed_in_phase.as_secs_f64()
+                    / info.total.as_secs_f64()).clamp(0.0, 1.0);
 
                 // Phases are laid out clockwise from the bottom-left corner,
                 // so that inhalation is upward motion and exhalation is
@@ -447,9 +449,11 @@ impl MeditateWindow {
         let prev_phase: Rc<Cell<Option<Phase>>> = Rc::new(Cell::new(None));
         drawing_area.add_tick_callback(move |_, _clock| {
             let tv = obj.imp().timer_view.clone();
-            let cur = tv.breath_elapsed().as_secs_f64();
+            let elapsed = tv.breath_elapsed();
+            let cur = elapsed.as_secs_f64();
 
-            let (phase, phase_elapsed, phase_total) = phase_at(&pattern_for_tick, cur);
+            let info = pattern_for_tick.phase_at(elapsed);
+            let phase = info.phase;
 
             // Phase boundary: fire the new phase's cue. First tick
             // seeds prev silently — the starting bell already played.
@@ -482,7 +486,7 @@ impl MeditateWindow {
                 l.set_label(&phase_name);
             }
             if let Some(l) = phase_sec_weak.upgrade() {
-                let remaining = (phase_total as f64 - phase_elapsed).ceil().max(0.0) as i64;
+                let remaining = info.remaining.as_secs_f64().ceil().max(0.0) as i64;
                 l.set_label(&remaining.to_string());
             }
             if let Some(l) = counter_weak.upgrade() {
