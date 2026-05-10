@@ -1,0 +1,23 @@
+// Milestone-3 placeholder: one screen, one button. Confirms that
+// the Slint + Material 3 toolchain renders on the device. No app
+// logic yet — meditate-core integration arrives in milestone 4.
+
+import { FilledButton, ElevatedCard } from "@material";
+export { MaterialWindowAdapter } from "@material";
+
+export component MainWindow inherits Window {
+    title: "Meditate";
+    property <int> taps: 0;
+
+    ElevatedCard {
+        width: 90%;
+        height: 90%;
+
+        FilledButton {
+            text: "Hello, Meditate — taps: " + taps;
+            clicked => {
+                taps += 1;
+            }
+        }
+    }
+}

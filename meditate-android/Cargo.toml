@@ -1,0 +1,45 @@
+[package]
+name = "meditate-android"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Dual layout matches the canonical Slint Material Rust template:
+# - the cdylib is what `cargo apk` / `xbuild` link into the APK
+#   via the `android_main` symbol exported from src/lib.rs;
+# - the bin lets us also `cargo run` on the host so we can iterate
+#   on the .slint UI without an Android device in the loop.
+#
+# The lib's `name` matches the package name (dashes → underscores)
+# rather than the template's `_lib` suffix: xbuild assumes lib name
+# == package name when locating the cdylib for APK packaging, and
+# fails with "failed to locate bin libmeditate_android.so" otherwise.
+# cargo-apk would tolerate the suffix via its `--lib` flag, but we
+# stay close to xbuild's expectation.
+[lib]
+crate-type = ["lib", "cdylib"]
+path = "src/lib.rs"
+name = "meditate_android"
+
+[[bin]]
+path = "src/main.rs"
+name = "meditate-android"
+
+[dependencies]
+# Pinned at template's recommended version. The
+# `backend-android-activity-06` feature wires Slint to the
+# android-activity 0.6 lifecycle on Android; on desktop targets
+# Slint falls through to its default backend (winit + skia).
+slint = { version = "1.13", features = ["backend-android-activity-06"] }
+
+[build-dependencies]
+slint-build = "1.13"
+
+# `cargo apk` / `xbuild` read this block for the Android manifest.
+# Reverse-DNS package id matches the GTK shell's flatpak app-id.
+[package.metadata.android]
+package = "io.github.janekbt.Meditate"
+apk_name = "meditate-android"
+
+[package.metadata.android.application]
+label = "Meditate"

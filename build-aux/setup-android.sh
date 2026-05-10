@@ -319,6 +319,13 @@ case ":\${PATH}:" in
     *":\${ANDROID_HOME}/build-tools/${PINNED_BUILD_TOOLS}:"*) ;;
     *) export PATH="\${ANDROID_HOME}/build-tools/${PINNED_BUILD_TOOLS}:\${PATH}" ;;
 esac
+# NDK's clang toolchain. xbuild needs llvm-readobj on PATH at the
+# APK-packaging step to walk the cdylib's NEEDED entries; without it
+# the build fails with "Failed to run llvm-readobj ... No such file".
+case ":\${PATH}:" in
+    *":\${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt/linux-x86_64/bin:"*) ;;
+    *) export PATH="\${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt/linux-x86_64/bin:\${PATH}" ;;
+esac
 EOF
 log "Wrote ${ENV_FILE}"
 
