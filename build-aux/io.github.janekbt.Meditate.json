@@ -52,6 +52,7 @@
     {
       "name": "meditate",
       "buildsystem": "meson",
+      "subdir": "meditate-gtk",
       "config-opts": [
         "--buildtype=release"
       ],

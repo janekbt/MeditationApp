@@ -1,57 +1,15 @@
-[package]
-name = "meditate"
-version = "26.4.4"
-edition = "2021"
-rust-version = "1.75"
-
-[[bin]]
-name = "meditate"
-path = "src/main.rs"
-
-[[bin]]
-name = "keychain_smoke"
-path = "src/bin/keychain_smoke.rs"
-
-[dependencies]
-gtk = { package = "gtk4", version = "0.11", features = ["v4_18"] }
-adw = { package = "libadwaita", version = "0.9", features = ["v1_7"] }
-glib = "0.22"
-rusqlite = { version = "0.32", features = ["bundled"] }
-csv = "1.3"
-gettext-rs = { version = "0.7", features = ["gettext-system"] }
-libc = "0.2"
-chrono = { version = "0.4", default-features = false }
-meditate-core = { path = "meditate-core" }
-# serde + serde_json for the preset-config JSON blob persisted in the
-# `presets` table. meditate-core already pulls these in transitively
-# (its event payloads are JSON-encoded the same way), but the shell
-# now derives Serialize / Deserialize on its own types so the
-# direct dep is required for the proc-macro lookup.
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-# oo7: pure-Rust Secret Service client for storing the Nextcloud
-# app-password in the user's keyring. async-only over D-Bus, requires
-# a tokio reactor (oo7's default). We host a small multi-threaded
-# tokio runtime alongside GLib's main loop and `block_on` from the
-# settings/sync handlers — keychain calls are infrequent and brief
-# (~50ms warm), so the synchronous shape avoids a swarm of channels.
-oo7 = "0.4"
-tokio = { version = "1", features = ["rt-multi-thread"] }
-# gstreamer-rs: in-process audio transcoding for custom-bell imports.
-# We re-encode anything that isn't already WAV/OGG into OGG/Vorbis at
-# import time. Routing the audio through the legacy `decodebin` (not
-# `decodebin3`) sidesteps a known gst 1.26.x assertion-fail in
-# `mq_slot_handle_stream_start: collection != NULL` that aborts the
-# process when previewing certain demuxer-heavy formats (notably MP3,
-# m4a) on aarch64 / Phosh runtime. OGG playback through gtk::MediaFile
-# stays on a code path that doesn't trip the assertion.
-gstreamer = "0.25"
-
-[build-dependencies]
-glib-build-tools = "0.22"
-
-[dev-dependencies]
-tempfile = "3"
+[workspace]
+resolver = "2"
+members = [
+    "meditate-core",
+    "meditate-gtk",
+]
+# `cargo build` / `cargo test` at the workspace root operates on the
+# GTK shell + its core dep — the host build that has shipped to
+# Flathub and the Librem 5 since 26.4.4. The Android shell, when it
+# arrives in milestone 3, will be added to `members` but kept out of
+# `default-members` so the Linux flow stays the default.
+default-members = ["meditate-gtk"]
 
 [profile.release]
 opt-level = 3
