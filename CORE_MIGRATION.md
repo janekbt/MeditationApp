@@ -360,7 +360,7 @@ its platform offers and passes the integer in. ~30–60 LOC + tests.
 **Risk:** medium. Rewrite of signatures (DateTime → integers) is the
 main work.
 
-### [ ] 17. Log date-grouping helpers → `meditate_core::format`
+### [x] 17. Log date-grouping helpers → `meditate_core::format`
 
 **From:** `src/log/imp.rs`:
 - `date_group_key(unix_secs)` (line 570) — formats a unix timestamp

@@ -381,6 +381,76 @@ pub fn running_text(target: Option<Duration>, elapsed: Duration) -> String {
     }
 }
 
+/// `YYYY-MM-DD` of the local-time day the unix timestamp falls on.
+/// Used as a HashMap grouping key for log sessions, not shown to
+/// the user. Empty string on the rare arithmetic edge case where
+/// chrono can't represent the timestamp locally.
+pub fn date_group_key(unix_secs: i64) -> String {
+    use chrono::TimeZone;
+    chrono::Local
+        .timestamp_opt(unix_secs, 0)
+        .single()
+        .map(|dt| dt.format("%Y-%m-%d").to_string())
+        .unwrap_or_default()
+}
+
+/// Local `HH:MM` of a unix timestamp. 24-hour, locale-independent
+/// (no AM/PM); shells that want 12-hour rendering should derive it
+/// from their native datetime formatter.
+pub fn format_time_of_day(unix_secs: i64) -> String {
+    use chrono::TimeZone;
+    chrono::Local
+        .timestamp_opt(unix_secs, 0)
+        .single()
+        .map(|dt| dt.format("%H:%M").to_string())
+        .unwrap_or_default()
+}
+
+/// Section-header classification for a log row's local date. The
+/// shell maps `Today` / `Yesterday` to translated strings, and
+/// renders `SameYearOther` / `EarlierYearOther` via its locale-
+/// aware datetime formatter (gtk uses `glib::DateTime::format`,
+/// Android uses its native one).
+///
+/// `EarlierYearOther` is `SameYearOther`'s mirror with the year
+/// emitted alongside the date, so callers don't have to re-check
+/// the year branch themselves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DateGroupKind {
+    Today,
+    Yesterday,
+    SameYearOther,
+    EarlierYearOther,
+}
+
+/// Classify a unix timestamp into its section header kind relative
+/// to `now_unix`. Local-timezone-aware (uses chrono::Local for both
+/// timestamps). Caller supplies `now_unix` so tests can pin a
+/// reference moment without messing with the system clock.
+pub fn date_group_kind(unix_secs: i64, now_unix: i64) -> DateGroupKind {
+    use chrono::{Datelike, TimeZone};
+    let Some(then) = chrono::Local.timestamp_opt(unix_secs, 0).single() else {
+        return DateGroupKind::EarlierYearOther;
+    };
+    let Some(now) = chrono::Local.timestamp_opt(now_unix, 0).single() else {
+        return DateGroupKind::EarlierYearOther;
+    };
+    if then.year() == now.year() && then.ordinal() == now.ordinal() {
+        return DateGroupKind::Today;
+    }
+    let yesterday = now.date_naive().pred_opt();
+    if let Some(yest) = yesterday {
+        if then.date_naive() == yest {
+            return DateGroupKind::Yesterday;
+        }
+    }
+    if then.year() == now.year() {
+        DateGroupKind::SameYearOther
+    } else {
+        DateGroupKind::EarlierYearOther
+    }
+}
+
 /// Stable-per-name 0..8 colour-class index for a label name. The
 /// shell maps the index to its native palette (gtk's log view uses
 /// the `log-c0`..`log-c7` CSS classes). DJB-ish string hash so the
@@ -1076,6 +1146,54 @@ mod tests {
         // Bell would land at or before session start — drop it.
         assert_eq!(fixed_from_end_target_secs(30, 1800), None);
         assert_eq!(fixed_from_end_target_secs(45, 1800), None);
+    }
+
+    #[test]
+    fn date_group_key_renders_local_yyyy_mm_dd() {
+        // 2025-04-17 12:00 UTC will be 2025-04-17 in any tz between
+        // -12 and +12 hours away. The test isn't strict on the
+        // exact local day; it just checks the format.
+        let key = date_group_key(1_744_891_200);
+        // YYYY-MM-DD is 10 chars with dashes at fixed positions.
+        assert_eq!(key.len(), 10);
+        assert_eq!(&key[4..5], "-");
+        assert_eq!(&key[7..8], "-");
+    }
+
+    #[test]
+    fn format_time_of_day_renders_local_hh_mm() {
+        let s = format_time_of_day(1_744_891_200);
+        assert_eq!(s.len(), 5);
+        assert_eq!(&s[2..3], ":");
+        // 24-hour HH range.
+        let hh: u32 = s[..2].parse().unwrap();
+        let mm: u32 = s[3..].parse().unwrap();
+        assert!(hh < 24);
+        assert!(mm < 60);
+    }
+
+    #[test]
+    fn date_group_kind_classifies_today_yesterday_and_other() {
+        // Pin a reference moment: 2025-04-17 12:00 UTC. Build the
+        // expected unix offsets by working in seconds.
+        let now_unix = 1_744_891_200_i64;
+        let day = 86_400_i64;
+        // Same instant → Today.
+        assert_eq!(date_group_kind(now_unix, now_unix), DateGroupKind::Today);
+        // ~12 hours ago might be the same local day or yesterday
+        // depending on test machine TZ; either is fine.
+        let result_12h = date_group_kind(now_unix - 12 * 3600, now_unix);
+        assert!(matches!(result_12h, DateGroupKind::Today | DateGroupKind::Yesterday));
+        // Two days ago → SameYearOther (April still).
+        assert_eq!(
+            date_group_kind(now_unix - 2 * day, now_unix),
+            DateGroupKind::SameYearOther,
+        );
+        // ~400 days ago → EarlierYearOther (crosses calendar year).
+        assert_eq!(
+            date_group_kind(now_unix - 400 * day, now_unix),
+            DateGroupKind::EarlierYearOther,
+        );
     }
 
     #[test]

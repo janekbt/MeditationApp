@@ -562,40 +562,43 @@ fn label_color_class(name: &str) -> &'static str {
     CLASSES[meditate_core::format::label_color_class_index(name)]
 }
 
-/// Local `YYYY-MM-DD` — used as a grouping key. Not shown to the user.
+/// Local `YYYY-MM-DD` — used as a grouping key. Not shown to the
+/// user. Delegates to core; gtk wrapper kept so the call sites
+/// don't all spell out `meditate_core::format::date_group_key`.
 fn date_group_key(unix_secs: i64) -> String {
-    glib::DateTime::from_unix_local(unix_secs)
-        .ok()
-        .and_then(|dt| dt.format("%Y-%m-%d").ok())
-        .map(|g| g.to_string())
-        .unwrap_or_default()
+    meditate_core::format::date_group_key(unix_secs)
 }
 
-/// Human-readable section header: "Today", "Yesterday", or "Apr 17".
-/// Year is elided for dates in the current calendar year, shown otherwise.
+/// Human-readable section header: "Today", "Yesterday", or "Apr 17"
+/// (year elided for dates in the current calendar year, shown
+/// otherwise). Classification lives in core; the locale-aware
+/// month/day rendering uses glib::DateTime so non-English locales
+/// get the right month abbreviations.
 fn date_group_display(unix_secs: i64) -> String {
-    let Some(dt) = glib::DateTime::from_unix_local(unix_secs).ok() else {
-        return String::new();
-    };
-    let now = crate::time::now_local();
-    let same_day = now.year() == dt.year() && now.day_of_year() == dt.day_of_year();
-    if same_day { return crate::i18n::gettext("Today"); }
-    if let Ok(yest) = now.add_days(-1) {
-        if yest.year() == dt.year() && yest.day_of_year() == dt.day_of_year() {
-            return crate::i18n::gettext("Yesterday");
+    use meditate_core::format::DateGroupKind;
+    let kind = meditate_core::format::date_group_kind(
+        unix_secs,
+        meditate_core::time::unix_now(),
+    );
+    match kind {
+        DateGroupKind::Today => crate::i18n::gettext("Today"),
+        DateGroupKind::Yesterday => crate::i18n::gettext("Yesterday"),
+        DateGroupKind::SameYearOther | DateGroupKind::EarlierYearOther => {
+            let Some(dt) = glib::DateTime::from_unix_local(unix_secs).ok() else {
+                return String::new();
+            };
+            // %b is the locale abbreviated month; no msgid needed.
+            let fmt = match kind {
+                DateGroupKind::SameYearOther => "%b %-d",
+                _ => "%b %-d, %Y",
+            };
+            dt.format(fmt).map(|g| g.to_string()).unwrap_or_default()
         }
     }
-    // %b is the locale abbreviated month; no msgid needed.
-    let fmt = if now.year() == dt.year() { "%b %-d" } else { "%b %-d, %Y" };
-    dt.format(fmt).map(|g| g.to_string()).unwrap_or_default()
 }
 
 fn format_time_of_day(unix_secs: i64) -> String {
-    glib::DateTime::from_unix_local(unix_secs)
-        .ok()
-        .and_then(|dt| dt.format("%H:%M").ok())
-        .map(|g| g.to_string())
-        .unwrap_or_default()
+    meditate_core::format::format_time_of_day(unix_secs)
 }
 
 fn section_caption_text(count: u32, total_secs: i64) -> String {
