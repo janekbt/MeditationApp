@@ -6,7 +6,7 @@
 //!   ergonomic UI integration. `SessionMode` is re-exported from
 //!   core directly — no separate enum.
 //! - Type translation at the API boundary (see `session_data_to_core` /
-//!   `session_from_core` and `crate::time::unix_to_local_iso`).
+//!   `session_from_core` and `meditate_core::time::unix_to_local_iso`).
 //! - The `rusqlite::Result<T>` return type so callers can keep using `?`
 //!   against this module without learning core's `DbError`.
 //!
@@ -239,7 +239,7 @@ pub use meditate_core::db::SessionFilter;
 /// durations clamp to the u32 range.
 fn session_data_to_core(s: &SessionData) -> meditate_core::db::Session {
     meditate_core::db::Session {
-        start_iso: crate::time::unix_to_local_iso(s.start_time),
+        start_iso: meditate_core::time::unix_to_local_iso(s.start_time),
         duration_secs: s.duration_secs.clamp(0, u32::MAX as i64) as u32,
         label_id: s.label_id,
         notes: s.note.clone(),
@@ -257,7 +257,7 @@ fn session_data_to_core(s: &SessionData) -> meditate_core::db::Session {
 fn session_from_core(id: i64, core: &meditate_core::db::Session) -> Session {
     Session {
         id,
-        start_time: crate::time::local_iso_to_unix(&core.start_iso),
+        start_time: meditate_core::time::local_iso_to_unix(&core.start_iso),
         duration_secs: core.duration_secs as i64,
         mode: core.mode,
         label_id: core.label_id,
@@ -1070,7 +1070,7 @@ impl Database {
     pub fn get_longest_session(&self) -> Result<Option<(i64, i64)>> {
         let row = self.inner.get_longest_session().map_err(map_core_err)?;
         Ok(row.map(|(_id, c)| {
-            (c.duration_secs as i64, crate::time::local_iso_to_unix(&c.start_iso))
+            (c.duration_secs as i64, meditate_core::time::local_iso_to_unix(&c.start_iso))
         }))
     }
 
@@ -1132,7 +1132,7 @@ mod tests {
             guided_file_uuid: None,
         };
         let core = session_data_to_core(&sd);
-        assert_eq!(crate::time::local_iso_to_unix(&core.start_iso), 1_700_000_000);
+        assert_eq!(meditate_core::time::local_iso_to_unix(&core.start_iso), 1_700_000_000);
         assert_eq!(core.duration_secs, 1234);
         assert_eq!(core.label_id, Some(42));
         assert_eq!(core.notes, Some("hello".to_string()));
@@ -1168,7 +1168,7 @@ mod tests {
     #[test]
     fn session_from_core_preserves_every_field() {
         let core = meditate_core::db::Session {
-            start_iso: crate::time::unix_to_local_iso(1_700_000_000),
+            start_iso: meditate_core::time::unix_to_local_iso(1_700_000_000),
             duration_secs: 600,
             label_id: Some(7),
             notes: Some("from core".to_string()),

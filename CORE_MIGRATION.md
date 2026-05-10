@@ -156,8 +156,14 @@ running page on the Librem 5 after landing.
 **From:** `src/data_io.rs` (401 LOC, tests included).
 **Move:** the parsing/writing logic that operates on `&Database` + a
 path. **Stay:** the `MeditateApplication` glue, file-chooser plumbing.
-**Triggered by:** an Android milestone that wants CSV (none currently
-planned, deferred until needed).
+**Depends on:** item 14. The CSV format stores `start_time_unix` as
+i64; gtk's `SessionData::start_time` is i64; but `meditate_core::db::
+Session::start_iso` is a `String`. Moving the import/export functions
+to core needs unix↔ISO conversion at the boundary — that conversion is
+item 14's deliverable (`unix_to_local_iso` / `local_iso_to_unix` from
+`src/time.rs`). Land 14 first, then revisit. The Insight Timer
+importer in particular also wants item 14 to drop its glib::DateTime
+dependency.
 
 ### [ ] 8. Bell-scheduling tick logic + `BellSchedule` struct
 
@@ -262,7 +268,7 @@ slice (prep tick first, then running tick, then overtime tick).
 This is the migration that actually thins `timer/imp.rs` from ~5000
 to ~2000 lines. **Substantial — surface design before coding.**
 
-### [ ] 14. `time.rs` portable timestamp conversions → `meditate_core::time`
+### [x] 14. `time.rs` portable timestamp conversions → `meditate_core::time`
 
 **From:** `src/time.rs`, the `unix_to_local_iso(secs)` and
 `local_iso_to_unix(iso)` functions (the entire portable surface of the
