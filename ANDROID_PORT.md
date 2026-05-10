@@ -138,7 +138,7 @@ branch. Each ends in a state where the Linux build still passes.
 2. **`setup-android.sh` lands.** Run from a fresh state on this laptop, end up with a working toolchain. Re-run is a no-op. Document the flag set in the script's `--help`.
 3. **Empty `meditate-android` crate.** Slint Material "Hello" — one screen, one button. `cargo apk run --target aarch64-linux-android` installs and launches on a real device. No `meditate-core` integration yet.
 4. **Wire `meditate-core::timer::Countdown` to one screen.** Start / pause / stop a countdown; render mm:ss. No persistence, no bells, no haptics.
-5. **Stopwatch and box-breath modes.** Same screen scaffold, different `meditate-core` types. Still no persistence.
+5. **Mode toggle + Box Breath mode + per-mode stopwatch toggle.** Adds the three-option mode toggle (Timer / Guided / Box Breath — Guided is a placeholder until audio lands in milestone 7) and implements Box Breath alongside Timer. Same screen scaffold; the per-mode stopwatch toggle flips the active mode from countdown to count-up by using `meditate_core::timer::Stopwatch` directly instead of wrapping it in a `Countdown`. There is *no* separate "Stopwatch mode" — it's a per-mode boolean, mirroring the GTK shell.
 6. **DB persistence.** `rusqlite` bundled feature compiles for `aarch64-linux-android` unchanged. Sessions list view; per-label stats query.
 7. **Bells.** Audio playback via Android `MediaPlayer` JNI (or `oboe-rs`). Decision deferred to milestone 7.
 8. **Haptics.** Android `Vibrator` / `VibratorManager` JNI. Reuse `meditate-core` envelope-quantising logic; map quantised levels to Android amplitude scale (0-255).
