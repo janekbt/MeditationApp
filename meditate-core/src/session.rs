@@ -95,6 +95,18 @@ pub enum Effect {
     /// done view with this duration. Never fired in stopwatch-only
     /// box-breath mode (no target; user must press Stop).
     EndBoxBreath { duration_secs: u64 },
+    /// Timer/Guided countdown crossed zero. Shell: morphs Pause →
+    /// Finish, hides Stop, reveals the Add button, freezes the
+    /// hero at the planned duration, fires the end bell, and sends
+    /// a system notification when the app isn't focused. The
+    /// session continues ticking in Overtime — interval bells keep
+    /// firing on the original session timeline; the Add button's
+    /// label counts up via subsequent `UpdateOvertimeLabel`.
+    EnterOvertime,
+    /// Overtime tick: how much past the target the session has
+    /// gone. Shell renders the Add button as
+    /// `<localized prefix> <MM:SS> ?`.
+    UpdateOvertimeLabel { overtime: Duration },
 }
 
 /// In-flight session. Created by `start_prep` (when prep silence is
@@ -202,10 +214,11 @@ impl Session {
         match self.phase {
             SessionPhase::Prep => self.tick_prep(now),
             SessionPhase::Running => self.tick_running(now),
-            // Stages 0e–0g add the Overtime tick. Paused doesn't
-            // appear here — pause is orthogonal to phase, handled
-            // by the early-return above.
-            SessionPhase::Paused | SessionPhase::Overtime => Vec::new(),
+            SessionPhase::Overtime => self.tick_overtime(now),
+            // Pause is orthogonal to phase — handled by the
+            // early-return above. SessionPhase::Paused is reserved
+            // and currently unreached.
+            SessionPhase::Paused => Vec::new(),
         }
     }
 
@@ -248,19 +261,37 @@ impl Session {
                 let target = Duration::from_secs(target_secs as u64);
                 let remaining = target.saturating_sub(elapsed);
                 if remaining.is_zero() {
-                    // Countdown reached zero — display 0. Stage 0e
-                    // adds the Running→Overtime transition; until
-                    // then a session past the target sits at zero.
-                    0
-                } else {
-                    remaining.as_secs() + u64::from(remaining.subsec_nanos() > 0)
+                    // Countdown crossed zero. Transition into Overtime
+                    // — phase_clock keeps ticking so the cumulative
+                    // elapsed (target + overtime) stays correct, and
+                    // the shell takes over with end-bell + button-
+                    // morph + notification ceremony in response to
+                    // EnterOvertime.
+                    self.phase = SessionPhase::Overtime;
+                    return vec![Effect::EnterOvertime];
                 }
+                remaining.as_secs() + u64::from(remaining.subsec_nanos() > 0)
             }
             // Stopwatch-only: floor-rounded elapsed. "0:00" until
             // 1.0 s crosses, "0:01" thereafter.
             None => elapsed.as_secs(),
         };
         vec![Effect::UpdateDisplay { secs: display_secs }]
+    }
+
+    fn tick_overtime(&mut self, now: Duration) -> Vec<Effect> {
+        // Overtime keeps the same phase_clock ticking that drove
+        // Running — total elapsed = target + overtime. The shell
+        // freezes the hero label at the planned duration; only the
+        // Add button's label updates each tick.
+        let target_secs = self
+            .settings
+            .target_secs
+            .expect("Overtime phase requires a target");
+        let target = Duration::from_secs(target_secs as u64);
+        let elapsed = self.phase_clock.elapsed(now);
+        let overtime = elapsed.saturating_sub(target);
+        vec![Effect::UpdateOvertimeLabel { overtime }]
     }
 
     fn tick_box_breath(&mut self, elapsed: Duration) -> Vec<Effect> {
@@ -500,27 +531,31 @@ mod tests {
     }
 
     #[test]
-    fn tick_running_countdown_at_target_displays_zero() {
-        // Exactly at the target — countdown is "complete." Display 0.
-        // The Running→Overtime transition lands in Stage 0e; until
-        // then the session sits at zero.
+    fn tick_running_countdown_at_target_enters_overtime() {
+        // Exactly at the target — countdown is "complete." Emit
+        // EnterOvertime + transition phase. Shell will fire the end
+        // bell + morph buttons + freeze hero in response.
         let mut s = Session::start_running(
             timer_countdown_settings(60),
             Duration::from_secs(100),
         );
         let effects = s.tick(Duration::from_secs(160));
-        assert_eq!(effects, vec![Effect::UpdateDisplay { secs: 0 }]);
-        assert_eq!(s.phase(), SessionPhase::Running);
+        assert_eq!(effects, vec![Effect::EnterOvertime]);
+        assert_eq!(s.phase(), SessionPhase::Overtime);
     }
 
     #[test]
-    fn tick_running_countdown_past_target_clamps_at_zero() {
+    fn tick_running_countdown_past_target_enters_overtime_once() {
+        // App backgrounded; first tick after wake catches up past
+        // the target. We transition once and produce EnterOvertime
+        // once; the next tick is in Overtime phase.
         let mut s = Session::start_running(
             timer_countdown_settings(60),
             Duration::from_secs(100),
         );
         let effects = s.tick(Duration::from_secs(200));
-        assert_eq!(effects, vec![Effect::UpdateDisplay { secs: 0 }]);
+        assert_eq!(effects, vec![Effect::EnterOvertime]);
+        assert_eq!(s.phase(), SessionPhase::Overtime);
     }
 
     #[test]
@@ -652,6 +687,87 @@ mod tests {
     fn box_breath_phase_info_is_none_for_non_box_breath_session() {
         let s = Session::start_running(timer_countdown_settings(600), Duration::from_secs(100));
         assert!(s.box_breath_phase_info(Duration::from_secs(105)).is_none());
+    }
+
+    // ── Overtime ─────────────────────────────────────────────────────
+
+    #[test]
+    fn overtime_tick_emits_overtime_label_with_delta_past_target() {
+        let mut s = Session::start_running(
+            timer_countdown_settings(60),
+            Duration::from_secs(100),
+        );
+        // Cross zero — transition.
+        let _ = s.tick(Duration::from_secs(160));
+        assert_eq!(s.phase(), SessionPhase::Overtime);
+        // 5 s of overtime have accumulated.
+        let effects = s.tick(Duration::from_secs(165));
+        assert_eq!(
+            effects,
+            vec![Effect::UpdateOvertimeLabel {
+                overtime: Duration::from_secs(5)
+            }]
+        );
+    }
+
+    #[test]
+    fn overtime_tick_at_transition_moment_reports_zero_overtime() {
+        // The very first tick that fires AFTER EnterOvertime, at
+        // host time = 60 s in (exactly target), reports overtime=0.
+        // Subsequent ticks count up.
+        let mut s = Session::start_running(
+            timer_countdown_settings(60),
+            Duration::from_secs(100),
+        );
+        let _ = s.tick(Duration::from_secs(160)); // EnterOvertime
+        let effects = s.tick(Duration::from_secs(160));
+        assert_eq!(
+            effects,
+            vec![Effect::UpdateOvertimeLabel {
+                overtime: Duration::ZERO
+            }]
+        );
+    }
+
+    #[test]
+    fn overtime_phase_clock_continues_uninterrupted_from_running() {
+        // Running→Overtime transition keeps phase_clock ticking
+        // (no reset); total elapsed = target + overtime accumulates
+        // continuously. Interval bells in Stage 0f will rely on
+        // this continuity.
+        let mut s = Session::start_running(
+            timer_countdown_settings(60),
+            Duration::from_secs(100),
+        );
+        let _ = s.tick(Duration::from_secs(160)); // transition
+        // Total elapsed at host time 200 s = 100 s (60 s target +
+        // 40 s overtime).
+        assert_eq!(
+            s.elapsed(Duration::from_secs(200)),
+            Duration::from_secs(100)
+        );
+    }
+
+    #[test]
+    fn pause_during_overtime_freezes_overtime_delta() {
+        let mut s = Session::start_running(
+            timer_countdown_settings(60),
+            Duration::from_secs(100),
+        );
+        let _ = s.tick(Duration::from_secs(160)); // EnterOvertime
+        let _ = s.tick(Duration::from_secs(170)); // 10 s of overtime
+        s.pause(Duration::from_secs(170));
+        // 100 s of host time pass while paused, then resume.
+        s.resume(Duration::from_secs(270));
+        // Active elapsed should still report 70 s total (60 target +
+        // 10 overtime), and tick should report 10 s overtime.
+        let effects = s.tick(Duration::from_secs(270));
+        assert_eq!(
+            effects,
+            vec![Effect::UpdateOvertimeLabel {
+                overtime: Duration::from_secs(10)
+            }]
+        );
     }
 
     // ── Pause / Resume ───────────────────────────────────────────────
