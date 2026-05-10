@@ -18,6 +18,7 @@
 
 use crate::breath::{BreathPattern, Phase, PhaseInfo};
 use crate::db::{BoxBreathPhaseId, SessionMode};
+use crate::timer::Stopwatch;
 use std::time::Duration;
 
 /// Which lifecycle phase the in-flight session is currently in.
@@ -104,11 +105,16 @@ pub enum Effect {
 pub struct Session {
     settings: SessionSettings,
     phase: SessionPhase,
-    /// Boot-time when the *current phase* started. For Prep it's
-    /// the start of prep silence; updated to `now` when phase
-    /// transitions to Running (so Running's elapsed counts from
-    /// the post-prep moment).
-    phase_started_at: Duration,
+    /// Per-phase elapsed-tracker. Re-anchored on phase transitions
+    /// (Prep→Running, eventually Running→Overtime) so the new
+    /// phase's elapsed counts from that moment. Pause/resume mutate
+    /// this in place so paused time doesn't leak into elapsed.
+    phase_clock: Stopwatch,
+    /// True when the session is paused (`pause()` was called more
+    /// recently than `resume()`). Tick is a no-op while paused;
+    /// `phase_clock` is in its `Paused` variant so elapsed reads
+    /// stay frozen at the pause moment.
+    is_paused: bool,
     /// Box-Breath phase boundary tracking. `None` until the first
     /// Running tick (which seeds it silently — the starting bell
     /// already fired). `Some(p)` thereafter; a tick observes
@@ -129,7 +135,8 @@ impl Session {
         Self {
             settings,
             phase: SessionPhase::Prep,
-            phase_started_at: now,
+            phase_clock: Stopwatch::started_at(now),
+            is_paused: false,
             last_breath_phase: None,
         }
     }
@@ -142,9 +149,44 @@ impl Session {
         Self {
             settings,
             phase: SessionPhase::Running,
-            phase_started_at: now,
+            phase_clock: Stopwatch::started_at(now),
+            is_paused: false,
             last_breath_phase: None,
         }
+    }
+
+    /// Freeze the session's elapsed clock at `now`. Subsequent
+    /// `tick()` calls return no effects. The phase is preserved —
+    /// resume continues from whatever phase pause was called from.
+    /// Idempotent: calling pause on an already-paused session is a
+    /// no-op (won't double-count paused time).
+    pub fn pause(&mut self, now: Duration) {
+        if self.is_paused {
+            return;
+        }
+        // Stopwatch::paused_at consumes self; swap-and-replace.
+        let dummy = Stopwatch::started_at(Duration::ZERO);
+        let s = std::mem::replace(&mut self.phase_clock, dummy);
+        self.phase_clock = s.paused_at(now);
+        self.is_paused = true;
+    }
+
+    /// Unfreeze the session. Subsequent ticks resume producing
+    /// effects, with elapsed continuing from the pause moment (no
+    /// leak from the pause window). Idempotent: calling resume on
+    /// an already-running session is a no-op.
+    pub fn resume(&mut self, now: Duration) {
+        if !self.is_paused {
+            return;
+        }
+        let dummy = Stopwatch::started_at(Duration::ZERO);
+        let s = std::mem::replace(&mut self.phase_clock, dummy);
+        self.phase_clock = s.resumed_at(now);
+        self.is_paused = false;
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.is_paused
     }
 
     /// Drive the session forward by one tick. Returns the effects
@@ -154,10 +196,15 @@ impl Session {
     /// shell can fire bell sounds / morph buttons / etc. exactly
     /// at the boundary.
     pub fn tick(&mut self, now: Duration) -> Vec<Effect> {
+        if self.is_paused {
+            return Vec::new();
+        }
         match self.phase {
             SessionPhase::Prep => self.tick_prep(now),
             SessionPhase::Running => self.tick_running(now),
-            // Stages 0d–0g add the other phases.
+            // Stages 0e–0g add the Overtime tick. Paused doesn't
+            // appear here — pause is orthogonal to phase, handled
+            // by the early-return above.
             SessionPhase::Paused | SessionPhase::Overtime => Vec::new(),
         }
     }
@@ -165,14 +212,14 @@ impl Session {
     fn tick_prep(&mut self, now: Duration) -> Vec<Effect> {
         let target_secs = self.settings.prep_secs.unwrap_or(0) as u64;
         let target = Duration::from_secs(target_secs);
-        let elapsed = now.saturating_sub(self.phase_started_at);
+        let elapsed = self.phase_clock.elapsed(now);
 
         if elapsed >= target {
             // Crossed the prep boundary. Transition to Running and
-            // anchor the new phase's start time at `now` so the
-            // running phase counts from this exact moment.
+            // restart the phase clock so Running's elapsed counts
+            // from this exact moment, not from prep start.
             self.phase = SessionPhase::Running;
-            self.phase_started_at = now;
+            self.phase_clock = Stopwatch::started_at(now);
             return vec![Effect::EndPrep];
         }
 
@@ -185,7 +232,7 @@ impl Session {
     }
 
     fn tick_running(&mut self, now: Duration) -> Vec<Effect> {
-        let elapsed = now.saturating_sub(self.phase_started_at);
+        let elapsed = self.phase_clock.elapsed(now);
 
         // Box Breath running has its own tick shape: phase-boundary
         // detection + cycle-aligned end + elapsed counter.
@@ -274,7 +321,7 @@ impl Session {
             return None;
         }
         let pattern = self.settings.breath_pattern.as_ref()?;
-        let elapsed = now.saturating_sub(self.phase_started_at);
+        let elapsed = self.phase_clock.elapsed(now);
         Some(pattern.phase_at(elapsed))
     }
 
@@ -283,7 +330,7 @@ impl Session {
     }
 
     pub fn elapsed(&self, now: Duration) -> Duration {
-        now.saturating_sub(self.phase_started_at)
+        self.phase_clock.elapsed(now)
     }
 
     /// Mode of the in-flight session. Captured at start; never
@@ -605,6 +652,94 @@ mod tests {
     fn box_breath_phase_info_is_none_for_non_box_breath_session() {
         let s = Session::start_running(timer_countdown_settings(600), Duration::from_secs(100));
         assert!(s.box_breath_phase_info(Duration::from_secs(105)).is_none());
+    }
+
+    // ── Pause / Resume ───────────────────────────────────────────────
+
+    #[test]
+    fn pause_during_running_freezes_elapsed_clock() {
+        let mut s = Session::start_running(
+            timer_countdown_settings(600),
+            Duration::from_secs(100),
+        );
+        let _ = s.tick(Duration::from_secs(110)); // 10 s in
+        s.pause(Duration::from_secs(110));
+        // 60 s of host time pass while paused.
+        assert_eq!(s.elapsed(Duration::from_secs(170)), Duration::from_secs(10));
+        assert!(s.is_paused());
+    }
+
+    #[test]
+    fn resume_continues_from_pause_moment_no_paused_time_leaks() {
+        let mut s = Session::start_running(
+            timer_countdown_settings(600),
+            Duration::from_secs(100),
+        );
+        s.pause(Duration::from_secs(110)); // 10 s in
+        s.resume(Duration::from_secs(170)); // 60 s pause window
+        // Active elapsed is still 10 s right after resume.
+        assert_eq!(s.elapsed(Duration::from_secs(170)), Duration::from_secs(10));
+        // 5 s of running time after resume → 15 s total active.
+        assert_eq!(s.elapsed(Duration::from_secs(175)), Duration::from_secs(15));
+    }
+
+    #[test]
+    fn tick_while_paused_emits_no_effects() {
+        let mut s = Session::start_running(
+            timer_countdown_settings(600),
+            Duration::from_secs(100),
+        );
+        s.pause(Duration::from_secs(110));
+        // Tick is a no-op while paused — caller should usually not
+        // call it (the gtk shell stops the tick loop on pause), but
+        // if it does, we don't update display or fire transitions.
+        let effects = s.tick(Duration::from_secs(120));
+        assert!(effects.is_empty(), "paused tick must produce nothing: {:?}", effects);
+    }
+
+    #[test]
+    fn pause_during_prep_works() {
+        let mut s = Session::start_prep(timer_settings_with_prep(30), Duration::from_secs(100));
+        s.pause(Duration::from_secs(105)); // 5 s into prep
+        s.resume(Duration::from_secs(200));
+        // Active prep elapsed is 5 s — first tick after resume
+        // should still report 25 s remaining (not the 95 s of host
+        // time that elapsed).
+        assert_eq!(
+            s.tick(Duration::from_secs(200)),
+            vec![Effect::UpdateDisplay { secs: 25 }]
+        );
+        assert_eq!(s.phase(), SessionPhase::Prep);
+    }
+
+    #[test]
+    fn pause_during_box_breath_freezes_phase() {
+        let mut s = Session::start_running(box_breath_settings(None), Duration::from_secs(100));
+        let _ = s.tick(Duration::from_millis(100_500)); // seed In
+        // 6 s in → still HoldIn (phase was at t=4 boundary).
+        let _ = s.tick(Duration::from_secs(106));
+        s.pause(Duration::from_secs(106));
+        // 1000 s of host time pass; resume.
+        s.resume(Duration::from_secs(1106));
+        // Active elapsed is still 6 s → phase is HoldIn.
+        let info = s.box_breath_phase_info(Duration::from_secs(1106)).unwrap();
+        assert_eq!(info.phase, Phase::HoldIn);
+    }
+
+    #[test]
+    fn pause_is_idempotent_and_resume_is_idempotent() {
+        let mut s = Session::start_running(
+            timer_stopwatch_settings(),
+            Duration::from_secs(100),
+        );
+        // 5 s elapsed, pause twice (second is a no-op).
+        s.pause(Duration::from_secs(105));
+        s.pause(Duration::from_secs(150)); // would over-pause if not idempotent
+        // 100 s of host time, then resume twice (second no-op).
+        s.resume(Duration::from_secs(205));
+        s.resume(Duration::from_secs(210)); // idempotent
+        // Active elapsed should be 5 s + (210-205) = 10 s.
+        assert_eq!(s.elapsed(Duration::from_secs(210)), Duration::from_secs(10));
     }
 
     #[test]
