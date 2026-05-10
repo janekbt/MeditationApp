@@ -216,20 +216,19 @@ overshoot-then-add UX.
 (for the subtitle helpers). All micro-tests carry along.
 **Risk:** trivial. Each is a self-contained move.
 
-**Done in two-thirds:** the per-mode key dispatchers all live in
-`meditate_core::settings_keys` keyed by `SessionMode`; gtk gained a
-`From<TimerMode> for SessionMode` impl so existing call sites that
-pass `TimerMode` keep working through thin one-line wrappers.
-`unix_now()` lives in `meditate_core::time` next to `boot_time_now`.
-
-**Subtitle formatters deferred:** `intervals_count_subtitle` and
-`preset_subtitle` are entangled with `gettext()` calls (every branch
-returns a translated string). The keep-i18n rule
-(`feedback_meditate_keep_i18n` memory) says don't drop translations
-during refactor; either we move them with a translator-callback
-parameter that each shell supplies (Android would substitute its
-own runtime translator) or we leave them shell-side. Surface to
-Janek before doing either; not blocking other items.
+**Layout:**
+- Per-mode key dispatchers live in `meditate_core::settings_keys`,
+  keyed by `SessionMode`. Gtk gained a `From<TimerMode> for SessionMode`
+  impl so existing call sites that pass `TimerMode` keep working
+  through thin one-line wrappers.
+- `unix_now()` lives in `meditate_core::time` next to `boot_time_now`.
+- `intervals_count_subtitle` and `preset_subtitle` retrofitted to the
+  typed-key pattern (see `feedback_meditate_i18n_typed_keys` memory):
+  `meditate_core::format::intervals_count_key(n) -> IntervalsCountKey`
+  and `meditate_core::format::preset_subtitle_parts(json) ->
+  Option<PresetSubtitleParts>`. The gtk callers `match` on the
+  variants and emit gettext-translated strings per branch — i18n
+  preserved, structural decision lifted to core.
 
 ### [ ] 12. Preset snapshot / apply walkers
 

@@ -4495,10 +4495,13 @@ impl TimerView {
 /// can be localised; "None" is its own string for grammatical reasons
 /// in some languages.
 fn intervals_count_subtitle(enabled_count: usize) -> String {
-    match enabled_count {
-        0 => crate::i18n::gettext("None enabled"),
-        1 => crate::i18n::gettext("1 enabled"),
-        n => crate::i18n::gettext("{n} enabled").replace("{n}", &n.to_string()),
+    use meditate_core::format::IntervalsCountKey;
+    match meditate_core::format::intervals_count_key(enabled_count) {
+        IntervalsCountKey::None => crate::i18n::gettext("None enabled"),
+        IntervalsCountKey::One => crate::i18n::gettext("1 enabled"),
+        IntervalsCountKey::Many(n) => {
+            crate::i18n::gettext("{n} enabled").replace("{n}", &n.to_string())
+        }
     }
 }
 
@@ -4511,55 +4514,51 @@ fn preset_subtitle(
     p: &meditate_core::db::Preset,
     label_names: &std::collections::HashMap<String, String>,
 ) -> String {
-    use meditate_core::preset_config::{PresetConfig, PresetTiming};
-    let cfg = match PresetConfig::from_json(&p.config_json) {
-        Ok(c) => c,
-        Err(_) => return String::new(),
+    use meditate_core::format::{
+        preset_subtitle_parts, BellsPart, BoxBreathAfter, TimingPart,
     };
-    let mut parts: Vec<String> = Vec::new();
-    match cfg.timing {
-        PresetTiming::Timer { stopwatch: true, .. } => {
-            parts.push(crate::i18n::gettext("Stopwatch"));
-        }
-        PresetTiming::Timer { stopwatch: false, duration_secs } => {
-            let mins = duration_secs / 60;
-            parts.push(crate::i18n::gettext("{n} min")
-                .replace("{n}", &mins.to_string()));
-        }
-        PresetTiming::BoxBreath {
-            stopwatch,
-            inhale_secs, hold_full_secs, exhale_secs, hold_empty_secs,
-            duration_secs,
+    let Some(parts) = preset_subtitle_parts(&p.config_json) else {
+        return String::new();
+    };
+
+    let render_duration = |mins: u32| {
+        crate::i18n::gettext("{n} min").replace("{n}", &mins.to_string())
+    };
+
+    let mut out: Vec<String> = Vec::new();
+    match parts.timing {
+        TimingPart::Stopwatch => out.push(crate::i18n::gettext("Stopwatch")),
+        TimingPart::Duration { mins } => out.push(render_duration(mins)),
+        TimingPart::BoxBreath {
+            inhale_secs,
+            hold_full_secs,
+            exhale_secs,
+            hold_empty_secs,
+            after,
         } => {
-            parts.push(format!(
+            out.push(format!(
                 "{}-{}-{}-{}",
                 inhale_secs, hold_full_secs, exhale_secs, hold_empty_secs,
             ));
-            if stopwatch {
-                parts.push(crate::i18n::gettext("Stopwatch"));
-            } else {
-                let mins = duration_secs / 60;
-                parts.push(crate::i18n::gettext("{n} min")
-                    .replace("{n}", &mins.to_string()));
+            match after {
+                BoxBreathAfter::Stopwatch => out.push(crate::i18n::gettext("Stopwatch")),
+                BoxBreathAfter::Duration { mins } => out.push(render_duration(mins)),
             }
         }
     }
-    if cfg.label.enabled {
-        if let Some(uuid) = cfg.label.uuid.as_ref() {
-            if let Some(name) = label_names.get(uuid) {
-                parts.push(name.clone());
-            }
+    if let Some(uuid) = parts.label_uuid.as_ref() {
+        if let Some(name) = label_names.get(uuid) {
+            out.push(name.clone());
         }
     }
-    if cfg.interval_bells.enabled && !cfg.interval_bells.bells.is_empty() {
-        let n = cfg.interval_bells.bells.len();
-        parts.push(if n == 1 {
-            crate::i18n::gettext("1 bell")
-        } else {
-            crate::i18n::gettext("{n} bells").replace("{n}", &n.to_string())
-        });
+    match parts.bells {
+        Some(BellsPart::One) => out.push(crate::i18n::gettext("1 bell")),
+        Some(BellsPart::Many(n)) => {
+            out.push(crate::i18n::gettext("{n} bells").replace("{n}", &n.to_string()))
+        }
+        None => {}
     }
-    parts.join(" · ")
+    out.join(" · ")
 }
 
 use meditate_core::time::unix_now;

@@ -136,6 +136,135 @@ pub fn overtime_button_label(prefix: &str, overtime: Duration) -> String {
     format!("{prefix} {} ?", format_time(overtime))
 }
 
+// ── Translatable subtitle helpers ────────────────────────────────────
+//
+// Pattern: core returns a typed key/struct capturing the structural
+// decision; the shell maps each variant to a localized string via its
+// own i18n stack. See `feedback_meditate_i18n_typed_keys` memory.
+
+/// Decision key for the "interval-bells: how many enabled?" subtitle.
+/// The shell renders each variant via its translator (e.g.
+/// `gettext("None enabled")`, `gettext("{n} enabled").replace(...)`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IntervalsCountKey {
+    None,
+    One,
+    Many(usize),
+}
+
+pub fn intervals_count_key(enabled_count: usize) -> IntervalsCountKey {
+    match enabled_count {
+        0 => IntervalsCountKey::None,
+        1 => IntervalsCountKey::One,
+        n => IntervalsCountKey::Many(n),
+    }
+}
+
+/// Decision key for the bell-count chip in the preset-row subtitle.
+/// Variants match `IntervalsCountKey` minus the `None` arm — the
+/// caller of `preset_subtitle_parts` only sees this when at least
+/// one bell is configured AND interval-bells are enabled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BellsPart {
+    One,
+    Many(usize),
+}
+
+/// What the box-breath running session ends on after one cycle wrap:
+/// keep going as a stopwatch, or stop when a target duration is hit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BoxBreathAfter {
+    Stopwatch,
+    Duration { mins: u32 },
+}
+
+/// Timing-part decision for the preset-row subtitle. The shell renders
+/// each variant via its translator + the parameters carried alongside.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimingPart {
+    Stopwatch,
+    Duration {
+        mins: u32,
+    },
+    BoxBreath {
+        inhale_secs: u32,
+        hold_full_secs: u32,
+        exhale_secs: u32,
+        hold_empty_secs: u32,
+        after: BoxBreathAfter,
+    },
+}
+
+/// Structural decomposition of a preset-row subtitle. Caller stitches
+/// the localized timing chip + the resolved label name (looked up by
+/// `label_uuid` against the caller's name table) + the localized
+/// bells chip with its own separator (the GTK shell uses
+/// `" · "`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PresetSubtitleParts {
+    pub timing: TimingPart,
+    /// `Some(uuid)` when the preset has the label expander enabled
+    /// AND a label UUID pinned. The shell looks up the name from its
+    /// own label table; resolution failures (uuid missing from the
+    /// table, e.g. label was deleted) collapse to no label part in
+    /// the rendered subtitle.
+    pub label_uuid: Option<String>,
+    pub bells: Option<BellsPart>,
+}
+
+/// Decompose the preset's `config_json` blob into the structural
+/// decisions the shell needs to render the row's subtitle. Returns
+/// `None` on JSON parse failure (the row is corrupt, the GTK shell
+/// renders an empty subtitle in that case).
+pub fn preset_subtitle_parts(config_json: &str) -> Option<PresetSubtitleParts> {
+    use crate::preset_config::{PresetConfig, PresetTiming};
+    let cfg = PresetConfig::from_json(config_json).ok()?;
+
+    let timing = match cfg.timing {
+        PresetTiming::Timer { stopwatch: true, .. } => TimingPart::Stopwatch,
+        PresetTiming::Timer { stopwatch: false, duration_secs } => TimingPart::Duration {
+            mins: duration_secs / 60,
+        },
+        PresetTiming::BoxBreath {
+            stopwatch,
+            inhale_secs,
+            hold_full_secs,
+            exhale_secs,
+            hold_empty_secs,
+            duration_secs,
+        } => TimingPart::BoxBreath {
+            inhale_secs,
+            hold_full_secs,
+            exhale_secs,
+            hold_empty_secs,
+            after: if stopwatch {
+                BoxBreathAfter::Stopwatch
+            } else {
+                BoxBreathAfter::Duration { mins: duration_secs / 60 }
+            },
+        },
+    };
+
+    let label_uuid = if cfg.label.enabled {
+        cfg.label.uuid.clone()
+    } else {
+        None
+    };
+
+    let bells = if cfg.interval_bells.enabled && !cfg.interval_bells.bells.is_empty() {
+        let n = cfg.interval_bells.bells.len();
+        Some(if n == 1 { BellsPart::One } else { BellsPart::Many(n) })
+    } else {
+        None
+    };
+
+    Some(PresetSubtitleParts {
+        timing,
+        label_uuid,
+        bells,
+    })
+}
+
 /// Bounds + default for the preparation-time silence in seconds.
 ///
 /// Min 5 s — anything shorter feels accidental. Max 5 min — keeps the
@@ -323,6 +452,197 @@ mod tests {
         assert_eq!(
             overtime_button_label("Add", Duration::from_secs(3661)),
             "Add 01:01:01 ?"
+        );
+    }
+
+    // ── intervals_count_key ───────────────────────────────────────────
+
+    #[test]
+    fn intervals_count_key_zero_is_none() {
+        assert_eq!(intervals_count_key(0), IntervalsCountKey::None);
+    }
+
+    #[test]
+    fn intervals_count_key_one_is_one() {
+        assert_eq!(intervals_count_key(1), IntervalsCountKey::One);
+    }
+
+    #[test]
+    fn intervals_count_key_many_carries_count() {
+        assert_eq!(intervals_count_key(5), IntervalsCountKey::Many(5));
+        assert_eq!(intervals_count_key(99), IntervalsCountKey::Many(99));
+    }
+
+    // ── preset_subtitle_parts ─────────────────────────────────────────
+
+    use crate::preset_config::{
+        PresetBoxBreathCues, PresetConfig, PresetEndBell, PresetIntervalBell,
+        PresetIntervalBells, PresetLabel, PresetStartingBell, PresetTiming,
+    };
+
+    fn cfg_to_json(cfg: &PresetConfig) -> String {
+        serde_json::to_string(cfg).unwrap()
+    }
+
+    fn timer_cfg(stopwatch: bool, duration_secs: u32) -> PresetConfig {
+        PresetConfig {
+            label: PresetLabel::default(),
+            starting_bell: PresetStartingBell::default(),
+            interval_bells: PresetIntervalBells::default(),
+            end_bell: PresetEndBell::default(),
+            timing: PresetTiming::Timer { stopwatch, duration_secs },
+            cues_signal_mode: "both".into(),
+            keep_screen_awake: false,
+            box_breath_cues: PresetBoxBreathCues::default(),
+        }
+    }
+
+    fn box_breath_cfg(
+        stopwatch: bool,
+        duration_secs: u32,
+        in_secs: u32,
+        hold_in: u32,
+        out_secs: u32,
+        hold_out: u32,
+    ) -> PresetConfig {
+        PresetConfig {
+            label: PresetLabel::default(),
+            starting_bell: PresetStartingBell::default(),
+            interval_bells: PresetIntervalBells::default(),
+            end_bell: PresetEndBell::default(),
+            timing: PresetTiming::BoxBreath {
+                stopwatch,
+                inhale_secs: in_secs,
+                hold_full_secs: hold_in,
+                exhale_secs: out_secs,
+                hold_empty_secs: hold_out,
+                duration_secs,
+            },
+            cues_signal_mode: "both".into(),
+            keep_screen_awake: false,
+            box_breath_cues: PresetBoxBreathCues::default(),
+        }
+    }
+
+    #[test]
+    fn preset_subtitle_parts_returns_none_for_corrupt_json() {
+        assert!(preset_subtitle_parts("not json").is_none());
+        assert!(preset_subtitle_parts("").is_none());
+    }
+
+    #[test]
+    fn preset_subtitle_parts_timer_stopwatch() {
+        let json = cfg_to_json(&timer_cfg(true, 600));
+        let parts = preset_subtitle_parts(&json).unwrap();
+        assert_eq!(parts.timing, TimingPart::Stopwatch);
+        assert_eq!(parts.label_uuid, None);
+        assert_eq!(parts.bells, None);
+    }
+
+    #[test]
+    fn preset_subtitle_parts_timer_duration_in_minutes() {
+        // 600 s = 10 min — duration arrives in minutes.
+        let json = cfg_to_json(&timer_cfg(false, 600));
+        let parts = preset_subtitle_parts(&json).unwrap();
+        assert_eq!(parts.timing, TimingPart::Duration { mins: 10 });
+    }
+
+    #[test]
+    fn preset_subtitle_parts_box_breath_stopwatch_carries_phase_durations() {
+        let json = cfg_to_json(&box_breath_cfg(true, 0, 4, 4, 4, 4));
+        let parts = preset_subtitle_parts(&json).unwrap();
+        assert_eq!(
+            parts.timing,
+            TimingPart::BoxBreath {
+                inhale_secs: 4,
+                hold_full_secs: 4,
+                exhale_secs: 4,
+                hold_empty_secs: 4,
+                after: BoxBreathAfter::Stopwatch,
+            }
+        );
+    }
+
+    #[test]
+    fn preset_subtitle_parts_box_breath_duration_carries_minutes() {
+        // 4-7-8-0 with a 10-min cap.
+        let json = cfg_to_json(&box_breath_cfg(false, 600, 4, 7, 8, 0));
+        let parts = preset_subtitle_parts(&json).unwrap();
+        assert_eq!(
+            parts.timing,
+            TimingPart::BoxBreath {
+                inhale_secs: 4,
+                hold_full_secs: 7,
+                exhale_secs: 8,
+                hold_empty_secs: 0,
+                after: BoxBreathAfter::Duration { mins: 10 },
+            }
+        );
+    }
+
+    #[test]
+    fn preset_subtitle_parts_label_uuid_set_only_when_enabled_and_present() {
+        let mut cfg = timer_cfg(false, 600);
+        // Disabled → None even if uuid is filled in.
+        cfg.label = PresetLabel { enabled: false, uuid: Some("u-1".into()) };
+        let json = cfg_to_json(&cfg);
+        assert_eq!(preset_subtitle_parts(&json).unwrap().label_uuid, None);
+
+        // Enabled + uuid → Some.
+        cfg.label = PresetLabel { enabled: true, uuid: Some("u-1".into()) };
+        let json = cfg_to_json(&cfg);
+        assert_eq!(
+            preset_subtitle_parts(&json).unwrap().label_uuid,
+            Some("u-1".to_string())
+        );
+
+        // Enabled but no uuid → None (mode-default fallback is the
+        // shell's job; subtitle just shows nothing).
+        cfg.label = PresetLabel { enabled: true, uuid: None };
+        let json = cfg_to_json(&cfg);
+        assert_eq!(preset_subtitle_parts(&json).unwrap().label_uuid, None);
+    }
+
+    #[test]
+    fn preset_subtitle_parts_bells_uses_one_or_many() {
+        let one_bell = PresetIntervalBell {
+            kind: "interval".into(),
+            minutes: 5,
+            jitter_pct: 0,
+            sound_uuid: "s".into(),
+            enabled: true,
+            signal_mode: "sound".into(),
+            vibration_pattern_uuid: String::new(),
+        };
+
+        let mut cfg = timer_cfg(false, 600);
+        // Disabled → None.
+        cfg.interval_bells = PresetIntervalBells { enabled: false, bells: vec![one_bell.clone()] };
+        let json = cfg_to_json(&cfg);
+        assert_eq!(preset_subtitle_parts(&json).unwrap().bells, None);
+
+        // Enabled but empty → None.
+        cfg.interval_bells = PresetIntervalBells { enabled: true, bells: vec![] };
+        let json = cfg_to_json(&cfg);
+        assert_eq!(preset_subtitle_parts(&json).unwrap().bells, None);
+
+        // Enabled with one → BellsPart::One.
+        cfg.interval_bells = PresetIntervalBells { enabled: true, bells: vec![one_bell.clone()] };
+        let json = cfg_to_json(&cfg);
+        assert_eq!(
+            preset_subtitle_parts(&json).unwrap().bells,
+            Some(BellsPart::One)
+        );
+
+        // Enabled with three → BellsPart::Many(3).
+        cfg.interval_bells = PresetIntervalBells {
+            enabled: true,
+            bells: vec![one_bell.clone(), one_bell.clone(), one_bell.clone()],
+        };
+        let json = cfg_to_json(&cfg);
+        assert_eq!(
+            preset_subtitle_parts(&json).unwrap().bells,
+            Some(BellsPart::Many(3))
         );
     }
 
