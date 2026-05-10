@@ -3330,110 +3330,14 @@ impl TimerView {
     /// Settings" chooser flow (capture state to write into a new or
     /// overwritten preset).
     fn snapshot_current_setup(&self) -> meditate_core::preset_config::PresetConfig {
-        use meditate_core::preset_config::*;
+        use meditate_core::preset_config::{
+            snapshot, PresetBoxBreathCues, PresetConfig, PresetEndBell,
+            PresetIntervalBells, PresetLabel, PresetStartingBell, PresetTiming,
+        };
         let mode = self.current_mode();
 
-        let label = PresetLabel {
-            enabled: self.persisted_label_active_for_mode(mode),
-            uuid: self.persisted_label_uuid_for_mode(mode),
-        };
-
-        // Bell + interval state. Default values mirror the read-back
-        // defaults in refresh_streak (starting bell off, prep off, etc.).
-        let read_bool = |k: &str, default: bool| -> bool {
-            self.get_app()
-                .and_then(|app| app.with_db(|db| db.get_setting(
-                    k, if default { "true" } else { "false" },
-                )))
-                .and_then(|r| r.ok())
-                .map(|v| v == "true")
-                .unwrap_or(default)
-        };
-        let read_str = |k: &str, default: &str| -> String {
-            self.get_app()
-                .and_then(|app| app.with_db(|db| db.get_setting(k, default)))
-                .and_then(|r| r.ok())
-                .unwrap_or_else(|| default.to_string())
-        };
-        let read_u32 = |k: &str, default: u32| -> u32 {
-            read_str(k, &default.to_string()).parse::<u32>().unwrap_or(default)
-        };
-
-        let starting_bell = PresetStartingBell {
-            enabled: read_bool("starting_bell_active", false),
-            sound_uuid: read_str("starting_bell_sound", crate::db::BUNDLED_BOWL_UUID),
-            prep_time_enabled: read_bool("preparation_time_active", false),
-            prep_time_secs: read_u32(
-                "preparation_time_secs",
-                meditate_core::format::PREP_SECS_DEFAULT,
-            ),
-            signal_mode: read_str("starting_bell_signal_mode", "sound"),
-            vibration_pattern_uuid: read_str(
-                "starting_bell_pattern",
-                crate::db::BUNDLED_PATTERN_PULSE_UUID,
-            ),
-        };
-
-        let end_bell = PresetEndBell {
-            enabled: read_bool("end_bell_active", true),
-            sound_uuid: read_str("end_bell_sound", crate::db::BUNDLED_BOWL_UUID),
-            signal_mode: read_str("end_bell_signal_mode", "sound"),
-            vibration_pattern_uuid: read_str(
-                "end_bell_pattern",
-                crate::db::BUNDLED_PATTERN_PULSE_UUID,
-            ),
-        };
-
-        let intervals_enabled = read_bool("interval_bells_active", false);
-        let bells: Vec<PresetIntervalBell> = self.get_app()
-            .and_then(|app| app.with_db(|db| db.list_interval_bells()))
-            .and_then(|r| r.ok())
-            .unwrap_or_default()
-            .into_iter()
-            .map(|b| PresetIntervalBell {
-                kind: b.kind.as_db_str().to_string(),
-                minutes: b.minutes,
-                jitter_pct: b.jitter_pct,
-                sound_uuid: b.sound,
-                enabled: b.enabled,
-                signal_mode: b.signal_mode.as_db_str().to_string(),
-                vibration_pattern_uuid: b.vibration_pattern_uuid,
-            })
-            .collect();
-        let interval_bells = PresetIntervalBells {
-            enabled: intervals_enabled,
-            bells,
-        };
-
-        // Box-Breath phase cues — captured for every preset, but
-        // Timer presets just hold the seed values (their apply path
-        // skips writing them back).
-        let phases = self.get_app().map(|app| {
-            use crate::db::BoxBreathPhaseId as P;
-            [P::In, P::HoldIn, P::Out, P::HoldOut]
-                .iter()
-                .filter_map(|&id| {
-                    app.with_db(|db| db.get_box_breath_phase(id))
-                        .and_then(|r| r.ok())
-                        .flatten()
-                })
-                .map(|p| PresetBoxBreathPhase {
-                    phase: p.phase.as_db_str().to_string(),
-                    enabled: p.enabled,
-                    signal_mode: p.signal_mode.as_db_str().to_string(),
-                    sound_uuid: p.sound_uuid,
-                    pattern_uuid: p.pattern_uuid,
-                })
-                .collect::<Vec<_>>()
-        }).unwrap_or_default();
-        let box_breath_cues = PresetBoxBreathCues {
-            master_enabled: read_bool("boxbreath_cues_active", false),
-            phases,
-        };
-
-        let cues_signal_mode = read_str(setting_key_for_mode(mode), "both");
-        let keep_screen_awake = read_bool(keep_screen_awake_key_for_mode(mode), false);
-
+        // Build the live-UI-state half from gtk Cell<>s. Core's
+        // snapshot consumes this + reads everything else from `db`.
         let timing = match mode {
             TimerMode::Timer => PresetTiming::Timer {
                 stopwatch: self.stopwatch_toggle_on.get(),
@@ -3459,227 +3363,51 @@ impl TimerView {
             },
         };
 
-        PresetConfig {
-            label,
-            starting_bell,
-            interval_bells,
-            end_bell,
-            timing,
-            cues_signal_mode,
-            keep_screen_awake,
-            box_breath_cues,
-        }
+        // App / DB unavailable: return a defaults-shaped PresetConfig
+        // with the timing we just built. Unreachable in normal flow
+        // (snapshot is called from a UI handler that has an app).
+        self.get_app()
+            .and_then(|app| {
+                app.with_db(|db| snapshot(db.core(), mode.into(), timing.clone()))
+            })
+            .unwrap_or_else(|| PresetConfig {
+                label: PresetLabel::default(),
+                starting_bell: PresetStartingBell::default(),
+                interval_bells: PresetIntervalBells::default(),
+                end_bell: PresetEndBell::default(),
+                timing,
+                cues_signal_mode: "both".to_string(),
+                keep_screen_awake: false,
+                box_breath_cues: PresetBoxBreathCues::default(),
+            })
     }
 
-    /// Apply a `PresetConfig` to the live Setup state. Replays the
-    /// config into every persistence point — per-mode settings, the
-    /// interval-bell library (DELETE-ALL + re-INSERT from snapshot),
-    /// the breath-pattern Cells, and the countdown target — then
-    /// triggers refresh_streak so the on-screen rows converge.
+    /// Apply a `PresetConfig` to the live Setup state. Delegates the
+    /// persistence work (settings + interval-bell replay +
+    /// box-breath phase rows) to `meditate_core::preset_config::apply`,
+    /// then unpacks the returned timing into the gtk-side Cell<>s and
+    /// widgets, and finishes with `refresh_streak` so dependent rows
+    /// converge.
     ///
-    /// Returns true iff the apply happened. Returns false when a
-    /// referenced bell sound hasn't arrived locally yet (sync-pending);
+    /// Returns true iff the apply happened. Returns false on
+    /// `ApplyError::SyncPending` (referenced bell sound or vibration
+    /// pattern hasn't arrived locally yet) or any underlying DB error;
     /// callers can decide how to surface that to the user.
     fn apply_config(&self, cfg: &meditate_core::preset_config::PresetConfig) -> bool {
-        use meditate_core::preset_config::PresetTiming;
+        use meditate_core::preset_config::{apply, PresetTiming};
         let Some(app) = self.get_app() else { return false; };
-
-        // Sync sound-uuid lookups: a preset synced from another
-        // device may reference a bell sound that hasn't arrived yet
-        // through the WebDAV layer. Refuse to apply and let the
-        // caller decide how to message it.
-        let known_sound_uuids: std::collections::HashSet<String> = app
-            .with_db(|db| db.list_bell_sounds())
-            .and_then(|r| r.ok())
-            .map(|sounds| sounds.into_iter().map(|s| s.uuid).collect())
-            .unwrap_or_default();
-        let mut needs_sound = Vec::<&str>::new();
-        if cfg.starting_bell.enabled { needs_sound.push(&cfg.starting_bell.sound_uuid); }
-        if cfg.end_bell.enabled      { needs_sound.push(&cfg.end_bell.sound_uuid); }
-        for b in &cfg.interval_bells.bells {
-            needs_sound.push(&b.sound_uuid);
-        }
-        if needs_sound.iter().any(|u| !known_sound_uuids.contains(*u)) {
-            return false;
-        }
-
-        // Same gate for vibration patterns. Empty uuid means "use the
-        // bundled Pulse default at apply time" — we don't refuse on
-        // those. Bundled patterns are seeded on every open, so any
-        // bundled uuid resolves locally; only sync-pending custom
-        // patterns can fail the lookup.
-        let known_pattern_uuids: std::collections::HashSet<String> = app
-            .with_db(|db| db.list_vibration_patterns())
-            .and_then(|r| r.ok())
-            .map(|ps| ps.into_iter().map(|p| p.uuid).collect())
-            .unwrap_or_default();
-        let mut needs_pattern: Vec<&str> = Vec::new();
-        if !cfg.starting_bell.vibration_pattern_uuid.is_empty() {
-            needs_pattern.push(&cfg.starting_bell.vibration_pattern_uuid);
-        }
-        if !cfg.end_bell.vibration_pattern_uuid.is_empty() {
-            needs_pattern.push(&cfg.end_bell.vibration_pattern_uuid);
-        }
-        for b in &cfg.interval_bells.bells {
-            if !b.vibration_pattern_uuid.is_empty() {
-                needs_pattern.push(&b.vibration_pattern_uuid);
-            }
-        }
-        for p in &cfg.box_breath_cues.phases {
-            if !p.pattern_uuid.is_empty() {
-                needs_pattern.push(&p.pattern_uuid);
-            }
-        }
-        if needs_pattern.iter().any(|u| !known_pattern_uuids.contains(*u)) {
-            return false;
-        }
-
         let mode = self.current_mode();
-        let stopwatch_active = match cfg.timing {
-            PresetTiming::Timer { stopwatch, .. } => stopwatch,
-            PresetTiming::BoxBreath { stopwatch, .. } => stopwatch,
+
+        let outcome = app.with_db_mut(|db| apply(db.core(), cfg, mode.into()));
+        let timing = match outcome {
+            Some(Ok(t)) => t,
+            // SyncPending, DbError, or app/db unavailable.
+            _ => return false,
         };
 
-        // Persist settings
-        let label_uuid_opt = cfg.label.uuid.clone();
-        let label_active = cfg.label.enabled;
-        let cfg_owned = cfg.clone();
-        app.with_db_mut(|db| {
-            let _ = db.set_setting(
-                label_active_setting_key(mode),
-                if label_active { "true" } else { "false" },
-            );
-            if let Some(luuid) = label_uuid_opt.as_ref() {
-                let _ = db.set_setting(label_uuid_setting_key(mode), luuid);
-            }
-            let _ = db.set_setting(
-                "starting_bell_active",
-                if cfg_owned.starting_bell.enabled { "true" } else { "false" },
-            );
-            if !cfg_owned.starting_bell.sound_uuid.is_empty() {
-                let _ = db.set_setting("starting_bell_sound", &cfg_owned.starting_bell.sound_uuid);
-            }
-            let _ = db.set_setting(
-                "preparation_time_active",
-                if cfg_owned.starting_bell.prep_time_enabled { "true" } else { "false" },
-            );
-            let _ = db.set_setting(
-                "preparation_time_secs",
-                &cfg_owned.starting_bell.prep_time_secs.to_string(),
-            );
-            let _ = db.set_setting(
-                "interval_bells_active",
-                if cfg_owned.interval_bells.enabled { "true" } else { "false" },
-            );
-            let _ = db.set_setting(
-                "end_bell_active",
-                if cfg_owned.end_bell.enabled { "true" } else { "false" },
-            );
-            if !cfg_owned.end_bell.sound_uuid.is_empty() {
-                let _ = db.set_setting("end_bell_sound", &cfg_owned.end_bell.sound_uuid);
-            }
-            let _ = db.set_setting(
-                stopwatch_key_for_mode(mode),
-                if stopwatch_active { "true" } else { "false" },
-            );
-
-            // Per-bell signal_mode + vibration_pattern_uuid.
-            let _ = db.set_setting(
-                "starting_bell_signal_mode",
-                &cfg_owned.starting_bell.signal_mode,
-            );
-            let _ = db.set_setting(
-                "starting_bell_pattern",
-                &cfg_owned.starting_bell.vibration_pattern_uuid,
-            );
-            let _ = db.set_setting(
-                "end_bell_signal_mode",
-                &cfg_owned.end_bell.signal_mode,
-            );
-            let _ = db.set_setting(
-                "end_bell_pattern",
-                &cfg_owned.end_bell.vibration_pattern_uuid,
-            );
-
-            // Per-mode "Cues" signal_mode override + "Keep Screen
-            // Awake" toggle.
-            let _ = db.set_setting(
-                setting_key_for_mode(mode),
-                &cfg_owned.cues_signal_mode,
-            );
-            let _ = db.set_setting(
-                keep_screen_awake_key_for_mode(mode),
-                if cfg_owned.keep_screen_awake { "true" } else { "false" },
-            );
-
-            // Box-Breath phase cues — master toggle + per-phase rows.
-            // Skip when the preset's mode is Timer: a Timer preset's
-            // captured phase data is the seed, and stamping it would
-            // wipe the user's box-breath authoring on apply. Only
-            // touch phases when the preset itself is Box Breath.
-            let preset_is_box_breath = matches!(
-                cfg_owned.timing,
-                meditate_core::preset_config::PresetTiming::BoxBreath { .. },
-            );
-            if preset_is_box_breath {
-                let _ = db.set_setting(
-                    "boxbreath_cues_active",
-                    if cfg_owned.box_breath_cues.master_enabled { "true" } else { "false" },
-                );
-                for p in &cfg_owned.box_breath_cues.phases {
-                    let Some(phase_id) = crate::db::BoxBreathPhaseId::from_db_str(&p.phase) else {
-                        continue;
-                    };
-                    let signal_mode = crate::db::SignalMode::from_db_str(&p.signal_mode)
-                        .expect("preset phase signal_mode must be a valid db-string");
-                    let _ = db.set_box_breath_phase(
-                        phase_id,
-                        p.enabled,
-                        signal_mode,
-                        &p.sound_uuid,
-                        &p.pattern_uuid,
-                    );
-                }
-            }
-        });
-
-        // Replace interval-bell library from the snapshot.
-        let snapshot_bells = cfg.interval_bells.bells.clone();
-        app.with_db_mut(|db| {
-            let existing = db.list_interval_bells().unwrap_or_default();
-            for b in &existing {
-                let _ = db.delete_interval_bell(&b.uuid);
-            }
-            for s in &snapshot_bells {
-                let kind = match s.kind.as_str() {
-                    "interval"          => crate::db::IntervalBellKind::Interval,
-                    "fixed_from_start"  => crate::db::IntervalBellKind::FixedFromStart,
-                    "fixed_from_end"    => crate::db::IntervalBellKind::FixedFromEnd,
-                    _ => continue,
-                };
-                let signal_mode = crate::db::SignalMode::from_db_str(&s.signal_mode)
-                    .expect("preset interval-bell signal_mode must be a valid db-string");
-                let rowid = match db.insert_interval_bell(
-                    kind, s.minutes, s.jitter_pct, &s.sound_uuid,
-                    &s.vibration_pattern_uuid,
-                    signal_mode,
-                ) {
-                    Ok(id) => id,
-                    Err(_) => continue,
-                };
-                if !s.enabled {
-                    if let Some(b) = db.list_interval_bells()
-                        .ok()
-                        .and_then(|bs| bs.into_iter().find(|b| b.id == rowid))
-                    {
-                        let _ = db.set_interval_bell_enabled(&b.uuid, false);
-                    }
-                }
-            }
-        });
-
-        // Apply mode-specific live state.
-        match cfg.timing {
+        // Apply mode-specific live state from the timing core just
+        // wrote. The shell owns the gtk-side reactive plumbing.
+        match timing {
             PresetTiming::Timer { stopwatch, duration_secs } => {
                 self.set_countdown_target(duration_secs as u64);
                 self.stopwatch_loading.set(true);
@@ -3707,7 +3435,6 @@ impl TimerView {
             }
         }
 
-        // Refresh dependent UI in one round.
         self.refresh_streak();
         true
     }

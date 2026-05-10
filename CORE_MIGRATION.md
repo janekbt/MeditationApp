@@ -230,7 +230,7 @@ overshoot-then-add UX.
   variants and emit gettext-translated strings per branch — i18n
   preserved, structural decision lifted to core.
 
-### [ ] 12. Preset snapshot / apply walkers
+### [x] 12. Preset snapshot / apply walkers
 
 **From:** `snapshot_current_setup` (3367) and `apply_config` (3518)
 in `timer/imp.rs`. Each walks every per-mode setting + DB row to
