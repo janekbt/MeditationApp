@@ -2203,6 +2203,22 @@ impl TimerView {
                 let timer = CoreCountdownTimer::new(std::time::Duration::from_secs(target));
                 let sw = CoreStopwatch::started_at(std::time::Duration::ZERO);
                 *self.countdown_core.borrow_mut() = Some(CoreCountdown::new(timer, sw));
+                // Stage 6 of item 13: Guided through Session. Always
+                // has a target (the file's probed duration); the
+                // stopwatch toggle only affects the running display
+                // (count-up vs count-down), not the Session's target.
+                let core_settings = CoreSessionSettings {
+                    mode: SessionMode::Guided,
+                    prep_secs: None,
+                    target_secs: Some(target as u32),
+                    breath_pattern: None,
+                    bells: Vec::new(),
+                    bell_rng_seed: 1,
+                };
+                *self.core_session.borrow_mut() = Some(CoreSession::start_running(
+                    core_settings,
+                    std::time::Duration::ZERO,
+                ));
             }
         }
 
@@ -2338,6 +2354,9 @@ impl TimerView {
                     if let Some(p) = self.guided_playback.borrow().as_ref() {
                         p.resume();
                     }
+                    if let Some(s) = self.core_session.borrow_mut().as_mut() {
+                        s.resume(now);
+                    }
                 }
             }
         }
@@ -2414,6 +2433,9 @@ impl TimerView {
                     *slot = slot.take().map(|c| c.pause(now));
                     if let Some(p) = self.guided_playback.borrow().as_ref() {
                         p.pause();
+                    }
+                    if let Some(s) = self.core_session.borrow_mut().as_mut() {
+                        s.pause(now);
                     }
                 }
             }
@@ -2703,6 +2725,7 @@ impl TimerView {
                 // idempotent.
                 *self.countdown_core.borrow_mut() = None;
                 *self.guided_playback.borrow_mut() = None;
+                *self.core_session.borrow_mut() = None;
             }
         }
         self.timer_state.set(TimerState::Idle);
@@ -2774,48 +2797,36 @@ impl TimerView {
     fn tick_running(&self, _obj: &super::TimerView) -> glib::ControlFlow {
         let mode = self.tick_mode.get();
         let is_stopwatch = self.stopwatch_toggle_on.get();
-        // Stage 2 of item 13: Timer mode delegates the per-tick
-        // display + countdown→overtime decision to the portable
-        // Session. Guided still uses the legacy countdown_core path
-        // until a later stage migrates it. The bell-firing block
-        // and the running-label update below are shared (gtk owns
-        // bells until a later stage too).
-        let (new_secs, done) = if mode == TimerMode::Timer {
+        // Stage 6: every Timer/Guided running tick flows through the
+        // portable Session. Guided always carries a target (the
+        // file's probed duration) and overrides the display when
+        // the stopwatch toggle is on — the file is still finite,
+        // just shown count-up.
+        let (new_secs, done) = {
             let now = self.elapsed_since_start();
             let mut session = self.core_session.borrow_mut();
             let Some(s) = session.as_mut() else {
                 return glib::ControlFlow::Break;
             };
-            let mut display: u64 = 0;
+            let mut session_display: Option<u64> = None;
             let mut entered_overtime = false;
             for effect in s.tick(now) {
                 match effect {
-                    CoreSessionEffect::UpdateDisplay { secs } => display = secs,
+                    CoreSessionEffect::UpdateDisplay { secs } => session_display = Some(secs),
                     CoreSessionEffect::EnterOvertime => entered_overtime = true,
                     _ => {}
                 }
             }
-            (display, entered_overtime)
-        } else if is_stopwatch {
-            // Guided stopwatch: countdown_core's internal stopwatch
-            // drives the count-up display.
-            (self.countdown_elapsed_secs(), false)
-        } else {
-            // Guided countdown: ceiling seconds (while remaining is
-            // in (k-1, k], show k — avoids skipping "0:59" on the
-            // first tick which fires slightly past 1.0s).
-            let now = self.elapsed_since_start();
-            let core = self.countdown_core.borrow();
-            let Some(c) = core.as_ref() else {
-                return glib::ControlFlow::Break;
-            };
-            if c.is_finished(now) {
-                self.timer_state.set(TimerState::Done);
-                (c.elapsed(now).as_secs(), true)
+            // Guided + stopwatch toggle: show count-up of elapsed
+            // even though the underlying timeline has a target.
+            // Session's UpdateDisplay would be ceiling-remaining
+            // here (since target_secs is set), so override.
+            let display = if mode == TimerMode::Guided && is_stopwatch {
+                s.elapsed(now).as_secs()
             } else {
-                let r = c.remaining(now);
-                (r.as_secs() + (r.subsec_nanos() > 0) as u64, false)
-            }
+                session_display.unwrap_or(0)
+            };
+            (display, entered_overtime)
         };
 
         if done {
@@ -2929,17 +2940,15 @@ impl TimerView {
     /// on the original session timeline. The hero readout stays
     /// frozen at the planned duration.
     fn tick_overtime(&self, _obj: &super::TimerView) -> glib::ControlFlow {
-        let mode = self.tick_mode.get();
         let total_elapsed = Duration::from_secs(self.countdown_elapsed_secs());
 
         // Bells stay on the legacy gtk path — Session.bells is empty
         // until a later stage migrates the schedule into core.
         self.fire_due_bells_at(total_elapsed.as_secs());
 
-        // Stage 3 of item 13: Timer-mode overtime tick reads its
-        // overtime delta from the Session. Guided keeps the legacy
-        // formatter path until a later stage migrates it.
-        let overtime = if mode == TimerMode::Timer {
+        // Stage 6: both Timer and Guided overtime ticks read the
+        // overtime delta from Session.
+        let overtime = {
             let now = self.elapsed_since_start();
             let mut session = self.core_session.borrow_mut();
             let Some(s) = session.as_mut() else {
@@ -2952,9 +2961,6 @@ impl TimerView {
                 }
             }
             delta
-        } else {
-            let target = Duration::from_secs(self.countdown_target_secs.get());
-            meditate_core::format::overtime(target, total_elapsed)
         };
 
         if let Some(add_btn) = self.overtime_add_btn.borrow().as_ref() {
