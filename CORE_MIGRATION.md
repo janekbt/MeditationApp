@@ -467,7 +467,7 @@ all three. Lives next to item 13's session-tick decision logic.
 **Depends on:** items 11 (key helpers) and 13 (tick decision logic).
 **Risk:** small once 13 lands; meaningless before then.
 
-### [ ] 22. Xorshift64 RNG for interval-bell jitter → `meditate_core::format`
+### [x] 22. Xorshift64 RNG for interval-bell jitter → `meditate_core::format`
 
 **From:** `src/timer/imp.rs:4266–4281` — `next_random_unit`,
 a lazy-seeded xorshift64 returning `f64` in `[0, 1)`. Pure algorithm.

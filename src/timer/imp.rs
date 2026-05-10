@@ -12,7 +12,7 @@ use meditate_core::breath::BreathPattern;
 use meditate_core::format::format_time;
 use meditate_core::time::boot_time_now;
 
-use meditate_core::bells::{ActiveBell, BellSchedule};
+use meditate_core::bells::ActiveBell;
 use meditate_core::session::{
     Effect as CoreSessionEffect,
     Session as CoreSession,
@@ -292,21 +292,6 @@ pub struct TimerView {
     /// Suppress persistence side-effects while `load_breathing_settings`
     /// is setting initial values from the DB.
     breathing_populating: Cell<bool>,
-    /// Snapshot of every interval/fixed bell that should fire during
-    /// the current Timer-mode session. Built once at the moment the
-    /// session enters Running (either directly from on_start with no
-    /// prep, or from transition_prep_to_running). Per-tick check
-    /// flips fired flags / reschedules the next ring on this in-
-    /// memory state — the DB rows + their enabled flags are read
-    /// only at session start, so toggling a bell mid-session is a
-    /// no-op for that session and takes effect next time. Cleared on
-    /// stop / done / reset.
-    active_bells: RefCell<Vec<ActiveBell>>,
-    /// Per-process xorshift state seeded once from the wall clock.
-    /// The first jittered ring of the first session may roll a tiny
-    /// non-uniform value; subsequent rolls are well-distributed.
-    /// Lazy init (Cell<u64> defaulting to 0 means "not yet seeded").
-    bell_rng_state: Cell<u64>,
     /// Boot-time anchor at session start. Suspend-resilient (see boot_time_now).
     start_boot_time: Cell<Option<std::time::Duration>>,
     /// `meditate_core::session::Session` — the portable state machine
@@ -2225,21 +2210,23 @@ impl TimerView {
             // Bell-library schedule is built when Running starts. With
             // prep, the same call lives in transition_prep_to_running.
             if mode == TimerMode::Timer {
-                self.load_active_bells_for_running();
-                // Stage 2 of item 13: portable Session drives the
-                // running tick for Timer mode (countdown + stopwatch).
-                let target_secs = if self.stopwatch_toggle_on.get() {
+                let stopwatch_on = self.stopwatch_toggle_on.get();
+                let target_secs = if stopwatch_on {
                     None
                 } else {
                     Some(self.countdown_target_secs.get() as u32)
                 };
+                let (bells, bell_rng_seed) = self.build_session_bells(
+                    target_secs.map(|t| t as u64),
+                    stopwatch_on,
+                );
                 let core_settings = CoreSessionSettings {
                     mode: SessionMode::Timer,
                     prep_secs: None,
                     target_secs,
                     breath_pattern: None,
-                    bells: Vec::new(),
-                    bell_rng_seed: 1,
+                    bells,
+                    bell_rng_seed,
                 };
                 *self.core_session.borrow_mut() = Some(CoreSession::start_running(
                     core_settings,
@@ -2368,13 +2355,11 @@ impl TimerView {
         // value the Done page is about to show. Mirrors the Overtime
         // Finish path which uses the same slot.
         self.final_duration_secs.set(Some(elapsed));
-        // Drop any prep state — the user stopped during prep, the
-        // session's "elapsed" came from Session's stop() above.
-        // Active bells stop firing the moment we leave Running, but
-        // the schedule is also dropped here so a quick re-Start
-        // rebuilds it from current settings.
+        // Drop the Session — bells were owned by it (built at
+        // start_session / transition_prep_to_running via
+        // build_session_bells) so they vanish with it; a quick
+        // re-Start rebuilds the schedule from current DB rows.
         *self.core_session.borrow_mut() = None;
-        self.active_bells.borrow_mut().clear();
         // Guided playback stops the moment the user picks Stop —
         // Drop runs set_state(Null) + drops the bus signal-watch.
         // No-op for non-Guided sessions (slot is already None).
@@ -2572,14 +2557,12 @@ impl TimerView {
     /// Reset a single mode back to Idle and update the UI if it's currently shown.
     fn reset_mode(&self, mode: TimerMode) {
         // Session is the sole owner of session timing state; drop
-        // it once, regardless of mode. Bells and the gst playbin
-        // are mode-specific gtk-side artefacts that still need
+        // it once, regardless of mode. The gst playbin is the only
+        // mode-specific gtk-side artefact left that still needs
         // explicit teardown.
         *self.core_session.borrow_mut() = None;
         match mode {
-            TimerMode::Timer => {
-                self.active_bells.borrow_mut().clear();
-            }
+            TimerMode::Timer => {}
             TimerMode::Breathing => {}
             TimerMode::Guided => {
                 // Drop runs set_state(Null) + removes the bus
@@ -2664,17 +2647,18 @@ impl TimerView {
         // file's probed duration) and overrides the display when
         // the stopwatch toggle is on — the file is still finite,
         // just shown count-up.
-        let (new_secs, done) = {
+        let (effects, new_secs, done) = {
             let now = self.elapsed_since_start();
             let mut session = self.core_session.borrow_mut();
             let Some(s) = session.as_mut() else {
                 return glib::ControlFlow::Break;
             };
+            let effects = s.tick(now);
             let mut session_display: Option<u64> = None;
             let mut entered_overtime = false;
-            for effect in s.tick(now) {
+            for effect in &effects {
                 match effect {
-                    CoreSessionEffect::UpdateDisplay { secs } => session_display = Some(secs),
+                    CoreSessionEffect::UpdateDisplay { secs } => session_display = Some(*secs),
                     CoreSessionEffect::EnterOvertime => entered_overtime = true,
                     _ => {}
                 }
@@ -2688,7 +2672,7 @@ impl TimerView {
             } else {
                 session_display.unwrap_or(0)
             };
-            (display, entered_overtime)
+            (effects, display, entered_overtime)
         };
 
         if done {
@@ -2702,19 +2686,9 @@ impl TimerView {
             return glib::ControlFlow::Continue;
         }
 
-        // Fire any bell whose ring boundary has been crossed since the
-        // previous tick. For Timer mode the relevant elapsed is the
-        // running stopwatch's elapsed (post-prep, post-resume). The
-        // collected list is empty when the master toggle is off, so
-        // this is cheap when bells aren't in use.
-        let elapsed_for_bells = if is_stopwatch {
-            new_secs
-        } else {
-            // Countdown branch's `new_secs` is REMAINING; we want
-            // ELAPSED. Read the core's elapsed directly.
-            self.countdown_elapsed_secs()
-        };
-        self.fire_due_bells_at(elapsed_for_bells);
+        // Bell sounds + vibrations flow through the portable
+        // dispatcher (FireBell effect from Session.tick above).
+        self.dispatch_session_effects(&effects);
 
         if let Some(label) = self.running_label.borrow().as_ref() {
             label.set_label(&format_time(Duration::from_secs(new_secs)));
@@ -2799,28 +2773,24 @@ impl TimerView {
     /// on the original session timeline. The hero readout stays
     /// frozen at the planned duration.
     fn tick_overtime(&self, _obj: &super::TimerView) -> glib::ControlFlow {
-        let total_elapsed = Duration::from_secs(self.countdown_elapsed_secs());
-
-        // Bells stay on the legacy gtk path — Session.bells is empty
-        // until a later stage migrates the schedule into core.
-        self.fire_due_bells_at(total_elapsed.as_secs());
-
-        // Stage 6: both Timer and Guided overtime ticks read the
-        // overtime delta from Session.
-        let overtime = {
+        // Overtime ticks read the overtime delta from Session and
+        // dispatch bell effects through the portable dispatcher.
+        let (effects, overtime) = {
             let now = self.elapsed_since_start();
             let mut session = self.core_session.borrow_mut();
             let Some(s) = session.as_mut() else {
                 return glib::ControlFlow::Break;
             };
+            let effects = s.tick(now);
             let mut delta = Duration::ZERO;
-            for effect in s.tick(now) {
+            for effect in &effects {
                 if let CoreSessionEffect::UpdateOvertimeLabel { overtime } = effect {
-                    delta = overtime;
+                    delta = *overtime;
                 }
             }
-            delta
+            (effects, delta)
         };
+        self.dispatch_session_effects(&effects);
 
         if let Some(add_btn) = self.overtime_add_btn.borrow().as_ref() {
             add_btn.set_label(&meditate_core::format::overtime_button_label(
@@ -2912,31 +2882,32 @@ impl TimerView {
 
         // Rebuild Session in Running phase, anchored at the current
         // boot-relative time. The previous prep Session already
-        // emitted EndPrep on the tick that called us; this swap is
-        // the equivalent of the bygone countdown_core construction.
-        let target_secs = if self.stopwatch_toggle_on.get() {
+        // emitted EndPrep on the tick that called us. Bells get
+        // built here (not at session start) so any DB change during
+        // prep is reflected in the running schedule.
+        let stopwatch_on = self.stopwatch_toggle_on.get();
+        let target_secs = if stopwatch_on {
             None
         } else {
             Some(self.countdown_target_secs.get() as u32)
         };
+        let (bells, bell_rng_seed) = self.build_session_bells(
+            target_secs.map(|t| t as u64),
+            stopwatch_on,
+        );
         let core_settings = CoreSessionSettings {
             mode: SessionMode::Timer,
             prep_secs: None,
             target_secs,
             breath_pattern: None,
-            bells: Vec::new(),
-            bell_rng_seed: 1,
+            bells,
+            bell_rng_seed,
         };
         let now = self.elapsed_since_start();
         *self.core_session.borrow_mut() = Some(CoreSession::start_running(
             core_settings,
             now,
         ));
-
-        // Session is already in Running phase post-rebuild; timer_
-        // state() picks that up directly. Now that Running has
-        // started, build the bell schedule.
-        self.load_active_bells_for_running();
     }
 
     /// Natural completion path for a breath session: marks Done, plays the
@@ -3884,160 +3855,35 @@ impl TimerView {
 // ── Interval / fixed bell scheduling ─────────────────────────────────────────
 
 impl TimerView {
-    /// Build the per-session bell schedule from the library + the
-    /// current session's parameters. Called at the moment the session
-    /// enters Running (in on_start when prep is off, or in
-    /// transition_prep_to_running when prep ends). No-op writes to
-    /// active_bells when interval_bells_active is off — the empty
-    /// vec means the per-tick check has nothing to do.
-    fn load_active_bells_for_running(&self) {
-        use meditate_core::db::IntervalBellKind as Kind;
-        let mut new_bells: Vec<ActiveBell> = Vec::new();
-        let Some(app) = self.get_app() else {
-            *self.active_bells.borrow_mut() = new_bells;
-            return;
-        };
-        let active = app
+    /// Build the per-session bell schedule + seed for the running
+    /// Session. Reads the user's bell library from the DB, applies
+    /// the master-toggle gate (`interval_bells_active`), and hands
+    /// the rest to `meditate_core::bells::build_active_bells` —
+    /// schedule construction + jitter rolls live in core. Returns
+    /// `(empty Vec, fresh seed)` when the master toggle is off so
+    /// Session's per-tick check has nothing to do.
+    fn build_session_bells(
+        &self,
+        total_target_secs: Option<u64>,
+        stopwatch_on: bool,
+    ) -> (Vec<ActiveBell>, u64) {
+        let seed = meditate_core::time::seed_now();
+        let Some(app) = self.get_app() else { return (Vec::new(), seed); };
+        let master_active = app
             .with_db(|db| {
                 db.get_setting("interval_bells_active", "false")
                     .map(|v| v == "true")
                     .unwrap_or(false)
             })
             .unwrap_or(false);
-        if !active {
-            *self.active_bells.borrow_mut() = new_bells;
-            return;
+        if !master_active {
+            return (Vec::new(), seed);
         }
-
-        let stopwatch_on = self.stopwatch_toggle_on.get();
-        let total_target_secs: Option<u64> = if stopwatch_on {
-            None
-        } else {
-            Some(self.countdown_target_secs.get())
-        };
-
-        let bells = app
+        let rows = app
             .with_db(|db| db.list_interval_bells())
             .and_then(|r| r.ok())
             .unwrap_or_default();
-        for b in bells {
-            if !b.enabled {
-                continue;
-            }
-            // Stopwatch mode mutes fixed-from-end bells — no end to
-            // count backwards from. Mirrors the UI grey-out.
-            if stopwatch_on && b.kind == Kind::FixedFromEnd {
-                continue;
-            }
-            let schedule = match b.kind {
-                Kind::Interval => {
-                    let r = self.next_random_unit();
-                    let next_ring = meditate_core::format::next_interval_ring_secs(
-                        0, b.minutes, b.jitter_pct, r,
-                    );
-                    BellSchedule::Interval {
-                        base_min: b.minutes,
-                        jitter_pct: b.jitter_pct,
-                        next_ring_secs: next_ring,
-                    }
-                }
-                Kind::FixedFromStart => {
-                    match meditate_core::format::fixed_from_start_target_secs(
-                        b.minutes, total_target_secs,
-                    ) {
-                        Some(t) => BellSchedule::Fixed { target_secs: t, fired: false },
-                        None => continue,
-                    }
-                }
-                Kind::FixedFromEnd => {
-                    let Some(total) = total_target_secs else { continue; };
-                    match meditate_core::format::fixed_from_end_target_secs(
-                        b.minutes, total,
-                    ) {
-                        Some(t) => BellSchedule::Fixed { target_secs: t, fired: false },
-                        None => continue,
-                    }
-                }
-            };
-            new_bells.push(ActiveBell {
-                sound: b.sound,
-                vibration_pattern_uuid: b.vibration_pattern_uuid,
-                signal_mode: b.signal_mode,
-                schedule,
-            });
-        }
-        *self.active_bells.borrow_mut() = new_bells;
-    }
-
-    /// Per-tick check: fire any bell whose ring boundary has been
-    /// crossed since the previous tick. The decision (and the
-    /// schedule mutation) lives in `meditate_core::bells::ActiveBell::tick`;
-    /// this loop is the gtk-side dispatcher that routes each fired
-    /// bell's sound + vibration through feedbackd / gstreamer.
-    /// `elapsed_secs` is the running session's elapsed-secs (post-prep).
-    fn fire_due_bells_at(&self, elapsed_secs: u64) {
-        if self.active_bells.borrow().is_empty() {
-            return;
-        }
-        // Collect-then-fire pattern so we don't keep the RefCell
-        // borrowed across the play_interval_sound call (sound.rs uses
-        // its own thread-locals; no recursion expected, but the
-        // collect is also clearer).
-        let mut to_play: Vec<(String, String, crate::db::SignalMode)> = Vec::new();
-        let mut bells = self.active_bells.borrow_mut();
-        for bell in bells.iter_mut() {
-            let mut rng = || self.next_random_unit();
-            if bell.tick(elapsed_secs, &mut rng) {
-                to_play.push((
-                    bell.sound.clone(),
-                    bell.vibration_pattern_uuid.clone(),
-                    bell.signal_mode,
-                ));
-            }
-        }
-        drop(bells);
-        let Some(app) = self.get_app() else { return; };
-        let mode_key = setting_key_for_mode(self.current_mode());
-        for (sound_uuid, pattern_uuid, signal_mode) in to_play {
-            // Sound channel — gate by per-bell + per-mode signal_mode.
-            if crate::vibration::should_fire_sound(&app, signal_mode, mode_key) {
-                crate::sound::play_interval_sound(&sound_uuid, &app);
-            }
-            // Vibration channel — same two-gate AND. Replace any
-            // previous handle so newest-wins on overlapping bells.
-            // install_vibration_handle disarms the old before
-            // replacing — feedbackd supersedes per-app, so the
-            // explicit cancel would race the new pattern.
-            let handle = crate::vibration::fire_pattern_if_allowed(
-                &app, signal_mode, mode_key, &pattern_uuid,
-            );
-            meditate_core::diag::log(&format!(
-                "fire_interval_bell: per_bell={} mode={} fired={}",
-                signal_mode.as_db_str(), mode_key, handle.is_some()
-            ));
-            self.install_vibration_handle(handle);
-        }
-    }
-
-    /// Lazy-seeded xorshift64 → unit-uniform f64 in [0, 1). Quality is
-    /// fine for "shake bell timing slightly" — we're not doing crypto.
-    /// Seeded once from wall-clock nanos on first use; subsequent
-    /// rolls are well-distributed for the lifetime of the process.
-    fn next_random_unit(&self) -> f64 {
-        let mut s = self.bell_rng_state.get();
-        if s == 0 {
-            s = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos() as u64)
-                .unwrap_or(1)
-                .max(1);
-        }
-        s ^= s << 13;
-        s ^= s >> 7;
-        s ^= s << 17;
-        self.bell_rng_state.set(s);
-        // Top 53 bits → f64 in [0, 1) without losing precision.
-        (s >> 11) as f64 / (1u64 << 53) as f64
+        meditate_core::bells::build_active_bells(&rows, total_target_secs, stopwatch_on, seed)
     }
 }
 
@@ -4262,16 +4108,43 @@ impl TimerView {
     }
 
     /// Run portable Session effects through their gtk-shell native
-    /// dispatchers. Currently only `StopActiveSignals` flows through
-    /// here — the other effects (UpdateDisplay / EnterOvertime /
-    /// FireBoxBreathCue / FireBell / EndSession / EndPrep /
+    /// dispatchers. Handles `StopActiveSignals` (sound + vibration
+    /// cancel) and `FireBell` (interval-bell sound + vibration with
+    /// per-mode AND-gating). Other effects (UpdateDisplay /
+    /// EnterOvertime / FireBoxBreathCue / EndSession / EndPrep /
     /// UpdateOvertimeLabel / EndBoxBreath) are consumed at their
     /// tick callsites where the surrounding context is needed for
     /// dispatch.
     fn dispatch_session_effects(&self, effects: &[CoreSessionEffect]) {
+        let mut app = None;
         for effect in effects {
-            if let CoreSessionEffect::StopActiveSignals = effect {
-                self.stop_active_signals();
+            match effect {
+                CoreSessionEffect::StopActiveSignals => self.stop_active_signals(),
+                CoreSessionEffect::FireBell {
+                    sound_uuid,
+                    vibration_pattern_uuid,
+                    signal_mode,
+                } => {
+                    let app = app.get_or_insert_with(|| self.get_app());
+                    let Some(app) = app.as_ref() else { return; };
+                    let mode_key = setting_key_for_mode(self.current_mode());
+                    // Two-gate AND: per-bell signal_mode AND per-mode
+                    // override. Mirrors the original gtk dispatch.
+                    if crate::vibration::should_fire_sound(app, *signal_mode, mode_key) {
+                        crate::sound::play_interval_sound(sound_uuid, app);
+                    }
+                    let handle = crate::vibration::fire_pattern_if_allowed(
+                        app, *signal_mode, mode_key, vibration_pattern_uuid,
+                    );
+                    meditate_core::diag::log(&format!(
+                        "fire_interval_bell: per_bell={} mode={} fired={}",
+                        signal_mode.as_db_str(),
+                        mode_key,
+                        handle.is_some(),
+                    ));
+                    self.install_vibration_handle(handle);
+                }
+                _ => {}
             }
         }
     }
