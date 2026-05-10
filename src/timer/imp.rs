@@ -2105,6 +2105,10 @@ impl TimerView {
                     mode: SessionMode::BoxBreath,
                     prep_secs: None,
                     target_secs: core_target,
+                    // Box Breath always shows count-up elapsed
+                    // regardless of any toggle; the cycle-aligned
+                    // end still fires via target_secs.
+                    stopwatch_display: true,
                     breath_pattern: Some(pattern),
                     bells: Vec::new(),
                     bell_rng_seed: 1,
@@ -2173,6 +2177,7 @@ impl TimerView {
                     mode: SessionMode::Guided,
                     prep_secs: None,
                     target_secs: Some(target as u32),
+                    stopwatch_display: self.stopwatch_toggle_on.get(),
                     breath_pattern: None,
                     bells: Vec::new(),
                     bell_rng_seed: 1,
@@ -2189,7 +2194,8 @@ impl TimerView {
         // Running transition internally.
         if let Some(prep_dur) = prep {
             self.start_boot_time.set(Some(boot_time_now()));
-            let target_secs = if self.stopwatch_toggle_on.get() {
+            let stopwatch_on = self.stopwatch_toggle_on.get();
+            let target_secs = if stopwatch_on {
                 None
             } else {
                 Some(self.countdown_target_secs.get() as u32)
@@ -2198,6 +2204,7 @@ impl TimerView {
                 mode: SessionMode::Timer,
                 prep_secs: Some(prep_dur.as_secs() as u32),
                 target_secs,
+                stopwatch_display: stopwatch_on,
                 breath_pattern: None,
                 bells: Vec::new(),
                 bell_rng_seed: 1,
@@ -2224,6 +2231,7 @@ impl TimerView {
                     mode: SessionMode::Timer,
                     prep_secs: None,
                     target_secs,
+                    stopwatch_display: stopwatch_on,
                     breath_pattern: None,
                     bells,
                     bell_rng_seed,
@@ -2640,13 +2648,10 @@ impl TimerView {
     }
 
     fn tick_running(&self, _obj: &super::TimerView) -> glib::ControlFlow {
-        let mode = self.tick_mode.get();
-        let is_stopwatch = self.stopwatch_toggle_on.get();
-        // Stage 6: every Timer/Guided running tick flows through the
-        // portable Session. Guided always carries a target (the
-        // file's probed duration) and overrides the display when
-        // the stopwatch toggle is on — the file is still finite,
-        // just shown count-up.
+        // Every Timer/Guided running tick flows through the portable
+        // Session. Session's UpdateDisplay already encodes the
+        // ceiling-vs-floor rounding for both countdown and
+        // stopwatch_display modes — the gtk shell just renders.
         let (effects, new_secs, done) = {
             let now = self.elapsed_since_start();
             let mut session = self.core_session.borrow_mut();
@@ -2663,16 +2668,7 @@ impl TimerView {
                     _ => {}
                 }
             }
-            // Guided + stopwatch toggle: show count-up of elapsed
-            // even though the underlying timeline has a target.
-            // Session's UpdateDisplay would be ceiling-remaining
-            // here (since target_secs is set), so override.
-            let display = if mode == TimerMode::Guided && is_stopwatch {
-                s.elapsed(now).as_secs()
-            } else {
-                session_display.unwrap_or(0)
-            };
-            (effects, display, entered_overtime)
+            (effects, session_display.unwrap_or(0), entered_overtime)
         };
 
         if done {
@@ -2899,6 +2895,7 @@ impl TimerView {
             mode: SessionMode::Timer,
             prep_secs: None,
             target_secs,
+            stopwatch_display: stopwatch_on,
             breath_pattern: None,
             bells,
             bell_rng_seed,
@@ -2985,23 +2982,11 @@ impl TimerView {
         }
     }
 
-    fn countdown_remaining_secs(&self) -> u64 {
-        let target = Duration::from_secs(self.countdown_target_secs.get());
-        let r = target.saturating_sub(self.session_elapsed());
-        r.as_secs() + (r.subsec_nanos() > 0) as u64
-    }
-
-    /// Countdown elapsed seconds (target - remaining, capped at target).
-    fn countdown_elapsed_secs(&self) -> u64 {
-        self.session_elapsed().as_secs()
-    }
-
-    fn stopwatch_elapsed_secs(&self) -> u64 {
-        self.session_elapsed().as_secs()
-    }
-
     /// Wall-clock-anchored elapsed time of the active breath session.
     /// Returns ZERO if no session is running. Pause freezes this value.
+    /// Surfaced for the window's per-frame Box-Breath callback (the
+    /// dot's perimeter position is a function of elapsed); all other
+    /// callers go through `Session::display_secs`.
     pub(super) fn breath_elapsed(&self) -> std::time::Duration {
         self.session_elapsed()
     }
@@ -3784,39 +3769,17 @@ impl TimerView {
     }
 
     pub fn current_display_secs(&self) -> u64 {
-        // While in (or paused from) prep, the hero shows the prep
-        // remaining. Session knows its phase + prep target, so the
-        // gtk shell just asks for the ceiling-rounded remaining.
+        // The portable Session encapsulates "what number does the
+        // hero show right now?" across every phase (Prep / Running
+        // / Overtime) and every mode (Timer / Box Breath / Guided)
+        // — ceiling vs floor + the stopwatch_display override are
+        // all internal to `Session::display_secs`.
         let now = self.elapsed_since_start();
-        if let Some(remaining) = self
-            .core_session
+        self.core_session
             .borrow()
             .as_ref()
-            .and_then(|s| s.prep_remaining_secs(now))
-        {
-            return remaining;
-        }
-        // Otherwise: the running readout for the active mode.
-        // Stopwatch in any mode counts up from 0; when off, each
-        // mode shows its natural readout (Timer countdown / Box
-        // Breath elapsed / Guided countdown).
-        match self.tick_mode.get() {
-            TimerMode::Timer => {
-                if self.stopwatch_toggle_on.get() {
-                    self.stopwatch_elapsed_secs()
-                } else {
-                    self.countdown_remaining_secs()
-                }
-            }
-            TimerMode::Breathing => self.breath_elapsed().as_secs(),
-            TimerMode::Guided => {
-                if self.stopwatch_toggle_on.get() {
-                    self.countdown_elapsed_secs()
-                } else {
-                    self.countdown_remaining_secs()
-                }
-            }
-        }
+            .map(|s| s.display_secs(now))
+            .unwrap_or(0)
     }
 
     pub fn set_running_label(&self, label: gtk::Label) {

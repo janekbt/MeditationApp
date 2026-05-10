@@ -445,7 +445,7 @@ call site — moving them gives a consistent contract.
 in `meditate-core::db` (or a new `core::display`).
 **Risk:** small.
 
-### [ ] 21. Display-second rounding + per-mode display dispatcher
+### [x] 21. Display-second rounding + per-mode display dispatcher
 
 **From:** `src/timer/imp.rs`:
 - The ceiling-vs-floor rounding decision in `tick_running` (lines

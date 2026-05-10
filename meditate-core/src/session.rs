@@ -62,12 +62,19 @@ pub struct SessionSettings {
     pub prep_secs: Option<u32>,
     /// Target session length in seconds. `Some(secs)` for countdown
     /// (Timer/Guided default; Box Breath when a fixed duration is
-    /// set). `None` for stopwatch-only (Timer-stopwatch /
-    /// Guided-stopwatch / Box-Breath-stopwatch). Decides whether the
-    /// running display reads as ceiling-rounded remaining or
-    /// floor-rounded elapsed in Timer/Guided, and whether Box Breath
-    /// auto-ends on a cycle-aligned boundary.
+    /// set). `None` for stopwatch-only Timer / Box-Breath where no
+    /// natural end exists. Drives the Running → Overtime transition
+    /// and Box-Breath's cycle-aligned end. **Independent of
+    /// `stopwatch_display`** — Guided keeps target=Some even when
+    /// the user toggles count-up display.
     pub target_secs: Option<u32>,
+    /// `true` → the running readout counts up (floor-rounded
+    /// elapsed); `false` → counts down (ceiling-rounded remaining,
+    /// when `target_secs` is set) or up (no target). Captures the
+    /// gtk-shell `stopwatch_toggle_on` user setting at session
+    /// start; same dimension for Guided (where the toggle changes
+    /// display but not the underlying target).
+    pub stopwatch_display: bool,
     /// `Some` only in Box Breath mode. The pattern drives phase
     /// boundary detection (for cue firing) and cycle-aligned session
     /// completion (Box Breath always ends on a full-cycle boundary
@@ -407,31 +414,20 @@ impl Session {
             return self.tick_box_breath(elapsed);
         }
 
-        let display_secs = match self.settings.target_secs {
-            // Countdown: ceiling-rounded remaining. (k-1, k] → k.
-            // Avoids skipping "0:59" on the very first tick that
-            // fires slightly past 1.0 s.
-            Some(target_secs) => {
-                let target = Duration::from_secs(target_secs as u64);
-                let remaining = target.saturating_sub(elapsed);
-                if remaining.is_zero() {
-                    // Countdown crossed zero. Transition into Overtime
-                    // — phase_clock keeps ticking so the cumulative
-                    // elapsed (target + overtime) stays correct, and
-                    // the shell takes over with end-bell + button-
-                    // morph + notification ceremony in response to
-                    // EnterOvertime. Bells skip this tick — gtk's
-                    // historical behaviour is "transition first,
-                    // bells fire on the next tick."
-                    self.phase = SessionPhase::Overtime;
-                    return vec![Effect::EnterOvertime];
-                }
-                remaining.as_secs() + u64::from(remaining.subsec_nanos() > 0)
+        // Overtime transition is independent of display mode — Guided
+        // with `stopwatch_display=true` still has a `target_secs` to
+        // cross (the audio file's natural length).
+        if let Some(target_secs) = self.settings.target_secs {
+            let target = Duration::from_secs(target_secs as u64);
+            if target.saturating_sub(elapsed).is_zero() {
+                // Bells skip this tick — gtk's historical behaviour is
+                // "transition first, bells fire on the next tick."
+                self.phase = SessionPhase::Overtime;
+                return vec![Effect::EnterOvertime];
             }
-            // Stopwatch-only: floor-rounded elapsed. "0:00" until
-            // 1.0 s crosses, "0:01" thereafter.
-            None => elapsed.as_secs(),
-        };
+        }
+
+        let display_secs = display_secs_for_running(&self.settings, elapsed);
         let mut effects = vec![Effect::UpdateDisplay { secs: display_secs }];
         effects.extend(fire_due_bells(
             &mut self.bells,
@@ -562,6 +558,38 @@ impl Session {
         let remaining = target.saturating_sub(self.phase_clock.elapsed(now));
         Some(remaining.as_secs() + u64::from(remaining.subsec_nanos() > 0))
     }
+
+    /// The whole-seconds value the running label should show right
+    /// now, dispatching on phase + display mode:
+    ///
+    /// - Prep: ceiling-rounded prep remaining (same as
+    ///   `prep_remaining_secs`).
+    /// - Running: floor elapsed if `stopwatch_display` is true,
+    ///   else ceiling-remaining (countdown) or floor elapsed
+    ///   (no target).
+    /// - Overtime: ceiling remaining clamps at 0 once past target;
+    ///   the gtk shell keeps the hero frozen at the planned
+    ///   duration via the same `target_secs` value, so callers
+    ///   that respect that freeze typically don't invoke this
+    ///   during Overtime.
+    /// - Stopped: 0 (caller usually reads `final_duration_secs`
+    ///   instead at that point).
+    ///
+    /// Centralises the rounding + dispatch the gtk shell used to
+    /// split across `tick_running`, `elapsed_secs_for_mode`, and
+    /// `current_display_secs`. Pure read — does not advance the
+    /// session.
+    pub fn display_secs(&self, now: Duration) -> u64 {
+        if let Some(prep_remaining) = self.prep_remaining_secs(now) {
+            return prep_remaining;
+        }
+        match self.phase {
+            SessionPhase::Prep | SessionPhase::Stopped | SessionPhase::Paused => 0,
+            SessionPhase::Running | SessionPhase::Overtime => {
+                display_secs_for_running(&self.settings, self.phase_clock.elapsed(now))
+            }
+        }
+    }
 }
 
 fn phase_to_id(phase: Phase) -> BoxBreathPhaseId {
@@ -570,6 +598,36 @@ fn phase_to_id(phase: Phase) -> BoxBreathPhaseId {
         Phase::HoldIn => BoxBreathPhaseId::HoldIn,
         Phase::Out => BoxBreathPhaseId::Out,
         Phase::HoldOut => BoxBreathPhaseId::HoldOut,
+    }
+}
+
+/// Display value (in whole seconds) for a Running session at the
+/// given `elapsed`. Encapsulates the ceiling-vs-floor rounding
+/// rule + the stopwatch-vs-countdown branch in one place; called
+/// from both `tick_running` (for per-tick UpdateDisplay) and
+/// `Session::display_secs` (for shell refreshes outside the tick
+/// loop).
+///
+/// - `stopwatch_display` → floor-rounded elapsed regardless of
+///   whether `target_secs` is set. Guided + stopwatch toggle on
+///   is the motivating case: the file still has a probed duration
+///   (target_secs=Some) but the user picked count-up display.
+/// - Otherwise + `target_secs` set → ceiling-rounded remaining.
+///   `(k-1, k]` remaining → display `k` so a fresh "10:00"
+///   doesn't flicker to "09:59" on the first sub-1.0 s tick.
+/// - Otherwise (no target, no stopwatch flag) → floor elapsed,
+///   the natural stopwatch-only readout.
+fn display_secs_for_running(settings: &SessionSettings, elapsed: Duration) -> u64 {
+    if settings.stopwatch_display {
+        return elapsed.as_secs();
+    }
+    match settings.target_secs {
+        Some(target_secs) => {
+            let target = Duration::from_secs(target_secs as u64);
+            let remaining = target.saturating_sub(elapsed);
+            remaining.as_secs() + u64::from(remaining.subsec_nanos() > 0)
+        }
+        None => elapsed.as_secs(),
     }
 }
 
@@ -615,6 +673,7 @@ mod tests {
             mode: SessionMode::Timer,
             prep_secs: Some(prep_secs),
             target_secs: Some(600),
+            stopwatch_display: false,
             breath_pattern: None,
             bells: Vec::new(),
             bell_rng_seed: 1,
@@ -626,6 +685,7 @@ mod tests {
             mode: SessionMode::Timer,
             prep_secs: None,
             target_secs: Some(target_secs),
+            stopwatch_display: false,
             breath_pattern: None,
             bells: Vec::new(),
             bell_rng_seed: 1,
@@ -637,6 +697,7 @@ mod tests {
             mode: SessionMode::Timer,
             prep_secs: None,
             target_secs: None,
+            stopwatch_display: true,
             breath_pattern: None,
             bells: Vec::new(),
             bell_rng_seed: 1,
@@ -648,6 +709,7 @@ mod tests {
             mode: SessionMode::BoxBreath,
             prep_secs: None,
             target_secs,
+            stopwatch_display: true,
             breath_pattern: Some(BreathPattern::box_breath()),
             bells: Vec::new(),
             bell_rng_seed: 1,
@@ -1318,6 +1380,52 @@ mod tests {
             Duration::from_secs(100),
         );
         assert_eq!(s.prep_remaining_secs(Duration::from_secs(110)), None);
+    }
+
+    // ── display_secs (unified hero readout) ──────────────────────────
+
+    #[test]
+    fn display_secs_during_prep_matches_prep_remaining() {
+        let s = Session::start_prep(
+            timer_settings_with_prep(30),
+            Duration::from_secs(100),
+        );
+        // 12 s in → 18 s remaining (same as prep_remaining_secs).
+        assert_eq!(s.display_secs(Duration::from_secs(112)), 18);
+    }
+
+    #[test]
+    fn display_secs_running_countdown_is_ceiling_remaining() {
+        let s = Session::start_running(
+            timer_countdown_settings(600),
+            Duration::from_secs(100),
+        );
+        // 100 s elapsed → 500 s remaining.
+        assert_eq!(s.display_secs(Duration::from_secs(200)), 500);
+        // Subsecond → ceiling up.
+        assert_eq!(s.display_secs(Duration::from_millis(200_500)), 500);
+    }
+
+    #[test]
+    fn display_secs_running_stopwatch_is_floor_elapsed() {
+        let s = Session::start_running(
+            timer_stopwatch_settings(),
+            Duration::from_secs(100),
+        );
+        assert_eq!(s.display_secs(Duration::from_secs(245)), 145);
+        // Subsecond → floor.
+        assert_eq!(s.display_secs(Duration::from_millis(245_700)), 145);
+    }
+
+    #[test]
+    fn display_secs_guided_stopwatch_shows_elapsed_even_with_target() {
+        // Guided + stopwatch toggle: target_secs is Some (file's
+        // probed duration) but display is count-up.
+        let mut settings = timer_countdown_settings(600);
+        settings.mode = SessionMode::Guided;
+        settings.stopwatch_display = true;
+        let s = Session::start_running(settings, Duration::from_secs(100));
+        assert_eq!(s.display_secs(Duration::from_secs(245)), 145);
     }
 
     // ── Stop / Finish-overtime / Add-overtime ────────────────────────
