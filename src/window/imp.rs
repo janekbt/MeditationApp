@@ -443,38 +443,41 @@ impl MeditateWindow {
         let phase_sec_weak = phase_seconds_label.downgrade();
         let obj = self.obj().clone();
         let pattern_for_tick = pattern;
-        // Phase-boundary detection for cue firing. Seed with the
-        // initial phase so the very first tick (Phase::In at t=0)
-        // doesn't fire a duplicate of the starting bell.
-        let prev_phase: Rc<Cell<Option<Phase>>> = Rc::new(Cell::new(None));
+        // Stage 4 of item 13: phase-boundary cue firing + cycle-
+        // aligned end are owned by the portable Session. The frame
+        // tick still drives the visual rendering (phase label, dot,
+        // counter), but the *decisions* now flow through Session
+        // effects.
         drawing_area.add_tick_callback(move |_, _clock| {
+            use meditate_core::session::Effect as CoreSessionEffect;
             let tv = obj.imp().timer_view.clone();
+
+            let mut session_ended = false;
+            for effect in tv.imp().box_breath_session_tick() {
+                match effect {
+                    CoreSessionEffect::FireBoxBreathCue(phase_id) => {
+                        if let Some(app) = obj.application()
+                            .and_then(|a| a.downcast::<crate::application::MeditateApplication>().ok())
+                        {
+                            tv.imp().fire_box_breath_phase_cue(&app, phase_id);
+                        }
+                    }
+                    CoreSessionEffect::EndBoxBreath { .. } => {
+                        session_ended = true;
+                    }
+                    // UpdateDisplay is redundant — the counter below
+                    // reads breath_elapsed() at frame rate already.
+                    _ => {}
+                }
+            }
+
+            // Visual render. breath_elapsed() is wall-clock anchored
+            // and freezes on pause, so it's the right input for both
+            // the dot's perimeter position and the counter.
             let elapsed = tv.breath_elapsed();
             let cur = elapsed.as_secs_f64();
-
             let info = pattern_for_tick.phase_at(elapsed);
             let phase = info.phase;
-
-            // Phase boundary: fire the new phase's cue. First tick
-            // seeds prev silently — the starting bell already played.
-            match prev_phase.get() {
-                None => prev_phase.set(Some(phase)),
-                Some(prev) if prev != phase => {
-                    prev_phase.set(Some(phase));
-                    if let Some(app) = obj.application()
-                        .and_then(|a| a.downcast::<crate::application::MeditateApplication>().ok())
-                    {
-                        let phase_id = match phase {
-                            Phase::In      => crate::db::BoxBreathPhaseId::In,
-                            Phase::HoldIn  => crate::db::BoxBreathPhaseId::HoldIn,
-                            Phase::Out     => crate::db::BoxBreathPhaseId::Out,
-                            Phase::HoldOut => crate::db::BoxBreathPhaseId::HoldOut,
-                        };
-                        tv.imp().fire_box_breath_phase_cue(&app, phase_id);
-                    }
-                }
-                _ => {}
-            }
 
             let phase_name = match phase {
                 Phase::In      => crate::i18n::gettext("Breathe in"),
@@ -501,11 +504,11 @@ impl MeditateWindow {
                 da.queue_draw();
             }
 
-            // Cycle-aligned stop: target was rounded up to a full cycle in
-            // on_start, so crossing it lands exactly at a cycle boundary.
-            // Use finish_breath_session() (natural completion: plays chime,
-            // vibrates, notifies) rather than stop() (user-initiated, silent).
-            if tv.breath_is_finished() {
+            // Cycle-aligned stop, signalled by the Session's
+            // EndBoxBreath effect above. Use finish_breath_session
+            // (natural completion: chime, vibration, notification)
+            // rather than stop() (user-initiated, silent).
+            if session_ended {
                 tv.finish_breath_session();
                 return glib::ControlFlow::Break;
             }

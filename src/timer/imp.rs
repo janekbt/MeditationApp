@@ -2133,6 +2133,27 @@ impl TimerView {
                 *self.breath_stopwatch.borrow_mut() =
                     Some(CoreStopwatch::started_at(std::time::Duration::ZERO));
                 self.breath_target.set(std::time::Duration::from_secs(target));
+                // Stage 4 of item 13: portable Session drives box-
+                // breath phase-cue firing + cycle-aligned end. No
+                // target_secs → stopwatch-only Box Breath never auto-
+                // ends (matches breath_is_finished returning false).
+                let core_target = if self.stopwatch_toggle_on.get() {
+                    None
+                } else {
+                    Some(target as u32)
+                };
+                let core_settings = CoreSessionSettings {
+                    mode: SessionMode::BoxBreath,
+                    prep_secs: None,
+                    target_secs: core_target,
+                    breath_pattern: Some(pattern),
+                    bells: Vec::new(),
+                    bell_rng_seed: 1,
+                };
+                *self.core_session.borrow_mut() = Some(CoreSession::start_running(
+                    core_settings,
+                    std::time::Duration::ZERO,
+                ));
             }
             TimerMode::Guided => {
                 // Build the countdown core (drives the hero) AND the
@@ -2302,6 +2323,9 @@ impl TimerView {
                 TimerMode::Breathing => {
                     let mut slot = self.breath_stopwatch.borrow_mut();
                     *slot = slot.take().map(|s| s.resumed_at(now));
+                    if let Some(s) = self.core_session.borrow_mut().as_mut() {
+                        s.resume(now);
+                    }
                 }
                 TimerMode::Guided => {
                     // Guided mode reuses the countdown_core for elapsed
@@ -2381,6 +2405,9 @@ impl TimerView {
                 TimerMode::Breathing => {
                     let mut slot = self.breath_stopwatch.borrow_mut();
                     *slot = slot.take().map(|s| s.paused_at(now));
+                    if let Some(s) = self.core_session.borrow_mut().as_mut() {
+                        s.pause(now);
+                    }
                 }
                 TimerMode::Guided => {
                     let mut slot = self.countdown_core.borrow_mut();
@@ -2658,7 +2685,10 @@ impl TimerView {
                 *self.core_session.borrow_mut() = None;
                 self.active_bells.borrow_mut().clear();
             }
-            TimerMode::Breathing => *self.breath_stopwatch.borrow_mut() = None,
+            TimerMode::Breathing => {
+                *self.breath_stopwatch.borrow_mut() = None;
+                *self.core_session.borrow_mut() = None;
+            }
             TimerMode::Guided => {
                 // Same countdown_core slot as Timer countdown. Plus
                 // tear down the gst playbin (Drop runs set_state(Null)
@@ -3039,6 +3069,9 @@ impl TimerView {
     pub(super) fn finish_breath_session(&self) {
         self.timer_state.set(TimerState::Done);
         let elapsed = self.breath_elapsed().as_secs();
+        // Stage 4: Session reached its cycle-aligned end and is
+        // terminal. Drop so the next session starts fresh.
+        *self.core_session.borrow_mut() = None;
         // Release running-page widget refs — the page pops next.
         *self.running_label.borrow_mut() = None;
         *self.running_pause_btn.borrow_mut() = None;
@@ -3107,6 +3140,21 @@ impl TimerView {
             return false;
         }
         self.breath_elapsed() >= self.breath_target.get()
+    }
+
+    /// Tick the portable Session against the current boot-anchored
+    /// elapsed; used by the box-breath per-frame callback in
+    /// window/imp.rs. Returns the effects (FireBoxBreathCue + the
+    /// cycle-aligned EndBoxBreath) so the caller can dispatch them
+    /// without touching `core_session` directly. Empty Vec when no
+    /// session is in flight or the session is paused.
+    pub(crate) fn box_breath_session_tick(&self) -> Vec<CoreSessionEffect> {
+        let now = self.elapsed_since_start();
+        self.core_session
+            .borrow_mut()
+            .as_mut()
+            .map(|s| s.tick(now))
+            .unwrap_or_default()
     }
 
     /// Suspend-resilient monotonic time since on_start set the anchor.
