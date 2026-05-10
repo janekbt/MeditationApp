@@ -2822,9 +2822,10 @@ impl TimerView {
     /// keeps running.
     fn transition_running_to_overtime(&self) {
         self.timer_state.set(TimerState::Overtime);
-        // Stage 2: Session handed off — legacy tick_overtime takes
-        // over from here until Stage 3 wires Overtime into Session.
-        *self.core_session.borrow_mut() = None;
+        // Stage 3: Session keeps ticking past the boundary — its
+        // phase_clock is preserved across the internal Running→
+        // Overtime transition, so tick_overtime can read overtime
+        // delta straight off it. Dropped at end_overtime_session.
 
         // Guided mode: drop the playbin BEFORE play_end_bell so the
         // end bell isn't competing with a few last frames of audio
@@ -2893,11 +2894,33 @@ impl TimerView {
     /// on the original session timeline. The hero readout stays
     /// frozen at the planned duration.
     fn tick_overtime(&self, _obj: &super::TimerView) -> glib::ControlFlow {
-        let target = Duration::from_secs(self.countdown_target_secs.get());
+        let mode = self.tick_mode.get();
         let total_elapsed = Duration::from_secs(self.countdown_elapsed_secs());
-        let overtime = meditate_core::format::overtime(target, total_elapsed);
 
+        // Bells stay on the legacy gtk path — Session.bells is empty
+        // until a later stage migrates the schedule into core.
         self.fire_due_bells_at(total_elapsed.as_secs());
+
+        // Stage 3 of item 13: Timer-mode overtime tick reads its
+        // overtime delta from the Session. Guided keeps the legacy
+        // formatter path until a later stage migrates it.
+        let overtime = if mode == TimerMode::Timer {
+            let now = self.elapsed_since_start();
+            let mut session = self.core_session.borrow_mut();
+            let Some(s) = session.as_mut() else {
+                return glib::ControlFlow::Break;
+            };
+            let mut delta = Duration::ZERO;
+            for effect in s.tick(now) {
+                if let CoreSessionEffect::UpdateOvertimeLabel { overtime } = effect {
+                    delta = overtime;
+                }
+            }
+            delta
+        } else {
+            let target = Duration::from_secs(self.countdown_target_secs.get());
+            meditate_core::format::overtime(target, total_elapsed)
+        };
 
         if let Some(add_btn) = self.overtime_add_btn.borrow().as_ref() {
             add_btn.set_label(&meditate_core::format::overtime_button_label(
@@ -2943,6 +2966,10 @@ impl TimerView {
         *self.running_pause_btn.borrow_mut() = None;
         *self.running_stop_btn.borrow_mut() = None;
         *self.overtime_add_btn.borrow_mut() = None;
+        // Stage 3: Session is terminal at this point; the user just
+        // accepted the session via Finish or Add. Drop so the next
+        // session starts fresh.
+        *self.core_session.borrow_mut() = None;
         self.timer_state.set(TimerState::Done);
         if let Some(app) = self.get_app() {
             self.release_screen_awake_lock(&app);
