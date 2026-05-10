@@ -43,6 +43,11 @@ pub enum SessionPhase {
     /// accumulates; interval bells keep firing on the original
     /// session timeline.
     Overtime,
+    /// Terminal phase reached via `stop` / `finish_overtime` /
+    /// `add_overtime_and_finish`. Subsequent `tick()` calls return
+    /// no effects; calling stop again is a no-op. The shell typically
+    /// drops the `Session` right after seeing `Effect::EndSession`.
+    Stopped,
 }
 
 /// All the configuration a fresh session needs. Built by the shell
@@ -127,12 +132,21 @@ pub enum Effect {
     /// gone. Shell renders the Add button as
     /// `<localized prefix> <MM:SS> ?`.
     UpdateOvertimeLabel { overtime: Duration },
+    /// Session terminated via `stop` / `finish_overtime` /
+    /// `add_overtime_and_finish`. `duration_secs` is what the saved
+    /// row should record — prep elapsed when stopped during prep,
+    /// running elapsed mid-session, target_secs for Finish-overtime,
+    /// running+overtime elapsed for Add-overtime. Shell: stops
+    /// playback, releases screen-awake, transitions to the Done UI
+    /// with this duration.
+    EndSession { duration_secs: u64 },
 }
 
 /// In-flight session. Created by `start_prep` (when prep silence is
 /// enabled) or `start_running` (skip-prep path); driven by `tick(now)`
-/// thereafter; consumed by `stop`/`add_overtime`/`finish_overtime`
-/// in later stages.
+/// thereafter; transitioned to `SessionPhase::Stopped` by `stop` /
+/// `finish_overtime` / `add_overtime_and_finish`, after which the
+/// shell drops it.
 #[derive(Debug)]
 pub struct Session {
     settings: SessionSettings,
@@ -237,6 +251,67 @@ impl Session {
         self.is_paused
     }
 
+    /// User-initiated stop. Returns a single `EndSession` effect
+    /// whose `duration_secs` is what the shell should persist as
+    /// the saved row's duration:
+    ///
+    /// - From Prep: prep elapsed so far (floor seconds). Lets a
+    ///   "stop during prep" still save a real session row instead
+    ///   of dropping the time the user spent waiting.
+    /// - From Running: running elapsed (floor seconds). Same as
+    ///   `phase_clock.elapsed(now)` — Running's clock anchored at
+    ///   the Prep→Running transition.
+    /// - From Overtime: running+overtime elapsed. The phase_clock
+    ///   was preserved across the Running→Overtime transition, so
+    ///   `elapsed(now)` already includes both.
+    ///
+    /// Phase transitions to `Stopped`; further ticks return no
+    /// effects. Idempotent: calling stop on an already-Stopped
+    /// session returns an empty Vec without re-emitting the effect.
+    /// Pause state is honoured — stop while paused returns the
+    /// duration captured at the pause moment, since the phase_clock
+    /// is frozen there.
+    pub fn stop(&mut self, now: Duration) -> Vec<Effect> {
+        if self.phase == SessionPhase::Stopped {
+            return Vec::new();
+        }
+        let duration_secs = self.phase_clock.elapsed(now).as_secs();
+        self.phase = SessionPhase::Stopped;
+        vec![Effect::EndSession { duration_secs }]
+    }
+
+    /// Overtime "Finish" — record exactly the planned countdown
+    /// duration; the overtime delta is discarded. Returns
+    /// `EndSession { duration_secs: target_secs }`. Only valid in
+    /// Overtime phase; from any other phase returns an empty Vec
+    /// without changing state, so the shell can call this
+    /// unconditionally on the user's Finish tap without first
+    /// checking phase.
+    pub fn finish_overtime(&mut self) -> Vec<Effect> {
+        if self.phase != SessionPhase::Overtime {
+            return Vec::new();
+        }
+        let target_secs = self
+            .settings
+            .target_secs
+            .expect("Overtime requires a target") as u64;
+        self.phase = SessionPhase::Stopped;
+        vec![Effect::EndSession { duration_secs: target_secs }]
+    }
+
+    /// Overtime "Add" — record the running+overtime elapsed
+    /// (`phase_clock.elapsed(now)`), keeping the user's bonus
+    /// minutes. Returns `EndSession { duration_secs: elapsed }`.
+    /// Only valid in Overtime; otherwise empty Vec.
+    pub fn add_overtime_and_finish(&mut self, now: Duration) -> Vec<Effect> {
+        if self.phase != SessionPhase::Overtime {
+            return Vec::new();
+        }
+        let duration_secs = self.phase_clock.elapsed(now).as_secs();
+        self.phase = SessionPhase::Stopped;
+        vec![Effect::EndSession { duration_secs }]
+    }
+
     /// Drive the session forward by one tick. Returns the effects
     /// the shell should dispatch this tick. Internal phase
     /// transitions (Prep→Running, Running→Overtime, etc.) emit
@@ -255,6 +330,11 @@ impl Session {
             // early-return above. SessionPhase::Paused is reserved
             // and currently unreached.
             SessionPhase::Paused => Vec::new(),
+            // Terminal phase set by `stop` / `finish_overtime` /
+            // `add_overtime_and_finish`. Any further ticks the shell
+            // happens to dispatch before dropping the Session are
+            // silent.
+            SessionPhase::Stopped => Vec::new(),
         }
     }
 
@@ -1152,5 +1232,137 @@ mod tests {
             s.tick(Duration::from_secs(190)),
             vec![Effect::UpdateDisplay { secs: 540 }]
         );
+    }
+
+    // ── Stop / Finish-overtime / Add-overtime ────────────────────────
+
+    #[test]
+    fn stop_during_prep_returns_prep_elapsed() {
+        let mut s = Session::start_prep(
+            timer_settings_with_prep(30),
+            Duration::from_secs(100),
+        );
+        // 12 s into prep: stop returns 12 s.
+        let effects = s.stop(Duration::from_secs(112));
+        assert_eq!(effects, vec![Effect::EndSession { duration_secs: 12 }]);
+        assert_eq!(s.phase(), SessionPhase::Stopped);
+    }
+
+    #[test]
+    fn stop_during_running_returns_running_elapsed() {
+        let mut s = Session::start_running(
+            timer_countdown_settings(600),
+            Duration::from_secs(100),
+        );
+        let effects = s.stop(Duration::from_secs(245));
+        assert_eq!(effects, vec![Effect::EndSession { duration_secs: 145 }]);
+        assert_eq!(s.phase(), SessionPhase::Stopped);
+    }
+
+    #[test]
+    fn stop_during_overtime_returns_running_plus_overtime_elapsed() {
+        let mut s = Session::start_running(
+            timer_countdown_settings(60),
+            Duration::from_secs(100),
+        );
+        // Cross zero → Overtime.
+        let _ = s.tick(Duration::from_secs(160));
+        assert_eq!(s.phase(), SessionPhase::Overtime);
+        // Stop 30 s into overtime: total elapsed 90 s.
+        let effects = s.stop(Duration::from_secs(190));
+        assert_eq!(effects, vec![Effect::EndSession { duration_secs: 90 }]);
+        assert_eq!(s.phase(), SessionPhase::Stopped);
+    }
+
+    #[test]
+    fn stop_while_paused_returns_elapsed_at_pause() {
+        let mut s = Session::start_running(
+            timer_countdown_settings(600),
+            Duration::from_secs(100),
+        );
+        s.pause(Duration::from_secs(150)); // 50 s elapsed
+        // Stop later — duration should be 50, not 50+anything.
+        let effects = s.stop(Duration::from_secs(300));
+        assert_eq!(effects, vec![Effect::EndSession { duration_secs: 50 }]);
+        assert_eq!(s.phase(), SessionPhase::Stopped);
+    }
+
+    #[test]
+    fn stop_is_idempotent() {
+        let mut s = Session::start_running(
+            timer_countdown_settings(600),
+            Duration::from_secs(100),
+        );
+        let first = s.stop(Duration::from_secs(120));
+        assert_eq!(first, vec![Effect::EndSession { duration_secs: 20 }]);
+        let second = s.stop(Duration::from_secs(140));
+        assert!(
+            second.is_empty(),
+            "second stop must be a no-op, got {:?}",
+            second
+        );
+    }
+
+    #[test]
+    fn ticks_after_stop_emit_no_effects() {
+        let mut s = Session::start_running(
+            timer_countdown_settings(600),
+            Duration::from_secs(100),
+        );
+        let _ = s.stop(Duration::from_secs(120));
+        let effects = s.tick(Duration::from_secs(125));
+        assert!(effects.is_empty(), "tick after stop must be silent: {:?}", effects);
+    }
+
+    #[test]
+    fn finish_overtime_returns_target_secs() {
+        let mut s = Session::start_running(
+            timer_countdown_settings(60),
+            Duration::from_secs(100),
+        );
+        // Cross zero into Overtime, accumulate 30 s of overtime.
+        let _ = s.tick(Duration::from_secs(160));
+        let _ = s.tick(Duration::from_secs(190));
+        let effects = s.finish_overtime();
+        // Overtime discarded — saved duration is the planned target.
+        assert_eq!(effects, vec![Effect::EndSession { duration_secs: 60 }]);
+        assert_eq!(s.phase(), SessionPhase::Stopped);
+    }
+
+    #[test]
+    fn finish_overtime_outside_overtime_is_a_noop() {
+        let mut s = Session::start_running(
+            timer_countdown_settings(600),
+            Duration::from_secs(100),
+        );
+        // Still Running — no Overtime crossed yet.
+        let effects = s.finish_overtime();
+        assert!(effects.is_empty());
+        assert_eq!(s.phase(), SessionPhase::Running);
+    }
+
+    #[test]
+    fn add_overtime_and_finish_returns_running_plus_overtime() {
+        let mut s = Session::start_running(
+            timer_countdown_settings(60),
+            Duration::from_secs(100),
+        );
+        let _ = s.tick(Duration::from_secs(160)); // EnterOvertime
+        let _ = s.tick(Duration::from_secs(195)); // 35 s of overtime
+        let effects = s.add_overtime_and_finish(Duration::from_secs(195));
+        // 60 s target + 35 s overtime = 95 s saved.
+        assert_eq!(effects, vec![Effect::EndSession { duration_secs: 95 }]);
+        assert_eq!(s.phase(), SessionPhase::Stopped);
+    }
+
+    #[test]
+    fn add_overtime_outside_overtime_is_a_noop() {
+        let mut s = Session::start_running(
+            timer_countdown_settings(600),
+            Duration::from_secs(100),
+        );
+        let effects = s.add_overtime_and_finish(Duration::from_secs(200));
+        assert!(effects.is_empty());
+        assert_eq!(s.phase(), SessionPhase::Running);
     }
 }
