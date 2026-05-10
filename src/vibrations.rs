@@ -17,6 +17,8 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 
+use meditate_core::vibration::patterns_equivalent;
+
 use crate::application::MeditateApplication;
 use crate::db::VibrationPattern;
 use crate::i18n::gettext;
@@ -462,16 +464,6 @@ fn add_delete_button(
         present_delete_dialog(btn, &app, &uuid, rebuilder.clone(), &toast_overlay);
     });
     row.add_suffix(&delete_btn);
-}
-
-fn patterns_equivalent(a: &VibrationPattern, b: &VibrationPattern) -> bool {
-    a.name == b.name
-        && a.duration_ms == b.duration_ms
-        && a.chart_kind == b.chart_kind
-        && a.intensities.len() == b.intensities.len()
-        && a.intensities.iter()
-            .zip(b.intensities.iter())
-            .all(|(x, y)| (x - y).abs() < 1e-6)
 }
 
 /// Show an Undo toast for an edit/rename. Clicking Undo restores

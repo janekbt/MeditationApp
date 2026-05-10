@@ -100,7 +100,7 @@ visible string actually changes.**
 
 ## Medium effort (substantial logic + tests, bounded)
 
-### [ ] 5. Vibration envelope / chunk logic → `meditate_core::vibration`
+### [x] 5. Vibration envelope / chunk logic → `meditate_core::vibration`
 
 **From:** `src/vibration.rs`, specifically:
 - `quantise_amplitude(v: f32) -> f64`
