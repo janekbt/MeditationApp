@@ -250,19 +250,6 @@ impl Drop for PatternPlayback {
 // Sound / Vibration / Both — so the resolution is the intersection
 // of the two.
 
-/// Read a per-mode `signal_mode` setting key, defaulting to Both
-/// when the value is missing or unparseable.
-fn read_mode_signal_mode(
-    app: &crate::application::MeditateApplication,
-    setting_key: &'static str,
-) -> crate::db::SignalMode {
-    let raw = app
-        .with_db(|db| db.get_setting(setting_key, "both"))
-        .and_then(|r| r.ok())
-        .unwrap_or_else(|| "both".to_string());
-    crate::db::SignalMode::from_db_str(&raw).unwrap_or(crate::db::SignalMode::Both)
-}
-
 /// True if the sound channel should fire given per-bell intent +
 /// the per-mode override. The two-gate AND lives in core
 /// (`meditate_core::bells::channel_allowed`).
@@ -271,7 +258,9 @@ pub fn should_fire_sound(
     per_bell: crate::db::SignalMode,
     mode_setting_key: &'static str,
 ) -> bool {
-    let per_mode = read_mode_signal_mode(app, mode_setting_key);
+    let per_mode = app
+        .with_db(|db| meditate_core::bells::signal_mode_override_from_db(db.core(), mode_setting_key))
+        .unwrap_or(crate::db::SignalMode::Both);
     meditate_core::bells::channel_allowed(per_bell, per_mode).0
 }
 
@@ -289,7 +278,9 @@ pub fn fire_pattern_if_allowed(
     if !app.has_haptic() {
         return None;
     }
-    let per_mode = read_mode_signal_mode(app, mode_setting_key);
+    let per_mode = app
+        .with_db(|db| meditate_core::bells::signal_mode_override_from_db(db.core(), mode_setting_key))
+        .unwrap_or(crate::db::SignalMode::Both);
     if !meditate_core::bells::channel_allowed(per_bell, per_mode).1 {
         return None;
     }

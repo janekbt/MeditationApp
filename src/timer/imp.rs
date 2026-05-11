@@ -1021,9 +1021,7 @@ impl TimerView {
         }
         let setting_key = setting_key_for_mode(self.current_mode());
         let saved = app
-            .with_db(|db| db.get_setting(setting_key, "both"))
-            .and_then(|r| r.ok())
-            .and_then(|s| crate::db::SignalMode::from_db_str(&s))
+            .with_db(|db| meditate_core::bells::signal_mode_override_from_db(db.core(), setting_key))
             .unwrap_or(crate::db::SignalMode::Both);
         let initial = meditate_core::bells::clamp_signal_mode_for_haptic(
             saved, app.has_haptic(),

@@ -720,25 +720,20 @@ impl MeditateWindow {
 /// Granularity steps up the further back the timestamp lies — minutes
 /// for the first hour, hours within a day, days beyond. Doesn't
 /// localise the count words; gettext takes care of that via the
-/// surrounding translatable templates.
+/// surrounding translatable templates. The bucket decision lives in
+/// `meditate_core::format::synced_ago_key`.
 fn format_synced_ago(unix_ts: i64) -> String {
     use crate::i18n::gettext;
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-    let secs_ago = (now - unix_ts).max(0);
-    if secs_ago < 60 {
-        gettext("Synced just now")
-    } else if secs_ago < 3600 {
-        gettext("Synced {n} minutes ago")
-            .replace("{n}", &(secs_ago / 60).to_string())
-    } else if secs_ago < 86400 {
-        gettext("Synced {n} hours ago")
-            .replace("{n}", &(secs_ago / 3600).to_string())
-    } else {
-        gettext("Synced {n} days ago")
-            .replace("{n}", &(secs_ago / 86400).to_string())
+    use meditate_core::format::SyncedAgoKey;
+    let secs_ago = meditate_core::time::unix_now() - unix_ts;
+    match meditate_core::format::synced_ago_key(secs_ago) {
+        SyncedAgoKey::JustNow => gettext("Synced just now"),
+        SyncedAgoKey::Minutes(n) => gettext("Synced {n} minutes ago")
+            .replace("{n}", &n.to_string()),
+        SyncedAgoKey::Hours(n) => gettext("Synced {n} hours ago")
+            .replace("{n}", &n.to_string()),
+        SyncedAgoKey::Days(n) => gettext("Synced {n} days ago")
+            .replace("{n}", &n.to_string()),
     }
 }
 

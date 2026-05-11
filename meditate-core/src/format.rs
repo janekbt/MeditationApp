@@ -235,6 +235,36 @@ pub fn mini_stat_or_dash(value: i64) -> String {
     }
 }
 
+/// "Synced N ago" granularity bucket. Step boundaries: under a
+/// minute → JustNow; under an hour → Minutes; under a day → Hours;
+/// else → Days. Shell maps each variant to its gettext-translated
+/// template ("Synced {n} minutes ago" etc.). The decision is
+/// portable; the strings are not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncedAgoKey {
+    JustNow,
+    Minutes(u64),
+    Hours(u64),
+    Days(u64),
+}
+
+/// Bucket `secs_ago` into a `SyncedAgoKey` granularity. Negative
+/// inputs (clock jump after a sync, peer's `last_sync_unix_ts` in
+/// the future) clamp to `JustNow` rather than "synced -3 minutes
+/// ago", which would look like a bug.
+pub fn synced_ago_key(secs_ago: i64) -> SyncedAgoKey {
+    let s = secs_ago.max(0) as u64;
+    if s < 60 {
+        SyncedAgoKey::JustNow
+    } else if s < 3600 {
+        SyncedAgoKey::Minutes(s / 60)
+    } else if s < 86_400 {
+        SyncedAgoKey::Hours(s / 3600)
+    } else {
+        SyncedAgoKey::Days(s / 86_400)
+    }
+}
+
 /// Decision key for the bell-count chip in the preset-row subtitle.
 /// Variants match `IntervalsCountKey` minus the `None` arm — the
 /// caller of `preset_subtitle_parts` only sees this when at least
@@ -663,6 +693,24 @@ mod tests {
         assert_eq!(mini_stat_or_dash(0), "–");
         assert_eq!(mini_stat_or_dash(1), "1");
         assert_eq!(mini_stat_or_dash(42), "42");
+    }
+
+    #[test]
+    fn synced_ago_key_partitions_at_minute_hour_day() {
+        assert_eq!(synced_ago_key(0), SyncedAgoKey::JustNow);
+        assert_eq!(synced_ago_key(59), SyncedAgoKey::JustNow);
+        assert_eq!(synced_ago_key(60), SyncedAgoKey::Minutes(1));
+        assert_eq!(synced_ago_key(3599), SyncedAgoKey::Minutes(59));
+        assert_eq!(synced_ago_key(3600), SyncedAgoKey::Hours(1));
+        assert_eq!(synced_ago_key(86_399), SyncedAgoKey::Hours(23));
+        assert_eq!(synced_ago_key(86_400), SyncedAgoKey::Days(1));
+        assert_eq!(synced_ago_key(7 * 86_400), SyncedAgoKey::Days(7));
+    }
+
+    #[test]
+    fn synced_ago_key_clamps_negative_to_just_now() {
+        assert_eq!(synced_ago_key(-30), SyncedAgoKey::JustNow);
+        assert_eq!(synced_ago_key(i64::MIN), SyncedAgoKey::JustNow);
     }
 
     #[test]

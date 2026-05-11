@@ -496,11 +496,7 @@ fn push_edit_page(
         bell.signal_mode,
         app.has_haptic(),
     );
-    signal_toggle.set_active_name(Some(match initial_mode {
-        crate::db::SignalMode::Sound     => "sound",
-        crate::db::SignalMode::Vibration => "vibration",
-        crate::db::SignalMode::Both      => "both",
-    }));
+    signal_toggle.set_active_name(Some(initial_mode.as_db_str()));
     signal_toggle_host.append(&signal_toggle);
 
     // Sound row — taps push the bell-sound chooser. Subtitle shows the
@@ -706,11 +702,9 @@ fn push_edit_page(
     let populating_for_sig = populating.clone();
     signal_toggle.connect_active_name_notify(move |tg| {
         if populating_for_sig.get() { return; }
-        let mode = match tg.active_name().as_deref() {
-            Some("vibration") => crate::db::SignalMode::Vibration,
-            Some("both")      => crate::db::SignalMode::Both,
-            _                 => crate::db::SignalMode::Sound,
-        };
+        let mode = tg.active_name()
+            .and_then(|n| crate::db::SignalMode::from_db_str(n.as_str()))
+            .unwrap_or(crate::db::SignalMode::Sound);
         snap_for_sig.borrow_mut().signal_mode = mode;
         sound_row_for_sig.set_visible(mode.includes_sound());
         pattern_row_for_sig.set_visible(mode.includes_vibration());
