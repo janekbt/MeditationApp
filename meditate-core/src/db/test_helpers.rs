@@ -160,3 +160,22 @@ pub(super) fn synth_setting_changed(
         serde_json::json!({ "key": key, "value": value }),
     )
 }
+
+/// 8-4-4-4-12 hex with v4 marker and RFC 4122 variant. Cheap shape
+/// check — used across entity tests to assert that a generated id
+/// looks like the output of `Uuid::new_v4()` rather than (say) a
+/// timestamp string or counter.
+pub(super) fn looks_like_uuid_v4(s: &str) -> bool {
+    if s.len() != 36 { return false; }
+    let bytes = s.as_bytes();
+    if bytes[8] != b'-' || bytes[13] != b'-' || bytes[18] != b'-' || bytes[23] != b'-' {
+        return false;
+    }
+    if bytes[14] != b'4' { return false; }                 // version
+    if !matches!(bytes[19], b'8' | b'9' | b'a' | b'b') {  // variant
+        return false;
+    }
+    bytes.iter().enumerate().all(|(i, c)| {
+        matches!(i, 8 | 13 | 18 | 23) || c.is_ascii_hexdigit()
+    })
+}

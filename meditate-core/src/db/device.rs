@@ -73,3 +73,134 @@ impl Database {
         self.lamport_clock()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::test_helpers::*;
+
+    #[test]
+    fn device_id_is_a_v4_uuid() {
+        let db = Database::open_in_memory().unwrap();
+        let id = db.device_id().unwrap();
+        assert!(looks_like_uuid_v4(&id),
+            "device_id `{id}` doesn't match v4 shape");
+    }
+
+    #[test]
+    fn device_id_is_stable_across_calls_within_one_process() {
+        let db = Database::open_in_memory().unwrap();
+        let a = db.device_id().unwrap();
+        let b = db.device_id().unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn device_id_is_stable_across_database_reopens() {
+        // Persistence: closing the DB and reopening the same file must
+        // yield the same device_id. This is the actual cross-restart
+        // contract; the in-memory variant above only proves "same call,
+        // same answer".
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("device_id.db");
+        let id_first = {
+            let db = Database::open(&path).unwrap();
+            db.device_id().unwrap()
+        };
+        let id_second = {
+            let db = Database::open(&path).unwrap();
+            db.device_id().unwrap()
+        };
+        assert_eq!(id_first, id_second);
+    }
+
+    #[test]
+    fn two_separate_databases_get_different_device_ids() {
+        let db_a = Database::open_in_memory().unwrap();
+        let db_b = Database::open_in_memory().unwrap();
+        assert_ne!(db_a.device_id().unwrap(), db_b.device_id().unwrap());
+    }
+
+    #[test]
+    fn lamport_clock_is_zero_on_a_fresh_database() {
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(db.lamport_clock().unwrap(), 0);
+    }
+
+    #[test]
+    fn lamport_clock_starts_at_zero_even_before_device_id_is_minted() {
+        let db = Database::open_in_memory().unwrap();
+        let _ = db.lamport_clock().unwrap();
+        assert_eq!(db.lamport_clock().unwrap(), 0);
+    }
+
+    #[test]
+    fn bump_lamport_clock_returns_post_increment_value() {
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(db.bump_lamport_clock().unwrap(), 1);
+        assert_eq!(db.bump_lamport_clock().unwrap(), 2);
+        assert_eq!(db.bump_lamport_clock().unwrap(), 3);
+    }
+
+    #[test]
+    fn bump_lamport_clock_persists_the_increment() {
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(db.bump_lamport_clock().unwrap(), 1);
+        assert_eq!(db.lamport_clock().unwrap(), 1);
+    }
+
+    #[test]
+    fn bump_lamport_clock_persists_across_database_reopens() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("lamport.db");
+        let mid = {
+            let db = Database::open(&path).unwrap();
+            db.bump_lamport_clock().unwrap();
+            db.bump_lamport_clock().unwrap()
+        };
+        assert_eq!(mid, 2);
+        let after_reopen = {
+            let db = Database::open(&path).unwrap();
+            db.lamport_clock().unwrap()
+        };
+        assert_eq!(after_reopen, 2);
+        let bumped = {
+            let db = Database::open(&path).unwrap();
+            db.bump_lamport_clock().unwrap()
+        };
+        assert_eq!(bumped, 3);
+    }
+
+    #[test]
+    fn observe_remote_lamport_advances_when_remote_is_ahead() {
+        let db = Database::open_in_memory().unwrap();
+        let new_local = db.observe_remote_lamport(42).unwrap();
+        assert_eq!(new_local, 43);
+        assert_eq!(db.lamport_clock().unwrap(), 43);
+    }
+
+    #[test]
+    fn observe_remote_lamport_keeps_advancing_when_local_is_already_ahead() {
+        let db = Database::open_in_memory().unwrap();
+        for _ in 0..100 { db.bump_lamport_clock().unwrap(); }
+        let new_local = db.observe_remote_lamport(7).unwrap();
+        assert_eq!(new_local, 101);
+        assert_eq!(db.lamport_clock().unwrap(), 101);
+    }
+
+    #[test]
+    fn observe_remote_lamport_treats_equal_as_max_plus_one() {
+        let db = Database::open_in_memory().unwrap();
+        for _ in 0..5 { db.bump_lamport_clock().unwrap(); }
+        let new_local = db.observe_remote_lamport(5).unwrap();
+        assert_eq!(new_local, 6);
+    }
+
+    #[test]
+    fn observe_remote_lamport_handles_zero() {
+        let db = Database::open_in_memory().unwrap();
+        let new_local = db.observe_remote_lamport(0).unwrap();
+        assert_eq!(new_local, 1);
+    }
+}
+
