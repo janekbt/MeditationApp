@@ -3776,7 +3776,11 @@ impl Database {
         Ok(())
     }
 
-    pub fn get_median_duration_secs(&self) -> Result<u32> {
+    /// Lower-median session duration in seconds, or `None` when the
+    /// sessions table is empty. The `Option` distinguishes "no data
+    /// to report" from a real zero — useful for any shell rendering
+    /// "n/a" vs "0s".
+    pub fn get_median_duration_secs(&self) -> Result<Option<u32>> {
         let mut stmt = self
             .conn
             .prepare("SELECT duration_secs FROM sessions ORDER BY duration_secs")?;
@@ -3784,11 +3788,11 @@ impl Database {
             .query_map([], |row| row.get(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         if durations.is_empty() {
-            return Ok(0);
+            return Ok(None);
         }
         // Lower-median: index (len-1)/2 hits the lower middle on even counts,
         // and the exact middle on odd counts.
-        Ok(durations[(durations.len() - 1) / 2])
+        Ok(Some(durations[(durations.len() - 1) / 2]))
     }
 
     pub fn get_running_average_secs(&self, today: chrono::NaiveDate, days: i64) -> Result<f64> {
@@ -6779,9 +6783,9 @@ mod tests {
     }
 
     #[test]
-    fn median_duration_is_zero_for_empty_db() {
+    fn median_duration_is_none_for_empty_db() {
         let db = Database::open_in_memory().unwrap();
-        assert_eq!(db.get_median_duration_secs().unwrap(), 0);
+        assert_eq!(db.get_median_duration_secs().unwrap(), None);
     }
 
     #[test]
@@ -6794,7 +6798,7 @@ mod tests {
             })
             .unwrap();
         }
-        assert_eq!(db.get_median_duration_secs().unwrap(), 900);
+        assert_eq!(db.get_median_duration_secs().unwrap(), Some(900));
     }
 
     #[test]
@@ -6808,7 +6812,7 @@ mod tests {
             })
             .unwrap();
         }
-        assert_eq!(db.get_median_duration_secs().unwrap(), 600);
+        assert_eq!(db.get_median_duration_secs().unwrap(), Some(600));
     }
 
     #[test]

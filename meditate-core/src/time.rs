@@ -37,6 +37,14 @@ pub fn unix_now() -> i64 {
         .as_secs() as i64
 }
 
+/// Today's local-time date as a `chrono::NaiveDate`. Thin alias
+/// over `chrono::Local::now().date_naive()` — present so callers
+/// don't all duplicate the chrono path + so the Android shell's
+/// "today" reads from the same source.
+pub fn today_local() -> chrono::NaiveDate {
+    chrono::Local::now().date_naive()
+}
+
 /// Wall-clock nanos as a `u64`, suitable as an xorshift64 seed for
 /// per-session bell jitter. Always returns ≥ 1 (xorshift64 outputs
 /// 0 forever from a 0 seed, so we collapse a clock that somehow

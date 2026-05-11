@@ -234,9 +234,10 @@ fn map_core_err(e: meditate_core::db::DbError) -> rusqlite::Error {
 
 /// Today as a `chrono::NaiveDate` in the user's local timezone — used
 /// for streak / running-average calculations that need a concrete
-/// "today" boundary.
+/// "today" boundary. Thin re-export of the core helper so call sites
+/// don't all spell out `meditate_core::time::today_local`.
 fn today_local_naive_date() -> chrono::NaiveDate {
-    chrono::Local::now().date_naive()
+    meditate_core::time::today_local()
 }
 
 // ── Database ──────────────────────────────────────────────────────────────────
@@ -853,15 +854,14 @@ impl Database {
         }))
     }
 
-    /// Median session duration, None on empty DB. Core's variant
-    /// returns 0 for empty (lossy for the UI's "n/a" display); the
-    /// wrapper checks `count_sessions` first to recover the None case.
+    /// Median session duration, `None` on empty DB. Thin wrapper —
+    /// core's variant carries the same Option semantics now.
     pub fn get_median_duration_secs(&self) -> Result<Option<i64>> {
-        if self.inner.count_sessions().map_err(map_core_err)? == 0 {
-            return Ok(None);
-        }
-        let secs = self.inner.get_median_duration_secs().map_err(map_core_err)?;
-        Ok(Some(secs as i64))
+        Ok(self
+            .inner
+            .get_median_duration_secs()
+            .map_err(map_core_err)?
+            .map(|s| s as i64))
     }
 
     pub fn hour_buckets(&self) -> Result<(i64, i64, i64)> {
