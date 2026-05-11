@@ -2,6 +2,13 @@ use rusqlite::{params, Connection, OptionalExtension};
 use std::io::{Read, Write};
 use std::path::Path;
 
+/// On-disk schema version. Bumped when the SQL in `SCHEMA` changes in
+/// a way that an older build cannot read safely. A DB whose
+/// `PRAGMA user_version` exceeds this constant is rejected at open
+/// time to prevent a downgrade from silently corrupting forward-only
+/// data.
+pub const SCHEMA_VERSION: u32 = 1;
+
 #[derive(Debug)]
 pub enum DbError {
     DuplicateLabel(String),
@@ -10,6 +17,10 @@ pub enum DbError {
     DuplicateVibrationPattern(String),
     Sqlite(rusqlite::Error),
     Csv(String),
+    /// The on-disk DB was written by a newer build (its
+    /// `user_version` exceeds this build's `SCHEMA_VERSION`).
+    /// Opening would risk silent corruption.
+    SchemaVersionTooNew { db: u32, build: u32 },
 }
 
 impl From<rusqlite::Error> for DbError {
@@ -711,12 +722,38 @@ impl Database {
     }
 
     fn init(conn: Connection) -> Result<Self> {
+        // Refuse to open a DB whose user_version exceeds what this
+        // build knows how to read — a downgrade from a future build
+        // could otherwise drop forward-only data silently. A fresh
+        // DB reads user_version=0 and falls through to the stamp.
+        let db_version: u32 = conn.query_row(
+            "PRAGMA user_version", [], |row| row.get(0),
+        )?;
+        if db_version > SCHEMA_VERSION {
+            return Err(DbError::SchemaVersionTooNew {
+                db: db_version,
+                build: SCHEMA_VERSION,
+            });
+        }
         // Explicit PRAGMAs — even when rusqlite enables them by default,
         // the intent is part of the source so it can't be silently
         // dropped by a dependency upgrade. The FK clause on
         // sessions.label_id only fires when this is ON.
         conn.execute_batch("PRAGMA foreign_keys=ON;")?;
         conn.execute_batch(SCHEMA)?;
+        // Stamp the current version. `execute_batch` is required because
+        // PRAGMA values aren't bindable via params.
+        conn.execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION};"))?;
+        // One-shot integrity check. `quick_check` returns "ok" on a
+        // clean DB or one or more issue lines on corruption — we log
+        // the first non-ok line via diag and continue, since refusing
+        // to open would lock the user out without a recovery path.
+        let integrity: String = conn.query_row(
+            "PRAGMA quick_check", [], |row| row.get(0),
+        ).unwrap_or_else(|_| "ok".to_string());
+        if integrity != "ok" {
+            crate::diag::log(&format!("db_integrity_check_failed: {integrity}"));
+        }
         Ok(Self { conn })
     }
 
@@ -4298,6 +4335,51 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── Schema version sentinel ───────────────────────────────────────
+
+    #[test]
+    fn open_in_memory_stamps_current_schema_version() {
+        // A fresh DB starts at user_version=0; init must apply schema
+        // and stamp SCHEMA_VERSION so a future reopen finds a matching
+        // value rather than treating the DB as fresh again.
+        let db = Database::open_in_memory().unwrap();
+        let v: u32 = db.conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(v, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn init_refuses_db_written_by_a_future_build() {
+        // A DB whose user_version exceeds our SCHEMA_VERSION was written
+        // by a build that may have added forward-only columns; opening
+        // it risks silent corruption on subsequent writes.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(&format!(
+            "PRAGMA user_version = {};", SCHEMA_VERSION + 1
+        )).unwrap();
+        match Database::init(conn) {
+            Err(DbError::SchemaVersionTooNew { db, build }) => {
+                assert_eq!(db, SCHEMA_VERSION + 1);
+                assert_eq!(build, SCHEMA_VERSION);
+            }
+            Err(other) => panic!("expected SchemaVersionTooNew, got {other:?}"),
+            Ok(_) => panic!("expected error, init succeeded"),
+        }
+    }
+
+    #[test]
+    fn init_accepts_db_already_at_current_schema_version() {
+        // Reopening a previously-stamped DB is the common case after
+        // the first launch; init must accept it without re-stamping
+        // or rejecting.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(&format!(
+            "PRAGMA user_version = {};", SCHEMA_VERSION
+        )).unwrap();
+        Database::init(conn).expect("init succeeds at current version");
+    }
 
     // ── SessionMode serialization ─────────────────────────────────────────────
 

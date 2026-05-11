@@ -229,6 +229,12 @@ fn map_core_err(e: meditate_core::db::DbError) -> rusqlite::Error {
         DbError::Csv(s) => rusqlite::Error::ToSqlConversionFailure(Box::new(
             std::io::Error::new(std::io::ErrorKind::InvalidData, s),
         )),
+        DbError::SchemaVersionTooNew { db, build } => rusqlite::Error::ToSqlConversionFailure(
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("db schema_version={db} exceeds build schema_version={build}"),
+            )),
+        ),
     }
 }
 
