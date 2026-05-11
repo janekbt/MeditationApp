@@ -537,6 +537,226 @@ rationale.
   minimal-core consumer can skip ~MB of deps. Not urgent —
   there's only one binary today.
 
+## Tier 0 — Correctness bugs (third pass, jump-the-queue)
+
+### `presets.mode` SQL CHECK excludes `'guided'`
+- `meditate-core/src/db.rs:546` — `CHECK (mode IN ('timer',
+  'box_breath'))`. Per memory `feedback_meditate_guided_presets`,
+  Guided IS a first-class preset mode in `preset_config::snapshot`
+  / `preset_config.rs:236-244`. A peer running a build that emits
+  a `preset_insert` event for a Guided preset crashes
+  `recompute_preset` with a CHECK-constraint violation.
+- Not caught by the planned `EventKind` enum (Tier 1): this is
+  runtime data drift, not a wire-format mismatch.
+- Fix: add `'guided'` to the CHECK list. Schema change; existing
+  rows survive (none have `mode='guided'` today because the bug
+  blocks them).
+
+### `wipe_local_event_log` deletes an incoherent subset of tables
+- `meditate-core/src/db.rs:1013-1024` wipes `events`, `sessions`,
+  `labels`, `bell_sounds`, `interval_bells`, `known_remote_*` —
+  but NOT `presets`, `guided_files`, `vibration_patterns`,
+  `box_breath_phases`. All four are event-log-driven (their state
+  is reconstructed via `recompute_*`).
+- After a remote-data-lost → wipe-and-pull recovery, stale local
+  rows in these four tables survive and overlap with peer-pulled
+  data. Silently masks divergence.
+- Fix: add the four missing DELETEs.
+- High-impact bug on the recovery path.
+
+### `push_custom_sound_files` lacks the 10 MB cap that pull enforces
+- `meditate-core/src/sync/orchestrator.rs:419-450` reads the
+  local file with no size gate and PUTs it. The puller (`:397`)
+  drops oversized files only after consuming bandwidth.
+- Cap is per-design symmetric; pull-only enforcement is silent
+  asymmetry.
+- Fix: `if bytes.len() as u64 > MAX_CUSTOM_BELL_BYTES { continue; }`
+  after the `fs::read`.
+
+## Tier 1 — Third-pass additions
+
+### `sessions` table missing indexes on `start_iso` + `label_id`
+- Every other entity table has UNIQUE-index coverage on its hot
+  column. `sessions` reads run `ORDER BY start_iso DESC`
+  (`query_sessions` four branches at `db.rs:4207/4218/4229/4240`)
+  and `WHERE label_id = ?1` (`label_session_count:1799`,
+  `list_sessions_for_label`).
+- Under 10k rows still ms-budget today; gets worse at scale.
+- Fix: `CREATE INDEX sessions_start_idx ON sessions(start_iso DESC)`
+  and `CREATE INDEX sessions_label_idx ON sessions(label_id)
+  WHERE label_id IS NOT NULL`.
+
+### `events_synced_idx` should be a partial index
+- `db.rs:648` indexes the full `synced` column (boolean).
+  Steady-state ~99% of rows have `synced = 1`; the only scan is
+  `WHERE synced = 0` (`pending_events`).
+- Fix: `CREATE INDEX events_pending_idx ON events(synced) WHERE
+  synced = 0`. Same lookup speed, one to two orders of magnitude
+  smaller after first push.
+
+### `breath::BreathSession` is an entirely dead struct
+- `meditate-core/src/breath.rs:277-309` — `BreathSession::new`,
+  `phase_info`, `pause`, `resume`. Zero callers in the workspace.
+  Tested but never used.
+- Bigger than backlog's existing `timer::Countdown` finding.
+- Delete the whole struct + its tests.
+
+### `timer.rs` is dead-by-transitive-closure
+- The 263-line module's only non-test consumers are the
+  `bin/*_smoke.rs` harnesses + `breath.rs`'s dead `BreathSession`
+  (above). Once both move/delete, the whole module becomes a
+  deletion candidate, not just `timer::Countdown`.
+- Re-audit after Tier 3 smoke-bin cleanup + the BreathSession
+  deletion above.
+
+### `breath::BreathPattern::{four_seven_eight, from_durations, last_phase}` + `Phase::index` are dead
+- Only tested, no callers. Delete or downgrade to `pub(crate)`.
+
+### `bells::build_active_bells` should be `pub(crate)`
+- `meditate-core/src/bells.rs:518` — only called by
+  `bells::session_bells_from_db`. No shell callers.
+
+### `mark_event_synced` (singular) has zero callers
+- `meditate-core/src/db.rs:978`. Plural `mark_events_synced` is
+  the live API. Delete the singular form.
+
+## Tier 2 — Third-pass additions
+
+### `preset_config::snapshot` (~96 lines) + `apply` (~184 lines)
+- `preset_config.rs:267-362` (`snapshot`): three closure readers
+  + four payload-builder blocks (label, starting/end/interval
+  bells, box-breath phases, settings). The Tier 1 `read_*_from_db`
+  consolidation already removes ~12 lines via the closure dedup;
+  per-section block extraction (`snapshot_starting_bell(db)`,
+  `snapshot_interval_bells(db)`) shrinks the body further.
+- `preset_config.rs:378-562` (`apply`, ~184 lines) mixes three
+  concerns: UUID validation (383-442), settings writes (444-492),
+  phase rows + bell library replay (494-559). Split into
+  `validate_referenced_uuids() -> Result<(), ApplyError>`,
+  `write_settings(...)`, `replay_interval_bell_library(...)`,
+  `write_box_breath_phases(...)`.
+
+### `emit_event` takes no `&Transaction` reference
+- `db.rs:1053-1066`. Implicitly relies on every caller having
+  opened `unchecked_transaction` first. Currently honored across
+  ~20 call sites by inspection; nothing prevents a future caller
+  from skipping it.
+- Fix: take `&Transaction` (or document the precondition in the
+  doc-comment with an audit-trail rule).
+
+### `WebDavError::MalformedResponse` doesn't capture the raw body
+- `webdav.rs:54` + `:304` — variant carries only the parser's
+  error string. A hand-debug of a broken Nextcloud response
+  needs the raw body.
+- Fix: extend to `MalformedResponse { detail: String,
+  body_excerpt: String }`.
+
+### Sync orchestrator-test `Sync::new` boilerplate
+- ~60 sites in `orchestrator.rs::tests` repeat
+  `Sync::new(&db, &fs, "Meditate", PathBuf::new())`. Crate-private
+  API (`pending_events`, `replay_events`) prevents moving to
+  cargo's `tests/common/`, but an in-`mod tests` helper works.
+- Fix: `fn sync<'a>(db: &'a Database, fs: &'a FakeWebDav) ->
+  Sync<'a>` inside the existing test mod. ~120 lines saved.
+
+### `preset_config.rs` `Vec::contains(&String)` allocation per iter
+- `preset_config.rs:400-405` and `:431-435` — `missing_sounds.
+  contains(&u.to_string())` builds a fresh `String` per
+  iteration. Cold path, small N — not a perf bug, but a clippy-
+  friendly cleanup.
+- Fix: `missing_sounds.iter().any(|m| m == *u)` or a `HashSet`
+  pre-built.
+
+## Tier 3 — Third-pass additions
+
+### `Database::open` PRAGMA-ordering is load-bearing but undocumented
+- `db.rs:718-720` does `PRAGMA foreign_keys=ON` BEFORE
+  `execute_batch(SCHEMA)`. This is load-bearing: FK enforcement
+  is per-connection — `PRAGMA` set AFTER the schema parse
+  doesn't retroactively enforce existing rows.
+- Add a one-line comment so a future refactor doesn't reorder it.
+
+### `breath.rs` mixes method-on-enum vs free-fn for the same `Phase`
+- `Phase::index()` is a method (24), but
+  `phase_running_label_key(Phase)` (46) is a free fn. Both do a
+  4-arm match on `Phase`.
+- Pick one (method-on-Phase is the more idiomatic choice).
+
+### `breath.rs` constants use three prefix conventions in one module
+- `PHASE_MAX_SECS` (no prefix), `MIN_CYCLE_SECS` (`MIN_` prefix),
+  `SESSION_MIN_SECS` / `SESSION_MAX_SECS` (`SESSION_` prefix).
+- Standardise to suffix-ordering matching siblings:
+  `CYCLE_MIN_SECS`, `PHASE_MAX_SECS`, `SESSION_MIN_SECS`,
+  `SESSION_MAX_SECS`.
+
+### Doc-comment gaps on named `pub` items
+- ~12 items lack `///` despite well-documented surrounding types:
+  - `bells::end_bell_row_state`, `bell_row_switch_state`,
+    `interval_bells_count`.
+  - `preset_config::PresetConfig::{to_json, from_json}`,
+    `StarVisualState::from_is_starred`.
+  - `vibration::PreviewToggle::{new, active_id, is_playing}`.
+  - `breath::Phase::index`, `BreathPattern::{from_durations,
+    duration_for}`, `BreathSession::*` (if not deleted).
+  - `labels::delete_impact_key`.
+- Mechanical add-docs sweep.
+
+### `seeds.rs:16` cites closed `B.4.4 migration site` phase-marker
+- Last stale phase-marker in the smaller modules. Replace
+  "(B.4.4 migration site, etc.)" with "(the legacy-key
+  compatibility layer)".
+
+### `preset_config.rs:400-405, 430-435` — covered above in Tier 2.
+
+### `Sync::new` test boilerplate — covered above in Tier 2.
+
+## Tier 4 — Third-pass additions
+
+### `TIMER_DEFAULT_SECS: u64` vs `BREATHING_DEFAULT_SECS: u32`
+- `session.rs:96/101`. Pick one width or document why each
+  module picks its own.
+
+### `UiState::Default` derive is dead
+- `session.rs:34` — `#[derive(Default)] enum UiState { #[default]
+  Idle, ... }`. `UiState::default()` is never called in the
+  workspace.
+- Drop the derive (or document the intended use).
+
+### Document the seconds-numeric-type convention at the crate root
+- `u32` everywhere a single session duration is involved;
+  `i64` for DB-aggregated totals (chrono uses `i64`); `u64`
+  where `Duration::as_secs()` feeds the value.
+- Defensible split, but worth a one-line `lib.rs` comment so a
+  future contributor doesn't pick yet another width.
+
+### Dep bumps when next touching the dep tree
+- `ureq 2.12` → `3.x` (current is 3.x, released late 2024).
+- `rusqlite 0.32` → `0.36+`. Each is a breaking API bump in
+  rusqlite's versioning.
+- No security advisory; no urgency. Worth bumping next time
+  the dep tree is touched.
+
+## Test-fixture sprawl — scope expansion
+
+The existing Tier 3 `db/tests_common.rs` proposal extends beyond
+`db.rs`:
+- `bells::tests` has 5 fixture constructors (`interval_row`,
+  `cue`, `row`, `fixed_bell`, `interval_bell`).
+- `preset_config::tests::cfg_with_known_uuids` repeats the
+  same row constructions.
+- `data_io::tests::fresh_db`, `preset_config::tests::fresh_db`,
+  `goal::tests`, `settings_keys::tests` all open
+  `Database::open_in_memory().unwrap()` per test.
+- `vibration::tests::pattern`, `sound::tests::sound`,
+  `labels::tests::label` are one-liner row constructors that
+  could share a fixture trait.
+
+Expand scope: crate-wide `tests_common` module (feature-gated
+`#[cfg(test)]`) with `db()`, `interval_bell_row()`,
+`vibration_pattern()`, `bell_sound()`, `label()`, `ts(start_iso,
+dur)`, `make_event(...)` helpers. Importable from every test
+module.
+
 ## Skipped (intentionally not migrating)
 
 (Empty for now — fill in as items get rejected.)
