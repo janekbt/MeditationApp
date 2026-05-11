@@ -180,10 +180,14 @@ impl<'a, W: WebDav> Sync<'a, W> {
         let known_events = self.db.known_event_uuids()?;
         let mut new_events: Vec<Event> = Vec::new();
         let mut newly_ingested_files: Vec<String> = Vec::new();
+        let mut skipped_unparseable: Vec<String> = Vec::new();
         for name in &listing {
             let Some(batch_uuid) = parse_batch_uuid_from_filename(name) else {
-                // Unrecognised filename — skip silently so a stray
-                // file in the dir doesn't block sync.
+                // Unrecognised filename — skip so a stray file in
+                // the dir doesn't block sync; record the name for a
+                // post-loop diag line so the user can investigate
+                // when missing-data complaints arise.
+                skipped_unparseable.push(name.clone());
                 continue;
             };
             if known_files.contains(&batch_uuid) { continue; }
@@ -197,6 +201,13 @@ impl<'a, W: WebDav> Sync<'a, W> {
                 }
             }
             newly_ingested_files.push(batch_uuid);
+        }
+        if !skipped_unparseable.is_empty() {
+            crate::diag::log(&format!(
+                "sync_pull: skipped {} unparseable filename(s): {}",
+                skipped_unparseable.len(),
+                skipped_unparseable.join(", "),
+            ));
         }
 
         let count = new_events.len();
@@ -212,8 +223,13 @@ impl<'a, W: WebDav> Sync<'a, W> {
 
         // After event replay, fetch any custom bell-sound audio
         // files referenced by newly-known bell_sounds rows.
-        self.pull_custom_sound_files()?;
+        let sounds_pulled = self.pull_custom_sound_files()?;
 
+        if count > 0 || sounds_pulled > 0 {
+            crate::diag::log(&format!(
+                "sync_pull_ok: events={count} sounds={sounds_pulled}"
+            ));
+        }
         Ok(PullStats { new_events: count })
     }
 
@@ -287,8 +303,13 @@ impl<'a, W: WebDav> Sync<'a, W> {
         // Failures here surface as a sync error so the user sees a
         // retry prompt; on success each file is recorded immediately
         // in known_remote_sounds.
-        self.push_custom_sound_files()?;
+        let sounds_pushed = self.push_custom_sound_files()?;
 
+        if pushed > 0 || sounds_pushed > 0 {
+            crate::diag::log(&format!(
+                "sync_push_ok: events={pushed} sounds={sounds_pushed}"
+            ));
+        }
         Ok(PushStats { pushed })
     }
 
@@ -483,8 +504,16 @@ fn put_with_rate_limit_retry<W: WebDav>(
             Err(WebDavError::RateLimited { retry_after }) => {
                 attempts = attempts.saturating_add(1);
                 if attempts >= MAX_429_RETRIES {
+                    crate::diag::log(&format!(
+                        "sync_rate_limit_exhausted: gave up on {path} after \
+                         {attempts} 429 retries (retry_after={retry_after:?})"
+                    ));
                     return Err(WebDavError::RateLimited { retry_after });
                 }
+                crate::diag::log(&format!(
+                    "sync_rate_limit_retry: {path} attempt={attempts} \
+                     retry_after={retry_after:?}"
+                ));
                 backoff.note_429(retry_after);
                 continue;
             }
@@ -511,6 +540,10 @@ fn put_atomic_with_rate_limit_retry<W: WebDav>(
     match webdav.move_to(&tmp_path, path) {
         Ok(()) => Ok(()),
         Err(e) => {
+            crate::diag::log(&format!(
+                "sync_atomic_put: MOVE failed after successful PUT \
+                 ({tmp_path} → {path}): {e}"
+            ));
             let _ = webdav.delete(&tmp_path);
             Err(e)
         }
