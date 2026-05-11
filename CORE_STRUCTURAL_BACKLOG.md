@@ -1732,6 +1732,410 @@ avoid silently losing items in a rewrite.
 - Fix: one line in README listing the path on Flatpak and
   non-Flatpak.
 
+## Tier 0 — Eighth-pass additions
+
+### Sync hard-stalls forever on concurrent label-name pick
+- `meditate-core/src/db.rs:471` — `labels.name COLLATE NOCASE
+  UNIQUE` (also `vibration_patterns:545`, `presets:564`,
+  `guided_files:584`). `recompute_label` upserts on `uuid`
+  but a peer-authored row with a DIFFERENT uuid + SAME name
+  fails `UNIQUE`-on-name.
+- Failure surfaces as `DbError::Sqlite` inside
+  `apply_event_inner`, aborts the `replay_events`
+  transaction (`db.rs:1169-1180`), propagates `SyncError::Db`
+  out of `pull()`. The poison file stays on the server; on
+  next pull it's re-fetched (the file wasn't recorded in
+  `known_remote_files` — `orchestrator.rs:206-211` records
+  ONLY after successful replay) and re-fails. Sync is
+  hard-stuck on the first concurrent label-name pick.
+- Two peers both naming a label "Morning" while offline is
+  a routine user action. No backoff / quarantine / skip-
+  poison path.
+- Fix: drop UNIQUE-on-name in the cache and resolve name
+  collisions by `(lamport, device_id)` rename suffix; or
+  quarantine individual failing events with an audit row and
+  keep replay moving.
+
+### Out-of-order `session_insert` → `label_insert` permanently orphans the session
+- `meditate-core/src/db.rs:1218-1228` `recompute_session`
+  resolves `label_uuid → label_id` via point-in-time SELECT.
+  If the label row doesn't exist yet, `label_id` is `None`.
+- When `label_insert` later arrives, `recompute_label`
+  recomputes ONLY the labels row — it does NOT recompute
+  sessions that referenced this uuid. Within one
+  `replay_events` batch the lamport-sort masks this, but
+  across batches — or if `label_insert` ships in a future-
+  format file whose name doesn't match
+  `parse_batch_uuid_from_filename` (`orchestrator.rs:184-188`
+  "skip silently") — the session is orphaned forever.
+- Fix: when `recompute_label` materializes a row, ALSO
+  re-link sessions whose payload references this uuid; or
+  denormalize `label_uuid` on the `sessions` table and
+  resolve lazily.
+
+### Unknown event-kind never re-applied after upgrade
+- `meditate-core/src/db.rs:1151-1155` records the event row
+  but skips the dispatch. Test
+  `apply_event_with_unknown_kind_is_a_silent_record_only`
+  (`db.rs:8886-8901`) confirms the row enters `events`.
+- The pass-7 backlog already flags the silent drop; this
+  reveals the **upgrade path is also broken**. No
+  `cache_schema_version`, no schema-version on the wire
+  envelope, no migration scaffolding (`grep -rn schema_version`
+  zero hits in core). A future build that DOES understand
+  kind 42 has no trigger to re-run `apply_event_inner` over
+  historical rows. The remote-file containing the kind-42
+  events is already in `known_remote_files`, so it's
+  skipped on next pull. **Events silently lost in the
+  materialized cache forever.**
+- Fix: bump a `cache_schema_version` setting; on mismatch,
+  walk `events` and re-`apply_event_inner` every row.
+
+### Completed session silently vanishes on `create_session` error
+- `src/timer/imp.rs:2394` — `let Some(Ok(session)) = ...
+  else { return; }`. On `with_db_blocking_mut(|db|
+  db.create_session(&data))` returning `None` (DB never
+  opened) OR `Some(Err(...))` (SQLITE_FULL / SQLITE_IOERR /
+  SQLITE_CORRUPT), the closure silently `return`s. No toast,
+  no diag log, no retry queue, no on-disk dead-letter.
+- A 60-min session vanishes from the timer with no UI
+  signal. **Single worst silent-loss path in the app.**
+- Fix: route the `Err` arm into `diag::log` + a toast routed
+  through the active window, AND persist the row JSON to a
+  sidecar `failed_sessions.jsonl` for next-launch retry.
+  One-line fix for the toast + log alone; full retry queue
+  is a follow-up.
+
+### DB open failure → headless inert app, no recovery path
+- `src/application.rs:106-110`. `Database::open` failure
+  prints to stderr (invisible on phosh / flatpak), writes
+  one diag line, leaves `*db = None`. Every `with_db*` then
+  returns `None`. User sees an app that loads, presents
+  Setup with no presets/labels, "save" silently fails. No
+  recovery path.
+- Fix: when `Database::open` returns `Err`, present a
+  blocking `adw::AlertDialog` on `startup`/`activate` with
+  "Open recovery folder / Quit" buttons. Hook into
+  `recovery_dialog.rs` flow.
+
+### WebDAV PUT writes directly to final path — partial body poisons entire pull pipeline
+- `meditate-core/src/sync/webdav.rs:197-214`. ureq's
+  `send_bytes` streams to the wire; a TCP RST mid-body
+  leaves Nextcloud with a half-batch JSON at the canonical
+  name.
+- Next pull hits `serde_json::from_slice` →
+  `SyncError::InvalidEvent(format!("{name}: {e}"))` and
+  aborts the entire pull, blocking all subsequent batches
+  until user manually deletes the corrupt file from
+  Nextcloud. Re-push of the same `batch_uuid` is blocked by
+  per-file-uuid known-set logic.
+- Fix: PUT to `<batch_uuid>.json.tmp`, then MOVE (WebDAV)
+  to `<batch_uuid>.json`. Or: tolerate `from_slice` failure
+  in pull by skipping that file + logging.
+
+## Tier 1 — Eighth-pass additions
+
+### Stringly-typed UUIDs across 7 entity types — root cause of Tier-0 path traversal
+- `meditate-core/src/db.rs:43, 114, 180, 327, 347, 399` +
+  `Event.target_id:429`. `session_uuid`, `label_uuid`,
+  `preset_uuid`, `bell_sound_uuid`, `interval_bell_uuid`,
+  `vibration_pattern_uuid`, `guided_file_uuid`, `event_uuid`,
+  `device_id`, `batch_uuid` — all `String`.
+- Sync::push passes `target_id` (event-level uuid) to
+  `record_known_remote_file` (file uuid); different
+  domains, compiles silently. The Tier-0 path-traversal bug
+  (`recompute_bell_sound` accepts `target_id =
+  "../../../etc"`) is **directly enabled** by this — with
+  `BellSoundUuid::try_new(&str) -> Result<...>` at the
+  parse boundary, validation lives in the type, not in
+  scattered call sites.
+- Fix: single newtype-macro file `meditate-core/src/ids.rs`
+  with `define_uuid!(SessionId); define_uuid!(LabelId);
+  ...`. `String` storage, `Display + Deref<Target=str>`,
+  `try_new` validates v4-shape. Mechanical rollout.
+
+### 12 sites of `bool` parameters in public APIs
+- `bells::end_bell_cue_from_db(db, stopwatch_on: bool)`,
+  `bells::interval_bells_count(db, stopwatch_on)`,
+  `bells::end_bell_row_state(db, stopwatch_on)`,
+  `bells::is_bell_inert_in_stopwatch(kind, stopwatch_on)`,
+  `format::idle_hero_label(stopwatch_on, target_secs)`,
+  `format::prep_target_duration(prep_active, prep_secs)`,
+  `bells::clamp_signal_mode_for_haptic(mode,
+  haptic_available)`, `bells::channel_allowed(per_bell,
+  per_mode)` returns `(bool, bool)`,
+  `db::set_interval_bell_enabled(uuid, enabled)`,
+  `db::update_preset_starred(uuid, is_starred)`,
+  `db::set_guided_file_starred(uuid, is_starred)`,
+  `db::is_label_name_taken(name, except_id)`.
+- Call sites read `foo(true)` with no clue what the flag
+  means.
+- Fix: `enum DisplayMode { Countdown, Stopwatch }`,
+  `enum HapticAvailability { Available, Absent }`, `enum
+  StarredState { Starred, Unstarred }`. The `(bool, bool)`
+  return from `channel_allowed` wants `Channels { sound:
+  bool, vib: bool }`.
+
+### `SessionSettings.target_secs: Option<u32>` collapses 3 distinct domain concepts
+- `None` means "stopwatch session, no end" (Timer),
+  "stopwatch box-breath" (BoxBreath), or "shouldn't
+  happen" (Guided always has it). Three `.expect("Overtime
+  requires a target")` panics at `session.rs:535, 684` are
+  the symptom. The phase-payload-hoist already in backlog
+  is the same root cause surfacing in `Session`; this is
+  the same in `SessionSettings`.
+- Fix: collapse `SessionSettings.mode + .target_secs +
+  .breath_pattern + .stopwatch_display` into one
+  `SessionShape` sum type: `Timer { target: SessionLength
+  }, BoxBreath { pattern, target }, Guided { duration_secs
+  }`. Eliminates four `.expect()`s and three "ignored
+  otherwise" doc comments.
+
+### Free-fn vs method inconsistency on the same enum
+- `breath::Phase::index()` is a method (`breath.rs:24`);
+  `breath::phase_running_label_key(Phase)` is a free fn
+  (`:46`); `breath::perimeter_point(Phase, t, pad, side)`
+  is free (`:62`). All three do a 4-arm match on `Phase`.
+- Also: `session::Session::toggle_action(ui_state)` is
+  associated fn but `session::ui_state(Option<&Session>)`
+  is free — symmetric API, asymmetric placement.
+- Also: `bells::ActiveBell` has methods AND a free
+  `bells::session_bells_from_db` builder.
+- Fix: pick "method-on-enum/struct when the receiver type
+  is the primary subject; free fn otherwise" and audit.
+  `Phase::running_label_key()`, `Phase::perimeter_point(t,
+  pad, side)`, `BellCue::resolve_sound_name(library)`.
+
+### `Audio device disappears mid-playback` — no error wiring
+- `src/sound.rs`. `gtk::MediaFile::for_file(...)` returned
+  objects never have `connect_error` or `notify::error`
+  hooked. Headphones unplug mid-session = bell silently
+  doesn't ring; next bell creates new MediaFiles with the
+  same dead pipeline. Session can't tell the user "bells
+  are no longer playing".
+- Fix: `media.connect_error(|_, _| diag::log(...))` plus a
+  one-shot toast.
+
+### Symlink follow on import destination — flatpak data-dir escape
+- `src/sounds.rs:622` (`fs::copy`) + `src/guided.rs:388`.
+  `std::fs::copy` follows symlinks on the source AND
+  clobbers the destination. If attacker pre-plants
+  `sounds_dir/<predictable-uuid>.ogg` as a symlink to
+  `~/.bashrc`, `fs::copy` follows the symlink and
+  overwrites `~/.bashrc` with audio bytes. UUIDs are fresh
+  v4 here so prediction is hard, but flatpak's
+  `--filesystem=home` makes the writable-symlink scenario
+  realistic on shared user data dirs.
+- Fix: `OpenOptions::new().write(true).create_new(true).
+  custom_flags(libc::O_NOFOLLOW).open(dest)`.
+
+### Battery-death / OOM mid-session = whole session lost
+- Session is only persisted on `on_complete`
+  (`timer/imp.rs:2380`). No "tick the duration into a
+  session-in-progress table" hook. A 50-min user session
+  interrupted at minute 49 by OS-kill has zero persisted
+  state.
+- Fix: write a `session_in_progress` settings row every
+  ~60s with running duration; on startup if it's set,
+  surface a "Resume / Save / Discard" dialog.
+
+### `wipe_local_event_log` preserves `lamport_clock`
+- `db.rs:1013-1024` + test at `db.rs:7619-7637`. After
+  wipe + re-pull-empty, local clock is e.g. 100 from prior
+  authoring. Next emit writes lamport 101 — but no event at
+  lamport 1..100 exists anywhere. Lamport-causal ordering
+  says "this happened after observing N prior events" but
+  those events are gone. Convergence still holds (peers'
+  `observe_remote_lamport` advances them past 101), but
+  the post-wipe device authors events with artificially
+  inflated lamports, compounding the drift growth in the
+  backlog.
+- Fix: reset `lamport_clock` to 0 inside
+  `wipe_local_event_log`; next pull observes the remote
+  max and advances correctly.
+
+### No conditional PUT — concurrent push from two peers silently clobbers
+- `orchestrator.rs:91-94` trait `put()` is unconditional;
+  `HttpWebDav::put` (`webdav.rs:197-214`) emits no
+  `If-None-Match` / `If-Match`.
+- Bulk batch files use freshly-minted v4 uuids in the
+  filename, so two concurrent pushes land on different
+  files (safe). **But** the sounds path (`<base>/sounds/
+  <uuid>.<ext>`) IS deterministic on the bell uuid; two
+  peers re-uploading the same custom bell concurrently —
+  the second wins blindly. Low probability; consequence is
+  a corrupted audio file if the two PUTs race at TCP-byte
+  level on a non-atomic server.
+- Fix: add `If-None-Match: *` on sound PUTs.
+
+## Tier 2 — Eighth-pass additions
+
+### `DbError` over-broad on read-only fns
+- `Result<i64, DbError>` where `DbError::DuplicatePreset`
+  etc. are unreachable from `list_labels`, `get_streak`,
+  `find_label_by_name`. Shell-side match-arms either
+  swallow them or write unreachable code. Tier-2 backlog
+  item `map_core_err` re-fabricates fake sqlite errors
+  because of this width — type-narrowing fixes both.
+- Fix: `enum ReadError { Sqlite, Decode }` for readers,
+  keep wide `DbError` for writers.
+
+### 5 more public functions with 5-8 args (sibling to existing Tier-2)
+- `db::insert_interval_bell(kind, minutes, jitter_pct,
+  sound, vibration_pattern_uuid, signal_mode)` 6 args,
+  `db::insert_bell_sound_with_uuid(uuid_str, name,
+  file_path, is_bundled, mime_type, category)` 6 args,
+  `db::insert_vibration_pattern_with_uuid(uuid_str, name,
+  duration_ms, intensities, chart_kind, is_bundled)` 6
+  args, `db::update_vibration_pattern(uuid_str, name,
+  duration_ms, intensities, chart_kind)` 5 args,
+  `db::set_box_breath_phase(phase, enabled, signal_mode,
+  sound_uuid, pattern_uuid)` 5 args.
+- Same fix as the existing 8-arg item: take
+  `&IntervalBell`, `&BellSound`, `&VibrationPattern`,
+  `&BoxBreathPhase`.
+
+### `PartialEq` includes `updated_iso` on entities
+- `VibrationPattern.updated_iso`,
+  `GuidedFile.updated_iso`, `Preset.updated_iso` — every
+  `derive(PartialEq)` includes the timestamp. Tests like
+  `assert_eq!(get_pattern(), expected_pattern)` pass today
+  only because seeds use a known value. After the pending
+  `to_event_payload` lands, the asymmetry between local-
+  write and replay-write `updated_iso` becomes a silent
+  test failure.
+- Fix: manual `PartialEq` excluding `updated_iso`, OR a
+  `same_logical_row(&self, other)` helper used in tests,
+  OR document equality is timestamp-sensitive.
+
+### Truncated GET body treated as fatal pull failure
+- `webdav.rs:181-184` `read_to_end` returns whatever
+  arrived; no Content-Length verification. A truncated
+  transfer produces partial JSON that `serde_json::
+  from_slice` rejects → `SyncError::InvalidEvent`. Same
+  stuck-on-first-failure dynamic as the name-UNIQUE
+  Tier-0 (file not recorded in `known_remote_files`,
+  retried forever, fails forever).
+- Fix: distinguish transient parse failure from
+  structurally-invalid file; retry-with-backoff on the
+  former.
+
+### Two app instances racing — stats invalidation per-process
+- `gtk::Application` is primary-instance on phosh, but on
+  desktop two windows can open same DB. WAL allows it
+  (per-conn `busy_timeout` already in backlog Tier-1),
+  but `InvalidateScope` is per-process. Window B's writes
+  don't dirty Window A's caches → A shows stale stats
+  until manual nav.
+- Per `feedback_meditate_solo_user_framing` this is
+  doc-only. Add to `ARCHITECTURE.md`: "two simultaneous
+  windows is not supported."
+
+### `parse_batch_uuid_from_filename` accepts anything past `__`
+- `orchestrator.rs:493-498` accepts ANY non-empty string
+  after `__` as a `batch_uuid` and inserts it into
+  `known_remote_files`. A peer naming a file
+  `00000000000001__../../etc/passwd.json` ingests cleanly
+  into the dedup tracker.
+- Not a fs-write primitive (path is only a tracking key),
+  but pollutes the known set with garbage. Pair with the
+  Tier-0 path-traversal in `target_id` for the broader
+  "trust the peer's strings" pattern.
+- Fix: validate the post-`__` segment as a v4 uuid.
+
+### `Lifetime 'a leaks` into pub `Sync` API
+- `sync::orchestrator::Sync<'a, W: WebDav>` — the `'a`
+  ties to `&'a Database` AND `&'a W`. Shell writes the
+  lifetime out at the binding site.
+- Question for the Android port: borrowed-`&` forbids
+  ownership transfer to a worker thread → forces shell to
+  manage Arc itself. Likely deliberate. Document, or
+  switch to `Arc<Database>` + `Arc<W>` and drop the
+  lifetime.
+- `session::FireRoute<'a>` — borrowed `sound_uuid: &'a
+  str` keeps the effect-pump loop short, but the Android
+  shell sending these across a JNI boundary needs an
+  `into_owned()` variant.
+
+### Error context lost — no row/uuid in `DbError::Sqlite`
+- `DbError::Sqlite(rusqlite::Error)` — a failed
+  `update_label(id, name)` produces `DbError::Sqlite
+  (SQLITE_BUSY)` with no record of *which* label id. Same
+  for every update fn.
+- `DataIoError::Io(io::Error)` drops the path.
+  `import_csv(db, path)` failing with `Io(file not found)`
+  doesn't say which file.
+- Fix: `DbError::Sqlite { source: rusqlite::Error,
+  context: &'static str }` (compile-time string keeps the
+  variant `Copy`-ish). `DataIoError::Io { source, path:
+  PathBuf }`.
+
+## Tier 3 — Eighth-pass additions
+
+### `device_id` collision undetected
+- `db.rs:774` `Uuid::new_v4()`; no schema constraint on
+  `events(lamport_ts, device_id)`. Astronomically unlikely.
+- If it happened, `recompute_*` tiebreak `ORDER BY
+  lamport_ts DESC, device_id DESC LIMIT 1` (`db.rs:1201`)
+  picks non-deterministically — already in backlog as
+  "weaker than replay_events tiebreaker."
+
+### Naming-convention drift in stats family
+- `total_minutes_by_label` vs `count_sessions_by_label`
+  vs `month_total_secs` vs `hour_buckets` — same shape,
+  four naming conventions.
+- Fix: lock the rule once `stats/` split lands. Rule:
+  `find_X_by_Y` returns `Option<Row>`; `list_X` returns
+  `Vec<Row>`; `count_X` returns `i64`; `total_X_secs`
+  returns aggregates; `is_X_<predicate>` returns `bool`.
+
+### `list_*` ordering invariants undocumented
+- `list_labels()` doc says "alphabetical" — good.
+- `list_interval_bells()` reads `ORDER BY id` (insertion
+  order) — undocumented at `db.rs:2145`. Users would
+  expect kind-then-minutes ordering?
+- `list_bell_sounds()` — `ORDER BY name COLLATE NOCASE`,
+  undocumented.
+- `list_presets_for_mode` / `list_starred_presets_for_mode`
+  — doc says "ordered" but not by what.
+- Fix: every `list_*` should have a one-line `/// Ordered
+  by X.`
+
+### Bundled-asset rollback breaks rows pointing at gresource
+- A future release removing a bundled sound: row stays in
+  DB (`BELLS_SEEDED_KEY` gates re-seed), `file_path`
+  still points at missing gresource, `gtk::MediaFile::
+  for_resource` silently fails.
+- Per `feedback_meditate_no_compat`: future rollback
+  should ship a `bell_sound_delete` event in the next
+  migration, not silently break the row. Doc-only.
+
+### Timezone change mid-session — stored start_iso vs displayed clock
+- `time.rs` flagged for DST round-trip; the active-session
+  piece is separate. `Session.start_iso` computed at
+  session-start, `duration_secs` from a boot-time
+  monotonic delta. If the user crosses timezones during
+  the session, stored `start_iso` reflects pre-flight TZ
+  but the user's clock shows post-flight TZ — log entry
+  looks "wrong" by 6 hours. Not data loss; user-confusion
+  only.
+
+### `Default` derive: `BoxBreathCueConfig` undocumented semantics
+- `bells.rs:260` derives `Default` constructing
+  `master_enabled: false, in_phase: None, ...` — coherent
+  ("cues off") but doc-comment doesn't say so.
+- Fix: add `///` confirming the default represents "cues
+  disabled."
+
+### `f64` rng callback in `ActiveBell::tick`
+- `ActiveBell::tick(elapsed_secs: u64, rng: &mut impl
+  FnMut() -> f64)` — `f64` in `[0.0, 1.0]` is the API but
+  nothing in the type says so. A caller's `|| 1.5`
+  compiles.
+- Fix: wrap in `struct Unit(f64)` with private
+  constructor, OR document more loudly. Low priority —
+  RNG callers are all in-crate.
+
 ## Skipped (intentionally not migrating)
 
 (Empty for now — fill in as items get rejected.)
