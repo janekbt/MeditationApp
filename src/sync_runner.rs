@@ -304,6 +304,10 @@ mod tests {
             fn delete(&self, _: &str)
                 -> meditate_core::sync::WebDavResult<()>
             { unreachable!() }
+            fn move_to(&self, _: &str, _: &str)
+                -> meditate_core::sync::WebDavResult<()>
+            { Err(meditate_core::sync::WebDavError::Server {
+                status: 500, body: "boom".into() }) }
         }
         let db = fresh_db_with_session();
         let result = run_with_webdav(&db, &BrokenWebDav);
@@ -341,6 +345,9 @@ mod tests {
             fn delete(&self, _: &str)
                 -> meditate_core::sync::WebDavResult<()>
             { unreachable!() }
+            fn move_to(&self, _: &str, _: &str)
+                -> meditate_core::sync::WebDavResult<()>
+            { Err(meditate_core::sync::WebDavError::Network("offline".into())) }
         }
         let _ = run_with_webdav(&db, &AlwaysFail);
         assert_eq!(
@@ -485,6 +492,8 @@ mod tests {
         fn mkcol(&self, _: &str)
             -> meditate_core::sync::WebDavResult<()> { unreachable!() }
         fn delete(&self, _: &str)
+            -> meditate_core::sync::WebDavResult<()> { unreachable!() }
+        fn move_to(&self, _: &str, _: &str)
             -> meditate_core::sync::WebDavResult<()> { unreachable!() }
     }
     impl AlwaysErrs {

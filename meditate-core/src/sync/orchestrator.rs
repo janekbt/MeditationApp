@@ -263,9 +263,13 @@ impl<'a, W: WebDav> Sync<'a, W> {
             .map_err(|e| SyncError::InvalidEvent(
                 format!("can't serialise batch with {} events: {e}", events.len())))?;
 
-        // Single PUT covers the whole batch. Built-in 429 handling so
-        // a transient rate-limit doesn't surface as a failed sync.
-        put_with_rate_limit_retry(self.webdav, &path, &body)?;
+        // Single atomic PUT covers the whole batch (uploads to .tmp,
+        // MOVEs to canonical name only after the body bytes land). A
+        // TCP RST mid-body therefore can't leave a half-written
+        // batch file that the next pull would treat as a complete-
+        // but-corrupt JSON. Built-in 429 handling so a transient
+        // rate-limit doesn't surface as a failed sync.
+        put_atomic_with_rate_limit_retry(self.webdav, &path, &body)?;
 
         // Atomically: mark every event in the batch synced, AND
         // record the batch_uuid as known so a future pull doesn't
@@ -442,7 +446,10 @@ impl<'a, W: WebDav> Sync<'a, W> {
                 }
             };
             let remote = self.sound_remote_path(&bell.uuid, ext);
-            put_with_rate_limit_retry(self.webdav, &remote, &bytes)?;
+            // Atomic upload: PUT to .tmp + MOVE, so a half-uploaded
+            // audio file can't show up at the canonical name and
+            // crash pull-side gstreamer decoders.
+            put_atomic_with_rate_limit_retry(self.webdav, &remote, &bytes)?;
             self.db.record_known_remote_sound(&bell.uuid)?;
             pushed += 1;
         }
@@ -482,6 +489,30 @@ fn put_with_rate_limit_retry<W: WebDav>(
                 continue;
             }
             Err(other) => return Err(other),
+        }
+    }
+}
+
+/// PUT-then-MOVE pattern: upload to `{path}.tmp` first, MOVE to the
+/// canonical `path` only on PUT success. A TCP RST mid-body leaves
+/// at most a partial `.tmp` file behind, never a half-written file at
+/// the canonical name — so pull-side `serde_json::from_slice` and
+/// audio decoders never see a corrupt payload masquerading as a
+/// complete one. Best-effort cleanup of the stale `.tmp` on MOVE
+/// failure; on PUT failure the partial `.tmp` is left in place for
+/// the next push to overwrite.
+fn put_atomic_with_rate_limit_retry<W: WebDav>(
+    webdav: &W,
+    path: &str,
+    body: &[u8],
+) -> Result<(), WebDavError> {
+    let tmp_path = format!("{path}.tmp");
+    put_with_rate_limit_retry(webdav, &tmp_path, body)?;
+    match webdav.move_to(&tmp_path, path) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let _ = webdav.delete(&tmp_path);
+            Err(e)
         }
     }
 }
@@ -575,6 +606,27 @@ mod tests {
         assert!(
             fs.list_collection("/Meditate/events/").unwrap().is_empty(),
             "no event files created on empty pending",
+        );
+    }
+
+    #[test]
+    fn push_leaves_no_tmp_file_behind_after_a_successful_batch() {
+        // Atomic-PUT contract: a successful push uploads to .tmp then
+        // MOVEs to the canonical name. Post-push, only canonical
+        // names must remain — a lingering .tmp would (a) inflate the
+        // collection listing and (b) re-appear in the next pull's
+        // dedup tracker as garbage.
+        let (db, fs) = setup();
+        insert_session(&db, "x", 100);
+        Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new()).push().unwrap();
+        let paths = fs.paths();
+        assert!(
+            paths.iter().all(|p| !p.ends_with(".tmp")),
+            "no .tmp stragglers; got paths={paths:?}"
+        );
+        assert!(
+            paths.iter().any(|p| p.ends_with(".json")),
+            "canonical .json batch must land; got paths={paths:?}"
         );
     }
 
@@ -740,6 +792,9 @@ mod tests {
             }
             fn delete(&self, p: &str) -> WebDavResult<()> {
                 self.inner.delete(p)
+            }
+            fn move_to(&self, from: &str, to: &str) -> WebDavResult<()> {
+                self.inner.move_to(from, to)
             }
         }
 
@@ -1194,6 +1249,9 @@ mod tests {
             }
             fn mkcol(&self, p: &str) -> WebDavResult<()> { self.0.mkcol(p) }
             fn delete(&self, p: &str) -> WebDavResult<()> { self.0.delete(p) }
+            fn move_to(&self, from: &str, to: &str) -> WebDavResult<()> {
+                self.0.move_to(from, to)
+            }
         }
         let (db, _) = setup();
         for i in 0..5 { insert_session(&db, &format!("e-{i}"), 100); }
@@ -1237,6 +1295,9 @@ mod tests {
             }
             fn mkcol(&self, p: &str) -> WebDavResult<()> { self.inner.mkcol(p) }
             fn delete(&self, p: &str) -> WebDavResult<()> { self.inner.delete(p) }
+            fn move_to(&self, from: &str, to: &str) -> WebDavResult<()> {
+                self.inner.move_to(from, to)
+            }
         }
 
         let (db, fs) = setup();
@@ -1266,6 +1327,9 @@ mod tests {
             }
             fn mkcol(&self, p: &str) -> WebDavResult<()> { self.0.mkcol(p) }
             fn delete(&self, p: &str) -> WebDavResult<()> { self.0.delete(p) }
+            fn move_to(&self, from: &str, to: &str) -> WebDavResult<()> {
+                self.0.move_to(from, to)
+            }
         }
         let (db, _) = setup();
         insert_session(&db, "x", 100);

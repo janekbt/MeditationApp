@@ -89,6 +89,15 @@ impl WebDav for FakeWebDav {
             Err(WebDavError::NotFound)
         }
     }
+
+    fn move_to(&self, from: &str, to: &str) -> WebDavResult<()> {
+        let from_key = norm(from);
+        let to_key = norm(to);
+        let mut files = self.files.lock().unwrap();
+        let body = files.remove(&from_key).ok_or(WebDavError::NotFound)?;
+        files.insert(to_key, body);
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -159,6 +168,33 @@ mod tests {
     fn delete_missing_returns_not_found() {
         let fs = FakeWebDav::new();
         assert!(matches!(fs.delete("/x.json").unwrap_err(), WebDavError::NotFound));
+    }
+
+    #[test]
+    fn move_to_renames_file_atomically() {
+        let fs = FakeWebDav::new();
+        fs.put("/a.tmp", b"payload").unwrap();
+        fs.move_to("/a.tmp", "/a.json").unwrap();
+        assert!(matches!(fs.get("/a.tmp").unwrap_err(), WebDavError::NotFound));
+        assert_eq!(fs.get("/a.json").unwrap(), b"payload");
+    }
+
+    #[test]
+    fn move_to_missing_source_returns_not_found() {
+        let fs = FakeWebDav::new();
+        assert!(matches!(
+            fs.move_to("/nope", "/anywhere").unwrap_err(),
+            WebDavError::NotFound,
+        ));
+    }
+
+    #[test]
+    fn move_to_overwrites_existing_target() {
+        let fs = FakeWebDav::new();
+        fs.put("/a.tmp", b"new").unwrap();
+        fs.put("/a.json", b"old").unwrap();
+        fs.move_to("/a.tmp", "/a.json").unwrap();
+        assert_eq!(fs.get("/a.json").unwrap(), b"new");
     }
 
     #[test]

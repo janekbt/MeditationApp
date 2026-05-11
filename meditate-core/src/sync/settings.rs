@@ -643,6 +643,7 @@ mod tests {
         fn put(&self, _: &str, _: &[u8]) -> WebDavResult<()> { unreachable!() }
         fn mkcol(&self, _: &str) -> WebDavResult<()> { unreachable!() }
         fn delete(&self, _: &str) -> WebDavResult<()> { unreachable!() }
+        fn move_to(&self, _: &str, _: &str) -> WebDavResult<()> { unreachable!() }
     }
 
     #[test]

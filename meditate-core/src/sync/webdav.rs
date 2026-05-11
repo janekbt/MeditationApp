@@ -99,6 +99,16 @@ pub trait WebDav {
 
     /// Delete a file or empty collection.
     fn delete(&self, path: &str) -> WebDavResult<()>;
+
+    /// Atomically rename a remote resource via the WebDAV MOVE verb.
+    /// `from` and `to` are server-relative paths (same shape as the
+    /// other verbs). On success the resource at `to` reflects the
+    /// bytes that were at `from` and `from` no longer exists.
+    /// Used to commit a `.tmp` upload to its canonical name only
+    /// after the body bytes are durable on the server, so a
+    /// partial-PUT crash never leaves a half-written file at the
+    /// canonical path.
+    fn move_to(&self, from: &str, to: &str) -> WebDavResult<()>;
 }
 
 /// Production WebDAV client. Holds the base URL of the user's WebDAV
@@ -219,6 +229,28 @@ impl WebDav for HttpWebDav {
         match self.agent
             .request("MKCOL", &self.url(path))
             .set("Authorization", &self.auth_header)
+            .call()
+        {
+            Ok(resp) => { drain_response_body(resp); Ok(()) }
+            Err(ureq::Error::Status(status, resp)) => {
+                if status == 429 { return Err(Self::extract_rate_limit(&resp)); }
+                let body = resp.into_string().unwrap_or_default();
+                Err(Self::map_status_error(status, body))
+            }
+            Err(ureq::Error::Transport(t)) => Err(WebDavError::Network(t.to_string())),
+        }
+    }
+
+    fn move_to(&self, from: &str, to: &str) -> WebDavResult<()> {
+        // Per RFC 4918, MOVE carries the target in the `Destination`
+        // header as an absolute URL. `Overwrite: F` would make the
+        // verb refuse to clobber an existing target — we omit it
+        // because the caller (atomic-PUT helper) treats overwriting
+        // as the success case.
+        match self.agent
+            .request("MOVE", &self.url(from))
+            .set("Authorization", &self.auth_header)
+            .set("Destination", &self.url(to))
             .call()
         {
             Ok(resp) => { drain_response_body(resp); Ok(()) }
