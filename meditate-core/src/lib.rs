@@ -7,7 +7,7 @@
 //!
 //! ## Architecture in one paragraph
 //!
-//! State is event-sourced into a single SQLite DB (`db.rs`). Every
+//! State is event-sourced into a single SQLite DB (`db/`). Every
 //! mutation appends a row to `events` carrying a Lamport timestamp
 //! and the authoring device's UUID; `recompute_*` family materialises
 //! the cache tables from the log. The sync layer (`sync/`) bulk-PUTs
