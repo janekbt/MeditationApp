@@ -118,6 +118,16 @@ pub fn format_time(d: Duration) -> String {
     }
 }
 
+/// Minute-precision "HH:MM" render of a session-length seconds value.
+/// Used by the Setup view's hero label and the Duration row's value
+/// suffix where seconds aren't shown (minute-aligned by the spinner).
+/// Hours zero-pad to two digits to keep the label width stable.
+pub fn format_hhmm(secs: u64) -> String {
+    let h = secs / 3600;
+    let m = (secs % 3600) / 60;
+    format!("{h:02}:{m:02}")
+}
+
 /// How much past the planned countdown the user has gone.
 /// `target.saturating_sub(elapsed)` semantics: 0 before they reach the
 /// target, the difference once they've crossed it. Used by the
@@ -470,6 +480,17 @@ mod tests {
     #[test]
     fn format_time_zero_shows_double_zero() {
         assert_eq!(format_time(Duration::ZERO), "00:00");
+    }
+
+    #[test]
+    fn format_hhmm_renders_zero_padded_hours_and_minutes() {
+        assert_eq!(format_hhmm(0), "00:00");
+        assert_eq!(format_hhmm(60), "00:01");
+        assert_eq!(format_hhmm(60 * 60), "01:00");
+        assert_eq!(format_hhmm(60 * 60 + 7 * 60), "01:07");
+        // Seconds are truncated to the minute.
+        assert_eq!(format_hhmm(59), "00:00");
+        assert_eq!(format_hhmm(60 + 59), "00:01");
     }
 
     // ── overtime ──────────────────────────────────────────────────────

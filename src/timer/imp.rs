@@ -396,7 +396,7 @@ impl TimerView {
                     app.with_db_mut(|db| {
                         let _ = db.set_setting(
                             key,
-                            if on { "true" } else { "false" },
+                            meditate_core::settings_keys::format_bool(on),
                         );
                     });
                 }
@@ -420,7 +420,7 @@ impl TimerView {
                     app.with_db_mut(|db| {
                         let _ = db.set_setting(
                             key,
-                            if on { "true" } else { "false" },
+                            meditate_core::settings_keys::format_bool(on),
                         );
                     });
                 }
@@ -646,7 +646,7 @@ impl TimerView {
                     app.with_db_mut(|db| {
                         let _ = db.set_setting(
                             "end_bell_active",
-                            if on { "true" } else { "false" },
+                            meditate_core::settings_keys::format_bool(on),
                         );
                     });
                     // Re-warm the preload so the next play_end_bell()
@@ -785,7 +785,7 @@ impl TimerView {
                     app.with_db_mut(|db| {
                         let _ = db.set_setting(
                             "starting_bell_active",
-                            if on { "true" } else { "false" },
+                            meditate_core::settings_keys::format_bool(on),
                         );
                     });
                 }
@@ -859,7 +859,7 @@ impl TimerView {
                     app.with_db_mut(|db| {
                         let _ = db.set_setting(
                             "preparation_time_active",
-                            if on { "true" } else { "false" },
+                            meditate_core::settings_keys::format_bool(on),
                         );
                     });
                 }
@@ -880,7 +880,7 @@ impl TimerView {
                     app.with_db_mut(|db| {
                         let _ = db.set_setting(
                             "interval_bells_active",
-                            if on { "true" } else { "false" },
+                            meditate_core::settings_keys::format_bool(on),
                         );
                     });
                 }
@@ -1046,16 +1046,11 @@ impl TimerView {
         let saved = app
             .with_db(|db| db.get_setting(setting_key, "both"))
             .and_then(|r| r.ok())
-            .unwrap_or_else(|| "both".to_string());
-        let initial = if !app.has_haptic() {
-            "sound"
-        } else {
-            match saved.as_str() {
-                "sound"     => "sound",
-                "vibration" => "vibration",
-                _           => "both",
-            }
-        };
+            .and_then(|s| crate::db::SignalMode::from_db_str(&s))
+            .unwrap_or(crate::db::SignalMode::Both);
+        let initial = meditate_core::bells::clamp_signal_mode_for_haptic(
+            saved, app.has_haptic(),
+        ).as_db_str();
         // Set populating flag so the active-name notify handler
         // doesn't write the just-loaded value back to the DB.
         self.bells_loading.set(true);
@@ -1072,7 +1067,7 @@ impl TimerView {
         let on = app
             .with_db(|db| db.get_setting(key, "false"))
             .and_then(|r| r.ok())
-            .map(|s| s == "true")
+            .map(|s| meditate_core::settings_keys::parse_bool(&s))
             .unwrap_or(false);
         self.bells_loading.set(true);
         self.keep_screen_awake_row.set_active(on);
@@ -1093,7 +1088,7 @@ impl TimerView {
         let active = app
             .with_db(|db| db.get_setting(key, "false"))
             .and_then(|r| r.ok())
-            .map(|s| s == "true")
+            .map(|s| meditate_core::settings_keys::parse_bool(&s))
             .unwrap_or(false);
         if !active { return; }
         let window = app.active_window();
@@ -1145,7 +1140,7 @@ impl TimerView {
                 if let Some(app) = imp.get_app() {
                     app.with_db_mut(|db| db.set_setting(
                         "boxbreath_cues_active",
-                        if on { "true" } else { "false" },
+                        meditate_core::settings_keys::format_bool(on),
                     ));
                 }
             }
@@ -1346,7 +1341,7 @@ impl TimerView {
         let master_on = app
             .with_db(|db| db.get_setting("boxbreath_cues_active", "false"))
             .and_then(|r| r.ok())
-            .map(|s| s == "true")
+            .map(|s| meditate_core::settings_keys::parse_bool(&s))
             .unwrap_or(false);
         self.boxbreath_master_row.set_enable_expansion(master_on);
         self.boxbreath_master_row.set_expanded(master_on);
@@ -1496,18 +1491,13 @@ pub(crate) fn build_signal_mode_toggle_widget(
     let pattern_revealer = pattern_revealer.clone();
     toggle_group.connect_active_name_notify(move |tg| {
         let Some(name) = tg.active_name() else { return; };
-        let value = match name.as_str() {
-            "vibration" => "vibration",
-            "both"      => "both",
-            _           => "sound",
-        };
+        let mode = crate::db::SignalMode::from_db_str(name.as_str())
+            .unwrap_or(crate::db::SignalMode::Sound);
         if let Some(app) = get_app() {
-            app.with_db_mut(|db| db.set_setting(setting_key, value));
+            app.with_db_mut(|db| db.set_setting(setting_key, mode.as_db_str()));
         }
-        let show_sound = matches!(value, "sound" | "both");
-        let show_pattern = matches!(value, "vibration" | "both");
-        sound_revealer.set_reveal_child(show_sound);
-        pattern_revealer.set_reveal_child(show_pattern);
+        sound_revealer.set_reveal_child(mode.includes_sound());
+        pattern_revealer.set_reveal_child(mode.includes_vibration());
     });
 }
 
@@ -1534,27 +1524,20 @@ pub(crate) fn apply_signal_mode_state(
         }
     }
 
+    // Force-display 'sound' on no-haptic devices regardless of saved
+    // value; the persisted setting stays untouched so syncing to a
+    // phone restores the user's intent.
     let saved = app
         .with_db(|db| db.get_setting(setting_key, "sound"))
         .and_then(|r| r.ok())
-        .unwrap_or_else(|| "sound".to_string());
-    let initial = if !app.has_haptic() {
-        // Force-display 'sound' on no-haptic devices, regardless of
-        // saved value. Persisted setting stays untouched so a sync
-        // to a phone restores the user's intent.
-        "sound"
-    } else {
-        match saved.as_str() {
-            "vibration" => "vibration",
-            "both"      => "both",
-            _           => "sound",
-        }
-    };
-    toggle_group.set_active_name(Some(initial));
-    let show_sound = matches!(initial, "sound" | "both");
-    let show_pattern = matches!(initial, "vibration" | "both");
-    sound_revealer.set_reveal_child(show_sound);
-    pattern_revealer.set_reveal_child(show_pattern);
+        .and_then(|s| crate::db::SignalMode::from_db_str(&s))
+        .unwrap_or(crate::db::SignalMode::Sound);
+    let initial = meditate_core::bells::clamp_signal_mode_for_haptic(
+        saved, app.has_haptic(),
+    );
+    toggle_group.set_active_name(Some(initial.as_db_str()));
+    sound_revealer.set_reveal_child(initial.includes_sound());
+    pattern_revealer.set_reveal_child(initial.includes_vibration());
 }
 
 /// Phase-config variant of `build_signal_mode_toggle_widget`. The
@@ -1589,11 +1572,8 @@ pub(crate) fn build_phase_signal_mode_toggle_widget(
     let pattern_revealer = pattern_revealer.clone();
     toggle_group.connect_active_name_notify(move |tg| {
         let Some(name) = tg.active_name() else { return; };
-        let mode = match name.as_str() {
-            "vibration" => crate::db::SignalMode::Vibration,
-            "both"      => crate::db::SignalMode::Both,
-            _           => crate::db::SignalMode::Sound,
-        };
+        let mode = crate::db::SignalMode::from_db_str(name.as_str())
+            .unwrap_or(crate::db::SignalMode::Sound);
         if let Some(app) = get_app() {
             if let Some(p) = app
                 .with_db(|db| db.get_box_breath_phase(phase))
@@ -1626,12 +1606,7 @@ pub(crate) fn apply_phase_signal_mode_state(
         if let Some(t) = toggle_group.toggle_by_name("both")      { t.set_enabled(false); }
     }
     let initial = meditate_core::bells::clamp_signal_mode_for_haptic(saved, app.has_haptic());
-    let name = match initial {
-        crate::db::SignalMode::Sound     => "sound",
-        crate::db::SignalMode::Vibration => "vibration",
-        crate::db::SignalMode::Both      => "both",
-    };
-    toggle_group.set_active_name(Some(name));
+    toggle_group.set_active_name(Some(initial.as_db_str()));
     sound_revealer.set_reveal_child(initial.includes_sound());
     pattern_revealer.set_reveal_child(initial.includes_vibration());
 }
@@ -1663,14 +1638,11 @@ pub(crate) fn build_per_mode_signal_toggle_widget(
 
     toggle_group.connect_active_name_notify(move |tg| {
         let Some(name) = tg.active_name() else { return; };
-        let value = match name.as_str() {
-            "sound"     => "sound",
-            "vibration" => "vibration",
-            _           => "both",
-        };
+        let mode = crate::db::SignalMode::from_db_str(name.as_str())
+            .unwrap_or(crate::db::SignalMode::Both);
         let Some(app) = get_app() else { return; };
         let setting_key = setting_key_for_mode(get_mode());
-        app.with_db_mut(|db| db.set_setting(setting_key, value));
+        app.with_db_mut(|db| db.set_setting(setting_key, mode.as_db_str()));
     });
 }
 
@@ -1817,7 +1789,7 @@ impl TimerView {
             let on = app
                 .with_db(|db| db.get_setting(key, "false"))
                 .and_then(|r| r.ok())
-                .map(|s| s == "true")
+                .map(|s| meditate_core::settings_keys::parse_bool(&s))
                 .unwrap_or(false);
             self.stopwatch_loading.set(true);
             self.stopwatch_mode_row.set_active(on);
@@ -1876,9 +1848,8 @@ impl TimerView {
             // so a future flag-flip can't expose stale numbers.
             TimerMode::Guided    => 0,
         };
-        let h = mins / 60;
-        let m = mins % 60;
-        self.duration_value_label.set_label(&format!("{h:02}:{m:02}"));
+        self.duration_value_label
+            .set_label(&meditate_core::format::format_hhmm(mins * 60));
     }
 
     /// Paused state: same layout as idle, but the hero shows the live time,
@@ -1910,35 +1881,17 @@ impl TimerView {
         let label = if self.stopwatch_toggle_on.get() {
             "00:00".to_string()
         } else {
-            match self.current_mode() {
-                TimerMode::Timer => {
-                    let secs = self.countdown_target_secs.get();
-                    let h = secs / 3600;
-                    let m = (secs % 3600) / 60;
-                    format!("{h:02}:{m:02}")
-                }
-                TimerMode::Breathing => {
-                    // Same hh:mm format as Timer for layout
-                    // consistency. breathing_session_secs is the
-                    // canonical store; divide by 60 to get minutes.
-                    let m = self.breathing_session_secs.get() / 60;
-                    format!("{:02}:{:02}", m / 60, m % 60)
-                }
-                TimerMode::Guided => {
-                    // Hero shows the picked file's natural duration.
-                    // Empty state (no file selected) reads 00:00 so
-                    // the layout doesn't shift when the user picks.
-                    let secs = self
-                        .guided_pick
-                        .borrow()
-                        .as_ref()
-                        .map(|p| p.duration_secs)
-                        .unwrap_or(0) as u64;
-                    let h = secs / 3600;
-                    let m = (secs % 3600) / 60;
-                    format!("{h:02}:{m:02}")
-                }
-            }
+            let secs = match self.current_mode() {
+                TimerMode::Timer => self.countdown_target_secs.get(),
+                TimerMode::Breathing => self.breathing_session_secs.get() as u64,
+                TimerMode::Guided => self
+                    .guided_pick
+                    .borrow()
+                    .as_ref()
+                    .map(|p| p.duration_secs)
+                    .unwrap_or(0) as u64,
+            };
+            meditate_core::format::format_hhmm(secs)
         };
         self.big_time_label.set_label(&label);
         self.time_unit_label.set_label(&crate::i18n::gettext("Hours · Minutes"));
@@ -1994,7 +1947,7 @@ impl TimerView {
             .and_then(|app| {
                 app.with_db(|db| {
                     db.get_setting("end_bell_active", "true")
-                        .map(|v| v == "true")
+                        .map(|v| meditate_core::settings_keys::parse_bool(&v))
                         .unwrap_or(true)
                 })
             })
@@ -2028,11 +1981,11 @@ impl TimerView {
                     app.with_db(|db| {
                         let active = db
                             .get_setting("preparation_time_active", "false")
-                            .map(|v| v == "true")
+                            .map(|v| meditate_core::settings_keys::parse_bool(&v))
                             .unwrap_or(false);
                         let starting = db
                             .get_setting("starting_bell_active", "false")
-                            .map(|v| v == "true")
+                            .map(|v| meditate_core::settings_keys::parse_bool(&v))
                             .unwrap_or(false);
                         let secs = db
                             .get_setting(
@@ -3073,12 +3026,16 @@ impl TimerView {
             return;
         };
 
-        // Restore the persisted Timer-mode countdown target. Done here
-        // because `constructed()` runs before the widget is rooted, so
+        // Restore the persisted Timer-mode countdown target and
+        // Box-Breath pattern / session length. Done here because
+        // `constructed()` runs before the widget is rooted, so
         // `get_app()` would return None — same reason every other
         // persisted Setup-view value is loaded from this function
-        // rather than constructed.
+        // rather than constructed. `refresh_phase_tiles` reflects the
+        // freshly-loaded pattern into the visible phase value labels.
         self.load_timer_settings();
+        self.load_breathing_settings();
+        self.refresh_phase_tiles();
 
         // Batch every DB read this visit needs into a single borrow:
         // one get_app() walk, one RefCell lock, four SQL queries instead
@@ -3091,18 +3048,18 @@ impl TimerView {
                 let streak  = db.get_streak().unwrap_or(0);
                 let stopwatch_on = db
                     .get_setting(stopwatch_key, "false")
-                    .map(|v| v == "true")
+                    .map(|v| meditate_core::settings_keys::parse_bool(&v))
                     .unwrap_or(false);
                 let starting_bell_on = db
                     .get_setting("starting_bell_active", "false")
-                    .map(|v| v == "true")
+                    .map(|v| meditate_core::settings_keys::parse_bool(&v))
                     .unwrap_or(false);
                 let starting_bell_sound = db
                     .get_setting("starting_bell_sound", "bowl")
                     .unwrap_or_else(|_| "bowl".to_string());
                 let prep_on = db
                     .get_setting("preparation_time_active", "false")
-                    .map(|v| v == "true")
+                    .map(|v| meditate_core::settings_keys::parse_bool(&v))
                     .unwrap_or(false);
                 let prep_secs = db
                     .get_setting(
@@ -3113,7 +3070,7 @@ impl TimerView {
                     .unwrap_or(meditate_core::format::PREP_SECS_DEFAULT);
                 let intervals_on = db
                     .get_setting("interval_bells_active", "false")
-                    .map(|v| v == "true")
+                    .map(|v| meditate_core::settings_keys::parse_bool(&v))
                     .unwrap_or(false);
                 let intervals_enabled_count = db
                     .list_interval_bells()
@@ -3209,10 +3166,9 @@ impl TimerView {
         // Rebuild visible starred-preset list for the current mode.
         self.rebuild_starred_presets_list();
         // Sync the duration row's value label with the current target.
-        let secs = self.countdown_target_secs.get();
-        let h = secs / 3600;
-        let m = (secs % 3600) / 60;
-        self.duration_value_label.set_label(&format!("{h:02}:{m:02}"));
+        self.duration_value_label.set_label(&meditate_core::format::format_hhmm(
+            self.countdown_target_secs.get(),
+        ));
 
         // End Bell master toggle is restored by refresh_stopwatch_
         // dependent_ui above (it calls refresh_end_bell_dependent_ui,
@@ -3624,10 +3580,9 @@ impl TimerView {
 
     fn set_countdown_target(&self, secs: u64) {
         self.countdown_target_secs.set(secs);
-        let h = secs / 3600;
-        let m = (secs % 3600) / 60;
-        self.big_time_label.set_label(&format!("{h:02}:{m:02}"));
-        self.duration_value_label.set_label(&format!("{h:02}:{m:02}"));
+        let label = meditate_core::format::format_hhmm(secs);
+        self.big_time_label.set_label(&label);
+        self.duration_value_label.set_label(&label);
         if self.timer_populating.get() { return; }
         if let Some(app) = self.get_app() {
             let _ = app.with_db_mut(|db| {
@@ -3917,7 +3872,7 @@ impl TimerView {
         let master_active = app
             .with_db(|db| {
                 db.get_setting("interval_bells_active", "false")
-                    .map(|v| v == "true")
+                    .map(|v| meditate_core::settings_keys::parse_bool(&v))
                     .unwrap_or(false)
             })
             .unwrap_or(false);
@@ -3957,7 +3912,7 @@ impl TimerView {
         let active = app
             .with_db(|db| db.get_setting("starting_bell_active", "false"))
             .and_then(|r| r.ok())
-            .map(|s| s == "true")
+            .map(|s| meditate_core::settings_keys::parse_bool(&s))
             .unwrap_or(false);
         if !active {
             return None;
@@ -4002,7 +3957,7 @@ impl TimerView {
         let active = app
             .with_db(|db| db.get_setting("end_bell_active", "true"))
             .and_then(|r| r.ok())
-            .map(|s| s == "true")
+            .map(|s| meditate_core::settings_keys::parse_bool(&s))
             .unwrap_or(true);
         if !active {
             return None;
@@ -4044,7 +3999,7 @@ impl TimerView {
         let master_enabled = app
             .with_db(|db| db.get_setting("boxbreath_cues_active", "false"))
             .and_then(|r| r.ok())
-            .map(|s| s == "true")
+            .map(|s| meditate_core::settings_keys::parse_bool(&s))
             .unwrap_or(false);
         let load_phase = |phase: BoxBreathPhaseId| -> Option<meditate_core::bells::BellCue> {
             let row = app
@@ -4085,7 +4040,7 @@ impl TimerView {
                 app.with_db(|db| {
                     let stopwatch_on = db
                         .get_setting(stopwatch_key_for_mode(mode), "false")
-                        .map(|v| v == "true")
+                        .map(|v| meditate_core::settings_keys::parse_bool(&v))
                         .unwrap_or(false);
                     db.list_interval_bells()
                         .map(|bells| bells.into_iter()
@@ -4388,9 +4343,6 @@ use meditate_core::breath::{clamp_session_secs, MIN_CYCLE_SECS, PHASE_MAX_SECS};
 impl TimerView {
     fn build_breathing_setup(&self) {
         self.build_phase_tiles();
-        // Load persisted values — overrides defaults set in `constructed`.
-        self.load_breathing_settings();
-        self.refresh_phase_tiles();
     }
 
     fn build_phase_tiles(&self) {
@@ -4505,10 +4457,8 @@ impl TimerView {
         // Duration row label is shared between modes; reflect the new
         // value here so a Box-Breath edit shows up immediately. H:MM
         // format matches Timer mode.
-        let mins = secs / 60;
-        let h = mins / 60;
-        let m = mins % 60;
-        self.duration_value_label.set_label(&format!("{h:02}:{m:02}"));
+        self.duration_value_label
+            .set_label(&meditate_core::format::format_hhmm(secs as u64));
         if self.current_mode() == TimerMode::Breathing {
             self.refresh_hero_for_idle();
         }
@@ -4577,10 +4527,8 @@ impl TimerView {
         // mode reads; reflect this load even if the user is currently
         // viewing Timer mode — switching to Box Breath later will
         // already have the right value visible.
-        let mins = secs / 60;
-        let h = mins / 60;
-        let m = mins % 60;
-        self.duration_value_label.set_label(&format!("{h:02}:{m:02}"));
+        self.duration_value_label
+            .set_label(&meditate_core::format::format_hhmm(secs as u64));
         self.breathing_populating.set(false);
     }
 
@@ -4623,7 +4571,7 @@ impl TimerView {
         };
         app.with_db(|db| db.get_setting(key, fallback))
             .and_then(|r| r.ok())
-            .map(|v| v == "true")
+            .map(|v| meditate_core::settings_keys::parse_bool(&v))
             .unwrap_or(mode == TimerMode::Guided)
     }
 
@@ -4631,7 +4579,7 @@ impl TimerView {
         let Some(app) = self.get_app() else { return; };
         let key = label_active_setting_key(mode);
         app.with_db_mut(|db| {
-            let _ = db.set_setting(key, if on { "true" } else { "false" });
+            let _ = db.set_setting(key, meditate_core::settings_keys::format_bool(on));
         });
     }
 

@@ -182,9 +182,10 @@ pub enum ApplyError {
 /// in-flight Box-Breath pattern or countdown target — those are gtk-
 /// side reactive plumbing) and supplies `mode` from its current view.
 pub fn snapshot(db: &Database, mode: SessionMode, timing: PresetTiming) -> PresetConfig {
+    use crate::settings_keys::{format_bool, parse_bool};
     let read_bool = |k: &str, default: bool| -> bool {
-        db.get_setting(k, if default { "true" } else { "false" })
-            .map(|v| v == "true")
+        db.get_setting(k, format_bool(default))
+            .map(|v| parse_bool(&v))
             .unwrap_or(default)
     };
     let read_str = |k: &str, default: &str| -> String {
@@ -367,7 +368,7 @@ pub fn apply(
         db.set_setting(k, v)
             .map_err(|e| ApplyError::DbError(format!("{e:?}")))
     };
-    let bool_str = |b: bool| if b { "true" } else { "false" };
+    let bool_str = crate::settings_keys::format_bool;
 
     set(label_active_key_for_mode(mode), bool_str(cfg.label.enabled))?;
     if let Some(luuid) = cfg.label.uuid.as_ref() {

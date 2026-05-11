@@ -80,6 +80,21 @@ pub fn default_label_uuid_for_mode(mode: SessionMode) -> &'static str {
     }
 }
 
+/// Settings-row boolean parse. Every boolean-valued settings row is
+/// stored as the literal string "true" or "false" (see the wider
+/// project convention; the `settings` table has no type info). Anything
+/// other than "true" reads as false — matches the existing per-call
+/// `db.get_setting(k, "false") == "true"` idiom.
+pub fn parse_bool(s: &str) -> bool {
+    s == "true"
+}
+
+/// Settings-row boolean render. Inverse of `parse_bool`; the literal
+/// strings the `settings` table stores.
+pub fn format_bool(b: bool) -> &'static str {
+    if b { "true" } else { "false" }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,6 +143,21 @@ mod tests {
             label_active_key_for_mode(SessionMode::Guided),
             label_active_key_for_mode(SessionMode::BoxBreath),
         ]);
+    }
+
+    #[test]
+    fn parse_bool_only_true_returns_true() {
+        assert!(parse_bool("true"));
+        assert!(!parse_bool("false"));
+        assert!(!parse_bool(""));
+        assert!(!parse_bool("True"));
+        assert!(!parse_bool("1"));
+    }
+
+    #[test]
+    fn format_bool_round_trips_through_parse_bool() {
+        assert!(parse_bool(format_bool(true)));
+        assert!(!parse_bool(format_bool(false)));
     }
 
     #[test]

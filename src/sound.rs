@@ -165,7 +165,7 @@ pub fn play_end_bell(app: &MeditateApplication) {
     let active = app
         .with_db(|db| db.get_setting("end_bell_active", "true"))
         .and_then(|r| r.ok())
-        .map(|v| v == "true")
+        .map(|v| meditate_core::settings_keys::parse_bool(&v))
         .unwrap_or(true);
     if !active {
         return;
@@ -204,7 +204,7 @@ pub fn play_starting_sound(app: &MeditateApplication) {
     let active = app
         .with_db(|db| db.get_setting("starting_bell_active", "false"))
         .and_then(|r| r.ok())
-        .map(|v| v == "true")
+        .map(|v| meditate_core::settings_keys::parse_bool(&v))
         .unwrap_or(false);
     if !active {
         return;

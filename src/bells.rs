@@ -116,7 +116,7 @@ fn rebuild_list(
     let stopwatch_on = app
         .with_db(|db| {
             db.get_setting(stopwatch_key, "false")
-                .map(|v| v == "true")
+                .map(|v| meditate_core::settings_keys::parse_bool(&v))
                 .unwrap_or(false)
         })
         .unwrap_or(false);
