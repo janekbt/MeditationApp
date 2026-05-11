@@ -3058,8 +3058,9 @@ impl TimerView {
                     // enabled flag stays untouched (returns when
                     // stopwatch flips off); the UI subtitle just
                     // reflects what will actually fire right now.
-                    .filter(|b| !(stopwatch_on
-                        && b.kind == meditate_core::db::IntervalBellKind::FixedFromEnd))
+                    .filter(|b| !meditate_core::bells::is_bell_inert_in_stopwatch(
+                        b.kind, stopwatch_on,
+                    ))
                     .count();
                 (
                     streak,

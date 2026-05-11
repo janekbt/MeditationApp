@@ -165,12 +165,12 @@ fn build_create_row(
     row.connect_activated(move |_| {
         let new_id = app_for_create.with_db_mut(|db| {
             db.insert_interval_bell(
-                IntervalBellKind::Interval,
-                5,
-                0,
+                meditate_core::bells::DEFAULT_NEW_BELL_KIND,
+                meditate_core::bells::DEFAULT_NEW_BELL_MINUTES,
+                meditate_core::bells::DEFAULT_NEW_BELL_JITTER_PCT,
                 crate::db::BUNDLED_BOWL_UUID,
                 crate::db::BUNDLED_PATTERN_PULSE_UUID,
-                crate::db::SignalMode::Sound,
+                meditate_core::bells::DEFAULT_NEW_BELL_SIGNAL_MODE,
             )
         }).and_then(|r| r.ok());
 
@@ -221,7 +221,7 @@ fn build_bell_row(
     // count backwards from). Switch shows OFF + insensitive without
     // touching the persisted enabled flag — the user's previous
     // intent comes back as soon as stopwatch flips off.
-    let inert = stopwatch_on && bell.kind == IntervalBellKind::FixedFromEnd;
+    let inert = meditate_core::bells::is_bell_inert_in_stopwatch(bell.kind, stopwatch_on);
     let switch = gtk::Switch::builder()
         .active(bell.enabled && !inert)
         .sensitive(!inert)
@@ -429,7 +429,10 @@ fn push_edit_page(
     let minutes_row = adw::SpinRow::builder()
         .title(gettext("Minutes"))
         .adjustment(&gtk::Adjustment::new(
-            bell.minutes as f64, 1.0, 120.0, 1.0, 5.0, 0.0,
+            bell.minutes as f64,
+            meditate_core::bells::BELL_MINUTES_MIN as f64,
+            meditate_core::bells::BELL_MINUTES_MAX as f64,
+            1.0, 5.0, 0.0,
         ))
         .build();
     form.add(&minutes_row);
@@ -440,7 +443,10 @@ fn push_edit_page(
         .title(gettext("Jitter"))
         .subtitle(gettext("Percent — randomises the next ring"))
         .adjustment(&gtk::Adjustment::new(
-            bell.jitter_pct as f64, 0.0, 50.0, 5.0, 10.0, 0.0,
+            bell.jitter_pct as f64,
+            meditate_core::bells::BELL_JITTER_PCT_MIN as f64,
+            meditate_core::bells::BELL_JITTER_PCT_MAX as f64,
+            5.0, 10.0, 0.0,
         ))
         .visible(bell.kind == IntervalBellKind::Interval)
         .build();
@@ -605,7 +611,10 @@ fn push_edit_page(
     let populating_for_min = populating.clone();
     minutes_row.connect_notify_local(Some("value"), move |row, _| {
         if populating_for_min.get() { return; }
-        snap_for_min.borrow_mut().minutes = row.value().round().max(1.0) as u32;
+        snap_for_min.borrow_mut().minutes = row.value().round().clamp(
+            meditate_core::bells::BELL_MINUTES_MIN as f64,
+            meditate_core::bells::BELL_MINUTES_MAX as f64,
+        ) as u32;
         write_back(&app_for_min, &snap_for_min, &rebuilder_for_min, &on_changed_for_min);
     });
 
@@ -616,7 +625,10 @@ fn push_edit_page(
     let populating_for_jitter = populating.clone();
     jitter_row.connect_notify_local(Some("value"), move |row, _| {
         if populating_for_jitter.get() { return; }
-        snap_for_jitter.borrow_mut().jitter_pct = row.value().round().clamp(0.0, 50.0) as u32;
+        snap_for_jitter.borrow_mut().jitter_pct = row.value().round().clamp(
+            meditate_core::bells::BELL_JITTER_PCT_MIN as f64,
+            meditate_core::bells::BELL_JITTER_PCT_MAX as f64,
+        ) as u32;
         write_back(&app_for_jitter, &snap_for_jitter, &rebuilder_for_jitter, &on_changed_for_jitter);
     });
 

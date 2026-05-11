@@ -179,6 +179,42 @@ pub fn channel_allowed(per_bell: SignalMode, per_mode: SignalMode) -> (bool, boo
     )
 }
 
+// ── Bell editor invariants ──────────────────────────────────────────
+
+/// Minimum minutes for an Interval / Fixed-from-start / Fixed-from-
+/// end bell. Below 1 the schedule would either never fire (Interval
+/// 0 → divide by zero on jitter) or fire instantly at start
+/// (Fixed-from-start 0).
+pub const BELL_MINUTES_MIN: u32 = 1;
+
+/// Upper bound for the bell-minutes SpinRow. Two hours is plenty
+/// for the longest meditation in any reasonable session.
+pub const BELL_MINUTES_MAX: u32 = 120;
+
+/// Lower bound for the bell-jitter SpinRow (0 = exact timing).
+pub const BELL_JITTER_PCT_MIN: u32 = 0;
+
+/// Upper bound for the bell-jitter SpinRow. 50% means each
+/// Interval bell's next ring can land in [0.5×base, 1.5×base].
+pub const BELL_JITTER_PCT_MAX: u32 = 50;
+
+/// Defaults for a freshly-created interval bell. Used by every
+/// shell's "Create new bell" affordance so an Android user adding
+/// a bell gets the same starting point a gtk user does.
+pub const DEFAULT_NEW_BELL_KIND: IntervalBellKind = IntervalBellKind::Interval;
+pub const DEFAULT_NEW_BELL_MINUTES: u32 = 5;
+pub const DEFAULT_NEW_BELL_JITTER_PCT: u32 = 0;
+pub const DEFAULT_NEW_BELL_SIGNAL_MODE: SignalMode = SignalMode::Sound;
+
+/// Whether a bell of `kind` is inert in a stopwatch session.
+/// Fixed-from-end bells can't fire when there's no end to count
+/// backwards from — every UI surface that shows / counts bells
+/// should consult this predicate to mute them visually, and
+/// `build_active_bells` already skips them at construction time.
+pub fn is_bell_inert_in_stopwatch(kind: IntervalBellKind, stopwatch_on: bool) -> bool {
+    stopwatch_on && kind == IntervalBellKind::FixedFromEnd
+}
+
 /// Build per-session bell schedules from raw `interval_bells` DB
 /// rows. Skips disabled rows; also skips `FixedFromEnd` rows when
 /// `stopwatch_on` is true (no end to count backwards from).
@@ -504,6 +540,18 @@ mod tests {
         // Per-bell wants sound, per-mode wants vibration — AND yields
         // nothing. Mirrors the "user disabled audio in this mode" path.
         assert_eq!(channel_allowed(SignalMode::Sound, SignalMode::Vibration), (false, false));
+    }
+
+    #[test]
+    fn is_bell_inert_in_stopwatch_targets_only_fixed_from_end() {
+        // Only FixedFromEnd goes inert with stopwatch on.
+        assert!(is_bell_inert_in_stopwatch(IntervalBellKind::FixedFromEnd, true));
+        // The other two kinds are fine in stopwatch.
+        assert!(!is_bell_inert_in_stopwatch(IntervalBellKind::Interval, true));
+        assert!(!is_bell_inert_in_stopwatch(IntervalBellKind::FixedFromStart, true));
+        // Nothing's inert when stopwatch is off.
+        assert!(!is_bell_inert_in_stopwatch(IntervalBellKind::FixedFromEnd, false));
+        assert!(!is_bell_inert_in_stopwatch(IntervalBellKind::Interval, false));
     }
 
     #[test]
