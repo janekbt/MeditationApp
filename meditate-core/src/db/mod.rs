@@ -19,6 +19,9 @@ mod settings;
 mod sync_state;
 mod vibration_patterns;
 
+#[cfg(test)]
+mod test_helpers;
+
 pub use bell_sounds::{BellSound, BellSoundCategory};
 pub use box_breath_phases::{BoxBreathPhase, BoxBreathPhaseId};
 pub use events::Event;
@@ -4950,100 +4953,7 @@ mod tests {
     // idempotent (re-applying same event_uuid is a no-op via INSERT OR
     // IGNORE) and order-independent (out-of-order delivery converges).
 
-    /// Hand-construct an event without going through a Database. Lets
-    /// tests pin specific lamport_ts / device_id values for tie-break
-    /// and out-of-order scenarios.
-    fn synth_event(
-        kind: &str,
-        target_id: &str,
-        lamport_ts: i64,
-        device_id: &str,
-        payload: serde_json::Value,
-    ) -> Event {
-        Event {
-            event_uuid: uuid::Uuid::new_v4().to_string(),
-            lamport_ts,
-            device_id: device_id.to_string(),
-            kind: kind.to_string(),
-            target_id: target_id.to_string(),
-            payload: payload.to_string(),
-        }
-    }
-
-    fn synth_session_insert(
-        session_uuid: &str,
-        lamport_ts: i64,
-        device_id: &str,
-        start_iso: &str,
-        duration_secs: u32,
-        label_uuid: Option<&str>,
-        notes: Option<&str>,
-        mode: SessionMode,
-    ) -> Event {
-        synth_event(
-            "session_insert",
-            session_uuid,
-            lamport_ts,
-            device_id,
-            serde_json::json!({
-                "uuid": session_uuid,
-                "start_iso": start_iso,
-                "duration_secs": duration_secs,
-                "label_uuid": label_uuid,
-                "notes": notes,
-                "mode": mode.as_db_str(),
-            }),
-        )
-    }
-
-    fn synth_session_update(
-        session_uuid: &str,
-        lamport_ts: i64,
-        device_id: &str,
-        start_iso: &str,
-        duration_secs: u32,
-        label_uuid: Option<&str>,
-        notes: Option<&str>,
-        mode: SessionMode,
-    ) -> Event {
-        synth_event(
-            "session_update",
-            session_uuid,
-            lamport_ts,
-            device_id,
-            serde_json::json!({
-                "uuid": session_uuid,
-                "start_iso": start_iso,
-                "duration_secs": duration_secs,
-                "label_uuid": label_uuid,
-                "notes": notes,
-                "mode": mode.as_db_str(),
-            }),
-        )
-    }
-
-    fn synth_session_delete(
-        session_uuid: &str,
-        lamport_ts: i64,
-        device_id: &str,
-    ) -> Event {
-        synth_event(
-            "session_delete",
-            session_uuid,
-            lamport_ts,
-            device_id,
-            serde_json::json!({ "uuid": session_uuid }),
-        )
-    }
-
-    const DEVICE_A: &str = "00000000-0000-4000-8000-aaaaaaaaaaaa";
-    const DEVICE_B: &str = "00000000-0000-4000-8000-bbbbbbbbbbbb";
-    const SESSION_X: &str = "11111111-1111-4111-8111-111111111111";
-    /// Mirror of the shell-side BUNDLED_PATTERN_PULSE_UUID const.
-    /// Kept literal here so the core tests don't need to plumb in the
-    /// shell module — every interval-bell insert in the test suite
-    /// passes this as the default pattern uuid.
-    const BUNDLED_PATTERN_PULSE_UUID: &str = "7e9c4d2f-5a8b-4f1d-9e3c-2d6f7a8b0001";
+    use super::test_helpers::*;
 
     #[test]
     fn apply_event_session_insert_creates_the_row() {
@@ -5288,30 +5198,6 @@ mod tests {
     // the FK (`ON DELETE SET NULL`) to clear `label_id` on any cached
     // sessions that referenced it.
 
-    const LABEL_X: &str = "22222222-2222-4222-8222-222222222222";
-
-    fn synth_label_insert(label_uuid: &str, lamport_ts: i64, device: &str, name: &str) -> Event {
-        synth_event(
-            "label_insert",
-            label_uuid, lamport_ts, device,
-            serde_json::json!({ "uuid": label_uuid, "name": name }),
-        )
-    }
-    fn synth_label_rename(label_uuid: &str, lamport_ts: i64, device: &str, name: &str) -> Event {
-        synth_event(
-            "label_rename",
-            label_uuid, lamport_ts, device,
-            serde_json::json!({ "uuid": label_uuid, "name": name }),
-        )
-    }
-    fn synth_label_delete(label_uuid: &str, lamport_ts: i64, device: &str) -> Event {
-        synth_event(
-            "label_delete",
-            label_uuid, lamport_ts, device,
-            serde_json::json!({ "uuid": label_uuid }),
-        )
-    }
-
     #[test]
     fn apply_event_label_insert_creates_the_label() {
         let db = Database::open_in_memory().unwrap();
@@ -5403,14 +5289,6 @@ mod tests {
     // setting_changed event is a write. Conflict resolution: highest
     // (lamport_ts, device_id) wins per key. Out-of-order delivery is
     // handled by the same recompute-from-events approach.
-
-    fn synth_setting_changed(key: &str, value: &str, lamport_ts: i64, device: &str) -> Event {
-        synth_event(
-            "setting_changed",
-            key, lamport_ts, device,
-            serde_json::json!({ "key": key, "value": value }),
-        )
-    }
 
     #[test]
     fn apply_event_setting_changed_writes_value_into_settings() {
