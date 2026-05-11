@@ -6,6 +6,7 @@ mod device;
 mod error;
 mod known_remote;
 mod schema;
+mod sync_state;
 pub use error::{target_id_is_well_formed_for, DbError, Result};
 pub use schema::{CACHE_SCHEMA_VERSION, CACHE_SCHEMA_VERSION_KEY, SCHEMA_VERSION};
 use error::{conflict_suffixed_name, is_unique_constraint_error};
@@ -1574,32 +1575,6 @@ impl Database {
                 params![sound_uuid],
             )?;
         }
-        Ok(())
-    }
-
-    /// Read a sync-state value (server URL, last-pull cursor, …),
-    /// returning `default` if the key has never been set. Mirrors
-    /// `get_setting` but keyed against the `sync_state` namespace.
-    pub fn get_sync_state(&self, key: &str, default: &str) -> Result<String> {
-        match self.conn.query_row(
-            "SELECT value FROM sync_state WHERE key = ?1",
-            params![key],
-            |row| row.get::<_, String>(0),
-        ) {
-            Ok(val) => Ok(val),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(default.to_string()),
-            Err(e) => Err(DbError::Sqlite(e)),
-        }
-    }
-
-    /// Upsert a sync-state value. Subsequent calls overwrite. Mirrors
-    /// `set_setting`'s semantics in the `sync_state` namespace.
-    pub fn set_sync_state(&self, key: &str, value: &str) -> Result<()> {
-        self.conn.execute(
-            "INSERT INTO sync_state (key, value) VALUES (?1, ?2)
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            params![key, value],
-        )?;
         Ok(())
     }
 
