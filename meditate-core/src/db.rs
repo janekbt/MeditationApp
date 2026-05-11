@@ -9,6 +9,19 @@ use std::path::Path;
 /// data.
 pub const SCHEMA_VERSION: u32 = 1;
 
+/// Cache materialization version. Bumped when `apply_event_inner`
+/// learns a new event kind it previously recorded-but-skipped, or
+/// changes the cache columns a kind materialises. On open, if the
+/// stored value is less than this constant, every event in the log
+/// is re-applied so historical events for newly-understood kinds
+/// land in the cache. Stored in `sync_state` (local-only) rather
+/// than `settings` (event-sourced) so peers don't see each other's
+/// cache progress as something to sync.
+pub const CACHE_SCHEMA_VERSION: u32 = 1;
+
+/// `sync_state` key holding the device-local cache schema version.
+pub const CACHE_SCHEMA_VERSION_KEY: &str = "cache_schema_version";
+
 #[derive(Debug)]
 pub enum DbError {
     DuplicateLabel(String),
@@ -783,7 +796,65 @@ impl Database {
         if integrity != "ok" {
             crate::diag::log(&format!("db_integrity_check_failed: {integrity}"));
         }
-        Ok(Self { conn })
+        let db = Self { conn };
+        db.maybe_walk_events_for_cache_upgrade()?;
+        Ok(db)
+    }
+
+    /// If the stored cache-schema version is below `CACHE_SCHEMA_VERSION`,
+    /// replay every event so any kind that this build understands but
+    /// the previous build skipped (apply_event_inner's "unknown kind"
+    /// branch) gets materialised into the cache. Idempotent: re-applying
+    /// understood kinds is a no-op (their dispatchers are UPSERT-shaped),
+    /// and lamport_clock isn't bumped because the events are not "fresh
+    /// from a peer" (was_new=false on re-record).
+    fn maybe_walk_events_for_cache_upgrade(&self) -> Result<()> {
+        let stored = self
+            .get_sync_state(CACHE_SCHEMA_VERSION_KEY, "0")?
+            .parse::<u32>()
+            .unwrap_or(0);
+        if stored >= CACHE_SCHEMA_VERSION {
+            return Ok(());
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        let events = {
+            let mut stmt = self.conn.prepare(
+                "SELECT event_uuid, lamport_ts, device_id, kind, target_id, payload
+                 FROM events
+                 ORDER BY lamport_ts ASC, device_id ASC",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok(Event {
+                    event_uuid: row.get(0)?,
+                    lamport_ts: row.get(1)?,
+                    device_id: row.get(2)?,
+                    kind: row.get(3)?,
+                    target_id: row.get(4)?,
+                    payload: row.get(5)?,
+                })
+            })?;
+            let mut out: Vec<Event> = Vec::new();
+            for r in rows {
+                out.push(r?);
+            }
+            out
+        };
+        let count = events.len();
+        for event in events {
+            self.apply_event_inner(&event)?;
+        }
+        self.set_sync_state(
+            CACHE_SCHEMA_VERSION_KEY,
+            &CACHE_SCHEMA_VERSION.to_string(),
+        )?;
+        tx.commit()?;
+        if count > 0 {
+            crate::diag::log(&format!(
+                "cache_schema_upgrade: replayed {count} events from v{stored} to v{}",
+                CACHE_SCHEMA_VERSION,
+            ));
+        }
+        Ok(())
     }
 
     /// Read the value of a settings key. Returns `default` (without
@@ -4409,6 +4480,83 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── Cache schema version + walk-on-upgrade ────────────────────────
+
+    #[test]
+    fn fresh_open_in_memory_stamps_cache_schema_version_to_current() {
+        // First-ever open: no events, but the marker still lands so
+        // subsequent opens take the fast path and skip the walk.
+        let db = Database::open_in_memory().unwrap();
+        let stored = db
+            .get_sync_state(CACHE_SCHEMA_VERSION_KEY, "missing")
+            .unwrap();
+        assert_eq!(stored, CACHE_SCHEMA_VERSION.to_string());
+    }
+
+    #[test]
+    fn re_open_with_old_cache_version_walks_events_and_rematerialises_cache() {
+        // Simulate a DB that was last opened by a build whose
+        // apply_event_inner skipped some kind we now understand. The
+        // walk-on-upgrade must re-apply every event so the cache
+        // catches up to the current dispatch, then stamp the new
+        // cache version to gate future fast paths.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("walk.db");
+        {
+            let db = Database::open(&path).unwrap();
+            // Author some events the normal way.
+            db.insert_label("Focus").unwrap();
+            db.insert_label("Calm").unwrap();
+            assert_eq!(db.list_labels().unwrap().len(), 2);
+            // Manually delete the cache rows AND roll the cache
+            // version back to 0 — pretending the previous build had
+            // recorded these events without materialising them.
+            db.conn.execute("DELETE FROM labels", []).unwrap();
+            db.set_sync_state(CACHE_SCHEMA_VERSION_KEY, "0").unwrap();
+            assert!(db.list_labels().unwrap().is_empty(),
+                "labels cache must be empty before the re-open");
+        }
+        // Reopen. init must walk and re-materialise the labels.
+        let db = Database::open(&path).unwrap();
+        let labels = db.list_labels().unwrap();
+        assert_eq!(labels.len(), 2, "labels must be re-materialised from event log");
+        let mut names: Vec<_> = labels.iter().map(|l| l.name.clone()).collect();
+        names.sort();
+        assert_eq!(names, vec!["Calm".to_string(), "Focus".to_string()]);
+        // Marker advances so the next open skips the walk.
+        assert_eq!(
+            db.get_sync_state(CACHE_SCHEMA_VERSION_KEY, "missing").unwrap(),
+            CACHE_SCHEMA_VERSION.to_string(),
+        );
+    }
+
+    #[test]
+    fn re_open_at_current_cache_version_does_not_re_walk() {
+        // Fast path: a DB already at the current cache version must
+        // skip the walk so re-opens stay O(1) regardless of how many
+        // events the log holds.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fast.db");
+        {
+            let db = Database::open(&path).unwrap();
+            db.insert_label("Focus").unwrap();
+            // Manually corrupt the cache and leave the marker at
+            // current — a re-walk would fix this; the fast path must
+            // therefore leave it broken (proving the walk was
+            // skipped).
+            db.conn.execute("DELETE FROM labels", []).unwrap();
+            assert_eq!(
+                db.get_sync_state(CACHE_SCHEMA_VERSION_KEY, "missing").unwrap(),
+                CACHE_SCHEMA_VERSION.to_string(),
+            );
+        }
+        let db = Database::open(&path).unwrap();
+        assert!(
+            db.list_labels().unwrap().is_empty(),
+            "fast path must NOT have re-walked (labels stay empty)",
+        );
+    }
 
     // ── Schema version sentinel ───────────────────────────────────────
 
