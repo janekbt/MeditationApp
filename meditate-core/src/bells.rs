@@ -163,6 +163,22 @@ pub fn clamp_signal_mode_for_haptic(mode: SignalMode, haptic_available: bool) ->
     if haptic_available { mode } else { SignalMode::Sound }
 }
 
+/// Resolve which channels (sound, vibration) actually fire for a
+/// bell. Each channel needs both gates to be open:
+/// 1. the per-bell `signal_mode` (the user's choice on this bell).
+/// 2. the per-mode `signal_mode` override (the user's mode-wide
+///    cap — Box-Breath cues are "Vibration", Timer bells are
+///    "Both", etc.).
+///
+/// Returns `(sound_on, vibration_on)`. Shells dispatch their
+/// native audio + haptic mechanisms based on the result.
+pub fn channel_allowed(per_bell: SignalMode, per_mode: SignalMode) -> (bool, bool) {
+    (
+        per_bell.includes_sound() && per_mode.includes_sound(),
+        per_bell.includes_vibration() && per_mode.includes_vibration(),
+    )
+}
+
 /// Build per-session bell schedules from raw `interval_bells` DB
 /// rows. Skips disabled rows; also skips `FixedFromEnd` rows when
 /// `stopwatch_on` is true (no end to count backwards from).
@@ -476,6 +492,29 @@ mod tests {
         for m in [SignalMode::Sound, SignalMode::Vibration, SignalMode::Both] {
             assert_eq!(clamp_signal_mode_for_haptic(m, true), m);
         }
+    }
+
+    #[test]
+    fn channel_allowed_both_bell_both_mode_fires_everything() {
+        assert_eq!(channel_allowed(SignalMode::Both, SignalMode::Both), (true, true));
+    }
+
+    #[test]
+    fn channel_allowed_sound_bell_vibration_mode_fires_nothing() {
+        // Per-bell wants sound, per-mode wants vibration — AND yields
+        // nothing. Mirrors the "user disabled audio in this mode" path.
+        assert_eq!(channel_allowed(SignalMode::Sound, SignalMode::Vibration), (false, false));
+    }
+
+    #[test]
+    fn channel_allowed_intersection_is_minimum() {
+        // Per-bell Both AND per-mode Sound → sound only.
+        assert_eq!(channel_allowed(SignalMode::Both, SignalMode::Sound), (true, false));
+        // Per-bell Both AND per-mode Vibration → vibration only.
+        assert_eq!(channel_allowed(SignalMode::Both, SignalMode::Vibration), (false, true));
+        // Symmetric.
+        assert_eq!(channel_allowed(SignalMode::Sound, SignalMode::Both), (true, false));
+        assert_eq!(channel_allowed(SignalMode::Vibration, SignalMode::Both), (false, true));
     }
 
     // ── build_active_bells ─────────────────────────────────────────────

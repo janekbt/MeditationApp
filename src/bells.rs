@@ -520,14 +520,8 @@ fn push_edit_page(
     form.add(&pattern_row);
 
     // Initial visibility based on the saved signal mode.
-    sound_row.set_visible(matches!(
-        initial_mode,
-        crate::db::SignalMode::Sound | crate::db::SignalMode::Both,
-    ));
-    pattern_row.set_visible(matches!(
-        initial_mode,
-        crate::db::SignalMode::Vibration | crate::db::SignalMode::Both,
-    ));
+    sound_row.set_visible(initial_mode.includes_sound());
+    pattern_row.set_visible(initial_mode.includes_vibration());
 
     prefs_page.add(&form);
 
@@ -701,14 +695,8 @@ fn push_edit_page(
             _                 => crate::db::SignalMode::Sound,
         };
         snap_for_sig.borrow_mut().signal_mode = mode;
-        sound_row_for_sig.set_visible(matches!(
-            mode,
-            crate::db::SignalMode::Sound | crate::db::SignalMode::Both,
-        ));
-        pattern_row_for_sig.set_visible(matches!(
-            mode,
-            crate::db::SignalMode::Vibration | crate::db::SignalMode::Both,
-        ));
+        sound_row_for_sig.set_visible(mode.includes_sound());
+        pattern_row_for_sig.set_visible(mode.includes_vibration());
         write_back(&app_for_sig, &snap_for_sig, &rebuilder_for_sig, &on_changed_for_sig);
     });
 

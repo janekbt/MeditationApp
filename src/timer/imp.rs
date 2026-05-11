@@ -1602,14 +1602,8 @@ pub(crate) fn build_phase_signal_mode_toggle_widget(
                 ));
             }
         }
-        sound_revealer.set_reveal_child(matches!(
-            mode,
-            crate::db::SignalMode::Sound | crate::db::SignalMode::Both
-        ));
-        pattern_revealer.set_reveal_child(matches!(
-            mode,
-            crate::db::SignalMode::Vibration | crate::db::SignalMode::Both
-        ));
+        sound_revealer.set_reveal_child(mode.includes_sound());
+        pattern_revealer.set_reveal_child(mode.includes_vibration());
     });
 }
 
@@ -1628,25 +1622,15 @@ pub(crate) fn apply_phase_signal_mode_state(
         if let Some(t) = toggle_group.toggle_by_name("vibration") { t.set_enabled(false); }
         if let Some(t) = toggle_group.toggle_by_name("both")      { t.set_enabled(false); }
     }
-    let initial = if !app.has_haptic() {
-        crate::db::SignalMode::Sound
-    } else {
-        saved
-    };
+    let initial = meditate_core::bells::clamp_signal_mode_for_haptic(saved, app.has_haptic());
     let name = match initial {
         crate::db::SignalMode::Sound     => "sound",
         crate::db::SignalMode::Vibration => "vibration",
         crate::db::SignalMode::Both      => "both",
     };
     toggle_group.set_active_name(Some(name));
-    sound_revealer.set_reveal_child(matches!(
-        initial,
-        crate::db::SignalMode::Sound | crate::db::SignalMode::Both
-    ));
-    pattern_revealer.set_reveal_child(matches!(
-        initial,
-        crate::db::SignalMode::Vibration | crate::db::SignalMode::Both
-    ));
+    sound_revealer.set_reveal_child(initial.includes_sound());
+    pattern_revealer.set_reveal_child(initial.includes_vibration());
 }
 
 /// Per-mode "what plays" Cues toggle. The persistence handler

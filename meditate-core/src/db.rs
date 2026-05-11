@@ -279,6 +279,16 @@ impl SignalMode {
             _           => None,
         }
     }
+
+    /// Does this mode include the sound channel? `Sound | Both`.
+    pub fn includes_sound(self) -> bool {
+        matches!(self, SignalMode::Sound | SignalMode::Both)
+    }
+
+    /// Does this mode include the vibration channel? `Vibration | Both`.
+    pub fn includes_vibration(self) -> bool {
+        matches!(self, SignalMode::Vibration | SignalMode::Both)
+    }
 }
 
 impl IntervalBellKind {

@@ -264,34 +264,35 @@ fn read_mode_signal_mode(
 }
 
 /// True if the sound channel should fire given per-bell intent +
-/// the per-mode override.
+/// the per-mode override. The two-gate AND lives in core
+/// (`meditate_core::bells::channel_allowed`).
 pub fn should_fire_sound(
     app: &crate::application::MeditateApplication,
     per_bell: crate::db::SignalMode,
     mode_setting_key: &'static str,
 ) -> bool {
-    use crate::db::SignalMode::*;
-    let mode = read_mode_signal_mode(app, mode_setting_key);
-    matches!(per_bell, Sound | Both) && matches!(mode, Sound | Both)
+    let per_mode = read_mode_signal_mode(app, mode_setting_key);
+    meditate_core::bells::channel_allowed(per_bell, per_mode).0
 }
 
 /// Fire the configured vibration pattern for a bell or phase if
 /// every gate allows: device has haptic, per-bell signal_mode
-/// includes vibration, per-mode override includes vibration. Looks
-/// up the pattern by uuid and returns a `PatternPlayback` handle —
-/// the caller MUST stash the handle to keep the pattern alive
-/// through its natural duration (drop fires cancel).
+/// includes vibration, per-mode override includes vibration. The
+/// channel-allowed AND lives in core; this fn adds the haptic-
+/// capability + DB-lookup mechanism.
 pub fn fire_pattern_if_allowed(
     app: &crate::application::MeditateApplication,
     per_bell: crate::db::SignalMode,
     mode_setting_key: &'static str,
     pattern_uuid: &str,
 ) -> Option<PatternPlayback> {
-    use crate::db::SignalMode::*;
-    if !app.has_haptic() { return None; }
-    if !matches!(per_bell, Vibration | Both) { return None; }
-    let mode = read_mode_signal_mode(app, mode_setting_key);
-    if !matches!(mode, Vibration | Both) { return None; }
+    if !app.has_haptic() {
+        return None;
+    }
+    let per_mode = read_mode_signal_mode(app, mode_setting_key);
+    if !meditate_core::bells::channel_allowed(per_bell, per_mode).1 {
+        return None;
+    }
     let pattern = app
         .with_db(|db| db.find_vibration_pattern_by_uuid(pattern_uuid))
         .and_then(|r| r.ok())
