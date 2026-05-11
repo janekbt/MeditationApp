@@ -1248,6 +1248,213 @@ avoid silently losing items in a rewrite.
 - 12 doc-comment gaps on named `pub` items (mechanical 20-minute
   pass).
 
+## Tier 0 — None (sixth-pass)
+
+## Tier 1 — Sixth-pass additions
+
+### Performance: `recompute_*` uses `query_row` (uncached) — bulk-replay parse storm
+- Every `recompute_X`'s two SQL reads use plain `query_row` which
+  reparses SQL on every call. `replay_events` over 30k pulled
+  events = 2×30k = 60k parse-and-plan cycles for ~14 distinct
+  SQL texts. Dominates first-launch and wipe-and-pull recovery
+  on Librem 5 eMMC.
+- Affected: `meditate-core/src/db.rs` recompute family
+  (lines 1187-1755).
+- Fix: convert each query to `prepare_cached`, bump
+  `set_prepared_statement_cache_capacity` to ~32 to fit them all
+  alongside the existing cached statements.
+
+### Performance: `replay_events` recomputes same target N times in batch
+- `meditate-core/src/db.rs:1167-1180`. Each event triggers a full
+  `recompute_X(target_id)`. A session edited 5 times in a batch
+  recomputes 5×. With 30k events across ~10k targets, 2-3×
+  duplication factor on the wipe-and-pull recovery path.
+- Fix: in the batch loop, collect a `HashSet<(EntityKind,
+  target_id)>` of touched targets, then `recompute_X` once per
+  unique target after appends complete. Pairs naturally with
+  the existing Tier-1 `EventKind` enum item.
+
+### Performance: hot stats queries use `prepare` not `prepare_cached`
+- `meditate-core/src/db.rs:3900` (`daily_totals_filtered`) and
+  `:3928` (`distinct_session_days_ascending`). Called on every
+  Insights / contrib heatmap / streak refresh; with ~10k
+  sessions the SUBSTR + GROUP BY runs unindexed and the SQL
+  gets reparsed each call.
+- Fix: flip both to `prepare_cached`. Optionally add an expression
+  index `CREATE INDEX sessions_day_idx ON sessions(SUBSTR(start_iso,
+  1, 10))` for the GROUP BY (the existing Tier-1 `sessions_start_idx`
+  helps ORDER BY DESC but not GROUP BY).
+
+### Security: unbounded body read on WebDAV GET
+- `meditate-core/src/sync/webdav.rs:182-184` calls
+  `resp.into_reader().read_to_end(&mut body)` with no cap.
+  `pull` then `serde_json::from_slice` on the result
+  (`orchestrator.rs:192`). Custom-sound pull enforces
+  `MAX_CUSTOM_BELL_BYTES` *after* the read.
+- A malicious / compromised Nextcloud (or one a redirect points
+  to) can OOM the client by serving a multi-GB body. The 10-MB
+  size check on sound bodies is post-buffer.
+- Fix: cap reads via `Read::take(N)` with caps per response type
+  (64 MB for event bundles, 11 MB for custom sounds), reject on
+  hit.
+
+### Security: `ureq` Agent has no redirect or scheme policy
+- `meditate-core/src/sync/webdav.rs:122-129` builds the Agent
+  with only timeouts. Default = follow 5 redirects.
+  `Authorization` header IS preserved on same-host redirects.
+- ureq 2.x strips `Authorization` on cross-host redirects since
+  2.4, mitigating most credential-exfil — but mixed-case host
+  comparisons and IDN tricks have historical bypasses.
+- Fix: `.redirects(0)` on the Agent builder; surface a redirect
+  explicitly as a sync error so the user knows their server
+  config changed.
+
+### Security: `http://` URL silently accepted
+- `meditate-core/src/sync/settings.rs:307-330` (`prepare_save`)
+  trims + rejects empty. A typo'd `http://nc.example.com`
+  sends the Basic-auth password in cleartext on every request.
+- Fix: reject scheme ≠ `https://` in `prepare_save`, OR surface
+  a save-time confirmation dialog so the user can opt in.
+
+### i18n: `format_hm_compact` / `format_hm_mins` / `format_hm_secs` return English-baked strings
+- All three (`format.rs`) return `"1h 4m"` / `"1h"` / `"4m"`
+  with hardcoded English unit suffixes. Called directly into
+  user-visible labels: `src/stats/imp.rs:170, 547` (weekly-goal
+  subtitle, mini-stat tile, Y-axis ticks).
+- Single biggest i18n leak in the codebase.
+- Fix: convert to typed `HmKey::{Zero, MinsOnly(u64),
+  HoursOnly(u64), HoursMins(u64,u64)}`; shell maps each variant
+  to `gettext("{h}h {m}m")` etc. Same three call sites collapse
+  to one match.
+
+### i18n: 2-form plural ceiling + no `ngettext` anywhere in the shell
+- Every "many" arm of every typed-key enum (`StreakKey::{One,
+  Many}`, `SessionCountKey::{One, Many}`, `IntervalsCountKey`,
+  `BellsPart`, `SyncedAgoKey`, `DeleteImpactKey`,
+  `InsightKey::CurrentStreak{days}`) is binary singular /
+  plural. The shell's `pluralize_sessions`
+  (`src/preferences.rs:675`) openly comments "we don't need
+  full ngettext support because English plurals are trivial."
+- That ships a Polish / Russian / Arabic regression the moment
+  a non-English `.po` is dropped in.
+- Per `feedback_meditate_keep_i18n`, translations are a planned
+  publish goal.
+- Fix: core keeps its variant + count (already correct).
+  Shell mapper calls `ngettext(singular_msgid, plural_msgid,
+  count)` instead of `gettext().replace("{n}", count.to_string())`.
+
+## Tier 2 — Sixth-pass additions
+
+### Performance: `get_median_duration_secs` materialises every duration in Rust
+- `meditate-core/src/db.rs:3856-3867`. Reads all 10k
+  `duration_secs` rows via `query_map` then sorts in Rust.
+  Allocates `Vec<u32>` of length n per stats refresh.
+- Fix: two-step SQL — `SELECT COUNT(*)` then `SELECT
+  duration_secs ORDER BY duration_secs LIMIT 1 OFFSET (n-1)/2`.
+  Add an index on `duration_secs` (none today).
+
+### Performance: `diag::log` opens the file per call
+- `meditate-core/src/diag.rs:52-58`. Each call:
+  `OpenOptions::new().create.append.open(path)` + `writeln!` +
+  `format!` for the timestamp. 33 call sites; sync flows fire
+  5-10 lines/pass. eMMC cost is hundreds of µs per call.
+- Fix: keep an `OnceLock<Mutex<File>>` opened once at `init()`.
+  Trade-off: loses "file recreated if user deleted it" —
+  acceptable since the only legitimate deleter is `init()`
+  itself.
+
+### Security: secrets never zeroed
+- `src/keychain.rs:124-176` `read_password` returns
+  `Result<Option<String>>`; password lives in a plain `String`.
+  `auth_header` (`webdav.rs:128`) retains base64-encoded creds
+  for the agent's lifetime.
+- Solo-user model so impact is low. Standard fix (`zeroize` /
+  `secrecy` crate on the `String` / `Vec<u8>`) is cheap.
+
+### Security: CSV-injection in export
+- `meditate-core/src/data_io.rs:101-122`. A label or note
+  starting with `=`, `+`, `-`, `@`, or `\t` becomes a formula
+  when the CSV is opened in Excel / LibreOffice / Sheets.
+- Janek-only today; if exported and shared, the risk
+  materializes.
+- Fix: OWASP-recommended prefix-with-single-quote on first-char
+  match.
+
+### Security: `meditate.db` umask perms (0644 by default)
+- `meditate-core/src/db.rs:693-711` uses `Connection::open`
+  with no perm step. On a non-flatpak Librem 5 install the DB
+  lands 0644 — session contents (incl. notes) world-readable.
+- Flatpak installs are private by app sandbox so the practical
+  impact is bounded; non-flatpak is the exposed case.
+- Fix: `OpenOptions::open` with mode 0600 on a touched file
+  before `Connection::open`, or `chmod` post-open.
+
+### Security: `diagnostics.log` umask perms
+- `meditate-core/src/diag.rs:54` uses default `OpenOptions` →
+  0644. Currently logs no secrets (every `diag::log` call site
+  audited — clean), but the umask gap exists for future callers.
+- Fix: belt-and-braces 0600 at `init()`.
+
+### i18n: `format::overtime_button_label` bakes word order
+- Takes a `prefix` and emits `"{prefix} MM:SS ?"`. German
+  "Hinzufügen 00:30 ?" works; Japanese / Hungarian want
+  "00:30 を追加 ?".
+- Fix: return typed `OvertimeButtonParts { overtime: Duration }`;
+  shell calls `gettext("Add {duration} ?")` with its own word
+  order.
+
+### i18n: `date_math::month_letter` returns hardcoded English ASCII
+- Returns `"J"/"F"/"M"/…` single letters used by
+  `src/stats/imp.rs:763` for the long-period X-axis. Doc says
+  "locale-independent" but is really Anglocentric — Japanese
+  months are "1月"-"12月", Russian uses Cyrillic.
+- Fix: return `MonthLetterKey { month: u32 }`; shell calls
+  `glib::DateTime::format("%b")` truncated to one char.
+
+## Tier 3 — Sixth-pass additions
+
+### Performance: `append_event_returning_newness` extra SELECT for rowid
+- `meditate-core/src/db.rs:840-865`. After `INSERT OR IGNORE`,
+  unconditionally runs `SELECT id FROM events WHERE event_uuid
+  = ?1` — even on the new-row path where
+  `conn.last_insert_rowid()` would answer for free.
+- Fix: `if was_new { conn.last_insert_rowid() } else { SELECT id }`.
+  Halves DB calls per event on bulk import.
+
+### Performance: PRAGMA `cache_size` and `mmap_size` at SQLite defaults
+- `meditate-core/src/db.rs:709-718`. Default `cache_size = -2000`
+  (~2 MB). On Librem 5 with 3 GB RAM, bumping to `-16000` (~16
+  MB) lets the events index stay resident.
+- Fix: `PRAGMA cache_size = -16000` in `Database::open`. Defer
+  `mmap_size` until benched.
+
+### Performance: `pending_events` / `known_event_uuids` use `prepare` (uncached)
+- `meditate-core/src/db.rs:872, 901`. Both run once per
+  push/pull cycle. Easy `prepare_cached` flip; share their
+  cache slot with no one else.
+
+### i18n: number formatting in pre-rendered strings
+- `format::format_count` does `n.to_string()` then
+  `.replace("{n}", …)`. Loses locale digit grouping (Polish
+  "1 234", German "1.234"). Invisible until totals cross 4
+  digits.
+- Fix path: wrap as `MiniStat::{Dash, Value(i64)}`; shell
+  applies locale digit grouping.
+
+### i18n: `format_time_of_day` is 24-hour-only
+- Doc says shells that want 12-hour bypass core, but every
+  consumer (log card, goal row) uses the function with no
+  signal that the string was already finalised.
+- Fix: change return to typed `TimeOfDay { unix_secs: i64 }`
+  so shell can always run through `glib::DateTime::format` for
+  the active locale.
+
+### i18n: Polish / German label sort uses ASCII fold
+- Labels do `ORDER BY name COLLATE NOCASE`. "ż" sorts past "z";
+  "ä" sorts past "a" instead of with it.
+- SQLite locale-aware collation requires an extension; defer
+  until a user with non-ASCII label names actually complains.
+
 ## Skipped (intentionally not migrating)
 
 (Empty for now — fill in as items get rejected.)
