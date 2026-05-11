@@ -292,6 +292,9 @@ pub struct TimerView {
     /// Suppress persistence side-effects while `load_breathing_settings`
     /// is setting initial values from the DB.
     breathing_populating: Cell<bool>,
+    /// Suppress persistence side-effects while `load_timer_settings`
+    /// is restoring the countdown target from the DB.
+    timer_populating: Cell<bool>,
     /// Boot-time anchor at session start. Suspend-resilient (see boot_time_now).
     start_boot_time: Cell<Option<std::time::Duration>>,
     /// `meditate_core::session::Session` — the portable state machine
@@ -3070,6 +3073,13 @@ impl TimerView {
             return;
         };
 
+        // Restore the persisted Timer-mode countdown target. Done here
+        // because `constructed()` runs before the widget is rooted, so
+        // `get_app()` would return None — same reason every other
+        // persisted Setup-view value is loaded from this function
+        // rather than constructed.
+        self.load_timer_settings();
+
         // Batch every DB read this visit needs into a single borrow:
         // one get_app() walk, one RefCell lock, four SQL queries instead
         // of as many separate calls. The bells block also rides along —
@@ -3618,6 +3628,30 @@ impl TimerView {
         let m = (secs % 3600) / 60;
         self.big_time_label.set_label(&format!("{h:02}:{m:02}"));
         self.duration_value_label.set_label(&format!("{h:02}:{m:02}"));
+        if self.timer_populating.get() { return; }
+        if let Some(app) = self.get_app() {
+            let _ = app.with_db_mut(|db| {
+                db.set_setting("timer_session_secs", &secs.to_string())
+            });
+        }
+    }
+
+    /// Restore the persisted Timer-mode countdown target. Falls back
+    /// to the 10-min default the Cell was initialised with if the
+    /// setting is missing or unparseable. The `timer_populating` guard
+    /// suppresses the write-back that `set_countdown_target` would
+    /// otherwise do.
+    fn load_timer_settings(&self) {
+        let Some(app) = self.get_app() else { return; };
+        let secs = app.with_db(|db| {
+            db.get_setting("timer_session_secs", "600")
+                .ok()
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(10 * 60)
+        }).unwrap_or(10 * 60);
+        self.timer_populating.set(true);
+        self.set_countdown_target(secs);
+        self.timer_populating.set(false);
     }
 
     /// Show the H:M spin-button dialog; apply on Set. Same shape in
