@@ -380,6 +380,23 @@ they sit here as a heads-up for the eventual port.
   as the dispatch-free wrapper. Kills the only remaining inline
   `glib::DateTime::format` call in `log/imp.rs`.
 
+## Fourth-pass findings
+
+### `settings_keys::read_bool(db, key, default) → bool`
+- Same `get_setting(key, "false") → ok → parse_bool → unwrap_or(default)`
+  chain repeats verbatim in 13+ call sites:
+  - `src/bells.rs:117-121`
+  - `src/sound.rs:165-169, :204-208`
+  - `src/timer/imp.rs:1042-1046, :1063-1067, :1316-1320, :1749-1753,
+    :1937-1944 (×2), :2923-2948 (×4), :3795-3798`
+- Migration: add `meditate_core::settings_keys::read_bool(db: &Database,
+  key: &str, default: bool) → bool` next to existing `parse_bool` /
+  `format_bool`. Each call site collapses from 4 lines to 1, and the
+  "missing key or parse-fail → default" contract gets crystallised in
+  one place. Subsumes the `read_keep_screen_awake` reader (already in
+  backlog) and the implicit `read_stopwatch_for_mode` shape — both
+  become one-liners over this primitive.
+
 ## Skipped (intentionally not migrating)
 
 ### `lookup_bell` walker in `src/bells.rs:763-769`
