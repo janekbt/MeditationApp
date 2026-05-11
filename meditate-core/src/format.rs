@@ -226,6 +226,30 @@ pub fn intervals_count_key(enabled_count: usize) -> IntervalsCountKey {
     }
 }
 
+/// Reason a session-save attempt failed. Shell maps each variant
+/// to a translatable toast.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionSaveFailureKind {
+    DbUnopened,
+    StorageError,
+}
+
+/// Diag-log line for a session-save failure. The `session_save_failed:`
+/// prefix is greppable across versions.
+pub fn session_save_failure_log_message(
+    kind: SessionSaveFailureKind,
+    detail: &str,
+) -> String {
+    match kind {
+        SessionSaveFailureKind::DbUnopened => {
+            format!("session_save_failed: db unopened (detail: {detail})")
+        }
+        SessionSaveFailureKind::StorageError => {
+            format!("session_save_failed: storage error: {detail}")
+        }
+    }
+}
+
 /// Decision key for the Setup-view streak chip. The shell translates
 /// each variant — "Start your streak today" / "1 day streak" / "{n}
 /// days streak" in the gtk shell today; Android picks its own
@@ -874,6 +898,41 @@ mod tests {
     fn intervals_count_key_many_carries_count() {
         assert_eq!(intervals_count_key(5), IntervalsCountKey::Many(5));
         assert_eq!(intervals_count_key(99), IntervalsCountKey::Many(99));
+    }
+
+    // ── session_save_failure_log_message ────────────────────────────
+
+    #[test]
+    fn session_save_failure_db_unopened_log_message_format() {
+        let msg = session_save_failure_log_message(
+            SessionSaveFailureKind::DbUnopened,
+            "with_db_blocking_mut returned None",
+        );
+        assert!(
+            msg.starts_with("session_save_failed:"),
+            "log line must use greppable prefix; got {msg:?}"
+        );
+        assert!(msg.contains("db unopened"));
+        assert!(msg.contains("with_db_blocking_mut returned None"));
+    }
+
+    #[test]
+    fn session_save_failure_storage_log_message_format() {
+        let msg = session_save_failure_log_message(
+            SessionSaveFailureKind::StorageError,
+            "SqliteFailure(SQLITE_FULL): disk full",
+        );
+        assert!(msg.starts_with("session_save_failed:"));
+        assert!(msg.contains("storage error"));
+        assert!(msg.contains("SQLITE_FULL"));
+        assert!(msg.contains("disk full"));
+    }
+
+    #[test]
+    fn session_save_failure_kinds_distinguishable_in_log() {
+        let a = session_save_failure_log_message(SessionSaveFailureKind::DbUnopened, "x");
+        let b = session_save_failure_log_message(SessionSaveFailureKind::StorageError, "x");
+        assert_ne!(a, b, "kinds must produce different log lines");
     }
 
     // ── preset_subtitle_parts ─────────────────────────────────────────

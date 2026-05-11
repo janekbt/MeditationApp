@@ -2391,7 +2391,43 @@ impl TimerView {
                 let result = app
                     .with_db_blocking_mut(move |db| db.create_session(&data))
                     .await;
-                let Some(Ok(session)) = result else { return; };
+                let session = match result {
+                    Some(Ok(s)) => s,
+                    Some(Err(e)) => {
+                        meditate_core::diag::log(
+                            &meditate_core::format::session_save_failure_log_message(
+                                meditate_core::format::SessionSaveFailureKind::StorageError,
+                                &e.to_string(),
+                            ),
+                        );
+                        if let Some(win) = app
+                            .active_window()
+                            .and_then(|w| w.downcast::<crate::window::MeditateWindow>().ok())
+                        {
+                            win.add_toast(adw::Toast::new(&crate::i18n::gettext(
+                                "Couldn't save session — storage error",
+                            )));
+                        }
+                        return;
+                    }
+                    None => {
+                        meditate_core::diag::log(
+                            &meditate_core::format::session_save_failure_log_message(
+                                meditate_core::format::SessionSaveFailureKind::DbUnopened,
+                                "with_db_blocking_mut returned None",
+                            ),
+                        );
+                        if let Some(win) = app
+                            .active_window()
+                            .and_then(|w| w.downcast::<crate::window::MeditateWindow>().ok())
+                        {
+                            win.add_toast(adw::Toast::new(&crate::i18n::gettext(
+                                "Couldn't save session — storage unavailable",
+                            )));
+                        }
+                        return;
+                    }
+                };
 
                 app.invalidate(crate::application::InvalidateScope::STATS);
                 if let Some(win) = app.active_window()
