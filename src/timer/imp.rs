@@ -16,32 +16,12 @@ use meditate_core::bells::ActiveBell;
 use meditate_core::session::{
     Effect as CoreSessionEffect,
     Session as CoreSession,
-    SessionPhase as CoreSessionPhase,
     SessionSettings as CoreSessionSettings,
 };
 
 // ── Per-mode independent state ────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum TimerState {
-    #[default]
-    Idle,
-    /// Counting down the silent preparation interval before the
-    /// starting bell fires and the actual Timer-mode session begins.
-    /// Timer-mode only; Box Breathing skips this entirely.
-    Preparing,
-    Running,
-    /// Countdown reached 0:00 but the user hasn't yet finished —
-    /// big-clock readout flips from "remaining" to "elapsed past
-    /// zero" (counting up), and Pause becomes Finish + an "Add
-    /// MM:SS?" button appears that commits the overtime as part
-    /// of the session duration. Interval bells keep firing on
-    /// the original session timeline. Stopwatch and Box Breath
-    /// don't enter this state — they have no countdown to overshoot.
-    Overtime,
-    Paused,
-    Done,
-}
+pub use meditate_core::session::UiState;
 
 /// Which of the two modes is currently selected. Encapsulates the
 /// mode_toggle_group's active-name in a single readable value
@@ -174,9 +154,10 @@ pub struct TimerView {
     // ── Active session state ─────────────────────────────────────────
     // Only one session runs at a time across the three modes.
     // The high-level state (Idle / Preparing / Running / Overtime /
-    // Paused / Done) is derived from `core_session` + `is_paused()`
-    // + `final_duration_secs` via the `timer_state()` method below
-    // — no separate Cell to keep in sync.
+    // Paused / Done) is derived from `core_session.ui_state()` —
+    // Session retains its `Stopped` phase + the saved duration after
+    // a session ends, so the Done view reads both off the Session
+    // until the shell drops it at reset_mode.
     /// Unix timestamp when the active session started (for DB save).
     session_start_time: Cell<i64>,
 
@@ -207,12 +188,6 @@ pub struct TimerView {
     running_pause_btn: RefCell<Option<gtk::Button>>,
     running_stop_btn: RefCell<Option<gtk::Button>>,
     overtime_add_btn: RefCell<Option<gtk::Button>>,
-    /// When `Some`, on_save records this duration instead of the
-    /// raw elapsed. Used by the Overtime "Finish" button so the
-    /// recorded session is exactly the planned countdown — Add's
-    /// path leaves it unset and on_save uses the natural elapsed
-    /// (countdown target + overtime).
-    final_duration_secs: Cell<Option<u64>>,
     /// True while a label-row update is being applied programmatically
     /// (mode switch, show_done refresh) — suppresses the
     /// enable_expansion_notify / activated callbacks so they don't
@@ -743,7 +718,9 @@ impl TimerView {
                     // First time the toggle flips on for this mode:
                     // adopt the mode-default uuid so subsequent reads
                     // resolve cleanly.
-                    let default = imp.mode_default_label_uuid(mode);
+                    let default = meditate_core::settings_keys::default_label_uuid_for_mode(
+                        mode.into(),
+                    );
                     imp.persist_label_uuid_for_mode(mode, default);
                 }
                 imp.refresh_setup_label_chooser_subtitle();
@@ -1798,15 +1775,15 @@ impl TimerView {
         }
         self.refresh_stopwatch_dependent_ui();
 
-        match self.timer_state() {
-            TimerState::Idle      => self.show_idle_ui(),
-            TimerState::Paused    => self.show_paused_ui(self.current_display_secs()),
-            TimerState::Done      => self.view_stack.set_visible_child_name("done"),
+        match self.ui_state() {
+            UiState::Idle      => self.show_idle_ui(),
+            UiState::Paused    => self.show_paused_ui(self.current_display_secs()),
+            UiState::Done      => self.view_stack.set_visible_child_name("done"),
             // Running, Preparing, and Overtime normally can't reach
             // here (the nav page blocks the toggle while a session
             // or prep is in flight); fall back to idle UI as a
             // safety net.
-            TimerState::Running | TimerState::Preparing | TimerState::Overtime => {
+            UiState::Running | UiState::Preparing | UiState::Overtime => {
                 self.show_idle_ui()
             }
         }
@@ -1906,7 +1883,7 @@ impl TimerView {
         // Hero refresh: stopwatch flips the hero between "00:00"
         // and the mode's target reading in every mode (Timer,
         // Box Breath, Guided), not just Timer.
-        if self.timer_state() == TimerState::Idle {
+        if self.ui_state() == UiState::Idle {
             self.refresh_hero_for_idle();
         }
         // Stopwatch on ⇒ planned-duration concept inert; grey out
@@ -2151,7 +2128,10 @@ impl TimerView {
 
         // Prep-mode setup: anchor the boot time and hand the prep
         // duration to Session — it owns prep ticking + the prep→
-        // Running transition internally.
+        // Running transition internally. Bells are built once here
+        // (not deferred to Running) so Session carries the schedule
+        // unchanged across the internal Prep→Running transition,
+        // and the shell needs no separate rebuild on EndPrep.
         if let Some(prep_dur) = prep {
             self.start_boot_time.set(Some(boot_time_now()));
             let stopwatch_on = self.stopwatch_toggle_on.get();
@@ -2160,6 +2140,10 @@ impl TimerView {
             } else {
                 Some(self.countdown_target_secs.get() as u32)
             };
+            let (bells, bell_rng_seed) = self.build_session_bells(
+                target_secs.map(|t| t as u64),
+                stopwatch_on,
+            );
             let Some(app) = self.get_app() else { return; };
             let core_settings = CoreSessionSettings {
                 mode: SessionMode::Timer,
@@ -2167,8 +2151,8 @@ impl TimerView {
                 target_secs,
                 stopwatch_display: stopwatch_on,
                 breath_pattern: None,
-                bells: Vec::new(),
-                bell_rng_seed: 1,
+                bells,
+                bell_rng_seed,
                 signal_mode_override: self.read_signal_mode_override(
                     &app, "timer_signal_mode",
                 ),
@@ -2181,8 +2165,8 @@ impl TimerView {
                 std::time::Duration::ZERO,
             ));
         } else {
-            // Bell-library schedule is built when Running starts. With
-            // prep, the same call lives in transition_prep_to_running.
+            // No-prep Timer: build bells + start Session directly in
+            // Running. Same SessionSettings shape as the prep path.
             if mode == TimerMode::Timer {
                 let stopwatch_on = self.stopwatch_toggle_on.get();
                 let target_secs = if stopwatch_on {
@@ -2335,15 +2319,10 @@ impl TimerView {
         let elapsed = self
             .core_session_end(|s, now| s.stop(now))
             .unwrap_or(0);
-        // Pin the elapsed we just computed so on_save reads the same
-        // value the Done page is about to show. Mirrors the Overtime
-        // Finish path which uses the same slot.
-        self.final_duration_secs.set(Some(elapsed));
-        // Drop the Session — bells were owned by it (built at
-        // start_session / transition_prep_to_running via
-        // build_session_bells) so they vanish with it; a quick
-        // re-Start rebuilds the schedule from current DB rows.
-        *self.core_session.borrow_mut() = None;
+        // Session transitioned to Stopped and stashed `elapsed` as
+        // its final duration — the Done view reads it back via
+        // `session_final_duration_secs()`. Don't drop the Session
+        // here; reset_mode drops it when the user leaves Done.
         // Guided playback stops the moment the user picks Stop —
         // Drop runs set_state(Null) + drops the bus signal-watch.
         // No-op for non-Guided sessions (slot is already None).
@@ -2367,15 +2346,26 @@ impl TimerView {
 
     /// Elapsed seconds for the active session. Used by on_stop /
     /// on_save (both produce a session row whose `duration_secs` is
-    /// what we return here). `final_duration_secs` short-circuits
-    /// when set (Overtime "Finish" pins the planned target there);
-    /// otherwise reads from Session, which has uniform elapsed
-    /// semantics across Prep / Running / Overtime / Box-Breath.
+    /// what we return here). Once the session has Stopped, Session
+    /// holds the canonical saved duration (target_secs for Finish-
+    /// overtime, running+overtime elapsed for Add, etc.); during in-
+    /// flight Prep / Running / Overtime the running phase_clock is
+    /// the source.
     fn elapsed_secs_for_mode(&self) -> u64 {
-        if let Some(forced) = self.final_duration_secs.get() {
-            return forced;
+        if let Some(secs) = self.session_final_duration_secs() {
+            return secs;
         }
         self.session_elapsed().as_secs()
+    }
+
+    /// Saved-duration accessor wrapping `Session::final_duration_secs()`.
+    /// Returns `None` when there is no Session or when the active
+    /// Session is still in flight.
+    fn session_final_duration_secs(&self) -> Option<u64> {
+        self.core_session
+            .borrow()
+            .as_ref()
+            .and_then(|s| s.final_duration_secs())
     }
 
     fn show_done(&self, elapsed_secs: u64) {
@@ -2454,23 +2444,23 @@ impl TimerView {
         // this mode — covers the case where they changed the
         // selection on the Done screen and want it stuck for next
         // session. Off-toggle clears the active flag so the next
-        // session starts off too.
-        match label_id {
-            Some(id) => {
-                let uuid = self.get_app().and_then(|app| {
-                    app.with_db(|db| db.list_labels())
-                        .and_then(|r| r.ok())
-                        .unwrap_or_default()
-                        .into_iter()
-                        .find(|l| l.id == id)
-                        .map(|l| l.uuid)
-                });
-                if let Some(uuid) = uuid {
-                    self.persist_label_uuid_for_mode(mode, &uuid);
-                    self.persist_label_active_for_mode(mode, true);
-                }
+        // session starts off too. The "what action to take" decision
+        // (set / deactivate / noop on a now-missing id) lives in
+        // core::labels so the Android shell shares it.
+        let labels = self
+            .get_app()
+            .and_then(|app| app.with_db(|db| db.list_labels()))
+            .and_then(|r| r.ok())
+            .unwrap_or_default();
+        match meditate_core::labels::resolve_persist_action(label_id, &labels) {
+            meditate_core::labels::PersistAction::SetUuidAndActivate { uuid } => {
+                self.persist_label_uuid_for_mode(mode, &uuid);
+                self.persist_label_active_for_mode(mode, true);
             }
-            None => self.persist_label_active_for_mode(mode, false),
+            meditate_core::labels::PersistAction::Deactivate => {
+                self.persist_label_active_for_mode(mode, false);
+            }
+            meditate_core::labels::PersistAction::NoOp => {}
         }
 
         // Fire-and-forget DB write on the blocking pool. SQLite fsync on
@@ -2556,10 +2546,9 @@ impl TimerView {
                 *self.guided_playback.borrow_mut() = None;
             }
         }
-        // core_session=None + final_duration_secs=None → timer_state()
-        // returns Idle automatically.
+        // Dropping core_session above also drops the saved final
+        // duration, so the next refresh sees `ui_state == Idle`.
         self.session_start_time.set(0);
-        self.final_duration_secs.set(None);
 
         // Only update the visible UI if this mode is the one currently shown.
         if mode == self.current_mode() {
@@ -2576,10 +2565,10 @@ impl TimerView {
             std::time::Duration::from_secs(1),
             move || {
                 let imp = obj.imp();
-                match imp.timer_state() {
-                    TimerState::Preparing => imp.tick_prep(&obj),
-                    TimerState::Running => imp.tick_running(&obj),
-                    TimerState::Overtime => imp.tick_overtime(&obj),
+                match imp.ui_state() {
+                    UiState::Preparing => imp.tick_prep(&obj),
+                    UiState::Running => imp.tick_running(&obj),
+                    UiState::Overtime => imp.tick_overtime(&obj),
                     _ => glib::ControlFlow::Break,
                 }
             },
@@ -2594,9 +2583,12 @@ impl TimerView {
     /// branch.
     fn tick_prep(&self, _obj: &super::TimerView) -> glib::ControlFlow {
         let now = self.elapsed_since_start();
-        // Prep ticking is owned by the portable state machine. The
-        // Session is constructed in start_session and dropped in
-        // transition_prep_to_running / on_stop / reset_mode.
+        // Prep ticking is owned by the portable state machine —
+        // Session emits EndPrep + flips its own phase to Running at
+        // the boundary, with starting-bell FireStartingBell on the
+        // same tick. The shell only renders display updates and
+        // routes fire cues; the next tick lands in `tick_running`
+        // automatically via `ui_state()`.
         let effects: Vec<CoreSessionEffect> = self
             .core_session
             .borrow_mut()
@@ -2604,16 +2596,10 @@ impl TimerView {
             .map(|s| s.tick(now))
             .unwrap_or_default();
         for effect in &effects {
-            match effect {
-                CoreSessionEffect::UpdateDisplay { secs } => {
-                    if let Some(label) = self.running_label.borrow().as_ref() {
-                        label.set_label(&format_time(Duration::from_secs(*secs)));
-                    }
+            if let CoreSessionEffect::UpdateDisplay { secs } = effect {
+                if let Some(label) = self.running_label.borrow().as_ref() {
+                    label.set_label(&format_time(Duration::from_secs(*secs)));
                 }
-                CoreSessionEffect::EndPrep => {
-                    self.transition_prep_to_running();
-                }
-                _ => {}
             }
         }
         // FireStartingBell (emitted by Session alongside EndPrep at
@@ -2782,7 +2768,7 @@ impl TimerView {
     /// duration *plus* the elapsed overtime as the session length,
     /// pop the running page, surface the Done screen.
     pub(super) fn add_overtime_and_finish(&self) {
-        if self.timer_state() != TimerState::Overtime {
+        if self.ui_state() != UiState::Overtime {
             return;
         }
         let elapsed = self
@@ -2792,11 +2778,12 @@ impl TimerView {
     }
 
     /// Overtime user picked "Finish" — record exactly the planned
-    /// countdown duration (overtime discarded). `final_duration_secs`
-    /// overrides the natural elapsed reading in `elapsed_secs_for_mode`
-    /// so the Save path stores the same value the Done screen shows.
+    /// countdown duration (overtime discarded). Session stashes the
+    /// target in its `final_duration_secs` slot via `finish_overtime`,
+    /// which `elapsed_secs_for_mode` then reads back so the Save path
+    /// stores the same value the Done screen shows.
     pub(super) fn finish_overtime_session(&self) {
-        if self.timer_state() != TimerState::Overtime {
+        if self.ui_state() != UiState::Overtime {
             return;
         }
         let target = self.countdown_target_secs.get();
@@ -2838,10 +2825,8 @@ impl TimerView {
         *self.running_pause_btn.borrow_mut() = None;
         *self.running_stop_btn.borrow_mut() = None;
         *self.overtime_add_btn.borrow_mut() = None;
-        // Pin the elapsed and drop the Session — together these flip
-        // `timer_state()` to Done.
-        self.final_duration_secs.set(Some(elapsed_secs));
-        *self.core_session.borrow_mut() = None;
+        // Session is in `Stopped` with `elapsed_secs` stashed —
+        // `ui_state()` flips to Done off that.
         if let Some(app) = self.get_app() {
             self.release_screen_awake_lock(&app);
         }
@@ -2849,65 +2834,18 @@ impl TimerView {
         self.show_done(elapsed_secs);
     }
 
-    /// Prep finished — swap in a fresh running Session, flip the
-    /// state to Running. The starting bell fired via Session's
-    /// FireStartingBell effect on the previous tick (the same one
-    /// that emitted EndPrep). The 1 Hz tick will pick up where this
-    /// left off on its next iteration.
-    fn transition_prep_to_running(&self) {
-        // Rebuild Session in Running phase, anchored at the current
-        // boot-relative time. The previous prep Session already
-        // emitted EndPrep on the tick that called us. Bells get
-        // built here (not at session start) so any DB change during
-        // prep is reflected in the running schedule.
-        let stopwatch_on = self.stopwatch_toggle_on.get();
-        let target_secs = if stopwatch_on {
-            None
-        } else {
-            Some(self.countdown_target_secs.get() as u32)
-        };
-        let (bells, bell_rng_seed) = self.build_session_bells(
-            target_secs.map(|t| t as u64),
-            stopwatch_on,
-        );
-        let Some(app) = self.get_app() else { return; };
-        let core_settings = CoreSessionSettings {
-            mode: SessionMode::Timer,
-            prep_secs: None,
-            target_secs,
-            stopwatch_display: stopwatch_on,
-            breath_pattern: None,
-            bells,
-            bell_rng_seed,
-            signal_mode_override: self.read_signal_mode_override(
-                &app, "timer_signal_mode",
-            ),
-            // Starting bell already fired alongside EndPrep on the
-            // prior tick — Session emitted FireStartingBell from
-            // tick_prep's boundary crossing. No need to attach it
-            // here (would double-fire).
-            starting_bell: None,
-            end_bell: self.build_end_bell_cue(&app),
-            box_breath_cues: None,
-        };
-        let now = self.elapsed_since_start();
-        *self.core_session.borrow_mut() = Some(CoreSession::start_running(
-            core_settings,
-            now,
-        ));
-    }
-
     /// Natural completion path for a breath session: marks Done, plays the
     /// end chime, vibrates, and sends a notification when not focused.
     /// Mirrors the countdown's done branch (timer.imp at the 1 Hz tick).
     /// Distinct from `on_stop` (user-initiated), which is silent.
     pub(super) fn finish_breath_session(&self) {
-        let elapsed = self.breath_elapsed().as_secs();
-        // Pin elapsed before dropping the Session — without this,
-        // session_elapsed reads 0 by the time on_save runs and the
-        // saved row would record a 0-second session.
-        self.final_duration_secs.set(Some(elapsed));
-        *self.core_session.borrow_mut() = None;
+        // tick_box_breath already transitioned Session to Stopped
+        // and stashed `duration_secs` into Session::final_duration_secs;
+        // both survive until reset_mode drops the Session at user
+        // dismissal of the Done view.
+        let elapsed = self
+            .session_final_duration_secs()
+            .unwrap_or_else(|| self.breath_elapsed().as_secs());
         // Release running-page widget refs — the page pops next.
         *self.running_label.borrow_mut() = None;
         *self.running_pause_btn.borrow_mut() = None;
@@ -2943,36 +2881,11 @@ impl TimerView {
             .unwrap_or_default()
     }
 
-    /// High-level UI state derived from Session.phase / is_paused
-    /// + `final_duration_secs`. Replaces the old `timer_state` Cell
-    /// — see the field-comment above for the mapping rationale.
-    /// Cheap: one RefCell borrow + a few comparisons per call.
-    pub(crate) fn timer_state(&self) -> TimerState {
-        let session = self.core_session.borrow();
-        let Some(s) = session.as_ref() else {
-            return if self.final_duration_secs.get().is_some() {
-                TimerState::Done
-            } else {
-                TimerState::Idle
-            };
-        };
-        if s.is_paused() {
-            return TimerState::Paused;
-        }
-        match s.phase() {
-            CoreSessionPhase::Prep => TimerState::Preparing,
-            CoreSessionPhase::Running => TimerState::Running,
-            CoreSessionPhase::Overtime => TimerState::Overtime,
-            // `Paused` phase is reserved and never set in practice —
-            // is_paused() covers the pause state orthogonally. Map
-            // anyway for completeness.
-            CoreSessionPhase::Paused => TimerState::Paused,
-            // `Stopped` is the brief window between Session.stop()
-            // and core_session being dropped at the call site; both
-            // happen in the same gtk method so it's not externally
-            // observed, but map for safety.
-            CoreSessionPhase::Stopped => TimerState::Done,
-        }
+    /// High-level UI state — delegated to the portable Session;
+    /// `None` (no in-flight session) → `UiState::Idle`. Cheap: one
+    /// RefCell borrow + a couple of comparisons inside core.
+    pub(crate) fn ui_state(&self) -> UiState {
+        meditate_core::session::ui_state(self.core_session.borrow().as_ref())
     }
 
     /// Wall-clock-anchored elapsed time of the active breath session.
@@ -3156,10 +3069,14 @@ impl TimerView {
 
         // Update streak label. .streak-chip applies text-transform:
         // uppercase, so we keep the source text sentence-case here.
-        let text = match streak {
-            0 => crate::i18n::gettext("Start your streak today"),
-            1 => crate::i18n::gettext("1 day streak"),
-            n => crate::i18n::gettext("{n} days streak").replace("{n}", &n.to_string()),
+        // Core picks the variant; the gtk shell maps each to a
+        // gettext-translated phrase at the i18n boundary.
+        use meditate_core::format::StreakKey;
+        let text = match meditate_core::format::streak_key(streak) {
+            StreakKey::Zero => crate::i18n::gettext("Start your streak today"),
+            StreakKey::One => crate::i18n::gettext("1 day streak"),
+            StreakKey::Many(n) => crate::i18n::gettext("{n} days streak")
+                .replace("{n}", &n.to_string()),
         };
         self.streak_label.set_label(&text);
 
@@ -3701,24 +3618,10 @@ impl TimerView {
         }
     }
 
-    /// Resolve the label currently configured for `mode`. Reads
-    /// `default_label_uuid_<mode>`, falls back to the mode-default
-    /// uuid (Meditation / Box-Breathing) when the setting is unset
-    /// or empty. Returns `None` only when even the mode-default row
-    /// has been deleted by the user.
     fn resolve_label_for_mode(&self, mode: TimerMode) -> Option<Label> {
-        let app = self.get_app()?;
-        let uuid = self
-            .persisted_label_uuid_for_mode(mode)
-            .unwrap_or_else(|| self.mode_default_label_uuid(mode).to_string());
-        if uuid.is_empty() {
-            return None;
-        }
-        app.with_db(|db| db.list_labels())
-            .and_then(|r| r.ok())
-            .unwrap_or_default()
-            .into_iter()
-            .find(|l| l.uuid == uuid)
+        self.get_app()?.with_db(|db| {
+            meditate_core::labels::resolve_label_for_mode(db.core(), mode.into())
+        }).flatten()
     }
 
     /// Returns the label currently configured for the active Setup
@@ -3830,13 +3733,13 @@ impl TimerView {
     }
 
     pub fn toggle_playback(&self) {
-        match self.timer_state() {
-            TimerState::Idle      => self.on_start(),
-            TimerState::Preparing => self.on_pause(),
-            TimerState::Running   => self.on_pause(),
-            TimerState::Overtime  => self.finish_overtime_session(),
-            TimerState::Paused    => self.on_resume(),
-            TimerState::Done      => {}
+        match self.ui_state() {
+            UiState::Idle      => self.on_start(),
+            UiState::Preparing => self.on_pause(),
+            UiState::Running   => self.on_pause(),
+            UiState::Overtime  => self.finish_overtime_session(),
+            UiState::Paused    => self.on_resume(),
+            UiState::Done      => {}
         }
     }
 }
@@ -3862,166 +3765,62 @@ impl TimerView {
     /// schedule construction + jitter rolls live in core. Returns
     /// `(empty Vec, fresh seed)` when the master toggle is off so
     /// Session's per-tick check has nothing to do.
+    // Session-config builders — one-line wrappers around the
+    // core::bells::*_from_db readers so the shell's setup-state
+    // assembly hands the same SessionSettings to Session that the
+    // Android shell will. The math lives in core; this is just the
+    // `app.with_db(...)` ceremony.
+
     fn build_session_bells(
         &self,
         total_target_secs: Option<u64>,
         stopwatch_on: bool,
     ) -> (Vec<ActiveBell>, u64) {
-        let seed = meditate_core::time::seed_now();
-        let Some(app) = self.get_app() else { return (Vec::new(), seed); };
-        let master_active = app
-            .with_db(|db| {
-                db.get_setting("interval_bells_active", "false")
-                    .map(|v| meditate_core::settings_keys::parse_bool(&v))
-                    .unwrap_or(false)
+        self.get_app()
+            .and_then(|app| {
+                app.with_db(|db| {
+                    meditate_core::bells::session_bells_from_db(
+                        db.core(),
+                        total_target_secs,
+                        stopwatch_on,
+                    )
+                })
             })
-            .unwrap_or(false);
-        if !master_active {
-            return (Vec::new(), seed);
-        }
-        let rows = app
-            .with_db(|db| db.list_interval_bells())
-            .and_then(|r| r.ok())
-            .unwrap_or_default();
-        meditate_core::bells::build_active_bells(&rows, total_target_secs, stopwatch_on, seed)
+            .unwrap_or_else(|| (Vec::new(), meditate_core::time::seed_now()))
     }
 
-    /// Read the per-mode "Cues" signal-mode override (sound /
-    /// vibration / both) for `mode`. Falls back to `Both` when the
-    /// setting is missing or unparseable — same default the existing
-    /// gtk dispatchers use.
     fn read_signal_mode_override(
         &self,
         app: &crate::application::MeditateApplication,
         mode_key: &'static str,
     ) -> crate::db::SignalMode {
-        let raw = app
-            .with_db(|db| db.get_setting(mode_key, "both"))
-            .and_then(|r| r.ok())
-            .unwrap_or_else(|| "both".to_string());
-        crate::db::SignalMode::from_db_str(&raw).unwrap_or(crate::db::SignalMode::Both)
+        app.with_db(|db| meditate_core::bells::signal_mode_override_from_db(db.core(), mode_key))
+            .unwrap_or(crate::db::SignalMode::Both)
     }
 
-    /// Build the starting-bell cue config from DB. `None` when the
-    /// user disabled the starting bell row — Session simply skips
-    /// emitting `FireStartingBell` in that case.
     fn build_starting_bell_cue(
         &self,
         app: &crate::application::MeditateApplication,
     ) -> Option<meditate_core::bells::BellCue> {
-        let active = app
-            .with_db(|db| db.get_setting("starting_bell_active", "false"))
-            .and_then(|r| r.ok())
-            .map(|s| meditate_core::settings_keys::parse_bool(&s))
-            .unwrap_or(false);
-        if !active {
-            return None;
-        }
-        let sound_uuid = app
-            .with_db(|db| {
-                db.get_setting("starting_bell_sound", crate::db::BUNDLED_BOWL_UUID)
-            })
-            .and_then(|r| r.ok())
-            .unwrap_or_else(|| crate::db::BUNDLED_BOWL_UUID.to_string());
-        let vibration_pattern_uuid = app
-            .with_db(|db| {
-                db.get_setting(
-                    "starting_bell_pattern",
-                    crate::db::BUNDLED_PATTERN_PULSE_UUID,
-                )
-            })
-            .and_then(|r| r.ok())
-            .unwrap_or_else(|| crate::db::BUNDLED_PATTERN_PULSE_UUID.to_string());
-        let raw_mode = app
-            .with_db(|db| db.get_setting("starting_bell_signal_mode", "sound"))
-            .and_then(|r| r.ok())
-            .unwrap_or_else(|| "sound".to_string());
-        let signal_mode = crate::db::SignalMode::from_db_str(&raw_mode)
-            .unwrap_or(crate::db::SignalMode::Sound);
-        Some(meditate_core::bells::BellCue {
-            sound_uuid,
-            vibration_pattern_uuid,
-            signal_mode,
-        })
+        app.with_db(|db| meditate_core::bells::starting_bell_cue_from_db(db.core()))
+            .flatten()
     }
 
-    /// Build the end-bell cue config from DB. `None` for a stopwatch
-    /// session (no natural end) or when the user disabled the row.
     fn build_end_bell_cue(
         &self,
         app: &crate::application::MeditateApplication,
     ) -> Option<meditate_core::bells::BellCue> {
-        if self.stopwatch_toggle_on.get() {
-            return None;
-        }
-        let active = app
-            .with_db(|db| db.get_setting("end_bell_active", "true"))
-            .and_then(|r| r.ok())
-            .map(|s| meditate_core::settings_keys::parse_bool(&s))
-            .unwrap_or(true);
-        if !active {
-            return None;
-        }
-        let sound_uuid = app
-            .with_db(|db| db.get_setting("end_bell_sound", crate::db::BUNDLED_BOWL_UUID))
-            .and_then(|r| r.ok())
-            .unwrap_or_else(|| crate::db::BUNDLED_BOWL_UUID.to_string());
-        let vibration_pattern_uuid = app
-            .with_db(|db| {
-                db.get_setting(
-                    "end_bell_pattern",
-                    crate::db::BUNDLED_PATTERN_PULSE_UUID,
-                )
-            })
-            .and_then(|r| r.ok())
-            .unwrap_or_else(|| crate::db::BUNDLED_PATTERN_PULSE_UUID.to_string());
-        let raw_mode = app
-            .with_db(|db| db.get_setting("end_bell_signal_mode", "sound"))
-            .and_then(|r| r.ok())
-            .unwrap_or_else(|| "sound".to_string());
-        let signal_mode = crate::db::SignalMode::from_db_str(&raw_mode)
-            .unwrap_or(crate::db::SignalMode::Sound);
-        Some(meditate_core::bells::BellCue {
-            sound_uuid,
-            vibration_pattern_uuid,
-            signal_mode,
-        })
+        let stopwatch_on = self.stopwatch_toggle_on.get();
+        app.with_db(|db| meditate_core::bells::end_bell_cue_from_db(db.core(), stopwatch_on))
+            .flatten()
     }
 
-    /// Build the Box-Breath per-phase cue config from DB. Always
-    /// returns a value (master_enabled may be false); Session checks
-    /// the master flag + the per-phase Option internally.
     fn build_box_breath_cues(
         &self,
         app: &crate::application::MeditateApplication,
     ) -> meditate_core::bells::BoxBreathCueConfig {
-        use crate::db::BoxBreathPhaseId;
-        let master_enabled = app
-            .with_db(|db| db.get_setting("boxbreath_cues_active", "false"))
-            .and_then(|r| r.ok())
-            .map(|s| meditate_core::settings_keys::parse_bool(&s))
-            .unwrap_or(false);
-        let load_phase = |phase: BoxBreathPhaseId| -> Option<meditate_core::bells::BellCue> {
-            let row = app
-                .with_db(|db| db.get_box_breath_phase(phase))
-                .and_then(|r| r.ok())
-                .flatten()?;
-            if !row.enabled {
-                return None;
-            }
-            Some(meditate_core::bells::BellCue {
-                sound_uuid: row.sound_uuid,
-                vibration_pattern_uuid: row.pattern_uuid,
-                signal_mode: row.signal_mode,
-            })
-        };
-        meditate_core::bells::BoxBreathCueConfig {
-            master_enabled,
-            in_phase: load_phase(BoxBreathPhaseId::In),
-            hold_in: load_phase(BoxBreathPhaseId::HoldIn),
-            out_phase: load_phase(BoxBreathPhaseId::Out),
-            hold_out: load_phase(BoxBreathPhaseId::HoldOut),
-        }
+        app.with_db(|db| meditate_core::bells::box_breath_cues_from_db(db.core()))
+            .unwrap_or_default()
     }
 }
 
@@ -4557,65 +4356,34 @@ impl TimerView {
     }
 
     fn persisted_label_active_for_mode(&self, mode: TimerMode) -> bool {
-        let Some(app) = self.get_app() else { return false; };
-        let key = label_active_setting_key(mode);
-        // Guided defaults to ON: a fresh user almost always wants
-        // their Guided sessions tagged with the seeded "Guided
-        // Meditation" label, and it's a hassle to flip the toggle
-        // every visit. Persisted user choice still wins on subsequent
-        // visits because get_setting only falls back here when the
-        // key is missing entirely.
-        let fallback = match mode {
-            TimerMode::Guided => "true",
-            _ => "false",
-        };
-        app.with_db(|db| db.get_setting(key, fallback))
-            .and_then(|r| r.ok())
-            .map(|v| meditate_core::settings_keys::parse_bool(&v))
+        self.get_app()
+            .and_then(|app| {
+                app.with_db(|db| {
+                    meditate_core::labels::persisted_active_for_mode(db.core(), mode.into())
+                })
+            })
             .unwrap_or(mode == TimerMode::Guided)
     }
 
     fn persist_label_active_for_mode(&self, mode: TimerMode, on: bool) {
         let Some(app) = self.get_app() else { return; };
-        let key = label_active_setting_key(mode);
         app.with_db_mut(|db| {
-            let _ = db.set_setting(key, meditate_core::settings_keys::format_bool(on));
+            let _ = meditate_core::labels::persist_active_for_mode(db.core(), mode.into(), on);
         });
     }
 
-    /// Read the persisted label uuid for `mode`. Returns `None` when
-    /// the setting is missing or empty — callers fall back to
-    /// `mode_default_label_uuid`.
     fn persisted_label_uuid_for_mode(&self, mode: TimerMode) -> Option<String> {
-        let app = self.get_app()?;
-        let key = label_uuid_setting_key(mode);
-        let val = app
-            .with_db(|db| db.get_setting(key, ""))
-            .and_then(|r| r.ok())?;
-        if val.is_empty() { None } else { Some(val) }
+        self.get_app()?.with_db(|db| {
+            meditate_core::labels::persisted_uuid_for_mode(db.core(), mode.into())
+        }).flatten()
     }
 
     fn persist_label_uuid_for_mode(&self, mode: TimerMode, uuid: &str) {
         let Some(app) = self.get_app() else { return; };
-        let key = label_uuid_setting_key(mode);
-        app.with_db_mut(|db| { let _ = db.set_setting(key, uuid); });
+        app.with_db_mut(|db| {
+            let _ = meditate_core::labels::persist_uuid_for_mode(db.core(), mode.into(), uuid);
+        });
     }
-
-    /// Stable per-mode default label uuid used when the user's
-    /// stored choice is missing — Meditation in Timer, Box-Breathing
-    /// in Box Breath, Guided Meditation in Guided. Resolves through
-    /// the seeded rows (`crate::db::DEFAULT_*_LABEL_UUID`).
-    fn mode_default_label_uuid(&self, mode: TimerMode) -> &'static str {
-        meditate_core::settings_keys::default_label_uuid_for_mode(mode.into())
-    }
-}
-
-fn label_active_setting_key(mode: TimerMode) -> &'static str {
-    meditate_core::settings_keys::label_active_key_for_mode(mode.into())
-}
-
-fn label_uuid_setting_key(mode: TimerMode) -> &'static str {
-    meditate_core::settings_keys::label_uuid_key_for_mode(mode.into())
 }
 
 

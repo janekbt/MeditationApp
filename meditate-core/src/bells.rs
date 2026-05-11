@@ -12,7 +12,12 @@
 //! the schedule doesn't carry its own state — so the shell stays
 //! free to pick its own deterministic source for tests / replay.
 
-use crate::db::{BellSound, IntervalBell, IntervalBellKind, SignalMode, VibrationPattern};
+use crate::db::{
+    BellSound, BoxBreathPhaseId, Database, IntervalBell, IntervalBellKind, SignalMode,
+    VibrationPattern,
+};
+use crate::seeds::{BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID};
+use crate::settings_keys::parse_bool;
 use crate::format::{
     fixed_from_end_target_secs, fixed_from_start_target_secs, next_interval_ring_secs,
 };
@@ -220,16 +225,130 @@ impl BoxBreathCueConfig {
     /// Resolve a `BoxBreathPhaseId` to the configured cue, or
     /// `None` when the master toggle is off or the phase has no
     /// row configured.
-    pub fn cue_for(&self, phase: crate::db::BoxBreathPhaseId) -> Option<&BellCue> {
+    pub fn cue_for(&self, phase: BoxBreathPhaseId) -> Option<&BellCue> {
         if !self.master_enabled {
             return None;
         }
         match phase {
-            crate::db::BoxBreathPhaseId::In => self.in_phase.as_ref(),
-            crate::db::BoxBreathPhaseId::HoldIn => self.hold_in.as_ref(),
-            crate::db::BoxBreathPhaseId::Out => self.out_phase.as_ref(),
-            crate::db::BoxBreathPhaseId::HoldOut => self.hold_out.as_ref(),
+            BoxBreathPhaseId::In => self.in_phase.as_ref(),
+            BoxBreathPhaseId::HoldIn => self.hold_in.as_ref(),
+            BoxBreathPhaseId::Out => self.out_phase.as_ref(),
+            BoxBreathPhaseId::HoldOut => self.hold_out.as_ref(),
         }
+    }
+}
+
+// ── Cue config loaders ──────────────────────────────────────────────
+//
+// `*_cue_from_db` rebuild the per-cue config the Session needs at
+// start time, from the settings rows the user has been editing in
+// the Setup view. Centralised so the Android shell can build the
+// same `BellCue` / `BoxBreathCueConfig` without re-implementing the
+// per-key fallback / parse rules each time.
+
+fn read_str(db: &Database, key: &str, default: &str) -> String {
+    db.get_setting(key, default).unwrap_or_else(|_| default.to_string())
+}
+
+fn read_bool(db: &Database, key: &str, default: bool) -> bool {
+    db.get_setting(key, crate::settings_keys::format_bool(default))
+        .map(|s| parse_bool(&s))
+        .unwrap_or(default)
+}
+
+fn read_signal_mode(db: &Database, key: &str, default: SignalMode) -> SignalMode {
+    db.get_setting(key, default.as_db_str())
+        .ok()
+        .and_then(|s| SignalMode::from_db_str(&s))
+        .unwrap_or(default)
+}
+
+/// Read the per-mode signal-mode override the user picked on the
+/// Setup view's "Cues" toggle group. Defaults to `Both` (no extra
+/// cap on top of per-bell signal_mode). The `key` is the mode-keyed
+/// setting from `settings_keys::signal_mode_key_for_mode`.
+pub fn signal_mode_override_from_db(db: &Database, key: &str) -> SignalMode {
+    read_signal_mode(db, key, SignalMode::Both)
+}
+
+/// Starting-bell cue config from the persisted settings rows.
+/// `None` when the user disabled the master starting-bell toggle
+/// (Session simply skips emitting `FireStartingBell` in that case).
+pub fn starting_bell_cue_from_db(db: &Database) -> Option<BellCue> {
+    if !read_bool(db, "starting_bell_active", false) {
+        return None;
+    }
+    Some(BellCue {
+        sound_uuid: read_str(db, "starting_bell_sound", BUNDLED_BOWL_UUID),
+        vibration_pattern_uuid: read_str(
+            db, "starting_bell_pattern", BUNDLED_PATTERN_PULSE_UUID,
+        ),
+        signal_mode: read_signal_mode(db, "starting_bell_signal_mode", SignalMode::Sound),
+    })
+}
+
+/// End-bell cue config from the persisted settings rows. `None`
+/// when the active session is stopwatch-only (no natural end) or
+/// when the master end-bell toggle is off.
+pub fn end_bell_cue_from_db(db: &Database, stopwatch_on: bool) -> Option<BellCue> {
+    if stopwatch_on {
+        return None;
+    }
+    if !read_bool(db, "end_bell_active", true) {
+        return None;
+    }
+    Some(BellCue {
+        sound_uuid: read_str(db, "end_bell_sound", BUNDLED_BOWL_UUID),
+        vibration_pattern_uuid: read_str(
+            db, "end_bell_pattern", BUNDLED_PATTERN_PULSE_UUID,
+        ),
+        signal_mode: read_signal_mode(db, "end_bell_signal_mode", SignalMode::Sound),
+    })
+}
+
+/// Per-session bell schedule from the persisted state: respects the
+/// master `interval_bells_active` toggle (empty schedule when off),
+/// reads the interval-bell library, and delegates the per-row
+/// schedule construction to `build_active_bells`. Returns `(bells,
+/// seed)` where `seed` is the xorshift64 seed Session uses for
+/// jitter draws — derived from `time::seed_now()` so multiple
+/// sessions in the same process don't draw identical jitter.
+pub fn session_bells_from_db(
+    db: &Database,
+    total_target_secs: Option<u64>,
+    stopwatch_on: bool,
+) -> (Vec<ActiveBell>, u64) {
+    let seed = crate::time::seed_now();
+    if !read_bool(db, "interval_bells_active", false) {
+        return (Vec::new(), seed);
+    }
+    let rows = db.list_interval_bells().unwrap_or_default();
+    build_active_bells(&rows, total_target_secs, stopwatch_on, seed)
+}
+
+/// Box-Breath per-phase cue config from the settings + phase rows.
+/// Always returns a value (with `master_enabled` reflecting the
+/// user's toggle); Session checks the master flag + the per-phase
+/// `Option<BellCue>` internally before emitting `FireBoxBreathCue`.
+pub fn box_breath_cues_from_db(db: &Database) -> BoxBreathCueConfig {
+    let master_enabled = read_bool(db, "boxbreath_cues_active", false);
+    let load = |phase: BoxBreathPhaseId| -> Option<BellCue> {
+        let row = db.get_box_breath_phase(phase).ok().flatten()?;
+        if !row.enabled {
+            return None;
+        }
+        Some(BellCue {
+            sound_uuid: row.sound_uuid,
+            vibration_pattern_uuid: row.pattern_uuid,
+            signal_mode: row.signal_mode,
+        })
+    };
+    BoxBreathCueConfig {
+        master_enabled,
+        in_phase: load(BoxBreathPhaseId::In),
+        hold_in: load(BoxBreathPhaseId::HoldIn),
+        out_phase: load(BoxBreathPhaseId::Out),
+        hold_out: load(BoxBreathPhaseId::HoldOut),
     }
 }
 
@@ -786,5 +905,89 @@ mod tests {
         assert!(!fixed.tick(60, &mut closure));
         drop(closure);
         assert_eq!(rng.calls, 0);
+    }
+
+    // ── *_cue_from_db loaders ───────────────────────────────────────
+
+    #[test]
+    fn starting_bell_cue_from_db_is_none_when_master_off() {
+        let db = Database::open_in_memory().unwrap();
+        assert!(starting_bell_cue_from_db(&db).is_none());
+    }
+
+    #[test]
+    fn starting_bell_cue_from_db_returns_persisted_when_master_on() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("starting_bell_active", "true").unwrap();
+        db.set_setting("starting_bell_sound", "custom-sound-uuid").unwrap();
+        db.set_setting("starting_bell_pattern", "custom-pattern-uuid").unwrap();
+        db.set_setting("starting_bell_signal_mode", "vibration").unwrap();
+        let cue = starting_bell_cue_from_db(&db).expect("master is on");
+        assert_eq!(cue.sound_uuid, "custom-sound-uuid");
+        assert_eq!(cue.vibration_pattern_uuid, "custom-pattern-uuid");
+        assert_eq!(cue.signal_mode, SignalMode::Vibration);
+    }
+
+    #[test]
+    fn starting_bell_cue_from_db_falls_back_to_bundled_defaults() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("starting_bell_active", "true").unwrap();
+        let cue = starting_bell_cue_from_db(&db).expect("master is on");
+        assert_eq!(cue.sound_uuid, BUNDLED_BOWL_UUID);
+        assert_eq!(cue.vibration_pattern_uuid, BUNDLED_PATTERN_PULSE_UUID);
+        assert_eq!(cue.signal_mode, SignalMode::Sound);
+    }
+
+    #[test]
+    fn end_bell_cue_from_db_is_none_for_stopwatch_session() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("end_bell_active", "true").unwrap();
+        assert!(end_bell_cue_from_db(&db, true).is_none());
+    }
+
+    #[test]
+    fn end_bell_cue_from_db_defaults_master_to_on() {
+        // First-launch state — no `end_bell_active` row at all.
+        // The default in core matches the gtk shell's prior default
+        // (`get_setting("end_bell_active", "true")`).
+        let db = Database::open_in_memory().unwrap();
+        let cue = end_bell_cue_from_db(&db, false).expect("default-on");
+        assert_eq!(cue.signal_mode, SignalMode::Sound);
+    }
+
+    #[test]
+    fn box_breath_cues_from_db_reflects_master_toggle() {
+        let db = Database::open_in_memory().unwrap();
+        let off = box_breath_cues_from_db(&db);
+        assert!(!off.master_enabled);
+        db.set_setting("boxbreath_cues_active", "true").unwrap();
+        let on = box_breath_cues_from_db(&db);
+        assert!(on.master_enabled);
+    }
+
+    #[test]
+    fn signal_mode_override_from_db_defaults_to_both() {
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(
+            signal_mode_override_from_db(&db, "timer_signal_mode"),
+            SignalMode::Both,
+        );
+    }
+
+    #[test]
+    fn signal_mode_override_from_db_reads_persisted_value() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("timer_signal_mode", "sound").unwrap();
+        assert_eq!(
+            signal_mode_override_from_db(&db, "timer_signal_mode"),
+            SignalMode::Sound,
+        );
+    }
+
+    #[test]
+    fn session_bells_from_db_is_empty_when_master_off() {
+        let db = Database::open_in_memory().unwrap();
+        let (bells, _seed) = session_bells_from_db(&db, Some(600), false);
+        assert!(bells.is_empty(), "master off must yield empty schedule");
     }
 }

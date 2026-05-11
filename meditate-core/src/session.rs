@@ -22,6 +22,39 @@ use crate::db::{BoxBreathPhaseId, SessionMode, SignalMode};
 use crate::timer::Stopwatch;
 use std::time::Duration;
 
+/// What the running-page view should reflect right now. Strict
+/// superset of `SessionPhase` plus `Idle` (no in-flight session)
+/// and an explicit `Paused` that captures the orthogonal pause flag
+/// (`Session::is_paused`) rather than the rarely-set `SessionPhase::
+/// Paused` variant. The shell branches on this enum to drive the
+/// view-stack page transitions and the running-page button row.
+///
+/// Resolved through `Session::ui_state()` (for in-flight sessions)
+/// or the free fn `ui_state(session)` which handles `None → Idle`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UiState {
+    /// No session in flight — the Setup view is showing.
+    #[default]
+    Idle,
+    /// Prep-silence countdown before the starting bell.
+    Preparing,
+    /// Active session (countdown, stopwatch, or box-breath cycling).
+    Running,
+    /// Countdown crossed zero; the user hasn't tapped Finish or Add.
+    Overtime,
+    /// Session paused; tick produces no effects.
+    Paused,
+    /// Session ended (any terminal path) — Done view is showing.
+    Done,
+}
+
+/// Resolve the running-page `UiState` from the shell's
+/// `Option<Session>` slot. `None` → `Idle`; `Some(s)` delegates to
+/// `s.ui_state()`.
+pub fn ui_state(session: Option<&Session>) -> UiState {
+    session.map(|s| s.ui_state()).unwrap_or(UiState::Idle)
+}
+
 /// Which lifecycle phase the in-flight session is currently in.
 /// "Idle" is not a phase — it corresponds to no session being in
 /// flight at all (the shell holds `Option<Session>::None`).
@@ -236,6 +269,13 @@ pub struct Session {
     /// `SessionSettings::bell_rng_seed` (zero → 1 to avoid the
     /// degenerate xorshift seed).
     bell_rng_state: u64,
+    /// Set when the session transitions to `Stopped` — the duration
+    /// the shell should persist in the saved session row. `None`
+    /// while in flight (Prep/Running/Overtime/Paused). Survives the
+    /// `Stopped` phase until the shell drops the Session at reset
+    /// time, so the Done view can render the saved length without
+    /// the shell having to shadow the value itself.
+    final_duration_secs: Option<u64>,
 }
 
 impl Session {
@@ -257,6 +297,7 @@ impl Session {
             last_breath_phase: None,
             bells,
             bell_rng_state,
+            final_duration_secs: None,
         }
     }
 
@@ -275,6 +316,7 @@ impl Session {
             last_breath_phase: None,
             bells,
             bell_rng_state,
+            final_duration_secs: None,
         }
     }
 
@@ -341,6 +383,7 @@ impl Session {
         }
         let duration_secs = self.phase_clock.elapsed(now).as_secs();
         self.phase = SessionPhase::Stopped;
+        self.final_duration_secs = Some(duration_secs);
         vec![
             Effect::StopActiveSignals,
             Effect::EndSession { duration_secs },
@@ -363,6 +406,7 @@ impl Session {
             .target_secs
             .expect("Overtime requires a target") as u64;
         self.phase = SessionPhase::Stopped;
+        self.final_duration_secs = Some(target_secs);
         vec![
             Effect::StopActiveSignals,
             Effect::EndSession { duration_secs: target_secs },
@@ -379,6 +423,7 @@ impl Session {
         }
         let duration_secs = self.phase_clock.elapsed(now).as_secs();
         self.phase = SessionPhase::Stopped;
+        self.final_duration_secs = Some(duration_secs);
         vec![
             Effect::StopActiveSignals,
             Effect::EndSession { duration_secs },
@@ -557,9 +602,10 @@ impl Session {
         if let Some(target_secs) = self.settings.target_secs {
             let target = Duration::from_secs(target_secs as u64);
             if elapsed >= target {
-                effects.push(Effect::EndBoxBreath {
-                    duration_secs: elapsed.as_secs(),
-                });
+                let duration_secs = elapsed.as_secs();
+                self.phase = SessionPhase::Stopped;
+                self.final_duration_secs = Some(duration_secs);
+                effects.push(Effect::EndBoxBreath { duration_secs });
                 if let Some(eff) = end_bell_effect(&self.settings) {
                     effects.push(eff);
                 }
@@ -604,6 +650,34 @@ impl Session {
 
     pub fn elapsed(&self, now: Duration) -> Duration {
         self.phase_clock.elapsed(now)
+    }
+
+    /// Saved duration the shell should record for this session.
+    /// `Some(secs)` once the session has stopped (any terminal path —
+    /// user Stop, Overtime Finish, Overtime Add, Box-Breath natural
+    /// end); `None` while in flight (Prep / Running / Overtime /
+    /// Paused). Survives until the shell drops the Session at reset
+    /// time, so the Done view can render the saved length without a
+    /// shell-side Cell shadow.
+    pub fn final_duration_secs(&self) -> Option<u64> {
+        self.final_duration_secs
+    }
+
+    /// What the shell's running-page view should reflect right now.
+    /// Pure dispatch over `phase` + `is_paused`; the free fn
+    /// `session::ui_state(session)` handles the `None` (= Idle) case
+    /// for the shell's top-level `Option<Session>` slot.
+    pub fn ui_state(&self) -> UiState {
+        if self.is_paused {
+            return UiState::Paused;
+        }
+        match self.phase {
+            SessionPhase::Prep => UiState::Preparing,
+            SessionPhase::Running => UiState::Running,
+            SessionPhase::Overtime => UiState::Overtime,
+            SessionPhase::Paused => UiState::Paused,
+            SessionPhase::Stopped => UiState::Done,
+        }
     }
 
     /// Mode of the in-flight session. Captured at start; never
@@ -841,6 +915,12 @@ mod tests {
             end_bell: None,
             box_breath_cues: None,
         }
+    }
+
+    fn timer_prep_settings(prep_secs: u32, target_secs: u32) -> SessionSettings {
+        let mut s = timer_countdown_settings(target_secs);
+        s.prep_secs = Some(prep_secs);
+        s
     }
 
     fn timer_stopwatch_settings() -> SessionSettings {
@@ -1156,6 +1236,11 @@ mod tests {
             "expected EndBoxBreath, got {:?}",
             effects
         );
+        // EndBoxBreath is a terminal path — Session transitions to
+        // Stopped and stashes the duration so the shell's Done view
+        // can read it without a Cell shadow.
+        assert_eq!(s.phase(), SessionPhase::Stopped);
+        assert_eq!(s.final_duration_secs(), Some(16));
     }
 
     #[test]
@@ -1705,6 +1790,80 @@ mod tests {
             "second stop must be a no-op, got {:?}",
             second
         );
+    }
+
+    #[test]
+    fn stop_stashes_final_duration_for_done_view() {
+        let mut s = Session::start_running(
+            timer_countdown_settings(600),
+            Duration::from_secs(100),
+        );
+        assert_eq!(s.final_duration_secs(), None, "in-flight before stop");
+        let _ = s.stop(Duration::from_secs(123));
+        assert_eq!(
+            s.final_duration_secs(),
+            Some(23),
+            "stash mirrors EndSession.duration_secs",
+        );
+    }
+
+    #[test]
+    fn finish_overtime_stashes_target_secs() {
+        let mut s = Session::start_running(
+            timer_countdown_settings(600),
+            Duration::from_secs(0),
+        );
+        let _ = s.enter_overtime();
+        let _ = s.finish_overtime();
+        assert_eq!(
+            s.final_duration_secs(),
+            Some(600),
+            "Finish-overtime pins the planned target",
+        );
+    }
+
+    #[test]
+    fn add_overtime_and_finish_stashes_running_plus_overtime() {
+        let mut s = Session::start_running(
+            timer_countdown_settings(600),
+            Duration::from_secs(0),
+        );
+        let _ = s.tick(Duration::from_secs(600));
+        let _ = s.add_overtime_and_finish(Duration::from_secs(630));
+        assert_eq!(s.final_duration_secs(), Some(630));
+    }
+
+    #[test]
+    fn ui_state_reflects_phase_and_pause() {
+        use crate::session::ui_state;
+        let mut s = Session::start_running(
+            timer_countdown_settings(600),
+            Duration::from_secs(0),
+        );
+        assert_eq!(ui_state(Some(&s)), UiState::Running);
+        let _ = s.pause(Duration::from_secs(5));
+        assert_eq!(ui_state(Some(&s)), UiState::Paused);
+        s.resume(Duration::from_secs(10));
+        let _ = s.enter_overtime();
+        assert_eq!(ui_state(Some(&s)), UiState::Overtime);
+        let _ = s.finish_overtime();
+        assert_eq!(ui_state(Some(&s)), UiState::Done);
+    }
+
+    #[test]
+    fn ui_state_idle_when_session_is_none() {
+        use crate::session::ui_state;
+        assert_eq!(ui_state(None), UiState::Idle);
+    }
+
+    #[test]
+    fn ui_state_preparing_during_prep() {
+        use crate::session::ui_state;
+        let s = Session::start_prep(
+            timer_prep_settings(10, 600),
+            Duration::from_secs(0),
+        );
+        assert_eq!(ui_state(Some(&s)), UiState::Preparing);
     }
 
     #[test]

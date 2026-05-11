@@ -1,6 +1,6 @@
 mod imp;
 
-pub use imp::{TimerMode, TimerState};
+pub use imp::TimerMode;
 
 use gtk::glib;
 use gtk::glib::prelude::*;

@@ -170,6 +170,28 @@ pub fn intervals_count_key(enabled_count: usize) -> IntervalsCountKey {
     }
 }
 
+/// Decision key for the Setup-view streak chip. The shell translates
+/// each variant — "Start your streak today" / "1 day streak" / "{n}
+/// days streak" in the gtk shell today; Android picks its own
+/// phrasing for the same three cases.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreakKey {
+    /// User has no current streak — invitation copy.
+    Zero,
+    /// Exactly one day, singular phrasing.
+    One,
+    /// Two or more days, plural phrasing with the count carried.
+    Many(u32),
+}
+
+pub fn streak_key(streak: u32) -> StreakKey {
+    match streak {
+        0 => StreakKey::Zero,
+        1 => StreakKey::One,
+        n => StreakKey::Many(n),
+    }
+}
+
 /// Decision key for the bell-count chip in the preset-row subtitle.
 /// Variants match `IntervalsCountKey` minus the `None` arm — the
 /// caller of `preset_subtitle_parts` only sees this when at least
@@ -563,6 +585,14 @@ mod tests {
     #[test]
     fn intervals_count_key_zero_is_none() {
         assert_eq!(intervals_count_key(0), IntervalsCountKey::None);
+    }
+
+    #[test]
+    fn streak_key_partitions_into_zero_one_many() {
+        assert_eq!(streak_key(0), StreakKey::Zero);
+        assert_eq!(streak_key(1), StreakKey::One);
+        assert_eq!(streak_key(2), StreakKey::Many(2));
+        assert_eq!(streak_key(365), StreakKey::Many(365));
     }
 
     #[test]
