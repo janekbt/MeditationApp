@@ -11,6 +11,26 @@ use crate::db::BellSound;
 /// data directory from growing without bound.
 pub const MAX_CUSTOM_BELL_BYTES: u64 = 10 * 1024 * 1024;
 
+/// Audio extensions the importer accepts at the file-picker filter
+/// level. Pinned across shells so the gtk file dialog and an
+/// eventual Android SAF MIME filter agree on the same allow-list,
+/// and the `do_import_io` transcode branch (passthrough vs.
+/// transcode-to-ogg) can be derived from the same source via
+/// `is_passthrough_ext`. Lowercase, no leading dot.
+pub const IMPORTABLE_EXTENSIONS: &[&str] = &[
+    "wav", "ogg", "mp3", "opus", "flac", "m4a", "aac",
+];
+
+/// True when the importer should copy the source file as-is rather
+/// than transcoding to ogg/vorbis. `gtk::MediaFile` plays both
+/// `wav` and `ogg` natively on every runtime we ship to; everything
+/// else routes through the gstreamer pipeline. Case-insensitive on
+/// the source extension.
+pub fn is_passthrough_ext(ext: &str) -> bool {
+    let lower = ext.to_ascii_lowercase();
+    matches!(lower.as_str(), "wav" | "ogg")
+}
+
 /// True iff the given byte count fits under the custom-sound cap.
 /// Sole gate at file-pick time before triggering the import dialog.
 pub fn is_within_size_limit(bytes: u64) -> bool {
@@ -75,6 +95,37 @@ pub fn display_name_from_path(source_path: &std::path::Path) -> String {
 mod tests {
     use super::*;
     use crate::db::BellSoundCategory;
+
+    #[test]
+    fn is_passthrough_ext_accepts_wav_ogg_only() {
+        assert!(is_passthrough_ext("wav"));
+        assert!(is_passthrough_ext("ogg"));
+        assert!(is_passthrough_ext("WAV"), "case-insensitive");
+        assert!(is_passthrough_ext("Ogg"), "case-insensitive");
+        assert!(!is_passthrough_ext("mp3"));
+        assert!(!is_passthrough_ext("flac"));
+        assert!(!is_passthrough_ext("m4a"));
+        assert!(!is_passthrough_ext(""));
+    }
+
+    #[test]
+    fn importable_extensions_includes_all_known_audio_formats() {
+        for ext in ["wav", "ogg", "mp3", "opus", "flac", "m4a", "aac"] {
+            assert!(IMPORTABLE_EXTENSIONS.contains(&ext), "missing {ext}");
+        }
+    }
+
+    #[test]
+    fn target_extension_passthrough_matches_is_passthrough_ext() {
+        for &ext in IMPORTABLE_EXTENSIONS {
+            let (out_ext, _) = target_extension_and_mime(ext);
+            assert_eq!(
+                is_passthrough_ext(ext),
+                out_ext == ext,
+                "{ext}: passthrough predicate must agree with target_extension",
+            );
+        }
+    }
 
     fn sound(uuid: &str, name: &str) -> BellSound {
         BellSound {

@@ -86,7 +86,7 @@ pub fn pick_file_for_open(
     // not already OGG into OGG/Vorbis on the way in.
     let filter = gtk::FileFilter::new();
     filter.set_name(Some(&gettext("Audio files")));
-    for ext in ["ogg", "mp3", "m4a", "aac", "wav", "flac", "opus"] {
+    for ext in meditate_core::sound::IMPORTABLE_EXTENSIONS {
         filter.add_pattern(&format!("*.{ext}"));
         filter.add_pattern(&format!("*.{}", ext.to_uppercase()));
     }
@@ -377,7 +377,7 @@ fn do_import_io(
     std::fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
     let dest_path = dest_dir.join(format!("{new_uuid}.ogg"));
 
-    if source_ext == "ogg" {
+    if meditate_core::sound::is_passthrough_ext(&source_ext) {
         // OGG passthrough: a plain copy. fs::copy is a single
         // syscall — too quick to interrupt; we just check the flag
         // before and after so a cancel before copy starts skips

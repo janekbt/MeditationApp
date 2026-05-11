@@ -328,7 +328,7 @@ fn present_file_picker(
 
     let filter = gtk::FileFilter::new();
     filter.set_name(Some(&gettext("Audio files")));
-    for ext in ["wav", "ogg", "mp3", "opus", "flac", "m4a"] {
+    for ext in meditate_core::sound::IMPORTABLE_EXTENSIONS {
         filter.add_suffix(ext);
     }
     file_dialog.set_default_filter(Some(&filter));

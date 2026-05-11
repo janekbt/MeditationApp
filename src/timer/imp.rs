@@ -2542,17 +2542,8 @@ impl TimerView {
             let Some(s) = session.as_mut() else {
                 return glib::ControlFlow::Break;
             };
-            let effects = s.tick(now);
-            let mut session_display: Option<u64> = None;
-            let mut entered_overtime = false;
-            for effect in &effects {
-                match effect {
-                    CoreSessionEffect::UpdateDisplay { secs } => session_display = Some(*secs),
-                    CoreSessionEffect::EnterOvertime => entered_overtime = true,
-                    _ => {}
-                }
-            }
-            (effects, session_display.unwrap_or(0), entered_overtime)
+            let (outcome, effects) = s.tick_summary(now);
+            (effects, outcome.display_secs.unwrap_or(0), outcome.entered_overtime)
         };
 
         // Bell sounds + vibrations flow through the portable

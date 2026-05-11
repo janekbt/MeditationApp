@@ -13,13 +13,14 @@ pub mod webdav;
 pub mod orchestrator;
 pub mod fake;
 pub mod backoff;
+pub mod indicator;
+pub mod settings;
 
 /// Remote folder name the orchestrator uses as the base path for
 /// every WebDAV operation. Pinned across all shells so multiple
 /// devices syncing to the same Nextcloud account converge on the
 /// same `/Meditate/…` tree.
 pub const REMOTE_BASE_PATH: &str = "Meditate";
-pub mod settings;
 
 pub use webdav::{HttpWebDav, WebDav, WebDavError, WebDavResult};
 pub use orchestrator::{Sync, SyncError, SyncResult, SyncStats, PullStats, PushStats};

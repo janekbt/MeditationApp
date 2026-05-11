@@ -55,6 +55,26 @@ pub fn ui_state(session: Option<&Session>) -> UiState {
     session.map(|s| s.ui_state()).unwrap_or(UiState::Idle)
 }
 
+/// Fold of the side-effect inspection every tick callsite does
+/// after `Session::tick`. The shell uses these three values to
+/// update its hero label, transition into Overtime UI, and update
+/// the Add-overtime button label. Returned alongside the raw
+/// effects vec from `Session::tick_summary` so fire-cue dispatch
+/// (sound + vibration) still happens in the same loop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TickOutcome {
+    /// The latest `Effect::UpdateDisplay` value observed this tick,
+    /// or `None` when no display update was emitted (e.g., a quiet
+    /// box-breath tick between phase boundaries).
+    pub display_secs: Option<u64>,
+    /// `true` when the tick crossed the Running → Overtime
+    /// boundary (Session emitted `Effect::EnterOvertime`).
+    pub entered_overtime: bool,
+    /// The latest `Effect::UpdateOvertimeLabel` overtime delta
+    /// observed this tick. `None` outside Overtime ticks.
+    pub overtime_delta: Option<Duration>,
+}
+
 /// What the play/pause-key tap should do given the current `UiState`.
 /// Returned by `Session::toggle_action`. Shell maps each variant to
 /// its `on_start` / `on_pause` / `finish_overtime_session` /
@@ -781,6 +801,26 @@ impl Session {
     /// and at Box-Breath's natural end.
     pub fn completion_duration_secs(&self) -> u64 {
         self.settings.target_secs.map(|s| s as u64).unwrap_or(0)
+    }
+
+    /// Tick + fold: advance the session and inspect the effects
+    /// for the two pieces of state the shell needs immediately
+    /// (the new display number, and whether the session just
+    /// crossed Running → Overtime). The effects vec rides along so
+    /// the shell can still dispatch fire-cues and other side
+    /// effects in the same loop.
+    pub fn tick_summary(&mut self, now: Duration) -> (TickOutcome, Vec<Effect>) {
+        let effects = self.tick(now);
+        let mut outcome = TickOutcome::default();
+        for effect in &effects {
+            match effect {
+                Effect::UpdateDisplay { secs } => outcome.display_secs = Some(*secs),
+                Effect::EnterOvertime => outcome.entered_overtime = true,
+                Effect::UpdateOvertimeLabel { overtime } => outcome.overtime_delta = Some(*overtime),
+                _ => {}
+            }
+        }
+        (outcome, effects)
     }
 
     /// What the shell's running-page play/pause action should

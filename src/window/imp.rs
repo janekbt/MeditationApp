@@ -249,7 +249,7 @@ impl MeditateWindow {
     /// animated square frame in the middle (cairo-drawn frame + perimeter
     /// dot), phase label + per-phase countdown inside, Pause/Stop below.
     fn push_breathing_running_page(&self) {
-        use meditate_core::breath::{BreathPattern, Phase};
+        use meditate_core::breath::BreathPattern;
         use std::cell::Cell;
         use std::rc::Rc;
 
@@ -359,19 +359,9 @@ impl MeditateWindow {
                 let t = (info.elapsed_in_phase.as_secs_f64()
                     / info.total.as_secs_f64()).clamp(0.0, 1.0);
 
-                // Phases are laid out clockwise from the bottom-left corner,
-                // so that inhalation is upward motion and exhalation is
-                // downward — reinforcing the breath metaphor.
-                //   In       → left edge (bottom→top)
-                //   HoldIn   → top edge (left→right)
-                //   Out      → right edge (top→bottom)
-                //   HoldOut  → bottom edge (right→left)
-                let (x, y) = match phase {
-                    Phase::In      => (pad,                    pad + side * (1.0 - t)),
-                    Phase::HoldIn  => (pad + side * t,         pad),
-                    Phase::Out     => (pad + side,             pad + side * t),
-                    Phase::HoldOut => (pad + side * (1.0 - t), pad + side),
-                };
+                // Perimeter geometry lives in core so the Android
+                // running page draws the same path.
+                let (x, y) = meditate_core::breath::perimeter_point(phase, t, pad, side);
 
                 // Halo (semi-transparent accent).
                 cr.set_source_rgba(ar, ag, ab, 0.30);
@@ -586,20 +576,14 @@ impl MeditateWindow {
                 let Some(app) = obj.application()
                     .and_then(|a| a.downcast::<crate::application::MeditateApplication>().ok())
                 else { return; };
-                let (has_error, is_data_lost) = app.with_db(|db| {
-                    let core_db = db.core();
-                    let err = meditate_core::sync::settings::get_last_sync_error(core_db)
-                        .unwrap_or(None);
-                    let kind = meditate_core::sync::settings::is_last_sync_remote_data_lost(core_db)
-                        .unwrap_or(false);
-                    (err.is_some(), kind)
-                }).unwrap_or((false, false));
-                if has_error && is_data_lost {
-                    crate::recovery_dialog::show(&app);
-                } else if has_error {
-                    app.trigger_sync();
-                } else {
-                    crate::preferences::show_preferences_on_page(&app, Some("data"));
+                use meditate_core::sync::indicator::{action_for, SyncIndicatorAction};
+                let state = sync_indicator_state_now(&app);
+                match action_for(&state) {
+                    SyncIndicatorAction::OpenRecovery => crate::recovery_dialog::show(&app),
+                    SyncIndicatorAction::RetrySync => app.trigger_sync(),
+                    SyncIndicatorAction::OpenPrefsData => {
+                        crate::preferences::show_preferences_on_page(&app, Some("data"));
+                    }
                 }
             }
         ));
@@ -637,80 +621,96 @@ impl MeditateWindow {
     /// every timer tick (every 2s) without measurable load.
     pub fn refresh_sync_status(&self) {
         use crate::i18n::gettext;
+        use meditate_core::sync::indicator::SyncIndicatorState;
         let Some(app) = self.obj().application()
             .and_then(|a| a.downcast::<crate::application::MeditateApplication>().ok())
         else { return; };
 
-        // Single DB borrow — read all three values in one with_db call
-        // so a slow lock contention can't put state out of sync between
-        // them.
-        let snapshot = app.with_db(|db| {
-            let core_db = db.core();
-            (
-                meditate_core::sync::settings::get_nextcloud_account(core_db).unwrap_or(None),
-                meditate_core::sync::settings::get_last_sync_unix_ts(core_db).unwrap_or(None),
-                meditate_core::sync::settings::get_last_sync_error(core_db).unwrap_or(None),
-            )
-        });
-        let (account, last_ts, last_error) = match snapshot {
-            Some(t) => t,
-            None => return, // DB unavailable — leave the button alone.
-        };
+        let state = sync_indicator_state_now(&app);
 
         let btn     = &*self.sync_status_btn;
         let stack   = &*self.sync_status_stack;
         let icon    = &*self.sync_status_icon;
         let spinner = &*self.sync_status_spinner;
 
-        // Unconfigured: hide the indicator entirely. There's nothing
-        // useful for the user to see or click on.
-        if account.is_none() {
-            btn.set_visible(false);
-            spinner.set_spinning(false);
-            return;
-        }
-        btn.set_visible(true);
-
         // Icon-tint classes (`success`, `warning`) are exclusive — at
         // most one applies at a time. Reset between transitions.
         btn.remove_css_class("success");
         btn.remove_css_class("warning");
 
-        if app.is_syncing() {
-            // Animated Spinner is the only visual that distinguishes
-            // "actively syncing" from "idle" — there's no third
-            // reliably-available status icon across our targets.
-            spinner.set_spinning(true);
-            stack.set_visible_child_name("syncing");
-            btn.set_tooltip_text(Some(&gettext("Syncing with Nextcloud…")));
-        } else if let Some(err) = last_error {
-            spinner.set_spinning(false);
-            stack.set_visible_child_name("idle");
-            icon.set_icon_name(Some("dialog-warning-symbolic"));
-            btn.add_css_class("warning");
-            btn.set_tooltip_text(Some(
-                &format!("{}\n{}",
-                    gettext("Last sync failed — click to retry"),
-                    err)));
-        } else if let Some(ts) = last_ts {
-            // Synced successfully — checkmark, tinted via libadwaita's
-            // `.success` button class so it reads green and clearly
-            // signals "all good" without hinting at an action.
-            spinner.set_spinning(false);
-            stack.set_visible_child_name("idle");
-            icon.set_icon_name(Some("object-select-symbolic"));
-            btn.add_css_class("success");
-            btn.set_tooltip_text(Some(&format_synced_ago(ts)));
-        } else {
-            // Configured but no sync has completed yet — same
-            // checkmark in neutral foreground. Avoids a blank period
-            // between "save credentials" and "first sync done".
-            spinner.set_spinning(false);
-            stack.set_visible_child_name("idle");
-            icon.set_icon_name(Some("object-select-symbolic"));
-            btn.set_tooltip_text(Some(&gettext("Sync configured (waiting for first run)")));
+        match state {
+            SyncIndicatorState::Hidden => {
+                // No account: hide the indicator. Nothing useful for
+                // the user to see or click on.
+                btn.set_visible(false);
+                spinner.set_spinning(false);
+            }
+            SyncIndicatorState::Syncing => {
+                btn.set_visible(true);
+                // Animated Spinner is the only visual that
+                // distinguishes "actively syncing" from "idle".
+                spinner.set_spinning(true);
+                stack.set_visible_child_name("syncing");
+                btn.set_tooltip_text(Some(&gettext("Syncing with Nextcloud…")));
+            }
+            SyncIndicatorState::Error { detail, .. } => {
+                btn.set_visible(true);
+                spinner.set_spinning(false);
+                stack.set_visible_child_name("idle");
+                icon.set_icon_name(Some("dialog-warning-symbolic"));
+                btn.add_css_class("warning");
+                btn.set_tooltip_text(Some(
+                    &format!("{}\n{}",
+                        gettext("Last sync failed — click to retry"),
+                        detail)));
+            }
+            SyncIndicatorState::OkWithTs(ts) => {
+                btn.set_visible(true);
+                spinner.set_spinning(false);
+                stack.set_visible_child_name("idle");
+                icon.set_icon_name(Some("object-select-symbolic"));
+                btn.add_css_class("success");
+                btn.set_tooltip_text(Some(&format_synced_ago(ts)));
+            }
+            SyncIndicatorState::OkNoTs => {
+                btn.set_visible(true);
+                spinner.set_spinning(false);
+                stack.set_visible_child_name("idle");
+                icon.set_icon_name(Some("object-select-symbolic"));
+                btn.set_tooltip_text(Some(&gettext("Sync configured (waiting for first run)")));
+            }
         }
     }
+}
+
+/// Read the persisted sync state from the DB and derive the
+/// `SyncIndicatorState` via the core helper. Returns
+/// `SyncIndicatorState::Hidden` when the DB is unavailable so the
+/// button is silent rather than stale.
+fn sync_indicator_state_now(
+    app: &crate::application::MeditateApplication,
+) -> meditate_core::sync::indicator::SyncIndicatorState {
+    use meditate_core::sync::indicator;
+    use meditate_core::sync::settings;
+    let snapshot = app.with_db(|db| {
+        let core_db = db.core();
+        (
+            settings::get_nextcloud_account(core_db).unwrap_or(None),
+            settings::get_last_sync_unix_ts(core_db).unwrap_or(None),
+            settings::get_last_sync_error(core_db).unwrap_or(None),
+            settings::is_last_sync_remote_data_lost(core_db).unwrap_or(false),
+        )
+    });
+    let Some((account, last_ts, last_error, is_data_lost)) = snapshot else {
+        return indicator::SyncIndicatorState::Hidden;
+    };
+    indicator::derive(
+        account.is_some(),
+        app.is_syncing(),
+        last_ts,
+        last_error,
+        is_data_lost,
+    )
 }
 
 /// Render a unix timestamp as a human-friendly "synced N ago" tooltip.
