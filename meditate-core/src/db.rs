@@ -1424,6 +1424,34 @@ impl Database {
                  ON CONFLICT(uuid) DO UPDATE SET name = excluded.name",
                 params![label_uuid, name],
             )?;
+
+            // Re-link any sessions whose LATEST mutate event references
+            // this label. Without this, an out-of-order delivery
+            // (session_insert arrives in batch 1, label_insert in
+            // batch 2) leaves the session permanently orphaned —
+            // recompute_session ran before the label existed and set
+            // label_id = None, but nothing recomputes the session when
+            // the label finally arrives. Only "latest mutate references
+            // this label" matches: a session that was inserted with L1
+            // and later updated to L2 must NOT be re-stolen by L1.
+            self.conn.execute(
+                "UPDATE sessions
+                 SET label_id = (SELECT id FROM labels WHERE uuid = ?1)
+                 WHERE uuid IN (
+                     SELECT e1.target_id FROM events e1
+                     WHERE e1.kind IN ('session_insert', 'session_update')
+                       AND json_extract(e1.payload, '$.label_uuid') = ?1
+                       AND NOT EXISTS (
+                           SELECT 1 FROM events e2
+                           WHERE e2.target_id = e1.target_id
+                             AND e2.kind IN ('session_insert', 'session_update')
+                             AND (e2.lamport_ts > e1.lamport_ts
+                                  OR (e2.lamport_ts = e1.lamport_ts
+                                      AND e2.device_id > e1.device_id))
+                       )
+                 )",
+                params![label_uuid],
+            )?;
         } else {
             // Tombstoned. `ON DELETE SET NULL` on the FK clears
             // label_id on any cached sessions that referenced this row.
@@ -4425,6 +4453,132 @@ mod tests {
             "PRAGMA user_version = {};", SCHEMA_VERSION
         )).unwrap();
         Database::init(conn).expect("init succeeds at current version");
+    }
+
+    // ── recompute_label re-links orphaned sessions ────────────────────
+
+    #[test]
+    fn session_arriving_before_label_gets_relinked_when_label_arrives() {
+        // Out-of-order event delivery: a peer pushes label_insert and
+        // session_insert in separate batches. Pull processes the
+        // session batch first; recompute_session looks up the label
+        // uuid and finds nothing (label_id = None — orphan). Later
+        // the label batch arrives; recompute_label must re-link the
+        // orphan sessions or they stay label-less forever even after
+        // the label exists locally.
+        let db = Database::open_in_memory().unwrap();
+        let label_uuid = "550e8400-e29b-41d4-a716-446655440001";
+        let session_uuid = "550e8400-e29b-41d4-a716-446655440002";
+
+        // Step 1: session_insert arrives, label doesn't exist yet.
+        let session_payload = serde_json::json!({
+            "uuid": session_uuid,
+            "start_iso": "2026-05-01T10:00:00",
+            "duration_secs": 600,
+            "label_uuid": label_uuid,
+            "notes": null,
+            "mode": "timer",
+            "guided_file_uuid": null,
+        }).to_string();
+        db.apply_event(&Event {
+            event_uuid: uuid::Uuid::new_v4().to_string(),
+            lamport_ts: 5,
+            device_id: "peer".to_string(),
+            kind: "session_insert".to_string(),
+            target_id: session_uuid.to_string(),
+            payload: session_payload,
+        }).unwrap();
+
+        // Session exists but label_id is None — the orphan state.
+        let sessions = db.list_sessions().unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert!(
+            sessions[0].1.label_id.is_none(),
+            "session must be orphaned before label arrives"
+        );
+
+        // Step 2: label_insert arrives. Re-link must happen inside
+        // recompute_label so the orphan resolves.
+        let label_payload = serde_json::json!({
+            "uuid": label_uuid,
+            "name": "Focus",
+        }).to_string();
+        db.apply_event(&Event {
+            event_uuid: uuid::Uuid::new_v4().to_string(),
+            lamport_ts: 6,
+            device_id: "peer".to_string(),
+            kind: "label_insert".to_string(),
+            target_id: label_uuid.to_string(),
+            payload: label_payload,
+        }).unwrap();
+
+        let sessions = db.list_sessions().unwrap();
+        let s = &sessions[0].1;
+        assert!(s.label_id.is_some(), "session must be re-linked after label arrives");
+        let labels = db.list_labels().unwrap();
+        let focus_id = labels.iter().find(|l| l.name == "Focus").unwrap().id;
+        assert_eq!(s.label_id, Some(focus_id));
+    }
+
+    #[test]
+    fn label_relink_only_targets_sessions_whose_latest_event_references_this_label() {
+        // A session that was inserted with label_uuid=L1 and later
+        // updated to label_uuid=L2 must stay linked to L2 when L1
+        // arrives — the re-link query must check the LATEST event's
+        // label_uuid, not just any event in history.
+        let db = Database::open_in_memory().unwrap();
+        let l1 = "550e8400-e29b-41d4-a716-44665544aaaa";
+        let l2 = "550e8400-e29b-41d4-a716-44665544bbbb";
+        let s = "550e8400-e29b-41d4-a716-44665544cccc";
+
+        // session_insert references L1 at lamport 5
+        db.apply_event(&Event {
+            event_uuid: uuid::Uuid::new_v4().to_string(),
+            lamport_ts: 5, device_id: "peer".to_string(),
+            kind: "session_insert".to_string(),
+            target_id: s.to_string(),
+            payload: serde_json::json!({
+                "uuid": s, "start_iso": "2026-05-01T10:00:00",
+                "duration_secs": 600, "label_uuid": l1,
+                "notes": null, "mode": "timer", "guided_file_uuid": null,
+            }).to_string(),
+        }).unwrap();
+        // session_update points to L2 at lamport 7 (the latest)
+        db.apply_event(&Event {
+            event_uuid: uuid::Uuid::new_v4().to_string(),
+            lamport_ts: 7, device_id: "peer".to_string(),
+            kind: "session_update".to_string(),
+            target_id: s.to_string(),
+            payload: serde_json::json!({
+                "uuid": s, "start_iso": "2026-05-01T10:00:00",
+                "duration_secs": 600, "label_uuid": l2,
+                "notes": null, "mode": "timer", "guided_file_uuid": null,
+            }).to_string(),
+        }).unwrap();
+        // Now L2 arrives — should link the session.
+        db.apply_event(&Event {
+            event_uuid: uuid::Uuid::new_v4().to_string(),
+            lamport_ts: 8, device_id: "peer".to_string(),
+            kind: "label_insert".to_string(),
+            target_id: l2.to_string(),
+            payload: serde_json::json!({"uuid": l2, "name": "L2"}).to_string(),
+        }).unwrap();
+        let labels = db.list_labels().unwrap();
+        let l2_id = labels.iter().find(|l| l.name == "L2").unwrap().id;
+        let session_label = db.list_sessions().unwrap()[0].1.label_id;
+        assert_eq!(session_label, Some(l2_id), "linked to L2 (latest)");
+
+        // L1 arrives — must NOT re-steal the session away from L2.
+        db.apply_event(&Event {
+            event_uuid: uuid::Uuid::new_v4().to_string(),
+            lamport_ts: 9, device_id: "peer".to_string(),
+            kind: "label_insert".to_string(),
+            target_id: l1.to_string(),
+            payload: serde_json::json!({"uuid": l1, "name": "L1"}).to_string(),
+        }).unwrap();
+        let session_label = db.list_sessions().unwrap()[0].1.label_id;
+        assert_eq!(session_label, Some(l2_id),
+            "session must remain on L2, not re-linked to L1 by the stale event");
     }
 
     // ── target_id_is_well_formed_for ──────────────────────────────────
