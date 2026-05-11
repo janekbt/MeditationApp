@@ -1,6 +1,7 @@
 pub mod bells;
 pub mod breath;
 pub mod data_io;
+pub mod date_math;
 pub mod db;
 pub mod diag;
 pub mod format;

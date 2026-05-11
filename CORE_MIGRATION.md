@@ -335,7 +335,7 @@ tests. The gtk shell's `sync_settings.rs` shrinks to UI glue.
 **Risk:** medium — the wipe-on-account-change invariant must survive
 the move. Pin it with a fresh test in core.
 
-### [ ] 16. Stats date math → `meditate_core::format` (or new `core::date_math`)
+### [x] 16. Stats date math → `meditate_core::format` (or new `core::date_math`)
 
 **From:** `src/stats/imp.rs`:
 - `locale_week_start_dow()` (line 692) — `nl_langinfo(_NL_TIME_FIRST_WEEKDAY)`

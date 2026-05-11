@@ -156,7 +156,7 @@ impl StatsView {
         // Total time logged since the locale's current-week start. A fresh
         // Monday (in a Monday-start locale) resets the ring to 0.
         let now = crate::time::now_local();
-        let week_start = now.add_days(-days_since_week_start(&now)).unwrap();
+        let week_start = now.add_days(-meditate_core::date_math::days_since_week_start(now.day_of_week(), locale_week_start_dow())).unwrap();
         let since = week_start.format("%Y-%m-%d").unwrap().to_string();
         let (week_secs, goal_mins) = self.get_app()
             .and_then(|app| app.with_db(|db| {
@@ -205,7 +205,7 @@ impl StatsView {
     fn reload_contrib_grid(&self) {
         let now = crate::time::now_local();
         // Row 0 = locale's first day of week (Monday, or Sunday on en_US etc.)
-        let cur_week_start = now.add_days(-days_since_week_start(&now)).unwrap();
+        let cur_week_start = now.add_days(-meditate_core::date_math::days_since_week_start(now.day_of_week(), locale_week_start_dow())).unwrap();
 
         // Fetch 91 days of totals (12 weeks ago through today) and the
         // user's weekly goal in a single DB borrow.
@@ -681,68 +681,23 @@ struct InsightData {
     session_count:  i64,
 }
 
-/// First day of the week per the active locale, in GLib's day_of_week
-/// numbering (1 = Monday … 7 = Sunday).
-///
-/// Queries `nl_langinfo(_NL_TIME_FIRST_WEEKDAY)` — a glibc POSIX
-/// extension whose returned byte is 1 = Sunday … 7 = Saturday. We
-/// translate into GLib's numbering so callers can compare against
-/// `GDateTime::day_of_week()` directly. Falls back to Monday if the
-/// locale is unset or the call returns a nonsense value.
+/// First day of the week per the active locale (1=Mon..7=Sun). Pure
+/// libc bridge — delegates to core so the Android shell inherits
+/// the same detection (with its own fallback for bionic).
 pub fn locale_week_start_dow() -> i32 {
-    // libc-rs doesn't expose glibc-specific _NL_* enumerants as named
-    // constants, so we reconstruct the value. _NL_ITEM(category, index)
-    // is ((category << 16) | index); on glibc __LC_TIME == 2 and the
-    // nl_langinfo.h enum lands _NL_TIME_FIRST_WEEKDAY at index 40 in
-    // the LC_TIME block, giving 0x20028 = 131176. Non-glibc libcs
-    // don't define this item — nl_langinfo then returns an empty
-    // string and we fall back to Monday.
-    #[cfg(target_os = "linux")]
-    const NL_TIME_FIRST_WEEKDAY: libc::nl_item = 131176;
-
-    #[cfg(not(target_os = "linux"))]
-    return 1;
-
-    #[cfg(target_os = "linux")]
-    unsafe {
-        let ptr = libc::nl_langinfo(NL_TIME_FIRST_WEEKDAY);
-        if ptr.is_null() { return 1; }
-        let byte = *ptr as u8;
-        // 1 = Sun … 7 = Sat (POSIX)  →  1 = Mon … 7 = Sun (GLib)
-        match byte {
-            1      => 7,              // Sunday
-            2..=7  => (byte - 1) as i32,
-            _      => 1,              // Unset / empty — default to Monday
-        }
-    }
-}
-
-/// Days between `now` and the most recent start-of-week, inclusive of
-/// today. 0 means today is the first day of the week.
-fn days_since_week_start(now: &glib::DateTime) -> i32 {
-    let today = now.day_of_week();      // 1 = Mon … 7 = Sun
-    let start = locale_week_start_dow();
-    (today - start + 7) % 7
+    meditate_core::date_math::locale_week_start_dow()
 }
 
 /// Returns (seconds this calendar week so far, seconds in the same
 /// portion of last week). Weeks start on the locale's first weekday,
-/// matching the goal ring and heatmap. The comparison is apples-to-
-/// apples: if it's Wednesday, we compare Mon–Wed to Mon–Wed of the
-/// prior week, not a partial week against a full one.
+/// matching the goal ring and heatmap. The decision lives in core;
+/// gtk just supplies `now` as a Unix timestamp.
 fn week_over_week(daily_totals: &[(String, i64)], now: &glib::DateTime) -> (i64, i64) {
-    use std::collections::HashMap;
-    let map: HashMap<&str, i64> =
-        daily_totals.iter().map(|(k, v)| (k.as_str(), *v)).collect();
-    let days_elapsed = days_since_week_start(now) + 1;   // 1..=7
-    let sum_range = |start_offset: i32| -> i64 {
-        (0..days_elapsed).filter_map(|i| {
-            let dt = now.add_days(start_offset - i).ok()?;
-            let key = dt.format("%Y-%m-%d").ok()?;
-            Some(map.get(key.as_str()).copied().unwrap_or(0))
-        }).sum()
-    };
-    (sum_range(0), sum_range(-7))
+    meditate_core::date_math::week_over_week(
+        daily_totals,
+        now.to_unix(),
+        locale_week_start_dow(),
+    )
 }
 
 fn axis_label(text: String) -> gtk::Label {
@@ -864,8 +819,14 @@ fn draw_goal_ring(area: &gtk::DrawingArea, cr: &cairo::Context, w: i32, h: i32, 
     }
 }
 
-/// Returns the x-axis label text for bar `i`.
+/// Returns the x-axis label text for bar `i`. The decision (which
+/// kind of label to render) lives in core; gtk just dispatches.
 fn x_label_text(data: &[(String, i64)], i: usize, days: u32) -> String {
+    use meditate_core::date_math::XLabelKind;
+    let months: Vec<u32> = data
+        .iter()
+        .map(|(d, _)| d[5..7].parse().unwrap_or(0))
+        .collect();
     let date_str = &data[i].0;
     let month: u32 = date_str[5..7].parse().unwrap_or(0);
     let day_num: u32 = date_str[8..10].parse().unwrap_or(0);
@@ -877,23 +838,13 @@ fn x_label_text(data: &[(String, i64)], i: usize, days: u32) -> String {
             .map(|s| s.to_string())
             .unwrap_or_default()
     };
-    match days {
-        7 => weekday_for(date_str),
-        28 => if i % 7 == 0 { format!("{} {}", month_short(month), day_num) } else { String::new() },
-        // 3-month and 1-year views: single-letter month when it changes,
-        // otherwise the 12 monthly labels in 1Y won't fit at 360 px.
-        _ => {
-            let prev_month: u32 = if i == 0 { 0 } else { data[i - 1].0[5..7].parse().unwrap_or(0) };
-            if month != prev_month { month_letter(month).to_string() } else { String::new() }
+    match meditate_core::date_math::x_label_kind(i, days, &months) {
+        XLabelKind::Weekday => weekday_for(date_str),
+        XLabelKind::MonthShortDay => format!("{} {}", month_short(month), day_num),
+        XLabelKind::MonthLetter => {
+            meditate_core::date_math::month_letter(month).to_string()
         }
-    }
-}
-
-fn month_letter(month: u32) -> &'static str {
-    match month {
-        1 => "J", 2 => "F", 3 => "M", 4 => "A",
-        5 => "M", 6 => "J", 7 => "J", 8 => "A",
-        9 => "S", 10 => "O", 11 => "N", _ => "D",
+        XLabelKind::Empty => String::new(),
     }
 }
 
