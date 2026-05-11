@@ -211,3 +211,149 @@ impl Database {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::{test_helpers::*, Event};
+
+    #[test]
+    fn box_breath_phase_id_round_trips_through_db_str() {
+        for p in BoxBreathPhaseId::all() {
+            assert_eq!(BoxBreathPhaseId::from_db_str(p.as_db_str()), Some(*p));
+        }
+        assert_eq!(BoxBreathPhaseId::from_db_str("typo"), None);
+    }
+
+    #[test]
+    fn box_breath_phases_table_check_constraint_rejects_unknown_phase() {
+        let db = Database::open_in_memory().unwrap();
+        let bad = db.conn.execute(
+            "INSERT INTO box_breath_phases (phase) VALUES ('paused')",
+            [],
+        );
+        assert!(bad.is_err(),
+            "phase = 'paused' must be rejected by the CHECK constraint");
+    }
+
+    #[test]
+    fn list_box_breath_phases_is_empty_before_seeding() {
+        let db = Database::open_in_memory().unwrap();
+        assert!(db.list_box_breath_phases().unwrap().is_empty());
+    }
+
+    #[test]
+    fn seed_box_breath_phases_creates_four_rows_with_defaults() {
+        let db = Database::open_in_memory().unwrap();
+        db.seed_box_breath_phases().unwrap();
+        let rows = db.list_box_breath_phases().unwrap();
+        assert_eq!(rows.len(), 4);
+        let expected_order = [
+            BoxBreathPhaseId::In,
+            BoxBreathPhaseId::HoldIn,
+            BoxBreathPhaseId::Out,
+            BoxBreathPhaseId::HoldOut,
+        ];
+        for (got, want) in rows.iter().zip(expected_order.iter()) {
+            assert_eq!(got.phase, *want);
+            assert!(!got.enabled, "fresh seed: enabled defaults to false");
+            assert_eq!(got.signal_mode, SignalMode::Sound);
+            assert!(!got.sound_uuid.is_empty());
+            assert!(!got.pattern_uuid.is_empty());
+        }
+    }
+
+    #[test]
+    fn seed_box_breath_phases_is_idempotent() {
+        let db = Database::open_in_memory().unwrap();
+        db.seed_box_breath_phases().unwrap();
+        db.seed_box_breath_phases().unwrap();
+        assert_eq!(db.list_box_breath_phases().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn set_box_breath_phase_round_trips_through_get() {
+        let db = Database::open_in_memory().unwrap();
+        db.seed_box_breath_phases().unwrap();
+        db.set_box_breath_phase(
+            BoxBreathPhaseId::In,
+            true,
+            SignalMode::Both,
+            "sound-uuid-x",
+            "pattern-uuid-y",
+        ).unwrap();
+        let row = db.get_box_breath_phase(BoxBreathPhaseId::In).unwrap().unwrap();
+        assert!(row.enabled);
+        assert_eq!(row.signal_mode, SignalMode::Both);
+        assert_eq!(row.sound_uuid, "sound-uuid-x");
+        assert_eq!(row.pattern_uuid, "pattern-uuid-y");
+        let other = db.get_box_breath_phase(BoxBreathPhaseId::HoldIn).unwrap().unwrap();
+        assert!(!other.enabled);
+    }
+
+    #[test]
+    fn replay_box_breath_phase_event_round_trips_to_a_fresh_peer() {
+        let dev_a = Database::open_in_memory().unwrap();
+        dev_a.seed_box_breath_phases().unwrap();
+        dev_a.set_box_breath_phase(
+            BoxBreathPhaseId::Out,
+            true, SignalMode::Both, "s-uuid", "p-uuid",
+        ).unwrap();
+        let events: Vec<Event> = dev_a.pending_events().unwrap()
+            .into_iter().map(|(_, e)| e).collect();
+
+        let dev_b = Database::open_in_memory().unwrap();
+        dev_b.seed_box_breath_phases().unwrap();
+        dev_b.replay_events(&events).unwrap();
+
+        let row = dev_b.get_box_breath_phase(BoxBreathPhaseId::Out)
+            .unwrap().unwrap();
+        assert!(row.enabled);
+        assert_eq!(row.signal_mode, SignalMode::Both);
+        assert_eq!(row.sound_uuid, "s-uuid");
+        assert_eq!(row.pattern_uuid, "p-uuid");
+    }
+
+    #[test]
+    fn apply_event_box_breath_phase_creates_row_on_unseeded_peer() {
+        // Edge case: a peer receives the update event before seeding.
+        // The recompute path INSERT-OR-UPDATEs so the row materialises.
+        let peer = Database::open_in_memory().unwrap();
+        peer.apply_event(&synth_event(
+            "box_breath_phase_update", "in", 5, DEVICE_A,
+            serde_json::json!({
+                "phase": "in",
+                "enabled": true,
+                "signal_mode": "vibration",
+                "sound_uuid": "x",
+                "pattern_uuid": "y",
+            }),
+        )).unwrap();
+        let row = peer.get_box_breath_phase(BoxBreathPhaseId::In)
+            .unwrap().unwrap();
+        assert!(row.enabled);
+        assert_eq!(row.signal_mode, SignalMode::Vibration);
+    }
+
+    #[test]
+    fn set_box_breath_phase_emits_a_box_breath_phase_update_event() {
+        let db = Database::open_in_memory().unwrap();
+        db.seed_box_breath_phases().unwrap();
+        db.set_box_breath_phase(
+            BoxBreathPhaseId::Out,
+            true, SignalMode::Vibration, "s-uuid", "p-uuid",
+        ).unwrap();
+        let updates: Vec<_> = db.pending_events().unwrap()
+            .into_iter()
+            .filter(|(_, e)| e.kind == "box_breath_phase_update")
+            .collect();
+        assert_eq!(updates.len(), 1);
+        let payload: serde_json::Value =
+            serde_json::from_str(&updates[0].1.payload).unwrap();
+        assert_eq!(payload["phase"], "out");
+        assert_eq!(payload["enabled"], true);
+        assert_eq!(payload["signal_mode"], "vibration");
+        assert_eq!(payload["sound_uuid"], "s-uuid");
+        assert_eq!(payload["pattern_uuid"], "p-uuid");
+    }
+}
