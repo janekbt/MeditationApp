@@ -1019,6 +1019,16 @@ impl Database {
         tx.execute("DELETE FROM labels", [])?;
         tx.execute("DELETE FROM bell_sounds", [])?;
         tx.execute("DELETE FROM interval_bells", [])?;
+        tx.execute("DELETE FROM presets", [])?;
+        tx.execute("DELETE FROM guided_files", [])?;
+        tx.execute("DELETE FROM vibration_patterns", [])?;
+        tx.execute("DELETE FROM box_breath_phases", [])?;
+        for phase in BoxBreathPhaseId::all() {
+            tx.execute(
+                "INSERT OR IGNORE INTO box_breath_phases (phase) VALUES (?1)",
+                params![phase.as_db_str()],
+            )?;
+        }
         tx.commit()?;
         Ok(())
     }
@@ -7550,6 +7560,10 @@ mod tests {
         }).unwrap();
         db.insert_interval_bell(IntervalBellKind::Interval, 5, 0, "bowl", BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound).unwrap();
         db.insert_bell_sound("Custom", "/p/c.wav", false, "audio/wav", BellSoundCategory::General).unwrap();
+        db.insert_preset("Sitting", SessionMode::Timer, true, r#"{}"#).unwrap();
+        db.insert_guided_file_with_uuid("gf-1", "Track", "/p/t.ogg", 300, false).unwrap();
+        db.insert_vibration_pattern("Custom Pulse", 200, &[1.0, 0.0], ChartKind::Bar, false).unwrap();
+        db.set_box_breath_phase(BoxBreathPhaseId::In, false, SignalMode::Sound, "x", "y").unwrap();
         db.record_known_remote_file("a").unwrap();
         db.record_known_remote_sound("bs-1").unwrap();
         // Sanity: rows present before wipe.
@@ -7558,6 +7572,9 @@ mod tests {
         assert!(!db.list_sessions().unwrap().is_empty());
         assert!(!db.list_interval_bells().unwrap().is_empty());
         assert!(!db.list_bell_sounds().unwrap().is_empty());
+        assert!(!db.list_presets().unwrap().is_empty());
+        assert!(!db.list_guided_files().unwrap().is_empty());
+        assert!(!db.list_vibration_patterns().unwrap().is_empty());
         assert!(!db.known_remote_file_uuids().unwrap().is_empty());
         assert!(!db.known_remote_sound_uuids().unwrap().is_empty());
 
@@ -7573,10 +7590,40 @@ mod tests {
             "interval_bells table must be empty");
         assert!(db.list_bell_sounds().unwrap().is_empty(),
             "bell_sounds table must be empty");
+        assert!(db.list_presets().unwrap().is_empty(),
+            "presets table must be empty");
+        assert!(db.list_guided_files().unwrap().is_empty(),
+            "guided_files table must be empty");
+        assert!(db.list_vibration_patterns().unwrap().is_empty(),
+            "vibration_patterns table must be empty");
         assert!(db.known_remote_file_uuids().unwrap().is_empty(),
             "file dedup tracker must be empty");
         assert!(db.known_remote_sound_uuids().unwrap().is_empty(),
             "sound dedup tracker must be empty");
+    }
+
+    #[test]
+    fn wipe_local_event_log_keeps_box_breath_phases_seeded_at_defaults() {
+        // Box-Breath mode requires the 4 phase rows to render. Wipe
+        // clears any user-customised rows but the seed re-runs inline
+        // so the mode stays usable post-wipe even before sync replay.
+        let db = Database::open_in_memory().unwrap();
+        db.seed_box_breath_phases().unwrap();
+        db.set_box_breath_phase(
+            BoxBreathPhaseId::In, true, SignalMode::Vibration, "u-x", "u-y",
+        ).unwrap();
+
+        db.wipe_local_event_log().unwrap();
+
+        let phases = db.list_box_breath_phases().unwrap();
+        assert_eq!(phases.len(), 4,
+            "all four phases re-seeded with defaults after wipe");
+        let in_phase = phases.iter()
+            .find(|p| p.phase == BoxBreathPhaseId::In).unwrap();
+        assert!(!in_phase.enabled,
+            "default enabled=false overwrote user's customised enabled=true");
+        assert_eq!(in_phase.signal_mode, SignalMode::Sound,
+            "default signal_mode overwrote user's customisation");
     }
 
     #[test]
