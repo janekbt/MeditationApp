@@ -34,3 +34,65 @@ impl Database {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn get_sync_state_returns_default_on_a_fresh_database() {
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(db.get_sync_state("server_url", "fallback").unwrap(),
+                   "fallback");
+    }
+
+    #[test]
+    fn get_sync_state_returns_default_for_unknown_key_after_other_keys_set() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_sync_state("server_url", "https://nc.example").unwrap();
+        assert_eq!(db.get_sync_state("missing", "fallback").unwrap(),
+                   "fallback");
+    }
+
+    #[test]
+    fn set_then_get_sync_state_round_trips_the_value() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_sync_state("server_url", "https://nc.example").unwrap();
+        assert_eq!(db.get_sync_state("server_url", "fallback").unwrap(),
+                   "https://nc.example");
+    }
+
+    #[test]
+    fn set_sync_state_overwrites_an_existing_value() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_sync_state("interval_seconds", "1800").unwrap();
+        db.set_sync_state("interval_seconds", "300").unwrap();
+        assert_eq!(db.get_sync_state("interval_seconds", "0").unwrap(),
+                   "300");
+    }
+
+    #[test]
+    fn sync_state_persists_across_database_reopens() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sync_state.db");
+        {
+            let db = Database::open(&path).unwrap();
+            db.set_sync_state("server_url", "https://nc.example").unwrap();
+        }
+        let db = Database::open(&path).unwrap();
+        assert_eq!(db.get_sync_state("server_url", "x").unwrap(),
+                   "https://nc.example");
+    }
+
+    #[test]
+    fn sync_state_and_settings_are_separate_namespaces() {
+        // Same key in both tables must NOT collide — they're conceptually
+        // independent stores. Pinning this makes future "let's just merge
+        // them" refactors visible in CI.
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("foo", "from-settings").unwrap();
+        db.set_sync_state("foo", "from-sync-state").unwrap();
+        assert_eq!(db.get_setting("foo", "x").unwrap(), "from-settings");
+        assert_eq!(db.get_sync_state("foo", "x").unwrap(), "from-sync-state");
+    }
+}
