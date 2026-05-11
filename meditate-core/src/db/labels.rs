@@ -288,3 +288,578 @@ impl Database {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::{test_helpers::*, Session, SessionMode};
+
+    #[test]
+    fn inserting_label_increases_count() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        assert_eq!(db.count_labels().unwrap(), 1);
+    }
+
+    #[test]
+    fn inserting_two_distinct_labels_yields_count_of_two() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        db.insert_label("Evening").unwrap();
+        assert_eq!(db.count_labels().unwrap(), 2);
+    }
+
+    #[test]
+    fn inserting_duplicate_label_returns_err() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        let second = db.insert_label("Morning");
+        assert!(second.is_err());
+        assert_eq!(db.count_labels().unwrap(), 1);
+    }
+
+    #[test]
+    fn is_label_name_taken_false_for_empty_db() {
+        let db = Database::open_in_memory().unwrap();
+        assert!(!db.is_label_name_taken("Morning", 0).unwrap());
+    }
+
+    #[test]
+    fn is_label_name_taken_true_for_existing_other_label() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        let evening = db.insert_label("Evening").unwrap();
+        assert!(db.is_label_name_taken("Morning", evening).unwrap());
+    }
+
+    #[test]
+    fn is_label_name_taken_false_when_only_owner_is_excluded() {
+        let db = Database::open_in_memory().unwrap();
+        let morning = db.insert_label("Morning").unwrap();
+        assert!(!db.is_label_name_taken("Morning", morning).unwrap());
+    }
+
+    #[test]
+    fn is_label_name_taken_is_case_insensitive() {
+        let db = Database::open_in_memory().unwrap();
+        let morning = db.insert_label("Morning").unwrap();
+        assert!(db.is_label_name_taken("morning", 0).unwrap());
+        assert!(db.is_label_name_taken("MORNING", 0).unwrap());
+        assert!(!db.is_label_name_taken("morning", morning).unwrap());
+    }
+
+    #[test]
+    fn label_session_count_zero_for_unreferenced_label() {
+        let db = Database::open_in_memory().unwrap();
+        let id = db.insert_label("Morning").unwrap();
+        assert_eq!(db.label_session_count(id).unwrap(), 0);
+    }
+
+    #[test]
+    fn label_session_count_counts_referencing_sessions() {
+        let db = Database::open_in_memory().unwrap();
+        let morning = db.insert_label("Morning").unwrap();
+        let evening = db.insert_label("Evening").unwrap();
+        for i in 0..3 {
+            db.insert_session(&Session {
+                start_iso: format!("2026-04-2{i}T10:00:00Z"),
+                duration_secs: 600,
+                label_id: Some(morning),
+                notes: None,
+                mode: SessionMode::Timer,
+                uuid: String::new(),
+                guided_file_uuid: None,
+            }).unwrap();
+        }
+        db.insert_session(&Session {
+            start_iso: "2026-04-27T19:00:00Z".to_string(),
+            duration_secs: 600,
+            label_id: Some(evening),
+            notes: None,
+            mode: SessionMode::Timer,
+            uuid: String::new(),
+            guided_file_uuid: None,
+        }).unwrap();
+        for i in 0..2 {
+            db.insert_session(&Session {
+                start_iso: format!("2026-04-2{i}T20:00:00Z"),
+                duration_secs: 300,
+                label_id: None,
+                notes: None,
+                mode: SessionMode::Timer,
+                uuid: String::new(),
+                guided_file_uuid: None,
+            }).unwrap();
+        }
+        assert_eq!(db.label_session_count(morning).unwrap(), 3);
+        assert_eq!(db.label_session_count(evening).unwrap(), 1);
+    }
+
+    #[test]
+    fn label_session_count_unknown_id_is_zero() {
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(db.label_session_count(9999).unwrap(), 0);
+    }
+
+    #[test]
+    fn delete_label_removes_only_that_row() {
+        let db = Database::open_in_memory().unwrap();
+        let morning = db.insert_label("Morning").unwrap();
+        let evening = db.insert_label("Evening").unwrap();
+        db.delete_label(morning).unwrap();
+        assert_eq!(db.find_label_by_name("Morning").unwrap(), None);
+        assert_eq!(db.find_label_by_name("Evening").unwrap(), Some(evening));
+        let names: Vec<String> =
+            db.list_labels().unwrap().into_iter().map(|l| l.name).collect();
+        assert_eq!(names, vec!["Evening"]);
+        assert_eq!(db.count_labels().unwrap(), 1);
+    }
+
+    #[test]
+    fn delete_label_unknown_id_is_noop() {
+        let db = Database::open_in_memory().unwrap();
+        let id = db.insert_label("Morning").unwrap();
+        db.delete_label(id + 999).unwrap();
+        assert_eq!(db.count_labels().unwrap(), 1);
+        assert_eq!(db.find_label_by_name("Morning").unwrap(), Some(id));
+    }
+
+    #[test]
+    fn delete_label_unlinks_sessions_via_set_null() {
+        let db = Database::open_in_memory().unwrap();
+        let morning = db.insert_label("Morning").unwrap();
+        let labeled_id = db.insert_session(&Session {
+            start_iso: "2026-04-27T10:00:00Z".to_string(),
+            duration_secs: 600,
+            label_id: Some(morning),
+            notes: Some("first sit".to_string()),
+            mode: SessionMode::Timer,
+            uuid: String::new(),
+            guided_file_uuid: None,
+        }).unwrap();
+        let labeled_id2 = db.insert_session(&Session {
+            start_iso: "2026-04-27T11:00:00Z".to_string(),
+            duration_secs: 1200,
+            label_id: Some(morning),
+            notes: None,
+            mode: SessionMode::Timer,
+            uuid: String::new(),
+            guided_file_uuid: None,
+        }).unwrap();
+        let unlabeled_id = db.insert_session(&Session {
+            start_iso: "2026-04-27T12:00:00Z".to_string(),
+            duration_secs: 300,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::BoxBreath,
+            uuid: String::new(),
+            guided_file_uuid: None,
+        }).unwrap();
+
+        db.delete_label(morning).unwrap();
+
+        let rows = db.list_sessions().unwrap();
+        assert_eq!(rows.len(), 3);
+        let by_id: std::collections::HashMap<i64, &Session> =
+            rows.iter().map(|(i, s)| (*i, s)).collect();
+        assert_eq!(by_id[&labeled_id].label_id, None);
+        assert_eq!(by_id[&labeled_id2].label_id, None);
+        assert_eq!(by_id[&unlabeled_id].label_id, None);
+        assert_eq!(db.count_labels().unwrap(), 0);
+    }
+
+    #[test]
+    fn delete_label_does_not_affect_unrelated_sessions() {
+        let db = Database::open_in_memory().unwrap();
+        let morning = db.insert_label("Morning").unwrap();
+        let evening = db.insert_label("Evening").unwrap();
+        let evening_id = db.insert_session(&Session {
+            start_iso: "2026-04-27T19:00:00Z".to_string(),
+            duration_secs: 600,
+            label_id: Some(evening),
+            notes: None,
+            mode: SessionMode::Timer,
+            uuid: String::new(),
+            guided_file_uuid: None,
+        }).unwrap();
+        db.delete_label(morning).unwrap();
+        let row = &db.list_sessions().unwrap()[0];
+        assert_eq!(row.0, evening_id);
+        assert_eq!(row.1.label_id, Some(evening));
+    }
+
+    #[test]
+    fn update_label_renames_row() {
+        let db = Database::open_in_memory().unwrap();
+        let morning = db.insert_label("Morning").unwrap();
+        let evening = db.insert_label("Evening").unwrap();
+        db.update_label(morning, "Pre-coffee").unwrap();
+        assert_eq!(db.find_label_by_name("Pre-coffee").unwrap(), Some(morning));
+        assert_eq!(db.find_label_by_name("Morning").unwrap(), None);
+        assert_eq!(db.find_label_by_name("Evening").unwrap(), Some(evening));
+        assert_eq!(db.count_labels().unwrap(), 2);
+    }
+
+    #[test]
+    fn update_label_to_same_name_is_idempotent() {
+        let db = Database::open_in_memory().unwrap();
+        let id = db.insert_label("Morning").unwrap();
+        db.update_label(id, "Morning").unwrap();
+        assert_eq!(db.count_labels().unwrap(), 1);
+        assert_eq!(db.find_label_by_name("Morning").unwrap(), Some(id));
+    }
+
+    #[test]
+    fn list_labels_returns_label_per_row_alphabetic_by_name() {
+        let db = Database::open_in_memory().unwrap();
+        let evening = db.insert_label("Evening").unwrap();
+        let morning = db.insert_label("Morning").unwrap();
+        let afternoon = db.insert_label("Afternoon").unwrap();
+        let rows = db.list_labels().unwrap();
+        assert_eq!(rows.len(), 3);
+        let uuids: std::collections::HashSet<_> =
+            rows.iter().map(|l| l.uuid.clone()).collect();
+        assert_eq!(uuids.len(), 3);
+        for label in &rows {
+            assert!(looks_like_uuid_v4(&label.uuid));
+        }
+        let by_name: std::collections::HashMap<_, _> =
+            rows.iter().map(|l| (l.name.clone(), l.uuid.clone())).collect();
+        assert_eq!(rows, vec![
+            Label { id: afternoon, name: "Afternoon".to_string(),
+                uuid: by_name["Afternoon"].clone() },
+            Label { id: evening,   name: "Evening".to_string(),
+                uuid: by_name["Evening"].clone() },
+            Label { id: morning,   name: "Morning".to_string(),
+                uuid: by_name["Morning"].clone() },
+        ]);
+    }
+
+    #[test]
+    fn list_labels_returns_label_per_row_case_insensitive_sort() {
+        let db = Database::open_in_memory().unwrap();
+        let banana = db.insert_label("Banana").unwrap();
+        let cherry = db.insert_label("cherry").unwrap();
+        let apple = db.insert_label("apple").unwrap();
+        let rows = db.list_labels().unwrap();
+        let names: Vec<&str> = rows.iter().map(|l| l.name.as_str()).collect();
+        assert_eq!(names, vec!["apple", "Banana", "cherry"]);
+        assert_eq!(rows[0].id, apple);
+        assert_eq!(rows[1].id, banana);
+        assert_eq!(rows[2].id, cherry);
+    }
+
+    #[test]
+    fn update_label_to_case_variant_of_own_name_succeeds() {
+        let db = Database::open_in_memory().unwrap();
+        let id = db.insert_label("morning").unwrap();
+        db.update_label(id, "Morning").unwrap();
+        assert_eq!(db.find_label_by_name("morning").unwrap(), Some(id));
+        assert_eq!(db.find_label_by_name("Morning").unwrap(), Some(id));
+        let names: Vec<String> =
+            db.list_labels().unwrap().into_iter().map(|l| l.name).collect();
+        assert_eq!(names, vec!["Morning"]);
+    }
+
+    #[test]
+    fn update_label_to_existing_other_name_returns_duplicate_error() {
+        let db = Database::open_in_memory().unwrap();
+        let morning = db.insert_label("Morning").unwrap();
+        let _evening = db.insert_label("Evening").unwrap();
+        let result = db.update_label(morning, "Evening");
+        assert!(
+            matches!(result, Err(DbError::DuplicateLabel(ref n)) if n == "Evening"),
+            "expected DuplicateLabel(\"Evening\"), got {result:?}"
+        );
+        assert_eq!(db.find_label_by_name("Morning").unwrap(), Some(morning));
+    }
+
+    #[test]
+    fn update_label_to_case_variant_of_other_name_returns_duplicate_error() {
+        let db = Database::open_in_memory().unwrap();
+        let morning = db.insert_label("Morning").unwrap();
+        db.insert_label("Evening").unwrap();
+        let result = db.update_label(morning, "evening");
+        assert!(
+            matches!(result, Err(DbError::DuplicateLabel(ref n)) if n == "evening"),
+            "expected DuplicateLabel(\"evening\"), got {result:?}"
+        );
+    }
+
+    #[test]
+    fn update_label_unknown_id_is_noop() {
+        let db = Database::open_in_memory().unwrap();
+        let id = db.insert_label("Morning").unwrap();
+        db.update_label(id + 999, "Phantom").unwrap();
+        assert_eq!(db.find_label_by_name("Morning").unwrap(), Some(id));
+        assert_eq!(db.find_label_by_name("Phantom").unwrap(), None);
+        assert_eq!(db.count_labels().unwrap(), 1);
+    }
+
+    #[test]
+    fn insert_label_returns_new_rowid() {
+        let db = Database::open_in_memory().unwrap();
+        let id1 = db.insert_label("Morning").unwrap();
+        let id2 = db.insert_label("Evening").unwrap();
+        let id3 = db.insert_label("Afternoon").unwrap();
+        assert_eq!(id1, 1);
+        assert_eq!(id2, 2);
+        assert_eq!(id3, 3);
+        assert_eq!(db.find_label_by_name("Morning").unwrap(), Some(id1));
+        assert_eq!(db.find_label_by_name("Evening").unwrap(), Some(id2));
+    }
+
+    #[test]
+    fn find_or_create_label_creates_when_missing() {
+        let db = Database::open_in_memory().unwrap();
+        let id = db.find_or_create_label("Morning").unwrap();
+        assert_eq!(db.count_labels().unwrap(), 1);
+        assert_eq!(db.find_label_by_name("Morning").unwrap(), Some(id));
+    }
+
+    #[test]
+    fn find_or_create_label_returns_existing_id() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        let existing = db.find_label_by_name("Morning").unwrap().unwrap();
+        let got = db.find_or_create_label("Morning").unwrap();
+        assert_eq!(got, existing);
+        assert_eq!(db.count_labels().unwrap(), 1);
+    }
+
+    #[test]
+    fn find_or_create_label_is_case_insensitive() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        let existing = db.find_label_by_name("Morning").unwrap().unwrap();
+        assert_eq!(db.find_or_create_label("morning").unwrap(), existing);
+        assert_eq!(db.find_or_create_label("MORNING").unwrap(), existing);
+        assert_eq!(db.count_labels().unwrap(), 1);
+    }
+
+    #[test]
+    fn find_or_create_label_idempotent_across_calls() {
+        let db = Database::open_in_memory().unwrap();
+        let id1 = db.find_or_create_label("Evening").unwrap();
+        let id2 = db.find_or_create_label("Evening").unwrap();
+        let id3 = db.find_or_create_label("evening").unwrap();
+        assert_eq!(id1, id2);
+        assert_eq!(id1, id3);
+        assert_eq!(db.count_labels().unwrap(), 1);
+    }
+
+    #[test]
+    fn label_uniqueness_is_case_insensitive() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        let result = db.insert_label("morning");
+        assert!(
+            matches!(result, Err(DbError::DuplicateLabel(ref name)) if name == "morning")
+        );
+        assert!(matches!(db.insert_label("MORNING"), Err(DbError::DuplicateLabel(_))));
+        assert!(matches!(db.insert_label("MoRnInG"), Err(DbError::DuplicateLabel(_))));
+        assert_eq!(db.count_labels().unwrap(), 1);
+    }
+
+    #[test]
+    fn find_label_by_name_is_case_insensitive() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        let canonical_id = db.find_label_by_name("Morning").unwrap();
+        assert!(canonical_id.is_some());
+        assert_eq!(db.find_label_by_name("morning").unwrap(), canonical_id);
+        assert_eq!(db.find_label_by_name("MORNING").unwrap(), canonical_id);
+        assert_eq!(db.find_label_by_name("MoRnInG").unwrap(), canonical_id);
+    }
+
+    #[test]
+    fn duplicate_label_error_identifies_offending_name() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        let err = db.insert_label("Morning").unwrap_err();
+        assert!(matches!(err, DbError::DuplicateLabel(ref name) if name == "Morning"));
+    }
+
+    #[test]
+    fn list_labels_returns_inserted_names_alphabetically() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        db.insert_label("Afternoon").unwrap();
+        db.insert_label("Evening").unwrap();
+        let names: Vec<String> =
+            db.list_labels().unwrap().into_iter().map(|l| l.name).collect();
+        assert_eq!(names, vec!["Afternoon", "Evening", "Morning"]);
+    }
+
+    #[test]
+    fn find_label_by_name_returns_some_id_when_present() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        assert!(db.find_label_by_name("Morning").unwrap().is_some());
+    }
+
+    #[test]
+    fn find_label_by_name_returns_none_when_absent() {
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(db.find_label_by_name("Morning").unwrap(), None);
+    }
+
+    #[test]
+    fn insert_label_appends_a_label_insert_event() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        let events = db.pending_events().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].1.kind, "label_insert");
+    }
+
+    #[test]
+    fn label_insert_event_payload_carries_uuid_and_name() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        let row_uuid = db.list_labels().unwrap()[0].uuid.clone();
+        let payload = event_payload(&db.pending_events().unwrap()[0].1);
+        assert_eq!(payload["uuid"], serde_json::Value::String(row_uuid));
+        assert_eq!(payload["name"], "Morning");
+    }
+
+    #[test]
+    fn duplicate_insert_label_emits_no_event() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        drain_events(&db);
+        let result = db.insert_label("Morning");
+        assert!(result.is_err());
+        assert!(db.pending_events().unwrap().is_empty());
+    }
+
+    #[test]
+    fn update_label_appends_a_label_rename_event() {
+        let db = Database::open_in_memory().unwrap();
+        let id = db.insert_label("Morning").unwrap();
+        let row_uuid = db.list_labels().unwrap()[0].uuid.clone();
+        drain_events(&db);
+        db.update_label(id, "Sunrise").unwrap();
+        let events = db.pending_events().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].1.kind, "label_rename");
+        let payload = event_payload(&events[0].1);
+        assert_eq!(payload["uuid"], serde_json::Value::String(row_uuid));
+        assert_eq!(payload["name"], "Sunrise");
+    }
+
+    #[test]
+    fn update_label_unknown_id_emits_no_event() {
+        let db = Database::open_in_memory().unwrap();
+        drain_events(&db);
+        db.update_label(9999, "Whatever").unwrap();
+        assert!(db.pending_events().unwrap().is_empty());
+    }
+
+    #[test]
+    fn update_label_to_duplicate_emits_no_event() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Morning").unwrap();
+        let evening_id = db.insert_label("Evening").unwrap();
+        drain_events(&db);
+        let result = db.update_label(evening_id, "Morning");
+        assert!(result.is_err());
+        assert!(db.pending_events().unwrap().is_empty());
+    }
+
+    #[test]
+    fn delete_label_appends_a_label_delete_event() {
+        let db = Database::open_in_memory().unwrap();
+        let id = db.insert_label("Morning").unwrap();
+        let row_uuid = db.list_labels().unwrap()[0].uuid.clone();
+        drain_events(&db);
+        db.delete_label(id).unwrap();
+        let events = db.pending_events().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].1.kind, "label_delete");
+        let payload = event_payload(&events[0].1);
+        assert_eq!(payload["uuid"], serde_json::Value::String(row_uuid));
+    }
+
+    #[test]
+    fn delete_label_unknown_id_emits_no_event() {
+        let db = Database::open_in_memory().unwrap();
+        drain_events(&db);
+        db.delete_label(9999).unwrap();
+        assert!(db.pending_events().unwrap().is_empty());
+    }
+
+    #[test]
+    fn apply_event_label_insert_creates_the_label() {
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_label_insert(LABEL_X, 5, DEVICE_A, "Morning")).unwrap();
+        let labels = db.list_labels().unwrap();
+        assert_eq!(labels.len(), 1);
+        assert_eq!(labels[0].name, "Morning");
+        assert_eq!(labels[0].uuid, LABEL_X);
+    }
+
+    #[test]
+    fn apply_event_label_rename_updates_the_name() {
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_label_insert(LABEL_X, 5, DEVICE_A, "Morning")).unwrap();
+        db.apply_event(&synth_label_rename(LABEL_X, 10, DEVICE_A, "Sunrise")).unwrap();
+        let labels = db.list_labels().unwrap();
+        assert_eq!(labels.len(), 1);
+        assert_eq!(labels[0].name, "Sunrise");
+        assert_eq!(labels[0].uuid, LABEL_X);
+    }
+
+    #[test]
+    fn apply_event_label_delete_removes_the_label() {
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_label_insert(LABEL_X, 5, DEVICE_A, "Morning")).unwrap();
+        db.apply_event(&synth_label_delete(LABEL_X, 10, DEVICE_A)).unwrap();
+        assert!(db.list_labels().unwrap().is_empty());
+    }
+
+    #[test]
+    fn apply_event_label_tombstone_resists_lower_lamport_insert() {
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_label_delete(LABEL_X, 10, DEVICE_A)).unwrap();
+        db.apply_event(&synth_label_insert(LABEL_X, 5, DEVICE_A, "Morning")).unwrap();
+        assert!(db.list_labels().unwrap().is_empty());
+    }
+
+    #[test]
+    fn apply_event_label_concurrent_renames_break_ties_on_device_id() {
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_label_insert(LABEL_X, 1, DEVICE_A, "Morning")).unwrap();
+        db.apply_event(&synth_label_rename(LABEL_X, 5, DEVICE_A, "From A")).unwrap();
+        db.apply_event(&synth_label_rename(LABEL_X, 5, DEVICE_B, "From B")).unwrap();
+        let labels = db.list_labels().unwrap();
+        assert_eq!(labels[0].name, "From B");
+    }
+
+    #[test]
+    fn apply_event_label_delete_clears_label_id_on_cached_sessions() {
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_label_insert(LABEL_X, 1, DEVICE_A, "Morning")).unwrap();
+        db.apply_event(&synth_session_insert(
+            SESSION_X, 2, DEVICE_A,
+            "2026-04-30T10:00:00", 600,
+            Some(LABEL_X), None, SessionMode::Timer,
+        )).unwrap();
+        assert!(db.list_sessions().unwrap()[0].1.label_id.is_some());
+        db.apply_event(&synth_label_delete(LABEL_X, 10, DEVICE_A)).unwrap();
+        assert!(db.list_labels().unwrap().is_empty());
+        let s = &db.list_sessions().unwrap()[0].1;
+        assert_eq!(s.label_id, None);
+    }
+
+    #[test]
+    fn apply_event_label_is_idempotent() {
+        let db = Database::open_in_memory().unwrap();
+        let event = synth_label_insert(LABEL_X, 5, DEVICE_A, "Morning");
+        db.apply_event(&event).unwrap();
+        db.apply_event(&event).unwrap();
+        let labels = db.list_labels().unwrap();
+        assert_eq!(labels.len(), 1);
+        assert_eq!(labels[0].name, "Morning");
+    }
+}

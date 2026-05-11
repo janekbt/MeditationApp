@@ -9,7 +9,7 @@
 
 #![cfg(test)]
 
-use super::{Event, SessionMode};
+use super::{Database, Event, SessionMode};
 
 /// Hand-construct an event without going through a Database. Lets
 /// tests pin specific lamport_ts / device_id values for tie-break
@@ -159,6 +159,15 @@ pub(super) fn synth_setting_changed(
         device,
         serde_json::json!({ "key": key, "value": value }),
     )
+}
+
+/// Mark every pending event synced. Many event-emission tests need
+/// to "reset the event log" between assertions — emit something,
+/// drain, emit again, observe the second emission in isolation.
+pub(super) fn drain_events(db: &Database) {
+    for (id, _) in db.pending_events().unwrap() {
+        db.mark_event_synced(id).unwrap();
+    }
 }
 
 /// Parse an event's JSON payload into a generic `serde_json::Value`
