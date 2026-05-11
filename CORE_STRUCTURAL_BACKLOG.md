@@ -989,6 +989,265 @@ module.
   other `secs` field in `Session` is `u32`. Pick one width or
   document why each module picks its own.
 
+## Tier 0 — Fifth-pass additions
+
+### Path-traversal via peer-controlled bell-sound `uuid`
+- `meditate-core/src/db.rs:1688-1751` (`recompute_bell_sound`) writes
+  `event.target_id` directly into `bell_sounds.uuid` with no
+  UUID-shape validation. `meditate-core/src/sync/orchestrator.rs:334-336,
+  400` (`pull_custom_sound_files`) then does
+  `self.sounds_dir.join(format!("{uuid}.{ext}"))` and
+  `fs::write(&local, &bytes)`.
+- A peer (or tampered remote folder) can ship a `bell_sound_insert`
+  event with `target_id = "../../../home/janek/.bashrc"` — the
+  puller writes attacker-chosen bytes anywhere reachable from
+  `sounds_dir`'s parent chain. `extension()` is a closed set so
+  the suffix is safe; the stem is not.
+- Janek is solo-user, but the WebDAV folder is shared across his
+  own devices by design. **Remote-code-write primitive.**
+- Highest-severity finding in the entire audit cycle so far.
+- Fix path A: validate `target_id` matches a UUID regex at
+  `append_event` time (single chokepoint).
+- Fix path B: `Path::new(uuid).components().count() == 1 &&
+  !uuid.contains(['/', '\\\\'])` at the pull site.
+
+### No `busy_timeout` on rusqlite connections
+- `meditate-core/src/db.rs:709-720` (`Database::open`) and
+  `src/sync_runner.rs:109` (the sync thread's own connection)
+  both open without setting `busy_timeout`. Rusqlite defaults to
+  `0`.
+- Main thread holds connection A under `Arc<Mutex<…>>`;
+  `std::thread::spawn` in `application.rs:423` runs the sync
+  worker which opens connection B against the same file. WAL
+  permits concurrent reader + one writer, but with
+  `busy_timeout=0` a main-thread `set_setting` that lands during
+  the sync's `replay_events` transaction window returns
+  `SQLITE_BUSY` instantly → `DbError::Sqlite` and the gtk call
+  fails.
+- Reproducible under bulk import + auto-sync.
+- Fix: `conn.busy_timeout(Duration::from_secs(5))` in
+  `Database::open` (no-op in `open_in_memory`) and in the sync
+  worker's open path.
+
+### `unix_to_local_iso` produces variable-length strings for years outside 0000-9999
+- `meditate-core/src/time.rs:73` — chrono's `%Y` format pads
+  positive years to 4 digits but uses a sign or extra digits for
+  negative / 5+ digit years.
+- Multiple SUBSTR-based extractions assume character-stable
+  positions: hour at `db.rs:4025`, day at `db.rs:3878, 3901, 3929`.
+  CSV import (`data_io.rs:131-183`) accepts a raw `i64`
+  `start_time_unix` from user CSV with no range check.
+- Round-tripping `i64::MIN`/`i64::MAX` through `unix_to_local_iso`
+  produces a year like `-100000-01-01T00:00:00`, after which
+  every stat SUBSTR is off by N.
+- Fix path A: clamp `start_unix` in `import_csv` to
+  `[0, 253_402_300_799]` (year 0–9999) before `unix_to_local_iso`.
+- Fix path B: add a length-19 assertion + reject path on
+  `local_iso_to_unix` input.
+
+## Tier 1 — Fifth-pass additions
+
+### `Database::import_sessions_csv` admits unvalidated `start_iso` strings
+- `meditate-core/src/db.rs:3771-3814`. Unlike
+  `meditate-core/src/data_io.rs::import_csv` (which goes through
+  `unix_to_local_iso`), this method takes column 0 as
+  `start_iso = record.get(0)?.to_string()` and inserts directly.
+- A row with `start_iso = "garbage"` is stored;
+  `daily_totals_filtered` silently filters it out via
+  `parse_from_str(...).ok()` so the row vanishes from stats
+  while still counting in `count_sessions` and
+  `get_longest_session`.
+- **Two methods exist for "import sessions from CSV" with
+  different validation policies** — symptomatic of historical
+  drift.
+- Fix: reuse `data_io::import_csv`'s path or call
+  `local_iso_to_unix(&start_iso)` and reject on `0` sentinel.
+  Distinct from the existing Tier-2 "inconsistent corrupt-row
+  handling" (which is read-side); this is import-side admitting
+  bad data in the first place.
+
+## Tier 2 — Fifth-pass additions
+
+### CSV export hour-counts collide for sessions crossing midnight
+- `meditate-core/src/db.rs:4012-4029` (hour-bucketing) attributes
+  the full session duration to the start hour. A session begun
+  at 23:55 lasting 30 min counts entirely as "evening" though
+  most of it was the next morning. Symmetric concern with
+  `daily_totals_filtered` attributing all duration to the start
+  day.
+- Behavior is consistent but undocumented. Either accept and
+  document, or split-on-midnight at the SUM site.
+
+## Documentation backlog (Tier 1 — onboarding blocker)
+
+The five passes confirmed the crate is internally well-commented at
+the type/function level, but **the map is missing**. A non-Janek
+contributor (or Janek six months from now, or a future Claude
+session with cleared memory) cannot reconstruct design intent from
+the code alone.
+
+### `meditate-core/src/lib.rs` `//!` overview
+- Bare 23 lines of `pub mod` declarations with zero context.
+- Fill: one-paragraph mission ("pure Rust core: state machines,
+  persistence, sync; zero GTK"), a module map grouped by concern
+  (state machines: `session`/`breath`/`timer`/`bells`;
+  persistence: `db`/`seeds`/`data_io`; sync: `sync/*`; formatting:
+  `format`/`naming`/`time`/`date_math`; settings/stats:
+  `settings_keys`/`goal`/`contrib`/`labels`/`insights`),
+  invariants (`Database` is single-threaded, no `Instant::now()`
+  inside core, seconds-widths convention), and reading order
+  (`session` → `db` → `sync/orchestrator`).
+
+### `ARCHITECTURE.md` is stale and contradicts the codebase
+- `/home/janek/Claude/MeditationApp/ARCHITECTURE.md:35-42`
+  documents a 4-module layout (`lib`, `timer`, `breath`,
+  `format`, `db`). Today there are 23 modules + 8 in `sync/`.
+- Also claims `db.rs` does "migrations" — directly contradicts
+  the `feedback_meditate_no_compat` memory rule.
+- Either rewrite to current state or remove the module-layout
+  section and link to the `lib.rs` `//!`.
+
+### No `meditate-core/README.md`; root README doesn't mention the crate
+- A contributor entering via the subdirectory has zero entry
+  point. Root `README.md` has zero `meditate-core` hits.
+- Fill: a `meditate-core/README.md` with the same overview as the
+  `lib.rs` `//!`, plus a "build / test from the workspace root"
+  line. Add a paragraph in the root README pointing here.
+
+### Stale `//!` on `session.rs:5`
+- Comment claims "Currently implements the Prep phase only.
+  Subsequent stages will extend...". Module is 2.2k lines and
+  covers all phases. Leftover from B.5 work.
+- Update or delete.
+
+### Critical-path APIs lack `///` doc-comments
+- `Database::open` / `Database::open_in_memory` (`db.rs:687-712`)
+  — zero `///`. The 17-line internal comment explains WAL but
+  not "are seeds run here?" (no, caller drives them), "is the
+  DB ready for reads?" (yes), "thread-safe?" (no).
+- `Sync::pull` (`orchestrator.rs:145`) and `Sync::push` (`:220`)
+  — no caller-facing contract: what state mutates, what events
+  emit, what errors are recoverable.
+- `Session::start_running` — has a doc but doesn't describe the
+  lifecycle from the caller's perspective (call `tick(now)`
+  every second, observe `Effect`s, terminate on
+  `TickOutcome::Done`).
+
+### `ENTITIES.md` — how to add an 8th sync-able entity
+- Adding one touches 9 surfaces: schema CHECK list, insert/
+  update/delete CRUD, `existing_rowid_by_uuid` integration,
+  `emit_event` kind, `apply_event_inner` dispatch arm,
+  `recompute_*` writer, `wipe_local_event_log` DELETE (per
+  Tier-0 bug), seed UUIDs in `seeds.rs`, payload struct +
+  `to_event_payload` (per Tier-3 backlog item).
+- Tribal knowledge today; Tier-1 `EventKind` enum helps but
+  doesn't replace the guide.
+- Fill: an `ENTITIES.md` walkthrough or a `//!`-block at the top
+  of `db/sync.rs` after the Tier-1 split.
+
+### `EVENTS.md` — per-event-kind JSON payload schema
+- `Event::payload` (`db.rs:436`) is `String` (JSON). Per-`kind`
+  shape is **not catalogued anywhere**.
+- A peer-shell author writing a non-Rust client (Android
+  Kotlin/Java) has to reverse-engineer ~29 kinds from
+  `apply_event_inner` (1105-1162) + every `recompute_*`.
+- **Highest external-correctness leverage of the doc list.**
+- Fill: `EVENTS.md` listing every kind with its JSON shape, or a
+  `//!`-block at the top of `db/sync.rs` post Tier-1.
+
+### Migration policy doc
+- Per `feedback_meditate_no_compat`: no migrations; wipe-and-
+  reimport is the recovery path. ARCHITECTURE.md:41 contradicts
+  this (claims `db.rs` does migrations). Schema uses
+  `CREATE TABLE IF NOT EXISTS` (naive readers assume forward-
+  compat).
+- Fill: one paragraph in `lib.rs` `//!` or top-of-`db.rs` `//!`
+  stating "additive-only schema; on breaking change the recovery
+  path is wipe-and-reimport, not migration."
+
+### Naming-convention doc (post Tier-1)
+- After the four-way DB-reader rename lands (existing Tier-1
+  item), add a one-line `lib.rs` `//!` note locking the
+  convention: "Read-only DB helpers are free functions named
+  `*_from_db` in their domain module. Mutating helpers are
+  methods on `Database`."
+
+### `DECISIONS.md` cross-referencing memory rules
+- 6+ binding design decisions live in
+  `/home/janek/.claude/projects/-home-janek-Claude/memory/`:
+  - `feedback_meditate_decisions_in_core`
+  - `feedback_meditate_no_compat`
+  - `feedback_meditate_keep_i18n`
+  - `feedback_meditate_guided_presets`
+  - `feedback_meditate_i18n_typed_keys`
+  - `reference_clock_boottime`
+- **None are surfaced in the codebase.** A non-Claude
+  contributor wouldn't see them.
+- Fill: a `DECISIONS.md` (or `lib.rs` `//!`-block) capturing
+  each as a one-paragraph statement.
+
+### `BUILDING.md` for cross-build + deploy
+- `build-aux/dev-xbuild.sh` is mentioned in root README:144 (one
+  paragraph), but `xbuild` quirks (lib-name suffix, NDK
+  `llvm-readobj` on PATH — per `reference_xbuild_quirks`) and
+  the Librem deploy cycle (wipe local DB after scp, wrap SSH in
+  `timeout 8` — per `feedback_meditate_librem_deploy`) are
+  tribal.
+- Fill: extend root README or add `BUILDING.md`.
+
+### `CONTRIBUTING.md`
+- `git log --oneline -20` shows consistent `area: short
+  imperative` style. Not documented anywhere.
+- One-line `CONTRIBUTING.md` locks the convention for outside
+  contributors / future Claude sessions.
+
+## Meta-audit notes — backlog reorganization (apply when implementing)
+
+Captured here, applied at implementation time rather than now to
+avoid silently losing items in a rewrite.
+
+### Re-tier
+- **Workspace declaration**: currently Tier 1 → **Tier 0**.
+  Foundation, not structural cleanup.
+- **`emit_event` takes no `&Transaction`**: Tier 2 → **Tier 1**.
+  Load-bearing invisible precondition.
+- **`streak_filtered` panics on `NaiveDate::MIN_DATE`**: Tier 0
+  → **Tier 2**. Bundle with the import-side fix (Tier 1
+  `DbError::DateOutOfRange`); real surface is `import_csv`, not
+  the streak path which only hits at year ±262144.
+- **`breath::BreathSession` dead struct + `timer.rs` dead-by-
+  transitive + `BreathPattern::four_seven_eight` etc.**: Tier 1
+  → **Tier 3**. Hygiene, not high-impact structural.
+- **`Vec::contains(&String)` allocation per iter**: Tier 2 →
+  **inline / Tier 3**.
+
+### Merge duplicates
+- **`seed_default_presets` literal-data** appears twice (Tier 4
+  + Tier 3). Dedupe.
+- **`query_sessions` four near-identical branches** appears
+  twice (Tier 4 + Tier 3). Dedupe.
+- **Test-fixture sprawl** is fragmented into 3 items (Tier 3 db,
+  Tier 2 sync-orch boilerplate, Tier 3 scope-expansion). Merge
+  into one Tier-2 "crate-wide `tests_common` module."
+- **`SaveSyncError`/`TestPrereq` collapse + `sync/settings.rs`
+  split** are the same PR. Merge into one Tier-1 item.
+- **`sound_label → sound_name` rename + `Option<String>` return**
+  are explicitly the same sweep. Merge.
+- **`*_from_db` free-fn migration + `stats/` consolidation +
+  `get_running_average_secs` move** are the same direction. One
+  PR.
+
+### Do inline (remove from backlog when next touching the file)
+- `mark_event_synced` (singular) zero-callers delete.
+- `UiState::Default` derive drop.
+- `seeds.rs:16` `B.4.4` comment edit.
+- `Database::open` PRAGMA-ordering one-line comment.
+- `bells::build_active_bells` `pub(crate)` flip.
+- `signal_mode_override_from_db` takes-`&str`-key fix (one call
+  site, own description: "trivial").
+- 12 doc-comment gaps on named `pub` items (mechanical 20-minute
+  pass).
+
 ## Skipped (intentionally not migrating)
 
 (Empty for now — fill in as items get rejected.)
