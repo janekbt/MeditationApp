@@ -44,6 +44,12 @@ mod imp {
         /// keep a re-trigger from being lost across a pass boundary)
         /// live in core.
         pub sync_coordinator: Arc<meditate_core::sync::coordinator::SyncCoordinator>,
+
+        /// Set by `startup` if `Database::open` failed. `activate`
+        /// reads it to present an error window instead of the main
+        /// window — without this, the user lands on an inert UI
+        /// whose every action silently no-ops.
+        pub last_open_error: Mutex<Option<meditate_core::format::DbOpenFailureKey>>,
     }
 
     impl Default for MeditateApplication {
@@ -54,6 +60,7 @@ mod imp {
                 log_dirty:   std::cell::Cell::new(true),
                 has_haptic: std::cell::Cell::new(false),
                 db_path: Mutex::new(None),
+                last_open_error: Mutex::new(None),
                 sync_coordinator: Arc::new(
                     meditate_core::sync::coordinator::SyncCoordinator::new(),
                 ),
@@ -74,6 +81,17 @@ mod imp {
         fn activate(&self) {
             self.parent_activate();
             let app = self.obj();
+
+            // If the DB couldn't be opened in startup, show a recovery
+            // window instead of the main UI. Without this the user
+            // lands on an inert MeditateWindow whose every action
+            // silently no-ops because `with_db*` returns None.
+            if let Some(key) = self.last_open_error.lock().unwrap().clone() {
+                if app.active_window().is_none() {
+                    present_db_open_error_window(&app, &key);
+                }
+                return;
+            }
 
             if let Some(window) = app.active_window() {
                 window.present();
@@ -104,8 +122,12 @@ mod imp {
                     meditate_core::diag::log(&format!("db open ok: {}", db_path.display()));
                 }
                 Err(e) => {
-                    eprintln!("Failed to open database: {e}");
-                    meditate_core::diag::log(&format!("db open FAILED at {}: {e}", db_path.display()));
+                    let key = meditate_core::format::db_open_failure_key(&e);
+                    eprintln!("Failed to open database: {e:?}");
+                    meditate_core::diag::log(&format!(
+                        "db open FAILED at {}: {e:?}", db_path.display()
+                    ));
+                    *self.last_open_error.lock().unwrap() = Some(key);
                 }
             }
             // Cache the path so the sync worker thread can open its own
@@ -145,6 +167,77 @@ mod imp {
 
     impl GtkApplicationImpl for MeditateApplication {}
     impl AdwApplicationImpl for MeditateApplication {}
+
+    /// Present a recovery window for the case where `Database::open`
+    /// failed at startup. Renders an AdwStatusPage with mode-specific
+    /// copy plus an "Open Data Folder" affordance and a "Quit" button.
+    fn present_db_open_error_window(
+        app: &super::MeditateApplication,
+        key: &meditate_core::format::DbOpenFailureKey,
+    ) {
+        use meditate_core::format::DbOpenFailureKey;
+        let (title_txt, body_txt) = match key {
+            DbOpenFailureKey::SchemaTooNew { db, build } => (
+                crate::i18n::gettext("Database is newer than this app"),
+                crate::i18n::gettext(
+                    "The local database (version {db}) was written by a \
+                     newer build than this one (version {build}). Install \
+                     a matching version, or move the file aside to start \
+                     fresh."
+                )
+                .replace("{db}", &db.to_string())
+                .replace("{build}", &build.to_string()),
+            ),
+            DbOpenFailureKey::Other => (
+                crate::i18n::gettext("Couldn't open database"),
+                crate::i18n::gettext(
+                    "An unexpected error prevented opening the local \
+                     database. Check the diagnostics log in About → \
+                     Troubleshooting for details."
+                ),
+            ),
+        };
+
+        let status = adw::StatusPage::builder()
+            .icon_name("dialog-error-symbolic")
+            .title(&title_txt)
+            .description(&body_txt)
+            .build();
+
+        let buttons = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .spacing(12)
+            .halign(gtk::Align::Center)
+            .build();
+
+        let open_folder = gtk::Button::builder()
+            .label(crate::i18n::gettext("Open Data Folder"))
+            .build();
+        open_folder.connect_clicked(|_| {
+            let dir = glib::user_data_dir().join("meditate");
+            let _ = std::process::Command::new("xdg-open").arg(&dir).spawn();
+        });
+
+        let quit_btn = gtk::Button::builder()
+            .label(crate::i18n::gettext("Quit"))
+            .css_classes(["suggested-action"])
+            .build();
+        let app_for_quit = app.clone();
+        quit_btn.connect_clicked(move |_| app_for_quit.quit());
+
+        buttons.append(&open_folder);
+        buttons.append(&quit_btn);
+        status.set_child(Some(&buttons));
+
+        let window = adw::ApplicationWindow::builder()
+            .application(app)
+            .title(crate::i18n::gettext("Meditate"))
+            .default_width(480)
+            .default_height(380)
+            .content(&status)
+            .build();
+        window.present();
+    }
 
     impl MeditateApplication {
         fn setup_actions(&self) {

@@ -226,6 +226,28 @@ pub fn intervals_count_key(enabled_count: usize) -> IntervalsCountKey {
     }
 }
 
+/// Classifies a `Database::open` failure. Shell maps each variant to
+/// translatable AdwStatusPage copy in the recovery error window.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DbOpenFailureKey {
+    /// On-disk DB was written by a newer build than this one.
+    /// Downgrade would silently corrupt; user must install a matching
+    /// version or move the file aside.
+    SchemaTooNew { db: u32, build: u32 },
+    /// Any other failure (IO, permission denied, locked, on-disk
+    /// corruption). The diag log carries the specific cause.
+    Other,
+}
+
+pub fn db_open_failure_key(err: &crate::db::DbError) -> DbOpenFailureKey {
+    match err {
+        crate::db::DbError::SchemaVersionTooNew { db, build } => {
+            DbOpenFailureKey::SchemaTooNew { db: *db, build: *build }
+        }
+        _ => DbOpenFailureKey::Other,
+    }
+}
+
 /// Reason a session-save attempt failed. Shell maps each variant
 /// to a translatable toast.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -898,6 +920,28 @@ mod tests {
     fn intervals_count_key_many_carries_count() {
         assert_eq!(intervals_count_key(5), IntervalsCountKey::Many(5));
         assert_eq!(intervals_count_key(99), IntervalsCountKey::Many(99));
+    }
+
+    // ── db_open_failure_key ─────────────────────────────────────────
+
+    #[test]
+    fn db_open_failure_key_schema_too_new_carries_versions() {
+        let err = crate::db::DbError::SchemaVersionTooNew { db: 5, build: 2 };
+        match db_open_failure_key(&err) {
+            DbOpenFailureKey::SchemaTooNew { db, build } => {
+                assert_eq!(db, 5);
+                assert_eq!(build, 2);
+            }
+            other => panic!("expected SchemaTooNew, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn db_open_failure_key_other_variants_collapse_to_other() {
+        let csv_err = crate::db::DbError::Csv("bad".to_string());
+        assert_eq!(db_open_failure_key(&csv_err), DbOpenFailureKey::Other);
+        let dup_err = crate::db::DbError::DuplicateLabel("focus".to_string());
+        assert_eq!(db_open_failure_key(&dup_err), DbOpenFailureKey::Other);
     }
 
     // ── session_save_failure_log_message ────────────────────────────

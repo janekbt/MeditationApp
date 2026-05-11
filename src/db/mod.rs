@@ -272,17 +272,19 @@ impl Database {
     /// pre-existing DB file written by an older version of this app
     /// will need to be deleted first (the user opted into that on
     /// 2026-04-29 — single-user repo).
-    pub fn open(path: &Path) -> Result<Self> {
+    pub fn open(path: &Path) -> meditate_core::db::Result<Self> {
+        use meditate_core::db::DbError;
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+            std::fs::create_dir_all(parent).map_err(|e| {
+                DbError::Csv(format!("mkdir {}: {e}", parent.display()))
+            })?;
         }
-        let inner = meditate_core::db::Database::open(path).map_err(map_core_err)?;
+        let inner = meditate_core::db::Database::open(path)?;
         let db = Self { inner };
         // Bell sounds stay shell-side: the seed list carries gresource
         // paths that don't exist on Android.
-        db.seed_bundled_bell_sounds()?;
-        db.inner.seed_all_non_audio().map_err(map_core_err)?;
+        db.seed_bundled_bell_sounds().map_err(DbError::Sqlite)?;
+        db.inner.seed_all_non_audio()?;
         Ok(db)
     }
 
