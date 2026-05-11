@@ -342,3 +342,293 @@ impl Database {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::Event;
+
+    fn synth_bell_sound_insert(uuid: &str, lamport_ts: i64, device: &str, name: &str) -> Event {
+        Event {
+            event_uuid: format!("bs-insert-{uuid}-{lamport_ts}-{device}"),
+            lamport_ts,
+            device_id: device.to_string(),
+            kind: "bell_sound_insert".to_string(),
+            target_id: uuid.to_string(),
+            payload: serde_json::json!({
+                "uuid": uuid,
+                "name": name,
+                "file_path": format!("/path/{name}.wav"),
+                "is_bundled": false,
+                "mime_type": "audio/wav",
+                "created_iso": "2026-05-03T00:00:00Z",
+            }).to_string(),
+        }
+    }
+
+    fn synth_bell_sound_delete(uuid: &str, lamport_ts: i64, device: &str) -> Event {
+        Event {
+            event_uuid: format!("bs-del-{uuid}-{lamport_ts}-{device}"),
+            lamport_ts,
+            device_id: device.to_string(),
+            kind: "bell_sound_delete".to_string(),
+            target_id: uuid.to_string(),
+            payload: serde_json::json!({ "uuid": uuid }).to_string(),
+        }
+    }
+
+    #[test]
+    fn insert_bell_sound_inserts_a_row_with_uuid_and_returns_rowid() {
+        let db = Database::open_in_memory().unwrap();
+        let rowid = db
+            .insert_bell_sound(
+                "Tibetan Bowl",
+                "/io/github/janekbt/Meditate/sounds/bowl.wav",
+                true,
+                "audio/wav",
+                BellSoundCategory::General,
+            )
+            .unwrap();
+        assert!(rowid > 0);
+        let sounds = db.list_bell_sounds().unwrap();
+        assert_eq!(sounds.len(), 1);
+        let s = &sounds[0];
+        assert_eq!(s.id, rowid);
+        assert!(!s.uuid.is_empty());
+        assert_eq!(s.name, "Tibetan Bowl");
+        assert_eq!(s.file_path, "/io/github/janekbt/Meditate/sounds/bowl.wav");
+        assert!(s.is_bundled);
+        assert_eq!(s.mime_type, "audio/wav");
+        assert_eq!(s.category, BellSoundCategory::General);
+        assert!(!s.created_iso.is_empty());
+    }
+
+    #[test]
+    fn insert_bell_sound_with_explicit_uuid_uses_it() {
+        let db = Database::open_in_memory().unwrap();
+        let fixed = "11111111-2222-3333-4444-555555555555";
+        let rowid = db
+            .insert_bell_sound_with_uuid(
+                fixed,
+                "Bundled bowl",
+                "/io/github/janekbt/Meditate/sounds/bowl.wav",
+                true,
+                "audio/wav",
+                BellSoundCategory::General,
+            )
+            .unwrap();
+        assert!(rowid > 0);
+        let s = &db.list_bell_sounds().unwrap()[0];
+        assert_eq!(s.uuid, fixed);
+    }
+
+    #[test]
+    fn insert_bell_sound_with_existing_uuid_is_silent_noop() {
+        let db = Database::open_in_memory().unwrap();
+        let fixed = "22222222-2222-3333-4444-555555555555";
+        let r1 = db.insert_bell_sound_with_uuid(
+            fixed, "Bowl", "/path/bowl.wav", true, "audio/wav",
+            BellSoundCategory::General,
+        ).unwrap();
+        let r2 = db.insert_bell_sound_with_uuid(
+            fixed, "Bowl", "/path/bowl.wav", true, "audio/wav",
+            BellSoundCategory::General,
+        ).unwrap();
+        assert_eq!(r1, r2);
+        assert_eq!(db.list_bell_sounds().unwrap().len(), 1);
+        let inserts: Vec<_> = db.pending_events().unwrap()
+            .into_iter()
+            .filter(|(_, e)| e.kind == "bell_sound_insert")
+            .collect();
+        assert_eq!(inserts.len(), 1);
+    }
+
+    #[test]
+    fn bell_sound_category_round_trips_through_db_str() {
+        for c in [BellSoundCategory::General, BellSoundCategory::BoxBreath] {
+            assert_eq!(BellSoundCategory::from_db_str(c.as_db_str()), Some(c));
+        }
+        assert_eq!(BellSoundCategory::from_db_str("typo"), None);
+    }
+
+    #[test]
+    fn bell_sounds_category_check_constraint_rejects_unknown_value() {
+        let db = Database::open_in_memory().unwrap();
+        let bad = db.conn.execute(
+            "INSERT INTO bell_sounds
+                (uuid, name, file_path, is_bundled, mime_type, category, created_iso)
+             VALUES ('u', 'n', '/p', 0, 'audio/wav', 'spiral', 'now')",
+            [],
+        );
+        assert!(bad.is_err());
+    }
+
+    #[test]
+    fn list_bell_sounds_for_category_filters_by_category() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_bell_sound("Bowl", "/p/bowl.wav", true, "audio/wav", BellSoundCategory::General).unwrap();
+        db.insert_bell_sound("Inhale", "/p/inhale.ogg", false, "audio/ogg", BellSoundCategory::BoxBreath).unwrap();
+        db.insert_bell_sound("Hold", "/p/hold.ogg", false, "audio/ogg", BellSoundCategory::BoxBreath).unwrap();
+
+        let general = db.list_bell_sounds_for_category(BellSoundCategory::General).unwrap();
+        assert_eq!(general.len(), 1);
+        assert_eq!(general[0].name, "Bowl");
+
+        let box_breath = db.list_bell_sounds_for_category(BellSoundCategory::BoxBreath).unwrap();
+        assert_eq!(box_breath.len(), 2);
+        let names: Vec<&str> = box_breath.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"Inhale"));
+        assert!(names.contains(&"Hold"));
+    }
+
+    #[test]
+    fn list_bell_sounds_unfiltered_returns_every_category() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_bell_sound("Bowl", "/p/bowl.wav", true, "audio/wav", BellSoundCategory::General).unwrap();
+        db.insert_bell_sound("Inhale", "/p/inhale.ogg", false, "audio/ogg", BellSoundCategory::BoxBreath).unwrap();
+        assert_eq!(db.list_bell_sounds().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn insert_bell_sound_emits_a_bell_sound_insert_event() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_bell_sound("Zen Bell", "/path/zen.wav", true, "audio/wav", BellSoundCategory::General).unwrap();
+        let events = db.pending_events().unwrap();
+        let inserts: Vec<_> = events
+            .iter()
+            .filter(|(_, e)| e.kind == "bell_sound_insert")
+            .collect();
+        assert_eq!(inserts.len(), 1);
+        let payload: serde_json::Value = serde_json::from_str(&inserts[0].1.payload).unwrap();
+        assert_eq!(payload["name"], "Zen Bell");
+        assert_eq!(payload["file_path"], "/path/zen.wav");
+        assert_eq!(payload["is_bundled"], true);
+        assert_eq!(payload["mime_type"], "audio/wav");
+        assert!(payload["uuid"].is_string());
+        assert!(payload["created_iso"].is_string());
+    }
+
+    #[test]
+    fn list_bell_sounds_returns_custom_rows_before_bundled() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_bell_sound("A", "/p/a.wav", true, "audio/wav", BellSoundCategory::General).unwrap();
+        db.insert_bell_sound("B", "/p/b.wav", false, "audio/wav", BellSoundCategory::General).unwrap();
+        db.insert_bell_sound("C", "/p/c.wav", true, "audio/wav", BellSoundCategory::General).unwrap();
+        db.insert_bell_sound("D", "/p/d.wav", false, "audio/wav", BellSoundCategory::General).unwrap();
+        let s = db.list_bell_sounds().unwrap();
+        let names: Vec<_> = s.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, vec!["B", "D", "A", "C"]);
+    }
+
+    #[test]
+    fn list_bell_sounds_returns_empty_when_none_inserted() {
+        let db = Database::open_in_memory().unwrap();
+        assert!(db.list_bell_sounds().unwrap().is_empty());
+    }
+
+    #[test]
+    fn rename_bell_sound_changes_name_and_emits_update_event() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_bell_sound("Bowl", "/p/bowl.wav", true, "audio/wav", BellSoundCategory::General).unwrap();
+        let uuid = db.list_bell_sounds().unwrap()[0].uuid.clone();
+        db.rename_bell_sound(&uuid, "Singing Bowl").unwrap();
+        assert_eq!(db.list_bell_sounds().unwrap()[0].name, "Singing Bowl");
+        let updates: Vec<_> = db.pending_events().unwrap()
+            .into_iter()
+            .filter(|(_, e)| e.kind == "bell_sound_update")
+            .collect();
+        assert_eq!(updates.len(), 1);
+        let payload: serde_json::Value = serde_json::from_str(&updates[0].1.payload).unwrap();
+        assert_eq!(payload["name"], "Singing Bowl");
+        assert_eq!(payload["uuid"], uuid);
+        assert_eq!(payload["file_path"], "/p/bowl.wav");
+        assert_eq!(payload["is_bundled"], true);
+        assert_eq!(payload["mime_type"], "audio/wav");
+    }
+
+    #[test]
+    fn rename_bell_sound_unknown_uuid_is_silent_noop() {
+        let db = Database::open_in_memory().unwrap();
+        db.rename_bell_sound("non-existent", "Bowl").unwrap();
+        let updates: Vec<_> = db.pending_events().unwrap()
+            .into_iter()
+            .filter(|(_, e)| e.kind == "bell_sound_update")
+            .collect();
+        assert!(updates.is_empty());
+    }
+
+    #[test]
+    fn delete_bell_sound_removes_the_row_and_emits_tombstone() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_bell_sound("Bowl", "/p/bowl.wav", false, "audio/wav", BellSoundCategory::General).unwrap();
+        let uuid = db.list_bell_sounds().unwrap()[0].uuid.clone();
+        db.delete_bell_sound(&uuid).unwrap();
+        assert!(db.list_bell_sounds().unwrap().is_empty());
+        let deletes: Vec<_> = db.pending_events().unwrap()
+            .into_iter()
+            .filter(|(_, e)| e.kind == "bell_sound_delete")
+            .collect();
+        assert_eq!(deletes.len(), 1);
+        assert_eq!(deletes[0].1.target_id, uuid);
+    }
+
+    #[test]
+    fn delete_bell_sound_unknown_uuid_is_silent_noop() {
+        let db = Database::open_in_memory().unwrap();
+        db.delete_bell_sound("non-existent").unwrap();
+        let deletes: Vec<_> = db.pending_events().unwrap()
+            .into_iter()
+            .filter(|(_, e)| e.kind == "bell_sound_delete")
+            .collect();
+        assert!(deletes.is_empty());
+    }
+
+    #[test]
+    fn apply_event_bell_sound_insert_creates_the_row() {
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_bell_sound_insert("bs-1", 5, "dev-A", "Bowl")).unwrap();
+        let s = &db.list_bell_sounds().unwrap()[0];
+        assert_eq!(s.uuid, "bs-1");
+        assert_eq!(s.name, "Bowl");
+        assert_eq!(s.file_path, "/path/Bowl.wav");
+    }
+
+    #[test]
+    fn apply_event_bell_sound_delete_removes_the_row() {
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_bell_sound_insert("bs-1", 5, "dev-A", "Bowl")).unwrap();
+        db.apply_event(&synth_bell_sound_delete("bs-1", 6, "dev-A")).unwrap();
+        assert!(db.list_bell_sounds().unwrap().is_empty());
+    }
+
+    #[test]
+    fn apply_event_bell_sound_tombstone_resists_lower_lamport_insert() {
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_bell_sound_delete("bs-1", 10, "dev-A")).unwrap();
+        db.apply_event(&synth_bell_sound_insert("bs-1", 5, "dev-A", "Bowl")).unwrap();
+        assert!(db.list_bell_sounds().unwrap().is_empty());
+    }
+
+    #[test]
+    fn apply_event_bell_sound_replay_round_trip_across_peers() {
+        let dev_a = Database::open_in_memory().unwrap();
+        dev_a.insert_bell_sound("Bowl", "/p/bowl.wav", true, "audio/wav", BellSoundCategory::General).unwrap();
+        let uuid = dev_a.list_bell_sounds().unwrap()[0].uuid.clone();
+        dev_a.rename_bell_sound(&uuid, "Singing Bowl").unwrap();
+
+        let events: Vec<Event> = dev_a.pending_events().unwrap()
+            .into_iter()
+            .filter(|(_, e)| e.kind.starts_with("bell_sound_"))
+            .map(|(_, e)| e)
+            .collect();
+
+        let dev_b = Database::open_in_memory().unwrap();
+        dev_b.replay_events(&events).unwrap();
+        let sounds = dev_b.list_bell_sounds().unwrap();
+        assert_eq!(sounds.len(), 1);
+        assert_eq!(sounds[0].uuid, uuid);
+        assert_eq!(sounds[0].name, "Singing Bowl");
+        assert!(sounds[0].is_bundled);
+        assert_eq!(sounds[0].file_path, "/p/bowl.wav");
+    }
+}
