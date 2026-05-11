@@ -32,6 +32,30 @@ impl Phase {
     }
 }
 
+/// Maximum per-phase duration (seconds). Mirrors the GTK editor's
+/// SpinRow upper bound and the runtime sampler's expectation that
+/// no single phase runs longer than ~20s.
+pub const PHASE_MAX_SECS: u32 = 20;
+
+/// Minimum legal cycle length. Below this, `phase_at` panics on a
+/// zero-length cycle — defence in depth against a 0-0-0-0 pattern
+/// reaching the running view.
+pub const MIN_CYCLE_SECS: u32 = 1;
+
+/// Lower bound on a Box-Breath session duration, in seconds.
+/// Anything less and the cycle-aligned rounding produces an
+/// empty session.
+pub const SESSION_MIN_SECS: u32 = 60;
+
+/// Upper bound on a Box-Breath session duration, in seconds.
+/// 23 hours 59 minutes — the inherited SpinRow cap.
+pub const SESSION_MAX_SECS: u32 = 23 * 3600 + 59 * 60;
+
+/// Clamp a raw session-duration request into the supported range.
+pub fn clamp_session_secs(secs: u32) -> u32 {
+    secs.clamp(SESSION_MIN_SECS, SESSION_MAX_SECS)
+}
+
 /// Four-phase breath pattern. Durations are seconds (matches the
 /// GTK shell's settings-key persistence and editor SpinRow ranges).
 /// `0` for any field skips that phase entirely.
@@ -78,6 +102,40 @@ impl BreathPattern {
         Duration::from_secs(
             (self.in_secs + self.hold_in + self.out_secs + self.hold_out) as u64,
         )
+    }
+
+    /// Round a requested session duration UP to the next full cycle
+    /// boundary, so a Box-Breath session always ends on an exhale
+    /// or hold-out boundary rather than mid-phase. `cycle().max(1)`
+    /// is the divisor so degenerate zero-cycle patterns (which can
+    /// only happen mid-edit) don't divide by zero.
+    pub fn cycle_aligned_target_secs(&self, raw_secs: u64) -> u64 {
+        let cycle = self.cycle().as_secs().max(1);
+        raw_secs.div_ceil(cycle) * cycle
+    }
+
+    /// Clamp + min-policy applied to raw per-phase values (e.g. read
+    /// from settings, typed into a spinner). Active phases
+    /// (`in`/`out`) require at least 1 second; hold phases may be
+    /// zero (4-7-8 with `hold_out=0` is valid). All four cap at
+    /// `PHASE_MAX_SECS`.
+    pub fn clamp_from_raw(in_secs: u32, hold_in: u32, out_secs: u32, hold_out: u32) -> Self {
+        Self {
+            in_secs: in_secs.clamp(1, PHASE_MAX_SECS),
+            hold_in: hold_in.clamp(0, PHASE_MAX_SECS),
+            out_secs: out_secs.clamp(1, PHASE_MAX_SECS),
+            hold_out: hold_out.clamp(0, PHASE_MAX_SECS),
+        }
+    }
+
+    /// Minimum allowed value for phase `index` (0=In, 1=HoldIn,
+    /// 2=Out, 3=HoldOut). Active phases need 1 second to keep the
+    /// cycle non-degenerate; hold phases may be zero.
+    pub fn phase_min_secs(index: u8) -> u32 {
+        match index {
+            0 | 2 => 1,
+            _ => 0,
+        }
     }
 
     pub fn duration_for(&self, phase: Phase) -> Duration {
@@ -216,6 +274,70 @@ mod tests {
 
     fn four_seven_eight() -> BreathPattern {
         BreathPattern::four_seven_eight()
+    }
+
+    // ── Invariants ──────────────────────────────────────────────────
+
+    #[test]
+    fn cycle_aligned_target_rounds_up_to_next_full_cycle() {
+        let p = box_pattern(); // cycle = 16s
+        // 60s requested → next multiple of 16 ≥ 60 is 64.
+        assert_eq!(p.cycle_aligned_target_secs(60), 64);
+        // 0s edge case (mid-edit) → still produces something legal.
+        assert_eq!(p.cycle_aligned_target_secs(0), 0);
+        // Exact multiple stays put.
+        assert_eq!(p.cycle_aligned_target_secs(128), 128);
+    }
+
+    #[test]
+    fn cycle_aligned_target_survives_degenerate_zero_cycle() {
+        let p = BreathPattern { in_secs: 0, hold_in: 0, out_secs: 0, hold_out: 0 };
+        // Divisor max(1) keeps this from dividing by zero.
+        assert_eq!(p.cycle_aligned_target_secs(60), 60);
+    }
+
+    #[test]
+    fn clamp_from_raw_enforces_active_phase_minimum() {
+        // in/out cannot be 0; hold phases can.
+        let p = BreathPattern::clamp_from_raw(0, 0, 0, 0);
+        assert_eq!(p, BreathPattern { in_secs: 1, hold_in: 0, out_secs: 1, hold_out: 0 });
+    }
+
+    #[test]
+    fn clamp_from_raw_caps_at_phase_max() {
+        let p = BreathPattern::clamp_from_raw(99, 99, 99, 99);
+        assert_eq!(
+            p,
+            BreathPattern {
+                in_secs: PHASE_MAX_SECS,
+                hold_in: PHASE_MAX_SECS,
+                out_secs: PHASE_MAX_SECS,
+                hold_out: PHASE_MAX_SECS,
+            }
+        );
+    }
+
+    #[test]
+    fn phase_min_secs_per_phase() {
+        // Active phases (in / out) need 1; hold phases may be zero.
+        assert_eq!(BreathPattern::phase_min_secs(0), 1);
+        assert_eq!(BreathPattern::phase_min_secs(1), 0);
+        assert_eq!(BreathPattern::phase_min_secs(2), 1);
+        assert_eq!(BreathPattern::phase_min_secs(3), 0);
+    }
+
+    #[test]
+    fn clamp_session_secs_floors_at_minimum() {
+        assert_eq!(clamp_session_secs(0), SESSION_MIN_SECS);
+        assert_eq!(clamp_session_secs(59), SESSION_MIN_SECS);
+        assert_eq!(clamp_session_secs(60), 60);
+    }
+
+    #[test]
+    fn clamp_session_secs_caps_at_maximum() {
+        assert_eq!(clamp_session_secs(u32::MAX), SESSION_MAX_SECS);
+        assert_eq!(clamp_session_secs(SESSION_MAX_SECS), SESSION_MAX_SECS);
+        assert_eq!(clamp_session_secs(SESSION_MAX_SECS + 1), SESSION_MAX_SECS);
     }
 
     // ── BreathPattern: cycle / from_durations ──────────────────────────

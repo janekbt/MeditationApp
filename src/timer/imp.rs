@@ -1729,14 +1729,10 @@ fn attach_revealer_row_click(row: &adw::ActionRow) {
 
 impl TimerView {
     pub(super) fn breathing_target_secs(&self) -> u64 {
-        // Cycle-aligned target: round the user-set duration up to
-        // the next full cycle so a Box-Breath session always ends on
-        // an exhale/hold-out boundary. Same shape as the round-up
-        // start_session does when building the Session.
-        let pattern = self.breathing_pattern.get();
-        let cycle = pattern.cycle().as_secs().max(1);
-        let raw = self.breathing_session_secs.get() as u64;
-        raw.div_ceil(cycle) * cycle
+        // Cycle-aligned target lives on BreathPattern in core.
+        self.breathing_pattern
+            .get()
+            .cycle_aligned_target_secs(self.breathing_session_secs.get() as u64)
     }
 
 
@@ -2071,12 +2067,12 @@ impl TimerView {
             }
             TimerMode::Breathing => {
                 let pattern = self.breathing_pattern.get();
-                let cycle = pattern.cycle().as_secs().max(1);
-                // "Finish the breath" before stopping: round the requested
-                // duration up to the next full cycle so the session always
-                // ends on an exhale/hold-out boundary.
-                let raw = self.breathing_session_secs.get() as u64;
-                let target = raw.div_ceil(cycle) * cycle;
+                // "Finish the breath" before stopping: round to the
+                // next full cycle so the session always ends on an
+                // exhale/hold-out boundary.
+                let target = pattern.cycle_aligned_target_secs(
+                    self.breathing_session_secs.get() as u64,
+                );
                 self.start_boot_time.set(Some(boot_time_now()));
                 // No target_secs → stopwatch-only Box Breath never
                 // auto-ends; user must press Stop.
@@ -4222,10 +4218,8 @@ use meditate_core::time::unix_now;
 
 // ── Breathing (Box Breath) setup wiring ───────────────────────────────────────
 
-/// Minimum cycle length we allow — prevents a 0-0-0-0 pattern from ever
-/// reaching the running view, which would panic phase_at.
-const MIN_CYCLE_SECS: u32 = 1;
-const PHASE_MAX_SECS: u32 = 20;
+// Per-phase + cycle invariants live in meditate_core::breath.
+use meditate_core::breath::{clamp_session_secs, MIN_CYCLE_SECS, PHASE_MAX_SECS};
 
 impl TimerView {
     fn build_breathing_setup(&self) {
@@ -4324,7 +4318,7 @@ impl TimerView {
 
         // Hold phases (index 1, 3) accept 0s (no hold); inhale/exhale must
         // be at least 1s or the cycle would degenerate.
-        let min_val: u32 = if index == 1 || index == 3 { 0 } else { 1 };
+        let min_val: u32 = BreathPattern::phase_min_secs(index);
 
         let tv = timer_obj.clone();
         minus.connect_clicked(move |_| tv.imp().adjust_phase(index, -1, min_val));
@@ -4341,7 +4335,7 @@ impl TimerView {
     /// clamps to 60..=23h59m * 60 — same effective upper bound as
     /// Timer mode for consistency.
     fn set_breathing_duration_secs(&self, secs: u32) {
-        let secs = secs.clamp(60, 23 * 3600 + 59 * 60);
+        let secs = clamp_session_secs(secs);
         self.breathing_session_secs.set(secs);
         self.save_breathing_settings();
         // Duration row label is shared between modes; reflect the new
@@ -4401,16 +4395,16 @@ impl TimerView {
                     .and_then(|s| s.parse::<u32>().ok())
                     .unwrap_or(default)
             };
-            let p = BreathPattern {
-                in_secs:  read("breathing_in", 4).clamp(1, PHASE_MAX_SECS),
-                hold_in:  read("breathing_hold_in", 4).clamp(0, PHASE_MAX_SECS),
-                out_secs: read("breathing_out", 4).clamp(1, PHASE_MAX_SECS),
-                hold_out: read("breathing_hold_out", 4).clamp(0, PHASE_MAX_SECS),
-            };
-            let secs = read("breathing_session_secs", 5 * 60).clamp(60, 23 * 3600 + 59 * 60);
+            let p = BreathPattern::clamp_from_raw(
+                read("breathing_in", 4),
+                read("breathing_hold_in", 4),
+                read("breathing_out", 4),
+                read("breathing_hold_out", 4),
+            );
+            let secs = clamp_session_secs(read("breathing_session_secs", 5 * 60));
             (p, secs)
         }).unwrap_or((
-            BreathPattern { in_secs: 4, hold_in: 4, out_secs: 4, hold_out: 4 },
+            BreathPattern::box_breath(),
             5 * 60,
         ));
         self.breathing_pattern.set(p);
