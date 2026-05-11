@@ -8,6 +8,23 @@
 
 use std::error::Error;
 use std::fmt;
+use std::time::Duration;
+
+/// TCP connect cap. Network-unreachable / DNS-failure should
+/// surface as a `Network(_)` error quickly so the sync runner
+/// records the failure and the UI's spinner clears. ureq has no
+/// default — without this, a stuck connect blocks the worker
+/// thread indefinitely and the in-flight flag never clears.
+const TIMEOUT_CONNECT: Duration = Duration::from_secs(10);
+
+/// Per-read cap inside an established connection. Generous enough
+/// to absorb a slow phone uplink mid-PUT but short enough that a
+/// dead TCP session doesn't leave the worker hanging forever.
+const TIMEOUT_READ: Duration = Duration::from_secs(60);
+
+/// Per-write cap. Same logic as TIMEOUT_READ — bounded so a
+/// half-open connection eventually fails out rather than hanging.
+const TIMEOUT_WRITE: Duration = Duration::from_secs(60);
 
 #[derive(Debug)]
 pub enum WebDavError {
@@ -102,7 +119,11 @@ impl HttpWebDav {
         write!(&mut creds, "{username}:{password}").unwrap();
         let encoded = base64_encode(&creds);
         Self {
-            agent: ureq::AgentBuilder::new().build(),
+            agent: ureq::AgentBuilder::new()
+                .timeout_connect(TIMEOUT_CONNECT)
+                .timeout_read(TIMEOUT_READ)
+                .timeout_write(TIMEOUT_WRITE)
+                .build(),
             base_url: base_url.trim_end_matches('/').to_string(),
             auth_header: format!("Basic {encoded}"),
         }
