@@ -161,6 +161,21 @@ pub(super) fn synth_setting_changed(
     )
 }
 
+/// A simple session-insert event built from one i64 seed. Used by
+/// event-log tests that don't care about payload specifics — just
+/// need distinct events with a known lamport_ts.
+pub(super) fn sample_event(seed: i64) -> Event {
+    let session_uuid = format!("00000000-0000-4000-9000-{:012x}", seed);
+    Event {
+        event_uuid: format!("00000000-0000-4000-8000-{:012x}", seed),
+        lamport_ts: seed,
+        device_id: "00000000-0000-4000-8000-aaaaaaaaaaaa".to_string(),
+        kind: "session_insert".to_string(),
+        target_id: session_uuid.clone(),
+        payload: format!("{{\"uuid\":\"{session_uuid}\",\"seed\":{seed}}}"),
+    }
+}
+
 /// 8-4-4-4-12 hex with v4 marker and RFC 4122 variant. Cheap shape
 /// check — used across entity tests to assert that a generated id
 /// looks like the output of `Uuid::new_v4()` rather than (say) a

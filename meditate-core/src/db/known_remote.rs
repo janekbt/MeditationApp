@@ -76,3 +76,119 @@ impl Database {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::test_helpers::*;
+
+    #[test]
+    fn known_remote_file_uuids_starts_empty() {
+        let db = Database::open_in_memory().unwrap();
+        assert!(db.known_remote_file_uuids().unwrap().is_empty());
+    }
+
+    #[test]
+    fn record_known_remote_file_then_known_remote_file_uuids_returns_it() {
+        let db = Database::open_in_memory().unwrap();
+        db.record_known_remote_file("aaa-batch-uuid").unwrap();
+        let known = db.known_remote_file_uuids().unwrap();
+        assert!(known.contains("aaa-batch-uuid"));
+    }
+
+    #[test]
+    fn record_known_remote_file_is_idempotent() {
+        let db = Database::open_in_memory().unwrap();
+        db.record_known_remote_file("xyz").unwrap();
+        db.record_known_remote_file("xyz").unwrap();
+        assert_eq!(db.known_remote_file_uuids().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn known_remote_files_persist_across_database_reopens() {
+        // The dedup tracker MUST survive process restart — otherwise a
+        // user who closes the app between sync attempts re-GETs every
+        // remote file on the next pull, defeating the optimisation.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.db");
+        {
+            let db = Database::open(&path).unwrap();
+            db.record_known_remote_file("persistent-batch").unwrap();
+        }
+        let db2 = Database::open(&path).unwrap();
+        assert!(db2.known_remote_file_uuids().unwrap().contains("persistent-batch"));
+    }
+
+    #[test]
+    fn wipe_known_remote_files_clears_every_recorded_uuid() {
+        let db = Database::open_in_memory().unwrap();
+        db.record_known_remote_file("a").unwrap();
+        db.record_known_remote_file("b").unwrap();
+        db.record_known_remote_file("c").unwrap();
+        assert_eq!(db.known_remote_file_uuids().unwrap().len(), 3);
+        db.wipe_known_remote_files().unwrap();
+        assert!(db.known_remote_file_uuids().unwrap().is_empty());
+    }
+
+    #[test]
+    fn wipe_known_remote_files_on_an_empty_table_is_a_silent_no_op() {
+        let db = Database::open_in_memory().unwrap();
+        db.wipe_known_remote_files().unwrap();
+        assert!(db.known_remote_file_uuids().unwrap().is_empty());
+    }
+
+    #[test]
+    fn wipe_known_remote_files_does_not_touch_other_tables() {
+        // Defensive: the wipe is scoped to the dedup tracker. Sessions,
+        // labels, events, and settings must all survive untouched —
+        // otherwise an account swap would silently destroy local state.
+        let db = Database::open_in_memory().unwrap();
+        let _ = db.append_event(&sample_event(1)).unwrap();
+        let label_id = db.insert_label("focus").unwrap();
+        db.record_known_remote_file("a").unwrap();
+        db.set_setting("k", "v").unwrap();
+        let labels_before = db.list_labels().unwrap().len();
+        let events_before = db.pending_events().unwrap().len();
+
+        db.wipe_known_remote_files().unwrap();
+
+        assert_eq!(db.list_labels().unwrap().len(), labels_before);
+        assert!(db.list_labels().unwrap().iter().any(|l| l.id == label_id));
+        assert_eq!(db.pending_events().unwrap().len(), events_before);
+        assert_eq!(db.get_setting("k", "default").unwrap(), "v");
+    }
+
+    #[test]
+    fn known_remote_sound_uuids_starts_empty() {
+        let db = Database::open_in_memory().unwrap();
+        assert!(db.known_remote_sound_uuids().unwrap().is_empty());
+    }
+
+    #[test]
+    fn record_known_remote_sound_adds_to_membership_set() {
+        let db = Database::open_in_memory().unwrap();
+        db.record_known_remote_sound("bs-1").unwrap();
+        db.record_known_remote_sound("bs-2").unwrap();
+        let known = db.known_remote_sound_uuids().unwrap();
+        assert_eq!(known.len(), 2);
+        assert!(known.contains("bs-1"));
+        assert!(known.contains("bs-2"));
+    }
+
+    #[test]
+    fn record_known_remote_sound_is_idempotent_on_repeat() {
+        let db = Database::open_in_memory().unwrap();
+        db.record_known_remote_sound("bs-1").unwrap();
+        db.record_known_remote_sound("bs-1").unwrap();
+        assert_eq!(db.known_remote_sound_uuids().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn wipe_known_remote_sounds_clears_the_set() {
+        let db = Database::open_in_memory().unwrap();
+        db.record_known_remote_sound("bs-1").unwrap();
+        db.record_known_remote_sound("bs-2").unwrap();
+        db.wipe_known_remote_sounds().unwrap();
+        assert!(db.known_remote_sound_uuids().unwrap().is_empty());
+    }
+}

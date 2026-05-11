@@ -3446,18 +3446,6 @@ mod tests {
     // to the caller. `pending_events` is the push-queue contract — sorted
     // by `lamport_ts` so peers see events in causal order.
 
-    fn sample_event(seed: i64) -> Event {
-        let session_uuid = format!("00000000-0000-4000-9000-{:012x}", seed);
-        Event {
-            event_uuid: format!("00000000-0000-4000-8000-{:012x}", seed),
-            lamport_ts: seed,
-            device_id: "00000000-0000-4000-8000-aaaaaaaaaaaa".to_string(),
-            kind: "session_insert".to_string(),
-            target_id: session_uuid.clone(),
-            payload: format!("{{\"uuid\":\"{session_uuid}\",\"seed\":{seed}}}"),
-        }
-    }
-
     #[test]
     fn pending_events_is_empty_on_a_fresh_database() {
         let db = Database::open_in_memory().unwrap();
@@ -3851,100 +3839,6 @@ mod tests {
         assert!(db.pending_events().unwrap().is_empty());
     }
 
-    // ── known_remote_files: bulk-file dedup tracker ─────────────────────
-
-    #[test]
-    fn known_remote_file_uuids_starts_empty() {
-        // Fresh database: no batch_uuids ingested. The puller takes
-        // this empty set and GETs every file it sees.
-        let db = Database::open_in_memory().unwrap();
-        assert!(db.known_remote_file_uuids().unwrap().is_empty());
-    }
-
-    #[test]
-    fn record_known_remote_file_then_known_remote_file_uuids_returns_it() {
-        // Round-trip: a recorded uuid shows up in the next read.
-        let db = Database::open_in_memory().unwrap();
-        db.record_known_remote_file("aaa-batch-uuid").unwrap();
-        let known = db.known_remote_file_uuids().unwrap();
-        assert!(known.contains("aaa-batch-uuid"),
-            "recorded uuid must appear in the known set");
-    }
-
-    #[test]
-    fn record_known_remote_file_is_idempotent() {
-        // Inserting the same uuid twice must not error — INSERT OR
-        // IGNORE protects against the "we re-pulled the same file"
-        // case where the puller calls record() unconditionally.
-        let db = Database::open_in_memory().unwrap();
-        db.record_known_remote_file("xyz").unwrap();
-        db.record_known_remote_file("xyz").unwrap();
-        assert_eq!(db.known_remote_file_uuids().unwrap().len(), 1);
-    }
-
-    #[test]
-    fn known_remote_files_persist_across_database_reopens() {
-        // The dedup tracker MUST survive process restart — otherwise a
-        // user who closes the app between sync attempts re-GETs every
-        // remote file on the next pull, defeating the optimisation.
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("test.db");
-        {
-            let db = Database::open(&path).unwrap();
-            db.record_known_remote_file("persistent-batch").unwrap();
-        }
-        let db2 = Database::open(&path).unwrap();
-        assert!(db2.known_remote_file_uuids().unwrap().contains("persistent-batch"));
-    }
-
-    #[test]
-    fn wipe_known_remote_files_clears_every_recorded_uuid() {
-        // The "remote data lost" fail-safe re-anchors the dedup tracker
-        // when (a) the account changes, or (b) the user decides to push
-        // their local state back up after a wipe. Both flows call
-        // `wipe_known_remote_files` to flush the table cleanly.
-        let db = Database::open_in_memory().unwrap();
-        db.record_known_remote_file("a").unwrap();
-        db.record_known_remote_file("b").unwrap();
-        db.record_known_remote_file("c").unwrap();
-        assert_eq!(db.known_remote_file_uuids().unwrap().len(), 3);
-        db.wipe_known_remote_files().unwrap();
-        assert!(db.known_remote_file_uuids().unwrap().is_empty(),
-            "wipe must remove every recorded file_uuid");
-    }
-
-    #[test]
-    fn wipe_known_remote_files_on_an_empty_table_is_a_silent_no_op() {
-        // First-time account setup: the table is already empty, but the
-        // wipe path runs unconditionally on account change. Don't crash.
-        let db = Database::open_in_memory().unwrap();
-        db.wipe_known_remote_files().unwrap();
-        assert!(db.known_remote_file_uuids().unwrap().is_empty());
-    }
-
-    #[test]
-    fn wipe_known_remote_files_does_not_touch_other_tables() {
-        // Defensive: the wipe is scoped to the dedup tracker. Sessions,
-        // labels, events, and settings must all survive untouched —
-        // otherwise an account swap would silently destroy local state.
-        let db = Database::open_in_memory().unwrap();
-        let _ = db.append_event(&sample_event(1)).unwrap();
-        let label_id = db.insert_label("focus").unwrap();
-        db.record_known_remote_file("a").unwrap();
-        db.set_setting("k", "v").unwrap();
-        let labels_before = db.list_labels().unwrap().len();
-        let events_before = db.pending_events().unwrap().len();
-
-        db.wipe_known_remote_files().unwrap();
-
-        assert_eq!(db.list_labels().unwrap().len(), labels_before,
-            "labels must not be wiped");
-        assert!(db.list_labels().unwrap().iter().any(|l| l.id == label_id));
-        assert_eq!(db.pending_events().unwrap().len(), events_before,
-            "events must not be wiped");
-        assert_eq!(db.get_setting("k", "default").unwrap(), "v",
-            "settings must not be wiped");
-    }
 
     #[test]
     fn append_event_persists_across_database_reopens() {
@@ -6179,47 +6073,6 @@ mod tests {
         assert!(db.list_bell_sounds().unwrap().is_empty());
     }
 
-    // ── known_remote_sounds (B.6.1) ──────────────────────────────
-    // Per-bell tracker mirroring known_remote_files. The push side
-    // marks each bell uuid after a successful WebDAV PUT; the pull
-    // side checks membership before issuing GETs.
-
-    #[test]
-    fn known_remote_sound_uuids_starts_empty() {
-        let db = Database::open_in_memory().unwrap();
-        assert!(db.known_remote_sound_uuids().unwrap().is_empty());
-    }
-
-    #[test]
-    fn record_known_remote_sound_adds_to_membership_set() {
-        let db = Database::open_in_memory().unwrap();
-        db.record_known_remote_sound("bs-1").unwrap();
-        db.record_known_remote_sound("bs-2").unwrap();
-        let known = db.known_remote_sound_uuids().unwrap();
-        assert_eq!(known.len(), 2);
-        assert!(known.contains("bs-1"));
-        assert!(known.contains("bs-2"));
-    }
-
-    #[test]
-    fn record_known_remote_sound_is_idempotent_on_repeat() {
-        // INSERT OR IGNORE — calling twice with the same uuid keeps
-        // the set at one entry, no error. Push retries can re-call
-        // safely.
-        let db = Database::open_in_memory().unwrap();
-        db.record_known_remote_sound("bs-1").unwrap();
-        db.record_known_remote_sound("bs-1").unwrap();
-        assert_eq!(db.known_remote_sound_uuids().unwrap().len(), 1);
-    }
-
-    #[test]
-    fn wipe_known_remote_sounds_clears_the_set() {
-        let db = Database::open_in_memory().unwrap();
-        db.record_known_remote_sound("bs-1").unwrap();
-        db.record_known_remote_sound("bs-2").unwrap();
-        db.wipe_known_remote_sounds().unwrap();
-        assert!(db.known_remote_sound_uuids().unwrap().is_empty());
-    }
 
     #[test]
     fn apply_event_bell_sound_replay_round_trip_across_peers() {
