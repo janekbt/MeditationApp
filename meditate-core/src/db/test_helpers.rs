@@ -161,6 +161,15 @@ pub(super) fn synth_setting_changed(
     )
 }
 
+/// Parse an event's JSON payload into a generic `serde_json::Value`
+/// for assertions. Avoids hardcoding a Rust struct per event kind in
+/// the test surface — the payload contract IS the JSON shape.
+pub(super) fn event_payload(event: &Event) -> serde_json::Value {
+    serde_json::from_str(&event.payload)
+        .unwrap_or_else(|e| panic!("payload `{}` is not valid JSON: {e}",
+            event.payload))
+}
+
 /// A simple session-insert event built from one i64 seed. Used by
 /// event-log tests that don't care about payload specifics — just
 /// need distinct events with a known lamport_ts.

@@ -1559,65 +1559,6 @@ mod tests {
     }
 
     #[test]
-    fn get_setting_returns_default_when_key_missing() {
-        // Reads of unset keys fall back to the caller-provided default
-        // (no INSERT, no error).
-        let db = Database::open_in_memory().unwrap();
-        assert_eq!(
-            db.get_setting("timer_presets", "5,10,15,20,30").unwrap(),
-            "5,10,15,20,30",
-        );
-        // The key remained absent — getting it again returns the same default.
-        assert_eq!(
-            db.get_setting("timer_presets", "5,10,15,20,30").unwrap(),
-            "5,10,15,20,30",
-        );
-    }
-
-    #[test]
-    fn set_setting_then_get_setting_round_trip() {
-        // Setting a key persists the value; subsequent gets ignore the
-        // default and return the stored value verbatim.
-        let db = Database::open_in_memory().unwrap();
-        db.set_setting("timer_presets", "3,7,12").unwrap();
-        assert_eq!(
-            db.get_setting("timer_presets", "5,10,15,20,30").unwrap(),
-            "3,7,12",
-        );
-    }
-
-    #[test]
-    fn set_setting_overwrites_existing_value() {
-        // Repeat sets overwrite (UPSERT semantics). The second value
-        // wins; the row count stays at 1 per key.
-        let db = Database::open_in_memory().unwrap();
-        db.set_setting("daily_goal_mins", "20").unwrap();
-        db.set_setting("daily_goal_mins", "25").unwrap();
-        assert_eq!(db.get_setting("daily_goal_mins", "0").unwrap(), "25");
-    }
-
-    #[test]
-    fn settings_keys_are_independent() {
-        // Setting key A does not affect key B's value or default.
-        let db = Database::open_in_memory().unwrap();
-        db.set_setting("daily_goal_mins", "20").unwrap();
-        // Other keys still return their defaults.
-        assert_eq!(db.get_setting("weekly_goal_mins", "150").unwrap(), "150");
-        // The set key is unaffected.
-        assert_eq!(db.get_setting("daily_goal_mins", "0").unwrap(), "20");
-    }
-
-    #[test]
-    fn set_setting_accepts_empty_string_and_unicode() {
-        // Values are opaque to the DB layer — UTF-8 string in, UTF-8 string out.
-        let db = Database::open_in_memory().unwrap();
-        db.set_setting("note_template", "").unwrap();
-        assert_eq!(db.get_setting("note_template", "fallback").unwrap(), "");
-        db.set_setting("greeting", "こんにちは ☀️").unwrap();
-        assert_eq!(db.get_setting("greeting", "").unwrap(), "こんにちは ☀️");
-    }
-
-    #[test]
     fn is_label_name_taken_false_for_empty_db() {
         // Nothing exists ⇒ no name is taken.
         let db = Database::open_in_memory().unwrap();
@@ -3864,14 +3805,6 @@ mod tests {
     // those events; if the cache and the log disagree, the log wins on
     // every other device.
 
-    /// Parse the JSON payload of an event into a generic `serde_json::Value`
-    /// for assertions. Avoids hardcoding a Rust struct per event kind in
-    /// the test surface — the payload contract IS the JSON shape.
-    fn event_payload(event: &Event) -> serde_json::Value {
-        serde_json::from_str(&event.payload)
-            .unwrap_or_else(|e| panic!("payload `{}` is not valid JSON: {e}",
-                event.payload))
-    }
 
     // ── A3.1: insert_session emits a session_insert event ────────────────────
 
@@ -4471,50 +4404,6 @@ mod tests {
             "no-match delete must produce no event");
     }
 
-    // ── A3.5: set_setting emits a setting_changed event ──────────────────────
-
-    #[test]
-    fn set_setting_appends_a_setting_changed_event() {
-        let db = Database::open_in_memory().unwrap();
-        db.set_setting("daily_goal_minutes", "20").unwrap();
-        let events = db.pending_events().unwrap();
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].1.kind, "setting_changed");
-
-        let payload = event_payload(&events[0].1);
-        assert_eq!(payload["key"], "daily_goal_minutes");
-        assert_eq!(payload["value"], "20");
-    }
-
-    #[test]
-    fn set_setting_overwrite_emits_a_second_event_with_the_new_value() {
-        // Settings are last-write-wins by lamport_ts on the receiving
-        // peer, so every overwrite must produce its own event — silently
-        // collapsing to one would lose the intermediate state's lamport
-        // ordering and tie-breaks.
-        let db = Database::open_in_memory().unwrap();
-        db.set_setting("daily_goal_minutes", "20").unwrap();
-        db.set_setting("daily_goal_minutes", "30").unwrap();
-
-        let events = db.pending_events().unwrap();
-        assert_eq!(events.len(), 2,
-            "two `set_setting` calls must emit two events");
-        let last_payload = event_payload(&events[1].1);
-        assert_eq!(last_payload["value"], "30",
-            "the later event must carry the latest value");
-    }
-
-    #[test]
-    fn set_setting_with_unicode_value_round_trips_through_payload() {
-        // Defensive: JSON-encoding emoji / non-ASCII must not corrupt
-        // the value. serde_json handles this, but pinning it makes
-        // future swaps to other JSON libs visible.
-        let db = Database::open_in_memory().unwrap();
-        db.set_setting("greeting", "🧘 こんにちは").unwrap();
-        let payload = event_payload(&db.pending_events().unwrap()[0].1);
-        assert_eq!(payload["value"], "🧘 こんにちは");
-    }
-
     // ── B1.0: events carry target_id for fast lookup ─────────────────────────
     //
     // Replay queries need to find "all events affecting target X" cheaply.
@@ -4915,67 +4804,6 @@ mod tests {
         db.apply_event(&event).unwrap();
         db.apply_event(&event).unwrap();
         assert_eq!(db.list_labels().unwrap().len(), 1);
-    }
-
-    // ── B1.3: apply_event for setting_changed ────────────────────────────────
-    //
-    // Settings have no tombstone (no `setting_delete` kind) — every
-    // setting_changed event is a write. Conflict resolution: highest
-    // (lamport_ts, device_id) wins per key. Out-of-order delivery is
-    // handled by the same recompute-from-events approach.
-
-    #[test]
-    fn apply_event_setting_changed_writes_value_into_settings() {
-        let db = Database::open_in_memory().unwrap();
-        db.apply_event(&synth_setting_changed("daily_goal", "20", 5, DEVICE_A)).unwrap();
-        assert_eq!(db.get_setting("daily_goal", "fallback").unwrap(), "20");
-    }
-
-    #[test]
-    fn apply_event_higher_lamport_setting_overwrites_lower() {
-        // First device A writes "20" at lamport 5; later device A writes
-        // "30" at lamport 10. The newer value wins.
-        let db = Database::open_in_memory().unwrap();
-        db.apply_event(&synth_setting_changed("daily_goal", "20", 5, DEVICE_A)).unwrap();
-        db.apply_event(&synth_setting_changed("daily_goal", "30", 10, DEVICE_A)).unwrap();
-        assert_eq!(db.get_setting("daily_goal", "x").unwrap(), "30");
-    }
-
-    #[test]
-    fn apply_event_out_of_order_settings_converge_correctly() {
-        // The newer write (lamport=10) arrives BEFORE the older one
-        // (lamport=5). The newer must still win after both are applied.
-        let db = Database::open_in_memory().unwrap();
-        db.apply_event(&synth_setting_changed("daily_goal", "30", 10, DEVICE_A)).unwrap();
-        db.apply_event(&synth_setting_changed("daily_goal", "20", 5, DEVICE_A)).unwrap();
-        assert_eq!(db.get_setting("daily_goal", "x").unwrap(), "30");
-    }
-
-    #[test]
-    fn apply_event_setting_concurrent_writes_break_ties_on_device_id() {
-        let db = Database::open_in_memory().unwrap();
-        db.apply_event(&synth_setting_changed("daily_goal", "from A", 5, DEVICE_A)).unwrap();
-        db.apply_event(&synth_setting_changed("daily_goal", "from B", 5, DEVICE_B)).unwrap();
-        assert_eq!(db.get_setting("daily_goal", "x").unwrap(), "from B",
-            "lex-larger device_id wins on lamport tie");
-    }
-
-    #[test]
-    fn apply_event_settings_for_different_keys_do_not_collide() {
-        let db = Database::open_in_memory().unwrap();
-        db.apply_event(&synth_setting_changed("a", "alpha", 5, DEVICE_A)).unwrap();
-        db.apply_event(&synth_setting_changed("b", "beta",  6, DEVICE_A)).unwrap();
-        assert_eq!(db.get_setting("a", "x").unwrap(), "alpha");
-        assert_eq!(db.get_setting("b", "x").unwrap(), "beta");
-    }
-
-    #[test]
-    fn apply_event_setting_is_idempotent() {
-        let db = Database::open_in_memory().unwrap();
-        let event = synth_setting_changed("daily_goal", "20", 5, DEVICE_A);
-        db.apply_event(&event).unwrap();
-        db.apply_event(&event).unwrap();
-        assert_eq!(db.get_setting("daily_goal", "x").unwrap(), "20");
     }
 
     // ── B2: replay_events ─────────────────────────────────────────────────────
