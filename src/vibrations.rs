@@ -69,10 +69,7 @@ pub fn push_vibrations_chooser(
     // cancel for any in-flight preview.
     let play_slot: Rc<RefCell<Option<crate::vibration::PatternPlayback>>> =
         Rc::new(RefCell::new(None));
-    let preview: Rc<RefCell<PreviewState>> = Rc::new(RefCell::new(PreviewState {
-        active_uuid: None,
-        active_btn: None,
-    }));
+    let preview: Rc<RefCell<PreviewState>> = Rc::new(RefCell::new(PreviewState::default()));
 
     let group_for_rb = group.clone();
     let rows_for_rb = rows.clone();
@@ -172,9 +169,14 @@ struct SelectionContext {
 /// showing the Stop icon. Used to flip the icon back to Play when
 /// the preview ends — either because the user tapped the Stop
 /// button, started a different pattern, or the natural duration
-/// timeout fired.
+/// timeout fired. The portable state machine (which uuid is
+/// active, the auto-revert generation counter) lives in
+/// `meditate_core::vibration::PreviewToggle`; this struct adds the
+/// shell-only "which gtk::Button is the active Stop icon" handle
+/// so we know which row to revert.
+#[derive(Default)]
 struct PreviewState {
-    active_uuid: Option<String>,
+    toggle: meditate_core::vibration::PreviewToggle,
     active_btn: Option<gtk::Button>,
 }
 
@@ -291,67 +293,56 @@ fn add_play_button(
     let preview_for_click = preview.clone();
     let btn_for_click = play_btn.clone();
     play_btn.connect_clicked(move |_| {
-        let already_playing_this = preview_for_click
-            .borrow()
-            .active_uuid
-            .as_deref()
-            == Some(pattern.uuid.as_str());
-
-        // Always revert whichever button currently shows Stop —
-        // either we're toggling it off here, or we're switching to
-        // a different pattern.
+        use meditate_core::vibration::PreviewAction;
+        let action = preview_for_click.borrow_mut().toggle.request(&pattern.uuid);
+        // The previous Stop-icon button (if any) always reverts
+        // first — either we're toggling it off, or switching to a
+        // different row.
         if let Some(prev_btn) = preview_for_click.borrow_mut().active_btn.take() {
             prev_btn.set_icon_name("media-playback-start-symbolic");
             prev_btn.set_tooltip_text(Some(&gettext("Preview pattern")));
         }
-        preview_for_click.borrow_mut().active_uuid = None;
-
-        if already_playing_this {
-            // Toggle off — clear the slot, its Drop fires the
-            // empty-array cancel at feedbackd.
-            *play_slot.borrow_mut() = None;
-            return;
-        }
-
-        // Start new preview. disarm-on-replace hands off cleanly to
-        // feedbackd's per-app supersede; no cancel race.
-        let new_handle = crate::vibration::PatternPlayback::play(&app, &pattern);
-        {
-            let mut slot = play_slot.borrow_mut();
-            if let Some(mut old) = slot.take() {
-                old.disarm();
+        match action {
+            PreviewAction::StopOnly => {
+                // Toggle off — clear the slot, its Drop fires the
+                // empty-array cancel at feedbackd.
+                *play_slot.borrow_mut() = None;
             }
-            *slot = Some(new_handle);
-        }
-
-        btn_for_click.set_icon_name("media-playback-stop-symbolic");
-        btn_for_click.set_tooltip_text(Some(&gettext("Stop preview")));
-        {
-            let mut state = preview_for_click.borrow_mut();
-            state.active_uuid = Some(pattern.uuid.clone());
-            state.active_btn = Some(btn_for_click.clone());
-        }
-
-        // Auto-revert on natural completion. The timeout fires after
-        // the pattern's full duration — if the same pattern is still
-        // active by then (no other Play tap in between), flip the
-        // icon back to Play. If another pattern took over in the
-        // meantime, this no-ops because active_uuid won't match.
-        let preview_for_timeout = preview_for_click.clone();
-        let uuid_for_timeout = pattern.uuid.clone();
-        glib::timeout_add_local_once(
-            std::time::Duration::from_millis(pattern.duration_ms as u64),
-            move || {
-                let mut state = preview_for_timeout.borrow_mut();
-                if state.active_uuid.as_deref() == Some(uuid_for_timeout.as_str()) {
-                    if let Some(btn) = state.active_btn.take() {
-                        btn.set_icon_name("media-playback-start-symbolic");
-                        btn.set_tooltip_text(Some(&gettext("Preview pattern")));
+            PreviewAction::StopAndStart { generation, .. } => {
+                // Start new preview. disarm-on-replace hands off
+                // cleanly to feedbackd's per-app supersede; no
+                // cancel race.
+                let new_handle = crate::vibration::PatternPlayback::play(&app, &pattern);
+                {
+                    let mut slot = play_slot.borrow_mut();
+                    if let Some(mut old) = slot.take() {
+                        old.disarm();
                     }
-                    state.active_uuid = None;
+                    *slot = Some(new_handle);
                 }
-            },
-        );
+                btn_for_click.set_icon_name("media-playback-stop-symbolic");
+                btn_for_click.set_tooltip_text(Some(&gettext("Stop preview")));
+                preview_for_click.borrow_mut().active_btn = Some(btn_for_click.clone());
+
+                // Auto-revert on natural completion. Core's
+                // `timer_should_revert` no-ops if the user already
+                // tapped Stop or switched rows in the meantime.
+                let preview_for_timeout = preview_for_click.clone();
+                glib::timeout_add_local_once(
+                    std::time::Duration::from_millis(pattern.duration_ms as u64),
+                    move || {
+                        let mut state = preview_for_timeout.borrow_mut();
+                        if state.toggle.timer_should_revert(generation) {
+                            if let Some(btn) = state.active_btn.take() {
+                                btn.set_icon_name("media-playback-start-symbolic");
+                                btn.set_tooltip_text(Some(&gettext("Preview pattern")));
+                            }
+                        }
+                    },
+                );
+            }
+            PreviewAction::NoOp => {}
+        }
     });
     row.add_suffix(&play_btn);
 }
@@ -570,12 +561,12 @@ fn present_rename_dialog(
         Rc::new(move || {
             let text = entry.text();
             let trimmed = text.trim();
-            let collision = app
-                .with_db(|db| db.is_vibration_pattern_name_taken(trimmed, &uuid))
-                .and_then(|r| r.ok())
-                .unwrap_or(false);
-            let valid = !trimmed.is_empty() && !collision;
-            dialog.set_response_enabled("rename", valid);
+            let validity = meditate_core::naming::validate(trimmed, |name| {
+                app.with_db(|db| db.is_vibration_pattern_name_taken(name, &uuid))
+                    .and_then(|r| r.ok())
+                    .unwrap_or(false)
+            });
+            dialog.set_response_enabled("rename", validity.is_savable());
         })
     };
     validate();

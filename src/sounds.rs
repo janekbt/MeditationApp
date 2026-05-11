@@ -787,15 +787,14 @@ fn present_rename_dialog(
         Rc::new(move || {
             let text = entry.text();
             let trimmed = text.trim();
-            let library = app
-                .with_db(|db| db.list_bell_sounds())
-                .and_then(|r| r.ok())
-                .unwrap_or_default();
-            let collision = meditate_core::sound::name_collides_excluding(
-                trimmed, &library, &uuid,
-            );
-            let valid = !trimmed.is_empty() && !collision;
-            dialog.set_response_enabled("rename", valid);
+            let validity = meditate_core::naming::validate(trimmed, |name| {
+                let library = app
+                    .with_db(|db| db.list_bell_sounds())
+                    .and_then(|r| r.ok())
+                    .unwrap_or_default();
+                meditate_core::sound::name_collides_excluding(name, &library, &uuid)
+            });
+            dialog.set_response_enabled("rename", validity.is_savable());
         })
     };
     validate();

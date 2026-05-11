@@ -206,6 +206,46 @@ impl StarVisualState {
     }
 }
 
+/// Per-mode visibility table for the Setup view's content rows.
+/// The gtk shell currently runs the same eight-row truth table in
+/// two places (`on_mode_switched` and `show_idle_ui`); collecting
+/// the decision into one struct removes the parallel-edit hazard
+/// and lets Android dispatch off the same shape.
+///
+/// `true` means "show the row in this mode"; `false` means "hide".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModeSetupVisibility {
+    pub countdown: bool,
+    pub boxbreath: bool,
+    pub guided: bool,
+    pub boxbreath_phase: bool,
+    pub starting_bell: bool,
+    pub interval_bells: bool,
+    pub duration: bool,
+    pub presets: bool,
+}
+
+pub fn setup_visibility(mode: SessionMode) -> ModeSetupVisibility {
+    // Starting Bell + Interval Bells apply to Timer mode only —
+    // Box Breath has its own start-cue model, Guided uses the
+    // audio file's natural opening. Duration / presets hide in
+    // Guided because the file's metadata supplies the duration and
+    // Guided has its own starred-files library.
+    let is_timer = matches!(mode, SessionMode::Timer);
+    let is_breath = matches!(mode, SessionMode::BoxBreath);
+    let is_guided = matches!(mode, SessionMode::Guided);
+    ModeSetupVisibility {
+        countdown: is_timer,
+        boxbreath: is_breath,
+        guided: is_guided,
+        boxbreath_phase: is_breath,
+        starting_bell: is_timer,
+        interval_bells: is_timer,
+        duration: !is_guided,
+        presets: mode_supports_presets(mode),
+    }
+}
+
 #[derive(Debug)]
 pub enum ApplyError {
     /// One or more referenced sound or vibration-pattern UUIDs are not

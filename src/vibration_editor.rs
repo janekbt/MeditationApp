@@ -528,68 +528,67 @@ pub fn push_pattern_editor(
     // pending auto-revert timeouts whenever the user re-taps (so a
     // stop, start, stop sequence doesn't get its second-stop undone
     // by the first-start's leftover timeout).
-    let is_playing: Rc<Cell<bool>> = Rc::new(Cell::new(false));
-    let play_gen: Rc<Cell<u64>> = Rc::new(Cell::new(0));
+    // Toggle / supersede / auto-revert state lives in core.
+    // Editor has a single playback slot so we use a sentinel id.
+    const EDITOR_SLOT: &str = "editor";
+    let preview_toggle: Rc<RefCell<meditate_core::vibration::PreviewToggle>> =
+        Rc::new(RefCell::new(meditate_core::vibration::PreviewToggle::new()));
     let editor_for_preview = editor.clone();
     let app_for_preview = app.clone();
     let btn_for_preview = preview_btn.clone();
     preview_btn.connect_clicked(move |_| {
-        if is_playing.get() {
-            // Stop. Drop the slot to fire the empty-array cancel.
-            *preview_slot.borrow_mut() = None;
-            is_playing.set(false);
-            // Bump generation so the previous play's revert-timeout
-            // no-ops if it was about to fire.
-            play_gen.set(play_gen.get().wrapping_add(1));
-            btn_for_preview.set_icon_name("media-playback-start-symbolic");
-            btn_for_preview.set_tooltip_text(Some(&gettext("Preview")));
-            return;
-        }
-
-        let intensities = editor_for_preview.intensities.borrow().clone();
-        let duration_ms = (editor_for_preview.duration_s.get() * 1000.0) as u32;
-        let chart_kind = editor_for_preview.chart_kind.get();
-        let pattern = crate::db::VibrationPattern {
-            id: 0,
-            uuid: String::new(),
-            name: String::new(),
-            duration_ms,
-            intensities,
-            chart_kind,
-            is_bundled: false,
-            created_iso: String::new(),
-            updated_iso: String::new(),
-        };
-        let new_handle = crate::vibration::PatternPlayback::play(&app_for_preview, &pattern);
-        {
-            let mut slot = preview_slot.borrow_mut();
-            if let Some(mut old) = slot.take() {
-                old.disarm();
+        use meditate_core::vibration::PreviewAction;
+        let action = preview_toggle.borrow_mut().request(EDITOR_SLOT);
+        match action {
+            PreviewAction::StopOnly => {
+                // Stop. Drop the slot to fire the empty-array cancel.
+                *preview_slot.borrow_mut() = None;
+                btn_for_preview.set_icon_name("media-playback-start-symbolic");
+                btn_for_preview.set_tooltip_text(Some(&gettext("Preview")));
             }
-            *slot = Some(new_handle);
-        }
-        is_playing.set(true);
-        let this_gen = play_gen.get().wrapping_add(1);
-        play_gen.set(this_gen);
-        btn_for_preview.set_icon_name("media-playback-stop-symbolic");
-        btn_for_preview.set_tooltip_text(Some(&gettext("Stop preview")));
-
-        // Auto-revert when the pattern finishes naturally. The
-        // generation check no-ops the timeout if the user already
-        // tapped Stop or restarted before this fires.
-        let is_playing_for_t = is_playing.clone();
-        let play_gen_for_t = play_gen.clone();
-        let btn_for_t = btn_for_preview.clone();
-        glib::timeout_add_local_once(
-            std::time::Duration::from_millis(duration_ms as u64),
-            move || {
-                if play_gen_for_t.get() == this_gen && is_playing_for_t.get() {
-                    is_playing_for_t.set(false);
-                    btn_for_t.set_icon_name("media-playback-start-symbolic");
-                    btn_for_t.set_tooltip_text(Some(&gettext("Preview")));
+            PreviewAction::StopAndStart { generation, .. } => {
+                let intensities = editor_for_preview.intensities.borrow().clone();
+                let duration_ms = (editor_for_preview.duration_s.get() * 1000.0) as u32;
+                let chart_kind = editor_for_preview.chart_kind.get();
+                let pattern = crate::db::VibrationPattern {
+                    id: 0,
+                    uuid: String::new(),
+                    name: String::new(),
+                    duration_ms,
+                    intensities,
+                    chart_kind,
+                    is_bundled: false,
+                    created_iso: String::new(),
+                    updated_iso: String::new(),
+                };
+                let new_handle = crate::vibration::PatternPlayback::play(&app_for_preview, &pattern);
+                {
+                    let mut slot = preview_slot.borrow_mut();
+                    if let Some(mut old) = slot.take() {
+                        old.disarm();
+                    }
+                    *slot = Some(new_handle);
                 }
-            },
-        );
+                btn_for_preview.set_icon_name("media-playback-stop-symbolic");
+                btn_for_preview.set_tooltip_text(Some(&gettext("Stop preview")));
+
+                // Auto-revert when the pattern finishes naturally.
+                // Core's `timer_should_revert` no-ops if the user
+                // already tapped Stop or restarted before this fires.
+                let preview_toggle_for_t = preview_toggle.clone();
+                let btn_for_t = btn_for_preview.clone();
+                glib::timeout_add_local_once(
+                    std::time::Duration::from_millis(duration_ms as u64),
+                    move || {
+                        if preview_toggle_for_t.borrow_mut().timer_should_revert(generation) {
+                            btn_for_t.set_icon_name("media-playback-start-symbolic");
+                            btn_for_t.set_tooltip_text(Some(&gettext("Preview")));
+                        }
+                    },
+                );
+            }
+            PreviewAction::NoOp => {}
+        }
     });
 
     nav_view.push(&page);

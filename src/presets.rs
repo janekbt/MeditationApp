@@ -446,14 +446,12 @@ fn present_create_preset_dialog(
         Rc::new(move || {
             let text = entry.text();
             let trimmed = text.trim();
-            let collision = if trimmed.is_empty() {
-                false
-            } else {
-                app.with_db(|db| db.is_preset_name_taken(trimmed, ""))
+            let validity = meditate_core::naming::validate(trimmed, |name| {
+                app.with_db(|db| db.is_preset_name_taken(name, ""))
                     .and_then(|r| r.ok())
                     .unwrap_or(false)
-            };
-            dialog.set_response_enabled("create", !trimmed.is_empty() && !collision);
+            });
+            dialog.set_response_enabled("create", validity.is_savable());
         })
     };
     let validate_for_change = validate.clone();
@@ -507,11 +505,12 @@ fn present_rename_preset_dialog(
         Rc::new(move || {
             let text = entry.text();
             let trimmed = text.trim();
-            let collision = app
-                .with_db(|db| db.is_preset_name_taken(trimmed, &preset_uuid))
-                .and_then(|r| r.ok())
-                .unwrap_or(false);
-            dialog.set_response_enabled("rename", !trimmed.is_empty() && !collision);
+            let validity = meditate_core::naming::validate(trimmed, |name| {
+                app.with_db(|db| db.is_preset_name_taken(name, &preset_uuid))
+                    .and_then(|r| r.ok())
+                    .unwrap_or(false)
+            });
+            dialog.set_response_enabled("rename", validity.is_savable());
         })
     };
     validate();

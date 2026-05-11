@@ -1682,29 +1682,13 @@ impl TimerView {
         // entirely. Hiding only the inner content would leave an
         // empty visible clamp in the chain and add a phantom 14 px
         // gap on either side of it.
-        self.countdown_inputs.set_visible(mode == TimerMode::Timer);
-        self.boxbreath_inputs.set_visible(mode == TimerMode::Breathing);
-        self.guided_section.set_visible(mode == TimerMode::Guided);
-        self.boxbreath_phase_section.set_visible(mode == TimerMode::Breathing);
-        // Starting Bell + Preparation Time + Interval Bells apply to
-        // Timer mode only — Box Breathing has its own independent
-        // rhythm + start-cue model, and Guided mode's "start cue" is
-        // the audio file's natural opening, so the whole bell stack
-        // goes away outside Timer.
-        self.starting_bell_row.set_visible(mode == TimerMode::Timer);
-        self.interval_bells_enabled_row.set_visible(mode == TimerMode::Timer);
+        // Per-mode visibility truth table lives in core so the
+        // Android shell agrees on which row appears in which mode.
+        self.apply_setup_visibility(mode);
         // Stopwatch is per-mode now: in Timer it counts up, in Box
         // Breath it runs without a target (user stops manually),
         // in Guided it suppresses the natural-end bell.
         self.stopwatch_mode_row.set_visible(true);
-        // Duration row hides in Guided mode — the duration is read
-        // from the picked file's metadata, the user can't dial it in.
-        self.duration_row.set_visible(mode != TimerMode::Guided);
-        // Presets section also hides in Guided mode — guided meditation
-        // has its own library (the starred-files group inside
-        // guided_inputs) so the preset machinery is irrelevant. Hide
-        // the OUTER clamp (presets_section), not just the inner widgets.
-        self.presets_section.set_visible(mode != TimerMode::Guided);
         // Refresh the duration label from the appropriate Cell on every
         // mode switch so the suffix doesn't lag.
         self.refresh_duration_value_label();
@@ -1768,19 +1752,29 @@ impl TimerView {
         self.countdown_inputs.set_sensitive(true);
         self.boxbreath_inputs.set_sensitive(true);
         self.guided_section.set_sensitive(true);
-        self.countdown_inputs.set_visible(mode == TimerMode::Timer);
-        self.boxbreath_inputs.set_visible(mode == TimerMode::Breathing);
-        self.guided_section.set_visible(mode == TimerMode::Guided);
-        self.boxbreath_phase_section.set_visible(mode == TimerMode::Breathing);
-        self.starting_bell_row.set_visible(mode == TimerMode::Timer);
-        self.interval_bells_enabled_row.set_visible(mode == TimerMode::Timer);
+        self.apply_setup_visibility(mode);
         self.stopwatch_mode_row.set_visible(true);
-        self.duration_row.set_visible(mode != TimerMode::Guided);
-        self.presets_section.set_visible(mode != TimerMode::Guided);
         self.refresh_duration_value_label();
         self.mode_toggle_group.set_sensitive(true);
         self.session_group.set_sensitive(true);
         self.refresh_hero_for_idle();
+    }
+
+    /// Apply the per-mode Setup-view visibility truth table from
+    /// `preset_config::setup_visibility` to the template-child rows.
+    /// Called from both `on_mode_switched` (live mode-toggle flip)
+    /// and `show_idle_ui` (post-session return). The decision lives
+    /// in core so the Android shell consults the same source.
+    fn apply_setup_visibility(&self, mode: TimerMode) {
+        let v = meditate_core::preset_config::setup_visibility(mode.into());
+        self.countdown_inputs.set_visible(v.countdown);
+        self.boxbreath_inputs.set_visible(v.boxbreath);
+        self.guided_section.set_visible(v.guided);
+        self.boxbreath_phase_section.set_visible(v.boxbreath_phase);
+        self.starting_bell_row.set_visible(v.starting_bell);
+        self.interval_bells_enabled_row.set_visible(v.interval_bells);
+        self.duration_row.set_visible(v.duration);
+        self.presets_section.set_visible(v.presets);
     }
 
     /// Pull the right Cell into the shared Duration row's value label.
