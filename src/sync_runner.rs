@@ -15,9 +15,7 @@ use std::fmt;
 use std::path::Path;
 
 use crate::keychain::{self, KeychainError};
-use meditate_core::sync::settings::{
-    KEY_LAST_SYNC_ERROR, KEY_LAST_SYNC_UNIX_TS, KEY_URL, KEY_USERNAME,
-};
+use meditate_core::sync::settings::{KEY_URL, KEY_USERNAME};
 
 /// Path under the WebDAV root where this app's data lives.
 pub const REMOTE_BASE_PATH: &str = "Meditate";
@@ -193,37 +191,19 @@ fn record_outcome(
     db: &CoreDb,
     result: &Result<SyncStats, meditate_core::sync::SyncError>,
 ) -> Result<(), SyncRunnerError> {
-    use meditate_core::sync::settings::KEY_LAST_SYNC_ERROR_KIND;
+    use meditate_core::sync::settings::{
+        record_remote_data_lost, record_successful_sync, record_sync_error,
+    };
     use meditate_core::sync::SyncError;
     match result {
-        Ok(_) => {
-            let now = unix_now();
-            db.set_sync_state(KEY_LAST_SYNC_UNIX_TS, &now.to_string())?;
-            db.set_sync_state(KEY_LAST_SYNC_ERROR, "")?;
-            db.set_sync_state(KEY_LAST_SYNC_ERROR_KIND, "")?;
-        }
-        Err(e) => {
-            // Tag remote-data-lost distinctly so the status-indicator
-            // click handler can route to the recovery dialog rather
-            // than the generic retry path.
-            let kind = match e {
-                SyncError::RemoteDataLost => "remote_data_lost",
-                _ => "",
-            };
-            db.set_sync_state(KEY_LAST_SYNC_ERROR, &e.to_string())?;
-            db.set_sync_state(KEY_LAST_SYNC_ERROR_KIND, kind)?;
-        }
+        Ok(_) => record_successful_sync(db, meditate_core::time::unix_now())?,
+        // Tag remote-data-lost distinctly so the status-indicator click
+        // handler can route to the recovery dialog rather than the
+        // generic retry path.
+        Err(e @ SyncError::RemoteDataLost) => record_remote_data_lost(db, &e.to_string())?,
+        Err(e) => record_sync_error(db, &e.to_string())?,
     }
     Ok(())
-}
-
-/// Current unix timestamp (UTC seconds). Defaults to 0 on the
-/// pathological "system clock before epoch" case rather than panicking.
-fn unix_now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
 }
 
 // Connection test (TestConnectionResult + test_connection +
@@ -242,6 +222,7 @@ mod tests {
     use super::*;
     use meditate_core::db::{Session, SessionMode};
     use meditate_core::sync::FakeWebDav;
+    use meditate_core::sync::settings::{KEY_LAST_SYNC_ERROR, KEY_LAST_SYNC_UNIX_TS};
 
     fn fresh_db_with_session() -> CoreDb {
         let db = CoreDb::open_in_memory().unwrap();
