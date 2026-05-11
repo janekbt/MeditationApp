@@ -337,3 +337,335 @@ impl Database {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::{test_helpers::*, Event};
+
+    #[test]
+    fn list_guided_files_is_empty_on_a_fresh_database() {
+        let db = Database::open_in_memory().unwrap();
+        assert!(db.list_guided_files().unwrap().is_empty());
+    }
+
+    #[test]
+    fn insert_guided_file_with_uuid_round_trips_through_list() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_guided_file_with_uuid(
+            "gf-1", "Body Scan", "guided/gf-1.ogg", 1200, true,
+        ).unwrap();
+        let rows = db.list_guided_files().unwrap();
+        assert_eq!(rows.len(), 1);
+        let r = &rows[0];
+        assert_eq!(r.uuid, "gf-1");
+        assert_eq!(r.name, "Body Scan");
+        assert_eq!(r.file_path, "guided/gf-1.ogg");
+        assert_eq!(r.duration_secs, 1200);
+        assert!(r.is_starred);
+        assert!(!r.created_iso.is_empty());
+        assert_eq!(r.created_iso, r.updated_iso);
+    }
+
+    #[test]
+    fn insert_guided_file_with_existing_uuid_is_silent_noop() {
+        let db = Database::open_in_memory().unwrap();
+        let id1 = db.insert_guided_file_with_uuid(
+            "gf-1", "Body Scan", "guided/gf-1.ogg", 1200, false,
+        ).unwrap();
+        let id2 = db.insert_guided_file_with_uuid(
+            "gf-1", "Different Name", "guided/different.ogg", 999, true,
+        ).unwrap();
+        assert_eq!(id1, id2);
+        let rows = db.list_guided_files().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, "Body Scan");
+        assert_eq!(rows[0].duration_secs, 1200);
+    }
+
+    #[test]
+    fn insert_guided_file_with_duplicate_name_returns_duplicate_error() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_guided_file_with_uuid(
+            "gf-1", "Body Scan", "guided/gf-1.ogg", 1200, false,
+        ).unwrap();
+        match db.insert_guided_file_with_uuid(
+            "gf-2", "BODY SCAN", "guided/gf-2.ogg", 800, false,
+        ) {
+            Err(DbError::DuplicateGuidedFile(name)) => assert_eq!(name, "BODY SCAN"),
+            other => panic!("expected DuplicateGuidedFile, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn list_guided_files_orders_by_created_iso() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_guided_file_with_uuid(
+            "gf-1", "First", "guided/1.ogg", 600, true,
+        ).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        db.insert_guided_file_with_uuid(
+            "gf-2", "Second", "guided/2.ogg", 1200, true,
+        ).unwrap();
+        let rows = db.list_guided_files().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].name, "First");
+        assert_eq!(rows[1].name, "Second");
+    }
+
+    #[test]
+    fn delete_guided_file_removes_the_row() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_guided_file_with_uuid(
+            "gf-1", "Body Scan", "guided/gf-1.ogg", 1200, true,
+        ).unwrap();
+        db.delete_guided_file("gf-1").unwrap();
+        assert!(db.list_guided_files().unwrap().is_empty());
+    }
+
+    #[test]
+    fn delete_guided_file_unknown_uuid_is_silent_noop() {
+        let db = Database::open_in_memory().unwrap();
+        db.delete_guided_file("never-existed").unwrap();
+        assert!(db.list_guided_files().unwrap().is_empty());
+    }
+
+    #[test]
+    fn rename_guided_file_changes_name_and_bumps_updated_iso() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_guided_file_with_uuid(
+            "gf-1", "Old Name", "guided/gf-1.ogg", 600, false,
+        ).unwrap();
+        let before = db.list_guided_files().unwrap()[0].clone();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        db.rename_guided_file("gf-1", "New Name").unwrap();
+        let after = db.list_guided_files().unwrap()[0].clone();
+        assert_eq!(after.name, "New Name");
+        assert_eq!(after.created_iso, before.created_iso);
+        assert!(after.updated_iso > before.updated_iso);
+    }
+
+    #[test]
+    fn rename_guided_file_unknown_uuid_is_silent_noop() {
+        let db = Database::open_in_memory().unwrap();
+        db.rename_guided_file("never-existed", "anything").unwrap();
+        let renames: Vec<_> = db.pending_events().unwrap()
+            .into_iter()
+            .filter(|(_, e)| e.kind == "guided_file_update")
+            .collect();
+        assert!(renames.is_empty());
+    }
+
+    #[test]
+    fn rename_guided_file_to_existing_name_returns_duplicate_error() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_guided_file_with_uuid(
+            "gf-1", "Body Scan", "guided/gf-1.ogg", 600, false,
+        ).unwrap();
+        db.insert_guided_file_with_uuid(
+            "gf-2", "Loving Kindness", "guided/gf-2.ogg", 900, false,
+        ).unwrap();
+        match db.rename_guided_file("gf-2", "Body Scan") {
+            Err(DbError::DuplicateGuidedFile(name)) => assert_eq!(name, "Body Scan"),
+            other => panic!("expected DuplicateGuidedFile, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rename_guided_file_to_same_name_with_different_case_is_accepted() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_guided_file_with_uuid(
+            "gf-1", "body scan", "guided/gf-1.ogg", 600, false,
+        ).unwrap();
+        db.rename_guided_file("gf-1", "Body Scan").unwrap();
+        assert_eq!(db.list_guided_files().unwrap()[0].name, "Body Scan");
+    }
+
+    #[test]
+    fn set_guided_file_starred_toggles_and_emits_event() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_guided_file_with_uuid(
+            "gf-1", "Body Scan", "guided/gf-1.ogg", 600, false,
+        ).unwrap();
+        db.set_guided_file_starred("gf-1", true).unwrap();
+        assert!(db.list_guided_files().unwrap()[0].is_starred);
+        db.set_guided_file_starred("gf-1", false).unwrap();
+        assert!(!db.list_guided_files().unwrap()[0].is_starred);
+        let updates: Vec<_> = db.pending_events().unwrap()
+            .into_iter()
+            .filter(|(_, e)| e.kind == "guided_file_update")
+            .collect();
+        assert_eq!(updates.len(), 2);
+    }
+
+    #[test]
+    fn set_guided_file_starred_unknown_uuid_is_silent_noop() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_guided_file_starred("never-existed", true).unwrap();
+        let events: Vec<_> = db.pending_events().unwrap()
+            .into_iter()
+            .filter(|(_, e)| e.kind.starts_with("guided_file"))
+            .collect();
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn find_guided_file_by_uuid_returns_some_when_present() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_guided_file_with_uuid(
+            "gf-1", "Body Scan", "guided/gf-1.ogg", 600, true,
+        ).unwrap();
+        let got = db.find_guided_file_by_uuid("gf-1").unwrap();
+        assert!(got.is_some());
+        let r = got.unwrap();
+        assert_eq!(r.name, "Body Scan");
+        assert_eq!(r.duration_secs, 600);
+        assert!(r.is_starred);
+    }
+
+    #[test]
+    fn find_guided_file_by_uuid_returns_none_when_missing() {
+        let db = Database::open_in_memory().unwrap();
+        assert!(db.find_guided_file_by_uuid("never-existed").unwrap().is_none());
+    }
+
+    #[test]
+    fn is_guided_file_name_taken_matches_case_insensitively() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_guided_file_with_uuid(
+            "gf-1", "Body Scan", "guided/gf-1.ogg", 600, false,
+        ).unwrap();
+        assert!(db.is_guided_file_name_taken("Body Scan", "").unwrap());
+        assert!(db.is_guided_file_name_taken("body scan", "").unwrap());
+        assert!(db.is_guided_file_name_taken("BODY SCAN", "").unwrap());
+        assert!(!db.is_guided_file_name_taken("Different Name", "").unwrap());
+    }
+
+    #[test]
+    fn is_guided_file_name_taken_excludes_the_row_being_renamed() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_guided_file_with_uuid(
+            "gf-1", "Body Scan", "guided/gf-1.ogg", 600, false,
+        ).unwrap();
+        assert!(!db.is_guided_file_name_taken("Body Scan", "gf-1").unwrap());
+        assert!(!db.is_guided_file_name_taken("body scan", "gf-1").unwrap());
+        assert!(db.is_guided_file_name_taken("Body Scan", "gf-2").unwrap());
+    }
+
+    #[test]
+    fn apply_event_guided_file_insert_creates_the_row_on_a_fresh_peer() {
+        let peer = Database::open_in_memory().unwrap();
+        let payload = serde_json::json!({
+            "uuid": "gf-1",
+            "name": "Body Scan",
+            "file_path": "guided/gf-1.ogg",
+            "duration_secs": 1200,
+            "is_starred": true,
+            "created_iso": "2026-05-05T20:00:00Z",
+            "updated_iso": "2026-05-05T20:00:00Z",
+        });
+        let event = synth_event(
+            "guided_file_insert", "gf-1", 5, DEVICE_A, payload,
+        );
+        peer.apply_event(&event).unwrap();
+        let rows = peer.list_guided_files().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, "Body Scan");
+        assert_eq!(rows[0].duration_secs, 1200);
+        assert!(rows[0].is_starred);
+    }
+
+    #[test]
+    fn apply_event_guided_file_update_overwrites_earlier_state() {
+        let peer = Database::open_in_memory().unwrap();
+        let insert_payload = serde_json::json!({
+            "uuid": "gf-1",
+            "name": "Old Name",
+            "file_path": "guided/gf-1.ogg",
+            "duration_secs": 1200,
+            "is_starred": false,
+            "created_iso": "2026-05-05T20:00:00Z",
+            "updated_iso": "2026-05-05T20:00:00Z",
+        });
+        peer.apply_event(&synth_event(
+            "guided_file_insert", "gf-1", 5, DEVICE_A, insert_payload,
+        )).unwrap();
+        let update_payload = serde_json::json!({
+            "uuid": "gf-1",
+            "name": "New Name",
+            "file_path": "guided/gf-1.ogg",
+            "duration_secs": 1200,
+            "is_starred": true,
+            "created_iso": "2026-05-05T20:00:00Z",
+            "updated_iso": "2026-05-05T20:05:00Z",
+        });
+        peer.apply_event(&synth_event(
+            "guided_file_update", "gf-1", 7, DEVICE_A, update_payload,
+        )).unwrap();
+        let rows = peer.list_guided_files().unwrap();
+        assert_eq!(rows[0].name, "New Name");
+        assert!(rows[0].is_starred);
+    }
+
+    #[test]
+    fn apply_event_guided_file_delete_removes_the_row() {
+        let peer = Database::open_in_memory().unwrap();
+        let insert_payload = serde_json::json!({
+            "uuid": "gf-1",
+            "name": "Body Scan",
+            "file_path": "guided/gf-1.ogg",
+            "duration_secs": 1200,
+            "is_starred": false,
+            "created_iso": "2026-05-05T20:00:00Z",
+            "updated_iso": "2026-05-05T20:00:00Z",
+        });
+        peer.apply_event(&synth_event(
+            "guided_file_insert", "gf-1", 5, DEVICE_A, insert_payload,
+        )).unwrap();
+        peer.apply_event(&synth_event(
+            "guided_file_delete", "gf-1", 7, DEVICE_A,
+            serde_json::json!({ "uuid": "gf-1" }),
+        )).unwrap();
+        assert!(peer.list_guided_files().unwrap().is_empty());
+    }
+
+    #[test]
+    fn apply_event_guided_file_tombstone_resists_lower_lamport_insert() {
+        let peer = Database::open_in_memory().unwrap();
+        peer.apply_event(&synth_event(
+            "guided_file_delete", "gf-1", 10, DEVICE_A,
+            serde_json::json!({ "uuid": "gf-1" }),
+        )).unwrap();
+        let insert_payload = serde_json::json!({
+            "uuid": "gf-1",
+            "name": "Body Scan",
+            "file_path": "guided/gf-1.ogg",
+            "duration_secs": 1200,
+            "is_starred": false,
+            "created_iso": "2026-05-05T20:00:00Z",
+            "updated_iso": "2026-05-05T20:00:00Z",
+        });
+        peer.apply_event(&synth_event(
+            "guided_file_insert", "gf-1", 5, DEVICE_A, insert_payload,
+        )).unwrap();
+        assert!(peer.list_guided_files().unwrap().is_empty());
+    }
+
+    #[test]
+    fn replay_guided_file_events_round_trips_to_a_fresh_peer() {
+        let dev_a = Database::open_in_memory().unwrap();
+        dev_a.insert_guided_file_with_uuid(
+            "gf-1", "Body Scan", "guided/gf-1.ogg", 1200, true,
+        ).unwrap();
+        dev_a.set_guided_file_starred("gf-1", false).unwrap();
+        let events: Vec<Event> = dev_a.pending_events().unwrap()
+            .into_iter().map(|(_, e)| e).collect();
+
+        let dev_b = Database::open_in_memory().unwrap();
+        dev_b.replay_events(&events).unwrap();
+        let rows = dev_b.list_guided_files().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, "Body Scan");
+        assert!(!rows[0].is_starred);
+    }
+}
