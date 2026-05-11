@@ -77,21 +77,31 @@ pub fn unix_to_local_iso(unix_secs: i64) -> String {
 /// Inverse of `unix_to_local_iso`: parse a local-naive ISO 8601 string
 /// and return the corresponding unix timestamp.
 ///
-/// Returns 0 (the unix epoch) on parse failure or DST ambiguity. The
-/// "drop on bad input" policy mirrors `unix_to_local_iso` — a corrupt
-/// timestamp shouldn't take down the log feed.
+/// On DST fall-back (a local time that occurs twice), the EARLIER of
+/// the two unix candidates is returned — picking either is wrong by
+/// up to one hour, but collapsing to the unix epoch (which `.single()`
+/// would do) is wrong by decades and breaks every downstream stat.
+///
+/// Returns 0 (the unix epoch) on parse failure or a DST spring-forward
+/// gap (a local time that doesn't exist) — both indicate corrupt or
+/// fabricated input, since `unix_to_local_iso` never produces either.
 pub fn local_iso_to_unix(iso: &str) -> i64 {
     use chrono::TimeZone;
-    let parsed = chrono::NaiveDateTime::parse_from_str(iso, "%Y-%m-%dT%H:%M:%S")
-        .or_else(|_| chrono::NaiveDateTime::parse_from_str(iso, "%Y-%m-%d %H:%M:%S"));
-    match parsed {
-        Ok(naive) => chrono::Local
-            .from_local_datetime(&naive)
-            .single()
-            .map(|dt| dt.timestamp())
-            .unwrap_or(0),
-        Err(_) => 0,
-    }
+    let Ok(naive) = chrono::NaiveDateTime::parse_from_str(iso, "%Y-%m-%dT%H:%M:%S")
+        .or_else(|_| chrono::NaiveDateTime::parse_from_str(iso, "%Y-%m-%d %H:%M:%S"))
+    else {
+        return 0;
+    };
+    disambiguate_local_result(chrono::Local.from_local_datetime(&naive)).unwrap_or(0)
+}
+
+/// Internal helper for `local_iso_to_unix`: collapses a chrono
+/// `LocalResult` into an optional unix timestamp, picking the earlier
+/// candidate on fall-back ambiguity.
+fn disambiguate_local_result<Tz: chrono::TimeZone>(
+    lr: chrono::LocalResult<chrono::DateTime<Tz>>,
+) -> Option<i64> {
+    lr.earliest().map(|dt| dt.timestamp())
 }
 
 #[cfg(test)]
@@ -192,6 +202,44 @@ mod tests {
         assert_eq!(local_iso_to_unix("not a date"), 0);
         assert_eq!(local_iso_to_unix("2026-13-01T00:00:00"), 0); // bad month
         assert_eq!(local_iso_to_unix("2026-04-31T00:00:00"), 0); // April has 30 days
+    }
+
+    // ── disambiguate_local_result ──────────────────────────────────────
+
+    #[test]
+    fn disambiguate_picks_earlier_unix_on_ambiguous_fall_back() {
+        use chrono::TimeZone;
+        // Simulate a DST fall-back: a local time that maps to two
+        // distinct unix candidates one hour apart. Picking the earlier
+        // matches how a user would describe "I meditated at 2:30" (the
+        // first 2:30, before the clock rolled back).
+        let earlier = chrono::Utc.timestamp_opt(1_700_000_000, 0).unwrap();
+        let later = chrono::Utc.timestamp_opt(1_700_003_600, 0).unwrap();
+        let lr = chrono::LocalResult::Ambiguous(earlier, later);
+        assert_eq!(
+            disambiguate_local_result(lr),
+            Some(1_700_000_000),
+            "must pick the earlier of two ambiguous unix candidates",
+        );
+    }
+
+    #[test]
+    fn disambiguate_returns_none_on_spring_forward_gap() {
+        // A local time inside a DST spring-forward gap (a wall-clock
+        // value that never occurred). `unix_to_local_iso` never produces
+        // these — they only arrive as corrupt input — so dropping them
+        // to None is fine; the public wrapper will land on the 0 sentinel.
+        let lr: chrono::LocalResult<chrono::DateTime<chrono::Utc>> =
+            chrono::LocalResult::None;
+        assert_eq!(disambiguate_local_result(lr), None);
+    }
+
+    #[test]
+    fn disambiguate_passes_through_unique_value() {
+        use chrono::TimeZone;
+        let dt = chrono::Utc.timestamp_opt(1_700_000_000, 0).unwrap();
+        let lr = chrono::LocalResult::Single(dt);
+        assert_eq!(disambiguate_local_result(lr), Some(1_700_000_000));
     }
 
     #[test]
