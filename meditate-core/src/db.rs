@@ -2206,6 +2206,31 @@ impl Database {
     /// peer doesn't get a redundant duplicate-insert. Returns the
     /// existing rowid in that case. Used by the bundled-seed path
     /// where every device must end up with the same UUID per file.
+    /// Seed-once bundled bell-sound orchestration: gated on
+    /// `BELLS_SEEDED_KEY` so a repeat startup is a no-op, walks the
+    /// caller-supplied rows (each `(uuid, name, file_path, mime)`),
+    /// inserts each as a bundled General-category row, then flips
+    /// the gate to "1". The platform-specific bit — the `file_path`,
+    /// which is a GResource URI on gtk and an assets:// URI on
+    /// Android — stays in the shell's row table; the orchestration
+    /// (idempotency, ordering, emit-event behavior via the
+    /// underlying `insert_bell_sound_with_uuid`) lives here.
+    pub fn seed_bell_sounds_with_paths(
+        &self,
+        rows: &[(&str, &str, &str, &str)],
+    ) -> Result<()> {
+        if self.get_setting(crate::seeds::BELLS_SEEDED_KEY, "0")? == "1" {
+            return Ok(());
+        }
+        for (uuid, name, file_path, mime) in rows {
+            self.insert_bell_sound_with_uuid(
+                uuid, name, file_path, true, mime, BellSoundCategory::General,
+            )?;
+        }
+        self.set_setting(crate::seeds::BELLS_SEEDED_KEY, "1")?;
+        Ok(())
+    }
+
     pub fn insert_bell_sound_with_uuid(
         &self,
         uuid_str: &str,

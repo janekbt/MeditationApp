@@ -260,6 +260,144 @@ pub fn test_connection(url: &str, username: &str, password: &str) -> TestConnect
     test_connection_with(&webdav)
 }
 
+// ── Sync-settings save/test prep ────────────────────────────────────
+//
+// The Preferences → Data page's Save and Test Connection buttons run
+// near-identical validation chains over (url, username, typed
+// password, stored password). The decisions — trim, reject empty,
+// fall back to keychain — are portable; the keychain access itself is
+// shell-specific. These helpers own the decision shape so every shell
+// agrees on the rules.
+
+/// Failure modes the save-button validation chain surfaces. Shell
+/// maps each variant to its gettext toast.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SaveSyncError {
+    EmptyUrl,
+    EmptyUsername,
+}
+
+/// What the shell should do with the password row's contents after
+/// the user taps Save.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PasswordAction {
+    /// User left the password row empty — keep the existing
+    /// keychain entry untouched. Avoids clobbering on a "fix the
+    /// URL typo, leave password alone" edit.
+    Keep,
+    /// User typed a non-empty password — write it to the keychain.
+    Store(String),
+}
+
+/// Resolved plan from a successful Save validation. Shell calls
+/// `keychain::store_password` per `password` then
+/// `set_nextcloud_account(url, username)` then `trigger_sync`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SaveSyncPlan {
+    pub url: String,
+    pub username: String,
+    pub password: PasswordAction,
+}
+
+/// Validate the user's Save-button input. Trims url + username,
+/// rejects empty, decides whether the typed password should be
+/// stored or skipped. The actual keychain write + DB update +
+/// `trigger_sync` ordering stays in the shell (it owns the
+/// keychain transport + the threading model).
+pub fn prepare_save(
+    url: &str,
+    username: &str,
+    typed_password: &str,
+) -> std::result::Result<SaveSyncPlan, SaveSyncError> {
+    let url = url.trim();
+    if url.is_empty() {
+        return Err(SaveSyncError::EmptyUrl);
+    }
+    let username = username.trim();
+    if username.is_empty() {
+        return Err(SaveSyncError::EmptyUsername);
+    }
+    let password = if typed_password.is_empty() {
+        PasswordAction::Keep
+    } else {
+        PasswordAction::Store(typed_password.to_string())
+    };
+    Ok(SaveSyncPlan {
+        url: url.to_string(),
+        username: username.to_string(),
+        password,
+    })
+}
+
+/// Failure modes the Test-Connection button's prerequisite check
+/// surfaces. Shell maps each to a gettext toast.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TestPrereq {
+    EmptyUrl,
+    EmptyUsername,
+    /// User left the password row empty AND no keychain entry
+    /// exists — they need to type one in.
+    NoPassword,
+    /// Keychain access failed (D-Bus error, locked keyring, etc.).
+    /// Shell logs the underlying error to diag; the toast just
+    /// signals the user to try again.
+    KeyringFailed,
+}
+
+/// Outcome of the shell's keychain lookup for the stored password.
+/// Carries the three states the prep function dispatches on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StoredPassword {
+    /// Keychain returned a password for the configured account.
+    Found(String),
+    /// Keychain succeeded but had no entry.
+    Missing,
+    /// Keychain access errored out.
+    Failed,
+}
+
+/// Validated credentials ready for the `test_connection` call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Credentials {
+    pub url: String,
+    pub username: String,
+    pub password: String,
+}
+
+/// Validate the user's Test-Connection input. Trims url + username,
+/// rejects empty, falls back to the keychain when typed password is
+/// empty. The shell supplies the keychain read via the closure so
+/// the helper stays portable.
+pub fn prepare_test(
+    url: &str,
+    username: &str,
+    typed_password: &str,
+    stored_password: impl FnOnce() -> StoredPassword,
+) -> std::result::Result<Credentials, TestPrereq> {
+    let url = url.trim();
+    if url.is_empty() {
+        return Err(TestPrereq::EmptyUrl);
+    }
+    let username = username.trim();
+    if username.is_empty() {
+        return Err(TestPrereq::EmptyUsername);
+    }
+    let password = if typed_password.is_empty() {
+        match stored_password() {
+            StoredPassword::Found(p) => p,
+            StoredPassword::Missing => return Err(TestPrereq::NoPassword),
+            StoredPassword::Failed => return Err(TestPrereq::KeyringFailed),
+        }
+    } else {
+        typed_password.to_string()
+    };
+    Ok(Credentials {
+        url: url.to_string(),
+        username: username.to_string(),
+        password,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -544,5 +682,98 @@ mod tests {
             TestConnectionResult::Other(_) => {}
             other => panic!("expected Other(_), got {other:?}"),
         }
+    }
+
+    // ── prepare_save ────────────────────────────────────────────────
+
+    #[test]
+    fn prepare_save_rejects_empty_url() {
+        assert_eq!(prepare_save("", "user", "pw"), Err(SaveSyncError::EmptyUrl));
+        assert_eq!(prepare_save("   ", "user", "pw"), Err(SaveSyncError::EmptyUrl));
+    }
+
+    #[test]
+    fn prepare_save_rejects_empty_username() {
+        assert_eq!(
+            prepare_save("https://nx.example", "", "pw"),
+            Err(SaveSyncError::EmptyUsername),
+        );
+        assert_eq!(
+            prepare_save("https://nx.example", "  ", "pw"),
+            Err(SaveSyncError::EmptyUsername),
+        );
+    }
+
+    #[test]
+    fn prepare_save_keep_when_password_empty() {
+        let plan = prepare_save("https://nx.example", "user", "").unwrap();
+        assert_eq!(plan.password, PasswordAction::Keep);
+        assert_eq!(plan.url, "https://nx.example");
+        assert_eq!(plan.username, "user");
+    }
+
+    #[test]
+    fn prepare_save_store_when_password_present() {
+        let plan = prepare_save("https://nx.example", "user", "secret").unwrap();
+        assert_eq!(plan.password, PasswordAction::Store("secret".into()));
+    }
+
+    #[test]
+    fn prepare_save_trims_url_and_username() {
+        let plan = prepare_save("  https://nx.example  ", "  user  ", "x").unwrap();
+        assert_eq!(plan.url, "https://nx.example");
+        assert_eq!(plan.username, "user");
+    }
+
+    // ── prepare_test ────────────────────────────────────────────────
+
+    #[test]
+    fn prepare_test_rejects_empty_url() {
+        assert_eq!(
+            prepare_test("", "user", "pw", || StoredPassword::Missing),
+            Err(TestPrereq::EmptyUrl),
+        );
+    }
+
+    #[test]
+    fn prepare_test_rejects_empty_username() {
+        assert_eq!(
+            prepare_test("https://nx", "", "pw", || StoredPassword::Missing),
+            Err(TestPrereq::EmptyUsername),
+        );
+    }
+
+    #[test]
+    fn prepare_test_uses_typed_password_directly() {
+        let creds = prepare_test(
+            "https://nx", "user", "typed",
+            || panic!("should not be called when typed_pw is non-empty"),
+        ).unwrap();
+        assert_eq!(creds.password, "typed");
+    }
+
+    #[test]
+    fn prepare_test_falls_back_to_stored_password_when_typed_empty() {
+        let creds = prepare_test(
+            "https://nx", "user", "",
+            || StoredPassword::Found("from-keyring".into()),
+        ).unwrap();
+        assert_eq!(creds.password, "from-keyring");
+    }
+
+    #[test]
+    fn prepare_test_returns_no_password_when_typed_empty_and_keyring_empty() {
+        assert_eq!(
+            prepare_test("https://nx", "user", "", || StoredPassword::Missing),
+            Err(TestPrereq::NoPassword),
+        );
+    }
+
+    #[test]
+    fn prepare_test_returns_keyring_failed_on_keychain_error() {
+        assert_eq!(
+            prepare_test("https://nx", "user", "", || StoredPassword::Failed),
+            Err(TestPrereq::KeyringFailed),
+        );
     }
 }

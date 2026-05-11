@@ -3,7 +3,6 @@ mod imp {
     use adw::subclass::prelude::*;
     use gtk::{gdk, gio, glib};
     use std::path::PathBuf;
-    use std::sync::atomic::AtomicBool;
     use std::sync::{Arc, Mutex};
 
     use crate::config;
@@ -37,18 +36,14 @@ mod imp {
         /// before `startup` runs.
         pub db_path: Mutex<Option<PathBuf>>,
 
-        /// True while a sync attempt is running. Triggers that arrive
-        /// during this window set `sync_re_trigger` instead of
-        /// spawning a second worker — at most one sync runs at a time.
-        pub sync_in_flight: Arc<AtomicBool>,
-
-        /// Set by `trigger_sync` when a sync is already in flight; the
-        /// worker checks this on completion and runs another pass if
-        /// it's true. Bulk-mutation flurries (the user deleting 10
-        /// sessions in a row) trigger one sync, queue a re-trigger,
-        /// and end with one follow-up sync that captures everything
-        /// that arrived during the first.
-        pub sync_re_trigger: Arc<AtomicBool>,
+        /// At-most-one-sync coordination. `request()` returns the
+        /// action the trigger should take; `start_pass` /
+        /// `should_run_again_after_pass` drive the worker's drain
+        /// loop; `release` frees the in-flight slot on exit. The
+        /// AtomicBool choreography (and the ordering invariants that
+        /// keep a re-trigger from being lost across a pass boundary)
+        /// live in core.
+        pub sync_coordinator: Arc<meditate_core::sync::coordinator::SyncCoordinator>,
     }
 
     impl Default for MeditateApplication {
@@ -59,8 +54,9 @@ mod imp {
                 log_dirty:   std::cell::Cell::new(true),
                 has_haptic: std::cell::Cell::new(false),
                 db_path: Mutex::new(None),
-                sync_in_flight: Arc::new(AtomicBool::new(false)),
-                sync_re_trigger: Arc::new(AtomicBool::new(false)),
+                sync_coordinator: Arc::new(
+                    meditate_core::sync::coordinator::SyncCoordinator::new(),
+                ),
             }
         }
     }
@@ -345,8 +341,7 @@ impl MeditateApplication {
     /// syncing icon during the run.
     pub fn is_syncing(&self) -> bool {
         use glib::subclass::prelude::ObjectSubclassIsExt;
-        use std::sync::atomic::Ordering;
-        self.imp().sync_in_flight.load(Ordering::SeqCst)
+        self.imp().sync_coordinator.is_in_flight()
     }
 
     /// `with_db` + a follow-up `trigger_sync()`. Use when the closure
@@ -390,7 +385,7 @@ impl MeditateApplication {
     /// semantics here.
     pub fn trigger_sync(&self) {
         use glib::subclass::prelude::ObjectSubclassIsExt;
-        use std::sync::atomic::Ordering;
+        use meditate_core::sync::coordinator::CoordinatorAction;
 
         // Fast-path: if sync isn't set up, skip everything below.
         // Saves spawning a worker (and pulling in the keychain D-Bus
@@ -407,45 +402,43 @@ impl MeditateApplication {
         }
 
         let imp = self.imp();
-        // Mark the re-trigger flag first so a sync that finishes
-        // RIGHT NOW (before our `swap` below) still picks us up via
-        // the worker's completion check.
-        imp.sync_re_trigger.store(true, Ordering::SeqCst);
-
-        // Try to take the in-flight slot. If someone else already has
-        // it, we're done — they'll see our re-trigger and re-fire.
-        if imp.sync_in_flight.swap(true, Ordering::SeqCst) {
-            return;
+        // Core coordinator handles the at-most-one-in-flight
+        // choreography. Caller-side: if we don't get the Spawn
+        // action, another worker is running and will see the
+        // re-trigger we just set.
+        match imp.sync_coordinator.request() {
+            CoordinatorAction::Spawn => {}
+            CoordinatorAction::AlreadyRunning => return,
         }
 
         let Some(db_path) = imp.db_path.lock().unwrap().clone() else {
-            // No DB path → startup never ran or failed; clear the flag
-            // we just took and bail.
-            imp.sync_in_flight.store(false, Ordering::SeqCst);
+            // No DB path → startup never ran or failed; release the
+            // slot we just took and bail.
+            imp.sync_coordinator.abort();
             return;
         };
 
-        let in_flight = Arc::clone(&imp.sync_in_flight);
-        let re_trigger = Arc::clone(&imp.sync_re_trigger);
+        let coord = Arc::clone(&imp.sync_coordinator);
 
         std::thread::spawn(move || {
             // Run sync attempts in a loop while the re-trigger flag
-            // is set. Clearing it BEFORE each pass means a trigger
-            // arriving during the pass survives to schedule another.
+            // is set. The coordinator's `start_pass` clears the flag
+            // BEFORE each pass so a trigger arriving during the pass
+            // survives to schedule another.
             loop {
-                re_trigger.store(false, Ordering::SeqCst);
+                coord.start_pass();
                 let result = crate::sync_runner::run_sync_attempt(&db_path);
                 if let Err(e) = &result {
                     meditate_core::diag::log(&format!("sync: {e}"));
                 }
-                if !re_trigger.load(Ordering::SeqCst) {
+                if !coord.should_run_again_after_pass() {
                     break;
                 }
             }
             // Release the in-flight slot before we hop back to the
             // main loop, so a trigger arriving on the main thread
             // *during* the invoke can spawn a fresh worker if needed.
-            in_flight.store(false, Ordering::SeqCst);
+            coord.release();
 
             // Hop back to the GTK main loop to refresh UI. The closure
             // is Send (captures nothing); we look the application up

@@ -13,6 +13,7 @@ pub mod webdav;
 pub mod orchestrator;
 pub mod fake;
 pub mod backoff;
+pub mod coordinator;
 pub mod indicator;
 pub mod settings;
 

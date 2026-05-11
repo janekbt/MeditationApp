@@ -261,34 +261,43 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
         #[weak] password_row,
         #[weak] test_btn,
         move |_| {
-            let url = url_row.text().trim().to_string();
-            let username = username_row.text().trim().to_string();
-            if url.is_empty() || username.is_empty() {
-                data_toast(&dialog, &gettext("Enter URL and username"));
-                return;
-            }
-            // If the password field is blank, fall back to the saved
-            // keychain entry so testing doesn't require re-typing for
-            // the "URL+user are right, is the keyring still good?" case.
+            use meditate_core::sync::settings::{prepare_test, StoredPassword, TestPrereq};
+            // Snapshot the raw fields so the keychain-lookup closure
+            // can use the trimmed url/username if it fires.
+            let raw_url = url_row.text().to_string();
+            let raw_username = username_row.text().to_string();
             let typed_pw = password_row.text().to_string();
-            let password = if typed_pw.is_empty() {
-                match crate::keychain::read_password(&url, &username) {
-                    Ok(Some(p)) => p,
-                    Ok(None) => {
-                        data_toast(&dialog, &gettext("Enter a password"));
-                        return;
-                    }
+            let creds = prepare_test(&raw_url, &raw_username, &typed_pw, || {
+                let url = raw_url.trim();
+                let username = raw_username.trim();
+                match crate::keychain::read_password(url, username) {
+                    Ok(Some(p)) => StoredPassword::Found(p),
+                    Ok(None) => StoredPassword::Missing,
                     Err(e) => {
-                        // Full error to diag log; toast stays narrow.
                         meditate_core::diag::log(&format!(
                             "test_connection: keychain read failed: {e:?}"));
-                        data_toast(&dialog, &gettext("Keyring read failed"));
-                        return;
+                        StoredPassword::Failed
                     }
                 }
-            } else {
-                typed_pw
+            });
+            let creds = match creds {
+                Ok(c) => c,
+                Err(TestPrereq::EmptyUrl) | Err(TestPrereq::EmptyUsername) => {
+                    data_toast(&dialog, &gettext("Enter URL and username"));
+                    return;
+                }
+                Err(TestPrereq::NoPassword) => {
+                    data_toast(&dialog, &gettext("Enter a password"));
+                    return;
+                }
+                Err(TestPrereq::KeyringFailed) => {
+                    data_toast(&dialog, &gettext("Keyring read failed"));
+                    return;
+                }
             };
+            let url = creds.url;
+            let username = creds.username;
+            let password = creds.password;
 
             // Disable the button while the HTTP call is in flight.
             test_btn.set_sensitive(false);
@@ -351,6 +360,7 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
         #[weak] username_row,
         #[weak] password_row,
         move |_| {
+            use meditate_core::sync::settings::{prepare_save, PasswordAction, SaveSyncError};
             let url = url_row.text().to_string();
             let username = username_row.text().to_string();
             let password = password_row.text().to_string();
@@ -358,13 +368,15 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
             // Trim leading/trailing whitespace on URL and username only.
             // Password is taken verbatim — Nextcloud app-passwords are
             // hex blobs that don't need trimming.
-            let url_trimmed = url.trim();
-            let username_trimmed = username.trim();
-
-            if url_trimmed.is_empty() || username_trimmed.is_empty() {
-                data_toast(&dialog, &gettext("Enter URL and username"));
-                return;
-            }
+            let plan = match prepare_save(&url, &username, &password) {
+                Ok(p) => p,
+                Err(SaveSyncError::EmptyUrl) | Err(SaveSyncError::EmptyUsername) => {
+                    data_toast(&dialog, &gettext("Enter URL and username"));
+                    return;
+                }
+            };
+            let url_trimmed: &str = &plan.url;
+            let username_trimmed: &str = &plan.username;
 
             // Order matters: store the password FIRST, then save the
             // account, then fire the sync trigger explicitly. The
@@ -377,8 +389,8 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
             //
             // Empty password = "keep what's in the keychain" — don't
             // clobber the saved one with "".
-            if !password.is_empty() {
-                match crate::keychain::store_password(url_trimmed, username_trimmed, &password) {
+            if let PasswordAction::Store(new_password) = &plan.password {
+                match crate::keychain::store_password(url_trimmed, username_trimmed, new_password) {
                     Ok(()) => password_row.set_text(""),
                     Err(e) => {
                         // Log the full error to diagnostics — toast text

@@ -290,23 +290,17 @@ impl Database {
     /// UUIDs are still hardcoded so every device — fresh seed or
     /// post-sync — converges on the same row identity per file.
     fn seed_bundled_bell_sounds(&self) -> Result<()> {
-        if self.inner.get_setting(BELLS_SEEDED_KEY, "0").map_err(map_core_err)? == "1" {
-            return Ok(());
-        }
-        for (uuid, name, path, mime) in BUNDLED_BELL_SOUNDS {
-            // Bundled rows ship as `general` — bells, gongs, chimes
-            // for the Starting / Interval / End bell choosers. Box
-            // Breath voice cues land via separate seeds when those
-            // ship (TODO entry: "Source bundled Box Breath voice-cue
-            // sounds").
-            self.inner
-                .insert_bell_sound_with_uuid(
-                    uuid, name, path, true, mime, BellSoundCategory::General,
-                )
-                .map_err(map_core_err)?;
-        }
-        self.inner.set_setting(BELLS_SEEDED_KEY, "1").map_err(map_core_err)?;
-        Ok(())
+        // Orchestration (idempotency gate, ordering, event emission)
+        // lives in core; only the gtk-specific row table (GResource
+        // URIs as file_path) stays here. Bundled rows ship as
+        // `general` — bells, gongs, chimes for the Starting /
+        // Interval / End bell choosers. Box Breath voice cues land
+        // via separate seeds when those ship (TODO entry: "Source
+        // bundled Box Breath voice-cue sounds").
+        let _ = BellSoundCategory::General;
+        self.inner
+            .seed_bell_sounds_with_paths(BUNDLED_BELL_SOUNDS)
+            .map_err(map_core_err)
     }
 
     // ── Labels ────────────────────────────────────────────────────────────────
