@@ -299,6 +299,87 @@ they sit here as a heads-up for the eventual port.
   composes against its native data-root path. Prevents drift between
   shells on filename convention.
 
+## Third-pass findings
+
+### `Session::toggle_action(UiState) → ToggleAction`
+- `src/timer/imp.rs:3696-3705` (`toggle_playback`) — six-arm match
+  on `UiState` deciding `Start | Pause | Pause | FinishOvertime |
+  Resume | NoOp`. Pure dispatch; Android's play/pause hardware key
+  handler will need the same.
+- Migration: `meditate_core::session::ToggleAction` enum +
+  `Session::toggle_action(ui_state) → ToggleAction`. Shell maps
+  each variant to its `on_start` / `on_pause` /
+  `finish_overtime_session` / `on_resume` calls.
+
+### `preset_config::setup_visibility(SessionMode) → ModeSetupVisibility`
+- `src/timer/imp.rs:1696-1718` (`on_mode_switched`) and `:1784-1792`
+  (`show_idle_ui`) both encode the same 8-row `set_visible(mode ==
+  X | mode != X)` truth table over the setup-panel rows
+  (countdown_inputs, boxbreath_inputs, guided_section,
+  boxbreath_phase_section, starting_bell_row,
+  interval_bells_enabled_row, duration_row, presets_section).
+  Parallel-edit hazard.
+- Migration: `meditate_core::preset_config::ModeSetupVisibility {
+  countdown, boxbreath, guided, boxbreath_phase, starting_bell,
+  interval_bells, duration, presets }` + `setup_visibility(
+  SessionMode) → ModeSetupVisibility`. Shell does one match → eight
+  `set_visible` calls.
+
+### `sync::SyncCoordinator` re-trigger state machine
+- `src/application.rs:391-473` (`MeditateApplication::trigger_sync`).
+  Encodes "at most one sync in flight; bursts collapse to exactly
+  one follow-up pass" via two AtomicBools: `re_trigger.store(true)`
+  BEFORE `in_flight.swap(true)` so a sync finishing mid-call still
+  picks us up; drain-loop clears `re_trigger` before each pass so a
+  trigger arriving DURING the pass survives.
+- Migration: new `meditate_core::sync::coordinator` module:
+  ```
+  pub struct SyncCoordinator { in_flight: AtomicBool, re_trigger: AtomicBool }
+  impl SyncCoordinator {
+      pub fn request(&self) → CoordinatorAction { TrySpawn | AlreadyRunning | Skipped }
+      pub fn release_and_check_retrigger(&self) → bool
+  }
+  ```
+  Shell handles account-gating, `std::thread::spawn`, the `loop`,
+  and the UI-refresh on completion. Unit-testable end-to-end without
+  threads.
+
+### `format::idle_hero_label(stopwatch_on, target_secs) → String`
+- `src/timer/imp.rs:1841-1858` (`refresh_hero_for_idle`) — `if
+  stopwatch { "00:00" } else { format_hhmm(secs_for_mode) }`. Three
+  per-mode Cell reads stay shell; the bool-branch + format call
+  moves.
+- Migration: add to `meditate_core::format`. Unit-test the
+  stopwatch=true branch.
+
+### `format::prep_plan_from_db(db) → Option<Duration>`
+- `src/timer/imp.rs:1933-1961` (`on_start` Timer arm) — three
+  settings (`preparation_time_active`, `starting_bell_active`,
+  `preparation_time_secs`) AND'd into `Option<Duration>` via
+  `prep_target_duration`. Encodes the policy "prep only makes sense
+  if there's a starting bell" inline.
+- Migration: `meditate_core::format::prep_plan_from_db(db) →
+  Option<Duration>` (or a new `meditate_core::prep` module). Shell
+  collapses to one line; the policy gets a unit test.
+
+### `bells::interval_bells_count(db, stopwatch_on) → usize`
+- `src/timer/imp.rs:2945-2962` (`refresh_streak` block) AND `:3789-3810`
+  (`refresh_interval_bells_count`) — same `list_interval_bells →
+  filter(enabled) → filter(!is_bell_inert_in_stopwatch) → count`.
+- Migration: add to `meditate_core::bells`. The standalone callsite
+  becomes one line; the batched callsite drops the chain and calls
+  the helper.
+
+### `format::format_date` dialog label — fold into `date_group_kind`
+- `src/log/imp.rs:1142-1148` (`format_date`) renders `unix_secs →
+  "Apr 17, 2026"` via `glib::DateTime::format("%b %d, %Y")` for the
+  add/edit dialog. The same `"%b %-d, %Y"` branch already lives in
+  `format::date_group_kind`'s `EarlierYearOther` arm.
+- Migration: either reuse `DateGroupKind::EarlierYearOther` directly
+  at this callsite or add `format::format_full_date_label(unix_secs)`
+  as the dispatch-free wrapper. Kills the only remaining inline
+  `glib::DateTime::format` call in `log/imp.rs`.
+
 ## Skipped (intentionally not migrating)
 
 ### `lookup_bell` walker in `src/bells.rs:763-769`
