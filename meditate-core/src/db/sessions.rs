@@ -890,3 +890,256 @@ impl Database {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::test_helpers::*;
+
+    // ── B1.1: apply_event for session events ─────────────────────────────────
+    //
+    // apply_event consumes a remote-authored event and updates the local
+    // materialized cache. The model: record the event in `events`, then
+    // recompute the cache row for its target_id from the events table —
+    // tombstone wins on tie/precedence, otherwise the highest-lamport
+    // mutate event drives the row's values. This makes apply_event
+    // idempotent (re-applying same event_uuid is a no-op via INSERT OR
+    // IGNORE) and order-independent (out-of-order delivery converges).
+
+    #[test]
+    fn apply_event_session_insert_creates_the_row() {
+        // Apply a single insert event from a peer; the cache row appears
+        // with all the event's values.
+        let db = Database::open_in_memory().unwrap();
+        let event = synth_session_insert(
+            SESSION_X, 5, DEVICE_A,
+            "2026-04-30T10:00:00", 600,
+            None, Some("from peer"), SessionMode::BoxBreath,
+        );
+        db.apply_event(&event).unwrap();
+        let rows = db.list_sessions().unwrap();
+        assert_eq!(rows.len(), 1);
+        let s = &rows[0].1;
+        assert_eq!(s.uuid, SESSION_X);
+        assert_eq!(s.start_iso, "2026-04-30T10:00:00");
+        assert_eq!(s.duration_secs, 600);
+        assert_eq!(s.notes.as_deref(), Some("from peer"));
+        assert_eq!(s.mode, SessionMode::BoxBreath);
+    }
+
+    #[test]
+    fn apply_event_session_insert_with_guided_file_uuid_round_trips() {
+        // A guided session synced from a peer carries the file's uuid
+        // in the event payload so per-file stats stay consistent across
+        // devices. recompute_session must lift `guided_file_uuid` out
+        // of the JSON payload and write it to the column.
+        let db = Database::open_in_memory().unwrap();
+        let file_uuid = "fffffff0-0000-4000-8000-cccccccccccc";
+        let event = synth_event(
+            "session_insert",
+            SESSION_X,
+            7,
+            DEVICE_A,
+            serde_json::json!({
+                "uuid": SESSION_X,
+                "start_iso": "2026-05-05T20:30:00",
+                "duration_secs": 1200,
+                "label_uuid": serde_json::Value::Null,
+                "notes": serde_json::Value::Null,
+                "mode": "guided",
+                "guided_file_uuid": file_uuid,
+            }),
+        );
+        db.apply_event(&event).unwrap();
+        let rows = db.list_sessions().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1.guided_file_uuid.as_deref(), Some(file_uuid));
+    }
+
+    #[test]
+    fn apply_event_session_insert_without_guided_file_uuid_leaves_column_null() {
+        // Old-shape event payloads (no guided_file_uuid key) must
+        // continue to work — recompute_session reads the field as
+        // optional and writes NULL when missing.
+        let db = Database::open_in_memory().unwrap();
+        let event = synth_session_insert(
+            SESSION_X, 5, DEVICE_A,
+            "2026-04-30T10:00:00", 600,
+            None, None, SessionMode::Timer,
+        );
+        db.apply_event(&event).unwrap();
+        let rows = db.list_sessions().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].1.guided_file_uuid.is_none());
+    }
+
+    #[test]
+    fn apply_event_is_idempotent_on_event_uuid() {
+        // Applying the exact same Event twice must not double-insert
+        // and must not error. The events table's UNIQUE(event_uuid)
+        // is the dedup key.
+        let db = Database::open_in_memory().unwrap();
+        let event = synth_session_insert(
+            SESSION_X, 5, DEVICE_A,
+            "2026-04-30T10:00:00", 600,
+            None, None, SessionMode::Timer,
+        );
+        db.apply_event(&event).unwrap();
+        db.apply_event(&event).unwrap();
+        assert_eq!(db.list_sessions().unwrap().len(), 1,
+            "duplicate event_uuid must not create a second row");
+    }
+
+    #[test]
+    fn apply_event_session_update_after_insert_updates_the_row() {
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_session_insert(
+            SESSION_X, 5, DEVICE_A,
+            "2026-04-30T10:00:00", 600,
+            None, None, SessionMode::Timer,
+        )).unwrap();
+        db.apply_event(&synth_session_update(
+            SESSION_X, 10, DEVICE_A,
+            "2026-05-01T11:00:00", 1200,
+            None, Some("revised"), SessionMode::Timer,
+        )).unwrap();
+        let s = &db.list_sessions().unwrap()[0].1;
+        assert_eq!(s.start_iso, "2026-05-01T11:00:00");
+        assert_eq!(s.duration_secs, 1200);
+        assert_eq!(s.notes.as_deref(), Some("revised"));
+        assert_eq!(s.mode, SessionMode::Timer);
+    }
+
+    #[test]
+    fn apply_event_session_delete_removes_the_row() {
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_session_insert(
+            SESSION_X, 5, DEVICE_A,
+            "2026-04-30T10:00:00", 600,
+            None, None, SessionMode::Timer,
+        )).unwrap();
+        db.apply_event(&synth_session_delete(SESSION_X, 10, DEVICE_A)).unwrap();
+        assert!(db.list_sessions().unwrap().is_empty());
+    }
+
+    #[test]
+    fn apply_event_tombstone_resists_later_applied_lower_lamport_insert() {
+        // Out-of-order delivery: peer's delete arrives first (lamport=10),
+        // then their insert at lamport=5 lands. The row must stay gone —
+        // delete tombstones beat earlier inserts.
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_session_delete(SESSION_X, 10, DEVICE_A)).unwrap();
+        db.apply_event(&synth_session_insert(
+            SESSION_X, 5, DEVICE_A,
+            "2026-04-30T10:00:00", 600,
+            None, None, SessionMode::Timer,
+        )).unwrap();
+        assert!(db.list_sessions().unwrap().is_empty(),
+            "tombstone with lamport 10 must beat insert at lamport 5");
+    }
+
+    #[test]
+    fn apply_event_higher_lamport_update_supersedes_lower_one() {
+        // Two updates from different devices on the same uuid; whichever
+        // has the higher lamport_ts wins, regardless of arrival order.
+        let db = Database::open_in_memory().unwrap();
+        // Device A's update at lamport 10, Device B's at lamport 7 —
+        // A wins. Apply B first (out of order), then A.
+        db.apply_event(&synth_session_insert(
+            SESSION_X, 1, DEVICE_A,
+            "initial", 100, None, None, SessionMode::Timer,
+        )).unwrap();
+        db.apply_event(&synth_session_update(
+            SESSION_X, 7, DEVICE_B,
+            "B's edit", 700, None, Some("from B"), SessionMode::Timer,
+        )).unwrap();
+        db.apply_event(&synth_session_update(
+            SESSION_X, 10, DEVICE_A,
+            "A's edit", 1000, None, Some("from A"), SessionMode::BoxBreath,
+        )).unwrap();
+        let s = &db.list_sessions().unwrap()[0].1;
+        assert_eq!(s.notes.as_deref(), Some("from A"),
+            "A's lamport-10 update must win over B's lamport-7");
+        assert_eq!(s.duration_secs, 1000);
+    }
+
+    #[test]
+    fn apply_event_concurrent_updates_break_ties_on_device_id() {
+        // Two updates with the SAME lamport_ts but different device_ids.
+        // Lex-larger device_id wins (consistent across all peers per the
+        // plan's tie-break rule).
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_session_insert(
+            SESSION_X, 1, DEVICE_A,
+            "initial", 100, None, None, SessionMode::Timer,
+        )).unwrap();
+        db.apply_event(&synth_session_update(
+            SESSION_X, 5, DEVICE_A,
+            "A wrote this", 500, None, Some("from A"), SessionMode::Timer,
+        )).unwrap();
+        db.apply_event(&synth_session_update(
+            SESSION_X, 5, DEVICE_B,
+            "B wrote this", 500, None, Some("from B"), SessionMode::Timer,
+        )).unwrap();
+        let s = &db.list_sessions().unwrap()[0].1;
+        assert_eq!(s.notes.as_deref(), Some("from B"),
+            "DEVICE_B is lex-larger than DEVICE_A; B's update wins on tie");
+    }
+
+    #[test]
+    fn apply_event_records_the_event_in_the_log() {
+        // After apply_event, the event must be in the events table so
+        // future recomputes see it. Sync's push phase will pick it up
+        // via pending_events (since `synced=0` by default).
+        let db = Database::open_in_memory().unwrap();
+        let event = synth_session_insert(
+            SESSION_X, 5, DEVICE_A,
+            "2026-04-30T10:00:00", 600,
+            None, None, SessionMode::Timer,
+        );
+        let event_uuid = event.event_uuid.clone();
+        db.apply_event(&event).unwrap();
+        let pending = db.pending_events().unwrap();
+        assert!(pending.iter().any(|(_, e)| e.event_uuid == event_uuid),
+            "applied event must appear in events table");
+    }
+
+    #[test]
+    fn apply_event_with_unknown_kind_is_a_silent_record_only() {
+        // Forwards-compat: a future event kind we don't understand must
+        // not panic or error. Record it — a future build can replay —
+        // but don't try to mutate the cache from it.
+        let db = Database::open_in_memory().unwrap();
+        let weird = synth_event(
+            "future_kind_not_yet_invented",
+            SESSION_X, 5, DEVICE_A,
+            serde_json::json!({"some": "future-data"}),
+        );
+        db.apply_event(&weird).unwrap();
+        // Cache is empty (the event affected nothing it understood),
+        // but the event was recorded.
+        assert!(db.list_sessions().unwrap().is_empty());
+        assert_eq!(db.pending_events().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn apply_event_session_insert_resolves_label_uuid_to_local_label_id() {
+        // The peer's event references a label by label_uuid. If we have
+        // a local label with that uuid, the materialized session must
+        // link to it via local label_id. (Ensures cross-device
+        // referential integrity survives the rowid-to-uuid translation.)
+        let db = Database::open_in_memory().unwrap();
+        let local_label_id = db.insert_label("Morning").unwrap();
+        let label_uuid = db.list_labels().unwrap()[0].uuid.clone();
+        drain_events(&db);
+
+        db.apply_event(&synth_session_insert(
+            SESSION_X, 5, DEVICE_A,
+            "2026-04-30T10:00:00", 600,
+            Some(&label_uuid), None, SessionMode::Timer,
+        )).unwrap();
+        let s = &db.list_sessions().unwrap()[0].1;
+        assert_eq!(s.label_id, Some(local_label_id),
+            "label_uuid must round-trip back to the local label_id");
+    }
+}
