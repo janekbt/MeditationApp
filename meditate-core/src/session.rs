@@ -92,6 +92,25 @@ pub struct SessionSettings {
     /// with 1 internally (xorshift64 outputs 0 forever from a 0
     /// seed).
     pub bell_rng_seed: u64,
+    /// Per-mode signal-mode override the user picked on the Setup
+    /// view's "Cues" ToggleGroup. AND'd with each bell / phase-cue's
+    /// own `signal_mode` at fire time to compute the effective
+    /// channel mix. Defaults to `Both` (no extra cap).
+    pub signal_mode_override: SignalMode,
+    /// Starting-bell cue, if the user enabled it. Fired at the
+    /// prep→Running boundary (or immediately when there's no prep).
+    /// `None` means starting bell is off — no FireStartingBell
+    /// effect emitted.
+    pub starting_bell: Option<crate::bells::BellCue>,
+    /// End-bell cue, if the user enabled it. Fired at the natural
+    /// end of the session — Running→Overtime for Timer/Guided
+    /// countdown, EndBoxBreath for Box-Breath cycle-aligned target.
+    /// Stopwatch-only sessions never reach those boundaries so the
+    /// end bell stays silent without an explicit `None` check.
+    pub end_bell: Option<crate::bells::BellCue>,
+    /// Box-Breath per-phase cue config. Only `Some` for BoxBreath
+    /// sessions; ignored otherwise.
+    pub box_breath_cues: Option<crate::bells::BoxBreathCueConfig>,
 }
 
 /// Side effect the shell should dispatch this tick. The shell
@@ -107,21 +126,46 @@ pub enum Effect {
     /// constructs the countdown core for Timer mode, plays the
     /// starting bell, refreshes the running button row.
     EndPrep,
-    /// Box Breath: a phase boundary was just crossed. Shell fires
-    /// the per-phase cue (sound + vibration as configured for that
-    /// phase). The first tick of a box-breath session seeds the
-    /// `last_phase` silently (the starting bell already fired); only
-    /// subsequent transitions emit this effect.
-    FireBoxBreathCue(BoxBreathPhaseId),
+    /// Box Breath: a phase boundary was just crossed AND a cue is
+    /// configured for the new phase (master toggle on + per-phase
+    /// row enabled). Carries the resolved sound + vibration + the
+    /// effective signal_mode (per-phase AND per-mode override
+    /// already applied). The first tick of a box-breath session
+    /// seeds `last_phase` silently; only subsequent transitions
+    /// emit.
+    FireBoxBreathCue {
+        phase: BoxBreathPhaseId,
+        sound_uuid: String,
+        vibration_pattern_uuid: String,
+        signal_mode: SignalMode,
+    },
+    /// Starting bell — fired at the prep→Running boundary, or
+    /// immediately at session start when there's no prep. Carries
+    /// the effective signal_mode (per-bell AND per-mode override).
+    FireStartingBell {
+        sound_uuid: String,
+        vibration_pattern_uuid: String,
+        signal_mode: SignalMode,
+    },
+    /// End bell — fired at Running→Overtime (Timer/Guided countdown
+    /// crosses zero) or at the cycle-aligned end of a Box-Breath
+    /// session. Stopwatch-only sessions never reach those
+    /// boundaries so this effect simply never emits for them.
+    FireEndBell {
+        sound_uuid: String,
+        vibration_pattern_uuid: String,
+        signal_mode: SignalMode,
+    },
     /// Box Breath: the cycle-aligned target was reached, ending the
     /// session naturally. Shell drops the session and shows the
     /// done view with this duration. Never fired in stopwatch-only
     /// box-breath mode (no target; user must press Stop).
     EndBoxBreath { duration_secs: u64 },
     /// Interval / fixed bell crossed its ring boundary this tick.
-    /// Shell dispatches sound + vibration, AND-combining this
-    /// bell's `signal_mode` with the active mode's override
-    /// (read from `db.get_setting(signal_mode_key_for_mode(mode), …)`).
+    /// `signal_mode` is the *effective* mode (per-bell AND per-mode
+    /// override already applied by Session); the shell dispatches
+    /// sound + vibration based on that variant directly — no extra
+    /// gating needed.
     FireBell {
         sound_uuid: String,
         vibration_pattern_uuid: String,
@@ -354,7 +398,11 @@ impl Session {
             return Vec::new();
         }
         self.phase = SessionPhase::Overtime;
-        vec![Effect::EnterOvertime]
+        let mut effects = vec![Effect::EnterOvertime];
+        if let Some(eff) = end_bell_effect(&self.settings) {
+            effects.push(eff);
+        }
+        effects
     }
 
     /// Drive the session forward by one tick. Returns the effects
@@ -394,7 +442,14 @@ impl Session {
             // from this exact moment, not from prep start.
             self.phase = SessionPhase::Running;
             self.phase_clock = Stopwatch::started_at(now);
-            return vec![Effect::EndPrep];
+            let mut effects = vec![Effect::EndPrep];
+            // Starting bell fires on the same tick as the boundary
+            // crossing — same instant the shell would have heard it
+            // before the migration.
+            if let Some(eff) = starting_bell_effect(&self.settings) {
+                effects.push(eff);
+            }
+            return effects;
         }
 
         // Still in prep — emit the ceiling-rounded display value.
@@ -423,7 +478,11 @@ impl Session {
                 // Bells skip this tick — gtk's historical behaviour is
                 // "transition first, bells fire on the next tick."
                 self.phase = SessionPhase::Overtime;
-                return vec![Effect::EnterOvertime];
+                let mut effects = vec![Effect::EnterOvertime];
+                if let Some(eff) = end_bell_effect(&self.settings) {
+                    effects.push(eff);
+                }
+                return effects;
             }
         }
 
@@ -432,6 +491,7 @@ impl Session {
         effects.extend(fire_due_bells(
             &mut self.bells,
             &mut self.bell_rng_state,
+            self.settings.signal_mode_override,
             elapsed,
         ));
         effects
@@ -456,6 +516,7 @@ impl Session {
         effects.extend(fire_due_bells(
             &mut self.bells,
             &mut self.bell_rng_state,
+            self.settings.signal_mode_override,
             elapsed,
         ));
         effects
@@ -479,7 +540,10 @@ impl Session {
             }
             Some(prev) if prev != info.phase => {
                 self.last_breath_phase = Some(info.phase);
-                effects.push(Effect::FireBoxBreathCue(phase_to_id(info.phase)));
+                let phase_id = phase_to_id(info.phase);
+                if let Some(eff) = box_breath_cue_effect(&self.settings, phase_id) {
+                    effects.push(eff);
+                }
             }
             _ => {}
         }
@@ -496,6 +560,9 @@ impl Session {
                 effects.push(Effect::EndBoxBreath {
                     duration_secs: elapsed.as_secs(),
                 });
+                if let Some(eff) = end_bell_effect(&self.settings) {
+                    effects.push(eff);
+                }
                 return effects;
             }
         }
@@ -511,6 +578,7 @@ impl Session {
         effects.extend(fire_due_bells(
             &mut self.bells,
             &mut self.bell_rng_state,
+            self.settings.signal_mode_override,
             elapsed,
         ));
         effects
@@ -631,6 +699,75 @@ fn display_secs_for_running(settings: &SessionSettings, elapsed: Duration) -> u6
     }
 }
 
+/// Build a `FireStartingBell` effect from the session's settings,
+/// AND-combining the per-bell signal_mode with the per-mode
+/// override. `None` when the user disabled the starting bell or
+/// when the effective channel mix is empty (both gates off).
+fn starting_bell_effect(settings: &SessionSettings) -> Option<Effect> {
+    let cue = settings.starting_bell.as_ref()?;
+    let signal_mode = crate::bells::effective_signal_mode(
+        cue.signal_mode,
+        settings.signal_mode_override,
+    )?;
+    Some(Effect::FireStartingBell {
+        sound_uuid: cue.sound_uuid.clone(),
+        vibration_pattern_uuid: cue.vibration_pattern_uuid.clone(),
+        signal_mode,
+    })
+}
+
+/// Mirror of `starting_bell_effect` for the end bell.
+fn end_bell_effect(settings: &SessionSettings) -> Option<Effect> {
+    let cue = settings.end_bell.as_ref()?;
+    let signal_mode = crate::bells::effective_signal_mode(
+        cue.signal_mode,
+        settings.signal_mode_override,
+    )?;
+    Some(Effect::FireEndBell {
+        sound_uuid: cue.sound_uuid.clone(),
+        vibration_pattern_uuid: cue.vibration_pattern_uuid.clone(),
+        signal_mode,
+    })
+}
+
+/// Build a `FireBoxBreathCue` effect for `phase`, AND-combining
+/// the per-phase signal_mode with the per-mode override. `None`
+/// when the master toggle is off, the per-phase row is missing
+/// / disabled, or the effective channel mix is empty.
+fn box_breath_cue_effect(
+    settings: &SessionSettings,
+    phase: BoxBreathPhaseId,
+) -> Option<Effect> {
+    let cfg = settings.box_breath_cues.as_ref()?;
+    let cue = cfg.cue_for(phase)?;
+    let signal_mode = crate::bells::effective_signal_mode(
+        cue.signal_mode,
+        settings.signal_mode_override,
+    )?;
+    Some(Effect::FireBoxBreathCue {
+        phase,
+        sound_uuid: cue.sound_uuid.clone(),
+        vibration_pattern_uuid: cue.vibration_pattern_uuid.clone(),
+        signal_mode,
+    })
+}
+
+/// Effects the shell should dispatch IMMEDIATELY after constructing
+/// a Session via `start_running` (no-prep path). For the prep path,
+/// the FireStartingBell is emitted as part of the tick that crosses
+/// the prep boundary; the shell calls this helper only for sessions
+/// that skip prep.
+impl Session {
+    pub fn start_signals(&self) -> Vec<Effect> {
+        match self.phase {
+            SessionPhase::Running => starting_bell_effect(&self.settings)
+                .into_iter()
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+}
+
 /// Iterate over the session's bells, tick each against `elapsed`,
 /// and emit `FireBell` effects for every bell that crosses its
 /// ring boundary this tick. Mutates `bells` (Interval bells reroll
@@ -643,6 +780,7 @@ fn display_secs_for_running(settings: &SessionSettings, elapsed: Duration) -> u6
 fn fire_due_bells(
     bells: &mut [ActiveBell],
     rng_state: &mut u64,
+    signal_mode_override: SignalMode,
     elapsed: Duration,
 ) -> Vec<Effect> {
     let mut effects = Vec::new();
@@ -654,11 +792,16 @@ fn fire_due_bells(
             unit
         };
         if bell.tick(elapsed_secs, &mut rng) {
-            effects.push(Effect::FireBell {
-                sound_uuid: bell.sound.clone(),
-                vibration_pattern_uuid: bell.vibration_pattern_uuid.clone(),
-                signal_mode: bell.signal_mode,
-            });
+            if let Some(eff) = crate::bells::effective_signal_mode(
+                bell.signal_mode,
+                signal_mode_override,
+            ) {
+                effects.push(Effect::FireBell {
+                    sound_uuid: bell.sound.clone(),
+                    vibration_pattern_uuid: bell.vibration_pattern_uuid.clone(),
+                    signal_mode: eff,
+                });
+            }
         }
     }
     effects
@@ -677,6 +820,10 @@ mod tests {
             breath_pattern: None,
             bells: Vec::new(),
             bell_rng_seed: 1,
+            signal_mode_override: SignalMode::Both,
+            starting_bell: None,
+            end_bell: None,
+            box_breath_cues: None,
         }
     }
 
@@ -689,6 +836,10 @@ mod tests {
             breath_pattern: None,
             bells: Vec::new(),
             bell_rng_seed: 1,
+            signal_mode_override: SignalMode::Both,
+            starting_bell: None,
+            end_bell: None,
+            box_breath_cues: None,
         }
     }
 
@@ -701,10 +852,19 @@ mod tests {
             breath_pattern: None,
             bells: Vec::new(),
             bell_rng_seed: 1,
+            signal_mode_override: SignalMode::Both,
+            starting_bell: None,
+            end_bell: None,
+            box_breath_cues: None,
         }
     }
 
     fn box_breath_settings(target_secs: Option<u32>) -> SessionSettings {
+        let cue = || crate::bells::BellCue {
+            sound_uuid: "cue-sound".into(),
+            vibration_pattern_uuid: "cue-pattern".into(),
+            signal_mode: SignalMode::Both,
+        };
         SessionSettings {
             mode: SessionMode::BoxBreath,
             prep_secs: None,
@@ -713,6 +873,19 @@ mod tests {
             breath_pattern: Some(BreathPattern::box_breath()),
             bells: Vec::new(),
             bell_rng_seed: 1,
+            signal_mode_override: SignalMode::Both,
+            starting_bell: None,
+            end_bell: None,
+            // Wire all four phases so phase-boundary tests see
+            // FireBoxBreathCue emissions; the gate-disabled cases
+            // get tested via their own dedicated tests.
+            box_breath_cues: Some(crate::bells::BoxBreathCueConfig {
+                master_enabled: true,
+                in_phase: Some(cue()),
+                hold_in: Some(cue()),
+                out_phase: Some(cue()),
+                hold_out: Some(cue()),
+            }),
         }
     }
 
@@ -903,7 +1076,7 @@ mod tests {
         let mut s = Session::start_running(box_breath_settings(None), Duration::from_secs(100));
         let effects = s.tick(Duration::from_millis(100_500)); // 0.5 s in, still Phase::In
         assert!(
-            !effects.iter().any(|e| matches!(e, Effect::FireBoxBreathCue(_))),
+            !effects.iter().any(|e| matches!(e, Effect::FireBoxBreathCue { .. })),
             "first tick must not fire a phase cue: {:?}",
             effects
         );
@@ -920,7 +1093,10 @@ mod tests {
         let _ = s.tick(Duration::from_millis(100_500)); // seed In
         let effects = s.tick(Duration::from_secs(104));
         assert!(
-            effects.contains(&Effect::FireBoxBreathCue(BoxBreathPhaseId::HoldIn)),
+            effects.iter().any(|e| matches!(
+                e,
+                Effect::FireBoxBreathCue { phase: BoxBreathPhaseId::HoldIn, .. }
+            )),
             "expected HoldIn cue, got {:?}",
             effects
         );
@@ -934,7 +1110,7 @@ mod tests {
         let _ = s.tick(Duration::from_millis(100_500)); // seed In
         let effects = s.tick(Duration::from_millis(101_500)); // still In
         assert!(
-            !effects.iter().any(|e| matches!(e, Effect::FireBoxBreathCue(_))),
+            !effects.iter().any(|e| matches!(e, Effect::FireBoxBreathCue { .. })),
             "no cue for same-phase tick"
         );
     }
@@ -946,19 +1122,23 @@ mod tests {
         // HoldIn boundary at t=104
         assert!(s
             .tick(Duration::from_secs(104))
-            .contains(&Effect::FireBoxBreathCue(BoxBreathPhaseId::HoldIn)));
+            .iter()
+            .any(|e| matches!(e, Effect::FireBoxBreathCue { phase: BoxBreathPhaseId::HoldIn, .. })));
         // Out boundary at t=108
         assert!(s
             .tick(Duration::from_secs(108))
-            .contains(&Effect::FireBoxBreathCue(BoxBreathPhaseId::Out)));
+            .iter()
+            .any(|e| matches!(e, Effect::FireBoxBreathCue { phase: BoxBreathPhaseId::Out, .. })));
         // HoldOut boundary at t=112
         assert!(s
             .tick(Duration::from_secs(112))
-            .contains(&Effect::FireBoxBreathCue(BoxBreathPhaseId::HoldOut)));
+            .iter()
+            .any(|e| matches!(e, Effect::FireBoxBreathCue { phase: BoxBreathPhaseId::HoldOut, .. })));
         // Wrap to In at t=116
         assert!(s
             .tick(Duration::from_secs(116))
-            .contains(&Effect::FireBoxBreathCue(BoxBreathPhaseId::In)));
+            .iter()
+            .any(|e| matches!(e, Effect::FireBoxBreathCue { phase: BoxBreathPhaseId::In, .. })));
     }
 
     #[test]

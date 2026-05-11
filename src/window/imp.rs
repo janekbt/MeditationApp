@@ -452,24 +452,14 @@ impl MeditateWindow {
             use meditate_core::session::Effect as CoreSessionEffect;
             let tv = obj.imp().timer_view.clone();
 
-            let mut session_ended = false;
-            for effect in tv.imp().box_breath_session_tick() {
-                match effect {
-                    CoreSessionEffect::FireBoxBreathCue(phase_id) => {
-                        if let Some(app) = obj.application()
-                            .and_then(|a| a.downcast::<crate::application::MeditateApplication>().ok())
-                        {
-                            tv.imp().fire_box_breath_phase_cue(&app, phase_id);
-                        }
-                    }
-                    CoreSessionEffect::EndBoxBreath { .. } => {
-                        session_ended = true;
-                    }
-                    // UpdateDisplay is redundant — the counter below
-                    // reads breath_elapsed() at frame rate already.
-                    _ => {}
-                }
-            }
+            let effects = tv.imp().box_breath_session_tick();
+            let session_ended = effects
+                .iter()
+                .any(|e| matches!(e, CoreSessionEffect::EndBoxBreath { .. }));
+            // FireBoxBreathCue + FireEndBell route through the shared
+            // dispatcher; UpdateDisplay stays redundant (counter reads
+            // breath_elapsed() at frame rate already).
+            tv.imp().dispatch_session_effects(&effects);
 
             // Visual render. breath_elapsed() is wall-clock anchored
             // and freezes on pause, so it's the right input for both

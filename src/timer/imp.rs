@@ -2081,6 +2081,7 @@ impl TimerView {
                 } else {
                     Some(target as u32)
                 };
+                let Some(app) = self.get_app() else { return; };
                 let core_settings = CoreSessionSettings {
                     mode: SessionMode::BoxBreath,
                     prep_secs: None,
@@ -2092,11 +2093,19 @@ impl TimerView {
                     breath_pattern: Some(pattern),
                     bells: Vec::new(),
                     bell_rng_seed: 1,
+                    signal_mode_override: self.read_signal_mode_override(
+                        &app, "boxbreath_signal_mode",
+                    ),
+                    starting_bell: None,
+                    end_bell: self.build_end_bell_cue(&app),
+                    box_breath_cues: Some(self.build_box_breath_cues(&app)),
                 };
-                *self.core_session.borrow_mut() = Some(CoreSession::start_running(
+                let session = CoreSession::start_running(
                     core_settings,
                     std::time::Duration::ZERO,
-                ));
+                );
+                self.dispatch_session_effects(&session.start_signals());
+                *self.core_session.borrow_mut() = Some(session);
             }
             TimerMode::Guided => {
                 // Build the countdown core (drives the hero) AND the
@@ -2125,14 +2134,17 @@ impl TimerView {
                         // MainContext. Ask Session to force-transition
                         // into Overtime; idempotent if we already
                         // crossed the boundary via tick_running.
+                        // Session emits [EnterOvertime, FireEndBell]
+                        // on the transition — dispatcher routes the
+                        // bell; EnterOvertime triggers the button-
+                        // morph + notification ceremony here.
                         let imp = obj_for_eos.imp();
                         let effects = imp.core_session.borrow_mut().as_mut()
                             .map(|s| s.enter_overtime())
                             .unwrap_or_default();
-                        for e in effects {
-                            if matches!(e, CoreSessionEffect::EnterOvertime) {
-                                imp.transition_running_to_overtime();
-                            }
+                        imp.dispatch_session_effects(&effects);
+                        if effects.iter().any(|e| matches!(e, CoreSessionEffect::EnterOvertime)) {
+                            imp.transition_running_to_overtime();
                         }
                     },
                 ) {
@@ -2153,6 +2165,7 @@ impl TimerView {
                 // duration); the stopwatch toggle only affects the
                 // running display (count-up vs count-down), not the
                 // Session's target.
+                let Some(app) = self.get_app() else { return; };
                 let core_settings = CoreSessionSettings {
                     mode: SessionMode::Guided,
                     prep_secs: None,
@@ -2161,11 +2174,22 @@ impl TimerView {
                     breath_pattern: None,
                     bells: Vec::new(),
                     bell_rng_seed: 1,
+                    signal_mode_override: self.read_signal_mode_override(
+                        &app, "guided_signal_mode",
+                    ),
+                    // Guided sessions have no starting bell (the file
+                    // is the "start"); end bell fires when the file
+                    // ends or the user clicks Finish.
+                    starting_bell: None,
+                    end_bell: self.build_end_bell_cue(&app),
+                    box_breath_cues: None,
                 };
-                *self.core_session.borrow_mut() = Some(CoreSession::start_running(
+                let session = CoreSession::start_running(
                     core_settings,
                     std::time::Duration::ZERO,
-                ));
+                );
+                self.dispatch_session_effects(&session.start_signals());
+                *self.core_session.borrow_mut() = Some(session);
             }
         }
 
@@ -2180,6 +2204,7 @@ impl TimerView {
             } else {
                 Some(self.countdown_target_secs.get() as u32)
             };
+            let Some(app) = self.get_app() else { return; };
             let core_settings = CoreSessionSettings {
                 mode: SessionMode::Timer,
                 prep_secs: Some(prep_dur.as_secs() as u32),
@@ -2188,6 +2213,12 @@ impl TimerView {
                 breath_pattern: None,
                 bells: Vec::new(),
                 bell_rng_seed: 1,
+                signal_mode_override: self.read_signal_mode_override(
+                    &app, "timer_signal_mode",
+                ),
+                starting_bell: self.build_starting_bell_cue(&app),
+                end_bell: self.build_end_bell_cue(&app),
+                box_breath_cues: None,
             };
             *self.core_session.borrow_mut() = Some(CoreSession::start_prep(
                 core_settings,
@@ -2207,6 +2238,7 @@ impl TimerView {
                     target_secs.map(|t| t as u64),
                     stopwatch_on,
                 );
+                let Some(app) = self.get_app() else { return; };
                 let core_settings = CoreSessionSettings {
                     mode: SessionMode::Timer,
                     prep_secs: None,
@@ -2215,11 +2247,19 @@ impl TimerView {
                     breath_pattern: None,
                     bells,
                     bell_rng_seed,
+                    signal_mode_override: self.read_signal_mode_override(
+                        &app, "timer_signal_mode",
+                    ),
+                    starting_bell: self.build_starting_bell_cue(&app),
+                    end_bell: self.build_end_bell_cue(&app),
+                    box_breath_cues: None,
                 };
-                *self.core_session.borrow_mut() = Some(CoreSession::start_running(
+                let session = CoreSession::start_running(
                     core_settings,
                     std::time::Duration::ZERO,
-                ));
+                );
+                self.dispatch_session_effects(&session.start_signals());
+                *self.core_session.borrow_mut() = Some(session);
             }
         }
 
@@ -2232,14 +2272,14 @@ impl TimerView {
             self.acquire_screen_awake_lock(&app);
         }
 
-        // Starting bell at session start — only when there's no prep.
-        // With prep, the bell fires at the prep→Running transition.
-        // Box Breathing never plays the starting bell (Timer-only).
-        if mode == TimerMode::Timer && prep.is_none() {
-            if let Some(app) = self.get_app() {
-                self.fire_starting_bell(&app);
-            }
-        }
+        // Starting bell fires via Session's FireStartingBell effect:
+        // - No-prep Timer: dispatched immediately after start_running
+        //   via session.start_signals() above.
+        // - With-prep Timer: dispatched alongside EndPrep at the prep
+        //   boundary tick (see Session::tick_prep).
+        // - Box Breath / Guided: starting_bell is None in their
+        //   SessionSettings, so no effect ever emits — matches the
+        //   prior Timer-only behaviour.
 
         self.tick_mode.set(mode);
         // Countdown/stopwatch use the shared 1 Hz tick; Breathing drives
@@ -2598,32 +2638,31 @@ impl TimerView {
     /// branch.
     fn tick_prep(&self, _obj: &super::TimerView) -> glib::ControlFlow {
         let now = self.elapsed_since_start();
-        // Stage 1 of item 13: prep ticking is owned by the portable
-        // state machine. The Session is constructed in start_session
-        // and dropped in transition_prep_to_running / on_stop /
-        // reset_mode.
+        // Prep ticking is owned by the portable state machine. The
+        // Session is constructed in start_session and dropped in
+        // transition_prep_to_running / on_stop / reset_mode.
         let effects: Vec<CoreSessionEffect> = self
             .core_session
             .borrow_mut()
             .as_mut()
             .map(|s| s.tick(now))
             .unwrap_or_default();
-        for effect in effects {
+        for effect in &effects {
             match effect {
                 CoreSessionEffect::UpdateDisplay { secs } => {
                     if let Some(label) = self.running_label.borrow().as_ref() {
-                        label.set_label(&format_time(Duration::from_secs(secs)));
+                        label.set_label(&format_time(Duration::from_secs(*secs)));
                     }
                 }
                 CoreSessionEffect::EndPrep => {
                     self.transition_prep_to_running();
                 }
-                // No other effects can fire from a Prep tick. Future
-                // stages route the rest of these into their own gtk
-                // dispatchers; for now the catch-all is dead.
                 _ => {}
             }
         }
+        // FireStartingBell (emitted by Session alongside EndPrep at
+        // the boundary tick) flows through the shared dispatcher.
+        self.dispatch_session_effects(&effects);
         glib::ControlFlow::Continue
     }
 
@@ -2651,20 +2690,22 @@ impl TimerView {
             (effects, session_display.unwrap_or(0), entered_overtime)
         };
 
+        // Bell sounds + vibrations flow through the portable
+        // dispatcher: FireBell during Running, FireEndBell at the
+        // EnterOvertime crossing (Session emits both alongside the
+        // transition).
+        self.dispatch_session_effects(&effects);
+
         if done {
             // Countdown crossed zero. Don't auto-finish — slide
             // into Overtime so the user can either commit the
             // extra time (Add) or stop at the planned duration
-            // (Finish). The end bell, vibration, and system
-            // notification still fire here because the *planned*
-            // session is over; overtime is bonus.
+            // (Finish). The end bell already fired above via
+            // FireEndBell dispatch; transition_running_to_overtime
+            // handles the button-morph + system-notification side.
             self.transition_running_to_overtime();
             return glib::ControlFlow::Continue;
         }
-
-        // Bell sounds + vibrations flow through the portable
-        // dispatcher (FireBell effect from Session.tick above).
-        self.dispatch_session_effects(&effects);
 
         if let Some(label) = self.running_label.borrow().as_ref() {
             label.set_label(&format_time(Duration::from_secs(new_secs)));
@@ -2690,7 +2731,11 @@ impl TimerView {
         *self.guided_playback.borrow_mut() = None;
 
         if let Some(app) = self.get_app() {
-            self.fire_end_bell(&app);
+            // End bell fires via Session's FireEndBell effect (emitted
+            // alongside EnterOvertime in tick_running, and from
+            // Session::enter_overtime() on the EOS-driven path).
+            // System notification stays here — it's a gtk mechanism.
+
             // Only send a system notification when the app isn't
             // focused — the in-app overtime UI already signals
             // completion.
@@ -2848,14 +2893,12 @@ impl TimerView {
         self.show_done(elapsed_secs);
     }
 
-    /// Prep finished — play the starting bell, swap in a fresh
-    /// running Session, and flip the state to Running. The 1 Hz
-    /// tick will pick up where this left off on its next iteration.
+    /// Prep finished — swap in a fresh running Session, flip the
+    /// state to Running. The starting bell fired via Session's
+    /// FireStartingBell effect on the previous tick (the same one
+    /// that emitted EndPrep). The 1 Hz tick will pick up where this
+    /// left off on its next iteration.
     fn transition_prep_to_running(&self) {
-        if let Some(app) = self.get_app() {
-            self.fire_starting_bell(&app);
-        }
-
         // Rebuild Session in Running phase, anchored at the current
         // boot-relative time. The previous prep Session already
         // emitted EndPrep on the tick that called us. Bells get
@@ -2871,6 +2914,7 @@ impl TimerView {
             target_secs.map(|t| t as u64),
             stopwatch_on,
         );
+        let Some(app) = self.get_app() else { return; };
         let core_settings = CoreSessionSettings {
             mode: SessionMode::Timer,
             prep_secs: None,
@@ -2879,6 +2923,16 @@ impl TimerView {
             breath_pattern: None,
             bells,
             bell_rng_seed,
+            signal_mode_override: self.read_signal_mode_override(
+                &app, "timer_signal_mode",
+            ),
+            // Starting bell already fired alongside EndPrep on the
+            // prior tick — Session emitted FireStartingBell from
+            // tick_prep's boundary crossing. No need to attach it
+            // here (would double-fire).
+            starting_bell: None,
+            end_bell: self.build_end_bell_cue(&app),
+            box_breath_cues: None,
         };
         let now = self.elapsed_since_start();
         *self.core_session.borrow_mut() = Some(CoreSession::start_running(
@@ -2906,8 +2960,11 @@ impl TimerView {
         }
         self.obj().emit_by_name::<()>("timer-stopped", &[]);
         self.show_done(elapsed);
+        // End bell fires via Session's FireEndBell effect — emitted
+        // on EndBoxBreath in tick_box_breath, dispatched through
+        // dispatch_session_effects on the frame-tick callback before
+        // we get here. System notification stays in gtk.
         if let Some(app) = self.get_app() {
-            self.fire_end_bell(&app);
             if !app.active_window().map(|w| w.is_active()).unwrap_or(false) {
                 let n = gtk::gio::Notification::new("Meditation Complete");
                 n.set_body(Some(&format!("Session: {}", format_time(Duration::from_secs(elapsed)))));
@@ -3555,7 +3612,6 @@ impl TimerView {
         }
     }
 
-    /// Update the countdown target + hero label + duration row suffix.
     fn set_countdown_target(&self, secs: u64) {
         self.countdown_target_secs.set(secs);
         let h = secs / 3600;
@@ -3796,6 +3852,17 @@ impl TimerView {
     }
 }
 
+/// Which `MEDIA` slot a fire-cue effect routes through. Three
+/// slots so polyphony works the way users expect: starting bell
+/// supersedes its own prior playback; end bell supersedes its
+/// own; interval bells stack so two coinciding rings both play.
+#[derive(Debug, Clone, Copy)]
+enum SoundChannel {
+    Starting,
+    End,
+    Interval,
+}
+
 // ── Interval / fixed bell scheduling ─────────────────────────────────────────
 
 impl TimerView {
@@ -3828,6 +3895,144 @@ impl TimerView {
             .and_then(|r| r.ok())
             .unwrap_or_default();
         meditate_core::bells::build_active_bells(&rows, total_target_secs, stopwatch_on, seed)
+    }
+
+    /// Read the per-mode "Cues" signal-mode override (sound /
+    /// vibration / both) for `mode`. Falls back to `Both` when the
+    /// setting is missing or unparseable — same default the existing
+    /// gtk dispatchers use.
+    fn read_signal_mode_override(
+        &self,
+        app: &crate::application::MeditateApplication,
+        mode_key: &'static str,
+    ) -> crate::db::SignalMode {
+        let raw = app
+            .with_db(|db| db.get_setting(mode_key, "both"))
+            .and_then(|r| r.ok())
+            .unwrap_or_else(|| "both".to_string());
+        crate::db::SignalMode::from_db_str(&raw).unwrap_or(crate::db::SignalMode::Both)
+    }
+
+    /// Build the starting-bell cue config from DB. `None` when the
+    /// user disabled the starting bell row — Session simply skips
+    /// emitting `FireStartingBell` in that case.
+    fn build_starting_bell_cue(
+        &self,
+        app: &crate::application::MeditateApplication,
+    ) -> Option<meditate_core::bells::BellCue> {
+        let active = app
+            .with_db(|db| db.get_setting("starting_bell_active", "false"))
+            .and_then(|r| r.ok())
+            .map(|s| s == "true")
+            .unwrap_or(false);
+        if !active {
+            return None;
+        }
+        let sound_uuid = app
+            .with_db(|db| {
+                db.get_setting("starting_bell_sound", crate::db::BUNDLED_BOWL_UUID)
+            })
+            .and_then(|r| r.ok())
+            .unwrap_or_else(|| crate::db::BUNDLED_BOWL_UUID.to_string());
+        let vibration_pattern_uuid = app
+            .with_db(|db| {
+                db.get_setting(
+                    "starting_bell_pattern",
+                    crate::db::BUNDLED_PATTERN_PULSE_UUID,
+                )
+            })
+            .and_then(|r| r.ok())
+            .unwrap_or_else(|| crate::db::BUNDLED_PATTERN_PULSE_UUID.to_string());
+        let raw_mode = app
+            .with_db(|db| db.get_setting("starting_bell_signal_mode", "sound"))
+            .and_then(|r| r.ok())
+            .unwrap_or_else(|| "sound".to_string());
+        let signal_mode = crate::db::SignalMode::from_db_str(&raw_mode)
+            .unwrap_or(crate::db::SignalMode::Sound);
+        Some(meditate_core::bells::BellCue {
+            sound_uuid,
+            vibration_pattern_uuid,
+            signal_mode,
+        })
+    }
+
+    /// Build the end-bell cue config from DB. `None` for a stopwatch
+    /// session (no natural end) or when the user disabled the row.
+    fn build_end_bell_cue(
+        &self,
+        app: &crate::application::MeditateApplication,
+    ) -> Option<meditate_core::bells::BellCue> {
+        if self.stopwatch_toggle_on.get() {
+            return None;
+        }
+        let active = app
+            .with_db(|db| db.get_setting("end_bell_active", "true"))
+            .and_then(|r| r.ok())
+            .map(|s| s == "true")
+            .unwrap_or(true);
+        if !active {
+            return None;
+        }
+        let sound_uuid = app
+            .with_db(|db| db.get_setting("end_bell_sound", crate::db::BUNDLED_BOWL_UUID))
+            .and_then(|r| r.ok())
+            .unwrap_or_else(|| crate::db::BUNDLED_BOWL_UUID.to_string());
+        let vibration_pattern_uuid = app
+            .with_db(|db| {
+                db.get_setting(
+                    "end_bell_pattern",
+                    crate::db::BUNDLED_PATTERN_PULSE_UUID,
+                )
+            })
+            .and_then(|r| r.ok())
+            .unwrap_or_else(|| crate::db::BUNDLED_PATTERN_PULSE_UUID.to_string());
+        let raw_mode = app
+            .with_db(|db| db.get_setting("end_bell_signal_mode", "sound"))
+            .and_then(|r| r.ok())
+            .unwrap_or_else(|| "sound".to_string());
+        let signal_mode = crate::db::SignalMode::from_db_str(&raw_mode)
+            .unwrap_or(crate::db::SignalMode::Sound);
+        Some(meditate_core::bells::BellCue {
+            sound_uuid,
+            vibration_pattern_uuid,
+            signal_mode,
+        })
+    }
+
+    /// Build the Box-Breath per-phase cue config from DB. Always
+    /// returns a value (master_enabled may be false); Session checks
+    /// the master flag + the per-phase Option internally.
+    fn build_box_breath_cues(
+        &self,
+        app: &crate::application::MeditateApplication,
+    ) -> meditate_core::bells::BoxBreathCueConfig {
+        use crate::db::BoxBreathPhaseId;
+        let master_enabled = app
+            .with_db(|db| db.get_setting("boxbreath_cues_active", "false"))
+            .and_then(|r| r.ok())
+            .map(|s| s == "true")
+            .unwrap_or(false);
+        let load_phase = |phase: BoxBreathPhaseId| -> Option<meditate_core::bells::BellCue> {
+            let row = app
+                .with_db(|db| db.get_box_breath_phase(phase))
+                .and_then(|r| r.ok())
+                .flatten()?;
+            if !row.enabled {
+                return None;
+            }
+            Some(meditate_core::bells::BellCue {
+                sound_uuid: row.sound_uuid,
+                vibration_pattern_uuid: row.pattern_uuid,
+                signal_mode: row.signal_mode,
+            })
+        };
+        meditate_core::bells::BoxBreathCueConfig {
+            master_enabled,
+            in_phase: load_phase(BoxBreathPhaseId::In),
+            hold_in: load_phase(BoxBreathPhaseId::HoldIn),
+            out_phase: load_phase(BoxBreathPhaseId::Out),
+            hold_out: load_phase(BoxBreathPhaseId::HoldOut),
+        }
     }
 }
 
@@ -3879,147 +4084,6 @@ impl TimerView {
     /// End-bell pattern row's subtitle reflects whichever
     /// vibration_patterns row the end_bell_pattern setting points at.
     /// Defaults to bundled Pulse on first ever read.
-    /// Same dual-channel firing for the Starting Bell. Reads
-    /// starting_bell_active + starting_bell_signal_mode +
-    /// starting_bell_pattern + the per-mode override; ignores the
-    /// row in modes where Starting Bell isn't shown (Box Breath /
-    /// Guided — the caller already gates by mode before calling
-    /// this, but defensive double-check is cheap).
-    pub(crate) fn fire_starting_bell(
-        &self,
-        app: &crate::application::MeditateApplication,
-    ) {
-        let active = app
-            .with_db(|db| db.get_setting("starting_bell_active", "false"))
-            .and_then(|r| r.ok())
-            .map(|s| s == "true")
-            .unwrap_or(false);
-        if !active { return; }
-
-        let raw = app
-            .with_db(|db| db.get_setting("starting_bell_signal_mode", "sound"))
-            .and_then(|r| r.ok())
-            .unwrap_or_else(|| "sound".to_string());
-        let per_bell = crate::db::SignalMode::from_db_str(&raw)
-            .unwrap_or(crate::db::SignalMode::Sound);
-        let mode_key = setting_key_for_mode(self.current_mode());
-
-        if crate::vibration::should_fire_sound(app, per_bell, mode_key) {
-            crate::sound::play_starting_sound(app);
-        }
-        let pattern_uuid = app
-            .with_db(|db| db.get_setting(
-                "starting_bell_pattern",
-                crate::db::BUNDLED_PATTERN_PULSE_UUID,
-            ))
-            .and_then(|r| r.ok())
-            .unwrap_or_else(|| crate::db::BUNDLED_PATTERN_PULSE_UUID.to_string());
-        let handle = crate::vibration::fire_pattern_if_allowed(
-            app, per_bell, mode_key, &pattern_uuid,
-        );
-        meditate_core::diag::log(&format!(
-            "fire_starting_bell: per_bell={} mode={} fired={}",
-            per_bell.as_db_str(), mode_key, handle.is_some()
-        ));
-        self.install_vibration_handle(handle);
-    }
-
-    /// Fire the End Bell's sound + vibration channels per the
-    /// current per-bell signal_mode + per-mode override. Both gates
-    /// ANDed: per-bell intent (end_bell_signal_mode) AND per-mode
-    /// override (timer / guided / boxbreath signal_mode setting).
-    /// The vibration handle stashes onto `current_vibration` so the
-    /// pattern plays out (drop fires cancel).
-    pub(crate) fn fire_end_bell(
-        &self,
-        app: &crate::application::MeditateApplication,
-    ) {
-        // Stopwatch on for the active mode mutes the end bell —
-        // matches the UI, where the End Bell row is greyed-out and
-        // shown as off whenever stopwatch is on. The persisted
-        // `end_bell_active` setting stays as the user left it, so
-        // flipping stopwatch off restores the bell next session.
-        if self.stopwatch_toggle_on.get() { return; }
-        let active = app
-            .with_db(|db| db.get_setting("end_bell_active", "true"))
-            .and_then(|r| r.ok())
-            .map(|s| s == "true")
-            .unwrap_or(true);
-        if !active { return; }
-
-        let raw = app
-            .with_db(|db| db.get_setting("end_bell_signal_mode", "sound"))
-            .and_then(|r| r.ok())
-            .unwrap_or_else(|| "sound".to_string());
-        let per_bell = crate::db::SignalMode::from_db_str(&raw)
-            .unwrap_or(crate::db::SignalMode::Sound);
-        let mode_key = setting_key_for_mode(self.current_mode());
-
-        if crate::vibration::should_fire_sound(app, per_bell, mode_key) {
-            crate::sound::play_end_bell(app);
-        }
-        let pattern_uuid = app
-            .with_db(|db| db.get_setting(
-                "end_bell_pattern",
-                crate::db::BUNDLED_PATTERN_PULSE_UUID,
-            ))
-            .and_then(|r| r.ok())
-            .unwrap_or_else(|| crate::db::BUNDLED_PATTERN_PULSE_UUID.to_string());
-        let handle = crate::vibration::fire_pattern_if_allowed(
-            app, per_bell, mode_key, &pattern_uuid,
-        );
-        meditate_core::diag::log(&format!(
-            "fire_end_bell: per_bell={} mode={} fired={}",
-            per_bell.as_db_str(), mode_key, handle.is_some()
-        ));
-        // Same-app Vibrate replaces in-flight, so disarm-then-replace
-        // (no explicit cancel) avoids the cancel-races-the-new-pattern
-        // bug. End-of-session pattern cleanly supersedes any
-        // interval-bell or phase pattern that was mid-playback.
-        self.install_vibration_handle(handle);
-    }
-
-    /// Fire the configured cue for a Box-Breath phase boundary.
-    /// Gated by the master `boxbreath_cues_active` switch and the
-    /// individual phase row's `enabled` flag — both must be on.
-    /// Resolution then matches every other bell: per-phase
-    /// signal_mode AND'd with the per-mode override
-    /// (`boxbreath_signal_mode`) for the sound + pattern channels.
-    pub(crate) fn fire_box_breath_phase_cue(
-        &self,
-        app: &crate::application::MeditateApplication,
-        phase: crate::db::BoxBreathPhaseId,
-    ) {
-        let master_on = app
-            .with_db(|db| db.get_setting("boxbreath_cues_active", "false"))
-            .and_then(|r| r.ok())
-            .map(|s| s == "true")
-            .unwrap_or(false);
-        if !master_on { return; }
-
-        let row = match app
-            .with_db(|db| db.get_box_breath_phase(phase))
-            .and_then(|r| r.ok())
-            .flatten()
-        {
-            Some(p) => p,
-            None => return,
-        };
-        if !row.enabled { return; }
-
-        let mode_key = "boxbreath_signal_mode";
-        if crate::vibration::should_fire_sound(app, row.signal_mode, mode_key) {
-            crate::sound::play_interval_sound(&row.sound_uuid, app);
-        }
-        let handle = crate::vibration::fire_pattern_if_allowed(
-            app, row.signal_mode, mode_key, &row.pattern_uuid,
-        );
-        meditate_core::diag::log(&format!(
-            "fire_box_breath_phase_cue: phase={} per_phase={} fired={}",
-            phase.as_db_str(), row.signal_mode.as_db_str(), handle.is_some()
-        ));
-        self.install_vibration_handle(handle);
-    }
 
     /// Replace the current PatternPlayback handle. Disarms the old
     /// handle's Drop-cancel — a same-app `Vibrate(...)` already
@@ -4053,13 +4117,15 @@ impl TimerView {
 
     /// Run portable Session effects through their gtk-shell native
     /// dispatchers. Handles `StopActiveSignals` (sound + vibration
-    /// cancel) and `FireBell` (interval-bell sound + vibration with
-    /// per-mode AND-gating). Other effects (UpdateDisplay /
-    /// EnterOvertime / FireBoxBreathCue / EndSession / EndPrep /
-    /// UpdateOvertimeLabel / EndBoxBreath) are consumed at their
-    /// tick callsites where the surrounding context is needed for
-    /// dispatch.
-    fn dispatch_session_effects(&self, effects: &[CoreSessionEffect]) {
+    /// cancel) and the four fire-* variants
+    /// (`FireBell` / `FireStartingBell` / `FireEndBell` /
+    /// `FireBoxBreathCue`). All four carry an *effective*
+    /// `signal_mode` (Session already AND'd per-cue with per-mode
+    /// override) so the shell just plays / vibrates per that
+    /// variant. Other effects (UpdateDisplay / EnterOvertime /
+    /// EndSession / EndPrep / UpdateOvertimeLabel / EndBoxBreath)
+    /// are consumed at their tick callsites.
+    pub(crate) fn dispatch_session_effects(&self, effects: &[CoreSessionEffect]) {
         let mut app = None;
         for effect in effects {
             match effect {
@@ -4068,29 +4134,92 @@ impl TimerView {
                     sound_uuid,
                     vibration_pattern_uuid,
                     signal_mode,
-                } => {
-                    let app = app.get_or_insert_with(|| self.get_app());
-                    let Some(app) = app.as_ref() else { return; };
-                    let mode_key = setting_key_for_mode(self.current_mode());
-                    // Two-gate AND: per-bell signal_mode AND per-mode
-                    // override. Mirrors the original gtk dispatch.
-                    if crate::vibration::should_fire_sound(app, *signal_mode, mode_key) {
-                        crate::sound::play_interval_sound(sound_uuid, app);
-                    }
-                    let handle = crate::vibration::fire_pattern_if_allowed(
-                        app, *signal_mode, mode_key, vibration_pattern_uuid,
-                    );
-                    meditate_core::diag::log(&format!(
-                        "fire_interval_bell: per_bell={} mode={} fired={}",
-                        signal_mode.as_db_str(),
-                        mode_key,
-                        handle.is_some(),
-                    ));
-                    self.install_vibration_handle(handle);
-                }
+                } => self.dispatch_fire_cue(
+                    &mut app,
+                    "fire_interval_bell",
+                    *signal_mode,
+                    sound_uuid,
+                    vibration_pattern_uuid,
+                    SoundChannel::Interval,
+                ),
+                CoreSessionEffect::FireStartingBell {
+                    sound_uuid,
+                    vibration_pattern_uuid,
+                    signal_mode,
+                } => self.dispatch_fire_cue(
+                    &mut app,
+                    "fire_starting_bell",
+                    *signal_mode,
+                    sound_uuid,
+                    vibration_pattern_uuid,
+                    SoundChannel::Starting,
+                ),
+                CoreSessionEffect::FireEndBell {
+                    sound_uuid,
+                    vibration_pattern_uuid,
+                    signal_mode,
+                } => self.dispatch_fire_cue(
+                    &mut app,
+                    "fire_end_bell",
+                    *signal_mode,
+                    sound_uuid,
+                    vibration_pattern_uuid,
+                    SoundChannel::End,
+                ),
+                CoreSessionEffect::FireBoxBreathCue {
+                    phase: _,
+                    sound_uuid,
+                    vibration_pattern_uuid,
+                    signal_mode,
+                } => self.dispatch_fire_cue(
+                    &mut app,
+                    "fire_box_breath_phase_cue",
+                    *signal_mode,
+                    sound_uuid,
+                    vibration_pattern_uuid,
+                    SoundChannel::Interval,
+                ),
                 _ => {}
             }
         }
+    }
+
+    /// Shared fire-cue dispatch: per the effective signal_mode (set
+    /// by Session — already AND'd with per-mode override), play the
+    /// sound via the right MEDIA slot, fire the haptic pattern
+    /// (when device supports it), stash the resulting handle.
+    fn dispatch_fire_cue(
+        &self,
+        app_cache: &mut Option<Option<crate::application::MeditateApplication>>,
+        log_tag: &str,
+        signal_mode: crate::db::SignalMode,
+        sound_uuid: &str,
+        vibration_pattern_uuid: &str,
+        channel: SoundChannel,
+    ) {
+        let app = app_cache.get_or_insert_with(|| self.get_app());
+        let Some(app) = app.as_ref() else { return; };
+        if signal_mode.includes_sound() {
+            match channel {
+                SoundChannel::Interval => crate::sound::play_interval_sound(sound_uuid, app),
+                SoundChannel::Starting => crate::sound::play_starting_uuid(sound_uuid, app),
+                SoundChannel::End => crate::sound::play_end_bell_uuid(sound_uuid, app),
+            }
+        }
+        let handle = if signal_mode.includes_vibration() && app.has_haptic() {
+            app.with_db(|db| db.find_vibration_pattern_by_uuid(vibration_pattern_uuid))
+                .and_then(|r| r.ok())
+                .flatten()
+                .map(|pattern| crate::vibration::PatternPlayback::play(app, &pattern))
+        } else {
+            None
+        };
+        meditate_core::diag::log(&format!(
+            "{log_tag}: signal_mode={} fired={}",
+            signal_mode.as_db_str(),
+            handle.is_some(),
+        ));
+        self.install_vibration_handle(handle);
     }
 
     pub(crate) fn refresh_end_bell_pattern_subtitle(&self) {

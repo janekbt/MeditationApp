@@ -225,6 +225,35 @@ pub fn play_starting_sound(app: &MeditateApplication) {
     media.set_playing(true);
 }
 
+/// Play the end bell by an explicit `uuid` — the post-migration
+/// path where the Session's `FireEndBell` effect carries the
+/// resolved sound uuid. Loads on the spot (no pre-warm reuse;
+/// that's reserved for the `play_end_bell` entry the gtk app
+/// preloads against the user's currently-configured uuid).
+pub fn play_end_bell_uuid(uuid: &str, app: &MeditateApplication) {
+    let Some(sound) = lookup_bell_sound_by_uuid(app, uuid) else {
+        return;
+    };
+    let media = media_for_bell_sound(&sound);
+    swap_and_play(media);
+}
+
+/// Play the starting bell by an explicit `uuid`. Mirror of
+/// `play_end_bell_uuid` but routed through `STARTING_MEDIA` so the
+/// pre-warmed end-bell pipeline in `CURRENT_MEDIA` isn't disturbed.
+pub fn play_starting_uuid(uuid: &str, app: &MeditateApplication) {
+    let Some(sound) = lookup_bell_sound_by_uuid(app, uuid) else {
+        return;
+    };
+    let media = media_for_bell_sound(&sound);
+    STARTING_MEDIA.with(|cell| {
+        if let Some(old) = cell.replace(Some(media.clone())) {
+            old.set_playing(false);
+        }
+    });
+    media.set_playing(true);
+}
+
 /// Play a bell during the running session — interval/fixed bells
 /// fired by the tick. Each call appends to INTERVAL_MEDIA so two
 /// bells whose boundaries coincide both ring through (clipping one

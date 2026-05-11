@@ -179,6 +179,60 @@ pub fn channel_allowed(per_bell: SignalMode, per_mode: SignalMode) -> (bool, boo
     )
 }
 
+/// Same as `channel_allowed` but collapses the `(bool, bool)` pair
+/// into the matching `SignalMode` variant. `None` means neither
+/// channel fires — the caller skips emitting the Effect entirely.
+pub fn effective_signal_mode(per_bell: SignalMode, per_mode: SignalMode) -> Option<SignalMode> {
+    match channel_allowed(per_bell, per_mode) {
+        (true, true) => Some(SignalMode::Both),
+        (true, false) => Some(SignalMode::Sound),
+        (false, true) => Some(SignalMode::Vibration),
+        (false, false) => None,
+    }
+}
+
+/// One audio + haptic cue config — used uniformly across starting
+/// bell, end bell, and Box-Breath per-phase cues. The `signal_mode`
+/// here is the *per-bell* / *per-phase* user choice; the per-mode
+/// override gets ANDed in when the Session computes the effective
+/// SignalMode at fire time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BellCue {
+    pub sound_uuid: String,
+    pub vibration_pattern_uuid: String,
+    pub signal_mode: SignalMode,
+}
+
+/// Box-Breath per-phase cue config. Each phase carries its own
+/// `BellCue` (or `None` when the phase row is disabled);
+/// `master_enabled` is the user-facing "cues on / off" toggle the
+/// Setup view shows above the per-phase rows.
+#[derive(Debug, Clone, Default)]
+pub struct BoxBreathCueConfig {
+    pub master_enabled: bool,
+    pub in_phase: Option<BellCue>,
+    pub hold_in: Option<BellCue>,
+    pub out_phase: Option<BellCue>,
+    pub hold_out: Option<BellCue>,
+}
+
+impl BoxBreathCueConfig {
+    /// Resolve a `BoxBreathPhaseId` to the configured cue, or
+    /// `None` when the master toggle is off or the phase has no
+    /// row configured.
+    pub fn cue_for(&self, phase: crate::db::BoxBreathPhaseId) -> Option<&BellCue> {
+        if !self.master_enabled {
+            return None;
+        }
+        match phase {
+            crate::db::BoxBreathPhaseId::In => self.in_phase.as_ref(),
+            crate::db::BoxBreathPhaseId::HoldIn => self.hold_in.as_ref(),
+            crate::db::BoxBreathPhaseId::Out => self.out_phase.as_ref(),
+            crate::db::BoxBreathPhaseId::HoldOut => self.hold_out.as_ref(),
+        }
+    }
+}
+
 // ── Bell editor invariants ──────────────────────────────────────────
 
 /// Minimum minutes for an Interval / Fixed-from-start / Fixed-from-
@@ -563,6 +617,65 @@ mod tests {
         // Symmetric.
         assert_eq!(channel_allowed(SignalMode::Sound, SignalMode::Both), (true, false));
         assert_eq!(channel_allowed(SignalMode::Vibration, SignalMode::Both), (false, true));
+    }
+
+    #[test]
+    fn effective_signal_mode_collapses_to_variant_or_none() {
+        assert_eq!(
+            effective_signal_mode(SignalMode::Both, SignalMode::Both),
+            Some(SignalMode::Both)
+        );
+        assert_eq!(
+            effective_signal_mode(SignalMode::Both, SignalMode::Sound),
+            Some(SignalMode::Sound)
+        );
+        assert_eq!(
+            effective_signal_mode(SignalMode::Sound, SignalMode::Vibration),
+            None
+        );
+    }
+
+    fn cue(uuid: &str) -> BellCue {
+        BellCue {
+            sound_uuid: uuid.into(),
+            vibration_pattern_uuid: "pattern".into(),
+            signal_mode: SignalMode::Both,
+        }
+    }
+
+    #[test]
+    fn box_breath_cue_master_off_suppresses_every_phase() {
+        let cfg = BoxBreathCueConfig {
+            master_enabled: false,
+            in_phase: Some(cue("a")),
+            hold_in: Some(cue("b")),
+            out_phase: Some(cue("c")),
+            hold_out: Some(cue("d")),
+        };
+        for phase in crate::db::BoxBreathPhaseId::all() {
+            assert!(cfg.cue_for(*phase).is_none());
+        }
+    }
+
+    #[test]
+    fn box_breath_cue_master_on_returns_per_phase_or_none() {
+        let cfg = BoxBreathCueConfig {
+            master_enabled: true,
+            in_phase: Some(cue("in")),
+            hold_in: None,
+            out_phase: Some(cue("out")),
+            hold_out: None,
+        };
+        assert_eq!(
+            cfg.cue_for(crate::db::BoxBreathPhaseId::In).map(|c| &c.sound_uuid),
+            Some(&"in".to_string()),
+        );
+        assert!(cfg.cue_for(crate::db::BoxBreathPhaseId::HoldIn).is_none());
+        assert_eq!(
+            cfg.cue_for(crate::db::BoxBreathPhaseId::Out).map(|c| &c.sound_uuid),
+            Some(&"out".to_string()),
+        );
+        assert!(cfg.cue_for(crate::db::BoxBreathPhaseId::HoldOut).is_none());
     }
 
     // ── build_active_bells ─────────────────────────────────────────────
