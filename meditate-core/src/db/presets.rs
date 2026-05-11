@@ -438,3 +438,451 @@ impl Database {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::{test_helpers::*, Event};
+
+    fn insert_basic_preset(db: &Database, name: &str, mode: SessionMode) -> i64 {
+        db.insert_preset(
+            name,
+            mode,
+            false,
+            r#"{"placeholder":true}"#,
+        ).unwrap()
+    }
+
+    #[test]
+    fn insert_preset_round_trips_through_list() {
+        let db = Database::open_in_memory().unwrap();
+        let id = db.insert_preset(
+            "Sitting",
+            SessionMode::Timer,
+            true,
+            r#"{"duration_secs":900}"#,
+        ).unwrap();
+
+        let presets = db.list_presets().unwrap();
+        assert_eq!(presets.len(), 1);
+        let p = &presets[0];
+        assert_eq!(p.id, id);
+        assert!(!p.uuid.is_empty(), "fresh insert mints a uuid");
+        assert_eq!(p.name, "Sitting");
+        assert_eq!(p.mode, SessionMode::Timer);
+        assert!(p.is_starred);
+        assert_eq!(p.config_json, r#"{"duration_secs":900}"#);
+        assert!(!p.created_iso.is_empty());
+        assert_eq!(p.created_iso, p.updated_iso,
+            "fresh insert sets updated_iso = created_iso");
+    }
+
+    #[test]
+    fn insert_preset_guided_mode_round_trips() {
+        let db = Database::open_in_memory().unwrap();
+        let id = db.insert_preset(
+            "Headspace Track 1",
+            SessionMode::Guided,
+            true,
+            r#"{"guided_file_uuid":"x"}"#,
+        ).unwrap();
+        let presets = db.list_presets().unwrap();
+        assert_eq!(presets.len(), 1);
+        assert_eq!(presets[0].id, id);
+        assert_eq!(presets[0].mode, SessionMode::Guided);
+    }
+
+    #[test]
+    fn insert_preset_with_uuid_uses_supplied_uuid() {
+        let db = Database::open_in_memory().unwrap();
+        let _id = db.insert_preset_with_uuid(
+            "abc-123",
+            "Sitting",
+            SessionMode::Timer,
+            false,
+            r#"{}"#,
+        ).unwrap();
+        let presets = db.list_presets().unwrap();
+        assert_eq!(presets[0].uuid, "abc-123");
+    }
+
+    #[test]
+    fn insert_preset_with_existing_uuid_is_silent_noop() {
+        let db = Database::open_in_memory().unwrap();
+        let r1 = db.insert_preset_with_uuid(
+            "u-1", "Sitting", SessionMode::Timer, false, r#"{}"#,
+        ).unwrap();
+        let r2 = db.insert_preset_with_uuid(
+            "u-1", "Different Name", SessionMode::BoxBreath, true, r#"{"x":1}"#,
+        ).unwrap();
+        assert_eq!(r1, r2, "second insert returns existing rowid");
+        assert_eq!(db.count_presets().unwrap(), 1);
+        // Original values stand — second insert is a pure no-op.
+        let p = &db.list_presets().unwrap()[0];
+        assert_eq!(p.name, "Sitting");
+        assert_eq!(p.mode, SessionMode::Timer);
+        assert!(!p.is_starred);
+    }
+
+    #[test]
+    fn insert_preset_duplicate_name_returns_duplicate_preset() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_preset("Sitting", SessionMode::Timer, false, r#"{}"#).unwrap();
+        let r = db.insert_preset(
+            "sitting",  // case-insensitive collision
+            SessionMode::BoxBreath,
+            false,
+            r#"{}"#,
+        );
+        assert!(
+            matches!(r, Err(DbError::DuplicatePreset(ref n)) if n == "sitting"),
+            "expected DuplicatePreset, got {r:?}",
+        );
+        assert_eq!(db.count_presets().unwrap(), 1, "row count unchanged");
+    }
+
+    #[test]
+    fn insert_preset_emits_a_preset_insert_event() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_preset("Sitting", SessionMode::Timer, true, r#"{"dur":900}"#).unwrap();
+        let events = db.pending_events().unwrap();
+        let insert: Vec<_> = events.iter()
+            .filter(|(_, e)| e.kind == "preset_insert")
+            .collect();
+        assert_eq!(insert.len(), 1);
+        let payload: serde_json::Value =
+            serde_json::from_str(&insert[0].1.payload).unwrap();
+        assert_eq!(payload["name"], "Sitting");
+        assert_eq!(payload["mode"], "timer");
+        assert_eq!(payload["is_starred"], true);
+        assert_eq!(payload["config_json"], r#"{"dur":900}"#);
+    }
+
+    #[test]
+    fn list_presets_orders_by_mode_then_created_iso() {
+        let db = Database::open_in_memory().unwrap();
+        // Interleave insert order and modes; verify the SQL ORDER BY
+        // groups by mode and orders by created_iso within each group.
+        insert_basic_preset(&db, "BB-1", SessionMode::BoxBreath);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        insert_basic_preset(&db, "T-1", SessionMode::Timer);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        insert_basic_preset(&db, "BB-2", SessionMode::BoxBreath);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        insert_basic_preset(&db, "T-2", SessionMode::Timer);
+
+        let names: Vec<String> = db.list_presets().unwrap()
+            .into_iter().map(|p| p.name).collect();
+        // Mode ordering (timer < box_breath alphabetically as DB string —
+        // 'box_breath' < 'timer' actually). Verify whichever way SQL sees it.
+        // What matters is that within each mode block, created_iso is ASC.
+        let bb_pos: Vec<usize> = names.iter().enumerate()
+            .filter(|(_, n)| n.starts_with("BB-"))
+            .map(|(i, _)| i).collect();
+        let t_pos: Vec<usize> = names.iter().enumerate()
+            .filter(|(_, n)| n.starts_with("T-"))
+            .map(|(i, _)| i).collect();
+        assert_eq!(bb_pos.len(), 2);
+        assert_eq!(t_pos.len(), 2);
+        // Within each mode, ordering follows insert order.
+        assert!(bb_pos[0] < bb_pos[1]);
+        assert!(t_pos[0] < t_pos[1]);
+        assert_eq!(names[bb_pos[0]], "BB-1");
+        assert_eq!(names[bb_pos[1]], "BB-2");
+        assert_eq!(names[t_pos[0]], "T-1");
+        assert_eq!(names[t_pos[1]], "T-2");
+    }
+
+    #[test]
+    fn list_presets_for_mode_filters_correctly() {
+        let db = Database::open_in_memory().unwrap();
+        insert_basic_preset(&db, "T-1", SessionMode::Timer);
+        insert_basic_preset(&db, "BB-1", SessionMode::BoxBreath);
+        insert_basic_preset(&db, "T-2", SessionMode::Timer);
+
+        let timers: Vec<String> = db.list_presets_for_mode(SessionMode::Timer)
+            .unwrap().into_iter().map(|p| p.name).collect();
+        assert_eq!(timers, vec!["T-1", "T-2"]);
+
+        let breaths: Vec<String> = db.list_presets_for_mode(SessionMode::BoxBreath)
+            .unwrap().into_iter().map(|p| p.name).collect();
+        assert_eq!(breaths, vec!["BB-1"]);
+    }
+
+    #[test]
+    fn list_starred_presets_for_mode_returns_only_starred_in_mode() {
+        let db = Database::open_in_memory().unwrap();
+        // Mix: Timer starred + unstarred; BoxBreath starred + unstarred.
+        db.insert_preset("T-star", SessionMode::Timer, true, r#"{}"#).unwrap();
+        db.insert_preset("T-no", SessionMode::Timer, false, r#"{}"#).unwrap();
+        db.insert_preset("BB-star", SessionMode::BoxBreath, true, r#"{}"#).unwrap();
+        db.insert_preset("BB-no", SessionMode::BoxBreath, false, r#"{}"#).unwrap();
+
+        let timer_starred: Vec<String> =
+            db.list_starred_presets_for_mode(SessionMode::Timer).unwrap()
+                .into_iter().map(|p| p.name).collect();
+        assert_eq!(timer_starred, vec!["T-star"]);
+
+        let breath_starred: Vec<String> =
+            db.list_starred_presets_for_mode(SessionMode::BoxBreath).unwrap()
+                .into_iter().map(|p| p.name).collect();
+        assert_eq!(breath_starred, vec!["BB-star"]);
+    }
+
+    #[test]
+    fn is_preset_name_taken_excludes_self_uuid() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_preset_with_uuid(
+            "u-1", "Sitting", SessionMode::Timer, false, r#"{}"#,
+        ).unwrap();
+        db.insert_preset_with_uuid(
+            "u-2", "Walking", SessionMode::Timer, false, r#"{}"#,
+        ).unwrap();
+        // Collision with another preset's name.
+        assert!(db.is_preset_name_taken("Walking", "u-1").unwrap());
+        // Renaming to own current name — case-insensitive — is allowed.
+        assert!(!db.is_preset_name_taken("sitting", "u-1").unwrap());
+        // Brand-new name is fine.
+        assert!(!db.is_preset_name_taken("Sleeping", "u-1").unwrap());
+    }
+
+    #[test]
+    fn find_preset_by_uuid_returns_some_when_present() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_preset_with_uuid(
+            "u-1", "Sitting", SessionMode::Timer, true, r#"{"x":1}"#,
+        ).unwrap();
+        let p = db.find_preset_by_uuid("u-1").unwrap().unwrap();
+        assert_eq!(p.name, "Sitting");
+        assert!(p.is_starred);
+        assert_eq!(p.config_json, r#"{"x":1}"#);
+    }
+
+    #[test]
+    fn find_preset_by_uuid_returns_none_when_absent() {
+        let db = Database::open_in_memory().unwrap();
+        assert!(db.find_preset_by_uuid("missing").unwrap().is_none());
+    }
+
+    #[test]
+    fn update_preset_name_changes_the_name_and_bumps_updated_iso() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_preset_with_uuid(
+            "u-1", "Sitting", SessionMode::Timer, false, r#"{}"#,
+        ).unwrap();
+        let before = db.find_preset_by_uuid("u-1").unwrap().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        db.update_preset_name("u-1", "Morning Sit").unwrap();
+        let after = db.find_preset_by_uuid("u-1").unwrap().unwrap();
+        assert_eq!(after.name, "Morning Sit");
+        assert_eq!(after.created_iso, before.created_iso);
+        assert!(after.updated_iso > before.updated_iso);
+    }
+
+    #[test]
+    fn update_preset_name_duplicate_returns_error_and_rolls_back() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_preset_with_uuid(
+            "u-1", "Sitting", SessionMode::Timer, false, r#"{}"#,
+        ).unwrap();
+        db.insert_preset_with_uuid(
+            "u-2", "Walking", SessionMode::Timer, false, r#"{}"#,
+        ).unwrap();
+        let result = db.update_preset_name("u-1", "Walking");
+        assert!(matches!(result, Err(DbError::DuplicatePreset(_))));
+        // u-1 still has its original name.
+        let p = db.find_preset_by_uuid("u-1").unwrap().unwrap();
+        assert_eq!(p.name, "Sitting");
+    }
+
+    #[test]
+    fn update_preset_name_unknown_uuid_is_silent_noop() {
+        let db = Database::open_in_memory().unwrap();
+        db.update_preset_name("missing", "Foo").unwrap();
+        let events: Vec<_> = db.pending_events().unwrap()
+            .into_iter()
+            .filter(|(_, e)| e.kind == "preset_update")
+            .collect();
+        assert!(events.is_empty(), "unknown uuid emits no event");
+    }
+
+    #[test]
+    fn update_preset_config_replaces_the_config_blob() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_preset_with_uuid(
+            "u-1", "Sitting", SessionMode::Timer, false, r#"{"old":1}"#,
+        ).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        db.update_preset_config("u-1", r#"{"new":2}"#).unwrap();
+        let p = db.find_preset_by_uuid("u-1").unwrap().unwrap();
+        assert_eq!(p.config_json, r#"{"new":2}"#);
+    }
+
+    #[test]
+    fn update_preset_config_emits_one_preset_update_event() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_preset_with_uuid(
+            "u-1", "Sitting", SessionMode::Timer, false, r#"{}"#,
+        ).unwrap();
+        db.update_preset_config("u-1", r#"{"x":1}"#).unwrap();
+        let updates: Vec<_> = db.pending_events().unwrap()
+            .into_iter()
+            .filter(|(_, e)| e.kind == "preset_update")
+            .collect();
+        assert_eq!(updates.len(), 1);
+    }
+
+    #[test]
+    fn update_preset_starred_toggles_the_flag() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_preset_with_uuid(
+            "u-1", "Sitting", SessionMode::Timer, false, r#"{}"#,
+        ).unwrap();
+        db.update_preset_starred("u-1", true).unwrap();
+        assert!(db.find_preset_by_uuid("u-1").unwrap().unwrap().is_starred);
+        db.update_preset_starred("u-1", false).unwrap();
+        assert!(!db.find_preset_by_uuid("u-1").unwrap().unwrap().is_starred);
+    }
+
+    #[test]
+    fn delete_preset_removes_the_row_and_emits_tombstone() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_preset_with_uuid(
+            "u-1", "Sitting", SessionMode::Timer, false, r#"{}"#,
+        ).unwrap();
+        db.delete_preset("u-1").unwrap();
+        assert!(db.find_preset_by_uuid("u-1").unwrap().is_none());
+        let tombstones: Vec<_> = db.pending_events().unwrap()
+            .into_iter()
+            .filter(|(_, e)| e.kind == "preset_delete")
+            .collect();
+        assert_eq!(tombstones.len(), 1);
+    }
+
+    #[test]
+    fn delete_preset_unknown_uuid_emits_no_event() {
+        let db = Database::open_in_memory().unwrap();
+        db.delete_preset("never-existed").unwrap();
+        let tombstones: Vec<_> = db.pending_events().unwrap()
+            .into_iter()
+            .filter(|(_, e)| e.kind == "preset_delete")
+            .collect();
+        assert!(tombstones.is_empty());
+    }
+
+    // ── Presets — sync replay (apply_event / replay_events) ───────────
+
+    #[test]
+    fn apply_event_preset_insert_creates_the_row_on_a_fresh_peer() {
+        let peer = Database::open_in_memory().unwrap();
+        let payload = serde_json::json!({
+            "uuid": "u-1",
+            "name": "Sitting",
+            "mode": "timer",
+            "is_starred": true,
+            "config_json": "{\"dur\":900}",
+            "created_iso": "2026-05-04T10:00:00Z",
+            "updated_iso": "2026-05-04T10:00:00Z",
+        });
+        peer.apply_event(&synth_event("preset_insert", "u-1", 1, "dev-a", payload))
+            .unwrap();
+        let p = peer.find_preset_by_uuid("u-1").unwrap()
+            .expect("row materialised on peer");
+        assert_eq!(p.name, "Sitting");
+        assert_eq!(p.mode, SessionMode::Timer);
+        assert!(p.is_starred);
+        assert_eq!(p.config_json, r#"{"dur":900}"#);
+    }
+
+    #[test]
+    fn apply_event_preset_update_overwrites_fields_after_insert() {
+        let peer = Database::open_in_memory().unwrap();
+        peer.apply_event(&synth_event("preset_insert", "u-1", 1, "dev-a",
+            serde_json::json!({
+                "uuid": "u-1", "name": "Sitting", "mode": "timer",
+                "is_starred": false, "config_json": "{\"v\":1}",
+                "created_iso": "2026-05-04T10:00:00Z",
+                "updated_iso": "2026-05-04T10:00:00Z",
+            }))).unwrap();
+        peer.apply_event(&synth_event("preset_update", "u-1", 5, "dev-a",
+            serde_json::json!({
+                "uuid": "u-1", "name": "Morning Sit", "mode": "timer",
+                "is_starred": true, "config_json": "{\"v\":2}",
+                "created_iso": "2026-05-04T10:00:00Z",
+                "updated_iso": "2026-05-04T10:05:00Z",
+            }))).unwrap();
+        let p = peer.find_preset_by_uuid("u-1").unwrap().unwrap();
+        assert_eq!(p.name, "Morning Sit");
+        assert!(p.is_starred);
+        assert_eq!(p.config_json, r#"{"v":2}"#);
+    }
+
+    #[test]
+    fn apply_event_preset_delete_removes_the_row() {
+        let peer = Database::open_in_memory().unwrap();
+        peer.apply_event(&synth_event("preset_insert", "u-1", 1, "dev-a",
+            serde_json::json!({
+                "uuid": "u-1", "name": "Sitting", "mode": "timer",
+                "is_starred": false, "config_json": "{}",
+                "created_iso": "x", "updated_iso": "x",
+            }))).unwrap();
+        peer.apply_event(&synth_event("preset_delete", "u-1", 5, "dev-a",
+            serde_json::json!({"uuid": "u-1"}))).unwrap();
+        assert!(peer.find_preset_by_uuid("u-1").unwrap().is_none());
+    }
+
+    #[test]
+    fn apply_event_preset_tombstone_resists_lower_lamport_insert() {
+        // Out-of-order delivery: delete arrives first (ts=10), then a
+        // late insert event with ts=5. Tombstone wins, row stays absent.
+        let peer = Database::open_in_memory().unwrap();
+        peer.apply_event(&synth_event("preset_delete", "u-1", 10, "dev-a",
+            serde_json::json!({"uuid": "u-1"}))).unwrap();
+        peer.apply_event(&synth_event("preset_insert", "u-1", 5, "dev-a",
+            serde_json::json!({
+                "uuid": "u-1", "name": "Sitting", "mode": "timer",
+                "is_starred": false, "config_json": "{}",
+                "created_iso": "x", "updated_iso": "x",
+            }))).unwrap();
+        assert!(peer.find_preset_by_uuid("u-1").unwrap().is_none(),
+            "tombstone with higher ts wins over later-applied lower-ts insert");
+    }
+
+    #[test]
+    fn replay_events_round_trips_a_preset_through_create_rename_delete() {
+        // Full lifecycle on device A, replayed on device B from the
+        // event log alone.
+        let dev_a = Database::open_in_memory().unwrap();
+        dev_a.insert_preset_with_uuid(
+            "u-1", "Sitting", SessionMode::Timer, true, r#"{"dur":900}"#,
+        ).unwrap();
+        dev_a.update_preset_name("u-1", "Morning Sit").unwrap();
+        dev_a.update_preset_starred("u-1", false).unwrap();
+
+        let events: Vec<Event> = dev_a.pending_events().unwrap()
+            .into_iter().map(|(_, e)| e).collect();
+
+        let dev_b = Database::open_in_memory().unwrap();
+        dev_b.replay_events(&events).unwrap();
+        let p = dev_b.find_preset_by_uuid("u-1").unwrap()
+            .expect("device B materialised the preset from events alone");
+        assert_eq!(p.name, "Morning Sit");
+        assert!(!p.is_starred);
+        assert_eq!(p.config_json, r#"{"dur":900}"#);
+    }
+
+    #[test]
+    fn replay_events_with_delete_at_the_end_leaves_the_row_absent() {
+        let dev_a = Database::open_in_memory().unwrap();
+        dev_a.insert_preset_with_uuid(
+            "u-1", "Sitting", SessionMode::Timer, false, r#"{}"#,
+        ).unwrap();
+        dev_a.delete_preset("u-1").unwrap();
+        let events: Vec<Event> = dev_a.pending_events().unwrap()
+            .into_iter().map(|(_, e)| e).collect();
+
+        let dev_b = Database::open_in_memory().unwrap();
+        dev_b.replay_events(&events).unwrap();
+        assert!(dev_b.find_preset_by_uuid("u-1").unwrap().is_none());
+    }
+}
