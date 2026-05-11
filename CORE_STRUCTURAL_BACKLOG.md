@@ -1455,6 +1455,283 @@ avoid silently losing items in a rewrite.
 - SQLite locale-aware collation requires an extension; defer
   until a user with non-ASCII label names actually complains.
 
+## Tier 0 — Seventh-pass additions
+
+### Schema-version sentinel + integrity check on open
+- `meditate-core/src/db.rs:709-720` sets `journal_mode`,
+  `synchronous`, `foreign_keys` but never `PRAGMA user_version`
+  and never `PRAGMA integrity_check`.
+- Per `feedback_meditate_no_compat` the schema is wipe-and-
+  reimport — but core has no way to **detect** a forwards-
+  incompatible DB. Downgrade across a schema bump silently
+  corrupts data. SD-card corruption on Librem 5 silently
+  passes through and surfaces weeks later as wrong totals.
+- Fix: stamp `PRAGMA user_version = N` at `Database::init`;
+  on `open`, refuse-and-log if `user_version` exceeds the
+  build's known version. Run `PRAGMA quick_check` on open
+  with one diag line on first failure.
+
+### Seed-application logs nothing on first launch
+- `db.rs:3547 seed_all_non_audio` + `seed_bundled_*` are
+  silent. A user's first-ever launch shows `db open ok` then
+  jumps to runtime events. If `seed_box_breath_phases` fails
+  to create 4 rows, the bug report "Box-Breath uses wrong
+  defaults" arrives with zero diagnostic context.
+- Fix: one summary line per seed at the call site near
+  `application.rs:104` — `seeded box_breath_phases: 4 rows`,
+  etc.
+
+## Tier 1 — Seventh-pass additions
+
+### Core never calls `diag::log` — all 33 sites are shell-side
+- `grep diag::log meditate-core/src/**` returns ZERO hits.
+  Every log line is authored from the gtk shell. Push/pull
+  internals (`sync/orchestrator.rs`, `sync/webdav.rs`,
+  conflict resolution, `apply_event_inner` unknown-kind
+  branch at `db.rs:1151`) are completely silent.
+- When sync produces a wrong outcome on Android (no gtk
+  wrapper), there will be no trail. Re-invents 33 call
+  sites in every shell.
+- Fix: plumb a `&dyn Fn(&str)` log sink through `Sync::new`
+  / `Database::init` so core can emit boundary events
+  portably. Single biggest leverage point — unlocks
+  observability for Android, would have caught both the
+  `SyncCoordinator` race and the `wipe_local_event_log`
+  subset bug.
+
+### `sync::backoff` uses `Instant::now()` (wall-clock-frozen on suspend)
+- `meditate-core/src/sync/backoff.rs:29,49,69,77` and the
+  sleep in `sync/orchestrator.rs:466-468` use `Instant`
+  (CLOCK_MONOTONIC, freezes during suspend).
+- A 30-s server-asked backoff that straddles a 10-min
+  suspend ends ~30 s after **resume**, not 30 s after the
+  429. Inconsistent with the codebase's deliberate
+  `boot_time_now()` discipline elsewhere.
+- Fix: switch to `Duration` (boot-time); pass `now: Duration`
+  to a `wait_for(now)` API. Drop `wait_until_now`/
+  `note_429` convenience wrappers — require callers to pass
+  a `boot_time_now()` value.
+
+### Sync-indicator polling timer fires every 2s even when window unmapped
+- `src/window/imp.rs:607-616` is the only periodic non-
+  session timer in the whole shell. Battery-hostile on
+  Librem 5 / Android in background.
+- Fix: gate on `obj.is_mapped()` or replace with the half-
+  built `notify::is_syncing` + `connect_map` refresh at
+  `:598`. Removes it leaves the app fully event-driven when
+  idle.
+
+### `DbError::Sqlite`/`Csv` dead-end at user UI; `DuplicateLabel(name)` not surfaced
+- `src/db/mod.rs:200,229` maps every `DbError::Sqlite` to a
+  raw `rusqlite::Error` → generic toast. `DuplicateLabel`/
+  `Preset`/`GuidedFile`/`VibrationPattern` carry the name
+  but get folded back into a synthesized `SqliteFailure`
+  with developer-language "UNIQUE constraint failed" message.
+- Fix: map `DuplicateLabel(name)` directly to a translatable
+  user toast at `src/db/mod.rs:197`, NOT to a fake rusqlite
+  error.
+
+### `SyncCoordinator::request` has zero multi-thread tests
+- All 6 tests in `sync/coordinator.rs:108-173` are single-
+  threaded — exercise the API, not the atomic ordering. The
+  Tier-0 drop-trigger race already in backlog slipped past
+  because nothing pumps two `request()`s from different
+  threads.
+- Fix: loom (or `std::thread::spawn` × N + barrier) test
+  that 1000 races never lose a request.
+
+### Panic-hook installation has no test verifying it writes
+- `diag.rs:102 install_panic_hook` is wired; only test
+  (`log_without_init_is_noop`) admits OnceLock prevents
+  real testing. A future refactor could silently drop the
+  hook and CI wouldn't notice.
+- Fix: forked-process test (`std::process::Command`
+  invoking the test binary with a `MEDITATE_PANIC_TEST=1`
+  env switch, asserting post-mortem log content).
+
+### Zero integration tests — `meditate-core/tests/` does not exist
+- All 933 tests are `#[cfg(test)] mod tests` inline. Cross-
+  module flows (create label → save preset → close DB →
+  reopen → sync push → wipe local → pull → verify preset
+  still references label by UUID) aren't covered. The 9-arm
+  `apply_event_inner` dispatch is tested per-arm but never
+  end-to-end across all entity types in one transaction.
+- Fix: start `meditate-core/tests/sync_roundtrip.rs` with one
+  such cross-cutting scenario; grow over time.
+
+## Tier 2 — Seventh-pass additions
+
+### Accessibility: `DurationSpeechKey` companion to the `format_*` family
+- `format::format_time`/`format_hhmm`/`format_duration_brief`
+  return display strings the shell hands to SR verbatim.
+  Orca/TalkBack voice "twelve colon thirty-four" or "zero
+  zero colon one zero" — not "ten minutes".
+- For the idle hero (`idle_hero_label("00:10")` for a 10-
+  min target) and Box-Breath counter, SR should say "ten
+  minutes" / "ten minutes of five minutes".
+- Fix: add typed companion `DurationSpeechKey::{HoursMinutes
+  {h,m}, MinutesSeconds{m,s}, MinutesOnly{m}, Zero}` — same
+  input as the formatter, emits speech intent. Shell maps
+  each to `ngettext`. Fold with the open sixth-pass `HmKey`
+  item — one PR.
+
+### Accessibility: `SoundName::{Resolved,Missing}` enum
+- The pending Tier-2 `sound_label`/`pattern_label` → `Option
+  <String>` sweep is a fine start, but a typed `Missing`
+  variant lets the shell announce the SR affordance ("Bell
+  sound: missing, double-tap to re-pick") distinct from the
+  visual empty-subtitle.
+- Fix: roll into the existing `sound_label` migration —
+  return `SoundName::{Resolved(String), Missing}` instead
+  of bare `Option<String>`.
+
+### Accessibility: typed `Announcement` / `ToastKey` enum for live regions
+- `Effect`/`TickOutcome` lack a shell-portable surface for
+  SR live-region intents (session saved, sync complete,
+  undo toast, label saved, import done). Every shell composes
+  its own toast string today; Android will diverge.
+- Fix: typed `Announcement` enum (`SessionSaved`,
+  `SessionDeleted{count}`, `SyncOk{secs_ago}`, `SyncFailed
+  (SyncFailureKind)`, `ImportComplete{n}`, `UndoAvailable
+  {kind}`). Bundle with the pending `SaveSyncError`/
+  `TestPrereq` collapse.
+
+### Accessibility: `MiniStatValue::{NoData,Value}` to keep dash glyphs out of SR
+- `format::mini_stat_or_dash` returns `"–"`; SR reads "minus"
+  or "dash".
+- Fix: `MiniStatValue::{NoData, Value(i64)}`. Shell renders
+  `set_visible(false)` on the value label and puts "no data
+  this week" on the tile's accessible-name. One-line variant
+  change at the call site.
+
+### Accessibility: `contrib::grid_summary` + `ContribCell::speech_role`
+- 91 cells × per-cell SR labels = a wall when Orca enters
+  the heatmap. Add `ContribCell::speech_role: CellRole::
+  {Future, Today, Past}` (shell already derives this from
+  two bools) and `contrib::grid_summary(&cells) ->
+  GridSummary { weeks_with_data, total_mins, best_day }` so
+  the shell can put the summary on the grid container's
+  accessible-description and `accessible-hidden=true` the
+  individual cells (Orca skips them, Tab lands on summary).
+
+### Performance: `BackoffState` switch to `Duration` (subsumed by Tier-1 sync::backoff fix)
+- See Tier-1 sync::backoff item — same code change resolves
+  both the suspend correctness gap and the inconsistency
+  with the rest of the codebase's `boot_time_now` discipline.
+
+### Operational: diag-log format not machine-parseable
+- `diag.rs:57 writeln!(f, "{} {msg}", timestamp())` produces
+  `2026-05-11 14:23:01 sync: …`. For an eventual Android
+  Sentry/Bugsnag bridge or `meditate logs --json` CLI this
+  requires regex parsing.
+- Fix: keep human format but prefix a structured tag:
+  `2026-05-11T14:23:01Z [sync.push] pulled=3 pushed=12`.
+  Backwards-compat for current 33 call sites = single-day
+  refactor.
+
+### Operational: diag-log timestamps drift across suspend
+- `meditate-core/src/diag.rs:74` uses wall-clock
+  (`chrono::Local::now`). After a suspend crossing midnight
+  or DST, adjacent log lines have wildly different
+  timestamps with no visible "device was suspended" signal.
+- Fix: append `[+Ns since prev]` boot-time delta, or emit
+  one `boottime jumped from X to Y (suspend?)` heuristic
+  line when consecutive boot-time deltas exceed 5 s.
+
+### Operational: `SyncRunnerError` UX collapses 3 distinct conditions
+- `application.rs:432` logs every `SyncRunnerError` variant
+  with the same `sync: {e}` prefix — keychain failure, server
+  500, transient network, `Unconfigured`, `PasswordMissing`,
+  `RemoteDataLost`. Display impls differ
+  (`sync_runner.rs:62-77`), but user-facing toast doesn't
+  distinguish them.
+- Fix: add `user_message()` to `SyncRunnerError` returning
+  `(severity, msg_key)`; shell maps to toast level +
+  translatable string per variant.
+
+### Operational: no proptest / fuzz harness
+- `Cargo.toml` lists no `proptest`/`quickcheck`. Replay
+  convergence ("events in any random permutation must yield
+  the same state") is the canonical proptest use-case — the
+  existing `apply_event_*_replay_round_trip_across_peers`
+  tests at `db.rs:10178,10201` hand-roll a fixed sequence.
+  CSV import is the second screaming candidate.
+- Fix: add `proptest` dev-dep; one property for sync replay
+  invariance.
+
+### Operational: recovery flow has no integration test from user POV
+- `wipe_local_event_log` is unit-tested at `db.rs:7534`
+  (and the Tier-0 subset-bug it ships with is in backlog).
+  But the **recovery flow** (wipe → sync → pull → reach
+  steady state) only exists in `recovery_dialog.rs` glue
+  with no test.
+- Fix: integration test driving the full sequence against
+  a `FakeWebDav`.
+
+### Operational: wall-clock test timing in `time.rs:114,138`
+- Two tests sleep 10 ms / 1 s and assert `>= 5 ms` /
+  monotonic. On a loaded CI runner the 5 ms assertion is
+  flake-prone.
+- Fix: inject a clock; `boot_time_now` is a unit-testable
+  function that should take an optional `clock_source`.
+
+## Tier 3 — Seventh-pass additions
+
+### Accessibility: `breath::PhaseProgressKey { phase, remaining_secs }`
+- Visual Box-Breath has the orbiting dot + countdown; SR
+  hears only "Breathe in", "Hold", "Breathe out". A blind
+  user can't anticipate phase transitions.
+- Fix: add `PhaseProgressKey { phase: PhaseRunningLabelKey,
+  remaining_secs: u32 }` so the shell can announce "Hold, 3
+  seconds" on a slower cadence via a live region. Strictly
+  additive; visual flow unchanged.
+
+### Power: interval bells coalesce on resume (doc-only)
+- `meditate-core/src/bells.rs:75-79`. Suspend across e.g.
+  three 5-min interval bell targets fires only ONE ring
+  post-resume, then rerolls from current elapsed. Likely
+  desired (don't fire-storm 3 bells on wake), but the
+  invariant isn't documented.
+- Fix: doc-comment on `ActiveBell::tick`.
+
+### Power: Box-Breath frame-clock has no 1Hz fallback
+- `src/window/imp.rs:440` (`drawing_area.add_tick_callback`)
+  drives both drawing AND `Session::tick` for cue dispatch
+  via `tick_box_breath`. The 1 Hz timer at `:2481` covers
+  timer-mode sessions; Box-Breath has no fallback if the
+  compositor stops compositing while the window stays
+  mapped.
+- Real-world the device suspends anyway. Sev: low.
+- Fix: doc-comment on `tick_box_breath`'s caller; consider
+  a 1 Hz safety net only if it bites in practice.
+
+### Power: verify screen-awake cookie survives suspend
+- `src/timer/imp.rs:1054-1066` calls `gtk::Application::
+  inhibit`. The cookie remains valid across suspend in
+  theory; verify once on Librem 5 by adding a
+  `diag::log("inhibit cookie=…")` on inhibit/uninhibit,
+  manual suspend-resume cycle, drop the log line if
+  confirmed.
+
+### Operational: no `cargo test` / `clippy` in CI
+- `.github/workflows/flatpak.yml` runs `appstreamcli
+  validate`, `desktop-file-validate`, `flatpak-builder` —
+  but never `cargo test --workspace` or `cargo clippy --
+  -D warnings`. The "cargo test must pass before deploy"
+  memory rule is enforced only by Janek's terminal.
+- Depends on the workspace declaration Tier-0 item. Once
+  that lands, add a `cargo-test` job to flatpak.yml.
+
+### Operational: diag-log on-disk path documented nowhere
+- `README.md:40` mentions the About → Troubleshooting view
+  and `application.rs:181` has a toast hint. But the
+  absolute on-disk path (`~/.var/app/io.github.janekbt.
+  Meditate/data/meditate/diagnostics.log` on Flatpak) is
+  documented nowhere — if the About dialog itself crashes,
+  user has nowhere to look.
+- Fix: one line in README listing the path on Flatpak and
+  non-Flatpak.
+
 ## Skipped (intentionally not migrating)
 
 (Empty for now — fill in as items get rejected.)
