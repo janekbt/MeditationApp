@@ -144,6 +144,100 @@ pub fn x_label_kind(i: usize, days: u32, months: &[u32]) -> XLabelKind {
     }
 }
 
+/// Period selector for the stats chart. `days()` returns how many
+/// trailing calendar days the chart should cover. Persisted to
+/// settings as the `as_db_str` form so the toggle survives restart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChartPeriod {
+    Week,
+    FourWeeks,
+    ThreeMonths,
+    OneYear,
+}
+
+impl ChartPeriod {
+    /// How many trailing days this period covers.
+    pub fn days(self) -> u32 {
+        match self {
+            ChartPeriod::Week => 7,
+            ChartPeriod::FourWeeks => 28,
+            ChartPeriod::ThreeMonths => 90,
+            ChartPeriod::OneYear => 365,
+        }
+    }
+
+    /// Stable string form for persisted settings + toggle-group
+    /// active-name values. Order matches the gtk shell's existing
+    /// ToggleGroup children so a DB written before this migration
+    /// still parses.
+    pub fn as_db_str(self) -> &'static str {
+        match self {
+            ChartPeriod::Week => "1w",
+            ChartPeriod::FourWeeks => "4w",
+            ChartPeriod::ThreeMonths => "3m",
+            ChartPeriod::OneYear => "1y",
+        }
+    }
+
+    /// Parse a persisted / toggle-group name back into the typed
+    /// variant. Unknown / empty input falls back to `Week` — the
+    /// default selection.
+    pub fn from_db_str(s: &str) -> Self {
+        match s {
+            "4w" => ChartPeriod::FourWeeks,
+            "3m" => ChartPeriod::ThreeMonths,
+            "1y" => ChartPeriod::OneYear,
+            _ => ChartPeriod::Week,
+        }
+    }
+}
+
+/// Roll a `(YYYY-MM-DD, secs)` daily series up into the granularity
+/// the stats chart wants for `days`:
+///
+/// - `days >= 365`: collapse into months (same `YYYY-MM` prefix).
+///   Each month-bar carries the sum of every day in that month
+///   plus a representative date_str (the first day seen).
+/// - `days >= 90`: collapse into chunks of 7 (weeks). The chunk's
+///   first date_str represents the week.
+/// - otherwise: daily, untouched.
+///
+/// Caller passes the dense daily series (with zero-filled gaps).
+/// Returns owned `(String, i64)` rows in display order.
+pub fn aggregate_for_chart_period(
+    daily: &[(String, i64)],
+    days: u32,
+) -> Vec<(String, i64)> {
+    if days >= 365 {
+        let mut months: Vec<(String, i64)> = Vec::new();
+        for (date_str, dur) in daily {
+            // Month-key match — both keys are YYYY-MM-DD so the
+            // first 7 chars are YYYY-MM.
+            let same = months
+                .last()
+                .map(|(k, _)| k.len() >= 7 && date_str.len() >= 7 && k[..7] == date_str[..7])
+                .unwrap_or(false);
+            if same {
+                months.last_mut().unwrap().1 += dur;
+            } else {
+                months.push((date_str.clone(), *dur));
+            }
+        }
+        months
+    } else if days >= 90 {
+        daily
+            .chunks(7)
+            .map(|c| {
+                let key = c.first().map(|(k, _)| k.clone()).unwrap_or_default();
+                let sum = c.iter().map(|(_, d)| d).sum();
+                (key, sum)
+            })
+            .collect()
+    } else {
+        daily.to_vec()
+    }
+}
+
 /// Single-letter month code (J/F/M/…) for month-number `1..=12`.
 /// Locale-independent — the longer chart views use this to label
 /// month boundaries without committing to a translated string.
@@ -236,6 +330,86 @@ mod tests {
     fn month_letter_covers_full_year() {
         let letters: Vec<&'static str> = (1..=12).map(month_letter).collect();
         assert_eq!(letters, vec!["J","F","M","A","M","J","J","A","S","O","N","D"]);
+    }
+
+    // ── ChartPeriod ───────────────────────────────────────────────────
+
+    #[test]
+    fn chart_period_days_per_variant() {
+        assert_eq!(ChartPeriod::Week.days(), 7);
+        assert_eq!(ChartPeriod::FourWeeks.days(), 28);
+        assert_eq!(ChartPeriod::ThreeMonths.days(), 90);
+        assert_eq!(ChartPeriod::OneYear.days(), 365);
+    }
+
+    #[test]
+    fn chart_period_round_trip_via_db_str() {
+        for p in [
+            ChartPeriod::Week,
+            ChartPeriod::FourWeeks,
+            ChartPeriod::ThreeMonths,
+            ChartPeriod::OneYear,
+        ] {
+            assert_eq!(ChartPeriod::from_db_str(p.as_db_str()), p);
+        }
+    }
+
+    #[test]
+    fn chart_period_unknown_input_falls_back_to_week() {
+        assert_eq!(ChartPeriod::from_db_str(""), ChartPeriod::Week);
+        assert_eq!(ChartPeriod::from_db_str("nonsense"), ChartPeriod::Week);
+        // The "1w" alias matches the default-not-explicit case.
+        assert_eq!(ChartPeriod::from_db_str("1w"), ChartPeriod::Week);
+    }
+
+    // ── aggregate_for_chart_period ────────────────────────────────────
+
+    fn daily(rows: &[(&str, i64)]) -> Vec<(String, i64)> {
+        rows.iter().map(|(d, v)| (d.to_string(), *v)).collect()
+    }
+
+    #[test]
+    fn aggregate_short_periods_stay_daily() {
+        let rows = daily(&[
+            ("2024-04-15", 10),
+            ("2024-04-16", 20),
+            ("2024-04-17", 30),
+        ]);
+        assert_eq!(aggregate_for_chart_period(&rows, 7), rows);
+        assert_eq!(aggregate_for_chart_period(&rows, 28), rows);
+    }
+
+    #[test]
+    fn aggregate_three_month_view_chunks_into_weeks_of_seven() {
+        let mut rows: Vec<(String, i64)> = Vec::new();
+        for i in 0..14 {
+            rows.push((format!("2024-04-{:02}", i + 1), 10));
+        }
+        let out = aggregate_for_chart_period(&rows, 90);
+        // 14 days → 2 weeks → 2 rows of 70 each.
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].1, 70);
+        assert_eq!(out[1].1, 70);
+        // Key of each chunk is the first day of the week.
+        assert_eq!(out[0].0, "2024-04-01");
+        assert_eq!(out[1].0, "2024-04-08");
+    }
+
+    #[test]
+    fn aggregate_one_year_view_collapses_into_months() {
+        let mut rows: Vec<(String, i64)> = Vec::new();
+        // 5 days in April + 3 days in May.
+        for d in 28..=30 {
+            rows.push((format!("2024-04-{d}"), 10));
+        }
+        for d in 1..=3 {
+            rows.push((format!("2024-05-0{d}"), 20));
+        }
+        let out = aggregate_for_chart_period(&rows, 365);
+        assert_eq!(out.len(), 2);
+        // First month: 3 × 10 = 30. Second: 3 × 20 = 60.
+        assert_eq!(out[0].1, 30);
+        assert_eq!(out[1].1, 60);
     }
 
     #[test]

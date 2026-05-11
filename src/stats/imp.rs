@@ -502,25 +502,8 @@ impl StatsView {
             })
             .collect();
 
-        // Aggregate: monthly for 1 year, weekly for 3 months
-        let data: Vec<(String, i64)> = if days >= 365 {
-            let mut months: Vec<(String, i64)> = Vec::new();
-            for (date_str, dur) in &daily {
-                let same = months.last().map(|(k, _)| k[..7] == date_str[..7]).unwrap_or(false);
-                if same {
-                    months.last_mut().unwrap().1 += dur;
-                } else {
-                    months.push((date_str.clone(), *dur));
-                }
-            }
-            months
-        } else if days >= 90 {
-            daily.chunks(7)
-                .map(|c| (c[0].0.clone(), c.iter().map(|(_, d)| d).sum()))
-                .collect()
-        } else {
-            daily
-        };
+        // Aggregate (monthly for 1y, weekly for 3m, else daily) lives in core.
+        let data = meditate_core::date_math::aggregate_for_chart_period(&daily, days);
 
         while let Some(child) = self.chart_container.first_child() {
             self.chart_container.remove(&child);
@@ -646,12 +629,11 @@ impl StatsView {
     }
 
     fn current_chart_days(&self) -> u32 {
-        match self.period_toggle_group.active_name().as_deref() {
-            Some("4w") => 28,
-            Some("3m") => 90,
-            Some("1y") => 365,
-            _          => 7,
-        }
+        let name = self.period_toggle_group.active_name();
+        meditate_core::date_math::ChartPeriod::from_db_str(
+            name.as_deref().unwrap_or(""),
+        )
+        .days()
     }
 }
 
