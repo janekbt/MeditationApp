@@ -345,3 +345,401 @@ impl Database {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::{test_helpers::*, Event};
+
+    fn synth_interval_bell_insert(
+        bell_uuid: &str,
+        lamport_ts: i64,
+        device: &str,
+        kind: IntervalBellKind,
+        minutes: u32,
+        jitter_pct: u32,
+        sound: &str,
+    ) -> Event {
+        Event {
+            event_uuid: format!("ev-insert-{bell_uuid}-{lamport_ts}-{device}"),
+            lamport_ts,
+            device_id: device.to_string(),
+            kind: "interval_bell_insert".to_string(),
+            target_id: bell_uuid.to_string(),
+            payload: serde_json::json!({
+                "uuid": bell_uuid,
+                "kind": kind.as_db_str(),
+                "minutes": minutes,
+                "jitter_pct": jitter_pct,
+                "sound": sound,
+                "enabled": true,
+                "created_iso": "2026-05-03T12:00:00Z",
+            }).to_string(),
+        }
+    }
+
+    fn synth_interval_bell_update(
+        bell_uuid: &str,
+        lamport_ts: i64,
+        device: &str,
+        minutes: u32,
+        enabled: bool,
+    ) -> Event {
+        Event {
+            event_uuid: format!("ev-update-{bell_uuid}-{lamport_ts}-{device}"),
+            lamport_ts,
+            device_id: device.to_string(),
+            kind: "interval_bell_update".to_string(),
+            target_id: bell_uuid.to_string(),
+            payload: serde_json::json!({
+                "uuid": bell_uuid,
+                "kind": "interval",
+                "minutes": minutes,
+                "jitter_pct": 0,
+                "sound": "bowl",
+                "enabled": enabled,
+                "created_iso": "2026-05-03T12:00:00Z",
+            }).to_string(),
+        }
+    }
+
+    fn synth_interval_bell_delete(
+        bell_uuid: &str,
+        lamport_ts: i64,
+        device: &str,
+    ) -> Event {
+        Event {
+            event_uuid: format!("ev-delete-{bell_uuid}-{lamport_ts}-{device}"),
+            lamport_ts,
+            device_id: device.to_string(),
+            kind: "interval_bell_delete".to_string(),
+            target_id: bell_uuid.to_string(),
+            payload: serde_json::json!({ "uuid": bell_uuid }).to_string(),
+        }
+    }
+
+    #[test]
+    fn interval_bell_kind_round_trips_through_db_strings() {
+        assert_eq!(IntervalBellKind::Interval.as_db_str(), "interval");
+        assert_eq!(IntervalBellKind::FixedFromStart.as_db_str(), "fixed_from_start");
+        assert_eq!(IntervalBellKind::FixedFromEnd.as_db_str(), "fixed_from_end");
+        assert_eq!(IntervalBellKind::from_db_str("interval"), Some(IntervalBellKind::Interval));
+        assert_eq!(IntervalBellKind::from_db_str("fixed_from_start"), Some(IntervalBellKind::FixedFromStart));
+        assert_eq!(IntervalBellKind::from_db_str("fixed_from_end"), Some(IntervalBellKind::FixedFromEnd));
+    }
+
+    #[test]
+    fn interval_bell_kind_from_db_str_rejects_unknown() {
+        assert_eq!(IntervalBellKind::from_db_str(""), None);
+        assert_eq!(IntervalBellKind::from_db_str("INTERVAL"), None);
+        assert_eq!(IntervalBellKind::from_db_str("from_start"), None);
+        assert_eq!(IntervalBellKind::from_db_str("garbage"), None);
+    }
+
+    #[test]
+    fn insert_interval_bell_inserts_a_row_with_uuid_and_returns_rowid() {
+        let db = Database::open_in_memory().unwrap();
+        let rowid = db
+            .insert_interval_bell(
+                IntervalBellKind::Interval, 9, 30, "bowl",
+                BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound,
+            )
+            .unwrap();
+        assert!(rowid > 0);
+        let bells = db.list_interval_bells().unwrap();
+        assert_eq!(bells.len(), 1);
+        let b = &bells[0];
+        assert_eq!(b.id, rowid);
+        assert!(!b.uuid.is_empty());
+        assert_eq!(b.kind, IntervalBellKind::Interval);
+        assert_eq!(b.minutes, 9);
+        assert_eq!(b.jitter_pct, 30);
+        assert_eq!(b.sound, "bowl");
+        assert!(b.enabled);
+        assert!(!b.created_iso.is_empty());
+    }
+
+    #[test]
+    fn insert_interval_bell_emits_an_interval_bell_insert_event() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_interval_bell(
+            IntervalBellKind::FixedFromStart, 10, 0, "bell",
+            BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound,
+        ).unwrap();
+        let events = db.pending_events().unwrap();
+        let mine: Vec<_> = events
+            .iter()
+            .filter(|(_, e)| e.kind == "interval_bell_insert")
+            .collect();
+        assert_eq!(mine.len(), 1);
+        let payload: serde_json::Value = serde_json::from_str(&mine[0].1.payload).unwrap();
+        assert_eq!(payload["kind"], "fixed_from_start");
+        assert_eq!(payload["minutes"], 10);
+        assert_eq!(payload["jitter_pct"], 0);
+        assert_eq!(payload["sound"], "bell");
+        assert_eq!(payload["enabled"], true);
+        assert!(payload["uuid"].is_string());
+        assert!(payload["created_iso"].is_string());
+    }
+
+    #[test]
+    fn list_interval_bells_returns_rows_in_insert_order() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_interval_bell(IntervalBellKind::Interval, 5, 0, "bowl", BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound).unwrap();
+        db.insert_interval_bell(IntervalBellKind::FixedFromStart, 10, 0, "bell", BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound).unwrap();
+        db.insert_interval_bell(IntervalBellKind::FixedFromEnd, 5, 0, "gong", BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound).unwrap();
+        let bells = db.list_interval_bells().unwrap();
+        assert_eq!(bells.len(), 3);
+        assert_eq!(bells[0].kind, IntervalBellKind::Interval);
+        assert_eq!(bells[1].kind, IntervalBellKind::FixedFromStart);
+        assert_eq!(bells[2].kind, IntervalBellKind::FixedFromEnd);
+    }
+
+    #[test]
+    fn list_interval_bells_returns_empty_when_none_inserted() {
+        let db = Database::open_in_memory().unwrap();
+        assert!(db.list_interval_bells().unwrap().is_empty());
+    }
+
+    #[test]
+    fn update_interval_bell_overwrites_every_mutable_field() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_interval_bell(IntervalBellKind::Interval, 5, 0, "bowl", BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound).unwrap();
+        let uuid = db.list_interval_bells().unwrap()[0].uuid.clone();
+
+        db.update_interval_bell(
+            &uuid,
+            IntervalBellKind::FixedFromStart,
+            12,
+            25,
+            "bell",
+            BUNDLED_PATTERN_PULSE_UUID,
+            SignalMode::Sound,
+            false,
+        ).unwrap();
+
+        let b = &db.list_interval_bells().unwrap()[0];
+        assert_eq!(b.kind, IntervalBellKind::FixedFromStart);
+        assert_eq!(b.minutes, 12);
+        assert_eq!(b.jitter_pct, 25);
+        assert_eq!(b.sound, "bell");
+        assert!(!b.enabled);
+        assert_eq!(b.uuid, uuid);
+    }
+
+    #[test]
+    fn update_interval_bell_emits_an_interval_bell_update_event() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_interval_bell(IntervalBellKind::Interval, 5, 0, "bowl", BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound).unwrap();
+        let uuid = db.list_interval_bells().unwrap()[0].uuid.clone();
+
+        db.update_interval_bell(
+            &uuid,
+            IntervalBellKind::Interval,
+            9,
+            30,
+            "gong",
+            BUNDLED_PATTERN_PULSE_UUID,
+            SignalMode::Sound,
+            true,
+        ).unwrap();
+
+        let events = db.pending_events().unwrap();
+        let updates: Vec<_> = events
+            .iter()
+            .filter(|(_, e)| e.kind == "interval_bell_update")
+            .collect();
+        assert_eq!(updates.len(), 1);
+        let payload: serde_json::Value = serde_json::from_str(&updates[0].1.payload).unwrap();
+        assert_eq!(payload["uuid"], uuid);
+        assert_eq!(payload["kind"], "interval");
+        assert_eq!(payload["minutes"], 9);
+        assert_eq!(payload["jitter_pct"], 30);
+        assert_eq!(payload["sound"], "gong");
+        assert_eq!(payload["enabled"], true);
+    }
+
+    #[test]
+    fn update_interval_bell_unknown_uuid_is_silent_noop() {
+        let db = Database::open_in_memory().unwrap();
+        db.update_interval_bell(
+            "non-existent-uuid",
+            IntervalBellKind::Interval,
+            5,
+            0,
+            "bowl",
+            BUNDLED_PATTERN_PULSE_UUID,
+            SignalMode::Sound,
+            true,
+        ).unwrap();
+        let updates: Vec<_> = db.pending_events().unwrap()
+            .into_iter()
+            .filter(|(_, e)| e.kind == "interval_bell_update")
+            .collect();
+        assert!(updates.is_empty());
+    }
+
+    #[test]
+    fn delete_interval_bell_removes_the_row() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_interval_bell(IntervalBellKind::Interval, 5, 0, "bowl", BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound).unwrap();
+        let uuid = db.list_interval_bells().unwrap()[0].uuid.clone();
+        db.delete_interval_bell(&uuid).unwrap();
+        assert!(db.list_interval_bells().unwrap().is_empty());
+    }
+
+    #[test]
+    fn delete_interval_bell_emits_a_delete_event_with_uuid_target() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_interval_bell(IntervalBellKind::Interval, 5, 0, "bowl", BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound).unwrap();
+        let uuid = db.list_interval_bells().unwrap()[0].uuid.clone();
+        db.delete_interval_bell(&uuid).unwrap();
+        let deletes: Vec<_> = db.pending_events().unwrap()
+            .into_iter()
+            .filter(|(_, e)| e.kind == "interval_bell_delete")
+            .collect();
+        assert_eq!(deletes.len(), 1);
+        assert_eq!(deletes[0].1.target_id, uuid);
+        let payload: serde_json::Value = serde_json::from_str(&deletes[0].1.payload).unwrap();
+        assert_eq!(payload["uuid"], uuid);
+    }
+
+    #[test]
+    fn delete_interval_bell_unknown_uuid_is_silent_noop() {
+        let db = Database::open_in_memory().unwrap();
+        db.delete_interval_bell("non-existent-uuid").unwrap();
+        let deletes: Vec<_> = db.pending_events().unwrap()
+            .into_iter()
+            .filter(|(_, e)| e.kind == "interval_bell_delete")
+            .collect();
+        assert!(deletes.is_empty());
+    }
+
+    #[test]
+    fn set_interval_bell_enabled_toggles_the_flag_only() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_interval_bell(IntervalBellKind::Interval, 9, 30, "bell", BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound).unwrap();
+        let uuid = db.list_interval_bells().unwrap()[0].uuid.clone();
+
+        db.set_interval_bell_enabled(&uuid, false).unwrap();
+        let b = &db.list_interval_bells().unwrap()[0];
+        assert!(!b.enabled);
+        assert_eq!(b.kind, IntervalBellKind::Interval);
+        assert_eq!(b.minutes, 9);
+        assert_eq!(b.jitter_pct, 30);
+        assert_eq!(b.sound, "bell");
+
+        db.set_interval_bell_enabled(&uuid, true).unwrap();
+        assert!(db.list_interval_bells().unwrap()[0].enabled);
+    }
+
+    #[test]
+    fn set_interval_bell_enabled_emits_an_update_event_with_new_state() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_interval_bell(IntervalBellKind::Interval, 9, 30, "bell", BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound).unwrap();
+        let uuid = db.list_interval_bells().unwrap()[0].uuid.clone();
+        db.set_interval_bell_enabled(&uuid, false).unwrap();
+        let updates: Vec<_> = db.pending_events().unwrap()
+            .into_iter()
+            .filter(|(_, e)| e.kind == "interval_bell_update")
+            .collect();
+        assert_eq!(updates.len(), 1);
+        let payload: serde_json::Value = serde_json::from_str(&updates[0].1.payload).unwrap();
+        assert_eq!(payload["enabled"], false);
+        assert_eq!(payload["minutes"], 9);
+    }
+
+    #[test]
+    fn apply_event_interval_bell_insert_creates_the_row() {
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_interval_bell_insert(
+            "bell-1", 5, "dev-A",
+            IntervalBellKind::Interval, 9, 30, "bell",
+        )).unwrap();
+        let bells = db.list_interval_bells().unwrap();
+        assert_eq!(bells.len(), 1);
+        assert_eq!(bells[0].uuid, "bell-1");
+        assert_eq!(bells[0].kind, IntervalBellKind::Interval);
+        assert_eq!(bells[0].minutes, 9);
+        assert_eq!(bells[0].jitter_pct, 30);
+        assert_eq!(bells[0].sound, "bell");
+        assert!(bells[0].enabled);
+    }
+
+    #[test]
+    fn apply_event_interval_bell_update_applies_after_insert() {
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_interval_bell_insert(
+            "bell-1", 5, "dev-A",
+            IntervalBellKind::Interval, 9, 30, "bell",
+        )).unwrap();
+        db.apply_event(&synth_interval_bell_update(
+            "bell-1", 7, "dev-A", 12, false,
+        )).unwrap();
+        let b = &db.list_interval_bells().unwrap()[0];
+        assert_eq!(b.minutes, 12);
+        assert!(!b.enabled);
+    }
+
+    #[test]
+    fn apply_event_interval_bell_delete_removes_the_row() {
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_interval_bell_insert(
+            "bell-1", 5, "dev-A",
+            IntervalBellKind::Interval, 9, 30, "bell",
+        )).unwrap();
+        db.apply_event(&synth_interval_bell_delete("bell-1", 6, "dev-A")).unwrap();
+        assert!(db.list_interval_bells().unwrap().is_empty());
+    }
+
+    #[test]
+    fn apply_event_interval_bell_tombstone_resists_lower_lamport_insert() {
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_interval_bell_delete("bell-1", 10, "dev-A")).unwrap();
+        db.apply_event(&synth_interval_bell_insert(
+            "bell-1", 5, "dev-A",
+            IntervalBellKind::Interval, 9, 30, "bell",
+        )).unwrap();
+        assert!(db.list_interval_bells().unwrap().is_empty());
+    }
+
+    #[test]
+    fn apply_event_interval_bell_higher_lamport_update_supersedes_lower_one() {
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_interval_bell_insert(
+            "bell-1", 5, "dev-A",
+            IntervalBellKind::Interval, 9, 30, "bell",
+        )).unwrap();
+        db.apply_event(&synth_interval_bell_update("bell-1", 7, "dev-A", 12, true)).unwrap();
+        db.apply_event(&synth_interval_bell_update("bell-1", 8, "dev-B", 18, true)).unwrap();
+        let b = &db.list_interval_bells().unwrap()[0];
+        assert_eq!(b.minutes, 18);
+    }
+
+    #[test]
+    fn apply_event_interval_bell_replay_round_trip_across_peers() {
+        let dev_a = Database::open_in_memory().unwrap();
+        dev_a.insert_interval_bell(IntervalBellKind::Interval, 9, 30, "bell", BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound).unwrap();
+        let uuid = dev_a.list_interval_bells().unwrap()[0].uuid.clone();
+        dev_a.update_interval_bell(
+            &uuid, IntervalBellKind::FixedFromStart, 10, 0, "gong",
+            BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound, true,
+        ).unwrap();
+
+        let events: Vec<Event> = dev_a.pending_events().unwrap()
+            .into_iter()
+            .filter(|(_, e)| e.kind.starts_with("interval_bell_"))
+            .map(|(_, e)| e)
+            .collect();
+
+        let dev_b = Database::open_in_memory().unwrap();
+        dev_b.replay_events(&events).unwrap();
+        let bells_b = dev_b.list_interval_bells().unwrap();
+        assert_eq!(bells_b.len(), 1);
+        let b = &bells_b[0];
+        assert_eq!(b.uuid, uuid);
+        assert_eq!(b.kind, IntervalBellKind::FixedFromStart);
+        assert_eq!(b.minutes, 10);
+        assert_eq!(b.sound, "gong");
+    }
+}
