@@ -446,14 +446,10 @@ impl TimerView {
                 let Some(window) = this.root()
                     .and_downcast::<crate::window::MeditateWindow>()
                 else { return; };
-                let session_mode = match imp.current_mode() {
-                    TimerMode::Timer     => crate::db::SessionMode::Timer,
-                    TimerMode::Breathing => crate::db::SessionMode::BoxBreath,
-                    // Guided mode hides this button — pre-empt anyway
-                    // so a future flag-flip can't accidentally drive
-                    // a Save Preset flow against a non-preset mode.
-                    TimerMode::Guided    => return,
-                };
+                let session_mode: crate::db::SessionMode = imp.current_mode().into();
+                if !meditate_core::preset_config::mode_supports_presets(session_mode) {
+                    return;
+                }
                 let snapshot = Box::new(imp.snapshot_current_setup());
                 let this_for_changed = this.clone();
                 window.push_presets_chooser(
@@ -472,11 +468,10 @@ impl TimerView {
                 let Some(window) = this.root()
                     .and_downcast::<crate::window::MeditateWindow>()
                 else { return; };
-                let session_mode = match imp.current_mode() {
-                    TimerMode::Timer     => crate::db::SessionMode::Timer,
-                    TimerMode::Breathing => crate::db::SessionMode::BoxBreath,
-                    TimerMode::Guided    => return,
-                };
+                let session_mode: crate::db::SessionMode = imp.current_mode().into();
+                if !meditate_core::preset_config::mode_supports_presets(session_mode) {
+                    return;
+                }
                 let this_for_changed = this.clone();
                 window.push_presets_chooser(
                     &app,
@@ -1830,21 +1825,20 @@ impl TimerView {
         // zero. When stopwatch is off the mode-specific target shows
         // (Timer's countdown, Box Breath's session duration, Guided's
         // picked file length).
-        let label = if self.stopwatch_toggle_on.get() {
-            "00:00".to_string()
-        } else {
-            let secs = match self.current_mode() {
-                TimerMode::Timer => self.countdown_target_secs.get(),
-                TimerMode::Breathing => self.breathing_session_secs.get() as u64,
-                TimerMode::Guided => self
-                    .guided_pick
-                    .borrow()
-                    .as_ref()
-                    .map(|p| p.duration_secs)
-                    .unwrap_or(0) as u64,
-            };
-            meditate_core::format::format_hhmm(secs)
+        let target_secs = match self.current_mode() {
+            TimerMode::Timer => self.countdown_target_secs.get(),
+            TimerMode::Breathing => self.breathing_session_secs.get() as u64,
+            TimerMode::Guided => self
+                .guided_pick
+                .borrow()
+                .as_ref()
+                .map(|p| p.duration_secs)
+                .unwrap_or(0) as u64,
         };
+        let label = meditate_core::format::idle_hero_label(
+            self.stopwatch_toggle_on.get(),
+            target_secs,
+        );
         self.big_time_label.set_label(&label);
         self.time_unit_label.set_label(&crate::i18n::gettext("Hours · Minutes"));
         self.time_unit_label.set_visible(true);
@@ -3032,13 +3026,12 @@ impl TimerView {
             self.presets_group.remove(&row);
         }
 
-        let session_mode = match self.current_mode() {
-            TimerMode::Timer     => crate::db::SessionMode::Timer,
-            TimerMode::Breathing => crate::db::SessionMode::BoxBreath,
-            // Guided mode rebuilds via `rebuild_starred_guided_list`
-            // instead of this path. on_mode_switched routes them.
-            TimerMode::Guided    => return,
-        };
+        let session_mode: crate::db::SessionMode = self.current_mode().into();
+        // Guided mode rebuilds via `rebuild_starred_guided_list`
+        // instead of this path. on_mode_switched routes them.
+        if !meditate_core::preset_config::mode_supports_presets(session_mode) {
+            return;
+        }
         let app_opt = self.get_app();
         let presets = app_opt
             .as_ref()
@@ -3334,14 +3327,13 @@ impl TimerView {
             Ok(c) => c,
             Err(_) => return,
         };
-        let want_session_mode = match self.current_mode() {
-            TimerMode::Timer     => crate::db::SessionMode::Timer,
-            TimerMode::Breathing => crate::db::SessionMode::BoxBreath,
-            // Preset rows aren't surfaced in Guided mode; this would
-            // only fire from a stale callback retained across a mode
-            // switch. Refuse rather than mutating Setup state.
-            TimerMode::Guided    => return,
-        };
+        let want_session_mode: crate::db::SessionMode = self.current_mode().into();
+        // Preset rows aren't surfaced in Guided mode; this would
+        // only fire from a stale callback retained across a mode
+        // switch. Refuse rather than mutating Setup state.
+        if !meditate_core::preset_config::mode_supports_presets(want_session_mode) {
+            return;
+        }
         if preset.mode != want_session_mode {
             return;
         }
@@ -3651,13 +3643,13 @@ impl TimerView {
     }
 
     pub fn toggle_playback(&self) {
-        match self.ui_state() {
-            UiState::Idle      => self.on_start(),
-            UiState::Preparing => self.on_pause(),
-            UiState::Running   => self.on_pause(),
-            UiState::Overtime  => self.finish_overtime_session(),
-            UiState::Paused    => self.on_resume(),
-            UiState::Done      => {}
+        use meditate_core::session::ToggleAction;
+        match meditate_core::session::Session::toggle_action(self.ui_state()) {
+            ToggleAction::Start => self.on_start(),
+            ToggleAction::Pause => self.on_pause(),
+            ToggleAction::FinishOvertime => self.finish_overtime_session(),
+            ToggleAction::Resume => self.on_resume(),
+            ToggleAction::NoOp => {}
         }
     }
 }

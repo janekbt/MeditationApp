@@ -55,6 +55,20 @@ pub fn ui_state(session: Option<&Session>) -> UiState {
     session.map(|s| s.ui_state()).unwrap_or(UiState::Idle)
 }
 
+/// What the play/pause-key tap should do given the current `UiState`.
+/// Returned by `Session::toggle_action`. Shell maps each variant to
+/// its `on_start` / `on_pause` / `finish_overtime_session` /
+/// `on_resume` calls; `NoOp` covers the Done-screen state where
+/// neither Play nor Pause have a meaningful target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToggleAction {
+    Start,
+    Pause,
+    FinishOvertime,
+    Resume,
+    NoOp,
+}
+
 /// Default Timer-mode countdown in seconds for a fresh user
 /// (10 minutes). Used by the shell when restoring on first launch
 /// before any persisted value exists, AND as the fallback when the
@@ -767,6 +781,22 @@ impl Session {
     /// and at Box-Breath's natural end.
     pub fn completion_duration_secs(&self) -> u64 {
         self.settings.target_secs.map(|s| s as u64).unwrap_or(0)
+    }
+
+    /// What the shell's running-page play/pause action should
+    /// resolve to given the current `UiState`. Pure dispatch.
+    /// Replaces the gtk shell's 6-arm `match self.ui_state()` inside
+    /// the hardware-play-key handler; Android can dispatch off the
+    /// same enum.
+    pub fn toggle_action(ui_state: UiState) -> ToggleAction {
+        match ui_state {
+            UiState::Idle => ToggleAction::Start,
+            UiState::Preparing => ToggleAction::Pause,
+            UiState::Running => ToggleAction::Pause,
+            UiState::Overtime => ToggleAction::FinishOvertime,
+            UiState::Paused => ToggleAction::Resume,
+            UiState::Done => ToggleAction::NoOp,
+        }
     }
 
     /// What the shell's running-page view should reflect right now.

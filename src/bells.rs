@@ -225,13 +225,15 @@ fn build_bell_row(
     // intent comes back as soon as stopwatch flips off. The row
     // stays activatable so the user can still drill into Edit to
     // change kind or delete.
-    let inert = meditate_core::bells::is_bell_inert_in_stopwatch(bell.kind, stopwatch_on);
-    if inert {
+    let switch_state = meditate_core::bells::bell_row_switch_state(
+        bell.enabled, bell.kind, stopwatch_on,
+    );
+    if !switch_state.sensitive {
         row.add_css_class("dim-label");
     }
     let switch = gtk::Switch::builder()
-        .active(bell.enabled && !inert)
-        .sensitive(!inert)
+        .active(switch_state.active)
+        .sensitive(switch_state.sensitive)
         .valign(gtk::Align::Center)
         .build();
 

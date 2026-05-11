@@ -99,6 +99,29 @@ pub enum PersistAction {
     NoOp,
 }
 
+/// Typed key for the delete-label dialog's body copy. The shell
+/// maps each variant to its gettext template — "Sessions tagged
+/// '{name}': {n}" for `InUse`, "'{name}' isn't used by any saved
+/// session yet" for `Unused`. Owns the policy "do we surface the
+/// session count?" so every shell agrees.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeleteImpactKey {
+    /// The label is currently attached to one or more saved
+    /// sessions. Shell shows the count so the user knows what's
+    /// about to be untagged.
+    InUse(i64),
+    /// No saved session references the label yet.
+    Unused,
+}
+
+pub fn delete_impact_key(session_count: i64) -> DeleteImpactKey {
+    if session_count > 0 {
+        DeleteImpactKey::InUse(session_count)
+    } else {
+        DeleteImpactKey::Unused
+    }
+}
+
 /// Resolve the persist action for a Done-screen save:
 /// - `picked = Some(id)` + the id exists in `labels` →
 ///   `SetUuidAndActivate` with that label's uuid.
@@ -182,6 +205,14 @@ mod tests {
     #[test]
     fn resolve_persist_action_returns_deactivate_for_none() {
         assert_eq!(resolve_persist_action(None, &[]), PersistAction::Deactivate);
+    }
+
+    #[test]
+    fn delete_impact_key_routes_at_zero_boundary() {
+        assert_eq!(delete_impact_key(0), DeleteImpactKey::Unused);
+        assert_eq!(delete_impact_key(1), DeleteImpactKey::InUse(1));
+        assert_eq!(delete_impact_key(42), DeleteImpactKey::InUse(42));
+        assert_eq!(delete_impact_key(-1), DeleteImpactKey::Unused, "no negative counts in practice");
     }
 
     #[test]

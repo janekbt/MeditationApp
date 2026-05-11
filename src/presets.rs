@@ -325,26 +325,26 @@ fn build_star_button(
     toast_slot: ToastSlot,
     rebuilder: crate::Rebuilder,
 ) -> gtk::Button {
-    let icon_name = if preset.is_starred {
-        "starred-symbolic"
-    } else {
-        "non-starred-symbolic"
+    use meditate_core::preset_config::StarVisualState;
+    let star_state = StarVisualState::from_is_starred(preset.is_starred);
+    let icon_name = match star_state {
+        StarVisualState::Starred => "starred-symbolic",
+        StarVisualState::Unstarred => "non-starred-symbolic",
     };
     let icon = gtk::Image::from_icon_name(icon_name);
-    if preset.is_starred {
-        icon.add_css_class("preset-star-on");
-    } else {
-        icon.add_css_class("dimmed");
-    }
+    icon.add_css_class(match star_state {
+        StarVisualState::Starred => "preset-star-on",
+        StarVisualState::Unstarred => "dimmed",
+    });
+    let tooltip = match star_state {
+        StarVisualState::Starred => gettext("Remove from home list"),
+        StarVisualState::Unstarred => gettext("Pin to home list"),
+    };
     let btn = gtk::Button::builder()
         .child(&icon)
         .css_classes(["flat", "circular"])
         .valign(gtk::Align::Center)
-        .tooltip_text(if preset.is_starred {
-            gettext("Remove from home list")
-        } else {
-            gettext("Pin to home list")
-        })
+        .tooltip_text(tooltip)
         .build();
     let _ = toast_slot;  // star toggle no longer emits a toast — kept
                           // in scope to avoid signature churn through

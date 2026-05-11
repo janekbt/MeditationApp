@@ -355,19 +355,21 @@ fn present_delete_label_dialog(
 ) {
     // Show how many sessions still point at this label so the user
     // can decide knowingly. delete_label() un-labels each affected
-    // session (label_id → NULL); the dialog body captures that.
+    // session (label_id → NULL); the dialog body captures that. The
+    // "is anything tagged?" decision lives in core (the dialog body
+    // strings stay shell-side at the i18n boundary).
     let session_count = app
         .with_db(|db| db.label_session_count(label_id))
         .and_then(|r| r.ok())
         .unwrap_or(0);
-    let body = if session_count > 0 {
-        format!(
+    use meditate_core::labels::DeleteImpactKey;
+    let body = match meditate_core::labels::delete_impact_key(session_count) {
+        DeleteImpactKey::InUse(n) => format!(
             "{} {}.",
             gettext("Sessions tagged with this label will be un-labelled:"),
-            session_count,
-        )
-    } else {
-        gettext("This label is not used by any sessions.")
+            n,
+        ),
+        DeleteImpactKey::Unused => gettext("This label is not used by any sessions."),
     };
 
     let dialog = adw::AlertDialog::builder()

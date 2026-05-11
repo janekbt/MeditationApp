@@ -1095,27 +1095,7 @@ fn build_undo_toast(
 /// Truncate a string to `max_chars` Unicode scalar values, appending
 /// "…" if truncation happened. Used by the toast titles so a long
 /// guided-file name doesn't push the Undo button off-screen on phone.
-fn ellipsize(s: &str, max_chars: usize) -> String {
-    let count = s.chars().count();
-    if count <= max_chars {
-        s.to_string()
-    } else {
-        let mut out: String = s.chars().take(max_chars.saturating_sub(1)).collect();
-        out.push('…');
-        out
-    }
-}
-
-pub fn format_duration_brief(secs: u32) -> String {
-    let h = secs / 3600;
-    let m = (secs % 3600) / 60;
-    let s = secs % 60;
-    if h > 0 {
-        format!("{h}:{m:02}:{s:02}")
-    } else {
-        format!("{m}:{s:02}")
-    }
-}
+pub use meditate_core::format::{ellipsize, format_duration_brief};
 
 fn window_from(widget: &impl glib::object::IsA<gtk::Widget>) -> Option<crate::window::MeditateWindow> {
     widget
@@ -1333,19 +1313,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn format_duration_brief_under_one_hour_is_m_ss() {
-        assert_eq!(format_duration_brief(0), "0:00");
-        assert_eq!(format_duration_brief(7), "0:07");
-        assert_eq!(format_duration_brief(60), "1:00");
-        assert_eq!(format_duration_brief(150), "2:30");
-        assert_eq!(format_duration_brief(59 * 60 + 59), "59:59");
-    }
-
-    #[test]
-    fn format_duration_brief_over_one_hour_is_h_mm_ss() {
-        assert_eq!(format_duration_brief(3600), "1:00:00");
-        assert_eq!(format_duration_brief(3661), "1:01:01");
-        assert_eq!(format_duration_brief(2 * 3600 + 5 * 60 + 9), "2:05:09");
-    }
 }

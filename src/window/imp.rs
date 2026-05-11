@@ -265,11 +265,10 @@ impl MeditateWindow {
             .css_classes(["caption", "dimmed"])
             .halign(gtk::Align::Center)
             .build();
-        let initial_counter = if stopwatch_active {
-            "0:00".to_string()
-        } else {
-            format!("0:00 / {}", format_time(Duration::from_secs(target_secs)))
-        };
+        let initial_counter = meditate_core::format::box_breath_counter_label(
+            Duration::ZERO,
+            if stopwatch_active { None } else { Some(Duration::from_secs(target_secs)) },
+        );
         let counter_label = gtk::Label::builder()
             .label(&initial_counter)
             .css_classes(["title-3", "numeric"])
@@ -469,11 +468,11 @@ impl MeditateWindow {
             let info = pattern_for_tick.phase_at(elapsed);
             let phase = info.phase;
 
-            let phase_name = match phase {
-                Phase::In      => crate::i18n::gettext("Breathe in"),
-                Phase::HoldIn  => crate::i18n::gettext("Hold"),
-                Phase::Out     => crate::i18n::gettext("Breathe out"),
-                Phase::HoldOut => crate::i18n::gettext("Hold"),
+            use meditate_core::breath::PhaseRunningLabelKey;
+            let phase_name = match meditate_core::breath::phase_running_label_key(phase) {
+                PhaseRunningLabelKey::BreatheIn => crate::i18n::gettext("Breathe in"),
+                PhaseRunningLabelKey::Hold => crate::i18n::gettext("Hold"),
+                PhaseRunningLabelKey::BreatheOut => crate::i18n::gettext("Breathe out"),
             };
             if let Some(l) = phase_lbl_weak.upgrade() {
                 l.set_label(&phase_name);
@@ -483,12 +482,10 @@ impl MeditateWindow {
                 l.set_label(&remaining.to_string());
             }
             if let Some(l) = counter_weak.upgrade() {
-                if stopwatch_active {
-                    l.set_label(&format_time(Duration::from_secs(cur as u64)));
-                } else {
-                    l.set_label(&format!("{} / {}",
-                        format_time(Duration::from_secs(cur as u64)), format_time(Duration::from_secs(target_secs))));
-                }
+                l.set_label(&meditate_core::format::box_breath_counter_label(
+                    Duration::from_secs(cur as u64),
+                    if stopwatch_active { None } else { Some(Duration::from_secs(target_secs)) },
+                ));
             }
             if let Some(da) = da_weak.upgrade() {
                 da.queue_draw();

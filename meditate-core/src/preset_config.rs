@@ -172,6 +172,40 @@ pub fn default_starred_on_save() -> bool {
     true
 }
 
+/// Whether `mode` exposes the Setup-view presets affordance. Guided
+/// drives off the picked-file metadata directly, so a preset (which
+/// stores duration / labels / bells, not a file uuid) doesn't apply
+/// — the gtk shell early-returns from every preset-related code
+/// path in Guided. Pinned here so the Android shell takes the same
+/// branch.
+pub fn mode_supports_presets(mode: SessionMode) -> bool {
+    !matches!(mode, SessionMode::Guided)
+}
+
+/// Star-button visual state for a preset row in the chooser / home
+/// chip list. Variants pick the (icon name, css class, tooltip
+/// translatable key) triple the gtk shell currently encodes as three
+/// parallel `if is_starred { … } else { … }` blocks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StarVisualState {
+    /// Preset is pinned. Filled accent star, "Unpin from home"
+    /// tooltip.
+    Starred,
+    /// Preset is unstarred. Outline dim star, "Pin to home"
+    /// tooltip.
+    Unstarred,
+}
+
+impl StarVisualState {
+    pub fn from_is_starred(is_starred: bool) -> Self {
+        if is_starred {
+            StarVisualState::Starred
+        } else {
+            StarVisualState::Unstarred
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum ApplyError {
     /// One or more referenced sound or vibration-pattern UUIDs are not

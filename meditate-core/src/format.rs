@@ -118,6 +118,62 @@ pub fn format_time(d: Duration) -> String {
     }
 }
 
+/// Audio-duration display: same as `format_time` but without
+/// zero-padding the leading component. "2:30" / "1:00:00" instead of
+/// "02:30" / "01:00:00". Used for compact metadata (Guided file
+/// duration row, log card chip). The distinction matters: a stable-
+/// width clock display picks `format_time`; a free-flowing inline
+/// label picks `format_duration_brief`.
+pub fn format_duration_brief(secs: u32) -> String {
+    let h = secs / 3600;
+    let m = (secs % 3600) / 60;
+    let s = secs % 60;
+    if h > 0 {
+        format!("{h}:{m:02}:{s:02}")
+    } else {
+        format!("{m}:{s:02}")
+    }
+}
+
+/// Unicode-safe truncate-with-ellipsis. `max_chars` counts
+/// `char`s, not bytes — Latin-1 accented forms and CJK input all
+/// behave consistently. Returns `s` unchanged when it fits.
+pub fn ellipsize(s: &str, max_chars: usize) -> String {
+    let count = s.chars().count();
+    if count <= max_chars {
+        s.to_string()
+    } else {
+        let mut out: String = s.chars().take(max_chars.saturating_sub(1)).collect();
+        out.push('…');
+        out
+    }
+}
+
+/// Pre-rendered hero label for the Setup view's idle state. When
+/// stopwatch mode is on the hero shows "00:00" (the upcoming
+/// count-up baseline); otherwise it shows the configured target
+/// duration in `HH:MM`. The shell resolves the right `target_secs`
+/// per mode (Timer's countdown / Box-Breath's session length /
+/// Guided's probed file length) and passes it in.
+pub fn idle_hero_label(stopwatch_on: bool, target_secs: u64) -> String {
+    if stopwatch_on {
+        "00:00".to_string()
+    } else {
+        format_hhmm(target_secs)
+    }
+}
+
+/// Counter-strip label on the Box-Breath running page. Stopwatch
+/// sessions show only the elapsed (no slash); fixed-duration
+/// sessions show `elapsed / target`. Re-uses `format_time` so the
+/// label format matches the rest of the running view.
+pub fn box_breath_counter_label(elapsed: Duration, target: Option<Duration>) -> String {
+    match target {
+        Some(t) => format!("{} / {}", format_time(elapsed), format_time(t)),
+        None => format_time(elapsed),
+    }
+}
+
 /// Minute-precision "HH:MM" render of a session-length seconds value.
 /// Used by the Setup view's hero label and the Duration row's value
 /// suffix where seconds aren't shown (minute-aligned by the spinner).
@@ -607,6 +663,70 @@ mod tests {
     #[test]
     fn format_time_zero_shows_double_zero() {
         assert_eq!(format_time(Duration::ZERO), "00:00");
+    }
+
+    #[test]
+    fn format_duration_brief_under_one_hour_is_m_ss() {
+        assert_eq!(format_duration_brief(0), "0:00");
+        assert_eq!(format_duration_brief(7), "0:07");
+        assert_eq!(format_duration_brief(60), "1:00");
+        assert_eq!(format_duration_brief(150), "2:30");
+        assert_eq!(format_duration_brief(59 * 60 + 59), "59:59");
+    }
+
+    #[test]
+    fn format_duration_brief_over_one_hour_is_h_mm_ss() {
+        assert_eq!(format_duration_brief(3600), "1:00:00");
+        assert_eq!(format_duration_brief(3661), "1:01:01");
+        assert_eq!(format_duration_brief(2 * 3600 + 5 * 60 + 9), "2:05:09");
+    }
+
+    #[test]
+    fn ellipsize_passes_through_when_within_limit() {
+        assert_eq!(ellipsize("hi", 28), "hi");
+        assert_eq!(ellipsize("exactly-five", 12), "exactly-five");
+    }
+
+    #[test]
+    fn ellipsize_truncates_with_ellipsis_at_max_char_boundary() {
+        assert_eq!(ellipsize("héllo world", 6), "héllo…");
+    }
+
+    #[test]
+    fn ellipsize_counts_chars_not_bytes() {
+        assert_eq!(ellipsize("éééééé", 4), "ééé…");
+    }
+
+    #[test]
+    fn idle_hero_label_stopwatch_renders_double_zero() {
+        assert_eq!(idle_hero_label(true, 600), "00:00");
+        assert_eq!(idle_hero_label(true, 0), "00:00");
+    }
+
+    #[test]
+    fn idle_hero_label_no_stopwatch_renders_target_as_hhmm() {
+        assert_eq!(idle_hero_label(false, 10 * 60), "00:10");
+        assert_eq!(idle_hero_label(false, 3600), "01:00");
+    }
+
+    #[test]
+    fn box_breath_counter_label_stopwatch_shows_elapsed_only() {
+        assert_eq!(
+            box_breath_counter_label(Duration::from_secs(75), None),
+            "01:15",
+        );
+    }
+
+    #[test]
+    fn box_breath_counter_label_fixed_shows_elapsed_over_target() {
+        assert_eq!(
+            box_breath_counter_label(Duration::from_secs(0), Some(Duration::from_secs(300))),
+            "00:00 / 05:00",
+        );
+        assert_eq!(
+            box_breath_counter_label(Duration::from_secs(90), Some(Duration::from_secs(300))),
+            "01:30 / 05:00",
+        );
     }
 
     #[test]

@@ -413,6 +413,36 @@ pub fn end_bell_row_state(db: &Database, stopwatch_on: bool) -> EndBellRowState 
     EndBellRowState { active: persisted_on, sensitive: true }
 }
 
+/// Per-row switch state for an entry in the interval-bell library
+/// list. The persisted `enabled` flag survives a stopwatch toggle
+/// (so the user's intent returns when stopwatch flips off); the row
+/// just renders inert when the bell can't fire in the current mode.
+/// Parallels `end_bell_row_state` shape so every per-row switch
+/// surface shares the same struct.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BellRowSwitchState {
+    /// `true` → the switch shows ON; `false` → OFF. Composed from
+    /// the persisted `enabled` AND the not-inert predicate so
+    /// inert-in-stopwatch bells visually flip OFF without touching
+    /// the persisted flag.
+    pub active: bool,
+    /// `true` → the switch reacts to taps; `false` → greyed out
+    /// (inert in this session-mode context).
+    pub sensitive: bool,
+}
+
+pub fn bell_row_switch_state(
+    enabled: bool,
+    kind: IntervalBellKind,
+    stopwatch_on: bool,
+) -> BellRowSwitchState {
+    let inert = is_bell_inert_in_stopwatch(kind, stopwatch_on);
+    BellRowSwitchState {
+        active: enabled && !inert,
+        sensitive: !inert,
+    }
+}
+
 /// Box-Breath per-phase cue config from the settings + phase rows.
 /// Always returns a value (with `master_enabled` reflecting the
 /// user's toggle); Session checks the master flag + the per-phase

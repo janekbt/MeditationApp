@@ -32,6 +32,25 @@ impl Phase {
     }
 }
 
+/// Translatable key for the running-page phase label ("Breathe in",
+/// "Hold", "Breathe out"). The shell maps each variant to gettext;
+/// `Hold` covers both `HoldIn` and `HoldOut` because the user-facing
+/// prompt is the same in both cases.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PhaseRunningLabelKey {
+    BreatheIn,
+    Hold,
+    BreatheOut,
+}
+
+pub fn phase_running_label_key(phase: Phase) -> PhaseRunningLabelKey {
+    match phase {
+        Phase::In => PhaseRunningLabelKey::BreatheIn,
+        Phase::HoldIn | Phase::HoldOut => PhaseRunningLabelKey::Hold,
+        Phase::Out => PhaseRunningLabelKey::BreatheOut,
+    }
+}
+
 /// Maximum per-phase duration (seconds). Mirrors the GTK editor's
 /// SpinRow upper bound and the runtime sampler's expectation that
 /// no single phase runs longer than ~20s.
