@@ -107,9 +107,15 @@ fn rebuild_list(
     // backwards from). The bell library is global, so we override the
     // visual switch state without writing to the DB — flipping
     // stopwatch off restores the user's persisted enabled flag.
+    // Interval bells fire in Timer mode (the only mode that calls
+    // build_session_bells with a real schedule), so the relevant
+    // stopwatch toggle is Timer's.
+    let stopwatch_key = meditate_core::settings_keys::stopwatch_key_for_mode(
+        meditate_core::db::SessionMode::Timer,
+    );
     let stopwatch_on = app
         .with_db(|db| {
-            db.get_setting("stopwatch_mode_active", "false")
+            db.get_setting(stopwatch_key, "false")
                 .map(|v| v == "true")
                 .unwrap_or(false)
         })
@@ -220,8 +226,13 @@ fn build_bell_row(
     // Fixed-from-end bells are inert in stopwatch mode (no end to
     // count backwards from). Switch shows OFF + insensitive without
     // touching the persisted enabled flag — the user's previous
-    // intent comes back as soon as stopwatch flips off.
+    // intent comes back as soon as stopwatch flips off. The row
+    // stays activatable so the user can still drill into Edit to
+    // change kind or delete.
     let inert = meditate_core::bells::is_bell_inert_in_stopwatch(bell.kind, stopwatch_on);
+    if inert {
+        row.add_css_class("dim-label");
+    }
     let switch = gtk::Switch::builder()
         .active(bell.enabled && !inert)
         .sensitive(!inert)
