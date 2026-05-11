@@ -3,7 +3,7 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{glib, cairo, CompositeTemplate};
 
-use meditate_core::format::{minutes_to_level, next_session_milestone};
+use meditate_core::format::minutes_to_level;
 
 /// Fallback weekly-goal target in minutes if the setting is unset or
 /// unparseable. The real value lives in the `weekly_goal_mins` DB setting,
@@ -311,114 +311,102 @@ impl StatsView {
             let (ly, lm) = if tm == 1 { (ty - 1, 12) } else { (ty, tm - 1) };
             let fourteen_since = now.add_days(-13).unwrap()
                 .format("%Y-%m-%d").unwrap().to_string();
-            InsightData {
-                current_streak: db.get_streak().unwrap_or(0),
-                best_streak:    db.get_best_streak().unwrap_or(0),
-                this_month:     db.month_total_secs(ty, tm).unwrap_or(0),
-                last_month:     db.month_total_secs(ly, lm).unwrap_or(0),
-                daily_totals:   db.get_daily_totals(&fourteen_since).unwrap_or_default(),
-                longest:        db.get_longest_session().unwrap_or(None),
-                typical:        db.get_median_duration_secs().unwrap_or(None).unwrap_or(0),
-                avg_secs:       db.get_running_average_secs(7).unwrap_or(0.0) as i64,
-                hour_buckets:   db.hour_buckets().unwrap_or((0, 0, 0)),
-                session_count:  db.count_sessions().unwrap_or(0),
+            meditate_core::insights::InsightInput {
+                current_streak:  db.get_streak().unwrap_or(0),
+                best_streak:     db.get_best_streak().unwrap_or(0),
+                this_month_secs: db.month_total_secs(ty, tm).unwrap_or(0),
+                last_month_secs: db.month_total_secs(ly, lm).unwrap_or(0),
+                daily_totals:    db.get_daily_totals(&fourteen_since).unwrap_or_default(),
+                longest:         db.get_longest_session().unwrap_or(None),
+                typical_secs:    db.get_median_duration_secs().unwrap_or(None).unwrap_or(0),
+                avg_secs_7d:     db.get_running_average_secs(7).unwrap_or(0.0) as i64,
+                hour_buckets:    db.hour_buckets().unwrap_or((0, 0, 0)),
+                session_count:   db.count_sessions().unwrap_or(0),
             }
         }).unwrap_or_default();
 
+        let keys = meditate_core::insights::compute(
+            &data,
+            meditate_core::time::unix_now(),
+            locale_week_start_dow(),
+        );
+        for k in keys {
+            self.render_insight(k);
+        }
+    }
+
+    /// Map a `meditate_core::insights::InsightKey` variant to the
+    /// gtk shell's gettext-translated card. The portable decision
+    /// lives in core; locale-aware strings + glib::DateTime month
+    /// formatting stay here.
+    fn render_insight(&self, key: meditate_core::insights::InsightKey) {
         use crate::i18n::gettext;
-
-        // 1. Current streak — complements the lifetime best shown in mini-stats.
-        if data.current_streak > 0 {
-            let body = if data.current_streak >= data.best_streak && data.current_streak > 1 {
-                gettext("{n} days — new record")
-                    .replace("{n}", &data.current_streak.to_string())
-            } else if data.best_streak > data.current_streak {
-                gettext("{n} days · best was {best}")
-                    .replace("{n}", &data.current_streak.to_string())
-                    .replace("{best}", &data.best_streak.to_string())
-            } else {
-                gettext("1 day · keep going")
-            };
-            let peak = data.current_streak >= data.best_streak && data.current_streak > 1;
-            self.append_insight("●", &gettext("Current streak"), &body, peak);
-        }
-
-        // 2. This week vs previous 7 days — short-horizon trend.
-        let (this_week_secs, last_week_secs) = week_over_week(&data.daily_totals, &now);
-        if last_week_secs > 0 {
-            let delta = this_week_secs - last_week_secs;
-            let pct = (delta as f64 / last_week_secs as f64 * 100.0).round() as i32;
-            let (icon, template) = if pct >= 0 {
-                ("↗", gettext("{pct}% up vs last week ({this} vs {last})"))
-            } else {
-                ("↘", gettext("{pct}% down vs last week ({this} vs {last})"))
-            };
-            let body = template
-                .replace("{pct}", &pct.abs().to_string())
-                .replace("{this}", &format_hm_secs(this_week_secs))
-                .replace("{last}", &format_hm_secs(last_week_secs));
-            self.append_insight(icon, &gettext("This week's practice"), &body, false);
-        }
-
-        // 3. Trend vs last month.
-        if data.last_month > 0 {
-            let pct = ((data.this_month - data.last_month) as f64
-                / data.last_month as f64 * 100.0).round() as i32;
-            let (icon, title) = if pct >= 0 {
-                ("↗", gettext("Practising more"))
-            } else {
-                ("↘", gettext("Practising less"))
-            };
-            let body = gettext("{pct}% vs last month ({this} vs {last})")
-                .replace("{pct}", &format!("{pct:+}"))
-                .replace("{this}", &format_hm_secs(data.this_month))
-                .replace("{last}", &format_hm_secs(data.last_month));
-            self.append_insight(icon, &title, &body, false);
-        }
-
-        // 4. Preferred time of day — only once there's enough data to be
-        //    meaningful (≥10 sessions).
-        let (morn, afte, even) = data.hour_buckets;
-        let bucket_total = morn + afte + even;
-        if bucket_total >= 10 {
-            let (template, count) = if morn >= afte && morn >= even {
-                (gettext("{pct}% of sessions are in the morning"), morn)
-            } else if even >= afte {
-                (gettext("{pct}% of sessions are in the evening"), even)
-            } else {
-                (gettext("{pct}% of sessions are in the afternoon"), afte)
-            };
-            let pct = (count as f64 / bucket_total as f64 * 100.0).round() as i32;
-            let body = template.replace("{pct}", &pct.to_string());
-            self.append_insight("◔", &gettext("Preferred time"), &body, false);
-        }
-
-        // 5. Typical session length (median) — only after 5+ sessions so it
-        //    stops being dominated by the first few outliers.
-        if data.session_count >= 5 && data.typical > 0 {
-            let body = gettext("About {duration}")
-                .replace("{duration}", &format_hm_secs(data.typical));
-            self.append_insight("≈", &gettext("Typical session"), &body, false);
-        }
-
-        // 6. Longest session ever.
-        if let Some((dur, start)) = data.longest {
-            let when = glib::DateTime::from_unix_local(start).ok()
-                .and_then(|d| d.format("%b %-d").ok())
-                .map(|s| s.to_string());
-            let body = match when {
-                Some(d) => gettext("{duration} on {date}")
-                    .replace("{duration}", &format_hm_secs(dur))
-                    .replace("{date}", &d),
-                None => format_hm_secs(dur),
-            };
-            self.append_insight("◆", &gettext("Longest session"), &body, true);
-        }
-
-        // 7. Next milestone — only if the user has a few sessions under
-        //    their belt (otherwise "12 until your 5th" feels patronising).
-        if data.session_count >= 5 {
-            if let Some((target, remaining)) = next_session_milestone(data.session_count) {
+        use meditate_core::insights::{HourBucket, InsightKey};
+        match key {
+            InsightKey::CurrentStreak { days, is_record, best } => {
+                let body = if is_record {
+                    gettext("{n} days — new record")
+                        .replace("{n}", &days.to_string())
+                } else if best > days {
+                    gettext("{n} days · best was {best}")
+                        .replace("{n}", &days.to_string())
+                        .replace("{best}", &best.to_string())
+                } else {
+                    gettext("1 day · keep going")
+                };
+                self.append_insight("●", &gettext("Current streak"), &body, is_record);
+            }
+            InsightKey::WeekOverWeek { pct, this_secs, last_secs } => {
+                let (icon, template) = if pct >= 0 {
+                    ("↗", gettext("{pct}% up vs last week ({this} vs {last})"))
+                } else {
+                    ("↘", gettext("{pct}% down vs last week ({this} vs {last})"))
+                };
+                let body = template
+                    .replace("{pct}", &pct.abs().to_string())
+                    .replace("{this}", &format_hm_secs(this_secs))
+                    .replace("{last}", &format_hm_secs(last_secs));
+                self.append_insight(icon, &gettext("This week's practice"), &body, false);
+            }
+            InsightKey::MonthTrend { pct, this_secs, last_secs } => {
+                let (icon, title) = if pct >= 0 {
+                    ("↗", gettext("Practising more"))
+                } else {
+                    ("↘", gettext("Practising less"))
+                };
+                let body = gettext("{pct}% vs last month ({this} vs {last})")
+                    .replace("{pct}", &format!("{pct:+}"))
+                    .replace("{this}", &format_hm_secs(this_secs))
+                    .replace("{last}", &format_hm_secs(last_secs));
+                self.append_insight(icon, &title, &body, false);
+            }
+            InsightKey::PreferredTime { bucket, pct } => {
+                let template = match bucket {
+                    HourBucket::Morning => gettext("{pct}% of sessions are in the morning"),
+                    HourBucket::Afternoon => gettext("{pct}% of sessions are in the afternoon"),
+                    HourBucket::Evening => gettext("{pct}% of sessions are in the evening"),
+                };
+                let body = template.replace("{pct}", &pct.to_string());
+                self.append_insight("◔", &gettext("Preferred time"), &body, false);
+            }
+            InsightKey::TypicalSession { duration_secs } => {
+                let body = gettext("About {duration}")
+                    .replace("{duration}", &format_hm_secs(duration_secs));
+                self.append_insight("≈", &gettext("Typical session"), &body, false);
+            }
+            InsightKey::LongestSession { duration_secs, start_unix } => {
+                let when = glib::DateTime::from_unix_local(start_unix).ok()
+                    .and_then(|d| d.format("%b %-d").ok())
+                    .map(|s| s.to_string());
+                let body = match when {
+                    Some(d) => gettext("{duration} on {date}")
+                        .replace("{duration}", &format_hm_secs(duration_secs))
+                        .replace("{date}", &d),
+                    None => format_hm_secs(duration_secs),
+                };
+                self.append_insight("◆", &gettext("Longest session"), &body, true);
+            }
+            InsightKey::NextMilestone { target, remaining } => {
                 let body = if remaining == 1 {
                     gettext("1 session to your {target}th")
                         .replace("{target}", &target.to_string())
@@ -429,24 +417,19 @@ impl StatsView {
                 };
                 self.append_insight("⚑", &gettext("Next milestone"), &body, false);
             }
-        }
-
-        // 8. Daily rhythm (average over last 7 days) — complements typical
-        //    session by including zero-days.
-        if data.avg_secs > 0 {
-            let body = gettext("{duration} average over last 7 days")
-                .replace("{duration}", &format_hm_secs(data.avg_secs));
-            self.append_insight("◷", &gettext("Daily rhythm"), &body, false);
-        }
-
-        // Fallback when there's no data at all.
-        if self.insights_list.first_child().is_none() {
-            self.append_insight(
-                "✦",
-                &gettext("No sessions yet"),
-                &gettext("Complete a meditation to start seeing insights here"),
-                false,
-            );
+            InsightKey::DailyRhythm { avg_secs } => {
+                let body = gettext("{duration} average over last 7 days")
+                    .replace("{duration}", &format_hm_secs(avg_secs));
+                self.append_insight("◷", &gettext("Daily rhythm"), &body, false);
+            }
+            InsightKey::NoData => {
+                self.append_insight(
+                    "✦",
+                    &gettext("No sessions yet"),
+                    &gettext("Complete a meditation to start seeing insights here"),
+                    false,
+                );
+            }
         }
     }
 
@@ -649,37 +632,12 @@ impl StatsView {
     }
 }
 
-#[derive(Default)]
-struct InsightData {
-    current_streak: u32,
-    best_streak:    u32,
-    this_month:     i64,
-    last_month:     i64,
-    daily_totals:   Vec<(String, i64)>,
-    longest:        Option<(i64, i64)>,
-    typical:        i64,
-    avg_secs:       i64,
-    hour_buckets:   (i64, i64, i64),
-    session_count:  i64,
-}
 
 /// First day of the week per the active locale (1=Mon..7=Sun). Pure
 /// libc bridge — delegates to core so the Android shell inherits
 /// the same detection (with its own fallback for bionic).
 pub fn locale_week_start_dow() -> i32 {
     meditate_core::date_math::locale_week_start_dow()
-}
-
-/// Returns (seconds this calendar week so far, seconds in the same
-/// portion of last week). Weeks start on the locale's first weekday,
-/// matching the goal ring and heatmap. The decision lives in core;
-/// gtk just supplies `now` as a Unix timestamp.
-fn week_over_week(daily_totals: &[(String, i64)], now: &glib::DateTime) -> (i64, i64) {
-    meditate_core::date_math::week_over_week(
-        daily_totals,
-        now.to_unix(),
-        locale_week_start_dow(),
-    )
 }
 
 fn axis_label(text: String) -> gtk::Label {

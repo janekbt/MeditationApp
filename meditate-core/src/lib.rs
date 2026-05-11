@@ -5,6 +5,7 @@ pub mod date_math;
 pub mod db;
 pub mod diag;
 pub mod format;
+pub mod insights;
 pub mod preset_config;
 pub mod rng;
 pub mod seeds;
