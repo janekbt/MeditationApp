@@ -342,43 +342,45 @@ impl StatsView {
     fn render_insight(&self, key: meditate_core::insights::InsightKey) {
         use crate::i18n::gettext;
         use meditate_core::insights::{HourBucket, InsightKey};
-        match key {
+        let glyph = key.glyph();
+        let accent = key.is_accent();
+        let (title, body) = match &key {
             InsightKey::CurrentStreak { days, is_record, best } => {
-                let body = if is_record {
+                let body = if *is_record {
                     gettext("{n} days — new record")
                         .replace("{n}", &days.to_string())
-                } else if best > days {
+                } else if *best > *days {
                     gettext("{n} days · best was {best}")
                         .replace("{n}", &days.to_string())
                         .replace("{best}", &best.to_string())
                 } else {
                     gettext("1 day · keep going")
                 };
-                self.append_insight("●", &gettext("Current streak"), &body, is_record);
+                (gettext("Current streak"), body)
             }
             InsightKey::WeekOverWeek { pct, this_secs, last_secs } => {
-                let (icon, template) = if pct >= 0 {
-                    ("↗", gettext("{pct}% up vs last week ({this} vs {last})"))
+                let template = if *pct >= 0 {
+                    gettext("{pct}% up vs last week ({this} vs {last})")
                 } else {
-                    ("↘", gettext("{pct}% down vs last week ({this} vs {last})"))
+                    gettext("{pct}% down vs last week ({this} vs {last})")
                 };
                 let body = template
                     .replace("{pct}", &pct.abs().to_string())
-                    .replace("{this}", &format_hm_secs(this_secs))
-                    .replace("{last}", &format_hm_secs(last_secs));
-                self.append_insight(icon, &gettext("This week's practice"), &body, false);
+                    .replace("{this}", &format_hm_secs(*this_secs))
+                    .replace("{last}", &format_hm_secs(*last_secs));
+                (gettext("This week's practice"), body)
             }
             InsightKey::MonthTrend { pct, this_secs, last_secs } => {
-                let (icon, title) = if pct >= 0 {
-                    ("↗", gettext("Practising more"))
+                let title = if *pct >= 0 {
+                    gettext("Practising more")
                 } else {
-                    ("↘", gettext("Practising less"))
+                    gettext("Practising less")
                 };
                 let body = gettext("{pct}% vs last month ({this} vs {last})")
                     .replace("{pct}", &format!("{pct:+}"))
-                    .replace("{this}", &format_hm_secs(this_secs))
-                    .replace("{last}", &format_hm_secs(last_secs));
-                self.append_insight(icon, &title, &body, false);
+                    .replace("{this}", &format_hm_secs(*this_secs))
+                    .replace("{last}", &format_hm_secs(*last_secs));
+                (title, body)
             }
             InsightKey::PreferredTime { bucket, pct } => {
                 let template = match bucket {
@@ -386,28 +388,27 @@ impl StatsView {
                     HourBucket::Afternoon => gettext("{pct}% of sessions are in the afternoon"),
                     HourBucket::Evening => gettext("{pct}% of sessions are in the evening"),
                 };
-                let body = template.replace("{pct}", &pct.to_string());
-                self.append_insight("◔", &gettext("Preferred time"), &body, false);
+                (gettext("Preferred time"), template.replace("{pct}", &pct.to_string()))
             }
             InsightKey::TypicalSession { duration_secs } => {
                 let body = gettext("About {duration}")
-                    .replace("{duration}", &format_hm_secs(duration_secs));
-                self.append_insight("≈", &gettext("Typical session"), &body, false);
+                    .replace("{duration}", &format_hm_secs(*duration_secs));
+                (gettext("Typical session"), body)
             }
             InsightKey::LongestSession { duration_secs, start_unix } => {
-                let when = glib::DateTime::from_unix_local(start_unix).ok()
+                let when = glib::DateTime::from_unix_local(*start_unix).ok()
                     .and_then(|d| d.format("%b %-d").ok())
                     .map(|s| s.to_string());
                 let body = match when {
                     Some(d) => gettext("{duration} on {date}")
-                        .replace("{duration}", &format_hm_secs(duration_secs))
+                        .replace("{duration}", &format_hm_secs(*duration_secs))
                         .replace("{date}", &d),
-                    None => format_hm_secs(duration_secs),
+                    None => format_hm_secs(*duration_secs),
                 };
-                self.append_insight("◆", &gettext("Longest session"), &body, true);
+                (gettext("Longest session"), body)
             }
             InsightKey::NextMilestone { target, remaining } => {
-                let body = if remaining == 1 {
+                let body = if *remaining == 1 {
                     gettext("1 session to your {target}th")
                         .replace("{target}", &target.to_string())
                 } else {
@@ -415,22 +416,19 @@ impl StatsView {
                         .replace("{n}", &remaining.to_string())
                         .replace("{target}", &target.to_string())
                 };
-                self.append_insight("⚑", &gettext("Next milestone"), &body, false);
+                (gettext("Next milestone"), body)
             }
             InsightKey::DailyRhythm { avg_secs } => {
                 let body = gettext("{duration} average over last 7 days")
-                    .replace("{duration}", &format_hm_secs(avg_secs));
-                self.append_insight("◷", &gettext("Daily rhythm"), &body, false);
+                    .replace("{duration}", &format_hm_secs(*avg_secs));
+                (gettext("Daily rhythm"), body)
             }
-            InsightKey::NoData => {
-                self.append_insight(
-                    "✦",
-                    &gettext("No sessions yet"),
-                    &gettext("Complete a meditation to start seeing insights here"),
-                    false,
-                );
-            }
-        }
+            InsightKey::NoData => (
+                gettext("No sessions yet"),
+                gettext("Complete a meditation to start seeing insights here"),
+            ),
+        };
+        self.append_insight(glyph, &title, &body, accent);
     }
 
     fn append_insight(&self, icon: &str, title: &str, body: &str, accent: bool) {

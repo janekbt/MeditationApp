@@ -94,6 +94,38 @@ pub enum InsightKey {
     NoData,
 }
 
+impl InsightKey {
+    /// Single-character glyph the shell uses as the card's icon. The
+    /// mapping is portable so Android renders the same icons; only
+    /// the up/down trend arrows vary with the variant's own data.
+    pub fn glyph(&self) -> &'static str {
+        match self {
+            InsightKey::CurrentStreak { .. } => "●",
+            InsightKey::WeekOverWeek { pct, .. } | InsightKey::MonthTrend { pct, .. } => {
+                if *pct >= 0 { "↗" } else { "↘" }
+            }
+            InsightKey::PreferredTime { .. } => "◔",
+            InsightKey::TypicalSession { .. } => "≈",
+            InsightKey::LongestSession { .. } => "◆",
+            InsightKey::NextMilestone { .. } => "⚑",
+            InsightKey::DailyRhythm { .. } => "◷",
+            InsightKey::NoData => "✦",
+        }
+    }
+
+    /// Whether the shell should accent (gtk: `accent` CSS class)
+    /// this card. Reserved for variants that signal a noteworthy
+    /// milestone — a current-streak record and the lifetime-longest
+    /// session today. Trend / threshold cards stay neutral.
+    pub fn is_accent(&self) -> bool {
+        match self {
+            InsightKey::CurrentStreak { is_record, .. } => *is_record,
+            InsightKey::LongestSession { .. } => true,
+            _ => false,
+        }
+    }
+}
+
 /// Run every insight branch and return the variants worth showing.
 /// Order matters: the shell renders cards top-to-bottom in the
 /// returned order, which matches the gtk shell's prior layout.
@@ -360,6 +392,43 @@ mod tests {
         assert!(out.contains(&rhythm));
         assert!(pos(&longest) < pos(&milestone));
         assert!(pos(&milestone) < pos(&rhythm));
+    }
+
+    #[test]
+    fn glyph_per_variant_is_stable_or_pct_signed() {
+        assert_eq!(
+            InsightKey::CurrentStreak { days: 1, is_record: false, best: 1 }.glyph(),
+            "●"
+        );
+        assert_eq!(
+            InsightKey::WeekOverWeek { pct: 12, this_secs: 0, last_secs: 0 }.glyph(),
+            "↗"
+        );
+        assert_eq!(
+            InsightKey::WeekOverWeek { pct: -3, this_secs: 0, last_secs: 0 }.glyph(),
+            "↘"
+        );
+        assert_eq!(
+            InsightKey::MonthTrend { pct: 0, this_secs: 0, last_secs: 0 }.glyph(),
+            "↗"
+        );
+        assert_eq!(InsightKey::PreferredTime { bucket: HourBucket::Morning, pct: 50 }.glyph(), "◔");
+        assert_eq!(InsightKey::TypicalSession { duration_secs: 600 }.glyph(), "≈");
+        assert_eq!(InsightKey::LongestSession { duration_secs: 1, start_unix: 0 }.glyph(), "◆");
+        assert_eq!(InsightKey::NextMilestone { target: 10, remaining: 1 }.glyph(), "⚑");
+        assert_eq!(InsightKey::DailyRhythm { avg_secs: 600 }.glyph(), "◷");
+        assert_eq!(InsightKey::NoData.glyph(), "✦");
+    }
+
+    #[test]
+    fn is_accent_only_for_streak_record_and_longest_session() {
+        assert!(InsightKey::CurrentStreak { days: 7, is_record: true, best: 7 }.is_accent());
+        assert!(!InsightKey::CurrentStreak { days: 3, is_record: false, best: 7 }.is_accent());
+        assert!(InsightKey::LongestSession { duration_secs: 1, start_unix: 0 }.is_accent());
+        // Every other variant is neutral.
+        assert!(!InsightKey::WeekOverWeek { pct: 0, this_secs: 0, last_secs: 0 }.is_accent());
+        assert!(!InsightKey::DailyRhythm { avg_secs: 600 }.is_accent());
+        assert!(!InsightKey::NoData.is_accent());
     }
 
     #[test]
