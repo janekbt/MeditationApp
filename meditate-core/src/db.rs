@@ -543,7 +543,7 @@ const SCHEMA: &str = "
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         uuid        TEXT NOT NULL UNIQUE,
         name        TEXT NOT NULL COLLATE NOCASE UNIQUE,
-        mode        TEXT NOT NULL CHECK (mode IN ('timer', 'box_breath')),
+        mode        TEXT NOT NULL CHECK (mode IN ('timer', 'box_breath', 'guided')),
         is_starred  INTEGER NOT NULL DEFAULT 0,
         config_json TEXT NOT NULL,
         created_iso TEXT NOT NULL,
@@ -10259,6 +10259,21 @@ mod tests {
         assert!(!p.created_iso.is_empty());
         assert_eq!(p.created_iso, p.updated_iso,
             "fresh insert sets updated_iso = created_iso");
+    }
+
+    #[test]
+    fn insert_preset_guided_mode_round_trips() {
+        let db = Database::open_in_memory().unwrap();
+        let id = db.insert_preset(
+            "Headspace Track 1",
+            SessionMode::Guided,
+            true,
+            r#"{"guided_file_uuid":"x"}"#,
+        ).unwrap();
+        let presets = db.list_presets().unwrap();
+        assert_eq!(presets.len(), 1);
+        assert_eq!(presets[0].id, id);
+        assert_eq!(presets[0].mode, SessionMode::Guided);
     }
 
     #[test]
