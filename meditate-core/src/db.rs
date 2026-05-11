@@ -708,6 +708,27 @@ const SCHEMA: &str = "
     );
 ";
 
+/// Compose a name that disambiguates a sync-merge collision between
+/// two rows holding the same `name` value. Appends the row's uuid
+/// short-prefix so the suffix is deterministic across replays (the
+/// same event always produces the same name) and unique (UUID
+/// collisions are negligible). English-only marker for now;
+/// translatable when the cache-conflict UI sweep ships.
+fn conflict_suffixed_name(name: &str, uuid: &str) -> String {
+    let short = uuid.chars().take(8).collect::<String>();
+    format!("{name} (conflict-{short})")
+}
+
+/// Whether a rusqlite error is the UNIQUE-constraint failure shape
+/// that our cache UPSERTs hit on a sync-merge name collision.
+fn is_unique_constraint_error(e: &rusqlite::Error) -> bool {
+    matches!(
+        e,
+        rusqlite::Error::SqliteFailure(err, _)
+            if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE
+    )
+}
+
 /// Whether `target_id` is safe to use as part of a filesystem path
 /// component for the given event `kind`. The attack this defends
 /// against is a peer-authored `bell_sound_insert` whose target_id is
@@ -1484,17 +1505,34 @@ impl Database {
                 .map_err(|e| DbError::Csv(
                     format!("label event payload not valid JSON: {e}")))?;
             let name = v["name"].as_str().unwrap_or_default();
-            // UPSERT keyed on uuid (column is UNIQUE). The `name` column
-            // is also UNIQUE COLLATE NOCASE — peers must not concurrently
-            // pick the same name for two different label uuids; if they
-            // do the cache write will fail and we'd need a rename-conflict
-            // resolution, but the v1 plan considers that rare and accepts
-            // the failure mode for now.
-            self.conn.execute(
+            // UPSERT keyed on uuid. The `name` column is UNIQUE
+            // COLLATE NOCASE — two peers offline can both pick the
+            // same label name independently. On collision, retry
+            // with a uuid-suffixed name so both rows materialise and
+            // sync keeps moving; without this retry the entire
+            // replay_events transaction rolled back and sync got
+            // hard-stuck on the poison event forever.
+            let upsert = self.conn.execute(
                 "INSERT INTO labels (uuid, name) VALUES (?1, ?2)
                  ON CONFLICT(uuid) DO UPDATE SET name = excluded.name",
                 params![label_uuid, name],
-            )?;
+            );
+            match upsert {
+                Ok(_) => {}
+                Err(e) if is_unique_constraint_error(&e) => {
+                    let suffixed = conflict_suffixed_name(name, label_uuid);
+                    crate::diag::log(&format!(
+                        "label_name_collision: uuid={label_uuid} \
+                         original={name:?} resolved={suffixed:?}"
+                    ));
+                    self.conn.execute(
+                        "INSERT INTO labels (uuid, name) VALUES (?1, ?2)
+                         ON CONFLICT(uuid) DO UPDATE SET name = excluded.name",
+                        params![label_uuid, suffixed],
+                    )?;
+                }
+                Err(e) => return Err(DbError::Sqlite(e)),
+            }
 
             // Re-link any sessions whose LATEST mutate event references
             // this label. Without this, an out-of-order delivery
@@ -1656,14 +1694,10 @@ impl Database {
             let config_json = v["config_json"].as_str().unwrap_or("{}");
             let created_iso = v["created_iso"].as_str().unwrap_or_default();
             let updated_iso = v["updated_iso"].as_str().unwrap_or_default();
-            // UPSERT keyed on uuid. Like labels, this can in principle
-            // fail if two peers concurrently pick the same name for
-            // different uuids (the COLLATE NOCASE UNIQUE on `name`
-            // would reject the second one) — accepted v1 risk per the
-            // labels precedent; rename-conflict resolution is a
-            // separate workstream.
-            self.conn.execute(
-                "INSERT INTO presets
+            // UPSERT keyed on uuid; UNIQUE-on-name collision retries
+            // with a uuid-suffixed name so both rows materialise and
+            // sync keeps moving.
+            let upsert_sql = "INSERT INTO presets
                     (uuid, name, mode, is_starred, config_json, created_iso, updated_iso)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                  ON CONFLICT(uuid) DO UPDATE SET
@@ -1672,17 +1706,26 @@ impl Database {
                     is_starred  = excluded.is_starred,
                     config_json = excluded.config_json,
                     created_iso = excluded.created_iso,
-                    updated_iso = excluded.updated_iso",
-                params![
-                    preset_uuid,
-                    name,
-                    mode,
-                    is_starred as i64,
-                    config_json,
-                    created_iso,
-                    updated_iso,
-                ],
-            )?;
+                    updated_iso = excluded.updated_iso";
+            let first = self.conn.execute(upsert_sql, params![
+                preset_uuid, name, mode, is_starred as i64,
+                config_json, created_iso, updated_iso,
+            ]);
+            match first {
+                Ok(_) => {}
+                Err(e) if is_unique_constraint_error(&e) => {
+                    let suffixed = conflict_suffixed_name(name, preset_uuid);
+                    crate::diag::log(&format!(
+                        "preset_name_collision: uuid={preset_uuid} \
+                         original={name:?} resolved={suffixed:?}"
+                    ));
+                    self.conn.execute(upsert_sql, params![
+                        preset_uuid, suffixed, mode, is_starred as i64,
+                        config_json, created_iso, updated_iso,
+                    ])?;
+                }
+                Err(e) => return Err(DbError::Sqlite(e)),
+            }
         } else {
             self.conn.execute(
                 "DELETE FROM presets WHERE uuid = ?1",
@@ -1731,8 +1774,7 @@ impl Database {
             let is_starred = v["is_starred"].as_bool().unwrap_or(false);
             let created_iso = v["created_iso"].as_str().unwrap_or_default();
             let updated_iso = v["updated_iso"].as_str().unwrap_or(created_iso);
-            self.conn.execute(
-                "INSERT INTO guided_files
+            let upsert_sql = "INSERT INTO guided_files
                     (uuid, name, file_path, duration_secs, is_starred, created_iso, updated_iso)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                  ON CONFLICT(uuid) DO UPDATE SET
@@ -1741,12 +1783,26 @@ impl Database {
                     duration_secs = excluded.duration_secs,
                     is_starred    = excluded.is_starred,
                     created_iso   = excluded.created_iso,
-                    updated_iso   = excluded.updated_iso",
-                params![
-                    file_uuid, name, file_path, duration_secs,
-                    is_starred as i64, created_iso, updated_iso,
-                ],
-            )?;
+                    updated_iso   = excluded.updated_iso";
+            let first = self.conn.execute(upsert_sql, params![
+                file_uuid, name, file_path, duration_secs,
+                is_starred as i64, created_iso, updated_iso,
+            ]);
+            match first {
+                Ok(_) => {}
+                Err(e) if is_unique_constraint_error(&e) => {
+                    let suffixed = conflict_suffixed_name(name, file_uuid);
+                    crate::diag::log(&format!(
+                        "guided_file_name_collision: uuid={file_uuid} \
+                         original={name:?} resolved={suffixed:?}"
+                    ));
+                    self.conn.execute(upsert_sql, params![
+                        file_uuid, suffixed, file_path, duration_secs,
+                        is_starred as i64, created_iso, updated_iso,
+                    ])?;
+                }
+                Err(e) => return Err(DbError::Sqlite(e)),
+            }
         } else {
             self.conn.execute(
                 "DELETE FROM guided_files WHERE uuid = ?1",
@@ -1795,8 +1851,7 @@ impl Database {
             let is_bundled = v["is_bundled"].as_bool().unwrap_or(false);
             let created_iso = v["created_iso"].as_str().unwrap_or_default();
             let updated_iso = v["updated_iso"].as_str().unwrap_or(created_iso);
-            self.conn.execute(
-                "INSERT INTO vibration_patterns
+            let upsert_sql = "INSERT INTO vibration_patterns
                     (uuid, name, duration_ms, intensities_json, chart_kind,
                      is_bundled, created_iso, updated_iso)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
@@ -1807,12 +1862,26 @@ impl Database {
                     chart_kind       = excluded.chart_kind,
                     is_bundled       = excluded.is_bundled,
                     created_iso      = excluded.created_iso,
-                    updated_iso      = excluded.updated_iso",
-                params![
-                    pattern_uuid, name, duration_ms, intensities_json,
-                    chart_kind, is_bundled as i64, created_iso, updated_iso,
-                ],
-            )?;
+                    updated_iso      = excluded.updated_iso";
+            let first = self.conn.execute(upsert_sql, params![
+                pattern_uuid, name, duration_ms, intensities_json,
+                chart_kind, is_bundled as i64, created_iso, updated_iso,
+            ]);
+            match first {
+                Ok(_) => {}
+                Err(e) if is_unique_constraint_error(&e) => {
+                    let suffixed = conflict_suffixed_name(name, pattern_uuid);
+                    crate::diag::log(&format!(
+                        "vibration_pattern_name_collision: uuid={pattern_uuid} \
+                         original={name:?} resolved={suffixed:?}"
+                    ));
+                    self.conn.execute(upsert_sql, params![
+                        pattern_uuid, suffixed, duration_ms, intensities_json,
+                        chart_kind, is_bundled as i64, created_iso, updated_iso,
+                    ])?;
+                }
+                Err(e) => return Err(DbError::Sqlite(e)),
+            }
         } else {
             self.conn.execute(
                 "DELETE FROM vibration_patterns WHERE uuid = ?1",
@@ -4601,6 +4670,84 @@ mod tests {
             "PRAGMA user_version = {};", SCHEMA_VERSION
         )).unwrap();
         Database::init(conn).expect("init succeeds at current version");
+    }
+
+    // ── Name-collision suffix on sync merge ───────────────────────────
+
+    #[test]
+    fn label_name_collision_during_apply_renames_loser_with_uuid_suffix() {
+        // Two peers offline both name a (different-uuid) label
+        // "Morning". On sync merge, the UPSERT-on-uuid for the
+        // second label hits UNIQUE-on-name. Without the retry,
+        // recompute_label returns Err and replay_events rolls back
+        // — sync hard-stuck on the poison event forever.
+        // With the retry, the second row materialises under a
+        // uuid-suffixed name and sync keeps moving.
+        let db = Database::open_in_memory().unwrap();
+        let l1 = "550e8400-e29b-41d4-a716-44665544aaaa";
+        let l2 = "550e8400-e29b-41d4-a716-44665544bbbb";
+        for (uuid, lamport, device) in [
+            (l1, 5_i64, "dev-A"),
+            (l2, 6_i64, "dev-B"),
+        ] {
+            db.apply_event(&Event {
+                event_uuid: uuid::Uuid::new_v4().to_string(),
+                lamport_ts: lamport,
+                device_id: device.to_string(),
+                kind: "label_insert".to_string(),
+                target_id: uuid.to_string(),
+                payload: serde_json::json!({
+                    "uuid": uuid, "name": "Morning",
+                }).to_string(),
+            }).unwrap();
+        }
+        let labels = db.list_labels().unwrap();
+        assert_eq!(labels.len(), 2,
+            "both label rows must materialise — neither poisons the apply");
+        let names: Vec<_> = labels.iter().map(|l| l.name.as_str()).collect();
+        // The first-arriving label keeps the bare name; the second
+        // gets the uuid-prefix suffix.
+        assert!(names.contains(&"Morning"),
+            "first label must keep its original name; got {names:?}");
+        assert!(
+            names.iter().any(|n| n.starts_with("Morning (conflict-")),
+            "second label must carry the conflict suffix; got {names:?}"
+        );
+    }
+
+    #[test]
+    fn label_name_collision_is_idempotent_on_replay() {
+        // Re-applying the same collision sequence must land on the
+        // same suffixed name, not invent a different one each time
+        // (the suffix is derived from the uuid prefix, which is
+        // event-deterministic).
+        let db1 = Database::open_in_memory().unwrap();
+        let db2 = Database::open_in_memory().unwrap();
+        let l1 = "550e8400-e29b-41d4-a716-44665544aaaa";
+        let l2 = "550e8400-e29b-41d4-a716-44665544bbbb";
+        let events: Vec<Event> = [(l1, 5_i64, "A"), (l2, 6_i64, "B")]
+            .into_iter()
+            .map(|(uuid, lamport, device)| Event {
+                event_uuid: uuid::Uuid::new_v4().to_string(),
+                lamport_ts: lamport,
+                device_id: device.to_string(),
+                kind: "label_insert".to_string(),
+                target_id: uuid.to_string(),
+                payload: serde_json::json!({
+                    "uuid": uuid, "name": "Morning",
+                }).to_string(),
+            })
+            .collect();
+        for db in [&db1, &db2] {
+            for e in &events { db.apply_event(e).unwrap(); }
+        }
+        let mut names1: Vec<_> = db1.list_labels().unwrap()
+            .into_iter().map(|l| l.name).collect();
+        let mut names2: Vec<_> = db2.list_labels().unwrap()
+            .into_iter().map(|l| l.name).collect();
+        names1.sort(); names2.sort();
+        assert_eq!(names1, names2,
+            "two devices applying the same events must converge on the same names");
     }
 
     // ── recompute_label re-links orphaned sessions ────────────────────
