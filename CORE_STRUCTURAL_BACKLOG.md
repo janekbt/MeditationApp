@@ -757,6 +757,238 @@ Expand scope: crate-wide `tests_common` module (feature-gated
 dur)`, `make_event(...)` helpers. Importable from every test
 module.
 
+## Tier 0 — Fourth-pass additions
+
+### DST fall-back collapses session ISO → unix 1970 on read-back
+- `meditate-core/src/time.rs:83-95` — `local_iso_to_unix` returns
+  `0` when `from_local_datetime().single() == None`, which fires
+  on DST fall-back ambiguous local times (e.g. `2024-11-03T01:30:00`
+  in US TZs). Save side is fine (`unix_to_local_iso` writes local
+  wall-time); only read-back collapses.
+- Shell calls this on every session read (`src/db/mod.rs:184, 857`).
+  A session at 01:30 during the fall-back hour silently
+  re-materializes as `1970-01-01` in Log view, Time-of-Day stat,
+  and CSV export (`data_io.rs:115`).
+- No DST round-trip test exists.
+- Fix: `from_local_datetime().earliest().or_else(|| .latest())` —
+  pick a representative rather than collapsing.
+
+### CSV import overflow in `parse_hms_duration`
+- `meditate-core/src/format.rs:10, 16` — `m * 60 + sec.round() as
+  u64` and `h * 3600 + m * 60 + …` use plain u64 multiplication,
+  no checked/saturating. Pasted Insight Timer row with a large
+  H:M:S value overflows in debug (panic on `import_csv`), wraps
+  silently in release (`overflow-checks` off in `Cargo.toml`).
+- Compounded by `meditate-core/src/data_io.rs:230`: `d.as_secs()
+  as u32` truncates — a single legitimate ≥18.2h marathon import
+  wraps to a tiny number.
+- Fix: `m.checked_mul(60).and_then(|x| x.checked_add(...)).map(
+  Duration::from_secs)`. Store duration as `u64`/`i64` in the
+  import path.
+
+### `csv::Writer` and pull-side `fs::write` aren't `sync_all`'d
+- `meditate-core/src/data_io.rs:99-126` — `File::create → csv::
+  Writer → flush → drop`. No `sync_all()`. Power-loss after
+  `flush()` returns can leave a truncated or zero-byte CSV.
+- `meditate-core/src/sync/orchestrator.rs:400` — pulled bell-sound
+  files: `fs::write(&local, &bytes)` then `record_known_remote_
+  sound`. Crash between write and DB commit leaves a zero-byte
+  sound file marked as "known remote" — pull never retries it.
+- Fix: wrap export in `File::create → BufWriter → csv → flush →
+  into_inner → sync_all`. For the sound pull, `sync_all` before
+  the DB record.
+
+### `SyncCoordinator` drop-trigger race
+- `meditate-core/src/sync/coordinator.rs:80-92`. Walkthrough:
+  worker calls `should_run_again_after_pass() → false`. Concurrent
+  thread calls `request()`: sets `re_trigger=true`, then
+  `swap(true)` returns `true` (slot still taken) → `AlreadyRunning`.
+  Worker calls `release()` → `in_flight=false`. `re_trigger=true`
+  is now stranded with no worker observing it.
+- The next user trigger picks it up; if auto-sync is off and no
+  trigger arrives, the request is silently dropped.
+- Also: the doc comment on `release()` claims it returns a `bool`
+  but the signature returns `()`. Doc/signature drift.
+- Fix: `release()` should CAS — clear `in_flight` only if
+  `re_trigger` is false; otherwise return a "must loop again"
+  signal to the worker.
+
+### `streak_filtered` panics on `NaiveDate::MIN_DATE`
+- `meditate-core/src/db.rs:3959, 3972` — `today.pred_opt().expect(
+  "date underflow")` and `succ_opt`/`pred_opt` chains in the
+  streak walk.
+- Same fix family as the already-flagged `db.rs:3761`
+  (`DbError::DateOutOfRange`); bundle in the same wave. Panic
+  surface is the streak read-path, called from the Setup view on
+  every open — not just the import path.
+
+## Tier 1 — Fourth-pass additions
+
+### Root `Cargo.toml` is NOT a workspace
+- `cargo test --workspace` doesn't actually cover `meditate-core`
+  — it behaves as `cargo test` on the gtk package only.
+- Silently violates the `feedback_strict_tdd` memory rule, which
+  explicitly says "cargo test --workspace must pass before
+  deploy."
+- 5-line fix: add `[workspace] members = [".", "meditate-core"]`
+  to root `Cargo.toml`. Both crates already pin matching versions
+  of `rusqlite 0.32` / `serde 1` / `chrono 0.4` / `csv 1` by
+  accident; the workspace declaration locks them in.
+- Highest single-leverage item in the fourth pass.
+
+### Move ~40 core-behavior tests out of `src/db/mod.rs` into `meditate-core`
+- `src/db/mod.rs:902-1604` — **700 lines of tests** that test
+  *core semantics* through a one-line shell wrapper: streak
+  math, daily-totals grouping by local date, seeding
+  idempotency, label dedup, vibration-pattern duplicate
+  handling, idempotency-on-reopen, median, running-average,
+  label-totals.
+- The vast majority would pass against a bare
+  `meditate_core::db::Database` with no shell wrapper at all.
+- Move to `meditate-core/src/db.rs::tests` (or per-domain test
+  files after the Tier 1 `db/` split). The `test_db_in_memory()`
+  fixture moves with them; drop `seed_bundled_bell_sounds` (gtk-
+  specific GResource paths) in favor of `seed_all_non_audio`.
+- Lines 907-992 (`session_data_to_core` round-trip tests) stay
+  shell-side — they test the translation layer.
+
+### Push four decision predicates to core
+- `application.rs::trigger_sync` lines 391-407: the "is sync
+  configured at all?" predicate. Add
+  `meditate_core::sync::should_attempt(&Database) -> bool`.
+- `timer/imp.rs::refresh_hero_for_idle` lines 1822-1840: the
+  `match mode { Timer→countdown, Breathing→session_secs, Guided→
+  pick.duration_secs }` dispatch feeds `format::idle_hero_label`.
+  Add `meditate_core::format::idle_hero_label_from_modes(mode,
+  countdown, breathing, guided_duration)` so the mode decision
+  lives next to the formatter.
+- `window/imp.rs::sync_indicator_state_now` lines 690-714:
+  assembles a 4-tuple snapshot inline then feeds `indicator::
+  derive`. Add `meditate_core::sync::indicator::snapshot(
+  &Database) -> SyncIndicatorSnapshot` to dedupe the unwrap chain.
+- `src/db/mod.rs::get_daily_totals` lines 822-831: filters by
+  `since` after calling core. Push the filter into core
+  (`get_daily_totals_since(since: NaiveDate)`); keep the
+  stringification at the chart-axis rendering boundary.
+
+### Crate-root `pub use` additions (counts from actual imports)
+- The existing Tier 1 item lists the obvious cross-cutting types.
+  Add these based on the actual shell import tally:
+  - `meditate_core::diag::log` — **32 sites**, by far the most-
+    imported symbol.
+  - `meditate_core::settings_keys::{read_bool, format_bool}` —
+    14 combined sites.
+  - `meditate_core::naming::validate` — 6 sites across
+    `labels.rs`, `sounds.rs`, `vibrations.rs`, `presets.rs`.
+  - `meditate_core::sync::{WebDavError, WebDavResult, SyncError}`
+    — 34 combined sites in `sync_runner.rs` alone. Already
+    re-exported from `sync/mod.rs:26-27`, but not at the crate
+    root.
+
+## Tier 2 — Fourth-pass additions
+
+### Eliminate `session_data_to_core` / `session_from_core`
+- `src/db/mod.rs:164-191` — the only substantive translation in
+  the shell DB wrapper. Reason: shell `Session.start_time: i64`
+  (unix) vs core `start_iso: String`; shell field name `note` vs
+  core `notes`.
+- Fix path A: add `meditate_core::db::Session::from_unix(unix,
+  dur, …)` and a `start_unix()` accessor.
+- Fix path B: rename core's `notes` field to `note` + ship a
+  unix-seconds constructor.
+- Saves ~30 lines + tests. Android shell would need this exact
+  translation; doing it twice is the smell.
+
+### `src/db/mod.rs::map_core_err` synthesises fake sqlite errors
+- Lines 197-233 — re-builds `rusqlite::Error::SqliteFailure(
+  SQLITE_CONSTRAINT_UNIQUE, …)` per `DbError::Duplicate*` variant
+  to keep the shell's `Result = rusqlite::Result` alias.
+- Impedance-matching debt: core already has typed duplicate
+  variants.
+- Fix path A: drop the alias and use `DbError` directly through
+  the shell.
+- Fix path B: add `DbError::is_unique_violation() -> bool` so
+  shells stop forging fake sqlite errors.
+
+### Drop three `*_key_for_mode` shims in `timer/imp.rs`
+- Lines 1598-1612 — three two-line shims that translate
+  `TimerMode → SessionMode` and delegate to the matching core
+  fn. `From<TimerMode> for SessionMode` already exists (line
+  52-58).
+- Fix: drop the shims; call sites take `SessionMode` directly.
+  8 call sites in `timer/imp.rs`.
+
+### `Database::update_interval_bell` 8-arg → take `&IntervalBell`
+- `src/bells.rs:599, 611, 625, 656, 681, 704` — every call site
+  directly mutates fields on a `snap.borrow_mut()` then calls
+  `update_interval_bell(uuid, kind, minutes, jitter_pct, sound,
+  pattern_uuid, signal_mode, enabled)`. The 8-arg signature is
+  precisely what you'd write to side-step the struct.
+- Fix: `Database::update_interval_bell(&IntervalBell)` — the row
+  is the API; the 8-arg drift risk is gone.
+
+### `get_streak` / `get_best_streak` shell-side `i32→u32` clamp
+- `src/db/mod.rs:792-801` — core returns `i32` (chrono artefact),
+  shell clamps to `u32` via `.clamp(0).as u32`.
+- Fix: have core return `u32` directly. The `i32` is not a
+  semantic choice.
+
+### `get_running_average_secs` is stats math in a shell wrapper
+- `src/db/mod.rs:810-817` — computes `today - days + 1` and
+  divides. Pure statistics math, not GTK glue.
+- Fix: move to `meditate_core::stats` (paired with the existing
+  `goal::*`).
+
+## Tier 4 — Fourth-pass additions
+
+### Storage waste on push retry
+- `meditate-core/src/sync/orchestrator.rs:258-277` — single bulk
+  PUT per push; `batch_uuid` minted before PUT, recorded only
+  after success. If PUT succeeds server-side but network drops
+  before client ack, next push uploads the SAME events under a
+  NEW `batch_uuid`. Peers' `known_event_uuids` dedup catches
+  them, but the remote dir accumulates N copies on N retries.
+- Not a correctness bug (convergence holds), but quota waste on
+  flaky networks.
+- Fix: hash the event-id-set into the batch_uuid so a retry with
+  the same events reuses the filename and a second PUT either
+  overwrites idempotently or 412s.
+
+### Pull `record_known_remote_file` loop in N separate transactions
+- `meditate-core/src/sync/orchestrator.rs:204-211`. `replay_events`
+  runs in one tx; the subsequent record loop runs in N separate
+  transactions. A crash between recording 3 and 5 means next
+  pull re-GETs the 2 missing files. Event-uuid dedup keeps
+  state correct — only bandwidth/IO wasted.
+
+### Lamport-clock drift growth pattern
+- `meditate-core/src/db.rs:1117-1119` — `apply_event_inner`
+  calls `observe_remote_lamport` per new remote event during
+  replay. `observe_remote_lamport = max(local, remote) + 1`, so
+  the local clock advances by at least 1 per remote event.
+- Two peers receiving the same N events in different orders end
+  up with DIFFERENT local clocks. Cache state still converges
+  (recompute uses event lamport, not local), but peers'
+  future-authored events have widely varying lamports.
+- Not a correctness bug — an unintended O(N) growth pattern.
+
+### `recompute_*` tiebreaker is weaker than `replay_events`
+- `meditate-core/src/db.rs:1201` and the parallel lines in each
+  `recompute_*` use `ORDER BY lamport_ts DESC, device_id DESC
+  LIMIT 1`. `replay_events` (`db.rs:1171-1175`) sorts by
+  `(lamport_ts, device_id, event_uuid)` for full determinism.
+- Identical `(lamport_ts, device_id)` is only reachable via
+  corrupted wire-format input (local `bump_lamport_clock`
+  guarantees uniqueness). Cosmetic; depends on malformed input.
+
+### `Session::final_duration_secs: u64` → DB `duration_secs: i64`
+- `meditate-core/src/session.rs:535, 552, 733` — stored as
+  `Option<u64>` and written to DB as `i64`. Implicit u64→i64
+  widening with `overflow-checks` off.
+- Impossible to hit in practice (millions of years), but every
+  other `secs` field in `Session` is `u32`. Pick one width or
+  document why each module picks its own.
+
 ## Skipped (intentionally not migrating)
 
 (Empty for now — fill in as items get rejected.)
