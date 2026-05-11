@@ -213,6 +213,19 @@ pub fn session_count_key(n: usize) -> SessionCountKey {
     }
 }
 
+/// Render a "{n} thing(s)" string from a singular form and a
+/// `{n}`-templated plural. Dispatches on `session_count_key`. The
+/// caller supplies the already-localized strings; this helper just
+/// owns the match + substitution so every shell stops re-deriving
+/// it. Singular case ignores `n` (the singular form is "1 thing" or
+/// "Session deleted", with no placeholder).
+pub fn format_count(singular: &str, plural_template: &str, n: usize) -> String {
+    match session_count_key(n) {
+        SessionCountKey::One => singular.to_string(),
+        SessionCountKey::Many(n) => plural_template.replace("{n}", &n.to_string()),
+    }
+}
+
 /// Log-card hero "minutes" display from a session's duration_secs.
 /// Negatives clamp to zero, rounds to the nearest minute, then
 /// floors at 1 so a Log row always shows a non-zero hero number.
@@ -466,6 +479,25 @@ pub fn prep_target_duration(prep_active: bool, prep_secs: u32) -> Option<Duratio
 /// (anything `u32::from_str` rejects), and clamps in-range integers to
 /// `[PREP_SECS_MIN, PREP_SECS_MAX]`. The shell never has to think about
 /// sanitising a raw string read from the DB.
+/// Resolve the prep silence the shell should hand to
+/// `Session::start_prep` from persisted state. Reads three settings
+/// — `preparation_time_active`, `starting_bell_active`,
+/// `preparation_time_secs` — and AND-gates them through
+/// `prep_target_duration`. Returns `None` when prep is off, when the
+/// starting bell is off (silence with no bell is just waiting for
+/// nothing), or when the configured secs degenerate. Replaces the
+/// inline three-setting closure in the gtk shell's `on_start`.
+pub fn prep_plan_from_db(db: &crate::db::Database) -> Option<Duration> {
+    use crate::settings_keys::read_bool;
+    let active = read_bool(db, "preparation_time_active", false);
+    let starting = read_bool(db, "starting_bell_active", false);
+    let secs = db
+        .get_setting("preparation_time_secs", &PREP_SECS_DEFAULT.to_string())
+        .map(|s| parse_prep_secs(&s))
+        .unwrap_or(PREP_SECS_DEFAULT);
+    prep_target_duration(active && starting, secs)
+}
+
 pub fn parse_prep_secs(s: &str) -> u32 {
     s.parse::<u32>()
         .map(|n| n.clamp(PREP_SECS_MIN, PREP_SECS_MAX))

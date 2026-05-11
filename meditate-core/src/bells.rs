@@ -350,6 +350,21 @@ pub fn end_bell_cue_from_db(db: &Database, stopwatch_on: bool) -> Option<BellCue
     })
 }
 
+/// Count of enabled, currently-firing interval bells. Used by the
+/// Setup view's "Manage Bells" subtitle ("3 enabled" / "None enabled")
+/// and by any shell surface that needs the same number. The
+/// `stopwatch_on` filter mirrors `is_bell_inert_in_stopwatch` —
+/// `FixedFromEnd` bells can't fire without a target, so they don't
+/// contribute to the active count in stopwatch sessions.
+pub fn interval_bells_count(db: &Database, stopwatch_on: bool) -> usize {
+    db.list_interval_bells()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|b| b.enabled)
+        .filter(|b| !is_bell_inert_in_stopwatch(b.kind, stopwatch_on))
+        .count()
+}
+
 /// Per-session bell schedule from the persisted state: respects the
 /// master `interval_bells_active` toggle (empty schedule when off),
 /// reads the interval-bell library, and delegates the per-row

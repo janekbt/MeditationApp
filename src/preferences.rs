@@ -80,16 +80,25 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
         .build();
 
     // Weekly meditation goal — drives the ring on the Stats tab.
+    use meditate_core::goal::{
+        read_weekly_goal_mins, write_weekly_goal_mins,
+        WEEKLY_GOAL_DEFAULT, WEEKLY_GOAL_MAX, WEEKLY_GOAL_MIN, WEEKLY_GOAL_STEP,
+    };
     let current_goal_mins = app
-        .with_db(|db| db.get_setting("weekly_goal_mins", "150"))
-        .and_then(|r| r.ok())
-        .and_then(|s| s.parse::<f64>().ok())
-        .unwrap_or(150.0);
+        .with_db(|db| read_weekly_goal_mins(db.core()))
+        .unwrap_or(WEEKLY_GOAL_DEFAULT);
     let goal_row = adw::SpinRow::builder()
         .title(gettext("Weekly goal"))
         .subtitle(gettext("Minutes per week — drives the ring on the Stats tab"))
-        .adjustment(&gtk::Adjustment::new(current_goal_mins, 30.0, 1000.0, 15.0, 60.0, 0.0))
-        .climb_rate(15.0)
+        .adjustment(&gtk::Adjustment::new(
+            current_goal_mins as f64,
+            WEEKLY_GOAL_MIN as f64,
+            WEEKLY_GOAL_MAX as f64,
+            WEEKLY_GOAL_STEP as f64,
+            (WEEKLY_GOAL_STEP * 4) as f64,
+            0.0,
+        ))
+        .climb_rate(WEEKLY_GOAL_STEP as f64)
         .digits(0)
         .build();
     goal_row.connect_notify_local(
@@ -98,7 +107,9 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
             #[weak] app,
             move |row, _| {
                 let val = row.value() as i64;
-                app.with_db_mut(|db| db.set_setting("weekly_goal_mins", &val.to_string()));
+                app.with_db_mut(|db| {
+                    let _ = write_weekly_goal_mins(db.core(), val);
+                });
                 app.invalidate(crate::application::InvalidateScope::STATS);
             }
         ),
@@ -650,9 +661,5 @@ fn refresh_main_window(app: &MeditateApplication) {
 /// English plurals are trivial and the catalogs cover enough locales that
 /// a 1 / ≥2 split is a reasonable approximation.
 fn pluralize_sessions(singular: &str, plural: &str, n: usize) -> String {
-    use meditate_core::format::SessionCountKey;
-    match meditate_core::format::session_count_key(n) {
-        SessionCountKey::One => singular.to_string(),
-        SessionCountKey::Many(n) => plural.replace("{n}", &n.to_string()),
-    }
+    meditate_core::format::format_count(singular, plural, n)
 }

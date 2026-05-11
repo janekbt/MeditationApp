@@ -11,7 +11,7 @@
 //! return a stable `&'static str` key. The keys are wire format:
 //! never edit one without a DB migration.
 
-use crate::db::SessionMode;
+use crate::db::{Database, SessionMode};
 
 /// Signal-mode override: which channels (sound / vibration / both /
 /// neither) are allowed to fire for each mode. Per-bell signal_mode
@@ -95,6 +95,27 @@ pub fn format_bool(b: bool) -> &'static str {
     if b { "true" } else { "false" }
 }
 
+/// Read a boolean settings row, falling back to `default` when the
+/// row is missing OR the stored value doesn't parse as `"true"`.
+/// Collapses the inline `db.get_setting(k, …) → ok → parse_bool →
+/// unwrap_or(default)` chain that recurs in every shell on every
+/// per-mode toggle, master-feature toggle, and screen-awake flag.
+/// The `default`-as-fallback-string handling stays inside the helper
+/// so callers only express their domain default.
+pub fn read_bool(db: &Database, key: &str, default: bool) -> bool {
+    db.get_setting(key, format_bool(default))
+        .map(|v| parse_bool(&v))
+        .unwrap_or(default)
+}
+
+/// Per-mode keep-screen-awake reader. Shell calls this on visit
+/// (sync the switch UI) and at session start (decide whether to
+/// hold the idle-inhibit cookie). Two callsites in the gtk shell
+/// today; Android will have its own pair.
+pub fn read_keep_screen_awake(db: &Database, mode: SessionMode) -> bool {
+    read_bool(db, keep_screen_awake_key_for_mode(mode), false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,6 +179,38 @@ mod tests {
     fn format_bool_round_trips_through_parse_bool() {
         assert!(parse_bool(format_bool(true)));
         assert!(!parse_bool(format_bool(false)));
+    }
+
+    #[test]
+    fn read_bool_returns_default_when_key_missing() {
+        let db = Database::open_in_memory().unwrap();
+        assert!(read_bool(&db, "absent", true));
+        assert!(!read_bool(&db, "absent", false));
+    }
+
+    #[test]
+    fn read_bool_reads_persisted_value() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("flag", "true").unwrap();
+        assert!(read_bool(&db, "flag", false));
+        db.set_setting("flag", "false").unwrap();
+        assert!(!read_bool(&db, "flag", true));
+    }
+
+    #[test]
+    fn read_keep_screen_awake_defaults_off_for_every_mode() {
+        let db = Database::open_in_memory().unwrap();
+        assert!(!read_keep_screen_awake(&db, SessionMode::Timer));
+        assert!(!read_keep_screen_awake(&db, SessionMode::Guided));
+        assert!(!read_keep_screen_awake(&db, SessionMode::BoxBreath));
+    }
+
+    #[test]
+    fn read_keep_screen_awake_reflects_per_mode_persistence() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting(keep_screen_awake_key_for_mode(SessionMode::Timer), "true").unwrap();
+        assert!(read_keep_screen_awake(&db, SessionMode::Timer));
+        assert!(!read_keep_screen_awake(&db, SessionMode::Guided));
     }
 
     #[test]

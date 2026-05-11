@@ -163,9 +163,7 @@ pub fn preload_end_bell(app: &MeditateApplication) {
 /// uuid doesn't resolve.
 pub fn play_end_bell(app: &MeditateApplication) {
     let active = app
-        .with_db(|db| db.get_setting("end_bell_active", "true"))
-        .and_then(|r| r.ok())
-        .map(|v| meditate_core::settings_keys::parse_bool(&v))
+        .with_db(|db| meditate_core::settings_keys::read_bool(db.core(), "end_bell_active", true))
         .unwrap_or(true);
     if !active {
         return;
@@ -202,9 +200,7 @@ pub fn play_end_bell(app: &MeditateApplication) {
 /// isn't disturbed.
 pub fn play_starting_sound(app: &MeditateApplication) {
     let active = app
-        .with_db(|db| db.get_setting("starting_bell_active", "false"))
-        .and_then(|r| r.ok())
-        .map(|v| meditate_core::settings_keys::parse_bool(&v))
+        .with_db(|db| meditate_core::settings_keys::read_bool(db.core(), "starting_bell_active", false))
         .unwrap_or(false);
     if !active {
         return;

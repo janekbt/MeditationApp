@@ -7,6 +7,49 @@
 //! cairo / Skia / Compose drawing is shell-specific. This module
 //! owns the math.
 
+use crate::db::Database;
+
+/// Lower bound (minutes per week) for the goal spinner. Lower would
+/// degenerate the heatmap thresholds — `daily_expected_mins`
+/// floor-divides by 7 and `minutes_to_level` would land everything
+/// in level 4 from minute one.
+pub const WEEKLY_GOAL_MIN: i64 = 30;
+
+/// Upper bound. Above ~17 hours/week the spinner stops being a
+/// realistic target and starts being a typo magnet.
+pub const WEEKLY_GOAL_MAX: i64 = 1000;
+
+/// Spinner step — matches the gtk shell's `Adjustment`.
+pub const WEEKLY_GOAL_STEP: i64 = 15;
+
+/// Default for a fresh user — chosen to map cleanly to `daily_
+/// expected_mins == 21` (~3 minutes per day plus tolerance).
+pub const WEEKLY_GOAL_DEFAULT: i64 = 150;
+
+/// Read the user's persisted weekly goal in minutes, falling back to
+/// `WEEKLY_GOAL_DEFAULT` when the row is missing, unparseable, or
+/// non-positive (a zero goal would collapse the daily-share math).
+pub fn read_weekly_goal_mins(db: &Database) -> i64 {
+    db.get_setting("weekly_goal_mins", &WEEKLY_GOAL_DEFAULT.to_string())
+        .ok()
+        .and_then(|s| s.parse::<i64>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(WEEKLY_GOAL_DEFAULT)
+}
+
+/// Persist a new weekly goal. The shell typically calls this from
+/// the preferences `SpinRow`'s value-changed notify.
+pub fn write_weekly_goal_mins(db: &Database, mins: i64) -> crate::db::Result<()> {
+    db.set_setting("weekly_goal_mins", &mins.to_string())
+}
+
+/// Daily share of the weekly goal, used as the heatmap-cell
+/// threshold by `contrib::build_grid`. Floor at 1 so a degenerate
+/// weekly-goal value can't divide-by-zero downstream.
+pub fn daily_expected_mins(weekly_goal_mins: i64) -> i64 {
+    ((weekly_goal_mins.max(0) as f64) / 7.0).round().max(1.0) as i64
+}
+
 /// Where the user currently stands against the weekly goal. The
 /// shell maps `Reached` to a "✓" suffix on the sub-label and renders
 /// the ring as a full circle; `InProgress` shows the "{duration} to
@@ -130,5 +173,38 @@ mod tests {
         assert_eq!(g.display_pct, 0);
         assert_eq!(g.arc_pct, 0.0);
         assert_eq!(g.status, GoalStatus::InProgress);
+    }
+
+    #[test]
+    fn read_weekly_goal_falls_back_to_default() {
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(read_weekly_goal_mins(&db), WEEKLY_GOAL_DEFAULT);
+        db.set_setting("weekly_goal_mins", "garbage").unwrap();
+        assert_eq!(read_weekly_goal_mins(&db), WEEKLY_GOAL_DEFAULT);
+        db.set_setting("weekly_goal_mins", "0").unwrap();
+        assert_eq!(read_weekly_goal_mins(&db), WEEKLY_GOAL_DEFAULT, "zero filters out");
+        db.set_setting("weekly_goal_mins", "-10").unwrap();
+        assert_eq!(read_weekly_goal_mins(&db), WEEKLY_GOAL_DEFAULT, "negative filters out");
+    }
+
+    #[test]
+    fn read_weekly_goal_returns_persisted_value() {
+        let db = Database::open_in_memory().unwrap();
+        write_weekly_goal_mins(&db, 240).unwrap();
+        assert_eq!(read_weekly_goal_mins(&db), 240);
+    }
+
+    #[test]
+    fn daily_expected_mins_floors_at_one() {
+        assert_eq!(daily_expected_mins(0), 1);
+        assert_eq!(daily_expected_mins(-10), 1);
+        assert_eq!(daily_expected_mins(7), 1, "exactly 1/day");
+    }
+
+    #[test]
+    fn daily_expected_mins_rounds_to_nearest() {
+        assert_eq!(daily_expected_mins(150), 21); // 21.43 → 21
+        assert_eq!(daily_expected_mins(70), 10);
+        assert_eq!(daily_expected_mins(140), 20);
     }
 }

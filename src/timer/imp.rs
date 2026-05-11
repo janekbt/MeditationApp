@@ -311,15 +311,15 @@ impl ObjectImpl for TimerView {
 
     fn constructed(&self) {
         self.parent_constructed();
-        // Default countdown target: 10 min — matches the hero label that's
-        // set to "00:10" in the blueprint.
-        self.countdown_target_secs.set(10 * 60);
-        // Default breathing pattern (classic box: 4-4-4-4, 5 min session).
-        // `load_breathing_settings` overrides from the DB in a moment.
+        // Defaults match the blueprint's hero label (`00:10`) and the
+        // canonical 4-4-4-4 / 5-min box-breath baseline. The core
+        // constants pin them across shells; `load_*_settings`
+        // overrides from the DB in a moment.
+        self.countdown_target_secs.set(meditate_core::session::TIMER_DEFAULT_SECS);
         self.breathing_pattern.set(BreathPattern {
             in_secs: 4, hold_in: 4, out_secs: 4, hold_out: 4,
         });
-        self.breathing_session_secs.set(5 * 60);
+        self.breathing_session_secs.set(meditate_core::session::BREATHING_DEFAULT_SECS);
         self.setup_buttons();
         self.build_breathing_setup();
         self.configure_preparation_time_secs_row();
@@ -1038,11 +1038,9 @@ impl TimerView {
     /// switch reflects the key the runtime will read on session start.
     pub(crate) fn refresh_keep_screen_awake_state(&self) {
         let Some(app) = self.get_app() else { return; };
-        let key = keep_screen_awake_key_for_mode(self.current_mode());
+        let mode = self.current_mode().into();
         let on = app
-            .with_db(|db| db.get_setting(key, "false"))
-            .and_then(|r| r.ok())
-            .map(|s| meditate_core::settings_keys::parse_bool(&s))
+            .with_db(|db| meditate_core::settings_keys::read_keep_screen_awake(db.core(), mode))
             .unwrap_or(false);
         self.bells_loading.set(true);
         self.keep_screen_awake_row.set_active(on);
@@ -1059,11 +1057,9 @@ impl TimerView {
         app: &crate::application::MeditateApplication,
     ) {
         if self.screen_awake_cookie.get() != 0 { return; }
-        let key = keep_screen_awake_key_for_mode(self.current_mode());
+        let mode = self.current_mode().into();
         let active = app
-            .with_db(|db| db.get_setting(key, "false"))
-            .and_then(|r| r.ok())
-            .map(|s| meditate_core::settings_keys::parse_bool(&s))
+            .with_db(|db| meditate_core::settings_keys::read_keep_screen_awake(db.core(), mode))
             .unwrap_or(false);
         if !active { return; }
         let window = app.active_window();
@@ -1314,9 +1310,7 @@ impl TimerView {
 
         // Master row.
         let master_on = app
-            .with_db(|db| db.get_setting("boxbreath_cues_active", "false"))
-            .and_then(|r| r.ok())
-            .map(|s| meditate_core::settings_keys::parse_bool(&s))
+            .with_db(|db| meditate_core::settings_keys::read_bool(db.core(), "boxbreath_cues_active", false))
             .unwrap_or(false);
         self.boxbreath_master_row.set_enable_expansion(master_on);
         self.boxbreath_master_row.set_expanded(master_on);
@@ -1747,9 +1741,7 @@ impl TimerView {
         if let Some(app) = self.get_app() {
             let key = stopwatch_key_for_mode(mode);
             let on = app
-                .with_db(|db| db.get_setting(key, "false"))
-                .and_then(|r| r.ok())
-                .map(|s| meditate_core::settings_keys::parse_bool(&s))
+                .with_db(|db| meditate_core::settings_keys::read_bool(db.core(), key, false))
                 .unwrap_or(false);
             self.stopwatch_loading.set(true);
             self.stopwatch_mode_row.set_active(on);
@@ -1933,27 +1925,7 @@ impl TimerView {
         let prep = if mode == TimerMode::Timer {
             self.get_app()
                 .and_then(|app| {
-                    app.with_db(|db| {
-                        let active = db
-                            .get_setting("preparation_time_active", "false")
-                            .map(|v| meditate_core::settings_keys::parse_bool(&v))
-                            .unwrap_or(false);
-                        let starting = db
-                            .get_setting("starting_bell_active", "false")
-                            .map(|v| meditate_core::settings_keys::parse_bool(&v))
-                            .unwrap_or(false);
-                        let secs = db
-                            .get_setting(
-                                "preparation_time_secs",
-                                &meditate_core::format::PREP_SECS_DEFAULT.to_string(),
-                            )
-                            .map(|s| meditate_core::format::parse_prep_secs(&s))
-                            .unwrap_or(meditate_core::format::PREP_SECS_DEFAULT);
-                        // Prep only makes sense if there's a starting bell
-                        // to delay — silence with no bell is just a wait
-                        // for nothing.
-                        meditate_core::format::prep_target_duration(active && starting, secs)
-                    })
+                    app.with_db(|db| meditate_core::format::prep_plan_from_db(db.core()))
                 })
                 .flatten()
         } else {
@@ -2919,22 +2891,15 @@ impl TimerView {
         let stopwatch_key = stopwatch_key_for_mode(self.current_mode());
         let (streak, stopwatch_on, bells, intervals) = app
             .with_db(|db| {
+                use meditate_core::settings_keys::read_bool;
+                let core_db = db.core();
                 let streak  = db.get_streak().unwrap_or(0);
-                let stopwatch_on = db
-                    .get_setting(stopwatch_key, "false")
-                    .map(|v| meditate_core::settings_keys::parse_bool(&v))
-                    .unwrap_or(false);
-                let starting_bell_on = db
-                    .get_setting("starting_bell_active", "false")
-                    .map(|v| meditate_core::settings_keys::parse_bool(&v))
-                    .unwrap_or(false);
+                let stopwatch_on = read_bool(core_db, stopwatch_key, false);
+                let starting_bell_on = read_bool(core_db, "starting_bell_active", false);
                 let starting_bell_sound = db
                     .get_setting("starting_bell_sound", "bowl")
                     .unwrap_or_else(|_| "bowl".to_string());
-                let prep_on = db
-                    .get_setting("preparation_time_active", "false")
-                    .map(|v| meditate_core::settings_keys::parse_bool(&v))
-                    .unwrap_or(false);
+                let prep_on = read_bool(core_db, "preparation_time_active", false);
                 let prep_secs = db
                     .get_setting(
                         "preparation_time_secs",
@@ -2942,24 +2907,15 @@ impl TimerView {
                     )
                     .map(|s| meditate_core::format::parse_prep_secs(&s))
                     .unwrap_or(meditate_core::format::PREP_SECS_DEFAULT);
-                let intervals_on = db
-                    .get_setting("interval_bells_active", "false")
-                    .map(|v| meditate_core::settings_keys::parse_bool(&v))
-                    .unwrap_or(false);
-                let intervals_enabled_count = db
-                    .list_interval_bells()
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter(|b| b.enabled)
-                    // Stopwatch mode mutes fixed-from-end bells — no
-                    // end to count backwards from. The persisted
-                    // enabled flag stays untouched (returns when
-                    // stopwatch flips off); the UI subtitle just
-                    // reflects what will actually fire right now.
-                    .filter(|b| !meditate_core::bells::is_bell_inert_in_stopwatch(
-                        b.kind, stopwatch_on,
-                    ))
-                    .count();
+                let intervals_on = read_bool(core_db, "interval_bells_active", false);
+                // Stopwatch mode mutes fixed-from-end bells — no end
+                // to count backwards from. The persisted enabled flag
+                // stays untouched (returns when stopwatch flips off);
+                // the UI subtitle just reflects what will actually
+                // fire right now.
+                let intervals_enabled_count = meditate_core::bells::interval_bells_count(
+                    core_db, stopwatch_on,
+                );
                 (
                     streak,
                     stopwatch_on,
@@ -3476,12 +3432,13 @@ impl TimerView {
     /// otherwise do.
     fn load_timer_settings(&self) {
         let Some(app) = self.get_app() else { return; };
+        let default = meditate_core::session::TIMER_DEFAULT_SECS;
         let secs = app.with_db(|db| {
-            db.get_setting("timer_session_secs", "600")
+            db.get_setting("timer_session_secs", &default.to_string())
                 .ok()
                 .and_then(|s| s.parse::<u64>().ok())
-                .unwrap_or(10 * 60)
-        }).unwrap_or(10 * 60);
+                .unwrap_or(default)
+        }).unwrap_or(default);
         self.timer_populating.set(true);
         self.set_countdown_target(secs);
         self.timer_populating.set(false);
@@ -3792,17 +3749,10 @@ impl TimerView {
             .get_app()
             .and_then(|app| {
                 app.with_db(|db| {
-                    let stopwatch_on = db
-                        .get_setting(stopwatch_key_for_mode(mode), "false")
-                        .map(|v| meditate_core::settings_keys::parse_bool(&v))
-                        .unwrap_or(false);
-                    db.list_interval_bells()
-                        .map(|bells| bells.into_iter()
-                            .filter(|b| b.enabled)
-                            .filter(|b| !(stopwatch_on
-                                && b.kind == meditate_core::db::IntervalBellKind::FixedFromEnd))
-                            .count())
-                        .unwrap_or(0)
+                    let stopwatch_on = meditate_core::settings_keys::read_bool(
+                        db.core(), stopwatch_key_for_mode(mode), false,
+                    );
+                    meditate_core::bells::interval_bells_count(db.core(), stopwatch_on)
                 })
             })
             .unwrap_or(0);
@@ -4148,11 +4098,14 @@ impl TimerView {
                 read("breathing_out", 4),
                 read("breathing_hold_out", 4),
             );
-            let secs = clamp_session_secs(read("breathing_session_secs", 5 * 60));
+            let secs = clamp_session_secs(read(
+                "breathing_session_secs",
+                meditate_core::session::BREATHING_DEFAULT_SECS,
+            ));
             (p, secs)
         }).unwrap_or((
             BreathPattern::box_breath(),
-            5 * 60,
+            meditate_core::session::BREATHING_DEFAULT_SECS,
         ));
         self.breathing_pattern.set(p);
         self.breathing_session_secs.set(secs);

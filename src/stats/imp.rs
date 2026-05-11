@@ -3,10 +3,6 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{glib, cairo, CompositeTemplate};
 
-/// Fallback weekly-goal target in minutes if the setting is unset or
-/// unparseable. The real value lives in the `weekly_goal_mins` DB setting,
-/// exposed in Preferences → Statistics → Weekly goal.
-const DEFAULT_WEEKLY_GOAL_MINS: i64 = 150;
 
 // ── GObject impl ──────────────────────────────────────────────────────────────
 
@@ -159,14 +155,10 @@ impl StatsView {
         let (week_secs, goal_mins) = self.get_app()
             .and_then(|app| app.with_db(|db| {
                 let s = db.get_total_secs_since(&since).unwrap_or(0);
-                let goal = db.get_setting("weekly_goal_mins", "150")
-                    .ok()
-                    .and_then(|s| s.parse::<i64>().ok())
-                    .filter(|v| *v > 0)
-                    .unwrap_or(DEFAULT_WEEKLY_GOAL_MINS);
+                let goal = meditate_core::goal::read_weekly_goal_mins(db.core());
                 (s, goal)
             }))
-            .unwrap_or((0, DEFAULT_WEEKLY_GOAL_MINS));
+            .unwrap_or((0, meditate_core::goal::WEEKLY_GOAL_DEFAULT));
         let g = meditate_core::goal::compute(week_secs, goal_mins);
         self.goal_pct.set(g.arc_pct);
         self.goal_ring.queue_draw();
@@ -205,19 +197,13 @@ impl StatsView {
         let (totals_vec, goal_mins) = self.get_app()
             .and_then(|app| app.with_db(|db| {
                 let t = db.core().get_daily_totals().unwrap_or_default();
-                let g = db.get_setting("weekly_goal_mins", "150")
-                    .ok()
-                    .and_then(|s| s.parse::<i64>().ok())
-                    .filter(|v| *v > 0)
-                    .unwrap_or(DEFAULT_WEEKLY_GOAL_MINS);
+                let g = meditate_core::goal::read_weekly_goal_mins(db.core());
                 (t, g)
             }))
-            .unwrap_or_else(|| (Vec::new(), DEFAULT_WEEKLY_GOAL_MINS));
+            .unwrap_or_else(|| (Vec::new(), meditate_core::goal::WEEKLY_GOAL_DEFAULT));
         let totals: std::collections::HashMap<chrono::NaiveDate, i64> =
             totals_vec.into_iter().collect();
-        // Daily share of the weekly goal — drives the heatmap thresholds so a
-        // 10-hour retreat day doesn't make on-target days look washed-out.
-        let daily_expected_mins = (goal_mins as f64 / 7.0).round().max(1.0) as i64;
+        let daily_expected_mins = meditate_core::goal::daily_expected_mins(goal_mins);
 
         // Core owns the cell classification (future / today / past +
         // level dispatch). Shell only renders.

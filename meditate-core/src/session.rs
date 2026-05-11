@@ -55,6 +55,17 @@ pub fn ui_state(session: Option<&Session>) -> UiState {
     session.map(|s| s.ui_state()).unwrap_or(UiState::Idle)
 }
 
+/// Default Timer-mode countdown in seconds for a fresh user
+/// (10 minutes). Used by the shell when restoring on first launch
+/// before any persisted value exists, AND as the fallback when the
+/// `timer_session_secs` row is missing or unparseable.
+pub const TIMER_DEFAULT_SECS: u64 = 10 * 60;
+
+/// Default Box-Breath session length in seconds for a fresh user
+/// (5 minutes). Used by the shell the same way as
+/// `TIMER_DEFAULT_SECS`.
+pub const BREATHING_DEFAULT_SECS: u32 = 5 * 60;
+
 /// Which lifecycle phase the in-flight session is currently in.
 /// "Idle" is not a phase — it corresponds to no session being in
 /// flight at all (the shell holds `Option<Session>::None`).

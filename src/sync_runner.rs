@@ -18,7 +18,9 @@ use crate::keychain::{self, KeychainError};
 use meditate_core::sync::settings::{KEY_URL, KEY_USERNAME};
 
 /// Path under the WebDAV root where this app's data lives.
-pub const REMOTE_BASE_PATH: &str = "Meditate";
+/// Re-export of the core constant so existing call sites stay
+/// terse; core owns the canonical value.
+pub use meditate_core::sync::REMOTE_BASE_PATH;
 
 #[derive(Debug)]
 pub enum SyncRunnerError {
