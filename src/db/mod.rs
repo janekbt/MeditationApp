@@ -118,7 +118,6 @@ pub use meditate_core::seeds::{
     BUNDLED_PATTERN_PYRAMID_UUID,
     BUNDLED_PATTERN_RIPPLE_UUID,
     BUNDLED_PATTERN_WAVE_UUID,
-    BUNDLED_VIBRATION_PATTERNS,
     DEFAULT_BOX_BREATH_4444_UUID,
     DEFAULT_BOX_BREATH_4780_UUID,
     DEFAULT_BREATHING_LABEL_UUID,
@@ -126,9 +125,6 @@ pub use meditate_core::seeds::{
     DEFAULT_LABELS,
     DEFAULT_SITTING_PRESET_UUID,
     DEFAULT_TIMER_LABEL_UUID,
-    LABELS_SEEDED_KEY,
-    PRESETS_SEEDED_KEY,
-    VIBRATION_PATTERNS_SEEDED_KEY,
 };
 
 #[derive(Debug, Clone)]
@@ -276,11 +272,10 @@ impl Database {
         }
         let inner = meditate_core::db::Database::open(path).map_err(map_core_err)?;
         let db = Self { inner };
+        // Bell sounds stay shell-side: the seed list carries gresource
+        // paths that don't exist on Android.
         db.seed_bundled_bell_sounds()?;
-        db.seed_default_labels()?;
-        db.seed_default_presets()?;
-        db.seed_bundled_vibration_patterns()?;
-        db.inner.seed_box_breath_phases().map_err(map_core_err)?;
+        db.inner.seed_all_non_audio().map_err(map_core_err)?;
         Ok(db)
     }
 
@@ -310,159 +305,6 @@ impl Database {
                 .map_err(map_core_err)?;
         }
         self.inner.set_setting(BELLS_SEEDED_KEY, "1").map_err(map_core_err)?;
-        Ok(())
-    }
-
-    /// Seed the five bundled vibration patterns (Pulse / Heartbeat /
-    /// Wave / Ripple / Pyramid) under stable UUIDs. Same one-shot
-    /// flag pattern as the other seeds — a deleted bundled pattern
-    /// stays deleted instead of resurrecting on the next open.
-    fn seed_bundled_vibration_patterns(&self) -> Result<()> {
-        if self
-            .inner
-            .get_setting(VIBRATION_PATTERNS_SEEDED_KEY, "0")
-            .map_err(map_core_err)?
-            == "1"
-        {
-            return Ok(());
-        }
-        for &(uuid, name, duration_ms, intensities, chart_kind) in BUNDLED_VIBRATION_PATTERNS {
-            self.inner
-                .insert_vibration_pattern_with_uuid(
-                    uuid, name, duration_ms, intensities, chart_kind, true,
-                )
-                .map_err(map_core_err)?;
-        }
-        self.inner
-            .set_setting(VIBRATION_PATTERNS_SEEDED_KEY, "1")
-            .map_err(map_core_err)?;
-        Ok(())
-    }
-
-    /// Seed the two default labels ("Meditation", "Box-Breathing")
-    /// with stable UUIDs, gated by a one-shot `default_labels_seeded`
-    /// settings flag. Same resurrect-bug rationale as the bell-sound
-    /// seed: deleting a seed label leaves its UUID free, and a
-    /// re-seed without the flag would emit a fresh `label_insert`
-    /// event that overrides the user's deletion via sync. A
-    /// `DuplicateLabel` error (user already has a row with this
-    /// *name* under a different uuid) is silently swallowed so we
-    /// don't shadow user-managed rows.
-    fn seed_default_labels(&self) -> Result<()> {
-        if self.inner.get_setting(LABELS_SEEDED_KEY, "0").map_err(map_core_err)? == "1" {
-            return Ok(());
-        }
-        for (uuid, name) in DEFAULT_LABELS {
-            match self.inner.insert_label_with_uuid(uuid, name) {
-                Ok(_) => {}
-                Err(meditate_core::db::DbError::DuplicateLabel(_)) => {}
-                Err(e) => return Err(map_core_err(e)),
-            }
-        }
-        self.inner.set_setting(LABELS_SEEDED_KEY, "1").map_err(map_core_err)?;
-        Ok(())
-    }
-
-    /// Seed the three bundled presets — one Timer ("Sitting") plus two
-    /// Box-Breath patterns (4-4-4-4 and 4-7-8-0) — under stable UUIDs,
-    /// all starred so they show in the home-screen chip list on first
-    /// run. Mode-strict separation means the user always sees one of
-    /// each kind regardless of which mode they start the app in. Per
-    /// the design call (2026-05-04), these are *regular* presets:
-    /// fully renamable / destarable / deletable, no special property
-    /// at the schema level. Same one-shot flag pattern as the labels
-    /// and bell-sounds seeds — deletion does not resurrect on the next
-    /// open.
-    fn seed_default_presets(&self) -> Result<()> {
-        if self.inner.get_setting(PRESETS_SEEDED_KEY, "0").map_err(map_core_err)? == "1" {
-            return Ok(());
-        }
-
-        use meditate_core::preset_config::*;
-        let default_starting_bell_off = || PresetStartingBell {
-            enabled: false,
-            sound_uuid: BUNDLED_BOWL_UUID.to_string(),
-            prep_time_enabled: false,
-            prep_time_secs: 5,
-            signal_mode: "sound".to_string(),
-            vibration_pattern_uuid: BUNDLED_PATTERN_PULSE_UUID.to_string(),
-        };
-        let sitting = PresetConfig {
-            label: PresetLabel {
-                enabled: true,
-                uuid: Some(DEFAULT_TIMER_LABEL_UUID.to_string()),
-            },
-            starting_bell: PresetStartingBell {
-                enabled: true,
-                ..default_starting_bell_off()
-            },
-            interval_bells: PresetIntervalBells::default(),
-            end_bell: PresetEndBell {
-                enabled: true,
-                sound_uuid: BUNDLED_BELL_UUID.to_string(),
-                signal_mode: "sound".to_string(),
-                vibration_pattern_uuid: BUNDLED_PATTERN_PULSE_UUID.to_string(),
-            },
-            timing: PresetTiming::Timer { stopwatch: false, duration_secs: 15 * 60 },
-            cues_signal_mode: "both".to_string(),
-            keep_screen_awake: false,
-            box_breath_cues: PresetBoxBreathCues::default(),
-        };
-        let box_4444 = PresetConfig {
-            label: PresetLabel {
-                enabled: true,
-                uuid: Some(DEFAULT_BREATHING_LABEL_UUID.to_string()),
-            },
-            starting_bell: default_starting_bell_off(),
-            interval_bells: PresetIntervalBells::default(),
-            end_bell: PresetEndBell {
-                enabled: true,
-                sound_uuid: BUNDLED_BELL_UUID.to_string(),
-                signal_mode: "sound".to_string(),
-                vibration_pattern_uuid: BUNDLED_PATTERN_PULSE_UUID.to_string(),
-            },
-            timing: PresetTiming::BoxBreath {
-                stopwatch: false,
-                inhale_secs: 4,
-                hold_full_secs: 4,
-                exhale_secs: 4,
-                hold_empty_secs: 4,
-                duration_secs: 10 * 60,
-            },
-            cues_signal_mode: "both".to_string(),
-            keep_screen_awake: false,
-            box_breath_cues: PresetBoxBreathCues::default(),
-        };
-        let box_4780 = PresetConfig {
-            timing: PresetTiming::BoxBreath {
-                stopwatch: false,
-                inhale_secs: 4,
-                hold_full_secs: 7,
-                exhale_secs: 8,
-                hold_empty_secs: 0,
-                duration_secs: 10 * 60,
-            },
-            ..box_4444.clone()
-        };
-
-        let seeds: &[(&str, &str, SessionMode, &PresetConfig)] = &[
-            (DEFAULT_SITTING_PRESET_UUID, "Sitting", SessionMode::Timer, &sitting),
-            (DEFAULT_BOX_BREATH_4444_UUID, "Box Breath 4-4-4-4",
-                SessionMode::BoxBreath, &box_4444),
-            (DEFAULT_BOX_BREATH_4780_UUID, "Box Breath 4-7-8-0",
-                SessionMode::BoxBreath, &box_4780),
-        ];
-
-        for (uuid, name, mode, cfg) in seeds {
-            match self.inner.insert_preset_with_uuid(
-                uuid, name, *mode, true, &cfg.to_json(),
-            ) {
-                Ok(_) => {}
-                Err(meditate_core::db::DbError::DuplicatePreset(_)) => {}
-                Err(e) => return Err(map_core_err(e)),
-            }
-        }
-        self.inner.set_setting(PRESETS_SEEDED_KEY, "1").map_err(map_core_err)?;
         Ok(())
     }
 
@@ -1045,9 +887,9 @@ pub(crate) fn test_db_in_memory() -> Database {
         inner: meditate_core::db::Database::open_in_memory().unwrap(),
     };
     db.seed_bundled_bell_sounds().unwrap();
-    db.seed_default_labels().unwrap();
-    db.seed_default_presets().unwrap();
-    db.seed_bundled_vibration_patterns().unwrap();
+    db.inner.seed_default_labels().unwrap();
+    db.inner.seed_default_presets().unwrap();
+    db.inner.seed_bundled_vibration_patterns().unwrap();
     db.inner.seed_box_breath_phases().unwrap();
     db
 }
@@ -1469,7 +1311,7 @@ mod tests {
     #[test]
     fn seeding_default_labels_twice_is_idempotent() {
         let db = test_db_in_memory();
-        db.seed_default_labels().unwrap();
+        db.inner.seed_default_labels().unwrap();
         let labels = db.list_labels().unwrap();
         assert_eq!(
             labels.iter().filter(|l| l.uuid == DEFAULT_TIMER_LABEL_UUID).count(),
@@ -1629,7 +1471,7 @@ mod tests {
     fn seeding_default_presets_twice_is_idempotent() {
         let db = test_db_in_memory();
         // test_db_in_memory already seeded once; do it again.
-        db.seed_default_presets().unwrap();
+        db.inner.seed_default_presets().unwrap();
         assert_eq!(db.list_presets().unwrap().len(), 3,
             "second seed must not duplicate rows");
     }
@@ -1684,7 +1526,7 @@ mod tests {
     #[test]
     fn seeding_bundled_vibration_patterns_twice_is_idempotent() {
         let db = test_db_in_memory();
-        db.seed_bundled_vibration_patterns().unwrap();
+        db.inner.seed_bundled_vibration_patterns().unwrap();
         assert_eq!(db.inner.list_vibration_patterns().unwrap().len(), 5,
             "second seed must not duplicate rows");
     }
