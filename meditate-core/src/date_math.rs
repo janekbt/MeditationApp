@@ -11,6 +11,15 @@
 
 use std::collections::HashMap;
 
+/// Parse a `YYYY-MM-DD` ISO-formatted date string into a
+/// `chrono::NaiveDate`. `None` on a malformed value (wrong length,
+/// non-numeric components, invalid calendar date). Used at the
+/// shell/db wrapper boundary where caller code wants strict ISO
+/// parsing without taking a dep on chrono themselves.
+pub fn parse_iso_date(s: &str) -> Option<chrono::NaiveDate> {
+    chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()
+}
+
 /// Two-tick y-axis decision for the stats chart (max + midpoint).
 /// `max` is the data series' largest value floored at 1 so a chart
 /// with no totals still draws axis ticks. `mid` is `max / 2`. The

@@ -184,11 +184,9 @@ fn build_create_row(
         // rowid, not the uuid) and drill into its edit page.
         if let Some(rowid) = new_id {
             let new_uuid = app_for_create
-                .with_db(|db| db.list_interval_bells())
+                .with_db(|db| db.find_interval_bell_by_id(rowid))
                 .and_then(|r| r.ok())
-                .unwrap_or_default()
-                .into_iter()
-                .find(|b| b.id == rowid)
+                .flatten()
                 .map(|b| b.uuid);
             if let Some(uuid) = new_uuid {
                 push_edit_page(

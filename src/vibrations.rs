@@ -593,15 +593,15 @@ fn present_rename_dialog(
             .with_db(|db| db.find_vibration_pattern_by_uuid(&uuid))
             .and_then(|r| r.ok())
             .flatten();
-        if let Some(ref p) = before {
-            if p.name == trimmed {
-                return; // No-op rename — skip the toast.
-            }
-            app.with_db_mut(|db| {
-                db.update_vibration_pattern(
-                    &uuid, trimmed, p.duration_ms, &p.intensities, p.chart_kind,
-                )
-            });
+        // Core's `rename_vibration_pattern` handles the read-modify-
+        // write and returns false on a no-op rename so the shell can
+        // skip the undo toast.
+        let changed = app
+            .with_db_mut(|db| db.rename_vibration_pattern(&uuid, trimmed))
+            .and_then(|r| r.ok())
+            .unwrap_or(false);
+        if !changed {
+            return;
         }
         if let Some(rb) = rebuilder.borrow().as_ref() {
             rb();

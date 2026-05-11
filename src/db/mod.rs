@@ -360,6 +360,12 @@ impl Database {
         self.inner.list_interval_bells().map_err(map_core_err)
     }
 
+    pub fn find_interval_bell_by_id(
+        &self, rowid: i64,
+    ) -> Result<Option<meditate_core::db::IntervalBell>> {
+        self.inner.find_interval_bell_by_id(rowid).map_err(map_core_err)
+    }
+
     pub fn insert_interval_bell(
         &self,
         kind: meditate_core::db::IntervalBellKind,
@@ -619,6 +625,10 @@ impl Database {
         self.inner
             .update_vibration_pattern(uuid, name, duration_ms, intensities, chart_kind)
             .map_err(map_core_err)
+    }
+
+    pub fn rename_vibration_pattern(&self, uuid: &str, new_name: &str) -> Result<bool> {
+        self.inner.rename_vibration_pattern(uuid, new_name).map_err(map_core_err)
     }
 
     pub fn delete_vibration_pattern(&self, uuid: &str) -> Result<()> {

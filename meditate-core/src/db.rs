@@ -2130,6 +2130,18 @@ impl Database {
     /// directly. Order is `id ASC` (rowid) — deterministic and stable
     /// across reads, matches the user's mental model of "first one I
     /// added is at the top".
+    /// Look up an interval bell by its primary-key rowid. Used by
+    /// the shell's "drill into the row I just inserted" flow —
+    /// `insert_interval_bell` returns rowid and this resolves it to
+    /// the full row (including the generated uuid) without
+    /// re-listing the whole library.
+    pub fn find_interval_bell_by_id(&self, rowid: i64) -> Result<Option<IntervalBell>> {
+        // Cheap to delegate to list_interval_bells then filter — the
+        // library is small (typically <20 rows). Avoids duplicating
+        // the row→IntervalBell decoder.
+        Ok(self.list_interval_bells()?.into_iter().find(|b| b.id == rowid))
+    }
+
     pub fn list_interval_bells(&self) -> Result<Vec<IntervalBell>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, uuid, kind, minutes, jitter_pct, sound,
@@ -3065,6 +3077,41 @@ impl Database {
             },
         ).optional()?;
         Ok(row)
+    }
+
+    /// Focused rename: re-uses `update_vibration_pattern` internally
+    /// but lets the shell skip the read-modify-write of all four
+    /// mutable fields when only the name changes. Returns `Ok(false)`
+    /// when the row doesn't exist OR `new_name == existing.name`
+    /// (a no-op rename — the shell uses this to skip the undo toast).
+    /// Returns `DuplicateVibrationPattern` if another row already
+    /// holds the new name.
+    pub fn rename_vibration_pattern(&self, uuid_str: &str, new_name: &str) -> Result<bool> {
+        let existing: Option<(String, u32, String, String)> = self.conn.query_row(
+            "SELECT name, duration_ms, intensities_json, chart_kind
+               FROM vibration_patterns WHERE uuid = ?1",
+            params![uuid_str],
+            |row| Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, u32>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            )),
+        ).optional()?;
+        let Some((current_name, duration_ms, intensities_json, chart_kind_str)) = existing else {
+            return Ok(false);
+        };
+        if current_name == new_name {
+            return Ok(false);
+        }
+        let intensities: Vec<f32> = serde_json::from_str(&intensities_json)
+            .map_err(|e| DbError::Csv(format!("deserialise intensities: {e}")))?;
+        let chart_kind = ChartKind::from_db_str(&chart_kind_str)
+            .ok_or_else(|| DbError::Csv(format!("bad chart_kind: {chart_kind_str}")))?;
+        self.update_vibration_pattern(
+            uuid_str, new_name, duration_ms, &intensities, chart_kind,
+        )?;
+        Ok(true)
     }
 
     /// Update the four mutable fields on an existing pattern. Bumps

@@ -10,6 +10,7 @@ pub mod goal;
 pub mod insights;
 pub mod labels;
 pub mod naming;
+pub mod paths;
 pub mod preset_config;
 pub mod rng;
 pub mod seeds;
