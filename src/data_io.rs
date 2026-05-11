@@ -9,12 +9,10 @@
 //!
 //! Native CSV format documented in `meditate_core::data_io`.
 
-use std::fs::File;
-use std::io::BufReader;
 use std::path::Path;
 
 use crate::application::MeditateApplication;
-use crate::db::{Database, SessionMode};
+use crate::db::Database;
 
 /// Everything that can go wrong during import or export, collapsed into a
 /// single user-facing error type so the caller can just show a toast.
@@ -117,45 +115,13 @@ pub fn import_insighttimer(app: &MeditateApplication, path: &Path) -> Result<usi
 }
 
 pub(crate) fn import_insighttimer_to_db(db: &Database, path: &Path) -> Result<usize, DataIoError> {
-    let file = File::open(path)?;
-    let mut rdr = csv::Reader::from_reader(BufReader::new(file));
-
-    let mut label_names: Vec<String> = Vec::new();
-    let mut rows: Vec<(i64, u32, SessionMode, Option<String>, usize)> = Vec::new();
-
-    for (i, record) in rdr.records().enumerate() {
-        let rec = record?;
-        let line = i + 2;
-        let started_raw = rec.get(0).unwrap_or("").trim();
-        let duration_raw = rec.get(1).unwrap_or("").trim();
-        let activity = rec.get(3).unwrap_or("").trim().to_string();
-
-        let start_time = parse_insighttimer_datetime(started_raw)
-            .ok_or_else(|| DataIoError::Parse(
-                format!("line {line}: can't parse 'Started At' {started_raw:?}")))?;
-        let duration_secs: u32 = meditate_core::format::parse_hms_duration(duration_raw)
-            .map(|d| d.as_secs() as u32)
-            .ok_or_else(|| DataIoError::Parse(
-                format!("line {line}: can't parse 'Duration' {duration_raw:?}")))?;
-        if duration_secs == 0 {
-            return Err(DataIoError::Parse(
-                format!("line {line}: duration must be positive, got {duration_raw:?}")));
-        }
-
-        // Insight Timer doesn't record countdown-vs-stopwatch — treat
-        // everything as countdown (the closer match: they picked a time).
-        let label_idx = if activity.is_empty() {
-            usize::MAX
-        } else {
-            let lower = activity.to_lowercase();
-            label_names.iter().position(|n| n.to_lowercase() == lower).unwrap_or_else(|| {
-                label_names.push(activity.clone());
-                label_names.len() - 1
-            })
-        };
-        rows.push((start_time, duration_secs, SessionMode::Timer, None, label_idx));
-    }
-
+    // CSV parsing + label dedup + duration validation live in core;
+    // gtk supplies its glib-based datetime parser via the closure
+    // (Android passes its own chrono-based one).
+    let (label_names, rows) = meditate_core::data_io::parse_insighttimer_csv(
+        path,
+        parse_insighttimer_datetime,
+    )?;
     meditate_core::data_io::insert_sessions_with_labels(db.core(), &label_names, &rows)
         .map_err(DataIoError::from)
 }

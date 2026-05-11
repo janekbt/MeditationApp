@@ -182,6 +182,81 @@ pub fn import_csv(db: &Database, path: &Path) -> Result<usize, DataIoError> {
     insert_sessions_with_labels(db, &label_names, &rows)
 }
 
+// ── Insight Timer import ────────────────────────────────────────────────
+
+/// Parse an Insight Timer CSV export into the `(label_names, rows)`
+/// pair that `insert_sessions_with_labels` consumes. The CSV format
+/// is:
+///   col 0: "Started At" (a local-time string — the gtk shell uses
+///          glib for parsing; Android uses chrono; either way the
+///          caller passes a `parse_dt` closure that returns the
+///          unix timestamp).
+///   col 1: "Duration" — HMS string parseable by `parse_hms_duration`.
+///   col 3: "Activity" — free-form text, becomes the session's
+///          label. Empty cells produce a label-less row.
+///
+/// Case-insensitive label dedup: two rows with `Activity` differing
+/// only in case land in the same label (the first spelling wins).
+/// Duration must be positive; zero rows are rejected with
+/// `DataIoError::Parse` carrying the line number.
+///
+/// Pure once `parse_dt` is supplied. The gtk shell passes its
+/// glib-based parser as the closure so this fn stays free of
+/// datetime backend choice.
+pub fn parse_insighttimer_csv<F>(
+    path: &Path,
+    parse_dt: F,
+) -> Result<(Vec<String>, Vec<(i64, u32, SessionMode, Option<String>, usize)>), DataIoError>
+where
+    F: Fn(&str) -> Option<i64>,
+{
+    let file = File::open(path)?;
+    let mut rdr = csv::Reader::from_reader(BufReader::new(file));
+    let mut label_names: Vec<String> = Vec::new();
+    let mut rows: Vec<(i64, u32, SessionMode, Option<String>, usize)> = Vec::new();
+    for (i, record) in rdr.records().enumerate() {
+        let rec = record?;
+        let line = i + 2;
+        let started_raw = rec.get(0).unwrap_or("").trim();
+        let duration_raw = rec.get(1).unwrap_or("").trim();
+        let activity = rec.get(3).unwrap_or("").trim().to_string();
+
+        let start_time = parse_dt(started_raw).ok_or_else(|| {
+            DataIoError::Parse(format!(
+                "line {line}: can't parse 'Started At' {started_raw:?}"
+            ))
+        })?;
+        let duration_secs: u32 = crate::format::parse_hms_duration(duration_raw)
+            .map(|d| d.as_secs() as u32)
+            .ok_or_else(|| {
+                DataIoError::Parse(format!(
+                    "line {line}: can't parse 'Duration' {duration_raw:?}"
+                ))
+            })?;
+        if duration_secs == 0 {
+            return Err(DataIoError::Parse(format!(
+                "line {line}: duration must be positive, got {duration_raw:?}"
+            )));
+        }
+        // Insight Timer doesn't record countdown-vs-stopwatch — treat
+        // everything as countdown (the closer match: they picked a time).
+        let label_idx = if activity.is_empty() {
+            usize::MAX
+        } else {
+            let lower = activity.to_lowercase();
+            label_names
+                .iter()
+                .position(|n| n.to_lowercase() == lower)
+                .unwrap_or_else(|| {
+                    label_names.push(activity.clone());
+                    label_names.len() - 1
+                })
+        };
+        rows.push((start_time, duration_secs, SessionMode::Timer, None, label_idx));
+    }
+    Ok((label_names, rows))
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────
 
 /// Resolve the accumulated `label_names` to ids (creating missing labels)
@@ -219,6 +294,67 @@ pub fn insert_sessions_with_labels(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+
+    fn write_csv(contents: &str) -> tempfile::NamedTempFile {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        f.write_all(contents.as_bytes()).unwrap();
+        f.flush().unwrap();
+        f
+    }
+
+    #[test]
+    fn parse_insighttimer_csv_dedupes_labels_case_insensitively() {
+        // Two rows whose Activity differs only in case must land
+        // under the same label name (the first spelling).
+        let csv = "Started At,Duration,Type,Activity\n\
+                   2024-04-17T08:00:00,00:10:00,T,Meditation\n\
+                   2024-04-18T08:00:00,00:15:00,T,meditation\n";
+        let f = write_csv(csv);
+        // Stub datetime parser: returns a unique value per spelling
+        // so we can confirm parsing actually fired.
+        let (labels, rows) =
+            parse_insighttimer_csv(f.path(), |s| Some(s.len() as i64)).unwrap();
+        assert_eq!(labels, vec!["Meditation".to_string()]);
+        assert_eq!(rows.len(), 2);
+        // Both rows reference label index 0.
+        assert_eq!(rows[0].4, 0);
+        assert_eq!(rows[1].4, 0);
+    }
+
+    #[test]
+    fn parse_insighttimer_csv_empty_activity_yields_no_label_sentinel() {
+        let csv = "Started At,Duration,Type,Activity\n\
+                   2024-04-17T08:00:00,00:10:00,T,\n";
+        let f = write_csv(csv);
+        let (labels, rows) =
+            parse_insighttimer_csv(f.path(), |s| Some(s.len() as i64)).unwrap();
+        assert!(labels.is_empty());
+        assert_eq!(rows[0].4, usize::MAX);
+    }
+
+    #[test]
+    fn parse_insighttimer_csv_rejects_zero_duration_with_line_number() {
+        let csv = "Started At,Duration,Type,Activity\n\
+                   2024-04-17T08:00:00,00:00:00,T,Meditation\n";
+        let f = write_csv(csv);
+        let err =
+            parse_insighttimer_csv(f.path(), |s| Some(s.len() as i64)).unwrap_err();
+        // The data row is on line 2 (after the header).
+        let msg = err.to_string();
+        assert!(msg.contains("line 2"), "expected 'line 2' in {msg:?}");
+    }
+
+    #[test]
+    fn parse_insighttimer_csv_propagates_datetime_parse_failure() {
+        let csv = "Started At,Duration,Type,Activity\n\
+                   garbage,00:10:00,T,Meditation\n";
+        let f = write_csv(csv);
+        let err =
+            parse_insighttimer_csv(f.path(), |_| None).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("Started At"), "expected 'Started At' in {msg:?}");
+    }
 
     fn fresh_db() -> Database {
         Database::open_in_memory().unwrap()
