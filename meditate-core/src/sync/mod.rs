@@ -13,6 +13,7 @@ pub mod webdav;
 pub mod orchestrator;
 pub mod fake;
 pub mod backoff;
+pub mod settings;
 
 pub use webdav::{HttpWebDav, WebDav, WebDavError, WebDavResult};
 pub use orchestrator::{Sync, SyncError, SyncResult, SyncStats, PullStats, PushStats};

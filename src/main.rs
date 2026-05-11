@@ -15,7 +15,6 @@ pub mod sound;
 pub mod sounds;
 pub mod stats;
 pub mod sync_runner;
-pub mod sync_settings;
 pub mod time;
 pub mod timer;
 pub mod vibration;

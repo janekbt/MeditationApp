@@ -600,9 +600,10 @@ impl MeditateWindow {
                     .and_then(|a| a.downcast::<crate::application::MeditateApplication>().ok())
                 else { return; };
                 let (has_error, is_data_lost) = app.with_db(|db| {
-                    let err = crate::sync_settings::get_last_sync_error(db)
+                    let core_db = db.core();
+                    let err = meditate_core::sync::settings::get_last_sync_error(core_db)
                         .unwrap_or(None);
-                    let kind = crate::sync_settings::is_last_sync_remote_data_lost(db)
+                    let kind = meditate_core::sync::settings::is_last_sync_remote_data_lost(core_db)
                         .unwrap_or(false);
                     (err.is_some(), kind)
                 }).unwrap_or((false, false));
@@ -656,11 +657,14 @@ impl MeditateWindow {
         // Single DB borrow — read all three values in one with_db call
         // so a slow lock contention can't put state out of sync between
         // them.
-        let snapshot = app.with_db(|db| (
-            crate::sync_settings::get_nextcloud_account(db).unwrap_or(None),
-            crate::sync_settings::get_last_sync_unix_ts(db).unwrap_or(None),
-            crate::sync_settings::get_last_sync_error(db).unwrap_or(None),
-        ));
+        let snapshot = app.with_db(|db| {
+            let core_db = db.core();
+            (
+                meditate_core::sync::settings::get_nextcloud_account(core_db).unwrap_or(None),
+                meditate_core::sync::settings::get_last_sync_unix_ts(core_db).unwrap_or(None),
+                meditate_core::sync::settings::get_last_sync_error(core_db).unwrap_or(None),
+            )
+        });
         let (account, last_ts, last_error) = match snapshot {
             Some(t) => t,
             None => return, // DB unavailable — leave the button alone.

@@ -300,7 +300,7 @@ Update gtk imports to `use meditate_core::time::{unix_to_local_iso,
 local_iso_to_unix}`.
 **Risk:** trivial — already chrono-only.
 
-### [ ] 15. Sync-settings + connection-test helpers → `meditate_core::sync::settings`
+### [x] 15. Sync-settings + connection-test helpers → `meditate_core::sync::settings`
 
 **From:** `src/sync_settings.rs` (~588 lines) — the
 portable surface, which is most of the file:

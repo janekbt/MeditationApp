@@ -15,7 +15,9 @@ use std::fmt;
 use std::path::Path;
 
 use crate::keychain::{self, KeychainError};
-use crate::sync_settings::{KEY_LAST_SYNC_ERROR, KEY_LAST_SYNC_UNIX_TS, KEY_URL, KEY_USERNAME};
+use meditate_core::sync::settings::{
+    KEY_LAST_SYNC_ERROR, KEY_LAST_SYNC_UNIX_TS, KEY_URL, KEY_USERNAME,
+};
 
 /// Path under the WebDAV root where this app's data lives.
 pub const REMOTE_BASE_PATH: &str = "Meditate";
@@ -191,7 +193,7 @@ fn record_outcome(
     db: &CoreDb,
     result: &Result<SyncStats, meditate_core::sync::SyncError>,
 ) -> Result<(), SyncRunnerError> {
-    use crate::sync_settings::KEY_LAST_SYNC_ERROR_KIND;
+    use meditate_core::sync::settings::KEY_LAST_SYNC_ERROR_KIND;
     use meditate_core::sync::SyncError;
     match result {
         Ok(_) => {
@@ -224,82 +226,11 @@ fn unix_now() -> i64 {
         .unwrap_or(0)
 }
 
-// ── Connection test ────────────────────────────────────────────────────────
-//
-// User-facing "Test connection" button in the sync settings dialog.
-// Validates a (URL, username, password) tuple by issuing a single
-// PROPFIND against the user's WebDAV root — cheap, doesn't touch the
-// local DB or keychain, doesn't write anything to the remote. Maps
-// the typed `WebDavError` variants to user-readable outcomes.
-
-/// Outcome of a connection test. Display impl is the toast text.
-#[derive(Debug, PartialEq, Eq)]
-pub enum TestConnectionResult {
-    /// PROPFIND returned 207 (Multi-Status) — auth + URL are good.
-    Ok,
-    /// 401 — credentials wrong (username, app-password, or both).
-    Unauthorized,
-    /// DNS / connection refused / timeout — couldn't reach the host.
-    /// The string is the underlying error for diagnostics.
-    Network(String),
-    /// 404 — the URL points somewhere that exists but isn't a WebDAV
-    /// folder. Almost always a typo in the path component.
-    NotWebDavRoot,
-    /// Anything else: 5xx, malformed XML, etc.
-    Other(String),
-}
-
-impl fmt::Display for TestConnectionResult {
-    /// Toast text — kept terse so it fits on narrow viewports
-    /// (Librem 5 truncates around 30 chars). Longer diagnostic
-    /// strings live in `detail()` and go to the diagnostics log.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Ok => write!(f, "Connection OK"),
-            Self::Unauthorized => write!(f, "Authentication failed"),
-            Self::Network(_) => write!(f, "Network error"),
-            Self::NotWebDavRoot => write!(f, "Not a WebDAV folder"),
-            Self::Other(_) => write!(f, "Server error"),
-        }
-    }
-}
-
-impl TestConnectionResult {
-    /// Detailed text for the diagnostics log — includes the
-    /// underlying error string for Network/Other so post-hoc
-    /// debugging has the full picture even though the toast is short.
-    pub fn detail(&self) -> String {
-        match self {
-            Self::Ok => "Connection OK".to_string(),
-            Self::Unauthorized => "Authentication failed (HTTP 401)".to_string(),
-            Self::Network(s) => format!("Network error: {s}"),
-            Self::NotWebDavRoot => "URL is not a WebDAV folder (HTTP 404)".to_string(),
-            Self::Other(s) => format!("Server error: {s}"),
-        }
-    }
-}
-
-/// Run a connection test using a real `HttpWebDav` against the given
-/// credentials. Synchronous — call from a worker thread so the UI
-/// doesn't freeze on slow networks. Doesn't read or write any local
-/// state.
-pub fn test_connection(url: &str, username: &str, password: &str) -> TestConnectionResult {
-    let webdav = meditate_core::sync::HttpWebDav::new(url, username, password);
-    test_connection_with(&webdav)
-}
-
-/// Transport-agnostic core. Lifts the WebDav trait so unit tests can
-/// pass a fake impl that produces specific error variants.
-pub fn test_connection_with<W: WebDav>(webdav: &W) -> TestConnectionResult {
-    use meditate_core::sync::WebDavError;
-    match webdav.list_collection("/") {
-        Ok(_) => TestConnectionResult::Ok,
-        Err(WebDavError::Unauthorized) => TestConnectionResult::Unauthorized,
-        Err(WebDavError::Network(s)) => TestConnectionResult::Network(s),
-        Err(WebDavError::NotFound) => TestConnectionResult::NotWebDavRoot,
-        Err(e) => TestConnectionResult::Other(e.to_string()),
-    }
-}
+// Connection test (TestConnectionResult + test_connection +
+// test_connection_with) lives in `meditate_core::sync::settings`.
+pub use meditate_core::sync::settings::{
+    test_connection, test_connection_with, TestConnectionResult,
+};
 
 #[cfg(test)]
 mod tests {

@@ -7,7 +7,7 @@
 //! user explicitly chooses how to recover.
 //!
 //! The dialog body is the substantive UX surface — the actions
-//! themselves delegate to `sync_settings::prepare_push_local_recovery`
+//! themselves delegate to `meditate_core::sync::settings::prepare_push_local_recovery`
 //! plus `app.trigger_sync()`. Those primitives are unit-tested
 //! separately; this module is a thin GTK shell on top.
 
@@ -63,9 +63,9 @@ pub fn show(app: &MeditateApplication) {
 
 /// Execute the "Push My Data" action. Pure data manipulation +
 /// sync trigger; the underlying `prepare_push_local_recovery`
-/// primitive is unit-tested in `sync_settings`.
+/// primitive is unit-tested in `meditate_core::sync::settings`.
 fn run_push_local_recovery(app: &MeditateApplication) {
-    let prep = app.with_db(crate::sync_settings::prepare_push_local_recovery);
+    let prep = app.with_db(|db| meditate_core::sync::settings::prepare_push_local_recovery(db.core()));
     match prep {
         Some(Ok(())) => {
             meditate_core::diag::log("recovery: push local — prepared, triggering sync");
@@ -114,7 +114,7 @@ fn confirm_wipe_local(app: &MeditateApplication) {
 /// invalidate cached UI state across views, kick a fresh sync.
 /// `prepare_wipe_local_recovery` is unit-tested separately.
 fn run_wipe_local_recovery(app: &MeditateApplication) {
-    let prep = app.with_db_mut(crate::sync_settings::prepare_wipe_local_recovery);
+    let prep = app.with_db_mut(|db| meditate_core::sync::settings::prepare_wipe_local_recovery(db.core()));
     match prep {
         Some(Ok(())) => {
             meditate_core::diag::log("recovery: wipe local — purged, triggering sync");

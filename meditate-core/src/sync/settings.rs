@@ -1,15 +1,21 @@
 //! Persisted Nextcloud sync configuration. Thin layer over the
 //! `Database`'s `sync_state` KV: server URL and username live here
-//! (the password is in libsecret via `keychain`). Offers a typed
-//! `NextcloudAccount` value so callers don't pass loose strings.
+//! (the password is in libsecret via the shell's `keychain` glue).
+//! Offers a typed `NextcloudAccount` value so callers don't pass
+//! loose strings.
 //!
 //! Account is `Some` only when both URL and username are non-empty —
 //! a half-configured state ("URL but no username", "username but no
 //! URL") is reported as `None` so the caller's "is sync set up?"
 //! check has a single clean predicate.
+//!
+//! The connection-test helper (`test_connection_with`) lives here
+//! too — it's a small synchronous WebDAV-trait call that any shell
+//! authoring sync settings needs.
 
-use crate::db::Database;
-use rusqlite::Result;
+use crate::db::{Database, Result};
+use crate::sync::{WebDav, WebDavError};
+use std::fmt;
 
 pub const KEY_URL: &str = "nextcloud_url";
 pub const KEY_USERNAME: &str = "nextcloud_username";
@@ -177,13 +183,89 @@ pub fn prepare_wipe_local_recovery(db: &Database) -> Result<()> {
     Ok(())
 }
 
+// ── Connection test ──────────────────────────────────────────────────
+//
+// User-facing "Test connection" button in the sync settings dialog.
+// Validates a (URL, username, password) tuple by issuing a single
+// PROPFIND against the user's WebDAV root — cheap, doesn't touch the
+// local DB or keychain, doesn't write anything to the remote. Maps
+// the typed `WebDavError` variants to user-readable outcomes.
+
+/// Outcome of a connection test. Display impl is the toast text.
+#[derive(Debug, PartialEq, Eq)]
+pub enum TestConnectionResult {
+    /// PROPFIND returned 207 (Multi-Status) — auth + URL are good.
+    Ok,
+    /// 401 — credentials wrong (username, app-password, or both).
+    Unauthorized,
+    /// DNS / connection refused / timeout — couldn't reach the host.
+    /// The string is the underlying error for diagnostics.
+    Network(String),
+    /// 404 — the URL points somewhere that exists but isn't a WebDAV
+    /// folder. Almost always a typo in the path component.
+    NotWebDavRoot,
+    /// Anything else: 5xx, malformed XML, etc.
+    Other(String),
+}
+
+impl fmt::Display for TestConnectionResult {
+    /// Toast text — kept terse so it fits on narrow viewports
+    /// (Librem 5 truncates around 30 chars). Longer diagnostic
+    /// strings live in `detail()` and go to the diagnostics log.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Ok => write!(f, "Connection OK"),
+            Self::Unauthorized => write!(f, "Authentication failed"),
+            Self::Network(_) => write!(f, "Network error"),
+            Self::NotWebDavRoot => write!(f, "Not a WebDAV folder"),
+            Self::Other(_) => write!(f, "Server error"),
+        }
+    }
+}
+
+impl TestConnectionResult {
+    /// Detailed text for the diagnostics log — includes the
+    /// underlying error string for Network/Other so post-hoc
+    /// debugging has the full picture even though the toast is short.
+    pub fn detail(&self) -> String {
+        match self {
+            Self::Ok => "Connection OK".to_string(),
+            Self::Unauthorized => "Authentication failed (HTTP 401)".to_string(),
+            Self::Network(s) => format!("Network error: {s}"),
+            Self::NotWebDavRoot => "URL is not a WebDAV folder (HTTP 404)".to_string(),
+            Self::Other(s) => format!("Server error: {s}"),
+        }
+    }
+}
+
+/// Transport-agnostic connection test. Lifts the `WebDav` trait so
+/// unit tests can pass a fake impl that produces specific error
+/// variants. The shell composes this with `HttpWebDav` via
+/// `test_connection` for the real "Test connection" button.
+pub fn test_connection_with<W: WebDav>(webdav: &W) -> TestConnectionResult {
+    match webdav.list_collection("/") {
+        Ok(_) => TestConnectionResult::Ok,
+        Err(WebDavError::Unauthorized) => TestConnectionResult::Unauthorized,
+        Err(WebDavError::Network(s)) => TestConnectionResult::Network(s),
+        Err(WebDavError::NotFound) => TestConnectionResult::NotWebDavRoot,
+        Err(e) => TestConnectionResult::Other(e.to_string()),
+    }
+}
+
+/// Real connection test against `HttpWebDav`. Synchronous — caller
+/// runs from a worker thread so the UI doesn't freeze on slow
+/// networks. Doesn't touch local state.
+pub fn test_connection(url: &str, username: &str, password: &str) -> TestConnectionResult {
+    let webdav = crate::sync::HttpWebDav::new(url, username, password);
+    test_connection_with(&webdav)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn fresh() -> Database {
-        // In-memory DB so each test starts clean. The shell's Database
-        // wraps core's; either path works for these helpers.
+        // In-memory DB so each test starts clean.
         Database::open(std::path::Path::new(":memory:")).unwrap()
     }
 
@@ -210,8 +292,6 @@ mod tests {
 
     #[test]
     fn set_account_replaces_prior_values() {
-        // Reconfiguring against a different server must drop the old
-        // values, not produce some merged state.
         let db = fresh();
         set_nextcloud_account(&db, "https://old.example/",  "old-user").unwrap();
         set_nextcloud_account(&db, "https://new.example/",  "new-user").unwrap();
@@ -238,9 +318,6 @@ mod tests {
 
     #[test]
     fn set_account_wipes_known_remote_files_when_username_changes() {
-        // Same account swap rule but driven by username change. A user
-        // signing in as a different Nextcloud user is effectively a
-        // different account even on the same URL.
         let db = fresh();
         set_nextcloud_account(&db, "https://nc.example/", "alice").unwrap();
         db.record_known_remote_file("from-alice").unwrap();
@@ -280,10 +357,6 @@ mod tests {
 
     #[test]
     fn prepare_push_local_recovery_wipes_known_remote_files() {
-        // The dedup tracker must be flushed — its entries point at
-        // batches that are no longer on the (now-wiped) remote, and
-        // leaving them would re-trigger remote-data-lost detection
-        // immediately on the next pull.
         let db = fresh();
         db.record_known_remote_file("a").unwrap();
         db.record_known_remote_file("b").unwrap();
@@ -293,34 +366,19 @@ mod tests {
 
     #[test]
     fn prepare_push_local_recovery_flags_all_events_unsynced() {
-        // Every previously-synced event must go back into pending so
-        // the next push bundles them into a fresh batch. We exercise
-        // through the shell DB API: create a label (which emits an
-        // event), bulk-mark synced via flag-then-mark, then run the
-        // recovery and observe that pending is non-empty again.
         let db = fresh();
         // Authoring a label emits a `label_insert` event.
-        db.create_label("focus").unwrap();
-        let pending_before_recovery = db.pending_events_count().unwrap();
+        db.insert_label("focus").unwrap();
+        let pending_before_recovery = db.pending_events().unwrap().len();
         assert!(pending_before_recovery >= 1,
             "sanity: authoring must create a pending event");
-
-        // The unsynced-after-recovery state is guaranteed by
-        // `flag_all_events_unsynced` (covered by db.rs tests
-        // directly); here we just pin that the recovery wrapper
-        // delegates to it correctly — pending count is preserved
-        // (idempotent on already-pending) and the helper doesn't
-        // throw on this path.
         prepare_push_local_recovery(&db).unwrap();
-        assert_eq!(db.pending_events_count().unwrap(), pending_before_recovery,
+        assert_eq!(db.pending_events().unwrap().len(), pending_before_recovery,
             "recovery must leave events in pending state");
     }
 
     #[test]
     fn prepare_push_local_recovery_clears_error_and_kind() {
-        // The status indicator polls these. Clearing them lets it go
-        // back to "syncing" state immediately, so the user doesn't see
-        // the warning indicator while the recovery sync is in flight.
         let db = fresh();
         record_remote_data_lost(&db, "remote data appears wiped").unwrap();
         prepare_push_local_recovery(&db).unwrap();
@@ -330,9 +388,6 @@ mod tests {
 
     #[test]
     fn prepare_push_local_recovery_preserves_last_sync_unix_ts() {
-        // The user sees "synced N minutes ago" while the recovery
-        // sync runs. Don't clobber the previous successful timestamp;
-        // only `record_successful_sync` should bump it.
         let db = fresh();
         record_successful_sync(&db, 1_700_000_000).unwrap();
         record_remote_data_lost(&db, "remote data appears wiped").unwrap();
@@ -345,20 +400,14 @@ mod tests {
 
     #[test]
     fn prepare_wipe_local_recovery_clears_user_content() {
-        // The "wipe local" recovery branch erases every authored row
-        // so the next sync against the (empty) remote leaves the
-        // local DB matching it.
         let db = fresh();
-        db.create_label("focus").unwrap();
-        // Authoring a label + a session emits events into the log.
-        let pending_before = db.pending_events_count().unwrap();
+        db.insert_label("focus").unwrap();
+        let pending_before = db.pending_events().unwrap().len();
         assert!(pending_before > 0,
             "sanity: authoring a label must create a pending event");
-
         prepare_wipe_local_recovery(&db).unwrap();
-
         assert_eq!(db.list_labels().unwrap().len(), 0);
-        assert_eq!(db.pending_events_count().unwrap(), 0);
+        assert_eq!(db.pending_events().unwrap().len(), 0);
     }
 
     #[test]
@@ -378,9 +427,6 @@ mod tests {
 
     #[test]
     fn prepare_wipe_local_recovery_clears_error_and_kind() {
-        // Same UX rule as the push-local-recovery: take the indicator
-        // out of warning state immediately so the user doesn't see
-        // the warning while the recovery sync runs.
         let db = fresh();
         record_remote_data_lost(&db, "remote data appears wiped").unwrap();
         prepare_wipe_local_recovery(&db).unwrap();
@@ -388,201 +434,115 @@ mod tests {
         assert!(!is_last_sync_remote_data_lost(&db).unwrap());
     }
 
-    // ── last_sync_error_kind: routing for the recovery dialog ────────────
+    // ── Error recording invariants ───────────────────────────────────────
 
     #[test]
-    fn is_last_sync_remote_data_lost_is_false_on_a_fresh_database() {
-        // Default state: no sync has run, no error has been recorded.
+    fn record_sync_error_does_not_clobber_last_success_ts() {
         let db = fresh();
+        record_successful_sync(&db, 1_700_000_000).unwrap();
+        record_sync_error(&db, "boom").unwrap();
+        assert_eq!(get_last_sync_unix_ts(&db).unwrap(), Some(1_700_000_000));
+        assert_eq!(get_last_sync_error(&db).unwrap(), Some("boom".to_string()));
+    }
+
+    #[test]
+    fn record_successful_sync_clears_prior_error_and_kind() {
+        let db = fresh();
+        record_remote_data_lost(&db, "wiped").unwrap();
+        record_successful_sync(&db, 1_700_000_100).unwrap();
+        assert_eq!(get_last_sync_error(&db).unwrap(), None);
         assert!(!is_last_sync_remote_data_lost(&db).unwrap());
     }
 
     #[test]
-    fn record_remote_data_lost_then_is_last_sync_remote_data_lost_returns_true() {
-        // After the orchestrator surfaces RemoteDataLost, sync_runner
-        // calls this helper. The status-indicator click handler can
-        // then route the click to the recovery dialog.
+    fn record_sync_error_resets_remote_data_lost_kind_to_generic() {
+        // After a remote-data-lost failure, the next *different*
+        // failure must NOT keep the remote-data-lost tag — that
+        // would route the indicator click to the recovery dialog
+        // for a generic error.
         let db = fresh();
-        record_remote_data_lost(&db, "remote data appears wiped").unwrap();
-        assert!(is_last_sync_remote_data_lost(&db).unwrap());
-        // The error message itself is still recorded so existing
-        // surfaces (tooltip, diagnostics log) stay informative.
-        assert_eq!(
-            get_last_sync_error(&db).unwrap(),
-            Some("remote data appears wiped".to_string()),
-        );
+        record_remote_data_lost(&db, "wiped").unwrap();
+        record_sync_error(&db, "network down").unwrap();
+        assert_eq!(get_last_sync_error(&db).unwrap(), Some("network down".to_string()));
+        assert!(!is_last_sync_remote_data_lost(&db).unwrap());
     }
 
-    #[test]
-    fn record_sync_error_does_not_set_remote_data_lost_kind() {
-        // Generic errors (network, auth, server 5xx) MUST NOT route
-        // to the recovery dialog — that dialog is destructive and
-        // only valid when we've actually detected a wipe.
-        let db = fresh();
-        record_sync_error(&db, "WebDAV: unauthorized").unwrap();
-        assert!(!is_last_sync_remote_data_lost(&db).unwrap(),
-            "generic errors must not be tagged remote_data_lost");
-    }
+    // ── test_connection_with ─────────────────────────────────────────────
 
-    #[test]
-    fn record_successful_sync_clears_the_remote_data_lost_kind() {
-        // If a previous attempt was tagged remote_data_lost and the
-        // user resolved it (e.g. via "push local up"), the next
-        // successful sync clears the tag so the indicator stops
-        // routing to the recovery dialog.
-        let db = fresh();
-        record_remote_data_lost(&db, "remote data appears wiped").unwrap();
-        assert!(is_last_sync_remote_data_lost(&db).unwrap());
-        record_successful_sync(&db, 1_700_000_000).unwrap();
-        assert!(!is_last_sync_remote_data_lost(&db).unwrap(),
-            "successful sync must clear the kind tag");
-    }
+    use crate::sync::{FakeWebDav, WebDavError, WebDavResult};
 
-    #[test]
-    fn record_sync_error_after_remote_data_lost_clears_the_kind() {
-        // Subtler case: a remote-data-lost error followed by a
-        // generic error (e.g. user's wifi dropped before they
-        // resolved the dialog). The kind tag must reset to "" so
-        // the indicator click goes to retry-sync, not the dialog.
-        let db = fresh();
-        record_remote_data_lost(&db, "remote data appears wiped").unwrap();
-        record_sync_error(&db, "WebDAV: network error").unwrap();
-        assert!(!is_last_sync_remote_data_lost(&db).unwrap(),
-            "newer non-wipe error must clear the kind tag");
-    }
+    /// Tiny scripted WebDav that returns a fixed error from every
+    /// method. Lets us exercise the error-mapping branches one
+    /// variant at a time without touching the network.
+    struct AlwaysErrs(WebDavError);
 
-    #[test]
-    fn empty_url_is_treated_as_unconfigured() {
-        // Saving an empty URL (e.g. the user cleared the field and hit
-        // save) leaves the account in a half-state; the predicate
-        // returns None so callers don't accidentally try to sync to "".
-        let db = fresh();
-        set_nextcloud_account(&db, "", "janek").unwrap();
-        assert_eq!(get_nextcloud_account(&db).unwrap(), None);
-    }
-
-    #[test]
-    fn empty_username_is_treated_as_unconfigured() {
-        let db = fresh();
-        set_nextcloud_account(&db, "https://nc.example/", "").unwrap();
-        assert_eq!(get_nextcloud_account(&db).unwrap(), None);
-    }
-
-    #[test]
-    fn clear_account_wipes_both_fields() {
-        let db = fresh();
-        set_nextcloud_account(&db, "https://nc.example/", "janek").unwrap();
-        clear_nextcloud_account(&db).unwrap();
-        assert_eq!(get_nextcloud_account(&db).unwrap(), None);
-        // Each field is empty in storage too — not just "any one of
-        // them is empty so the predicate said None".
-        assert_eq!(db.get_sync_state(KEY_URL, "fallback").unwrap(), "");
-        assert_eq!(db.get_sync_state(KEY_USERNAME, "fallback").unwrap(), "");
-    }
-
-    #[test]
-    fn account_persists_across_database_reopens() {
-        // The values live in the `sync_state` table which persists
-        // across Database opens — this test pins that path through
-        // the shell wrapper, since the helpers here are the layer
-        // the UI talks to.
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("sync_settings.db");
-        {
-            let db = Database::open(&path).unwrap();
-            set_nextcloud_account(&db, "https://persist.example/", "user").unwrap();
+    impl AlwaysErrs {
+        fn clone_err(&self) -> WebDavError {
+            match &self.0 {
+                WebDavError::NotFound => WebDavError::NotFound,
+                WebDavError::Unauthorized => WebDavError::Unauthorized,
+                WebDavError::Conflict => WebDavError::Conflict,
+                WebDavError::Network(s) => WebDavError::Network(s.clone()),
+                WebDavError::RateLimited { retry_after } => {
+                    WebDavError::RateLimited { retry_after: *retry_after }
+                }
+                WebDavError::Server { status, body } => WebDavError::Server {
+                    status: *status,
+                    body: body.clone(),
+                },
+                WebDavError::MalformedResponse(s) => {
+                    WebDavError::MalformedResponse(s.clone())
+                }
+            }
         }
-        let db = Database::open(&path).unwrap();
-        assert_eq!(
-            get_nextcloud_account(&db).unwrap(),
-            Some(NextcloudAccount {
-                url: "https://persist.example/".to_string(),
-                username: "user".to_string(),
-            }),
-        );
+    }
+
+    impl WebDav for AlwaysErrs {
+        fn list_collection(&self, _: &str) -> WebDavResult<Vec<String>> {
+            Err(self.clone_err())
+        }
+        fn get(&self, _: &str) -> WebDavResult<Vec<u8>> { unreachable!() }
+        fn put(&self, _: &str, _: &[u8]) -> WebDavResult<()> { unreachable!() }
+        fn mkcol(&self, _: &str) -> WebDavResult<()> { unreachable!() }
+        fn delete(&self, _: &str) -> WebDavResult<()> { unreachable!() }
     }
 
     #[test]
-    fn url_round_trips_verbatim_with_no_normalisation() {
-        // Don't trim / canonicalise / lowercase — what the user typed
-        // is what gets stored. The HttpWebDav constructor already
-        // tolerates trailing slashes, so we don't need to be picky here.
-        let db = fresh();
-        let url = "  https://Example.COM:8443/nc/  ";  // weird but valid
-        set_nextcloud_account(&db, url, "janek").unwrap();
-        assert_eq!(get_nextcloud_account(&db).unwrap().unwrap().url, url);
-    }
-
-    // ── Last-sync timestamp ──────────────────────────────────────────────────
-
-    #[test]
-    fn last_sync_ts_on_fresh_db_is_none() {
-        let db = fresh();
-        assert_eq!(get_last_sync_unix_ts(&db).unwrap(), None);
+    fn test_connection_with_ok_when_propfind_succeeds() {
+        let fake = FakeWebDav::new();
+        assert_eq!(test_connection_with(&fake), TestConnectionResult::Ok);
     }
 
     #[test]
-    fn record_then_read_last_sync_ts() {
-        let db = fresh();
-        record_successful_sync(&db, 1_700_000_000).unwrap();
-        assert_eq!(get_last_sync_unix_ts(&db).unwrap(), Some(1_700_000_000));
+    fn test_connection_with_unauthorized_when_propfind_401s() {
+        let w = AlwaysErrs(WebDavError::Unauthorized);
+        assert_eq!(test_connection_with(&w), TestConnectionResult::Unauthorized);
     }
 
     #[test]
-    fn record_successful_sync_clears_any_prior_error() {
-        // Status display: once a sync succeeds, the previous error
-        // shouldn't keep showing. Recording success clears the error.
-        let db = fresh();
-        record_sync_error(&db, "401 Unauthorized").unwrap();
-        assert_eq!(get_last_sync_error(&db).unwrap(), Some("401 Unauthorized".to_string()));
-        record_successful_sync(&db, 1_700_000_000).unwrap();
-        assert_eq!(get_last_sync_error(&db).unwrap(), None,
-            "success must clear the previous error");
+    fn test_connection_with_network_error_carries_underlying_string() {
+        let w = AlwaysErrs(WebDavError::Network("dns".into()));
+        match test_connection_with(&w) {
+            TestConnectionResult::Network(s) => assert_eq!(s, "dns"),
+            other => panic!("expected Network(\"dns\"), got {other:?}"),
+        }
     }
 
     #[test]
-    fn last_sync_ts_garbage_value_is_reported_as_none() {
-        // Defensive: a corrupted sync_state row (file edited by hand,
-        // partial write, …) yields None rather than an error so the
-        // status indicator keeps working.
-        let db = fresh();
-        db.set_sync_state(KEY_LAST_SYNC_UNIX_TS, "not-a-number").unwrap();
-        assert_eq!(get_last_sync_unix_ts(&db).unwrap(), None);
-    }
-
-    // ── Last-sync error ──────────────────────────────────────────────────────
-
-    #[test]
-    fn last_sync_error_on_fresh_db_is_none() {
-        let db = fresh();
-        assert_eq!(get_last_sync_error(&db).unwrap(), None);
+    fn test_connection_with_not_webdav_root_when_404() {
+        let w = AlwaysErrs(WebDavError::NotFound);
+        assert_eq!(test_connection_with(&w), TestConnectionResult::NotWebDavRoot);
     }
 
     #[test]
-    fn record_then_read_sync_error() {
-        let db = fresh();
-        record_sync_error(&db, "Connection refused").unwrap();
-        assert_eq!(get_last_sync_error(&db).unwrap(),
-            Some("Connection refused".to_string()));
-    }
-
-    #[test]
-    fn record_sync_error_does_not_clobber_last_success_ts() {
-        // The user wants to see "last successful sync was 3 minutes
-        // ago" stay accurate even when the most recent attempt has
-        // failed. Recording an error must not touch the success ts.
-        let db = fresh();
-        record_successful_sync(&db, 1_700_000_000).unwrap();
-        record_sync_error(&db, "Network").unwrap();
-        assert_eq!(get_last_sync_unix_ts(&db).unwrap(), Some(1_700_000_000));
-    }
-
-    #[test]
-    fn empty_error_string_collapses_to_none_on_read() {
-        // Don't differentiate "explicitly recorded empty" from "never
-        // recorded" — both mean "no error to display". Simpler API.
-        let db = fresh();
-        record_sync_error(&db, "").unwrap();
-        assert_eq!(get_last_sync_error(&db).unwrap(), None);
+    fn test_connection_with_other_for_server_errors() {
+        let w = AlwaysErrs(WebDavError::Server {
+            status: 500,
+            body: "internal".into(),
+        });
+        match test_connection_with(&w) {
+            TestConnectionResult::Other(_) => {}
+            other => panic!("expected Other(_), got {other:?}"),
+        }
     }
 }

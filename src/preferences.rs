@@ -206,7 +206,7 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
     // Pre-fill from previously-saved values. Password stays blank by
     // design — we don't echo what's in the keychain.
     if let Some(account) = app
-        .with_db(crate::sync_settings::get_nextcloud_account)
+        .with_db(|db| meditate_core::sync::settings::get_nextcloud_account(db.core()))
         .and_then(|r| r.ok())
         .flatten()
     {
@@ -385,7 +385,7 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
             // so we control when the trigger fires — explicitly,
             // below, after BOTH credentials are in place.
             let account_result = app.with_db(|db| {
-                crate::sync_settings::set_nextcloud_account(db, url_trimmed, username_trimmed)
+                meditate_core::sync::settings::set_nextcloud_account(db.core(), url_trimmed, username_trimmed)
             });
             match account_result {
                 Some(Ok(())) => {}
