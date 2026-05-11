@@ -236,6 +236,89 @@ pub enum Effect {
     StopActiveSignals,
 }
 
+/// Which "fire channel" a `Fire*` effect belongs to — the abstract
+/// slot the shell routes the sound through. The gtk shell maps to
+/// its three thread-local `MediaFile` slots (Starting, End,
+/// Interval); the Android shell maps to its `MediaPlayer` channels.
+/// Box-Breath phase cues share the `Interval` channel because they
+/// stack the same way interval bells do — two cues coinciding both
+/// play through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FireChannel {
+    Starting,
+    End,
+    Interval,
+}
+
+/// Resolved routing info for a `Fire*` effect: the channel slot, a
+/// stable diag tag (logged via `meditate_core::diag::log`), and the
+/// three carried fields (sound uuid, vibration pattern uuid,
+/// effective signal_mode). The shell dispatches sound + vibration
+/// based on `signal_mode.includes_*` — no extra gating needed
+/// because Session already AND'd the per-mode override.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FireRoute<'a> {
+    pub channel: FireChannel,
+    pub log_tag: &'static str,
+    pub sound_uuid: &'a str,
+    pub vibration_pattern_uuid: &'a str,
+    pub signal_mode: SignalMode,
+}
+
+impl Effect {
+    /// Resolve a Fire effect to its routing info. `None` for every
+    /// non-`Fire*` variant (UpdateDisplay, EndPrep, EndSession,
+    /// EnterOvertime, UpdateOvertimeLabel, EndBoxBreath,
+    /// StopActiveSignals — those are consumed at their tick
+    /// callsites). The shell's dispatch loop becomes
+    /// `for r in effects.iter().filter_map(Effect::fire_route) {
+    /// play(r.channel, r.sound_uuid); ... }`.
+    pub fn fire_route(&self) -> Option<FireRoute<'_>> {
+        match self {
+            Effect::FireBell { sound_uuid, vibration_pattern_uuid, signal_mode } => {
+                Some(FireRoute {
+                    channel: FireChannel::Interval,
+                    log_tag: "fire_interval_bell",
+                    sound_uuid,
+                    vibration_pattern_uuid,
+                    signal_mode: *signal_mode,
+                })
+            }
+            Effect::FireStartingBell { sound_uuid, vibration_pattern_uuid, signal_mode } => {
+                Some(FireRoute {
+                    channel: FireChannel::Starting,
+                    log_tag: "fire_starting_bell",
+                    sound_uuid,
+                    vibration_pattern_uuid,
+                    signal_mode: *signal_mode,
+                })
+            }
+            Effect::FireEndBell { sound_uuid, vibration_pattern_uuid, signal_mode } => {
+                Some(FireRoute {
+                    channel: FireChannel::End,
+                    log_tag: "fire_end_bell",
+                    sound_uuid,
+                    vibration_pattern_uuid,
+                    signal_mode: *signal_mode,
+                })
+            }
+            Effect::FireBoxBreathCue {
+                phase: _,
+                sound_uuid,
+                vibration_pattern_uuid,
+                signal_mode,
+            } => Some(FireRoute {
+                channel: FireChannel::Interval,
+                log_tag: "fire_box_breath_phase_cue",
+                sound_uuid,
+                vibration_pattern_uuid,
+                signal_mode: *signal_mode,
+            }),
+            _ => None,
+        }
+    }
+}
+
 /// In-flight session. Created by `start_prep` (when prep silence is
 /// enabled) or `start_running` (skip-prep path); driven by `tick(now)`
 /// thereafter; transitioned to `SessionPhase::Stopped` by `stop` /
@@ -1848,6 +1931,49 @@ mod tests {
         assert_eq!(ui_state(Some(&s)), UiState::Overtime);
         let _ = s.finish_overtime();
         assert_eq!(ui_state(Some(&s)), UiState::Done);
+    }
+
+    #[test]
+    fn fire_route_dispatches_each_fire_variant_to_its_channel() {
+        let starting = Effect::FireStartingBell {
+            sound_uuid: "s".into(),
+            vibration_pattern_uuid: "v".into(),
+            signal_mode: SignalMode::Both,
+        };
+        let r = starting.fire_route().expect("FireStartingBell routes");
+        assert_eq!(r.channel, FireChannel::Starting);
+        assert_eq!(r.log_tag, "fire_starting_bell");
+
+        let interval = Effect::FireBell {
+            sound_uuid: "s".into(),
+            vibration_pattern_uuid: "v".into(),
+            signal_mode: SignalMode::Sound,
+        };
+        assert_eq!(interval.fire_route().unwrap().channel, FireChannel::Interval);
+
+        let end = Effect::FireEndBell {
+            sound_uuid: "s".into(),
+            vibration_pattern_uuid: "v".into(),
+            signal_mode: SignalMode::Sound,
+        };
+        assert_eq!(end.fire_route().unwrap().channel, FireChannel::End);
+
+        let phase = Effect::FireBoxBreathCue {
+            phase: BoxBreathPhaseId::In,
+            sound_uuid: "s".into(),
+            vibration_pattern_uuid: "v".into(),
+            signal_mode: SignalMode::Both,
+        };
+        assert_eq!(phase.fire_route().unwrap().channel, FireChannel::Interval);
+    }
+
+    #[test]
+    fn fire_route_returns_none_for_non_fire_effects() {
+        assert!(Effect::EndPrep.fire_route().is_none());
+        assert!(Effect::UpdateDisplay { secs: 5 }.fire_route().is_none());
+        assert!(Effect::StopActiveSignals.fire_route().is_none());
+        assert!(Effect::EndSession { duration_secs: 10 }.fire_route().is_none());
+        assert!(Effect::EnterOvertime.fire_route().is_none());
     }
 
     #[test]

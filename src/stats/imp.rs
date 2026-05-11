@@ -3,8 +3,6 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{glib, cairo, CompositeTemplate};
 
-use meditate_core::format::minutes_to_level;
-
 /// Fallback weekly-goal target in minutes if the setting is unset or
 /// unparseable. The real value lives in the `weekly_goal_mins` DB setting,
 /// exposed in Preferences → Statistics → Weekly goal.
@@ -204,16 +202,13 @@ impl StatsView {
 
     fn reload_contrib_grid(&self) {
         let now = crate::time::now_local();
-        // Row 0 = locale's first day of week (Monday, or Sunday on en_US etc.)
-        let cur_week_start = now.add_days(-meditate_core::date_math::days_since_week_start(now.day_of_week(), locale_week_start_dow())).unwrap();
 
-        // Fetch 91 days of totals (12 weeks ago through today) and the
-        // user's weekly goal in a single DB borrow.
-        let since_dt = cur_week_start.add_days(-12 * 7).unwrap();
-        let since = since_dt.format("%Y-%m-%d").unwrap().to_string();
+        // Fetch 91 days of totals (12 weeks back through today) and
+        // the user's weekly goal in a single DB borrow. Core's
+        // `get_daily_totals` returns NaiveDate keys directly.
         let (totals_vec, goal_mins) = self.get_app()
             .and_then(|app| app.with_db(|db| {
-                let t = db.get_daily_totals(&since).unwrap_or_default();
+                let t = db.core().get_daily_totals().unwrap_or_default();
                 let g = db.get_setting("weekly_goal_mins", "150")
                     .ok()
                     .and_then(|s| s.parse::<i64>().ok())
@@ -222,76 +217,77 @@ impl StatsView {
                 (t, g)
             }))
             .unwrap_or_else(|| (Vec::new(), DEFAULT_WEEKLY_GOAL_MINS));
-        let totals: std::collections::HashMap<String, i64> =
+        let totals: std::collections::HashMap<chrono::NaiveDate, i64> =
             totals_vec.into_iter().collect();
         // Daily share of the weekly goal — drives the heatmap thresholds so a
         // 10-hour retreat day doesn't make on-target days look washed-out.
         let daily_expected_mins = (goal_mins as f64 / 7.0).round().max(1.0) as i64;
 
+        // Core owns the cell classification (future / today / past +
+        // level dispatch). Shell only renders.
+        let today_naive = meditate_core::time::today_local();
+        let core_cells = meditate_core::contrib::build_grid(
+            today_naive,
+            locale_week_start_dow(),
+            &totals,
+            daily_expected_mins,
+        );
+
         let cells = self.contrib_cells.borrow();
-        let today_unix = now.to_unix();
-        for col in 0..13i32 {
-            let weeks_ago = 12 - col;
-            let week_start = cur_week_start.add_days(-weeks_ago * 7).unwrap();
-            for row in 0..7i32 {
-                let date = week_start.add_days(row).unwrap();
-                let idx = (col * 7 + row) as usize;
-                let cell = &cells[idx];
+        for (idx, c) in core_cells.iter().enumerate() {
+            let cell = &cells[idx];
+            for l in 0..=4 { cell.remove_css_class(&format!("level-{l}")); }
+            cell.remove_css_class("today");
+            cell.set_label("");
 
-                // Clear prior level / today classes and any glyph text
-                for l in 0..=4 { cell.remove_css_class(&format!("level-{l}")); }
-                cell.remove_css_class("today");
-                cell.set_label("");
-
-                if date.to_unix() > today_unix + 60 {
-                    // Future day — show as empty level-0 with reduced opacity
-                    cell.add_css_class("level-0");
-                    cell.set_opacity(0.3);
-                    continue;
-                }
-                cell.set_opacity(1.0);
-
-                let date_str = date.format("%Y-%m-%d").unwrap();
-                let mins = totals.get(date_str.as_str()).copied().unwrap_or(0) / 60;
-                let level = minutes_to_level(mins, daily_expected_mins);
-                cell.add_css_class(&format!("level-{level}"));
-                // ★ only for days that exceed the daily goal by 20 % or more.
-                // On-target days rely on colour intensity alone — a wall of
-                // glyphs in a 13×7 grid blurs together and dilutes the signal.
-                if level == 4 { cell.set_label("★"); }
-                if date.year() == now.year()
-                    && date.day_of_year() == now.day_of_year()
-                {
-                    cell.add_css_class("today");
-                }
-
-                // Accessible name — without this the ★ reads as "black star"
-                // and empty cells announce nothing useful. %A/%B/%e render
-                // through the active locale, so translators only own the
-                // sentence framing.
-                let readable = date.format("%A, %B %e")
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|_| date_str.to_string());
-                let name = if level == 4 {
-                    crate::i18n::gettext("{date} — goal exceeded, {mins} minutes")
-                        .replace("{date}", &readable)
-                        .replace("{mins}", &mins.to_string())
-                } else if mins > 0 {
-                    crate::i18n::gettext("{date} — {mins} minutes")
-                        .replace("{date}", &readable)
-                        .replace("{mins}", &mins.to_string())
-                } else {
-                    crate::i18n::gettext("{date} — no sessions")
-                        .replace("{date}", &readable)
-                };
-                cell.update_property(&[gtk::accessible::Property::Label(&name)]);
+            if c.is_future {
+                cell.add_css_class("level-0");
+                cell.set_opacity(0.3);
+                continue;
             }
+            cell.set_opacity(1.0);
+            cell.add_css_class(&format!("level-{}", c.level));
+            // ★ only for days that exceed the daily goal by 20 % or more.
+            // On-target days rely on colour intensity alone — a wall of
+            // glyphs in a 13×7 grid blurs together and dilutes the signal.
+            if c.is_goal_exceeded() { cell.set_label("★"); }
+            if c.is_today { cell.add_css_class("today"); }
+
+            // Accessible name — without this the ★ reads as "black star"
+            // and empty cells announce nothing useful. %A/%B/%e render
+            // through the active locale via glib::DateTime, so
+            // translators only own the sentence framing.
+            let date_dt = crate::time::glib_datetime_from_iso(&c.date_iso);
+            let readable = date_dt
+                .as_ref()
+                .and_then(|d| d.format("%A, %B %e").ok())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| c.date_iso.clone());
+            let name = if c.is_goal_exceeded() {
+                crate::i18n::gettext("{date} — goal exceeded, {mins} minutes")
+                    .replace("{date}", &readable)
+                    .replace("{mins}", &c.mins.to_string())
+            } else if c.mins > 0 {
+                crate::i18n::gettext("{date} — {mins} minutes")
+                    .replace("{date}", &readable)
+                    .replace("{mins}", &c.mins.to_string())
+            } else {
+                crate::i18n::gettext("{date} — no sessions")
+                    .replace("{date}", &readable)
+            };
+            cell.update_property(&[gtk::accessible::Property::Label(&name)]);
         }
 
-        // Date-range caption: "<since month> – <current month>". %b
+        // Date-range caption: "<oldest month> – <current month>". %b
         // renders through the locale's LC_TIME so no msgid is needed.
+        // The oldest cell's date_iso anchors the left edge.
+        let since_dt = core_cells.first()
+            .and_then(|c| crate::time::glib_datetime_from_iso(&c.date_iso));
         let range = format!("{} – {}",
-            since_dt.format("%b").map(|s| s.to_string()).unwrap_or_default(),
+            since_dt.as_ref()
+                .and_then(|d| d.format("%b").ok())
+                .map(|s| s.to_string())
+                .unwrap_or_default(),
             now.format("%b").map(|s| s.to_string()).unwrap_or_default(),
         );
         self.contrib_range_label.set_label(&range);

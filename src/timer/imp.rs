@@ -1394,25 +1394,10 @@ impl TimerView {
         phase: crate::db::BoxBreathPhaseId,
     ) {
         let Some(app) = self.get_app() else { return; };
-        let Some(p) = app
-            .with_db(|db| db.get_box_breath_phase(phase))
-            .and_then(|r| r.ok())
+        let Some((sound_name, pattern_name)) = app
+            .with_db(|db| meditate_core::bells::phase_cue_names(db.core(), phase))
             .flatten()
         else { return; };
-        let sound_name = app
-            .with_db(|db| db.list_bell_sounds())
-            .and_then(|r| r.ok())
-            .unwrap_or_default()
-            .into_iter()
-            .find(|s| s.uuid == p.sound_uuid)
-            .map(|s| s.name)
-            .unwrap_or_default();
-        let pattern_name = app
-            .with_db(|db| db.find_vibration_pattern_by_uuid(&p.pattern_uuid))
-            .and_then(|r| r.ok())
-            .flatten()
-            .map(|p| p.name)
-            .unwrap_or_default();
         use crate::db::BoxBreathPhaseId as PP;
         let (sound_row, pattern_row): (&adw::ActionRow, &adw::ActionRow) = match phase {
             PP::In      => (&self.boxbreath_phase_in_sound_row,      &self.boxbreath_phase_in_pattern_row),
@@ -3747,13 +3732,7 @@ impl TimerView {
 /// Which `MEDIA` slot a fire-cue effect routes through. Three
 /// slots so polyphony works the way users expect: starting bell
 /// supersedes its own prior playback; end bell supersedes its
-/// own; interval bells stack so two coinciding rings both play.
-#[derive(Debug, Clone, Copy)]
-enum SoundChannel {
-    Starting,
-    End,
-    Interval,
-}
+use meditate_core::session::FireChannel;
 
 // ── Interval / fixed bell scheduling ─────────────────────────────────────────
 
@@ -3916,86 +3895,36 @@ impl TimerView {
     pub(crate) fn dispatch_session_effects(&self, effects: &[CoreSessionEffect]) {
         let mut app = None;
         for effect in effects {
-            match effect {
-                CoreSessionEffect::StopActiveSignals => self.stop_active_signals(),
-                CoreSessionEffect::FireBell {
-                    sound_uuid,
-                    vibration_pattern_uuid,
-                    signal_mode,
-                } => self.dispatch_fire_cue(
-                    &mut app,
-                    "fire_interval_bell",
-                    *signal_mode,
-                    sound_uuid,
-                    vibration_pattern_uuid,
-                    SoundChannel::Interval,
-                ),
-                CoreSessionEffect::FireStartingBell {
-                    sound_uuid,
-                    vibration_pattern_uuid,
-                    signal_mode,
-                } => self.dispatch_fire_cue(
-                    &mut app,
-                    "fire_starting_bell",
-                    *signal_mode,
-                    sound_uuid,
-                    vibration_pattern_uuid,
-                    SoundChannel::Starting,
-                ),
-                CoreSessionEffect::FireEndBell {
-                    sound_uuid,
-                    vibration_pattern_uuid,
-                    signal_mode,
-                } => self.dispatch_fire_cue(
-                    &mut app,
-                    "fire_end_bell",
-                    *signal_mode,
-                    sound_uuid,
-                    vibration_pattern_uuid,
-                    SoundChannel::End,
-                ),
-                CoreSessionEffect::FireBoxBreathCue {
-                    phase: _,
-                    sound_uuid,
-                    vibration_pattern_uuid,
-                    signal_mode,
-                } => self.dispatch_fire_cue(
-                    &mut app,
-                    "fire_box_breath_phase_cue",
-                    *signal_mode,
-                    sound_uuid,
-                    vibration_pattern_uuid,
-                    SoundChannel::Interval,
-                ),
-                _ => {}
+            if matches!(effect, CoreSessionEffect::StopActiveSignals) {
+                self.stop_active_signals();
+            }
+            if let Some(route) = effect.fire_route() {
+                self.dispatch_fire_route(&mut app, &route);
             }
         }
     }
 
-    /// Shared fire-cue dispatch: per the effective signal_mode (set
-    /// by Session — already AND'd with per-mode override), play the
-    /// sound via the right MEDIA slot, fire the haptic pattern
-    /// (when device supports it), stash the resulting handle.
-    fn dispatch_fire_cue(
+    /// Shared fire-cue dispatch routed off `Effect::fire_route`: per
+    /// the effective signal_mode (already AND'd with per-mode
+    /// override by Session), play the sound via the right MEDIA
+    /// slot, fire the haptic pattern when device supports it, stash
+    /// the resulting handle.
+    fn dispatch_fire_route(
         &self,
         app_cache: &mut Option<Option<crate::application::MeditateApplication>>,
-        log_tag: &str,
-        signal_mode: crate::db::SignalMode,
-        sound_uuid: &str,
-        vibration_pattern_uuid: &str,
-        channel: SoundChannel,
+        route: &meditate_core::session::FireRoute<'_>,
     ) {
         let app = app_cache.get_or_insert_with(|| self.get_app());
         let Some(app) = app.as_ref() else { return; };
-        if signal_mode.includes_sound() {
-            match channel {
-                SoundChannel::Interval => crate::sound::play_interval_sound(sound_uuid, app),
-                SoundChannel::Starting => crate::sound::play_starting_uuid(sound_uuid, app),
-                SoundChannel::End => crate::sound::play_end_bell_uuid(sound_uuid, app),
+        if route.signal_mode.includes_sound() {
+            match route.channel {
+                FireChannel::Interval => crate::sound::play_interval_sound(route.sound_uuid, app),
+                FireChannel::Starting => crate::sound::play_starting_uuid(route.sound_uuid, app),
+                FireChannel::End => crate::sound::play_end_bell_uuid(route.sound_uuid, app),
             }
         }
-        let handle = if signal_mode.includes_vibration() && app.has_haptic() {
-            app.with_db(|db| db.find_vibration_pattern_by_uuid(vibration_pattern_uuid))
+        let handle = if route.signal_mode.includes_vibration() && app.has_haptic() {
+            app.with_db(|db| db.find_vibration_pattern_by_uuid(route.vibration_pattern_uuid))
                 .and_then(|r| r.ok())
                 .flatten()
                 .map(|pattern| crate::vibration::PatternPlayback::play(app, &pattern))
@@ -4003,8 +3932,9 @@ impl TimerView {
             None
         };
         meditate_core::diag::log(&format!(
-            "{log_tag}: signal_mode={} fired={}",
-            signal_mode.as_db_str(),
+            "{}: signal_mode={} fired={}",
+            route.log_tag,
+            route.signal_mode.as_db_str(),
             handle.is_some(),
         ));
         self.install_vibration_handle(handle);
@@ -4023,39 +3953,21 @@ impl TimerView {
 
     fn lookup_sound_name_for_setting(&self, setting_key: &str) -> String {
         let Some(app) = self.get_app() else { return String::new(); };
-        let uuid = app
-            .with_db(|db| db.get_setting(setting_key, crate::db::BUNDLED_BOWL_UUID))
-            .and_then(|r| r.ok())
-            .unwrap_or_default();
-        if uuid.is_empty() {
-            return String::new();
-        }
-        app.with_db(|db| db.list_bell_sounds())
-            .and_then(|r| r.ok())
-            .unwrap_or_default()
-            .into_iter()
-            .find(|s| s.uuid == uuid)
-            .map(|s| s.name)
-            .unwrap_or_default()
+        app.with_db(|db| {
+            let uuid = db.get_setting(setting_key, crate::db::BUNDLED_BOWL_UUID)
+                .unwrap_or_default();
+            meditate_core::bells::resolve_sound_name(db.core(), &uuid)
+        }).unwrap_or_default()
     }
 
     fn lookup_pattern_name_for_setting(&self, setting_key: &str) -> String {
         let Some(app) = self.get_app() else { return String::new(); };
-        let uuid = app
-            .with_db(|db| db.get_setting(
-                setting_key,
-                crate::db::BUNDLED_PATTERN_PULSE_UUID,
-            ))
-            .and_then(|r| r.ok())
-            .unwrap_or_default();
-        if uuid.is_empty() {
-            return String::new();
-        }
-        app.with_db(|db| db.find_vibration_pattern_by_uuid(&uuid))
-            .and_then(|r| r.ok())
-            .flatten()
-            .map(|p| p.name)
-            .unwrap_or_default()
+        app.with_db(|db| {
+            let uuid = db
+                .get_setting(setting_key, crate::db::BUNDLED_PATTERN_PULSE_UUID)
+                .unwrap_or_default();
+            meditate_core::bells::resolve_pattern_name(db.core(), &uuid)
+        }).unwrap_or_default()
     }
 }
 
@@ -4076,61 +3988,7 @@ fn intervals_count_subtitle(enabled_count: usize) -> String {
     }
 }
 
-/// One-line subtitle for a preset row in the home-view starred list.
-/// Composes timing + label + interval-bell count, matching the
-/// chooser's subtitle for visual consistency. `label_names` is a
-/// uuid → name map already resolved by the caller (one DB roundtrip
-/// per rebuild instead of per row).
-fn preset_subtitle(
-    p: &meditate_core::db::Preset,
-    label_names: &std::collections::HashMap<String, String>,
-) -> String {
-    use meditate_core::format::{
-        preset_subtitle_parts, BellsPart, BoxBreathAfter, TimingPart,
-    };
-    let Some(parts) = preset_subtitle_parts(&p.config_json) else {
-        return String::new();
-    };
-
-    let render_duration = |mins: u32| {
-        crate::i18n::gettext("{n} min").replace("{n}", &mins.to_string())
-    };
-
-    let mut out: Vec<String> = Vec::new();
-    match parts.timing {
-        TimingPart::Stopwatch => out.push(crate::i18n::gettext("Stopwatch")),
-        TimingPart::Duration { mins } => out.push(render_duration(mins)),
-        TimingPart::BoxBreath {
-            inhale_secs,
-            hold_full_secs,
-            exhale_secs,
-            hold_empty_secs,
-            after,
-        } => {
-            out.push(format!(
-                "{}-{}-{}-{}",
-                inhale_secs, hold_full_secs, exhale_secs, hold_empty_secs,
-            ));
-            match after {
-                BoxBreathAfter::Stopwatch => out.push(crate::i18n::gettext("Stopwatch")),
-                BoxBreathAfter::Duration { mins } => out.push(render_duration(mins)),
-            }
-        }
-    }
-    if let Some(uuid) = parts.label_uuid.as_ref() {
-        if let Some(name) = label_names.get(uuid) {
-            out.push(name.clone());
-        }
-    }
-    match parts.bells {
-        Some(BellsPart::One) => out.push(crate::i18n::gettext("1 bell")),
-        Some(BellsPart::Many(n)) => {
-            out.push(crate::i18n::gettext("{n} bells").replace("{n}", &n.to_string()))
-        }
-        None => {}
-    }
-    out.join(" · ")
-}
+use crate::preset_subtitle::preset_subtitle;
 
 use meditate_core::time::unix_now;
 

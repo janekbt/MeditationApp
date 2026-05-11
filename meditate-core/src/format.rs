@@ -192,6 +192,27 @@ pub fn streak_key(streak: u32) -> StreakKey {
     }
 }
 
+/// Decision key for any "N session(s)" copy — the log's section
+/// caption, the delete-toast title, the "Imported / exported {n}
+/// sessions" data toasts in preferences. The shell picks its own
+/// singular vs. plural phrasing per call site; this key just owns
+/// the partition rule so every shell agrees.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionCountKey {
+    /// Exactly one session — singular phrasing.
+    One,
+    /// Zero or two or more sessions — plural phrasing with the count
+    /// carried (zero is part of the plural arm by convention).
+    Many(usize),
+}
+
+pub fn session_count_key(n: usize) -> SessionCountKey {
+    match n {
+        1 => SessionCountKey::One,
+        n => SessionCountKey::Many(n),
+    }
+}
+
 /// Decision key for the bell-count chip in the preset-row subtitle.
 /// Variants match `IntervalsCountKey` minus the `None` arm — the
 /// caller of `preset_subtitle_parts` only sees this when at least
@@ -593,6 +614,14 @@ mod tests {
         assert_eq!(streak_key(1), StreakKey::One);
         assert_eq!(streak_key(2), StreakKey::Many(2));
         assert_eq!(streak_key(365), StreakKey::Many(365));
+    }
+
+    #[test]
+    fn session_count_key_one_vs_many() {
+        assert_eq!(session_count_key(0), SessionCountKey::Many(0));
+        assert_eq!(session_count_key(1), SessionCountKey::One);
+        assert_eq!(session_count_key(2), SessionCountKey::Many(2));
+        assert_eq!(session_count_key(42), SessionCountKey::Many(42));
     }
 
     #[test]

@@ -159,6 +159,50 @@ pub fn pattern_label(uuid: &str, library: &[VibrationPattern]) -> String {
         .unwrap_or_default()
 }
 
+/// Resolve a sound UUID to its display name by reading the
+/// bell-sounds library straight from `db` and delegating to
+/// `sound_label`. Used by Setup-view subtitle rows that have only
+/// the uuid in hand — saves callers the boilerplate of "list_bell_
+/// sounds → find by uuid → name". Empty string when uuid is empty
+/// or the row is gone.
+pub fn resolve_sound_name(db: &Database, uuid: &str) -> String {
+    if uuid.is_empty() {
+        return String::new();
+    }
+    let library = db.list_bell_sounds().unwrap_or_default();
+    sound_label(uuid, &library)
+}
+
+/// Resolve a vibration-pattern UUID to its display name via
+/// `find_vibration_pattern_by_uuid`. Empty string when uuid is
+/// empty or the row is gone (matches `pattern_label`).
+pub fn resolve_pattern_name(db: &Database, uuid: &str) -> String {
+    if uuid.is_empty() {
+        return String::new();
+    }
+    db.find_vibration_pattern_by_uuid(uuid)
+        .ok()
+        .flatten()
+        .map(|p| p.name)
+        .unwrap_or_default()
+}
+
+/// Resolve the Box-Breath per-phase row's two subtitle strings
+/// (sound name + vibration pattern name) for `phase`. `None` when
+/// the phase row doesn't exist (shouldn't happen — the seed inserts
+/// all four — but the API stays total). Used by the Setup view's
+/// `refresh_boxbreath_phase_subtitles` and the Android equivalent.
+pub fn phase_cue_names(
+    db: &Database,
+    phase: BoxBreathPhaseId,
+) -> Option<(String, String)> {
+    let row = db.get_box_breath_phase(phase).ok().flatten()?;
+    Some((
+        resolve_sound_name(db, &row.sound_uuid),
+        resolve_pattern_name(db, &row.pattern_uuid),
+    ))
+}
+
 /// Clamp a persisted `SignalMode` down to `Sound` when the runtime
 /// has no haptic capability. Mirrors the gtk-side UI behaviour:
 /// the user can author Vibration/Both modes in setups they share

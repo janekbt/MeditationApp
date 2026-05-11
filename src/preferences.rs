@@ -650,9 +650,9 @@ fn refresh_main_window(app: &MeditateApplication) {
 /// English plurals are trivial and the catalogs cover enough locales that
 /// a 1 / ≥2 split is a reasonable approximation.
 fn pluralize_sessions(singular: &str, plural: &str, n: usize) -> String {
-    if n == 1 {
-        singular.to_string()
-    } else {
-        plural.replace("{n}", &n.to_string())
+    use meditate_core::format::SessionCountKey;
+    match meditate_core::format::session_count_key(n) {
+        SessionCountKey::One => singular.to_string(),
+        SessionCountKey::Many(n) => plural.replace("{n}", &n.to_string()),
     }
 }

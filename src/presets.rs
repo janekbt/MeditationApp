@@ -226,7 +226,7 @@ fn build_preset_row(
 ) -> adw::ActionRow {
     let row = adw::ActionRow::builder()
         .title(&preset.name)
-        .subtitle(subtitle_for(preset, label_names))
+        .subtitle(crate::preset_subtitle::preset_subtitle(preset, label_names))
         .activatable(matches!(**chooser_mode, ChooserMode::Save { .. }))
         .build();
 
@@ -632,61 +632,6 @@ fn present_override_dialog(
             dialog.present(Some(&window));
         }
     }
-}
-
-/// One-line subtitle on a chooser row, populated from the preset's
-/// config_json. Composes timing + label name + interval-bell count
-/// so a preset reads the same here as on the home-view chip list.
-/// `label_names` is a uuid → name map already resolved by the
-/// caller (one DB roundtrip per rebuild instead of per row).
-fn subtitle_for(p: &Preset, label_names: &HashMap<String, String>) -> String {
-    use meditate_core::preset_config::PresetTiming;
-    let cfg = match PresetConfig::from_json(&p.config_json) {
-        Ok(c) => c,
-        Err(_) => return String::new(),
-    };
-    let mut parts: Vec<String> = Vec::new();
-    match cfg.timing {
-        PresetTiming::Timer { stopwatch: true, .. } => {
-            parts.push(gettext("Stopwatch"));
-        }
-        PresetTiming::Timer { stopwatch: false, duration_secs } => {
-            let mins = duration_secs / 60;
-            parts.push(gettext("{n} min").replace("{n}", &mins.to_string()));
-        }
-        PresetTiming::BoxBreath {
-            stopwatch,
-            inhale_secs, hold_full_secs, exhale_secs, hold_empty_secs,
-            duration_secs,
-        } => {
-            parts.push(format!(
-                "{}-{}-{}-{}",
-                inhale_secs, hold_full_secs, exhale_secs, hold_empty_secs,
-            ));
-            if stopwatch {
-                parts.push(gettext("Stopwatch"));
-            } else {
-                let mins = duration_secs / 60;
-                parts.push(gettext("{n} min").replace("{n}", &mins.to_string()));
-            }
-        }
-    }
-    if cfg.label.enabled {
-        if let Some(uuid) = cfg.label.uuid.as_ref() {
-            if let Some(name) = label_names.get(uuid) {
-                parts.push(name.clone());
-            }
-        }
-    }
-    if cfg.interval_bells.enabled && !cfg.interval_bells.bells.is_empty() {
-        let n = cfg.interval_bells.bells.len();
-        parts.push(if n == 1 {
-            gettext("1 bell")
-        } else {
-            gettext("{n} bells").replace("{n}", &n.to_string())
-        });
-    }
-    parts.join(" · ")
 }
 
 /// Push (or replace) the chooser's currently-visible undo toast on

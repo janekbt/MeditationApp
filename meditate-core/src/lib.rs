@@ -1,5 +1,6 @@
 pub mod bells;
 pub mod breath;
+pub mod contrib;
 pub mod data_io;
 pub mod date_math;
 pub mod db;

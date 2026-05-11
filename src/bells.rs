@@ -376,20 +376,14 @@ fn bell_title(bell: &IntervalBell) -> String {
 /// so the Android shell shares the same "empty string when missing"
 /// contract.
 fn sound_label(app: &MeditateApplication, uuid: &str) -> String {
-    let library = app
-        .with_db(|db| db.list_bell_sounds())
-        .and_then(|r| r.ok())
-        .unwrap_or_default();
-    meditate_core::bells::sound_label(uuid, &library)
+    app.with_db(|db| meditate_core::bells::resolve_sound_name(db.core(), uuid))
+        .unwrap_or_default()
 }
 
 /// Same as sound_label but for vibration_patterns.
 fn pattern_label(app: &MeditateApplication, uuid: &str) -> String {
-    let library = app
-        .with_db(|db| db.list_vibration_patterns())
-        .and_then(|r| r.ok())
-        .unwrap_or_default();
-    meditate_core::bells::pattern_label(uuid, &library)
+    app.with_db(|db| meditate_core::bells::resolve_pattern_name(db.core(), uuid))
+        .unwrap_or_default()
 }
 
 /// Edit page for one bell — pushed when the user taps a row in the
