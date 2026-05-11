@@ -180,12 +180,12 @@ fn rebuild_chooser_rows(
                 row,
                 &app_for_create,
                 Box::new(move |name| {
-                    // Create as starred so the new preset shows up in
-                    // the home-view chip list immediately. The user
-                    // can destar from Manage if they want it hidden.
+                    // Default-starred policy lives in core so the
+                    // Android shell agrees with the gtk default.
                     let json = snapshot.to_json();
+                    let starred = meditate_core::preset_config::default_starred_on_save();
                     let result = app.with_db_mut(
-                        |db| db.insert_preset(&name, mode, true, &json),
+                        |db| db.insert_preset(&name, mode, starred, &json),
                     );
                     if matches!(result, Some(Ok(_))) {
                         on_changed();

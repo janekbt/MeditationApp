@@ -746,6 +746,18 @@ impl Session {
         self.final_duration_secs
     }
 
+    /// Duration the "session complete" system notification should
+    /// show — the planned target, NOT the elapsed-with-overtime.
+    /// Same value regardless of mode: Timer/Guided countdown's
+    /// `target_secs`, Box-Breath's cycle-aligned target. Stopwatch-
+    /// only sessions (no `target_secs`) collapse to 0; the shell
+    /// shouldn't reach this path for them since they never auto-
+    /// complete. Used at the Running→Overtime boundary (Timer/Guided)
+    /// and at Box-Breath's natural end.
+    pub fn completion_duration_secs(&self) -> u64 {
+        self.settings.target_secs.map(|s| s as u64).unwrap_or(0)
+    }
+
     /// What the shell's running-page view should reflect right now.
     /// Pure dispatch over `phase` + `is_paused`; the free fn
     /// `session::ui_state(session)` handles the `None` (= Idle) case

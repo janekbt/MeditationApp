@@ -167,36 +167,32 @@ impl StatsView {
                 (s, goal)
             }))
             .unwrap_or((0, DEFAULT_WEEKLY_GOAL_MINS));
-        let week_mins = week_secs / 60;
-        let pct = week_mins as f64 / goal_mins as f64;
-        self.goal_pct.set(pct);
+        let g = meditate_core::goal::compute(week_secs, goal_mins);
+        self.goal_pct.set(g.arc_pct);
         self.goal_ring.queue_draw();
-        self.goal_pct_label.set_label(
-            &format!("{}%", (pct.clamp(0.0, 9.99) * 100.0).round() as i32),
-        );
+        self.goal_pct_label.set_label(&format!("{}%", g.display_pct));
 
         // "1h 48m / 2h 30m"
         self.goal_progress_label.set_markup(&format!(
             "{} <span alpha=\"60%\" size=\"60%\">/ {}</span>",
-            format_hm_mins(week_mins),
-            format_hm_mins(goal_mins),
+            format_hm_mins(g.week_mins),
+            format_hm_mins(g.goal_mins),
         ));
-        let remain = (goal_mins - week_mins).max(0);
-        let sub = if remain == 0 {
-            crate::i18n::gettext("Goal reached ✓ · {duration} this week")
-                .replace("{duration}", &format_hm_mins(week_mins))
-        } else {
-            crate::i18n::gettext("{duration} to go this week")
-                .replace("{duration}", &format_hm_mins(remain))
+        use meditate_core::goal::GoalStatus;
+        let sub = match g.status {
+            GoalStatus::Reached => crate::i18n::gettext("Goal reached ✓ · {duration} this week")
+                .replace("{duration}", &format_hm_mins(g.week_mins)),
+            GoalStatus::InProgress => crate::i18n::gettext("{duration} to go this week")
+                .replace("{duration}", &format_hm_mins(g.remaining_mins)),
         };
         self.goal_sub_label.set_label(&sub);
 
         // Accessible name for the Cairo-drawn ring — no intrinsic text for
         // screen readers to fall back on.
         let ring_name = crate::i18n::gettext("Weekly goal: {pct}% — {done} of {goal}")
-            .replace("{pct}", &((pct.clamp(0.0, 9.99) * 100.0).round() as i32).to_string())
-            .replace("{done}", &format_hm_mins(week_mins))
-            .replace("{goal}", &format_hm_mins(goal_mins));
+            .replace("{pct}", &g.display_pct.to_string())
+            .replace("{done}", &format_hm_mins(g.week_mins))
+            .replace("{goal}", &format_hm_mins(g.goal_mins));
         self.goal_ring.update_property(&[gtk::accessible::Property::Label(&ring_name)]);
     }
 
@@ -488,7 +484,9 @@ impl StatsView {
 
         let bars_h = 120i32;
         let chart_h = bars_h as f64;
-        let max_val = data.iter().map(|(_, d)| *d).max().unwrap_or(0).max(1);
+        let series: Vec<i64> = data.iter().map(|(_, d)| *d).collect();
+        let ticks = meditate_core::date_math::chart_y_axis_ticks(&series);
+        let max_val = ticks.max;
 
         // Y-axis with max and midpoint labels
         let y_axis = gtk::Box::builder()
@@ -497,9 +495,9 @@ impl StatsView {
             .height_request(bars_h)
             .valign(gtk::Align::Start)
             .build();
-        y_axis.append(&axis_label(format_hm_secs(max_val)));
+        y_axis.append(&axis_label(format_hm_secs(ticks.max)));
         y_axis.append(&gtk::Box::builder().vexpand(true).build());
-        y_axis.append(&axis_label(format_hm_secs(max_val / 2)));
+        y_axis.append(&axis_label(format_hm_secs(ticks.mid)));
         y_axis.append(&gtk::Box::builder().vexpand(true).build());
 
         // Plot area — one DrawingArea that can render bars or a line
@@ -562,7 +560,7 @@ impl StatsView {
         );
         self.mini_total_value.set_label(&format_hm_compact(total));
         self.mini_sessions_value.set_label(
-            &if sessions == 0 { "–".to_string() } else { sessions.to_string() }
+            &meditate_core::format::mini_stat_or_dash(sessions),
         );
     }
 

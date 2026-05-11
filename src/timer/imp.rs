@@ -1904,26 +1904,21 @@ impl TimerView {
         // as the user left it — flipping stopwatch off in any mode
         // brings the previous state back.
         let stopwatch_on = self.stopwatch_toggle_on.get();
-        let persisted_on = self
+        let state = self
             .get_app()
             .and_then(|app| {
                 app.with_db(|db| {
-                    db.get_setting("end_bell_active", "true")
-                        .map(|v| meditate_core::settings_keys::parse_bool(&v))
-                        .unwrap_or(true)
+                    meditate_core::bells::end_bell_row_state(db.core(), stopwatch_on)
                 })
             })
-            .unwrap_or(true);
+            .unwrap_or(meditate_core::bells::EndBellRowState {
+                active: true,
+                sensitive: !stopwatch_on,
+            });
         self.bells_loading.set(true);
-        if stopwatch_on {
-            self.end_bell_row.set_enable_expansion(false);
-            self.end_bell_row.set_expanded(false);
-            self.end_bell_row.set_sensitive(false);
-        } else {
-            self.end_bell_row.set_enable_expansion(persisted_on);
-            self.end_bell_row.set_expanded(persisted_on);
-            self.end_bell_row.set_sensitive(true);
-        }
+        self.end_bell_row.set_enable_expansion(state.active);
+        self.end_bell_row.set_expanded(state.active);
+        self.end_bell_row.set_sensitive(state.sensitive);
         self.bells_loading.set(false);
     }
 }
@@ -2111,14 +2106,11 @@ impl TimerView {
             }
         }
 
-        // Prep-mode setup: anchor the boot time and hand the prep
-        // duration to Session — it owns prep ticking + the prep→
-        // Running transition internally. Bells are built once here
-        // (not deferred to Running) so Session carries the schedule
-        // unchanged across the internal Prep→Running transition,
-        // and the shell needs no separate rebuild on EndPrep.
-        if let Some(prep_dur) = prep {
-            self.start_boot_time.set(Some(boot_time_now()));
+        // Prep / no-prep Timer share the same SessionSettings build;
+        // only `prep_secs` and the construction call (start_prep vs.
+        // start_running) differ.
+        let build_timer_settings = |prep_dur: Option<Duration>| {
+            let Some(app) = self.get_app() else { return None; };
             let stopwatch_on = self.stopwatch_toggle_on.get();
             let target_secs = if stopwatch_on {
                 None
@@ -2129,10 +2121,9 @@ impl TimerView {
                 target_secs.map(|t| t as u64),
                 stopwatch_on,
             );
-            let Some(app) = self.get_app() else { return; };
-            let core_settings = CoreSessionSettings {
+            Some(CoreSessionSettings {
                 mode: SessionMode::Timer,
-                prep_secs: Some(prep_dur.as_secs() as u32),
+                prep_secs: prep_dur.map(|d| d.as_secs() as u32),
                 target_secs,
                 stopwatch_display: stopwatch_on,
                 breath_pattern: None,
@@ -2144,7 +2135,15 @@ impl TimerView {
                 starting_bell: self.build_starting_bell_cue(&app),
                 end_bell: self.build_end_bell_cue(&app),
                 box_breath_cues: None,
-            };
+            })
+        };
+
+        if let Some(prep_dur) = prep {
+            // Prep path: Session owns prep ticking + the prep→Running
+            // transition internally; bells are pre-built so the
+            // schedule survives the transition unchanged.
+            self.start_boot_time.set(Some(boot_time_now()));
+            let Some(core_settings) = build_timer_settings(Some(prep_dur)) else { return; };
             *self.core_session.borrow_mut() = Some(CoreSession::start_prep(
                 core_settings,
                 std::time::Duration::ZERO,
@@ -2153,32 +2152,7 @@ impl TimerView {
             // No-prep Timer: build bells + start Session directly in
             // Running. Same SessionSettings shape as the prep path.
             if mode == TimerMode::Timer {
-                let stopwatch_on = self.stopwatch_toggle_on.get();
-                let target_secs = if stopwatch_on {
-                    None
-                } else {
-                    Some(self.countdown_target_secs.get() as u32)
-                };
-                let (bells, bell_rng_seed) = self.build_session_bells(
-                    target_secs.map(|t| t as u64),
-                    stopwatch_on,
-                );
-                let Some(app) = self.get_app() else { return; };
-                let core_settings = CoreSessionSettings {
-                    mode: SessionMode::Timer,
-                    prep_secs: None,
-                    target_secs,
-                    stopwatch_display: stopwatch_on,
-                    breath_pattern: None,
-                    bells,
-                    bell_rng_seed,
-                    signal_mode_override: self.read_signal_mode_override(
-                        &app, "timer_signal_mode",
-                    ),
-                    starting_bell: self.build_starting_bell_cue(&app),
-                    end_bell: self.build_end_bell_cue(&app),
-                    box_breath_cues: None,
-                };
+                let Some(core_settings) = build_timer_settings(None) else { return; };
                 let session = CoreSession::start_running(
                     core_settings,
                     std::time::Duration::ZERO,
@@ -2668,18 +2642,16 @@ impl TimerView {
             // completion.
             if !app.active_window().map(|w| w.is_active()).unwrap_or(false) {
                 let n = gtk::gio::Notification::new("Meditation Complete");
-                // For Guided sessions, the Hero's frozen value is the
-                // file's natural duration — read from the active pick
-                // since countdown_target_secs is the Timer-mode field.
-                let target = match self.current_mode() {
-                    TimerMode::Guided => self
-                        .guided_pick
-                        .borrow()
-                        .as_ref()
-                        .map(|p| p.duration_secs as u64)
-                        .unwrap_or(0),
-                    _ => self.countdown_target_secs.get(),
-                };
+                // Session knows its own planned target (Timer's
+                // countdown, Guided's probed duration via target_secs,
+                // Box-Breath's cycle-aligned end) — read it instead
+                // of re-deriving per mode.
+                let target = self
+                    .core_session
+                    .borrow()
+                    .as_ref()
+                    .map(|s| s.completion_duration_secs())
+                    .unwrap_or(0);
                 n.set_body(Some(&format!("Session: {}", format_time(Duration::from_secs(target)))));
                 app.send_notification(Some("timer-done"), &n);
             }
@@ -2846,7 +2818,13 @@ impl TimerView {
         if let Some(app) = self.get_app() {
             if !app.active_window().map(|w| w.is_active()).unwrap_or(false) {
                 let n = gtk::gio::Notification::new("Meditation Complete");
-                n.set_body(Some(&format!("Session: {}", format_time(Duration::from_secs(elapsed)))));
+                let target = self
+                    .core_session
+                    .borrow()
+                    .as_ref()
+                    .map(|s| s.completion_duration_secs())
+                    .unwrap_or(elapsed);
+                n.set_body(Some(&format!("Session: {}", format_time(Duration::from_secs(target)))));
                 app.send_notification(Some("timer-done"), &n);
             }
         }

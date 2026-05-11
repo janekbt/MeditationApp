@@ -11,6 +11,23 @@
 
 use std::collections::HashMap;
 
+/// Two-tick y-axis decision for the stats chart (max + midpoint).
+/// `max` is the data series' largest value floored at 1 so a chart
+/// with no totals still draws axis ticks. `mid` is `max / 2`. The
+/// shell formats both via its native duration formatter; the
+/// decision (max picking + 1-flooring) lives here so any future
+/// Android stats view picks the same ticks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChartYAxisTicks {
+    pub max: i64,
+    pub mid: i64,
+}
+
+pub fn chart_y_axis_ticks(values: &[i64]) -> ChartYAxisTicks {
+    let max = values.iter().copied().max().unwrap_or(0).max(1);
+    ChartYAxisTicks { max, mid: max / 2 }
+}
+
 /// First day of the week per the active locale, in 1=Mon..7=Sun
 /// numbering (compatible with `chrono::Weekday::number_from_monday()`
 /// and `glib::DateTime::day_of_week()`).
@@ -261,6 +278,20 @@ pub fn month_letter(month: u32) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chart_y_axis_ticks_floors_max_at_one() {
+        assert_eq!(chart_y_axis_ticks(&[]).max, 1);
+        assert_eq!(chart_y_axis_ticks(&[0, 0, 0]).max, 1);
+        assert_eq!(chart_y_axis_ticks(&[0]).mid, 0);
+    }
+
+    #[test]
+    fn chart_y_axis_ticks_picks_series_max() {
+        let t = chart_y_axis_ticks(&[60, 3600, 1200]);
+        assert_eq!(t.max, 3600);
+        assert_eq!(t.mid, 1800);
+    }
 
     #[test]
     fn days_since_week_start_zero_when_today_is_start() {

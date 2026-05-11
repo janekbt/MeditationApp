@@ -163,6 +163,15 @@ use crate::settings_keys::{
     signal_mode_key_for_mode, stopwatch_key_for_mode,
 };
 
+/// Whether a preset created from the "Save current setup" flow
+/// starts pinned to the home-view starred chip list. The user can
+/// always destar from Manage afterwards; this is the default-on
+/// affordance so a fresh preset is immediately reachable.
+/// Centralized here so every shell agrees on the policy.
+pub fn default_starred_on_save() -> bool {
+    true
+}
+
 #[derive(Debug)]
 pub enum ApplyError {
     /// One or more referenced sound or vibration-pattern UUIDs are not

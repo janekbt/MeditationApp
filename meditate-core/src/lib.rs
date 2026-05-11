@@ -6,6 +6,7 @@ pub mod date_math;
 pub mod db;
 pub mod diag;
 pub mod format;
+pub mod goal;
 pub mod insights;
 pub mod labels;
 pub mod preset_config;

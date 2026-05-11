@@ -254,13 +254,10 @@ fn present_create_label_dialog(
         Rc::new(move || {
             let text = entry.text();
             let trimmed = text.trim();
-            let lower = trimmed.to_lowercase();
             let collision = app
-                .with_db(|db| db.list_labels())
+                .with_db(|db| db.is_label_name_taken(trimmed, 0))
                 .and_then(|r| r.ok())
-                .unwrap_or_default()
-                .into_iter()
-                .any(|l| l.name.to_lowercase() == lower);
+                .unwrap_or(false);
             dialog.set_response_enabled("create", !trimmed.is_empty() && !collision);
         })
     };

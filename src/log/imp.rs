@@ -380,9 +380,9 @@ fn build_card(session: &Session, label_map: &std::collections::HashMap<i64, &str
         .build();
 
     // Left column: big duration, "MIN" unit, time-of-day.
-    let mins = (session.duration_secs.max(0) as u64 + 30) / 60;
+    let mins = meditate_core::format::log_card_minutes(session.duration_secs);
     let dur_label = gtk::Label::builder()
-        .label(mins.max(1).to_string())
+        .label(mins.to_string())
         .css_classes(["log-duration", "numeric"])
         .halign(gtk::Align::Start)
         .build();
@@ -792,7 +792,7 @@ impl LogView {
         }
 
         // ── Date row with calendar picker ──────────────────────────────
-        let init_time = session.map(|s| s.start_time).unwrap_or_else(unix_now);
+        let init_time = session.map(|s| s.start_time).unwrap_or_else(meditate_core::time::unix_now);
         let init_dt = glib::DateTime::from_unix_local(init_time).ok();
         let init_hour   = init_dt.as_ref().map(|d| d.hour()).unwrap_or(0);
         let init_minute = init_dt.as_ref().map(|d| d.minute()).unwrap_or(0);
@@ -1077,7 +1077,7 @@ impl LogView {
                     time_hours_spin.value() as i32,
                     time_minutes_spin.value() as i32,
                     0.0,
-                ).ok().map(|d| d.to_unix()).unwrap_or_else(unix_now);
+                ).ok().map(|d| d.to_unix()).unwrap_or_else(meditate_core::time::unix_now);
                 let label_id = if label_expander.enables_expansion() {
                     selected_label_id_for_save.get()
                 } else {
@@ -1147,11 +1147,4 @@ fn format_date(unix_secs: i64) -> String {
         .unwrap_or_default()
 }
 
-
-fn unix_now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64
-}
 

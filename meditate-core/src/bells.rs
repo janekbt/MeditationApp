@@ -370,6 +370,34 @@ pub fn session_bells_from_db(
     build_active_bells(&rows, total_target_secs, stopwatch_on, seed)
 }
 
+/// Setup-view End Bell row's display state given the persisted
+/// master toggle and the active mode's stopwatch flag. Pure
+/// decision: stopwatch sessions have no natural end, so the row
+/// shows insensitive + collapsed regardless of the persisted toggle;
+/// the persisted value stays untouched so flipping stopwatch off
+/// brings the previous expanded state back. Used by the gtk shell's
+/// `refresh_end_bell_dependent_ui` and the Android equivalent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EndBellRowState {
+    /// `true` → row expanded + the user can collapse it; the master
+    /// toggle has its persisted value. `false` → row collapsed +
+    /// non-interactive (stopwatch mode).
+    pub active: bool,
+    /// `true` → the row reacts to taps; `false` → greyed-out chrome.
+    /// Mirrors `active` today but exposed separately because the
+    /// gtk shell calls `set_enable_expansion(active)` AND
+    /// `set_sensitive(sensitive)` — distinct GTK methods.
+    pub sensitive: bool,
+}
+
+pub fn end_bell_row_state(db: &Database, stopwatch_on: bool) -> EndBellRowState {
+    if stopwatch_on {
+        return EndBellRowState { active: false, sensitive: false };
+    }
+    let persisted_on = read_bool(db, "end_bell_active", true);
+    EndBellRowState { active: persisted_on, sensitive: true }
+}
+
 /// Box-Breath per-phase cue config from the settings + phase rows.
 /// Always returns a value (with `master_enabled` reflecting the
 /// user's toggle); Session checks the master flag + the per-phase

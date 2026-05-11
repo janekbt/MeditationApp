@@ -213,6 +213,28 @@ pub fn session_count_key(n: usize) -> SessionCountKey {
     }
 }
 
+/// Log-card hero "minutes" display from a session's duration_secs.
+/// Negatives clamp to zero, rounds to the nearest minute, then
+/// floors at 1 so a Log row always shows a non-zero hero number.
+/// (A 0-minute session lands on the Log because save still ran;
+/// "0" would look broken, so we surface as "1 min" instead.)
+pub fn log_card_minutes(duration_secs: i64) -> u64 {
+    let mins = (duration_secs.max(0) as u64 + 30) / 60;
+    mins.max(1)
+}
+
+/// Mini-stat value display: render zero as an en-dash (typographic
+/// "no data" marker), otherwise the integer as a string. Used by
+/// the Stats view's mini-stat tiles where an empty week shouldn't
+/// read as a flat "0".
+pub fn mini_stat_or_dash(value: i64) -> String {
+    if value == 0 {
+        "–".to_string()
+    } else {
+        value.to_string()
+    }
+}
+
 /// Decision key for the bell-count chip in the preset-row subtitle.
 /// Variants match `IntervalsCountKey` minus the `None` arm — the
 /// caller of `preset_subtitle_parts` only sees this when at least
@@ -622,6 +644,25 @@ mod tests {
         assert_eq!(session_count_key(1), SessionCountKey::One);
         assert_eq!(session_count_key(2), SessionCountKey::Many(2));
         assert_eq!(session_count_key(42), SessionCountKey::Many(42));
+    }
+
+    #[test]
+    fn log_card_minutes_rounds_to_nearest_and_floors_at_one() {
+        assert_eq!(log_card_minutes(0), 1);
+        assert_eq!(log_card_minutes(29), 1, "29s rounds to 0 min, floor to 1");
+        assert_eq!(log_card_minutes(30), 1);
+        assert_eq!(log_card_minutes(60), 1);
+        assert_eq!(log_card_minutes(89), 1, "89s rounds to 1.48 → 1 min");
+        assert_eq!(log_card_minutes(90), 2);
+        assert_eq!(log_card_minutes(60 * 15), 15);
+        assert_eq!(log_card_minutes(-100), 1, "negative clamps to 0 then floors");
+    }
+
+    #[test]
+    fn mini_stat_or_dash_renders_zero_as_endash() {
+        assert_eq!(mini_stat_or_dash(0), "–");
+        assert_eq!(mini_stat_or_dash(1), "1");
+        assert_eq!(mini_stat_or_dash(42), "42");
     }
 
     #[test]
