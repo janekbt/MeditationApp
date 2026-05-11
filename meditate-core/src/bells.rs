@@ -18,9 +18,77 @@ use crate::db::{
 };
 use crate::seeds::{BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID};
 use crate::settings_keys::parse_bool;
-use crate::format::{
-    fixed_from_end_target_secs, fixed_from_start_target_secs, next_interval_ring_secs,
-};
+
+// ── Bell-scheduling helpers ─────────────────────────────────────────
+// Pure functions the running tick uses to decide when each configured
+// bell should fire. random_unit is a caller-supplied [0, 1) random for
+// the jittered intervals — keeps the helpers deterministic + testable
+// while letting the shell choose its RNG (xorshift, system time, ...).
+
+/// Compute the elapsed-secs boundary when the next ring of an
+/// interval bell should fire.
+///
+/// `last_ring_secs` is the elapsed-secs boundary of the previous ring
+/// (use 0 for the first ring of a session). `base_min` and `jitter_pct`
+/// come from the bell row. `random_unit` is a caller-supplied uniform
+/// in `[0, 1)`.
+///
+/// With `jitter_pct == 0` the offset is exactly `base_min * 60` and
+/// `random_unit` is ignored. With non-zero jitter the offset is in
+/// `[base * (1 - j/100), base * (1 + j/100)]`, picked linearly from
+/// `random_unit`.
+pub fn next_interval_ring_secs(
+    last_ring_secs: u64,
+    base_min: u32,
+    jitter_pct: u32,
+    random_unit: f64,
+) -> u64 {
+    let base_secs = (base_min as u64).saturating_mul(60).max(1);
+    if jitter_pct == 0 {
+        return last_ring_secs + base_secs;
+    }
+    let span = base_secs as f64 * (jitter_pct as f64) / 100.0;
+    // [0, 1) → [-span, +span). Centre (0.5) lands on zero offset.
+    let offset = (random_unit - 0.5) * 2.0 * span;
+    let next_secs = ((base_secs as f64) + offset).round().max(1.0) as u64;
+    last_ring_secs + next_secs
+}
+
+/// Compute the elapsed-secs boundary for a "T minutes from session
+/// start" bell, or `None` if the bell would overlap the starting bell
+/// (offset==0) or the completion sound (offset>=target).
+///
+/// In stopwatch mode, `total_target_secs` is `None` — only the
+/// zero-offset overlap rule applies.
+pub fn fixed_from_start_target_secs(
+    offset_min: u32,
+    total_target_secs: Option<u64>,
+) -> Option<u64> {
+    let offset_secs = (offset_min as u64) * 60;
+    if offset_secs == 0 {
+        return None;
+    }
+    match total_target_secs {
+        Some(t) if offset_secs >= t => None,
+        _ => Some(offset_secs),
+    }
+}
+
+/// Compute the elapsed-secs boundary for a "T minutes before session
+/// end" bell. Only meaningful in countdown mode — stopwatch mode has
+/// no end so the shell skips this kind altogether. Returns `None` if
+/// the bell would overlap the completion sound (offset==0) or land
+/// at/before session start (offset>=total).
+pub fn fixed_from_end_target_secs(
+    offset_min: u32,
+    total_target_secs: u64,
+) -> Option<u64> {
+    let offset_secs = (offset_min as u64) * 60;
+    if offset_secs == 0 || offset_secs >= total_target_secs {
+        return None;
+    }
+    Some(total_target_secs - offset_secs)
+}
 
 /// One bell's per-session schedule. Built once at the moment a session
 /// enters Running (after prep, if any) and mutated in place by
@@ -1106,5 +1174,103 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         let (bells, _seed) = session_bells_from_db(&db, Some(600), false);
         assert!(bells.is_empty(), "master off must yield empty schedule");
+    }
+
+    // ── next_interval_ring_secs ────────────────────────────────────
+
+    #[test]
+    fn next_interval_ring_with_zero_jitter_is_exactly_base_minutes() {
+        // No jitter → next ring is last_ring + base_min*60 regardless
+        // of random_unit. random_unit gets ignored entirely.
+        assert_eq!(next_interval_ring_secs(0, 5, 0, 0.0), 300);
+        assert_eq!(next_interval_ring_secs(0, 5, 0, 0.5), 300);
+        assert_eq!(next_interval_ring_secs(0, 5, 0, 0.999), 300);
+        assert_eq!(next_interval_ring_secs(300, 5, 0, 0.5), 600);
+    }
+
+    #[test]
+    fn next_interval_ring_with_random_unit_at_centre_is_exactly_base() {
+        assert_eq!(next_interval_ring_secs(0, 9, 30, 0.5), 540);
+        assert_eq!(next_interval_ring_secs(540, 9, 30, 0.5), 1080);
+    }
+
+    #[test]
+    fn next_interval_ring_random_unit_at_zero_lands_at_lower_bound() {
+        // random_unit=0.0 → -span offset from base. For base=9 ±30%,
+        // span = 540 * 0.30 = 162, so 540 - 162 = 378.
+        assert_eq!(next_interval_ring_secs(0, 9, 30, 0.0), 378);
+    }
+
+    #[test]
+    fn next_interval_ring_random_unit_just_below_one_lands_near_upper_bound() {
+        // random_unit just below 1.0 → just below +span. For base=9 ±30%,
+        // upper bound is 540 + 162 = 702.
+        let v = next_interval_ring_secs(0, 9, 30, 0.9999);
+        assert!(v <= 702 && v >= 700, "got {}", v);
+    }
+
+    #[test]
+    fn next_interval_ring_stays_within_jitter_window_for_every_unit() {
+        let base = 9 * 60u64;
+        let jitter_pct = 30u32;
+        let span = base as f64 * jitter_pct as f64 / 100.0;
+        let lo = (base as f64 - span).round() as u64;
+        let hi = (base as f64 + span).round() as u64;
+        for i in 0..=10 {
+            let u = (i as f64) / 10.0;
+            let v = next_interval_ring_secs(0, 9, jitter_pct, u);
+            assert!(v >= lo && v <= hi,
+                "u={} produced {} outside [{}, {}]", u, v, lo, hi);
+        }
+    }
+
+    #[test]
+    fn next_interval_ring_zero_minutes_clamps_to_one_second() {
+        // base=0 doesn't make sense (UI prevents it via SpinRow min),
+        // but the helper still has to return a usable u64 — clamping
+        // to 1 second is the harmless choice.
+        assert_eq!(next_interval_ring_secs(0, 0, 0, 0.5), 1);
+    }
+
+    // ── fixed_from_start_target_secs ──────────────────────────────
+
+    #[test]
+    fn fixed_from_start_returns_offset_when_inside_target() {
+        assert_eq!(fixed_from_start_target_secs(10, Some(1800)), Some(600));
+    }
+
+    #[test]
+    fn fixed_from_start_returns_offset_in_stopwatch_mode() {
+        assert_eq!(fixed_from_start_target_secs(10, None), Some(600));
+    }
+
+    #[test]
+    fn fixed_from_start_is_none_at_zero_offset() {
+        assert_eq!(fixed_from_start_target_secs(0, Some(1800)), None);
+        assert_eq!(fixed_from_start_target_secs(0, None), None);
+    }
+
+    #[test]
+    fn fixed_from_start_is_none_at_or_beyond_target() {
+        assert_eq!(fixed_from_start_target_secs(30, Some(1800)), None);
+        assert_eq!(fixed_from_start_target_secs(45, Some(1800)), None);
+    }
+
+    // ── fixed_from_end_target_secs ────────────────────────────────
+
+    #[test]
+    fn fixed_from_end_returns_target_minus_offset() {
+        assert_eq!(fixed_from_end_target_secs(5, 1800), Some(1500));
+    }
+
+    #[test]
+    fn fixed_from_end_is_none_at_zero_offset() {
+        assert_eq!(fixed_from_end_target_secs(0, 1800), None);
+    }
+
+    #[test]
+    fn fixed_from_end_is_none_at_or_beyond_total() {
+        assert_eq!(fixed_from_end_target_secs(30, 1800), None);
+        assert_eq!(fixed_from_end_target_secs(45, 1800), None);
     }
 }
