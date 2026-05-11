@@ -1,3 +1,6 @@
+[workspace]
+members = ["meditate-core"]
+
 [package]
 name = "meditate"
 version = "26.4.4"
