@@ -11,19 +11,6 @@ rationale.
 
 ## Tier 1 — High-impact, mostly mechanical
 
-### Split `db.rs` (11.5k lines) into a `db/` directory
-- File has 28 existing `// ── … ─` section dividers that map to
-  clean per-domain boundaries. Promoting them to siblings (one
-  `impl Database` block per file across `db/{sessions, labels,
-  presets, bell_sounds, vibration_patterns, guided_files,
-  interval_bells, box_breath_phases, sync, stats, seed, settings,
-  types, mod}.rs`) is mostly cut-and-paste — Rust allows multiple
-  `impl Database` blocks across files, no trait gymnastics.
-- Tests (~7300 lines, `#[cfg(test)] mod tests` from line 4288 to
-  EOF) follow their impl into the new files.
-- `recompute_*` family stays together in `db/sync.rs` next to
-  `apply_event_inner` — they share the dispatch table.
-
 ### Collapse the 7-way `recompute_*` template
 - `recompute_session`, `_label`, `_interval_bell`, `_preset`,
   `_guided_file`, `_vibration_pattern`, `_bell_sound` in
@@ -80,17 +67,6 @@ rationale.
 - Promote `settings_keys::{read_str, read_signal_mode, read_u32}`
   to `pub`. Delete the bells.rs + preset_config copies.
 
-### Move scheduling math out of `format.rs` into `bells.rs`
-- `bells` today imports `format::next_interval_ring_secs` +
-  `format::fixed_from_*_target_secs` — a presentation→domain
-  inversion (`format` is the render tier; `bells` is the domain).
-- Move `next_interval_ring_secs`, `fixed_from_start_target_secs`,
-  `fixed_from_end_target_secs` from `format.rs` to `bells.rs`.
-- Also fold `PREP_SECS_DEFAULT` / `PREP_SECS_MIN` / `PREP_SECS_MAX`
-  + `parse_prep_secs` + `prep_target_duration` + `prep_plan_from_db`
-  from `format` into `bells` (they're bell-domain timing, not
-  formatting).
-
 ### Add `pub use` at crate root
 - `lib.rs` has zero re-exports today; callers write
   `meditate_core::db::SignalMode`, `meditate_core::db::Session`.
@@ -102,18 +78,6 @@ rationale.
   ```
 
 ## Tier 2 — Medium impact, light design
-
-### Split `session.rs` (2.2k lines) into `session/` directory
-- Two existing `impl Session` blocks at lines 409 + 1010 mark a
-  natural fault line.
-- Proposed: `session/{mod, effect, settings}.rs`:
-  - `mod.rs` — state machine, `Session` struct, tick / pause /
-    resume / stop / overtime / start_prep / start_running.
-  - `effect.rs` — `Effect` enum, `FireChannel`, `FireRoute`,
-    `Effect::fire_route()`, `TickOutcome`, `ToggleAction`,
-    `UiState`, `ui_state()`.
-  - `settings.rs` — `SessionSettings` + `TIMER_DEFAULT_SECS` /
-    `BREATHING_DEFAULT_SECS` consts.
 
 ### `bells::sound_label` / `pattern_label` / `resolve_sound_name` / `resolve_pattern_name` should return `Option<String>`
 - Currently return `String` with `""` as the missing sentinel
@@ -172,22 +136,6 @@ rationale.
 - `rng` (86 lines, one stateless xorshift64) — inline into
   `bells` (its sole intended consumer per its doc comment) or
   pair with `time::seed_now`.
-
-### Shared test fixture for `db/` tests
-- ~379 inline `Database::open_in_memory().unwrap()` calls across
-  the test suite. Each test reconstructs the same fixtures by
-  hand.
-- Add `db/tests_common.rs` (a `pub(super)` helper module gated by
-  `#[cfg(test)]`) with at minimum:
-  ```rust
-  pub(super) fn db() -> Database { Database::open_in_memory().unwrap() }
-  pub(super) fn ts(start_iso: &str, dur_secs: u32) -> Session { … }
-  pub(super) fn insert(db: &Database, start: &str, dur: u32,
-                       label: Option<i64>) -> i64 { … }
-  pub(super) fn make_event(kind: &str, target: &str, ts: i64,
-                           payload: serde_json::Value) -> Event { … }
-  ```
-- Sheds ~3-5 lines per test × hundreds of tests.
 
 ### Per-entity CRUD tombstone helper
 - `delete_interval_bell` / `delete_bell_sound` / `delete_preset` /
@@ -539,31 +487,6 @@ rationale.
 
 ## Tier 0 — Correctness bugs (third pass, jump-the-queue)
 
-### `presets.mode` SQL CHECK excludes `'guided'`
-- `meditate-core/src/db.rs:546` — `CHECK (mode IN ('timer',
-  'box_breath'))`. Per memory `feedback_meditate_guided_presets`,
-  Guided IS a first-class preset mode in `preset_config::snapshot`
-  / `preset_config.rs:236-244`. A peer running a build that emits
-  a `preset_insert` event for a Guided preset crashes
-  `recompute_preset` with a CHECK-constraint violation.
-- Not caught by the planned `EventKind` enum (Tier 1): this is
-  runtime data drift, not a wire-format mismatch.
-- Fix: add `'guided'` to the CHECK list. Schema change; existing
-  rows survive (none have `mode='guided'` today because the bug
-  blocks them).
-
-### `wipe_local_event_log` deletes an incoherent subset of tables
-- `meditate-core/src/db.rs:1013-1024` wipes `events`, `sessions`,
-  `labels`, `bell_sounds`, `interval_bells`, `known_remote_*` —
-  but NOT `presets`, `guided_files`, `vibration_patterns`,
-  `box_breath_phases`. All four are event-log-driven (their state
-  is reconstructed via `recompute_*`).
-- After a remote-data-lost → wipe-and-pull recovery, stale local
-  rows in these four tables survive and overlap with peer-pulled
-  data. Silently masks divergence.
-- Fix: add the four missing DELETEs.
-- High-impact bug on the recovery path.
-
 ### `push_custom_sound_files` lacks the 10 MB cap that pull enforces
 - `meditate-core/src/sync/orchestrator.rs:419-450` reads the
   local file with no size gate and PUTs it. The puller (`:397`)
@@ -758,20 +681,6 @@ dur)`, `make_event(...)` helpers. Importable from every test
 module.
 
 ## Tier 0 — Fourth-pass additions
-
-### DST fall-back collapses session ISO → unix 1970 on read-back
-- `meditate-core/src/time.rs:83-95` — `local_iso_to_unix` returns
-  `0` when `from_local_datetime().single() == None`, which fires
-  on DST fall-back ambiguous local times (e.g. `2024-11-03T01:30:00`
-  in US TZs). Save side is fine (`unix_to_local_iso` writes local
-  wall-time); only read-back collapses.
-- Shell calls this on every session read (`src/db/mod.rs:184, 857`).
-  A session at 01:30 during the fall-back hour silently
-  re-materializes as `1970-01-01` in Log view, Time-of-Day stat,
-  and CSV export (`data_io.rs:115`).
-- No DST round-trip test exists.
-- Fix: `from_local_datetime().earliest().or_else(|| .latest())` —
-  pick a representative rather than collapsing.
 
 ### CSV import overflow in `parse_hms_duration`
 - `meditate-core/src/format.rs:10, 16` — `m * 60 + sec.round() as
@@ -991,26 +900,6 @@ module.
 
 ## Tier 0 — Fifth-pass additions
 
-### Path-traversal via peer-controlled bell-sound `uuid`
-- `meditate-core/src/db.rs:1688-1751` (`recompute_bell_sound`) writes
-  `event.target_id` directly into `bell_sounds.uuid` with no
-  UUID-shape validation. `meditate-core/src/sync/orchestrator.rs:334-336,
-  400` (`pull_custom_sound_files`) then does
-  `self.sounds_dir.join(format!("{uuid}.{ext}"))` and
-  `fs::write(&local, &bytes)`.
-- A peer (or tampered remote folder) can ship a `bell_sound_insert`
-  event with `target_id = "../../../home/janek/.bashrc"` — the
-  puller writes attacker-chosen bytes anywhere reachable from
-  `sounds_dir`'s parent chain. `extension()` is a closed set so
-  the suffix is safe; the stem is not.
-- Janek is solo-user, but the WebDAV folder is shared across his
-  own devices by design. **Remote-code-write primitive.**
-- Highest-severity finding in the entire audit cycle so far.
-- Fix path A: validate `target_id` matches a UUID regex at
-  `append_event` time (single chokepoint).
-- Fix path B: `Path::new(uuid).components().count() == 1 &&
-  !uuid.contains(['/', '\\\\'])` at the pull site.
-
 ### No `busy_timeout` on rusqlite connections
 - `meditate-core/src/db.rs:709-720` (`Database::open`) and
   `src/sync_runner.rs:109` (the sync thread's own connection)
@@ -1085,18 +974,6 @@ the type/function level, but **the map is missing**. A non-Janek
 contributor (or Janek six months from now, or a future Claude
 session with cleared memory) cannot reconstruct design intent from
 the code alone.
-
-### `meditate-core/src/lib.rs` `//!` overview
-- Bare 23 lines of `pub mod` declarations with zero context.
-- Fill: one-paragraph mission ("pure Rust core: state machines,
-  persistence, sync; zero GTK"), a module map grouped by concern
-  (state machines: `session`/`breath`/`timer`/`bells`;
-  persistence: `db`/`seeds`/`data_io`; sync: `sync/*`; formatting:
-  `format`/`naming`/`time`/`date_math`; settings/stats:
-  `settings_keys`/`goal`/`contrib`/`labels`/`insights`),
-  invariants (`Database` is single-threaded, no `Instant::now()`
-  inside core, seconds-widths convention), and reading order
-  (`session` → `db` → `sync/orchestrator`).
 
 ### `ARCHITECTURE.md` is stale and contradicts the codebase
 - `/home/janek/Claude/MeditationApp/ARCHITECTURE.md:35-42`
@@ -1457,20 +1334,6 @@ avoid silently losing items in a rewrite.
 
 ## Tier 0 — Seventh-pass additions
 
-### Schema-version sentinel + integrity check on open
-- `meditate-core/src/db.rs:709-720` sets `journal_mode`,
-  `synchronous`, `foreign_keys` but never `PRAGMA user_version`
-  and never `PRAGMA integrity_check`.
-- Per `feedback_meditate_no_compat` the schema is wipe-and-
-  reimport — but core has no way to **detect** a forwards-
-  incompatible DB. Downgrade across a schema bump silently
-  corrupts data. SD-card corruption on Librem 5 silently
-  passes through and surfaces weeks later as wrong totals.
-- Fix: stamp `PRAGMA user_version = N` at `Database::init`;
-  on `open`, refuse-and-log if `user_version` exceeds the
-  build's known version. Run `PRAGMA quick_check` on open
-  with one diag line on first failure.
-
 ### Seed-application logs nothing on first launch
 - `db.rs:3547 seed_all_non_audio` + `seed_bundled_*` are
   silent. A user's first-ever launch shows `db open ok` then
@@ -1482,22 +1345,6 @@ avoid silently losing items in a rewrite.
   etc.
 
 ## Tier 1 — Seventh-pass additions
-
-### Core never calls `diag::log` — all 33 sites are shell-side
-- `grep diag::log meditate-core/src/**` returns ZERO hits.
-  Every log line is authored from the gtk shell. Push/pull
-  internals (`sync/orchestrator.rs`, `sync/webdav.rs`,
-  conflict resolution, `apply_event_inner` unknown-kind
-  branch at `db.rs:1151`) are completely silent.
-- When sync produces a wrong outcome on Android (no gtk
-  wrapper), there will be no trail. Re-invents 33 call
-  sites in every shell.
-- Fix: plumb a `&dyn Fn(&str)` log sink through `Sync::new`
-  / `Database::init` so core can emit boundary events
-  portably. Single biggest leverage point — unlocks
-  observability for Android, would have caught both the
-  `SyncCoordinator` race and the `wipe_local_event_log`
-  subset bug.
 
 ### `sync::backoff` uses `Instant::now()` (wall-clock-frozen on suspend)
 - `meditate-core/src/sync/backoff.rs:29,49,69,77` and the
@@ -1731,107 +1578,6 @@ avoid silently losing items in a rewrite.
   user has nowhere to look.
 - Fix: one line in README listing the path on Flatpak and
   non-Flatpak.
-
-## Tier 0 — Eighth-pass additions
-
-### Sync hard-stalls forever on concurrent label-name pick
-- `meditate-core/src/db.rs:471` — `labels.name COLLATE NOCASE
-  UNIQUE` (also `vibration_patterns:545`, `presets:564`,
-  `guided_files:584`). `recompute_label` upserts on `uuid`
-  but a peer-authored row with a DIFFERENT uuid + SAME name
-  fails `UNIQUE`-on-name.
-- Failure surfaces as `DbError::Sqlite` inside
-  `apply_event_inner`, aborts the `replay_events`
-  transaction (`db.rs:1169-1180`), propagates `SyncError::Db`
-  out of `pull()`. The poison file stays on the server; on
-  next pull it's re-fetched (the file wasn't recorded in
-  `known_remote_files` — `orchestrator.rs:206-211` records
-  ONLY after successful replay) and re-fails. Sync is
-  hard-stuck on the first concurrent label-name pick.
-- Two peers both naming a label "Morning" while offline is
-  a routine user action. No backoff / quarantine / skip-
-  poison path.
-- Fix: drop UNIQUE-on-name in the cache and resolve name
-  collisions by `(lamport, device_id)` rename suffix; or
-  quarantine individual failing events with an audit row and
-  keep replay moving.
-
-### Out-of-order `session_insert` → `label_insert` permanently orphans the session
-- `meditate-core/src/db.rs:1218-1228` `recompute_session`
-  resolves `label_uuid → label_id` via point-in-time SELECT.
-  If the label row doesn't exist yet, `label_id` is `None`.
-- When `label_insert` later arrives, `recompute_label`
-  recomputes ONLY the labels row — it does NOT recompute
-  sessions that referenced this uuid. Within one
-  `replay_events` batch the lamport-sort masks this, but
-  across batches — or if `label_insert` ships in a future-
-  format file whose name doesn't match
-  `parse_batch_uuid_from_filename` (`orchestrator.rs:184-188`
-  "skip silently") — the session is orphaned forever.
-- Fix: when `recompute_label` materializes a row, ALSO
-  re-link sessions whose payload references this uuid; or
-  denormalize `label_uuid` on the `sessions` table and
-  resolve lazily.
-
-### Unknown event-kind never re-applied after upgrade
-- `meditate-core/src/db.rs:1151-1155` records the event row
-  but skips the dispatch. Test
-  `apply_event_with_unknown_kind_is_a_silent_record_only`
-  (`db.rs:8886-8901`) confirms the row enters `events`.
-- The pass-7 backlog already flags the silent drop; this
-  reveals the **upgrade path is also broken**. No
-  `cache_schema_version`, no schema-version on the wire
-  envelope, no migration scaffolding (`grep -rn schema_version`
-  zero hits in core). A future build that DOES understand
-  kind 42 has no trigger to re-run `apply_event_inner` over
-  historical rows. The remote-file containing the kind-42
-  events is already in `known_remote_files`, so it's
-  skipped on next pull. **Events silently lost in the
-  materialized cache forever.**
-- Fix: bump a `cache_schema_version` setting; on mismatch,
-  walk `events` and re-`apply_event_inner` every row.
-
-### Completed session silently vanishes on `create_session` error
-- `src/timer/imp.rs:2394` — `let Some(Ok(session)) = ...
-  else { return; }`. On `with_db_blocking_mut(|db|
-  db.create_session(&data))` returning `None` (DB never
-  opened) OR `Some(Err(...))` (SQLITE_FULL / SQLITE_IOERR /
-  SQLITE_CORRUPT), the closure silently `return`s. No toast,
-  no diag log, no retry queue, no on-disk dead-letter.
-- A 60-min session vanishes from the timer with no UI
-  signal. **Single worst silent-loss path in the app.**
-- Fix: route the `Err` arm into `diag::log` + a toast routed
-  through the active window, AND persist the row JSON to a
-  sidecar `failed_sessions.jsonl` for next-launch retry.
-  One-line fix for the toast + log alone; full retry queue
-  is a follow-up.
-
-### DB open failure → headless inert app, no recovery path
-- `src/application.rs:106-110`. `Database::open` failure
-  prints to stderr (invisible on phosh / flatpak), writes
-  one diag line, leaves `*db = None`. Every `with_db*` then
-  returns `None`. User sees an app that loads, presents
-  Setup with no presets/labels, "save" silently fails. No
-  recovery path.
-- Fix: when `Database::open` returns `Err`, present a
-  blocking `adw::AlertDialog` on `startup`/`activate` with
-  "Open recovery folder / Quit" buttons. Hook into
-  `recovery_dialog.rs` flow.
-
-### WebDAV PUT writes directly to final path — partial body poisons entire pull pipeline
-- `meditate-core/src/sync/webdav.rs:197-214`. ureq's
-  `send_bytes` streams to the wire; a TCP RST mid-body
-  leaves Nextcloud with a half-batch JSON at the canonical
-  name.
-- Next pull hits `serde_json::from_slice` →
-  `SyncError::InvalidEvent(format!("{name}: {e}"))` and
-  aborts the entire pull, blocking all subsequent batches
-  until user manually deletes the corrupt file from
-  Nextcloud. Re-push of the same `batch_uuid` is blocked by
-  per-file-uuid known-set logic.
-- Fix: PUT to `<batch_uuid>.json.tmp`, then MOVE (WebDAV)
-  to `<batch_uuid>.json`. Or: tolerate `from_slice` failure
-  in pull by skipping that file + logging.
 
 ## Tier 1 — Eighth-pass additions
 
