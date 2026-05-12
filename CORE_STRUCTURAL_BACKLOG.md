@@ -16,19 +16,15 @@ Small TDD pass to round out the Tier-0 sync/recovery hardening from
 tests; #4 deserves its own session because the UX flow needs Janek's
 input.
 
-1. **`busy_timeout` on rusqlite connections** — see Tier 0
-   fifth-pass. Two-line fix in `Database::open` and the sync
-   worker's open path; prevents `SQLITE_BUSY` surfacing as
-   `DbError` under bulk-import + auto-sync.
-2. **`wipe_local_event_log` preserves `lamport_clock`** — see Tier 1
+1. **`wipe_local_event_log` preserves `lamport_clock`** — see Tier 1
    eighth-pass. Reset `lamport_clock` to 0 inside the recovery
    primitive we hardened on 2026-05-11; stops post-wipe lamport
    drift.
-3. **Symlink follow on import destination** — see Tier 1 eighth-pass.
+2. **Symlink follow on import destination** — see Tier 1 eighth-pass.
    Real flatpak `--filesystem=home` data-dir escape. Switch
    `fs::copy` → `OpenOptions::new().create_new().custom_flags(O_NOFOLLOW)`
    at `src/sounds.rs:622` and `src/guided.rs:388`.
-4. **Battery-death / OOM mid-session = whole session lost** — see
+3. **Battery-death / OOM mid-session = whole session lost** — see
    Tier 1 eighth-pass. Needs design discussion: `session_in_progress`
    settings row written every ~60s + Resume/Save/Discard dialog on
    next launch.
@@ -923,24 +919,6 @@ module.
   document why each module picks its own.
 
 ## Tier 0 — Fifth-pass additions
-
-### No `busy_timeout` on rusqlite connections
-- `meditate-core/src/db.rs:709-720` (`Database::open`) and
-  `src/sync_runner.rs:109` (the sync thread's own connection)
-  both open without setting `busy_timeout`. Rusqlite defaults to
-  `0`.
-- Main thread holds connection A under `Arc<Mutex<…>>`;
-  `std::thread::spawn` in `application.rs:423` runs the sync
-  worker which opens connection B against the same file. WAL
-  permits concurrent reader + one writer, but with
-  `busy_timeout=0` a main-thread `set_setting` that lands during
-  the sync's `replay_events` transaction window returns
-  `SQLITE_BUSY` instantly → `DbError::Sqlite` and the gtk call
-  fails.
-- Reproducible under bulk import + auto-sync.
-- Fix: `conn.busy_timeout(Duration::from_secs(5))` in
-  `Database::open` (no-op in `open_in_memory`) and in the sync
-  worker's open path.
 
 ### `unix_to_local_iso` produces variable-length strings for years outside 0000-9999
 - `meditate-core/src/time.rs:73` — chrono's `%Y` format pads

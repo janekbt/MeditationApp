@@ -123,6 +123,16 @@ impl Database {
 
     pub fn open(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)?;
+        // Wait up to 8s when another writer holds the lock instead of
+        // failing instantly with SQLITE_BUSY. Main thread holds one
+        // connection under Arc<Mutex<…>>; the sync worker opens its
+        // own connection via this same path. WAL allows concurrent
+        // reader + one writer, but two writers (e.g. a main-thread
+        // set_setting landing during the sync worker's replay_events
+        // transaction) still need this back-off to coexist. rusqlite
+        // happens to default to 5s today; we pin the value explicitly
+        // so a future version bump can't silently change the contract.
+        conn.busy_timeout(std::time::Duration::from_secs(8))?;
         // For on-disk databases, enable WAL with synchronous=NORMAL.
         // The default (rollback journal + synchronous=FULL) does a
         // full fsync on every commit — autocommit UPDATEs become
@@ -307,4 +317,22 @@ mod tests {
         Database::init(conn).expect("init succeeds at current version");
     }
 
+    // ── busy_timeout ──────────────────────────────────────────────────
+
+    #[test]
+    fn open_sets_busy_timeout_on_file_backed_connection() {
+        // Without a busy_timeout, a main-thread `set_setting` racing
+        // the sync worker's `replay_events` transaction returns
+        // SQLITE_BUSY instantly. We explicitly set 8s rather than
+        // relying on rusqlite's current 5s default — the value is
+        // part of our runtime contract, not an inherited accident.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("busy.db");
+        let db = Database::open(&path).unwrap();
+        let timeout_ms: i64 = db.conn
+            .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(timeout_ms, 8000,
+            "Database::open must explicitly set busy_timeout to 8s");
+    }
 }
