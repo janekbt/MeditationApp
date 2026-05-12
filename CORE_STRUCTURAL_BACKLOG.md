@@ -16,15 +16,11 @@ Small TDD pass to round out the Tier-0 sync/recovery hardening from
 tests; #4 deserves its own session because the UX flow needs Janek's
 input.
 
-1. **`wipe_local_event_log` preserves `lamport_clock`** — see Tier 1
-   eighth-pass. Reset `lamport_clock` to 0 inside the recovery
-   primitive we hardened on 2026-05-11; stops post-wipe lamport
-   drift.
-2. **Symlink follow on import destination** — see Tier 1 eighth-pass.
+1. **Symlink follow on import destination** — see Tier 1 eighth-pass.
    Real flatpak `--filesystem=home` data-dir escape. Switch
    `fs::copy` → `OpenOptions::new().create_new().custom_flags(O_NOFOLLOW)`
    at `src/sounds.rs:622` and `src/guided.rs:388`.
-3. **Battery-death / OOM mid-session = whole session lost** — see
+2. **Battery-death / OOM mid-session = whole session lost** — see
    Tier 1 eighth-pass. Needs design discussion: `session_in_progress`
    settings row written every ~60s + Resume/Save/Discard dialog on
    next launch.
@@ -1686,21 +1682,6 @@ avoid silently losing items in a rewrite.
 - Fix: write a `session_in_progress` settings row every
   ~60s with running duration; on startup if it's set,
   surface a "Resume / Save / Discard" dialog.
-
-### `wipe_local_event_log` preserves `lamport_clock`
-- `db.rs:1013-1024` + test at `db.rs:7619-7637`. After
-  wipe + re-pull-empty, local clock is e.g. 100 from prior
-  authoring. Next emit writes lamport 101 — but no event at
-  lamport 1..100 exists anywhere. Lamport-causal ordering
-  says "this happened after observing N prior events" but
-  those events are gone. Convergence still holds (peers'
-  `observe_remote_lamport` advances them past 101), but
-  the post-wipe device authors events with artificially
-  inflated lamports, compounding the drift growth in the
-  backlog.
-- Fix: reset `lamport_clock` to 0 inside
-  `wipe_local_event_log`; next pull observes the remote
-  max and advances correctly.
 
 ### No conditional PUT — concurrent push from two peers silently clobbers
 - `orchestrator.rs:91-94` trait `put()` is unconditional;

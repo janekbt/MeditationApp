@@ -238,6 +238,12 @@ impl Database {
                 params![phase.as_db_str()],
             )?;
         }
+        // Reset the Lamport clock. A value of N means "observed N
+        // prior events"; with the log gone, that justification is
+        // gone too. A subsequent pull from a peer advances the clock
+        // past the peer's max via observe_remote_lamport, so the
+        // reset is invisible in the typical recovery flow.
+        tx.execute("UPDATE device SET lamport_clock = 0", [])?;
         tx.commit()?;
         Ok(())
     }
@@ -756,24 +762,39 @@ mod tests {
     }
 
     #[test]
-    fn wipe_local_event_log_preserves_device_id_and_lamport() {
+    fn wipe_local_event_log_preserves_device_id() {
         // Device identity persists across wipes. Resetting device_id
         // would create a new identity for the same physical device,
-        // confusing peers' replay; resetting lamport could in theory
-        // produce duplicate (lamport, device_id) tuples, though
-        // monotonicity of the next emit_event would still prevent
-        // collisions. Conservative: leave the device row alone.
+        // confusing peers' replay.
         let db = Database::open_in_memory().unwrap();
         let device_before = db.device_id().unwrap();
-        for _ in 0..5 { db.bump_lamport_clock().unwrap(); }
-        let lamport_before = db.lamport_clock().unwrap();
 
         db.wipe_local_event_log().unwrap();
 
         assert_eq!(db.device_id().unwrap(), device_before,
             "device_id must survive wipe — it's this device's identity");
-        assert_eq!(db.lamport_clock().unwrap(), lamport_before,
-            "lamport_clock must survive wipe — keeps causal correctness");
+    }
+
+    #[test]
+    fn wipe_local_event_log_resets_lamport_clock_to_zero() {
+        // The wipe is the "remote data lost — restart from blank"
+        // recovery primitive. Lamport-causal ordering says a value
+        // of N means "this happened after observing N prior events";
+        // after wipe those events are gone locally. Leaving the clock
+        // at N would have the next emit author lamport N+1 with no
+        // preceding events to justify the timestamp, growing drift
+        // forever. A re-pull from a peer advances the clock past the
+        // peer's max via observe_remote_lamport anyway, so resetting
+        // costs nothing in the typical recovery flow.
+        let db = Database::open_in_memory().unwrap();
+        for _ in 0..5 { db.bump_lamport_clock().unwrap(); }
+        assert!(db.lamport_clock().unwrap() > 0,
+            "precondition: clock is non-zero before wipe");
+
+        db.wipe_local_event_log().unwrap();
+
+        assert_eq!(db.lamport_clock().unwrap(), 0,
+            "lamport_clock must reset to 0 — events justifying its value are gone");
     }
 
     #[test]
