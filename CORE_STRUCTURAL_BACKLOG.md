@@ -9,18 +9,9 @@ When you implement one, delete it from this list. When you decide
 to permanently skip one, move it under "## Skipped" with a one-line
 rationale.
 
-## Tomorrow (2026-05-13)
+## Up next (needs design discussion)
 
-Small TDD pass to round out the Tier-0 sync/recovery hardening from
-2026-05-11. Items 1-3 are one- or two-line fixes with clear unit
-tests; #4 deserves its own session because the UX flow needs Janek's
-input.
-
-1. **Symlink follow on import destination** — see Tier 1 eighth-pass.
-   Real flatpak `--filesystem=home` data-dir escape. Switch
-   `fs::copy` → `OpenOptions::new().create_new().custom_flags(O_NOFOLLOW)`
-   at `src/sounds.rs:622` and `src/guided.rs:388`.
-2. **Battery-death / OOM mid-session = whole session lost** — see
+1. **Battery-death / OOM mid-session = whole session lost** — see
    Tier 1 eighth-pass. Needs design discussion: `session_in_progress`
    settings row written every ~60s + Resume/Save/Discard dialog on
    next launch.
@@ -1659,19 +1650,6 @@ avoid silently losing items in a rewrite.
   are no longer playing".
 - Fix: `media.connect_error(|_, _| diag::log(...))` plus a
   one-shot toast.
-
-### Symlink follow on import destination — flatpak data-dir escape
-- `src/sounds.rs:622` (`fs::copy`) + `src/guided.rs:388`.
-  `std::fs::copy` follows symlinks on the source AND
-  clobbers the destination. If attacker pre-plants
-  `sounds_dir/<predictable-uuid>.ogg` as a symlink to
-  `~/.bashrc`, `fs::copy` follows the symlink and
-  overwrites `~/.bashrc` with audio bytes. UUIDs are fresh
-  v4 here so prediction is hard, but flatpak's
-  `--filesystem=home` makes the writable-symlink scenario
-  realistic on shared user data dirs.
-- Fix: `OpenOptions::new().write(true).create_new(true).
-  custom_flags(libc::O_NOFOLLOW).open(dest)`.
 
 ### Battery-death / OOM mid-session = whole session lost
 - Session is only persisted on `on_complete`

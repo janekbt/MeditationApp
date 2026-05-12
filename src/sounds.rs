@@ -619,7 +619,13 @@ fn do_import_io(
     let dest_path = dest_dir.join(format!("{new_uuid}.{dest_ext}"));
 
     if dest_ext == source_ext.as_str() {
-        std::fs::copy(source, &dest_path).map_err(|e| e.to_string())?;
+        // Don't use std::fs::copy — it follows symlinks at the
+        // destination, which would let a pre-planted link at
+        // dest_path silently overwrite an arbitrary file. The core
+        // helper uses O_CREAT|O_EXCL plus O_NOFOLLOW to refuse a
+        // pre-existing or symlinked destination.
+        meditate_core::sound::safe_copy_no_follow(source, &dest_path)
+            .map_err(|e| e.to_string())?;
     } else if let Err(e) = transcode_to_ogg(source, &dest_path) {
         let _ = std::fs::remove_file(&dest_path);
         return Err(e);

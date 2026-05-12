@@ -91,6 +91,48 @@ pub fn display_name_from_path(source_path: &std::path::Path) -> String {
         .to_string()
 }
 
+/// Copy a source file to a destination that **must not exist yet**.
+/// `std::fs::copy` follows symlinks on both ends — if an attacker
+/// pre-plants a symlink at `dest` pointing to a sensitive file
+/// (e.g. `~/.bashrc`), `fs::copy` overwrites the link's target with
+/// the source bytes. The threat is small in practice because the
+/// destination uuid is freshly minted v4 — but flatpak's
+/// `--filesystem=home` puts shared user dirs in scope, and the
+/// fix is free.
+///
+/// `O_CREAT | O_EXCL` (Rust's `create_new(true)`) guarantees the
+/// open fails if the path already exists, defending against the
+/// pre-planted-symlink case. `O_NOFOLLOW` adds defense against a
+/// TOCTOU window where the destination doesn't exist at check time
+/// but appears as a symlink before the open. Belt and braces.
+///
+/// Returns the number of bytes copied on success.
+#[cfg(unix)]
+pub fn safe_copy_no_follow(
+    source: &std::path::Path,
+    dest: &std::path::Path,
+) -> std::io::Result<u64> {
+    use std::fs::OpenOptions;
+    use std::io::{Read, Write};
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut src = std::fs::File::open(source)?;
+    let mut dst = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(dest)?;
+    let mut buf = [0u8; 64 * 1024];
+    let mut total: u64 = 0;
+    loop {
+        let n = src.read(&mut buf)?;
+        if n == 0 { break; }
+        dst.write_all(&buf[..n])?;
+        total += n as u64;
+    }
+    Ok(total)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -206,5 +248,65 @@ mod tests {
             display_name_from_path(std::path::Path::new("")),
             "Custom sound"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn safe_copy_no_follow_writes_source_bytes_to_fresh_destination() {
+        // Happy path: dest doesn't exist, copy goes through, bytes match.
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("in.wav");
+        let dest = dir.path().join("out.wav");
+        std::fs::write(&source, b"hello world").unwrap();
+
+        let n = safe_copy_no_follow(&source, &dest).unwrap();
+
+        assert_eq!(n, 11);
+        assert_eq!(std::fs::read(&dest).unwrap(), b"hello world");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn safe_copy_no_follow_refuses_when_destination_is_a_symlink() {
+        // Attack scenario: an attacker (or a confused other process)
+        // pre-plants a symlink at the destination uuid path pointing
+        // at a sensitive file. std::fs::copy would follow the link
+        // and overwrite the target. safe_copy_no_follow must refuse.
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("payload.wav");
+        let victim = dir.path().join("victim.txt");
+        let dest = dir.path().join("dest.wav");
+        std::fs::write(&source, b"attacker bytes").unwrap();
+        std::fs::write(&victim, b"sensitive original contents").unwrap();
+        std::os::unix::fs::symlink(&victim, &dest).unwrap();
+
+        let result = safe_copy_no_follow(&source, &dest);
+
+        assert!(result.is_err(), "copy through a symlink at dest must fail");
+        // Victim's contents are unchanged.
+        assert_eq!(
+            std::fs::read(&victim).unwrap(),
+            b"sensitive original contents",
+            "victim file pointed to by the dest symlink must be untouched",
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn safe_copy_no_follow_refuses_when_destination_is_a_regular_file() {
+        // Defensive: even a non-symlink destination must not be
+        // clobbered. The importer mints a fresh uuid so dest should
+        // never exist; if it does, that's a bug somewhere and we'd
+        // rather error than overwrite.
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("in.wav");
+        let dest = dir.path().join("dest.wav");
+        std::fs::write(&source, b"new").unwrap();
+        std::fs::write(&dest, b"existing").unwrap();
+
+        let result = safe_copy_no_follow(&source, &dest);
+
+        assert!(result.is_err(), "existing destination must not be clobbered");
+        assert_eq!(std::fs::read(&dest).unwrap(), b"existing");
     }
 }

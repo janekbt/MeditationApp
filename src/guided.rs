@@ -378,14 +378,18 @@ fn do_import_io(
     let dest_path = dest_dir.join(format!("{new_uuid}.ogg"));
 
     if meditate_core::sound::is_passthrough_ext(&source_ext) {
-        // OGG passthrough: a plain copy. fs::copy is a single
-        // syscall — too quick to interrupt; we just check the flag
-        // before and after so a cancel before copy starts skips
-        // straight through.
+        // OGG passthrough: a plain copy. Don't use std::fs::copy —
+        // it follows symlinks at the destination, which would let a
+        // pre-planted link at dest_path silently overwrite an
+        // arbitrary file. The core helper uses O_CREAT|O_EXCL plus
+        // O_NOFOLLOW to refuse a pre-existing or symlinked
+        // destination. Cancel-flag is still checked before and
+        // after; the copy itself is a single fast syscall sequence.
         if cancel.load(Ordering::Relaxed) {
             return Err(CANCELLED.into());
         }
-        std::fs::copy(source, &dest_path).map_err(|e| e.to_string())?;
+        meditate_core::sound::safe_copy_no_follow(source, &dest_path)
+            .map_err(|e| e.to_string())?;
     } else if let Err(e) = transcode_to_ogg_preserve_channels(source, &dest_path, cancel) {
         let _ = std::fs::remove_file(&dest_path);
         return Err(e);
