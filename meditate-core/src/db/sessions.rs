@@ -432,6 +432,12 @@ impl Database {
         self.daily_totals_filtered(Some(label_id))
     }
 
+    /// Sum of `duration_secs` grouped by start date (`SUBSTR(start_iso,
+    /// 1, 10)`). A session that began at 23:55 and ran 30 minutes
+    /// attributes the full 30 minutes to the start date — none of it
+    /// is split into the next day. Matches the `hour_buckets`
+    /// attribution rule (see its doc comment) and the peer-app
+    /// convention. Intended behaviour.
     fn daily_totals_filtered(
         &self,
         label_filter: Option<i64>,
@@ -552,6 +558,14 @@ impl Database {
     /// 0-11), afternoon 12-17, evening ≥ 18 (18-23). Returns
     /// `(morning, afternoon, evening)`. Every session lands in exactly
     /// one bucket.
+    ///
+    /// Attribution is by **start hour only** — a session that began at
+    /// 23:55 and ran 30 minutes counts as one evening session, even
+    /// though most of it occurred the next morning. This matches how
+    /// peer meditation apps (Insight Timer et al.) report
+    /// time-of-day, and avoids the CTE + date-arithmetic complexity
+    /// a "split across midnight" SUM would require. Documented as
+    /// intended behaviour, not a defect.
     pub fn hour_buckets(&self) -> Result<(i64, i64, i64)> {
         let mut stmt = self.conn.prepare_cached(
             "SELECT

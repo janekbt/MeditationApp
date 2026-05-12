@@ -944,18 +944,6 @@ module.
   handling" (which is read-side); this is import-side admitting
   bad data in the first place.
 
-## Tier 2 — Fifth-pass additions
-
-### CSV export hour-counts collide for sessions crossing midnight
-- `meditate-core/src/db.rs:4012-4029` (hour-bucketing) attributes
-  the full session duration to the start hour. A session begun
-  at 23:55 lasting 30 min counts entirely as "evening" though
-  most of it was the next morning. Symmetric concern with
-  `daily_totals_filtered` attributing all duration to the start
-  day.
-- Behavior is consistent but undocumented. Either accept and
-  document, or split-on-midnight at the SUM site.
-
 ## Documentation backlog (Tier 1 — onboarding blocker)
 
 The five passes confirmed the crate is internally well-commented at
