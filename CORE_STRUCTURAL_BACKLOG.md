@@ -964,15 +964,6 @@ contributor (or Janek six months from now, or a future Claude
 session with cleared memory) cannot reconstruct design intent from
 the code alone.
 
-### `ARCHITECTURE.md` is stale and contradicts the codebase
-- `/home/janek/Claude/MeditationApp/ARCHITECTURE.md:35-42`
-  documents a 4-module layout (`lib`, `timer`, `breath`,
-  `format`, `db`). Today there are 23 modules + 8 in `sync/`.
-- Also claims `db.rs` does "migrations" — directly contradicts
-  the `feedback_meditate_no_compat` memory rule.
-- Either rewrite to current state or remove the module-layout
-  section and link to the `lib.rs` `//!`.
-
 ### No `meditate-core/README.md`; root README doesn't mention the crate
 - A contributor entering via the subdirectory has zero entry
   point. Root `README.md` has zero `meditate-core` hits.
@@ -1010,26 +1001,6 @@ the code alone.
   doesn't replace the guide.
 - Fill: an `ENTITIES.md` walkthrough or a `//!`-block at the top
   of `db/sync.rs` after the Tier-1 split.
-
-### `EVENTS.md` — per-event-kind JSON payload schema
-- `Event::payload` (`db.rs:436`) is `String` (JSON). Per-`kind`
-  shape is **not catalogued anywhere**.
-- A peer-shell author writing a non-Rust client (Android
-  Kotlin/Java) has to reverse-engineer ~29 kinds from
-  `apply_event_inner` (1105-1162) + every `recompute_*`.
-- **Highest external-correctness leverage of the doc list.**
-- Fill: `EVENTS.md` listing every kind with its JSON shape, or a
-  `//!`-block at the top of `db/sync.rs` post Tier-1.
-
-### Migration policy doc
-- Per `feedback_meditate_no_compat`: no migrations; wipe-and-
-  reimport is the recovery path. ARCHITECTURE.md:41 contradicts
-  this (claims `db.rs` does migrations). Schema uses
-  `CREATE TABLE IF NOT EXISTS` (naive readers assume forward-
-  compat).
-- Fill: one paragraph in `lib.rs` `//!` or top-of-`db.rs` `//!`
-  stating "additive-only schema; on breaking change the recovery
-  path is wipe-and-reimport, not migration."
 
 ### Naming-convention doc (post Tier-1)
 - After the four-way DB-reader rename lands (existing Tier-1
