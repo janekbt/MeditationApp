@@ -9,6 +9,30 @@ When you implement one, delete it from this list. When you decide
 to permanently skip one, move it under "## Skipped" with a one-line
 rationale.
 
+## Tomorrow (2026-05-13)
+
+Small TDD pass to round out the Tier-0 sync/recovery hardening from
+2026-05-11. Items 1-3 are one- or two-line fixes with clear unit
+tests; #4 deserves its own session because the UX flow needs Janek's
+input.
+
+1. **`busy_timeout` on rusqlite connections** — see Tier 0
+   fifth-pass. Two-line fix in `Database::open` and the sync
+   worker's open path; prevents `SQLITE_BUSY` surfacing as
+   `DbError` under bulk-import + auto-sync.
+2. **`wipe_local_event_log` preserves `lamport_clock`** — see Tier 1
+   eighth-pass. Reset `lamport_clock` to 0 inside the recovery
+   primitive we hardened on 2026-05-11; stops post-wipe lamport
+   drift.
+3. **Symlink follow on import destination** — see Tier 1 eighth-pass.
+   Real flatpak `--filesystem=home` data-dir escape. Switch
+   `fs::copy` → `OpenOptions::new().create_new().custom_flags(O_NOFOLLOW)`
+   at `src/sounds.rs:622` and `src/guided.rs:388`.
+4. **Battery-death / OOM mid-session = whole session lost** — see
+   Tier 1 eighth-pass. Needs design discussion: `session_in_progress`
+   settings row written every ~60s + Resume/Save/Discard dialog on
+   next launch.
+
 ## Tier 1 — High-impact, mostly mechanical
 
 ### Collapse the 7-way `recompute_*` template
