@@ -80,7 +80,7 @@ impl From<crate::db::DbError> for DataIoError {
             DbError::DuplicateVibrationPattern(name) => {
                 DataIoError::Db(format!("duplicate vibration pattern: {name}"))
             }
-            DbError::Csv(msg) => DataIoError::Csv(csv::Error::from(std::io::Error::other(msg))),
+            DbError::Decode(msg) => DataIoError::Csv(csv::Error::from(std::io::Error::other(msg))),
             DbError::SchemaVersionTooNew { db, build } => DataIoError::Db(format!(
                 "db schema_version={db} exceeds build schema_version={build}"
             )),

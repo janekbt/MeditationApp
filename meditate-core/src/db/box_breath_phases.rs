@@ -181,7 +181,7 @@ impl Database {
         let Some(payload) = mutate else { return Ok(()); };
 
         let v: serde_json::Value = serde_json::from_str(&payload)
-            .map_err(|e| DbError::Csv(
+            .map_err(|e| DbError::Decode(
                 format!("box_breath_phase event payload not valid JSON: {e}")))?;
         let enabled = v["enabled"].as_bool().unwrap_or(false);
         let signal_mode = v["signal_mode"].as_str().unwrap_or("sound");

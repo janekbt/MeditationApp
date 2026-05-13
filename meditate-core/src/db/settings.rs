@@ -48,7 +48,7 @@ impl Database {
 
         if let Some(payload) = mutate {
             let v: serde_json::Value = serde_json::from_str(&payload)
-                .map_err(|e| DbError::Csv(
+                .map_err(|e| DbError::Decode(
                     format!("setting_changed payload not valid JSON: {e}")))?;
             let value = v["value"].as_str().unwrap_or_default();
             self.conn.execute(

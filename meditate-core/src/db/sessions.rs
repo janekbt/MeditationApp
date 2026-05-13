@@ -354,16 +354,16 @@ impl Database {
         let mut rdr = csv::Reader::from_reader(reader);
         let mut count = 0;
         for record in rdr.records() {
-            let record = record.map_err(|e| DbError::Csv(e.to_string()))?;
+            let record = record.map_err(|e| DbError::Decode(e.to_string()))?;
             let start_iso = record
                 .get(0)
-                .ok_or_else(|| DbError::Csv("missing start_iso".to_string()))?
+                .ok_or_else(|| DbError::Decode("missing start_iso".to_string()))?
                 .to_string();
             let duration_secs: u32 = record
                 .get(1)
                 .unwrap_or("")
                 .parse()
-                .map_err(|_| DbError::Csv("bad duration_secs".to_string()))?;
+                .map_err(|_| DbError::Decode("bad duration_secs".to_string()))?;
             let label = record
                 .get(2)
                 .map(str::to_string)
@@ -374,7 +374,7 @@ impl Database {
                 .filter(|s| !s.is_empty());
             let mode_str = record.get(4).unwrap_or("timer");
             let mode = SessionMode::from_db_str(mode_str)
-                .ok_or_else(|| DbError::Csv(format!("unknown mode: {mode_str}")))?;
+                .ok_or_else(|| DbError::Decode(format!("unknown mode: {mode_str}")))?;
 
             let label_id = match label {
                 Some(name) => Some(self.find_or_create_label(&name)?),
@@ -398,7 +398,7 @@ impl Database {
     pub fn export_sessions_csv<W: Write>(&self, writer: W) -> Result<()> {
         let mut wtr = csv::Writer::from_writer(writer);
         wtr.write_record(["start_iso", "duration_secs", "label", "notes", "mode"])
-            .map_err(|e| DbError::Csv(e.to_string()))?;
+            .map_err(|e| DbError::Decode(e.to_string()))?;
 
         let mut stmt = self.conn.prepare(
             "SELECT s.start_iso, s.duration_secs, l.name, s.notes, s.mode
@@ -424,9 +424,9 @@ impl Database {
                 notes.as_deref().unwrap_or(""),
                 &mode,
             ])
-            .map_err(|e| DbError::Csv(e.to_string()))?;
+            .map_err(|e| DbError::Decode(e.to_string()))?;
         }
-        wtr.flush().map_err(|e| DbError::Csv(e.to_string()))?;
+        wtr.flush().map_err(|e| DbError::Decode(e.to_string()))?;
         Ok(())
     }
 

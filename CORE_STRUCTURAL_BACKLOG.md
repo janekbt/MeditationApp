@@ -150,14 +150,6 @@ rationale.
   and `session` — move to `breath.rs`.
 - (Same logic as `SignalMode` already in backlog Tier 3.)
 
-### `DbError::Csv` rename / split
-- Used as a stringly-typed catch-all for **three** distinct
-  things: CSV parse errors (3775, 3784), JSON parse errors in
-  recompute helpers (1216, 1280, 1320, 1377, 1459, 1534, 1597,
-  1651), and serde serialize errors (3015, 3167).
-- Rename to `DbError::Decode(String)` (covers all three) or
-  split into `Csv` + `Json` variants.
-
 ### Inconsistent corrupt-row handling
 - Some sites `.unwrap_or(default)` (silent coercion of bad
   enum value), others `.expect()` (panic), others

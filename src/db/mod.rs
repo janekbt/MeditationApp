@@ -226,7 +226,7 @@ fn map_core_err(e: meditate_core::db::DbError) -> rusqlite::Error {
             },
             Some(format!("UNIQUE constraint failed: vibration_patterns.name (\"{name}\")")),
         ),
-        DbError::Csv(s) => rusqlite::Error::ToSqlConversionFailure(Box::new(
+        DbError::Decode(s) => rusqlite::Error::ToSqlConversionFailure(Box::new(
             std::io::Error::new(std::io::ErrorKind::InvalidData, s),
         )),
         DbError::SchemaVersionTooNew { db, build } => rusqlite::Error::ToSqlConversionFailure(
@@ -282,7 +282,7 @@ impl Database {
         use meditate_core::db::DbError;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
-                DbError::Csv(format!("mkdir {}: {e}", parent.display()))
+                DbError::Decode(format!("mkdir {}: {e}", parent.display()))
             })?;
         }
         let inner = meditate_core::Database::open(path)?;

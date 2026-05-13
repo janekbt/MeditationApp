@@ -82,7 +82,7 @@ impl Database {
             return Ok(existing);
         }
         let intensities_json = serde_json::to_string(intensities)
-            .map_err(|e| DbError::Csv(format!("serialise intensities: {e}")))?;
+            .map_err(|e| DbError::Decode(format!("serialise intensities: {e}")))?;
         let now_iso = chrono::Utc::now().to_rfc3339();
         self.conn
             .execute(
@@ -195,9 +195,9 @@ impl Database {
             return Ok(false);
         }
         let intensities: Vec<f32> = serde_json::from_str(&intensities_json)
-            .map_err(|e| DbError::Csv(format!("deserialise intensities: {e}")))?;
+            .map_err(|e| DbError::Decode(format!("deserialise intensities: {e}")))?;
         let chart_kind = ChartKind::from_db_str(&chart_kind_str)
-            .ok_or_else(|| DbError::Csv(format!("bad chart_kind: {chart_kind_str}")))?;
+            .ok_or_else(|| DbError::Decode(format!("bad chart_kind: {chart_kind_str}")))?;
         self.update_vibration_pattern(
             uuid_str, new_name, duration_ms, &intensities, chart_kind,
         )?;
@@ -229,7 +229,7 @@ impl Database {
         };
         let is_bundled = is_bundled_int != 0;
         let intensities_json = serde_json::to_string(intensities)
-            .map_err(|e| DbError::Csv(format!("serialise intensities: {e}")))?;
+            .map_err(|e| DbError::Decode(format!("serialise intensities: {e}")))?;
         let now_iso = chrono::Utc::now().to_rfc3339();
         self.conn
             .execute(

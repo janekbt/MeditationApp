@@ -622,7 +622,7 @@ impl Database {
         };
         if let Some((_, payload)) = mutate.filter(|_| row_should_exist) {
             let v: serde_json::Value = serde_json::from_str(&payload)
-                .map_err(|e| DbError::Csv(
+                .map_err(|e| DbError::Decode(
                     format!("event payload not valid JSON: {e}")))?;
             Ok(Some(v))
         } else {

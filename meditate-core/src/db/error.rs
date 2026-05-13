@@ -8,7 +8,14 @@ pub enum DbError {
     DuplicateGuidedFile(String),
     DuplicateVibrationPattern(String),
     Sqlite(rusqlite::Error),
-    Csv(String),
+    /// A structural data problem at a boundary between SQLite and
+    /// Rust types — bad JSON in a `recompute_*` payload, malformed
+    /// CSV row in `import_sessions_csv`, serde serialize/deserialize
+    /// failure on a vibration-pattern intensities array, etc. The
+    /// `String` is a human-readable description (originating from
+    /// the underlying parser / serializer) intended for diag-log
+    /// and developer-facing toast, not for translation.
+    Decode(String),
     /// The on-disk DB was written by a newer build (its
     /// `user_version` exceeds this build's `SCHEMA_VERSION`).
     /// Opening would risk silent corruption.

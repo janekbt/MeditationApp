@@ -851,8 +851,8 @@ mod tests {
 
     #[test]
     fn db_open_failure_key_other_variants_collapse_to_other() {
-        let csv_err = crate::db::DbError::Csv("bad".to_string());
-        assert_eq!(db_open_failure_key(&csv_err), DbOpenFailureKey::Other);
+        let decode_err = crate::db::DbError::Decode("bad".to_string());
+        assert_eq!(db_open_failure_key(&decode_err), DbOpenFailureKey::Other);
         let dup_err = crate::db::DbError::DuplicateLabel("focus".to_string());
         assert_eq!(db_open_failure_key(&dup_err), DbOpenFailureKey::Other);
     }

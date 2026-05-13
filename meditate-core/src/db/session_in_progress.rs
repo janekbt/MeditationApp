@@ -105,7 +105,7 @@ impl Database {
         .optional()?
         .map(|(start_iso, accumulated_secs, mode_str, mode_payload, label_id, guided_file_uuid)| {
             let mode = SessionMode::from_db_str(&mode_str).ok_or_else(|| {
-                DbError::Csv(format!(
+                DbError::Decode(format!(
                     "session_in_progress.mode has invalid value: {mode_str:?}"
                 ))
             })?;
