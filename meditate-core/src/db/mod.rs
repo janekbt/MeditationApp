@@ -44,7 +44,10 @@ mod test_helpers;
 pub use bell_sounds::{BellSound, BellSoundCategory};
 pub use box_breath_phases::{BoxBreathPhase, BoxBreathPhaseId};
 pub use events::Event;
-pub use guided_files::GuidedFile;
+pub use guided_files::{
+    find_guided_file_by_uuid_from_db, is_guided_file_name_taken_from_db,
+    list_guided_files_from_db, GuidedFile,
+};
 pub use interval_bells::{IntervalBell, IntervalBellKind};
 pub use labels::{
     count_labels_from_db, find_label_by_name_from_db, is_label_name_taken_from_db,

@@ -531,7 +531,7 @@ impl Database {
     // synthesized UNIQUE-constraint failure via map_core_err).
 
     pub fn list_guided_files(&self) -> Result<Vec<GuidedFile>> {
-        self.inner.list_guided_files().map_err(map_core_err)
+        meditate_core::db::list_guided_files_from_db(&self.inner).map_err(map_core_err)
     }
 
     pub fn insert_guided_file_with_uuid(
@@ -548,11 +548,11 @@ impl Database {
     }
 
     pub fn find_guided_file_by_uuid(&self, uuid: &str) -> Result<Option<GuidedFile>> {
-        self.inner.find_guided_file_by_uuid(uuid).map_err(map_core_err)
+        meditate_core::db::find_guided_file_by_uuid_from_db(&self.inner, uuid).map_err(map_core_err)
     }
 
     pub fn is_guided_file_name_taken(&self, name: &str, except_uuid: &str) -> Result<bool> {
-        self.inner.is_guided_file_name_taken(name, except_uuid).map_err(map_core_err)
+        meditate_core::db::is_guided_file_name_taken_from_db(&self.inner, name, except_uuid).map_err(map_core_err)
     }
 
     pub fn rename_guided_file(&self, uuid: &str, name: &str) -> Result<()> {

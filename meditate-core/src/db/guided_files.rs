@@ -32,6 +32,65 @@ pub struct GuidedFile {
     pub updated_iso: String,
 }
 
+pub fn list_guided_files_from_db(db: &Database) -> Result<Vec<GuidedFile>> {
+    let mut stmt = db.conn.prepare(
+        "SELECT id, uuid, name, file_path, duration_secs, is_starred, created_iso, updated_iso
+         FROM guided_files
+         ORDER BY created_iso ASC, id ASC",
+    )?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(GuidedFile {
+                id: row.get(0)?,
+                uuid: row.get(1)?,
+                name: row.get(2)?,
+                file_path: row.get(3)?,
+                duration_secs: row.get::<_, i64>(4)? as u32,
+                is_starred: row.get::<_, i64>(5)? != 0,
+                created_iso: row.get(6)?,
+                updated_iso: row.get(7)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+/// Look up a guided-file row by its cross-device uuid. Returns
+/// None if no row matches. Used by the chooser sub-row, the
+/// session-save path (resolving the home-list selection's
+/// uuid → row → file_path / duration), and the import flow's
+/// "did this UUID land?" check.
+pub fn find_guided_file_by_uuid_from_db(db: &Database, uuid_str: &str) -> Result<Option<GuidedFile>> {
+    let row = db.conn.query_row(
+        "SELECT id, uuid, name, file_path, duration_secs, is_starred, created_iso, updated_iso
+         FROM guided_files WHERE uuid = ?1",
+        params![uuid_str],
+        |row| Ok(GuidedFile {
+            id: row.get(0)?,
+            uuid: row.get(1)?,
+            name: row.get(2)?,
+            file_path: row.get(3)?,
+            duration_secs: row.get::<_, i64>(4)? as u32,
+            is_starred: row.get::<_, i64>(5)? != 0,
+            created_iso: row.get(6)?,
+            updated_iso: row.get(7)?,
+        }),
+    ).optional()?;
+    Ok(row)
+}
+/// True iff a row other than `except_uuid` already holds `name`
+/// (case-insensitive). The import / rename dialogs use this to
+/// live-validate input — `except_uuid` must be the row currently
+/// being renamed (or "" for fresh imports) so the user's own
+/// case-only renames don't false-positive.
+pub fn is_guided_file_name_taken_from_db(db: &Database, name: &str, except_uuid: &str) -> Result<bool> {
+    let count: i64 = db.conn.query_row(
+        "SELECT COUNT(*) FROM guided_files
+          WHERE name = ?1 COLLATE NOCASE AND uuid != ?2",
+        params![name, except_uuid],
+        |row| row.get(0),
+    )?;
+    Ok(count > 0)
+}
 impl Database {
     /// Insert a row keyed on `uuid_str`. Idempotent — a second call
     /// with the same uuid returns the existing rowid without touching
@@ -83,28 +142,6 @@ impl Database {
         Ok(rowid)
     }
 
-    pub fn list_guided_files(&self) -> Result<Vec<GuidedFile>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, uuid, name, file_path, duration_secs, is_starred, created_iso, updated_iso
-             FROM guided_files
-             ORDER BY created_iso ASC, id ASC",
-        )?;
-        let rows = stmt
-            .query_map([], |row| {
-                Ok(GuidedFile {
-                    id: row.get(0)?,
-                    uuid: row.get(1)?,
-                    name: row.get(2)?,
-                    file_path: row.get(3)?,
-                    duration_secs: row.get::<_, i64>(4)? as u32,
-                    is_starred: row.get::<_, i64>(5)? != 0,
-                    created_iso: row.get(6)?,
-                    updated_iso: row.get(7)?,
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
-    }
 
     /// Rename a guided-file row. Bumps `updated_iso` so the recompute
     /// helper can resolve concurrent renames by lamport timestamp.
@@ -184,44 +221,7 @@ impl Database {
         Ok(())
     }
 
-    /// Look up a guided-file row by its cross-device uuid. Returns
-    /// None if no row matches. Used by the chooser sub-row, the
-    /// session-save path (resolving the home-list selection's
-    /// uuid → row → file_path / duration), and the import flow's
-    /// "did this UUID land?" check.
-    pub fn find_guided_file_by_uuid(&self, uuid_str: &str) -> Result<Option<GuidedFile>> {
-        let row = self.conn.query_row(
-            "SELECT id, uuid, name, file_path, duration_secs, is_starred, created_iso, updated_iso
-             FROM guided_files WHERE uuid = ?1",
-            params![uuid_str],
-            |row| Ok(GuidedFile {
-                id: row.get(0)?,
-                uuid: row.get(1)?,
-                name: row.get(2)?,
-                file_path: row.get(3)?,
-                duration_secs: row.get::<_, i64>(4)? as u32,
-                is_starred: row.get::<_, i64>(5)? != 0,
-                created_iso: row.get(6)?,
-                updated_iso: row.get(7)?,
-            }),
-        ).optional()?;
-        Ok(row)
-    }
 
-    /// True iff a row other than `except_uuid` already holds `name`
-    /// (case-insensitive). The import / rename dialogs use this to
-    /// live-validate input — `except_uuid` must be the row currently
-    /// being renamed (or "" for fresh imports) so the user's own
-    /// case-only renames don't false-positive.
-    pub fn is_guided_file_name_taken(&self, name: &str, except_uuid: &str) -> Result<bool> {
-        let count: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM guided_files
-              WHERE name = ?1 COLLATE NOCASE AND uuid != ?2",
-            params![name, except_uuid],
-            |row| row.get(0),
-        )?;
-        Ok(count > 0)
-    }
 
     /// Drop a guided-file row. Unknown uuids are silent no-ops AND
     /// emit no event — peers would otherwise see a tombstone for a
@@ -312,7 +312,7 @@ mod tests {
     #[test]
     fn list_guided_files_is_empty_on_a_fresh_database() {
         let db = Database::open_in_memory().unwrap();
-        assert!(db.list_guided_files().unwrap().is_empty());
+        assert!(list_guided_files_from_db(&db).unwrap().is_empty());
     }
 
     #[test]
@@ -321,7 +321,7 @@ mod tests {
         db.insert_guided_file_with_uuid(
             "gf-1", "Body Scan", "guided/gf-1.ogg", 1200, true,
         ).unwrap();
-        let rows = db.list_guided_files().unwrap();
+        let rows = list_guided_files_from_db(&db).unwrap();
         assert_eq!(rows.len(), 1);
         let r = &rows[0];
         assert_eq!(r.uuid, "gf-1");
@@ -343,7 +343,7 @@ mod tests {
             "gf-1", "Different Name", "guided/different.ogg", 999, true,
         ).unwrap();
         assert_eq!(id1, id2);
-        let rows = db.list_guided_files().unwrap();
+        let rows = list_guided_files_from_db(&db).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].name, "Body Scan");
         assert_eq!(rows[0].duration_secs, 1200);
@@ -373,7 +373,7 @@ mod tests {
         db.insert_guided_file_with_uuid(
             "gf-2", "Second", "guided/2.ogg", 1200, true,
         ).unwrap();
-        let rows = db.list_guided_files().unwrap();
+        let rows = list_guided_files_from_db(&db).unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].name, "First");
         assert_eq!(rows[1].name, "Second");
@@ -386,14 +386,14 @@ mod tests {
             "gf-1", "Body Scan", "guided/gf-1.ogg", 1200, true,
         ).unwrap();
         db.delete_guided_file("gf-1").unwrap();
-        assert!(db.list_guided_files().unwrap().is_empty());
+        assert!(list_guided_files_from_db(&db).unwrap().is_empty());
     }
 
     #[test]
     fn delete_guided_file_unknown_uuid_is_silent_noop() {
         let db = Database::open_in_memory().unwrap();
         db.delete_guided_file("never-existed").unwrap();
-        assert!(db.list_guided_files().unwrap().is_empty());
+        assert!(list_guided_files_from_db(&db).unwrap().is_empty());
     }
 
     #[test]
@@ -402,10 +402,10 @@ mod tests {
         db.insert_guided_file_with_uuid(
             "gf-1", "Old Name", "guided/gf-1.ogg", 600, false,
         ).unwrap();
-        let before = db.list_guided_files().unwrap()[0].clone();
+        let before = list_guided_files_from_db(&db).unwrap()[0].clone();
         std::thread::sleep(std::time::Duration::from_millis(10));
         db.rename_guided_file("gf-1", "New Name").unwrap();
-        let after = db.list_guided_files().unwrap()[0].clone();
+        let after = list_guided_files_from_db(&db).unwrap()[0].clone();
         assert_eq!(after.name, "New Name");
         assert_eq!(after.created_iso, before.created_iso);
         assert!(after.updated_iso > before.updated_iso);
@@ -444,7 +444,7 @@ mod tests {
             "gf-1", "body scan", "guided/gf-1.ogg", 600, false,
         ).unwrap();
         db.rename_guided_file("gf-1", "Body Scan").unwrap();
-        assert_eq!(db.list_guided_files().unwrap()[0].name, "Body Scan");
+        assert_eq!(list_guided_files_from_db(&db).unwrap()[0].name, "Body Scan");
     }
 
     #[test]
@@ -454,9 +454,9 @@ mod tests {
             "gf-1", "Body Scan", "guided/gf-1.ogg", 600, false,
         ).unwrap();
         db.set_guided_file_starred("gf-1", true).unwrap();
-        assert!(db.list_guided_files().unwrap()[0].is_starred);
+        assert!(list_guided_files_from_db(&db).unwrap()[0].is_starred);
         db.set_guided_file_starred("gf-1", false).unwrap();
-        assert!(!db.list_guided_files().unwrap()[0].is_starred);
+        assert!(!list_guided_files_from_db(&db).unwrap()[0].is_starred);
         let updates: Vec<_> = db.pending_events().unwrap()
             .into_iter()
             .filter(|(_, e)| e.kind == "guided_file_update")
@@ -481,7 +481,7 @@ mod tests {
         db.insert_guided_file_with_uuid(
             "gf-1", "Body Scan", "guided/gf-1.ogg", 600, true,
         ).unwrap();
-        let got = db.find_guided_file_by_uuid("gf-1").unwrap();
+        let got = find_guided_file_by_uuid_from_db(&db, "gf-1").unwrap();
         assert!(got.is_some());
         let r = got.unwrap();
         assert_eq!(r.name, "Body Scan");
@@ -492,7 +492,7 @@ mod tests {
     #[test]
     fn find_guided_file_by_uuid_returns_none_when_missing() {
         let db = Database::open_in_memory().unwrap();
-        assert!(db.find_guided_file_by_uuid("never-existed").unwrap().is_none());
+        assert!(find_guided_file_by_uuid_from_db(&db, "never-existed").unwrap().is_none());
     }
 
     #[test]
@@ -501,10 +501,10 @@ mod tests {
         db.insert_guided_file_with_uuid(
             "gf-1", "Body Scan", "guided/gf-1.ogg", 600, false,
         ).unwrap();
-        assert!(db.is_guided_file_name_taken("Body Scan", "").unwrap());
-        assert!(db.is_guided_file_name_taken("body scan", "").unwrap());
-        assert!(db.is_guided_file_name_taken("BODY SCAN", "").unwrap());
-        assert!(!db.is_guided_file_name_taken("Different Name", "").unwrap());
+        assert!(is_guided_file_name_taken_from_db(&db, "Body Scan", "").unwrap());
+        assert!(is_guided_file_name_taken_from_db(&db, "body scan", "").unwrap());
+        assert!(is_guided_file_name_taken_from_db(&db, "BODY SCAN", "").unwrap());
+        assert!(!is_guided_file_name_taken_from_db(&db, "Different Name", "").unwrap());
     }
 
     #[test]
@@ -513,9 +513,9 @@ mod tests {
         db.insert_guided_file_with_uuid(
             "gf-1", "Body Scan", "guided/gf-1.ogg", 600, false,
         ).unwrap();
-        assert!(!db.is_guided_file_name_taken("Body Scan", "gf-1").unwrap());
-        assert!(!db.is_guided_file_name_taken("body scan", "gf-1").unwrap());
-        assert!(db.is_guided_file_name_taken("Body Scan", "gf-2").unwrap());
+        assert!(!is_guided_file_name_taken_from_db(&db, "Body Scan", "gf-1").unwrap());
+        assert!(!is_guided_file_name_taken_from_db(&db, "body scan", "gf-1").unwrap());
+        assert!(is_guided_file_name_taken_from_db(&db, "Body Scan", "gf-2").unwrap());
     }
 
     #[test]
@@ -534,7 +534,7 @@ mod tests {
             "guided_file_insert", "gf-1", 5, DEVICE_A, payload,
         );
         peer.apply_event(&event).unwrap();
-        let rows = peer.list_guided_files().unwrap();
+        let rows = list_guided_files_from_db(&peer).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].name, "Body Scan");
         assert_eq!(rows[0].duration_secs, 1200);
@@ -568,7 +568,7 @@ mod tests {
         peer.apply_event(&synth_event(
             "guided_file_update", "gf-1", 7, DEVICE_A, update_payload,
         )).unwrap();
-        let rows = peer.list_guided_files().unwrap();
+        let rows = list_guided_files_from_db(&peer).unwrap();
         assert_eq!(rows[0].name, "New Name");
         assert!(rows[0].is_starred);
     }
@@ -592,7 +592,7 @@ mod tests {
             "guided_file_delete", "gf-1", 7, DEVICE_A,
             serde_json::json!({ "uuid": "gf-1" }),
         )).unwrap();
-        assert!(peer.list_guided_files().unwrap().is_empty());
+        assert!(list_guided_files_from_db(&peer).unwrap().is_empty());
     }
 
     #[test]
@@ -614,7 +614,7 @@ mod tests {
         peer.apply_event(&synth_event(
             "guided_file_insert", "gf-1", 5, DEVICE_A, insert_payload,
         )).unwrap();
-        assert!(peer.list_guided_files().unwrap().is_empty());
+        assert!(list_guided_files_from_db(&peer).unwrap().is_empty());
     }
 
     #[test]
@@ -629,7 +629,7 @@ mod tests {
 
         let dev_b = Database::open_in_memory().unwrap();
         dev_b.replay_events(&events).unwrap();
-        let rows = dev_b.list_guided_files().unwrap();
+        let rows = list_guided_files_from_db(&dev_b).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].name, "Body Scan");
         assert!(!rows[0].is_starred);
