@@ -33,6 +33,7 @@ impl Database {
             )?;
         }
         self.set_setting(crate::seeds::BELLS_SEEDED_KEY, "1")?;
+        crate::diag::log(&format!("seed_bell_sounds: {} rows", rows.len()));
         Ok(())
     }
 
@@ -43,13 +44,17 @@ impl Database {
     /// pointless overwrite.
     pub fn seed_box_breath_phases(&self) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
+        let mut new_rows = 0;
         for phase in BoxBreathPhaseId::all() {
-            self.conn.execute(
+            new_rows += self.conn.execute(
                 "INSERT OR IGNORE INTO box_breath_phases (phase) VALUES (?1)",
                 params![phase.as_db_str()],
             )?;
         }
         tx.commit()?;
+        if new_rows > 0 {
+            crate::diag::log(&format!("seed_box_breath_phases: {new_rows} rows"));
+        }
         Ok(())
     }
 
@@ -73,6 +78,10 @@ impl Database {
             }
         }
         self.set_setting(crate::seeds::LABELS_SEEDED_KEY, "1")?;
+        crate::diag::log(&format!(
+            "seed_default_labels: {} rows",
+            crate::seeds::DEFAULT_LABELS.len(),
+        ));
         Ok(())
     }
 
@@ -92,6 +101,10 @@ impl Database {
             )?;
         }
         self.set_setting(crate::seeds::VIBRATION_PATTERNS_SEEDED_KEY, "1")?;
+        crate::diag::log(&format!(
+            "seed_bundled_vibration_patterns: {} rows",
+            crate::seeds::BUNDLED_VIBRATION_PATTERNS.len(),
+        ));
         Ok(())
     }
 
@@ -108,7 +121,9 @@ impl Database {
         if self.get_setting(crate::seeds::PRESETS_SEEDED_KEY, "0")? == "1" {
             return Ok(());
         }
-        for (uuid, name, mode, cfg) in crate::seeds::default_presets() {
+        let presets = crate::seeds::default_presets();
+        let n = presets.len();
+        for (uuid, name, mode, cfg) in presets {
             match self.insert_preset_with_uuid(uuid, name, mode, true, &cfg.to_json()) {
                 Ok(_) => {}
                 Err(DbError::DuplicatePreset(_)) => {}
@@ -116,6 +131,7 @@ impl Database {
             }
         }
         self.set_setting(crate::seeds::PRESETS_SEEDED_KEY, "1")?;
+        crate::diag::log(&format!("seed_default_presets: {n} rows"));
         Ok(())
     }
 

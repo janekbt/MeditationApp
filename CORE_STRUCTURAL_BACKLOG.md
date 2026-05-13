@@ -628,15 +628,6 @@ avoid silently losing items in a rewrite.
 
 ## Tier 0 — Seventh-pass additions
 
-### Seed-application logs nothing on first launch
-- `db.rs:3547 seed_all_non_audio` + `seed_bundled_*` are
-  silent. A user's first-ever launch shows `db open ok` then
-  jumps to runtime events. If `seed_box_breath_phases` fails
-  to create 4 rows, the bug report "Box-Breath uses wrong
-  defaults" arrives with zero diagnostic context.
-- Fix: one summary line per seed at the call site near
-  `application.rs:104` — `seeded box_breath_phases: 4 rows`,
-  etc.
 
 ## Tier 1 — Seventh-pass additions
 
