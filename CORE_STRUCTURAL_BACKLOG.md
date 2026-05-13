@@ -603,15 +603,6 @@ avoid silently losing items in a rewrite.
 - Solo-user model so impact is low. Standard fix (`zeroize` /
   `secrecy` crate on the `String` / `Vec<u8>`) is cheap.
 
-### Security: `meditate.db` umask perms (0644 by default)
-- `meditate-core/src/db.rs:693-711` uses `Connection::open`
-  with no perm step. On a non-flatpak Librem 5 install the DB
-  lands 0644 — session contents (incl. notes) world-readable.
-- Flatpak installs are private by app sandbox so the practical
-  impact is bounded; non-flatpak is the exposed case.
-- Fix: `OpenOptions::open` with mode 0600 on a touched file
-  before `Connection::open`, or `chmod` post-open.
-
 
 ### i18n: `format::overtime_button_label` bakes word order
 - Takes a `prefix` and emits `"{prefix} MM:SS ?"`. German

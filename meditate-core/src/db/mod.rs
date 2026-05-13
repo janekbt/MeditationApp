@@ -173,6 +173,22 @@ impl Database {
     /// `Connection`; callers needing cross-thread access wrap the
     /// value in `Arc<Mutex<_>>`.
     pub fn open(path: &Path) -> Result<Self> {
+        // Touch the file with mode 0600 BEFORE letting SQLite open it,
+        // so a fresh DB lands user-only-readable. `rusqlite::Connection::
+        // open` creates the file under the default umask (typically
+        // 0644 on Linux) — fine inside the Flatpak sandbox, but
+        // exposes session contents on a non-Flatpak install where the
+        // home dir isn't private. Existing files are left as-is; users
+        // who've explicitly chmod'd their DB don't get clobbered.
+        #[cfg(unix)]
+        if !path.exists() {
+            use std::os::unix::fs::OpenOptionsExt;
+            let _ = std::fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .mode(0o600)
+                .open(path);
+        }
         let conn = Connection::open(path)?;
         // Wait up to 8s when another writer holds the lock instead of
         // failing instantly with SQLITE_BUSY. Main thread holds one
