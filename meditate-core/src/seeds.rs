@@ -134,11 +134,11 @@ pub const DEFAULT_BOX_BREATH_4780_UUID: &str = "b9e1c5a4-2d3f-4d8b-9c70-7a0e1d2c
 pub fn default_presets() -> [(&'static str, &'static str, SessionMode, PresetConfig); 3] {
     let default_starting_bell_off = || PresetStartingBell {
         enabled: false,
-        sound_uuid: BUNDLED_BOWL_UUID.to_string(),
+        sound_uuid: BUNDLED_BOWL_UUID.into(),
         prep_time_enabled: false,
         prep_time_secs: 5,
         signal_mode: "sound".to_string(),
-        vibration_pattern_uuid: BUNDLED_PATTERN_PULSE_UUID.to_string(),
+        vibration_pattern_uuid: BUNDLED_PATTERN_PULSE_UUID.into(),
     };
     let sitting = PresetConfig {
         label: PresetLabel {
@@ -149,9 +149,9 @@ pub fn default_presets() -> [(&'static str, &'static str, SessionMode, PresetCon
         interval_bells: PresetIntervalBells::default(),
         end_bell: PresetEndBell {
             enabled: true,
-            sound_uuid: BUNDLED_BELL_UUID.to_string(),
+            sound_uuid: BUNDLED_BELL_UUID.into(),
             signal_mode: "sound".to_string(),
-            vibration_pattern_uuid: BUNDLED_PATTERN_PULSE_UUID.to_string(),
+            vibration_pattern_uuid: BUNDLED_PATTERN_PULSE_UUID.into(),
         },
         timing: PresetTiming::Timer { stopwatch: false, duration_secs: 15 * 60 },
         cues_signal_mode: "both".to_string(),
@@ -167,9 +167,9 @@ pub fn default_presets() -> [(&'static str, &'static str, SessionMode, PresetCon
         interval_bells: PresetIntervalBells::default(),
         end_bell: PresetEndBell {
             enabled: true,
-            sound_uuid: BUNDLED_BELL_UUID.to_string(),
+            sound_uuid: BUNDLED_BELL_UUID.into(),
             signal_mode: "sound".to_string(),
-            vibration_pattern_uuid: BUNDLED_PATTERN_PULSE_UUID.to_string(),
+            vibration_pattern_uuid: BUNDLED_PATTERN_PULSE_UUID.into(),
         },
         timing: PresetTiming::BoxBreath {
             stopwatch: false,

@@ -1203,7 +1203,7 @@ impl TimerView {
                         .flatten()
                     {
                         app.with_db_mut(|db| db.set_box_breath_phase(
-                            phase, on, p.signal_mode, &p.sound_uuid, &p.pattern_uuid,
+                            phase, on, p.signal_mode, p.sound_uuid.as_str(), p.pattern_uuid.as_str(),
                         ));
                     }
                 }
@@ -1238,14 +1238,14 @@ impl TimerView {
                 window.push_sound_chooser(
                     &app,
                     crate::db::BellSoundCategory::BoxBreath,
-                    Some(p.sound_uuid.clone()),
+                    Some(p.sound_uuid.0.clone()),
                     move |uuid| {
                         app_for_pick.with_db_mut(|db| db.set_box_breath_phase(
                             phase_for_sound,
                             p_for_pick.enabled,
                             p_for_pick.signal_mode,
                             &uuid,
-                            &p_for_pick.pattern_uuid,
+                            p_for_pick.pattern_uuid.as_str(),
                         ));
                         this_for_pick.imp().refresh_boxbreath_phase_subtitles(phase_for_sound);
                     },
@@ -1276,13 +1276,13 @@ impl TimerView {
                 let p_for_pick = p.clone();
                 window.push_vibrations_chooser(
                     &app,
-                    Some(p.pattern_uuid.clone()),
+                    Some(p.pattern_uuid.0.clone()),
                     move |uuid| {
                         app_for_pick.with_db_mut(|db| db.set_box_breath_phase(
                             phase_for_pattern,
                             p_for_pick.enabled,
                             p_for_pick.signal_mode,
-                            &p_for_pick.sound_uuid,
+                            p_for_pick.sound_uuid.as_str(),
                             &uuid,
                         ));
                         this_for_pick.imp().refresh_boxbreath_phase_subtitles(phase_for_pattern);
@@ -1542,7 +1542,7 @@ pub(crate) fn build_phase_signal_mode_toggle_widget(
                 .flatten()
             {
                 app.with_db_mut(|db| db.set_box_breath_phase(
-                    phase, p.enabled, mode, &p.sound_uuid, &p.pattern_uuid,
+                    phase, p.enabled, mode, p.sound_uuid.as_str(), p.pattern_uuid.as_str(),
                 ));
             }
         }

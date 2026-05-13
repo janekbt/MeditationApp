@@ -118,8 +118,8 @@ pub enum BellSchedule {
 /// dispatch loop has everything it needs without a second DB lookup.
 #[derive(Debug, Clone)]
 pub struct ActiveBell {
-    pub sound_uuid: String,
-    pub vibration_pattern_uuid: String,
+    pub sound_uuid: crate::db::BellSoundUuid,
+    pub vibration_pattern_uuid: crate::db::VibrationPatternUuid,
     pub signal_mode: SignalMode,
     pub schedule: BellSchedule,
 }
@@ -266,8 +266,8 @@ pub fn phase_cue_names(
 ) -> Option<(String, String)> {
     let row = db.get_box_breath_phase(phase).ok().flatten()?;
     Some((
-        resolve_sound_name(db, &row.sound_uuid),
-        resolve_pattern_name(db, &row.pattern_uuid),
+        resolve_sound_name(db, row.sound_uuid.as_str()),
+        resolve_pattern_name(db, row.pattern_uuid.as_str()),
     ))
 }
 
@@ -315,8 +315,8 @@ pub fn effective_signal_mode(per_bell: SignalMode, per_mode: SignalMode) -> Opti
 /// SignalMode at fire time.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BellCue {
-    pub sound_uuid: String,
-    pub vibration_pattern_uuid: String,
+    pub sound_uuid: crate::db::BellSoundUuid,
+    pub vibration_pattern_uuid: crate::db::VibrationPatternUuid,
     pub signal_mode: SignalMode,
 }
 
@@ -379,10 +379,10 @@ pub fn starting_bell_cue_from_db(db: &Database) -> Option<BellCue> {
         return None;
     }
     Some(BellCue {
-        sound_uuid: read_str(db, "starting_bell_sound", BUNDLED_BOWL_UUID),
+        sound_uuid: read_str(db, "starting_bell_sound", BUNDLED_BOWL_UUID).into(),
         vibration_pattern_uuid: read_str(
             db, "starting_bell_pattern", BUNDLED_PATTERN_PULSE_UUID,
-        ),
+        ).into(),
         signal_mode: read_signal_mode(db, "starting_bell_signal_mode", SignalMode::Sound),
     })
 }
@@ -398,10 +398,10 @@ pub fn end_bell_cue_from_db(db: &Database, stopwatch_on: bool) -> Option<BellCue
         return None;
     }
     Some(BellCue {
-        sound_uuid: read_str(db, "end_bell_sound", BUNDLED_BOWL_UUID),
+        sound_uuid: read_str(db, "end_bell_sound", BUNDLED_BOWL_UUID).into(),
         vibration_pattern_uuid: read_str(
             db, "end_bell_pattern", BUNDLED_PATTERN_PULSE_UUID,
-        ),
+        ).into(),
         signal_mode: read_signal_mode(db, "end_bell_signal_mode", SignalMode::Sound),
     })
 }
@@ -990,13 +990,13 @@ mod tests {
             hold_out: None,
         };
         assert_eq!(
-            cfg.cue_for(crate::db::BoxBreathPhaseId::In).map(|c| &c.sound_uuid),
-            Some(&"in".to_string()),
+            cfg.cue_for(crate::db::BoxBreathPhaseId::In).map(|c| c.sound_uuid.as_str()),
+            Some("in"),
         );
         assert!(cfg.cue_for(crate::db::BoxBreathPhaseId::HoldIn).is_none());
         assert_eq!(
-            cfg.cue_for(crate::db::BoxBreathPhaseId::Out).map(|c| &c.sound_uuid),
-            Some(&"out".to_string()),
+            cfg.cue_for(crate::db::BoxBreathPhaseId::Out).map(|c| c.sound_uuid.as_str()),
+            Some("out"),
         );
         assert!(cfg.cue_for(crate::db::BoxBreathPhaseId::HoldOut).is_none());
     }

@@ -213,7 +213,7 @@ fn build_bell_row(
 ) -> adw::ActionRow {
     let row = adw::ActionRow::builder()
         .title(bell_title(bell))
-        .subtitle(sound_name(app, &bell.sound_uuid))
+        .subtitle(sound_name(app, bell.sound_uuid.as_str()))
         .activatable(true)
         .build();
 
@@ -499,7 +499,7 @@ fn push_edit_page(
     // currently-selected sound's name (looked up by uuid).
     let sound_row = adw::ActionRow::builder()
         .title(gettext("Sound"))
-        .subtitle(sound_name(app, &bell.sound_uuid))
+        .subtitle(sound_name(app, bell.sound_uuid.as_str()))
         .activatable(true)
         .build();
     {
@@ -512,7 +512,7 @@ fn push_edit_page(
     // Pattern row — taps push the vibration-pattern chooser.
     let pattern_row = adw::ActionRow::builder()
         .title(gettext("Pattern"))
-        .subtitle(pattern_name(app, &bell.vibration_pattern_uuid))
+        .subtitle(pattern_name(app, bell.vibration_pattern_uuid.as_str()))
         .activatable(true)
         .build();
     {
@@ -630,7 +630,7 @@ fn push_edit_page(
         let Some(window) = row.root()
             .and_then(|r| r.downcast::<crate::window::MeditateWindow>().ok())
         else { return; };
-        let current = Some(snap_for_sound.borrow().sound_uuid.clone());
+        let current = Some(snap_for_sound.borrow().sound_uuid.0.clone());
         let snap = snap_for_sound.clone();
         let app_outer = app_for_sound.clone();
         let app_inner = app_for_sound.clone();
@@ -642,7 +642,7 @@ fn push_edit_page(
             crate::db::BellSoundCategory::General,
             current,
             move |uuid| {
-                snap.borrow_mut().sound_uuid = uuid.clone();
+                snap.borrow_mut().sound_uuid = uuid.clone().into();
                 sound_row.set_subtitle(&sound_name(&app_inner, &uuid));
                 write_back(&app_inner, &snap, &rebuilder, &on_changed);
             },
@@ -659,7 +659,7 @@ fn push_edit_page(
         let Some(window) = row.root()
             .and_then(|r| r.downcast::<crate::window::MeditateWindow>().ok())
         else { return; };
-        let current = Some(snap_for_pat.borrow().vibration_pattern_uuid.clone());
+        let current = Some(snap_for_pat.borrow().vibration_pattern_uuid.0.clone());
         let snap = snap_for_pat.clone();
         let app_outer = app_for_pat.clone();
         let app_inner = app_for_pat.clone();
@@ -667,7 +667,7 @@ fn push_edit_page(
         let on_changed = on_changed_for_pat.clone();
         let pattern_row = pattern_row_for_sub.clone();
         window.push_vibrations_chooser(&app_outer, current, move |uuid| {
-            snap.borrow_mut().vibration_pattern_uuid = uuid.clone();
+            snap.borrow_mut().vibration_pattern_uuid = uuid.clone().into();
             pattern_row.set_subtitle(&pattern_name(&app_inner, &uuid));
             write_back(&app_inner, &snap, &rebuilder, &on_changed);
         });

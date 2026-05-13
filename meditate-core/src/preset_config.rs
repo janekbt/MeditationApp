@@ -74,13 +74,13 @@ pub struct PresetLabel {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct PresetStartingBell {
     pub enabled: bool,
-    pub sound_uuid: String,
+    pub sound_uuid: crate::db::BellSoundUuid,
     pub prep_time_enabled: bool,
     pub prep_time_secs: u32,
     /// Per-bell sound/vibration/both mode (db-string form).
     pub signal_mode: String,
     /// Per-bell vibration pattern uuid.
-    pub vibration_pattern_uuid: String,
+    pub vibration_pattern_uuid: crate::db::VibrationPatternUuid,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -97,22 +97,22 @@ pub struct PresetIntervalBell {
     pub kind: String,
     pub minutes: u32,
     pub jitter_pct: u32,
-    pub sound_uuid: String,
+    pub sound_uuid: crate::db::BellSoundUuid,
     pub enabled: bool,
     /// Per-bell sound/vibration/both mode (db-string form).
     pub signal_mode: String,
     /// Per-bell vibration pattern uuid.
-    pub vibration_pattern_uuid: String,
+    pub vibration_pattern_uuid: crate::db::VibrationPatternUuid,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct PresetEndBell {
     pub enabled: bool,
-    pub sound_uuid: String,
+    pub sound_uuid: crate::db::BellSoundUuid,
     /// Per-bell sound/vibration/both mode (db-string form).
     pub signal_mode: String,
     /// Per-bell vibration pattern uuid.
-    pub vibration_pattern_uuid: String,
+    pub vibration_pattern_uuid: crate::db::VibrationPatternUuid,
 }
 
 /// Box-Breath per-phase cue config — master enable + four phase
@@ -130,8 +130,8 @@ pub struct PresetBoxBreathPhase {
     pub phase: String,
     pub enabled: bool,
     pub signal_mode: String,
-    pub sound_uuid: String,
-    pub pattern_uuid: String,
+    pub sound_uuid: crate::db::BellSoundUuid,
+    pub pattern_uuid: crate::db::VibrationPatternUuid,
 }
 
 impl PresetConfig {
@@ -315,18 +315,18 @@ pub fn snapshot(db: &Database, mode: SessionMode, timing: PresetTiming) -> Prese
 
     let starting_bell = PresetStartingBell {
         enabled: read_bool("starting_bell_active", false),
-        sound_uuid: read_str("starting_bell_sound", BUNDLED_BOWL_UUID),
+        sound_uuid: read_str("starting_bell_sound", BUNDLED_BOWL_UUID).into(),
         prep_time_enabled: read_bool("preparation_time_active", false),
         prep_time_secs: read_u32("preparation_time_secs", PREP_SECS_DEFAULT),
         signal_mode: read_str("starting_bell_signal_mode", "sound"),
-        vibration_pattern_uuid: read_str("starting_bell_pattern", BUNDLED_PATTERN_PULSE_UUID),
+        vibration_pattern_uuid: read_str("starting_bell_pattern", BUNDLED_PATTERN_PULSE_UUID).into(),
     };
 
     let end_bell = PresetEndBell {
         enabled: read_bool("end_bell_active", true),
-        sound_uuid: read_str("end_bell_sound", BUNDLED_BOWL_UUID),
+        sound_uuid: read_str("end_bell_sound", BUNDLED_BOWL_UUID).into(),
         signal_mode: read_str("end_bell_signal_mode", "sound"),
-        vibration_pattern_uuid: read_str("end_bell_pattern", BUNDLED_PATTERN_PULSE_UUID),
+        vibration_pattern_uuid: read_str("end_bell_pattern", BUNDLED_PATTERN_PULSE_UUID).into(),
     };
 
     let intervals_enabled = read_bool("interval_bells_active", false);
@@ -413,13 +413,13 @@ pub fn apply(
         .collect();
     let mut needs_sound: Vec<&str> = Vec::new();
     if cfg.starting_bell.enabled {
-        needs_sound.push(&cfg.starting_bell.sound_uuid);
+        needs_sound.push(cfg.starting_bell.sound_uuid.as_str());
     }
     if cfg.end_bell.enabled {
-        needs_sound.push(&cfg.end_bell.sound_uuid);
+        needs_sound.push(cfg.end_bell.sound_uuid.as_str());
     }
     for b in &cfg.interval_bells.bells {
-        needs_sound.push(&b.sound_uuid);
+        needs_sound.push(b.sound_uuid.as_str());
     }
     let mut missing_sounds: Vec<String> = Vec::new();
     for u in &needs_sound {
@@ -436,19 +436,19 @@ pub fn apply(
         .collect();
     let mut needs_pattern: Vec<&str> = Vec::new();
     if !cfg.starting_bell.vibration_pattern_uuid.is_empty() {
-        needs_pattern.push(&cfg.starting_bell.vibration_pattern_uuid);
+        needs_pattern.push(cfg.starting_bell.vibration_pattern_uuid.as_str());
     }
     if !cfg.end_bell.vibration_pattern_uuid.is_empty() {
-        needs_pattern.push(&cfg.end_bell.vibration_pattern_uuid);
+        needs_pattern.push(cfg.end_bell.vibration_pattern_uuid.as_str());
     }
     for b in &cfg.interval_bells.bells {
         if !b.vibration_pattern_uuid.is_empty() {
-            needs_pattern.push(&b.vibration_pattern_uuid);
+            needs_pattern.push(b.vibration_pattern_uuid.as_str());
         }
     }
     for p in &cfg.box_breath_cues.phases {
         if !p.pattern_uuid.is_empty() {
-            needs_pattern.push(&p.pattern_uuid);
+            needs_pattern.push(p.pattern_uuid.as_str());
         }
     }
     let mut missing_patterns: Vec<String> = Vec::new();
@@ -483,7 +483,7 @@ pub fn apply(
     }
     set("starting_bell_active", bool_str(cfg.starting_bell.enabled))?;
     if !cfg.starting_bell.sound_uuid.is_empty() {
-        set("starting_bell_sound", &cfg.starting_bell.sound_uuid)?;
+        set("starting_bell_sound", cfg.starting_bell.sound_uuid.as_str())?;
     }
     set(
         "preparation_time_active",
@@ -499,16 +499,16 @@ pub fn apply(
     )?;
     set("end_bell_active", bool_str(cfg.end_bell.enabled))?;
     if !cfg.end_bell.sound_uuid.is_empty() {
-        set("end_bell_sound", &cfg.end_bell.sound_uuid)?;
+        set("end_bell_sound", cfg.end_bell.sound_uuid.as_str())?;
     }
     set(stopwatch_key_for_mode(mode), bool_str(stopwatch_active))?;
     set("starting_bell_signal_mode", &cfg.starting_bell.signal_mode)?;
     set(
         "starting_bell_pattern",
-        &cfg.starting_bell.vibration_pattern_uuid,
+        cfg.starting_bell.vibration_pattern_uuid.as_str(),
     )?;
     set("end_bell_signal_mode", &cfg.end_bell.signal_mode)?;
-    set("end_bell_pattern", &cfg.end_bell.vibration_pattern_uuid)?;
+    set("end_bell_pattern", cfg.end_bell.vibration_pattern_uuid.as_str())?;
     set(signal_mode_key_for_mode(mode), &cfg.cues_signal_mode)?;
     set(
         keep_screen_awake_key_for_mode(mode),
@@ -535,8 +535,8 @@ pub fn apply(
                 phase_id,
                 p.enabled,
                 signal_mode,
-                &p.sound_uuid,
-                &p.pattern_uuid,
+                p.sound_uuid.as_str(),
+                p.pattern_uuid.as_str(),
             )
             .map_err(|e| ApplyError::DbError(format!("{e:?}")))?;
         }
@@ -565,8 +565,8 @@ pub fn apply(
                 kind,
                 s.minutes,
                 s.jitter_pct,
-                &s.sound_uuid,
-                &s.vibration_pattern_uuid,
+                s.sound_uuid.as_str(),
+                s.vibration_pattern_uuid.as_str(),
                 signal_mode,
             )
             .map_err(|e| ApplyError::DbError(format!("{e:?}")))?;
@@ -598,11 +598,11 @@ mod tests {
             },
             starting_bell: PresetStartingBell {
                 enabled: true,
-                sound_uuid: "bell-uuid".to_string(),
+                sound_uuid: "bell-uuid".into(),
                 prep_time_enabled: false,
                 prep_time_secs: 5,
                 signal_mode: "both".to_string(),
-                vibration_pattern_uuid: "pulse-uuid".to_string(),
+                vibration_pattern_uuid: "pulse-uuid".into(),
             },
             interval_bells: PresetIntervalBells {
                 enabled: false,
@@ -610,9 +610,9 @@ mod tests {
             },
             end_bell: PresetEndBell {
                 enabled: true,
-                sound_uuid: "end-uuid".to_string(),
+                sound_uuid: "end-uuid".into(),
                 signal_mode: "vibration".to_string(),
-                vibration_pattern_uuid: "heartbeat-uuid".to_string(),
+                vibration_pattern_uuid: "heartbeat-uuid".into(),
             },
             timing: PresetTiming::Timer {
                 stopwatch: false,
@@ -640,9 +640,9 @@ mod tests {
             interval_bells: PresetIntervalBells::default(),
             end_bell: PresetEndBell {
                 enabled: true,
-                sound_uuid: "end-uuid".to_string(),
+                sound_uuid: "end-uuid".into(),
                 signal_mode: "sound".to_string(),
-                vibration_pattern_uuid: String::new(),
+                vibration_pattern_uuid: crate::db::VibrationPatternUuid::default(),
             },
             timing: PresetTiming::BoxBreath {
                 stopwatch: false,
@@ -661,29 +661,29 @@ mod tests {
                         phase: "in".to_string(),
                         enabled: true,
                         signal_mode: "vibration".to_string(),
-                        sound_uuid: String::new(),
-                        pattern_uuid: "pulse-uuid".to_string(),
+                        sound_uuid: crate::db::BellSoundUuid::default(),
+                        pattern_uuid: "pulse-uuid".into(),
                     },
                     PresetBoxBreathPhase {
                         phase: "holdin".to_string(),
                         enabled: false,
                         signal_mode: "sound".to_string(),
-                        sound_uuid: "voice-uuid".to_string(),
-                        pattern_uuid: "pulse-uuid".to_string(),
+                        sound_uuid: "voice-uuid".into(),
+                        pattern_uuid: "pulse-uuid".into(),
                     },
                     PresetBoxBreathPhase {
                         phase: "out".to_string(),
                         enabled: true,
                         signal_mode: "both".to_string(),
-                        sound_uuid: "voice-uuid".to_string(),
-                        pattern_uuid: "wave-uuid".to_string(),
+                        sound_uuid: "voice-uuid".into(),
+                        pattern_uuid: "wave-uuid".into(),
                     },
                     PresetBoxBreathPhase {
                         phase: "holdout".to_string(),
                         enabled: false,
                         signal_mode: "sound".to_string(),
-                        sound_uuid: String::new(),
-                        pattern_uuid: String::new(),
+                        sound_uuid: crate::db::BellSoundUuid::default(),
+                        pattern_uuid: crate::db::VibrationPatternUuid::default(),
                     },
                 ],
             },
@@ -706,19 +706,19 @@ mod tests {
                         kind: "interval".to_string(),
                         minutes: 5,
                         jitter_pct: 10,
-                        sound_uuid: "ping-uuid".to_string(),
+                        sound_uuid: "ping-uuid".into(),
                         enabled: true,
                         signal_mode: "vibration".to_string(),
-                        vibration_pattern_uuid: "wave-uuid".to_string(),
+                        vibration_pattern_uuid: "wave-uuid".into(),
                     },
                     PresetIntervalBell {
                         kind: "fixed_from_start".to_string(),
                         minutes: 1,
                         jitter_pct: 0,
-                        sound_uuid: "tick-uuid".to_string(),
+                        sound_uuid: "tick-uuid".into(),
                         enabled: false,
                         signal_mode: "sound".to_string(),
-                        vibration_pattern_uuid: String::new(),
+                        vibration_pattern_uuid: crate::db::VibrationPatternUuid::default(),
                     },
                 ],
             },
@@ -775,11 +775,11 @@ mod tests {
             label: PresetLabel { enabled: true, uuid: Some("label-uuid".into()) },
             starting_bell: PresetStartingBell {
                 enabled: true,
-                sound_uuid: sound_uuid.to_string(),
+                sound_uuid: sound_uuid.into(),
                 prep_time_enabled: true,
                 prep_time_secs: 30,
                 signal_mode: "both".to_string(),
-                vibration_pattern_uuid: pattern_uuid.to_string(),
+                vibration_pattern_uuid: pattern_uuid.into(),
             },
             interval_bells: PresetIntervalBells {
                 enabled: true,
@@ -787,17 +787,17 @@ mod tests {
                     kind: "interval".to_string(),
                     minutes: 5,
                     jitter_pct: 10,
-                    sound_uuid: sound_uuid.to_string(),
+                    sound_uuid: sound_uuid.into(),
                     enabled: true,
                     signal_mode: "sound".to_string(),
-                    vibration_pattern_uuid: String::new(),
+                    vibration_pattern_uuid: crate::db::VibrationPatternUuid::default(),
                 }],
             },
             end_bell: PresetEndBell {
                 enabled: true,
-                sound_uuid: sound_uuid.to_string(),
+                sound_uuid: sound_uuid.into(),
                 signal_mode: "vibration".to_string(),
-                vibration_pattern_uuid: pattern_uuid.to_string(),
+                vibration_pattern_uuid: pattern_uuid.into(),
             },
             timing,
             cues_signal_mode: "both".to_string(),
@@ -857,7 +857,7 @@ mod tests {
         );
         // Belt + braces: also point the interval bell at the missing
         // sound so the test exercises the fan-in over multiple slots.
-        cfg.interval_bells.bells[0].sound_uuid = "missing-sound-uuid".to_string();
+        cfg.interval_bells.bells[0].sound_uuid = "missing-sound-uuid".into();
 
         let err = apply(&db, &cfg, SessionMode::Timer).unwrap_err();
         assert_matches!(
@@ -877,8 +877,8 @@ mod tests {
             &sound,
             "missing-pattern-uuid",
         );
-        cfg.starting_bell.vibration_pattern_uuid = "missing-pattern-uuid".to_string();
-        cfg.end_bell.vibration_pattern_uuid = "missing-pattern-uuid".to_string();
+        cfg.starting_bell.vibration_pattern_uuid = "missing-pattern-uuid".into();
+        cfg.end_bell.vibration_pattern_uuid = "missing-pattern-uuid".into();
 
         let err = apply(&db, &cfg, SessionMode::Timer).unwrap_err();
         assert_matches!(
@@ -942,8 +942,8 @@ mod tests {
                     phase: "in".to_string(),
                     enabled: true,
                     signal_mode: "sound".to_string(),
-                    sound_uuid: sound.clone(),
-                    pattern_uuid: pattern.clone(),
+                    sound_uuid: sound.clone().into(),
+                    pattern_uuid: pattern.clone().into(),
                 }],
             },
         };

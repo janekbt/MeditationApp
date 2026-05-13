@@ -1010,7 +1010,7 @@ mod tests {
             sound_uuid: "s".into(),
             enabled: true,
             signal_mode: "sound".into(),
-            vibration_pattern_uuid: String::new(),
+            vibration_pattern_uuid: crate::db::VibrationPatternUuid::default(),
         };
 
         let mut cfg = timer_cfg(false, 600);

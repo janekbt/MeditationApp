@@ -757,8 +757,8 @@ fn starting_bell_effect(settings: &SessionSettings) -> Option<Effect> {
         settings.signal_mode_override,
     )?;
     Some(Effect::FireStartingBell {
-        sound_uuid: cue.sound_uuid.clone(),
-        vibration_pattern_uuid: cue.vibration_pattern_uuid.clone(),
+        sound_uuid: cue.sound_uuid.0.clone(),
+        vibration_pattern_uuid: cue.vibration_pattern_uuid.0.clone(),
         signal_mode,
     })
 }
@@ -771,8 +771,8 @@ fn end_bell_effect(settings: &SessionSettings) -> Option<Effect> {
         settings.signal_mode_override,
     )?;
     Some(Effect::FireEndBell {
-        sound_uuid: cue.sound_uuid.clone(),
-        vibration_pattern_uuid: cue.vibration_pattern_uuid.clone(),
+        sound_uuid: cue.sound_uuid.0.clone(),
+        vibration_pattern_uuid: cue.vibration_pattern_uuid.0.clone(),
         signal_mode,
     })
 }
@@ -793,8 +793,8 @@ fn box_breath_cue_effect(
     )?;
     Some(Effect::FireBoxBreathCue {
         phase,
-        sound_uuid: cue.sound_uuid.clone(),
-        vibration_pattern_uuid: cue.vibration_pattern_uuid.clone(),
+        sound_uuid: cue.sound_uuid.0.clone(),
+        vibration_pattern_uuid: cue.vibration_pattern_uuid.0.clone(),
         signal_mode,
     })
 }
@@ -844,8 +844,8 @@ fn fire_due_bells(
                 signal_mode_override,
             ) {
                 effects.push(Effect::FireBell {
-                    sound_uuid: bell.sound_uuid.clone(),
-                    vibration_pattern_uuid: bell.vibration_pattern_uuid.clone(),
+                    sound_uuid: bell.sound_uuid.0.clone(),
+                    vibration_pattern_uuid: bell.vibration_pattern_uuid.0.clone(),
                     signal_mode: eff,
                 });
             }
@@ -946,8 +946,8 @@ mod tests {
     fn fixed_bell(target_secs: u64, sound_uuid: &str) -> ActiveBell {
         use crate::bells::BellSchedule;
         ActiveBell {
-            sound_uuid: sound_uuid.to_string(),
-            vibration_pattern_uuid: "pattern".to_string(),
+            sound_uuid: sound_uuid.into(),
+            vibration_pattern_uuid: "pattern".into(),
             signal_mode: SignalMode::Sound,
             schedule: BellSchedule::Fixed { target_secs, fired: false },
         }
@@ -956,8 +956,8 @@ mod tests {
     fn interval_bell(base_min: u32, sound_uuid: &str) -> ActiveBell {
         use crate::bells::BellSchedule;
         ActiveBell {
-            sound_uuid: sound_uuid.to_string(),
-            vibration_pattern_uuid: "pattern".to_string(),
+            sound_uuid: sound_uuid.into(),
+            vibration_pattern_uuid: "pattern".into(),
             signal_mode: SignalMode::Sound,
             schedule: BellSchedule::Interval {
                 base_min,

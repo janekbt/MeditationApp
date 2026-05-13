@@ -29,7 +29,7 @@
 macro_rules! entity_uuid {
     ($name:ident, $doc:literal) => {
         #[doc = $doc]
-        #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+        #[derive(Debug, Clone, Default, Hash, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
         #[serde(transparent)]
         pub struct $name(pub String);
 

@@ -18,8 +18,8 @@ pub struct BoxBreathPhase {
     pub phase: BoxBreathPhaseId,
     pub enabled: bool,
     pub signal_mode: SignalMode,
-    pub sound_uuid: String,
-    pub pattern_uuid: String,
+    pub sound_uuid: crate::db::BellSoundUuid,
+    pub pattern_uuid: crate::db::VibrationPatternUuid,
 }
 
 /// Mirrors `crate::timer::breathing::Phase` shapewise (In / HoldIn /
