@@ -708,7 +708,7 @@ fn build_guided_file_row(
         .valign(gtk::Align::Center)
         .build();
     let app_for_star = app.clone();
-    let uuid_for_star = file.uuid.clone();
+    let uuid_for_star = file.uuid.0.clone();
     let new_starred = !file.is_starred;
     let rebuilder_for_star = rebuilder.clone();
     let on_changed_for_star = on_changed.clone();
@@ -732,7 +732,7 @@ fn build_guided_file_row(
         .build();
     {
         let app = app.clone();
-        let uuid = file.uuid.clone();
+        let uuid = file.uuid.0.clone();
         let current_name = file.name.clone();
         let rebuilder = rebuilder.clone();
         let on_changed = on_changed.clone();
@@ -762,7 +762,7 @@ fn build_guided_file_row(
         .build();
     {
         let app = app.clone();
-        let uuid = file.uuid.clone();
+        let uuid = file.uuid.0.clone();
         let display_name = file.name.clone();
         let rebuilder = rebuilder.clone();
         let on_changed = on_changed.clone();
@@ -999,7 +999,7 @@ fn present_delete_dialog(
             move || {
                 app_for_undo.with_db_mut(|db| {
                     db.insert_guided_file_with_uuid(
-                        &file_for_undo.uuid,
+                        file_for_undo.uuid.as_str(),
                         &file_for_undo.name,
                         &file_for_undo.file_path,
                         file_for_undo.duration_secs,

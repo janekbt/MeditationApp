@@ -23,7 +23,7 @@ use super::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GuidedFile {
     pub id: i64,
-    pub uuid: String,
+    pub uuid: super::GuidedFileUuid,
     pub name: String,
     pub file_path: String,
     pub duration_secs: u32,

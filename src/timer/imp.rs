@@ -537,7 +537,7 @@ impl TimerView {
                         // (now with a uuid attached), so the user can
                         // hit Start without re-tapping anything.
                         let imp = this_for_done.imp();
-                        *imp.guided_selected_uuid.borrow_mut() = Some(row.uuid.clone());
+                        *imp.guided_selected_uuid.borrow_mut() = Some(row.uuid.0.clone());
                         *imp.guided_pick.borrow_mut() = Some(crate::guided::GuidedFilePick {
                             display_name: row.name.clone(),
                             source_path: std::path::PathBuf::from(&row.file_path),
@@ -3258,7 +3258,7 @@ impl TimerView {
             star.add_css_class("preset-star-on");
             row.add_prefix(&star);
 
-            let uuid = f.uuid.clone();
+            let uuid = f.uuid.0.clone();
             let name = f.name.clone();
             let path = f.file_path.clone();
             let duration_secs = f.duration_secs;
@@ -3278,7 +3278,7 @@ impl TimerView {
             });
 
             self.guided_files_group.add(&row);
-            tracked.push((row, f.uuid.clone()));
+            tracked.push((row, f.uuid.0.clone()));
         }
         *self.starred_guided_rows.borrow_mut() = tracked;
     }
