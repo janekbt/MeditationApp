@@ -356,6 +356,11 @@ impl Database {
         let tx = self.conn.unchecked_transaction()?;
         tx.execute("DELETE FROM known_remote_files", [])?;
         tx.execute("DELETE FROM known_remote_sounds", [])?;
+        // The in-flight snapshot is device-local state derived from
+        // local activity. If we kept it across a "throw away local,
+        // pull from remote" recovery, the next launch would auto-
+        // finalise it into a phantom session no peer authored.
+        tx.execute("DELETE FROM session_in_progress", [])?;
         tx.execute("DELETE FROM events", [])?;
         tx.execute("DELETE FROM sessions", [])?;
         tx.execute("DELETE FROM labels", [])?;
@@ -1050,6 +1055,31 @@ mod tests {
         db.wipe_local_event_log().unwrap();
         db.wipe_local_event_log().unwrap();
         assert!(db.pending_events().unwrap().is_empty());
+    }
+
+    #[test]
+    fn wipe_local_event_log_clears_session_in_progress() {
+        // Wipe is the "local copy is wrong, throw it away and pull
+        // from remote" recovery. An in-progress snapshot is device-
+        // local state derived from local activity; if we keep it
+        // around, the next launch would auto-finalise it into a
+        // phantom session that no peer ever saw, polluting the
+        // post-recovery sync state. Wipe must take it.
+        let db = Database::open_in_memory().unwrap();
+        let snapshot = crate::db::SessionInProgress {
+            start_iso: "2026-05-13T10:00:00".into(),
+            accumulated_secs: 600,
+            mode: SessionMode::Timer,
+            mode_payload: "{}".into(),
+            label_id: None,
+            guided_file_uuid: None,
+        };
+        db.set_session_in_progress(&snapshot).unwrap();
+        assert!(db.get_session_in_progress().unwrap().is_some());
+
+        db.wipe_local_event_log().unwrap();
+        assert!(db.get_session_in_progress().unwrap().is_none(),
+            "wipe must drop the in-progress snapshot");
     }
 
     #[test]
