@@ -806,7 +806,7 @@ fn fire_due_bells(
     let elapsed_secs = elapsed.as_secs();
     for bell in bells.iter_mut() {
         let mut rng = || -> f64 {
-            let (unit, next) = crate::rng::xorshift64(*rng_state);
+            let (unit, next) = crate::bells::xorshift64(*rng_state);
             *rng_state = next;
             unit
         };

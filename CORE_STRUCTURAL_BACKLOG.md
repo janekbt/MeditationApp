@@ -53,14 +53,6 @@ rationale.
   crate root via `pub use stats::*` to avoid breaking shell
   imports of `meditate_core::labels::*` / `goal::*` / `contrib::*`.
 
-### Merge `paths` and `rng` micro-modules
-- `paths` (44 lines, four `&str` constants) — fold into `seeds`
-  (the wire-format constant module) or `db` (the file-path
-  consumer).
-- `rng` (86 lines, one stateless xorshift64) — inline into
-  `bells` (its sole intended consumer per its doc comment) or
-  pair with `time::seed_now`.
-
 ### Per-entity CRUD tombstone helper
 - `delete_interval_bell` / `delete_bell_sound` / `delete_preset` /
   `delete_guided_file` / `delete_vibration_pattern` (and the

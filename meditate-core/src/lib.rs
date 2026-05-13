@@ -55,7 +55,7 @@
 //! - `diag`          — ring-buffer log to `<data>/diagnostics.log`.
 //! - `data_io`       — CSV import / export of sessions.
 //! - `seeds`         — bundled vibration patterns + default presets.
-//! - `labels`, `naming`, `paths`, `rng`, `settings_keys`, `sound`,
+//! - `labels`, `naming`, `settings_keys`, `sound`,
 //!   `timer`, `date_math` — supporting utilities.
 
 pub mod bells;
@@ -70,9 +70,7 @@ pub mod goal;
 pub mod insights;
 pub mod labels;
 pub mod naming;
-pub mod paths;
 pub mod preset_config;
-pub mod rng;
 pub mod seeds;
 pub mod session;
 pub mod sound;
