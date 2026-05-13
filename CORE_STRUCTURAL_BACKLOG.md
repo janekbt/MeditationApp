@@ -401,25 +401,6 @@ rationale.
 
 ## Tier 1 — Third-pass additions
 
-### `sessions` table missing indexes on `start_iso` + `label_id`
-- Every other entity table has UNIQUE-index coverage on its hot
-  column. `sessions` reads run `ORDER BY start_iso DESC`
-  (`query_sessions` four branches at `db.rs:4207/4218/4229/4240`)
-  and `WHERE label_id = ?1` (`label_session_count:1799`,
-  `list_sessions_for_label`).
-- Under 10k rows still ms-budget today; gets worse at scale.
-- Fix: `CREATE INDEX sessions_start_idx ON sessions(start_iso DESC)`
-  and `CREATE INDEX sessions_label_idx ON sessions(label_id)
-  WHERE label_id IS NOT NULL`.
-
-### `events_synced_idx` should be a partial index
-- `db.rs:648` indexes the full `synced` column (boolean).
-  Steady-state ~99% of rows have `synced = 1`; the only scan is
-  `WHERE synced = 0` (`pending_events`).
-- Fix: `CREATE INDEX events_pending_idx ON events(synced) WHERE
-  synced = 0`. Same lookup speed, one to two orders of magnitude
-  smaller after first push.
-
 ### `breath::BreathSession` is an entirely dead struct
 - `meditate-core/src/breath.rs:277-309` — `BreathSession::new`,
   `phase_info`, `pause`, `resume`. Zero callers in the workspace.
@@ -847,29 +828,6 @@ avoid silently losing items in a rewrite.
 ## Tier 0 — None (sixth-pass)
 
 ## Tier 1 — Sixth-pass additions
-
-### Performance: `recompute_*` uses `query_row` (uncached) — bulk-replay parse storm
-- Every `recompute_X`'s two SQL reads use plain `query_row` which
-  reparses SQL on every call. `replay_events` over 30k pulled
-  events = 2×30k = 60k parse-and-plan cycles for ~14 distinct
-  SQL texts. Dominates first-launch and wipe-and-pull recovery
-  on Librem 5 eMMC.
-- Affected: `meditate-core/src/db.rs` recompute family
-  (lines 1187-1755).
-- Fix: convert each query to `prepare_cached`, bump
-  `set_prepared_statement_cache_capacity` to ~32 to fit them all
-  alongside the existing cached statements.
-
-### Performance: hot stats queries use `prepare` not `prepare_cached`
-- `meditate-core/src/db.rs:3900` (`daily_totals_filtered`) and
-  `:3928` (`distinct_session_days_ascending`). Called on every
-  Insights / contrib heatmap / streak refresh; with ~10k
-  sessions the SUBSTR + GROUP BY runs unindexed and the SQL
-  gets reparsed each call.
-- Fix: flip both to `prepare_cached`. Optionally add an expression
-  index `CREATE INDEX sessions_day_idx ON sessions(SUBSTR(start_iso,
-  1, 10))` for the GROUP BY (the existing Tier-1 `sessions_start_idx`
-  helps ORDER BY DESC but not GROUP BY).
 
 ### Security: unbounded body read on WebDAV GET
 - `meditate-core/src/sync/webdav.rs:182-184` calls

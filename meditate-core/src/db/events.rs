@@ -565,26 +565,36 @@ impl Database {
         mutate_kinds: [EventKind; 2],
         delete_kind: EventKind,
     ) -> Result<Option<serde_json::Value>> {
-        let delete_ts: Option<i64> = self.conn.query_row(
+        // `prepare_cached`: replay_events fires this helper once per
+        // event during recovery (~30k events on a wipe-and-pull),
+        // each call running the same two SQL strings. Caching the
+        // prepared statements turns 60k parse-and-plan cycles into
+        // 2 — dominates the eMMC budget on the Librem 5.
+        let mut delete_stmt = self.conn.prepare_cached(
             "SELECT MAX(lamport_ts) FROM events
              WHERE target_id = ?1 AND kind = ?2",
+        )?;
+        let delete_ts: Option<i64> = delete_stmt.query_row(
             params![target_id, delete_kind.as_db_str()],
             |row| row.get::<_, Option<i64>>(0),
         )?;
-        let mutate: Option<(i64, String)> = self.conn.query_row(
+        let mut mutate_stmt = self.conn.prepare_cached(
             "SELECT lamport_ts, payload FROM events
              WHERE target_id = ?1
                AND kind IN (?2, ?3)
              ORDER BY lamport_ts DESC, device_id DESC
              LIMIT 1",
-            params![
-                target_id,
-                mutate_kinds[0].as_db_str(),
-                mutate_kinds[1].as_db_str(),
-            ],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
-        )
-        .optional()?;
+        )?;
+        let mutate: Option<(i64, String)> = mutate_stmt
+            .query_row(
+                params![
+                    target_id,
+                    mutate_kinds[0].as_db_str(),
+                    mutate_kinds[1].as_db_str(),
+                ],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
         let row_should_exist = match (mutate.as_ref(), delete_ts) {
             (Some(_), None) => true,
             (None, _) => false,

@@ -480,7 +480,11 @@ impl Database {
         &self,
         label_filter: Option<i64>,
     ) -> Result<Vec<(chrono::NaiveDate, i64)>> {
-        let mut stmt = self.conn.prepare(
+        // `prepare_cached`: fires on every Stats / Insights / contrib
+        // heatmap / streak refresh — among the hottest reads in the
+        // crate. Caching the parse is free on the first call and
+        // shaves a noticeable slice off every subsequent tab open.
+        let mut stmt = self.conn.prepare_cached(
             "SELECT SUBSTR(start_iso, 1, 10) AS day, SUM(duration_secs)
              FROM sessions
              WHERE ?1 IS NULL OR label_id = ?1
@@ -508,7 +512,10 @@ impl Database {
         &self,
         label_filter: Option<i64>,
     ) -> Result<Vec<chrono::NaiveDate>> {
-        let mut stmt = self.conn.prepare(
+        // `prepare_cached`: streak refresh on every Setup view open
+        // + every Stats tab open. Same hotness profile as
+        // `daily_totals_filtered` above.
+        let mut stmt = self.conn.prepare_cached(
             "SELECT DISTINCT SUBSTR(start_iso, 1, 10) FROM sessions
              WHERE ?1 IS NULL OR label_id = ?1
              ORDER BY 1",

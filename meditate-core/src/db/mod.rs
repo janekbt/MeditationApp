@@ -194,6 +194,14 @@ impl Database {
         if integrity != "ok" {
             crate::diag::log(&format!("db_integrity_check_failed: {integrity}"));
         }
+        // Bump the prepared-statement cache so the `recompute_*`
+        // family + hot stats queries all stay parsed. rusqlite
+        // defaults to 16 — too small once you count the seven
+        // recompute targets times two queries each (winning_mutate)
+        // plus the per-tab stats queries. 32 fits the working set
+        // comfortably with headroom; cost is per-statement memory,
+        // negligible at this count.
+        conn.set_prepared_statement_cache_capacity(32);
         let db = Self { conn };
         db.maybe_walk_events_for_cache_upgrade()?;
         Ok(db)

@@ -86,6 +86,17 @@ pub(super) const SCHEMA: &str = "
         -- played a file without importing it into the library.
         guided_file_uuid TEXT
     );
+    -- Sessions are queried in two hot shapes that scan the table
+    -- without these indexes: `ORDER BY start_iso DESC` (the log
+    -- feed) and `WHERE label_id = ?1` (per-label stats). Linear
+    -- scan is in the ms-budget for a few thousand rows but degrades
+    -- linearly; an index keeps the cost flat for a long-term user.
+    -- Partial index on label_id excludes the NULL rows (un-labelled
+    -- sessions) which the WHERE clause never matches anyway.
+    CREATE INDEX IF NOT EXISTS sessions_start_idx
+        ON sessions(start_iso DESC);
+    CREATE INDEX IF NOT EXISTS sessions_label_idx
+        ON sessions(label_id) WHERE label_id IS NOT NULL;
     -- Named, full-fidelity session templates. `config_json` is opaque
     -- to core (the shell defines its schema). `mode` is mirrored out
     -- of the JSON into a column so the visible-list query can filter
@@ -198,10 +209,13 @@ pub(super) const SCHEMA: &str = "
     -- deterministic across peers.
     CREATE INDEX IF NOT EXISTS events_lamport_idx
         ON events(lamport_ts, device_id);
-    -- Index on `synced` makes `pending_events` (which scans WHERE
-    -- synced = 0) efficient even when the log grows large.
-    CREATE INDEX IF NOT EXISTS events_synced_idx
-        ON events(synced);
+    -- Partial index on `synced = 0` makes `pending_events` (the
+    -- only scanner of this column) cheap. Steady-state ~99% of rows
+    -- are synced=1, so a partial index is one-to-two orders of
+    -- magnitude smaller than a full one. Same lookup speed, less
+    -- write amplification on every event append.
+    CREATE INDEX IF NOT EXISTS events_pending_idx
+        ON events(synced) WHERE synced = 0;
     -- Index on `target_id` makes the apply_event recompute query
     -- (all events touching one uuid/key) fast even when the log has
     -- thousands of entries.
