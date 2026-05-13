@@ -631,22 +631,6 @@ module.
 
 ## Tier 1 — Fourth-pass additions
 
-### Move ~40 core-behavior tests out of `src/db/mod.rs` into `meditate-core`
-- `src/db/mod.rs:902-1604` — **700 lines of tests** that test
-  *core semantics* through a one-line shell wrapper: streak
-  math, daily-totals grouping by local date, seeding
-  idempotency, label dedup, vibration-pattern duplicate
-  handling, idempotency-on-reopen, median, running-average,
-  label-totals.
-- The vast majority would pass against a bare
-  `meditate_core::db::Database` with no shell wrapper at all.
-- Move to `meditate-core/src/db.rs::tests` (or per-domain test
-  files after the Tier 1 `db/` split). The `test_db_in_memory()`
-  fixture moves with them; drop `seed_bundled_bell_sounds` (gtk-
-  specific GResource paths) in favor of `seed_all_non_audio`.
-- Lines 907-992 (`session_data_to_core` round-trip tests) stay
-  shell-side — they test the translation layer.
-
 ### Push four decision predicates to core
 - `application.rs::trigger_sync` lines 391-407: the "is sync
   configured at all?" predicate. Add
