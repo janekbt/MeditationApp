@@ -380,7 +380,7 @@ mod imp {
 
             let minutes = finalized.duration_secs / 60;
             let title = crate::i18n::gettext(
-                "Saved your previous session of {n} min."
+                "Recovered {n} min session"
             ).replace("{n}", &minutes.to_string());
 
             let toast = adw::Toast::builder()
