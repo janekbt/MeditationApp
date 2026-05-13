@@ -740,18 +740,6 @@ module.
 
 ## Tier 1 — Fourth-pass additions
 
-### Root `Cargo.toml` is NOT a workspace
-- `cargo test --workspace` doesn't actually cover `meditate-core`
-  — it behaves as `cargo test` on the gtk package only.
-- Silently violates the `feedback_strict_tdd` memory rule, which
-  explicitly says "cargo test --workspace must pass before
-  deploy."
-- 5-line fix: add `[workspace] members = [".", "meditate-core"]`
-  to root `Cargo.toml`. Both crates already pin matching versions
-  of `rusqlite 0.32` / `serde 1` / `chrono 0.4` / `csv 1` by
-  accident; the workspace declaration locks them in.
-- Highest single-leverage item in the fourth pass.
-
 ### Move ~40 core-behavior tests out of `src/db/mod.rs` into `meditate-core`
 - `src/db/mod.rs:902-1604` — **700 lines of tests** that test
   *core semantics* through a one-line shell wrapper: streak
@@ -1514,8 +1502,7 @@ avoid silently losing items in a rewrite.
   but never `cargo test --workspace` or `cargo clippy --
   -D warnings`. The "cargo test must pass before deploy"
   memory rule is enforced only by Janek's terminal.
-- Depends on the workspace declaration Tier-0 item. Once
-  that lands, add a `cargo-test` job to flatpak.yml.
+- Add a `cargo-test` and `cargo-clippy` job to flatpak.yml.
 
 ### Operational: diag-log on-disk path documented nowhere
 - `README.md:40` mentions the About → Troubleshooting view
