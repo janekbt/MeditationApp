@@ -275,21 +275,13 @@ pub enum ApplyError {
 /// in-flight Box-Breath pattern or countdown target — those are gtk-
 /// side reactive plumbing) and supplies `mode` from its current view.
 pub fn snapshot(db: &Database, mode: SessionMode, timing: PresetTiming) -> PresetConfig {
-    use crate::settings_keys::{format_bool, parse_bool};
-    let read_bool = |k: &str, default: bool| -> bool {
-        db.get_setting(k, format_bool(default))
-            .map(|v| parse_bool(&v))
-            .unwrap_or(default)
-    };
-    let read_str = |k: &str, default: &str| -> String {
-        db.get_setting(k, default)
-            .unwrap_or_else(|_| default.to_string())
-    };
-    let read_u32 = |k: &str, default: u32| -> u32 {
-        read_str(k, &default.to_string())
-            .parse::<u32>()
-            .unwrap_or(default)
-    };
+    // Forward to the canonical helpers in `settings_keys` (one
+    // implementation of the get-or-default recipe) while keeping
+    // the local `read_*(key, default)` call shape so this function's
+    // body doesn't drown in `db,` arguments.
+    let read_bool = |k: &str, default: bool| crate::settings_keys::read_bool(db, k, default);
+    let read_str = |k: &str, default: &str| crate::settings_keys::read_str(db, k, default);
+    let read_u32 = |k: &str, default: u32| crate::settings_keys::read_u32(db, k, default);
 
     let label = PresetLabel {
         enabled: read_bool(label_active_key_for_mode(mode), false),

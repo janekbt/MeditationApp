@@ -11,7 +11,7 @@
 //! return a stable `&'static str` key. The keys are wire format:
 //! never edit one without a DB migration.
 
-use crate::db::{Database, SessionMode};
+use crate::db::{Database, SessionMode, SignalMode};
 
 /// Signal-mode override: which channels (sound / vibration / both /
 /// neither) are allowed to fire for each mode. Per-bell signal_mode
@@ -108,6 +108,33 @@ pub fn read_bool(db: &Database, key: &str, default: bool) -> bool {
         .unwrap_or(default)
 }
 
+/// Read a string settings row, falling back to `default` when the
+/// row is missing. Sibling of `read_bool` for `String`-shaped values
+/// (sound UUIDs, vibration-pattern UUIDs, etc.).
+pub fn read_str(db: &Database, key: &str, default: &str) -> String {
+    db.get_setting(key, default).unwrap_or_else(|_| default.to_string())
+}
+
+/// Read a `SignalMode` settings row, falling back to `default` when
+/// the row is missing or carries a string that doesn't parse as one
+/// of the known variants. The `default.as_db_str()` is passed as the
+/// `get_setting` fallback so a fresh DB doesn't perturb the
+/// canonical default value at the get_setting level either.
+pub fn read_signal_mode(db: &Database, key: &str, default: SignalMode) -> SignalMode {
+    db.get_setting(key, default.as_db_str())
+        .ok()
+        .and_then(|s| SignalMode::from_db_str(&s))
+        .unwrap_or(default)
+}
+
+/// Read a `u32` settings row, falling back to `default` when the
+/// row is missing or the stored value isn't a parseable u32.
+pub fn read_u32(db: &Database, key: &str, default: u32) -> u32 {
+    read_str(db, key, &default.to_string())
+        .parse::<u32>()
+        .unwrap_or(default)
+}
+
 /// Per-mode keep-screen-awake reader. Shell calls this on visit
 /// (sync the switch UI) and at session start (decide whether to
 /// hold the idle-inhibit cookie). Two callsites in the gtk shell
@@ -195,6 +222,66 @@ mod tests {
         assert!(read_bool(&db, "flag", false));
         db.set_setting("flag", "false").unwrap();
         assert!(!read_bool(&db, "flag", true));
+    }
+
+    #[test]
+    fn read_str_returns_default_when_key_missing() {
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(read_str(&db, "absent", "fallback"), "fallback");
+    }
+
+    #[test]
+    fn read_str_reads_persisted_value() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("k", "stored").unwrap();
+        assert_eq!(read_str(&db, "k", "default"), "stored");
+    }
+
+    #[test]
+    fn read_signal_mode_returns_default_when_key_missing() {
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(read_signal_mode(&db, "absent", SignalMode::Both), SignalMode::Both);
+    }
+
+    #[test]
+    fn read_signal_mode_returns_default_on_unrecognised_value() {
+        // Defensive: a corrupted row or a string from a future build
+        // that adds variants should fall back, not panic.
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("k", "future_variant").unwrap();
+        assert_eq!(read_signal_mode(&db, "k", SignalMode::Sound), SignalMode::Sound);
+    }
+
+    #[test]
+    fn read_signal_mode_reads_every_known_variant() {
+        let db = Database::open_in_memory().unwrap();
+        for variant in [SignalMode::Sound, SignalMode::Vibration, SignalMode::Both] {
+            db.set_setting("k", variant.as_db_str()).unwrap();
+            assert_eq!(read_signal_mode(&db, "k", SignalMode::Both), variant);
+        }
+    }
+
+    #[test]
+    fn read_u32_returns_default_when_key_missing() {
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(read_u32(&db, "absent", 600), 600);
+    }
+
+    #[test]
+    fn read_u32_returns_default_on_unparseable_value() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("k", "not_a_number").unwrap();
+        assert_eq!(read_u32(&db, "k", 42), 42);
+        // Negative input doesn't parse as u32 either.
+        db.set_setting("k", "-7").unwrap();
+        assert_eq!(read_u32(&db, "k", 42), 42);
+    }
+
+    #[test]
+    fn read_u32_reads_persisted_value() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("k", "1234").unwrap();
+        assert_eq!(read_u32(&db, "k", 0), 1234);
     }
 
     #[test]

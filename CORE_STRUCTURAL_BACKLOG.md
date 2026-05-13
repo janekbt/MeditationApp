@@ -11,14 +11,6 @@ rationale.
 
 ## Tier 1 — High-impact, mostly mechanical
 
-### Deduplicate `read_bool` / `read_str` / `read_signal_mode`
-- `settings_keys::read_bool` is `pub`; `bells.rs:297-308`
-  reimplements `read_str` / `read_bool` / `read_signal_mode` as
-  module-private; `preset_config::snapshot` inlines a fourth set
-  as closures. All three share signature `(db, key, default)`.
-- Promote `settings_keys::{read_str, read_signal_mode, read_u32}`
-  to `pub`. Delete the bells.rs + preset_config copies.
-
 ### Add `pub use` at crate root
 - `lib.rs` has zero re-exports today; callers write
   `meditate_core::db::SignalMode`, `meditate_core::db::Session`.

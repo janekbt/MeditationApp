@@ -17,7 +17,7 @@ use crate::db::{
     SignalMode, VibrationPattern,
 };
 use crate::seeds::{BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID};
-use crate::settings_keys::parse_bool;
+use crate::settings_keys::{read_bool, read_signal_mode, read_str};
 
 // ── Bell-scheduling helpers ─────────────────────────────────────────
 // Pure functions the running tick uses to decide when each configured
@@ -356,24 +356,9 @@ impl BoxBreathCueConfig {
 // start time, from the settings rows the user has been editing in
 // the Setup view. Centralised so the Android shell can build the
 // same `BellCue` / `BoxBreathCueConfig` without re-implementing the
-// per-key fallback / parse rules each time.
-
-fn read_str(db: &Database, key: &str, default: &str) -> String {
-    db.get_setting(key, default).unwrap_or_else(|_| default.to_string())
-}
-
-fn read_bool(db: &Database, key: &str, default: bool) -> bool {
-    db.get_setting(key, crate::settings_keys::format_bool(default))
-        .map(|s| parse_bool(&s))
-        .unwrap_or(default)
-}
-
-fn read_signal_mode(db: &Database, key: &str, default: SignalMode) -> SignalMode {
-    db.get_setting(key, default.as_db_str())
-        .ok()
-        .and_then(|s| SignalMode::from_db_str(&s))
-        .unwrap_or(default)
-}
+// per-key fallback / parse rules each time. Reads route through
+// `settings_keys::read_*` so there's one canonical implementation
+// of the get-or-default recipe.
 
 /// Read the per-mode signal-mode override the user picked on the
 /// Setup view's "Cues" toggle group. Defaults to `Both` (no extra
