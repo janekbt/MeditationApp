@@ -20,20 +20,6 @@ pub enum Phase {
     HoldOut,
 }
 
-impl Phase {
-    /// Zero-based positional index in cycle order (In, HoldIn, Out,
-    /// HoldOut). Used for `BreathPattern::phase_min_secs` and any
-    /// shell-side iteration that needs a stable integer offset.
-    pub fn index(self) -> usize {
-        match self {
-            Phase::In => 0,
-            Phase::HoldIn => 1,
-            Phase::Out => 2,
-            Phase::HoldOut => 3,
-        }
-    }
-}
-
 /// Translatable key for the running-page phase label ("Breathe in",
 /// "Hold", "Breathe out"). The shell maps each variant to gettext;
 /// `Hold` covers both `HoldIn` and `HoldOut` because the user-facing
@@ -126,21 +112,9 @@ pub struct PhaseInfo {
 }
 
 impl BreathPattern {
-    /// Build a pattern from raw per-phase second counts. No clamping —
-    /// the caller is responsible for the active-phase ≥1 invariant.
-    /// `BreathPattern::clamp_from_raw` is the validated alternative.
-    pub fn from_durations(in_secs: u32, hold_in: u32, out_secs: u32, hold_out: u32) -> Self {
-        Self { in_secs, hold_in, out_secs, hold_out }
-    }
-
     /// Box breath: 4-4-4-4.
     pub fn box_breath() -> Self {
         Self { in_secs: 4, hold_in: 4, out_secs: 4, hold_out: 4 }
-    }
-
-    /// 4-7-8 (Weil) — inhale 4, hold 7, exhale 8, no final hold.
-    pub fn four_seven_eight() -> Self {
-        Self { in_secs: 4, hold_in: 7, out_secs: 8, hold_out: 0 }
     }
 
     /// Total cycle length. Sum of the four phase durations.
@@ -262,21 +236,6 @@ impl BreathPattern {
         }
     }
 
-    /// The phase that represents the end of a cycle — the one we
-    /// align session completion to. Prefers `HoldOut` if non-zero,
-    /// then `Out`, then `HoldIn`, then `In` (matches 4-7-8-0 style
-    /// patterns where the trailing hold is skipped).
-    pub fn last_phase(&self) -> Phase {
-        if self.hold_out > 0 {
-            Phase::HoldOut
-        } else if self.out_secs > 0 {
-            Phase::Out
-        } else if self.hold_in > 0 {
-            Phase::HoldIn
-        } else {
-            Phase::In
-        }
-    }
 }
 
 #[cfg(test)]
@@ -288,7 +247,7 @@ mod tests {
     }
 
     fn four_seven_eight() -> BreathPattern {
-        BreathPattern::four_seven_eight()
+        BreathPattern { in_secs: 4, hold_in: 7, out_secs: 8, hold_out: 0 }
     }
 
     // ── Invariants ──────────────────────────────────────────────────
@@ -355,18 +314,12 @@ mod tests {
         assert_eq!(clamp_session_secs(SESSION_MAX_SECS + 1), SESSION_MAX_SECS);
     }
 
-    // ── BreathPattern: cycle / from_durations ──────────────────────────
+    // ── BreathPattern: cycle / duration_for ────────────────────────────
 
     #[test]
     fn cycle_sums_all_four_phases() {
         assert_eq!(box_pattern().cycle(), Duration::from_secs(16));
         assert_eq!(four_seven_eight().cycle(), Duration::from_secs(19));
-    }
-
-    #[test]
-    fn from_durations_assembles_an_arbitrary_pattern() {
-        let p = BreathPattern::from_durations(5, 5, 5, 5);
-        assert_eq!(p.cycle(), Duration::from_secs(20));
     }
 
     #[test]
@@ -483,26 +436,6 @@ mod tests {
         // t=4 starts HoldIn — remaining should be the full HoldIn duration.
         let info = box_pattern().phase_at(Duration::from_secs(4));
         assert_eq!(info.remaining, Duration::from_secs(4));
-    }
-
-    // ── last_phase ─────────────────────────────────────────────────────
-
-    #[test]
-    fn last_phase_prefers_trailing_nonzero() {
-        assert_eq!(box_pattern().last_phase(), Phase::HoldOut);
-        assert_eq!(four_seven_eight().last_phase(), Phase::Out);
-        let only_in = BreathPattern::from_durations(5, 0, 0, 0);
-        assert_eq!(only_in.last_phase(), Phase::In);
-    }
-
-    // ── Phase::index ───────────────────────────────────────────────────
-
-    #[test]
-    fn phase_index_matches_cycle_order() {
-        assert_eq!(Phase::In.index(), 0);
-        assert_eq!(Phase::HoldIn.index(), 1);
-        assert_eq!(Phase::Out.index(), 2);
-        assert_eq!(Phase::HoldOut.index(), 3);
     }
 
     // ── perimeter_point ─────────────────────────────────────────────
