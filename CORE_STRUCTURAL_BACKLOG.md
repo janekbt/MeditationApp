@@ -611,15 +611,6 @@ module.
   `re_trigger` is false; otherwise return a "must loop again"
   signal to the worker.
 
-### `streak_filtered` panics on `NaiveDate::MIN_DATE`
-- `meditate-core/src/db.rs:3959, 3972` — `today.pred_opt().expect(
-  "date underflow")` and `succ_opt`/`pred_opt` chains in the
-  streak walk.
-- Same fix family as the already-flagged `db.rs:3761`
-  (`DbError::DateOutOfRange`); bundle in the same wave. Panic
-  surface is the streak read-path, called from the Setup view on
-  every open — not just the import path.
-
 ## Tier 1 — Fourth-pass additions
 
 ### Push four decision predicates to core

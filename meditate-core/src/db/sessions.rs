@@ -539,7 +539,16 @@ impl Database {
         let Some(&most_recent) = days.last() else {
             return Ok(0);
         };
-        let yesterday = today.pred_opt().expect("date underflow");
+        // `pred_opt()` returns None only at `NaiveDate::MIN_DATE`
+        // (chrono year -262144). Practically unreachable on real
+        // session data, but the streak path runs on every Setup
+        // view open — a panic here would be a sharp edge for any
+        // future caller (CSV import of a synthetic test row, fuzz
+        // input, etc.). Treat the boundary as "no prior day exists"
+        // → no streak.
+        let Some(yesterday) = today.pred_opt() else {
+            return Ok(0);
+        };
         let mut expected = if most_recent == today {
             today
         } else if most_recent == yesterday {
@@ -552,7 +561,10 @@ impl Database {
         for day in days.iter().rev() {
             if *day == expected {
                 count += 1;
-                expected = expected.pred_opt().expect("date underflow");
+                // Same boundary: walking past MIN_DATE means the
+                // streak terminates here, not that we panic.
+                let Some(prev) = expected.pred_opt() else { break };
+                expected = prev;
             } else {
                 break;
             }
@@ -3424,6 +3436,25 @@ mod tests {
         assert_eq!(db.get_streak_for_label(today, evening).unwrap(), 1);
         // Overall streak (no filter): today + yesterday + day-2 = 3.
         assert_eq!(db.get_streak(today).unwrap(), 3);
+    }
+
+    #[test]
+    fn streak_at_naive_date_min_does_not_panic() {
+        // chrono's NaiveDate::MIN (year -262144) has no pred_opt;
+        // the streak walk used to .expect() on it. Practically
+        // unreachable on real data, but the Setup view hits the
+        // streak path on every open — a panic there for any caller
+        // synthesising a date (CSV import, fuzz, future tests)
+        // would be a sharp edge. Verify the saturation path
+        // returns 0 rather than panicking.
+        let db = Database::open_in_memory().unwrap();
+        // Without any sessions, returns 0 trivially.
+        assert_eq!(db.get_streak(chrono::NaiveDate::MIN).unwrap(), 0);
+        // Insert a session at MIN too — exercises the loop's
+        // saturating pred path.
+        db.insert_session(&session_on("-262144-01-01")).unwrap();
+        let n = db.get_streak(chrono::NaiveDate::MIN).unwrap();
+        assert!(n >= 0, "no panic, returns a valid count: got {n}");
     }
 
     #[test]
