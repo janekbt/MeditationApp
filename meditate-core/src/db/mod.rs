@@ -1,3 +1,21 @@
+//! SQLite persistence tier: the materialised cache tables, the
+//! append-only event log, the apply/replay dispatch that
+//! materialises events into cache rows, and the per-entity CRUD
+//! around it. Submodules split the surface by entity type
+//! (sessions, labels, presets, bell_sounds, …) plus the cross-
+//! cutting machinery (events, device, schema, error, seeds).
+//!
+//! `Database` is the single owning struct — every public method on
+//! it is part of the contract the shells consume. The `pub(super)`
+//! helpers (read_kv / write_kv / existing_rowid_by_uuid /
+//! map_unique_err / winning_mutate) are crate-internal building
+//! blocks shared across the submodules.
+//!
+//! No GTK dependencies; an Android shell consumes this crate
+//! verbatim. Mechanism conventions (per-connection PRAGMAs, the
+//! 8-second busy_timeout, prepare_cached for hot loops) live
+//! inside `init`.
+
 use rusqlite::Connection;
 use std::path::Path;
 

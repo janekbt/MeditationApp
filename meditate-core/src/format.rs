@@ -1,3 +1,20 @@
+//! User-facing duration formatting + the typed translatable-key
+//! enums the shells consume.
+//!
+//! Two halves:
+//!   - **Plain formatters** (`format_time`, `format_hhmm`,
+//!     `format_hm_compact`, etc.) — pure number-to-string. The
+//!     translatable typed-key helpers below are the i18n-clean way
+//!     to render copy; the plain formatters are fine for non-
+//!     translatable digit-only output.
+//!   - **Typed translatable keys** (`StreakKey`, `SyncedAgoKey`,
+//!     `BellTitleKey`, `BellsCountKey`, `TimingKey`, `DateGroupKey`,
+//!     …) — every helper that produces user-visible text returns
+//!     a typed enum capturing every choice the shell needs to
+//!     render; the shell maps each variant to its gettext template.
+//!     Tests in core assert on the typed value, never on rendered
+//!     strings.
+
 use std::time::Duration;
 
 pub fn parse_hms_duration(s: &str) -> Option<Duration> {

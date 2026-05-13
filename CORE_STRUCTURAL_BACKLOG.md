@@ -229,13 +229,6 @@ rationale.
 
 ## Tier 3 — Second-pass additions
 
-### Missing `//!` doc comments
-- `meditate-core/src/lib.rs`, `db.rs`, `format.rs`, `timer.rs`
-  all lack a top-of-file `//!` doc. The four biggest /
-  highest-traffic modules in the crate.
-- Add one-paragraph `//!` to each so the rustdoc index is
-  navigable.
-
 ### Move `src/bin/*_smoke.rs` to `examples/` or delete
 - Five `bin/` smoke harnesses (`breath_smoke`, `record_smoke`,
   `smoke`, `sync_smoke`, `sync_pipeline_smoke`) are not

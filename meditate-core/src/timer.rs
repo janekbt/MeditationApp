@@ -1,3 +1,10 @@
+//! Standalone timer primitives — `CountdownTimer` and `Stopwatch`.
+//! `Stopwatch` is used inside `Session` for the pause-aware elapsed-
+//! time clock; `CountdownTimer` and `Countdown` survive primarily
+//! for the `bin/*_smoke.rs` harnesses. Production timing logic
+//! lives in `session/` (see `Session::tick`) which owns its own
+//! phase clocks.
+
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
