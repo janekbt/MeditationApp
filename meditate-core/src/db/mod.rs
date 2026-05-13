@@ -136,11 +136,42 @@ pub fn mint_uuid() -> String {
 
 
 impl Database {
+    /// Open an ephemeral in-memory database — same shape as
+    /// `open`, including the full SQL schema, but with no on-disk
+    /// state and no WAL pragmas (a no-op on `:memory:`). Used by
+    /// every unit test in the workspace as the standard fixture.
+    ///
+    /// Like `open`, the caller still has to drive the seeds
+    /// (`seed_all_non_audio`, `seed_bell_sounds_with_paths`) —
+    /// `Database::open*` does the schema + integrity check only.
     pub fn open_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
         Self::init(conn)
     }
 
+    /// Open or create the SQLite database at `path`. On return:
+    ///
+    /// - The full SQL schema is applied (idempotent — re-opens
+    ///   skip table creation via `CREATE TABLE IF NOT EXISTS`).
+    /// - `PRAGMA user_version` is stamped at `SCHEMA_VERSION`.
+    ///   A DB whose version exceeds this build is rejected with
+    ///   `DbError::SchemaVersionTooNew` (downgrade guard).
+    /// - WAL is on; `synchronous=NORMAL`; `foreign_keys=ON`;
+    ///   `busy_timeout=8s`.
+    /// - `PRAGMA quick_check` has run; corruption is logged via
+    ///   `diag::log` but does NOT block the open.
+    /// - Reads + writes are immediately safe.
+    ///
+    /// Seed data (default labels, presets, vibration patterns,
+    /// bell sounds) is NOT inserted here — the caller drives those
+    /// via `seed_all_non_audio` + the shell-specific
+    /// `seed_bell_sounds_with_paths` after open returns. This
+    /// keeps the platform-specific bits (gresource paths on gtk,
+    /// asset URIs on Android) out of core.
+    ///
+    /// Not thread-safe: a `Database` value wraps a single rusqlite
+    /// `Connection`; callers needing cross-thread access wrap the
+    /// value in `Arc<Mutex<_>>`.
     pub fn open(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)?;
         // Wait up to 8s when another writer holds the lock instead of

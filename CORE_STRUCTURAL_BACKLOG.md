@@ -476,10 +476,6 @@ the code alone.
   line. Add a paragraph in the root README pointing here.
 
 ### Critical-path APIs lack `///` doc-comments
-- `Database::open` / `Database::open_in_memory` (`db.rs:687-712`)
-  — zero `///`. The 17-line internal comment explains WAL but
-  not "are seeds run here?" (no, caller drives them), "is the
-  DB ready for reads?" (yes), "thread-safe?" (no).
 - `Sync::pull` (`orchestrator.rs:145`) and `Sync::push` (`:220`)
   — no caller-facing contract: what state mutates, what events
   emit, what errors are recoverable.
