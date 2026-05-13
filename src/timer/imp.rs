@@ -2067,7 +2067,7 @@ impl TimerView {
         // only `prep_secs` and the construction call (start_prep vs.
         // start_running) differ.
         let build_timer_settings = |prep_dur: Option<Duration>| {
-            let Some(app) = self.get_app() else { return None; };
+            let app = self.get_app()?;
             let stopwatch_on = self.stopwatch_toggle_on.get();
             let target_secs = if stopwatch_on {
                 None
@@ -3119,7 +3119,7 @@ impl TimerView {
             StreakKey::Zero => crate::i18n::gettext("Start your streak today"),
             StreakKey::One => crate::i18n::ngettext("1 day streak", "{n} day streak", 1),
             StreakKey::Many(n) =>
-                crate::i18n::ngettext("1 day streak", "{n} day streak", n as u32)
+                crate::i18n::ngettext("1 day streak", "{n} day streak", n)
                     .replace("{n}", &n.to_string()),
         };
         self.streak_label.set_label(&text);
@@ -3799,12 +3799,12 @@ impl TimerView {
     /// schedule construction + jitter rolls live in core. Returns
     /// `(empty Vec, fresh seed)` when the master toggle is off so
     /// Session's per-tick check has nothing to do.
-    // Session-config builders — one-line wrappers around the
-    // core::bells::*_from_db readers so the shell's setup-state
-    // assembly hands the same SessionSettings to Session that the
-    // Android shell will. The math lives in core; this is just the
-    // `app.with_db(...)` ceremony.
-
+    ///
+    /// Session-config builders — one-line wrappers around the
+    /// `core::bells::*_from_db` readers so the shell's setup-state
+    /// assembly hands the same SessionSettings to Session that the
+    /// Android shell will. The math lives in core; this is just the
+    /// `app.with_db(...)` ceremony.
     fn build_session_bells(
         &self,
         total_target_secs: Option<u64>,
@@ -3895,10 +3895,6 @@ impl TimerView {
         let name = self.lookup_sound_name_for_setting("end_bell_sound");
         self.end_bell_sound_row.set_subtitle(&name);
     }
-
-    /// End-bell pattern row's subtitle reflects whichever
-    /// vibration_patterns row the end_bell_pattern setting points at.
-    /// Defaults to bundled Pulse on first ever read.
 
     /// Replace the current PatternPlayback handle. Disarms the old
     /// handle's Drop-cancel — a same-app `Vibrate(...)` already

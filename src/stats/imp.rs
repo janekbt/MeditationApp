@@ -325,13 +325,13 @@ impl StatsView {
         let (title, body) = match &key {
             InsightKey::CurrentStreak { days, is_record, best } => {
                 let body = if *is_record {
-                    ngettext("1 day — new record", "{n} days — new record", *days as u32)
+                    ngettext("1 day — new record", "{n} days — new record", *days )
                         .replace("{n}", &days.to_string())
                 } else if *best > *days {
                     ngettext(
                         "1 day · best was {best}",
                         "{n} days · best was {best}",
-                        *days as u32,
+                        *days ,
                     )
                         .replace("{n}", &days.to_string())
                         .replace("{best}", &best.to_string())

@@ -728,60 +728,6 @@ fn format_synced_ago(unix_ts: i64) -> String {
     }
 }
 
-#[cfg(test)]
-mod sync_status_tests {
-    //! `format_synced_ago` is the only piece of E.5 worth a unit test —
-    //! the GTK glue (template wiring, tooltip text setting, CSS class
-    //! flips) is verified by running the app. The "ago" formatting is
-    //! pure logic and easy to pin: pick a fixed `now` via the formula
-    //! and step `unix_ts` through each bucket boundary.
-    use super::format_synced_ago;
-
-    fn ago(unix_ts_offset_secs: i64) -> String {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
-        format_synced_ago(now + unix_ts_offset_secs)
-    }
-
-    #[test]
-    fn under_a_minute_says_just_now() {
-        assert!(ago(-30).contains("just now"),
-            "30 s ago should fall into the 'just now' bucket, got `{}`", ago(-30));
-        assert!(ago(0).contains("just now"));
-    }
-
-    #[test]
-    fn between_one_minute_and_an_hour_uses_minutes() {
-        assert!(ago(-90).contains("minute"));
-        assert!(ago(-3540).contains("minute"),
-            "59 minutes still falls in the minutes bucket, got `{}`", ago(-3540));
-    }
-
-    #[test]
-    fn between_one_hour_and_a_day_uses_hours() {
-        assert!(ago(-3600).contains("hour"));
-        assert!(ago(-86399).contains("hour"));
-    }
-
-    #[test]
-    fn beyond_a_day_uses_days() {
-        assert!(ago(-86400).contains("day"));
-        assert!(ago(-86400 * 7).contains("day"));
-    }
-
-    #[test]
-    fn future_timestamps_clamp_to_just_now_rather_than_negative() {
-        // Defensive: clock skew between two devices can land a
-        // timestamp slightly in the future. Avoid showing "synced -3
-        // minutes ago" via the saturating max(0) clamp.
-        let s = ago(60);  // 60 s in the future
-        assert!(s.contains("just now"),
-            "future timestamps should clamp to 'just now', got `{s}`");
-    }
-}
-
 /// Read the accent colour from libadwaita's StyleManager (respects the
 /// user's chosen system accent on GNOME 46+). Falls back to the default
 /// Adwaita blue only if the lookup somehow misses.
@@ -960,5 +906,59 @@ impl MeditateWindow {
                 }
             ),
         );
+    }
+}
+
+#[cfg(test)]
+mod sync_status_tests {
+    //! `format_synced_ago` is the only piece of E.5 worth a unit test —
+    //! the GTK glue (template wiring, tooltip text setting, CSS class
+    //! flips) is verified by running the app. The "ago" formatting is
+    //! pure logic and easy to pin: pick a fixed `now` via the formula
+    //! and step `unix_ts` through each bucket boundary.
+    use super::format_synced_ago;
+
+    fn ago(unix_ts_offset_secs: i64) -> String {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        format_synced_ago(now + unix_ts_offset_secs)
+    }
+
+    #[test]
+    fn under_a_minute_says_just_now() {
+        assert!(ago(-30).contains("just now"),
+            "30 s ago should fall into the 'just now' bucket, got `{}`", ago(-30));
+        assert!(ago(0).contains("just now"));
+    }
+
+    #[test]
+    fn between_one_minute_and_an_hour_uses_minutes() {
+        assert!(ago(-90).contains("minute"));
+        assert!(ago(-3540).contains("minute"),
+            "59 minutes still falls in the minutes bucket, got `{}`", ago(-3540));
+    }
+
+    #[test]
+    fn between_one_hour_and_a_day_uses_hours() {
+        assert!(ago(-3600).contains("hour"));
+        assert!(ago(-86399).contains("hour"));
+    }
+
+    #[test]
+    fn beyond_a_day_uses_days() {
+        assert!(ago(-86400).contains("day"));
+        assert!(ago(-86400 * 7).contains("day"));
+    }
+
+    #[test]
+    fn future_timestamps_clamp_to_just_now_rather_than_negative() {
+        // Defensive: clock skew between two devices can land a
+        // timestamp slightly in the future. Avoid showing "synced -3
+        // minutes ago" via the saturating max(0) clamp.
+        let s = ago(60);  // 60 s in the future
+        assert!(s.contains("just now"),
+            "future timestamps should clamp to 'just now', got `{s}`");
     }
 }

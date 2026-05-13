@@ -42,22 +42,22 @@
 //! ## Module map
 //!
 //! - `db`            — SQLite cache, event log, apply/replay,
-//!                     recompute_* dispatch. Owns `Database`.
+//!   recompute_* dispatch. Owns `Database`.
 //! - `sync/`         — WebDAV push/pull engine, settings, coordinator.
 //! - `session`       — session-mode state machine (`Session`,
-//!                     `Effect`, `TickOutcome`).
+//!   `Effect`, `TickOutcome`).
 //! - `bells`         — interval / starting / end bell scheduling.
 //! - `breath`        — box-breath phases and perimeter math.
 //! - `vibration`     — vibration pattern editor + envelope helpers.
 //! - `format`        — translatable typed keys + plain formatters
-//!                     (durations, counters, mini-stats).
+//!   (durations, counters, mini-stats).
 //! - `goal`          — weekly-goal snapshot logic.
 //! - `insights`      — derived stats (week-over-week, milestones).
 //! - `contrib`       — contribution-heatmap data model.
 //! - `preset_config` — JSON-encoded preset payload (Timer / BoxBreath /
-//!                     Guided).
+//!   Guided).
 //! - `time`          — `boot_time_now` (suspend-resilient) +
-//!                     ISO-to-unix helpers.
+//!   ISO-to-unix helpers.
 //! - `diag`          — ring-buffer log to `<data>/diagnostics.log`.
 //! - `data_io`       — CSV import / export of sessions.
 //! - `seeds`         — bundled vibration patterns + default presets.

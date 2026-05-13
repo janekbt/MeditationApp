@@ -165,7 +165,7 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_secs(1));
         let after = unix_now();
         assert!(
-            after >= before + 1,
+            after > before,
             "unix_now did not advance across a 1s sleep: before={before} after={after}"
         );
     }

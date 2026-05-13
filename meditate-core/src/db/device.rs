@@ -58,10 +58,10 @@ impl Database {
         self.lamport_clock()
     }
 
-    /// Apply the Lamport observation rule: set local = max(local, remote)
-    /// + 1. Returns the new local value. Always strictly increases the
-    /// clock, so any event authored after observation sorts after the
-    /// remote one we just witnessed.
+    /// Apply the Lamport observation rule: set `local = max(local,
+    /// remote) + 1`, returning the new local value. Always strictly
+    /// increases the clock, so any event authored after observation
+    /// sorts after the remote one we just witnessed.
     pub(crate) fn observe_remote_lamport(&self, remote_ts: i64) -> Result<i64> {
         let _ = self.device_id()?;
         // Single statement, no read-modify-write race: SQL computes

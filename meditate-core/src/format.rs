@@ -1259,8 +1259,10 @@ mod tests {
         assert_eq!(PREP_SECS_MIN, 5);
         assert_eq!(PREP_SECS_MAX, 300);
         assert_eq!(PREP_SECS_DEFAULT, 30);
-        // Default must lie in the allowed range.
-        assert!(PREP_SECS_MIN <= PREP_SECS_DEFAULT && PREP_SECS_DEFAULT <= PREP_SECS_MAX);
+        // Default must lie in the allowed range. const block so the
+        // check fires at compile time — a future edit that breaks the
+        // invariant fails to build, not at test-run time.
+        const { assert!(PREP_SECS_MIN <= PREP_SECS_DEFAULT && PREP_SECS_DEFAULT <= PREP_SECS_MAX); }
     }
 
     #[test]

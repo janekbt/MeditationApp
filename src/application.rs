@@ -391,12 +391,12 @@ mod imp {
             let title = crate::i18n::ngettext(
                 "Recovered 1 min session",
                 "Recovered {n} min session",
-                minutes as u32,
+                minutes,
             ).replace("{n}", &minutes.to_string());
 
             let toast = adw::Toast::builder()
                 .title(&title)
-                .button_label(&crate::i18n::gettext("Undo"))
+                .button_label(crate::i18n::gettext("Undo"))
                 .timeout(8)
                 .build();
 

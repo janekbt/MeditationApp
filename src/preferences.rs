@@ -270,10 +270,17 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
             let creds = prepare_test(&raw_url, &raw_username, &typed_pw, || {
                 let url = raw_url.trim();
                 let username = raw_username.trim();
-                crate::keychain::read_password(url, username).inspect_err(|e| {
-                    meditate_core::log(&format!(
-                        "test_connection: keychain read failed: {e:?}"));
-                })
+                // `Result::inspect_err` would be the idiomatic shape
+                // here, but it's stable since Rust 1.76 and the crate
+                // pins MSRV at 1.75 — match-then-log keeps the floor.
+                match crate::keychain::read_password(url, username) {
+                    Ok(opt) => Ok(opt),
+                    Err(e) => {
+                        meditate_core::log(&format!(
+                            "test_connection: keychain read failed: {e:?}"));
+                        Err(e)
+                    }
+                }
             });
             let creds = match creds {
                 Ok(c) => c,

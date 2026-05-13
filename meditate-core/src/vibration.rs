@@ -744,7 +744,7 @@ mod tests {
         // Bar-style master: first three at 200 ms, rest at 50 ms.
         // Stride = 8. Chunk 1 starts at master[8].
         let mut m = vec![(0.5, 200u32); 3];
-        m.extend(std::iter::repeat((0.5, 50u32)).take(20));
+        m.extend(std::iter::repeat_n((0.5, 50u32), 20));
         // master[0..8] = 3 × 200 + 5 × 50 = 850 ms.
         assert_eq!(chunk_start_offset_ms(&m, 1), 850);
     }

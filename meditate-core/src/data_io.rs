@@ -157,6 +157,14 @@ pub fn export_csv(db: &Database, path: &Path) -> Result<usize, DataIoError> {
 
 // ── Import ──────────────────────────────────────────────────────────────
 
+/// One CSV import row decoded into the second-pass shape: unix-secs
+/// start, duration, mode, optional note, and the index into the
+/// caller's parallel `label_names` vec (`usize::MAX` for "no label").
+/// The two-pass design lets `insert_sessions_with_labels` resolve
+/// every label name to a rowid in one batch before the per-session
+/// insert loop runs.
+pub type ImportedRow = (i64, u32, SessionMode, Option<String>, usize);
+
 pub fn import_csv(db: &Database, path: &Path) -> Result<usize, DataIoError> {
     let file = File::open(path)?;
     let mut rdr = csv::Reader::from_reader(BufReader::new(file));
@@ -164,7 +172,7 @@ pub fn import_csv(db: &Database, path: &Path) -> Result<usize, DataIoError> {
     // Pull every row into memory first so the whole import happens inside
     // a single DB transaction.
     let mut label_names: Vec<String> = Vec::new();
-    let mut rows: Vec<(i64, u32, SessionMode, Option<String>, usize)> = Vec::new();
+    let mut rows: Vec<ImportedRow> = Vec::new();
 
     for (i, record) in rdr.records().enumerate() {
         let rec = record?;
@@ -235,14 +243,14 @@ pub fn import_csv(db: &Database, path: &Path) -> Result<usize, DataIoError> {
 pub fn parse_insighttimer_csv<F>(
     path: &Path,
     parse_dt: F,
-) -> Result<(Vec<String>, Vec<(i64, u32, SessionMode, Option<String>, usize)>), DataIoError>
+) -> Result<(Vec<String>, Vec<ImportedRow>), DataIoError>
 where
     F: Fn(&str) -> Option<i64>,
 {
     let file = File::open(path)?;
     let mut rdr = csv::Reader::from_reader(BufReader::new(file));
     let mut label_names: Vec<String> = Vec::new();
-    let mut rows: Vec<(i64, u32, SessionMode, Option<String>, usize)> = Vec::new();
+    let mut rows: Vec<ImportedRow> = Vec::new();
     for (i, record) in rdr.records().enumerate() {
         let rec = record?;
         let line = i + 2;

@@ -200,6 +200,7 @@ impl ActiveBell {
     ///   - `Interval`: rerolls `next_ring_secs` using one draw from
     ///     `rng()` for the jitter pick.
     ///   - `Fixed`: flips `fired` to true.
+    ///
     /// Returns `true` if the caller should dispatch this bell's
     /// playback now. `rng()` is only called on an `Interval` fire;
     /// `Fixed` and the no-fire branches never touch it.
@@ -1322,7 +1323,7 @@ mod tests {
         // random_unit just below 1.0 → just below +span. For base=9 ±30%,
         // upper bound is 540 + 162 = 702.
         let v = next_interval_ring_secs(0, 9, 30, 0.9999);
-        assert!(v <= 702 && v >= 700, "got {}", v);
+        assert!((700..=702).contains(&v), "got {}", v);
     }
 
     #[test]

@@ -300,7 +300,7 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{test_helpers::*, Event};
+    use crate::db::Event;
     use crate::seeds::{BUNDLED_BELL_UUID, BUNDLED_GONG_UUID};
 
     fn synth_interval_bell_insert(

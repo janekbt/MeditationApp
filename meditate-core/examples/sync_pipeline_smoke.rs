@@ -221,7 +221,7 @@ fn insert_session(db: &Database, start_iso: &str, secs: u32, notes: Option<&str>
 }
 
 fn update_session_notes(db: &Database, id: i64, notes: &str) {
-    let current = meditate_core::db::list_sessions_from_db(&db).unwrap()
+    let current = meditate_core::db::list_sessions_from_db(db).unwrap()
         .into_iter()
         .find(|(rid, _)| *rid == id)
         .map(|(_, s)| s)

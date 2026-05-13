@@ -313,7 +313,7 @@ pub fn total_seconds_from_db(db: &Database) -> Result<i64> {
     )?)
 }
 pub fn total_minutes_from_db(db: &Database) -> Result<i64> {
-    Ok(total_seconds_from_db(&db)? / 60)
+    Ok(total_seconds_from_db(db)? / 60)
 }
 /// Per-label session count. `None` represents unlabeled sessions.
 pub fn count_sessions_by_label_from_db(db: &Database) -> Result<Vec<(Option<String>, i64)>> {
@@ -3497,8 +3497,10 @@ mod tests {
         // Insert a session at MIN too — exercises the loop's
         // saturating pred path.
         db.insert_session(&session_on("-262144-01-01")).unwrap();
-        let n = get_streak_from_db(&db, chrono::NaiveDate::MIN).unwrap();
-        assert!(n >= 0, "no panic, returns a valid count: got {n}");
+        // `unwrap()` is the "doesn't panic" check — the count's value
+        // doesn't matter, only that the saturation path doesn't trip
+        // the underlying chrono predecessor at MIN_DATE.
+        get_streak_from_db(&db, chrono::NaiveDate::MIN).unwrap();
     }
 
     #[test]

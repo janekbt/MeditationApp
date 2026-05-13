@@ -368,12 +368,12 @@ fn main() {
 
     let state = |db: &Database| {
         // Project SessionMode to its db_str so the tuple is Ord-comparable.
-        let mut sessions: Vec<_> = meditate_core::db::list_sessions_from_db(&db).unwrap().into_iter()
+        let mut sessions: Vec<_> = meditate_core::db::list_sessions_from_db(db).unwrap().into_iter()
             .map(|(_, s)| (s.uuid.clone(), s.start_iso.clone(), s.duration_secs,
                 s.label_id.is_some(), s.notes.clone(), s.mode.as_db_str().to_string()))
             .collect();
         sessions.sort();
-        let mut labels: Vec<_> = meditate_core::db::list_labels_from_db(&db).unwrap().into_iter()
+        let mut labels: Vec<_> = meditate_core::db::list_labels_from_db(db).unwrap().into_iter()
             .map(|l| (l.uuid.clone(), l.name.clone())).collect();
         labels.sort();
         let stretch = db.get_setting("stretch_minutes", "?").unwrap();
@@ -493,26 +493,26 @@ fn drain(db: &Database) -> Vec<Event> {
 }
 
 fn print_state(label: &str, db: &Database) {
-    let sessions = meditate_core::db::list_sessions_from_db(&db).unwrap();
-    let labels = meditate_core::db::list_labels_from_db(&db).unwrap();
+    let sessions = meditate_core::db::list_sessions_from_db(db).unwrap();
+    let labels = meditate_core::db::list_labels_from_db(db).unwrap();
     println!("  [{label}]: {} session(s), {} label(s), lamport={}",
         sessions.len(), labels.len(), db.lamport_clock().unwrap());
 }
 
 fn assert_states_match(a: &Database, b: &Database) {
-    let mut a_sessions: Vec<_> = meditate_core::db::list_sessions_from_db(&a).unwrap().into_iter()
+    let mut a_sessions: Vec<_> = meditate_core::db::list_sessions_from_db(a).unwrap().into_iter()
         .map(|(_, s)| (s.uuid.clone(), s.start_iso.clone(), s.duration_secs, s.notes.clone()))
         .collect();
-    let mut b_sessions: Vec<_> = meditate_core::db::list_sessions_from_db(&b).unwrap().into_iter()
+    let mut b_sessions: Vec<_> = meditate_core::db::list_sessions_from_db(b).unwrap().into_iter()
         .map(|(_, s)| (s.uuid.clone(), s.start_iso.clone(), s.duration_secs, s.notes.clone()))
         .collect();
     a_sessions.sort();
     b_sessions.sort();
     assert_eq!(a_sessions, b_sessions, "session sets diverged");
 
-    let mut a_labels: Vec<_> = meditate_core::db::list_labels_from_db(&a).unwrap().into_iter()
+    let mut a_labels: Vec<_> = meditate_core::db::list_labels_from_db(a).unwrap().into_iter()
         .map(|l| (l.uuid.clone(), l.name.clone())).collect();
-    let mut b_labels: Vec<_> = meditate_core::db::list_labels_from_db(&b).unwrap().into_iter()
+    let mut b_labels: Vec<_> = meditate_core::db::list_labels_from_db(b).unwrap().into_iter()
         .map(|l| (l.uuid.clone(), l.name.clone())).collect();
     a_labels.sort();
     b_labels.sort();
