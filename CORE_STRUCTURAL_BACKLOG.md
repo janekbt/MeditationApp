@@ -11,67 +11,181 @@ rationale.
 
 ## Tier 1 — High-impact, mostly mechanical
 
-## Tier 2 — Medium impact, light design
+### Security: unbounded body read on WebDAV GET
+- `meditate-core/src/sync/webdav.rs:182-184` calls
+  `resp.into_reader().read_to_end(&mut body)` with no cap.
+  `pull` then `serde_json::from_slice` on the result
+  (`orchestrator.rs:192`). Custom-sound pull enforces
+  `MAX_CUSTOM_BELL_BYTES` *after* the read.
+- A malicious / compromised Nextcloud (or one a redirect points
+  to) can OOM the client by serving a multi-GB body. The 10-MB
+  size check on sound bodies is post-buffer.
+- Fix: cap reads via `Read::take(N)` with caps per response type
+  (64 MB for event bundles, 11 MB for custom sounds), reject on
+  hit.
 
-## Tier 3 — Judgment calls
+### Security: `ureq` Agent has no redirect or scheme policy
+- `meditate-core/src/sync/webdav.rs:122-129` builds the Agent
+  with only timeouts. Default = follow 5 redirects.
+  `Authorization` header IS preserved on same-host redirects.
+- ureq 2.x strips `Authorization` on cross-host redirects since
+  2.4, mitigating most credential-exfil — but mixed-case host
+  comparisons and IDN tricks have historical bypasses.
+- Fix: `.redirects(0)` on the Agent builder; surface a redirect
+  explicitly as a sync error so the user knows their server
+  config changed.
 
-### Extract `vibration::PreviewToggle` into generic `preview.rs`
-- Currently named after its first consumer (vibration patterns).
-  Sound chooser will want the same toggle / cancel / auto-revert
-  state machine when Android sound preview lands.
-- Move to `preview.rs`. Both `vibration` and `sound` `pub use`.
+### i18n: `format_hm_compact` / `format_hm_mins` / `format_hm_secs` return English-baked strings
+- All three (`format.rs`) return `"1h 4m"` / `"1h"` / `"4m"`
+  with hardcoded English unit suffixes. Called directly into
+  user-visible labels: `src/stats/imp.rs:170, 547` (weekly-goal
+  subtitle, mini-stat tile, Y-axis ticks).
+- Single biggest i18n leak in the codebase.
+- Fix: convert to typed `HmKey::{Zero, MinsOnly(u64),
+  HoursOnly(u64), HoursMins(u64,u64)}`; shell maps each variant
+  to `gettext("{h}h {m}m")` etc. Same three call sites collapse
+  to one match.
 
-### Consolidate `labels` + `goal` + `contrib` under `stats/`
-- All three are pure stats/score helpers (224, 210, 191 lines).
-- Move under `stats/{labels, goal, contrib}.rs`. Re-export at
-  crate root via `pub use stats::*` to avoid breaking shell
-  imports of `meditate_core::labels::*` / `goal::*` / `contrib::*`.
+### i18n: 2-form plural ceiling + no `ngettext` anywhere in the shell
+- Every "many" arm of every typed-key enum (`StreakKey::{One,
+  Many}`, `SessionCountKey::{One, Many}`, `IntervalsCountKey`,
+  `BellsPart`, `SyncedAgoKey`, `DeleteImpactKey`,
+  `InsightKey::CurrentStreak{days}`) is binary singular /
+  plural. The shell's `pluralize_sessions`
+  (`src/preferences.rs:675`) openly comments "we don't need
+  full ngettext support because English plurals are trivial."
+- That ships a Polish / Russian / Arabic regression the moment
+  a non-English `.po` is dropped in.
+- Per `feedback_meditate_keep_i18n`, translations are a planned
+  publish goal.
+- Fix: core keeps its variant + count (already correct).
+  Shell mapper calls `ngettext(singular_msgid, plural_msgid,
+  count)` instead of `gettext().replace("{n}", count.to_string())`.
 
-### Per-entity CRUD tombstone helper
-- `delete_interval_bell` / `delete_bell_sound` / `delete_preset` /
-  `delete_guided_file` / `delete_vibration_pattern` (and the
-  box-breath / session equivalents) follow the same "tombstone-
-  if-exists, no-op otherwise" pattern: open tx → check exists →
-  DELETE → emit tombstone event → commit. Repeated 7 times.
-- Extract `fn emit_tombstone_if_exists(table, uuid, kind) ->
-  Result<bool>` in `db/sync.rs`. Two-line callers replace ~10
-  lines × 7 sites.
+### `sync::backoff` uses `Instant::now()` (wall-clock-frozen on suspend)
+- `meditate-core/src/sync/backoff.rs:29,49,69,77` and the
+  sleep in `sync/orchestrator.rs:466-468` use `Instant`
+  (CLOCK_MONOTONIC, freezes during suspend).
+- A 30-s server-asked backoff that straddles a 10-min
+  suspend ends ~30 s after **resume**, not 30 s after the
+  429. Inconsistent with the codebase's deliberate
+  `boot_time_now()` discipline elsewhere.
+- Fix: switch to `Duration` (boot-time); pass `now: Duration`
+  to a `wait_for(now)` API. Drop `wait_until_now`/
+  `note_429` convenience wrappers — require callers to pass
+  a `boot_time_now()` value.
 
-### Per-entity `to_event_payload(row) -> serde_json::Value` helpers
-- `insert_*_with_uuid` and `update_*` build the same JSON payload
-  twice — once for the local INSERT/UPDATE, once for the event
-  payload. Drift between them is a silent peer-divergence bug
-  (sync replay rehydrates differently than the local row).
-- Add `fn to_event_payload(row: &<Entity>) -> serde_json::Value`
-  per entity. The insert/update sites build the row first, then
-  call the helper for the payload. Now any drift is a compile
+### `DbError::Sqlite`/`Csv` dead-end at user UI; `DuplicateLabel(name)` not surfaced
+- `src/db/mod.rs:200,229` maps every `DbError::Sqlite` to a
+  raw `rusqlite::Error` → generic toast. `DuplicateLabel`/
+  `Preset`/`GuidedFile`/`VibrationPattern` carry the name
+  but get folded back into a synthesized `SqliteFailure`
+  with developer-language "UNIQUE constraint failed" message.
+- Fix: map `DuplicateLabel(name)` directly to a translatable
+  user toast at `src/db/mod.rs:197`, NOT to a fake rusqlite
   error.
 
-## Tier 4 — Defer / discuss
+### `SyncCoordinator::request` has zero multi-thread tests
+- All 6 tests in `sync/coordinator.rs:108-173` are single-
+  threaded — exercise the API, not the atomic ordering. The
+  Tier-0 drop-trigger race already in backlog slipped past
+  because nothing pumps two `request()`s from different
+  threads.
+- Fix: loom (or `std::thread::spawn` × N + barrier) test
+  that 1000 races never lose a request.
 
-### `Result<()>` on writes that callers always `let _ =`
-- `labels::persist_active_for_mode`, `persist_uuid_for_mode`,
-  `goal::write_weekly_goal_mins` — own doc says callers should
-  `let _ =` since failure here only means the next launch shows
-  the prior value. By contrast `sync::settings` writes correctly
-  propagate (sync flow is transactional).
-- Option A: keep `Result<()>` (honest), add a `log_on_err(ctx)`
-  extension trait so call sites become `.log_on_err("persist
-  label active")` rather than mute `let _ =`.
-- Option B: add a sibling `*_silent(db, …)` variant that logs to
-  `diag::log` and returns `()`.
-- Subjective; pick one when next touching these helpers.
+### Panic-hook installation has no test verifying it writes
+- `diag.rs:102 install_panic_hook` is wired; only test
+  (`log_without_init_is_noop`) admits OnceLock prevents
+  real testing. A future refactor could silently drop the
+  hook and CI wouldn't notice.
+- Fix: forked-process test (`std::process::Command`
+  invoking the test binary with a `MEDITATE_PANIC_TEST=1`
+  env switch, asserting post-mortem log content).
 
-### Split `format.rs` further
-- After Tier 1 redistribution (scheduling math + prep helpers
-  move to `bells`), `format.rs` will still hold both number
-  formatting and the translatable-key enums.
-- Could split into `format/{duration, i18n_keys}.rs` later, but
-  the dust needs to settle from Tier 1 first.
+### Zero integration tests — `meditate-core/tests/` does not exist
+- All 933 tests are `#[cfg(test)] mod tests` inline. Cross-
+  module flows (create label → save preset → close DB →
+  reopen → sync push → wipe local → pull → verify preset
+  still references label by UUID) aren't covered. The 9-arm
+  `apply_event_inner` dispatch is tested per-arm but never
+  end-to-end across all entity types in one transaction.
+- Fix: start `meditate-core/tests/sync_roundtrip.rs` with one
+  such cross-cutting scenario; grow over time.
 
-## Tier 1 — Second-pass additions
+### Remaining `bool` parameters in public APIs
+High-leverage sites shipped (`DisplayMode`, `Channels`,
+`StarredState`); the original twelve-bool sweep proposed three
+more conversions that turned out marginal at the call-site level.
+Re-evaluate each individually if a touching commit lands nearby:
 
-## Tier 2 — Second-pass additions
+- `bells::clamp_signal_mode_for_haptic(mode, haptic_available: bool)`
+  — one consumer; an `enum HapticAvailability { Available, Absent }`
+  buys little versus a verb-named param.
+- `format::prep_target_duration(prep_active: bool, prep_secs: u32)`
+  — entangled with the `SessionSettings.target_secs: Option<u32>`
+  collapse below. Fold there.
+- `db::set_interval_bell_enabled(uuid, enabled: bool)` — the
+  method verb (`set_..._enabled`) already disambiguates the bool.
+- `db::is_label_name_taken_from_db(name, except_id: i64)` — not
+  actually a bool; the `0`-as-sentinel int is the footgun. Convert
+  to `Option<i64>` or `Except::{Any, Exclude(i64)}` independently.
+
+### `SessionSettings.target_secs: Option<u32>` collapses 3 distinct domain concepts
+- `None` means "stopwatch session, no end" (Timer),
+  "stopwatch box-breath" (BoxBreath), or "shouldn't
+  happen" (Guided always has it). Three `.expect("Overtime
+  requires a target")` panics at `session.rs:535, 684` are
+  the symptom. The phase-payload-hoist already in backlog
+  is the same root cause surfacing in `Session`; this is
+  the same in `SessionSettings`.
+- Fix: collapse `SessionSettings.mode + .target_secs +
+  .breath_pattern + .stopwatch_display` into one
+  `SessionShape` sum type: `Timer { target: SessionLength
+  }, BoxBreath { pattern, target }, Guided { duration_secs
+  }`. Eliminates four `.expect()`s and three "ignored
+  otherwise" doc comments.
+
+### Free-fn vs method inconsistency on the same enum
+- `breath::Phase::index()` is a method (`breath.rs:24`);
+  `breath::phase_running_label_key(Phase)` is a free fn
+  (`:46`); `breath::perimeter_point(Phase, t, pad, side)`
+  is free (`:62`). All three do a 4-arm match on `Phase`.
+- Also: `session::Session::toggle_action(ui_state)` is
+  associated fn but `session::ui_state(Option<&Session>)`
+  is free — symmetric API, asymmetric placement.
+- Also: `bells::ActiveBell` has methods AND a free
+  `bells::session_bells_from_db` builder.
+- Fix: pick "method-on-enum/struct when the receiver type
+  is the primary subject; free fn otherwise" and audit.
+  `Phase::running_label_key()`, `Phase::perimeter_point(t,
+  pad, side)`, `BellCue::resolve_sound_name(library)`.
+
+### `Audio device disappears mid-playback` — no error wiring
+- `src/sound.rs`. `gtk::MediaFile::for_file(...)` returned
+  objects never have `connect_error` or `notify::error`
+  hooked. Headphones unplug mid-session = bell silently
+  doesn't ring; next bell creates new MediaFiles with the
+  same dead pipeline. Session can't tell the user "bells
+  are no longer playing".
+- Fix: `media.connect_error(|_, _| diag::log(...))` plus a
+  one-shot toast.
+
+### No conditional PUT — concurrent push from two peers silently clobbers
+- `orchestrator.rs:91-94` trait `put()` is unconditional;
+  `HttpWebDav::put` (`webdav.rs:197-214`) emits no
+  `If-None-Match` / `If-Match`.
+- Bulk batch files use freshly-minted v4 uuids in the
+  filename, so two concurrent pushes land on different
+  files (safe). **But** the sounds path (`<base>/sounds/
+  <uuid>.<ext>`) IS deterministic on the bell uuid; two
+  peers re-uploading the same custom bell concurrently —
+  the second wins blindly. Low probability; consequence is
+  a corrupted audio file if the two PUTs race at TCP-byte
+  level on a non-atomic server.
+- Fix: add `If-None-Match: *` on sound PUTs.
+
+## Tier 2 — Medium impact, light design
 
 ### Consolidate `Phase` and `BoxBreathPhaseId` into one enum
 - Both live in `meditate-core/src/breath.rs` after the domain-
@@ -131,47 +245,6 @@ rationale.
   `format.rs` is genuine display formatters + the i18n typed-
   key enums. Rename to `display.rs` then.
 
-## Tier 3 — Second-pass additions
-
-### `pub const` audit for `pub(crate)` downgrades
-- Tunables that look internal:
-  - `sync::backoff::MAX_BACKOFF_SECS` — used only inside its
-    own module.
-  - `vibration::EDITOR_INTENSITY_STEP` / `EDITOR_MIN_POINT_SPACING_MS`
-    — UI editor consts; check shell callers, downgrade if none.
-  - `breath::PHASE_MAX_SECS` / `MIN_CYCLE_SECS` — used by
-    `clamp_session_secs` only.
-- Wire-format consts stay `pub` (all `seeds::*`, `paths::*`,
-  `sync::REMOTE_BASE_PATH`, `sync::settings::KEY_*`).
-
-## Tier 4 — Second-pass additions
-
-### Document Rust-tier referential-integrity contract
-- Only `sessions.label_id` has a SQL `REFERENCES`. Every other
-  cross-row reference (`sessions.guided_file_uuid`,
-  `interval_bells.vibration_pattern_uuid`,
-  `box_breath_phases.{sound_uuid, pattern_uuid}`) is enforced
-  in Rust only.
-- Adding FKs blindly would break sync replay races. Instead:
-  - Document the Rust-tier enforcement contract on `Database`
-    (top-of-file comment + per-method `// Caller must ensure`
-    notes).
-  - Consider an on-startup sweep that nulls dangling refs.
-
-### `Cargo.toml` optional features
-- `ureq` and `roxmltree` are only used by `sync/webdav.rs`;
-  `csv` is only used by `data_io.rs`; `mockito` is only used
-  by sync tests.
-- Could go behind `[features] sync` and `csv-io` so a future
-  minimal-core consumer can skip ~MB of deps. Not urgent —
-  there's only one binary today.
-
-## Tier 0 — Correctness bugs (third pass, jump-the-queue)
-
-## Tier 1 — Third-pass additions
-
-## Tier 2 — Third-pass additions
-
 ### `preset_config::snapshot` (~96 lines) + `apply` (~184 lines)
 - `preset_config.rs:267-362` (`snapshot`): three closure readers
   + four payload-builder blocks (label, starting/end/interval
@@ -210,48 +283,6 @@ rationale.
 - Fix: `fn sync<'a>(db: &'a Database, fs: &'a FakeWebDav) ->
   Sync<'a>` inside the existing test mod. ~120 lines saved.
 
-## Tier 3 — Third-pass additions
-
-### `preset_config.rs:400-405, 430-435` — covered above in Tier 2.
-
-### `Sync::new` test boilerplate — covered above in Tier 2.
-
-## Tier 4 — Third-pass additions
-
-### Dep bumps when next touching the dep tree
-- `ureq 2.12` → `3.x` (current is 3.x, released late 2024).
-- `rusqlite 0.32` → `0.36+`. Each is a breaking API bump in
-  rusqlite's versioning.
-- No security advisory; no urgency. Worth bumping next time
-  the dep tree is touched.
-
-## Test-fixture sprawl — scope expansion
-
-The existing Tier 3 `db/tests_common.rs` proposal extends beyond
-`db.rs`:
-- `bells::tests` has 5 fixture constructors (`interval_row`,
-  `cue`, `row`, `fixed_bell`, `interval_bell`).
-- `preset_config::tests::cfg_with_known_uuids` repeats the
-  same row constructions.
-- `data_io::tests::fresh_db`, `preset_config::tests::fresh_db`,
-  `goal::tests`, `settings_keys::tests` all open
-  `Database::open_in_memory().unwrap()` per test.
-- `vibration::tests::pattern`, `sound::tests::sound`,
-  `labels::tests::label` are one-liner row constructors that
-  could share a fixture trait.
-
-Expand scope: crate-wide `tests_common` module (feature-gated
-`#[cfg(test)]`) with `db()`, `interval_bell_row()`,
-`vibration_pattern()`, `bell_sound()`, `label()`, `ts(start_iso,
-dur)`, `make_event(...)` helpers. Importable from every test
-module.
-
-## Tier 0 — Fourth-pass additions
-
-## Tier 1 — Fourth-pass additions
-
-## Tier 2 — Fourth-pass additions
-
 ### Eliminate `session_data_to_core` / `session_from_core`
 - `src/db/mod.rs:164-191` — the only substantive translation in
   the shell DB wrapper. Reason: shell `Session.start_time: i64`
@@ -275,134 +306,6 @@ module.
 - Fix path B: add `DbError::is_unique_violation() -> bool` so
   shells stop forging fake sqlite errors.
 
-## Tier 4 — Fourth-pass additions
-
-### Storage waste on push retry
-- `meditate-core/src/sync/orchestrator.rs:258-277` — single bulk
-  PUT per push; `batch_uuid` minted before PUT, recorded only
-  after success. If PUT succeeds server-side but network drops
-  before client ack, next push uploads the SAME events under a
-  NEW `batch_uuid`. Peers' `known_event_uuids` dedup catches
-  them, but the remote dir accumulates N copies on N retries.
-- Not a correctness bug (convergence holds), but quota waste on
-  flaky networks.
-- Fix: hash the event-id-set into the batch_uuid so a retry with
-  the same events reuses the filename and a second PUT either
-  overwrites idempotently or 412s.
-
-### Pull `record_known_remote_file` loop in N separate transactions
-- `meditate-core/src/sync/orchestrator.rs:204-211`. `replay_events`
-  runs in one tx; the subsequent record loop runs in N separate
-  transactions. A crash between recording 3 and 5 means next
-  pull re-GETs the 2 missing files. Event-uuid dedup keeps
-  state correct — only bandwidth/IO wasted.
-
-### Lamport-clock drift growth pattern
-- `meditate-core/src/db.rs:1117-1119` — `apply_event_inner`
-  calls `observe_remote_lamport` per new remote event during
-  replay. `observe_remote_lamport = max(local, remote) + 1`, so
-  the local clock advances by at least 1 per remote event.
-- Two peers receiving the same N events in different orders end
-  up with DIFFERENT local clocks. Cache state still converges
-  (recompute uses event lamport, not local), but peers'
-  future-authored events have widely varying lamports.
-- Not a correctness bug — an unintended O(N) growth pattern.
-
-### `recompute_*` tiebreaker is weaker than `replay_events`
-- `meditate-core/src/db.rs:1201` and the parallel lines in each
-  `recompute_*` use `ORDER BY lamport_ts DESC, device_id DESC
-  LIMIT 1`. `replay_events` (`db.rs:1171-1175`) sorts by
-  `(lamport_ts, device_id, event_uuid)` for full determinism.
-- Identical `(lamport_ts, device_id)` is only reachable via
-  corrupted wire-format input (local `bump_lamport_clock`
-  guarantees uniqueness). Cosmetic; depends on malformed input.
-
-## Tier 0 — Fifth-pass additions
-
-## Tier 1 — Fifth-pass additions
-
-## Meta-audit notes — backlog reorganization (apply when implementing)
-
-Captured here, applied at implementation time rather than now to
-avoid silently losing items in a rewrite.
-
-### Re-tier
-- **Workspace declaration**: currently Tier 1 → **Tier 0**.
-  Foundation, not structural cleanup.
-- **`emit_event` takes no `&Transaction`**: Tier 2 → **Tier 1**.
-  Load-bearing invisible precondition.
-- **`streak_filtered` panics on `NaiveDate::MIN_DATE`**: Tier 0
-  → **Tier 2**. Bundle with the import-side fix (Tier 1
-  `DbError::DateOutOfRange`); real surface is `import_csv`, not
-  the streak path which only hits at year ±262144.
-- **`Vec::contains(&String)` allocation per iter**: Tier 2 →
-  **inline / Tier 3**.
-
-### Merge duplicates
-- **Test-fixture sprawl** is fragmented into 3 items (Tier 3 db,
-  Tier 2 sync-orch boilerplate, Tier 3 scope-expansion). Merge
-  into one Tier-2 "crate-wide `tests_common` module."
-- **`*_from_db` free-fn migration + `stats/` consolidation +
-  `get_running_average_secs` move** are the same direction. One
-  PR.
-
-## Tier 0 — None (sixth-pass)
-
-## Tier 1 — Sixth-pass additions
-
-### Security: unbounded body read on WebDAV GET
-- `meditate-core/src/sync/webdav.rs:182-184` calls
-  `resp.into_reader().read_to_end(&mut body)` with no cap.
-  `pull` then `serde_json::from_slice` on the result
-  (`orchestrator.rs:192`). Custom-sound pull enforces
-  `MAX_CUSTOM_BELL_BYTES` *after* the read.
-- A malicious / compromised Nextcloud (or one a redirect points
-  to) can OOM the client by serving a multi-GB body. The 10-MB
-  size check on sound bodies is post-buffer.
-- Fix: cap reads via `Read::take(N)` with caps per response type
-  (64 MB for event bundles, 11 MB for custom sounds), reject on
-  hit.
-
-### Security: `ureq` Agent has no redirect or scheme policy
-- `meditate-core/src/sync/webdav.rs:122-129` builds the Agent
-  with only timeouts. Default = follow 5 redirects.
-  `Authorization` header IS preserved on same-host redirects.
-- ureq 2.x strips `Authorization` on cross-host redirects since
-  2.4, mitigating most credential-exfil — but mixed-case host
-  comparisons and IDN tricks have historical bypasses.
-- Fix: `.redirects(0)` on the Agent builder; surface a redirect
-  explicitly as a sync error so the user knows their server
-  config changed.
-
-### i18n: `format_hm_compact` / `format_hm_mins` / `format_hm_secs` return English-baked strings
-- All three (`format.rs`) return `"1h 4m"` / `"1h"` / `"4m"`
-  with hardcoded English unit suffixes. Called directly into
-  user-visible labels: `src/stats/imp.rs:170, 547` (weekly-goal
-  subtitle, mini-stat tile, Y-axis ticks).
-- Single biggest i18n leak in the codebase.
-- Fix: convert to typed `HmKey::{Zero, MinsOnly(u64),
-  HoursOnly(u64), HoursMins(u64,u64)}`; shell maps each variant
-  to `gettext("{h}h {m}m")` etc. Same three call sites collapse
-  to one match.
-
-### i18n: 2-form plural ceiling + no `ngettext` anywhere in the shell
-- Every "many" arm of every typed-key enum (`StreakKey::{One,
-  Many}`, `SessionCountKey::{One, Many}`, `IntervalsCountKey`,
-  `BellsPart`, `SyncedAgoKey`, `DeleteImpactKey`,
-  `InsightKey::CurrentStreak{days}`) is binary singular /
-  plural. The shell's `pluralize_sessions`
-  (`src/preferences.rs:675`) openly comments "we don't need
-  full ngettext support because English plurals are trivial."
-- That ships a Polish / Russian / Arabic regression the moment
-  a non-English `.po` is dropped in.
-- Per `feedback_meditate_keep_i18n`, translations are a planned
-  publish goal.
-- Fix: core keeps its variant + count (already correct).
-  Shell mapper calls `ngettext(singular_msgid, plural_msgid,
-  count)` instead of `gettext().replace("{n}", count.to_string())`.
-
-## Tier 2 — Sixth-pass additions
-
 ### Performance: `get_median_duration_secs` materialises every duration in Rust
 - `meditate-core/src/db.rs:3856-3867`. Reads all 10k
   `duration_secs` rows via `query_map` then sorts in Rust.
@@ -411,7 +314,6 @@ avoid silently losing items in a rewrite.
   duration_secs ORDER BY duration_secs LIMIT 1 OFFSET (n-1)/2`.
   Add an index on `duration_secs` (none today).
 
-
 ### Security: secrets never zeroed
 - `src/keychain.rs:124-176` `read_password` returns
   `Result<Option<String>>`; password lives in a plain `String`.
@@ -419,91 +321,6 @@ avoid silently losing items in a rewrite.
   for the agent's lifetime.
 - Solo-user model so impact is low. Standard fix (`zeroize` /
   `secrecy` crate on the `String` / `Vec<u8>`) is cheap.
-
-
-
-## Tier 3 — Sixth-pass additions
-
-
-### i18n: number formatting in pre-rendered strings
-- `format::format_count` does `n.to_string()` then
-  `.replace("{n}", …)`. Loses locale digit grouping (Polish
-  "1 234", German "1.234"). Invisible until totals cross 4
-  digits.
-- Fix path: wrap as `MiniStat::{Dash, Value(i64)}`; shell
-  applies locale digit grouping.
-
-### i18n: `format_time_of_day` is 24-hour-only
-- Doc says shells that want 12-hour bypass core, but every
-  consumer (log card, goal row) uses the function with no
-  signal that the string was already finalised.
-- Fix: change return to typed `TimeOfDay { unix_secs: i64 }`
-  so shell can always run through `glib::DateTime::format` for
-  the active locale.
-
-### i18n: Polish / German label sort uses ASCII fold
-- Labels do `ORDER BY name COLLATE NOCASE`. "ż" sorts past "z";
-  "ä" sorts past "a" instead of with it.
-- SQLite locale-aware collation requires an extension; defer
-  until a user with non-ASCII label names actually complains.
-
-## Tier 0 — Seventh-pass additions
-
-
-## Tier 1 — Seventh-pass additions
-
-### `sync::backoff` uses `Instant::now()` (wall-clock-frozen on suspend)
-- `meditate-core/src/sync/backoff.rs:29,49,69,77` and the
-  sleep in `sync/orchestrator.rs:466-468` use `Instant`
-  (CLOCK_MONOTONIC, freezes during suspend).
-- A 30-s server-asked backoff that straddles a 10-min
-  suspend ends ~30 s after **resume**, not 30 s after the
-  429. Inconsistent with the codebase's deliberate
-  `boot_time_now()` discipline elsewhere.
-- Fix: switch to `Duration` (boot-time); pass `now: Duration`
-  to a `wait_for(now)` API. Drop `wait_until_now`/
-  `note_429` convenience wrappers — require callers to pass
-  a `boot_time_now()` value.
-
-### `DbError::Sqlite`/`Csv` dead-end at user UI; `DuplicateLabel(name)` not surfaced
-- `src/db/mod.rs:200,229` maps every `DbError::Sqlite` to a
-  raw `rusqlite::Error` → generic toast. `DuplicateLabel`/
-  `Preset`/`GuidedFile`/`VibrationPattern` carry the name
-  but get folded back into a synthesized `SqliteFailure`
-  with developer-language "UNIQUE constraint failed" message.
-- Fix: map `DuplicateLabel(name)` directly to a translatable
-  user toast at `src/db/mod.rs:197`, NOT to a fake rusqlite
-  error.
-
-### `SyncCoordinator::request` has zero multi-thread tests
-- All 6 tests in `sync/coordinator.rs:108-173` are single-
-  threaded — exercise the API, not the atomic ordering. The
-  Tier-0 drop-trigger race already in backlog slipped past
-  because nothing pumps two `request()`s from different
-  threads.
-- Fix: loom (or `std::thread::spawn` × N + barrier) test
-  that 1000 races never lose a request.
-
-### Panic-hook installation has no test verifying it writes
-- `diag.rs:102 install_panic_hook` is wired; only test
-  (`log_without_init_is_noop`) admits OnceLock prevents
-  real testing. A future refactor could silently drop the
-  hook and CI wouldn't notice.
-- Fix: forked-process test (`std::process::Command`
-  invoking the test binary with a `MEDITATE_PANIC_TEST=1`
-  env switch, asserting post-mortem log content).
-
-### Zero integration tests — `meditate-core/tests/` does not exist
-- All 933 tests are `#[cfg(test)] mod tests` inline. Cross-
-  module flows (create label → save preset → close DB →
-  reopen → sync push → wipe local → pull → verify preset
-  still references label by UUID) aren't covered. The 9-arm
-  `apply_event_inner` dispatch is tested per-arm but never
-  end-to-end across all entity types in one transaction.
-- Fix: start `meditate-core/tests/sync_roundtrip.rs` with one
-  such cross-cutting scenario; grow over time.
-
-## Tier 2 — Seventh-pass additions
 
 ### Accessibility: `DurationSpeechKey` companion to the `format_*` family
 - `format::format_time`/`format_hhmm`/`format_duration_brief`
@@ -599,129 +416,6 @@ avoid silently losing items in a rewrite.
   flake-prone.
 - Fix: inject a clock; `boot_time_now` is a unit-testable
   function that should take an optional `clock_source`.
-
-## Tier 3 — Seventh-pass additions
-
-### Accessibility: `breath::PhaseProgressKey { phase, remaining_secs }`
-- Visual Box-Breath has the orbiting dot + countdown; SR
-  hears only "Breathe in", "Hold", "Breathe out". A blind
-  user can't anticipate phase transitions.
-- Fix: add `PhaseProgressKey { phase: PhaseRunningLabelKey,
-  remaining_secs: u32 }` so the shell can announce "Hold, 3
-  seconds" on a slower cadence via a live region. Strictly
-  additive; visual flow unchanged.
-
-### Power: interval bells coalesce on resume (doc-only)
-- `meditate-core/src/bells.rs:75-79`. Suspend across e.g.
-  three 5-min interval bell targets fires only ONE ring
-  post-resume, then rerolls from current elapsed. Likely
-  desired (don't fire-storm 3 bells on wake), but the
-  invariant isn't documented.
-- Fix: doc-comment on `ActiveBell::tick`.
-
-### Power: Box-Breath frame-clock has no 1Hz fallback
-- `src/window/imp.rs:440` (`drawing_area.add_tick_callback`)
-  drives both drawing AND `Session::tick` for cue dispatch
-  via `tick_box_breath`. The 1 Hz timer at `:2481` covers
-  timer-mode sessions; Box-Breath has no fallback if the
-  compositor stops compositing while the window stays
-  mapped.
-- Real-world the device suspends anyway. Sev: low.
-- Fix: doc-comment on `tick_box_breath`'s caller; consider
-  a 1 Hz safety net only if it bites in practice.
-
-### Power: verify screen-awake cookie survives suspend
-- `src/timer/imp.rs:1054-1066` calls `gtk::Application::
-  inhibit`. The cookie remains valid across suspend in
-  theory; verify once on Librem 5 by adding a
-  `diag::log("inhibit cookie=…")` on inhibit/uninhibit,
-  manual suspend-resume cycle, drop the log line if
-  confirmed.
-
-### Operational: no `cargo test` / `clippy` in CI
-- `.github/workflows/flatpak.yml` runs `appstreamcli
-  validate`, `desktop-file-validate`, `flatpak-builder` —
-  but never `cargo test --workspace` or `cargo clippy --
-  -D warnings`. The "cargo test must pass before deploy"
-  memory rule is enforced only by Janek's terminal.
-- Add a `cargo-test` and `cargo-clippy` job to flatpak.yml.
-
-
-## Tier 1 — Eighth-pass additions
-
-### Remaining `bool` parameters in public APIs
-High-leverage sites shipped (`DisplayMode`, `Channels`,
-`StarredState`); the original twelve-bool sweep proposed three
-more conversions that turned out marginal at the call-site level.
-Re-evaluate each individually if a touching commit lands nearby:
-
-- `bells::clamp_signal_mode_for_haptic(mode, haptic_available: bool)`
-  — one consumer; an `enum HapticAvailability { Available, Absent }`
-  buys little versus a verb-named param.
-- `format::prep_target_duration(prep_active: bool, prep_secs: u32)`
-  — entangled with the `SessionSettings.target_secs: Option<u32>`
-  collapse below. Fold there.
-- `db::set_interval_bell_enabled(uuid, enabled: bool)` — the
-  method verb (`set_..._enabled`) already disambiguates the bool.
-- `db::is_label_name_taken_from_db(name, except_id: i64)` — not
-  actually a bool; the `0`-as-sentinel int is the footgun. Convert
-  to `Option<i64>` or `Except::{Any, Exclude(i64)}` independently.
-
-### `SessionSettings.target_secs: Option<u32>` collapses 3 distinct domain concepts
-- `None` means "stopwatch session, no end" (Timer),
-  "stopwatch box-breath" (BoxBreath), or "shouldn't
-  happen" (Guided always has it). Three `.expect("Overtime
-  requires a target")` panics at `session.rs:535, 684` are
-  the symptom. The phase-payload-hoist already in backlog
-  is the same root cause surfacing in `Session`; this is
-  the same in `SessionSettings`.
-- Fix: collapse `SessionSettings.mode + .target_secs +
-  .breath_pattern + .stopwatch_display` into one
-  `SessionShape` sum type: `Timer { target: SessionLength
-  }, BoxBreath { pattern, target }, Guided { duration_secs
-  }`. Eliminates four `.expect()`s and three "ignored
-  otherwise" doc comments.
-
-### Free-fn vs method inconsistency on the same enum
-- `breath::Phase::index()` is a method (`breath.rs:24`);
-  `breath::phase_running_label_key(Phase)` is a free fn
-  (`:46`); `breath::perimeter_point(Phase, t, pad, side)`
-  is free (`:62`). All three do a 4-arm match on `Phase`.
-- Also: `session::Session::toggle_action(ui_state)` is
-  associated fn but `session::ui_state(Option<&Session>)`
-  is free — symmetric API, asymmetric placement.
-- Also: `bells::ActiveBell` has methods AND a free
-  `bells::session_bells_from_db` builder.
-- Fix: pick "method-on-enum/struct when the receiver type
-  is the primary subject; free fn otherwise" and audit.
-  `Phase::running_label_key()`, `Phase::perimeter_point(t,
-  pad, side)`, `BellCue::resolve_sound_name(library)`.
-
-### `Audio device disappears mid-playback` — no error wiring
-- `src/sound.rs`. `gtk::MediaFile::for_file(...)` returned
-  objects never have `connect_error` or `notify::error`
-  hooked. Headphones unplug mid-session = bell silently
-  doesn't ring; next bell creates new MediaFiles with the
-  same dead pipeline. Session can't tell the user "bells
-  are no longer playing".
-- Fix: `media.connect_error(|_, _| diag::log(...))` plus a
-  one-shot toast.
-
-### No conditional PUT — concurrent push from two peers silently clobbers
-- `orchestrator.rs:91-94` trait `put()` is unconditional;
-  `HttpWebDav::put` (`webdav.rs:197-214`) emits no
-  `If-None-Match` / `If-Match`.
-- Bulk batch files use freshly-minted v4 uuids in the
-  filename, so two concurrent pushes land on different
-  files (safe). **But** the sounds path (`<base>/sounds/
-  <uuid>.<ext>`) IS deterministic on the bell uuid; two
-  peers re-uploading the same custom bell concurrently —
-  the second wins blindly. Low probability; consequence is
-  a corrupted audio file if the two PUTs race at TCP-byte
-  level on a non-atomic server.
-- Fix: add `If-None-Match: *` on sound PUTs.
-
-## Tier 2 — Eighth-pass additions
 
 ### `DbError` over-broad on read-only fns
 - `Result<i64, DbError>` where `DbError::DuplicatePreset`
@@ -823,7 +517,120 @@ Re-evaluate each individually if a touching commit lands nearby:
   variant `Copy`-ish). `DataIoError::Io { source, path:
   PathBuf }`.
 
-## Tier 3 — Eighth-pass additions
+## Tier 3 — Judgment calls
+
+### Extract `vibration::PreviewToggle` into generic `preview.rs`
+- Currently named after its first consumer (vibration patterns).
+  Sound chooser will want the same toggle / cancel / auto-revert
+  state machine when Android sound preview lands.
+- Move to `preview.rs`. Both `vibration` and `sound` `pub use`.
+
+### Consolidate `labels` + `goal` + `contrib` under `stats/`
+- All three are pure stats/score helpers (224, 210, 191 lines).
+- Move under `stats/{labels, goal, contrib}.rs`. Re-export at
+  crate root via `pub use stats::*` to avoid breaking shell
+  imports of `meditate_core::labels::*` / `goal::*` / `contrib::*`.
+
+### Per-entity CRUD tombstone helper
+- `delete_interval_bell` / `delete_bell_sound` / `delete_preset` /
+  `delete_guided_file` / `delete_vibration_pattern` (and the
+  box-breath / session equivalents) follow the same "tombstone-
+  if-exists, no-op otherwise" pattern: open tx → check exists →
+  DELETE → emit tombstone event → commit. Repeated 7 times.
+- Extract `fn emit_tombstone_if_exists(table, uuid, kind) ->
+  Result<bool>` in `db/sync.rs`. Two-line callers replace ~10
+  lines × 7 sites.
+
+### Per-entity `to_event_payload(row) -> serde_json::Value` helpers
+- `insert_*_with_uuid` and `update_*` build the same JSON payload
+  twice — once for the local INSERT/UPDATE, once for the event
+  payload. Drift between them is a silent peer-divergence bug
+  (sync replay rehydrates differently than the local row).
+- Add `fn to_event_payload(row: &<Entity>) -> serde_json::Value`
+  per entity. The insert/update sites build the row first, then
+  call the helper for the payload. Now any drift is a compile
+  error.
+
+### `pub const` audit for `pub(crate)` downgrades
+- Tunables that look internal:
+  - `sync::backoff::MAX_BACKOFF_SECS` — used only inside its
+    own module.
+  - `vibration::EDITOR_INTENSITY_STEP` / `EDITOR_MIN_POINT_SPACING_MS`
+    — UI editor consts; check shell callers, downgrade if none.
+  - `breath::PHASE_MAX_SECS` / `MIN_CYCLE_SECS` — used by
+    `clamp_session_secs` only.
+- Wire-format consts stay `pub` (all `seeds::*`, `paths::*`,
+  `sync::REMOTE_BASE_PATH`, `sync::settings::KEY_*`).
+
+### `preset_config.rs:400-405, 430-435` — covered above in Tier 2.
+
+### `Sync::new` test boilerplate — covered above in Tier 2.
+
+### i18n: number formatting in pre-rendered strings
+- `format::format_count` does `n.to_string()` then
+  `.replace("{n}", …)`. Loses locale digit grouping (Polish
+  "1 234", German "1.234"). Invisible until totals cross 4
+  digits.
+- Fix path: wrap as `MiniStat::{Dash, Value(i64)}`; shell
+  applies locale digit grouping.
+
+### i18n: `format_time_of_day` is 24-hour-only
+- Doc says shells that want 12-hour bypass core, but every
+  consumer (log card, goal row) uses the function with no
+  signal that the string was already finalised.
+- Fix: change return to typed `TimeOfDay { unix_secs: i64 }`
+  so shell can always run through `glib::DateTime::format` for
+  the active locale.
+
+### i18n: Polish / German label sort uses ASCII fold
+- Labels do `ORDER BY name COLLATE NOCASE`. "ż" sorts past "z";
+  "ä" sorts past "a" instead of with it.
+- SQLite locale-aware collation requires an extension; defer
+  until a user with non-ASCII label names actually complains.
+
+### Accessibility: `breath::PhaseProgressKey { phase, remaining_secs }`
+- Visual Box-Breath has the orbiting dot + countdown; SR
+  hears only "Breathe in", "Hold", "Breathe out". A blind
+  user can't anticipate phase transitions.
+- Fix: add `PhaseProgressKey { phase: PhaseRunningLabelKey,
+  remaining_secs: u32 }` so the shell can announce "Hold, 3
+  seconds" on a slower cadence via a live region. Strictly
+  additive; visual flow unchanged.
+
+### Power: interval bells coalesce on resume (doc-only)
+- `meditate-core/src/bells.rs:75-79`. Suspend across e.g.
+  three 5-min interval bell targets fires only ONE ring
+  post-resume, then rerolls from current elapsed. Likely
+  desired (don't fire-storm 3 bells on wake), but the
+  invariant isn't documented.
+- Fix: doc-comment on `ActiveBell::tick`.
+
+### Power: Box-Breath frame-clock has no 1Hz fallback
+- `src/window/imp.rs:440` (`drawing_area.add_tick_callback`)
+  drives both drawing AND `Session::tick` for cue dispatch
+  via `tick_box_breath`. The 1 Hz timer at `:2481` covers
+  timer-mode sessions; Box-Breath has no fallback if the
+  compositor stops compositing while the window stays
+  mapped.
+- Real-world the device suspends anyway. Sev: low.
+- Fix: doc-comment on `tick_box_breath`'s caller; consider
+  a 1 Hz safety net only if it bites in practice.
+
+### Power: verify screen-awake cookie survives suspend
+- `src/timer/imp.rs:1054-1066` calls `gtk::Application::
+  inhibit`. The cookie remains valid across suspend in
+  theory; verify once on Librem 5 by adding a
+  `diag::log("inhibit cookie=…")` on inhibit/uninhibit,
+  manual suspend-resume cycle, drop the log line if
+  confirmed.
+
+### Operational: no `cargo test` / `clippy` in CI
+- `.github/workflows/flatpak.yml` runs `appstreamcli
+  validate`, `desktop-file-validate`, `flatpak-builder` —
+  but never `cargo test --workspace` or `cargo clippy --
+  -D warnings`. The "cargo test must pass before deploy"
+  memory rule is enforced only by Janek's terminal.
+- Add a `cargo-test` and `cargo-clippy` job to flatpak.yml.
 
 ### `device_id` collision undetected
 - `db.rs:774` `Uuid::new_v4()`; no schema constraint on
@@ -888,6 +695,141 @@ Re-evaluate each individually if a touching commit lands nearby:
 - Fix: wrap in `struct Unit(f64)` with private
   constructor, OR document more loudly. Low priority —
   RNG callers are all in-crate.
+
+## Tier 4 — Defer / discuss
+
+### `Result<()>` on writes that callers always `let _ =`
+- `labels::persist_active_for_mode`, `persist_uuid_for_mode`,
+  `goal::write_weekly_goal_mins` — own doc says callers should
+  `let _ =` since failure here only means the next launch shows
+  the prior value. By contrast `sync::settings` writes correctly
+  propagate (sync flow is transactional).
+- Option A: keep `Result<()>` (honest), add a `log_on_err(ctx)`
+  extension trait so call sites become `.log_on_err("persist
+  label active")` rather than mute `let _ =`.
+- Option B: add a sibling `*_silent(db, …)` variant that logs to
+  `diag::log` and returns `()`.
+- Subjective; pick one when next touching these helpers.
+
+### Split `format.rs` further
+- After Tier 1 redistribution (scheduling math + prep helpers
+  move to `bells`), `format.rs` will still hold both number
+  formatting and the translatable-key enums.
+- Could split into `format/{duration, i18n_keys}.rs` later, but
+  the dust needs to settle from Tier 1 first.
+
+### Document Rust-tier referential-integrity contract
+- Only `sessions.label_id` has a SQL `REFERENCES`. Every other
+  cross-row reference (`sessions.guided_file_uuid`,
+  `interval_bells.vibration_pattern_uuid`,
+  `box_breath_phases.{sound_uuid, pattern_uuid}`) is enforced
+  in Rust only.
+- Adding FKs blindly would break sync replay races. Instead:
+  - Document the Rust-tier enforcement contract on `Database`
+    (top-of-file comment + per-method `// Caller must ensure`
+    notes).
+  - Consider an on-startup sweep that nulls dangling refs.
+
+### `Cargo.toml` optional features
+- `ureq` and `roxmltree` are only used by `sync/webdav.rs`;
+  `csv` is only used by `data_io.rs`; `mockito` is only used
+  by sync tests.
+- Could go behind `[features] sync` and `csv-io` so a future
+  minimal-core consumer can skip ~MB of deps. Not urgent —
+  there's only one binary today.
+
+### Dep bumps when next touching the dep tree
+- `ureq 2.12` → `3.x` (current is 3.x, released late 2024).
+- `rusqlite 0.32` → `0.36+`. Each is a breaking API bump in
+  rusqlite's versioning.
+- No security advisory; no urgency. Worth bumping next time
+  the dep tree is touched.
+
+### Storage waste on push retry
+- `meditate-core/src/sync/orchestrator.rs:258-277` — single bulk
+  PUT per push; `batch_uuid` minted before PUT, recorded only
+  after success. If PUT succeeds server-side but network drops
+  before client ack, next push uploads the SAME events under a
+  NEW `batch_uuid`. Peers' `known_event_uuids` dedup catches
+  them, but the remote dir accumulates N copies on N retries.
+- Not a correctness bug (convergence holds), but quota waste on
+  flaky networks.
+- Fix: hash the event-id-set into the batch_uuid so a retry with
+  the same events reuses the filename and a second PUT either
+  overwrites idempotently or 412s.
+
+### Pull `record_known_remote_file` loop in N separate transactions
+- `meditate-core/src/sync/orchestrator.rs:204-211`. `replay_events`
+  runs in one tx; the subsequent record loop runs in N separate
+  transactions. A crash between recording 3 and 5 means next
+  pull re-GETs the 2 missing files. Event-uuid dedup keeps
+  state correct — only bandwidth/IO wasted.
+
+### Lamport-clock drift growth pattern
+- `meditate-core/src/db.rs:1117-1119` — `apply_event_inner`
+  calls `observe_remote_lamport` per new remote event during
+  replay. `observe_remote_lamport = max(local, remote) + 1`, so
+  the local clock advances by at least 1 per remote event.
+- Two peers receiving the same N events in different orders end
+  up with DIFFERENT local clocks. Cache state still converges
+  (recompute uses event lamport, not local), but peers'
+  future-authored events have widely varying lamports.
+- Not a correctness bug — an unintended O(N) growth pattern.
+
+### `recompute_*` tiebreaker is weaker than `replay_events`
+- `meditate-core/src/db.rs:1201` and the parallel lines in each
+  `recompute_*` use `ORDER BY lamport_ts DESC, device_id DESC
+  LIMIT 1`. `replay_events` (`db.rs:1171-1175`) sorts by
+  `(lamport_ts, device_id, event_uuid)` for full determinism.
+- Identical `(lamport_ts, device_id)` is only reachable via
+  corrupted wire-format input (local `bump_lamport_clock`
+  guarantees uniqueness). Cosmetic; depends on malformed input.
+
+## Test-fixture sprawl — scope expansion
+
+The existing Tier 3 `db/tests_common.rs` proposal extends beyond
+`db.rs`:
+- `bells::tests` has 5 fixture constructors (`interval_row`,
+  `cue`, `row`, `fixed_bell`, `interval_bell`).
+- `preset_config::tests::cfg_with_known_uuids` repeats the
+  same row constructions.
+- `data_io::tests::fresh_db`, `preset_config::tests::fresh_db`,
+  `goal::tests`, `settings_keys::tests` all open
+  `Database::open_in_memory().unwrap()` per test.
+- `vibration::tests::pattern`, `sound::tests::sound`,
+  `labels::tests::label` are one-liner row constructors that
+  could share a fixture trait.
+
+Expand scope: crate-wide `tests_common` module (feature-gated
+`#[cfg(test)]`) with `db()`, `interval_bell_row()`,
+`vibration_pattern()`, `bell_sound()`, `label()`, `ts(start_iso,
+dur)`, `make_event(...)` helpers. Importable from every test
+module.
+
+## Meta-audit notes — backlog reorganization (apply when implementing)
+
+Captured here, applied at implementation time rather than now to
+avoid silently losing items in a rewrite.
+
+### Re-tier
+- **Workspace declaration**: currently Tier 1 → **Tier 0**.
+  Foundation, not structural cleanup.
+- **`emit_event` takes no `&Transaction`**: Tier 2 → **Tier 1**.
+  Load-bearing invisible precondition.
+- **`streak_filtered` panics on `NaiveDate::MIN_DATE`**: Tier 0
+  → **Tier 2**. Bundle with the import-side fix (Tier 1
+  `DbError::DateOutOfRange`); real surface is `import_csv`, not
+  the streak path which only hits at year ±262144.
+- **`Vec::contains(&String)` allocation per iter**: Tier 2 →
+  **inline / Tier 3**.
+
+### Merge duplicates
+- **Test-fixture sprawl** is fragmented into 3 items (Tier 3 db,
+  Tier 2 sync-orch boilerplate, Tier 3 scope-expansion). Merge
+  into one Tier-2 "crate-wide `tests_common` module."
+- **`*_from_db` free-fn migration + `stats/` consolidation +
+  `get_running_average_secs` move** are the same direction. One
+  PR.
 
 ## Skipped (intentionally not migrating)
 
