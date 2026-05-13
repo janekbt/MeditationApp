@@ -29,7 +29,7 @@ pub use guided_files::GuidedFile;
 pub use interval_bells::{IntervalBell, IntervalBellKind};
 pub use labels::Label;
 pub use presets::Preset;
-pub use session_in_progress::SessionInProgress;
+pub use session_in_progress::{FinalizedSession, SessionInProgress};
 pub use sessions::{Session, SessionFilter, SessionMode};
 pub use vibration_patterns::{ChartKind, VibrationPattern};
 pub use error::{target_id_is_well_formed_for, DbError, Result};

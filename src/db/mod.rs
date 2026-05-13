@@ -709,6 +709,45 @@ impl Database {
         self.inner.delete_session(id).map_err(map_core_err)
     }
 
+    // ── Session-in-progress (crash recovery) ──────────────────────────────────
+
+    /// Write the device-local in-flight snapshot. Called by the timer
+    /// view on session start and on the ~60s tick cadence. Does NOT
+    /// emit a sync event — the in-progress row lives outside the
+    /// event log so a session-in-progress stays private to this
+    /// device.
+    pub fn set_session_in_progress(
+        &self,
+        snapshot: &meditate_core::db::SessionInProgress,
+    ) -> Result<()> {
+        self.inner.set_session_in_progress(snapshot).map_err(map_core_err)
+    }
+
+    /// Read the in-flight snapshot, or `None` when no session is in
+    /// progress (the common case on a clean shutdown).
+    pub fn get_session_in_progress(
+        &self,
+    ) -> Result<Option<meditate_core::db::SessionInProgress>> {
+        self.inner.get_session_in_progress().map_err(map_core_err)
+    }
+
+    /// Drop the in-flight snapshot. Idempotent; safe to call from
+    /// every session-reset path.
+    pub fn clear_session_in_progress(&self) -> Result<()> {
+        self.inner.clear_session_in_progress().map_err(map_core_err)
+    }
+
+    /// Atomically convert any in-flight snapshot into a recorded
+    /// session (one `session_insert` event emitted) and clear the
+    /// snapshot row. Returns `None` when no session was in flight.
+    /// Called from `application::startup` so a crash mid-session
+    /// shows up as a saved row + an Undo toast on the next launch.
+    pub fn finalize_session_in_progress(
+        &self,
+    ) -> Result<Option<meditate_core::db::FinalizedSession>> {
+        self.inner.finalize_session_in_progress().map_err(map_core_err)
+    }
+
     // ── Settings ──────────────────────────────────────────────────────────────
 
     pub fn get_setting(&self, key: &str, default: &str) -> Result<String> {

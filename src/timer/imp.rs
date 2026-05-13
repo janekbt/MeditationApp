@@ -2126,6 +2126,14 @@ impl TimerView {
 
         self.session_start_time.set(unix_now());
 
+        // Crash-recovery snapshot. Initial write with accumulated_secs=0
+        // so a process death before the 60s tick still leaves a row the
+        // next launch can finalise (as a 0-min session — toast still
+        // surfaces, Undo trivially dismisses). The 60s tick (see
+        // step 6 of SESSION_RECOVERY_PLAN.md) keeps this updated as
+        // the session progresses.
+        self.write_in_progress_snapshot(0);
+
         // Inhibit display sleep if the active mode requested it. Cookie
         // released at every timer-stopped emit site (user-stop,
         // countdown finish, breath finish).
@@ -2507,11 +2515,80 @@ impl TimerView {
         // duration, so the next refresh sees `ui_state == Idle`.
         self.session_start_time.set(0);
 
+        // Drop the crash-recovery snapshot. Every path that ends a
+        // session — save, discard, stop-from-pause, abandonment by
+        // mode switch — funnels through here, so this single call
+        // covers all of them. set_session_in_progress / finalize on
+        // the next launch will see no row and skip the toast.
+        self.clear_in_progress_snapshot();
+
         // Only update the visible UI if this mode is the one currently shown.
         if mode == self.current_mode() {
             self.show_idle_ui();
             self.refresh_streak();
         }
+    }
+
+    /// Build the crash-recovery snapshot from current setup state +
+    /// the supplied `accumulated_secs` and write it. Called at session
+    /// start (with accumulated_secs=0) and on the 60s tick cadence so
+    /// a kernel OOM / battery-death / app crash mid-session leaves a
+    /// row the next launch can finalise into a real session.
+    ///
+    /// `mode_payload` is reserved for shell-side mode-specific data
+    /// (e.g. a future v2 Resume feature might capture box-breath
+    /// phase progress); v1 stores an empty JSON object — core treats
+    /// the field as opaque.
+    fn write_in_progress_snapshot(&self, accumulated_secs: u32) {
+        let Some(app) = self.get_app() else { return; };
+        let unix_start = self.session_start_time.get();
+        if unix_start <= 0 {
+            // No session has started yet (or already ended) — nothing
+            // to snapshot.
+            return;
+        }
+        let mode = match self.current_mode() {
+            TimerMode::Timer => meditate_core::db::SessionMode::Timer,
+            TimerMode::Breathing => meditate_core::db::SessionMode::BoxBreath,
+            TimerMode::Guided => meditate_core::db::SessionMode::Guided,
+        };
+        let label_id = self.setup_selected_label_id();
+        let guided_file_uuid = if matches!(mode, meditate_core::db::SessionMode::Guided) {
+            self.guided_selected_uuid.borrow().clone()
+        } else {
+            None
+        };
+        let snapshot = meditate_core::db::SessionInProgress {
+            start_iso: meditate_core::time::unix_to_local_iso(unix_start),
+            accumulated_secs,
+            mode,
+            mode_payload: "{}".into(),
+            label_id,
+            guided_file_uuid,
+        };
+        app.with_db_mut(|db| {
+            if let Err(e) = db.set_session_in_progress(&snapshot) {
+                meditate_core::diag::log(&format!(
+                    "session_recovery: set snapshot failed: {e}"
+                ));
+            }
+        });
+    }
+
+    /// Drop the crash-recovery snapshot if any. Idempotent — a no-op
+    /// when no session was in flight. DB errors are logged but
+    /// otherwise swallowed: failing to clear the snapshot is at
+    /// worst a one-off phantom auto-finalize on the next launch
+    /// (which the user can Undo), not a state corruption.
+    fn clear_in_progress_snapshot(&self) {
+        let Some(app) = self.get_app() else { return; };
+        app.with_db_mut(|db| {
+            if let Err(e) = db.clear_session_in_progress() {
+                meditate_core::diag::log(&format!(
+                    "session_recovery: clear snapshot failed: {e}"
+                ));
+            }
+        });
     }
 
     fn start_tick(&self) {
