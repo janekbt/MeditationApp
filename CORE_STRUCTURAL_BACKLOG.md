@@ -528,21 +528,6 @@ module.
 
 ## Tier 0 — Fourth-pass additions
 
-### `SyncCoordinator` drop-trigger race
-- `meditate-core/src/sync/coordinator.rs:80-92`. Walkthrough:
-  worker calls `should_run_again_after_pass() → false`. Concurrent
-  thread calls `request()`: sets `re_trigger=true`, then
-  `swap(true)` returns `true` (slot still taken) → `AlreadyRunning`.
-  Worker calls `release()` → `in_flight=false`. `re_trigger=true`
-  is now stranded with no worker observing it.
-- The next user trigger picks it up; if auto-sync is off and no
-  trigger arrives, the request is silently dropped.
-- Also: the doc comment on `release()` claims it returns a `bool`
-  but the signature returns `()`. Doc/signature drift.
-- Fix: `release()` should CAS — clear `in_flight` only if
-  `re_trigger` is false; otherwise return a "must loop again"
-  signal to the worker.
-
 ## Tier 1 — Fourth-pass additions
 
 ### Push four decision predicates to core

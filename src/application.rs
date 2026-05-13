@@ -620,14 +620,16 @@ impl MeditateApplication {
                 if let Err(e) = &result {
                     meditate_core::log(&format!("sync: {e}"));
                 }
-                if !coord.should_run_again_after_pass() {
+                // Exit only when there's no fresh trigger AND release
+                // successfully clears the in-flight slot. release()
+                // returns false when a trigger landed in the narrow
+                // window between should_run_again_after_pass() and the
+                // slot-clear — in that case it re-took the slot and
+                // we owe another pass.
+                if !coord.should_run_again_after_pass() && coord.release() {
                     break;
                 }
             }
-            // Release the in-flight slot before we hop back to the
-            // main loop, so a trigger arriving on the main thread
-            // *during* the invoke can spawn a fresh worker if needed.
-            coord.release();
 
             // Hop back to the GTK main loop to refresh UI. The closure
             // is Send (captures nothing); we look the application up
