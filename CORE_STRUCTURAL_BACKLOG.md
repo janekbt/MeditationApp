@@ -784,25 +784,6 @@ avoid silently losing items in a rewrite.
 
 ## Tier 1 — Eighth-pass additions
 
-### Stringly-typed UUIDs across 7 entity types — root cause of Tier-0 path traversal
-- `meditate-core/src/db.rs:43, 114, 180, 327, 347, 399` +
-  `Event.target_id:429`. `session_uuid`, `label_uuid`,
-  `preset_uuid`, `bell_sound_uuid`, `interval_bell_uuid`,
-  `vibration_pattern_uuid`, `guided_file_uuid`, `event_uuid`,
-  `device_id`, `batch_uuid` — all `String`.
-- Sync::push passes `target_id` (event-level uuid) to
-  `record_known_remote_file` (file uuid); different
-  domains, compiles silently. The Tier-0 path-traversal bug
-  (`recompute_bell_sound` accepts `target_id =
-  "../../../etc"`) is **directly enabled** by this — with
-  `BellSoundUuid::try_new(&str) -> Result<...>` at the
-  parse boundary, validation lives in the type, not in
-  scattered call sites.
-- Fix: single newtype-macro file `meditate-core/src/ids.rs`
-  with `define_uuid!(SessionId); define_uuid!(LabelId);
-  ...`. `String` storage, `Display + Deref<Target=str>`,
-  `try_new` validates v4-shape. Mechanical rollout.
-
 ### 12 sites of `bool` parameters in public APIs
 - `bells::end_bell_cue_from_db(db, stopwatch_on: bool)`,
   `bells::interval_bells_count(db, stopwatch_on)`,
