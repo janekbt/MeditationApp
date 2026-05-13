@@ -699,26 +699,9 @@ fn sync_indicator_state_now(
     app: &crate::application::MeditateApplication,
 ) -> meditate_core::sync::indicator::SyncIndicatorState {
     use meditate_core::sync::indicator;
-    use meditate_core::sync::settings;
-    let snapshot = app.with_db(|db| {
-        let core_db = db.core();
-        (
-            settings::nextcloud_account_from_db(core_db).unwrap_or(None),
-            settings::get_last_sync_unix_ts(core_db).unwrap_or(None),
-            settings::get_last_sync_error(core_db).unwrap_or(None),
-            settings::is_last_sync_remote_data_lost(core_db).unwrap_or(false),
-        )
-    });
-    let Some((account, last_ts, last_error, is_data_lost)) = snapshot else {
-        return indicator::SyncIndicatorState::Hidden;
-    };
-    indicator::derive(
-        account.is_some(),
-        app.is_syncing(),
-        last_ts,
-        last_error,
-        is_data_lost,
-    )
+    let is_syncing = app.is_syncing();
+    app.with_db(|db| indicator::state_from_db(db.core(), is_syncing))
+        .unwrap_or(indicator::SyncIndicatorState::Hidden)
 }
 
 /// Render a unix timestamp as a human-friendly "synced N ago" tooltip.

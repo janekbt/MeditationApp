@@ -91,6 +91,29 @@ pub fn derive(
     }
 }
 
+/// Resolve the indicator state straight off a `Database` handle +
+/// the shell's `is_syncing` bool. Bundles the four sync_state
+/// reads (account, last_ts, last_error, data_lost flag) and the
+/// `derive` dispatch so the shell calls one function instead of
+/// stitching the snapshot together inline. Each underlying DB
+/// read collapses to its safe default on error (no account, no
+/// timestamp, no error string, not data-lost) — the indicator is
+/// observability, not a hard guarantee, and a transient DB read
+/// failure shouldn't change which button the user sees.
+pub fn state_from_db(
+    db: &crate::db::Database,
+    is_syncing: bool,
+) -> SyncIndicatorState {
+    use crate::sync::settings;
+    let has_account = settings::nextcloud_account_from_db(db)
+        .map(|opt| opt.is_some())
+        .unwrap_or(false);
+    let last_ts = settings::get_last_sync_unix_ts(db).unwrap_or(None);
+    let last_error = settings::get_last_sync_error(db).unwrap_or(None);
+    let is_data_lost = settings::is_last_sync_remote_data_lost(db).unwrap_or(false);
+    derive(has_account, is_syncing, last_ts, last_error, is_data_lost)
+}
+
 /// Click-action dispatch. Errors with the data-lost flag route to
 /// recovery; plain errors retry; everything else opens prefs.
 pub fn action_for(state: &SyncIndicatorState) -> SyncIndicatorAction {
