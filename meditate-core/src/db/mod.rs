@@ -97,6 +97,27 @@ pub(crate) use schema::{CACHE_SCHEMA_VERSION, CACHE_SCHEMA_VERSION_KEY, SCHEMA_V
 use error::{conflict_suffixed_name, is_unique_constraint_error, map_unique_err};
 use schema::schema;
 
+/// Whether a library row (preset, guided file) is currently flagged
+/// as a favourite. Persisted as a SQLite INTEGER 0/1. Used at the
+/// `update_*_starred` / `set_*_starred` API surface so callers can't
+/// pass the wrong bool to the wrong method — `foo(uuid, true)` reads
+/// no more clearly than `foo(uuid, StarredState::Starred)` writes,
+/// but the typed form refuses to accept a `bool` from elsewhere.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StarredState {
+    Starred,
+    Unstarred,
+}
+
+impl StarredState {
+    pub fn from_flag(is_starred: bool) -> Self {
+        if is_starred { StarredState::Starred } else { StarredState::Unstarred }
+    }
+    pub fn is_starred(self) -> bool {
+        matches!(self, StarredState::Starred)
+    }
+}
+
 /// One entry in the append-only sync event log. A self-contained
 /// description of a state-changing operation — sessions inserted /
 /// updated / deleted, labels renamed, settings changed. Every field

@@ -649,27 +649,23 @@ avoid silently losing items in a rewrite.
 
 ## Tier 1 — Eighth-pass additions
 
-### 12 sites of `bool` parameters in public APIs
-- `bells::end_bell_cue_from_db(db, stopwatch_on: bool)`,
-  `bells::interval_bells_count(db, stopwatch_on)`,
-  `bells::end_bell_row_state(db, stopwatch_on)`,
-  `bells::is_bell_inert_in_stopwatch(kind, stopwatch_on)`,
-  `format::idle_hero_label(stopwatch_on, target_secs)`,
-  `format::prep_target_duration(prep_active, prep_secs)`,
-  `bells::clamp_signal_mode_for_haptic(mode,
-  haptic_available)`, `bells::channel_allowed(per_bell,
-  per_mode)` returns `(bool, bool)`,
-  `db::set_interval_bell_enabled(uuid, enabled)`,
-  `db::update_preset_starred(uuid, is_starred)`,
-  `db::set_guided_file_starred(uuid, is_starred)`,
-  `db::is_label_name_taken(name, except_id)`.
-- Call sites read `foo(true)` with no clue what the flag
-  means.
-- Fix: `enum DisplayMode { Countdown, Stopwatch }`,
-  `enum HapticAvailability { Available, Absent }`, `enum
-  StarredState { Starred, Unstarred }`. The `(bool, bool)`
-  return from `channel_allowed` wants `Channels { sound:
-  bool, vib: bool }`.
+### Remaining `bool` parameters in public APIs
+High-leverage sites shipped (`DisplayMode`, `Channels`,
+`StarredState`); the original twelve-bool sweep proposed three
+more conversions that turned out marginal at the call-site level.
+Re-evaluate each individually if a touching commit lands nearby:
+
+- `bells::clamp_signal_mode_for_haptic(mode, haptic_available: bool)`
+  — one consumer; an `enum HapticAvailability { Available, Absent }`
+  buys little versus a verb-named param.
+- `format::prep_target_duration(prep_active: bool, prep_secs: u32)`
+  — entangled with the `SessionSettings.target_secs: Option<u32>`
+  collapse below. Fold there.
+- `db::set_interval_bell_enabled(uuid, enabled: bool)` — the
+  method verb (`set_..._enabled`) already disambiguates the bool.
+- `db::is_label_name_taken_from_db(name, except_id: i64)` — not
+  actually a bool; the `0`-as-sentinel int is the footgun. Convert
+  to `Option<i64>` or `Except::{Any, Exclude(i64)}` independently.
 
 ### `SessionSettings.target_secs: Option<u32>` collapses 3 distinct domain concepts
 - `None` means "stopwatch session, no end" (Timer),

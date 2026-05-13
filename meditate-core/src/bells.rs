@@ -19,6 +19,36 @@ use crate::db::{
 use crate::seeds::{BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID};
 use crate::settings_keys::{read_bool, read_signal_mode, read_str};
 
+/// Whether the active session runs as a countdown (target_secs > 0)
+/// or as a stopwatch (no natural end). Several setup-tier decisions
+/// branch on this — end-bell row state, fixed-from-end bell
+/// inertness, hero label format. Passing it around as a typed enum
+/// instead of `stopwatch_on: bool` removes the `foo(true)` footgun
+/// at every call site.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisplayMode {
+    Countdown,
+    Stopwatch,
+}
+
+impl DisplayMode {
+    /// Build from the persisted-flag shape. Shells read a bool from
+    /// their GTK property cell or a settings-KV row at the very edge
+    /// of the call tree; this is the single boundary that maps the
+    /// bool to the typed enum.
+    pub fn from_stopwatch_flag(stopwatch_on: bool) -> Self {
+        if stopwatch_on { DisplayMode::Stopwatch } else { DisplayMode::Countdown }
+    }
+
+    pub fn is_stopwatch(self) -> bool {
+        matches!(self, DisplayMode::Stopwatch)
+    }
+
+    pub fn is_countdown(self) -> bool {
+        matches!(self, DisplayMode::Countdown)
+    }
+}
+
 /// What channels a bell or phase plays through. Mirrors the
 /// Sound / Vibration / Both `Adw.ToggleGroup` segments in the timer
 /// setup. Used as the persisted enum behind every per-bell signal-mode
@@ -337,31 +367,41 @@ pub fn clamp_signal_mode_for_haptic(mode: SignalMode, haptic_available: bool) ->
     if haptic_available { mode } else { SignalMode::Sound }
 }
 
-/// Resolve which channels (sound, vibration) actually fire for a
-/// bell. Each channel needs both gates to be open:
+/// Which actual playback channels fire for a given bell. Named
+/// fields disambiguate the order — historically a `(bool, bool)`
+/// return, which left callers needing to remember which slot was
+/// sound vs vibration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Channels {
+    pub sound: bool,
+    pub vib: bool,
+}
+
+/// Resolve which channels actually fire for a bell. Each channel
+/// needs both gates to be open:
 /// 1. the per-bell `signal_mode` (the user's choice on this bell).
 /// 2. the per-mode `signal_mode` override (the user's mode-wide
 ///    cap — Box-Breath cues are "Vibration", Timer bells are
 ///    "Both", etc.).
 ///
-/// Returns `(sound_on, vibration_on)`. Shells dispatch their
-/// native audio + haptic mechanisms based on the result.
-pub fn channel_allowed(per_bell: SignalMode, per_mode: SignalMode) -> (bool, bool) {
-    (
-        per_bell.includes_sound() && per_mode.includes_sound(),
-        per_bell.includes_vibration() && per_mode.includes_vibration(),
-    )
+/// Shells dispatch their native audio + haptic mechanisms based on
+/// the returned struct.
+pub fn channel_allowed(per_bell: SignalMode, per_mode: SignalMode) -> Channels {
+    Channels {
+        sound: per_bell.includes_sound() && per_mode.includes_sound(),
+        vib: per_bell.includes_vibration() && per_mode.includes_vibration(),
+    }
 }
 
-/// Same as `channel_allowed` but collapses the `(bool, bool)` pair
+/// Same as `channel_allowed` but collapses the resulting channels
 /// into the matching `SignalMode` variant. `None` means neither
 /// channel fires — the caller skips emitting the Effect entirely.
 pub fn effective_signal_mode(per_bell: SignalMode, per_mode: SignalMode) -> Option<SignalMode> {
     match channel_allowed(per_bell, per_mode) {
-        (true, true) => Some(SignalMode::Both),
-        (true, false) => Some(SignalMode::Sound),
-        (false, true) => Some(SignalMode::Vibration),
-        (false, false) => None,
+        Channels { sound: true, vib: true } => Some(SignalMode::Both),
+        Channels { sound: true, vib: false } => Some(SignalMode::Sound),
+        Channels { sound: false, vib: true } => Some(SignalMode::Vibration),
+        Channels { sound: false, vib: false } => None,
     }
 }
 
@@ -447,8 +487,8 @@ pub fn starting_bell_cue_from_db(db: &Database) -> Option<BellCue> {
 /// End-bell cue config from the persisted settings rows. `None`
 /// when the active session is stopwatch-only (no natural end) or
 /// when the master end-bell toggle is off.
-pub fn end_bell_cue_from_db(db: &Database, stopwatch_on: bool) -> Option<BellCue> {
-    if stopwatch_on {
+pub fn end_bell_cue_from_db(db: &Database, display: DisplayMode) -> Option<BellCue> {
+    if display.is_stopwatch() {
         return None;
     }
     if !read_bool(db, "end_bell_active", true) {
@@ -466,15 +506,15 @@ pub fn end_bell_cue_from_db(db: &Database, stopwatch_on: bool) -> Option<BellCue
 /// Count of enabled, currently-firing interval bells. Used by the
 /// Setup view's "Manage Bells" subtitle ("3 enabled" / "None enabled")
 /// and by any shell surface that needs the same number. The
-/// `stopwatch_on` filter mirrors `is_bell_inert_in_stopwatch` —
+/// `display` filter mirrors `is_bell_inert_in_stopwatch` —
 /// `FixedFromEnd` bells can't fire without a target, so they don't
 /// contribute to the active count in stopwatch sessions.
-pub fn interval_bells_count(db: &Database, stopwatch_on: bool) -> usize {
+pub fn interval_bells_count(db: &Database, display: DisplayMode) -> usize {
     db.list_interval_bells()
         .unwrap_or_default()
         .into_iter()
         .filter(|b| b.enabled)
-        .filter(|b| !is_bell_inert_in_stopwatch(b.kind, stopwatch_on))
+        .filter(|b| !is_bell_inert_in_stopwatch(b.kind, display))
         .count()
 }
 
@@ -488,14 +528,14 @@ pub fn interval_bells_count(db: &Database, stopwatch_on: bool) -> usize {
 pub fn session_bells_from_db(
     db: &Database,
     total_target_secs: Option<u64>,
-    stopwatch_on: bool,
+    display: DisplayMode,
 ) -> (Vec<ActiveBell>, u64) {
     let seed = crate::time::seed_now();
     if !read_bool(db, "interval_bells_active", false) {
         return (Vec::new(), seed);
     }
     let rows = db.list_interval_bells().unwrap_or_default();
-    build_active_bells(&rows, total_target_secs, stopwatch_on, seed)
+    build_active_bells(&rows, total_target_secs, display, seed)
 }
 
 /// Setup-view End Bell row's display state given the persisted
@@ -521,8 +561,8 @@ pub struct EndBellRowState {
 /// Compose the Setup-view End Bell row state from the persisted
 /// master toggle and the active mode's stopwatch flag. Stopwatch
 /// forces inactive + insensitive regardless of the persisted value.
-pub fn end_bell_row_state(db: &Database, stopwatch_on: bool) -> EndBellRowState {
-    if stopwatch_on {
+pub fn end_bell_row_state(db: &Database, display: DisplayMode) -> EndBellRowState {
+    if display.is_stopwatch() {
         return EndBellRowState { active: false, sensitive: false };
     }
     let persisted_on = read_bool(db, "end_bell_active", true);
@@ -553,9 +593,9 @@ pub struct BellRowSwitchState {
 pub fn bell_row_switch_state(
     enabled: bool,
     kind: IntervalBellKind,
-    stopwatch_on: bool,
+    display: DisplayMode,
 ) -> BellRowSwitchState {
-    let inert = is_bell_inert_in_stopwatch(kind, stopwatch_on);
+    let inert = is_bell_inert_in_stopwatch(kind, display);
     BellRowSwitchState {
         active: enabled && !inert,
         sensitive: !inert,
@@ -620,13 +660,13 @@ pub const DEFAULT_NEW_BELL_SIGNAL_MODE: SignalMode = SignalMode::Sound;
 /// backwards from — every UI surface that shows / counts bells
 /// should consult this predicate to mute them visually, and
 /// `build_active_bells` already skips them at construction time.
-pub fn is_bell_inert_in_stopwatch(kind: IntervalBellKind, stopwatch_on: bool) -> bool {
-    stopwatch_on && kind == IntervalBellKind::FixedFromEnd
+pub fn is_bell_inert_in_stopwatch(kind: IntervalBellKind, display: DisplayMode) -> bool {
+    display.is_stopwatch() && kind == IntervalBellKind::FixedFromEnd
 }
 
 /// Build per-session bell schedules from raw `interval_bells` DB
 /// rows. Skips disabled rows; also skips `FixedFromEnd` rows when
-/// `stopwatch_on` is true (no end to count backwards from).
+/// `display` is true (no end to count backwards from).
 /// Interval rows get an initial jittered roll for `next_ring_secs`
 /// using xorshift64 seeded from `seed`; the advanced state is
 /// returned so the caller (typically `Session`) can continue the
@@ -637,7 +677,7 @@ pub fn is_bell_inert_in_stopwatch(kind: IntervalBellKind, stopwatch_on: bool) ->
 pub(crate) fn build_active_bells(
     rows: &[IntervalBell],
     total_target_secs: Option<u64>,
-    stopwatch_on: bool,
+    display: DisplayMode,
     seed: u64,
 ) -> (Vec<ActiveBell>, u64) {
     let mut state = seed.max(1);
@@ -649,7 +689,7 @@ pub(crate) fn build_active_bells(
         // Stopwatch sessions mute fixed-from-end bells — there's
         // no end to count backwards from. Mirrors the gtk UI's
         // grey-out at the same condition.
-        if stopwatch_on && row.kind == IntervalBellKind::FixedFromEnd {
+        if display.is_stopwatch() && row.kind == IntervalBellKind::FixedFromEnd {
             continue;
         }
         let schedule = match row.kind {
@@ -966,37 +1006,37 @@ mod tests {
 
     #[test]
     fn channel_allowed_both_bell_both_mode_fires_everything() {
-        assert_eq!(channel_allowed(SignalMode::Both, SignalMode::Both), (true, true));
+        assert_eq!(channel_allowed(SignalMode::Both, SignalMode::Both), Channels { sound: true, vib: true });
     }
 
     #[test]
     fn channel_allowed_sound_bell_vibration_mode_fires_nothing() {
         // Per-bell wants sound, per-mode wants vibration — AND yields
         // nothing. Mirrors the "user disabled audio in this mode" path.
-        assert_eq!(channel_allowed(SignalMode::Sound, SignalMode::Vibration), (false, false));
+        assert_eq!(channel_allowed(SignalMode::Sound, SignalMode::Vibration), Channels { sound: false, vib: false });
     }
 
     #[test]
     fn is_bell_inert_in_stopwatch_targets_only_fixed_from_end() {
         // Only FixedFromEnd goes inert with stopwatch on.
-        assert!(is_bell_inert_in_stopwatch(IntervalBellKind::FixedFromEnd, true));
+        assert!(is_bell_inert_in_stopwatch(IntervalBellKind::FixedFromEnd, DisplayMode::Stopwatch));
         // The other two kinds are fine in stopwatch.
-        assert!(!is_bell_inert_in_stopwatch(IntervalBellKind::Interval, true));
-        assert!(!is_bell_inert_in_stopwatch(IntervalBellKind::FixedFromStart, true));
+        assert!(!is_bell_inert_in_stopwatch(IntervalBellKind::Interval, DisplayMode::Stopwatch));
+        assert!(!is_bell_inert_in_stopwatch(IntervalBellKind::FixedFromStart, DisplayMode::Stopwatch));
         // Nothing's inert when stopwatch is off.
-        assert!(!is_bell_inert_in_stopwatch(IntervalBellKind::FixedFromEnd, false));
-        assert!(!is_bell_inert_in_stopwatch(IntervalBellKind::Interval, false));
+        assert!(!is_bell_inert_in_stopwatch(IntervalBellKind::FixedFromEnd, DisplayMode::Countdown));
+        assert!(!is_bell_inert_in_stopwatch(IntervalBellKind::Interval, DisplayMode::Countdown));
     }
 
     #[test]
     fn channel_allowed_intersection_is_minimum() {
         // Per-bell Both AND per-mode Sound → sound only.
-        assert_eq!(channel_allowed(SignalMode::Both, SignalMode::Sound), (true, false));
+        assert_eq!(channel_allowed(SignalMode::Both, SignalMode::Sound), Channels { sound: true, vib: false });
         // Per-bell Both AND per-mode Vibration → vibration only.
-        assert_eq!(channel_allowed(SignalMode::Both, SignalMode::Vibration), (false, true));
+        assert_eq!(channel_allowed(SignalMode::Both, SignalMode::Vibration), Channels { sound: false, vib: true });
         // Symmetric.
-        assert_eq!(channel_allowed(SignalMode::Sound, SignalMode::Both), (true, false));
-        assert_eq!(channel_allowed(SignalMode::Vibration, SignalMode::Both), (false, true));
+        assert_eq!(channel_allowed(SignalMode::Sound, SignalMode::Both), Channels { sound: true, vib: false });
+        assert_eq!(channel_allowed(SignalMode::Vibration, SignalMode::Both), Channels { sound: false, vib: true });
     }
 
     #[test]
@@ -1086,7 +1126,7 @@ mod tests {
             row(IntervalBellKind::Interval, 5, 0, false),
             row(IntervalBellKind::Interval, 10, 0, true),
         ];
-        let (bells, _) = build_active_bells(&rows, Some(1800), false, 42);
+        let (bells, _) = build_active_bells(&rows, Some(1800), DisplayMode::Countdown, 42);
         assert_eq!(bells.len(), 1);
         assert!(matches!(
             bells[0].schedule,
@@ -1100,7 +1140,7 @@ mod tests {
             row(IntervalBellKind::FixedFromEnd, 2, 0, true),
             row(IntervalBellKind::FixedFromStart, 5, 0, true),
         ];
-        let (bells, _) = build_active_bells(&rows, None, true, 42);
+        let (bells, _) = build_active_bells(&rows, None, DisplayMode::Stopwatch, 42);
         // FixedFromEnd dropped; FixedFromStart survives (it doesn't
         // need a session target).
         assert_eq!(bells.len(), 1);
@@ -1117,7 +1157,7 @@ mod tests {
             row(IntervalBellKind::Interval, 10, 50, true),
             row(IntervalBellKind::Interval, 15, 50, true),
         ];
-        let (_, seed_after) = build_active_bells(&rows, Some(3600), false, 42);
+        let (_, seed_after) = build_active_bells(&rows, Some(3600), DisplayMode::Countdown, 42);
         // Three interval rows → three xorshift draws → state must
         // have moved off the seed.
         assert_ne!(seed_after, 42);
@@ -1129,8 +1169,8 @@ mod tests {
             row(IntervalBellKind::Interval, 5, 50, true),
             row(IntervalBellKind::Interval, 10, 50, true),
         ];
-        let (a, sa) = build_active_bells(&rows, Some(3600), false, 12345);
-        let (b, sb) = build_active_bells(&rows, Some(3600), false, 12345);
+        let (a, sa) = build_active_bells(&rows, Some(3600), DisplayMode::Countdown, 12345);
+        let (b, sb) = build_active_bells(&rows, Some(3600), DisplayMode::Countdown, 12345);
         assert_eq!(sa, sb);
         for (x, y) in a.iter().zip(b.iter()) {
             assert_eq!(x.schedule, y.schedule);
@@ -1145,8 +1185,8 @@ mod tests {
             row(IntervalBellKind::Interval, 5, 0, true),
             row(IntervalBellKind::FixedFromEnd, 1, 0, true),
         ];
-        let (_, sa) = build_active_bells(&interval_only, Some(600), false, 7);
-        let (_, sb) = build_active_bells(&mixed, Some(600), false, 7);
+        let (_, sa) = build_active_bells(&interval_only, Some(600), DisplayMode::Countdown, 7);
+        let (_, sb) = build_active_bells(&mixed, Some(600), DisplayMode::Countdown, 7);
         // The Interval row is the only consumer of rng — both runs
         // must end at the same state.
         assert_eq!(sa, sb);
@@ -1203,7 +1243,7 @@ mod tests {
     fn end_bell_cue_from_db_is_none_for_stopwatch_session() {
         let db = Database::open_in_memory().unwrap();
         db.set_setting("end_bell_active", "true").unwrap();
-        assert!(end_bell_cue_from_db(&db, true).is_none());
+        assert!(end_bell_cue_from_db(&db, DisplayMode::Stopwatch).is_none());
     }
 
     #[test]
@@ -1212,7 +1252,7 @@ mod tests {
         // The default in core matches the gtk shell's prior default
         // (`get_setting("end_bell_active", "true")`).
         let db = Database::open_in_memory().unwrap();
-        let cue = end_bell_cue_from_db(&db, false).expect("default-on");
+        let cue = end_bell_cue_from_db(&db, DisplayMode::Countdown).expect("default-on");
         assert_eq!(cue.signal_mode, SignalMode::Sound);
     }
 
@@ -1248,7 +1288,7 @@ mod tests {
     #[test]
     fn session_bells_from_db_is_empty_when_master_off() {
         let db = Database::open_in_memory().unwrap();
-        let (bells, _seed) = session_bells_from_db(&db, Some(600), false);
+        let (bells, _seed) = session_bells_from_db(&db, Some(600), DisplayMode::Countdown);
         assert!(bells.is_empty(), "master off must yield empty schedule");
     }
 

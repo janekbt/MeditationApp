@@ -191,7 +191,7 @@ impl Database {
 
     /// Toggle the home-screen-pin flag. Same payload shape as rename
     /// so peers can replay either change with the same recompute path.
-    pub fn set_guided_file_starred(&self, uuid_str: &str, is_starred: bool) -> Result<()> {
+    pub fn set_guided_file_starred(&self, uuid_str: &str, starred: crate::db::StarredState) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
         let row: Option<(String, String, i64, String)> = self.conn.query_row(
             "SELECT name, file_path, duration_secs, created_iso
@@ -203,6 +203,7 @@ impl Database {
             return Ok(());
         };
         let now_iso = chrono::Utc::now().to_rfc3339();
+        let is_starred = starred.is_starred();
         self.conn.execute(
             "UPDATE guided_files SET is_starred = ?1, updated_iso = ?2 WHERE uuid = ?3",
             params![is_starred as i64, now_iso, uuid_str],
@@ -453,9 +454,9 @@ mod tests {
         db.insert_guided_file_with_uuid(
             "gf-1", "Body Scan", "guided/gf-1.ogg", 600, false,
         ).unwrap();
-        db.set_guided_file_starred("gf-1", true).unwrap();
+        db.set_guided_file_starred("gf-1", crate::db::StarredState::Starred).unwrap();
         assert!(list_guided_files_from_db(&db).unwrap()[0].is_starred);
-        db.set_guided_file_starred("gf-1", false).unwrap();
+        db.set_guided_file_starred("gf-1", crate::db::StarredState::Unstarred).unwrap();
         assert!(!list_guided_files_from_db(&db).unwrap()[0].is_starred);
         let updates: Vec<_> = db.pending_events().unwrap()
             .into_iter()
@@ -467,7 +468,7 @@ mod tests {
     #[test]
     fn set_guided_file_starred_unknown_uuid_is_silent_noop() {
         let db = Database::open_in_memory().unwrap();
-        db.set_guided_file_starred("never-existed", true).unwrap();
+        db.set_guided_file_starred("never-existed", crate::db::StarredState::Starred).unwrap();
         let events: Vec<_> = db.pending_events().unwrap()
             .into_iter()
             .filter(|(_, e)| e.kind.starts_with("guided_file"))
@@ -623,7 +624,7 @@ mod tests {
         dev_a.insert_guided_file_with_uuid(
             "gf-1", "Body Scan", "guided/gf-1.ogg", 1200, true,
         ).unwrap();
-        dev_a.set_guided_file_starred("gf-1", false).unwrap();
+        dev_a.set_guided_file_starred("gf-1", crate::db::StarredState::Unstarred).unwrap();
         let events: Vec<Event> = dev_a.pending_events().unwrap()
             .into_iter().map(|(_, e)| e).collect();
 

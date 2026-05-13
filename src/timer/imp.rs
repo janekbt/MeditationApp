@@ -1825,7 +1825,9 @@ impl TimerView {
             .unwrap_or(0);
         let label = meditate_core::format::idle_hero_label_from_modes(
             self.current_mode().into(),
-            self.stopwatch_toggle_on.get(),
+            meditate_core::bells::DisplayMode::from_stopwatch_flag(
+                self.stopwatch_toggle_on.get(),
+            ),
             self.countdown_target_secs.get(),
             self.breathing_session_secs.get(),
             guided_duration_secs,
@@ -1883,7 +1885,7 @@ impl TimerView {
             .get_app()
             .and_then(|app| {
                 app.with_db(|db| {
-                    meditate_core::bells::end_bell_row_state(db.core(), stopwatch_on)
+                    meditate_core::bells::end_bell_row_state(db.core(), meditate_core::bells::DisplayMode::from_stopwatch_flag(stopwatch_on))
                 })
             })
             .unwrap_or(meditate_core::bells::EndBellRowState {
@@ -3037,7 +3039,8 @@ impl TimerView {
                 // the UI subtitle just reflects what will actually
                 // fire right now.
                 let intervals_enabled_count = meditate_core::bells::interval_bells_count(
-                    core_db, stopwatch_on,
+                    core_db,
+                    meditate_core::bells::DisplayMode::from_stopwatch_flag(stopwatch_on),
                 );
                 (
                     streak,
@@ -3812,7 +3815,7 @@ impl TimerView {
                     meditate_core::bells::session_bells_from_db(
                         db.core(),
                         total_target_secs,
-                        stopwatch_on,
+                        meditate_core::bells::DisplayMode::from_stopwatch_flag(stopwatch_on),
                     )
                 })
             })
@@ -3841,7 +3844,7 @@ impl TimerView {
         app: &crate::application::MeditateApplication,
     ) -> Option<meditate_core::bells::BellCue> {
         let stopwatch_on = self.stopwatch_toggle_on.get();
-        app.with_db(|db| meditate_core::bells::end_bell_cue_from_db(db.core(), stopwatch_on))
+        app.with_db(|db| meditate_core::bells::end_bell_cue_from_db(db.core(), meditate_core::bells::DisplayMode::from_stopwatch_flag(stopwatch_on)))
             .flatten()
     }
 
@@ -3870,7 +3873,7 @@ impl TimerView {
                     let stopwatch_on = meditate_core::read_bool(
                         db.core(), meditate_core::settings_keys::stopwatch_key_for_mode(mode.into()), false,
                     );
-                    meditate_core::bells::interval_bells_count(db.core(), stopwatch_on)
+                    meditate_core::bells::interval_bells_count(db.core(), meditate_core::bells::DisplayMode::from_stopwatch_flag(stopwatch_on))
                 })
             })
             .unwrap_or(0);

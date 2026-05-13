@@ -517,8 +517,12 @@ impl Database {
         self.inner.update_preset_config(uuid, config_json).map_err(map_core_err)
     }
 
-    pub fn update_preset_starred(&self, uuid: &str, is_starred: bool) -> Result<()> {
-        self.inner.update_preset_starred(uuid, is_starred).map_err(map_core_err)
+    pub fn update_preset_starred(
+        &self,
+        uuid: &str,
+        starred: meditate_core::db::StarredState,
+    ) -> Result<()> {
+        self.inner.update_preset_starred(uuid, starred).map_err(map_core_err)
     }
 
     pub fn delete_preset(&self, uuid: &str) -> Result<()> {
@@ -559,8 +563,12 @@ impl Database {
         self.inner.rename_guided_file(uuid, name).map_err(map_core_err)
     }
 
-    pub fn set_guided_file_starred(&self, uuid: &str, is_starred: bool) -> Result<()> {
-        self.inner.set_guided_file_starred(uuid, is_starred).map_err(map_core_err)
+    pub fn set_guided_file_starred(
+        &self,
+        uuid: &str,
+        starred: meditate_core::db::StarredState,
+    ) -> Result<()> {
+        self.inner.set_guided_file_starred(uuid, starred).map_err(map_core_err)
     }
 
     pub fn delete_guided_file(&self, uuid: &str) -> Result<()> {

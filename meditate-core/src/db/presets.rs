@@ -301,11 +301,12 @@ impl Database {
     /// Star or unstar a preset. Unknown uuids are silent no-ops with
     /// no event. Bumps `updated_iso` so peers' last-write-wins
     /// resolution converges on the latest toggle.
-    pub fn update_preset_starred(&self, uuid_str: &str, is_starred: bool) -> Result<()> {
+    pub fn update_preset_starred(&self, uuid_str: &str, starred: crate::db::StarredState) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
         let row = find_preset_by_uuid_from_db(self, uuid_str)?;
         let Some(row) = row else { return Ok(()); };
         let now_iso = chrono::Utc::now().to_rfc3339();
+        let is_starred = starred.is_starred();
         self.conn.execute(
             "UPDATE presets SET is_starred = ?1, updated_iso = ?2 WHERE uuid = ?3",
             params![is_starred as i64, now_iso, uuid_str],
@@ -703,9 +704,9 @@ mod tests {
         db.insert_preset_with_uuid(
             "u-1", "Sitting", SessionMode::Timer, false, r#"{}"#,
         ).unwrap();
-        db.update_preset_starred("u-1", true).unwrap();
+        db.update_preset_starred("u-1", crate::db::StarredState::Starred).unwrap();
         assert!(find_preset_by_uuid_from_db(&db, "u-1").unwrap().unwrap().is_starred);
-        db.update_preset_starred("u-1", false).unwrap();
+        db.update_preset_starred("u-1", crate::db::StarredState::Unstarred).unwrap();
         assert!(!find_preset_by_uuid_from_db(&db, "u-1").unwrap().unwrap().is_starred);
     }
 
@@ -822,7 +823,7 @@ mod tests {
             "u-1", "Sitting", SessionMode::Timer, true, r#"{"dur":900}"#,
         ).unwrap();
         dev_a.update_preset_name("u-1", "Morning Sit").unwrap();
-        dev_a.update_preset_starred("u-1", false).unwrap();
+        dev_a.update_preset_starred("u-1", crate::db::StarredState::Unstarred).unwrap();
 
         let events: Vec<Event> = dev_a.pending_events().unwrap()
             .into_iter().map(|(_, e)| e).collect();

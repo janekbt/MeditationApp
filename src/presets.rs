@@ -351,7 +351,7 @@ fn build_star_button(
                           // build_preset_row's call site.
     let app = app.clone();
     let preset_uuid = preset.uuid.0.clone();
-    let new_starred = !preset.is_starred;
+    let new_starred = meditate_core::db::StarredState::from_flag(!preset.is_starred);
     btn.connect_clicked(move |_| {
         app.with_db_mut(|db| {
             let _ = db.update_preset_starred(&preset_uuid, new_starred);

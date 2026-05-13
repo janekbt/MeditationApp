@@ -15,6 +15,7 @@
 //!     Tests in core assert on the typed value, never on rendered
 //!     strings.
 
+use crate::bells::DisplayMode;
 use std::time::Duration;
 
 pub fn parse_hms_duration(s: &str) -> Option<Duration> {
@@ -188,8 +189,8 @@ pub fn ellipsize(s: &str, max_chars: usize) -> String {
 /// duration in `HH:MM`. The shell resolves the right `target_secs`
 /// per mode (Timer's countdown / Box-Breath's session length /
 /// Guided's probed file length) and passes it in.
-pub fn idle_hero_label(stopwatch_on: bool, target_secs: u32) -> String {
-    if stopwatch_on {
+pub fn idle_hero_label(display: DisplayMode, target_secs: u32) -> String {
+    if display.is_stopwatch() {
         "00:00".to_string()
     } else {
         format_hhmm(target_secs)
@@ -205,7 +206,7 @@ pub fn idle_hero_label(stopwatch_on: bool, target_secs: u32) -> String {
 /// match.
 pub fn idle_hero_label_from_modes(
     mode: crate::db::SessionMode,
-    stopwatch_on: bool,
+    display: DisplayMode,
     timer_secs: u32,
     breathing_secs: u32,
     guided_duration_secs: u32,
@@ -215,7 +216,7 @@ pub fn idle_hero_label_from_modes(
         crate::db::SessionMode::BoxBreath => breathing_secs,
         crate::db::SessionMode::Guided => guided_duration_secs,
     };
-    idle_hero_label(stopwatch_on, target_secs)
+    idle_hero_label(display, target_secs)
 }
 
 /// Counter-strip label on the Box-Breath running page. Stopwatch
@@ -702,14 +703,14 @@ mod tests {
 
     #[test]
     fn idle_hero_label_stopwatch_renders_double_zero() {
-        assert_eq!(idle_hero_label(true, 600), "00:00");
-        assert_eq!(idle_hero_label(true, 0), "00:00");
+        assert_eq!(idle_hero_label(DisplayMode::Stopwatch, 600), "00:00");
+        assert_eq!(idle_hero_label(DisplayMode::Stopwatch, 0), "00:00");
     }
 
     #[test]
     fn idle_hero_label_no_stopwatch_renders_target_as_hhmm() {
-        assert_eq!(idle_hero_label(false, 10 * 60), "00:10");
-        assert_eq!(idle_hero_label(false, 3600), "01:00");
+        assert_eq!(idle_hero_label(DisplayMode::Countdown, 10 * 60), "00:10");
+        assert_eq!(idle_hero_label(DisplayMode::Countdown, 3600), "01:00");
     }
 
     #[test]

@@ -709,7 +709,7 @@ fn build_guided_file_row(
         .build();
     let app_for_star = app.clone();
     let uuid_for_star = file.uuid.0.clone();
-    let new_starred = !file.is_starred;
+    let new_starred = meditate_core::db::StarredState::from_flag(!file.is_starred);
     let rebuilder_for_star = rebuilder.clone();
     let on_changed_for_star = on_changed.clone();
     star_btn.connect_clicked(move |_| {

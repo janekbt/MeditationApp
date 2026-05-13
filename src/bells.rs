@@ -224,7 +224,9 @@ fn build_bell_row(
     // stays activatable so the user can still drill into Edit to
     // change kind or delete.
     let switch_state = meditate_core::bells::bell_row_switch_state(
-        bell.enabled, bell.kind, stopwatch_on,
+        bell.enabled,
+        bell.kind,
+        meditate_core::bells::DisplayMode::from_stopwatch_flag(stopwatch_on),
     );
     if !switch_state.sensitive {
         row.add_css_class("dim-label");
