@@ -17,24 +17,30 @@
 //!   (which prints to stderr and unwinds), so a crash shows up in the log
 //!   even if the user never saw stderr.
 //!
-//! Thread safety: relies on Linux O_APPEND atomicity — each `writeln!` is
-//! one atomic write at well under PIPE_BUF (4 KiB), so concurrent writes
-//! from the main thread and the GIO blocking pool interleave at line
-//! granularity without a mutex.
+//! Thread safety: a single `OnceLock<Mutex<File>>` opened at `init()`
+//! serialises writes. The previous design opened the file per `log()`
+//! call and relied on Linux O_APPEND line atomicity; sync flows fire
+//! 5–10 lines per pass and the open syscall dominates the cost on
+//! phone eMMC (hundreds of µs each). Trade-off: a user who deletes
+//! `diagnostics.log` mid-session would have their `log()` calls
+//! silently write to the deleted-but-still-open fd until next `init`;
+//! the only legitimate deleter is `init` itself, so this is fine.
 
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 const MAX_LINES: usize = 2000;
 
 static LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
+static LOG_FILE: OnceLock<Mutex<File>> = OnceLock::new();
 
 /// Initialise the diag log at `<data_dir>/diagnostics.log`. Trims any
-/// existing log to the last `MAX_LINES` lines, then installs a panic
-/// hook that appends panic info before the default hook unwinds.
-/// Idempotent — safe to call more than once (subsequent calls are no-ops).
+/// existing log to the last `MAX_LINES` lines, opens the file once
+/// for append, then installs a panic hook that appends panic info
+/// before the default hook unwinds. Idempotent — safe to call more
+/// than once (subsequent calls are no-ops).
 pub fn init(data_dir: &Path) {
     if LOG_PATH.get().is_some() {
         return;
@@ -42,18 +48,21 @@ pub fn init(data_dir: &Path) {
     let _ = std::fs::create_dir_all(data_dir);
     let path = data_dir.join("diagnostics.log");
     trim_to_tail(&path, MAX_LINES);
-    let _ = LOG_PATH.set(path);
+    let _ = LOG_PATH.set(path.clone());
+    if let Ok(f) = OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = LOG_FILE.set(Mutex::new(f));
+    }
     install_panic_hook();
 }
 
 /// Append a single line to the diag log. Cheap no-op if `init` hasn't
-/// run or the file can't be opened — this is diagnostics, not business
-/// logic, so failure to log must never fail the caller.
+/// run or the file couldn't be opened — this is diagnostics, not
+/// business logic, so failure to log must never fail the caller.
+/// Poisoned mutex (a previous holder panicked mid-write) is treated
+/// the same: drop silently.
 pub fn log(msg: &str) {
-    let Some(path) = LOG_PATH.get() else { return; };
-    let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) else {
-        return;
-    };
+    let Some(mutex) = LOG_FILE.get() else { return; };
+    let Ok(mut f) = mutex.lock() else { return; };
     let _ = writeln!(f, "{} {msg}", timestamp());
 }
 

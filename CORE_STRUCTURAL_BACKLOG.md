@@ -594,15 +594,6 @@ avoid silently losing items in a rewrite.
   duration_secs ORDER BY duration_secs LIMIT 1 OFFSET (n-1)/2`.
   Add an index on `duration_secs` (none today).
 
-### Performance: `diag::log` opens the file per call
-- `meditate-core/src/diag.rs:52-58`. Each call:
-  `OpenOptions::new().create.append.open(path)` + `writeln!` +
-  `format!` for the timestamp. 33 call sites; sync flows fire
-  5-10 lines/pass. eMMC cost is hundreds of µs per call.
-- Fix: keep an `OnceLock<Mutex<File>>` opened once at `init()`.
-  Trade-off: loses "file recreated if user deleted it" —
-  acceptable since the only legitimate deleter is `init()`
-  itself.
 
 ### Security: secrets never zeroed
 - `src/keychain.rs:124-176` `read_password` returns
