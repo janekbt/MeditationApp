@@ -602,11 +602,19 @@ impl MeditateWindow {
 
         // Poll every 2s for state changes. The timer self-cancels via
         // the weak-ref upgrade failing once the window is destroyed;
-        // no manual SourceId tracking.
+        // no manual SourceId tracking. Skip the refresh when the
+        // window is unmapped (minimised, hidden, app backgrounded on
+        // Phosh / Android) — the user can't see the indicator anyway
+        // and the DB read costs eMMC IO + battery. `connect_map`
+        // above refreshes once on re-show, so the user sees the
+        // current state immediately when the window comes back.
         let weak = obj.downgrade();
         glib::timeout_add_seconds_local(2, move || {
             match weak.upgrade() {
                 Some(w) => {
+                    if !w.is_mapped() {
+                        return glib::ControlFlow::Continue;
+                    }
                     use glib::subclass::prelude::ObjectSubclassIsExt;
                     w.imp().refresh_sync_status();
                     glib::ControlFlow::Continue

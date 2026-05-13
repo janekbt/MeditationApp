@@ -1142,15 +1142,6 @@ avoid silently losing items in a rewrite.
   `note_429` convenience wrappers — require callers to pass
   a `boot_time_now()` value.
 
-### Sync-indicator polling timer fires every 2s even when window unmapped
-- `src/window/imp.rs:607-616` is the only periodic non-
-  session timer in the whole shell. Battery-hostile on
-  Librem 5 / Android in background.
-- Fix: gate on `obj.is_mapped()` or replace with the half-
-  built `notify::is_syncing` + `connect_map` refresh at
-  `:598`. Removes it leaves the app fully event-driven when
-  idle.
-
 ### `DbError::Sqlite`/`Csv` dead-end at user UI; `DuplicateLabel(name)` not surfaced
 - `src/db/mod.rs:200,229` maps every `DbError::Sqlite` to a
   raw `rusqlite::Error` → generic toast. `DuplicateLabel`/
