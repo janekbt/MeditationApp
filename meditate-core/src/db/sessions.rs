@@ -230,6 +230,29 @@ impl Database {
         Ok(())
     }
 
+    /// Delete a session row by its cross-device uuid. Used by the
+    /// crash-recovery Undo flow — the toast carries the uuid that
+    /// `finalize_session_in_progress` minted, not the local rowid.
+    /// Emits one `session_delete` event so peers tombstone the row
+    /// too. Unknown uuids are a silent no-op (the row may have been
+    /// deleted via a peer-authored event between finalize and Undo).
+    pub fn delete_session_by_uuid(&self, uuid: &str) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        let exists: Option<i64> = self.conn.query_row(
+            "SELECT id FROM sessions WHERE uuid = ?1",
+            params![uuid],
+            |row| row.get::<_, i64>(0),
+        ).optional()?;
+        if exists.is_none() {
+            return Ok(());
+        }
+        self.conn.execute("DELETE FROM sessions WHERE uuid = ?1", params![uuid])?;
+        let payload = serde_json::json!({ "uuid": uuid }).to_string();
+        self.emit_event(EventKind::SessionDelete, uuid, payload)?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Remove every session row. Returns how many rows were deleted.
     /// Labels and settings are untouched. Emits one `session_delete`
     /// event per row that was actually present, so peers tombstone the

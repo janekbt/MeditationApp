@@ -50,6 +50,13 @@ mod imp {
         /// window — without this, the user lands on an inert UI
         /// whose every action silently no-ops.
         pub last_open_error: Mutex<Option<meditate_core::format::DbOpenFailureKey>>,
+
+        /// Set by `startup` when `finalize_session_in_progress` rescued
+        /// an in-flight session left behind by a crash / OOM / battery
+        /// death. `activate` reads it once the window exists and
+        /// surfaces an Undo toast — startup itself can't toast because
+        /// no window exists yet.
+        pub pending_recovery_toast: Mutex<Option<meditate_core::db::FinalizedSession>>,
     }
 
     impl Default for MeditateApplication {
@@ -61,6 +68,7 @@ mod imp {
                 has_haptic: std::cell::Cell::new(false),
                 db_path: Mutex::new(None),
                 last_open_error: Mutex::new(None),
+                pending_recovery_toast: Mutex::new(None),
                 sync_coordinator: Arc::new(
                     meditate_core::sync::coordinator::SyncCoordinator::new(),
                 ),
@@ -107,6 +115,13 @@ mod imp {
             // First activation after startup: pull whatever a peer
             // device authored while we were closed.
             app.trigger_sync();
+
+            // If startup's finalize_session_in_progress rescued a
+            // crash-leftover session, surface the Undo toast now that
+            // the window exists. The session is already in the log
+            // (and in pending sync events); the toast just tells the
+            // user it happened and gives them a one-tap undo.
+            self.present_recovery_toast_if_pending();
         }
 
         fn startup(&self) {
@@ -118,6 +133,28 @@ mod imp {
                 .join("meditate.db");
             match Database::open(&db_path) {
                 Ok(db) => {
+                    // Crash-recovery finalize. A session-in-progress
+                    // row left behind by a kernel OOM / battery-death
+                    // / panic mid-session becomes one session_insert
+                    // event here, so the work the user already did
+                    // shows up in the log as soon as activate runs.
+                    // The Undo toast happens later in activate
+                    // (startup is too early — no window exists yet).
+                    match db.finalize_session_in_progress() {
+                        Ok(Some(finalized)) => {
+                            meditate_core::diag::log(&format!(
+                                "session_recovery: finalised in-flight session uuid={} duration_secs={}",
+                                finalized.session_uuid, finalized.duration_secs,
+                            ));
+                            *self.pending_recovery_toast.lock().unwrap() = Some(finalized);
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            meditate_core::diag::log(&format!(
+                                "session_recovery: finalize FAILED at startup: {e}"
+                            ));
+                        }
+                    }
                     *self.db.lock().unwrap() = Some(db);
                     meditate_core::diag::log(&format!("db open ok: {}", db_path.display()));
                 }
@@ -306,6 +343,65 @@ mod imp {
                 move |_, _| app.quit()
             ));
             app.add_action(&quit_action);
+        }
+
+        /// If startup's `finalize_session_in_progress` rescued an
+        /// in-flight session, render an Undo toast on the active
+        /// window. Single-shot: takes the stashed FinalizedSession
+        /// out, so a subsequent re-activate doesn't re-toast the same
+        /// recovery.
+        ///
+        /// The recovered row already lives in `sessions` (and an
+        /// authored `session_insert` event is in the pending queue)
+        /// — the toast just narrates that to the user and offers a
+        /// one-tap undo. Tapping Undo calls `delete_session_by_uuid`,
+        /// which emits a tombstoning `session_delete` event so peers
+        /// converge on the deletion too.
+        fn present_recovery_toast_if_pending(&self) {
+            let Some(finalized) = self.pending_recovery_toast.lock().unwrap().take()
+            else { return; };
+            let app = self.obj();
+            let Some(win) = app
+                .active_window()
+                .and_then(|w| w.downcast::<MeditateWindow>().ok())
+            else {
+                // No window yet (shouldn't happen since we're called
+                // from activate after present, but defensive). Put the
+                // FinalizedSession back so the next activate gets it.
+                *self.pending_recovery_toast.lock().unwrap() = Some(finalized);
+                return;
+            };
+
+            // Refresh the log view + stats so the recovered session
+            // shows up immediately. invalidate-on-stats was already
+            // done implicitly via the event log mutation, but the
+            // log feed needs an explicit prepend.
+            app.invalidate(crate::application::InvalidateScope::ALL);
+
+            let minutes = finalized.duration_secs / 60;
+            let title = crate::i18n::gettext(
+                "Saved your previous session of {n} min."
+            ).replace("{n}", &minutes.to_string());
+
+            let toast = adw::Toast::builder()
+                .title(&title)
+                .button_label(&crate::i18n::gettext("Undo"))
+                .timeout(8)
+                .build();
+
+            let app_for_undo = app.clone();
+            let session_uuid = finalized.session_uuid.clone();
+            toast.connect_button_clicked(move |_| {
+                app_for_undo.with_db_mut(|db| {
+                    if let Err(e) = db.delete_session_by_uuid(&session_uuid) {
+                        meditate_core::diag::log(&format!(
+                            "session_recovery: Undo delete failed for uuid={session_uuid}: {e}"
+                        ));
+                    }
+                });
+                app_for_undo.invalidate(crate::application::InvalidateScope::ALL);
+            });
+            win.add_toast(toast);
         }
 
         fn setup_accels(&self) {

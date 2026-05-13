@@ -709,6 +709,13 @@ impl Database {
         self.inner.delete_session(id).map_err(map_core_err)
     }
 
+    /// Delete a session row by its cross-device uuid. The crash-
+    /// recovery Undo flow uses this — the toast carries the uuid
+    /// from `finalize_session_in_progress`, not the local rowid.
+    pub fn delete_session_by_uuid(&self, uuid: &str) -> Result<()> {
+        self.inner.delete_session_by_uuid(uuid).map_err(map_core_err)
+    }
+
     // ── Session-in-progress (crash recovery) ──────────────────────────────────
 
     /// Write the device-local in-flight snapshot. Called by the timer

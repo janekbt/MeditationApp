@@ -9,13 +9,6 @@ When you implement one, delete it from this list. When you decide
 to permanently skip one, move it under "## Skipped" with a one-line
 rationale.
 
-## Up next (needs design discussion)
-
-1. **Battery-death / OOM mid-session = whole session lost** — see
-   Tier 1 eighth-pass. Needs design discussion: `session_in_progress`
-   settings row written every ~60s + Resume/Save/Discard dialog on
-   next launch.
-
 ## Tier 1 — High-impact, mostly mechanical
 
 ### Collapse the 7-way `recompute_*` template
@@ -1515,16 +1508,6 @@ avoid silently losing items in a rewrite.
   are no longer playing".
 - Fix: `media.connect_error(|_, _| diag::log(...))` plus a
   one-shot toast.
-
-### Battery-death / OOM mid-session = whole session lost
-- Session is only persisted on `on_complete`
-  (`timer/imp.rs:2380`). No "tick the duration into a
-  session-in-progress table" hook. A 50-min user session
-  interrupted at minute 49 by OS-kill has zero persisted
-  state.
-- Fix: write a `session_in_progress` settings row every
-  ~60s with running duration; on startup if it's set,
-  surface a "Resume / Save / Discard" dialog.
 
 ### No conditional PUT — concurrent push from two peers silently clobbers
 - `orchestrator.rs:91-94` trait `put()` is unconditional;
