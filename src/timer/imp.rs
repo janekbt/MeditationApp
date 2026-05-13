@@ -3424,12 +3424,9 @@ impl TimerView {
                 inhale_secs, hold_full_secs, exhale_secs, hold_empty_secs,
                 duration_secs,
             } => {
-                self.breathing_pattern.set(BreathPattern {
-                    in_secs:  inhale_secs,
-                    hold_in:  hold_full_secs,
-                    out_secs: exhale_secs,
-                    hold_out: hold_empty_secs,
-                });
+                self.breathing_pattern.set(BreathPattern::clamp_from_raw(
+                    inhale_secs, hold_full_secs, exhale_secs, hold_empty_secs,
+                ));
                 self.set_breathing_duration_secs(duration_secs);
                 self.refresh_phase_tiles();
                 self.stopwatch_loading.set(true);

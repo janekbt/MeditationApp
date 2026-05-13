@@ -238,15 +238,6 @@ rationale.
   so call sites become
   `assert_matches!(err, SyncError::WebDav(WebDavError::Unauthorized))`.
 
-### `BreathPattern::new` validation audit
-- `breath.rs:247` — `phase_at` panics on a zero-length cycle.
-  Constructor-validated? If `BreathPattern::new` rejects all-
-  zero patterns, this is dead code; otherwise it can fire.
-- Audit `BreathPattern::new`; either confirm validation +
-  add a comment at the panic site, or change `phase_at` to
-  return `Option<PhaseInfo>` so the failure mode is type-
-  visible.
-
 ### Schema-default UUIDs hardcoded as string literals
 - `db.rs:513, 607, 608` — SQL `DEFAULT 'f0c2e8a1-…'` etc.
   Comments say "kept literal to avoid plumbing shell-side

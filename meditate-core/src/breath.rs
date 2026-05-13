@@ -68,9 +68,12 @@ pub fn perimeter_point(phase: Phase, t: f64, pad: f64, side: f64) -> (f64, f64) 
 /// no single phase runs longer than ~20s.
 pub const PHASE_MAX_SECS: u32 = 20;
 
-/// Minimum legal cycle length. Below this, `phase_at` panics on a
-/// zero-length cycle — defence in depth against a 0-0-0-0 pattern
-/// reaching the running view.
+/// Minimum legal cycle length. `phase_at` divides by the cycle
+/// length (`elapsed % cycle`) so a 0-0-0-0 pattern would panic.
+/// `clamp_from_raw` guarantees `in_secs ≥ 1` and `out_secs ≥ 1`
+/// which keeps the cycle ≥ 2; shell callers building patterns from
+/// untrusted data (preset JSON, settings, sync payloads) MUST go
+/// through `clamp_from_raw` rather than the struct literal.
 pub const CYCLE_MIN_SECS: u32 = 1;
 
 /// Lower bound on a Box-Breath session duration, in seconds.
