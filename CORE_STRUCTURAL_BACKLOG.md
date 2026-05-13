@@ -11,19 +11,6 @@ rationale.
 
 ## Tier 1 — High-impact, mostly mechanical
 
-### Security: unbounded body read on WebDAV GET
-- `meditate-core/src/sync/webdav.rs:182-184` calls
-  `resp.into_reader().read_to_end(&mut body)` with no cap.
-  `pull` then `serde_json::from_slice` on the result
-  (`orchestrator.rs:192`). Custom-sound pull enforces
-  `MAX_CUSTOM_BELL_BYTES` *after* the read.
-- A malicious / compromised Nextcloud (or one a redirect points
-  to) can OOM the client by serving a multi-GB body. The 10-MB
-  size check on sound bodies is post-buffer.
-- Fix: cap reads via `Read::take(N)` with caps per response type
-  (64 MB for event bundles, 11 MB for custom sounds), reject on
-  hit.
-
 ### Security: `ureq` Agent has no redirect or scheme policy
 - `meditate-core/src/sync/webdav.rs:122-129` builds the Agent
   with only timeouts. Default = follow 5 redirects.

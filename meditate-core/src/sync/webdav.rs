@@ -56,6 +56,12 @@ pub enum WebDavError {
     /// the server actually sent (truncated to keep the diag log
     /// readable for HTML error pages, multistatus dumps, etc.).
     MalformedResponse { detail: String, body_excerpt: String },
+    /// GET body exceeded the per-call cap. A malicious or compromised
+    /// server could otherwise serve a multi-GB body and OOM the
+    /// client before any post-read size check fires. `limit` is the
+    /// caller-supplied cap in bytes — surfacing it in logs makes
+    /// "which cap did we hit" obvious.
+    ResponseTooLarge { limit: u64 },
 }
 
 impl fmt::Display for WebDavError {
@@ -76,6 +82,9 @@ impl fmt::Display for WebDavError {
                 f,
                 "WebDAV: malformed response: {detail} (body excerpt: {body_excerpt:?})",
             ),
+            Self::ResponseTooLarge { limit } => {
+                write!(f, "WebDAV: response exceeded {limit}-byte cap")
+            }
         }
     }
 }
@@ -92,8 +101,13 @@ pub trait WebDav {
     /// NOT included in the result.
     fn list_collection(&self, path: &str) -> WebDavResult<Vec<String>>;
 
-    /// Download a file's full body. `NotFound` for missing paths.
-    fn get(&self, path: &str) -> WebDavResult<Vec<u8>>;
+    /// Download a file's full body, capped at `max_bytes` to bound
+    /// the in-memory allocation. A server that serves a body
+    /// exceeding the cap surfaces `ResponseTooLarge { limit }`
+    /// without buffering the rest. `NotFound` for missing paths.
+    /// Each caller picks its own cap from the kind of body it
+    /// expects (event-bundle JSON vs custom-sound audio).
+    fn get(&self, path: &str, max_bytes: u64) -> WebDavResult<Vec<u8>>;
 
     /// Upload `body` to `path`, creating or overwriting. WebDAV PUT
     /// semantics — no atomic put-if-absent unless the impl negotiates
@@ -188,16 +202,30 @@ impl HttpWebDav {
 }
 
 impl WebDav for HttpWebDav {
-    fn get(&self, path: &str) -> WebDavResult<Vec<u8>> {
+    fn get(&self, path: &str, max_bytes: u64) -> WebDavResult<Vec<u8>> {
+        use std::io::Read;
         match self.agent
             .get(&self.url(path))
             .set("Authorization", &self.auth_header)
             .call()
         {
             Ok(resp) => {
+                // `take(max_bytes + 1)` lets us detect overflow:
+                // a body at-or-under the cap fits in `max_bytes`
+                // bytes; a body OVER the cap reads exactly
+                // `max_bytes + 1`. Bailing here keeps the in-
+                // memory allocation bounded even when a malicious
+                // server claims a small Content-Length and then
+                // streams gigabytes.
+                let cap = max_bytes.saturating_add(1);
                 let mut body = Vec::new();
-                resp.into_reader().read_to_end(&mut body)
+                resp.into_reader()
+                    .take(cap)
+                    .read_to_end(&mut body)
                     .map_err(|e| WebDavError::Network(e.to_string()))?;
+                if body.len() as u64 > max_bytes {
+                    return Err(WebDavError::ResponseTooLarge { limit: max_bytes });
+                }
                 Ok(body)
             }
             Err(ureq::Error::Status(status, resp)) => {
@@ -509,9 +537,46 @@ mod tests {
             .create();
 
         let client = HttpWebDav::new(&server.url(), "u", "p");
-        let body = client.get("/file.json").unwrap();
+        let body = client.get("/file.json", u64::MAX).unwrap();
         assert_eq!(body, b"hello world");
         mock.assert();
+    }
+
+    #[test]
+    fn get_rejects_body_exceeding_cap() {
+        // A malicious or compromised Nextcloud could serve a multi-GB
+        // body and OOM the client if `get` read unbounded. The
+        // `max_bytes` cap stops the read at `max_bytes + 1` and
+        // surfaces `ResponseTooLarge` so the orchestrator drops the
+        // payload instead of buffering it.
+        let mut server = mockito::Server::new();
+        let _mock = server.mock("GET", "/big.json")
+            .with_status(200)
+            .with_body(vec![b'a'; 200])
+            .create();
+
+        let client = HttpWebDav::new(&server.url(), "u", "p");
+        let err = client.get("/big.json", 100).unwrap_err();
+        assert!(
+            matches!(err, WebDavError::ResponseTooLarge { limit: 100 }),
+            "expected ResponseTooLarge {{ limit: 100 }}, got {err:?}",
+        );
+    }
+
+    #[test]
+    fn get_at_cap_succeeds() {
+        // A body exactly at the cap must NOT trip the overflow check
+        // — the `take(max_bytes + 1)` boundary fires only when more
+        // than `max_bytes` bytes are read.
+        let mut server = mockito::Server::new();
+        let _mock = server.mock("GET", "/at-cap.json")
+            .with_status(200)
+            .with_body(vec![b'x'; 100])
+            .create();
+
+        let client = HttpWebDav::new(&server.url(), "u", "p");
+        let body = client.get("/at-cap.json", 100).unwrap();
+        assert_eq!(body.len(), 100);
     }
 
     #[test]
@@ -527,7 +592,7 @@ mod tests {
             .create();
 
         let client = HttpWebDav::new(&server.url(), "Aladdin", "open sesame");
-        client.get("/file.json").unwrap();
+        client.get("/file.json", u64::MAX).unwrap();
         mock.assert();
     }
 
@@ -540,7 +605,7 @@ mod tests {
             .create();
 
         let client = HttpWebDav::new(&server.url(), "u", "p");
-        let err = client.get("/missing.json").unwrap_err();
+        let err = client.get("/missing.json", u64::MAX).unwrap_err();
         assert!(matches!(err, WebDavError::NotFound),
             "expected NotFound, got {err:?}");
     }
@@ -554,7 +619,7 @@ mod tests {
             .create();
 
         let client = HttpWebDav::new(&server.url(), "u", "wrong-pass");
-        let err = client.get("/file.json").unwrap_err();
+        let err = client.get("/file.json", u64::MAX).unwrap_err();
         assert!(matches!(err, WebDavError::Unauthorized),
             "expected Unauthorized, got {err:?}");
     }
@@ -568,7 +633,7 @@ mod tests {
             .create();
 
         let client = HttpWebDav::new(&server.url(), "u", "p");
-        let err = client.get("/file.json").unwrap_err();
+        let err = client.get("/file.json", u64::MAX).unwrap_err();
         assert_matches!(
             err,
             WebDavError::Server { status, body } => {
@@ -585,7 +650,7 @@ mod tests {
         // connection synchronously. We use a fixed unlikely port; if
         // this test flakes it means the port was actually in use.
         let client = HttpWebDav::new("http://127.0.0.1:1", "u", "p");
-        let err = client.get("/whatever").unwrap_err();
+        let err = client.get("/whatever", u64::MAX).unwrap_err();
         assert!(matches!(err, WebDavError::Network(_)),
             "expected Network, got {err:?}");
     }

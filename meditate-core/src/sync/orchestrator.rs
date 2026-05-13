@@ -33,6 +33,21 @@ const MAX_429_RETRIES: u32 = 8;
 /// known, so they retry next round if shrunk / replaced.
 const MAX_CUSTOM_BELL_BYTES: u64 = 10 * 1024 * 1024;
 
+/// Per-GET in-memory cap for event-bundle pulls. A bundle is JSON
+/// of `Vec<Event>`; a bulk batch (~2700 events) measured around
+/// 1.4 MB. 64 MB is ~45× the largest realistic bundle, leaving
+/// generous headroom for future event-payload growth without
+/// letting a malicious server OOM the client.
+const MAX_EVENT_BUNDLE_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Per-GET in-memory cap for custom-sound pulls. 1 MB of headroom
+/// over the user-facing `MAX_CUSTOM_BELL_BYTES` (10 MB) so a
+/// precisely-sized file still passes the network cap and lands in
+/// the post-read size check below — which is the right place for
+/// the user-facing "this file is too big" toast, separate from the
+/// "the server tried to OOM us" security cap.
+const MAX_SOUND_GET_BYTES: u64 = 11 * 1024 * 1024;
+
 #[derive(Debug)]
 pub enum SyncError {
     WebDav(WebDavError),
@@ -223,7 +238,7 @@ impl<'a, W: WebDav> Sync<'a, W> {
             };
             if known_files.contains(&batch_uuid) { continue; }
             let path = format!("{}/{}", events_dir, name);
-            let body = self.webdav.get(&path)?;
+            let body = self.webdav.get(&path, MAX_EVENT_BUNDLE_BYTES)?;
             let events: Vec<Event> = serde_json::from_slice(&body)
                 .map_err(|e| SyncError::InvalidEvent(format!("{name}: {e}")))?;
             for event in events {
@@ -468,9 +483,10 @@ impl<'a, W: WebDav> Sync<'a, W> {
                 continue;
             }
             let remote = self.sound_remote_path(bell.uuid.as_str(), ext);
-            let bytes = match self.webdav.get(&remote) {
+            let bytes = match self.webdav.get(&remote, MAX_SOUND_GET_BYTES) {
                 Ok(b) => b,
                 Err(WebDavError::NotFound) => continue,
+                Err(WebDavError::ResponseTooLarge { .. }) => continue,
                 Err(e) => return Err(e.into()),
             };
             // 10 MB cap mirrors the import side. Drop oversized
@@ -837,7 +853,7 @@ mod tests {
 
         Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new()).push().unwrap();
         let listing = fs.list_collection("/Meditate/events/").unwrap();
-        let body = fs.get(&format!("/Meditate/events/{}", listing[0])).unwrap();
+        let body = fs.get(&format!("/Meditate/events/{}", listing[0]), u64::MAX).unwrap();
         // Must parse as Vec<Event>.
         let parsed: Vec<Event> = serde_json::from_slice(&body)
             .expect("body must be a JSON array of events");
@@ -854,7 +870,7 @@ mod tests {
         insert_session(&db, "2026-04-30T10:00:00", 600);
         Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new()).push().unwrap();
         let listing = fs.list_collection("/Meditate/events/").unwrap();
-        let body = fs.get(&format!("/Meditate/events/{}", listing[0])).unwrap();
+        let body = fs.get(&format!("/Meditate/events/{}", listing[0]), u64::MAX).unwrap();
         let body_str = String::from_utf8(body).unwrap();
         assert!(body_str.contains("\"payload\""),
             "uploaded JSON must carry the payload field, got: {body_str}");
@@ -902,9 +918,9 @@ mod tests {
             fn list_collection(&self, p: &str) -> WebDavResult<Vec<String>> {
                 self.inner.list_collection(p)
             }
-            fn get(&self, p: &str) -> WebDavResult<Vec<u8>> {
+            fn get(&self, p: &str, max_bytes: u64) -> WebDavResult<Vec<u8>> {
                 self.gets.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                self.inner.get(p)
+                self.inner.get(p, max_bytes)
             }
             fn put(&self, p: &str, b: &[u8]) -> WebDavResult<()> {
                 self.inner.put(p, b)
@@ -1365,7 +1381,7 @@ mod tests {
             fn list_collection(&self, p: &str) -> WebDavResult<Vec<String>> {
                 self.0.list_collection(p)
             }
-            fn get(&self, p: &str) -> WebDavResult<Vec<u8>> { self.0.get(p) }
+            fn get(&self, p: &str, max_bytes: u64) -> WebDavResult<Vec<u8>> { self.0.get(p, max_bytes) }
             fn put(&self, _: &str, _: &[u8]) -> WebDavResult<()> {
                 Err(WebDavError::Unauthorized)
             }
@@ -1399,7 +1415,7 @@ mod tests {
             fn list_collection(&self, p: &str) -> WebDavResult<Vec<String>> {
                 self.inner.list_collection(p)
             }
-            fn get(&self, p: &str) -> WebDavResult<Vec<u8>> { self.inner.get(p) }
+            fn get(&self, p: &str, max_bytes: u64) -> WebDavResult<Vec<u8>> { self.inner.get(p, max_bytes) }
             fn put(&self, p: &str, b: &[u8]) -> WebDavResult<()> {
                 use std::sync::atomic::Ordering;
                 let prev = self.remaining_429.fetch_update(
@@ -1440,7 +1456,7 @@ mod tests {
             fn list_collection(&self, p: &str) -> WebDavResult<Vec<String>> {
                 self.0.list_collection(p)
             }
-            fn get(&self, p: &str) -> WebDavResult<Vec<u8>> { self.0.get(p) }
+            fn get(&self, p: &str, max_bytes: u64) -> WebDavResult<Vec<u8>> { self.0.get(p, max_bytes) }
             fn put(&self, _: &str, _: &[u8]) -> WebDavResult<()> {
                 Err(WebDavError::RateLimited { retry_after: Some(0) })
             }
@@ -1508,7 +1524,7 @@ mod tests {
         );
         // Body round-trips intact.
         let remote_path = format!("/Meditate/sounds/{uuid}.ogg");
-        assert_eq!(fs.get(&remote_path).unwrap(), b"AUDIO");
+        assert_eq!(fs.get(&remote_path, u64::MAX).unwrap(), b"AUDIO");
         // Recorded as known so a second push doesn't re-PUT.
         assert!(db.known_remote_sound_uuids().unwrap().contains(&uuid));
     }
@@ -1728,7 +1744,7 @@ mod tests {
             "expected sounds/{uuid}.wav on remote after sync, got {put:?}",
         );
         // Body intact.
-        assert_eq!(fs.get(&format!("/Meditate/sounds/{uuid}.wav")).unwrap(), b"AUDIO");
+        assert_eq!(fs.get(&format!("/Meditate/sounds/{uuid}.wav"), u64::MAX).unwrap(), b"AUDIO");
         // Known set marks it now (post-PUT).
         assert!(db.known_remote_sound_uuids().unwrap().contains(&uuid));
     }

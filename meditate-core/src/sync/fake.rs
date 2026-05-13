@@ -60,12 +60,16 @@ impl WebDav for FakeWebDav {
         Ok(names)
     }
 
-    fn get(&self, path: &str) -> WebDavResult<Vec<u8>> {
+    fn get(&self, path: &str, max_bytes: u64) -> WebDavResult<Vec<u8>> {
         let key = norm(path);
-        self.files.lock().unwrap()
+        let body = self.files.lock().unwrap()
             .get(&key)
             .cloned()
-            .ok_or(WebDavError::NotFound)
+            .ok_or(WebDavError::NotFound)?;
+        if body.len() as u64 > max_bytes {
+            return Err(WebDavError::ResponseTooLarge { limit: max_bytes });
+        }
+        Ok(body)
     }
 
     fn put(&self, path: &str, body: &[u8]) -> WebDavResult<()> {
@@ -108,7 +112,7 @@ mod tests {
     fn put_then_get_round_trips() {
         let fs = FakeWebDav::new();
         fs.put("/foo.json", b"hello").unwrap();
-        assert_eq!(fs.get("/foo.json").unwrap(), b"hello");
+        assert_eq!(fs.get("/foo.json", u64::MAX).unwrap(), b"hello");
     }
 
     #[test]
@@ -116,13 +120,13 @@ mod tests {
         let fs = FakeWebDav::new();
         fs.put("/foo.json", b"v1").unwrap();
         fs.put("/foo.json", b"v2").unwrap();
-        assert_eq!(fs.get("/foo.json").unwrap(), b"v2");
+        assert_eq!(fs.get("/foo.json", u64::MAX).unwrap(), b"v2");
     }
 
     #[test]
     fn get_missing_path_returns_not_found() {
         let fs = FakeWebDav::new();
-        assert!(matches!(fs.get("/missing").unwrap_err(), WebDavError::NotFound));
+        assert!(matches!(fs.get("/missing", u64::MAX).unwrap_err(), WebDavError::NotFound));
     }
 
     #[test]
@@ -161,7 +165,7 @@ mod tests {
         let fs = FakeWebDav::new();
         fs.put("/x.json", b"").unwrap();
         fs.delete("/x.json").unwrap();
-        assert!(matches!(fs.get("/x.json").unwrap_err(), WebDavError::NotFound));
+        assert!(matches!(fs.get("/x.json", u64::MAX).unwrap_err(), WebDavError::NotFound));
     }
 
     #[test]
@@ -175,8 +179,8 @@ mod tests {
         let fs = FakeWebDav::new();
         fs.put("/a.tmp", b"payload").unwrap();
         fs.move_to("/a.tmp", "/a.json").unwrap();
-        assert!(matches!(fs.get("/a.tmp").unwrap_err(), WebDavError::NotFound));
-        assert_eq!(fs.get("/a.json").unwrap(), b"payload");
+        assert!(matches!(fs.get("/a.tmp", u64::MAX).unwrap_err(), WebDavError::NotFound));
+        assert_eq!(fs.get("/a.json", u64::MAX).unwrap(), b"payload");
     }
 
     #[test]
@@ -194,7 +198,7 @@ mod tests {
         fs.put("/a.tmp", b"new").unwrap();
         fs.put("/a.json", b"old").unwrap();
         fs.move_to("/a.tmp", "/a.json").unwrap();
-        assert_eq!(fs.get("/a.json").unwrap(), b"new");
+        assert_eq!(fs.get("/a.json", u64::MAX).unwrap(), b"new");
     }
 
     #[test]
@@ -204,6 +208,6 @@ mod tests {
         let fs_a = FakeWebDav::new();
         let fs_b = fs_a.clone();
         fs_a.put("/x.json", b"from a").unwrap();
-        assert_eq!(fs_b.get("/x.json").unwrap(), b"from a");
+        assert_eq!(fs_b.get("/x.json", u64::MAX).unwrap(), b"from a");
     }
 }

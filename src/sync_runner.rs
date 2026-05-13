@@ -290,7 +290,7 @@ mod tests {
                 -> meditate_core::WebDavResult<Vec<String>>
             { Err(meditate_core::WebDavError::Server {
                 status: 500, body: "boom".into() }) }
-            fn get(&self, _: &str)
+            fn get(&self, _: &str, _: u64)
                 -> meditate_core::WebDavResult<Vec<u8>>
             { unreachable!() }
             fn put(&self, _: &str, _: &[u8])
@@ -333,7 +333,7 @@ mod tests {
             fn list_collection(&self, _: &str)
                 -> meditate_core::WebDavResult<Vec<String>>
             { Err(meditate_core::WebDavError::Network("offline".into())) }
-            fn get(&self, _: &str)
+            fn get(&self, _: &str, _: u64)
                 -> meditate_core::WebDavResult<Vec<u8>>
             { unreachable!() }
             fn put(&self, _: &str, _: &[u8])
@@ -485,7 +485,7 @@ mod tests {
         fn list_collection(&self, _: &str)
             -> meditate_core::WebDavResult<Vec<String>>
         { Err(self.clone_err()) }
-        fn get(&self, _: &str)
+        fn get(&self, _: &str, _: u64)
             -> meditate_core::WebDavResult<Vec<u8>> { unreachable!() }
         fn put(&self, _: &str, _: &[u8])
             -> meditate_core::WebDavResult<()> { unreachable!() }
@@ -512,6 +512,7 @@ mod tests {
                     detail: detail.clone(),
                     body_excerpt: body_excerpt.clone(),
                 },
+                E::ResponseTooLarge { limit } => E::ResponseTooLarge { limit: *limit },
             }
         }
     }

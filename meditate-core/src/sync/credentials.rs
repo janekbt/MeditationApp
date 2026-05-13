@@ -266,6 +266,9 @@ mod tests {
                         body_excerpt: body_excerpt.clone(),
                     }
                 }
+                WebDavError::ResponseTooLarge { limit } => {
+                    WebDavError::ResponseTooLarge { limit: *limit }
+                }
             }
         }
     }
@@ -274,7 +277,7 @@ mod tests {
         fn list_collection(&self, _: &str) -> WebDavResult<Vec<String>> {
             Err(self.clone_err())
         }
-        fn get(&self, _: &str) -> WebDavResult<Vec<u8>> { unreachable!() }
+        fn get(&self, _: &str, _: u64) -> WebDavResult<Vec<u8>> { unreachable!() }
         fn put(&self, _: &str, _: &[u8]) -> WebDavResult<()> { unreachable!() }
         fn mkcol(&self, _: &str) -> WebDavResult<()> { unreachable!() }
         fn delete(&self, _: &str) -> WebDavResult<()> { unreachable!() }
