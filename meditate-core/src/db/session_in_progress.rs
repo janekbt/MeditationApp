@@ -50,7 +50,7 @@ pub struct SessionInProgress {
     pub mode: SessionMode,
     pub mode_payload: String,
     pub label_id: Option<i64>,
-    pub guided_file_uuid: Option<String>,
+    pub guided_file_uuid: Option<super::GuidedFileUuid>,
 }
 
 impl Database {
@@ -115,7 +115,7 @@ impl Database {
                 mode,
                 mode_payload,
                 label_id,
-                guided_file_uuid,
+                guided_file_uuid: guided_file_uuid.map(super::GuidedFileUuid::new),
             })
         })
         .transpose()
@@ -426,7 +426,7 @@ mod tests {
         );
         let sessions = db.list_sessions().unwrap();
         assert_eq!(
-            sessions[0].1.guided_file_uuid.as_deref(),
+            sessions[0].1.guided_file_uuid.as_ref().map(|u| u.as_str()),
             Some("ffffffff-ffff-4fff-8fff-ffffffffffff"),
         );
         assert_eq!(sessions[0].1.mode, SessionMode::Guided);

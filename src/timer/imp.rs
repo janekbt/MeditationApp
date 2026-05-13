@@ -2548,7 +2548,7 @@ impl TimerView {
         };
         let label_id = self.setup_selected_label_id();
         let guided_file_uuid = if matches!(mode, meditate_core::SessionMode::Guided) {
-            self.guided_selected_uuid.borrow().clone()
+            self.guided_selected_uuid.borrow().clone().map(meditate_core::db::GuidedFileUuid::new)
         } else {
             None
         };

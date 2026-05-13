@@ -171,7 +171,7 @@ fn session_data_to_core(s: &SessionData) -> meditate_core::db::Session {
         // Empty placeholder — core's `insert_session` overwrites this
         // with a freshly generated v4 uuid. Read paths see the real one.
         uuid: meditate_core::db::SessionUuid::new(""),
-        guided_file_uuid: s.guided_file_uuid.clone(),
+        guided_file_uuid: s.guided_file_uuid.clone().map(meditate_core::db::GuidedFileUuid::new),
     }
 }
 
@@ -186,7 +186,7 @@ fn session_from_core(id: i64, core: &meditate_core::db::Session) -> Session {
         mode: core.mode,
         label_id: core.label_id,
         note: core.notes.clone(),
-        guided_file_uuid: core.guided_file_uuid.clone(),
+        guided_file_uuid: core.guided_file_uuid.as_ref().map(|u| u.0.clone()),
     }
 }
 

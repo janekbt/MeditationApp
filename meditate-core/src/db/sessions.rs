@@ -27,7 +27,7 @@ pub struct Session {
     /// AND for transient one-off guided sessions where the user played
     /// a file without importing it. Lets stats and the log surface
     /// per-file aggregates on top of the per-mode breakdown.
-    pub guided_file_uuid: Option<String>,
+    pub guided_file_uuid: Option<super::GuidedFileUuid>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1041,7 +1041,7 @@ mod tests {
         db.apply_event(&event).unwrap();
         let rows = db.list_sessions().unwrap();
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].1.guided_file_uuid.as_deref(), Some(file_uuid));
+        assert_eq!(rows[0].1.guided_file_uuid.as_ref().map(|u| u.as_str()), Some(file_uuid));
     }
 
     #[test]
@@ -2698,12 +2698,12 @@ mod tests {
             notes: None,
             mode: SessionMode::Guided,
             uuid: crate::db::SessionUuid::new(""),
-            guided_file_uuid: Some(file_uuid.to_string()),
+            guided_file_uuid: Some(file_uuid.into()),
         };
         db.insert_session(&session).unwrap();
         let rows = db.query_sessions(&SessionFilter::default()).unwrap();
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].1.guided_file_uuid.as_deref(), Some(file_uuid));
+        assert_eq!(rows[0].1.guided_file_uuid.as_ref().map(|u| u.as_str()), Some(file_uuid));
     }
 
     #[test]
