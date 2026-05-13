@@ -56,6 +56,12 @@ flatpak run io.github.janekbt.Meditate
 
 ### Building from source
 
+The workspace splits into two crates: the GTK shell at the root (this
+README's subject) and the portable [`meditate-core`](meditate-core/README.md)
+crate that owns persistence, sync, and session logic. Most non-UI
+contributions land in `meditate-core/`; see its README for the
+architecture overview and a module map.
+
 **Dependencies**
 
 - GTK 4.18+, libadwaita 1.7+, GStreamer (with base plugins)
