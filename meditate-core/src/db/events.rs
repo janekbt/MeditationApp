@@ -416,6 +416,26 @@ impl Database {
     /// `target_id` is the affected row's cross-device identity (session
     /// or label uuid, or setting key) — denormalised onto the event so
     /// replay queries don't need to parse the JSON payload.
+    ///
+    /// # Precondition
+    ///
+    /// **Every caller must already be inside an `unchecked_transaction`
+    /// on `self.conn`.** Three steps run in sequence on `self.conn`
+    /// (Lamport bump, event append, the caller's own data write), and
+    /// a partial failure between any pair is corrupting:
+    ///
+    /// - A bumped Lamport without an appended event leaves the clock
+    ///   one step ahead of any actual event — fine in isolation, but
+    ///   the same clock value can never be reused, so a future event
+    ///   that happens to land on it would diverge from a peer's view.
+    /// - An appended event without the matching cache-row write means
+    ///   the next `recompute_*` reads stale cache state but sees the
+    ///   new event — the row in the cache table no longer matches the
+    ///   event log.
+    ///
+    /// The precondition is honored at every call site today, but the
+    /// signature doesn't enforce it. See backlog entry "Make
+    /// `emit_event` take `&Transaction`" for the structural fix.
     pub(super) fn emit_event(
         &self,
         kind: EventKind,

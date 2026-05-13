@@ -288,13 +288,21 @@ rationale.
   `write_settings(...)`, `replay_interval_bell_library(...)`,
   `write_box_breath_phases(...)`.
 
-### `emit_event` takes no `&Transaction` reference
-- `db.rs:1053-1066`. Implicitly relies on every caller having
-  opened `unchecked_transaction` first. Currently honored across
-  ~20 call sites by inspection; nothing prevents a future caller
-  from skipping it.
-- Fix: take `&Transaction` (or document the precondition in the
-  doc-comment with an audit-trail rule).
+### Make `emit_event` take `&Transaction`
+- `meditate-core/src/db/events.rs::emit_event` — the
+  "must be inside an `unchecked_transaction`" precondition is
+  doc'd but not enforced. Type-system enforcement would route the
+  Lamport bump + event append + caller's data write through the
+  same explicit transaction handle, making the partial-failure
+  windows described in the doc impossible to introduce by
+  accident.
+- Tier 2 → Tier 1 per the meta-audit "load-bearing invisible
+  precondition" note.
+- Touches every call site of `emit_event` (~20) plus
+  `bump_lamport_clock`, `append_event`, `device_id`,
+  `mark_event_uuid_known`, etc. — all the per-write internals
+  that currently borrow `self.conn` would take `&Transaction`
+  instead. Not a one-pass change; do it as a focused PR.
 
 ### `WebDavError::MalformedResponse` doesn't capture the raw body
 - `webdav.rs:54` + `:304` — variant carries only the parser's
