@@ -3,17 +3,33 @@ use std::time::Duration;
 pub fn parse_hms_duration(s: &str) -> Option<Duration> {
     let parts: Vec<&str> = s.split(':').collect();
     // Last component may be fractional ("30.5"); leading components must be integers.
+    // Use checked_* throughout so a hostile import row ("99999999:59:59")
+    // returns None rather than panicking in debug builds or silently
+    // wrapping in release.
     match parts.as_slice() {
         [m, sec] => {
             let m: u64 = m.parse().ok()?;
             let sec: f64 = sec.parse().ok()?;
-            Some(Duration::from_secs(m * 60 + sec.round() as u64))
+            let sec = sec.round();
+            if !(0.0..=u64::MAX as f64).contains(&sec) {
+                return None;
+            }
+            let total = m.checked_mul(60)?.checked_add(sec as u64)?;
+            Some(Duration::from_secs(total))
         }
         [h, m, sec] => {
             let h: u64 = h.parse().ok()?;
             let m: u64 = m.parse().ok()?;
             let sec: f64 = sec.parse().ok()?;
-            Some(Duration::from_secs(h * 3600 + m * 60 + sec.round() as u64))
+            let sec = sec.round();
+            if !(0.0..=u64::MAX as f64).contains(&sec) {
+                return None;
+            }
+            let total = h
+                .checked_mul(3600)?
+                .checked_add(m.checked_mul(60)?)?
+                .checked_add(sec as u64)?;
+            Some(Duration::from_secs(total))
         }
         _ => None,
     }
@@ -1164,6 +1180,22 @@ mod tests {
         assert_eq!(parse_hms_duration("60"), None); // single component is ambiguous
         assert_eq!(parse_hms_duration("1:30:45:00"), None);
         assert_eq!(parse_hms_duration(":30"), None);
+    }
+
+    #[test]
+    fn parse_hms_duration_rejects_overflowing_input() {
+        // Pasted Insight Timer row with a u64-overflowing minutes
+        // field used to panic in debug builds (overflow-checks on)
+        // and wrap silently in release. Now: None.
+        assert_eq!(parse_hms_duration("99999999999999999999:59:59"), None);
+        assert_eq!(parse_hms_duration("18446744073709551615:1"), None);
+        // h * 3600 overflows even when h itself fits in u64 — needs
+        // the intermediate checked_mul to catch it. u64::MAX / 3600
+        // ≈ 5.12e15; any h above that wraps without checked_mul.
+        assert_eq!(parse_hms_duration("9999999999999999:0:0"), None);
+        // Negative seconds via "-1.5" parses as a valid f64 but
+        // shouldn't survive the as-u64 conversion either.
+        assert_eq!(parse_hms_duration("1:-1.5"), None);
     }
 
     #[test]

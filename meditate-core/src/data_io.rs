@@ -237,7 +237,7 @@ where
             ))
         })?;
         let duration_secs: u32 = crate::format::parse_hms_duration(duration_raw)
-            .map(|d| d.as_secs() as u32)
+            .and_then(|d| u32::try_from(d.as_secs()).ok())
             .ok_or_else(|| {
                 DataIoError::Parse(format!(
                     "line {line}: can't parse 'Duration' {duration_raw:?}"

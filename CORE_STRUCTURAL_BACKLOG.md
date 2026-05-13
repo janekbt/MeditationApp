@@ -583,19 +583,6 @@ module.
 
 ## Tier 0 — Fourth-pass additions
 
-### CSV import overflow in `parse_hms_duration`
-- `meditate-core/src/format.rs:10, 16` — `m * 60 + sec.round() as
-  u64` and `h * 3600 + m * 60 + …` use plain u64 multiplication,
-  no checked/saturating. Pasted Insight Timer row with a large
-  H:M:S value overflows in debug (panic on `import_csv`), wraps
-  silently in release (`overflow-checks` off in `Cargo.toml`).
-- Compounded by `meditate-core/src/data_io.rs:230`: `d.as_secs()
-  as u32` truncates — a single legitimate ≥18.2h marathon import
-  wraps to a tiny number.
-- Fix: `m.checked_mul(60).and_then(|x| x.checked_add(...)).map(
-  Duration::from_secs)`. Store duration as `u64`/`i64` in the
-  import path.
-
 ### `SyncCoordinator` drop-trigger race
 - `meditate-core/src/sync/coordinator.rs:80-92`. Walkthrough:
   worker calls `should_run_again_after_pass() → false`. Concurrent
