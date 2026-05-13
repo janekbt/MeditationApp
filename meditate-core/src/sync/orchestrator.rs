@@ -595,7 +595,7 @@ fn put_with_rate_limit_retry<W: WebDav>(
     let mut backoff = BackoffState::new();
     let mut attempts: u32 = 0;
     loop {
-        if let Some(d) = backoff.wait_until_now() {
+        if let Some(d) = backoff.wait_for(crate::time::boot_time_now()) {
             if !d.is_zero() {
                 std::thread::sleep(d);
             }
@@ -618,7 +618,7 @@ fn put_with_rate_limit_retry<W: WebDav>(
                     "sync_rate_limit_retry: {path} attempt={attempts} \
                      retry_after={retry_after:?}"
                 ));
-                backoff.note_429(retry_after);
+                backoff.note_429_at(crate::time::boot_time_now(), retry_after);
                 continue;
             }
             Err(other) => return Err(other),

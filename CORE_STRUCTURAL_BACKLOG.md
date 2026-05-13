@@ -11,19 +11,6 @@ rationale.
 
 ## Tier 1 — High-impact, mostly mechanical
 
-### `sync::backoff` uses `Instant::now()` (wall-clock-frozen on suspend)
-- `meditate-core/src/sync/backoff.rs:29,49,69,77` and the
-  sleep in `sync/orchestrator.rs:466-468` use `Instant`
-  (CLOCK_MONOTONIC, freezes during suspend).
-- A 30-s server-asked backoff that straddles a 10-min
-  suspend ends ~30 s after **resume**, not 30 s after the
-  429. Inconsistent with the codebase's deliberate
-  `boot_time_now()` discipline elsewhere.
-- Fix: switch to `Duration` (boot-time); pass `now: Duration`
-  to a `wait_for(now)` API. Drop `wait_until_now`/
-  `note_429` convenience wrappers — require callers to pass
-  a `boot_time_now()` value.
-
 ### `DbError::Sqlite`/`Csv` dead-end at user UI; `DuplicateLabel(name)` not surfaced
 - `src/db/mod.rs:200,229` maps every `DbError::Sqlite` to a
   raw `rusqlite::Error` → generic toast. `DuplicateLabel`/
