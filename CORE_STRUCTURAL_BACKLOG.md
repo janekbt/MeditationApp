@@ -360,10 +360,6 @@ rationale.
 
 ## Tier 4 — Third-pass additions
 
-### `TIMER_DEFAULT_SECS: u64` vs `BREATHING_DEFAULT_SECS: u32`
-- `session.rs:96/101`. Pick one width or document why each
-  module picks its own.
-
 ### Document the seconds-numeric-type convention at the crate root
 - `u32` everywhere a single session duration is involved;
   `i64` for DB-aggregated totals (chrono uses `i64`); `u64`

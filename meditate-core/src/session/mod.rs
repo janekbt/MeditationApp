@@ -97,7 +97,7 @@ pub enum ToggleAction {
 /// (10 minutes). Used by the shell when restoring on first launch
 /// before any persisted value exists, AND as the fallback when the
 /// `timer_session_secs` row is missing or unparseable.
-pub const TIMER_DEFAULT_SECS: u64 = 10 * 60;
+pub const TIMER_DEFAULT_SECS: u32 = 10 * 60;
 
 /// Default Box-Breath session length in seconds for a fresh user
 /// (5 minutes). Used by the shell the same way as

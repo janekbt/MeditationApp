@@ -211,7 +211,7 @@ pub struct TimerView {
     /// Currently-selected countdown duration in seconds, set by preset
     /// chips or the "Custom" dialog. Default 10 min; used as the target
     /// when the user taps Start (and Stopwatch Mode is off).
-    countdown_target_secs: Cell<u64>,
+    countdown_target_secs: Cell<u32>,
     /// Live mirror of the active mode's persisted stopwatch flag and
     /// of `stopwatch_mode_row`'s active state. `true` means count up
     /// from zero with no target; `false` means count down to
@@ -1794,7 +1794,7 @@ impl TimerView {
     fn refresh_duration_value_label(&self) {
         let mins = match self.current_mode() {
             TimerMode::Timer     => self.countdown_target_secs.get() / 60,
-            TimerMode::Breathing => self.breathing_session_secs.get() as u64 / 60,
+            TimerMode::Breathing => self.breathing_session_secs.get() / 60,
             // Duration row is hidden in Guided mode (the duration
             // comes from the picked file's metadata, the user can't
             // dial it in). The label would never render — read 0
@@ -1833,13 +1833,13 @@ impl TimerView {
         // picked file length).
         let target_secs = match self.current_mode() {
             TimerMode::Timer => self.countdown_target_secs.get(),
-            TimerMode::Breathing => self.breathing_session_secs.get() as u64,
+            TimerMode::Breathing => self.breathing_session_secs.get(),
             TimerMode::Guided => self
                 .guided_pick
                 .borrow()
                 .as_ref()
                 .map(|p| p.duration_secs)
-                .unwrap_or(0) as u64,
+                .unwrap_or(0),
         };
         let label = meditate_core::format::idle_hero_label(
             self.stopwatch_toggle_on.get(),
@@ -2085,7 +2085,7 @@ impl TimerView {
             let target_secs = if stopwatch_on {
                 None
             } else {
-                Some(self.countdown_target_secs.get() as u32)
+                Some(self.countdown_target_secs.get())
             };
             let (bells, bell_rng_seed) = self.build_session_bells(
                 target_secs.map(|t| t as u64),
@@ -2798,7 +2798,7 @@ impl TimerView {
         // surfacing how much extra time they've accumulated.
         if let Some(label) = self.running_label.borrow().as_ref() {
             let target = self.countdown_target_secs.get();
-            label.set_label(&format_time(Duration::from_secs(target)));
+            label.set_label(&format_time(Duration::from_secs(target as u64)));
         }
     }
 
@@ -2860,7 +2860,7 @@ impl TimerView {
         let target = self.countdown_target_secs.get();
         let elapsed = self
             .core_session_end(|s, _now| s.finish_overtime())
-            .unwrap_or(target);
+            .unwrap_or(target as u64);
         self.end_overtime_session(elapsed);
     }
 
@@ -3361,7 +3361,7 @@ impl TimerView {
         let timing = match mode {
             TimerMode::Timer => PresetTiming::Timer {
                 stopwatch: self.stopwatch_toggle_on.get(),
-                duration_secs: self.countdown_target_secs.get() as u32,
+                duration_secs: self.countdown_target_secs.get(),
             },
             TimerMode::Breathing => {
                 let p = self.breathing_pattern.get();
@@ -3429,7 +3429,7 @@ impl TimerView {
         // wrote. The shell owns the gtk-side reactive plumbing.
         match timing {
             PresetTiming::Timer { stopwatch, duration_secs } => {
-                self.set_countdown_target(duration_secs as u64);
+                self.set_countdown_target(duration_secs);
                 self.stopwatch_loading.set(true);
                 self.stopwatch_mode_row.set_active(stopwatch);
                 self.stopwatch_toggle_on.set(stopwatch);
@@ -3554,7 +3554,7 @@ impl TimerView {
         }
     }
 
-    fn set_countdown_target(&self, secs: u64) {
+    fn set_countdown_target(&self, secs: u32) {
         self.countdown_target_secs.set(secs);
         let label = meditate_core::format::format_hhmm(secs);
         self.big_time_label.set_label(&label);
@@ -3578,7 +3578,7 @@ impl TimerView {
         let secs = app.with_db(|db| {
             db.get_setting("timer_session_secs", &default.to_string())
                 .ok()
-                .and_then(|s| s.parse::<u64>().ok())
+                .and_then(|s| s.parse::<u32>().ok())
                 .unwrap_or(default)
         }).unwrap_or(default);
         self.timer_populating.set(true);
@@ -3658,8 +3658,8 @@ impl TimerView {
         let mode_for_response = mode;
         dialog.connect_response(None, move |_, response| {
             if response != "set" { return; }
-            let h = hours_spin.value() as u64;
-            let m = minutes_spin.value() as u64;
+            let h = hours_spin.value() as u32;
+            let m = minutes_spin.value() as u32;
             let total_mins = h * 60 + m;
             if total_mins == 0 { return; }
             match mode_for_response {
@@ -3667,7 +3667,7 @@ impl TimerView {
                     obj.imp().set_countdown_target(total_mins * 60);
                 }
                 TimerMode::Breathing => {
-                    obj.imp().set_breathing_duration_secs((total_mins * 60) as u32);
+                    obj.imp().set_breathing_duration_secs(total_mins * 60);
                 }
                 TimerMode::Guided => {} // unreachable per show_custom_time_dialog guard
             }
@@ -4183,7 +4183,7 @@ impl TimerView {
         // value here so a Box-Breath edit shows up immediately. H:MM
         // format matches Timer mode.
         self.duration_value_label
-            .set_label(&meditate_core::format::format_hhmm(secs as u64));
+            .set_label(&meditate_core::format::format_hhmm(secs));
         if self.current_mode() == TimerMode::Breathing {
             self.refresh_hero_for_idle();
         }
@@ -4256,7 +4256,7 @@ impl TimerView {
         // viewing Timer mode — switching to Box Breath later will
         // already have the right value visible.
         self.duration_value_label
-            .set_label(&meditate_core::format::format_hhmm(secs as u64));
+            .set_label(&meditate_core::format::format_hhmm(secs));
         self.breathing_populating.set(false);
     }
 

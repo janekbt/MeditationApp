@@ -188,7 +188,7 @@ pub fn ellipsize(s: &str, max_chars: usize) -> String {
 /// duration in `HH:MM`. The shell resolves the right `target_secs`
 /// per mode (Timer's countdown / Box-Breath's session length /
 /// Guided's probed file length) and passes it in.
-pub fn idle_hero_label(stopwatch_on: bool, target_secs: u64) -> String {
+pub fn idle_hero_label(stopwatch_on: bool, target_secs: u32) -> String {
     if stopwatch_on {
         "00:00".to_string()
     } else {
@@ -211,7 +211,7 @@ pub fn box_breath_counter_label(elapsed: Duration, target: Option<Duration>) -> 
 /// Used by the Setup view's hero label and the Duration row's value
 /// suffix where seconds aren't shown (minute-aligned by the spinner).
 /// Hours zero-pad to two digits to keep the label width stable.
-pub fn format_hhmm(secs: u64) -> String {
+pub fn format_hhmm(secs: u32) -> String {
     let h = secs / 3600;
     let m = (secs % 3600) / 60;
     format!("{h:02}:{m:02}")
