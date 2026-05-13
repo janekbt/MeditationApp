@@ -409,7 +409,7 @@ pub fn apply(
         .list_bell_sounds()
         .map_err(|e| ApplyError::DbError(format!("{e:?}")))?
         .into_iter()
-        .map(|s| s.uuid)
+        .map(|s| s.uuid.0)
         .collect();
     let mut needs_sound: Vec<&str> = Vec::new();
     if cfg.starting_bell.enabled {

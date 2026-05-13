@@ -385,7 +385,7 @@ impl<'a, W: WebDav> Sync<'a, W> {
         let bells = self.db.list_bell_sounds()?;
         let pending: Vec<crate::db::BellSound> = bells
             .into_iter()
-            .filter(|b| !b.is_bundled && !known.contains(&b.uuid))
+            .filter(|b| !b.is_bundled && !known.contains(b.uuid.as_str()))
             .collect();
         if pending.is_empty() {
             return Ok(0);
@@ -398,7 +398,7 @@ impl<'a, W: WebDav> Sync<'a, W> {
         let mut pulled = 0;
         for bell in pending {
             let ext = bell.extension();
-            let local = self.sound_local_path(&bell.uuid, ext);
+            let local = self.sound_local_path(bell.uuid.as_str(), ext);
             if local.exists() {
                 // We already have the audio. Skip the GET — but
                 // DON'T mark it known. The known set means "this
@@ -409,7 +409,7 @@ impl<'a, W: WebDav> Sync<'a, W> {
                 // file local-only forever.
                 continue;
             }
-            let remote = self.sound_remote_path(&bell.uuid, ext);
+            let remote = self.sound_remote_path(bell.uuid.as_str(), ext);
             let bytes = match self.webdav.get(&remote) {
                 Ok(b) => b,
                 Err(WebDavError::NotFound) => continue,
@@ -448,7 +448,7 @@ impl<'a, W: WebDav> Sync<'a, W> {
                         format!("can't fsync sound file {local:?}: {e}"))
                 })?;
             }
-            self.db.record_known_remote_sound(&bell.uuid)?;
+            self.db.record_known_remote_sound(bell.uuid.as_str())?;
             pulled += 1;
         }
         Ok(pulled)
@@ -468,7 +468,7 @@ impl<'a, W: WebDav> Sync<'a, W> {
         let bells = self.db.list_bell_sounds()?;
         let pending: Vec<crate::db::BellSound> = bells
             .into_iter()
-            .filter(|b| !b.is_bundled && !known.contains(&b.uuid))
+            .filter(|b| !b.is_bundled && !known.contains(b.uuid.as_str()))
             .collect();
         if pending.is_empty() {
             return Ok(0);
@@ -477,7 +477,7 @@ impl<'a, W: WebDav> Sync<'a, W> {
         let mut pushed = 0;
         for bell in pending {
             let ext = bell.extension();
-            let local = self.sound_local_path(&bell.uuid, ext);
+            let local = self.sound_local_path(bell.uuid.as_str(), ext);
             let bytes = match std::fs::read(&local) {
                 Ok(b) => b,
                 Err(_) => {
@@ -496,12 +496,12 @@ impl<'a, W: WebDav> Sync<'a, W> {
             if bytes.len() as u64 > MAX_CUSTOM_BELL_BYTES {
                 continue;
             }
-            let remote = self.sound_remote_path(&bell.uuid, ext);
+            let remote = self.sound_remote_path(bell.uuid.as_str(), ext);
             // Atomic upload: PUT to .tmp + MOVE, so a half-uploaded
             // audio file can't show up at the canonical name and
             // crash pull-side gstreamer decoders.
             put_atomic_with_rate_limit_retry(self.webdav, &remote, &bytes)?;
-            self.db.record_known_remote_sound(&bell.uuid)?;
+            self.db.record_known_remote_sound(bell.uuid.as_str())?;
             pushed += 1;
         }
         Ok(pushed)

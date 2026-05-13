@@ -218,7 +218,7 @@ fn build_sound_row(
         add_delete_button(&row, sound, app, rebuilder);
     }
 
-    let uuid = sound.uuid.clone();
+    let uuid = sound.uuid.0.clone();
     let on_selected = selection.on_selected.clone();
     let nav_view = selection.nav_view.clone();
     row.connect_activated(move |_| {
@@ -279,7 +279,7 @@ fn add_rename_button(
         .valign(gtk::Align::Center)
         .build();
     let app = app.clone();
-    let uuid = sound.uuid.clone();
+    let uuid = sound.uuid.0.clone();
     let row_clone = row.clone();
     rename_btn.connect_clicked(move |btn| {
         present_rename_dialog(btn, &app, &uuid, &row_clone.title(), rebuilder.clone());
@@ -300,7 +300,7 @@ fn add_delete_button(
         .valign(gtk::Align::Center)
         .build();
     let app = app.clone();
-    let uuid = sound.uuid.clone();
+    let uuid = sound.uuid.0.clone();
     delete_btn.connect_clicked(move |btn| {
         present_delete_dialog(btn, &app, &uuid, rebuilder.clone());
     });

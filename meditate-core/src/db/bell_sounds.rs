@@ -13,7 +13,7 @@ use super::{Database, Result};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BellSound {
     pub id: i64,
-    pub uuid: String,
+    pub uuid: super::BellSoundUuid,
     pub name: String,
     pub file_path: String,
     pub is_bundled: bool,
@@ -504,7 +504,7 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         db.insert_bell_sound("Bowl", "/p/bowl.wav", true, "audio/wav", BellSoundCategory::General).unwrap();
         let uuid = db.list_bell_sounds().unwrap()[0].uuid.clone();
-        db.rename_bell_sound(&uuid, "Singing Bowl").unwrap();
+        db.rename_bell_sound(uuid.as_str(), "Singing Bowl").unwrap();
         assert_eq!(db.list_bell_sounds().unwrap()[0].name, "Singing Bowl");
         let updates: Vec<_> = db.pending_events().unwrap()
             .into_iter()
@@ -513,7 +513,7 @@ mod tests {
         assert_eq!(updates.len(), 1);
         let payload: serde_json::Value = serde_json::from_str(&updates[0].1.payload).unwrap();
         assert_eq!(payload["name"], "Singing Bowl");
-        assert_eq!(payload["uuid"], uuid);
+        assert_eq!(payload["uuid"], uuid.0);
         assert_eq!(payload["file_path"], "/p/bowl.wav");
         assert_eq!(payload["is_bundled"], true);
         assert_eq!(payload["mime_type"], "audio/wav");
@@ -535,7 +535,7 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         db.insert_bell_sound("Bowl", "/p/bowl.wav", false, "audio/wav", BellSoundCategory::General).unwrap();
         let uuid = db.list_bell_sounds().unwrap()[0].uuid.clone();
-        db.delete_bell_sound(&uuid).unwrap();
+        db.delete_bell_sound(uuid.as_str()).unwrap();
         assert!(db.list_bell_sounds().unwrap().is_empty());
         let deletes: Vec<_> = db.pending_events().unwrap()
             .into_iter()
@@ -587,7 +587,7 @@ mod tests {
         let dev_a = Database::open_in_memory().unwrap();
         dev_a.insert_bell_sound("Bowl", "/p/bowl.wav", true, "audio/wav", BellSoundCategory::General).unwrap();
         let uuid = dev_a.list_bell_sounds().unwrap()[0].uuid.clone();
-        dev_a.rename_bell_sound(&uuid, "Singing Bowl").unwrap();
+        dev_a.rename_bell_sound(uuid.as_str(), "Singing Bowl").unwrap();
 
         let events: Vec<Event> = dev_a.pending_events().unwrap()
             .into_iter()
