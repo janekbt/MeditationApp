@@ -50,7 +50,11 @@ pub use labels::{
     count_labels_from_db, find_label_by_name_from_db, is_label_name_taken_from_db,
     label_session_count_from_db, list_labels_from_db, Label,
 };
-pub use presets::Preset;
+pub use presets::{
+    count_presets_from_db, find_preset_by_uuid_from_db, is_preset_name_taken_from_db,
+    list_presets_for_mode_from_db, list_presets_from_db, list_starred_presets_for_mode_from_db,
+    Preset,
+};
 pub use session_in_progress::{FinalizedSession, SessionInProgress};
 pub use sessions::{Session, SessionFilter, SessionMode};
 pub use uuids::{

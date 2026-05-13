@@ -34,6 +34,132 @@ pub struct Preset {
     pub updated_iso: String,
 }
 
+/// Every preset, ordered by mode (timer first, then box_breath)
+/// then created_iso ASC. Stable order: rows don't shuffle when a
+/// star toggles or a config gets overwritten.
+pub fn list_presets_from_db(db: &Database) -> Result<Vec<Preset>> {
+    let mut stmt = db.conn.prepare(
+        "SELECT id, uuid, name, mode, is_starred, config_json, created_iso, updated_iso
+         FROM presets
+         ORDER BY mode, created_iso ASC",
+    )?;
+    let rows = stmt
+        .query_map([], |row| {
+            let mode_str: String = row.get(3)?;
+            Ok(Preset {
+                id: row.get(0)?,
+                uuid: row.get(1)?,
+                name: row.get(2)?,
+                mode: SessionMode::from_db_str(&mode_str)
+                    .unwrap_or(SessionMode::Timer),
+                is_starred: row.get::<_, i64>(4)? != 0,
+                config_json: row.get(5)?,
+                created_iso: row.get(6)?,
+                updated_iso: row.get(7)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+/// Presets for one mode, ordered by created_iso ASC. Used by the
+/// chooser pages (Save / Manage), both of which are mode-strict
+/// per the design (the user shouldn't accidentally save a Timer
+/// config into a Box-Breath preset, or see other-mode presets in
+/// the management page).
+pub fn list_presets_for_mode_from_db(db: &Database, mode: SessionMode) -> Result<Vec<Preset>> {
+    let mut stmt = db.conn.prepare(
+        "SELECT id, uuid, name, mode, is_starred, config_json, created_iso, updated_iso
+         FROM presets
+         WHERE mode = ?1
+         ORDER BY created_iso ASC",
+    )?;
+    let rows = stmt
+        .query_map(params![mode.as_db_str()], |row| {
+            let mode_str: String = row.get(3)?;
+            Ok(Preset {
+                id: row.get(0)?,
+                uuid: row.get(1)?,
+                name: row.get(2)?,
+                mode: SessionMode::from_db_str(&mode_str)
+                    .unwrap_or(SessionMode::Timer),
+                is_starred: row.get::<_, i64>(4)? != 0,
+                config_json: row.get(5)?,
+                created_iso: row.get(6)?,
+                updated_iso: row.get(7)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+/// Starred presets for one mode, ordered by created_iso ASC.
+/// Drives the visible chip list above the Save / Manage buttons
+/// in the Setup view. When this list is empty, the chip section
+/// hides entirely (just the two buttons remain).
+pub fn list_starred_presets_for_mode_from_db(db: &Database, mode: SessionMode) -> Result<Vec<Preset>> {
+    let mut stmt = db.conn.prepare(
+        "SELECT id, uuid, name, mode, is_starred, config_json, created_iso, updated_iso
+         FROM presets
+         WHERE mode = ?1 AND is_starred = 1
+         ORDER BY created_iso ASC",
+    )?;
+    let rows = stmt
+        .query_map(params![mode.as_db_str()], |row| {
+            let mode_str: String = row.get(3)?;
+            Ok(Preset {
+                id: row.get(0)?,
+                uuid: row.get(1)?,
+                name: row.get(2)?,
+                mode: SessionMode::from_db_str(&mode_str)
+                    .unwrap_or(SessionMode::Timer),
+                is_starred: row.get::<_, i64>(4)? != 0,
+                config_json: row.get(5)?,
+                created_iso: row.get(6)?,
+                updated_iso: row.get(7)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+/// True iff any preset other than `except_uuid` already uses
+/// `name` (case-insensitive — the column is COLLATE NOCASE).
+/// Used by the rename flow's live validation; pass the row's own
+/// uuid as `except_uuid` so renaming to its current name (or a
+/// case variant) doesn't false-positive.
+pub fn is_preset_name_taken_from_db(db: &Database, name: &str, except_uuid: &str) -> Result<bool> {
+    let n: i64 = db.conn.query_row(
+        "SELECT COUNT(*) FROM presets WHERE name = ?1 AND uuid != ?2",
+        params![name, except_uuid],
+        |row| row.get(0),
+    )?;
+    Ok(n > 0)
+}
+pub fn find_preset_by_uuid_from_db(db: &Database, uuid_str: &str) -> Result<Option<Preset>> {
+    let row = db.conn.query_row(
+        "SELECT id, uuid, name, mode, is_starred, config_json, created_iso, updated_iso
+         FROM presets WHERE uuid = ?1",
+        params![uuid_str],
+        |row| {
+            let mode_str: String = row.get(3)?;
+            Ok(Preset {
+                id: row.get(0)?,
+                uuid: row.get(1)?,
+                name: row.get(2)?,
+                mode: SessionMode::from_db_str(&mode_str)
+                    .unwrap_or(SessionMode::Timer),
+                is_starred: row.get::<_, i64>(4)? != 0,
+                config_json: row.get(5)?,
+                created_iso: row.get(6)?,
+                updated_iso: row.get(7)?,
+            })
+        },
+    ).optional()?;
+    Ok(row)
+}
+pub fn count_presets_from_db(db: &Database) -> Result<i64> {
+    Ok(db
+        .conn
+        .query_row("SELECT COUNT(*) FROM presets", [], |row| row.get(0))?)
+}
 impl Database {
     /// Create a preset under a freshly-minted v4 UUID. Convenience
     /// over `insert_preset_with_uuid` for the user-creates-from-Setup
@@ -103,137 +229,11 @@ impl Database {
         Ok(rowid)
     }
 
-    /// Every preset, ordered by mode (timer first, then box_breath)
-    /// then created_iso ASC. Stable order: rows don't shuffle when a
-    /// star toggles or a config gets overwritten.
-    pub fn list_presets(&self) -> Result<Vec<Preset>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, uuid, name, mode, is_starred, config_json, created_iso, updated_iso
-             FROM presets
-             ORDER BY mode, created_iso ASC",
-        )?;
-        let rows = stmt
-            .query_map([], |row| {
-                let mode_str: String = row.get(3)?;
-                Ok(Preset {
-                    id: row.get(0)?,
-                    uuid: row.get(1)?,
-                    name: row.get(2)?,
-                    mode: SessionMode::from_db_str(&mode_str)
-                        .unwrap_or(SessionMode::Timer),
-                    is_starred: row.get::<_, i64>(4)? != 0,
-                    config_json: row.get(5)?,
-                    created_iso: row.get(6)?,
-                    updated_iso: row.get(7)?,
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
-    }
 
-    /// Presets for one mode, ordered by created_iso ASC. Used by the
-    /// chooser pages (Save / Manage), both of which are mode-strict
-    /// per the design (the user shouldn't accidentally save a Timer
-    /// config into a Box-Breath preset, or see other-mode presets in
-    /// the management page).
-    pub fn list_presets_for_mode(&self, mode: SessionMode) -> Result<Vec<Preset>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, uuid, name, mode, is_starred, config_json, created_iso, updated_iso
-             FROM presets
-             WHERE mode = ?1
-             ORDER BY created_iso ASC",
-        )?;
-        let rows = stmt
-            .query_map(params![mode.as_db_str()], |row| {
-                let mode_str: String = row.get(3)?;
-                Ok(Preset {
-                    id: row.get(0)?,
-                    uuid: row.get(1)?,
-                    name: row.get(2)?,
-                    mode: SessionMode::from_db_str(&mode_str)
-                        .unwrap_or(SessionMode::Timer),
-                    is_starred: row.get::<_, i64>(4)? != 0,
-                    config_json: row.get(5)?,
-                    created_iso: row.get(6)?,
-                    updated_iso: row.get(7)?,
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
-    }
 
-    /// Starred presets for one mode, ordered by created_iso ASC.
-    /// Drives the visible chip list above the Save / Manage buttons
-    /// in the Setup view. When this list is empty, the chip section
-    /// hides entirely (just the two buttons remain).
-    pub fn list_starred_presets_for_mode(&self, mode: SessionMode) -> Result<Vec<Preset>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, uuid, name, mode, is_starred, config_json, created_iso, updated_iso
-             FROM presets
-             WHERE mode = ?1 AND is_starred = 1
-             ORDER BY created_iso ASC",
-        )?;
-        let rows = stmt
-            .query_map(params![mode.as_db_str()], |row| {
-                let mode_str: String = row.get(3)?;
-                Ok(Preset {
-                    id: row.get(0)?,
-                    uuid: row.get(1)?,
-                    name: row.get(2)?,
-                    mode: SessionMode::from_db_str(&mode_str)
-                        .unwrap_or(SessionMode::Timer),
-                    is_starred: row.get::<_, i64>(4)? != 0,
-                    config_json: row.get(5)?,
-                    created_iso: row.get(6)?,
-                    updated_iso: row.get(7)?,
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
-    }
 
-    /// True iff any preset other than `except_uuid` already uses
-    /// `name` (case-insensitive — the column is COLLATE NOCASE).
-    /// Used by the rename flow's live validation; pass the row's own
-    /// uuid as `except_uuid` so renaming to its current name (or a
-    /// case variant) doesn't false-positive.
-    pub fn is_preset_name_taken(&self, name: &str, except_uuid: &str) -> Result<bool> {
-        let n: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM presets WHERE name = ?1 AND uuid != ?2",
-            params![name, except_uuid],
-            |row| row.get(0),
-        )?;
-        Ok(n > 0)
-    }
 
-    pub fn find_preset_by_uuid(&self, uuid_str: &str) -> Result<Option<Preset>> {
-        let row = self.conn.query_row(
-            "SELECT id, uuid, name, mode, is_starred, config_json, created_iso, updated_iso
-             FROM presets WHERE uuid = ?1",
-            params![uuid_str],
-            |row| {
-                let mode_str: String = row.get(3)?;
-                Ok(Preset {
-                    id: row.get(0)?,
-                    uuid: row.get(1)?,
-                    name: row.get(2)?,
-                    mode: SessionMode::from_db_str(&mode_str)
-                        .unwrap_or(SessionMode::Timer),
-                    is_starred: row.get::<_, i64>(4)? != 0,
-                    config_json: row.get(5)?,
-                    created_iso: row.get(6)?,
-                    updated_iso: row.get(7)?,
-                })
-            },
-        ).optional()?;
-        Ok(row)
-    }
 
-    pub fn count_presets(&self) -> Result<i64> {
-        Ok(self
-            .conn
-            .query_row("SELECT COUNT(*) FROM presets", [], |row| row.get(0))?)
-    }
 
     /// Rename a preset. Unknown uuids are silent no-ops AND emit no
     /// event. If `name` collides with another preset (case-insensitive)
@@ -256,7 +256,7 @@ impl Database {
                 params![name, now_iso, uuid_str],
             )
             .map_err(|e| map_unique_err(e, || DbError::DuplicatePreset(name.to_string())))?;
-        let row = self.find_preset_by_uuid(uuid_str)?
+        let row = find_preset_by_uuid_from_db(self, uuid_str)?
             .expect("just confirmed exists");
         let payload = serde_json::json!({
             "uuid": uuid_str,
@@ -277,7 +277,7 @@ impl Database {
     /// Bumps `updated_iso`.
     pub fn update_preset_config(&self, uuid_str: &str, config_json: &str) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
-        let row = self.find_preset_by_uuid(uuid_str)?;
+        let row = find_preset_by_uuid_from_db(self, uuid_str)?;
         let Some(row) = row else { return Ok(()); };
         let now_iso = chrono::Utc::now().to_rfc3339();
         self.conn.execute(
@@ -303,7 +303,7 @@ impl Database {
     /// resolution converges on the latest toggle.
     pub fn update_preset_starred(&self, uuid_str: &str, is_starred: bool) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
-        let row = self.find_preset_by_uuid(uuid_str)?;
+        let row = find_preset_by_uuid_from_db(self, uuid_str)?;
         let Some(row) = row else { return Ok(()); };
         let now_iso = chrono::Utc::now().to_rfc3339();
         self.conn.execute(
@@ -428,7 +428,7 @@ mod tests {
             r#"{"duration_secs":900}"#,
         ).unwrap();
 
-        let presets = db.list_presets().unwrap();
+        let presets = list_presets_from_db(&db).unwrap();
         assert_eq!(presets.len(), 1);
         let p = &presets[0];
         assert_eq!(p.id, id);
@@ -451,7 +451,7 @@ mod tests {
             true,
             r#"{"guided_file_uuid":"x"}"#,
         ).unwrap();
-        let presets = db.list_presets().unwrap();
+        let presets = list_presets_from_db(&db).unwrap();
         assert_eq!(presets.len(), 1);
         assert_eq!(presets[0].id, id);
         assert_eq!(presets[0].mode, SessionMode::Guided);
@@ -467,7 +467,7 @@ mod tests {
             false,
             r#"{}"#,
         ).unwrap();
-        let presets = db.list_presets().unwrap();
+        let presets = list_presets_from_db(&db).unwrap();
         assert_eq!(presets[0].uuid, "abc-123");
     }
 
@@ -481,9 +481,9 @@ mod tests {
             "u-1", "Different Name", SessionMode::BoxBreath, true, r#"{"x":1}"#,
         ).unwrap();
         assert_eq!(r1, r2, "second insert returns existing rowid");
-        assert_eq!(db.count_presets().unwrap(), 1);
+        assert_eq!(count_presets_from_db(&db).unwrap(), 1);
         // Original values stand — second insert is a pure no-op.
-        let p = &db.list_presets().unwrap()[0];
+        let p = &list_presets_from_db(&db).unwrap()[0];
         assert_eq!(p.name, "Sitting");
         assert_eq!(p.mode, SessionMode::Timer);
         assert!(!p.is_starred);
@@ -503,7 +503,7 @@ mod tests {
             matches!(r, Err(DbError::DuplicatePreset(ref n)) if n == "sitting"),
             "expected DuplicatePreset, got {r:?}",
         );
-        assert_eq!(db.count_presets().unwrap(), 1, "row count unchanged");
+        assert_eq!(count_presets_from_db(&db).unwrap(), 1, "row count unchanged");
     }
 
     #[test]
@@ -536,7 +536,7 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(2));
         insert_basic_preset(&db, "T-2", SessionMode::Timer);
 
-        let names: Vec<String> = db.list_presets().unwrap()
+        let names: Vec<String> = list_presets_from_db(&db).unwrap()
             .into_iter().map(|p| p.name).collect();
         // Mode ordering (timer < box_breath alphabetically as DB string —
         // 'box_breath' < 'timer' actually). Verify whichever way SQL sees it.
@@ -565,11 +565,11 @@ mod tests {
         insert_basic_preset(&db, "BB-1", SessionMode::BoxBreath);
         insert_basic_preset(&db, "T-2", SessionMode::Timer);
 
-        let timers: Vec<String> = db.list_presets_for_mode(SessionMode::Timer)
+        let timers: Vec<String> = list_presets_for_mode_from_db(&db, SessionMode::Timer)
             .unwrap().into_iter().map(|p| p.name).collect();
         assert_eq!(timers, vec!["T-1", "T-2"]);
 
-        let breaths: Vec<String> = db.list_presets_for_mode(SessionMode::BoxBreath)
+        let breaths: Vec<String> = list_presets_for_mode_from_db(&db, SessionMode::BoxBreath)
             .unwrap().into_iter().map(|p| p.name).collect();
         assert_eq!(breaths, vec!["BB-1"]);
     }
@@ -584,12 +584,12 @@ mod tests {
         db.insert_preset("BB-no", SessionMode::BoxBreath, false, r#"{}"#).unwrap();
 
         let timer_starred: Vec<String> =
-            db.list_starred_presets_for_mode(SessionMode::Timer).unwrap()
+            list_starred_presets_for_mode_from_db(&db, SessionMode::Timer).unwrap()
                 .into_iter().map(|p| p.name).collect();
         assert_eq!(timer_starred, vec!["T-star"]);
 
         let breath_starred: Vec<String> =
-            db.list_starred_presets_for_mode(SessionMode::BoxBreath).unwrap()
+            list_starred_presets_for_mode_from_db(&db, SessionMode::BoxBreath).unwrap()
                 .into_iter().map(|p| p.name).collect();
         assert_eq!(breath_starred, vec!["BB-star"]);
     }
@@ -604,11 +604,11 @@ mod tests {
             "u-2", "Walking", SessionMode::Timer, false, r#"{}"#,
         ).unwrap();
         // Collision with another preset's name.
-        assert!(db.is_preset_name_taken("Walking", "u-1").unwrap());
+        assert!(is_preset_name_taken_from_db(&db, "Walking", "u-1").unwrap());
         // Renaming to own current name — case-insensitive — is allowed.
-        assert!(!db.is_preset_name_taken("sitting", "u-1").unwrap());
+        assert!(!is_preset_name_taken_from_db(&db, "sitting", "u-1").unwrap());
         // Brand-new name is fine.
-        assert!(!db.is_preset_name_taken("Sleeping", "u-1").unwrap());
+        assert!(!is_preset_name_taken_from_db(&db, "Sleeping", "u-1").unwrap());
     }
 
     #[test]
@@ -617,7 +617,7 @@ mod tests {
         db.insert_preset_with_uuid(
             "u-1", "Sitting", SessionMode::Timer, true, r#"{"x":1}"#,
         ).unwrap();
-        let p = db.find_preset_by_uuid("u-1").unwrap().unwrap();
+        let p = find_preset_by_uuid_from_db(&db, "u-1").unwrap().unwrap();
         assert_eq!(p.name, "Sitting");
         assert!(p.is_starred);
         assert_eq!(p.config_json, r#"{"x":1}"#);
@@ -626,7 +626,7 @@ mod tests {
     #[test]
     fn find_preset_by_uuid_returns_none_when_absent() {
         let db = Database::open_in_memory().unwrap();
-        assert!(db.find_preset_by_uuid("missing").unwrap().is_none());
+        assert!(find_preset_by_uuid_from_db(&db, "missing").unwrap().is_none());
     }
 
     #[test]
@@ -635,10 +635,10 @@ mod tests {
         db.insert_preset_with_uuid(
             "u-1", "Sitting", SessionMode::Timer, false, r#"{}"#,
         ).unwrap();
-        let before = db.find_preset_by_uuid("u-1").unwrap().unwrap();
+        let before = find_preset_by_uuid_from_db(&db, "u-1").unwrap().unwrap();
         std::thread::sleep(std::time::Duration::from_millis(2));
         db.update_preset_name("u-1", "Morning Sit").unwrap();
-        let after = db.find_preset_by_uuid("u-1").unwrap().unwrap();
+        let after = find_preset_by_uuid_from_db(&db, "u-1").unwrap().unwrap();
         assert_eq!(after.name, "Morning Sit");
         assert_eq!(after.created_iso, before.created_iso);
         assert!(after.updated_iso > before.updated_iso);
@@ -656,7 +656,7 @@ mod tests {
         let result = db.update_preset_name("u-1", "Walking");
         assert!(matches!(result, Err(DbError::DuplicatePreset(_))));
         // u-1 still has its original name.
-        let p = db.find_preset_by_uuid("u-1").unwrap().unwrap();
+        let p = find_preset_by_uuid_from_db(&db, "u-1").unwrap().unwrap();
         assert_eq!(p.name, "Sitting");
     }
 
@@ -679,7 +679,7 @@ mod tests {
         ).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(2));
         db.update_preset_config("u-1", r#"{"new":2}"#).unwrap();
-        let p = db.find_preset_by_uuid("u-1").unwrap().unwrap();
+        let p = find_preset_by_uuid_from_db(&db, "u-1").unwrap().unwrap();
         assert_eq!(p.config_json, r#"{"new":2}"#);
     }
 
@@ -704,9 +704,9 @@ mod tests {
             "u-1", "Sitting", SessionMode::Timer, false, r#"{}"#,
         ).unwrap();
         db.update_preset_starred("u-1", true).unwrap();
-        assert!(db.find_preset_by_uuid("u-1").unwrap().unwrap().is_starred);
+        assert!(find_preset_by_uuid_from_db(&db, "u-1").unwrap().unwrap().is_starred);
         db.update_preset_starred("u-1", false).unwrap();
-        assert!(!db.find_preset_by_uuid("u-1").unwrap().unwrap().is_starred);
+        assert!(!find_preset_by_uuid_from_db(&db, "u-1").unwrap().unwrap().is_starred);
     }
 
     #[test]
@@ -716,7 +716,7 @@ mod tests {
             "u-1", "Sitting", SessionMode::Timer, false, r#"{}"#,
         ).unwrap();
         db.delete_preset("u-1").unwrap();
-        assert!(db.find_preset_by_uuid("u-1").unwrap().is_none());
+        assert!(find_preset_by_uuid_from_db(&db, "u-1").unwrap().is_none());
         let tombstones: Vec<_> = db.pending_events().unwrap()
             .into_iter()
             .filter(|(_, e)| e.kind == "preset_delete")
@@ -751,7 +751,7 @@ mod tests {
         });
         peer.apply_event(&synth_event("preset_insert", "u-1", 1, "dev-a", payload))
             .unwrap();
-        let p = peer.find_preset_by_uuid("u-1").unwrap()
+        let p = find_preset_by_uuid_from_db(&peer, "u-1").unwrap()
             .expect("row materialised on peer");
         assert_eq!(p.name, "Sitting");
         assert_eq!(p.mode, SessionMode::Timer);
@@ -776,7 +776,7 @@ mod tests {
                 "created_iso": "2026-05-04T10:00:00Z",
                 "updated_iso": "2026-05-04T10:05:00Z",
             }))).unwrap();
-        let p = peer.find_preset_by_uuid("u-1").unwrap().unwrap();
+        let p = find_preset_by_uuid_from_db(&peer, "u-1").unwrap().unwrap();
         assert_eq!(p.name, "Morning Sit");
         assert!(p.is_starred);
         assert_eq!(p.config_json, r#"{"v":2}"#);
@@ -793,7 +793,7 @@ mod tests {
             }))).unwrap();
         peer.apply_event(&synth_event("preset_delete", "u-1", 5, "dev-a",
             serde_json::json!({"uuid": "u-1"}))).unwrap();
-        assert!(peer.find_preset_by_uuid("u-1").unwrap().is_none());
+        assert!(find_preset_by_uuid_from_db(&peer, "u-1").unwrap().is_none());
     }
 
     #[test]
@@ -809,7 +809,7 @@ mod tests {
                 "is_starred": false, "config_json": "{}",
                 "created_iso": "x", "updated_iso": "x",
             }))).unwrap();
-        assert!(peer.find_preset_by_uuid("u-1").unwrap().is_none(),
+        assert!(find_preset_by_uuid_from_db(&peer, "u-1").unwrap().is_none(),
             "tombstone with higher ts wins over later-applied lower-ts insert");
     }
 
@@ -829,7 +829,7 @@ mod tests {
 
         let dev_b = Database::open_in_memory().unwrap();
         dev_b.replay_events(&events).unwrap();
-        let p = dev_b.find_preset_by_uuid("u-1").unwrap()
+        let p = find_preset_by_uuid_from_db(&dev_b, "u-1").unwrap()
             .expect("device B materialised the preset from events alone");
         assert_eq!(p.name, "Morning Sit");
         assert!(!p.is_starred);
@@ -848,6 +848,6 @@ mod tests {
 
         let dev_b = Database::open_in_memory().unwrap();
         dev_b.replay_events(&events).unwrap();
-        assert!(dev_b.find_preset_by_uuid("u-1").unwrap().is_none());
+        assert!(find_preset_by_uuid_from_db(&dev_b, "u-1").unwrap().is_none());
     }
 }

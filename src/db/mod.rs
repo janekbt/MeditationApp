@@ -465,15 +465,15 @@ impl Database {
     // for these via the GTK shell's Database wrapper.
 
     pub fn list_presets(&self) -> Result<Vec<Preset>> {
-        self.inner.list_presets().map_err(map_core_err)
+        meditate_core::db::list_presets_from_db(&self.inner).map_err(map_core_err)
     }
 
     pub fn list_presets_for_mode(&self, mode: SessionMode) -> Result<Vec<Preset>> {
-        self.inner.list_presets_for_mode(mode).map_err(map_core_err)
+        meditate_core::db::list_presets_for_mode_from_db(&self.inner, mode).map_err(map_core_err)
     }
 
     pub fn list_starred_presets_for_mode(&self, mode: SessionMode) -> Result<Vec<Preset>> {
-        self.inner.list_starred_presets_for_mode(mode).map_err(map_core_err)
+        meditate_core::db::list_starred_presets_for_mode_from_db(&self.inner, mode).map_err(map_core_err)
     }
 
     pub fn insert_preset(
@@ -502,11 +502,11 @@ impl Database {
     }
 
     pub fn is_preset_name_taken(&self, name: &str, except_uuid: &str) -> Result<bool> {
-        self.inner.is_preset_name_taken(name, except_uuid).map_err(map_core_err)
+        meditate_core::db::is_preset_name_taken_from_db(&self.inner, name, except_uuid).map_err(map_core_err)
     }
 
     pub fn find_preset_by_uuid(&self, uuid: &str) -> Result<Option<Preset>> {
-        self.inner.find_preset_by_uuid(uuid).map_err(map_core_err)
+        meditate_core::db::find_preset_by_uuid_from_db(&self.inner, uuid).map_err(map_core_err)
     }
 
     pub fn update_preset_name(&self, uuid: &str, name: &str) -> Result<()> {

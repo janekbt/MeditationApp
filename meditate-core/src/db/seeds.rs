@@ -244,7 +244,7 @@ mod tests {
     fn seed_default_presets_creates_three_starred_rows_with_stable_uuids() {
         let db = Database::open_in_memory().unwrap();
         db.seed_default_presets().unwrap();
-        let presets = db.list_presets().unwrap();
+        let presets = crate::db::list_presets_from_db(&db).unwrap();
         assert_eq!(presets.len(), 3);
         assert!(presets.iter().all(|p| p.is_starred),
             "all bundled presets ship starred");
@@ -265,7 +265,7 @@ mod tests {
         // shape).
         let db = Database::open_in_memory().unwrap();
         db.seed_default_presets().unwrap();
-        for p in db.list_presets().unwrap() {
+        for p in crate::db::list_presets_from_db(&db).unwrap() {
             let cfg = PresetConfig::from_json(&p.config_json)
                 .unwrap_or_else(|e| panic!(
                     "preset '{}' config_json must round-trip: {e} — json={}",
@@ -285,7 +285,7 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         db.seed_default_presets().unwrap();
         db.seed_default_presets().unwrap();
-        assert_eq!(db.list_presets().unwrap().len(), 3,
+        assert_eq!(crate::db::list_presets_from_db(&db).unwrap().len(), 3,
             "second seed must not duplicate rows");
     }
 
@@ -300,7 +300,7 @@ mod tests {
         }
         let db2 = Database::open(&path).unwrap();
         db2.seed_default_presets().unwrap();
-        let presets = db2.list_presets().unwrap();
+        let presets = crate::db::list_presets_from_db(&db2).unwrap();
         assert!(
             !presets.iter().any(|p| p.uuid == DEFAULT_SITTING_PRESET_UUID),
             "deleted seed preset must stay deleted across reopen",

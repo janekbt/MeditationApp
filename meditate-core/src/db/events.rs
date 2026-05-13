@@ -1026,7 +1026,7 @@ mod tests {
         assert!(!db.list_sessions().unwrap().is_empty());
         assert!(!db.list_interval_bells().unwrap().is_empty());
         assert!(!db.list_bell_sounds().unwrap().is_empty());
-        assert!(!db.list_presets().unwrap().is_empty());
+        assert!(!crate::db::list_presets_from_db(&db).unwrap().is_empty());
         assert!(!db.list_guided_files().unwrap().is_empty());
         assert!(!db.list_vibration_patterns().unwrap().is_empty());
         assert!(!db.known_remote_file_uuids().unwrap().is_empty());
@@ -1044,7 +1044,7 @@ mod tests {
             "interval_bells table must be empty");
         assert!(db.list_bell_sounds().unwrap().is_empty(),
             "bell_sounds table must be empty");
-        assert!(db.list_presets().unwrap().is_empty(),
+        assert!(crate::db::list_presets_from_db(&db).unwrap().is_empty(),
             "presets table must be empty");
         assert!(db.list_guided_files().unwrap().is_empty(),
             "guided_files table must be empty");
