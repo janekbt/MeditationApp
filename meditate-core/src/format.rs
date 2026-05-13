@@ -217,15 +217,6 @@ pub fn format_hhmm(secs: u64) -> String {
     format!("{h:02}:{m:02}")
 }
 
-/// How much past the planned countdown the user has gone.
-/// `target.saturating_sub(elapsed)` semantics: 0 before they reach the
-/// target, the difference once they've crossed it. Used by the
-/// running-page "Add MM:SS ?" button to show the bonus duration that
-/// would be committed if the user taps it.
-pub fn overtime(target: Duration, elapsed: Duration) -> Duration {
-    elapsed.saturating_sub(target)
-}
-
 /// Build the dynamic label for the running-page "Add" button. Caller
 /// supplies the localized prefix word ("Add" in English, "Hinzufügen"
 /// in German, etc. — gettext-translated on the gtk side); the format
@@ -572,20 +563,6 @@ pub fn parse_prep_secs(s: &str) -> u32 {
         .unwrap_or(PREP_SECS_DEFAULT)
 }
 
-/// Hero-label text for a running Timer-mode session.
-///
-/// `target = Some(d)` means the user picked a duration; the label counts
-/// down (`format_time(target - elapsed)`). `target = None` means the
-/// stopwatch toggle is on; the label counts up (`format_time(elapsed)`).
-/// Saturating subtraction: if a tick lands a beat past `target`, the
-/// caller gets `00:00` instead of an underflow panic.
-pub fn running_text(target: Option<Duration>, elapsed: Duration) -> String {
-    match target {
-        Some(t) => format_time(t.saturating_sub(elapsed)),
-        None => format_time(elapsed),
-    }
-}
-
 /// `YYYY-MM-DD` of the local-time day the unix timestamp falls on.
 /// Used as a HashMap grouping key for log sessions, not shown to
 /// the user. Empty string on the rare arithmetic edge case where
@@ -752,37 +729,7 @@ mod tests {
         assert_eq!(format_hhmm(60 + 59), "00:01");
     }
 
-    // ── overtime ──────────────────────────────────────────────────────
-
-    #[test]
-    fn overtime_is_zero_before_target() {
-        assert_eq!(
-            overtime(Duration::from_secs(600), Duration::from_secs(0)),
-            Duration::ZERO
-        );
-        assert_eq!(
-            overtime(Duration::from_secs(600), Duration::from_secs(599)),
-            Duration::ZERO
-        );
-    }
-
-    #[test]
-    fn overtime_is_zero_at_exact_target() {
-        // Hitting the target is "session complete", not "1 second over".
-        // The transition into Overtime state happens here too.
-        assert_eq!(
-            overtime(Duration::from_secs(600), Duration::from_secs(600)),
-            Duration::ZERO
-        );
-    }
-
-    #[test]
-    fn overtime_is_difference_past_target() {
-        assert_eq!(
-            overtime(Duration::from_secs(600), Duration::from_secs(630)),
-            Duration::from_secs(30)
-        );
-    }
+    // ── overtime_button_label ─────────────────────────────────────────
 
     #[test]
     fn overtime_button_label_uses_supplied_prefix() {
@@ -1116,50 +1063,6 @@ mod tests {
             preset_subtitle_parts(&json).unwrap().bells,
             Some(BellsCountKey::Many(3))
         );
-    }
-
-    // ── running_text ──────────────────────────────────────────────────
-    // The hero label on the running timer page. Two regimes folded into
-    // one helper so the merged Timer mode (M.2 onwards) can branch on a
-    // single Option<Duration> rather than a TimerMode variant.
-
-    #[test]
-    fn running_text_targeted_shows_remaining() {
-        assert_eq!(
-            running_text(Some(Duration::from_secs(60)), Duration::from_secs(10)),
-            "00:50"
-        );
-    }
-
-    #[test]
-    fn running_text_open_ended_shows_elapsed() {
-        assert_eq!(
-            running_text(None, Duration::from_secs(10)),
-            "00:10"
-        );
-    }
-
-    #[test]
-    fn running_text_targeted_clamps_to_zero_when_elapsed_overshoots() {
-        // Tick scheduling sometimes lands one tick after target; saturating_sub
-        // gives "00:00" instead of underflowing.
-        assert_eq!(
-            running_text(Some(Duration::from_secs(60)), Duration::from_secs(75)),
-            "00:00"
-        );
-    }
-
-    #[test]
-    fn running_text_targeted_at_start_shows_full_target() {
-        assert_eq!(
-            running_text(Some(Duration::from_secs(600)), Duration::ZERO),
-            "10:00"
-        );
-    }
-
-    #[test]
-    fn running_text_open_ended_at_start_shows_zero() {
-        assert_eq!(running_text(None, Duration::ZERO), "00:00");
     }
 
     #[test]
