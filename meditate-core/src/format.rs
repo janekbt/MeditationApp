@@ -196,6 +196,28 @@ pub fn idle_hero_label(stopwatch_on: bool, target_secs: u32) -> String {
     }
 }
 
+/// Same as `idle_hero_label`, but picks the right `target_secs`
+/// from the three per-mode values the shell tracks separately
+/// (Timer's countdown, Box-Breath's session length, Guided's
+/// probed file length). The mode dispatch is a decision, not
+/// glue; keeping it here means a future shell (Android, web)
+/// just hands over the three values without duplicating the
+/// match.
+pub fn idle_hero_label_from_modes(
+    mode: crate::db::SessionMode,
+    stopwatch_on: bool,
+    timer_secs: u32,
+    breathing_secs: u32,
+    guided_duration_secs: u32,
+) -> String {
+    let target_secs = match mode {
+        crate::db::SessionMode::Timer => timer_secs,
+        crate::db::SessionMode::BoxBreath => breathing_secs,
+        crate::db::SessionMode::Guided => guided_duration_secs,
+    };
+    idle_hero_label(stopwatch_on, target_secs)
+}
+
 /// Counter-strip label on the Box-Breath running page. Stopwatch
 /// sessions show only the elapsed (no slash); fixed-duration
 /// sessions show `elapsed / target`. Re-uses `format_time` so the

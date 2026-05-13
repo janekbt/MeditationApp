@@ -1815,19 +1815,18 @@ impl TimerView {
         // zero. When stopwatch is off the mode-specific target shows
         // (Timer's countdown, Box Breath's session duration, Guided's
         // picked file length).
-        let target_secs = match self.current_mode() {
-            TimerMode::Timer => self.countdown_target_secs.get(),
-            TimerMode::Breathing => self.breathing_session_secs.get(),
-            TimerMode::Guided => self
-                .guided_pick
-                .borrow()
-                .as_ref()
-                .map(|p| p.duration_secs)
-                .unwrap_or(0),
-        };
-        let label = meditate_core::format::idle_hero_label(
+        let guided_duration_secs = self
+            .guided_pick
+            .borrow()
+            .as_ref()
+            .map(|p| p.duration_secs)
+            .unwrap_or(0);
+        let label = meditate_core::format::idle_hero_label_from_modes(
+            self.current_mode().into(),
             self.stopwatch_toggle_on.get(),
-            target_secs,
+            self.countdown_target_secs.get(),
+            self.breathing_session_secs.get(),
+            guided_duration_secs,
         );
         self.big_time_label.set_label(&label);
         self.time_unit_label.set_label(&crate::i18n::gettext("Hours · Minutes"));
