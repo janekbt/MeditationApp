@@ -3,6 +3,7 @@
 
 # Rust sources (every gettext(...) call site)
 src/application.rs
+src/bells.rs
 src/data_io.rs
 src/db/mod.rs
 src/i18n.rs

@@ -13,14 +13,14 @@ rationale.
 
 ## Tier 2 — Medium impact, light design
 
-### `bells::sound_name` / `pattern_name` / `resolve_sound_name` / `resolve_pattern_name` should return `Option<String>`
-- Currently return `String` with `""` as the missing sentinel
-  (`bells.rs:139/151/168/179`). The empty-string footgun forces
-  shells to special-case `if name.is_empty() { gettext("Missing") }`
-  per call site — exactly the i18n problem typed keys were meant
-  to prevent.
-- Change to `Option<String>` (or a `SoundName::{Resolved(String),
-  Missing}` enum if shells want exhaustive match).
+### `bells::sound_name` / `pattern_name` / `resolve_sound_name` / `resolve_pattern_name` should return `Option<String>` ✅ shipped 2026-05-13
+- Landed as a typed enum: `ResolvedName::{Resolved(String), Missing}`
+  in `meditate-core/src/bells.rs`. `phase_cue_names` carries the
+  same enum in its tuple return. Shell renders `Missing` once via
+  `src/bells.rs::render_resolved_name` (single `gettext("Missing")`
+  call). Also closes the Tier-3 a11y "SoundName::{Resolved,Missing}"
+  entry — same enum, same rendering seam, ready for an SR
+  announcement that the row needs re-picking.
 
 ### Collapse `SaveSyncError` / `TestPrereq` / `StoredPassword` into one shape
 - `TestPrereq { EmptyUrl, EmptyUsername, NoPassword, KeyringFailed }`
@@ -566,15 +566,14 @@ avoid silently losing items in a rewrite.
   each to `ngettext`. Fold with the open sixth-pass `HmKey`
   item — one PR.
 
-### Accessibility: `SoundName::{Resolved,Missing}` enum
-- The pending Tier-2 `sound_name`/`pattern_name` → `Option
-  <String>` sweep is a fine start, but a typed `Missing`
-  variant lets the shell announce the SR affordance ("Bell
-  sound: missing, double-tap to re-pick") distinct from the
-  visual empty-subtitle.
-- Fix: roll into the existing `sound_name` migration —
-  return `SoundName::{Resolved(String), Missing}` instead
-  of bare `Option<String>`.
+### Accessibility: `SoundName::{Resolved,Missing}` enum ✅ shipped 2026-05-13
+- Typed enum landed (named `ResolvedName` since it's shared
+  between sound and pattern). Shell collapses `Missing` to
+  `gettext("Missing")` at one call site; the SR-announcement
+  variant — "Bell sound: missing, double-tap to re-pick"
+  distinct from the visible subtitle — is now a one-line shell
+  change inside `render_resolved_name` when the wider a11y
+  pass starts.
 
 ### Accessibility: typed `Announcement` / `ToastKey` enum for live regions
 - `Effect`/`TickOutcome` lack a shell-portable surface for

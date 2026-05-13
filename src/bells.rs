@@ -367,19 +367,35 @@ fn bell_title(bell: &IntervalBell) -> String {
     }
 }
 
+/// Render a core `ResolvedName` to subtitle text. `Resolved` passes
+/// through; `Missing` becomes a localized affordance so a user (or
+/// SR) sees that the row needs re-picking rather than just an empty
+/// subtitle. Single rendering point so the `gettext` call lives in
+/// one place — the Android shell will have its own equivalent using
+/// `strings.xml`.
+pub(crate) fn render_resolved_name(name: meditate_core::bells::ResolvedName) -> String {
+    match name {
+        meditate_core::bells::ResolvedName::Resolved(s) => s,
+        meditate_core::bells::ResolvedName::Missing => gettext("Missing"),
+    }
+}
+
 /// Look up a bell-sound's display name from the bell_sounds library.
-/// Pulls the library from the DB and delegates the lookup to core
-/// so the Android shell shares the same "empty string when missing"
-/// contract.
+/// Pulls the library from the DB and delegates the lookup to core,
+/// then renders core's `ResolvedName` to subtitle text.
 fn sound_name(app: &MeditateApplication, uuid: &str) -> String {
-    app.with_db(|db| meditate_core::bells::resolve_sound_name(db.core(), uuid))
-        .unwrap_or_default()
+    app.with_db(|db| render_resolved_name(
+        meditate_core::bells::resolve_sound_name(db.core(), uuid),
+    ))
+    .unwrap_or_default()
 }
 
 /// Same as sound_name but for vibration_patterns.
 fn pattern_name(app: &MeditateApplication, uuid: &str) -> String {
-    app.with_db(|db| meditate_core::bells::resolve_pattern_name(db.core(), uuid))
-        .unwrap_or_default()
+    app.with_db(|db| render_resolved_name(
+        meditate_core::bells::resolve_pattern_name(db.core(), uuid),
+    ))
+    .unwrap_or_default()
 }
 
 /// Edit page for one bell — pushed when the user taps a row in the

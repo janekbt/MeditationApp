@@ -1397,6 +1397,8 @@ impl TimerView {
             .with_db(|db| meditate_core::bells::phase_cue_names(db.core(), phase))
             .flatten()
         else { return; };
+        let sound_subtitle = crate::bells::render_resolved_name(sound_name);
+        let pattern_subtitle = crate::bells::render_resolved_name(pattern_name);
         use crate::db::BoxBreathPhaseId as PP;
         let (sound_row, pattern_row): (&adw::ActionRow, &adw::ActionRow) = match phase {
             PP::In      => (&self.boxbreath_phase_in_sound_row,      &self.boxbreath_phase_in_pattern_row),
@@ -1404,8 +1406,8 @@ impl TimerView {
             PP::Out     => (&self.boxbreath_phase_out_sound_row,     &self.boxbreath_phase_out_pattern_row),
             PP::HoldOut => (&self.boxbreath_phase_holdout_sound_row, &self.boxbreath_phase_holdout_pattern_row),
         };
-        sound_row.set_subtitle(&sound_name);
-        pattern_row.set_subtitle(&pattern_name);
+        sound_row.set_subtitle(&sound_subtitle);
+        pattern_row.set_subtitle(&pattern_subtitle);
     }
 }
 
@@ -3998,7 +4000,9 @@ impl TimerView {
         app.with_db(|db| {
             let uuid = db.get_setting(setting_key, crate::db::BUNDLED_BOWL_UUID)
                 .unwrap_or_default();
-            meditate_core::bells::resolve_sound_name(db.core(), &uuid)
+            crate::bells::render_resolved_name(
+                meditate_core::bells::resolve_sound_name(db.core(), &uuid),
+            )
         }).unwrap_or_default()
     }
 
@@ -4008,7 +4012,9 @@ impl TimerView {
             let uuid = db
                 .get_setting(setting_key, crate::db::BUNDLED_PATTERN_PULSE_UUID)
                 .unwrap_or_default();
-            meditate_core::bells::resolve_pattern_name(db.core(), &uuid)
+            crate::bells::render_resolved_name(
+                meditate_core::bells::resolve_pattern_name(db.core(), &uuid),
+            )
         }).unwrap_or_default()
     }
 }

@@ -199,71 +199,88 @@ pub fn bell_title_key(bell: &IntervalBell) -> BellTitleKey {
     }
 }
 
-/// Look up a bell-sound's display name from a library snapshot.
-/// Empty string when the uuid is empty or stale (post-wipe or
-/// post-sync the stored uuid may point at no row) — the caller
-/// renders a missing subtitle which is the desired "user re-picks"
-/// affordance.
-pub fn sound_name(uuid: &str, library: &[BellSound]) -> String {
-    if uuid.is_empty() {
-        return String::new();
+/// A name looked up in a bell-sound or vibration-pattern library.
+/// Two states: the row was found and we have its display name, or
+/// the row is missing (uuid empty, or set but referent gone — e.g.
+/// the user deleted a custom pattern or the bundled row got
+/// tombstoned via sync).
+///
+/// Returned from `sound_name`, `pattern_name`, and their `resolve_*`
+/// counterparts in place of the older `""`-as-missing sentinel.
+/// Shells decide how to render `Missing` — typically a localized
+/// "Missing" subtitle plus an a11y announcement so a screen-reader
+/// user knows the row needs re-picking, not just that the subtitle
+/// is blank. Keeping it a two-variant enum (rather than splitting
+/// `Unset` vs `Missing`) reflects the current code's behaviour;
+/// shells already conflate both into the same affordance.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolvedName {
+    Resolved(String),
+    Missing,
+}
+
+impl ResolvedName {
+    fn from_lookup<T: AsRef<str>>(uuid: &str, found: Option<T>) -> Self {
+        match (uuid.is_empty(), found) {
+            (true, _) => ResolvedName::Missing,
+            (false, None) => ResolvedName::Missing,
+            (false, Some(name)) => ResolvedName::Resolved(name.as_ref().to_owned()),
+        }
     }
-    library
-        .iter()
-        .find(|s| s.uuid == uuid)
-        .map(|s| s.name.clone())
-        .unwrap_or_default()
+}
+
+/// Look up a bell-sound's display name from a library snapshot.
+/// `Missing` when the uuid is empty or stale (post-wipe or
+/// post-sync the stored uuid may point at no row); shells map that
+/// to a localized "Missing" affordance so the user can re-pick.
+pub fn sound_name(uuid: &str, library: &[BellSound]) -> ResolvedName {
+    let found = library.iter().find(|s| s.uuid == uuid).map(|s| s.name.clone());
+    ResolvedName::from_lookup(uuid, found)
 }
 
 /// Same as `sound_name` but for vibration patterns.
-pub fn pattern_name(uuid: &str, library: &[VibrationPattern]) -> String {
-    if uuid.is_empty() {
-        return String::new();
-    }
-    library
-        .iter()
-        .find(|p| p.uuid == uuid)
-        .map(|p| p.name.clone())
-        .unwrap_or_default()
+pub fn pattern_name(uuid: &str, library: &[VibrationPattern]) -> ResolvedName {
+    let found = library.iter().find(|p| p.uuid == uuid).map(|p| p.name.clone());
+    ResolvedName::from_lookup(uuid, found)
 }
 
 /// Resolve a sound UUID to its display name by reading the
 /// bell-sounds library straight from `db` and delegating to
 /// `sound_name`. Used by Setup-view subtitle rows that have only
 /// the uuid in hand — saves callers the boilerplate of "list_bell_
-/// sounds → find by uuid → name". Empty string when uuid is empty
+/// sounds → find by uuid → name". `Missing` when the uuid is empty
 /// or the row is gone.
-pub fn resolve_sound_name(db: &Database, uuid: &str) -> String {
+pub fn resolve_sound_name(db: &Database, uuid: &str) -> ResolvedName {
     if uuid.is_empty() {
-        return String::new();
+        return ResolvedName::Missing;
     }
     let library = db.list_bell_sounds().unwrap_or_default();
     sound_name(uuid, &library)
 }
 
 /// Resolve a vibration-pattern UUID to its display name via
-/// `find_vibration_pattern_by_uuid`. Empty string when uuid is
-/// empty or the row is gone (matches `pattern_name`).
-pub fn resolve_pattern_name(db: &Database, uuid: &str) -> String {
+/// `find_vibration_pattern_by_uuid_from_db`. `Missing` when the
+/// uuid is empty or the row is gone (matches `pattern_name`).
+pub fn resolve_pattern_name(db: &Database, uuid: &str) -> ResolvedName {
     if uuid.is_empty() {
-        return String::new();
+        return ResolvedName::Missing;
     }
-    crate::db::find_vibration_pattern_by_uuid_from_db(&db, uuid)
+    let found = crate::db::find_vibration_pattern_by_uuid_from_db(db, uuid)
         .ok()
         .flatten()
-        .map(|p| p.name)
-        .unwrap_or_default()
+        .map(|p| p.name);
+    ResolvedName::from_lookup(uuid, found)
 }
 
-/// Resolve the Box-Breath per-phase row's two subtitle strings
-/// (sound name + vibration pattern name) for `phase`. `None` when
-/// the phase row doesn't exist (shouldn't happen — the seed inserts
+/// Resolve the Box-Breath per-phase row's two subtitle names
+/// (sound + vibration pattern) for `phase`. `None` when the
+/// phase row doesn't exist (shouldn't happen — the seed inserts
 /// all four — but the API stays total). Used by the Setup view's
 /// `refresh_boxbreath_phase_subtitles` and the Android equivalent.
 pub fn phase_cue_names(
     db: &Database,
     phase: BoxBreathPhaseId,
-) -> Option<(String, String)> {
+) -> Option<(ResolvedName, ResolvedName)> {
     let row = db.get_box_breath_phase(phase).ok().flatten()?;
     Some((
         resolve_sound_name(db, row.sound_uuid.as_str()),
@@ -875,13 +892,13 @@ mod tests {
             category: BellSoundCategory::General,
             created_iso: "1970-01-01T00:00:00".into(),
         }];
-        assert_eq!(sound_name("u1", &lib), "Bowl");
+        assert_eq!(sound_name("u1", &lib), ResolvedName::Resolved("Bowl".into()));
     }
 
     #[test]
-    fn sound_name_returns_empty_on_miss_or_empty_uuid() {
-        assert_eq!(sound_name("", &[]), "");
-        assert_eq!(sound_name("missing", &[]), "");
+    fn sound_name_is_missing_on_empty_or_stale_uuid() {
+        assert_eq!(sound_name("", &[]), ResolvedName::Missing);
+        assert_eq!(sound_name("stale", &[]), ResolvedName::Missing);
     }
 
     #[test]
