@@ -784,13 +784,11 @@ impl Database {
     /// user's local timezone here, then handed to core.
     pub fn get_streak(&self) -> Result<u32> {
         let today = today_local_naive_date();
-        let n = self.inner.get_streak(today).map_err(map_core_err)?;
-        Ok(n.max(0) as u32)
+        self.inner.get_streak(today).map_err(map_core_err)
     }
 
     pub fn get_best_streak(&self) -> Result<u32> {
-        let n = self.inner.get_best_streak().map_err(map_core_err)?;
-        Ok(n.max(0) as u32)
+        self.inner.get_best_streak().map_err(map_core_err)
     }
 
     pub fn total_seconds(&self) -> Result<i64> {

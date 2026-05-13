@@ -452,12 +452,6 @@ module.
 - Fix: `Database::update_interval_bell(&IntervalBell)` — the row
   is the API; the 8-arg drift risk is gone.
 
-### `get_streak` / `get_best_streak` shell-side `i32→u32` clamp
-- `src/db/mod.rs:792-801` — core returns `i32` (chrono artefact),
-  shell clamps to `u32` via `.clamp(0).as u32`.
-- Fix: have core return `u32` directly. The `i32` is not a
-  semantic choice.
-
 ### `get_running_average_secs` is stats math in a shell wrapper
 - `src/db/mod.rs:810-817` — computes `today - days + 1` and
   divides. Pure statistics math, not GTK glue.

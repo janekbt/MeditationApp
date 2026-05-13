@@ -321,21 +321,21 @@ impl Database {
         Ok(())
     }
 
-    pub fn get_best_streak(&self) -> Result<i64> {
+    pub fn get_best_streak(&self) -> Result<u32> {
         self.best_streak_filtered(None)
     }
 
-    pub fn get_best_streak_for_label(&self, label_id: i64) -> Result<i64> {
+    pub fn get_best_streak_for_label(&self, label_id: i64) -> Result<u32> {
         self.best_streak_filtered(Some(label_id))
     }
 
-    fn best_streak_filtered(&self, label_filter: Option<i64>) -> Result<i64> {
+    fn best_streak_filtered(&self, label_filter: Option<i64>) -> Result<u32> {
         let days = self.distinct_session_days_ascending(label_filter)?;
         if days.is_empty() {
             return Ok(0);
         }
-        let mut best = 1i64;
-        let mut current = 1i64;
+        let mut best = 1u32;
+        let mut current = 1u32;
         for window in days.windows(2) {
             if window[1] == window[0].succ_opt().expect("date overflow") {
                 current += 1;
@@ -529,11 +529,11 @@ impl Database {
         Ok(days)
     }
 
-    pub fn get_streak(&self, today: chrono::NaiveDate) -> Result<i64> {
+    pub fn get_streak(&self, today: chrono::NaiveDate) -> Result<u32> {
         self.streak_filtered(today, None)
     }
 
-    pub fn get_streak_for_label(&self, today: chrono::NaiveDate, label_id: i64) -> Result<i64> {
+    pub fn get_streak_for_label(&self, today: chrono::NaiveDate, label_id: i64) -> Result<u32> {
         self.streak_filtered(today, Some(label_id))
     }
 
@@ -541,7 +541,7 @@ impl Database {
         &self,
         today: chrono::NaiveDate,
         label_filter: Option<i64>,
-    ) -> Result<i64> {
+    ) -> Result<u32> {
         let days = self.distinct_session_days_ascending(label_filter)?;
         let Some(&most_recent) = days.last() else {
             return Ok(0);
@@ -564,7 +564,7 @@ impl Database {
             return Ok(0);
         };
 
-        let mut count = 0;
+        let mut count = 0u32;
         for day in days.iter().rev() {
             if *day == expected {
                 count += 1;
