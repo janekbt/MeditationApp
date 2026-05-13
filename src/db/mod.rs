@@ -802,15 +802,15 @@ impl Database {
     }
 
     /// `(local-date "YYYY-MM-DD", total_secs)` for each day on or after
-    /// `since_date`. Filters core's full daily-totals list in Rust;
-    /// fine for the typical 30–90 day window the heatmap asks for.
+    /// `since_date`. Core does the date filter in SQL; this wrapper
+    /// owns only the `&str → NaiveDate → &str` parse / re-stringify
+    /// at the chart-axis rendering boundary.
     pub fn get_daily_totals(&self, since_date: &str) -> Result<Vec<(String, i64)>> {
         let since = chrono::NaiveDate::parse_from_str(since_date, "%Y-%m-%d")
             .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-        let totals = self.inner.get_daily_totals().map_err(map_core_err)?;
+        let totals = self.inner.get_daily_totals_since(since).map_err(map_core_err)?;
         Ok(totals
             .into_iter()
-            .filter(|(d, _)| *d >= since)
             .map(|(d, secs)| (d.format("%Y-%m-%d").to_string(), secs))
             .collect())
     }

@@ -301,25 +301,6 @@ module.
 
 ## Tier 1 — Fourth-pass additions
 
-### Push four decision predicates to core
-- `application.rs::trigger_sync` lines 391-407: the "is sync
-  configured at all?" predicate. Add
-  `meditate_core::sync::should_attempt(&Database) -> bool`.
-- `timer/imp.rs::refresh_hero_for_idle` lines 1822-1840: the
-  `match mode { Timer→countdown, Breathing→session_secs, Guided→
-  pick.duration_secs }` dispatch feeds `format::idle_hero_label`.
-  Add `meditate_core::format::idle_hero_label_from_modes(mode,
-  countdown, breathing, guided_duration)` so the mode decision
-  lives next to the formatter.
-- `window/imp.rs::sync_indicator_state_now` lines 690-714:
-  assembles a 4-tuple snapshot inline then feeds `indicator::
-  derive`. Add `meditate_core::sync::indicator::snapshot(
-  &Database) -> SyncIndicatorSnapshot` to dedupe the unwrap chain.
-- `src/db/mod.rs::get_daily_totals` lines 822-831: filters by
-  `since` after calling core. Push the filter into core
-  (`get_daily_totals_since(since: NaiveDate)`); keep the
-  stringification at the chart-axis rendering boundary.
-
 ## Tier 2 — Fourth-pass additions
 
 ### Eliminate `session_data_to_core` / `session_from_core`

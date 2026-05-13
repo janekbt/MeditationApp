@@ -484,6 +484,42 @@ impl Database {
         self.daily_totals_filtered(Some(label_id))
     }
 
+    /// Same shape as `get_daily_totals`, but only days on or after
+    /// `since`. Pushes the date filter into the SQL `WHERE` instead
+    /// of materialising every row in Rust and filtering after —
+    /// matters once a heatmap user has a year+ of sessions; cheap
+    /// even on tiny libraries because the comparison is on the
+    /// `SUBSTR(start_iso, 1, 10)` GROUP key which sorts
+    /// lexicographically identical to date order.
+    pub fn get_daily_totals_since(
+        &self,
+        since: chrono::NaiveDate,
+    ) -> Result<Vec<(chrono::NaiveDate, i64)>> {
+        let since_str = since.format("%Y-%m-%d").to_string();
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT SUBSTR(start_iso, 1, 10) AS day, SUM(duration_secs)
+             FROM sessions
+             WHERE SUBSTR(start_iso, 1, 10) >= ?1
+             GROUP BY day
+             ORDER BY day",
+        )?;
+        let totals = stmt
+            .query_map(params![since_str], |row| {
+                let day_str: String = row.get(0)?;
+                let total_secs: i64 = row.get(1)?;
+                Ok((day_str, total_secs))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .filter_map(|(s, secs)| {
+                chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d")
+                    .ok()
+                    .map(|d| (d, secs))
+            })
+            .collect();
+        Ok(totals)
+    }
+
     /// Sum of `duration_secs` grouped by start date (`SUBSTR(start_iso,
     /// 1, 10)`). A session that began at 23:55 and ran 30 minutes
     /// attributes the full 30 minutes to the start date — none of it
@@ -3564,6 +3600,40 @@ mod tests {
     fn daily_totals_is_empty_for_empty_db() {
         let db = Database::open_in_memory().unwrap();
         assert_eq!(db.get_daily_totals().unwrap(), vec![]);
+    }
+
+    #[test]
+    fn daily_totals_since_excludes_days_before_cutoff() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_session(&Session {
+            duration_secs: 600,
+            ..session_on("2026-04-24")
+        }).unwrap();
+        db.insert_session(&Session {
+            duration_secs: 300,
+            ..session_on("2026-04-26")
+        }).unwrap();
+        db.insert_session(&Session {
+            duration_secs: 1200,
+            ..session_on("2026-04-27")
+        }).unwrap();
+        assert_eq!(
+            db.get_daily_totals_since(date(2026, 4, 26)).unwrap(),
+            vec![(date(2026, 4, 26), 300), (date(2026, 4, 27), 1200)],
+        );
+    }
+
+    #[test]
+    fn daily_totals_since_includes_the_cutoff_day_itself() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_session(&Session {
+            duration_secs: 600,
+            ..session_on("2026-04-26")
+        }).unwrap();
+        assert_eq!(
+            db.get_daily_totals_since(date(2026, 4, 26)).unwrap(),
+            vec![(date(2026, 4, 26), 600)],
+        );
     }
 
     #[test]
