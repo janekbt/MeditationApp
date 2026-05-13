@@ -13,15 +13,6 @@ rationale.
 
 ## Tier 2 — Medium impact, light design
 
-### `bells::sound_name` / `pattern_name` / `resolve_sound_name` / `resolve_pattern_name` should return `Option<String>` ✅ shipped 2026-05-13
-- Landed as a typed enum: `ResolvedName::{Resolved(String), Missing}`
-  in `meditate-core/src/bells.rs`. `phase_cue_names` carries the
-  same enum in its tuple return. Shell renders `Missing` once via
-  `src/bells.rs::render_resolved_name` (single `gettext("Missing")`
-  call). Also closes the Tier-3 a11y "SoundName::{Resolved,Missing}"
-  entry — same enum, same rendering seam, ready for an SR
-  announcement that the row needs re-picking.
-
 ### Collapse `SaveSyncError` / `TestPrereq` / `StoredPassword` into one shape
 - `TestPrereq { EmptyUrl, EmptyUsername, NoPassword, KeyringFailed }`
   is a strict superset of `SaveSyncError { EmptyUrl, EmptyUsername }`,
@@ -107,15 +98,6 @@ rationale.
   `sync/credentials.rs` (prepare/test types + the validation
   state machine). The Tier-2 "collapse SaveSyncError / TestPrereq"
   item gets cleaner once the types live next to each other.
-
-### Read-only `Database` methods → `*_from_db` free fns ✅ shipped 2026-05-13
-- Labels, Presets, Guided, Vibration, and the 24 session/stats
-  readers all moved to free `*_from_db` fns in their domain
-  modules. Shell wrapper methods kept (they own the rusqlite
-  `Result` translation); their bodies call core's free fns.
-- `export_sessions_csv<W: Write>` stays as a method — streaming
-  writer, not a SELECT helper.
-- Convention locked in `db/mod.rs` module-doc.
 
 ## Tier 2 — Second-pass additions
 
@@ -360,12 +342,6 @@ module.
 
 ## Tier 1 — Fifth-pass additions
 
-## Documentation backlog (Tier 1 — onboarding blocker) ✅ all shipped
-
-All seven entries shipped: meditate-core/README.md, critical-path
-`///` docs, ENTITIES.md, DECISIONS.md, BUILDING.md, CONTRIBUTING.md,
-naming-convention `//!` in `db/mod.rs`.
-
 ## Meta-audit notes — backlog reorganization (apply when implementing)
 
 Captured here, applied at implementation time rather than now to
@@ -565,15 +541,6 @@ avoid silently losing items in a rewrite.
   input as the formatter, emits speech intent. Shell maps
   each to `ngettext`. Fold with the open sixth-pass `HmKey`
   item — one PR.
-
-### Accessibility: `SoundName::{Resolved,Missing}` enum ✅ shipped 2026-05-13
-- Typed enum landed (named `ResolvedName` since it's shared
-  between sound and pattern). Shell collapses `Missing` to
-  `gettext("Missing")` at one call site; the SR-announcement
-  variant — "Bell sound: missing, double-tap to re-pick"
-  distinct from the visible subtitle — is now a one-line shell
-  change inside `render_resolved_name` when the wider a11y
-  pass starts.
 
 ### Accessibility: typed `Announcement` / `ToastKey` enum for live regions
 - `Effect`/`TickOutcome` lack a shell-portable surface for
