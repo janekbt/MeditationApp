@@ -375,7 +375,7 @@ impl TimerView {
                 let on = row.is_active();
                 imp.stopwatch_toggle_on.set(on);
                 if let Some(app) = imp.get_app() {
-                    let key = stopwatch_key_for_mode(imp.current_mode());
+                    let key = meditate_core::settings_keys::stopwatch_key_for_mode(imp.current_mode().into());
                     app.with_db_mut(|db| {
                         let _ = db.set_setting(
                             key,
@@ -399,7 +399,7 @@ impl TimerView {
                 if imp.bells_loading.get() { return; }
                 let on = row.is_active();
                 if let Some(app) = imp.get_app() {
-                    let key = keep_screen_awake_key_for_mode(imp.current_mode());
+                    let key = meditate_core::settings_keys::keep_screen_awake_key_for_mode(imp.current_mode().into());
                     app.with_db_mut(|db| {
                         let _ = db.set_setting(
                             key,
@@ -1602,25 +1602,9 @@ pub(crate) fn build_per_mode_signal_toggle_widget(
         let mode = crate::db::SignalMode::from_db_str(name.as_str())
             .unwrap_or(crate::db::SignalMode::Both);
         let Some(app) = get_app() else { return; };
-        let setting_key = setting_key_for_mode(get_mode());
+        let setting_key = meditate_core::settings_keys::signal_mode_key_for_mode(get_mode().into());
         app.with_db_mut(|db| db.set_setting(setting_key, mode.as_db_str()));
     });
-}
-
-/// Map a TimerMode to its per-mode signal-mode setting key.
-/// TimerMode-keyed wrappers around `meditate_core::settings_keys::*`.
-/// Call sites pass `TimerMode`; the `From` impl above hands the
-/// canonical `SessionMode` to core.
-pub(crate) fn setting_key_for_mode(mode: TimerMode) -> &'static str {
-    meditate_core::settings_keys::signal_mode_key_for_mode(mode.into())
-}
-
-pub(crate) fn keep_screen_awake_key_for_mode(mode: TimerMode) -> &'static str {
-    meditate_core::settings_keys::keep_screen_awake_key_for_mode(mode.into())
-}
-
-pub(crate) fn stopwatch_key_for_mode(mode: TimerMode) -> &'static str {
-    meditate_core::settings_keys::stopwatch_key_for_mode(mode.into())
 }
 
 /// Walk a Gtk.Box and return the first AdwToggleGroup child, or
@@ -1730,7 +1714,7 @@ impl TimerView {
         // mirror + the row UI from the new mode's setting before
         // running the dependent refresh.
         if let Some(app) = self.get_app() {
-            let key = stopwatch_key_for_mode(mode);
+            let key = meditate_core::settings_keys::stopwatch_key_for_mode(mode.into());
             let on = app
                 .with_db(|db| meditate_core::read_bool(db.core(), key, false))
                 .unwrap_or(false);
@@ -3032,7 +3016,7 @@ impl TimerView {
         // of as many separate calls. The bells block also rides along —
         // four extra get_setting() calls are cheap next to the existing
         // streak / labels SQL we're already running.
-        let stopwatch_key = stopwatch_key_for_mode(self.current_mode());
+        let stopwatch_key = meditate_core::settings_keys::stopwatch_key_for_mode(self.current_mode().into());
         let (streak, stopwatch_on, bells, intervals) = app
             .with_db(|db| {
                 use meditate_core::read_bool;
@@ -3892,7 +3876,7 @@ impl TimerView {
             .and_then(|app| {
                 app.with_db(|db| {
                     let stopwatch_on = meditate_core::read_bool(
-                        db.core(), stopwatch_key_for_mode(mode), false,
+                        db.core(), meditate_core::settings_keys::stopwatch_key_for_mode(mode.into()), false,
                     );
                     meditate_core::bells::interval_bells_count(db.core(), stopwatch_on)
                 })
@@ -4315,72 +4299,3 @@ impl TimerView {
     }
 }
 
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // ── Per-mode setting-key helpers ─────────────────────────────────────
-
-    #[test]
-    fn setting_key_for_mode_uses_distinct_keys_per_mode() {
-        // The whole point of these helpers is that no two modes
-        // share a key — otherwise the per-mode toggles would leak
-        // into each other.
-        let timer = setting_key_for_mode(TimerMode::Timer);
-        let guided = setting_key_for_mode(TimerMode::Guided);
-        let breath = setting_key_for_mode(TimerMode::Breathing);
-        assert_ne!(timer, guided);
-        assert_ne!(timer, breath);
-        assert_ne!(guided, breath);
-    }
-
-    #[test]
-    fn keep_screen_awake_key_for_mode_uses_distinct_keys_per_mode() {
-        let timer = keep_screen_awake_key_for_mode(TimerMode::Timer);
-        let guided = keep_screen_awake_key_for_mode(TimerMode::Guided);
-        let breath = keep_screen_awake_key_for_mode(TimerMode::Breathing);
-        assert_ne!(timer, guided);
-        assert_ne!(timer, breath);
-        assert_ne!(guided, breath);
-    }
-
-    #[test]
-    fn keep_screen_awake_key_does_not_collide_with_signal_mode_key() {
-        // signal-mode and keep-screen-awake are independent per-mode
-        // settings; sharing a key would mean toggling one writes the
-        // other's value.
-        for mode in [TimerMode::Timer, TimerMode::Guided, TimerMode::Breathing] {
-            assert_ne!(
-                setting_key_for_mode(mode),
-                keep_screen_awake_key_for_mode(mode),
-                "{mode:?}: signal-mode and keep-awake keys must differ",
-            );
-        }
-    }
-
-    #[test]
-    fn stopwatch_key_for_mode_uses_distinct_keys_per_mode() {
-        let timer = stopwatch_key_for_mode(TimerMode::Timer);
-        let guided = stopwatch_key_for_mode(TimerMode::Guided);
-        let breath = stopwatch_key_for_mode(TimerMode::Breathing);
-        assert_ne!(timer, guided);
-        assert_ne!(timer, breath);
-        assert_ne!(guided, breath);
-    }
-
-    #[test]
-    fn stopwatch_key_does_not_collide_with_other_per_mode_keys() {
-        // signal-mode, keep-screen-awake, and stopwatch are three
-        // independent per-mode flags. Any collision would mean
-        // toggling one persists into another, scrambling the
-        // remembered settings across pageloads.
-        for mode in [TimerMode::Timer, TimerMode::Guided, TimerMode::Breathing] {
-            let sw = stopwatch_key_for_mode(mode);
-            assert_ne!(sw, setting_key_for_mode(mode),
-                "{mode:?}: stopwatch and signal-mode keys must differ");
-            assert_ne!(sw, keep_screen_awake_key_for_mode(mode),
-                "{mode:?}: stopwatch and keep-awake keys must differ");
-        }
-    }
-}

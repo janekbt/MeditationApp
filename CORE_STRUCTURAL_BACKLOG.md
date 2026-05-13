@@ -443,14 +443,6 @@ module.
 - Fix path B: add `DbError::is_unique_violation() -> bool` so
   shells stop forging fake sqlite errors.
 
-### Drop three `*_key_for_mode` shims in `timer/imp.rs`
-- Lines 1598-1612 — three two-line shims that translate
-  `TimerMode → SessionMode` and delegate to the matching core
-  fn. `From<TimerMode> for SessionMode` already exists (line
-  52-58).
-- Fix: drop the shims; call sites take `SessionMode` directly.
-  8 call sites in `timer/imp.rs`.
-
 ### `Database::update_interval_bell` 8-arg → take `&IntervalBell`
 - `src/bells.rs:599, 611, 625, 656, 681, 704` — every call site
   directly mutates fields on a `snap.borrow_mut()` then calls
