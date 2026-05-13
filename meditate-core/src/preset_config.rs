@@ -566,6 +566,7 @@ pub fn apply(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_macros::assert_matches;
 
     fn timer_config() -> PresetConfig {
         PresetConfig {
@@ -837,13 +838,13 @@ mod tests {
         cfg.interval_bells.bells[0].sound_uuid = "missing-sound-uuid".to_string();
 
         let err = apply(&db, &cfg, SessionMode::Timer).unwrap_err();
-        match err {
+        assert_matches!(
+            err,
             ApplyError::SyncPending { missing_sounds, missing_patterns } => {
                 assert_eq!(missing_sounds, vec!["missing-sound-uuid".to_string()]);
                 assert!(missing_patterns.is_empty());
             }
-            other => panic!("expected SyncPending, got {other:?}"),
-        }
+        );
     }
 
     #[test]
@@ -858,13 +859,13 @@ mod tests {
         cfg.end_bell.vibration_pattern_uuid = "missing-pattern-uuid".to_string();
 
         let err = apply(&db, &cfg, SessionMode::Timer).unwrap_err();
-        match err {
+        assert_matches!(
+            err,
             ApplyError::SyncPending { missing_sounds, missing_patterns } => {
                 assert!(missing_sounds.is_empty());
                 assert_eq!(missing_patterns, vec!["missing-pattern-uuid".to_string()]);
             }
-            other => panic!("expected SyncPending, got {other:?}"),
-        }
+        );
     }
 
     #[test]

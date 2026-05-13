@@ -64,6 +64,9 @@
 //! - `labels`, `naming`, `settings_keys`, `sound`,
 //!   `timer`, `date_math` — supporting utilities.
 
+#[cfg(test)]
+mod test_macros;
+
 pub mod bells;
 pub mod breath;
 pub mod contrib;

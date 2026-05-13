@@ -415,6 +415,7 @@ pub fn select_xlabel_indices(layouts: &[XLabelLayout], min_gap: f64) -> Vec<usiz
 mod tests {
     use super::*;
     use crate::db::ChartKind;
+    use crate::test_macros::assert_matches;
 
     // ── PreviewToggle ───────────────────────────────────────────────
 
@@ -422,10 +423,10 @@ mod tests {
     fn preview_starts_fresh_on_first_request() {
         let mut p = PreviewToggle::new();
         let action = p.request("pattern-a");
-        match action {
+        assert_matches!(
+            &action,
             PreviewAction::StopAndStart { id, .. } => assert_eq!(id, "pattern-a"),
-            _ => panic!("expected StopAndStart, got {:?}", action),
-        }
+        );
         assert!(p.is_playing());
         assert_eq!(p.active_id(), Some("pattern-a"));
     }
@@ -444,10 +445,10 @@ mod tests {
         let mut p = PreviewToggle::new();
         let _ = p.request("pattern-a");
         let action = p.request("pattern-b");
-        match action {
+        assert_matches!(
+            &action,
             PreviewAction::StopAndStart { id, .. } => assert_eq!(id, "pattern-b"),
-            _ => panic!("expected StopAndStart, got {:?}", action),
-        }
+        );
         assert_eq!(p.active_id(), Some("pattern-b"));
     }
 

@@ -206,15 +206,6 @@ rationale.
 - Add three doctests. Even three is a marked step up from zero
   and forces the example to stay in sync with the API.
 
-### `assert_matches!` test macro
-- ~15 `other => panic!("expected X, got {other:?}")` sites
-  across `db.rs`, `preset_config.rs`, `vibration.rs`,
-  `sync/webdav.rs`, `sync/settings.rs`, `sync/orchestrator.rs`,
-  `bin/sync_pipeline_smoke.rs`.
-- Add an `assert_matches!` mini-macro in a `test_macros` module
-  so call sites become
-  `assert_matches!(err, SyncError::WebDav(WebDavError::Unauthorized))`.
-
 ## Tier 4 — Second-pass additions
 
 ### Document Rust-tier referential-integrity contract

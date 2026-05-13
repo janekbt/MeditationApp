@@ -597,6 +597,7 @@ mod tests {
     use crate::db::{BellSoundCategory, Session, SessionMode};
     use crate::sync::fake::FakeWebDav;
     use crate::sync::webdav::WebDavResult;
+    use crate::test_macros::assert_matches;
 
     /// Convenience: build a fresh DB + fake remote pair, returning
     /// both. Each test sets up its own state.
@@ -1320,10 +1321,7 @@ mod tests {
         for i in 0..5 { insert_session(&db, &format!("e-{i}"), 100); }
         let bad = PutFails(FakeWebDav::new());
         let err = Sync::new(&db, &bad, "Meditate", std::path::PathBuf::new()).push().unwrap_err();
-        match err {
-            SyncError::WebDav(WebDavError::Unauthorized) => {}
-            other => panic!("expected SyncError::WebDav(Unauthorized), got {other:?}"),
-        }
+        assert_matches!(err, SyncError::WebDav(WebDavError::Unauthorized));
         // No events get marked synced after a failure (we didn't reach
         // the post-PUT mark step). Pending stays full so the next sync
         // retries the whole batch.

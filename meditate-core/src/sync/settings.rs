@@ -412,6 +412,7 @@ pub fn prepare_test(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_macros::assert_matches;
 
     fn fresh() -> Database {
         // In-memory DB so each test starts clean.
@@ -675,10 +676,10 @@ mod tests {
     #[test]
     fn test_connection_with_network_error_carries_underlying_string() {
         let w = AlwaysErrs(WebDavError::Network("dns".into()));
-        match test_connection_with(&w) {
+        assert_matches!(
+            test_connection_with(&w),
             TestConnectionResult::Network(s) => assert_eq!(s, "dns"),
-            other => panic!("expected Network(\"dns\"), got {other:?}"),
-        }
+        );
     }
 
     #[test]
@@ -693,10 +694,7 @@ mod tests {
             status: 500,
             body: "internal".into(),
         });
-        match test_connection_with(&w) {
-            TestConnectionResult::Other(_) => {}
-            other => panic!("expected Other(_), got {other:?}"),
-        }
+        assert_matches!(test_connection_with(&w), TestConnectionResult::Other(_));
     }
 
     // ── prepare_save ────────────────────────────────────────────────

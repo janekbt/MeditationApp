@@ -398,6 +398,7 @@ impl Database {
 mod tests {
     use super::*;
     use crate::db::{test_helpers::*, Event};
+    use crate::test_macros::assert_matches;
 
     #[test]
     fn chart_kind_round_trips_through_db_str() {
@@ -475,13 +476,13 @@ mod tests {
             "vp-1", "Pulse", 400, &[0.0, 1.0, 0.0],
             ChartKind::Line, false,
         ).unwrap();
-        match db.insert_vibration_pattern_with_uuid(
-            "vp-2", "PULSE", 400, &[0.0, 1.0, 0.0],
-            ChartKind::Line, false,
-        ) {
+        assert_matches!(
+            db.insert_vibration_pattern_with_uuid(
+                "vp-2", "PULSE", 400, &[0.0, 1.0, 0.0],
+                ChartKind::Line, false,
+            ),
             Err(DbError::DuplicateVibrationPattern(name)) => assert_eq!(name, "PULSE"),
-            other => panic!("expected DuplicateVibrationPattern, got {other:?}"),
-        }
+        );
     }
 
     #[test]
@@ -560,12 +561,12 @@ mod tests {
         let other = db.insert_vibration_pattern(
             "Wave", 1000, &[0.0, 1.0, 0.0], ChartKind::Line, false,
         ).unwrap();
-        match db.update_vibration_pattern(
-            &other, "PULSE", 1000, &[0.0, 1.0, 0.0], ChartKind::Line,
-        ) {
+        assert_matches!(
+            db.update_vibration_pattern(
+                &other, "PULSE", 1000, &[0.0, 1.0, 0.0], ChartKind::Line,
+            ),
             Err(DbError::DuplicateVibrationPattern(name)) => assert_eq!(name, "PULSE"),
-            other => panic!("expected DuplicateVibrationPattern, got {other:?}"),
-        }
+        );
     }
 
     #[test]

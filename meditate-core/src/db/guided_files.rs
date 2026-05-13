@@ -307,6 +307,7 @@ impl Database {
 mod tests {
     use super::*;
     use crate::db::{test_helpers::*, Event};
+    use crate::test_macros::assert_matches;
 
     #[test]
     fn list_guided_files_is_empty_on_a_fresh_database() {
@@ -354,12 +355,12 @@ mod tests {
         db.insert_guided_file_with_uuid(
             "gf-1", "Body Scan", "guided/gf-1.ogg", 1200, false,
         ).unwrap();
-        match db.insert_guided_file_with_uuid(
-            "gf-2", "BODY SCAN", "guided/gf-2.ogg", 800, false,
-        ) {
+        assert_matches!(
+            db.insert_guided_file_with_uuid(
+                "gf-2", "BODY SCAN", "guided/gf-2.ogg", 800, false,
+            ),
             Err(DbError::DuplicateGuidedFile(name)) => assert_eq!(name, "BODY SCAN"),
-            other => panic!("expected DuplicateGuidedFile, got {other:?}"),
-        }
+        );
     }
 
     #[test]
@@ -430,10 +431,10 @@ mod tests {
         db.insert_guided_file_with_uuid(
             "gf-2", "Loving Kindness", "guided/gf-2.ogg", 900, false,
         ).unwrap();
-        match db.rename_guided_file("gf-2", "Body Scan") {
+        assert_matches!(
+            db.rename_guided_file("gf-2", "Body Scan"),
             Err(DbError::DuplicateGuidedFile(name)) => assert_eq!(name, "Body Scan"),
-            other => panic!("expected DuplicateGuidedFile, got {other:?}"),
-        }
+        );
     }
 
     #[test]

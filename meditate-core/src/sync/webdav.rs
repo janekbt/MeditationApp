@@ -449,6 +449,7 @@ fn base64_encode(input: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_macros::assert_matches;
 
     // ── Basic-auth header construction ───────────────────────────────────
     //
@@ -568,14 +569,14 @@ mod tests {
 
         let client = HttpWebDav::new(&server.url(), "u", "p");
         let err = client.get("/file.json").unwrap_err();
-        match err {
+        assert_matches!(
+            err,
             WebDavError::Server { status, body } => {
                 assert_eq!(status, 500);
                 assert!(body.contains("DB connection"),
                     "body should be preserved for diagnostics, got: {body}");
             }
-            other => panic!("expected Server{{500}}, got {other:?}"),
-        }
+        );
     }
 
     #[test]
@@ -671,13 +672,13 @@ mod tests {
             .create();
         let client = HttpWebDav::new(&server.url(), "u", "p");
         let err = client.put("/file.json", b"x").unwrap_err();
-        match err {
-            WebDavError::RateLimited { retry_after } => {
-                assert_eq!(retry_after, None,
-                    "no Retry-After header → retry_after must be None");
-            }
-            other => panic!("expected RateLimited, got {other:?}"),
-        }
+        assert_matches!(
+            err,
+            WebDavError::RateLimited { retry_after } => assert_eq!(
+                retry_after, None,
+                "no Retry-After header → retry_after must be None",
+            ),
+        );
     }
 
     #[test]
@@ -691,12 +692,10 @@ mod tests {
             .create();
         let client = HttpWebDav::new(&server.url(), "u", "p");
         let err = client.put("/file.json", b"x").unwrap_err();
-        match err {
-            WebDavError::RateLimited { retry_after } => {
-                assert_eq!(retry_after, Some(30));
-            }
-            other => panic!("expected RateLimited, got {other:?}"),
-        }
+        assert_matches!(
+            err,
+            WebDavError::RateLimited { retry_after } => assert_eq!(retry_after, Some(30)),
+        );
     }
 
     #[test]

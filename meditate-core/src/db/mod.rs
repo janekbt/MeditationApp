@@ -344,6 +344,7 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_macros::assert_matches;
 
     // ── Cache schema version + walk-on-upgrade ────────────────────────
 
@@ -504,11 +505,11 @@ mod tests {
                 None::<String>,
             ],
         );
-        match res {
+        assert_matches!(
+            res,
             Err(rusqlite::Error::SqliteFailure(err, _))
-                if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_CHECK => {}
-            other => panic!("expected SQLITE_CONSTRAINT_CHECK, got {other:?}"),
-        }
+                if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_CHECK,
+        );
     }
 
     #[test]
@@ -557,11 +558,11 @@ mod tests {
                 None::<String>,
             ],
         );
-        match res {
+        assert_matches!(
+            res,
             Err(rusqlite::Error::SqliteFailure(err, _))
-                if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_CHECK => {}
-            other => panic!("expected SQLITE_CONSTRAINT_CHECK, got {other:?}"),
-        }
+                if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_CHECK,
+        );
     }
 
     // ── busy_timeout ──────────────────────────────────────────────────

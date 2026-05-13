@@ -648,6 +648,7 @@ pub fn label_color_class_index(name: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_macros::assert_matches;
 
     #[test]
     fn format_time_zero_shows_double_zero() {
@@ -840,13 +841,13 @@ mod tests {
     #[test]
     fn db_open_failure_key_schema_too_new_carries_versions() {
         let err = crate::db::DbError::SchemaVersionTooNew { db: 5, build: 2 };
-        match db_open_failure_key(&err) {
+        assert_matches!(
+            db_open_failure_key(&err),
             DbOpenFailureKey::SchemaTooNew { db, build } => {
                 assert_eq!(db, 5);
                 assert_eq!(build, 2);
             }
-            other => panic!("expected SchemaTooNew, got {other:?}"),
-        }
+        );
     }
 
     #[test]
