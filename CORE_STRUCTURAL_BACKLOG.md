@@ -571,12 +571,6 @@ the code alone.
   `lib.rs` `//!`, plus a "build / test from the workspace root"
   line. Add a paragraph in the root README pointing here.
 
-### Stale `//!` on `session.rs:5`
-- Comment claims "Currently implements the Prep phase only.
-  Subsequent stages will extend...". Module is 2.2k lines and
-  covers all phases. Leftover from B.5 work.
-- Update or delete.
-
 ### Critical-path APIs lack `///` doc-comments
 - `Database::open` / `Database::open_in_memory` (`db.rs:687-712`)
   — zero `///`. The 17-line internal comment explains WAL but

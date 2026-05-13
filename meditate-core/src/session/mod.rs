@@ -2,10 +2,10 @@
 //! lifecycle, owned by the shell and driven via `tick(now)` once a
 //! second.
 //!
-//! Currently implements the Prep phase only. Subsequent stages will
-//! extend `Session` with Running / Box-Breath / Pause-Resume /
-//! Overtime / Bells / Stop semantics. See item 13 in
-//! `CORE_MIGRATION.md`.
+//! `Session` covers every phase of an in-flight session:
+//! Prep → Running → (Overtime or Box-Breath) → Stop, with
+//! Pause/Resume layered on top via `Stopwatch`. Bells (starting,
+//! interval, end) and Box-Breath phase cues fire as `Effect`s.
 //!
 //! Ownership pattern: the shell holds `Cell<Option<Session>>` —
 //! `None` when no session is in flight (the setup view is showing),
