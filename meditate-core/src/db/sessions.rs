@@ -359,6 +359,17 @@ impl Database {
                 .get(0)
                 .ok_or_else(|| DbError::Decode("missing start_iso".to_string()))?
                 .to_string();
+            // Validate the timestamp before storing — `local_iso_to_unix`
+            // returns 0 on parse failure / out-of-range year. Without
+            // this gate a garbage row would persist; stats paths filter
+            // it back out silently via `parse_from_str(...).ok()`, so
+            // the row would vanish from totals while still counting
+            // toward `count_sessions` and `get_longest_session`.
+            if crate::time::local_iso_to_unix(&start_iso) == 0 {
+                return Err(DbError::Decode(format!(
+                    "bad start_iso: {start_iso:?}"
+                )));
+            }
             let duration_secs: u32 = record
                 .get(1)
                 .unwrap_or("")
@@ -3723,8 +3734,10 @@ mod tests {
         let src = Database::open_in_memory().unwrap();
         src.insert_label("Morning").unwrap();
         let morning_id = src.find_label_by_name("Morning").unwrap();
+        // Canonical naive-local ISO shape (no `Z`) — `unix_to_local_iso`
+        // never emits one, and `import_sessions_csv` now rejects them.
         src.insert_session(&Session {
-            start_iso: "2026-04-27T10:00:00Z".to_string(),
+            start_iso: "2026-04-27T10:00:00".to_string(),
             duration_secs: 600,
             label_id: morning_id,
             notes: Some("clear, focused".to_string()), // comma forces CSV quoting
@@ -3734,7 +3747,7 @@ mod tests {
         })
         .unwrap();
         src.insert_session(&Session {
-            start_iso: "2026-04-27T19:00:00Z".to_string(),
+            start_iso: "2026-04-27T19:00:00".to_string(),
             duration_secs: 1200,
             label_id: None,
             notes: None,
@@ -3769,7 +3782,7 @@ mod tests {
         assert_eq!(
             sessions[0].1,
             Session {
-                start_iso: "2026-04-27T10:00:00Z".to_string(),
+                start_iso: "2026-04-27T10:00:00".to_string(),
                 duration_secs: 600,
                 label_id: dst_morning_id,
                 notes: Some("clear, focused".to_string()),
@@ -3781,7 +3794,7 @@ mod tests {
         assert_eq!(
             sessions[1].1,
             Session {
-                start_iso: "2026-04-27T19:00:00Z".to_string(),
+                start_iso: "2026-04-27T19:00:00".to_string(),
                 duration_secs: 1200,
                 label_id: None,
                 notes: None,
@@ -3790,6 +3803,25 @@ mod tests {
                 guided_file_uuid: None,
             }
         );
+    }
+
+    #[test]
+    fn import_sessions_csv_rejects_unparseable_start_iso() {
+        // Without the validation gate, a row with `start_iso = "garbage"`
+        // would persist; `daily_totals_filtered` would then silently
+        // filter it out via `parse_from_str(...).ok()`, but
+        // `count_sessions` would still see it — invisible drift between
+        // stat surfaces.
+        let db = Database::open_in_memory().unwrap();
+        let csv = "start_iso,duration_secs,label,notes,mode\n\
+                   not-a-date,600,,,timer\n";
+        let err = db.import_sessions_csv(csv.as_bytes()).unwrap_err();
+        assert!(
+            matches!(&err, DbError::Decode(s) if s.contains("bad start_iso")),
+            "expected DbError::Decode(\"bad start_iso: …\"), got {err:?}",
+        );
+        assert_eq!(db.list_sessions().unwrap().len(), 0,
+            "rejected row must not have landed in the DB");
     }
 
     #[test]

@@ -411,25 +411,6 @@ module.
 
 ## Tier 1 — Fifth-pass additions
 
-### `Database::import_sessions_csv` admits unvalidated `start_iso` strings
-- `meditate-core/src/db.rs:3771-3814`. Unlike
-  `meditate-core/src/data_io.rs::import_csv` (which goes through
-  `unix_to_local_iso`), this method takes column 0 as
-  `start_iso = record.get(0)?.to_string()` and inserts directly.
-- A row with `start_iso = "garbage"` is stored;
-  `daily_totals_filtered` silently filters it out via
-  `parse_from_str(...).ok()` so the row vanishes from stats
-  while still counting in `count_sessions` and
-  `get_longest_session`.
-- **Two methods exist for "import sessions from CSV" with
-  different validation policies** — symptomatic of historical
-  drift.
-- Fix: reuse `data_io::import_csv`'s path or call
-  `local_iso_to_unix(&start_iso)` and reject on `0` sentinel.
-  Distinct from the existing Tier-2 "inconsistent corrupt-row
-  handling" (which is read-side); this is import-side admitting
-  bad data in the first place.
-
 ## Documentation backlog (Tier 1 — onboarding blocker)
 
 The five passes confirmed the crate is internally well-commented at
