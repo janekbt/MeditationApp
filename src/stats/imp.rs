@@ -785,18 +785,6 @@ fn weekday_for(date_str: &str) -> String {
         .unwrap_or_default()
 }
 
-// Thin shims around meditate_core::format — keep the i64-secs/i64-mins
-// signatures the call sites use; convert to Duration inside.
-fn format_hm_compact(secs: i64) -> String {
-    meditate_core::format::format_hm_compact(secs_to_duration(secs))
-}
-fn format_hm_secs(secs: i64) -> String {
-    meditate_core::format::format_hm_secs(secs_to_duration(secs))
-}
-fn format_hm_mins(mins: i64) -> String {
-    meditate_core::format::format_hm_mins(secs_to_duration(mins.saturating_mul(60)))
-}
-fn secs_to_duration(secs: i64) -> std::time::Duration {
-    std::time::Duration::from_secs(secs.max(0) as u64)
-}
+// HmKey-rendering shims live in `crate::format`; this view imports them.
+use crate::format::{format_hm_compact, format_hm_mins, format_hm_secs};
 

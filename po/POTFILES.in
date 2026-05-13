@@ -6,6 +6,7 @@ src/application.rs
 src/bells.rs
 src/data_io.rs
 src/db/mod.rs
+src/format.rs
 src/i18n.rs
 src/log/imp.rs
 src/log/mod.rs

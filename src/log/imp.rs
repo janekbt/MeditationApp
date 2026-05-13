@@ -609,8 +609,7 @@ fn section_caption_text(count: u32, total_secs: i64) -> String {
             crate::i18n::ngettext("1 session", "{n} sessions", n as u32)
                 .replace("{n}", &n.to_string()),
     };
-    let total = std::time::Duration::from_secs(total_secs.max(0) as u64);
-    format!("{base} · {}", meditate_core::format::format_hm_compact(total))
+    format!("{base} · {}", crate::format::format_hm_compact(total_secs))
 }
 
 // ── Delete with undo toast ────────────────────────────────────────────────────

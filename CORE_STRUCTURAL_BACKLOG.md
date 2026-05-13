@@ -11,33 +11,6 @@ rationale.
 
 ## Tier 1 — High-impact, mostly mechanical
 
-### i18n: `format_hm_compact` / `format_hm_mins` / `format_hm_secs` return English-baked strings
-- All three (`format.rs`) return `"1h 4m"` / `"1h"` / `"4m"`
-  with hardcoded English unit suffixes. Called directly into
-  user-visible labels: `src/stats/imp.rs:170, 547` (weekly-goal
-  subtitle, mini-stat tile, Y-axis ticks).
-- Single biggest i18n leak in the codebase.
-- Fix: convert to typed `HmKey::{Zero, MinsOnly(u64),
-  HoursOnly(u64), HoursMins(u64,u64)}`; shell maps each variant
-  to `gettext("{h}h {m}m")` etc. Same three call sites collapse
-  to one match.
-
-### i18n: 2-form plural ceiling + no `ngettext` anywhere in the shell
-- Every "many" arm of every typed-key enum (`StreakKey::{One,
-  Many}`, `SessionCountKey::{One, Many}`, `IntervalsCountKey`,
-  `BellsPart`, `SyncedAgoKey`, `DeleteImpactKey`,
-  `InsightKey::CurrentStreak{days}`) is binary singular /
-  plural. The shell's `pluralize_sessions`
-  (`src/preferences.rs:675`) openly comments "we don't need
-  full ngettext support because English plurals are trivial."
-- That ships a Polish / Russian / Arabic regression the moment
-  a non-English `.po` is dropped in.
-- Per `feedback_meditate_keep_i18n`, translations are a planned
-  publish goal.
-- Fix: core keeps its variant + count (already correct).
-  Shell mapper calls `ngettext(singular_msgid, plural_msgid,
-  count)` instead of `gettext().replace("{n}", count.to_string())`.
-
 ### `sync::backoff` uses `Instant::now()` (wall-clock-frozen on suspend)
 - `meditate-core/src/sync/backoff.rs:29,49,69,77` and the
   sleep in `sync/orchestrator.rs:466-468` use `Instant`

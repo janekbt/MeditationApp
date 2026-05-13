@@ -3,6 +3,7 @@ pub mod bells;
 mod config;
 mod data_io;
 pub mod db;
+pub mod format;
 pub mod guided;
 pub mod i18n;
 pub mod keychain;

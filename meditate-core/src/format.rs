@@ -2,18 +2,18 @@
 //! enums the shells consume.
 //!
 //! Two halves:
-//!   - **Plain formatters** (`format_time`, `format_hhmm`,
-//!     `format_hm_compact`, etc.) — pure number-to-string. The
-//!     translatable typed-key helpers below are the i18n-clean way
-//!     to render copy; the plain formatters are fine for non-
-//!     translatable digit-only output.
-//!   - **Typed translatable keys** (`StreakKey`, `SyncedAgoKey`,
-//!     `BellTitleKey`, `BellsCountKey`, `TimingKey`, `DateGroupKey`,
-//!     …) — every helper that produces user-visible text returns
-//!     a typed enum capturing every choice the shell needs to
-//!     render; the shell maps each variant to its gettext template.
-//!     Tests in core assert on the typed value, never on rendered
-//!     strings.
+//!   - **Plain formatters** (`format_time`, `format_hhmm`, etc.) —
+//!     pure number-to-string for digit-only output (`"01:30"`,
+//!     `"4:23"`) that needs no localization. The typed-key helpers
+//!     below are the i18n-clean route for anything that has
+//!     translatable copy.
+//!   - **Typed translatable keys** (`HmKey`, `StreakKey`,
+//!     `SyncedAgoKey`, `BellTitleKey`, `BellsCountKey`, `TimingKey`,
+//!     `DateGroupKey`, …) — every helper that produces user-visible
+//!     text returns a typed enum capturing every choice the shell
+//!     needs to render; the shell maps each variant to its
+//!     gettext / ngettext template. Tests in core assert on the
+//!     typed value, never on rendered strings.
 
 use crate::bells::DisplayMode;
 use std::time::Duration;
@@ -94,49 +94,77 @@ pub fn minutes_to_level(mins: i64, goal_mins: i64) -> u8 {
     }
 }
 
-pub fn format_hm_compact(d: Duration) -> String {
+/// Decomposed `Duration` for an "h/m" display, with the rendering
+/// (unit suffixes, separators, the em-dash for zero) deferred to
+/// the shell. Three pickers below — `hm_compact_key`,
+/// `hm_mins_key`, `hm_secs_key` — apply per-use-site policies
+/// (whether zero displays as a dash vs `"0m"`, whether large
+/// durations truncate to hours-only) and emit this typed key;
+/// the shell maps each variant to gettext / ngettext templates so
+/// translators can localize `"h"` / `"m"` (or use full words like
+/// `"hours"` / `"minutes"`) without core knowing about i18n.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HmKey {
+    /// Render as the typographic "no data" marker (em-dash).
+    /// `hm_compact_key` and `hm_secs_key` emit this for a zero
+    /// input; `hm_mins_key` does NOT — there, zero is rendered
+    /// as `"0m"` (see `MinsOnly(0)`).
+    Empty,
+    /// `"{n}m"` — sub-1-hour duration. May be `MinsOnly(0)` from
+    /// `hm_mins_key` (the "0m" baseline).
+    MinsOnly(u64),
+    /// `"{n}h"` — whole-hour duration (or `hm_compact_key`'s
+    /// `≥ 100h` truncation, where the minute component is dropped
+    /// to keep the label short).
+    HoursOnly(u64),
+    /// `"{h}h {m}m"` — both components nonzero, below 100h.
+    HoursMins(u64, u64),
+}
+
+/// "h/m" picker for the stats mini-tiles and Y-axis ticks.
+/// Zero → `Empty` (em-dash). Durations at or above 100 hours
+/// truncate to `HoursOnly(h)` to keep the label compact.
+pub fn hm_compact_key(d: Duration) -> HmKey {
     let total_mins = d.as_secs() / 60;
-    if total_mins == 0 {
-        return "–".to_string();
-    }
+    if total_mins == 0 { return HmKey::Empty; }
     let h = total_mins / 60;
     let m = total_mins % 60;
-    if h >= 100 {
-        return format!("{h}h");
-    }
+    if h >= 100 { return HmKey::HoursOnly(h); }
     match (h, m) {
-        (0, _) => format!("{m}m"),
-        (_, 0) => format!("{h}h"),
-        _ => format!("{h}h {m}m"),
+        (0, m) => HmKey::MinsOnly(m),
+        (h, 0) => HmKey::HoursOnly(h),
+        (h, m) => HmKey::HoursMins(h, m),
     }
 }
 
-pub fn format_hm_mins(d: Duration) -> String {
+/// "h/m" picker for the weekly-goal subtitle / progress ring,
+/// where `0m` is meaningful data (not "no data"). Zero →
+/// `MinsOnly(0)`, no `≥ 100h` truncation.
+pub fn hm_mins_key(d: Duration) -> HmKey {
     let total_mins = d.as_secs() / 60;
     let h = total_mins / 60;
     let m = total_mins % 60;
     match (h, m) {
-        (0, _) => format!("{m}m"),
-        (_, 0) => format!("{h}h"),
-        _ => format!("{h}h {m}m"),
+        (0, m) => HmKey::MinsOnly(m),
+        (h, 0) => HmKey::HoursOnly(h),
+        (h, m) => HmKey::HoursMins(h, m),
     }
 }
 
-/// "h/m output from a seconds-precision input." Despite the name (which
-/// reflects the input precision), this drops sub-minute remainder for
-/// stats display where seconds are noise. Use `format_time` for live
-/// session display where seconds matter.
-pub fn format_hm_secs(d: Duration) -> String {
+/// "h/m" picker from a seconds-precision input — drops the sub-
+/// minute remainder. Zero → `Empty` (em-dash). Used by Stats
+/// insights / longest-session / weekly-comparison renderers
+/// where seconds are noise. Use `format_time` for live session
+/// display where seconds matter.
+pub fn hm_secs_key(d: Duration) -> HmKey {
     let total = d.as_secs();
-    if total == 0 {
-        return "–".to_string();
-    }
+    if total == 0 { return HmKey::Empty; }
     let h = total / 3600;
     let m = (total % 3600) / 60;
     match (h, m) {
-        (0, m) => format!("{m}m"),
-        (h, 0) => format!("{h}h"),
-        (h, m) => format!("{h}h {m}m"),
+        (0, m) => HmKey::MinsOnly(m),
+        (h, 0) => HmKey::HoursOnly(h),
+        (h, m) => HmKey::HoursMins(h, m),
     }
 }
 
@@ -1099,43 +1127,44 @@ mod tests {
     }
 
     #[test]
-    fn format_hm_secs_drops_sub_minute_and_uses_em_dash_for_zero() {
-        // Stats display: seconds are noise; show "–" for empty.
-        assert_eq!(format_hm_secs(Duration::ZERO), "–");
-        assert_eq!(format_hm_secs(Duration::from_secs(30)), "0m");
-        assert_eq!(format_hm_secs(Duration::from_secs(90)), "1m");
-        assert_eq!(format_hm_secs(Duration::from_secs(3600)), "1h");
-        assert_eq!(format_hm_secs(Duration::from_secs(3665)), "1h 1m");
+    fn hm_secs_key_drops_sub_minute_and_emits_empty_for_zero() {
+        // Stats display: seconds are noise; emit Empty (shell renders "–").
+        assert_eq!(hm_secs_key(Duration::ZERO), HmKey::Empty);
+        assert_eq!(hm_secs_key(Duration::from_secs(30)), HmKey::MinsOnly(0));
+        assert_eq!(hm_secs_key(Duration::from_secs(90)), HmKey::MinsOnly(1));
+        assert_eq!(hm_secs_key(Duration::from_secs(3600)), HmKey::HoursOnly(1));
+        assert_eq!(hm_secs_key(Duration::from_secs(3665)), HmKey::HoursMins(1, 1));
     }
 
     #[test]
-    fn format_hm_mins_drops_seconds_and_unused_units() {
-        assert_eq!(format_hm_mins(Duration::ZERO), "0m");
-        assert_eq!(format_hm_mins(Duration::from_secs(30)), "0m");
-        assert_eq!(format_hm_mins(Duration::from_secs(90)), "1m");
-        assert_eq!(format_hm_mins(Duration::from_secs(3600)), "1h");
-        assert_eq!(format_hm_mins(Duration::from_secs(3661)), "1h 1m");
+    fn hm_mins_key_emits_mins_only_zero_at_zero() {
+        // Goal-progress display: 0m is meaningful, not "no data".
+        assert_eq!(hm_mins_key(Duration::ZERO), HmKey::MinsOnly(0));
+        assert_eq!(hm_mins_key(Duration::from_secs(30)), HmKey::MinsOnly(0));
+        assert_eq!(hm_mins_key(Duration::from_secs(90)), HmKey::MinsOnly(1));
+        assert_eq!(hm_mins_key(Duration::from_secs(3600)), HmKey::HoursOnly(1));
+        assert_eq!(hm_mins_key(Duration::from_secs(3661)), HmKey::HoursMins(1, 1));
     }
 
     #[test]
-    fn format_hm_compact_uses_em_dash_for_empty() {
-        // Zero is empty, not "0m" — heatmap cells with no data render "–".
-        assert_eq!(format_hm_compact(Duration::ZERO), "–");
+    fn hm_compact_key_emits_empty_for_zero() {
+        // Heatmap cells with no data render via Empty (the shell's "–").
+        assert_eq!(hm_compact_key(Duration::ZERO), HmKey::Empty);
     }
 
     #[test]
-    fn format_hm_compact_clips_at_100h() {
-        assert_eq!(format_hm_compact(Duration::from_secs(90)), "1m");
-        assert_eq!(format_hm_compact(Duration::from_secs(3600)), "1h");
-        assert_eq!(format_hm_compact(Duration::from_secs(3661)), "1h 1m");
-        // h >= 100 clips minutes — keeps the cell narrow in the heatmap.
+    fn hm_compact_key_truncates_at_100h() {
+        assert_eq!(hm_compact_key(Duration::from_secs(90)), HmKey::MinsOnly(1));
+        assert_eq!(hm_compact_key(Duration::from_secs(3600)), HmKey::HoursOnly(1));
+        assert_eq!(hm_compact_key(Duration::from_secs(3661)), HmKey::HoursMins(1, 1));
+        // h >= 100 drops the minute component — keeps the heatmap-cell label narrow.
         assert_eq!(
-            format_hm_compact(Duration::from_secs(100 * 3600)),
-            "100h"
+            hm_compact_key(Duration::from_secs(100 * 3600)),
+            HmKey::HoursOnly(100),
         );
         assert_eq!(
-            format_hm_compact(Duration::from_secs(100 * 3600 + 60)),
-            "100h"
+            hm_compact_key(Duration::from_secs(100 * 3600 + 60)),
+            HmKey::HoursOnly(100),
         );
     }
 
