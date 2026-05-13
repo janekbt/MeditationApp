@@ -62,15 +62,21 @@ pub fn seed_now() -> u64 {
 /// wall-clock time the user would see on their device — no timezone
 /// suffix because the DB convention is "naive local".
 ///
-/// On TZ ambiguity (DST fall-back) or invalid input, returns the unix
-/// epoch as ISO ("1970-01-01T00:00:00") rather than panicking — losing
-/// a session timestamp is bad, crashing on the save path is worse.
+/// On TZ ambiguity (DST fall-back), invalid input, or a year outside
+/// 0000-9999, returns the unix epoch as ISO ("1970-01-01T00:00:00")
+/// rather than panicking. Losing a session timestamp is bad, crashing
+/// on the save path is worse — and emitting a year like "10000-..."
+/// or "-262143-..." would silently break every SUBSTR-based stat
+/// downstream (hour-of-day, day-of-week, etc. all assume the 19-char
+/// canonical shape).
 pub fn unix_to_local_iso(unix_secs: i64) -> String {
-    use chrono::TimeZone;
+    use chrono::{Datelike, TimeZone};
     chrono::Local
         .timestamp_opt(unix_secs, 0)
         .single()
-        .map(|dt| dt.naive_local().format("%Y-%m-%dT%H:%M:%S").to_string())
+        .map(|dt| dt.naive_local())
+        .filter(|naive| (0..=9999).contains(&naive.year()))
+        .map(|naive| naive.format("%Y-%m-%dT%H:%M:%S").to_string())
         .unwrap_or_else(|| "1970-01-01T00:00:00".to_string())
 }
 
@@ -82,16 +88,25 @@ pub fn unix_to_local_iso(unix_secs: i64) -> String {
 /// up to one hour, but collapsing to the unix epoch (which `.single()`
 /// would do) is wrong by decades and breaks every downstream stat.
 ///
-/// Returns 0 (the unix epoch) on parse failure or a DST spring-forward
-/// gap (a local time that doesn't exist) — both indicate corrupt or
-/// fabricated input, since `unix_to_local_iso` never produces either.
+/// Returns 0 (the unix epoch) on parse failure, on a DST spring-forward
+/// gap (a local time that doesn't exist), or on a year outside
+/// 0000-9999 — all three indicate corrupt or fabricated input, since
+/// `unix_to_local_iso` never produces any of them.
 pub fn local_iso_to_unix(iso: &str) -> i64 {
-    use chrono::TimeZone;
+    use chrono::{Datelike, TimeZone};
     let Ok(naive) = chrono::NaiveDateTime::parse_from_str(iso, "%Y-%m-%dT%H:%M:%S")
         .or_else(|_| chrono::NaiveDateTime::parse_from_str(iso, "%Y-%m-%d %H:%M:%S"))
     else {
         return 0;
     };
+    // Chrono accepts extreme years (-262144..=262143). A peer-authored
+    // event with a 5-digit / negative year would parse cleanly here
+    // and round-trip back through `unix_to_local_iso` as an unusable
+    // string. Reject before computing the unix value so the caller
+    // gets the same "corrupt input" signal as parse failure.
+    if !(0..=9999).contains(&naive.year()) {
+        return 0;
+    }
     disambiguate_local_result(chrono::Local.from_local_datetime(&naive)).unwrap_or(0)
 }
 
@@ -202,6 +217,51 @@ mod tests {
         assert_eq!(local_iso_to_unix("not a date"), 0);
         assert_eq!(local_iso_to_unix("2026-13-01T00:00:00"), 0); // bad month
         assert_eq!(local_iso_to_unix("2026-04-31T00:00:00"), 0); // April has 30 days
+    }
+
+    #[test]
+    fn local_iso_to_unix_rejects_extreme_years() {
+        // chrono parses 5-digit / negative years just fine — only the
+        // explicit range check inside local_iso_to_unix stops them.
+        // Without it, a peer-authored event with start_iso="10000-..."
+        // would slip through and corrupt downstream SUBSTR-based stats.
+        assert_eq!(local_iso_to_unix("10000-01-01T00:00:00"), 0);
+        assert_eq!(local_iso_to_unix("-262143-01-01T00:00:00"), 0);
+        // Year 0 and year 9999 are the boundary values and must pass.
+        assert_ne!(local_iso_to_unix("0001-01-01T00:00:00"), 0,
+            "year 0001 is inside the accepted range");
+        assert_ne!(local_iso_to_unix("9999-12-31T23:59:59"), 0,
+            "year 9999 is inside the accepted range");
+    }
+
+    #[test]
+    fn unix_to_local_iso_falls_back_to_epoch_for_extreme_years() {
+        // Symmetric to the local_iso_to_unix guard. Without the
+        // range filter, chrono's %Y format would emit a year with
+        // a sign or 5+ digits, breaking every SUBSTR-based stat
+        // (hour-of-day, day-of-week, etc.) that assumes the 19-char
+        // canonical shape.
+        //
+        // 253_402_300_800 unix seconds corresponds to year 10000.
+        let year_10000 = 253_402_300_800;
+        let s = unix_to_local_iso(year_10000);
+        assert_eq!(s.len(), 19,
+            "year-overflow case must fall back to a 19-char string, got {s:?}");
+        assert!(!s.starts_with('-'),
+            "year-overflow case must not produce a negative-year string");
+    }
+
+    #[test]
+    fn unix_to_local_iso_falls_back_to_epoch_for_i64_extremes() {
+        // i64::MIN / i64::MAX both saturate chrono's date range —
+        // timestamp_opt returns None and the unwrap_or_else fires.
+        // Belt-and-braces: even if a future chrono accepted these,
+        // the year filter catches them too.
+        for ts in [i64::MIN, i64::MAX] {
+            let s = unix_to_local_iso(ts);
+            assert_eq!(s.len(), 19,
+                "i64 extreme {ts} must fall back, got {s:?}");
+        }
     }
 
     // ── disambiguate_local_result ──────────────────────────────────────

@@ -655,22 +655,6 @@ module.
 
 ## Tier 0 — Fifth-pass additions
 
-### `unix_to_local_iso` produces variable-length strings for years outside 0000-9999
-- `meditate-core/src/time.rs:73` — chrono's `%Y` format pads
-  positive years to 4 digits but uses a sign or extra digits for
-  negative / 5+ digit years.
-- Multiple SUBSTR-based extractions assume character-stable
-  positions: hour at `db.rs:4025`, day at `db.rs:3878, 3901, 3929`.
-  CSV import (`data_io.rs:131-183`) accepts a raw `i64`
-  `start_time_unix` from user CSV with no range check.
-- Round-tripping `i64::MIN`/`i64::MAX` through `unix_to_local_iso`
-  produces a year like `-100000-01-01T00:00:00`, after which
-  every stat SUBSTR is off by N.
-- Fix path A: clamp `start_unix` in `import_csv` to
-  `[0, 253_402_300_799]` (year 0–9999) before `unix_to_local_iso`.
-- Fix path B: add a length-19 assertion + reject path on
-  `local_iso_to_unix` input.
-
 ## Tier 1 — Fifth-pass additions
 
 ### `Database::import_sessions_csv` admits unvalidated `start_iso` strings
