@@ -639,8 +639,11 @@ mod tests {
                     status: *status,
                     body: body.clone(),
                 },
-                WebDavError::MalformedResponse(s) => {
-                    WebDavError::MalformedResponse(s.clone())
+                WebDavError::MalformedResponse { detail, body_excerpt } => {
+                    WebDavError::MalformedResponse {
+                        detail: detail.clone(),
+                        body_excerpt: body_excerpt.clone(),
+                    }
                 }
             }
         }

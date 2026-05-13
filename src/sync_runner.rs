@@ -508,7 +508,10 @@ mod tests {
                     E::RateLimited { retry_after: *retry_after },
                 E::Server { status, body } => E::Server {
                     status: *status, body: body.clone() },
-                E::MalformedResponse(s) => E::MalformedResponse(s.clone()),
+                E::MalformedResponse { detail, body_excerpt } => E::MalformedResponse {
+                    detail: detail.clone(),
+                    body_excerpt: body_excerpt.clone(),
+                },
             }
         }
     }

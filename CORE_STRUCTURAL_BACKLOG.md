@@ -304,13 +304,6 @@ rationale.
   that currently borrow `self.conn` would take `&Transaction`
   instead. Not a one-pass change; do it as a focused PR.
 
-### `WebDavError::MalformedResponse` doesn't capture the raw body
-- `webdav.rs:54` + `:304` — variant carries only the parser's
-  error string. A hand-debug of a broken Nextcloud response
-  needs the raw body.
-- Fix: extend to `MalformedResponse { detail: String,
-  body_excerpt: String }`.
-
 ### Sync orchestrator-test `Sync::new` boilerplate
 - ~60 sites in `orchestrator.rs::tests` repeat
   `Sync::new(&db, &fs, "Meditate", PathBuf::new())`. Crate-private

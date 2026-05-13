@@ -50,8 +50,12 @@ pub enum WebDavError {
     /// Body is included so logs can show what the server complained about.
     Server { status: u16, body: String },
     /// PROPFIND parser bailed — server responded but the XML wasn't a
-    /// shape we recognise.
-    MalformedResponse(String),
+    /// shape we recognise. `detail` is the parser's error string;
+    /// `body_excerpt` is the first ~512 bytes of the response so
+    /// a hand-debug doesn't have to reproduce the request to see what
+    /// the server actually sent (truncated to keep the diag log
+    /// readable for HTML error pages, multistatus dumps, etc.).
+    MalformedResponse { detail: String, body_excerpt: String },
 }
 
 impl fmt::Display for WebDavError {
@@ -68,7 +72,10 @@ impl fmt::Display for WebDavError {
             Self::Server { status, body } => {
                 write!(f, "WebDAV: server returned {status}: {body}")
             }
-            Self::MalformedResponse(s) => write!(f, "WebDAV: malformed response: {s}"),
+            Self::MalformedResponse { detail, body_excerpt } => write!(
+                f,
+                "WebDAV: malformed response: {detail} (body excerpt: {body_excerpt:?})",
+            ),
         }
     }
 }
@@ -333,7 +340,10 @@ fn parse_multistatus_filenames(body: &str, requested_path: &str)
     -> WebDavResult<Vec<String>>
 {
     let doc = roxmltree::Document::parse(body)
-        .map_err(|e| WebDavError::MalformedResponse(e.to_string()))?;
+        .map_err(|e| WebDavError::MalformedResponse {
+            detail: e.to_string(),
+            body_excerpt: body.chars().take(512).collect(),
+        })?;
 
     // The "self" path: the directory we asked about. Strip leading /
     // and trailing / so the comparison is path-segment based.
@@ -928,7 +938,7 @@ mod tests {
             .create();
         let client = HttpWebDav::new(&server.url(), "u", "p");
         let err = client.list_collection("/x/").unwrap_err();
-        assert!(matches!(err, WebDavError::MalformedResponse(_)),
+        assert!(matches!(err, WebDavError::MalformedResponse { .. }),
             "expected MalformedResponse, got {err:?}");
     }
 
