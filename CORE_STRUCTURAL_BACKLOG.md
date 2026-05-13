@@ -22,16 +22,6 @@ rationale.
 - Change to `Option<String>` (or a `SoundName::{Resolved(String),
   Missing}` enum if shells want exhaustive match).
 
-### Standardize `*Key` suffix for translatable enums
-- `feedback_meditate_i18n_typed_keys` convention says `*Key`.
-  Stragglers: `DateGroupKind` (`format.rs:612`), `BellsPart`
-  (`format.rs:342`), `TimingPart` (`format.rs:358`). Same intent
-  as `StreakKey` / `SyncedAgoKey` / `BellTitleKey` / ….
-- Rename `DateGroupKind` → `DateGroupKey`, `BellsPart` →
-  `BellsCountKey`, `TimingPart` → `TimingKey`.
-- `XLabelKind` in `date_math.rs:129` is genuinely different (a
-  layout decision, no translation) — leave it as `*Kind`.
-
 ### Collapse `SaveSyncError` / `TestPrereq` / `StoredPassword` into one shape
 - `TestPrereq { EmptyUrl, EmptyUsername, NoPassword, KeyringFailed }`
   is a strict superset of `SaveSyncError { EmptyUrl, EmptyUsername }`,

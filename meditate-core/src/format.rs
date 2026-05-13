@@ -401,7 +401,7 @@ pub fn synced_ago_key(secs_ago: i64) -> SyncedAgoKey {
 /// caller of `preset_subtitle_parts` only sees this when at least
 /// one bell is configured AND interval-bells are enabled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BellsPart {
+pub enum BellsCountKey {
     One,
     Many(usize),
 }
@@ -417,7 +417,7 @@ pub enum BoxBreathAfter {
 /// Timing-part decision for the preset-row subtitle. The shell renders
 /// each variant via its translator + the parameters carried alongside.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TimingPart {
+pub enum TimingKey {
     Stopwatch,
     Duration {
         mins: u32,
@@ -438,14 +438,14 @@ pub enum TimingPart {
 /// `" · "`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PresetSubtitleParts {
-    pub timing: TimingPart,
+    pub timing: TimingKey,
     /// `Some(uuid)` when the preset has the label expander enabled
     /// AND a label UUID pinned. The shell looks up the name from its
     /// own label table; resolution failures (uuid missing from the
     /// table, e.g. label was deleted) collapse to no label part in
     /// the rendered subtitle.
     pub label_uuid: Option<String>,
-    pub bells: Option<BellsPart>,
+    pub bells: Option<BellsCountKey>,
 }
 
 /// Decompose the preset's `config_json` blob into the structural
@@ -457,8 +457,8 @@ pub fn preset_subtitle_parts(config_json: &str) -> Option<PresetSubtitleParts> {
     let cfg = PresetConfig::from_json(config_json).ok()?;
 
     let timing = match cfg.timing {
-        PresetTiming::Timer { stopwatch: true, .. } => TimingPart::Stopwatch,
-        PresetTiming::Timer { stopwatch: false, duration_secs } => TimingPart::Duration {
+        PresetTiming::Timer { stopwatch: true, .. } => TimingKey::Stopwatch,
+        PresetTiming::Timer { stopwatch: false, duration_secs } => TimingKey::Duration {
             mins: duration_secs / 60,
         },
         PresetTiming::BoxBreath {
@@ -468,7 +468,7 @@ pub fn preset_subtitle_parts(config_json: &str) -> Option<PresetSubtitleParts> {
             exhale_secs,
             hold_empty_secs,
             duration_secs,
-        } => TimingPart::BoxBreath {
+        } => TimingKey::BoxBreath {
             inhale_secs,
             hold_full_secs,
             exhale_secs,
@@ -489,7 +489,7 @@ pub fn preset_subtitle_parts(config_json: &str) -> Option<PresetSubtitleParts> {
 
     let bells = if cfg.interval_bells.enabled && !cfg.interval_bells.bells.is_empty() {
         let n = cfg.interval_bells.bells.len();
-        Some(if n == 1 { BellsPart::One } else { BellsPart::Many(n) })
+        Some(if n == 1 { BellsCountKey::One } else { BellsCountKey::Many(n) })
     } else {
         None
     };
@@ -604,7 +604,7 @@ pub fn format_time_of_day(unix_secs: i64) -> String {
 /// emitted alongside the date, so callers don't have to re-check
 /// the year branch themselves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DateGroupKind {
+pub enum DateGroupKey {
     Today,
     Yesterday,
     SameYearOther,
@@ -615,27 +615,27 @@ pub enum DateGroupKind {
 /// to `now_unix`. Local-timezone-aware (uses chrono::Local for both
 /// timestamps). Caller supplies `now_unix` so tests can pin a
 /// reference moment without messing with the system clock.
-pub fn date_group_kind(unix_secs: i64, now_unix: i64) -> DateGroupKind {
+pub fn date_group_kind(unix_secs: i64, now_unix: i64) -> DateGroupKey {
     use chrono::{Datelike, TimeZone};
     let Some(then) = chrono::Local.timestamp_opt(unix_secs, 0).single() else {
-        return DateGroupKind::EarlierYearOther;
+        return DateGroupKey::EarlierYearOther;
     };
     let Some(now) = chrono::Local.timestamp_opt(now_unix, 0).single() else {
-        return DateGroupKind::EarlierYearOther;
+        return DateGroupKey::EarlierYearOther;
     };
     if then.year() == now.year() && then.ordinal() == now.ordinal() {
-        return DateGroupKind::Today;
+        return DateGroupKey::Today;
     }
     let yesterday = now.date_naive().pred_opt();
     if let Some(yest) = yesterday {
         if then.date_naive() == yest {
-            return DateGroupKind::Yesterday;
+            return DateGroupKey::Yesterday;
         }
     }
     if then.year() == now.year() {
-        DateGroupKind::SameYearOther
+        DateGroupKey::SameYearOther
     } else {
-        DateGroupKind::EarlierYearOther
+        DateGroupKey::EarlierYearOther
     }
 }
 
@@ -989,7 +989,7 @@ mod tests {
     fn preset_subtitle_parts_timer_stopwatch() {
         let json = cfg_to_json(&timer_cfg(true, 600));
         let parts = preset_subtitle_parts(&json).unwrap();
-        assert_eq!(parts.timing, TimingPart::Stopwatch);
+        assert_eq!(parts.timing, TimingKey::Stopwatch);
         assert_eq!(parts.label_uuid, None);
         assert_eq!(parts.bells, None);
     }
@@ -999,7 +999,7 @@ mod tests {
         // 600 s = 10 min — duration arrives in minutes.
         let json = cfg_to_json(&timer_cfg(false, 600));
         let parts = preset_subtitle_parts(&json).unwrap();
-        assert_eq!(parts.timing, TimingPart::Duration { mins: 10 });
+        assert_eq!(parts.timing, TimingKey::Duration { mins: 10 });
     }
 
     #[test]
@@ -1008,7 +1008,7 @@ mod tests {
         let parts = preset_subtitle_parts(&json).unwrap();
         assert_eq!(
             parts.timing,
-            TimingPart::BoxBreath {
+            TimingKey::BoxBreath {
                 inhale_secs: 4,
                 hold_full_secs: 4,
                 exhale_secs: 4,
@@ -1025,7 +1025,7 @@ mod tests {
         let parts = preset_subtitle_parts(&json).unwrap();
         assert_eq!(
             parts.timing,
-            TimingPart::BoxBreath {
+            TimingKey::BoxBreath {
                 inhale_secs: 4,
                 hold_full_secs: 7,
                 exhale_secs: 8,
@@ -1081,15 +1081,15 @@ mod tests {
         let json = cfg_to_json(&cfg);
         assert_eq!(preset_subtitle_parts(&json).unwrap().bells, None);
 
-        // Enabled with one → BellsPart::One.
+        // Enabled with one → BellsCountKey::One.
         cfg.interval_bells = PresetIntervalBells { enabled: true, bells: vec![one_bell.clone()] };
         let json = cfg_to_json(&cfg);
         assert_eq!(
             preset_subtitle_parts(&json).unwrap().bells,
-            Some(BellsPart::One)
+            Some(BellsCountKey::One)
         );
 
-        // Enabled with three → BellsPart::Many(3).
+        // Enabled with three → BellsCountKey::Many(3).
         cfg.interval_bells = PresetIntervalBells {
             enabled: true,
             bells: vec![one_bell.clone(), one_bell.clone(), one_bell.clone()],
@@ -1097,7 +1097,7 @@ mod tests {
         let json = cfg_to_json(&cfg);
         assert_eq!(
             preset_subtitle_parts(&json).unwrap().bells,
-            Some(BellsPart::Many(3))
+            Some(BellsCountKey::Many(3))
         );
     }
 
@@ -1443,20 +1443,20 @@ mod tests {
         let now_unix = 1_744_891_200_i64;
         let day = 86_400_i64;
         // Same instant → Today.
-        assert_eq!(date_group_kind(now_unix, now_unix), DateGroupKind::Today);
+        assert_eq!(date_group_kind(now_unix, now_unix), DateGroupKey::Today);
         // ~12 hours ago might be the same local day or yesterday
         // depending on test machine TZ; either is fine.
         let result_12h = date_group_kind(now_unix - 12 * 3600, now_unix);
-        assert!(matches!(result_12h, DateGroupKind::Today | DateGroupKind::Yesterday));
+        assert!(matches!(result_12h, DateGroupKey::Today | DateGroupKey::Yesterday));
         // Two days ago → SameYearOther (April still).
         assert_eq!(
             date_group_kind(now_unix - 2 * day, now_unix),
-            DateGroupKind::SameYearOther,
+            DateGroupKey::SameYearOther,
         );
         // ~400 days ago → EarlierYearOther (crosses calendar year).
         assert_eq!(
             date_group_kind(now_unix - 400 * day, now_unix),
-            DateGroupKind::EarlierYearOther,
+            DateGroupKey::EarlierYearOther,
         );
     }
 

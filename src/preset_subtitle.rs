@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use meditate_core::db::Preset;
 use meditate_core::format::{
-    preset_subtitle_parts, BellsPart, BoxBreathAfter, TimingPart,
+    preset_subtitle_parts, BellsCountKey, BoxBreathAfter, TimingKey,
 };
 
 use crate::i18n::gettext;
@@ -30,9 +30,9 @@ pub fn preset_subtitle(p: &Preset, label_names: &HashMap<String, String>) -> Str
 
     let mut out: Vec<String> = Vec::new();
     match parts.timing {
-        TimingPart::Stopwatch => out.push(gettext("Stopwatch")),
-        TimingPart::Duration { mins } => out.push(render_duration(mins)),
-        TimingPart::BoxBreath {
+        TimingKey::Stopwatch => out.push(gettext("Stopwatch")),
+        TimingKey::Duration { mins } => out.push(render_duration(mins)),
+        TimingKey::BoxBreath {
             inhale_secs,
             hold_full_secs,
             exhale_secs,
@@ -55,8 +55,8 @@ pub fn preset_subtitle(p: &Preset, label_names: &HashMap<String, String>) -> Str
         }
     }
     match parts.bells {
-        Some(BellsPart::One) => out.push(gettext("1 bell")),
-        Some(BellsPart::Many(n)) => {
+        Some(BellsCountKey::One) => out.push(gettext("1 bell")),
+        Some(BellsCountKey::Many(n)) => {
             out.push(gettext("{n} bells").replace("{n}", &n.to_string()))
         }
         None => {}

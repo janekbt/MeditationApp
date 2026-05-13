@@ -575,21 +575,21 @@ fn date_group_key(unix_secs: i64) -> String {
 /// month/day rendering uses glib::DateTime so non-English locales
 /// get the right month abbreviations.
 fn date_group_display(unix_secs: i64) -> String {
-    use meditate_core::format::DateGroupKind;
+    use meditate_core::format::DateGroupKey;
     let kind = meditate_core::format::date_group_kind(
         unix_secs,
         meditate_core::time::unix_now(),
     );
     match kind {
-        DateGroupKind::Today => crate::i18n::gettext("Today"),
-        DateGroupKind::Yesterday => crate::i18n::gettext("Yesterday"),
-        DateGroupKind::SameYearOther | DateGroupKind::EarlierYearOther => {
+        DateGroupKey::Today => crate::i18n::gettext("Today"),
+        DateGroupKey::Yesterday => crate::i18n::gettext("Yesterday"),
+        DateGroupKey::SameYearOther | DateGroupKey::EarlierYearOther => {
             let Some(dt) = glib::DateTime::from_unix_local(unix_secs).ok() else {
                 return String::new();
             };
             // %b is the locale abbreviated month; no msgid needed.
             let fmt = match kind {
-                DateGroupKind::SameYearOther => "%b %-d",
+                DateGroupKey::SameYearOther => "%b %-d",
                 _ => "%b %-d, %Y",
             };
             dt.format(fmt).map(|g| g.to_string()).unwrap_or_default()
