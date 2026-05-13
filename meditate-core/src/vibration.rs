@@ -9,6 +9,35 @@
 
 use crate::db::VibrationPattern;
 
+/// How playback interpolates between adjacent envelope samples.
+/// Persisted as a string in the `vibration_patterns.chart_kind`
+/// column via `as_db_str`/`from_db_str`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChartKind {
+    /// Linear interpolation between adjacent samples — produces a
+    /// continuous, smoothly-ramping intensity curve.
+    Line,
+    /// Sample-and-hold — each sample's value is held for its segment
+    /// length, producing abrupt step transitions at sample boundaries.
+    Bar,
+}
+
+impl ChartKind {
+    pub fn as_db_str(self) -> &'static str {
+        match self {
+            ChartKind::Line => "line",
+            ChartKind::Bar  => "bar",
+        }
+    }
+    pub fn from_db_str(s: &str) -> Option<Self> {
+        match s {
+            "line" => Some(ChartKind::Line),
+            "bar"  => Some(ChartKind::Bar),
+            _      => None,
+        }
+    }
+}
+
 // ── Preview state machine ───────────────────────────────────────────
 //
 // The shell renders Play/Stop buttons in two places: each row in the

@@ -14,10 +14,50 @@
 
 use crate::db::{
     BellSound, BoxBreathPhaseId, Database, IntervalBell, IntervalBellKind, SessionMode,
-    SignalMode, VibrationPattern,
+    VibrationPattern,
 };
 use crate::seeds::{BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID};
 use crate::settings_keys::{read_bool, read_signal_mode, read_str};
+
+/// What channels a bell or phase plays through. Mirrors the
+/// Sound / Vibration / Both `Adw.ToggleGroup` segments in the timer
+/// setup. Used as the persisted enum behind every per-bell signal-mode
+/// setting key + the `interval_bells.signal_mode` column +
+/// the `box_breath_phases.signal_mode` column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SignalMode {
+    Sound,
+    Vibration,
+    Both,
+}
+
+impl SignalMode {
+    pub fn as_db_str(self) -> &'static str {
+        match self {
+            SignalMode::Sound     => "sound",
+            SignalMode::Vibration => "vibration",
+            SignalMode::Both      => "both",
+        }
+    }
+    pub fn from_db_str(s: &str) -> Option<Self> {
+        match s {
+            "sound"     => Some(SignalMode::Sound),
+            "vibration" => Some(SignalMode::Vibration),
+            "both"      => Some(SignalMode::Both),
+            _           => None,
+        }
+    }
+
+    /// Does this mode include the sound channel? `Sound | Both`.
+    pub fn includes_sound(self) -> bool {
+        matches!(self, SignalMode::Sound | SignalMode::Both)
+    }
+
+    /// Does this mode include the vibration channel? `Vibration | Both`.
+    pub fn includes_vibration(self) -> bool {
+        matches!(self, SignalMode::Vibration | SignalMode::Both)
+    }
+}
 
 // ── Bell-scheduling helpers ─────────────────────────────────────────
 // Pure functions the running tick uses to decide when each configured

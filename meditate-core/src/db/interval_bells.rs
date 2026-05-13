@@ -6,7 +6,8 @@
 use rusqlite::{params, OptionalExtension};
 
 use super::events::EventKind;
-use super::{Database, Result, SignalMode};
+use super::{Database, Result};
+use crate::bells::SignalMode;
 use crate::seeds::{BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID};
 
 /// One configured bell entry in the user's interval-bell library.

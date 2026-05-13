@@ -15,14 +15,6 @@ rationale.
 
 ## Tier 3 — Judgment calls
 
-### Move `SignalMode` out of `db.rs`
-- Used by `bells`, `vibration`, `session`, `settings_keys`,
-  `preset_config` — its placement in `db` is purely because the
-  column reads it.
-- Move to a new `signal.rs` (or into `bells.rs` since that's its
-  primary consumer); `db` re-exports for the shell crates that
-  still import via `db::SignalMode`.
-
 ### Extract `vibration::PreviewToggle` into generic `preview.rs`
 - Currently named after its first consumer (vibration patterns).
   Sound chooser will want the same toggle / cancel / auto-revert
@@ -81,16 +73,23 @@ rationale.
 
 ## Tier 2 — Second-pass additions
 
-### Move sync-tier types out of `db.rs`
-- `Event` (lines 423-437) is used **only inside `db.rs`** — it's
-  the sync wire envelope. Should follow into `db/sync.rs` when
-  Tier 1 split lands.
-- `SessionFilter` (line 441) is pure pagination state — belongs
-  in `db/sessions.rs` next to `query_sessions`.
-- `ChartKind` is consumed by `vibration` only — move there.
-- `BoxBreathPhaseId` / `BoxBreathPhase` are consumed by `breath`
-  and `session` — move to `breath.rs`.
-- (Same logic as `SignalMode` already in backlog Tier 3.)
+### Consolidate `Phase` and `BoxBreathPhaseId` into one enum
+- Both live in `meditate-core/src/breath.rs` after the domain-
+  promotion pass, with identical four-variant shape (In / HoldIn
+  / Out / HoldOut) but distinct roles: `Phase` is the in-cycle
+  state from the breath state machine; `BoxBreathPhaseId` is the
+  primary key of `box_breath_phases` rows. `session/mod.rs:738-741`
+  carries the explicit conversion.
+- Merging them removes the conversion ladder + the visually-
+  confusing duplicate in `breath.rs`. The cost is that the
+  resulting enum loses its tier-isolation marker (the column-
+  identity role gets implicit). Net win because the variants
+  are literally identical.
+- Fix: rename the merged type to `Phase`, drop `BoxBreathPhaseId`,
+  re-export from `meditate_core::db::BoxBreathPhaseId` as `Phase`
+  for one release if any external callers care; ~98 call sites
+  in core + shell rewrite via a mechanical `BoxBreathPhaseId` →
+  `Phase` rename.
 
 ### Inconsistent corrupt-row handling
 - Some sites `.unwrap_or(default)` (silent coercion of bad

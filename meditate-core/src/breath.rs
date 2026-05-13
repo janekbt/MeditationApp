@@ -20,6 +20,66 @@ pub enum Phase {
     HoldOut,
 }
 
+/// Persisted-row variant of [`Phase`] used as the primary key of the
+/// `box_breath_phases` table. Same four variants as `Phase` but with
+/// a different role (storage identity vs in-cycle state); the
+/// `crate::session` layer carries an explicit conversion between
+/// them. A consolidation pass would fold these into a single enum
+/// once the conversion's ergonomic cost is judged worth the
+/// untyping; tracked in the backlog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BoxBreathPhaseId {
+    In,
+    HoldIn,
+    Out,
+    HoldOut,
+}
+
+impl BoxBreathPhaseId {
+    pub fn as_db_str(self) -> &'static str {
+        match self {
+            BoxBreathPhaseId::In      => "in",
+            BoxBreathPhaseId::HoldIn  => "holdin",
+            BoxBreathPhaseId::Out     => "out",
+            BoxBreathPhaseId::HoldOut => "holdout",
+        }
+    }
+    pub fn from_db_str(s: &str) -> Option<Self> {
+        match s {
+            "in"      => Some(BoxBreathPhaseId::In),
+            "holdin"  => Some(BoxBreathPhaseId::HoldIn),
+            "out"     => Some(BoxBreathPhaseId::Out),
+            "holdout" => Some(BoxBreathPhaseId::HoldOut),
+            _         => None,
+        }
+    }
+    /// Iteration order for the seed + the UI list — matches the
+    /// natural Box Breath cycle (in → hold → out → hold).
+    pub fn all() -> &'static [BoxBreathPhaseId] {
+        &[
+            BoxBreathPhaseId::In,
+            BoxBreathPhaseId::HoldIn,
+            BoxBreathPhaseId::Out,
+            BoxBreathPhaseId::HoldOut,
+        ]
+    }
+}
+
+/// One row of the `box_breath_phases` table — the per-phase cue
+/// config (enabled / signal_mode / sound_uuid / pattern_uuid).
+/// Identified by `phase` (PK); persistence shape matches the
+/// per-bell config in `IntervalBell`. The four rows are fixed
+/// (no insert/delete) so the table acts as a tiny typed K/V store
+/// keyed on `BoxBreathPhaseId`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoxBreathPhase {
+    pub phase: BoxBreathPhaseId,
+    pub enabled: bool,
+    pub signal_mode: crate::bells::SignalMode,
+    pub sound_uuid: crate::db::BellSoundUuid,
+    pub pattern_uuid: crate::db::VibrationPatternUuid,
+}
+
 /// Translatable key for the running-page phase label ("Breathe in",
 /// "Hold", "Breathe out"). The shell maps each variant to gettext;
 /// `Hold` covers both `HoldIn` and `HoldOut` because the user-facing

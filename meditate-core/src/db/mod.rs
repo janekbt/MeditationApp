@@ -51,13 +51,17 @@ mod vibration_patterns;
 mod test_helpers;
 
 pub use bell_sounds::{BellSound, BellSoundCategory};
-pub use box_breath_phases::{BoxBreathPhase, BoxBreathPhaseId};
+pub use crate::breath::{BoxBreathPhase, BoxBreathPhaseId};
 pub use events::Event;
 pub use guided_files::{
     find_guided_file_by_uuid_from_db, is_guided_file_name_taken_from_db,
     list_guided_files_from_db, GuidedFile,
 };
 pub use interval_bells::{IntervalBell, IntervalBellKind};
+// Domain enums whose persisted-string mapping lives with the type
+// definition in the domain module. Re-exported here so the `db`
+// API surface stays stable across the promotion pass.
+pub use crate::bells::SignalMode;
 pub use labels::{
     count_labels_from_db, find_label_by_name_from_db, is_label_name_taken_from_db,
     label_session_count_from_db, list_labels_from_db, Label,
@@ -85,68 +89,13 @@ pub use uuids::{
 };
 pub use vibration_patterns::{
     find_vibration_pattern_by_uuid_from_db, is_vibration_pattern_name_taken_from_db,
-    list_vibration_patterns_from_db, ChartKind, VibrationPattern,
+    list_vibration_patterns_from_db, VibrationPattern,
 };
+pub use crate::vibration::ChartKind;
 pub use error::{target_id_is_well_formed_for, DbError, Result};
 pub(crate) use schema::{CACHE_SCHEMA_VERSION, CACHE_SCHEMA_VERSION_KEY, SCHEMA_VERSION};
 use error::{conflict_suffixed_name, is_unique_constraint_error, map_unique_err};
 use schema::schema;
-
-/// One audio file in the bell-sound library — bundled CC0 sounds the
-/// app ships with, plus user-imported custom files. Referenced by
-/// every bell-fire site (starting bell, interval bells, completion
-/// sound) via the `uuid` column. The `is_bundled` flag distinguishes
-/// what the audio system does with `file_path`: bundled rows hold a
-/// GResource path the binary contains; custom rows hold a filesystem
-/// path under `$XDG_DATA_HOME`. Bundled rows ride sync (so a peer
-/// without the bundle inherits the same UUIDs from the seeding device)
-/// but the audio itself doesn't — peers compile in their own copy.
-///
-/// `category` partitions the library by usage context: General sounds
-/// (bells / gongs / chimes) feed the Starting / Interval / End bell
-/// choosers; BoxBreath sounds (voice cues / phase markers) feed the
-/// One configured bell entry in the user's interval-bell library.
-/// What channels a bell or phase plays through. Mirrors the
-/// Sound / Vibration / Both `Adw.ToggleGroup` segments in the
-/// timer setup. Used as the persisted enum behind every per-bell
-/// signal-mode setting key + the `interval_bells.signal_mode`
-/// column + the `box_breath_phases.signal_mode` column.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SignalMode {
-    Sound,
-    Vibration,
-    Both,
-}
-
-/// One row in `box_breath_phases` — the per-phase cue config for
-impl SignalMode {
-    pub fn as_db_str(self) -> &'static str {
-        match self {
-            SignalMode::Sound     => "sound",
-            SignalMode::Vibration => "vibration",
-            SignalMode::Both      => "both",
-        }
-    }
-    pub fn from_db_str(s: &str) -> Option<Self> {
-        match s {
-            "sound"     => Some(SignalMode::Sound),
-            "vibration" => Some(SignalMode::Vibration),
-            "both"      => Some(SignalMode::Both),
-            _           => None,
-        }
-    }
-
-    /// Does this mode include the sound channel? `Sound | Both`.
-    pub fn includes_sound(self) -> bool {
-        matches!(self, SignalMode::Sound | SignalMode::Both)
-    }
-
-    /// Does this mode include the vibration channel? `Vibration | Both`.
-    pub fn includes_vibration(self) -> bool {
-        matches!(self, SignalMode::Vibration | SignalMode::Both)
-    }
-}
-
 
 /// One entry in the append-only sync event log. A self-contained
 /// description of a state-changing operation — sessions inserted /

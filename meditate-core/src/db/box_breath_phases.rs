@@ -7,62 +7,9 @@
 use rusqlite::{params, OptionalExtension};
 
 use super::events::EventKind;
-use super::{Database, DbError, Result, SignalMode};
-
-/// Box Breath. Identified by `phase` (PK), with the same
-/// (enabled / signal_mode / sound_uuid / pattern_uuid) shape as
-/// per-bell config. The four rows are fixed (no insert / delete) so
-/// the table acts as a tiny key/value store with strong typing.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BoxBreathPhase {
-    pub phase: BoxBreathPhaseId,
-    pub enabled: bool,
-    pub signal_mode: SignalMode,
-    pub sound_uuid: crate::db::BellSoundUuid,
-    pub pattern_uuid: crate::db::VibrationPatternUuid,
-}
-
-/// Mirrors `crate::timer::breathing::Phase` shapewise (In / HoldIn /
-/// Out / HoldOut), but lives in core so the DB layer can use it
-/// without depending on the timer module. The shell maps between the
-/// two as needed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum BoxBreathPhaseId {
-    In,
-    HoldIn,
-    Out,
-    HoldOut,
-}
-
-impl BoxBreathPhaseId {
-    pub fn as_db_str(self) -> &'static str {
-        match self {
-            BoxBreathPhaseId::In      => "in",
-            BoxBreathPhaseId::HoldIn  => "holdin",
-            BoxBreathPhaseId::Out     => "out",
-            BoxBreathPhaseId::HoldOut => "holdout",
-        }
-    }
-    pub fn from_db_str(s: &str) -> Option<Self> {
-        match s {
-            "in"      => Some(BoxBreathPhaseId::In),
-            "holdin"  => Some(BoxBreathPhaseId::HoldIn),
-            "out"     => Some(BoxBreathPhaseId::Out),
-            "holdout" => Some(BoxBreathPhaseId::HoldOut),
-            _         => None,
-        }
-    }
-    /// Iteration order for the seed + the UI list — matches the
-    /// natural Box Breath cycle (in → hold → out → hold).
-    pub fn all() -> &'static [BoxBreathPhaseId] {
-        &[
-            BoxBreathPhaseId::In,
-            BoxBreathPhaseId::HoldIn,
-            BoxBreathPhaseId::Out,
-            BoxBreathPhaseId::HoldOut,
-        ]
-    }
-}
+use super::{Database, DbError, Result};
+use crate::bells::SignalMode;
+use crate::breath::{BoxBreathPhase, BoxBreathPhaseId};
 
 impl Database {
     /// Read every phase row in cycle order (in / hold-in / out /

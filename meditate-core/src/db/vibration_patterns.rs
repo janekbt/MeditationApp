@@ -10,6 +10,7 @@ use super::{
     conflict_suffixed_name, is_unique_constraint_error, map_unique_err,
     Database, DbError, Result,
 };
+use crate::vibration::ChartKind;
 
 /// One vibration pattern in the user's library. The pattern itself is
 /// an envelope of N equally-spaced amplitude samples played back over
@@ -35,32 +36,6 @@ pub struct VibrationPattern {
     pub updated_iso: String,
 }
 
-/// How playback interpolates between adjacent envelope samples.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ChartKind {
-    /// Linear interpolation between adjacent samples — produces a
-    /// continuous, smoothly-ramping intensity curve.
-    Line,
-    /// Sample-and-hold — each sample's value is held for its segment
-    /// length, producing abrupt step transitions at sample boundaries.
-    Bar,
-}
-
-impl ChartKind {
-    pub fn as_db_str(self) -> &'static str {
-        match self {
-            ChartKind::Line => "line",
-            ChartKind::Bar  => "bar",
-        }
-    }
-    pub fn from_db_str(s: &str) -> Option<Self> {
-        match s {
-            "line" => Some(ChartKind::Line),
-            "bar"  => Some(ChartKind::Bar),
-            _      => None,
-        }
-    }
-}
 
 pub fn list_vibration_patterns_from_db(db: &Database) -> Result<Vec<VibrationPattern>> {
     // Custom rows first (is_bundled = 0), then the bundled seed
