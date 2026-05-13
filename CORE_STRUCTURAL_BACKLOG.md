@@ -311,14 +311,6 @@ rationale.
 - Fix: `fn sync<'a>(db: &'a Database, fs: &'a FakeWebDav) ->
   Sync<'a>` inside the existing test mod. ~120 lines saved.
 
-### `preset_config.rs` `Vec::contains(&String)` allocation per iter
-- `preset_config.rs:400-405` and `:431-435` — `missing_sounds.
-  contains(&u.to_string())` builds a fresh `String` per
-  iteration. Cold path, small N — not a perf bug, but a clippy-
-  friendly cleanup.
-- Fix: `missing_sounds.iter().any(|m| m == *u)` or a `HashSet`
-  pre-built.
-
 ## Tier 3 — Third-pass additions
 
 ### `preset_config.rs:400-405, 430-435` — covered above in Tier 2.

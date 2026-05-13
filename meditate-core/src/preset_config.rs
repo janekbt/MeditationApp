@@ -401,7 +401,7 @@ pub fn apply(
     }
     let mut missing_sounds: Vec<String> = Vec::new();
     for u in &needs_sound {
-        if !known_sounds.contains(*u) && !missing_sounds.contains(&u.to_string()) {
+        if !known_sounds.contains(*u) && !missing_sounds.iter().any(|m| m == *u) {
             missing_sounds.push(u.to_string());
         }
     }
@@ -431,7 +431,7 @@ pub fn apply(
     }
     let mut missing_patterns: Vec<String> = Vec::new();
     for u in &needs_pattern {
-        if !known_patterns.contains(*u) && !missing_patterns.contains(&u.to_string()) {
+        if !known_patterns.contains(*u) && !missing_patterns.iter().any(|m| m == *u) {
             missing_patterns.push(u.to_string());
         }
     }
