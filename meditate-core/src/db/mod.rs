@@ -207,6 +207,44 @@ impl Database {
         Ok(db)
     }
 
+    /// Read a `(key, value)`-shaped row from a table where keys are
+    /// strings and values are strings. Returns `default` when the key
+    /// has never been set. Shared by `get_setting` (event-sourced
+    /// settings table) and `get_sync_state` (device-local sync KV)
+    /// — both tables have the same `(key TEXT PK, value TEXT)` shape.
+    pub(super) fn read_kv(
+        &self,
+        table: &'static str,
+        key: &str,
+        default: &str,
+    ) -> Result<String> {
+        let sql = format!("SELECT value FROM {table} WHERE key = ?1");
+        match self.conn.query_row(&sql, rusqlite::params![key], |row| {
+            row.get::<_, String>(0)
+        }) {
+            Ok(val) => Ok(val),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(default.to_string()),
+            Err(e) => Err(DbError::Sqlite(e)),
+        }
+    }
+
+    /// UPSERT a `(key, value)` row. The settings table caller wraps
+    /// this in a transaction that also emits a `setting_changed`
+    /// event so peers converge; the sync_state caller uses it
+    /// directly (sync_state is device-local and doesn't emit).
+    pub(super) fn write_kv(
+        &self,
+        table: &'static str,
+        key: &str,
+        value: &str,
+    ) -> Result<()> {
+        let sql = format!(
+            "INSERT INTO {table} (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+        );
+        self.conn.execute(&sql, rusqlite::params![key, value])?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

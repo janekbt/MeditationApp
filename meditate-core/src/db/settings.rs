@@ -11,15 +11,7 @@ impl Database {
     /// Read the value of a settings key. Returns `default` (without
     /// inserting it) when the key has never been set.
     pub fn get_setting(&self, key: &str, default: &str) -> Result<String> {
-        match self.conn.query_row(
-            "SELECT value FROM settings WHERE key = ?1",
-            params![key],
-            |row| row.get::<_, String>(0),
-        ) {
-            Ok(val) => Ok(val),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(default.to_string()),
-            Err(e) => Err(DbError::Sqlite(e)),
-        }
+        self.read_kv("settings", key, default)
     }
 
     /// Write a settings value. Upserts: subsequent calls overwrite.
@@ -28,11 +20,7 @@ impl Database {
     /// one event would lose the intermediate ordering.
     pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
-        self.conn.execute(
-            "INSERT INTO settings (key, value) VALUES (?1, ?2)
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            params![key, value],
-        )?;
+        self.write_kv("settings", key, value)?;
         let payload = serde_json::json!({
             "key": key,
             "value": value,

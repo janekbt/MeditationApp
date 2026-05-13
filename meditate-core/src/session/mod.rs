@@ -17,7 +17,7 @@
 //! a thin pump.
 
 use crate::bells::ActiveBell;
-use crate::breath::{BreathPattern, Phase, PhaseInfo};
+use crate::breath::{Phase, PhaseInfo};
 use crate::db::{BoxBreathPhaseId, SessionMode, SignalMode};
 use crate::timer::Stopwatch;
 use std::time::Duration;
@@ -829,6 +829,7 @@ fn fire_due_bells(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::breath::BreathPattern;
 
     fn timer_settings_with_prep(prep_secs: u32) -> SessionSettings {
         SessionSettings {

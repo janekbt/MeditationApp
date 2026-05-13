@@ -140,13 +140,6 @@ rationale.
 - Extract `fn map_unique_err(e: rusqlite::Error, dup: impl
   FnOnce() -> DbError) -> DbError`.
 
-### `read_kv(table, key, default)` for setting + sync_state
-- `Database::get_setting` (725) and `Database::get_sync_state`
-  (1757) are byte-identical apart from the table name.
-- Collapse into `fn read_kv(&self, table: &'static str, key: &str,
-  default: &str) -> Result<String>`. Both setters likewise collapse
-  to `write_kv`.
-
 ### Date-arithmetic `.expect()`s → `DbError::DateOutOfRange`
 - `db.rs:3761, 3959, 3972` — `succ_opt().expect("date overflow")` /
   `pred_opt().expect(...)` on `chrono::NaiveDate`.

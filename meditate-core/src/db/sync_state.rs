@@ -3,35 +3,23 @@
 //! from `settings` because settings are event-sourced and would sync
 //! to peers, whereas sync_state is device-private.
 
-use rusqlite::params;
-
-use super::{Database, DbError, Result};
+use super::{Database, Result};
 
 impl Database {
     /// Read a sync-state value (server URL, last-pull cursor, …),
     /// returning `default` if the key has never been set. Mirrors
-    /// `get_setting` but keyed against the `sync_state` namespace.
+    /// `get_setting` but keyed against the `sync_state` namespace —
+    /// sync_state is device-local and doesn't emit events, so writes
+    /// go through `write_kv` directly without the `set_setting`
+    /// transaction + emit_event step.
     pub fn get_sync_state(&self, key: &str, default: &str) -> Result<String> {
-        match self.conn.query_row(
-            "SELECT value FROM sync_state WHERE key = ?1",
-            params![key],
-            |row| row.get::<_, String>(0),
-        ) {
-            Ok(val) => Ok(val),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(default.to_string()),
-            Err(e) => Err(DbError::Sqlite(e)),
-        }
+        self.read_kv("sync_state", key, default)
     }
 
     /// Upsert a sync-state value. Subsequent calls overwrite. Mirrors
     /// `set_setting`'s semantics in the `sync_state` namespace.
     pub fn set_sync_state(&self, key: &str, value: &str) -> Result<()> {
-        self.conn.execute(
-            "INSERT INTO sync_state (key, value) VALUES (?1, ?2)
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            params![key, value],
-        )?;
-        Ok(())
+        self.write_kv("sync_state", key, value)
     }
 }
 
