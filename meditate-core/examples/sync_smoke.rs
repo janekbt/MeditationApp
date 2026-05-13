@@ -68,7 +68,7 @@ fn main() {
     print_state("Laptop after sync", &laptop);
     assert_states_match(&phone, &laptop);
     println!("✓ both devices converged on the same {} sessions / {} labels",
-        phone.list_sessions().unwrap().len(),
+        meditate_core::db::list_sessions_from_db(&phone).unwrap().len(),
         meditate_core::db::list_labels_from_db(&phone).unwrap().len(),
     );
 
@@ -77,12 +77,12 @@ fn main() {
 
     // Use the Morning-tagged session as the contested one. Both devices
     // see it (it just synced).
-    let morning_session_id_phone = phone.list_sessions().unwrap()
+    let morning_session_id_phone = meditate_core::db::list_sessions_from_db(&phone).unwrap()
         .iter()
         .find(|(_, s)| s.notes.as_deref() == Some("clear and present"))
         .map(|(id, _)| *id)
         .expect("phone should have the Morning session post-sync");
-    let morning_session_id_laptop = laptop.list_sessions().unwrap()
+    let morning_session_id_laptop = meditate_core::db::list_sessions_from_db(&laptop).unwrap()
         .iter()
         .find(|(_, s)| s.notes.as_deref() == Some("clear and present"))
         .map(|(id, _)| *id)
@@ -130,7 +130,7 @@ fn main() {
     print_state("Phone after concurrent-edit sync", &phone);
     print_state("Laptop after concurrent-edit sync", &laptop);
     assert_states_match(&phone, &laptop);
-    let winning_notes = phone.list_sessions().unwrap()
+    let winning_notes = meditate_core::db::list_sessions_from_db(&phone).unwrap()
         .iter()
         .find(|(_, s)| s.start_iso == "2026-04-30T07:00:00")
         .and_then(|(_, s)| s.notes.clone());
@@ -143,7 +143,7 @@ fn main() {
 
     // ── Round 3: tombstone test ──────────────────────────────────────────
     println!("\n--- Round 3: delete on one device, sync, tombstone wins ---");
-    let evening_session_id = phone.list_sessions().unwrap()
+    let evening_session_id = meditate_core::db::list_sessions_from_db(&phone).unwrap()
         .iter()
         .find(|(_, s)| s.start_iso == "2026-04-30T20:00:00")
         .map(|(id, _)| *id)
@@ -157,11 +157,11 @@ fn main() {
     print_state("Phone after delete", &phone);
     print_state("Laptop after sync", &laptop);
     assert_states_match(&phone, &laptop);
-    let evening_still_there = laptop.list_sessions().unwrap()
+    let evening_still_there = meditate_core::db::list_sessions_from_db(&laptop).unwrap()
         .iter().any(|(_, s)| s.start_iso == "2026-04-30T20:00:00");
     assert!(!evening_still_there, "tombstone failed: Evening session still on laptop");
     println!("✓ tombstone propagated; both devices have {} session(s)",
-        laptop.list_sessions().unwrap().len());
+        meditate_core::db::list_sessions_from_db(&laptop).unwrap().len());
 
     // ── Round 4: settings sync ────────────────────────────────────────────
     println!("\n--- Round 4: settings sync ---");
@@ -222,7 +222,7 @@ fn main() {
     println!("B authored 'from B', synced to C ({} events transited)", from_b_to_c.len());
 
     // C should now have BOTH sessions — A's transited via B.
-    let c_notes: std::collections::HashSet<_> = device_c.list_sessions().unwrap()
+    let c_notes: std::collections::HashSet<_> = meditate_core::db::list_sessions_from_db(&device_c).unwrap()
         .iter().filter_map(|(_, s)| s.notes.clone()).collect();
     let expected_c: std::collections::HashSet<_> = ["from A", "from B"]
         .iter().map(|s| s.to_string()).collect();
@@ -241,7 +241,7 @@ fn main() {
     let from_c = drain(&device_c);
     device_a.replay_events(&from_c).unwrap();
 
-    let a_notes: std::collections::HashSet<_> = device_a.list_sessions().unwrap()
+    let a_notes: std::collections::HashSet<_> = meditate_core::db::list_sessions_from_db(&device_a).unwrap()
         .iter().filter_map(|(_, s)| s.notes.clone()).collect();
     let expected_all: std::collections::HashSet<_> = ["from A", "from B", "from C"]
         .iter().map(|s| s.to_string()).collect();
@@ -252,9 +252,9 @@ fn main() {
     // Apply duplicates: re-replay events on a device that's already seen them.
     // After the cycle, C has all three sessions (from A via B, from B, and
     // from C itself). Re-replaying its own drained batch must dedup cleanly.
-    let n_sessions_before = device_c.list_sessions().unwrap().len();
+    let n_sessions_before = meditate_core::db::list_sessions_from_db(&device_c).unwrap().len();
     device_c.replay_events(&from_c).unwrap();
-    let n_sessions_after = device_c.list_sessions().unwrap().len();
+    let n_sessions_after = meditate_core::db::list_sessions_from_db(&device_c).unwrap().len();
     assert_eq!(n_sessions_before, n_sessions_after,
         "duplicate replay must not duplicate sessions (event_uuid dedup)");
     println!("✓ duplicate replay was a no-op ({} sessions before and after)", n_sessions_after);
@@ -280,13 +280,13 @@ fn main() {
             mode: SessionMode::Timer, uuid: meditate_core::db::SessionUuid::new(""),
             guided_file_uuid: None,
         }).unwrap();
-        saved_session_uuid = db.list_sessions().unwrap()[0].1.uuid.clone();
+        saved_session_uuid = meditate_core::db::list_sessions_from_db(&db).unwrap()[0].1.uuid.clone();
         saved_lamport = db.lamport_clock().unwrap();
         saved_event_uuid = db.pending_events().unwrap()[0].1.event_uuid.clone();
         println!("Pre-close: device_id={}, lamport={}, sessions={}, pending_events={}",
             &saved_device_id[..8],
             saved_lamport,
-            db.list_sessions().unwrap().len(),
+            meditate_core::db::list_sessions_from_db(&db).unwrap().len(),
             db.pending_events().unwrap().len(),
         );
         // db drops here, closing the connection.
@@ -296,15 +296,15 @@ fn main() {
     println!("Post-reopen: device_id={}, lamport={}, sessions={}, pending_events={}",
         &db.device_id().unwrap()[..8],
         db.lamport_clock().unwrap(),
-        db.list_sessions().unwrap().len(),
+        meditate_core::db::list_sessions_from_db(&db).unwrap().len(),
         db.pending_events().unwrap().len(),
     );
     assert_eq!(db.device_id().unwrap(), saved_device_id,
         "device_id must persist across reopens");
     assert_eq!(db.lamport_clock().unwrap(), saved_lamport,
         "lamport clock must persist across reopens");
-    assert_eq!(db.list_sessions().unwrap().len(), 1);
-    assert_eq!(db.list_sessions().unwrap()[0].1.uuid, saved_session_uuid,
+    assert_eq!(meditate_core::db::list_sessions_from_db(&db).unwrap().len(), 1);
+    assert_eq!(meditate_core::db::list_sessions_from_db(&db).unwrap()[0].1.uuid, saved_session_uuid,
         "session uuid must be preserved");
     assert_eq!(meditate_core::db::list_labels_from_db(&db).unwrap()[0].name, "Persistent");
     let pending_uuids: Vec<_> = db.pending_events().unwrap()
@@ -368,7 +368,7 @@ fn main() {
 
     let state = |db: &Database| {
         // Project SessionMode to its db_str so the tuple is Ord-comparable.
-        let mut sessions: Vec<_> = db.list_sessions().unwrap().into_iter()
+        let mut sessions: Vec<_> = meditate_core::db::list_sessions_from_db(&db).unwrap().into_iter()
             .map(|(_, s)| (s.uuid.clone(), s.start_iso.clone(), s.duration_secs,
                 s.label_id.is_some(), s.notes.clone(), s.mode.as_db_str().to_string()))
             .collect();
@@ -493,17 +493,17 @@ fn drain(db: &Database) -> Vec<Event> {
 }
 
 fn print_state(label: &str, db: &Database) {
-    let sessions = db.list_sessions().unwrap();
+    let sessions = meditate_core::db::list_sessions_from_db(&db).unwrap();
     let labels = meditate_core::db::list_labels_from_db(&db).unwrap();
     println!("  [{label}]: {} session(s), {} label(s), lamport={}",
         sessions.len(), labels.len(), db.lamport_clock().unwrap());
 }
 
 fn assert_states_match(a: &Database, b: &Database) {
-    let mut a_sessions: Vec<_> = a.list_sessions().unwrap().into_iter()
+    let mut a_sessions: Vec<_> = meditate_core::db::list_sessions_from_db(&a).unwrap().into_iter()
         .map(|(_, s)| (s.uuid.clone(), s.start_iso.clone(), s.duration_secs, s.notes.clone()))
         .collect();
-    let mut b_sessions: Vec<_> = b.list_sessions().unwrap().into_iter()
+    let mut b_sessions: Vec<_> = meditate_core::db::list_sessions_from_db(&b).unwrap().into_iter()
         .map(|(_, s)| (s.uuid.clone(), s.start_iso.clone(), s.duration_secs, s.notes.clone()))
         .collect();
     a_sessions.sort();

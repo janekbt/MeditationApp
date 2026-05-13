@@ -46,12 +46,12 @@ fn main() {
 
     let today = chrono::Utc::now().naive_utc().date();
     println!("Stats:");
-    println!("  Total sessions:  {}", db.count_sessions().unwrap());
-    println!("  Total minutes:   {}", db.total_minutes().unwrap());
-    println!("  Current streak:  {} days", db.get_streak(today).unwrap());
-    println!("  Best streak:     {} days", db.get_best_streak().unwrap());
+    println!("  Total sessions:  {}", meditate_core::db::count_sessions_from_db(&db).unwrap());
+    println!("  Total minutes:   {}", meditate_core::db::total_minutes_from_db(&db).unwrap());
+    println!("  Current streak:  {} days", meditate_core::db::get_streak_from_db(&db, today).unwrap());
+    println!("  Best streak:     {} days", meditate_core::db::get_best_streak_from_db(&db).unwrap());
 
-    let totals = db.get_daily_totals().unwrap();
+    let totals = meditate_core::db::get_daily_totals_from_db(&db).unwrap();
     if !totals.is_empty() {
         println!("  Daily totals:");
         for (day, secs) in totals {

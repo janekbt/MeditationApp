@@ -423,7 +423,7 @@ mod tests {
 
         db.delete_label(morning).unwrap();
 
-        let rows = db.list_sessions().unwrap();
+        let rows = crate::db::list_sessions_from_db(&db).unwrap();
         assert_eq!(rows.len(), 3);
         let by_id: std::collections::HashMap<i64, &Session> =
             rows.iter().map(|(i, s)| (*i, s)).collect();
@@ -448,7 +448,7 @@ mod tests {
             guided_file_uuid: None,
         }).unwrap();
         db.delete_label(morning).unwrap();
-        let row = &db.list_sessions().unwrap()[0];
+        let row = &crate::db::list_sessions_from_db(&db).unwrap()[0];
         assert_eq!(row.0, evening_id);
         assert_eq!(row.1.label_id, Some(evening));
     }
@@ -810,10 +810,10 @@ mod tests {
             "2026-04-30T10:00:00", 600,
             Some(LABEL_X), None, SessionMode::Timer,
         )).unwrap();
-        assert!(db.list_sessions().unwrap()[0].1.label_id.is_some());
+        assert!(crate::db::list_sessions_from_db(&db).unwrap()[0].1.label_id.is_some());
         db.apply_event(&synth_label_delete(LABEL_X, 10, DEVICE_A)).unwrap();
         assert!(list_labels_from_db(&db).unwrap().is_empty());
-        let s = &db.list_sessions().unwrap()[0].1;
+        let s = &crate::db::list_sessions_from_db(&db).unwrap()[0].1;
         assert_eq!(s.label_id, None);
     }
 
@@ -970,7 +970,7 @@ mod tests {
         }).unwrap();
 
         // Session exists but label_id is None — the orphan state.
-        let sessions = db.list_sessions().unwrap();
+        let sessions = crate::db::list_sessions_from_db(&db).unwrap();
         assert_eq!(sessions.len(), 1);
         assert!(
             sessions[0].1.label_id.is_none(),
@@ -992,7 +992,7 @@ mod tests {
             payload: label_payload,
         }).unwrap();
 
-        let sessions = db.list_sessions().unwrap();
+        let sessions = crate::db::list_sessions_from_db(&db).unwrap();
         let s = &sessions[0].1;
         assert!(s.label_id.is_some(), "session must be re-linked after label arrives");
         let labels = list_labels_from_db(&db).unwrap();
@@ -1045,7 +1045,7 @@ mod tests {
         }).unwrap();
         let labels = list_labels_from_db(&db).unwrap();
         let l2_id = labels.iter().find(|l| l.name == "L2").unwrap().id;
-        let session_label = db.list_sessions().unwrap()[0].1.label_id;
+        let session_label = crate::db::list_sessions_from_db(&db).unwrap()[0].1.label_id;
         assert_eq!(session_label, Some(l2_id), "linked to L2 (latest)");
 
         // L1 arrives — must NOT re-steal the session away from L2.
@@ -1056,7 +1056,7 @@ mod tests {
             target_id: l1.to_string(),
             payload: serde_json::json!({"uuid": l1, "name": "L1"}).to_string(),
         }).unwrap();
-        let session_label = db.list_sessions().unwrap()[0].1.label_id;
+        let session_label = crate::db::list_sessions_from_db(&db).unwrap()[0].1.label_id;
         assert_eq!(session_label, Some(l2_id),
             "session must remain on L2, not re-linked to L1 by the stale event");
     }

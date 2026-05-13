@@ -775,7 +775,7 @@ mod tests {
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].1.kind, "session_archive");
         // sessions cache stayed empty.
-        assert!(db.list_sessions().unwrap().is_empty());
+        assert!(crate::db::list_sessions_from_db(&db).unwrap().is_empty());
     }
 
     // ── Event log: append + pending + mark_synced (A2.3) ─────────────────────
@@ -1023,7 +1023,7 @@ mod tests {
         // Sanity: rows present before wipe.
         assert!(!db.pending_events().unwrap().is_empty());
         assert!(!crate::db::list_labels_from_db(&db).unwrap().is_empty());
-        assert!(!db.list_sessions().unwrap().is_empty());
+        assert!(!crate::db::list_sessions_from_db(&db).unwrap().is_empty());
         assert!(!db.list_interval_bells().unwrap().is_empty());
         assert!(!db.list_bell_sounds().unwrap().is_empty());
         assert!(!crate::db::list_presets_from_db(&db).unwrap().is_empty());
@@ -1038,7 +1038,7 @@ mod tests {
             "events table must be empty");
         assert!(crate::db::list_labels_from_db(&db).unwrap().is_empty(),
             "labels table must be empty");
-        assert!(db.list_sessions().unwrap().is_empty(),
+        assert!(crate::db::list_sessions_from_db(&db).unwrap().is_empty(),
             "sessions table must be empty");
         assert!(db.list_interval_bells().unwrap().is_empty(),
             "interval_bells table must be empty");
@@ -1203,7 +1203,7 @@ mod tests {
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
         }).unwrap();
-        assert_eq!(db.list_sessions().unwrap().len(), 1);
+        assert_eq!(crate::db::list_sessions_from_db(&db).unwrap().len(), 1);
         assert!(!db.pending_events().unwrap().is_empty(),
             "the new authoring must produce a pending event");
     }
@@ -1257,7 +1257,7 @@ mod tests {
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
         }).unwrap();
-        let row_uuid = db.list_sessions().unwrap()[0].1.uuid.clone();
+        let row_uuid = crate::db::list_sessions_from_db(&db).unwrap()[0].1.uuid.clone();
         let events = db.pending_events().unwrap();
         assert_eq!(events[0].1.target_id, row_uuid);
     }
@@ -1274,7 +1274,7 @@ mod tests {
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
         }).unwrap();
-        let row_uuid = db.list_sessions().unwrap()[0].1.uuid.clone();
+        let row_uuid = crate::db::list_sessions_from_db(&db).unwrap()[0].1.uuid.clone();
         drain_events(&db);
         db.delete_session(id).unwrap();
         let events = db.pending_events().unwrap();
@@ -1311,7 +1311,7 @@ mod tests {
     fn replay_events_with_empty_slice_is_a_noop() {
         let db = Database::open_in_memory().unwrap();
         db.replay_events(&[]).unwrap();
-        assert!(db.list_sessions().unwrap().is_empty());
+        assert!(crate::db::list_sessions_from_db(&db).unwrap().is_empty());
         assert!(crate::db::list_labels_from_db(&db).unwrap().is_empty());
         assert!(db.pending_events().unwrap().is_empty());
     }
@@ -1325,7 +1325,7 @@ mod tests {
             None, None, SessionMode::Timer,
         );
         db.replay_events(std::slice::from_ref(&event)).unwrap();
-        let rows = db.list_sessions().unwrap();
+        let rows = crate::db::list_sessions_from_db(&db).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].1.uuid, SESSION_X);
     }
@@ -1353,8 +1353,8 @@ mod tests {
         let db_reversed = Database::open_in_memory().unwrap();
         db_reversed.replay_events(&shuffled).unwrap();
 
-        let in_order = db_in_order.list_sessions().unwrap();
-        let reversed = db_reversed.list_sessions().unwrap();
+        let in_order = crate::db::list_sessions_from_db(&db_in_order).unwrap();
+        let reversed = crate::db::list_sessions_from_db(&db_reversed).unwrap();
         assert_eq!(in_order.len(), 1, "session_b must be tombstoned away");
         assert_eq!(in_order.len(), reversed.len(),
             "convergence: same event set yields same row count regardless of order");
@@ -1376,7 +1376,7 @@ mod tests {
             None, None, SessionMode::Timer,
         );
         db.replay_events(&[event.clone(), event]).unwrap();
-        assert_eq!(db.list_sessions().unwrap().len(), 1);
+        assert_eq!(crate::db::list_sessions_from_db(&db).unwrap().len(), 1);
     }
 
     #[test]
@@ -1408,8 +1408,8 @@ mod tests {
         device_a.replay_events(&events_b).unwrap();
         device_b.replay_events(&events_a).unwrap();
 
-        let sessions_a = device_a.list_sessions().unwrap();
-        let sessions_b = device_b.list_sessions().unwrap();
+        let sessions_a = crate::db::list_sessions_from_db(&device_a).unwrap();
+        let sessions_b = crate::db::list_sessions_from_db(&device_b).unwrap();
         assert_eq!(sessions_a.len(), 2);
         assert_eq!(sessions_b.len(), 2);
 
@@ -1442,9 +1442,9 @@ mod tests {
         let events: Vec<Event> = device_a.pending_events().unwrap()
             .into_iter().map(|(_, e)| e).collect();
         device_b.replay_events(&events).unwrap();
-        let after_first = device_b.list_sessions().unwrap();
+        let after_first = crate::db::list_sessions_from_db(&device_b).unwrap();
         device_b.replay_events(&events).unwrap();
-        let after_second = device_b.list_sessions().unwrap();
+        let after_second = crate::db::list_sessions_from_db(&device_b).unwrap();
         assert_eq!(after_first.len(), after_second.len());
         assert_eq!(after_first, after_second,
             "second replay of the same batch must be a no-op on the cache");
@@ -1609,7 +1609,7 @@ mod tests {
         assert!(crate::db::list_labels_from_db(&db).unwrap().is_empty());
         // Session is present with the lamport-3 update's values, but
         // its label_id is NULL because the label has been deleted.
-        let s = &db.list_sessions().unwrap()[0].1;
+        let s = &crate::db::list_sessions_from_db(&db).unwrap()[0].1;
         assert_eq!(s.duration_secs, 900);
         assert_eq!(s.notes.as_deref(), Some("longer"));
         assert_eq!(s.label_id, None,
@@ -1643,7 +1643,7 @@ mod tests {
         let labels = crate::db::list_labels_from_db(&db).unwrap();
         assert_eq!(labels.len(), 1);
         let label = &labels[0];
-        let s = &db.list_sessions().unwrap()[0].1;
+        let s = &crate::db::list_sessions_from_db(&db).unwrap()[0].1;
         assert_eq!(s.label_id, Some(label.id),
             "session.label_id must resolve to the freshly-inserted label's rowid");
     }

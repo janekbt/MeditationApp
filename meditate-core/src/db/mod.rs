@@ -59,7 +59,17 @@ pub use presets::{
     Preset,
 };
 pub use session_in_progress::{FinalizedSession, SessionInProgress};
-pub use sessions::{Session, SessionFilter, SessionMode};
+pub use sessions::{
+    active_days_in_month_from_db, active_months_from_db, count_sessions_by_label_from_db,
+    count_sessions_from_db, get_best_streak_for_label_from_db, get_best_streak_from_db,
+    get_daily_totals_for_label_from_db, get_daily_totals_from_db, get_daily_totals_since_from_db,
+    get_longest_session_from_db, get_median_duration_secs_from_db,
+    get_running_average_secs_from_db, get_streak_for_label_from_db, get_streak_from_db,
+    hour_buckets_from_db, label_totals_seconds_from_db, list_sessions_for_label_from_db,
+    list_sessions_from_db, month_total_secs_from_db, query_sessions_from_db,
+    total_minutes_by_label_from_db, total_minutes_from_db, total_secs_since_from_db,
+    total_seconds_from_db, Session, SessionFilter, SessionMode,
+};
 pub use uuids::{
     BellSoundUuid, GuidedFileUuid, IntervalBellUuid, LabelUuid, PresetUuid,
     SessionUuid, VibrationPatternUuid,

@@ -40,7 +40,7 @@ fn round_1_basic_two_device_sync() {
     println!("Laptop synced: pulled={}, pushed={}", laptop_stats.pulled, laptop_stats.pushed);
     assert_eq!(laptop_stats.pulled, 1, "laptop must pick up phone's session");
 
-    let laptop_sessions = laptop.list_sessions().unwrap();
+    let laptop_sessions = meditate_core::db::list_sessions_from_db(&laptop).unwrap();
     assert_eq!(laptop_sessions.len(), 1);
     assert_eq!(laptop_sessions[0].1.notes.as_deref(), Some("phone-authored"));
     println!("✓ laptop materialised phone's session through the WebDAV pipeline\n");
@@ -56,7 +56,7 @@ fn round_2_concurrent_edits_converge_over_two_sync_passes() {
     let phone_session_id = insert_session(&phone, "shared", 600, None);
     Sync::new(&phone, &nc, "Meditate", smoke_sounds_dir()).sync().unwrap();
     Sync::new(&laptop, &nc, "Meditate", smoke_sounds_dir()).sync().unwrap();
-    let laptop_session_id = laptop.list_sessions().unwrap()[0].0;
+    let laptop_session_id = meditate_core::db::list_sessions_from_db(&laptop).unwrap()[0].0;
     println!("Both devices have the shared session");
 
     // Concurrent edits — neither has seen the other's update yet.
@@ -70,8 +70,8 @@ fn round_2_concurrent_edits_converge_over_two_sync_passes() {
         Sync::new(&laptop, &nc, "Meditate", smoke_sounds_dir()).sync().unwrap();
     }
 
-    let phone_notes  = phone.list_sessions().unwrap()[0].1.notes.clone();
-    let laptop_notes = laptop.list_sessions().unwrap()[0].1.notes.clone();
+    let phone_notes  = meditate_core::db::list_sessions_from_db(&phone).unwrap()[0].1.notes.clone();
+    let laptop_notes = meditate_core::db::list_sessions_from_db(&laptop).unwrap()[0].1.notes.clone();
     assert_eq!(phone_notes, laptop_notes,
         "both devices must converge on the same winning value");
     println!("✓ both devices converged on notes={:?} (one device's edit won deterministically)\n",
@@ -87,14 +87,14 @@ fn round_3_tombstone_propagation() {
     let phone_session_id = insert_session(&phone, "to-be-deleted", 600, None);
     Sync::new(&phone,  &nc, "Meditate", smoke_sounds_dir()).sync().unwrap();
     Sync::new(&laptop, &nc, "Meditate", smoke_sounds_dir()).sync().unwrap();
-    assert_eq!(laptop.list_sessions().unwrap().len(), 1);
+    assert_eq!(meditate_core::db::list_sessions_from_db(&laptop).unwrap().len(), 1);
 
     phone.delete_session(phone_session_id).unwrap();
     Sync::new(&phone, &nc, "Meditate", smoke_sounds_dir()).sync().unwrap();
     println!("Phone synced after delete; remote has the tombstone event");
 
     Sync::new(&laptop, &nc, "Meditate", smoke_sounds_dir()).sync().unwrap();
-    assert!(laptop.list_sessions().unwrap().is_empty(),
+    assert!(meditate_core::db::list_sessions_from_db(&laptop).unwrap().is_empty(),
         "laptop must drop the row after pulling the tombstone");
     println!("✓ tombstone propagated through Sync::sync\n");
 }
@@ -119,7 +119,7 @@ fn round_4_three_device_chain_through_shared_remote() {
     assert_eq!(c_stats.pulled, 2,
         "C must pick up both A's and B's events on first sync");
 
-    let c_starts: std::collections::HashSet<String> = c.list_sessions().unwrap()
+    let c_starts: std::collections::HashSet<String> = meditate_core::db::list_sessions_from_db(&c).unwrap()
         .iter().map(|(_, s)| s.start_iso.clone()).collect();
     let expected: std::collections::HashSet<_> =
         ["from A", "from B"].iter().map(|s| s.to_string()).collect();
@@ -131,9 +131,9 @@ fn round_4_three_device_chain_through_shared_remote() {
     Sync::new(&c, &nc, "Meditate", smoke_sounds_dir()).sync().unwrap();
     Sync::new(&a, &nc, "Meditate", smoke_sounds_dir()).sync().unwrap();
     Sync::new(&b, &nc, "Meditate", smoke_sounds_dir()).sync().unwrap();
-    let a_starts: std::collections::HashSet<String> = a.list_sessions().unwrap()
+    let a_starts: std::collections::HashSet<String> = meditate_core::db::list_sessions_from_db(&a).unwrap()
         .iter().map(|(_, s)| s.start_iso.clone()).collect();
-    let b_starts: std::collections::HashSet<String> = b.list_sessions().unwrap()
+    let b_starts: std::collections::HashSet<String> = meditate_core::db::list_sessions_from_db(&b).unwrap()
         .iter().map(|(_, s)| s.start_iso.clone()).collect();
     let three_way: std::collections::HashSet<_> =
         ["from A", "from B", "from C"].iter().map(|s| s.to_string()).collect();
@@ -157,8 +157,8 @@ fn round_5_idempotency_under_repeated_calls() {
         Sync::new(&phone,  &nc, "Meditate", smoke_sounds_dir()).sync().unwrap();
         Sync::new(&laptop, &nc, "Meditate", smoke_sounds_dir()).sync().unwrap();
     }
-    let phone_count_converged  = phone.list_sessions().unwrap().len();
-    let laptop_count_converged = laptop.list_sessions().unwrap().len();
+    let phone_count_converged  = meditate_core::db::list_sessions_from_db(&phone).unwrap().len();
+    let laptop_count_converged = meditate_core::db::list_sessions_from_db(&laptop).unwrap().len();
     let remote_files_converged = nc.file_count();
     println!("After convergence: phone={} sessions, laptop={} sessions, remote={} files",
         phone_count_converged, laptop_count_converged, remote_files_converged);
@@ -168,8 +168,8 @@ fn round_5_idempotency_under_repeated_calls() {
         Sync::new(&phone,  &nc, "Meditate", smoke_sounds_dir()).sync().unwrap();
         Sync::new(&laptop, &nc, "Meditate", smoke_sounds_dir()).sync().unwrap();
     }
-    assert_eq!(phone.list_sessions().unwrap().len(), phone_count_converged);
-    assert_eq!(laptop.list_sessions().unwrap().len(), laptop_count_converged);
+    assert_eq!(meditate_core::db::list_sessions_from_db(&phone).unwrap().len(), phone_count_converged);
+    assert_eq!(meditate_core::db::list_sessions_from_db(&laptop).unwrap().len(), laptop_count_converged);
     assert_eq!(nc.file_count(), remote_files_converged,
         "post-convergence syncs must not append phantom remote files");
     println!("✓ further sync() calls were no-ops; state stable\n");
@@ -221,7 +221,7 @@ fn insert_session(db: &Database, start_iso: &str, secs: u32, notes: Option<&str>
 }
 
 fn update_session_notes(db: &Database, id: i64, notes: &str) {
-    let current = db.list_sessions().unwrap()
+    let current = meditate_core::db::list_sessions_from_db(&db).unwrap()
         .into_iter()
         .find(|(rid, _)| *rid == id)
         .map(|(_, s)| s)

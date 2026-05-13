@@ -196,7 +196,7 @@ impl StatsView {
         // `get_daily_totals` returns NaiveDate keys directly.
         let (totals_vec, goal_mins) = self.get_app()
             .and_then(|app| app.with_db(|db| {
-                let t = db.core().get_daily_totals().unwrap_or_default();
+                let t = meditate_core::db::get_daily_totals_from_db(db.core()).unwrap_or_default();
                 let g = meditate_core::goal::weekly_goal_mins_from_db(db.core());
                 (t, g)
             }))

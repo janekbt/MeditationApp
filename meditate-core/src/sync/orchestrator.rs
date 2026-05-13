@@ -885,7 +885,7 @@ mod tests {
         let (db_us, _) = setup();
         let stats = Sync::new(&db_us, &fs, "Meditate", std::path::PathBuf::new()).pull().unwrap();
         assert_eq!(stats.new_events, 3);
-        let our_sessions = db_us.list_sessions().unwrap();
+        let our_sessions = crate::db::list_sessions_from_db(&db_us).unwrap();
         assert_eq!(our_sessions.len(), 3);
     }
 
@@ -963,7 +963,7 @@ mod tests {
 
         let (db_us, _) = setup();
         Sync::new(&db_us, &fs, "Meditate", std::path::PathBuf::new()).pull().unwrap();
-        assert_eq!(db_us.list_sessions().unwrap().len(), 1);
+        assert_eq!(crate::db::list_sessions_from_db(&db_us).unwrap().len(), 1);
 
         // Forge a second remote file with the same event under a new
         // batch_uuid, bypassing our stored known_remote_files.
@@ -974,7 +974,7 @@ mod tests {
         let stats = Sync::new(&db_us, &fs, "Meditate", std::path::PathBuf::new()).pull().unwrap();
         assert_eq!(stats.new_events, 0,
             "events whose UUIDs we already know must not be reapplied");
-        assert_eq!(db_us.list_sessions().unwrap().len(), 1,
+        assert_eq!(crate::db::list_sessions_from_db(&db_us).unwrap().len(), 1,
             "row count must not grow under duplicate ingestion");
     }
 
@@ -1049,8 +1049,8 @@ mod tests {
         let (laptop_db, _) = setup();
         Sync::new(&laptop_db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap();
 
-        let phone_sessions = phone_db.list_sessions().unwrap();
-        let laptop_sessions = laptop_db.list_sessions().unwrap();
+        let phone_sessions = crate::db::list_sessions_from_db(&phone_db).unwrap();
+        let laptop_sessions = crate::db::list_sessions_from_db(&laptop_db).unwrap();
         assert_eq!(phone_sessions.len(), 1);
         assert_eq!(laptop_sessions.len(), 1);
         assert_eq!(phone_sessions[0].1.uuid, laptop_sessions[0].1.uuid,
@@ -1071,9 +1071,9 @@ mod tests {
         Sync::new(&a_db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap();
         Sync::new(&b_db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap();
 
-        let starts_a: std::collections::HashSet<String> = a_db.list_sessions()
+        let starts_a: std::collections::HashSet<String> = crate::db::list_sessions_from_db(&a_db)
             .unwrap().iter().map(|(_, s)| s.start_iso.clone()).collect();
-        let starts_b: std::collections::HashSet<String> = b_db.list_sessions()
+        let starts_b: std::collections::HashSet<String> = crate::db::list_sessions_from_db(&b_db)
             .unwrap().iter().map(|(_, s)| s.start_iso.clone()).collect();
         assert_eq!(starts_a, starts_b, "both devices must converge");
         let expected: std::collections::HashSet<_> =
@@ -1090,14 +1090,14 @@ mod tests {
         let session_id = insert_session(&a_db, "to-be-deleted", 100);
         Sync::new(&a_db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap();
         Sync::new(&b_db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap();
-        assert_eq!(b_db.list_sessions().unwrap().len(), 1);
+        assert_eq!(crate::db::list_sessions_from_db(&b_db).unwrap().len(), 1);
 
         a_db.delete_session(session_id).unwrap();
         Sync::new(&a_db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap();
-        assert!(a_db.list_sessions().unwrap().is_empty());
+        assert!(crate::db::list_sessions_from_db(&a_db).unwrap().is_empty());
 
         Sync::new(&b_db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap();
-        assert!(b_db.list_sessions().unwrap().is_empty(),
+        assert!(crate::db::list_sessions_from_db(&b_db).unwrap().is_empty(),
             "tombstone must propagate via pull");
     }
 
@@ -1114,15 +1114,15 @@ mod tests {
             Sync::new(&a_db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap();
             Sync::new(&b_db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap();
         }
-        assert_eq!(a_db.list_sessions().unwrap().len(), 2);
-        assert_eq!(b_db.list_sessions().unwrap().len(), 2);
+        assert_eq!(crate::db::list_sessions_from_db(&a_db).unwrap().len(), 2);
+        assert_eq!(crate::db::list_sessions_from_db(&b_db).unwrap().len(), 2);
 
         for _ in 0..2 {
             Sync::new(&a_db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap();
             Sync::new(&b_db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap();
         }
-        assert_eq!(a_db.list_sessions().unwrap().len(), 2);
-        assert_eq!(b_db.list_sessions().unwrap().len(), 2);
+        assert_eq!(crate::db::list_sessions_from_db(&a_db).unwrap().len(), 2);
+        assert_eq!(crate::db::list_sessions_from_db(&b_db).unwrap().len(), 2);
     }
 
     #[test]
@@ -1350,7 +1350,7 @@ mod tests {
         let (db_b, _) = setup();
         let stats = Sync::new(&db_b, &fs, "Meditate", std::path::PathBuf::new()).pull().unwrap();
         assert_eq!(stats.new_events, 2700);
-        assert_eq!(db_b.list_sessions().unwrap().len(), 2700);
+        assert_eq!(crate::db::list_sessions_from_db(&db_b).unwrap().len(), 2700);
     }
 
     // ── Push-side dedup: PUT failure modes ────────────────────────────────

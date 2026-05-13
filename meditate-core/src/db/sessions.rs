@@ -89,6 +89,348 @@ pub struct SessionFilter {
     pub offset: Option<u32>,
 }
 
+pub fn count_sessions_from_db(db: &Database) -> Result<i64> {
+    Ok(db
+        .conn
+        .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))?)
+}
+pub fn get_best_streak_from_db(db: &Database) -> Result<u32> {
+    db.best_streak_filtered(None)
+}
+pub fn get_best_streak_for_label_from_db(db: &Database, label_id: i64) -> Result<u32> {
+    db.best_streak_filtered(Some(label_id))
+}
+/// Lower-median session duration in seconds, or `None` when the
+/// sessions table is empty. The `Option` distinguishes "no data
+/// to report" from a real zero — useful for any shell rendering
+/// "n/a" vs "0s".
+pub fn get_median_duration_secs_from_db(db: &Database) -> Result<Option<u32>> {
+    let mut stmt = db
+        .conn
+        .prepare("SELECT duration_secs FROM sessions ORDER BY duration_secs")?;
+    let durations: Vec<u32> = stmt
+        .query_map([], |row| row.get(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    if durations.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(durations[(durations.len() - 1) / 2]))
+}
+pub fn get_running_average_secs_from_db(db: &Database, today: chrono::NaiveDate, days: u32) -> Result<f64> {
+    if days == 0 {
+        return Ok(0.0);
+    }
+    let cutoff = today - chrono::Duration::days((days - 1) as i64);
+    let cutoff_str = cutoff.format("%Y-%m-%d").to_string();
+    let total: i64 = db.conn.query_row(
+        "SELECT COALESCE(SUM(duration_secs), 0) FROM sessions
+         WHERE SUBSTR(start_iso, 1, 10) >= ?1",
+        [cutoff_str],
+        |row| row.get(0),
+    )?;
+    Ok(total as f64 / days as f64)
+}
+pub fn get_daily_totals_from_db(db: &Database) -> Result<Vec<(chrono::NaiveDate, i64)>> {
+    db.daily_totals_filtered(None)
+}
+pub fn get_daily_totals_for_label_from_db(
+    db: &Database,
+    label_id: i64,
+) -> Result<Vec<(chrono::NaiveDate, i64)>> {
+    db.daily_totals_filtered(Some(label_id))
+}
+/// Same shape as `get_daily_totals`, but only days on or after
+/// `since`. Pushes the date filter into the SQL `WHERE` instead
+/// of materialising every row in Rust and filtering after —
+/// matters once a heatmap user has a year+ of sessions; cheap
+/// even on tiny libraries because the comparison is on the
+/// `SUBSTR(start_iso, 1, 10)` GROUP key which sorts
+/// lexicographically identical to date order.
+pub fn get_daily_totals_since_from_db(
+    db: &Database,
+    since: chrono::NaiveDate,
+) -> Result<Vec<(chrono::NaiveDate, i64)>> {
+    let since_str = since.format("%Y-%m-%d").to_string();
+    let mut stmt = db.conn.prepare_cached(
+        "SELECT SUBSTR(start_iso, 1, 10) AS day, SUM(duration_secs)
+         FROM sessions
+         WHERE SUBSTR(start_iso, 1, 10) >= ?1
+         GROUP BY day
+         ORDER BY day",
+    )?;
+    let totals = stmt
+        .query_map(params![since_str], |row| {
+            let day_str: String = row.get(0)?;
+            let total_secs: i64 = row.get(1)?;
+            Ok((day_str, total_secs))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .into_iter()
+        .filter_map(|(s, secs)| {
+            chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d")
+                .ok()
+                .map(|d| (d, secs))
+        })
+        .collect();
+    Ok(totals)
+}
+pub fn get_streak_from_db(db: &Database, today: chrono::NaiveDate) -> Result<u32> {
+    db.streak_filtered(today, None)
+}
+pub fn get_streak_for_label_from_db(db: &Database, today: chrono::NaiveDate, label_id: i64) -> Result<u32> {
+    db.streak_filtered(today, Some(label_id))
+}
+/// The longest single session — `(id, Session)`, or None on empty DB.
+/// Tie-break is unspecified (whichever SQLite returns first); callers
+/// should not depend on the order of equal-duration rows.
+pub fn get_longest_session_from_db(db: &Database) -> Result<Option<(i64, Session)>> {
+    let mut stmt = db.conn.prepare_cached(
+        "SELECT id, start_iso, duration_secs, label_id, notes, mode, uuid, guided_file_uuid
+         FROM sessions
+         ORDER BY duration_secs DESC LIMIT 1",
+    )?;
+    let mut rows = stmt.query([])?;
+    match rows.next()? {
+        None => Ok(None),
+        Some(row) => {
+            let mode_str: String = row.get(5)?;
+            let mode = SessionMode::from_db_str(&mode_str)
+                .expect("DB CHECK constraint should restrict mode");
+            Ok(Some((
+                row.get::<_, i64>(0)?,
+                Session {
+                    start_iso: row.get(1)?,
+                    duration_secs: row.get(2)?,
+                    label_id: row.get(3)?,
+                    notes: row.get(4)?,
+                    mode,
+                    uuid: row.get(6)?,
+                    guided_file_uuid: row.get(7)?,
+                },
+            )))
+        }
+    }
+}
+/// Counts of sessions bucketed by start hour: morning < 12 (hours
+/// 0-11), afternoon 12-17, evening ≥ 18 (18-23). Returns
+/// `(morning, afternoon, evening)`. Every session lands in exactly
+/// one bucket.
+///
+/// Attribution is by **start hour only** — a session that began at
+/// 23:55 and ran 30 minutes counts as one evening session, even
+/// though most of it occurred the next morning. This matches how
+/// peer meditation apps (Insight Timer et al.) report
+/// time-of-day, and avoids the CTE + date-arithmetic complexity
+/// a "split across midnight" SUM would require. Documented as
+/// intended behaviour, not a defect.
+pub fn hour_buckets_from_db(db: &Database) -> Result<(i64, i64, i64)> {
+    let mut stmt = db.conn.prepare_cached(
+        "SELECT
+           COALESCE(SUM(CASE WHEN h <  12 THEN 1 ELSE 0 END), 0),
+           COALESCE(SUM(CASE WHEN h >= 12 AND h < 18 THEN 1 ELSE 0 END), 0),
+           COALESCE(SUM(CASE WHEN h >= 18 THEN 1 ELSE 0 END), 0)
+         FROM (
+           SELECT CAST(SUBSTR(start_iso, 12, 2) AS INTEGER) AS h
+           FROM sessions
+         )",
+    )?;
+    Ok(stmt.query_row([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?)
+}
+/// Distinct (year, month) pairs that have at least one session,
+/// ordered most-recent first. Used by the calendar-picker dropdown.
+pub fn active_months_from_db(db: &Database) -> Result<Vec<(i32, u32)>> {
+    let mut stmt = db.conn.prepare_cached(
+        "SELECT DISTINCT
+             CAST(SUBSTR(start_iso, 1, 4) AS INTEGER),
+             CAST(SUBSTR(start_iso, 6, 2) AS INTEGER)
+         FROM sessions
+         ORDER BY 1 DESC, 2 DESC",
+    )?;
+    let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+/// Day-of-month numbers in `(year, month)` that have at least one
+/// session, ascending. Caller maps these directly to calendar cells.
+/// December rolls cleanly to next-year January for the upper bound.
+pub fn active_days_in_month_from_db(db: &Database, year: i32, month: u32) -> Result<Vec<u32>> {
+    let start = format!("{year:04}-{month:02}-01");
+    let (next_year, next_month) =
+        if month == 12 { (year + 1, 1) } else { (year, month + 1) };
+    let end = format!("{next_year:04}-{next_month:02}-01");
+    let mut stmt = db.conn.prepare_cached(
+        "SELECT DISTINCT CAST(SUBSTR(start_iso, 9, 2) AS INTEGER)
+         FROM sessions
+         WHERE start_iso >= ?1 AND start_iso < ?2
+         ORDER BY 1",
+    )?;
+    let rows = stmt.query_map(params![start, end], |row| row.get::<_, u32>(0))?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+/// Sum of `duration_secs` for sessions inside a calendar month
+/// (`year`, `month` 1-12). Boundaries are at local midnight on the
+/// first and last day of the month. December rolls cleanly into
+/// January of the next year.
+pub fn month_total_secs_from_db(db: &Database, year: i32, month: u32) -> Result<i64> {
+    let start = format!("{year:04}-{month:02}-01");
+    let (next_year, next_month) =
+        if month == 12 { (year + 1, 1) } else { (year, month + 1) };
+    let end = format!("{next_year:04}-{next_month:02}-01");
+    Ok(db.conn.query_row(
+        "SELECT COALESCE(SUM(duration_secs), 0)
+         FROM sessions
+         WHERE start_iso >= ?1 AND start_iso < ?2",
+        params![start, end],
+        |row| row.get(0),
+    )?)
+}
+/// Sum of `duration_secs` for sessions whose `start_iso` is on or
+/// after the start of `since` (interpreted as the user's local
+/// midnight). Returns 0 if no sessions match.
+///
+/// Lexicographic comparison on ISO 8601 strings works because the
+/// format sorts chronologically as ASCII text. The cut-off is at
+/// the START of the date — a session at 00:00:00 on `since` is
+/// included.
+pub fn total_secs_since_from_db(db: &Database, since: chrono::NaiveDate) -> Result<i64> {
+    let prefix = since.format("%Y-%m-%d").to_string();
+    Ok(db.conn.query_row(
+        "SELECT COALESCE(SUM(duration_secs), 0)
+         FROM sessions
+         WHERE start_iso >= ?1",
+        params![prefix],
+        |row| row.get(0),
+    )?)
+}
+/// Total of `duration_secs` across every session (no filter). Returns
+/// 0 on an empty DB. Use this when you want the underlying precision
+/// (e.g. weekly-goal ring, longest-session display); use
+/// `total_minutes` for stats lines that show "X min".
+pub fn total_seconds_from_db(db: &Database) -> Result<i64> {
+    Ok(db.conn.query_row(
+        "SELECT COALESCE(SUM(duration_secs), 0) FROM sessions",
+        [],
+        |row| row.get(0),
+    )?)
+}
+pub fn total_minutes_from_db(db: &Database) -> Result<i64> {
+    Ok(total_seconds_from_db(&db)? / 60)
+}
+/// Per-label session count. `None` represents unlabeled sessions.
+pub fn count_sessions_by_label_from_db(db: &Database) -> Result<Vec<(Option<String>, i64)>> {
+    let mut stmt = db.conn.prepare(
+        "SELECT l.name, COUNT(*)
+         FROM sessions s
+         LEFT JOIN labels l ON s.label_id = l.id
+         GROUP BY l.name
+         ORDER BY l.name",
+    )?;
+    let rows = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+/// Per-label `(name, total_secs, session_count)` ordered by total
+/// seconds DESC, ties broken by name NOCASE ASC. Excludes unlabeled
+/// sessions AND labels with zero sessions (INNER JOIN drops both).
+/// Used by the stats panel's per-label breakdown.
+pub fn label_totals_seconds_from_db(db: &Database) -> Result<Vec<(String, i64, i64)>> {
+    let mut stmt = db.conn.prepare_cached(
+        "SELECT labels.name,
+                SUM(sessions.duration_secs) AS total,
+                COUNT(sessions.id) AS n
+         FROM labels
+         INNER JOIN sessions ON sessions.label_id = labels.id
+         GROUP BY labels.id, labels.name
+         ORDER BY total DESC, labels.name COLLATE NOCASE ASC",
+    )?;
+    let rows = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+/// Per-label total minutes. `None` represents unlabeled sessions.
+pub fn total_minutes_by_label_from_db(db: &Database) -> Result<Vec<(Option<String>, i64)>> {
+    let mut stmt = db.conn.prepare(
+        "SELECT l.name, SUM(s.duration_secs) / 60
+         FROM sessions s
+         LEFT JOIN labels l ON s.label_id = l.id
+         GROUP BY l.name
+         ORDER BY l.name",
+    )?;
+    let rows = stmt
+        .query_map([], |row| {
+            let name: Option<String> = row.get(0)?;
+            let mins: i64 = row.get(1)?;
+            Ok((name, mins))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+/// Rich-filter session query for the log feed: pagination, label
+/// filter, notes-only. Rows are ordered `start_iso DESC` so the
+/// caller's first page is the newest sessions.
+pub fn query_sessions_from_db(db: &Database, filter: &SessionFilter) -> Result<Vec<(i64, Session)>> {
+    let limit_val: i64 = filter.limit.map(|n| n as i64).unwrap_or(-1);
+    let offset_val: i64 = filter.offset.map(|n| n as i64).unwrap_or(0);
+
+    // Build the WHERE clause from the filter. `prepare_cached`
+    // dedupes by generated SQL text, so the four possible
+    // (label_id, only_with_notes) combinations each end up with
+    // their own cached statement just like the previous hand-
+    // unrolled branches.
+    let mut sql = String::from(
+        "SELECT id, start_iso, duration_secs, label_id, notes, mode, uuid, guided_file_uuid \
+         FROM sessions"
+    );
+    let mut clauses: Vec<&'static str> = Vec::new();
+    if filter.label_id.is_some() {
+        clauses.push("label_id = ?");
+    }
+    if filter.only_with_notes {
+        clauses.push("notes IS NOT NULL AND notes != ''");
+    }
+    if !clauses.is_empty() {
+        sql.push_str(" WHERE ");
+        sql.push_str(&clauses.join(" AND "));
+    }
+    sql.push_str(" ORDER BY start_iso DESC LIMIT ? OFFSET ?");
+
+    // Param order matches positional `?` placement: optional
+    // label_id first (only when the clause is included), then
+    // limit, then offset.
+    let mut params: Vec<&dyn rusqlite::ToSql> = Vec::new();
+    if let Some(lid) = filter.label_id.as_ref() {
+        params.push(lid);
+    }
+    params.push(&limit_val);
+    params.push(&offset_val);
+
+    let mut s = db.conn.prepare_cached(&sql)?;
+    let rows = s.query_map(rusqlite::params_from_iter(params), |row| {
+        let mode_str: String = row.get(5)?;
+        let mode = SessionMode::from_db_str(&mode_str)
+            .expect("DB CHECK constraint should restrict mode to known values");
+        Ok((
+            row.get::<_, i64>(0)?,
+            Session {
+                start_iso: row.get(1)?,
+                duration_secs: row.get(2)?,
+                label_id: row.get(3)?,
+                notes: row.get(4)?,
+                mode,
+                uuid: row.get(6)?,
+                guided_file_uuid: row.get(7)?,
+            },
+        ))
+    })?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+pub fn list_sessions_from_db(db: &Database) -> Result<Vec<(i64, Session)>> {
+    db.list_sessions_filtered(None)
+}
+pub fn list_sessions_for_label_from_db(db: &Database, label_id: i64) -> Result<Vec<(i64, Session)>> {
+    db.list_sessions_filtered(Some(label_id))
+}
 impl Database {
     /// Look up a label's cross-device UUID by its local rowid. Used at
     /// event-emission time to translate from the cache key (rowid) to
@@ -103,11 +445,6 @@ impl Database {
         )?)
     }
 
-    pub fn count_sessions(&self) -> Result<i64> {
-        Ok(self
-            .conn
-            .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))?)
-    }
 
     pub fn insert_session(&self, session: &Session) -> Result<i64> {
         let tx = self.conn.unchecked_transaction()?;
@@ -321,13 +658,7 @@ impl Database {
         Ok(())
     }
 
-    pub fn get_best_streak(&self) -> Result<u32> {
-        self.best_streak_filtered(None)
-    }
 
-    pub fn get_best_streak_for_label(&self, label_id: i64) -> Result<u32> {
-        self.best_streak_filtered(Some(label_id))
-    }
 
     fn best_streak_filtered(&self, label_filter: Option<i64>) -> Result<u32> {
         let days = self.distinct_session_days_ascending(label_filter)?;
@@ -441,84 +772,10 @@ impl Database {
         Ok(())
     }
 
-    /// Lower-median session duration in seconds, or `None` when the
-    /// sessions table is empty. The `Option` distinguishes "no data
-    /// to report" from a real zero — useful for any shell rendering
-    /// "n/a" vs "0s".
-    pub fn get_median_duration_secs(&self) -> Result<Option<u32>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT duration_secs FROM sessions ORDER BY duration_secs")?;
-        let durations: Vec<u32> = stmt
-            .query_map([], |row| row.get(0))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        if durations.is_empty() {
-            return Ok(None);
-        }
-        Ok(Some(durations[(durations.len() - 1) / 2]))
-    }
 
-    pub fn get_running_average_secs(&self, today: chrono::NaiveDate, days: u32) -> Result<f64> {
-        if days == 0 {
-            return Ok(0.0);
-        }
-        let cutoff = today - chrono::Duration::days((days - 1) as i64);
-        let cutoff_str = cutoff.format("%Y-%m-%d").to_string();
-        let total: i64 = self.conn.query_row(
-            "SELECT COALESCE(SUM(duration_secs), 0) FROM sessions
-             WHERE SUBSTR(start_iso, 1, 10) >= ?1",
-            [cutoff_str],
-            |row| row.get(0),
-        )?;
-        Ok(total as f64 / days as f64)
-    }
 
-    pub fn get_daily_totals(&self) -> Result<Vec<(chrono::NaiveDate, i64)>> {
-        self.daily_totals_filtered(None)
-    }
 
-    pub fn get_daily_totals_for_label(
-        &self,
-        label_id: i64,
-    ) -> Result<Vec<(chrono::NaiveDate, i64)>> {
-        self.daily_totals_filtered(Some(label_id))
-    }
 
-    /// Same shape as `get_daily_totals`, but only days on or after
-    /// `since`. Pushes the date filter into the SQL `WHERE` instead
-    /// of materialising every row in Rust and filtering after —
-    /// matters once a heatmap user has a year+ of sessions; cheap
-    /// even on tiny libraries because the comparison is on the
-    /// `SUBSTR(start_iso, 1, 10)` GROUP key which sorts
-    /// lexicographically identical to date order.
-    pub fn get_daily_totals_since(
-        &self,
-        since: chrono::NaiveDate,
-    ) -> Result<Vec<(chrono::NaiveDate, i64)>> {
-        let since_str = since.format("%Y-%m-%d").to_string();
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT SUBSTR(start_iso, 1, 10) AS day, SUM(duration_secs)
-             FROM sessions
-             WHERE SUBSTR(start_iso, 1, 10) >= ?1
-             GROUP BY day
-             ORDER BY day",
-        )?;
-        let totals = stmt
-            .query_map(params![since_str], |row| {
-                let day_str: String = row.get(0)?;
-                let total_secs: i64 = row.get(1)?;
-                Ok((day_str, total_secs))
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?
-            .into_iter()
-            .filter_map(|(s, secs)| {
-                chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d")
-                    .ok()
-                    .map(|d| (d, secs))
-            })
-            .collect();
-        Ok(totals)
-    }
 
     /// Sum of `duration_secs` grouped by start date (`SUBSTR(start_iso,
     /// 1, 10)`). A session that began at 23:55 and ran 30 minutes
@@ -579,13 +836,7 @@ impl Database {
         Ok(days)
     }
 
-    pub fn get_streak(&self, today: chrono::NaiveDate) -> Result<u32> {
-        self.streak_filtered(today, None)
-    }
 
-    pub fn get_streak_for_label(&self, today: chrono::NaiveDate, label_id: i64) -> Result<u32> {
-        self.streak_filtered(today, Some(label_id))
-    }
 
     fn streak_filtered(
         &self,
@@ -629,270 +880,19 @@ impl Database {
         Ok(count)
     }
 
-    /// The longest single session — `(id, Session)`, or None on empty DB.
-    /// Tie-break is unspecified (whichever SQLite returns first); callers
-    /// should not depend on the order of equal-duration rows.
-    pub fn get_longest_session(&self) -> Result<Option<(i64, Session)>> {
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT id, start_iso, duration_secs, label_id, notes, mode, uuid, guided_file_uuid
-             FROM sessions
-             ORDER BY duration_secs DESC LIMIT 1",
-        )?;
-        let mut rows = stmt.query([])?;
-        match rows.next()? {
-            None => Ok(None),
-            Some(row) => {
-                let mode_str: String = row.get(5)?;
-                let mode = SessionMode::from_db_str(&mode_str)
-                    .expect("DB CHECK constraint should restrict mode");
-                Ok(Some((
-                    row.get::<_, i64>(0)?,
-                    Session {
-                        start_iso: row.get(1)?,
-                        duration_secs: row.get(2)?,
-                        label_id: row.get(3)?,
-                        notes: row.get(4)?,
-                        mode,
-                        uuid: row.get(6)?,
-                        guided_file_uuid: row.get(7)?,
-                    },
-                )))
-            }
-        }
-    }
 
-    /// Counts of sessions bucketed by start hour: morning < 12 (hours
-    /// 0-11), afternoon 12-17, evening ≥ 18 (18-23). Returns
-    /// `(morning, afternoon, evening)`. Every session lands in exactly
-    /// one bucket.
-    ///
-    /// Attribution is by **start hour only** — a session that began at
-    /// 23:55 and ran 30 minutes counts as one evening session, even
-    /// though most of it occurred the next morning. This matches how
-    /// peer meditation apps (Insight Timer et al.) report
-    /// time-of-day, and avoids the CTE + date-arithmetic complexity
-    /// a "split across midnight" SUM would require. Documented as
-    /// intended behaviour, not a defect.
-    pub fn hour_buckets(&self) -> Result<(i64, i64, i64)> {
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT
-               COALESCE(SUM(CASE WHEN h <  12 THEN 1 ELSE 0 END), 0),
-               COALESCE(SUM(CASE WHEN h >= 12 AND h < 18 THEN 1 ELSE 0 END), 0),
-               COALESCE(SUM(CASE WHEN h >= 18 THEN 1 ELSE 0 END), 0)
-             FROM (
-               SELECT CAST(SUBSTR(start_iso, 12, 2) AS INTEGER) AS h
-               FROM sessions
-             )",
-        )?;
-        Ok(stmt.query_row([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?)
-    }
 
-    /// Distinct (year, month) pairs that have at least one session,
-    /// ordered most-recent first. Used by the calendar-picker dropdown.
-    pub fn active_months(&self) -> Result<Vec<(i32, u32)>> {
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT DISTINCT
-                 CAST(SUBSTR(start_iso, 1, 4) AS INTEGER),
-                 CAST(SUBSTR(start_iso, 6, 2) AS INTEGER)
-             FROM sessions
-             ORDER BY 1 DESC, 2 DESC",
-        )?;
-        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
-        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
-    }
 
-    /// Day-of-month numbers in `(year, month)` that have at least one
-    /// session, ascending. Caller maps these directly to calendar cells.
-    /// December rolls cleanly to next-year January for the upper bound.
-    pub fn active_days_in_month(&self, year: i32, month: u32) -> Result<Vec<u32>> {
-        let start = format!("{year:04}-{month:02}-01");
-        let (next_year, next_month) =
-            if month == 12 { (year + 1, 1) } else { (year, month + 1) };
-        let end = format!("{next_year:04}-{next_month:02}-01");
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT DISTINCT CAST(SUBSTR(start_iso, 9, 2) AS INTEGER)
-             FROM sessions
-             WHERE start_iso >= ?1 AND start_iso < ?2
-             ORDER BY 1",
-        )?;
-        let rows = stmt.query_map(params![start, end], |row| row.get::<_, u32>(0))?;
-        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
-    }
 
-    /// Sum of `duration_secs` for sessions inside a calendar month
-    /// (`year`, `month` 1-12). Boundaries are at local midnight on the
-    /// first and last day of the month. December rolls cleanly into
-    /// January of the next year.
-    pub fn month_total_secs(&self, year: i32, month: u32) -> Result<i64> {
-        let start = format!("{year:04}-{month:02}-01");
-        let (next_year, next_month) =
-            if month == 12 { (year + 1, 1) } else { (year, month + 1) };
-        let end = format!("{next_year:04}-{next_month:02}-01");
-        Ok(self.conn.query_row(
-            "SELECT COALESCE(SUM(duration_secs), 0)
-             FROM sessions
-             WHERE start_iso >= ?1 AND start_iso < ?2",
-            params![start, end],
-            |row| row.get(0),
-        )?)
-    }
 
-    /// Sum of `duration_secs` for sessions whose `start_iso` is on or
-    /// after the start of `since` (interpreted as the user's local
-    /// midnight). Returns 0 if no sessions match.
-    ///
-    /// Lexicographic comparison on ISO 8601 strings works because the
-    /// format sorts chronologically as ASCII text. The cut-off is at
-    /// the START of the date — a session at 00:00:00 on `since` is
-    /// included.
-    pub fn total_secs_since(&self, since: chrono::NaiveDate) -> Result<i64> {
-        let prefix = since.format("%Y-%m-%d").to_string();
-        Ok(self.conn.query_row(
-            "SELECT COALESCE(SUM(duration_secs), 0)
-             FROM sessions
-             WHERE start_iso >= ?1",
-            params![prefix],
-            |row| row.get(0),
-        )?)
-    }
 
-    /// Total of `duration_secs` across every session (no filter). Returns
-    /// 0 on an empty DB. Use this when you want the underlying precision
-    /// (e.g. weekly-goal ring, longest-session display); use
-    /// `total_minutes` for stats lines that show "X min".
-    pub fn total_seconds(&self) -> Result<i64> {
-        Ok(self.conn.query_row(
-            "SELECT COALESCE(SUM(duration_secs), 0) FROM sessions",
-            [],
-            |row| row.get(0),
-        )?)
-    }
 
-    pub fn total_minutes(&self) -> Result<i64> {
-        Ok(self.total_seconds()? / 60)
-    }
 
-    /// Per-label session count. `None` represents unlabeled sessions.
-    pub fn count_sessions_by_label(&self) -> Result<Vec<(Option<String>, i64)>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT l.name, COUNT(*)
-             FROM sessions s
-             LEFT JOIN labels l ON s.label_id = l.id
-             GROUP BY l.name
-             ORDER BY l.name",
-        )?;
-        let rows = stmt
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
-    }
 
-    /// Per-label `(name, total_secs, session_count)` ordered by total
-    /// seconds DESC, ties broken by name NOCASE ASC. Excludes unlabeled
-    /// sessions AND labels with zero sessions (INNER JOIN drops both).
-    /// Used by the stats panel's per-label breakdown.
-    pub fn label_totals_seconds(&self) -> Result<Vec<(String, i64, i64)>> {
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT labels.name,
-                    SUM(sessions.duration_secs) AS total,
-                    COUNT(sessions.id) AS n
-             FROM labels
-             INNER JOIN sessions ON sessions.label_id = labels.id
-             GROUP BY labels.id, labels.name
-             ORDER BY total DESC, labels.name COLLATE NOCASE ASC",
-        )?;
-        let rows = stmt
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
-    }
 
-    /// Per-label total minutes. `None` represents unlabeled sessions.
-    pub fn total_minutes_by_label(&self) -> Result<Vec<(Option<String>, i64)>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT l.name, SUM(s.duration_secs) / 60
-             FROM sessions s
-             LEFT JOIN labels l ON s.label_id = l.id
-             GROUP BY l.name
-             ORDER BY l.name",
-        )?;
-        let rows = stmt
-            .query_map([], |row| {
-                let name: Option<String> = row.get(0)?;
-                let mins: i64 = row.get(1)?;
-                Ok((name, mins))
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
-    }
 
-    /// Rich-filter session query for the log feed: pagination, label
-    /// filter, notes-only. Rows are ordered `start_iso DESC` so the
-    /// caller's first page is the newest sessions.
-    pub fn query_sessions(&self, filter: &SessionFilter) -> Result<Vec<(i64, Session)>> {
-        let limit_val: i64 = filter.limit.map(|n| n as i64).unwrap_or(-1);
-        let offset_val: i64 = filter.offset.map(|n| n as i64).unwrap_or(0);
 
-        // Build the WHERE clause from the filter. `prepare_cached`
-        // dedupes by generated SQL text, so the four possible
-        // (label_id, only_with_notes) combinations each end up with
-        // their own cached statement just like the previous hand-
-        // unrolled branches.
-        let mut sql = String::from(
-            "SELECT id, start_iso, duration_secs, label_id, notes, mode, uuid, guided_file_uuid \
-             FROM sessions"
-        );
-        let mut clauses: Vec<&'static str> = Vec::new();
-        if filter.label_id.is_some() {
-            clauses.push("label_id = ?");
-        }
-        if filter.only_with_notes {
-            clauses.push("notes IS NOT NULL AND notes != ''");
-        }
-        if !clauses.is_empty() {
-            sql.push_str(" WHERE ");
-            sql.push_str(&clauses.join(" AND "));
-        }
-        sql.push_str(" ORDER BY start_iso DESC LIMIT ? OFFSET ?");
 
-        // Param order matches positional `?` placement: optional
-        // label_id first (only when the clause is included), then
-        // limit, then offset.
-        let mut params: Vec<&dyn rusqlite::ToSql> = Vec::new();
-        if let Some(lid) = filter.label_id.as_ref() {
-            params.push(lid);
-        }
-        params.push(&limit_val);
-        params.push(&offset_val);
-
-        let mut s = self.conn.prepare_cached(&sql)?;
-        let rows = s.query_map(rusqlite::params_from_iter(params), |row| {
-            let mode_str: String = row.get(5)?;
-            let mode = SessionMode::from_db_str(&mode_str)
-                .expect("DB CHECK constraint should restrict mode to known values");
-            Ok((
-                row.get::<_, i64>(0)?,
-                Session {
-                    start_iso: row.get(1)?,
-                    duration_secs: row.get(2)?,
-                    label_id: row.get(3)?,
-                    notes: row.get(4)?,
-                    mode,
-                    uuid: row.get(6)?,
-                    guided_file_uuid: row.get(7)?,
-                },
-            ))
-        })?;
-        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
-    }
-
-    pub fn list_sessions(&self) -> Result<Vec<(i64, Session)>> {
-        self.list_sessions_filtered(None)
-    }
-
-    pub fn list_sessions_for_label(&self, label_id: i64) -> Result<Vec<(i64, Session)>> {
-        self.list_sessions_filtered(Some(label_id))
-    }
 
     fn list_sessions_filtered(&self, label_filter: Option<i64>) -> Result<Vec<(i64, Session)>> {
         let mut stmt = self.conn.prepare(
@@ -1005,7 +1005,7 @@ mod tests {
             None, Some("from peer"), SessionMode::BoxBreath,
         );
         db.apply_event(&event).unwrap();
-        let rows = db.list_sessions().unwrap();
+        let rows = list_sessions_from_db(&db).unwrap();
         assert_eq!(rows.len(), 1);
         let s = &rows[0].1;
         assert_eq!(s.uuid, SESSION_X);
@@ -1039,7 +1039,7 @@ mod tests {
             }),
         );
         db.apply_event(&event).unwrap();
-        let rows = db.list_sessions().unwrap();
+        let rows = list_sessions_from_db(&db).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].1.guided_file_uuid.as_ref().map(|u| u.as_str()), Some(file_uuid));
     }
@@ -1056,7 +1056,7 @@ mod tests {
             None, None, SessionMode::Timer,
         );
         db.apply_event(&event).unwrap();
-        let rows = db.list_sessions().unwrap();
+        let rows = list_sessions_from_db(&db).unwrap();
         assert_eq!(rows.len(), 1);
         assert!(rows[0].1.guided_file_uuid.is_none());
     }
@@ -1074,7 +1074,7 @@ mod tests {
         );
         db.apply_event(&event).unwrap();
         db.apply_event(&event).unwrap();
-        assert_eq!(db.list_sessions().unwrap().len(), 1,
+        assert_eq!(list_sessions_from_db(&db).unwrap().len(), 1,
             "duplicate event_uuid must not create a second row");
     }
 
@@ -1091,7 +1091,7 @@ mod tests {
             "2026-05-01T11:00:00", 1200,
             None, Some("revised"), SessionMode::Timer,
         )).unwrap();
-        let s = &db.list_sessions().unwrap()[0].1;
+        let s = &list_sessions_from_db(&db).unwrap()[0].1;
         assert_eq!(s.start_iso, "2026-05-01T11:00:00");
         assert_eq!(s.duration_secs, 1200);
         assert_eq!(s.notes.as_deref(), Some("revised"));
@@ -1107,7 +1107,7 @@ mod tests {
             None, None, SessionMode::Timer,
         )).unwrap();
         db.apply_event(&synth_session_delete(SESSION_X, 10, DEVICE_A)).unwrap();
-        assert!(db.list_sessions().unwrap().is_empty());
+        assert!(list_sessions_from_db(&db).unwrap().is_empty());
     }
 
     #[test]
@@ -1122,7 +1122,7 @@ mod tests {
             "2026-04-30T10:00:00", 600,
             None, None, SessionMode::Timer,
         )).unwrap();
-        assert!(db.list_sessions().unwrap().is_empty(),
+        assert!(list_sessions_from_db(&db).unwrap().is_empty(),
             "tombstone with lamport 10 must beat insert at lamport 5");
     }
 
@@ -1145,7 +1145,7 @@ mod tests {
             SESSION_X, 10, DEVICE_A,
             "A's edit", 1000, None, Some("from A"), SessionMode::BoxBreath,
         )).unwrap();
-        let s = &db.list_sessions().unwrap()[0].1;
+        let s = &list_sessions_from_db(&db).unwrap()[0].1;
         assert_eq!(s.notes.as_deref(), Some("from A"),
             "A's lamport-10 update must win over B's lamport-7");
         assert_eq!(s.duration_secs, 1000);
@@ -1169,7 +1169,7 @@ mod tests {
             SESSION_X, 5, DEVICE_B,
             "B wrote this", 500, None, Some("from B"), SessionMode::Timer,
         )).unwrap();
-        let s = &db.list_sessions().unwrap()[0].1;
+        let s = &list_sessions_from_db(&db).unwrap()[0].1;
         assert_eq!(s.notes.as_deref(), Some("from B"),
             "DEVICE_B is lex-larger than DEVICE_A; B's update wins on tie");
     }
@@ -1206,7 +1206,7 @@ mod tests {
         db.apply_event(&weird).unwrap();
         // Cache is empty (the event affected nothing it understood),
         // but the event was recorded.
-        assert!(db.list_sessions().unwrap().is_empty());
+        assert!(list_sessions_from_db(&db).unwrap().is_empty());
         assert_eq!(db.pending_events().unwrap().len(), 1);
     }
 
@@ -1226,7 +1226,7 @@ mod tests {
             "2026-04-30T10:00:00", 600,
             Some(label_uuid.as_str()), None, SessionMode::Timer,
         )).unwrap();
-        let s = &db.list_sessions().unwrap()[0].1;
+        let s = &list_sessions_from_db(&db).unwrap()[0].1;
         assert_eq!(s.label_id, Some(local_label_id),
             "label_uuid must round-trip back to the local label_id");
     }
@@ -1273,7 +1273,7 @@ mod tests {
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
         }).unwrap();
-        let row_uuid = db.list_sessions().unwrap()[0].1.uuid.clone();
+        let row_uuid = list_sessions_from_db(&db).unwrap()[0].1.uuid.clone();
         let events = db.pending_events().unwrap();
         let payload = event_payload(&events[0].1);
         assert_eq!(payload["uuid"], serde_json::Value::String(row_uuid.0));
@@ -1459,7 +1459,7 @@ mod tests {
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
         }).unwrap();
-        let original_uuid = db.list_sessions().unwrap()[0].1.uuid.clone();
+        let original_uuid = list_sessions_from_db(&db).unwrap()[0].1.uuid.clone();
         drain_events(&db);
 
         db.update_session(id, &Session {
@@ -1568,7 +1568,7 @@ mod tests {
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
         }).unwrap();
-        let row_uuid = db.list_sessions().unwrap()[0].1.uuid.clone();
+        let row_uuid = list_sessions_from_db(&db).unwrap()[0].1.uuid.clone();
         drain_events(&db);
 
         db.delete_session(id).unwrap();
@@ -1633,7 +1633,7 @@ mod tests {
             guided_file_uuid: None,
         }).collect();
         db.bulk_insert_sessions(&to_insert).unwrap();
-        let row_uuids: std::collections::HashSet<String> = db.list_sessions()
+        let row_uuids: std::collections::HashSet<String> = list_sessions_from_db(&db)
             .unwrap()
             .iter().map(|(_, s)| s.uuid.0.clone()).collect();
         let event_uuids: std::collections::HashSet<String> = db
@@ -1695,7 +1695,7 @@ mod tests {
                 guided_file_uuid: None,
             }).unwrap();
         }
-        let row_uuids: std::collections::HashSet<String> = db.list_sessions()
+        let row_uuids: std::collections::HashSet<String> = list_sessions_from_db(&db)
             .unwrap()
             .iter().map(|(_, s)| s.uuid.0.clone()).collect();
         drain_events(&db);
@@ -1772,7 +1772,7 @@ mod tests {
     #[test]
     fn label_totals_seconds_is_empty_for_empty_db() {
         let db = Database::open_in_memory().unwrap();
-        assert!(db.label_totals_seconds().unwrap().is_empty());
+        assert!(label_totals_seconds_from_db(&db).unwrap().is_empty());
     }
 
     #[test]
@@ -1818,7 +1818,7 @@ mod tests {
             guided_file_uuid: None,
         }).unwrap();
 
-        let got = db.label_totals_seconds().unwrap();
+        let got = label_totals_seconds_from_db(&db).unwrap();
         assert_eq!(got.len(), 2,
             "Unused label and unlabeled session must be excluded: {got:?}");
         assert_eq!(got[0], ("Evening".to_string(), 1200, 1));
@@ -1845,7 +1845,7 @@ mod tests {
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
         }).unwrap();
-        let got = db.label_totals_seconds().unwrap();
+        let got = label_totals_seconds_from_db(&db).unwrap();
         // 'alpha' (lowercase) sorts before 'Zebra' under NOCASE collation.
         assert_eq!(got[0].0, "alpha");
         assert_eq!(got[1].0, "Zebra");
@@ -1873,7 +1873,7 @@ mod tests {
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
         }).unwrap();
-        let got = db.label_totals_seconds().unwrap();
+        let got = label_totals_seconds_from_db(&db).unwrap();
         assert_eq!(got[0], ("Morning".to_string(), 135, 2));
     }
 
@@ -1882,7 +1882,7 @@ mod tests {
     #[test]
     fn hour_buckets_is_zero_zero_zero_for_empty_db() {
         let db = Database::open_in_memory().unwrap();
-        assert_eq!(db.hour_buckets().unwrap(), (0, 0, 0));
+        assert_eq!(hour_buckets_from_db(&db).unwrap(), (0, 0, 0));
     }
 
     #[test]
@@ -1911,7 +1911,7 @@ mod tests {
         db.insert_session(&make(18, 0)).unwrap();  // boundary into evening
         db.insert_session(&make(23, 59)).unwrap();
 
-        let (morning, afternoon, evening) = db.hour_buckets().unwrap();
+        let (morning, afternoon, evening) = hour_buckets_from_db(&db).unwrap();
         assert_eq!(morning, 5, "five sessions in 00:00–11:59");
         assert_eq!(afternoon, 3, "three sessions in 12:00–17:59");
         assert_eq!(evening, 2, "two sessions in 18:00–23:59");
@@ -1932,9 +1932,9 @@ mod tests {
                 guided_file_uuid: None,
             }).unwrap();
         }
-        let (m, a, e) = db.hour_buckets().unwrap();
+        let (m, a, e) = hour_buckets_from_db(&db).unwrap();
         assert_eq!(m + a + e, hours.len() as i64);
-        assert_eq!(m + a + e, db.count_sessions().unwrap());
+        assert_eq!(m + a + e, count_sessions_from_db(&db).unwrap());
     }
 
     // ── active_months ────────────────────────────────────────────────────────
@@ -1942,7 +1942,7 @@ mod tests {
     #[test]
     fn active_months_is_empty_for_empty_db() {
         let db = Database::open_in_memory().unwrap();
-        assert!(db.active_months().unwrap().is_empty());
+        assert!(active_months_from_db(&db).unwrap().is_empty());
     }
 
     #[test]
@@ -1978,7 +1978,7 @@ mod tests {
             guided_file_uuid: None,
         }).unwrap();
 
-        let got = db.active_months().unwrap();
+        let got = active_months_from_db(&db).unwrap();
         // Three distinct months, newest first.
         assert_eq!(got, vec![(2026, 4), (2026, 3), (2025, 12)]);
     }
@@ -2001,7 +2001,7 @@ mod tests {
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
         }).unwrap();
-        let got = db.active_months().unwrap();
+        let got = active_months_from_db(&db).unwrap();
         assert_eq!(got, vec![(2026, 1), (2025, 12)]);
     }
 
@@ -2010,7 +2010,7 @@ mod tests {
     #[test]
     fn active_days_in_month_is_empty_for_silent_month() {
         let db = Database::open_in_memory().unwrap();
-        assert!(db.active_days_in_month(2026, 4).unwrap().is_empty());
+        assert!(active_days_in_month_from_db(&db, 2026, 4).unwrap().is_empty());
     }
 
     #[test]
@@ -2053,7 +2053,7 @@ mod tests {
             guided_file_uuid: None,
         }).unwrap();
 
-        let got = db.active_days_in_month(2026, 4).unwrap();
+        let got = active_days_in_month_from_db(&db, 2026, 4).unwrap();
         assert_eq!(got, vec![5u32, 12, 28]);
     }
 
@@ -2077,7 +2077,7 @@ mod tests {
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
         }).unwrap();
-        let got = db.active_days_in_month(2026, 12).unwrap();
+        let got = active_days_in_month_from_db(&db, 2026, 12).unwrap();
         assert_eq!(got, vec![31u32]);
     }
 
@@ -2087,9 +2087,9 @@ mod tests {
     fn month_total_secs_is_zero_for_empty_month() {
         let db = Database::open_in_memory().unwrap();
         // Far past — guaranteed empty.
-        assert_eq!(db.month_total_secs(1999, 1).unwrap(), 0);
+        assert_eq!(month_total_secs_from_db(&db, 1999, 1).unwrap(), 0);
         // Mid-future — also empty.
-        assert_eq!(db.month_total_secs(2099, 12).unwrap(), 0);
+        assert_eq!(month_total_secs_from_db(&db, 2099, 12).unwrap(), 0);
     }
 
     #[test]
@@ -2130,7 +2130,7 @@ mod tests {
             guided_file_uuid: None,
         }).unwrap();
 
-        assert_eq!(db.month_total_secs(2026, 4).unwrap(), 600 + 1200);
+        assert_eq!(month_total_secs_from_db(&db, 2026, 4).unwrap(), 600 + 1200);
     }
 
     #[test]
@@ -2153,7 +2153,7 @@ mod tests {
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
         }).unwrap();
-        assert_eq!(db.month_total_secs(2026, 12).unwrap(), 600);
+        assert_eq!(month_total_secs_from_db(&db, 2026, 12).unwrap(), 600);
     }
 
     // ── total_secs_since: weekly goal ring etc. ──────────────────────────────
@@ -2162,7 +2162,7 @@ mod tests {
     fn total_secs_since_is_zero_for_empty_db() {
         let db = Database::open_in_memory().unwrap();
         let since = chrono::NaiveDate::from_ymd_opt(2026, 4, 27).unwrap();
-        assert_eq!(db.total_secs_since(since).unwrap(), 0);
+        assert_eq!(total_secs_since_from_db(&db, since).unwrap(), 0);
     }
 
     #[test]
@@ -2195,7 +2195,7 @@ mod tests {
             guided_file_uuid: None,
         }).unwrap();
         let since = chrono::NaiveDate::from_ymd_opt(2026, 4, 27).unwrap();
-        assert_eq!(db.total_secs_since(since).unwrap(), 600 + 1200 + 300);
+        assert_eq!(total_secs_since_from_db(&db, since).unwrap(), 600 + 1200 + 300);
     }
 
     #[test]
@@ -2218,7 +2218,7 @@ mod tests {
             guided_file_uuid: None,
         }).unwrap();
         let since = chrono::NaiveDate::from_ymd_opt(2026, 4, 27).unwrap();
-        assert_eq!(db.total_secs_since(since).unwrap(), 600);
+        assert_eq!(total_secs_since_from_db(&db, since).unwrap(), 600);
     }
 
     #[test]
@@ -2233,7 +2233,7 @@ mod tests {
             guided_file_uuid: None,
         }).unwrap();
         let since = chrono::NaiveDate::from_ymd_opt(2099, 1, 1).unwrap();
-        assert_eq!(db.total_secs_since(since).unwrap(), 0);
+        assert_eq!(total_secs_since_from_db(&db, since).unwrap(), 0);
     }
 
     // ── get_longest_session ──────────────────────────────────────────────────
@@ -2241,7 +2241,7 @@ mod tests {
     #[test]
     fn get_longest_session_is_none_for_empty_db() {
         let db = Database::open_in_memory().unwrap();
-        assert!(db.get_longest_session().unwrap().is_none());
+        assert!(get_longest_session_from_db(&db).unwrap().is_none());
     }
 
     #[test]
@@ -2257,7 +2257,7 @@ mod tests {
             guided_file_uuid: None,
         };
         let id = db.insert_session(&session).unwrap();
-        let (got_id, got) = db.get_longest_session().unwrap().unwrap();
+        let (got_id, got) = get_longest_session_from_db(&db).unwrap().unwrap();
         assert!(looks_like_uuid_v4(got.uuid.as_str()),
             "longest-session result must carry a v4 uuid");
         session.uuid = got.uuid.clone();
@@ -2303,7 +2303,7 @@ mod tests {
             guided_file_uuid: None,
         }).unwrap();
 
-        let (got_id, got) = db.get_longest_session().unwrap().unwrap();
+        let (got_id, got) = get_longest_session_from_db(&db).unwrap().unwrap();
         assert!(looks_like_uuid_v4(got.uuid.as_str()));
         longest_session.uuid = got.uuid.clone();
         assert_eq!(got_id, longest_id);
@@ -2316,7 +2316,7 @@ mod tests {
     #[test]
     fn total_seconds_is_zero_for_empty_db() {
         let db = Database::open_in_memory().unwrap();
-        assert_eq!(db.total_seconds().unwrap(), 0);
+        assert_eq!(total_seconds_from_db(&db).unwrap(), 0);
     }
 
     #[test]
@@ -2346,7 +2346,7 @@ mod tests {
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
         }).unwrap();
-        assert_eq!(db.total_seconds().unwrap(), 600 + 1245 + 17);
+        assert_eq!(total_seconds_from_db(&db).unwrap(), 600 + 1245 + 17);
     }
 
     #[test]
@@ -2363,8 +2363,8 @@ mod tests {
                 guided_file_uuid: None,
             }).unwrap();
         }
-        let secs = db.total_seconds().unwrap();
-        let mins = db.total_minutes().unwrap();
+        let secs = total_seconds_from_db(&db).unwrap();
+        let mins = total_minutes_from_db(&db).unwrap();
         assert_eq!(mins, secs / 60);
     }
 
@@ -2389,7 +2389,7 @@ mod tests {
         let _id_new = db.insert_session(&make("2026-04-27T10:00:00Z")).unwrap();
         let _id_mid = db.insert_session(&make("2026-04-26T10:00:00Z")).unwrap();
 
-        let rows = db.query_sessions(&SessionFilter::default()).unwrap();
+        let rows = query_sessions_from_db(&db, &SessionFilter::default()).unwrap();
         let isos: Vec<&str> = rows.iter().map(|(_, s)| s.start_iso.as_str()).collect();
         assert_eq!(
             isos,
@@ -2402,7 +2402,7 @@ mod tests {
     fn query_sessions_empty_db_returns_empty_vec() {
         // No rows — not an error, just an empty Vec.
         let db = Database::open_in_memory().unwrap();
-        let rows = db.query_sessions(&SessionFilter::default()).unwrap();
+        let rows = query_sessions_from_db(&db, &SessionFilter::default()).unwrap();
         assert!(rows.is_empty());
     }
 
@@ -2422,7 +2422,7 @@ mod tests {
                 guided_file_uuid: None,
             }).unwrap();
         }
-        let rows = db.query_sessions(&SessionFilter {
+        let rows = query_sessions_from_db(&db, &SessionFilter {
             limit: Some(3), ..Default::default()
         }).unwrap();
         let isos: Vec<&str> = rows.iter().map(|(_, s)| s.start_iso.as_str()).collect();
@@ -2451,7 +2451,7 @@ mod tests {
             }).unwrap();
         }
         // Page 2 of size 3: skip 3, take 3.
-        let rows = db.query_sessions(&SessionFilter {
+        let rows = query_sessions_from_db(&db, &SessionFilter {
             limit: Some(3),
             offset: Some(3),
             ..Default::default()
@@ -2477,7 +2477,7 @@ mod tests {
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
         }).unwrap();
-        let rows = db.query_sessions(&SessionFilter {
+        let rows = query_sessions_from_db(&db, &SessionFilter {
             offset: Some(100),
             ..Default::default()
         }).unwrap();
@@ -2520,7 +2520,7 @@ mod tests {
             guided_file_uuid: None,
         }).unwrap();
 
-        let rows = db.query_sessions(&SessionFilter {
+        let rows = query_sessions_from_db(&db, &SessionFilter {
             label_id: Some(morning), ..Default::default()
         }).unwrap();
         assert_eq!(rows.len(), 2);
@@ -2561,7 +2561,7 @@ mod tests {
             guided_file_uuid: None,
         }).unwrap();
 
-        let rows = db.query_sessions(&SessionFilter {
+        let rows = query_sessions_from_db(&db, &SessionFilter {
             only_with_notes: true, ..Default::default()
         }).unwrap();
         assert_eq!(rows.len(), 1);
@@ -2600,7 +2600,7 @@ mod tests {
             guided_file_uuid: None,
         }).unwrap();
 
-        let rows = db.query_sessions(&SessionFilter {
+        let rows = query_sessions_from_db(&db, &SessionFilter {
             label_id: Some(morning),
             only_with_notes: true,
             ..Default::default()
@@ -2625,7 +2625,7 @@ mod tests {
         let mut seen: Vec<i64> = Vec::new();
         let mut offset = 0u32;
         loop {
-            let page = db.query_sessions(&SessionFilter {
+            let page = query_sessions_from_db(&db, &SessionFilter {
                 limit: Some(3),
                 offset: Some(offset),
                 ..Default::default()
@@ -2646,7 +2646,7 @@ mod tests {
     #[test]
     fn empty_database_has_zero_sessions() {
         let db = Database::open_in_memory().unwrap();
-        assert_eq!(db.count_sessions().unwrap(), 0);
+        assert_eq!(count_sessions_from_db(&db).unwrap(), 0);
     }
 
     #[test]
@@ -2662,7 +2662,7 @@ mod tests {
             guided_file_uuid: None,
         };
         db.insert_session(&session).unwrap();
-        assert_eq!(db.count_sessions().unwrap(), 1);
+        assert_eq!(count_sessions_from_db(&db).unwrap(), 1);
     }
 
     #[test]
@@ -2681,7 +2681,7 @@ mod tests {
             guided_file_uuid: None,
         };
         db.insert_session(&session).unwrap();
-        assert_eq!(db.count_sessions().unwrap(), 1);
+        assert_eq!(count_sessions_from_db(&db).unwrap(), 1);
     }
 
     #[test]
@@ -2701,7 +2701,7 @@ mod tests {
             guided_file_uuid: Some(file_uuid.into()),
         };
         db.insert_session(&session).unwrap();
-        let rows = db.query_sessions(&SessionFilter::default()).unwrap();
+        let rows = query_sessions_from_db(&db, &SessionFilter::default()).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].1.guided_file_uuid.as_ref().map(|u| u.as_str()), Some(file_uuid));
     }
@@ -2721,7 +2721,7 @@ mod tests {
             guided_file_uuid: None,
         };
         db.insert_session(&session).unwrap();
-        let rows = db.query_sessions(&SessionFilter::default()).unwrap();
+        let rows = query_sessions_from_db(&db, &SessionFilter::default()).unwrap();
         assert_eq!(rows.len(), 1);
         assert!(rows[0].1.guided_file_uuid.is_none());
     }
@@ -2751,7 +2751,7 @@ mod tests {
         };
         let labeled_id = db.insert_session(&labeled).unwrap();
         db.insert_session(&unlabeled).unwrap();
-        let rows = db.list_sessions_for_label(morning).unwrap();
+        let rows = list_sessions_for_label_from_db(&db, morning).unwrap();
         assert_eq!(rows.len(), 1, "only the labeled session must be returned");
         assert!(looks_like_uuid_v4(rows[0].1.uuid.as_str()));
         labeled.uuid = rows[0].1.uuid.clone();
@@ -2771,7 +2771,7 @@ mod tests {
             guided_file_uuid: None,
         };
         let id = db.insert_session(&session).unwrap();
-        let rows = db.list_sessions().unwrap();
+        let rows = list_sessions_from_db(&db).unwrap();
         assert_eq!(rows.len(), 1);
         assert!(looks_like_uuid_v4(rows[0].1.uuid.as_str()),
             "round-tripped session must carry a v4 uuid");
@@ -2802,7 +2802,7 @@ mod tests {
         assert_eq!(id1, 1);
         assert_eq!(id2, 2);
         assert_eq!(id3, 3);
-        let rows = db.list_sessions().unwrap();
+        let rows = list_sessions_from_db(&db).unwrap();
         let got_ids: Vec<i64> = rows.iter().map(|(id, _)| *id).collect();
         assert_eq!(got_ids, vec![id1, id2, id3]);
     }
@@ -2848,7 +2848,7 @@ mod tests {
         };
         db.update_session(id, &updated).unwrap();
 
-        let rows = db.list_sessions().unwrap();
+        let rows = list_sessions_from_db(&db).unwrap();
         assert_eq!(rows.len(), 2);
         // Updated row reflects every new field. Its uuid is whatever the
         // DB assigned at insert time and must survive an update unchanged
@@ -2892,7 +2892,7 @@ mod tests {
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
         }).unwrap();
-        let row = &db.list_sessions().unwrap()[0].1;
+        let row = &list_sessions_from_db(&db).unwrap()[0].1;
         assert_eq!(row.label_id, None);
         assert_eq!(row.notes, None);
     }
@@ -2921,7 +2921,7 @@ mod tests {
             guided_file_uuid: None,
         }).unwrap();
         // Original row is intact.
-        let rows = db.list_sessions().unwrap();
+        let rows = list_sessions_from_db(&db).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].1.duration_secs, 600);
         assert_eq!(rows[0].1.start_iso, "2026-04-27T10:00:00Z");
@@ -2947,9 +2947,9 @@ mod tests {
         db.delete_session(id2).unwrap();
 
         let surviving_ids: Vec<i64> =
-            db.list_sessions().unwrap().into_iter().map(|(i, _)| i).collect();
+            list_sessions_from_db(&db).unwrap().into_iter().map(|(i, _)| i).collect();
         assert_eq!(surviving_ids, vec![id1, id3]);
-        assert_eq!(db.count_sessions().unwrap(), 2);
+        assert_eq!(count_sessions_from_db(&db).unwrap(), 2);
     }
 
     #[test]
@@ -2967,7 +2967,7 @@ mod tests {
         }).unwrap();
         db.delete_session(id + 999).unwrap();
         // Original row still there.
-        assert_eq!(db.count_sessions().unwrap(), 1);
+        assert_eq!(count_sessions_from_db(&db).unwrap(), 1);
     }
 
     #[test]
@@ -3019,7 +3019,7 @@ mod tests {
         });
         assert!(result.is_err(), "expected FK violation, got {result:?}");
         // No row landed.
-        assert_eq!(db.count_sessions().unwrap(), 0);
+        assert_eq!(count_sessions_from_db(&db).unwrap(), 0);
     }
 
     #[test]
@@ -3063,13 +3063,13 @@ mod tests {
 
         let n = db.bulk_insert_sessions(&to_insert).unwrap();
         assert_eq!(n, 3);
-        assert_eq!(db.count_sessions().unwrap(), 3);
+        assert_eq!(count_sessions_from_db(&db).unwrap(), 3);
 
         // Every row round-trips through the DB unchanged. The DB assigns
         // each row a fresh v4 uuid that the input doesn't carry — verify
         // each is well-formed, then graft it onto the expected value
         // before comparing the rest of the fields.
-        let mut stored: Vec<Session> = db.list_sessions()
+        let mut stored: Vec<Session> = list_sessions_from_db(&db)
             .unwrap()
             .into_iter()
             .map(|(_, s)| s)
@@ -3095,7 +3095,7 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         let n = db.bulk_insert_sessions(&[]).unwrap();
         assert_eq!(n, 0);
-        assert_eq!(db.count_sessions().unwrap(), 0);
+        assert_eq!(count_sessions_from_db(&db).unwrap(), 0);
     }
 
     #[test]
@@ -3113,7 +3113,7 @@ mod tests {
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
         }).unwrap();
-        assert_eq!(db.count_sessions().unwrap(), 1);
+        assert_eq!(count_sessions_from_db(&db).unwrap(), 1);
 
         let bad_label = 9999i64; // No label has this id.
         let batch = vec![
@@ -3140,8 +3140,8 @@ mod tests {
         assert!(result.is_err(), "expected FK violation, got {result:?}");
 
         // No rows from the failed batch landed; the pre-existing row is intact.
-        assert_eq!(db.count_sessions().unwrap(), 1);
-        let rows = db.list_sessions().unwrap();
+        assert_eq!(count_sessions_from_db(&db).unwrap(), 1);
+        let rows = list_sessions_from_db(&db).unwrap();
         assert_eq!(rows[0].0, pre_id);
     }
 
@@ -3165,8 +3165,8 @@ mod tests {
             },
         ];
         let _ = db.bulk_insert_sessions(&batch);
-        assert_eq!(db.count_sessions().unwrap(), 0);
-        assert!(db.list_sessions().unwrap().is_empty());
+        assert_eq!(count_sessions_from_db(&db).unwrap(), 0);
+        assert!(list_sessions_from_db(&db).unwrap().is_empty());
     }
 
     #[test]
@@ -3187,12 +3187,12 @@ mod tests {
                 guided_file_uuid: None,
             }).unwrap();
         }
-        assert_eq!(db.count_sessions().unwrap(), 3);
+        assert_eq!(count_sessions_from_db(&db).unwrap(), 3);
 
         let removed = db.delete_all_sessions().unwrap();
         assert_eq!(removed, 3);
-        assert_eq!(db.count_sessions().unwrap(), 0);
-        assert!(db.list_sessions().unwrap().is_empty());
+        assert_eq!(count_sessions_from_db(&db).unwrap(), 0);
+        assert!(list_sessions_from_db(&db).unwrap().is_empty());
 
         // Labels untouched.
         let names: Vec<String> =
@@ -3205,7 +3205,7 @@ mod tests {
         // Idempotent: nothing to delete is not an error.
         let db = Database::open_in_memory().unwrap();
         assert_eq!(db.delete_all_sessions().unwrap(), 0);
-        assert_eq!(db.count_sessions().unwrap(), 0);
+        assert_eq!(count_sessions_from_db(&db).unwrap(), 0);
     }
 
     #[test]
@@ -3234,7 +3234,7 @@ mod tests {
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
         }).unwrap();
-        let rows = db.list_sessions_for_label(morning).unwrap();
+        let rows = list_sessions_for_label_from_db(&db, morning).unwrap();
         assert_eq!(rows.len(), 1, "only the labeled session must be returned");
         assert!(looks_like_uuid_v4(rows[0].1.uuid.as_str()));
         labeled.uuid = rows[0].1.uuid.clone();
@@ -3255,13 +3255,13 @@ mod tests {
         };
         db.insert_session(&session_with_dur(600)).unwrap(); // 10 min
         db.insert_session(&session_with_dur(900)).unwrap(); // 15 min
-        assert_eq!(db.total_minutes().unwrap(), 25);
+        assert_eq!(total_minutes_from_db(&db).unwrap(), 25);
     }
 
     #[test]
     fn total_minutes_is_zero_for_empty_db() {
         let db = Database::open_in_memory().unwrap();
-        assert_eq!(db.total_minutes().unwrap(), 0);
+        assert_eq!(total_minutes_from_db(&db).unwrap(), 0);
     }
 
     #[test]
@@ -3293,7 +3293,7 @@ mod tests {
         .unwrap();
         // SQLite default ORDER BY name puts ASCII "Evening" before "Morning".
         assert_eq!(
-            db.total_minutes_by_label().unwrap(),
+            total_minutes_by_label_from_db(&db).unwrap(),
             vec![
                 (Some("Evening".to_string()), 5),
                 (Some("Morning".to_string()), 30),
@@ -3320,7 +3320,7 @@ mod tests {
         .unwrap();
         // SQLite ORDER BY ASC sorts NULL first.
         assert_eq!(
-            db.total_minutes_by_label().unwrap(),
+            total_minutes_by_label_from_db(&db).unwrap(),
             vec![(None, 5), (Some("Morning".to_string()), 10)]
         );
     }
@@ -3328,7 +3328,7 @@ mod tests {
     #[test]
     fn total_minutes_by_label_is_empty_for_empty_db() {
         let db = Database::open_in_memory().unwrap();
-        assert_eq!(db.total_minutes_by_label().unwrap(), vec![]);
+        assert_eq!(total_minutes_by_label_from_db(&db).unwrap(), vec![]);
     }
 
     #[test]
@@ -3352,7 +3352,7 @@ mod tests {
         })
         .unwrap();
         assert_eq!(
-            db.count_sessions_by_label().unwrap(),
+            count_sessions_by_label_from_db(&db).unwrap(),
             vec![(None, 1), (Some("Morning".to_string()), 2)]
         );
     }
@@ -3364,7 +3364,7 @@ mod tests {
     #[test]
     fn streak_is_zero_for_empty_db() {
         let db = Database::open_in_memory().unwrap();
-        assert_eq!(db.get_streak(date(2026, 4, 27)).unwrap(), 0);
+        assert_eq!(get_streak_from_db(&db, date(2026, 4, 27)).unwrap(), 0);
     }
 
     fn session_on(day: &str) -> Session {
@@ -3383,7 +3383,7 @@ mod tests {
     fn streak_is_one_with_single_session_today() {
         let db = Database::open_in_memory().unwrap();
         db.insert_session(&session_on("2026-04-27")).unwrap();
-        assert_eq!(db.get_streak(date(2026, 4, 27)).unwrap(), 1);
+        assert_eq!(get_streak_from_db(&db, date(2026, 4, 27)).unwrap(), 1);
     }
 
     #[test]
@@ -3392,7 +3392,7 @@ mod tests {
         db.insert_session(&session_on("2026-04-27")).unwrap();
         db.insert_session(&session_on("2026-04-26")).unwrap();
         db.insert_session(&session_on("2026-04-25")).unwrap();
-        assert_eq!(db.get_streak(date(2026, 4, 27)).unwrap(), 3);
+        assert_eq!(get_streak_from_db(&db, date(2026, 4, 27)).unwrap(), 3);
     }
 
     #[test]
@@ -3402,7 +3402,7 @@ mod tests {
         // gap on 2026-04-26
         db.insert_session(&session_on("2026-04-25")).unwrap();
         db.insert_session(&session_on("2026-04-24")).unwrap();
-        assert_eq!(db.get_streak(date(2026, 4, 27)).unwrap(), 1);
+        assert_eq!(get_streak_from_db(&db, date(2026, 4, 27)).unwrap(), 1);
     }
 
     #[test]
@@ -3411,14 +3411,14 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         db.insert_session(&session_on("2026-04-26")).unwrap();
         db.insert_session(&session_on("2026-04-25")).unwrap();
-        assert_eq!(db.get_streak(date(2026, 4, 27)).unwrap(), 2);
+        assert_eq!(get_streak_from_db(&db, date(2026, 4, 27)).unwrap(), 2);
     }
 
     #[test]
     fn streak_is_zero_when_most_recent_session_is_older_than_yesterday() {
         let db = Database::open_in_memory().unwrap();
         db.insert_session(&session_on("2026-04-24")).unwrap();
-        assert_eq!(db.get_streak(date(2026, 4, 27)).unwrap(), 0);
+        assert_eq!(get_streak_from_db(&db, date(2026, 4, 27)).unwrap(), 0);
     }
 
     #[test]
@@ -3434,13 +3434,13 @@ mod tests {
             ..session_on("2026-04-27")
         })
         .unwrap();
-        assert_eq!(db.get_streak(date(2026, 4, 27)).unwrap(), 1);
+        assert_eq!(get_streak_from_db(&db, date(2026, 4, 27)).unwrap(), 1);
     }
 
     #[test]
     fn best_streak_is_zero_for_empty_db() {
         let db = Database::open_in_memory().unwrap();
-        assert_eq!(db.get_best_streak().unwrap(), 0);
+        assert_eq!(get_best_streak_from_db(&db).unwrap(), 0);
     }
 
     #[test]
@@ -3475,11 +3475,11 @@ mod tests {
         })
         .unwrap();
         // Morning streak: today + yesterday = 2 (gap on day-2).
-        assert_eq!(db.get_streak_for_label(today, morning).unwrap(), 2);
+        assert_eq!(get_streak_for_label_from_db(&db, today, morning).unwrap(), 2);
         // Evening streak: today only (gap on yesterday).
-        assert_eq!(db.get_streak_for_label(today, evening).unwrap(), 1);
+        assert_eq!(get_streak_for_label_from_db(&db, today, evening).unwrap(), 1);
         // Overall streak (no filter): today + yesterday + day-2 = 3.
-        assert_eq!(db.get_streak(today).unwrap(), 3);
+        assert_eq!(get_streak_from_db(&db, today).unwrap(), 3);
     }
 
     #[test]
@@ -3493,11 +3493,11 @@ mod tests {
         // returns 0 rather than panicking.
         let db = Database::open_in_memory().unwrap();
         // Without any sessions, returns 0 trivially.
-        assert_eq!(db.get_streak(chrono::NaiveDate::MIN).unwrap(), 0);
+        assert_eq!(get_streak_from_db(&db, chrono::NaiveDate::MIN).unwrap(), 0);
         // Insert a session at MIN too — exercises the loop's
         // saturating pred path.
         db.insert_session(&session_on("-262144-01-01")).unwrap();
-        let n = db.get_streak(chrono::NaiveDate::MIN).unwrap();
+        let n = get_streak_from_db(&db, chrono::NaiveDate::MIN).unwrap();
         assert!(n >= 0, "no panic, returns a valid count: got {n}");
     }
 
@@ -3519,8 +3519,8 @@ mod tests {
             db.insert_session(&session_on(&day.format("%Y-%m-%d").to_string()))
                 .unwrap();
         }
-        assert_eq!(db.get_streak(today).unwrap(), 3, "current streak");
-        assert_eq!(db.get_best_streak().unwrap(), 6, "best historical streak");
+        assert_eq!(get_streak_from_db(&db, today).unwrap(), 3, "current streak");
+        assert_eq!(get_best_streak_from_db(&db).unwrap(), 6, "best historical streak");
     }
 
     #[test]
@@ -3548,10 +3548,10 @@ mod tests {
             })
             .unwrap();
         }
-        assert_eq!(db.get_best_streak_for_label(morning).unwrap(), 3);
-        assert_eq!(db.get_best_streak_for_label(evening).unwrap(), 5);
+        assert_eq!(get_best_streak_for_label_from_db(&db, morning).unwrap(), 3);
+        assert_eq!(get_best_streak_for_label_from_db(&db, evening).unwrap(), 5);
         // Overall best ignores label and finds the longest run anywhere.
-        assert_eq!(db.get_best_streak().unwrap(), 5);
+        assert_eq!(get_best_streak_from_db(&db).unwrap(), 5);
     }
 
     #[test]
@@ -3567,7 +3567,7 @@ mod tests {
         db.insert_session(&session_on("2026-04-13")).unwrap();
         // Run of 1: Apr 20
         db.insert_session(&session_on("2026-04-20")).unwrap();
-        assert_eq!(db.get_best_streak().unwrap(), 4);
+        assert_eq!(get_best_streak_from_db(&db).unwrap(), 4);
     }
 
     #[test]
@@ -3591,7 +3591,7 @@ mod tests {
         })
         .unwrap();
         assert_eq!(
-            db.get_daily_totals().unwrap(),
+            get_daily_totals_from_db(&db).unwrap(),
             vec![(date(2026, 4, 26), 900), (date(2026, 4, 27), 1200)]
         );
     }
@@ -3599,7 +3599,7 @@ mod tests {
     #[test]
     fn daily_totals_is_empty_for_empty_db() {
         let db = Database::open_in_memory().unwrap();
-        assert_eq!(db.get_daily_totals().unwrap(), vec![]);
+        assert_eq!(get_daily_totals_from_db(&db).unwrap(), vec![]);
     }
 
     #[test]
@@ -3618,7 +3618,7 @@ mod tests {
             ..session_on("2026-04-27")
         }).unwrap();
         assert_eq!(
-            db.get_daily_totals_since(date(2026, 4, 26)).unwrap(),
+            get_daily_totals_since_from_db(&db, date(2026, 4, 26)).unwrap(),
             vec![(date(2026, 4, 26), 300), (date(2026, 4, 27), 1200)],
         );
     }
@@ -3631,7 +3631,7 @@ mod tests {
             ..session_on("2026-04-26")
         }).unwrap();
         assert_eq!(
-            db.get_daily_totals_since(date(2026, 4, 26)).unwrap(),
+            get_daily_totals_since_from_db(&db, date(2026, 4, 26)).unwrap(),
             vec![(date(2026, 4, 26), 600)],
         );
     }
@@ -3662,7 +3662,7 @@ mod tests {
         })
         .unwrap();
         assert_eq!(
-            db.get_daily_totals_for_label(morning).unwrap(),
+            get_daily_totals_for_label_from_db(&db, morning).unwrap(),
             vec![(date(2026, 4, 26), 600), (date(2026, 4, 27), 1200)]
         );
     }
@@ -3704,14 +3704,14 @@ mod tests {
         let names: Vec<String> =
             crate::db::list_labels_from_db(&db).unwrap().into_iter().map(|l| l.name).collect();
         assert_eq!(names, vec!["Morning"]);
-        assert_eq!(db.count_sessions().unwrap(), 1);
+        assert_eq!(count_sessions_from_db(&db).unwrap(), 1);
     }
 
     #[test]
     fn running_average_is_zero_for_empty_db() {
         let db = Database::open_in_memory().unwrap();
         assert_eq!(
-            db.get_running_average_secs(date(2026, 4, 27), 7).unwrap(),
+            get_running_average_secs_from_db(&db, date(2026, 4, 27), 7).unwrap(),
             0.0
         );
     }
@@ -3721,7 +3721,7 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         db.insert_session(&session_on("2026-04-27")).unwrap();
         assert_eq!(
-            db.get_running_average_secs(date(2026, 4, 27), 0).unwrap(),
+            get_running_average_secs_from_db(&db, date(2026, 4, 27), 0).unwrap(),
             0.0
         );
     }
@@ -3736,12 +3736,12 @@ mod tests {
         })
         .unwrap();
         assert_eq!(
-            db.get_running_average_secs(date(2026, 4, 27), 1).unwrap(),
+            get_running_average_secs_from_db(&db, date(2026, 4, 27), 1).unwrap(),
             600.0
         );
         // Same data, window of 2 days → average = 300.
         assert_eq!(
-            db.get_running_average_secs(date(2026, 4, 27), 2).unwrap(),
+            get_running_average_secs_from_db(&db, date(2026, 4, 27), 2).unwrap(),
             300.0
         );
     }
@@ -3762,14 +3762,14 @@ mod tests {
         })
         .unwrap();
         // Window of 7 days = today and 6 prior days; only today's 600s counts.
-        let avg = db.get_running_average_secs(date(2026, 4, 27), 7).unwrap();
+        let avg = get_running_average_secs_from_db(&db, date(2026, 4, 27), 7).unwrap();
         assert!((avg - (600.0 / 7.0)).abs() < 1e-9, "got {avg}");
     }
 
     #[test]
     fn median_duration_is_none_for_empty_db() {
         let db = Database::open_in_memory().unwrap();
-        assert_eq!(db.get_median_duration_secs().unwrap(), None);
+        assert_eq!(get_median_duration_secs_from_db(&db).unwrap(), None);
     }
 
     #[test]
@@ -3782,7 +3782,7 @@ mod tests {
             })
             .unwrap();
         }
-        assert_eq!(db.get_median_duration_secs().unwrap(), Some(900));
+        assert_eq!(get_median_duration_secs_from_db(&db).unwrap(), Some(900));
     }
 
     #[test]
@@ -3796,7 +3796,7 @@ mod tests {
             })
             .unwrap();
         }
-        assert_eq!(db.get_median_duration_secs().unwrap(), Some(600));
+        assert_eq!(get_median_duration_secs_from_db(&db).unwrap(), Some(600));
     }
 
     #[test]
@@ -3844,7 +3844,7 @@ mod tests {
         // (uuids aren't part of the CSV format). Verify each row carries
         // one, then bind it into the expected struct so the full
         // comparison below also covers the rest of the fields.
-        let sessions = dst.list_sessions().unwrap();
+        let sessions = list_sessions_from_db(&dst).unwrap();
         assert_eq!(sessions.len(), 2);
         assert!(looks_like_uuid_v4(sessions[0].1.uuid.as_str()));
         assert!(looks_like_uuid_v4(sessions[1].1.uuid.as_str()));
@@ -3890,7 +3890,7 @@ mod tests {
             matches!(&err, DbError::Decode(s) if s.contains("bad start_iso")),
             "expected DbError::Decode(\"bad start_iso: …\"), got {err:?}",
         );
-        assert_eq!(db.list_sessions().unwrap().len(), 0,
+        assert_eq!(list_sessions_from_db(&db).unwrap().len(), 0,
             "rejected row must not have landed in the DB");
     }
 
@@ -3945,7 +3945,7 @@ mod tests {
                         guided_file_uuid: None,
         })
         .unwrap();
-        let rows = db.list_sessions().unwrap();
+        let rows = list_sessions_from_db(&db).unwrap();
         assert_eq!(rows.len(), 1);
         assert!(!rows[0].1.uuid.is_empty(), "uuid must be populated on read");
     }
@@ -3965,7 +3965,7 @@ mod tests {
             })
             .unwrap();
         }
-        let rows = db.list_sessions().unwrap();
+        let rows = list_sessions_from_db(&db).unwrap();
         assert_eq!(rows.len(), 2);
         assert_ne!(rows[0].1.uuid, rows[1].1.uuid,
             "two inserts must produce distinct uuids");
@@ -3984,7 +3984,7 @@ mod tests {
                         guided_file_uuid: None,
         })
         .unwrap();
-        let uuid = &db.list_sessions().unwrap()[0].1.uuid;
+        let uuid = &list_sessions_from_db(&db).unwrap()[0].1.uuid;
         assert!(looks_like_uuid_v4(uuid.as_str()),
             "session uuid `{uuid}` doesn't match v4 shape");
     }
@@ -4008,7 +4008,7 @@ mod tests {
             })
             .unwrap();
         }
-        let rows = db.list_sessions().unwrap();
+        let rows = list_sessions_from_db(&db).unwrap();
         assert_ne!(rows[0].1.uuid, bogus, "DB must override caller's uuid");
         assert_ne!(rows[1].1.uuid, bogus, "DB must override caller's uuid");
         assert_ne!(rows[0].1.uuid, rows[1].1.uuid);

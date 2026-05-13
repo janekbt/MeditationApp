@@ -344,7 +344,7 @@ mod tests {
             "finalize must clear the snapshot");
 
         // Sessions cache has the new row.
-        let sessions = db.list_sessions().unwrap();
+        let sessions = crate::db::list_sessions_from_db(&db).unwrap();
         assert_eq!(sessions.len(), 1);
         let saved = &sessions[0].1;
         assert_eq!(saved.uuid, finalized.session_uuid,
@@ -397,7 +397,7 @@ mod tests {
             "event must carry the cross-device label_uuid, not the local rowid",
         );
         // Also confirm the cache row resolved label_id locally.
-        let sessions = db.list_sessions().unwrap();
+        let sessions = crate::db::list_sessions_from_db(&db).unwrap();
         assert_eq!(sessions[0].1.label_id, Some(label_id));
         assert_eq!(sessions[0].1.uuid, finalized.session_uuid);
     }
@@ -424,7 +424,7 @@ mod tests {
             payload["guided_file_uuid"].as_str(),
             Some("ffffffff-ffff-4fff-8fff-ffffffffffff"),
         );
-        let sessions = db.list_sessions().unwrap();
+        let sessions = crate::db::list_sessions_from_db(&db).unwrap();
         assert_eq!(
             sessions[0].1.guided_file_uuid.as_ref().map(|u| u.as_str()),
             Some("ffffffff-ffff-4fff-8fff-ffffffffffff"),
@@ -444,7 +444,7 @@ mod tests {
         assert!(first.is_some());
         assert_eq!(second, None,
             "second finalize must be a no-op, not duplicate the session");
-        assert_eq!(db.list_sessions().unwrap().len(), 1,
+        assert_eq!(crate::db::list_sessions_from_db(&db).unwrap().len(), 1,
             "exactly one session row was inserted");
     }
 

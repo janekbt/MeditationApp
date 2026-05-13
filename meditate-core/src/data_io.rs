@@ -125,7 +125,7 @@ pub fn export_csv(db: &Database, path: &Path) -> Result<usize, DataIoError> {
     // list_sessions returns DESC start; reverse so the CSV is
     // start-time ascending, matching what users expect when opening
     // a backup file in chronological order.
-    let mut sessions = db.list_sessions()?;
+    let mut sessions = crate::db::list_sessions_from_db(db)?;
     sessions.reverse();
     let mut n = 0usize;
     for (_id, s) in &sessions {
@@ -442,7 +442,7 @@ mod tests {
         assert_eq!(written, originals.len());
 
         db.delete_all_sessions().unwrap();
-        assert_eq!(db.count_sessions().unwrap(), 0);
+        assert_eq!(crate::db::count_sessions_from_db(&db).unwrap(), 0);
 
         let imported = import_csv(&db, tmp.path()).unwrap();
         assert_eq!(imported, originals.len());
@@ -450,7 +450,7 @@ mod tests {
         // Pull the sessions back and compare. list_sessions returns them in
         // descending start_iso order — reverse so we can index parallel to
         // `originals` which is ascending.
-        let mut rows = db.list_sessions().unwrap();
+        let mut rows = crate::db::list_sessions_from_db(&db).unwrap();
         rows.reverse();
         assert_eq!(rows.len(), originals.len());
 

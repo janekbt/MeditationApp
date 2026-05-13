@@ -381,12 +381,12 @@ mod tests {
         // A doesn't have B's session yet — needs another sync round.
         run_with_webdav(&db_a, &shared).unwrap();
 
-        let a_starts: std::collections::HashSet<String> = db_a
-            .list_sessions().unwrap()
-            .iter().map(|(_, s)| s.start_iso.clone()).collect();
-        let b_starts: std::collections::HashSet<String> = db_b
-            .list_sessions().unwrap()
-            .iter().map(|(_, s)| s.start_iso.clone()).collect();
+        let a_starts: std::collections::HashSet<String> =
+            meditate_core::db::list_sessions_from_db(&db_a).unwrap()
+                .iter().map(|(_, s)| s.start_iso.clone()).collect();
+        let b_starts: std::collections::HashSet<String> =
+            meditate_core::db::list_sessions_from_db(&db_b).unwrap()
+                .iter().map(|(_, s)| s.start_iso.clone()).collect();
         assert_eq!(a_starts, b_starts, "both devices converge on the same set");
         assert_eq!(a_starts.len(), 2);
     }
