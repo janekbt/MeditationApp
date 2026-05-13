@@ -337,7 +337,10 @@ impl Database {
         let mut best = 1u32;
         let mut current = 1u32;
         for window in days.windows(2) {
-            if window[1] == window[0].succ_opt().expect("date overflow") {
+            let Some(next_day) = window[0].succ_opt() else {
+                return Err(DbError::DateOutOfRange);
+            };
+            if window[1] == next_day {
                 current += 1;
                 best = best.max(current);
             } else {

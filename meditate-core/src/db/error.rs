@@ -13,6 +13,12 @@ pub enum DbError {
     /// `user_version` exceeds this build's `SCHEMA_VERSION`).
     /// Opening would risk silent corruption.
     SchemaVersionTooNew { db: u32, build: u32 },
+    /// A date computation walked past `chrono::NaiveDate::MAX` or
+    /// `MIN` (year ±262144). Reachable via `import_csv` admitting a
+    /// row with `start_iso` at the calendar boundary — without this
+    /// variant the streak/aggregation code would panic via
+    /// `succ_opt().expect()` / `pred_opt().expect()`.
+    DateOutOfRange,
 }
 
 impl From<rusqlite::Error> for DbError {

@@ -84,6 +84,7 @@ impl From<crate::db::DbError> for DataIoError {
             DbError::SchemaVersionTooNew { db, build } => DataIoError::Db(format!(
                 "db schema_version={db} exceeds build schema_version={build}"
             )),
+            DbError::DateOutOfRange => DataIoError::Db("date out of range".to_string()),
         }
     }
 }

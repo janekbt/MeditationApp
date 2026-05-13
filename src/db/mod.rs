@@ -235,6 +235,12 @@ fn map_core_err(e: meditate_core::db::DbError) -> rusqlite::Error {
                 format!("db schema_version={db} exceeds build schema_version={build}"),
             )),
         ),
+        DbError::DateOutOfRange => rusqlite::Error::ToSqlConversionFailure(Box::new(
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "date out of range",
+            ),
+        )),
     }
 }
 

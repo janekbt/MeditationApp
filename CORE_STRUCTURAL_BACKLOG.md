@@ -105,13 +105,6 @@ rationale.
 
 ## Tier 1 — Second-pass additions
 
-### Date-arithmetic `.expect()`s → `DbError::DateOutOfRange`
-- `db.rs:3761, 3959, 3972` — `succ_opt().expect("date overflow")` /
-  `pred_opt().expect(...)` on `chrono::NaiveDate`.
-- Real fault risk: `import_csv` accepts user-supplied
-  `start_iso`; a row with `start_iso = "9999-12-31"` panics.
-- Add `DbError::DateOutOfRange` variant; map the three sites to it.
-
 ### Split `sync/settings.rs` (29 pub items) → `settings.rs` + `credentials.rs`
 - Module currently mixes three concerns: (a) key consts +
   account CRUD + sync-status writers, (b) `prepare_save` /
