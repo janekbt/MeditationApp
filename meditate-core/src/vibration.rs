@@ -309,14 +309,14 @@ pub const EDITOR_DEFAULT_DURATION_S: f64 = 2.0;
 /// Lower bound on control-point count (UI clamp).
 pub const EDITOR_POINTS_MIN: u32 = 3;
 /// Upper bound on control-point count regardless of duration.
-pub const EDITOR_POINTS_MAX: u32 = 24;
+pub(crate) const EDITOR_POINTS_MAX: u32 = 24;
 /// Minimum spacing between authored control points, in
 /// milliseconds. Below this the LRA can't render the steps as
 /// distinct, and feedbackd's chunking math (200 ms overlap, 10
 /// segments per chunk) starts to wobble. The Points spinner's
 /// upper bound is recomputed on every Duration change to enforce
 /// it: `max_points = min(POINTS_MAX, floor(D_secs * 10))`.
-pub const EDITOR_MIN_POINT_SPACING_MS: u32 = 100;
+pub(crate) const EDITOR_MIN_POINT_SPACING_MS: u32 = 100;
 /// Vertical-axis snap on the chart. Matches the runtime sampler's
 /// 10% amplitude quantisation, so what the user authors equals
 /// what feedbackd renders. Finer steps would be invisible to the

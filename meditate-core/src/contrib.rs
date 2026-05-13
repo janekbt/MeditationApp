@@ -15,9 +15,9 @@ use crate::date_math::days_since_week_start;
 use crate::format::minutes_to_level;
 
 /// The grid's column count — 12 prior weeks plus the current week.
-pub const CONTRIB_COLS: usize = 13;
+pub(crate) const CONTRIB_COLS: usize = 13;
 /// The grid's row count — one row per weekday.
-pub const CONTRIB_ROWS: usize = 7;
+pub(crate) const CONTRIB_ROWS: usize = 7;
 
 /// One cell of the contrib heatmap. The shell maps each variant /
 /// field to its native rendering: future days dim, past/today days

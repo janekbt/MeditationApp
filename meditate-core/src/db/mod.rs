@@ -51,7 +51,7 @@ pub use session_in_progress::{FinalizedSession, SessionInProgress};
 pub use sessions::{Session, SessionFilter, SessionMode};
 pub use vibration_patterns::{ChartKind, VibrationPattern};
 pub use error::{target_id_is_well_formed_for, DbError, Result};
-pub use schema::{CACHE_SCHEMA_VERSION, CACHE_SCHEMA_VERSION_KEY, SCHEMA_VERSION};
+pub(crate) use schema::{CACHE_SCHEMA_VERSION, CACHE_SCHEMA_VERSION_KEY, SCHEMA_VERSION};
 use error::{conflict_suffixed_name, is_unique_constraint_error, map_unique_err};
 use schema::SCHEMA;
 

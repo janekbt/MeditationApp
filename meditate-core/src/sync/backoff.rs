@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 /// Retry-After header. 30 s is small enough that a transient burst
 /// recovers within a normal sync attempt, large enough that we stop
 /// hammering a server that's actively asking us to back off.
-pub const MAX_BACKOFF_SECS: u64 = 30;
+pub(crate) const MAX_BACKOFF_SECS: u64 = 30;
 
 /// Per-push backoff state. Owned by the retry loop in
 /// `put_with_rate_limit_retry`; one fresh instance per push attempt.

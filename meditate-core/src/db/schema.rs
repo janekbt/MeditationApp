@@ -5,7 +5,7 @@
 /// `PRAGMA user_version` exceeds this constant is rejected at open
 /// time to prevent a downgrade from silently corrupting forward-only
 /// data.
-pub const SCHEMA_VERSION: u32 = 1;
+pub(crate) const SCHEMA_VERSION: u32 = 1;
 
 /// Cache materialization version. Bumped when `apply_event_inner`
 /// learns a new event kind it previously recorded-but-skipped, or
@@ -15,10 +15,10 @@ pub const SCHEMA_VERSION: u32 = 1;
 /// land in the cache. Stored in `sync_state` (local-only) rather
 /// than `settings` (event-sourced) so peers don't see each other's
 /// cache progress as something to sync.
-pub const CACHE_SCHEMA_VERSION: u32 = 1;
+pub(crate) const CACHE_SCHEMA_VERSION: u32 = 1;
 
 /// `sync_state` key holding the device-local cache schema version.
-pub const CACHE_SCHEMA_VERSION_KEY: &str = "cache_schema_version";
+pub(crate) const CACHE_SCHEMA_VERSION_KEY: &str = "cache_schema_version";
 
 pub(super) const SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS labels (
