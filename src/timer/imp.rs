@@ -4063,7 +4063,7 @@ use meditate_core::time::unix_now;
 // ── Breathing (Box Breath) setup wiring ───────────────────────────────────────
 
 // Per-phase + cycle invariants live in meditate_core::breath.
-use meditate_core::breath::{clamp_session_secs, MIN_CYCLE_SECS, PHASE_MAX_SECS};
+use meditate_core::breath::{clamp_session_secs, CYCLE_MIN_SECS, PHASE_MAX_SECS};
 
 impl TimerView {
     fn build_breathing_setup(&self) {
@@ -4203,7 +4203,7 @@ impl TimerView {
             return;
         }
         *slot = new_val;
-        if p.cycle().as_secs() < MIN_CYCLE_SECS as u64 {
+        if p.cycle().as_secs() < CYCLE_MIN_SECS as u64 {
             // Defence in depth; shouldn't fire given the per-slot minimums
             // above enforce at least inhale=1 + exhale=1.
             return;

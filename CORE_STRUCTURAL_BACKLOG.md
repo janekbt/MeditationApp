@@ -354,13 +354,6 @@ rationale.
   4-arm match on `Phase`.
 - Pick one (method-on-Phase is the more idiomatic choice).
 
-### `breath.rs` constants use three prefix conventions in one module
-- `PHASE_MAX_SECS` (no prefix), `MIN_CYCLE_SECS` (`MIN_` prefix),
-  `SESSION_MIN_SECS` / `SESSION_MAX_SECS` (`SESSION_` prefix).
-- Standardise to suffix-ordering matching siblings:
-  `CYCLE_MIN_SECS`, `PHASE_MAX_SECS`, `SESSION_MIN_SECS`,
-  `SESSION_MAX_SECS`.
-
 ### `preset_config.rs:400-405, 430-435` — covered above in Tier 2.
 
 ### `Sync::new` test boilerplate — covered above in Tier 2.

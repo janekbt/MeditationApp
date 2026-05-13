@@ -69,7 +69,7 @@ pub const PHASE_MAX_SECS: u32 = 20;
 /// Minimum legal cycle length. Below this, `phase_at` panics on a
 /// zero-length cycle — defence in depth against a 0-0-0-0 pattern
 /// reaching the running view.
-pub const MIN_CYCLE_SECS: u32 = 1;
+pub const CYCLE_MIN_SECS: u32 = 1;
 
 /// Lower bound on a Box-Breath session duration, in seconds.
 /// Anything less and the cycle-aligned rounding produces an
