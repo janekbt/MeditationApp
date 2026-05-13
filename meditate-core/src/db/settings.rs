@@ -4,6 +4,7 @@
 
 use rusqlite::{params, OptionalExtension};
 
+use super::events::EventKind;
 use super::{Database, DbError, Result};
 
 impl Database {
@@ -36,7 +37,7 @@ impl Database {
             "key": key,
             "value": value,
         }).to_string();
-        self.emit_event("setting_changed", key, payload)?;
+        self.emit_event(EventKind::SettingChanged, key, payload)?;
         tx.commit()?;
         Ok(())
     }

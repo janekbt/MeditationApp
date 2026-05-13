@@ -4,6 +4,7 @@
 
 use rusqlite::{params, OptionalExtension};
 
+use super::events::EventKind;
 use super::{
     conflict_suffixed_name, is_unique_constraint_error, mint_uuid, Database, DbError,
     Result, SessionMode,
@@ -100,7 +101,7 @@ impl Database {
                     "created_iso": now_iso,
                     "updated_iso": now_iso,
                 }).to_string();
-                self.emit_event("preset_insert", uuid_str, payload)?;
+                self.emit_event(EventKind::PresetInsert, uuid_str, payload)?;
                 tx.commit()?;
                 Ok(rowid)
             }
@@ -283,7 +284,7 @@ impl Database {
             "created_iso": row.created_iso,
             "updated_iso": now_iso,
         }).to_string();
-        self.emit_event("preset_update", uuid_str, payload)?;
+        self.emit_event(EventKind::PresetUpdate, uuid_str, payload)?;
         tx.commit()?;
         Ok(())
     }
@@ -309,7 +310,7 @@ impl Database {
             "created_iso": row.created_iso,
             "updated_iso": now_iso,
         }).to_string();
-        self.emit_event("preset_update", uuid_str, payload)?;
+        self.emit_event(EventKind::PresetUpdate, uuid_str, payload)?;
         tx.commit()?;
         Ok(())
     }
@@ -335,7 +336,7 @@ impl Database {
             "created_iso": row.created_iso,
             "updated_iso": now_iso,
         }).to_string();
-        self.emit_event("preset_update", uuid_str, payload)?;
+        self.emit_event(EventKind::PresetUpdate, uuid_str, payload)?;
         tx.commit()?;
         Ok(())
     }
@@ -356,7 +357,7 @@ impl Database {
             params![uuid_str],
         )?;
         let payload = serde_json::json!({ "uuid": uuid_str }).to_string();
-        self.emit_event("preset_delete", uuid_str, payload)?;
+        self.emit_event(EventKind::PresetDelete, uuid_str, payload)?;
         tx.commit()?;
         Ok(())
     }

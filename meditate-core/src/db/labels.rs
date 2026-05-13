@@ -3,6 +3,7 @@
 
 use rusqlite::{params, OptionalExtension};
 
+use super::events::EventKind;
 use super::{
     conflict_suffixed_name, is_unique_constraint_error, Database, DbError, Result,
 };
@@ -56,7 +57,7 @@ impl Database {
         let Some(uuid) = row_uuid else { return Ok(()); };
         self.conn.execute("DELETE FROM labels WHERE id = ?1", params![id])?;
         let payload = serde_json::json!({ "uuid": uuid }).to_string();
-        self.emit_event("label_delete", &uuid, payload)?;
+        self.emit_event(EventKind::LabelDelete, &uuid, payload)?;
         tx.commit()?;
         Ok(())
     }
@@ -85,7 +86,7 @@ impl Database {
                     "uuid": label_uuid,
                     "name": name,
                 }).to_string();
-                self.emit_event("label_rename", &label_uuid, payload)?;
+                self.emit_event(EventKind::LabelRename, &label_uuid, payload)?;
                 tx.commit()?;
                 Ok(())
             }
@@ -133,7 +134,7 @@ impl Database {
                     "uuid": uuid_str,
                     "name": name,
                 }).to_string();
-                self.emit_event("label_insert", uuid_str, payload)?;
+                self.emit_event(EventKind::LabelInsert, uuid_str, payload)?;
                 tx.commit()?;
                 Ok(rowid)
             }

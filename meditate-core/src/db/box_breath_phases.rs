@@ -6,6 +6,7 @@
 
 use rusqlite::{params, OptionalExtension};
 
+use super::events::EventKind;
 use super::{Database, DbError, Result, SignalMode};
 
 /// Box Breath. Identified by `phase` (PK), with the same
@@ -157,7 +158,7 @@ impl Database {
             "sound_uuid": sound_uuid,
             "pattern_uuid": pattern_uuid,
         }).to_string();
-        self.emit_event("box_breath_phase_update", phase.as_db_str(), payload)?;
+        self.emit_event(EventKind::BoxBreathPhaseUpdate, phase.as_db_str(), payload)?;
         tx.commit()?;
         Ok(())
     }

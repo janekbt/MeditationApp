@@ -204,19 +204,6 @@ rationale.
 
 ## Tier 1 — Second-pass additions
 
-### Typed `EventKind` enum for sync emit + dispatch
-- `meditate-core/src/db.rs` has 29 bare string literals at
-  `emit_event(..., "session_insert", ...)` sites + a 9-arm `match`
-  in `apply_event_inner` reading them back. A typo on either side
-  is a silent sync-data-loss bug.
-- Add `pub(crate) enum EventKind { SessionInsert, SessionUpdate,
-  SessionDelete, LabelInsert, LabelRename, LabelDelete, ... }` in
-  `db/sync.rs` (the same `as_db_str` / `from_db_str` convention
-  every other db-tier enum uses).
-- `emit_event` takes `EventKind`; the dispatch becomes an
-  exhaustive match. Compile-time guarantee that emit + apply agree.
-- Highest-leverage single new item in the second pass.
-
 ### `existing_rowid_by_uuid(table, uuid)` helper
 - Idempotent-insert prelude (`SELECT id FROM <t> WHERE uuid = ?1`)
   repeats verbatim 5 times: `insert_label_with_uuid:1884-1890`,
@@ -926,8 +913,8 @@ the code alone.
   `recompute_*` writer, `wipe_local_event_log` DELETE (per
   Tier-0 bug), seed UUIDs in `seeds.rs`, payload struct +
   `to_event_payload` (per Tier-3 backlog item).
-- Tribal knowledge today; Tier-1 `EventKind` enum helps but
-  doesn't replace the guide.
+- Tribal knowledge today; the `EventKind` enum gives compile-time
+  coverage of the emit/apply axes but doesn't replace the guide.
 - Fill: an `ENTITIES.md` walkthrough or a `//!`-block at the top
   of `db/sync.rs` after the Tier-1 split.
 
@@ -1018,16 +1005,6 @@ avoid silently losing items in a rewrite.
 - Fix: convert each query to `prepare_cached`, bump
   `set_prepared_statement_cache_capacity` to ~32 to fit them all
   alongside the existing cached statements.
-
-### Performance: `replay_events` recomputes same target N times in batch
-- `meditate-core/src/db.rs:1167-1180`. Each event triggers a full
-  `recompute_X(target_id)`. A session edited 5 times in a batch
-  recomputes 5×. With 30k events across ~10k targets, 2-3×
-  duplication factor on the wipe-and-pull recovery path.
-- Fix: in the batch loop, collect a `HashSet<(EntityKind,
-  target_id)>` of touched targets, then `recompute_X` once per
-  unique target after appends complete. Pairs naturally with
-  the existing Tier-1 `EventKind` enum item.
 
 ### Performance: hot stats queries use `prepare` not `prepare_cached`
 - `meditate-core/src/db.rs:3900` (`daily_totals_filtered`) and

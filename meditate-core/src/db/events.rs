@@ -11,6 +11,151 @@ use super::{
     CACHE_SCHEMA_VERSION_KEY,
 };
 
+/// Typed variant of `Event.kind`. Replaces the bare string literals
+/// that emit_event / apply_event_inner previously passed — a typo
+/// on either side is now a compile error rather than a silent sync
+/// data-loss bug.
+///
+/// `as_db_str` produces the canonical wire string stored in
+/// `events.kind`; `from_db_str` parses one back. Unknown strings
+/// (e.g. an event kind a future build understands but this one
+/// doesn't) return `None` and propagate to apply_event_inner's
+/// forward-compat path: record the event, skip dispatch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EventKind {
+    SessionInsert,
+    SessionUpdate,
+    SessionDelete,
+    LabelInsert,
+    LabelRename,
+    LabelDelete,
+    IntervalBellInsert,
+    IntervalBellUpdate,
+    IntervalBellDelete,
+    BellSoundInsert,
+    BellSoundUpdate,
+    BellSoundDelete,
+    PresetInsert,
+    PresetUpdate,
+    PresetDelete,
+    GuidedFileInsert,
+    GuidedFileUpdate,
+    GuidedFileDelete,
+    VibrationPatternInsert,
+    VibrationPatternUpdate,
+    VibrationPatternDelete,
+    BoxBreathPhaseUpdate,
+    SettingChanged,
+}
+
+impl EventKind {
+    pub(crate) fn as_db_str(self) -> &'static str {
+        match self {
+            EventKind::SessionInsert => "session_insert",
+            EventKind::SessionUpdate => "session_update",
+            EventKind::SessionDelete => "session_delete",
+            EventKind::LabelInsert => "label_insert",
+            EventKind::LabelRename => "label_rename",
+            EventKind::LabelDelete => "label_delete",
+            EventKind::IntervalBellInsert => "interval_bell_insert",
+            EventKind::IntervalBellUpdate => "interval_bell_update",
+            EventKind::IntervalBellDelete => "interval_bell_delete",
+            EventKind::BellSoundInsert => "bell_sound_insert",
+            EventKind::BellSoundUpdate => "bell_sound_update",
+            EventKind::BellSoundDelete => "bell_sound_delete",
+            EventKind::PresetInsert => "preset_insert",
+            EventKind::PresetUpdate => "preset_update",
+            EventKind::PresetDelete => "preset_delete",
+            EventKind::GuidedFileInsert => "guided_file_insert",
+            EventKind::GuidedFileUpdate => "guided_file_update",
+            EventKind::GuidedFileDelete => "guided_file_delete",
+            EventKind::VibrationPatternInsert => "vibration_pattern_insert",
+            EventKind::VibrationPatternUpdate => "vibration_pattern_update",
+            EventKind::VibrationPatternDelete => "vibration_pattern_delete",
+            EventKind::BoxBreathPhaseUpdate => "box_breath_phase_update",
+            EventKind::SettingChanged => "setting_changed",
+        }
+    }
+
+    pub(crate) fn from_db_str(s: &str) -> Option<Self> {
+        match s {
+            "session_insert" => Some(EventKind::SessionInsert),
+            "session_update" => Some(EventKind::SessionUpdate),
+            "session_delete" => Some(EventKind::SessionDelete),
+            "label_insert" => Some(EventKind::LabelInsert),
+            "label_rename" => Some(EventKind::LabelRename),
+            "label_delete" => Some(EventKind::LabelDelete),
+            "interval_bell_insert" => Some(EventKind::IntervalBellInsert),
+            "interval_bell_update" => Some(EventKind::IntervalBellUpdate),
+            "interval_bell_delete" => Some(EventKind::IntervalBellDelete),
+            "bell_sound_insert" => Some(EventKind::BellSoundInsert),
+            "bell_sound_update" => Some(EventKind::BellSoundUpdate),
+            "bell_sound_delete" => Some(EventKind::BellSoundDelete),
+            "preset_insert" => Some(EventKind::PresetInsert),
+            "preset_update" => Some(EventKind::PresetUpdate),
+            "preset_delete" => Some(EventKind::PresetDelete),
+            "guided_file_insert" => Some(EventKind::GuidedFileInsert),
+            "guided_file_update" => Some(EventKind::GuidedFileUpdate),
+            "guided_file_delete" => Some(EventKind::GuidedFileDelete),
+            "vibration_pattern_insert" => Some(EventKind::VibrationPatternInsert),
+            "vibration_pattern_update" => Some(EventKind::VibrationPatternUpdate),
+            "vibration_pattern_delete" => Some(EventKind::VibrationPatternDelete),
+            "box_breath_phase_update" => Some(EventKind::BoxBreathPhaseUpdate),
+            "setting_changed" => Some(EventKind::SettingChanged),
+            _ => None,
+        }
+    }
+
+    /// Which materialised cache table this event kind mutates. Used by
+    /// `replay_events` to dedup recomputes — a session edited five
+    /// times in the same batch recomputes once — and to order Session
+    /// recomputes after Label recomputes (Session's dereferences
+    /// labels.uuid → labels.id during materialise).
+    pub(crate) fn entity(self) -> EntityKind {
+        match self {
+            EventKind::SessionInsert
+            | EventKind::SessionUpdate
+            | EventKind::SessionDelete => EntityKind::Session,
+            EventKind::LabelInsert
+            | EventKind::LabelRename
+            | EventKind::LabelDelete => EntityKind::Label,
+            EventKind::IntervalBellInsert
+            | EventKind::IntervalBellUpdate
+            | EventKind::IntervalBellDelete => EntityKind::IntervalBell,
+            EventKind::BellSoundInsert
+            | EventKind::BellSoundUpdate
+            | EventKind::BellSoundDelete => EntityKind::BellSound,
+            EventKind::PresetInsert
+            | EventKind::PresetUpdate
+            | EventKind::PresetDelete => EntityKind::Preset,
+            EventKind::GuidedFileInsert
+            | EventKind::GuidedFileUpdate
+            | EventKind::GuidedFileDelete => EntityKind::GuidedFile,
+            EventKind::VibrationPatternInsert
+            | EventKind::VibrationPatternUpdate
+            | EventKind::VibrationPatternDelete => EntityKind::VibrationPattern,
+            EventKind::BoxBreathPhaseUpdate => EntityKind::BoxBreathPhase,
+            EventKind::SettingChanged => EntityKind::Setting,
+        }
+    }
+}
+
+/// Which materialised cache table an event mutates. Sibling of
+/// `EventKind` collapsed across the insert/update/delete dimension —
+/// the recompute is the same regardless of which CRUD variant fired.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum EntityKind {
+    Session,
+    Label,
+    IntervalBell,
+    BellSound,
+    Preset,
+    GuidedFile,
+    VibrationPattern,
+    BoxBreathPhase,
+    Setting,
+}
+
 /// One entry in the append-only sync event log. A self-contained
 /// description of a state-changing operation — sessions inserted /
 /// updated / deleted, labels renamed, settings changed. Every field
@@ -268,7 +413,7 @@ impl Database {
     /// replay queries don't need to parse the JSON payload.
     pub(super) fn emit_event(
         &self,
-        kind: &str,
+        kind: EventKind,
         target_id: &str,
         payload: String,
     ) -> Result<()> {
@@ -278,7 +423,7 @@ impl Database {
             event_uuid: uuid::Uuid::new_v4().to_string(),
             lamport_ts,
             device_id,
-            kind: kind.to_string(),
+            kind: kind.as_db_str().to_string(),
             target_id: target_id.to_string(),
             payload,
         };
@@ -311,6 +456,24 @@ impl Database {
     /// transaction — opening a SAVEPOINT per event would be correct but
     /// pointlessly slow.
     fn apply_event_inner(&self, event: &Event) -> Result<()> {
+        if let Some(entity) = self.apply_event_record_only(event)? {
+            self.recompute_for(entity, &event.target_id)?;
+        }
+        Ok(())
+    }
+
+    /// Record + validate the event without firing its recompute_*.
+    /// Returns `Some(entity)` if the caller should follow up with a
+    /// `recompute_for(entity, target_id)`. Returns `None` when the
+    /// event is rejected (invalid target_id) or unknown (kind a
+    /// future build understands but this one doesn't) — both are
+    /// soft-fail / record-but-skip-dispatch paths.
+    ///
+    /// Split out from `apply_event_inner` so `replay_events` can
+    /// record N events first, then dedup their recomputes per
+    /// `(EntityKind, target_id)` — a session edited five times in
+    /// the same batch recomputes once.
+    fn apply_event_record_only(&self, event: &Event) -> Result<Option<EntityKind>> {
         // Record first — the recompute query reads from events, so the
         // freshly-arrived event needs to be visible.
         let (_, was_new) = self.append_event_returning_newness(event)?;
@@ -340,46 +503,30 @@ impl Database {
                 "apply_event_inner: rejected event kind={} target_id={:?} (invalid)",
                 event.kind, event.target_id,
             ));
-            return Ok(());
+            return Ok(None);
         }
 
-        match event.kind.as_str() {
-            "session_insert" | "session_update" | "session_delete" => {
-                self.recompute_session(&event.target_id)?;
-            }
-            "label_insert" | "label_rename" | "label_delete" => {
-                self.recompute_label(&event.target_id)?;
-            }
-            "interval_bell_insert" | "interval_bell_update" | "interval_bell_delete" => {
-                self.recompute_interval_bell(&event.target_id)?;
-            }
-            "bell_sound_insert" | "bell_sound_update" | "bell_sound_delete" => {
-                self.recompute_bell_sound(&event.target_id)?;
-            }
-            "preset_insert" | "preset_update" | "preset_delete" => {
-                self.recompute_preset(&event.target_id)?;
-            }
-            "guided_file_insert" | "guided_file_update" | "guided_file_delete" => {
-                self.recompute_guided_file(&event.target_id)?;
-            }
-            "vibration_pattern_insert"
-            | "vibration_pattern_update"
-            | "vibration_pattern_delete" => {
-                self.recompute_vibration_pattern(&event.target_id)?;
-            }
-            "box_breath_phase_update" => {
-                self.recompute_box_breath_phase(&event.target_id)?;
-            }
-            "setting_changed" => {
-                self.recompute_setting(&event.target_id)?;
-            }
-            _ => {
-                // Unknown kind — record for forwards-compat (a later
-                // build may know how to apply it) but don't mutate the
-                // cache from a payload shape we don't understand.
-            }
+        // Unknown kind → record but skip dispatch (forward-compat).
+        Ok(EventKind::from_db_str(&event.kind).map(|k| k.entity()))
+    }
+
+    /// Materialise the named entity's cache row from the events table.
+    /// Each `recompute_X` is a pure function of `events.*` filtered
+    /// by `target_id`, so it can run at any point after the events
+    /// are recorded — `replay_events` batches them at the end of
+    /// the apply loop.
+    fn recompute_for(&self, entity: EntityKind, target_id: &str) -> Result<()> {
+        match entity {
+            EntityKind::Session => self.recompute_session(target_id),
+            EntityKind::Label => self.recompute_label(target_id),
+            EntityKind::IntervalBell => self.recompute_interval_bell(target_id),
+            EntityKind::BellSound => self.recompute_bell_sound(target_id),
+            EntityKind::Preset => self.recompute_preset(target_id),
+            EntityKind::GuidedFile => self.recompute_guided_file(target_id),
+            EntityKind::VibrationPattern => self.recompute_vibration_pattern(target_id),
+            EntityKind::BoxBreathPhase => self.recompute_box_breath_phase(target_id),
+            EntityKind::Setting => self.recompute_setting(target_id),
         }
-        Ok(())
     }
 
     /// Apply a batch of events to the materialized cache. Events are
@@ -389,6 +536,15 @@ impl Database {
     /// batch runs inside one transaction so a partial failure rolls back.
     /// Idempotent on `event_uuid`: repeat calls with the same input are
     /// no-ops on the cache.
+    ///
+    /// Recompute dedup: each `recompute_X(target_id)` is a pure function
+    /// of the events table contents, so calling it once at the end of
+    /// the batch produces the same row as calling it after every event
+    /// for that target. We record every event first, collect the set
+    /// of `(EntityKind, target_id)` pairs touched, then recompute each
+    /// pair once. A session edited five times in one batch recomputes
+    /// once; on the wipe-and-pull recovery path (~30k events across
+    /// ~10k targets) this drops the 2–3× duplicate-recompute factor.
     pub fn replay_events(&self, events: &[Event]) -> Result<()> {
         if events.is_empty() { return Ok(()); }
         let tx = self.conn.unchecked_transaction()?;
@@ -398,8 +554,29 @@ impl Database {
                 .then_with(|| a.device_id.cmp(&b.device_id))
                 .then_with(|| a.event_uuid.cmp(&b.event_uuid))
         });
+        let mut touched: std::collections::HashSet<(EntityKind, String)> =
+            std::collections::HashSet::new();
         for event in sorted {
-            self.apply_event_inner(event)?;
+            if let Some(entity) = self.apply_event_record_only(event)? {
+                touched.insert((entity, event.target_id.clone()));
+            }
+        }
+        // Two-pass recompute. `recompute_session` dereferences
+        // labels.uuid → labels.id during materialise, so labels must
+        // be present in the cache by the time it runs. Every other
+        // `recompute_X` reads only from `events` and is order-free.
+        // Splitting into "non-Session first, Session second" honours
+        // the one cross-entity dependency without paying for a
+        // topological sort.
+        for (entity, target_id) in &touched {
+            if *entity != EntityKind::Session {
+                self.recompute_for(*entity, target_id)?;
+            }
+        }
+        for (entity, target_id) in &touched {
+            if *entity == EntityKind::Session {
+                self.recompute_for(*entity, target_id)?;
+            }
         }
         tx.commit()?;
         Ok(())
@@ -413,6 +590,84 @@ mod tests {
         test_helpers::*, BellSoundCategory, BoxBreathPhaseId, ChartKind,
         IntervalBellKind, Session, SessionMode, SignalMode,
     };
+
+    // ── EventKind wire-format round trip ─────────────────────────────────────
+    //
+    // The typed EventKind enum is the in-process API; the wire format
+    // is still the string stored in `events.kind`. as_db_str/from_db_str
+    // must be inverses for every variant — drift between them is a
+    // silent sync-data-loss bug exactly the EventKind enum was added
+    // to prevent.
+
+    #[test]
+    fn event_kind_round_trips_through_db_strings() {
+        let all = [
+            EventKind::SessionInsert,
+            EventKind::SessionUpdate,
+            EventKind::SessionDelete,
+            EventKind::LabelInsert,
+            EventKind::LabelRename,
+            EventKind::LabelDelete,
+            EventKind::IntervalBellInsert,
+            EventKind::IntervalBellUpdate,
+            EventKind::IntervalBellDelete,
+            EventKind::BellSoundInsert,
+            EventKind::BellSoundUpdate,
+            EventKind::BellSoundDelete,
+            EventKind::PresetInsert,
+            EventKind::PresetUpdate,
+            EventKind::PresetDelete,
+            EventKind::GuidedFileInsert,
+            EventKind::GuidedFileUpdate,
+            EventKind::GuidedFileDelete,
+            EventKind::VibrationPatternInsert,
+            EventKind::VibrationPatternUpdate,
+            EventKind::VibrationPatternDelete,
+            EventKind::BoxBreathPhaseUpdate,
+            EventKind::SettingChanged,
+        ];
+        for kind in all {
+            assert_eq!(
+                EventKind::from_db_str(kind.as_db_str()),
+                Some(kind),
+                "round trip failed for {kind:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn event_kind_from_db_str_returns_none_on_unknown_string() {
+        // Forward-compat: an event kind a future build understands
+        // but this one doesn't must parse as None, so apply_event_inner
+        // records the row and skips dispatch instead of mis-routing it.
+        assert_eq!(EventKind::from_db_str("session_archive"), None);
+        assert_eq!(EventKind::from_db_str(""), None);
+        assert_eq!(EventKind::from_db_str("SESSION_INSERT"), None);
+    }
+
+    #[test]
+    fn apply_event_with_unknown_kind_records_but_skips_dispatch() {
+        // The forward-compat invariant: a kind this build doesn't
+        // recognise still lands in the events table (so a later build
+        // that knows it can pick it up on cache-schema replay) but
+        // doesn't mutate any cache row.
+        let db = Database::open_in_memory().unwrap();
+        let event = Event {
+            event_uuid: "00000000-0000-0000-0000-000000000099".into(),
+            lamport_ts: 1,
+            device_id: DEVICE_A.into(),
+            kind: "session_archive".into(),
+            target_id: SESSION_X.into(),
+            payload: "{}".into(),
+        };
+        db.apply_event(&event).unwrap();
+        // Row landed in events table.
+        let pending = db.pending_events().unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].1.kind, "session_archive");
+        // sessions cache stayed empty.
+        assert!(db.list_sessions().unwrap().is_empty());
+    }
 
     // ── Event log: append + pending + mark_synced (A2.3) ─────────────────────
     //
@@ -1226,5 +1481,36 @@ mod tests {
         assert_eq!(s.label_id, None,
             "session keeps its data but loses the label link when the label tombstones");
         assert_eq!(db.get_setting("daily_goal", "x").unwrap(), "20");
+    }
+
+    #[test]
+    fn replay_events_session_resolves_label_id_from_same_batch() {
+        // Regression test for the recompute-dedup two-pass ordering:
+        // a session_insert + a label_insert (same batch, no delete)
+        // must end up with the session row's label_id pointing at
+        // the label's local rowid. Because `recompute_session`
+        // dereferences labels.uuid → labels.id during materialise,
+        // labels must be materialised before sessions — the dedup
+        // pass explicitly runs non-Session recomputes before Session
+        // recomputes so this holds regardless of event order.
+        let db = Database::open_in_memory().unwrap();
+        let events = vec![
+            // Session at higher lamport (causal-after-label), but
+            // listed FIRST in the input so the sorter has work to do.
+            synth_session_insert(
+                SESSION_X, 10, DEVICE_A,
+                "2026-05-13T10:00:00", 600,
+                Some(LABEL_X), None, SessionMode::Timer,
+            ),
+            synth_label_insert(LABEL_X, 5, DEVICE_A, "Morning"),
+        ];
+        db.replay_events(&events).unwrap();
+
+        let labels = db.list_labels().unwrap();
+        assert_eq!(labels.len(), 1);
+        let label = &labels[0];
+        let s = &db.list_sessions().unwrap()[0].1;
+        assert_eq!(s.label_id, Some(label.id),
+            "session.label_id must resolve to the freshly-inserted label's rowid");
     }
 }

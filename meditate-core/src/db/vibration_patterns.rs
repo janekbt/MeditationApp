@@ -5,6 +5,7 @@
 
 use rusqlite::{params, OptionalExtension};
 
+use super::events::EventKind;
 use super::{
     conflict_suffixed_name, is_unique_constraint_error, Database, DbError, Result,
 };
@@ -121,7 +122,7 @@ impl Database {
             "created_iso": now_iso,
             "updated_iso": now_iso,
         }).to_string();
-        self.emit_event("vibration_pattern_insert", uuid_str, payload)?;
+        self.emit_event(EventKind::VibrationPatternInsert, uuid_str, payload)?;
         tx.commit()?;
         Ok(rowid)
     }
@@ -267,7 +268,7 @@ impl Database {
             "created_iso": created_iso,
             "updated_iso": now_iso,
         }).to_string();
-        self.emit_event("vibration_pattern_update", uuid_str, payload)?;
+        self.emit_event(EventKind::VibrationPatternUpdate, uuid_str, payload)?;
         tx.commit()?;
         Ok(())
     }
@@ -307,7 +308,7 @@ impl Database {
             params![uuid_str],
         )?;
         let payload = serde_json::json!({ "uuid": uuid_str }).to_string();
-        self.emit_event("vibration_pattern_delete", uuid_str, payload)?;
+        self.emit_event(EventKind::VibrationPatternDelete, uuid_str, payload)?;
         tx.commit()?;
         Ok(())
     }
