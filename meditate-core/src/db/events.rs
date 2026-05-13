@@ -298,7 +298,7 @@ impl Database {
     /// drains this list in order; mark each entry with `mark_events_synced`
     /// once the WebDAV PUT succeeds.
     pub fn pending_events(&self) -> Result<Vec<(i64, Event)>> {
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare_cached(
             "SELECT id, event_uuid, lamport_ts, device_id, kind, target_id, payload
              FROM events
              WHERE synced = 0
@@ -327,7 +327,7 @@ impl Database {
     /// listing — only events we don't have get GETted. Cheap up to
     /// the order of (event count) — fine for personal use sizes.
     pub(crate) fn known_event_uuids(&self) -> Result<std::collections::HashSet<String>> {
-        let mut stmt = self.conn.prepare("SELECT event_uuid FROM events")?;
+        let mut stmt = self.conn.prepare_cached("SELECT event_uuid FROM events")?;
         let ids = stmt
             .query_map([], |row| row.get::<_, String>(0))?
             .collect::<rusqlite::Result<std::collections::HashSet<_>>>()?;

@@ -646,18 +646,6 @@ avoid silently losing items in a rewrite.
 ## Tier 3 — Sixth-pass additions
 
 
-### Performance: PRAGMA `cache_size` and `mmap_size` at SQLite defaults
-- `meditate-core/src/db.rs:709-718`. Default `cache_size = -2000`
-  (~2 MB). On Librem 5 with 3 GB RAM, bumping to `-16000` (~16
-  MB) lets the events index stay resident.
-- Fix: `PRAGMA cache_size = -16000` in `Database::open`. Defer
-  `mmap_size` until benched.
-
-### Performance: `pending_events` / `known_event_uuids` use `prepare` (uncached)
-- `meditate-core/src/db.rs:872, 901`. Both run once per
-  push/pull cycle. Easy `prepare_cached` flip; share their
-  cache slot with no one else.
-
 ### i18n: number formatting in pre-rendered strings
 - `format::format_count` does `n.to_string()` then
   `.replace("{n}", …)`. Loses locale digit grouping (Polish

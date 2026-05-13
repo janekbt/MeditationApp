@@ -229,6 +229,12 @@ impl Database {
         // OFF state. A future refactor that reorders these will
         // silently disable FK checks.
         conn.execute_batch("PRAGMA foreign_keys=ON;")?;
+        // 16 MB page cache (default is ~2 MB). On the Librem 5 with
+        // 3 GB RAM this is negligible; in exchange the events index
+        // stays resident across a sync pull's storm of `INSERT OR
+        // IGNORE` + `recompute_*` round-trips. Negative values are
+        // SQLite's "size in KiB" convention.
+        conn.execute_batch("PRAGMA cache_size=-16000;")?;
         conn.execute_batch(&schema())?;
         // Stamp the current version. `execute_batch` is required because
         // PRAGMA values aren't bindable via params.
