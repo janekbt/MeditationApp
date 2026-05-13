@@ -11,20 +11,6 @@ rationale.
 
 ## Tier 1 — High-impact, mostly mechanical
 
-### Visibility fix on `db.rs`'s sync surface
-- ~10 `pub fn`s are the WebDAV engine's internal contract but
-  currently callable from any shell code: `apply_event`,
-  `apply_event_inner`, `replay_events`, `append_event*`,
-  `pending_events`, `mark_events_synced`,
-  `flag_all_events_unsynced`, `wipe_local_event_log`,
-  `known_event_uuids`, `known_remote_*`, `record_known_remote_*`,
-  `wipe_known_remote_*`, `device_id`, `lamport_clock`,
-  `bump_lamport_clock`, `observe_remote_lamport`,
-  `get_sync_state`, `set_sync_state`.
-- Downgrade to `pub(crate)`. Re-export the small surface the shell
-  actually needs (`device_id`, maybe `wipe_local_event_log` for
-  the recovery menu) via `crate::sync`.
-
 ### Standardize DB-reader naming
 - Four conventions in use today for "load X with default":
   - `bells::*_from_db` (5 sites)

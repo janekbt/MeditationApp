@@ -250,7 +250,7 @@ impl Database {
     /// `event_uuid` already present is a silent no-op; this makes
     /// delivery at-most-once on the local cache regardless of retries
     /// or peer forwarding.
-    pub fn append_event(&self, event: &Event) -> Result<i64> {
+    pub(crate) fn append_event(&self, event: &Event) -> Result<i64> {
         Ok(self.append_event_returning_newness(event)?.0)
     }
 
@@ -319,7 +319,7 @@ impl Database {
     /// checks. Sync's pull phase uses this to diff against a remote
     /// listing — only events we don't have get GETted. Cheap up to
     /// the order of (event count) — fine for personal use sizes.
-    pub fn known_event_uuids(&self) -> Result<std::collections::HashSet<String>> {
+    pub(crate) fn known_event_uuids(&self) -> Result<std::collections::HashSet<String>> {
         let mut stmt = self.conn.prepare("SELECT event_uuid FROM events")?;
         let ids = stmt
             .query_map([], |row| row.get::<_, String>(0))?
@@ -337,7 +337,7 @@ impl Database {
     /// Scoped to the events table only. The caller is responsible for
     /// also calling `wipe_known_remote_files` (so the dedup tracker
     /// doesn't claim the freshly-emptied remote already has them).
-    pub fn flag_all_events_unsynced(&self) -> Result<()> {
+    pub(crate) fn flag_all_events_unsynced(&self) -> Result<()> {
         self.conn.execute("UPDATE events SET synced = 0", [])?;
         Ok(())
     }
@@ -352,7 +352,7 @@ impl Database {
     /// box_breath_phases re-seeds inline to its 4 default rows —
     /// Box-Breath mode requires those rows to render, and the seed
     /// is gate-less so it's safe to call directly.
-    pub fn wipe_local_event_log(&self) -> Result<()> {
+    pub(crate) fn wipe_local_event_log(&self) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
         tx.execute("DELETE FROM known_remote_files", [])?;
         tx.execute("DELETE FROM known_remote_sounds", [])?;
@@ -449,7 +449,13 @@ impl Database {
     /// - Update + delete on same target → delete wins on tie (≥).
     /// - Insert + delete out of order → tombstone wins if its lamport
     ///   ≥ the mutate's, regardless of arrival sequence.
-    pub fn apply_event(&self, event: &Event) -> Result<()> {
+    ///
+    /// Production replay goes through `apply_event_inner` directly via
+    /// `replay_events`; this single-event wrapper is gated to test
+    /// builds because it has no production callers — tests that need
+    /// the simpler "one event in, one row out" entry point use it.
+    #[cfg(test)]
+    pub(crate) fn apply_event(&self, event: &Event) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
         self.apply_event_inner(event)?;
         tx.commit()?;

@@ -26,7 +26,7 @@ impl Database {
     /// Record a single batch_uuid as ingested. Idempotent (uses
     /// INSERT OR IGNORE) so callers don't have to check membership
     /// first.
-    pub fn record_known_remote_file(&self, file_uuid: &str) -> Result<()> {
+    pub(crate) fn record_known_remote_file(&self, file_uuid: &str) -> Result<()> {
         self.conn.execute(
             "INSERT OR IGNORE INTO known_remote_files (file_uuid) VALUES (?1)",
             params![file_uuid],
@@ -42,7 +42,7 @@ impl Database {
     /// - Push-local-after-wipe: after the user resolves a "remote data
     ///   lost" prompt by re-uploading, we wipe + re-anchor against
     ///   the now-empty remote.
-    pub fn wipe_known_remote_files(&self) -> Result<()> {
+    pub(crate) fn wipe_known_remote_files(&self) -> Result<()> {
         self.conn.execute("DELETE FROM known_remote_files", [])?;
         Ok(())
     }
@@ -51,7 +51,7 @@ impl Database {
     /// B.6 audio-file sync layer. Returns every bell uuid this device
     /// has either pushed or pulled; the orchestrator's push side
     /// skips files in this set and the pull side dittos.
-    pub fn known_remote_sound_uuids(&self) -> Result<std::collections::HashSet<String>> {
+    pub(crate) fn known_remote_sound_uuids(&self) -> Result<std::collections::HashSet<String>> {
         let mut stmt = self.conn.prepare("SELECT bell_uuid FROM known_remote_sounds")?;
         let ids = stmt
             .query_map([], |row| row.get::<_, String>(0))?
@@ -61,7 +61,7 @@ impl Database {
 
     /// INSERT-OR-IGNORE on the known-sound tracker. Idempotent so a
     /// retry after a half-completed PUT can re-call without fuss.
-    pub fn record_known_remote_sound(&self, bell_uuid: &str) -> Result<()> {
+    pub(crate) fn record_known_remote_sound(&self, bell_uuid: &str) -> Result<()> {
         self.conn.execute(
             "INSERT OR IGNORE INTO known_remote_sounds (bell_uuid) VALUES (?1)",
             params![bell_uuid],
@@ -71,7 +71,7 @@ impl Database {
 
     /// Clear the known-sound tracker. Same callers as
     /// wipe_known_remote_files: account swap, push-after-wipe.
-    pub fn wipe_known_remote_sounds(&self) -> Result<()> {
+    pub(crate) fn wipe_known_remote_sounds(&self) -> Result<()> {
         self.conn.execute("DELETE FROM known_remote_sounds", [])?;
         Ok(())
     }

@@ -777,67 +777,6 @@ impl Database {
         self.inner.set_sync_state(key, value).map_err(map_core_err)
     }
 
-    /// All remote file_uuids this device has ingested or pushed.
-    /// Used by the remote-data-lost detection to recognise our own
-    /// previous batches in the remote listing.
-    pub fn known_remote_file_uuids(&self)
-        -> Result<std::collections::HashSet<String>>
-    {
-        self.inner.known_remote_file_uuids().map_err(map_core_err)
-    }
-
-    /// Record a remote batch_uuid as ingested. Idempotent.
-    pub fn record_known_remote_file(&self, file_uuid: &str) -> Result<()> {
-        self.inner.record_known_remote_file(file_uuid).map_err(map_core_err)
-    }
-
-    /// Drop every recorded remote file_uuid. Called on account swap
-    /// (URL or username change) and on the "push local up" recovery
-    /// path after a remote-data-lost prompt.
-    pub fn wipe_known_remote_files(&self) -> Result<()> {
-        self.inner.wipe_known_remote_files().map_err(map_core_err)
-    }
-
-    // ── known_remote_sounds (B.6) ─────────────────────────────────────────────
-    // Same lifecycle shape as known_remote_files but keyed on
-    // bell_sounds.uuid for the audio-file sync layer.
-
-    pub fn known_remote_sound_uuids(&self)
-        -> Result<std::collections::HashSet<String>>
-    {
-        self.inner.known_remote_sound_uuids().map_err(map_core_err)
-    }
-
-    pub fn record_known_remote_sound(&self, bell_uuid: &str) -> Result<()> {
-        self.inner.record_known_remote_sound(bell_uuid).map_err(map_core_err)
-    }
-
-    pub fn wipe_known_remote_sounds(&self) -> Result<()> {
-        self.inner.wipe_known_remote_sounds().map_err(map_core_err)
-    }
-
-    /// Reset every event row's synced flag to 0, putting all of them
-    /// back into pending. Used by the "push local up" recovery path.
-    pub fn flag_all_events_unsynced(&self) -> Result<()> {
-        self.inner.flag_all_events_unsynced().map_err(map_core_err)
-    }
-
-    /// Erase every user-content row plus the dedup tracker — events,
-    /// sessions, labels, known_remote_files. Settings, sync_state,
-    /// and device identity survive. Used by the "wipe local to match
-    /// remote" recovery path.
-    pub fn wipe_local_event_log(&self) -> Result<()> {
-        self.inner.wipe_local_event_log().map_err(map_core_err)
-    }
-
-    /// How many events are currently pending push. Mostly a test-
-    /// observability helper, but useful for any caller that wants to
-    /// know "is there local work to sync?" without listing the full
-    /// pending vector.
-    pub fn pending_events_count(&self) -> Result<usize> {
-        Ok(self.inner.pending_events().map_err(map_core_err)?.len())
-    }
-
     // ── Stats queries ─────────────────────────────────────────────────────────
 
     /// Current streak of consecutive calendar days (ending today or

@@ -46,7 +46,7 @@ impl Database {
     /// Increment the Lamport clock by 1; return the new value (so the
     /// caller can stamp the event they're about to author with it). On
     /// a fresh DB this also seeds the single `device` row.
-    pub fn bump_lamport_clock(&self) -> Result<i64> {
+    pub(crate) fn bump_lamport_clock(&self) -> Result<i64> {
         // Make sure a row exists — sharing the existing seed path with
         // `device_id` keeps the device_id and lamport_clock in the same
         // single row, as the schema requires (device_id is PRIMARY KEY).
@@ -62,7 +62,7 @@ impl Database {
     /// + 1. Returns the new local value. Always strictly increases the
     /// clock, so any event authored after observation sorts after the
     /// remote one we just witnessed.
-    pub fn observe_remote_lamport(&self, remote_ts: i64) -> Result<i64> {
+    pub(crate) fn observe_remote_lamport(&self, remote_ts: i64) -> Result<i64> {
         let _ = self.device_id()?;
         // Single statement, no read-modify-write race: SQL computes
         // max(stored, ?) + 1 inline.
