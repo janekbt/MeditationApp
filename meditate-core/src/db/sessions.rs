@@ -111,6 +111,21 @@ impl Database {
 
     pub fn insert_session(&self, session: &Session) -> Result<i64> {
         let tx = self.conn.unchecked_transaction()?;
+        let (rowid, _uuid) = self.insert_session_tx_less(session)?;
+        tx.commit()?;
+        Ok(rowid)
+    }
+
+    /// Transaction-less core of `insert_session`. Inserts the row,
+    /// emits the `session_insert` event, returns `(rowid,
+    /// session_uuid)`. The caller is responsible for opening +
+    /// committing the surrounding transaction. Split out so
+    /// `finalize_session_in_progress` can atomically insert the
+    /// session AND clear the in-progress row inside one outer
+    /// transaction — without this, the gap between insert.commit
+    /// and the subsequent clear would let a crash double-finalize
+    /// the same in-flight session on the next launch.
+    pub(super) fn insert_session_tx_less(&self, session: &Session) -> Result<(i64, String)> {
         let session_uuid = uuid::Uuid::new_v4().to_string();
         self.conn.execute(
             "INSERT INTO sessions (start_iso, duration_secs, label_id, notes, mode, uuid, guided_file_uuid)
@@ -144,8 +159,7 @@ impl Database {
         }).to_string();
         self.emit_event(EventKind::SessionInsert, &session_uuid, payload)?;
 
-        tx.commit()?;
-        Ok(rowid)
+        Ok((rowid, session_uuid))
     }
 
     /// Insert many sessions inside a single transaction — orders of

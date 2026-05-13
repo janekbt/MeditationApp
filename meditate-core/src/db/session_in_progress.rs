@@ -13,7 +13,18 @@
 
 use rusqlite::{params, OptionalExtension};
 
-use super::{Database, DbError, Result, SessionMode};
+use super::{Database, DbError, Result, Session, SessionMode};
+
+/// What `finalize_session_in_progress` returns when it actually
+/// committed a session. The shell uses `duration_secs` for the
+/// "Saved your previous session of MM min — Undo?" toast title
+/// and `session_uuid` to wire the toast's Undo button (which calls
+/// `delete_session(&session_uuid)`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FinalizedSession {
+    pub session_uuid: String,
+    pub duration_secs: u32,
+}
 
 /// Single-row snapshot of the in-flight meditation. The shell writes
 /// this on session start + on a ~60s tick cadence + on state
@@ -120,6 +131,44 @@ impl Database {
             [],
         )?;
         Ok(())
+    }
+
+    /// Atomic crash-recovery primitive. Reads the in-flight snapshot;
+    /// if present, inserts a `sessions` row from it (emitting one
+    /// `session_insert` event with the captured `accumulated_secs`)
+    /// AND deletes the snapshot — all inside one outer transaction
+    /// so a process kill between insert + clear cannot leave the
+    /// snapshot dangling to be double-finalised on the next launch.
+    ///
+    /// Returns `Some(FinalizedSession)` carrying the new session
+    /// uuid + duration so the shell can render the toast and wire
+    /// its Undo button. `None` on the happy path (no in-flight
+    /// session — the typical clean shutdown).
+    pub fn finalize_session_in_progress(&self) -> Result<Option<FinalizedSession>> {
+        let tx = self.conn.unchecked_transaction()?;
+        let snapshot = self.get_session_in_progress()?;
+        let Some(snapshot) = snapshot else {
+            return Ok(None);
+        };
+        let session = Session {
+            start_iso: snapshot.start_iso,
+            duration_secs: snapshot.accumulated_secs,
+            label_id: snapshot.label_id,
+            notes: None,
+            mode: snapshot.mode,
+            uuid: String::new(),
+            guided_file_uuid: snapshot.guided_file_uuid,
+        };
+        let (_rowid, session_uuid) = self.insert_session_tx_less(&session)?;
+        self.conn.execute(
+            "DELETE FROM session_in_progress WHERE id = 1",
+            [],
+        )?;
+        tx.commit()?;
+        Ok(Some(FinalizedSession {
+            session_uuid,
+            duration_secs: snapshot.accumulated_secs,
+        }))
     }
 }
 
@@ -253,6 +302,150 @@ mod tests {
         db.clear_session_in_progress().unwrap();
         assert!(db.pending_events().unwrap().is_empty(),
             "no event must be emitted across the full lifecycle");
+    }
+
+    // ── finalize_session_in_progress ────────────────────────────────────────
+
+    #[test]
+    fn finalize_on_empty_returns_none_and_emits_no_events() {
+        // The common-launch path: no in-flight session exists, finalize
+        // is a no-op. Must not synthesise a phantom session.
+        let db = Database::open_in_memory().unwrap();
+        let result = db.finalize_session_in_progress().unwrap();
+        assert_eq!(result, None);
+        assert!(db.pending_events().unwrap().is_empty(),
+            "finalize-on-empty must not emit anything");
+    }
+
+    #[test]
+    fn finalize_persists_the_session_and_clears_the_snapshot() {
+        // The recovery happy path: a crash-leftover snapshot becomes
+        // one session row in the cache and one session_insert event
+        // in the log. The in-progress row goes away.
+        let db = Database::open_in_memory().unwrap();
+        db.set_session_in_progress(&SessionInProgress {
+            start_iso: "2026-05-13T09:30:00".into(),
+            accumulated_secs: 1800,
+            mode: SessionMode::Timer,
+            mode_payload: "{}".into(),
+            label_id: None,
+            guided_file_uuid: None,
+        }).unwrap();
+        let pending_before = db.pending_events().unwrap().len();
+
+        let finalized = db.finalize_session_in_progress().unwrap()
+            .expect("finalize returns Some for an in-flight session");
+        assert_eq!(finalized.duration_secs, 1800);
+        assert!(!finalized.session_uuid.is_empty(),
+            "the finalized session has a usable uuid for the Undo button");
+
+        // In-progress row is gone.
+        assert_eq!(db.get_session_in_progress().unwrap(), None,
+            "finalize must clear the snapshot");
+
+        // Sessions cache has the new row.
+        let sessions = db.list_sessions().unwrap();
+        assert_eq!(sessions.len(), 1);
+        let saved = &sessions[0].1;
+        assert_eq!(saved.uuid, finalized.session_uuid,
+            "the cache row uuid matches the returned uuid");
+        assert_eq!(saved.start_iso, "2026-05-13T09:30:00");
+        assert_eq!(saved.duration_secs, 1800);
+        assert_eq!(saved.mode, SessionMode::Timer);
+        assert_eq!(saved.label_id, None);
+
+        // Exactly one session_insert event was emitted.
+        let pending_after = db.pending_events().unwrap().len();
+        assert_eq!(pending_after, pending_before + 1,
+            "finalize emits exactly one event");
+        let event = db.pending_events().unwrap().pop().unwrap().1;
+        assert_eq!(event.kind, "session_insert");
+        assert_eq!(event.target_id, finalized.session_uuid);
+    }
+
+    #[test]
+    fn finalize_resolves_label_id_into_event_payload_label_uuid() {
+        // The snapshot stored a local rowid; the event must carry the
+        // cross-device label_uuid for peers to dereference.
+        let db = Database::open_in_memory().unwrap();
+        db.conn.execute(
+            "INSERT INTO labels (name, uuid) VALUES (?1, ?2)",
+            params!["Morning", "22222222-2222-4222-8222-222222222222"],
+        ).unwrap();
+        let label_id: i64 = db.conn
+            .query_row(
+                "SELECT id FROM labels WHERE uuid = ?1",
+                params!["22222222-2222-4222-8222-222222222222"],
+                |r| r.get(0),
+            )
+            .unwrap();
+        db.set_session_in_progress(&SessionInProgress {
+            start_iso: "2026-05-13T10:00:00".into(),
+            accumulated_secs: 600,
+            mode: SessionMode::Timer,
+            mode_payload: "{}".into(),
+            label_id: Some(label_id),
+            guided_file_uuid: None,
+        }).unwrap();
+
+        let finalized = db.finalize_session_in_progress().unwrap().unwrap();
+        let event = db.pending_events().unwrap().pop().unwrap().1;
+        let payload: serde_json::Value = serde_json::from_str(&event.payload).unwrap();
+        assert_eq!(
+            payload["label_uuid"].as_str(),
+            Some("22222222-2222-4222-8222-222222222222"),
+            "event must carry the cross-device label_uuid, not the local rowid",
+        );
+        // Also confirm the cache row resolved label_id locally.
+        let sessions = db.list_sessions().unwrap();
+        assert_eq!(sessions[0].1.label_id, Some(label_id));
+        assert_eq!(sessions[0].1.uuid, finalized.session_uuid);
+    }
+
+    #[test]
+    fn finalize_preserves_guided_file_uuid_through_to_the_event() {
+        // Guided sessions need the file uuid on the recovered row so
+        // per-file stats resolve later.
+        let db = Database::open_in_memory().unwrap();
+        db.set_session_in_progress(&SessionInProgress {
+            start_iso: "2026-05-13T10:00:00".into(),
+            accumulated_secs: 900,
+            mode: SessionMode::Guided,
+            mode_payload: "{}".into(),
+            label_id: None,
+            guided_file_uuid: Some("ffffffff-ffff-4fff-8fff-ffffffffffff".into()),
+        }).unwrap();
+
+        db.finalize_session_in_progress().unwrap().unwrap();
+
+        let event = db.pending_events().unwrap().pop().unwrap().1;
+        let payload: serde_json::Value = serde_json::from_str(&event.payload).unwrap();
+        assert_eq!(
+            payload["guided_file_uuid"].as_str(),
+            Some("ffffffff-ffff-4fff-8fff-ffffffffffff"),
+        );
+        let sessions = db.list_sessions().unwrap();
+        assert_eq!(
+            sessions[0].1.guided_file_uuid.as_deref(),
+            Some("ffffffff-ffff-4fff-8fff-ffffffffffff"),
+        );
+        assert_eq!(sessions[0].1.mode, SessionMode::Guided);
+    }
+
+    #[test]
+    fn finalize_then_finalize_again_is_a_silent_noop() {
+        // Defensive: a future caller that doesn't check the Option
+        // and calls finalize twice in a row gets None on the second
+        // call, not a duplicate session.
+        let db = Database::open_in_memory().unwrap();
+        db.set_session_in_progress(&sample(60)).unwrap();
+        let first = db.finalize_session_in_progress().unwrap();
+        let second = db.finalize_session_in_progress().unwrap();
+        assert!(first.is_some());
+        assert_eq!(second, None,
+            "second finalize must be a no-op, not duplicate the session");
+        assert_eq!(db.list_sessions().unwrap().len(), 1,
+            "exactly one session row was inserted");
     }
 
     #[test]
