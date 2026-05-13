@@ -13,7 +13,7 @@ rationale.
 
 ## Tier 2 — Medium impact, light design
 
-### `bells::sound_label` / `pattern_label` / `resolve_sound_name` / `resolve_pattern_name` should return `Option<String>`
+### `bells::sound_name` / `pattern_name` / `resolve_sound_name` / `resolve_pattern_name` should return `Option<String>`
 - Currently return `String` with `""` as the missing sentinel
   (`bells.rs:139/151/168/179`). The empty-string footgun forces
   shells to special-case `if name.is_empty() { gettext("Missing") }`
@@ -205,12 +205,6 @@ rationale.
   `format.rs` is genuine display formatters + the i18n typed-
   key enums. Rename to `display.rs` then.
 
-### Rename `bells::sound_label` / `pattern_label` → `*_name`
-- The functions return names; "label" is overloaded
-  vocabulary in the crate (`Label` is its own row type).
-- Rename to `sound_name` / `pattern_name`. Combine with the
-  Tier 2 `Option<String>` change so both happen in one sweep.
-
 ## Tier 3 — Second-pass additions
 
 ### Move `src/bin/*_smoke.rs` to `examples/` or delete
@@ -244,14 +238,6 @@ rationale.
     `clamp_session_secs` only.
 - Wire-format consts stay `pub` (all `seeds::*`, `paths::*`,
   `sync::REMOTE_BASE_PATH`, `sync::settings::KEY_*`).
-
-### `src/db/mod.rs:111` shell-side seeds re-export shim
-- Shell crate `pub use`s `meditate_core::seeds::{BELLS_SEEDED_KEY,
-  BUNDLED_BELL_UUID, ...}` to keep existing callers working
-  through `crate::db::*` imports.
-- Disappears once Tier 1 adds the crate-root `pub use seeds::*`
-  (or once shell callers update to import from
-  `meditate_core::seeds` directly).
 
 ### Three doc-tests on entry-point types
 - The crate has **zero** runnable doc examples. Conspicuously
@@ -719,8 +705,6 @@ avoid silently losing items in a rewrite.
   into one Tier-2 "crate-wide `tests_common` module."
 - **`SaveSyncError`/`TestPrereq` collapse + `sync/settings.rs`
   split** are the same PR. Merge into one Tier-1 item.
-- **`sound_label → sound_name` rename + `Option<String>` return**
-  are explicitly the same sweep. Merge.
 - **`*_from_db` free-fn migration + `stats/` consolidation +
   `get_running_average_secs` move** are the same direction. One
   PR.
@@ -974,12 +958,12 @@ avoid silently losing items in a rewrite.
   item — one PR.
 
 ### Accessibility: `SoundName::{Resolved,Missing}` enum
-- The pending Tier-2 `sound_label`/`pattern_label` → `Option
+- The pending Tier-2 `sound_name`/`pattern_name` → `Option
   <String>` sweep is a fine start, but a typed `Missing`
   variant lets the shell announce the SR affordance ("Bell
   sound: missing, double-tap to re-pick") distinct from the
   visual empty-subtitle.
-- Fix: roll into the existing `sound_label` migration —
+- Fix: roll into the existing `sound_name` migration —
   return `SoundName::{Resolved(String), Missing}` instead
   of bare `Option<String>`.
 

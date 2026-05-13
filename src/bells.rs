@@ -213,7 +213,7 @@ fn build_bell_row(
 ) -> adw::ActionRow {
     let row = adw::ActionRow::builder()
         .title(bell_title(bell))
-        .subtitle(sound_label(app, &bell.sound))
+        .subtitle(sound_name(app, &bell.sound))
         .activatable(true)
         .build();
 
@@ -371,13 +371,13 @@ fn bell_title(bell: &IntervalBell) -> String {
 /// Pulls the library from the DB and delegates the lookup to core
 /// so the Android shell shares the same "empty string when missing"
 /// contract.
-fn sound_label(app: &MeditateApplication, uuid: &str) -> String {
+fn sound_name(app: &MeditateApplication, uuid: &str) -> String {
     app.with_db(|db| meditate_core::bells::resolve_sound_name(db.core(), uuid))
         .unwrap_or_default()
 }
 
-/// Same as sound_label but for vibration_patterns.
-fn pattern_label(app: &MeditateApplication, uuid: &str) -> String {
+/// Same as sound_name but for vibration_patterns.
+fn pattern_name(app: &MeditateApplication, uuid: &str) -> String {
     app.with_db(|db| meditate_core::bells::resolve_pattern_name(db.core(), uuid))
         .unwrap_or_default()
 }
@@ -499,7 +499,7 @@ fn push_edit_page(
     // currently-selected sound's name (looked up by uuid).
     let sound_row = adw::ActionRow::builder()
         .title(gettext("Sound"))
-        .subtitle(sound_label(app, &bell.sound))
+        .subtitle(sound_name(app, &bell.sound))
         .activatable(true)
         .build();
     {
@@ -512,7 +512,7 @@ fn push_edit_page(
     // Pattern row — taps push the vibration-pattern chooser.
     let pattern_row = adw::ActionRow::builder()
         .title(gettext("Pattern"))
-        .subtitle(pattern_label(app, &bell.vibration_pattern_uuid))
+        .subtitle(pattern_name(app, &bell.vibration_pattern_uuid))
         .activatable(true)
         .build();
     {
@@ -654,7 +654,7 @@ fn push_edit_page(
             current,
             move |uuid| {
                 snap.borrow_mut().sound = uuid.clone();
-                sound_row.set_subtitle(&sound_label(&app_inner, &uuid));
+                sound_row.set_subtitle(&sound_name(&app_inner, &uuid));
                 write_back(&app_inner, &snap, &rebuilder, &on_changed);
             },
         );
@@ -679,7 +679,7 @@ fn push_edit_page(
         let pattern_row = pattern_row_for_sub.clone();
         window.push_vibrations_chooser(&app_outer, current, move |uuid| {
             snap.borrow_mut().vibration_pattern_uuid = uuid.clone();
-            pattern_row.set_subtitle(&pattern_label(&app_inner, &uuid));
+            pattern_row.set_subtitle(&pattern_name(&app_inner, &uuid));
             write_back(&app_inner, &snap, &rebuilder, &on_changed);
         });
     });

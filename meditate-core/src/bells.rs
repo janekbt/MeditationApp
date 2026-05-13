@@ -204,7 +204,7 @@ pub fn bell_title_key(bell: &IntervalBell) -> BellTitleKey {
 /// post-sync the stored uuid may point at no row) — the caller
 /// renders a missing subtitle which is the desired "user re-picks"
 /// affordance.
-pub fn sound_label(uuid: &str, library: &[BellSound]) -> String {
+pub fn sound_name(uuid: &str, library: &[BellSound]) -> String {
     if uuid.is_empty() {
         return String::new();
     }
@@ -215,8 +215,8 @@ pub fn sound_label(uuid: &str, library: &[BellSound]) -> String {
         .unwrap_or_default()
 }
 
-/// Same as `sound_label` but for vibration patterns.
-pub fn pattern_label(uuid: &str, library: &[VibrationPattern]) -> String {
+/// Same as `sound_name` but for vibration patterns.
+pub fn pattern_name(uuid: &str, library: &[VibrationPattern]) -> String {
     if uuid.is_empty() {
         return String::new();
     }
@@ -229,7 +229,7 @@ pub fn pattern_label(uuid: &str, library: &[VibrationPattern]) -> String {
 
 /// Resolve a sound UUID to its display name by reading the
 /// bell-sounds library straight from `db` and delegating to
-/// `sound_label`. Used by Setup-view subtitle rows that have only
+/// `sound_name`. Used by Setup-view subtitle rows that have only
 /// the uuid in hand — saves callers the boilerplate of "list_bell_
 /// sounds → find by uuid → name". Empty string when uuid is empty
 /// or the row is gone.
@@ -238,12 +238,12 @@ pub fn resolve_sound_name(db: &Database, uuid: &str) -> String {
         return String::new();
     }
     let library = db.list_bell_sounds().unwrap_or_default();
-    sound_label(uuid, &library)
+    sound_name(uuid, &library)
 }
 
 /// Resolve a vibration-pattern UUID to its display name via
 /// `find_vibration_pattern_by_uuid`. Empty string when uuid is
-/// empty or the row is gone (matches `pattern_label`).
+/// empty or the row is gone (matches `pattern_name`).
 pub fn resolve_pattern_name(db: &Database, uuid: &str) -> String {
     if uuid.is_empty() {
         return String::new();
@@ -863,7 +863,7 @@ mod tests {
     }
 
     #[test]
-    fn sound_label_finds_match_by_uuid() {
+    fn sound_name_finds_match_by_uuid() {
         use crate::db::BellSoundCategory;
         let lib = vec![BellSound {
             id: 0,
@@ -875,13 +875,13 @@ mod tests {
             category: BellSoundCategory::General,
             created_iso: "1970-01-01T00:00:00".into(),
         }];
-        assert_eq!(sound_label("u1", &lib), "Bowl");
+        assert_eq!(sound_name("u1", &lib), "Bowl");
     }
 
     #[test]
-    fn sound_label_returns_empty_on_miss_or_empty_uuid() {
-        assert_eq!(sound_label("", &[]), "");
-        assert_eq!(sound_label("missing", &[]), "");
+    fn sound_name_returns_empty_on_miss_or_empty_uuid() {
+        assert_eq!(sound_name("", &[]), "");
+        assert_eq!(sound_name("missing", &[]), "");
     }
 
     #[test]
