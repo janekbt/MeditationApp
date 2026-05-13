@@ -612,7 +612,7 @@ mod tests {
             label_id: None,
             notes: None,
             mode: SessionMode::Timer,
-            uuid: String::new(),
+            uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
         }).unwrap()
     }

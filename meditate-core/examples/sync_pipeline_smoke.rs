@@ -215,7 +215,7 @@ fn insert_session(db: &Database, start_iso: &str, secs: u32, notes: Option<&str>
         label_id: None,
         notes: notes.map(|s| s.to_string()),
         mode: SessionMode::Timer,
-        uuid: String::new(),
+        uuid: meditate_core::db::SessionUuid::new(""),
         guided_file_uuid: None,
     }).unwrap()
 }
@@ -232,7 +232,7 @@ fn update_session_notes(db: &Database, id: i64, notes: &str) {
         label_id: current.label_id,
         notes: Some(notes.to_string()),
         mode: current.mode,
-        uuid: String::new(),
+        uuid: meditate_core::db::SessionUuid::new(""),
         guided_file_uuid: None,
     }).unwrap();
 }

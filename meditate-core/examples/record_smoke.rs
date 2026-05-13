@@ -39,7 +39,7 @@ fn main() {
         label_id: None,
         notes: None,
         mode: SessionMode::Timer,
-        uuid: String::new(),
+        uuid: meditate_core::db::SessionUuid::new(""),
         guided_file_uuid: None,
     };
     db.insert_session(&session).expect("insert session");

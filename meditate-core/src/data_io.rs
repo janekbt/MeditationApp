@@ -313,7 +313,7 @@ pub fn insert_sessions_with_labels(
             label_id: (*label_idx != usize::MAX).then(|| label_ids[*label_idx]),
             notes: note.clone(),
             mode: *mode,
-            uuid: String::new(),
+            uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
         })
         .collect();
@@ -408,7 +408,7 @@ mod tests {
                 label_id: Some(morning),
                 // Commas and a quote to exercise CSV escaping on the note column.
                 notes: Some("first sit, \"nice\" focus".to_string()),
-                uuid: String::new(),
+                uuid: crate::db::SessionUuid::new(""),
                 guided_file_uuid: None,
             },
             Session {
@@ -417,7 +417,7 @@ mod tests {
                 mode: SessionMode::Timer,
                 label_id: Some(evening),
                 notes: None,
-                uuid: String::new(),
+                uuid: crate::db::SessionUuid::new(""),
                 guided_file_uuid: None,
             },
             Session {
@@ -426,7 +426,7 @@ mod tests {
                 mode: SessionMode::Timer,
                 label_id: None,
                 notes: Some("no label on this one".to_string()),
-                uuid: String::new(),
+                uuid: crate::db::SessionUuid::new(""),
                 guided_file_uuid: None,
             },
         ];

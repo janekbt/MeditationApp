@@ -170,7 +170,7 @@ fn session_data_to_core(s: &SessionData) -> meditate_core::db::Session {
         mode: s.mode,
         // Empty placeholder — core's `insert_session` overwrites this
         // with a freshly generated v4 uuid. Read paths see the real one.
-        uuid: String::new(),
+        uuid: meditate_core::db::SessionUuid::new(""),
         guided_file_uuid: s.guided_file_uuid.clone(),
     }
 }
@@ -944,7 +944,7 @@ mod tests {
             // Translation from core → shell drops the uuid (the GTK-side
             // Session doesn't carry one). This test pins the rest of the
             // mapping; uuid round-trip is covered in core's tests.
-            uuid: "ignored-by-shell".to_string(),
+            uuid: "ignored-by-shell".into(),
             guided_file_uuid: None,
         };
         let s = session_from_core(99, &core);

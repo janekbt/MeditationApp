@@ -332,7 +332,7 @@ mod tests {
                 label_id: Some(morning),
                 notes: None,
                 mode: SessionMode::Timer,
-                uuid: String::new(),
+                uuid: crate::db::SessionUuid::new(""),
                 guided_file_uuid: None,
             }).unwrap();
         }
@@ -342,7 +342,7 @@ mod tests {
             label_id: Some(evening),
             notes: None,
             mode: SessionMode::Timer,
-            uuid: String::new(),
+            uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
         }).unwrap();
         for i in 0..2 {
@@ -352,7 +352,7 @@ mod tests {
                 label_id: None,
                 notes: None,
                 mode: SessionMode::Timer,
-                uuid: String::new(),
+                uuid: crate::db::SessionUuid::new(""),
                 guided_file_uuid: None,
             }).unwrap();
         }
@@ -399,7 +399,7 @@ mod tests {
             label_id: Some(morning),
             notes: Some("first sit".to_string()),
             mode: SessionMode::Timer,
-            uuid: String::new(),
+            uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
         }).unwrap();
         let labeled_id2 = db.insert_session(&Session {
@@ -408,7 +408,7 @@ mod tests {
             label_id: Some(morning),
             notes: None,
             mode: SessionMode::Timer,
-            uuid: String::new(),
+            uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
         }).unwrap();
         let unlabeled_id = db.insert_session(&Session {
@@ -417,7 +417,7 @@ mod tests {
             label_id: None,
             notes: None,
             mode: SessionMode::BoxBreath,
-            uuid: String::new(),
+            uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
         }).unwrap();
 
@@ -444,7 +444,7 @@ mod tests {
             label_id: Some(evening),
             notes: None,
             mode: SessionMode::Timer,
-            uuid: String::new(),
+            uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
         }).unwrap();
         db.delete_label(morning).unwrap();

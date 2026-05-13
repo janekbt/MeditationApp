@@ -1009,7 +1009,7 @@ mod tests {
             label_id: None,
             notes: None,
             mode: SessionMode::Timer,
-            uuid: String::new(),
+            uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
         }).unwrap();
         db.insert_interval_bell(IntervalBellKind::Interval, 5, 0, BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound).unwrap();
@@ -1200,7 +1200,7 @@ mod tests {
             label_id: None,
             notes: None,
             mode: SessionMode::Timer,
-            uuid: String::new(),
+            uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
         }).unwrap();
         assert_eq!(db.list_sessions().unwrap().len(), 1);
@@ -1254,7 +1254,7 @@ mod tests {
             label_id: None,
             notes: None,
             mode: SessionMode::Timer,
-            uuid: String::new(),
+            uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
         }).unwrap();
         let row_uuid = db.list_sessions().unwrap()[0].1.uuid.clone();
@@ -1271,7 +1271,7 @@ mod tests {
             label_id: None,
             notes: None,
             mode: SessionMode::Timer,
-            uuid: String::new(),
+            uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
         }).unwrap();
         let row_uuid = db.list_sessions().unwrap()[0].1.uuid.clone();
@@ -1390,13 +1390,13 @@ mod tests {
         device_a.insert_session(&Session {
             start_iso: "2026-04-30T10:00:00".to_string(),
             duration_secs: 600, label_id: None, notes: Some("from A".to_string()),
-            mode: SessionMode::Timer, uuid: String::new(),
+            mode: SessionMode::Timer, uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
         }).unwrap();
         device_b.insert_session(&Session {
             start_iso: "2026-04-30T18:00:00".to_string(),
             duration_secs: 1200, label_id: None, notes: Some("from B".to_string()),
-            mode: SessionMode::Timer, uuid: String::new(),
+            mode: SessionMode::Timer, uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
         }).unwrap();
 
@@ -1435,7 +1435,7 @@ mod tests {
             device_a.insert_session(&Session {
                 start_iso: format!("2026-04-3{i}T10:00:00"),
                 duration_secs: 600, label_id: None, notes: None,
-                mode: SessionMode::Timer, uuid: String::new(),
+                mode: SessionMode::Timer, uuid: crate::db::SessionUuid::new(""),
                 guided_file_uuid: None,
             }).unwrap();
         }
@@ -1551,7 +1551,7 @@ mod tests {
             label_id: None,
             notes: None,
             mode: SessionMode::Timer,
-            uuid: String::new(),
+            uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
         }).unwrap();
         let local_event = db.pending_events().unwrap()

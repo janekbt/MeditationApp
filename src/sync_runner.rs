@@ -234,7 +234,7 @@ mod tests {
             label_id: None,
             notes: None,
             mode: SessionMode::Timer,
-            uuid: String::new(),
+            uuid: meditate_core::db::SessionUuid::new(""),
             guided_file_uuid: None,
         }).unwrap();
         db
@@ -371,7 +371,7 @@ mod tests {
             label_id: None,
             notes: None,
             mode: SessionMode::Timer,
-            uuid: String::new(),
+            uuid: meditate_core::db::SessionUuid::new(""),
             guided_file_uuid: None,
         }).unwrap();
         let shared = FakeWebDav::new();

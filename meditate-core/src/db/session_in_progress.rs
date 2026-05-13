@@ -156,7 +156,7 @@ impl Database {
             label_id: snapshot.label_id,
             notes: None,
             mode: snapshot.mode,
-            uuid: String::new(),
+            uuid: super::SessionUuid::new(""),
             guided_file_uuid: snapshot.guided_file_uuid,
         };
         let (_rowid, session_uuid) = self.insert_session_tx_less(&session)?;
