@@ -24,7 +24,7 @@ use crate::seeds::{BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IntervalBell {
     pub id: i64,
-    pub uuid: String,
+    pub uuid: super::IntervalBellUuid,
     pub kind: IntervalBellKind,
     pub minutes: u32,
     pub jitter_pct: u32,
@@ -153,7 +153,7 @@ impl Database {
             "enabled": bell.enabled,
             "created_iso": created_iso,
         }).to_string();
-        self.emit_event(EventKind::IntervalBellUpdate, &bell.uuid, payload)?;
+        self.emit_event(EventKind::IntervalBellUpdate, bell.uuid.as_str(), payload)?;
         tx.commit()?;
         Ok(())
     }
@@ -496,7 +496,7 @@ mod tests {
             .collect();
         assert_eq!(updates.len(), 1);
         let payload: serde_json::Value = serde_json::from_str(&updates[0].1.payload).unwrap();
-        assert_eq!(payload["uuid"], original.uuid);
+        assert_eq!(payload["uuid"], original.uuid.0);
         assert_eq!(payload["kind"], "interval");
         assert_eq!(payload["minutes"], 9);
         assert_eq!(payload["jitter_pct"], 30);
@@ -531,7 +531,7 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         db.insert_interval_bell(IntervalBellKind::Interval, 5, 0, BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound).unwrap();
         let uuid = db.list_interval_bells().unwrap()[0].uuid.clone();
-        db.delete_interval_bell(&uuid).unwrap();
+        db.delete_interval_bell(uuid.as_str()).unwrap();
         assert!(db.list_interval_bells().unwrap().is_empty());
     }
 
@@ -540,15 +540,15 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         db.insert_interval_bell(IntervalBellKind::Interval, 5, 0, BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound).unwrap();
         let uuid = db.list_interval_bells().unwrap()[0].uuid.clone();
-        db.delete_interval_bell(&uuid).unwrap();
+        db.delete_interval_bell(uuid.as_str()).unwrap();
         let deletes: Vec<_> = db.pending_events().unwrap()
             .into_iter()
             .filter(|(_, e)| e.kind == "interval_bell_delete")
             .collect();
         assert_eq!(deletes.len(), 1);
-        assert_eq!(deletes[0].1.target_id, uuid);
+        assert_eq!(deletes[0].1.target_id, uuid.0);
         let payload: serde_json::Value = serde_json::from_str(&deletes[0].1.payload).unwrap();
-        assert_eq!(payload["uuid"], uuid);
+        assert_eq!(payload["uuid"], uuid.0);
     }
 
     #[test]
@@ -568,7 +568,7 @@ mod tests {
         db.insert_interval_bell(IntervalBellKind::Interval, 9, 30, BUNDLED_BELL_UUID, BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound).unwrap();
         let uuid = db.list_interval_bells().unwrap()[0].uuid.clone();
 
-        db.set_interval_bell_enabled(&uuid, false).unwrap();
+        db.set_interval_bell_enabled(uuid.as_str(), false).unwrap();
         let b = &db.list_interval_bells().unwrap()[0];
         assert!(!b.enabled);
         assert_eq!(b.kind, IntervalBellKind::Interval);
@@ -576,7 +576,7 @@ mod tests {
         assert_eq!(b.jitter_pct, 30);
         assert_eq!(b.sound_uuid, BUNDLED_BELL_UUID);
 
-        db.set_interval_bell_enabled(&uuid, true).unwrap();
+        db.set_interval_bell_enabled(uuid.as_str(), true).unwrap();
         assert!(db.list_interval_bells().unwrap()[0].enabled);
     }
 
@@ -585,7 +585,7 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         db.insert_interval_bell(IntervalBellKind::Interval, 9, 30, BUNDLED_BELL_UUID, BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound).unwrap();
         let uuid = db.list_interval_bells().unwrap()[0].uuid.clone();
-        db.set_interval_bell_enabled(&uuid, false).unwrap();
+        db.set_interval_bell_enabled(uuid.as_str(), false).unwrap();
         let updates: Vec<_> = db.pending_events().unwrap()
             .into_iter()
             .filter(|(_, e)| e.kind == "interval_bell_update")

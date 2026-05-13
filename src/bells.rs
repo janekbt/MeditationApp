@@ -187,7 +187,7 @@ fn build_create_row(
                 .with_db(|db| db.find_interval_bell_by_id(rowid))
                 .and_then(|r| r.ok())
                 .flatten()
-                .map(|b| b.uuid);
+                .map(|b| b.uuid.0);
             if let Some(uuid) = new_uuid {
                 push_edit_page(
                     &nav_view_for_create,
@@ -238,7 +238,7 @@ fn build_bell_row(
     // Toggle persists immediately. No list rebuild needed for an
     // enabled flip — the row's title/subtitle don't change, only the
     // count subtitle on the timer setup page.
-    let bell_uuid_for_toggle = bell.uuid.clone();
+    let bell_uuid_for_toggle = bell.uuid.0.clone();
     let app_for_toggle = app.clone();
     let on_changed_for_toggle = on_changed.clone();
     switch.connect_active_notify(move |s| {
@@ -260,7 +260,7 @@ fn build_bell_row(
         .css_classes(["flat", "circular", "destructive-action"])
         .valign(gtk::Align::Center)
         .build();
-    let bell_uuid_for_del = bell.uuid.clone();
+    let bell_uuid_for_del = bell.uuid.0.clone();
     let app_for_del = app.clone();
     let rebuilder_for_del = rebuilder.clone();
     let on_changed_for_del = on_changed.clone();
@@ -279,7 +279,7 @@ fn build_bell_row(
     // emit `activated` and push the edit page; taps on the switch
     // and delete button handle themselves as their own widgets.
 
-    let bell_uuid_for_edit = bell.uuid.clone();
+    let bell_uuid_for_edit = bell.uuid.0.clone();
     let app_for_edit = app.clone();
     let nav_view_for_edit = nav_view.clone();
     let rebuilder_for_edit = rebuilder.clone();

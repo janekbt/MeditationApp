@@ -547,7 +547,7 @@ pub fn apply(
         .list_interval_bells()
         .map_err(|e| ApplyError::DbError(format!("{e:?}")))?;
     for b in &existing {
-        db.delete_interval_bell(&b.uuid)
+        db.delete_interval_bell(b.uuid.as_str())
             .map_err(|e| ApplyError::DbError(format!("{e:?}")))?;
     }
     for s in &cfg.interval_bells.bells {
@@ -576,7 +576,7 @@ pub fn apply(
                 .ok()
                 .and_then(|bs| bs.into_iter().find(|b| b.id == rowid))
             {
-                db.set_interval_bell_enabled(&b.uuid, false)
+                db.set_interval_bell_enabled(b.uuid.as_str(), false)
                     .map_err(|e| ApplyError::DbError(format!("{e:?}")))?;
             }
         }
