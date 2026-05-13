@@ -217,15 +217,6 @@ pub fn format_hhmm(secs: u32) -> String {
     format!("{h:02}:{m:02}")
 }
 
-/// Build the dynamic label for the running-page "Add" button. Caller
-/// supplies the localized prefix word ("Add" in English, "Hinzufügen"
-/// in German, etc. — gettext-translated on the gtk side); the format
-/// itself is `"<prefix> <MM:SS> ?"`. Trailing space + question mark
-/// match the existing GTK shell rendering.
-pub fn overtime_button_label(prefix: &str, overtime: Duration) -> String {
-    format!("{prefix} {} ?", format_time(overtime))
-}
-
 // ── Translatable subtitle helpers ────────────────────────────────────
 //
 // Pattern: core returns a typed key/struct capturing the structural
@@ -728,41 +719,6 @@ mod tests {
         // Seconds are truncated to the minute.
         assert_eq!(format_hhmm(59), "00:00");
         assert_eq!(format_hhmm(60 + 59), "00:01");
-    }
-
-    // ── overtime_button_label ─────────────────────────────────────────
-
-    #[test]
-    fn overtime_button_label_uses_supplied_prefix() {
-        // Prefix passed in as a translated word; format itself is fixed.
-        assert_eq!(
-            overtime_button_label("Add", Duration::from_secs(45)),
-            "Add 00:45 ?"
-        );
-        assert_eq!(
-            overtime_button_label("Hinzufügen", Duration::from_secs(45)),
-            "Hinzufügen 00:45 ?"
-        );
-    }
-
-    #[test]
-    fn overtime_button_label_at_zero_overtime_reads_double_zero() {
-        // The label shows the moment-of-transition: just hit the
-        // target, no bonus accumulated yet, button is "Add 00:00 ?".
-        assert_eq!(
-            overtime_button_label("Add", Duration::ZERO),
-            "Add 00:00 ?"
-        );
-    }
-
-    #[test]
-    fn overtime_button_label_carries_through_to_hours() {
-        // Sub-hour vs hour-or-more — same formatter as format_time
-        // which uses two-digit hours per item 4's consolidation.
-        assert_eq!(
-            overtime_button_label("Add", Duration::from_secs(3661)),
-            "Add 01:01:01 ?"
-        );
     }
 
     // ── intervals_count_key ───────────────────────────────────────────

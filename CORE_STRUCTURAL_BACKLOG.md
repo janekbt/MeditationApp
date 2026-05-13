@@ -576,14 +576,6 @@ avoid silently losing items in a rewrite.
   `secrecy` crate on the `String` / `Vec<u8>`) is cheap.
 
 
-### i18n: `format::overtime_button_label` bakes word order
-- Takes a `prefix` and emits `"{prefix} MM:SS ?"`. German
-  "Hinzufügen 00:30 ?" works; Japanese / Hungarian want
-  "00:30 を追加 ?".
-- Fix: return typed `OvertimeButtonParts { overtime: Duration }`;
-  shell calls `gettext("Add {duration} ?")` with its own word
-  order.
-
 ### i18n: `date_math::month_letter` returns hardcoded English ASCII
 - Returns `"J"/"F"/"M"/…` single letters used by
   `src/stats/imp.rs:763` for the long-period X-axis. Doc says

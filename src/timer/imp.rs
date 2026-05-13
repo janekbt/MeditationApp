@@ -2765,10 +2765,7 @@ impl TimerView {
             )));
         }
         if let Some(add_btn) = self.overtime_add_btn.borrow().as_ref() {
-            add_btn.set_label(&meditate_core::format::overtime_button_label(
-                &crate::i18n::gettext("Add"),
-                Duration::ZERO,
-            ));
+            add_btn.set_label(&overtime_add_button_label(Duration::ZERO));
             // Visibility is owned by the Clamp wrapper that the
             // window builder put around the button — flipping the
             // button itself wouldn't reveal the row.
@@ -2811,10 +2808,7 @@ impl TimerView {
         self.dispatch_session_effects(&effects);
 
         if let Some(add_btn) = self.overtime_add_btn.borrow().as_ref() {
-            add_btn.set_label(&meditate_core::format::overtime_button_label(
-                &crate::i18n::gettext("Add"),
-                overtime,
-            ));
+            add_btn.set_label(&overtime_add_button_label(overtime));
         }
         glib::ControlFlow::Continue
     }
@@ -4023,6 +4017,17 @@ impl TimerView {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /// Subtitle text for the "Manage Bells" row reflecting how many of the
+/// "Add MM:SS ?" running-page button label. `{time}` is the
+/// placeholder for the formatted overtime duration; translators
+/// can position it anywhere in the localised string (German
+/// "Hinzufügen {time} ?", Japanese "{time} を追加 ?", etc.). Core
+/// returns the formatted MM:SS via `format_time`; the shell owns
+/// word order via this gettext template.
+fn overtime_add_button_label(overtime: std::time::Duration) -> String {
+    crate::i18n::gettext("Add {time} ?")
+        .replace("{time}", &meditate_core::format::format_time(overtime))
+}
+
 /// library's bells are currently enabled. Uses gettext so the count
 /// can be localised; "None" is its own string for grammatical reasons
 /// in some languages.
