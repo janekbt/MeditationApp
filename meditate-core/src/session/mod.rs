@@ -816,7 +816,7 @@ fn fire_due_bells(
                 signal_mode_override,
             ) {
                 effects.push(Effect::FireBell {
-                    sound_uuid: bell.sound.clone(),
+                    sound_uuid: bell.sound_uuid.clone(),
                     vibration_pattern_uuid: bell.vibration_pattern_uuid.clone(),
                     signal_mode: eff,
                 });
@@ -915,20 +915,20 @@ mod tests {
         }
     }
 
-    fn fixed_bell(target_secs: u64, sound: &str) -> ActiveBell {
+    fn fixed_bell(target_secs: u64, sound_uuid: &str) -> ActiveBell {
         use crate::bells::BellSchedule;
         ActiveBell {
-            sound: sound.to_string(),
+            sound_uuid: sound_uuid.to_string(),
             vibration_pattern_uuid: "pattern".to_string(),
             signal_mode: SignalMode::Sound,
             schedule: BellSchedule::Fixed { target_secs, fired: false },
         }
     }
 
-    fn interval_bell(base_min: u32, sound: &str) -> ActiveBell {
+    fn interval_bell(base_min: u32, sound_uuid: &str) -> ActiveBell {
         use crate::bells::BellSchedule;
         ActiveBell {
-            sound: sound.to_string(),
+            sound_uuid: sound_uuid.to_string(),
             vibration_pattern_uuid: "pattern".to_string(),
             signal_mode: SignalMode::Sound,
             schedule: BellSchedule::Interval {

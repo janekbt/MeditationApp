@@ -316,7 +316,7 @@ pub fn snapshot(db: &Database, mode: SessionMode, timing: PresetTiming) -> Prese
             kind: b.kind.as_db_str().to_string(),
             minutes: b.minutes,
             jitter_pct: b.jitter_pct,
-            sound_uuid: b.sound,
+            sound_uuid: b.sound_uuid,
             enabled: b.enabled,
             signal_mode: b.signal_mode.as_db_str().to_string(),
             vibration_pattern_uuid: b.vibration_pattern_uuid,

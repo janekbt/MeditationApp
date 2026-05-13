@@ -68,7 +68,7 @@ pub(super) fn schema() -> String {
         kind                   TEXT NOT NULL CHECK (kind IN ('interval', 'fixed_from_start', 'fixed_from_end')),
         minutes                INTEGER NOT NULL,
         jitter_pct             INTEGER NOT NULL DEFAULT 0,
-        sound                  TEXT NOT NULL DEFAULT 'bowl',
+        sound_uuid             TEXT NOT NULL DEFAULT '{BUNDLED_BOWL_UUID}',
         -- Default uses the bundled Pulse pattern's stable UUID
         -- (BUNDLED_PATTERN_PULSE_UUID in src/db/mod.rs). Kept literal
         -- here to avoid plumbing a shell-side const into the core

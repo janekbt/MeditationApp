@@ -671,6 +671,7 @@ mod tests {
         test_helpers::*, BellSoundCategory, BoxBreathPhaseId, ChartKind,
         IntervalBellKind, Session, SessionMode, SignalMode,
     };
+    use crate::seeds::{BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID};
 
     // ── EventKind wire-format round trip ─────────────────────────────────────
     //
@@ -984,7 +985,7 @@ mod tests {
             uuid: String::new(),
             guided_file_uuid: None,
         }).unwrap();
-        db.insert_interval_bell(IntervalBellKind::Interval, 5, 0, "bowl", BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound).unwrap();
+        db.insert_interval_bell(IntervalBellKind::Interval, 5, 0, BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound).unwrap();
         db.insert_bell_sound("Custom", "/p/c.wav", false, "audio/wav", BellSoundCategory::General).unwrap();
         db.insert_preset("Sitting", SessionMode::Timer, true, r#"{}"#).unwrap();
         db.insert_guided_file_with_uuid("gf-1", "Track", "/p/t.ogg", 300, false).unwrap();

@@ -260,14 +260,6 @@ rationale.
     notes).
   - Consider an on-startup sweep that nulls dangling refs.
 
-### `interval_bells.sound` legacy free-text column
-- Column stores `"bowl"` / `"bell"` / `"gong"` (legacy enum)
-  alongside the modern uuid-keyed sound resolution; two
-  parallel plumbings exist.
-- Either migrate the column to a uuid (one-shot SQL migration
-  + `bell_sounds` lookup at apply-event time) or document the
-  hybrid as an intentional aliasing layer.
-
 ### `Cargo.toml` optional features
 - `ureq` and `roxmltree` are only used by `sync/webdav.rs`;
   `csv` is only used by `data_io.rs`; `mockito` is only used

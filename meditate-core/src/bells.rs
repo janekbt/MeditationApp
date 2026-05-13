@@ -118,7 +118,7 @@ pub enum BellSchedule {
 /// dispatch loop has everything it needs without a second DB lookup.
 #[derive(Debug, Clone)]
 pub struct ActiveBell {
-    pub sound: String,
+    pub sound_uuid: String,
     pub vibration_pattern_uuid: String,
     pub signal_mode: SignalMode,
     pub schedule: BellSchedule,
@@ -622,7 +622,7 @@ pub(crate) fn build_active_bells(
             }
         };
         bells.push(ActiveBell {
-            sound: row.sound.clone(),
+            sound_uuid: row.sound_uuid.clone(),
             vibration_pattern_uuid: row.vibration_pattern_uuid.clone(),
             signal_mode: row.signal_mode,
             schedule,
@@ -662,7 +662,7 @@ mod tests {
 
     fn fixed_bell(target_secs: u64) -> ActiveBell {
         ActiveBell {
-            sound: "sound-uuid".into(),
+            sound_uuid: "sound-uuid".into(),
             vibration_pattern_uuid: "pattern-uuid".into(),
             signal_mode: SignalMode::Sound,
             schedule: BellSchedule::Fixed { target_secs, fired: false },
@@ -671,7 +671,7 @@ mod tests {
 
     fn interval_bell(base_min: u32, jitter_pct: u32, next_ring_secs: u64) -> ActiveBell {
         ActiveBell {
-            sound: "sound-uuid".into(),
+            sound_uuid: "sound-uuid".into(),
             vibration_pattern_uuid: "pattern-uuid".into(),
             signal_mode: SignalMode::Sound,
             schedule: BellSchedule::Interval { base_min, jitter_pct, next_ring_secs },
@@ -827,7 +827,7 @@ mod tests {
             kind,
             minutes,
             jitter_pct,
-            sound: "s".into(),
+            sound_uuid: "s".into(),
             vibration_pattern_uuid: "p".into(),
             signal_mode: SignalMode::Sound,
             enabled: true,
@@ -1015,7 +1015,7 @@ mod tests {
             kind,
             minutes,
             jitter_pct,
-            sound: "row-sound".into(),
+            sound_uuid: "row-sound".into(),
             vibration_pattern_uuid: "row-pattern".into(),
             signal_mode: SignalMode::Sound,
             enabled,

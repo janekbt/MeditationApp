@@ -213,7 +213,7 @@ fn build_bell_row(
 ) -> adw::ActionRow {
     let row = adw::ActionRow::builder()
         .title(bell_title(bell))
-        .subtitle(sound_name(app, &bell.sound))
+        .subtitle(sound_name(app, &bell.sound_uuid))
         .activatable(true)
         .build();
 
@@ -499,7 +499,7 @@ fn push_edit_page(
     // currently-selected sound's name (looked up by uuid).
     let sound_row = adw::ActionRow::builder()
         .title(gettext("Sound"))
-        .subtitle(sound_name(app, &bell.sound))
+        .subtitle(sound_name(app, &bell.sound_uuid))
         .activatable(true)
         .build();
     {
@@ -630,7 +630,7 @@ fn push_edit_page(
         let Some(window) = row.root()
             .and_then(|r| r.downcast::<crate::window::MeditateWindow>().ok())
         else { return; };
-        let current = Some(snap_for_sound.borrow().sound.clone());
+        let current = Some(snap_for_sound.borrow().sound_uuid.clone());
         let snap = snap_for_sound.clone();
         let app_outer = app_for_sound.clone();
         let app_inner = app_for_sound.clone();
@@ -642,7 +642,7 @@ fn push_edit_page(
             crate::db::BellSoundCategory::General,
             current,
             move |uuid| {
-                snap.borrow_mut().sound = uuid.clone();
+                snap.borrow_mut().sound_uuid = uuid.clone();
                 sound_row.set_subtitle(&sound_name(&app_inner, &uuid));
                 write_back(&app_inner, &snap, &rebuilder, &on_changed);
             },
@@ -757,14 +757,14 @@ fn lookup_bell(app: &MeditateApplication, uuid: &str) -> Option<IntervalBell> {
 mod tests {
     use super::*;
 
-    fn b(kind: IntervalBellKind, minutes: u32, jitter_pct: u32, sound: &str) -> IntervalBell {
+    fn b(kind: IntervalBellKind, minutes: u32, jitter_pct: u32, sound_uuid: &str) -> IntervalBell {
         IntervalBell {
             id: 0,
             uuid: "u".into(),
             kind,
             minutes,
             jitter_pct,
-            sound: sound.into(),
+            sound_uuid: sound_uuid.into(),
             vibration_pattern_uuid: crate::db::BUNDLED_PATTERN_PULSE_UUID.into(),
             signal_mode: crate::db::SignalMode::Sound,
             enabled: true,

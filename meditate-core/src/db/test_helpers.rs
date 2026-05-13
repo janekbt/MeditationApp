@@ -101,10 +101,6 @@ pub(super) const DEVICE_A: &str = "00000000-0000-4000-8000-aaaaaaaaaaaa";
 pub(super) const DEVICE_B: &str = "00000000-0000-4000-8000-bbbbbbbbbbbb";
 pub(super) const SESSION_X: &str = "11111111-1111-4111-8111-111111111111";
 pub(super) const LABEL_X: &str = "22222222-2222-4222-8222-222222222222";
-/// Mirror of the shell-side BUNDLED_PATTERN_PULSE_UUID const. Kept
-/// literal so the core tests don't have to plumb in the shell module.
-pub(super) const BUNDLED_PATTERN_PULSE_UUID: &str =
-    "7e9c4d2f-5a8b-4f1d-9e3c-2d6f7a8b0001";
 
 pub(super) fn synth_label_insert(
     label_uuid: &str,

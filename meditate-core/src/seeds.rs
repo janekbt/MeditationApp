@@ -17,9 +17,10 @@ use crate::preset_config::{
 };
 
 // ── Bell-sound UUIDs ───────────────────────────────────────────────
-// Public so the legacy-key compatibility layer can map old
-// "bowl" / "bell" / "gong" string keys to their bundled UUIDs
-// without re-deriving the table here.
+// Public so any bundled-row default that needs to spell out a stable
+// UUID at compile time (preset configs, SQL schema column DEFAULTs,
+// test fixtures across the workspace) can reference the canonical
+// constant rather than copy the literal.
 
 pub const BUNDLED_BOWL_UUID: &str = "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0001";
 pub const BUNDLED_BELL_UUID: &str = "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0002";
