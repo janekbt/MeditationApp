@@ -30,11 +30,30 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 
 const MAX_LINES: usize = 2000;
 
+/// Boot-time gap (between two consecutive `log()` calls) above which
+/// we annotate the second line with a `[+Ns since prev]` marker. A
+/// device suspend across midnight or DST otherwise leaves two
+/// adjacent log lines with wildly different wall-clock timestamps
+/// and no visible signal that any time-domain jump happened. The
+/// 5-second threshold conflates "device suspended" with "app was
+/// genuinely idle for a few seconds" — fine, the marker is
+/// informational, not diagnostic.
+const SUSPEND_MARKER_GAP_SECS: u64 = 5;
+
+struct LogState {
+    file: File,
+    /// Boot-time at the previous `log()` call. `None` until the
+    /// first line is written; the first marker fires on the second
+    /// call.
+    last_boot: Option<Duration>,
+}
+
 static LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
-static LOG_FILE: OnceLock<Mutex<File>> = OnceLock::new();
+static LOG_STATE: OnceLock<Mutex<LogState>> = OnceLock::new();
 
 /// Initialise the diag log at `<data_dir>/diagnostics.log`. Trims any
 /// existing log to the last `MAX_LINES` lines, opens the file once
@@ -62,7 +81,7 @@ pub fn init(data_dir: &Path) {
         open.mode(0o600);
     }
     if let Ok(f) = open.open(&path) {
-        let _ = LOG_FILE.set(Mutex::new(f));
+        let _ = LOG_STATE.set(Mutex::new(LogState { file: f, last_boot: None }));
     }
     install_panic_hook();
 }
@@ -73,9 +92,18 @@ pub fn init(data_dir: &Path) {
 /// Poisoned mutex (a previous holder panicked mid-write) is treated
 /// the same: drop silently.
 pub fn log(msg: &str) {
-    let Some(mutex) = LOG_FILE.get() else { return; };
-    let Ok(mut f) = mutex.lock() else { return; };
-    let _ = writeln!(f, "{} {msg}", timestamp());
+    let Some(mutex) = LOG_STATE.get() else { return; };
+    let Ok(mut state) = mutex.lock() else { return; };
+    let ts = timestamp();
+    let now_boot = crate::time::boot_time_now();
+    if let Some(prev) = state.last_boot {
+        let gap = now_boot.saturating_sub(prev);
+        if gap.as_secs() >= SUSPEND_MARKER_GAP_SECS {
+            let _ = writeln!(state.file, "{ts} [+{}s since prev log]", gap.as_secs());
+        }
+    }
+    state.last_boot = Some(now_boot);
+    let _ = writeln!(state.file, "{ts} {msg}");
 }
 
 /// Return the full log as a single string, or an empty string if the

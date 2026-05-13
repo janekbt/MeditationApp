@@ -752,15 +752,6 @@ avoid silently losing items in a rewrite.
   Backwards-compat for current 33 call sites = single-day
   refactor.
 
-### Operational: diag-log timestamps drift across suspend
-- `meditate-core/src/diag.rs:74` uses wall-clock
-  (`chrono::Local::now`). After a suspend crossing midnight
-  or DST, adjacent log lines have wildly different
-  timestamps with no visible "device was suspended" signal.
-- Fix: append `[+Ns since prev]` boot-time delta, or emit
-  one `boottime jumped from X to Y (suspend?)` heuristic
-  line when consecutive boot-time deltas exceed 5 s.
-
 ### Operational: `SyncRunnerError` UX collapses 3 distinct conditions
 - `application.rs:432` logs every `SyncRunnerError` variant
   with the same `sync: {e}` prefix — keychain failure, server
