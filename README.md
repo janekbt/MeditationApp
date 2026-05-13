@@ -150,6 +150,8 @@ flatpak run io.github.janekbt.Meditate
 
 If you're working on Linux-phone perf, `build-aux/dev-xbuild.sh` cross-compiles a Librem 5–compatible binary in ~15 seconds on an x86_64 host — avoiding the 20–35 minute `flatpak-builder --arch=aarch64` QEMU build. Output goes to `target/aarch64-unknown-linux-gnu/release/meditate`, ready to `scp` straight over a Flatpak-installed binary on the phone for testing. One-time prerequisites are documented at the top of the script.
 
+See [`BUILDING.md`](BUILDING.md) for the full cross-compile + Librem 5 deploy cycle (including the kill-the-app + DB-wipe steps) and the xbuild quirks for the Android port.
+
 ## Data
 
 Sessions and settings are stored in a SQLite database at
