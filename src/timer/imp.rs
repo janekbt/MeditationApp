@@ -168,6 +168,14 @@ pub struct TimerView {
     /// Active glib timeout handle (at most one mode runs at a time).
     tick_source: RefCell<Option<glib::SourceId>>,
 
+    /// Slow heartbeat that refreshes the crash-recovery snapshot's
+    /// `accumulated_secs`. Separate from `tick_source` so the 1 Hz
+    /// running-display tick can stay decoupled from the on-disk
+    /// snapshot write (which is ~hundreds of µs of eMMC fsync). One
+    /// fire per ~60s while a session is in flight; cleared at
+    /// `reset_mode`.
+    snapshot_tick_source: RefCell<Option<glib::SourceId>>,
+
     /// Held PatternPlayback handle for the most recent bell or
     /// phase-cue vibration. Replacing it with a new handle drops the
     /// previous one — the Drop impl fires `Vibrate(app_id, [])` to
@@ -2127,12 +2135,13 @@ impl TimerView {
         self.session_start_time.set(unix_now());
 
         // Crash-recovery snapshot. Initial write with accumulated_secs=0
-        // so a process death before the 60s tick still leaves a row the
-        // next launch can finalise (as a 0-min session — toast still
-        // surfaces, Undo trivially dismisses). The 60s tick (see
-        // step 6 of SESSION_RECOVERY_PLAN.md) keeps this updated as
-        // the session progresses.
+        // so a process death before the first 60 s heartbeat still
+        // leaves a row the next launch can finalise (as a 0-min
+        // session — toast still surfaces, Undo trivially dismisses).
+        // The snapshot heartbeat rewrites this with the current
+        // elapsed every 60 s while the session is in flight.
         self.write_in_progress_snapshot(0);
+        self.start_snapshot_tick();
 
         // Inhibit display sleep if the active mode requested it. Cookie
         // released at every timer-stopped emit site (user-stop,
@@ -2515,11 +2524,13 @@ impl TimerView {
         // duration, so the next refresh sees `ui_state == Idle`.
         self.session_start_time.set(0);
 
-        // Drop the crash-recovery snapshot. Every path that ends a
-        // session — save, discard, stop-from-pause, abandonment by
-        // mode switch — funnels through here, so this single call
-        // covers all of them. set_session_in_progress / finalize on
-        // the next launch will see no row and skip the toast.
+        // Drop the crash-recovery snapshot + cancel its 60 s
+        // heartbeat. Every path that ends a session — save, discard,
+        // stop-from-pause, abandonment by mode switch — funnels
+        // through here, so this single pair covers all of them.
+        // set_session_in_progress / finalize on the next launch
+        // will see no row and skip the toast.
+        self.cancel_snapshot_tick();
         self.clear_in_progress_snapshot();
 
         // Only update the visible UI if this mode is the one currently shown.
@@ -2589,6 +2600,43 @@ impl TimerView {
                 ));
             }
         });
+    }
+
+    /// Schedule a slow heartbeat that rewrites the in-progress
+    /// snapshot every 60 s with the current `elapsed_secs_for_mode`.
+    /// The snapshot's accumulated_secs is the only timing fact the
+    /// next-launch recovery needs; capturing it once a minute keeps
+    /// the worst-case loss bounded to ~60 s of meditation if the
+    /// process is killed between two beats.
+    ///
+    /// Coexists with `start_tick` (which drives the 1 Hz running
+    /// display) — separate source so an eMMC fsync stall on the
+    /// snapshot write doesn't visibly hitch the running label.
+    fn start_snapshot_tick(&self) {
+        self.cancel_snapshot_tick();
+        let obj = self.obj().clone();
+        let source_id = glib::timeout_add_seconds_local(60, move || {
+            let imp = obj.imp();
+            // No session in flight → tick has nothing to do. Bail
+            // without rescheduling so a stale source after a session
+            // ends doesn't keep waking up.
+            if imp.core_session.borrow().is_none() {
+                return glib::ControlFlow::Break;
+            }
+            let elapsed = imp.elapsed_secs_for_mode();
+            let secs_u32: u32 = elapsed.try_into().unwrap_or(u32::MAX);
+            imp.write_in_progress_snapshot(secs_u32);
+            glib::ControlFlow::Continue
+        });
+        *self.snapshot_tick_source.borrow_mut() = Some(source_id);
+    }
+
+    /// Drop the 60 s snapshot heartbeat. Called from `reset_mode`
+    /// so every session-end path cancels it.
+    fn cancel_snapshot_tick(&self) {
+        if let Some(src) = self.snapshot_tick_source.borrow_mut().take() {
+            src.remove();
+        }
     }
 
     fn start_tick(&self) {
