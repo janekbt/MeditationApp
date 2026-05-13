@@ -81,11 +81,11 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
 
     // Weekly meditation goal — drives the ring on the Stats tab.
     use meditate_core::goal::{
-        read_weekly_goal_mins, write_weekly_goal_mins,
+        weekly_goal_mins_from_db, write_weekly_goal_mins,
         WEEKLY_GOAL_DEFAULT, WEEKLY_GOAL_MAX, WEEKLY_GOAL_MIN, WEEKLY_GOAL_STEP,
     };
     let current_goal_mins = app
-        .with_db(|db| read_weekly_goal_mins(db.core()))
+        .with_db(|db| weekly_goal_mins_from_db(db.core()))
         .unwrap_or(WEEKLY_GOAL_DEFAULT);
     let goal_row = adw::SpinRow::builder()
         .title(gettext("Weekly goal"))
@@ -217,7 +217,7 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
     // Pre-fill from previously-saved values. Password stays blank by
     // design — we don't echo what's in the keychain.
     if let Some(account) = app
-        .with_db(|db| meditate_core::sync::settings::get_nextcloud_account(db.core()))
+        .with_db(|db| meditate_core::sync::settings::nextcloud_account_from_db(db.core()))
         .and_then(|r| r.ok())
         .flatten()
     {

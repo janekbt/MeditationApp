@@ -11,24 +11,6 @@ rationale.
 
 ## Tier 1 — High-impact, mostly mechanical
 
-### Standardize DB-reader naming
-- Four conventions in use today for "load X with default":
-  - `bells::*_from_db` (5 sites)
-  - `labels::persisted_*_for_mode`
-  - `goal::read_*`, `settings_keys::read_*`
-  - `sync::settings::get_*`
-- Pick `*_from_db` (pairs with the existing `*::from_db_str`
-  parse functions). Rename:
-  - `labels::persisted_active_for_mode` → `label_active_from_db`
-  - `labels::persisted_uuid_for_mode` → `label_uuid_from_db`
-  - `goal::read_weekly_goal_mins` → `weekly_goal_mins_from_db`
-  - `settings_keys::read_bool` → `bool_from_db` (or stays
-    `read_bool` if we treat the `settings_keys::*` prefix as the
-    distinguisher)
-  - `sync::settings::get_nextcloud_account` →
-    `nextcloud_account_from_db`, etc.
-- Mechanical; no signature change.
-
 ### Deduplicate `read_bool` / `read_str` / `read_signal_mode`
 - `settings_keys::read_bool` is `pub`; `bells.rs:297-308`
   reimplements `read_str` / `read_bool` / `read_signal_mode` as

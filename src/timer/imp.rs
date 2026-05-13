@@ -1047,7 +1047,7 @@ impl TimerView {
         let Some(app) = self.get_app() else { return; };
         let mode = self.current_mode().into();
         let on = app
-            .with_db(|db| meditate_core::settings_keys::read_keep_screen_awake(db.core(), mode))
+            .with_db(|db| meditate_core::settings_keys::keep_screen_awake_from_db(db.core(), mode))
             .unwrap_or(false);
         self.bells_loading.set(true);
         self.keep_screen_awake_row.set_active(on);
@@ -1066,7 +1066,7 @@ impl TimerView {
         if self.screen_awake_cookie.get() != 0 { return; }
         let mode = self.current_mode().into();
         let active = app
-            .with_db(|db| meditate_core::settings_keys::read_keep_screen_awake(db.core(), mode))
+            .with_db(|db| meditate_core::settings_keys::keep_screen_awake_from_db(db.core(), mode))
             .unwrap_or(false);
         if !active { return; }
         let window = app.active_window();
@@ -4288,7 +4288,7 @@ impl TimerView {
         self.get_app()
             .and_then(|app| {
                 app.with_db(|db| {
-                    meditate_core::labels::persisted_active_for_mode(db.core(), mode.into())
+                    meditate_core::labels::label_active_from_db(db.core(), mode.into())
                 })
             })
             .unwrap_or(mode == TimerMode::Guided)
@@ -4303,7 +4303,7 @@ impl TimerView {
 
     fn persisted_label_uuid_for_mode(&self, mode: TimerMode) -> Option<String> {
         self.get_app()?.with_db(|db| {
-            meditate_core::labels::persisted_uuid_for_mode(db.core(), mode.into())
+            meditate_core::labels::label_uuid_from_db(db.core(), mode.into())
         }).flatten()
     }
 

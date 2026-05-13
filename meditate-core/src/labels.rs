@@ -21,7 +21,7 @@ use crate::settings_keys::{
 /// didn't ask for. Persisted user choice always wins on subsequent
 /// visits because `get_setting` only falls back here when the key is
 /// missing entirely.
-pub fn persisted_active_for_mode(db: &Database, mode: SessionMode) -> bool {
+pub fn label_active_from_db(db: &Database, mode: SessionMode) -> bool {
     let fallback = mode == SessionMode::Guided;
     db.get_setting(label_active_key_for_mode(mode), format_bool(fallback))
         .map(|v| parse_bool(&v))
@@ -32,7 +32,7 @@ pub fn persisted_active_for_mode(db: &Database, mode: SessionMode) -> bool {
 /// is missing or empty — callers fall back to `default_label_uuid_
 /// for_mode` (or, if even the seeded default row was deleted, treat
 /// the label as un-resolvable).
-pub fn persisted_uuid_for_mode(db: &Database, mode: SessionMode) -> Option<String> {
+pub fn label_uuid_from_db(db: &Database, mode: SessionMode) -> Option<String> {
     let val = db.get_setting(label_uuid_key_for_mode(mode), "").ok()?;
     if val.is_empty() {
         None
@@ -67,7 +67,7 @@ pub fn persist_uuid_for_mode(
 /// user. `list_labels` walks happen here so callers don't repeat the
 /// "fetch list + find by uuid" pattern.
 pub fn resolve_label_for_mode(db: &Database, mode: SessionMode) -> Option<Label> {
-    let uuid = persisted_uuid_for_mode(db, mode)
+    let uuid = label_uuid_from_db(db, mode)
         .unwrap_or_else(|| default_label_uuid_for_mode(mode).to_string());
     if uuid.is_empty() {
         return None;
@@ -157,41 +157,41 @@ mod tests {
     }
 
     #[test]
-    fn persisted_active_defaults_to_off_for_timer_and_box_breath() {
+    fn label_active_from_db_defaults_to_off_for_timer_and_box_breath() {
         let db = Database::open_in_memory().unwrap();
-        assert!(!persisted_active_for_mode(&db, SessionMode::Timer));
-        assert!(!persisted_active_for_mode(&db, SessionMode::BoxBreath));
+        assert!(!label_active_from_db(&db, SessionMode::Timer));
+        assert!(!label_active_from_db(&db, SessionMode::BoxBreath));
     }
 
     #[test]
-    fn persisted_active_defaults_to_on_for_guided() {
+    fn label_active_from_db_defaults_to_on_for_guided() {
         let db = Database::open_in_memory().unwrap();
-        assert!(persisted_active_for_mode(&db, SessionMode::Guided));
+        assert!(label_active_from_db(&db, SessionMode::Guided));
     }
 
     #[test]
-    fn persisted_active_reads_back_the_user_override() {
+    fn label_active_from_db_reads_back_the_user_override() {
         let db = Database::open_in_memory().unwrap();
         persist_active_for_mode(&db, SessionMode::Timer, true).unwrap();
-        assert!(persisted_active_for_mode(&db, SessionMode::Timer));
+        assert!(label_active_from_db(&db, SessionMode::Timer));
         persist_active_for_mode(&db, SessionMode::Guided, false).unwrap();
-        assert!(!persisted_active_for_mode(&db, SessionMode::Guided));
+        assert!(!label_active_from_db(&db, SessionMode::Guided));
     }
 
     #[test]
-    fn persisted_uuid_is_none_when_empty_or_missing() {
+    fn label_uuid_from_db_is_none_when_empty_or_missing() {
         let db = Database::open_in_memory().unwrap();
-        assert!(persisted_uuid_for_mode(&db, SessionMode::Timer).is_none());
+        assert!(label_uuid_from_db(&db, SessionMode::Timer).is_none());
         persist_uuid_for_mode(&db, SessionMode::Timer, "").unwrap();
-        assert!(persisted_uuid_for_mode(&db, SessionMode::Timer).is_none());
+        assert!(label_uuid_from_db(&db, SessionMode::Timer).is_none());
     }
 
     #[test]
-    fn persisted_uuid_round_trips_through_settings() {
+    fn label_uuid_from_db_round_trips_through_settings() {
         let db = Database::open_in_memory().unwrap();
         persist_uuid_for_mode(&db, SessionMode::Timer, "custom-uuid").unwrap();
         assert_eq!(
-            persisted_uuid_for_mode(&db, SessionMode::Timer).as_deref(),
+            label_uuid_from_db(&db, SessionMode::Timer).as_deref(),
             Some("custom-uuid"),
         );
     }

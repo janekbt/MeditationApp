@@ -29,7 +29,7 @@ pub const WEEKLY_GOAL_DEFAULT: i64 = 150;
 /// Read the user's persisted weekly goal in minutes, falling back to
 /// `WEEKLY_GOAL_DEFAULT` when the row is missing, unparseable, or
 /// non-positive (a zero goal would collapse the daily-share math).
-pub fn read_weekly_goal_mins(db: &Database) -> i64 {
+pub fn weekly_goal_mins_from_db(db: &Database) -> i64 {
     db.get_setting("weekly_goal_mins", &WEEKLY_GOAL_DEFAULT.to_string())
         .ok()
         .and_then(|s| s.parse::<i64>().ok())
@@ -178,20 +178,20 @@ mod tests {
     #[test]
     fn read_weekly_goal_falls_back_to_default() {
         let db = Database::open_in_memory().unwrap();
-        assert_eq!(read_weekly_goal_mins(&db), WEEKLY_GOAL_DEFAULT);
+        assert_eq!(weekly_goal_mins_from_db(&db), WEEKLY_GOAL_DEFAULT);
         db.set_setting("weekly_goal_mins", "garbage").unwrap();
-        assert_eq!(read_weekly_goal_mins(&db), WEEKLY_GOAL_DEFAULT);
+        assert_eq!(weekly_goal_mins_from_db(&db), WEEKLY_GOAL_DEFAULT);
         db.set_setting("weekly_goal_mins", "0").unwrap();
-        assert_eq!(read_weekly_goal_mins(&db), WEEKLY_GOAL_DEFAULT, "zero filters out");
+        assert_eq!(weekly_goal_mins_from_db(&db), WEEKLY_GOAL_DEFAULT, "zero filters out");
         db.set_setting("weekly_goal_mins", "-10").unwrap();
-        assert_eq!(read_weekly_goal_mins(&db), WEEKLY_GOAL_DEFAULT, "negative filters out");
+        assert_eq!(weekly_goal_mins_from_db(&db), WEEKLY_GOAL_DEFAULT, "negative filters out");
     }
 
     #[test]
     fn read_weekly_goal_returns_persisted_value() {
         let db = Database::open_in_memory().unwrap();
         write_weekly_goal_mins(&db, 240).unwrap();
-        assert_eq!(read_weekly_goal_mins(&db), 240);
+        assert_eq!(weekly_goal_mins_from_db(&db), 240);
     }
 
     #[test]

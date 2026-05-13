@@ -39,7 +39,7 @@ pub struct NextcloudAccount {
 /// Return the configured account, or `None` if either field is unset/
 /// empty. Callers use this as the "is sync set up?" predicate; they
 /// don't need to know which specific field was missing.
-pub fn get_nextcloud_account(db: &Database) -> Result<Option<NextcloudAccount>> {
+pub fn nextcloud_account_from_db(db: &Database) -> Result<Option<NextcloudAccount>> {
     let url = db.get_sync_state(KEY_URL, "")?;
     let username = db.get_sync_state(KEY_USERNAME, "")?;
     if url.is_empty() || username.is_empty() {
@@ -51,7 +51,7 @@ pub fn get_nextcloud_account(db: &Database) -> Result<Option<NextcloudAccount>> 
 
 /// Persist (or update) the configured account. Both fields are written
 /// in a single logical "save" — leaving one stale would create a
-/// half-configured state that `get_nextcloud_account` would still
+/// half-configured state that `nextcloud_account_from_db` would still
 /// report as `None`, but cleaner to just keep the pair consistent.
 ///
 /// On a real change to either URL or username the dedup tracker
@@ -75,7 +75,7 @@ pub fn set_nextcloud_account(db: &Database, url: &str, username: &str) -> Result
     Ok(())
 }
 
-/// Wipe the stored account. After this `get_nextcloud_account` returns
+/// Wipe the stored account. After this `nextcloud_account_from_db` returns
 /// `None`. The keychain entry for the password is the caller's
 /// responsibility — clearing the account doesn't touch libsecret
 /// (the user might want to keep the password for later).
@@ -423,7 +423,7 @@ mod tests {
     #[test]
     fn get_account_on_fresh_db_returns_none() {
         let db = fresh();
-        assert_eq!(get_nextcloud_account(&db).unwrap(), None);
+        assert_eq!(nextcloud_account_from_db(&db).unwrap(), None);
     }
 
     #[test]
@@ -431,7 +431,7 @@ mod tests {
         let db = fresh();
         set_nextcloud_account(&db, "https://nc.example.com/", "janek").unwrap();
         assert_eq!(
-            get_nextcloud_account(&db).unwrap(),
+            nextcloud_account_from_db(&db).unwrap(),
             Some(NextcloudAccount {
                 url: "https://nc.example.com/".to_string(),
                 username: "janek".to_string(),
@@ -444,7 +444,7 @@ mod tests {
         let db = fresh();
         set_nextcloud_account(&db, "https://old.example/",  "old-user").unwrap();
         set_nextcloud_account(&db, "https://new.example/",  "new-user").unwrap();
-        let got = get_nextcloud_account(&db).unwrap().unwrap();
+        let got = nextcloud_account_from_db(&db).unwrap().unwrap();
         assert_eq!(got.url, "https://new.example/");
         assert_eq!(got.username, "new-user");
     }
@@ -567,7 +567,7 @@ mod tests {
         let db = fresh();
         set_nextcloud_account(&db, "https://nc.example/", "alice").unwrap();
         prepare_wipe_local_recovery(&db).unwrap();
-        let account = get_nextcloud_account(&db).unwrap();
+        let account = nextcloud_account_from_db(&db).unwrap();
         assert_eq!(account, Some(NextcloudAccount {
             url: "https://nc.example/".to_string(),
             username: "alice".to_string(),

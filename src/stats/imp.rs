@@ -155,7 +155,7 @@ impl StatsView {
         let (week_secs, goal_mins) = self.get_app()
             .and_then(|app| app.with_db(|db| {
                 let s = db.get_total_secs_since(&since).unwrap_or(0);
-                let goal = meditate_core::goal::read_weekly_goal_mins(db.core());
+                let goal = meditate_core::goal::weekly_goal_mins_from_db(db.core());
                 (s, goal)
             }))
             .unwrap_or((0, meditate_core::goal::WEEKLY_GOAL_DEFAULT));
@@ -197,7 +197,7 @@ impl StatsView {
         let (totals_vec, goal_mins) = self.get_app()
             .and_then(|app| app.with_db(|db| {
                 let t = db.core().get_daily_totals().unwrap_or_default();
-                let g = meditate_core::goal::read_weekly_goal_mins(db.core());
+                let g = meditate_core::goal::weekly_goal_mins_from_db(db.core());
                 (t, g)
             }))
             .unwrap_or_else(|| (Vec::new(), meditate_core::goal::WEEKLY_GOAL_DEFAULT));

@@ -703,7 +703,7 @@ fn sync_indicator_state_now(
     let snapshot = app.with_db(|db| {
         let core_db = db.core();
         (
-            settings::get_nextcloud_account(core_db).unwrap_or(None),
+            settings::nextcloud_account_from_db(core_db).unwrap_or(None),
             settings::get_last_sync_unix_ts(core_db).unwrap_or(None),
             settings::get_last_sync_error(core_db).unwrap_or(None),
             settings::is_last_sync_remote_data_lost(core_db).unwrap_or(false),

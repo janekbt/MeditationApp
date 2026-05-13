@@ -112,7 +112,7 @@ pub fn read_bool(db: &Database, key: &str, default: bool) -> bool {
 /// (sync the switch UI) and at session start (decide whether to
 /// hold the idle-inhibit cookie). Two callsites in the gtk shell
 /// today; Android will have its own pair.
-pub fn read_keep_screen_awake(db: &Database, mode: SessionMode) -> bool {
+pub fn keep_screen_awake_from_db(db: &Database, mode: SessionMode) -> bool {
     read_bool(db, keep_screen_awake_key_for_mode(mode), false)
 }
 
@@ -198,19 +198,19 @@ mod tests {
     }
 
     #[test]
-    fn read_keep_screen_awake_defaults_off_for_every_mode() {
+    fn keep_screen_awake_from_db_defaults_off_for_every_mode() {
         let db = Database::open_in_memory().unwrap();
-        assert!(!read_keep_screen_awake(&db, SessionMode::Timer));
-        assert!(!read_keep_screen_awake(&db, SessionMode::Guided));
-        assert!(!read_keep_screen_awake(&db, SessionMode::BoxBreath));
+        assert!(!keep_screen_awake_from_db(&db, SessionMode::Timer));
+        assert!(!keep_screen_awake_from_db(&db, SessionMode::Guided));
+        assert!(!keep_screen_awake_from_db(&db, SessionMode::BoxBreath));
     }
 
     #[test]
-    fn read_keep_screen_awake_reflects_per_mode_persistence() {
+    fn keep_screen_awake_from_db_reflects_per_mode_persistence() {
         let db = Database::open_in_memory().unwrap();
         db.set_setting(keep_screen_awake_key_for_mode(SessionMode::Timer), "true").unwrap();
-        assert!(read_keep_screen_awake(&db, SessionMode::Timer));
-        assert!(!read_keep_screen_awake(&db, SessionMode::Guided));
+        assert!(keep_screen_awake_from_db(&db, SessionMode::Timer));
+        assert!(!keep_screen_awake_from_db(&db, SessionMode::Guided));
     }
 
     #[test]

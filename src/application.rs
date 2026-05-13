@@ -581,7 +581,7 @@ impl MeditateApplication {
         // round-trip) just to find out we have no account configured.
         let configured = self
             .with_db(|db| {
-                meditate_core::sync::settings::get_nextcloud_account(db.core())
+                meditate_core::sync::settings::nextcloud_account_from_db(db.core())
                     .map(|opt| opt.is_some())
                     .unwrap_or(false)
             })
