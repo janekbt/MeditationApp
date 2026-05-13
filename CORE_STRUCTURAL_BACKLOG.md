@@ -121,17 +121,6 @@ rationale.
 
 ## Tier 1 — Second-pass additions
 
-### `existing_rowid_by_uuid(table, uuid)` helper
-- Idempotent-insert prelude (`SELECT id FROM <t> WHERE uuid = ?1`)
-  repeats verbatim 5 times: `insert_label_with_uuid:1884-1890`,
-  `insert_bell_sound_with_uuid:2246-2252`,
-  `insert_preset_with_uuid:2459-2465`,
-  `insert_guided_file_with_uuid:2773-2779`,
-  `insert_vibration_pattern_with_uuid:3007-3013`.
-- Extract `fn existing_rowid_by_uuid(&self, table: &'static str,
-  uuid: &str) -> Result<Option<i64>>`. Two-line caller replaces
-  ~6 lines × 5 sites.
-
 ### `map_unique_err(e, dup)` helper
 - `Err(rusqlite::Error::SqliteFailure(err, _)) if err.extended_code
   == SQLITE_CONSTRAINT_UNIQUE => Err(DbError::Duplicate*)` repeats

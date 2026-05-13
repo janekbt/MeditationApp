@@ -77,11 +77,7 @@ impl Database {
         is_bundled: bool,
     ) -> Result<i64> {
         let tx = self.conn.unchecked_transaction()?;
-        if let Some(existing) = self.conn.query_row(
-            "SELECT id FROM vibration_patterns WHERE uuid = ?1",
-            params![uuid_str],
-            |row| row.get::<_, i64>(0),
-        ).optional()? {
+        if let Some(existing) = self.existing_rowid_by_uuid("vibration_patterns", uuid_str)? {
             return Ok(existing);
         }
         let intensities_json = serde_json::to_string(intensities)

@@ -117,11 +117,7 @@ impl Database {
     /// shadow each other's rows.
     pub fn insert_label_with_uuid(&self, uuid_str: &str, name: &str) -> Result<i64> {
         let tx = self.conn.unchecked_transaction()?;
-        if let Some(existing) = self.conn.query_row(
-            "SELECT id FROM labels WHERE uuid = ?1",
-            params![uuid_str],
-            |row| row.get::<_, i64>(0),
-        ).optional()? {
+        if let Some(existing) = self.existing_rowid_by_uuid("labels", uuid_str)? {
             return Ok(existing);
         }
         match self.conn.execute(

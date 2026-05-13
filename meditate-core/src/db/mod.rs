@@ -245,6 +245,26 @@ impl Database {
         self.conn.execute(&sql, rusqlite::params![key, value])?;
         Ok(())
     }
+
+    /// `SELECT id FROM <table> WHERE uuid = ?1`. Used by every
+    /// `insert_*_with_uuid` entry point to make the insert
+    /// idempotent — a row with the requested uuid already present
+    /// returns its rowid without writing anything (and without
+    /// emitting a sync event, since no state changed). The pre-
+    /// flight check is what makes "import the same payload twice"
+    /// safe across sync replay.
+    pub(super) fn existing_rowid_by_uuid(
+        &self,
+        table: &'static str,
+        uuid: &str,
+    ) -> Result<Option<i64>> {
+        use rusqlite::OptionalExtension;
+        let sql = format!("SELECT id FROM {table} WHERE uuid = ?1");
+        Ok(self
+            .conn
+            .query_row(&sql, rusqlite::params![uuid], |row| row.get::<_, i64>(0))
+            .optional()?)
+    }
 }
 
 #[cfg(test)]

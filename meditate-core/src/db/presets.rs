@@ -70,11 +70,7 @@ impl Database {
         config_json: &str,
     ) -> Result<i64> {
         let tx = self.conn.unchecked_transaction()?;
-        if let Some(existing) = self.conn.query_row(
-            "SELECT id FROM presets WHERE uuid = ?1",
-            params![uuid_str],
-            |row| row.get::<_, i64>(0),
-        ).optional()? {
+        if let Some(existing) = self.existing_rowid_by_uuid("presets", uuid_str)? {
             return Ok(existing);
         }
         let now_iso = chrono::Utc::now().to_rfc3339();

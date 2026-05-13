@@ -103,11 +103,7 @@ impl Database {
         let tx = self.conn.unchecked_transaction()?;
         // Pre-check for an existing row with this uuid — return its
         // rowid without inserting or emitting an event.
-        if let Some(existing) = self.conn.query_row(
-            "SELECT id FROM bell_sounds WHERE uuid = ?1",
-            params![uuid_str],
-            |row| row.get::<_, i64>(0),
-        ).optional()? {
+        if let Some(existing) = self.existing_rowid_by_uuid("bell_sounds", uuid_str)? {
             return Ok(existing);
         }
         let created_iso = chrono::Utc::now().to_rfc3339();
@@ -187,12 +183,7 @@ impl Database {
     /// no DB-level enforcement here.
     pub fn delete_bell_sound(&self, uuid_str: &str) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
-        let exists: Option<i64> = self.conn.query_row(
-            "SELECT id FROM bell_sounds WHERE uuid = ?1",
-            params![uuid_str],
-            |row| row.get::<_, i64>(0),
-        ).optional()?;
-        if exists.is_none() {
+        if self.existing_rowid_by_uuid("bell_sounds", uuid_str)?.is_none() {
             return Ok(());
         }
         self.conn.execute(

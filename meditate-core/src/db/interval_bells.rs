@@ -204,12 +204,7 @@ impl Database {
     /// shouldn't get a delete for a row they never knew existed).
     pub fn delete_interval_bell(&self, uuid: &str) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
-        let exists: Option<i64> = self.conn.query_row(
-            "SELECT id FROM interval_bells WHERE uuid = ?1",
-            params![uuid],
-            |row| row.get::<_, i64>(0),
-        ).optional()?;
-        if exists.is_none() {
+        if self.existing_rowid_by_uuid("interval_bells", uuid)?.is_none() {
             return Ok(());
         }
         self.conn.execute(

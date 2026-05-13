@@ -48,11 +48,7 @@ impl Database {
         is_starred: bool,
     ) -> Result<i64> {
         let tx = self.conn.unchecked_transaction()?;
-        if let Some(existing) = self.conn.query_row(
-            "SELECT id FROM guided_files WHERE uuid = ?1",
-            params![uuid_str],
-            |row| row.get::<_, i64>(0),
-        ).optional()? {
+        if let Some(existing) = self.existing_rowid_by_uuid("guided_files", uuid_str)? {
             return Ok(existing);
         }
         let now_iso = chrono::Utc::now().to_rfc3339();
