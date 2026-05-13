@@ -8,7 +8,7 @@
 
 use rusqlite::params;
 
-use super::{BellSoundCategory, BoxBreathPhaseId, Database, DbError, Result, SessionMode};
+use super::{BellSoundCategory, BoxBreathPhaseId, Database, DbError, Result};
 
 impl Database {
     /// Seed-once bundled bell-sound orchestration: gated on
@@ -105,96 +105,17 @@ impl Database {
     /// (user has a preset with the same name under a different UUID)
     /// is silently swallowed.
     pub fn seed_default_presets(&self) -> Result<()> {
-        use crate::preset_config::*;
-        use crate::seeds::*;
-        if self.get_setting(PRESETS_SEEDED_KEY, "0")? == "1" {
+        if self.get_setting(crate::seeds::PRESETS_SEEDED_KEY, "0")? == "1" {
             return Ok(());
         }
-        let default_starting_bell_off = || PresetStartingBell {
-            enabled: false,
-            sound_uuid: BUNDLED_BOWL_UUID.to_string(),
-            prep_time_enabled: false,
-            prep_time_secs: 5,
-            signal_mode: "sound".to_string(),
-            vibration_pattern_uuid: BUNDLED_PATTERN_PULSE_UUID.to_string(),
-        };
-        let sitting = PresetConfig {
-            label: PresetLabel {
-                enabled: true,
-                uuid: Some(DEFAULT_TIMER_LABEL_UUID.to_string()),
-            },
-            starting_bell: PresetStartingBell { enabled: true, ..default_starting_bell_off() },
-            interval_bells: PresetIntervalBells::default(),
-            end_bell: PresetEndBell {
-                enabled: true,
-                sound_uuid: BUNDLED_BELL_UUID.to_string(),
-                signal_mode: "sound".to_string(),
-                vibration_pattern_uuid: BUNDLED_PATTERN_PULSE_UUID.to_string(),
-            },
-            timing: PresetTiming::Timer { stopwatch: false, duration_secs: 15 * 60 },
-            cues_signal_mode: "both".to_string(),
-            keep_screen_awake: false,
-            box_breath_cues: PresetBoxBreathCues::default(),
-        };
-        let box_4444 = PresetConfig {
-            label: PresetLabel {
-                enabled: true,
-                uuid: Some(DEFAULT_BREATHING_LABEL_UUID.to_string()),
-            },
-            starting_bell: default_starting_bell_off(),
-            interval_bells: PresetIntervalBells::default(),
-            end_bell: PresetEndBell {
-                enabled: true,
-                sound_uuid: BUNDLED_BELL_UUID.to_string(),
-                signal_mode: "sound".to_string(),
-                vibration_pattern_uuid: BUNDLED_PATTERN_PULSE_UUID.to_string(),
-            },
-            timing: PresetTiming::BoxBreath {
-                stopwatch: false,
-                inhale_secs: 4,
-                hold_full_secs: 4,
-                exhale_secs: 4,
-                hold_empty_secs: 4,
-                duration_secs: 10 * 60,
-            },
-            cues_signal_mode: "both".to_string(),
-            keep_screen_awake: false,
-            box_breath_cues: PresetBoxBreathCues::default(),
-        };
-        let box_4780 = PresetConfig {
-            timing: PresetTiming::BoxBreath {
-                stopwatch: false,
-                inhale_secs: 4,
-                hold_full_secs: 7,
-                exhale_secs: 8,
-                hold_empty_secs: 0,
-                duration_secs: 10 * 60,
-            },
-            ..box_4444.clone()
-        };
-        let seeds: &[(&str, &str, SessionMode, &PresetConfig)] = &[
-            (DEFAULT_SITTING_PRESET_UUID, "Sitting", SessionMode::Timer, &sitting),
-            (
-                DEFAULT_BOX_BREATH_4444_UUID,
-                "Box Breath 4-4-4-4",
-                SessionMode::BoxBreath,
-                &box_4444,
-            ),
-            (
-                DEFAULT_BOX_BREATH_4780_UUID,
-                "Box Breath 4-7-8-0",
-                SessionMode::BoxBreath,
-                &box_4780,
-            ),
-        ];
-        for (uuid, name, mode, cfg) in seeds {
-            match self.insert_preset_with_uuid(uuid, name, *mode, true, &cfg.to_json()) {
+        for (uuid, name, mode, cfg) in crate::seeds::default_presets() {
+            match self.insert_preset_with_uuid(uuid, name, mode, true, &cfg.to_json()) {
                 Ok(_) => {}
                 Err(DbError::DuplicatePreset(_)) => {}
                 Err(e) => return Err(e),
             }
         }
-        self.set_setting(PRESETS_SEEDED_KEY, "1")?;
+        self.set_setting(crate::seeds::PRESETS_SEEDED_KEY, "1")?;
         Ok(())
     }
 

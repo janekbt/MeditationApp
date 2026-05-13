@@ -88,14 +88,6 @@ rationale.
   `diag::log` and returns `()`.
 - Subjective; pick one when next touching these helpers.
 
-### `seed_default_presets` body of literal `PresetConfig` data
-- `meditate-core/src/db.rs:3447-3539` — 92 lines of `PresetConfig`
-  literal constructors. This is data, not behaviour.
-- Move the three `PresetConfig` constructors into `crate::seeds`
-  next to the UUID consts. `seed_default_presets` body shrinks
-  to a loop over a `&[(&str, &str, SessionMode, fn() ->
-  PresetConfig)]`.
-
 ### `query_sessions` four near-identical branches
 - `meditate-core/src/db.rs:4180-4248` — four `prepare_cached`
   branches each hardcode the same 8-column SELECT + ORDER BY;
@@ -299,14 +291,6 @@ rationale.
 - Either `format!`-build the schema string at init with the
   seed consts inlined, OR drop the column DEFAULT entirely
   (writes always supply the value anyway).
-
-### `seed_default_presets` body of literal `PresetConfig` data
-- `db.rs:3447-3539` — 92 lines of `PresetConfig` literal
-  constructors. Data, not behavior.
-- Move the three `PresetConfig` constructors into
-  `crate::seeds` next to the UUID consts. `seed_default_presets`
-  shrinks to a loop over a static
-  `&[(&str, &str, SessionMode, fn() -> PresetConfig)]`.
 
 ### `query_sessions` four near-identical branches
 - `db.rs:4180-4248` — four `prepare_cached` branches each
@@ -728,8 +712,6 @@ avoid silently losing items in a rewrite.
   **inline / Tier 3**.
 
 ### Merge duplicates
-- **`seed_default_presets` literal-data** appears twice (Tier 4
-  + Tier 3). Dedupe.
 - **`query_sessions` four near-identical branches** appears
   twice (Tier 4 + Tier 3). Dedupe.
 - **Test-fixture sprawl** is fragmented into 3 items (Tier 3 db,

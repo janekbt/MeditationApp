@@ -10,7 +10,11 @@
 //! with its own asset paths. Vibration patterns and labels are pure
 //! data and travel here in their entirety.
 
-use crate::db::ChartKind;
+use crate::db::{ChartKind, SessionMode};
+use crate::preset_config::{
+    PresetBoxBreathCues, PresetConfig, PresetEndBell, PresetIntervalBells,
+    PresetLabel, PresetStartingBell, PresetTiming,
+};
 
 // ── Bell-sound UUIDs ───────────────────────────────────────────────
 // Public so the legacy-key compatibility layer can map old
@@ -115,6 +119,86 @@ pub const BUNDLED_VIBRATION_PATTERNS: &[(&str, &str, u32, &[f32], ChartKind)] = 
 pub const DEFAULT_SITTING_PRESET_UUID: &str = "b9e1c5a4-2d3f-4d8b-9c70-7a0e1d2c3001";
 pub const DEFAULT_BOX_BREATH_4444_UUID: &str = "b9e1c5a4-2d3f-4d8b-9c70-7a0e1d2c3002";
 pub const DEFAULT_BOX_BREATH_4780_UUID: &str = "b9e1c5a4-2d3f-4d8b-9c70-7a0e1d2c3003";
+
+/// Seed list: (uuid, name, mode, config). The `PresetConfig` values
+/// hold owned `String`s so this is a fn, not a `const`. Called once
+/// per fresh DB by `seed_default_presets`; the gated one-shot keeps
+/// re-opens from doing the work again.
+///
+/// Sitting is a 15-minute Timer with starting + end bells on the
+/// default sound, prep-time off. The two Box-Breath presets share
+/// everything except their phase timing (4-4-4-4 vs 4-7-8-0). All
+/// three ship starred so the home-screen chip list isn't empty on
+/// first launch.
+pub fn default_presets() -> [(&'static str, &'static str, SessionMode, PresetConfig); 3] {
+    let default_starting_bell_off = || PresetStartingBell {
+        enabled: false,
+        sound_uuid: BUNDLED_BOWL_UUID.to_string(),
+        prep_time_enabled: false,
+        prep_time_secs: 5,
+        signal_mode: "sound".to_string(),
+        vibration_pattern_uuid: BUNDLED_PATTERN_PULSE_UUID.to_string(),
+    };
+    let sitting = PresetConfig {
+        label: PresetLabel {
+            enabled: true,
+            uuid: Some(DEFAULT_TIMER_LABEL_UUID.to_string()),
+        },
+        starting_bell: PresetStartingBell { enabled: true, ..default_starting_bell_off() },
+        interval_bells: PresetIntervalBells::default(),
+        end_bell: PresetEndBell {
+            enabled: true,
+            sound_uuid: BUNDLED_BELL_UUID.to_string(),
+            signal_mode: "sound".to_string(),
+            vibration_pattern_uuid: BUNDLED_PATTERN_PULSE_UUID.to_string(),
+        },
+        timing: PresetTiming::Timer { stopwatch: false, duration_secs: 15 * 60 },
+        cues_signal_mode: "both".to_string(),
+        keep_screen_awake: false,
+        box_breath_cues: PresetBoxBreathCues::default(),
+    };
+    let box_4444 = PresetConfig {
+        label: PresetLabel {
+            enabled: true,
+            uuid: Some(DEFAULT_BREATHING_LABEL_UUID.to_string()),
+        },
+        starting_bell: default_starting_bell_off(),
+        interval_bells: PresetIntervalBells::default(),
+        end_bell: PresetEndBell {
+            enabled: true,
+            sound_uuid: BUNDLED_BELL_UUID.to_string(),
+            signal_mode: "sound".to_string(),
+            vibration_pattern_uuid: BUNDLED_PATTERN_PULSE_UUID.to_string(),
+        },
+        timing: PresetTiming::BoxBreath {
+            stopwatch: false,
+            inhale_secs: 4,
+            hold_full_secs: 4,
+            exhale_secs: 4,
+            hold_empty_secs: 4,
+            duration_secs: 10 * 60,
+        },
+        cues_signal_mode: "both".to_string(),
+        keep_screen_awake: false,
+        box_breath_cues: PresetBoxBreathCues::default(),
+    };
+    let box_4780 = PresetConfig {
+        timing: PresetTiming::BoxBreath {
+            stopwatch: false,
+            inhale_secs: 4,
+            hold_full_secs: 7,
+            exhale_secs: 8,
+            hold_empty_secs: 0,
+            duration_secs: 10 * 60,
+        },
+        ..box_4444.clone()
+    };
+    [
+        (DEFAULT_SITTING_PRESET_UUID, "Sitting", SessionMode::Timer, sitting),
+        (DEFAULT_BOX_BREATH_4444_UUID, "Box Breath 4-4-4-4", SessionMode::BoxBreath, box_4444),
+        (DEFAULT_BOX_BREATH_4780_UUID, "Box Breath 4-7-8-0", SessionMode::BoxBreath, box_4780),
+    ]
+}
 
 #[cfg(test)]
 mod tests {
