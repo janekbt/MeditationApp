@@ -207,27 +207,6 @@ rationale.
 
 ## Tier 3 — Second-pass additions
 
-### Move `src/bin/*_smoke.rs` to `examples/` or delete
-- Five `bin/` smoke harnesses (`breath_smoke`, `record_smoke`,
-  `smoke`, `sync_smoke`, `sync_pipeline_smoke`) are not
-  referenced from CI / README / scripts. Cargo builds them
-  on every workspace `cargo build`.
-- Move to `examples/` (only built on `cargo run --example`) or
-  delete. Net build-time win.
-
-### Dead code audit
-- `format::running_text` (line 570) — no callers anywhere in
-  the workspace; tested but never rendered. Delete or document
-  why it stays.
-- `format::overtime` free fn (line 192) — no shell callers
-  (shells use `overtime_button_label` which computes overtime
-  internally).
-- `timer::Countdown` — only used by the `bin/*_smoke.rs`
-  harnesses. After Q lands, drop to `pub(crate)` or delete.
-- `sync::fake::FakeWebDav` — `pub use`'d at `sync/mod.rs` for
-  the smoke binaries; gate to `#[cfg(any(test, feature =
-  "test-fakes"))]` after Q.
-
 ### `pub const` audit for `pub(crate)` downgrades
 - Tunables that look internal:
   - `sync::backoff::MAX_BACKOFF_SECS` — used only inside its
