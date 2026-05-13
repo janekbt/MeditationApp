@@ -881,15 +881,6 @@ avoid silently losing items in a rewrite.
   memory rule is enforced only by Janek's terminal.
 - Add a `cargo-test` and `cargo-clippy` job to flatpak.yml.
 
-### Operational: diag-log on-disk path documented nowhere
-- `README.md:40` mentions the About → Troubleshooting view
-  and `application.rs:181` has a toast hint. But the
-  absolute on-disk path (`~/.var/app/io.github.janekbt.
-  Meditate/data/meditate/diagnostics.log` on Flatpak) is
-  documented nowhere — if the About dialog itself crashes,
-  user has nowhere to look.
-- Fix: one line in README listing the path on Flatpak and
-  non-Flatpak.
 
 ## Tier 1 — Eighth-pass additions
 

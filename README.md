@@ -38,6 +38,7 @@ Countdown and stopwatch, a browsable log, and weekly-goal stats to help you buil
 - Keyboard shortcuts for the common actions
 - Dark-mode and high-contrast safe; follows your system accent colour
 - About → Troubleshooting view with a rolling diagnostics log, for attaching to bug reports
+  - Log file lives at `~/.var/app/io.github.janekbt.Meditate/data/meditate/diagnostics.log` on Flatpak, `~/.local/share/meditate/diagnostics.log` otherwise — useful when the About dialog itself can't be opened
 
 ## Installation
 
