@@ -184,7 +184,6 @@ pub fn prepare_wipe_local_recovery(db: &Database) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_macros::assert_matches;
 
     fn fresh() -> Database {
         // In-memory DB so each test starts clean.

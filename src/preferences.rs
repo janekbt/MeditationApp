@@ -261,7 +261,7 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
         #[weak] password_row,
         #[weak] test_btn,
         move |_| {
-            use meditate_core::sync::credentials::{prepare_test, StoredPassword, TestPrereq};
+            use meditate_core::sync::credentials::{prepare_test, SyncSettingsError};
             // Snapshot the raw fields so the keychain-lookup closure
             // can use the trimmed url/username if it fires.
             let raw_url = url_row.text().to_string();
@@ -270,30 +270,32 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
             let creds = prepare_test(&raw_url, &raw_username, &typed_pw, || {
                 let url = raw_url.trim();
                 let username = raw_username.trim();
-                match crate::keychain::read_password(url, username) {
-                    Ok(Some(p)) => StoredPassword::Found(p),
-                    Ok(None) => StoredPassword::Missing,
-                    Err(e) => {
-                        meditate_core::log(&format!(
-                            "test_connection: keychain read failed: {e:?}"));
-                        StoredPassword::Failed
-                    }
-                }
+                crate::keychain::read_password(url, username).inspect_err(|e| {
+                    meditate_core::log(&format!(
+                        "test_connection: keychain read failed: {e:?}"));
+                })
             });
             let creds = match creds {
                 Ok(c) => c,
-                Err(TestPrereq::EmptyUrl) | Err(TestPrereq::EmptyUsername) => {
+                Err(SyncSettingsError::EmptyUrl)
+                | Err(SyncSettingsError::EmptyUsername) => {
                     data_toast(&dialog, &gettext("Enter URL and username"));
                     return;
                 }
-                Err(TestPrereq::NoPassword) => {
+                Err(SyncSettingsError::NoPassword) => {
                     data_toast(&dialog, &gettext("Enter a password"));
                     return;
                 }
-                Err(TestPrereq::KeyringFailed) => {
+                Err(SyncSettingsError::KeyringFailed) => {
                     data_toast(&dialog, &gettext("Keyring read failed"));
                     return;
                 }
+                // prepare_test never emits InsecureUrl — the test
+                // path lets http:// through so the user can probe
+                // it; the save path is where that gets refused.
+                Err(SyncSettingsError::InsecureUrl) => unreachable!(
+                    "prepare_test does not validate URL scheme"
+                ),
             };
             let url = creds.url;
             let username = creds.username;
@@ -360,7 +362,7 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
         #[weak] username_row,
         #[weak] password_row,
         move |_| {
-            use meditate_core::sync::credentials::{prepare_save, PasswordAction, SaveSyncError};
+            use meditate_core::sync::credentials::{prepare_save, PasswordAction, SyncSettingsError};
             let url = url_row.text().to_string();
             let username = username_row.text().to_string();
             let password = password_row.text().to_string();
@@ -370,14 +372,22 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
             // hex blobs that don't need trimming.
             let plan = match prepare_save(&url, &username, &password) {
                 Ok(p) => p,
-                Err(SaveSyncError::EmptyUrl) | Err(SaveSyncError::EmptyUsername) => {
+                Err(SyncSettingsError::EmptyUrl)
+                | Err(SyncSettingsError::EmptyUsername) => {
                     data_toast(&dialog, &gettext("Enter URL and username"));
                     return;
                 }
-                Err(SaveSyncError::InsecureUrl) => {
+                Err(SyncSettingsError::InsecureUrl) => {
                     data_toast(&dialog, &gettext("URL must start with https://"));
                     return;
                 }
+                // prepare_save never emits NoPassword/KeyringFailed —
+                // it doesn't touch the keychain. The shell stores the
+                // typed password AFTER this validates.
+                Err(SyncSettingsError::NoPassword)
+                | Err(SyncSettingsError::KeyringFailed) => unreachable!(
+                    "prepare_save does not consult the keychain"
+                ),
             };
             let url_trimmed: &str = &plan.url;
             let username_trimmed: &str = &plan.username;

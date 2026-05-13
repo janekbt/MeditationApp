@@ -13,15 +13,6 @@ rationale.
 
 ## Tier 2 — Medium impact, light design
 
-### Collapse `SaveSyncError` / `TestPrereq` / `StoredPassword` into one shape
-- `TestPrereq { EmptyUrl, EmptyUsername, NoPassword, KeyringFailed }`
-  is a strict superset of `SaveSyncError { EmptyUrl, EmptyUsername }`,
-  and `StoredPassword::{Missing, Failed}` is the same axis as
-  `TestPrereq::{NoPassword, KeyringFailed}`.
-- Rename `TestPrereq` → `SyncSettingsError`; `prepare_save`
-  returns the same enum but only emits the two empty-input
-  variants.
-
 ## Tier 3 — Judgment calls
 
 ### Move `SignalMode` out of `db.rs`
@@ -352,8 +343,6 @@ avoid silently losing items in a rewrite.
 - **Test-fixture sprawl** is fragmented into 3 items (Tier 3 db,
   Tier 2 sync-orch boilerplate, Tier 3 scope-expansion). Merge
   into one Tier-2 "crate-wide `tests_common` module."
-- **`SaveSyncError`/`TestPrereq` collapse + `sync/settings.rs`
-  split** are the same PR. Merge into one Tier-1 item.
 - **`*_from_db` free-fn migration + `stats/` consolidation +
   `get_running_average_secs` move** are the same direction. One
   PR.
@@ -539,8 +528,8 @@ avoid silently losing items in a rewrite.
 - Fix: typed `Announcement` enum (`SessionSaved`,
   `SessionDeleted{count}`, `SyncOk{secs_ago}`, `SyncFailed
   (SyncFailureKind)`, `ImportComplete{n}`, `UndoAvailable
-  {kind}`). Bundle with the pending `SaveSyncError`/
-  `TestPrereq` collapse.
+  {kind}`). Mirrors the shipped `SyncSettingsError` pattern in
+  `sync/credentials.rs` — typed key in core, shell renders.
 
 ### Accessibility: `MiniStatValue::{NoData,Value}` to keep dash glyphs out of SR
 - `format::mini_stat_or_dash` returns `"–"`; SR reads "minus"
