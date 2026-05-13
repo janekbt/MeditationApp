@@ -11,16 +11,6 @@ rationale.
 
 ## Tier 1 — High-impact, mostly mechanical
 
-### `DbError::Sqlite`/`Csv` dead-end at user UI; `DuplicateLabel(name)` not surfaced
-- `src/db/mod.rs:200,229` maps every `DbError::Sqlite` to a
-  raw `rusqlite::Error` → generic toast. `DuplicateLabel`/
-  `Preset`/`GuidedFile`/`VibrationPattern` carry the name
-  but get folded back into a synthesized `SqliteFailure`
-  with developer-language "UNIQUE constraint failed" message.
-- Fix: map `DuplicateLabel(name)` directly to a translatable
-  user toast at `src/db/mod.rs:197`, NOT to a fake rusqlite
-  error.
-
 ### `SyncCoordinator::request` has zero multi-thread tests
 - All 6 tests in `sync/coordinator.rs:108-173` are single-
   threaded — exercise the API, not the atomic ordering. The
@@ -631,6 +621,18 @@ Re-evaluate each individually if a touching commit lands nearby:
 - Fix: wrap in `struct Unit(f64)` with private
   constructor, OR document more loudly. Low priority —
   RNG callers are all in-crate.
+
+### `DbError::Decode(String)` could be typed
+- Both `meditate_core::db::DbError::Decode(String)` and the
+  matching shell `crate::db::DbError::Decode(String)` carry
+  free-form English strings. Callers don't pattern-match on
+  the content; the string is purely for the diag log. That's
+  fine for now (Decode errors are debug-tier, never user-
+  visible) but a future audit might want to split into typed
+  variants like `Decode::BadEnum { column, raw }`,
+  `Decode::MissingField { column }`, etc. so log lines parse
+  cleanly. Tentative — revisit only if a real bug is masked
+  by the opaque string.
 
 ## Tier 4 — Defer / discuss
 

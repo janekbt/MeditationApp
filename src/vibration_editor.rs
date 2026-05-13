@@ -486,6 +486,7 @@ pub fn push_pattern_editor(
     let editor_for_save = editor.clone();
     let on_saved = Rc::new(on_saved);
     let on_saved_for_save = on_saved.clone();
+    let save_btn_for_toast = save_btn.clone();
     save_btn.connect_clicked(move |_| {
         let name = editor_for_save.name.borrow().trim().to_string();
         if name.is_empty() {
@@ -495,27 +496,30 @@ pub fn push_pattern_editor(
         let intensities = editor_for_save.intensities.borrow().clone();
         let chart_kind = editor_for_save.chart_kind.get();
 
-        let saved_uuid = match editor_for_save.edit_uuid.borrow().clone() {
+        let result: Option<crate::db::Result<String>> = match editor_for_save.edit_uuid.borrow().clone() {
             None => app_for_save
                 .with_db_mut(|db| {
                     db.insert_vibration_pattern(
                         &name, duration_ms, &intensities, chart_kind, false,
                     )
-                })
-                .and_then(|r| r.ok()),
+                }),
             Some(uuid) => app_for_save
                 .with_db_mut(|db| {
                     db.update_vibration_pattern(
                         &uuid, &name, duration_ms, &intensities, chart_kind,
-                    )
-                })
-                .and_then(|r| r.ok())
-                .map(|()| uuid),
+                    ).map(|()| uuid.clone())
+                }),
         };
-        if let Some(uuid) = saved_uuid {
-            on_saved_for_save(uuid);
+        match result {
+            Some(Ok(uuid)) => {
+                on_saved_for_save(uuid);
+                nav_for_save.pop();
+            }
+            Some(Err(e)) => {
+                crate::db::surface_duplicate_toast(&save_btn_for_toast, &e);
+            }
+            None => {}
         }
-        nav_for_save.pop();
     });
 
     // Preview slot: replacing the previous handle disarms its Drop

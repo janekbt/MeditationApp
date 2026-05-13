@@ -864,6 +864,7 @@ fn present_rename_dialog(
     let entry_for_response = entry.clone();
     let toast_overlay_for_response = toast_overlay.clone();
     let toast_slot_for_response = toast_slot.clone();
+    let anchor_for_response = anchor.clone();
     dialog.connect_response(None, move |_, id| {
         if id != "rename" {
             return;
@@ -872,9 +873,12 @@ fn present_rename_dialog(
         if new_name.is_empty() || new_name == old_name {
             return;
         }
-        app_for_response.with_db_mut(|db| {
+        if let Some(Err(e)) = app_for_response.with_db_mut(|db| {
             db.rename_guided_file(&uuid_for_response, &new_name)
-        });
+        }) {
+            crate::db::surface_duplicate_toast(&anchor_for_response, &e);
+            return;
+        }
         if let Some(rb) = rebuilder.borrow().as_ref() {
             rb();
         }

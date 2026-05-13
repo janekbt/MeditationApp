@@ -13,8 +13,88 @@
 //! Core's schema is the on-disk reality; the existing app's old schema
 //! is gone (one user, opted into a fresh DB).
 
-use rusqlite::Result;
+use gtk::prelude::*;
 use std::path::Path;
+
+/// Shell-side error type returned by every wrapper method on the
+/// `Database` struct. Mirrors core's `meditate_core::db::DbError`
+/// shape, preserving the typed `Duplicate*` variants so the four
+/// "name already taken" toasts can render a real user-facing
+/// message instead of a synthesized rusqlite `UNIQUE constraint
+/// failed` string. `Other` wraps a genuine `rusqlite::Error` for
+/// the long tail of SQL surface that doesn't need typed handling.
+#[derive(Debug)]
+pub enum DbError {
+    DuplicateLabel(String),
+    DuplicatePreset(String),
+    DuplicateGuidedFile(String),
+    DuplicateVibrationPattern(String),
+    SchemaVersionTooNew { db: u32, build: u32 },
+    DateOutOfRange,
+    Decode(String),
+    Other(rusqlite::Error),
+}
+
+impl std::fmt::Display for DbError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::DuplicateLabel(name) => write!(f, "duplicate label: {name}"),
+            Self::DuplicatePreset(name) => write!(f, "duplicate preset: {name}"),
+            Self::DuplicateGuidedFile(name) => write!(f, "duplicate guided file: {name}"),
+            Self::DuplicateVibrationPattern(name) =>
+                write!(f, "duplicate vibration pattern: {name}"),
+            Self::SchemaVersionTooNew { db, build } =>
+                write!(f, "db schema_version={db} exceeds build schema_version={build}"),
+            Self::DateOutOfRange => write!(f, "date out of range"),
+            Self::Decode(s) => write!(f, "decode error: {s}"),
+            Self::Other(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl std::error::Error for DbError {}
+
+impl From<rusqlite::Error> for DbError {
+    fn from(e: rusqlite::Error) -> Self { Self::Other(e) }
+}
+
+impl DbError {
+    /// Localized "«{name}» is already taken" toast text for the four
+    /// duplicate variants. `None` for non-duplicate errors so the
+    /// caller can decide whether to show a generic toast or stay
+    /// silent. Phrasing is deliberately short — Librem 5 toast width
+    /// truncates around 30 chars, and longer copy is what made the
+    /// previous developer-language `UNIQUE constraint failed`
+    /// rendering useless to users.
+    pub fn duplicate_toast_text(&self) -> Option<String> {
+        let name = match self {
+            DbError::DuplicateLabel(n)
+            | DbError::DuplicatePreset(n)
+            | DbError::DuplicateGuidedFile(n)
+            | DbError::DuplicateVibrationPattern(n) => n,
+            _ => return None,
+        };
+        Some(crate::i18n::gettext("«{name}» is already taken").replace("{name}", name))
+    }
+}
+
+pub type Result<T> = std::result::Result<T, DbError>;
+
+/// Push a "«{name}» is already taken" toast onto the main window
+/// for the four `Duplicate*` variants of `DbError`. Non-duplicate
+/// errors are silently ignored — they only fire on a genuine DB
+/// fault and there's no useful user action; the diag log catches
+/// them for post-hoc debugging. Anchored on any widget that lives
+/// inside `MeditateWindow` (entry / button / row).
+pub fn surface_duplicate_toast<W: gtk::glib::object::IsA<gtk::Widget>>(
+    anchor: &W,
+    err: &DbError,
+) {
+    let Some(msg) = err.duplicate_toast_text() else { return; };
+    let Some(root) = anchor.root() else { return; };
+    let Ok(window) = root.downcast::<crate::window::MeditateWindow>() else { return; };
+    window.add_toast(adw::Toast::builder().title(msg).timeout(4).build());
+}
 
 // ── Models ────────────────────────────────────────────────────────────────────
 
@@ -190,57 +270,22 @@ fn session_from_core(id: i64, core: &meditate_core::db::Session) -> Session {
     }
 }
 
-/// Map core's structured error to a `rusqlite::Error` so the GTK side
-/// can keep its `Result = rusqlite::Result` alias. `DuplicateLabel`
-/// becomes a synthesized UNIQUE-constraint failure, matching what
-/// callers used to see when the GTK app talked to rusqlite directly.
-fn map_core_err(e: meditate_core::db::DbError) -> rusqlite::Error {
-    use meditate_core::db::DbError;
+/// Map core's structured error to the shell's `DbError`. Typed
+/// `Duplicate*` variants carry the offending name straight through
+/// so the create / rename dialogs render a real "«{name}» is
+/// already taken" toast rather than the developer-language UNIQUE-
+/// constraint string they used to.
+fn map_core_err(e: meditate_core::db::DbError) -> DbError {
+    use meditate_core::db::DbError as Core;
     match e {
-        DbError::Sqlite(err) => err,
-        DbError::DuplicateLabel(name) => rusqlite::Error::SqliteFailure(
-            rusqlite::ffi::Error {
-                code: rusqlite::ErrorCode::ConstraintViolation,
-                extended_code: rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE,
-            },
-            Some(format!("UNIQUE constraint failed: labels.name (\"{name}\")")),
-        ),
-        DbError::DuplicatePreset(name) => rusqlite::Error::SqliteFailure(
-            rusqlite::ffi::Error {
-                code: rusqlite::ErrorCode::ConstraintViolation,
-                extended_code: rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE,
-            },
-            Some(format!("UNIQUE constraint failed: presets.name (\"{name}\")")),
-        ),
-        DbError::DuplicateGuidedFile(name) => rusqlite::Error::SqliteFailure(
-            rusqlite::ffi::Error {
-                code: rusqlite::ErrorCode::ConstraintViolation,
-                extended_code: rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE,
-            },
-            Some(format!("UNIQUE constraint failed: guided_files.name (\"{name}\")")),
-        ),
-        DbError::DuplicateVibrationPattern(name) => rusqlite::Error::SqliteFailure(
-            rusqlite::ffi::Error {
-                code: rusqlite::ErrorCode::ConstraintViolation,
-                extended_code: rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE,
-            },
-            Some(format!("UNIQUE constraint failed: vibration_patterns.name (\"{name}\")")),
-        ),
-        DbError::Decode(s) => rusqlite::Error::ToSqlConversionFailure(Box::new(
-            std::io::Error::new(std::io::ErrorKind::InvalidData, s),
-        )),
-        DbError::SchemaVersionTooNew { db, build } => rusqlite::Error::ToSqlConversionFailure(
-            Box::new(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("db schema_version={db} exceeds build schema_version={build}"),
-            )),
-        ),
-        DbError::DateOutOfRange => rusqlite::Error::ToSqlConversionFailure(Box::new(
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "date out of range",
-            ),
-        )),
+        Core::Sqlite(err) => DbError::Other(err),
+        Core::DuplicateLabel(name) => DbError::DuplicateLabel(name),
+        Core::DuplicatePreset(name) => DbError::DuplicatePreset(name),
+        Core::DuplicateGuidedFile(name) => DbError::DuplicateGuidedFile(name),
+        Core::DuplicateVibrationPattern(name) => DbError::DuplicateVibrationPattern(name),
+        Core::Decode(s) => DbError::Decode(s),
+        Core::SchemaVersionTooNew { db, build } => DbError::SchemaVersionTooNew { db, build },
+        Core::DateOutOfRange => DbError::DateOutOfRange,
     }
 }
 
@@ -278,19 +323,18 @@ impl Database {
     /// pre-existing DB file written by an older version of this app
     /// will need to be deleted first (the user opted into that on
     /// 2026-04-29 — single-user repo).
-    pub fn open(path: &Path) -> meditate_core::db::Result<Self> {
-        use meditate_core::db::DbError;
+    pub fn open(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
                 DbError::Decode(format!("mkdir {}: {e}", parent.display()))
             })?;
         }
-        let inner = meditate_core::Database::open(path)?;
+        let inner = meditate_core::Database::open(path).map_err(map_core_err)?;
         let db = Self { inner };
         // Bell sounds stay shell-side: the seed list carries gresource
         // paths that don't exist on Android.
-        db.seed_bundled_bell_sounds().map_err(DbError::Sqlite)?;
-        db.inner.seed_all_non_audio()?;
+        db.seed_bundled_bell_sounds()?;
+        db.inner.seed_all_non_audio().map_err(map_core_err)?;
         Ok(db)
     }
 
@@ -334,7 +378,7 @@ impl Database {
             .map_err(map_core_err)?
             .into_iter()
             .find(|l| l.id == id)
-            .ok_or(rusqlite::Error::QueryReturnedNoRows)
+            .ok_or(DbError::Other(rusqlite::Error::QueryReturnedNoRows))
     }
 
     pub fn list_labels(&self) -> Result<Vec<Label>> {
@@ -1001,28 +1045,26 @@ mod tests {
         let second = db.create_label("Morning");
         let err = second.expect_err("collision must surface as an error");
         assert!(
-            matches!(
-                err,
-                rusqlite::Error::SqliteFailure(ref f, _)
-                    if f.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE
-            ),
-            "expected UNIQUE constraint violation, got {err:?}",
+            matches!(err, DbError::DuplicateLabel(ref n) if n == "Morning"),
+            "expected DuplicateLabel(\"Morning\"), got {err:?}",
         );
     }
 
     #[test]
-    fn create_label_returns_unique_constraint_error_on_case_variant() {
+    fn create_label_returns_duplicate_label_error_on_case_variant() {
         // Column is COLLATE NOCASE — different casings collide too.
         let db = fresh_db();
         db.create_label("Morning").unwrap();
         for variant in ["morning", "MORNING", "MoRnInG"] {
             let err = db.create_label(variant)
                 .expect_err(&format!("'{variant}' must collide with 'Morning'"));
-            assert!(matches!(
-                err,
-                rusqlite::Error::SqliteFailure(ref f, _)
-                    if f.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE
-            ));
+            // The name in the error is the colliding one the caller
+            // typed — that's what the toast renders, not the
+            // canonical row.
+            assert!(
+                matches!(err, DbError::DuplicateLabel(ref n) if n == variant),
+                "expected DuplicateLabel(\"{variant}\"), got {err:?}",
+            );
         }
     }
 
@@ -1068,22 +1110,20 @@ mod tests {
     }
 
     #[test]
-    fn shell_vibration_pattern_duplicate_name_maps_to_unique_constraint_err() {
+    fn shell_vibration_pattern_duplicate_name_surfaces_typed_variant() {
         // The core-side DuplicateVibrationPattern variant must surface
-        // through the shell as a synthesized UNIQUE-constraint failure
-        // (same shape callers handle for guided files / presets / labels).
+        // through the shell with the colliding name preserved, so the
+        // editor's create / rename flow can render a localised toast.
         let db = test_db_in_memory();
         // "Pulse" is already in the seed set — inserting a custom row
         // with the same name must fail through the wrapper.
         let result = db.insert_vibration_pattern(
             "Pulse", 500, &[0.0, 1.0, 0.0], ChartKind::Line, false,
         );
-        let Err(rusqlite::Error::SqliteFailure(err, msg)) = result else {
-            panic!("expected SqliteFailure(UNIQUE), got {result:?}");
-        };
-        assert_eq!(err.code, rusqlite::ErrorCode::ConstraintViolation);
-        assert_eq!(err.extended_code, rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE);
-        assert!(msg.unwrap_or_default().contains("vibration_patterns.name"),
-            "error message should name the failing column");
+        let err = result.expect_err("duplicate name must surface as Err");
+        assert!(
+            matches!(err, DbError::DuplicateVibrationPattern(ref n) if n == "Pulse"),
+            "expected DuplicateVibrationPattern(\"Pulse\"), got {err:?}",
+        );
     }
 }

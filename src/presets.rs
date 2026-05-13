@@ -176,6 +176,7 @@ fn rebuild_chooser_rows(
             let app = app_for_create.clone();
             let nav_view = nav_view_for_create.clone();
             let on_changed = on_changed_for_create.clone();
+            let row_for_toast = row.clone();
             present_create_preset_dialog(
                 row,
                 &app_for_create,
@@ -187,9 +188,15 @@ fn rebuild_chooser_rows(
                     let result = app.with_db_mut(
                         |db| db.insert_preset(&name, mode, starred, &json),
                     );
-                    if matches!(result, Some(Ok(_))) {
-                        on_changed();
-                        nav_view.pop();
+                    match result {
+                        Some(Ok(_)) => {
+                            on_changed();
+                            nav_view.pop();
+                        }
+                        Some(Err(e)) => {
+                            crate::db::surface_duplicate_toast(&row_for_toast, &e);
+                        }
+                        None => {}
                     }
                 }),
             );
@@ -520,11 +527,17 @@ fn present_rename_preset_dialog(
     let app = app.clone();
     let preset_uuid = preset_uuid.to_string();
     let entry_for_response = entry.clone();
+    let anchor_for_response = anchor.clone();
     dialog.connect_response(None, move |_, id| {
         if id != "rename" { return; }
         let new_name = entry_for_response.text().trim().to_string();
         if new_name.is_empty() { return; }
-        app.with_db_mut(|db| { let _ = db.update_preset_name(&preset_uuid, &new_name); });
+        if let Some(Err(e)) =
+            app.with_db_mut(|db| db.update_preset_name(&preset_uuid, &new_name))
+        {
+            crate::db::surface_duplicate_toast(&anchor_for_response, &e);
+            return;
+        }
         on_changed();
         if let Some(rb) = rebuilder.borrow().as_ref() { rb(); }
     });

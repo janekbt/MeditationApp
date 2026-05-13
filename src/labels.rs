@@ -268,15 +268,19 @@ fn present_create_label_dialog(
     let on_created = Rc::new(on_created);
     let app = app.clone();
     let entry_for_response = entry.clone();
+    let anchor_for_response = anchor.clone();
     dialog.connect_response(None, move |_, id| {
         if id != "create" { return; }
         let name = entry_for_response.text().trim().to_string();
         if name.is_empty() { return; }
-        let new_label: Option<Label> = app
-            .with_db_mut(|db| db.create_label(&name))
-            .and_then(|r| r.ok());
-        if let Some(label) = new_label {
-            on_created(label);
+        let outcome = app.with_db_mut(|db| db.create_label(&name));
+        match outcome {
+            Some(Ok(label)) => on_created(label),
+            // Duplicate raced past the live `is_label_name_taken`
+            // validation — surface as a toast so the user knows
+            // why the action did nothing.
+            Some(Err(e)) => crate::db::surface_duplicate_toast(&anchor_for_response, &e),
+            None => {} // DB unavailable; handled elsewhere.
         }
     });
 
@@ -331,11 +335,15 @@ fn present_rename_label_dialog(
 
     let app = app.clone();
     let entry_for_response = entry.clone();
+    let anchor_for_response = anchor.clone();
     dialog.connect_response(None, move |_, id| {
         if id != "rename" { return; }
         let new_name = entry_for_response.text().trim().to_string();
         if new_name.is_empty() { return; }
-        app.with_db_mut(|db| { let _ = db.update_label(label_id, &new_name); });
+        if let Some(Err(e)) = app.with_db_mut(|db| db.update_label(label_id, &new_name)) {
+            crate::db::surface_duplicate_toast(&anchor_for_response, &e);
+            return;
+        }
         if let Some(rb) = rebuilder.borrow().as_ref() {
             rb();
         }

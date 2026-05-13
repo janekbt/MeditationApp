@@ -159,7 +159,16 @@ mod imp {
                     meditate_core::log(&format!("db open ok: {}", db_path.display()));
                 }
                 Err(e) => {
-                    let key = meditate_core::format::db_open_failure_key(&e);
+                    // Shell DbError → DbOpenFailureKey: only the
+                    // SchemaTooNew variant matters for the recovery
+                    // window's copy; everything else collapses to
+                    // Other.
+                    use meditate_core::format::DbOpenFailureKey;
+                    let key = match &e {
+                        crate::db::DbError::SchemaVersionTooNew { db, build } =>
+                            DbOpenFailureKey::SchemaTooNew { db: *db, build: *build },
+                        _ => DbOpenFailureKey::Other,
+                    };
                     eprintln!("Failed to open database: {e:?}");
                     meditate_core::log(&format!(
                         "db open FAILED at {}: {e:?}", db_path.display()

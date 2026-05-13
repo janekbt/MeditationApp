@@ -47,6 +47,9 @@ impl From<csv::Error> for DataIoError {
 impl From<rusqlite::Error> for DataIoError {
     fn from(e: rusqlite::Error) -> Self { DataIoError::Db(e.to_string()) }
 }
+impl From<crate::db::DbError> for DataIoError {
+    fn from(e: crate::db::DbError) -> Self { DataIoError::Db(e.to_string()) }
+}
 
 /// Bridge from core's English-only error type to the gtk shell's
 /// gettext-localized one. The variant mapping is one-to-one; the
