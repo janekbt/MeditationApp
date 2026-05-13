@@ -418,15 +418,6 @@ module.
 - Fix path B: add `DbError::is_unique_violation() -> bool` so
   shells stop forging fake sqlite errors.
 
-### `Database::update_interval_bell` 8-arg → take `&IntervalBell`
-- `src/bells.rs:599, 611, 625, 656, 681, 704` — every call site
-  directly mutates fields on a `snap.borrow_mut()` then calls
-  `update_interval_bell(uuid, kind, minutes, jitter_pct, sound,
-  pattern_uuid, signal_mode, enabled)`. The 8-arg signature is
-  precisely what you'd write to side-step the struct.
-- Fix: `Database::update_interval_bell(&IntervalBell)` — the row
-  is the API; the 8-arg drift risk is gone.
-
 ### `get_running_average_secs` is stats math in a shell wrapper
 - `src/db/mod.rs:810-817` — computes `today - days + 1` and
   divides. Pure statistics math, not GTK glue.

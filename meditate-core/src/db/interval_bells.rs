@@ -109,26 +109,17 @@ impl Database {
         Ok(rowid)
     }
 
-    /// Overwrite every mutable field of the bell with `uuid`. UUID +
-    /// created_iso are immutable. Unknown uuids are a silent no-op AND
-    /// emit no event — peers receiving an update for a row they've
-    /// already tombstoned should not be reflected back as "this bell
-    /// is alive again". Mirrors `update_label`'s shape.
-    pub fn update_interval_bell(
-        &self,
-        uuid: &str,
-        kind: IntervalBellKind,
-        minutes: u32,
-        jitter_pct: u32,
-        sound: &str,
-        vibration_pattern_uuid: &str,
-        signal_mode: SignalMode,
-        enabled: bool,
-    ) -> Result<()> {
+    /// Overwrite every mutable field of the bell. UUID + created_iso
+    /// are immutable — the `bell.uuid` field is the row identity, the
+    /// stored `created_iso` is preserved. Unknown uuids are a silent
+    /// no-op AND emit no event — peers receiving an update for a row
+    /// they've already tombstoned should not be reflected back as
+    /// "this bell is alive again". Mirrors `update_label`'s shape.
+    pub fn update_interval_bell(&self, bell: &IntervalBell) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
         let created_iso: Option<String> = self.conn.query_row(
             "SELECT created_iso FROM interval_bells WHERE uuid = ?1",
-            params![uuid],
+            params![bell.uuid],
             |row| row.get::<_, String>(0),
         ).optional()?;
         let Some(created_iso) = created_iso else {
@@ -140,28 +131,28 @@ impl Database {
                     vibration_pattern_uuid = ?5, signal_mode = ?6, enabled = ?7
               WHERE uuid = ?8",
             params![
-                kind.as_db_str(),
-                minutes,
-                jitter_pct,
-                sound,
-                vibration_pattern_uuid,
-                signal_mode.as_db_str(),
-                enabled as i64,
-                uuid,
+                bell.kind.as_db_str(),
+                bell.minutes,
+                bell.jitter_pct,
+                bell.sound,
+                bell.vibration_pattern_uuid,
+                bell.signal_mode.as_db_str(),
+                bell.enabled as i64,
+                bell.uuid,
             ],
         )?;
         let payload = serde_json::json!({
-            "uuid": uuid,
-            "kind": kind.as_db_str(),
-            "minutes": minutes,
-            "jitter_pct": jitter_pct,
-            "sound": sound,
-            "vibration_pattern_uuid": vibration_pattern_uuid,
-            "signal_mode": signal_mode.as_db_str(),
-            "enabled": enabled,
+            "uuid": bell.uuid,
+            "kind": bell.kind.as_db_str(),
+            "minutes": bell.minutes,
+            "jitter_pct": bell.jitter_pct,
+            "sound": bell.sound,
+            "vibration_pattern_uuid": bell.vibration_pattern_uuid,
+            "signal_mode": bell.signal_mode.as_db_str(),
+            "enabled": bell.enabled,
             "created_iso": created_iso,
         }).to_string();
-        self.emit_event(EventKind::IntervalBellUpdate, uuid, payload)?;
+        self.emit_event(EventKind::IntervalBellUpdate, &bell.uuid, payload)?;
         tx.commit()?;
         Ok(())
     }
@@ -171,32 +162,13 @@ impl Database {
     /// `interval_bell_update` event as a full-fields update so the
     /// sync replay code only has to handle one update kind.
     pub fn set_interval_bell_enabled(&self, uuid: &str, enabled: bool) -> Result<()> {
-        let row: Option<(String, u32, u32, String, String, String)> = self.conn.query_row(
-            "SELECT kind, minutes, jitter_pct, sound,
-                    vibration_pattern_uuid, signal_mode
-               FROM interval_bells WHERE uuid = ?1",
-            params![uuid],
-            |row| Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, i64>(1)? as u32,
-                row.get::<_, i64>(2)? as u32,
-                row.get::<_, String>(3)?,
-                row.get::<_, String>(4)?,
-                row.get::<_, String>(5)?,
-            )),
-        ).optional()?;
-        let Some((kind_str, minutes, jitter_pct, sound,
-                  vibration_pattern_uuid, signal_mode_str)) = row else {
+        let Some(bell) = self.list_interval_bells()?
+            .into_iter()
+            .find(|b| b.uuid == uuid)
+        else {
             return Ok(());
         };
-        let kind = IntervalBellKind::from_db_str(&kind_str)
-            .expect("interval_bells.kind violates CHECK constraint");
-        let signal_mode = SignalMode::from_db_str(&signal_mode_str)
-            .expect("interval_bells.signal_mode violates CHECK constraint");
-        self.update_interval_bell(
-            uuid, kind, minutes, jitter_pct, &sound,
-            &vibration_pattern_uuid, signal_mode, enabled,
-        )
+        self.update_interval_bell(&IntervalBell { enabled, ..bell })
     }
 
     /// Remove the bell row with `uuid` and emit a tombstone event.
@@ -482,18 +454,16 @@ mod tests {
     fn update_interval_bell_overwrites_every_mutable_field() {
         let db = Database::open_in_memory().unwrap();
         db.insert_interval_bell(IntervalBellKind::Interval, 5, 0, "bowl", BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound).unwrap();
-        let uuid = db.list_interval_bells().unwrap()[0].uuid.clone();
+        let original = db.list_interval_bells().unwrap()[0].clone();
 
-        db.update_interval_bell(
-            &uuid,
-            IntervalBellKind::FixedFromStart,
-            12,
-            25,
-            "bell",
-            BUNDLED_PATTERN_PULSE_UUID,
-            SignalMode::Sound,
-            false,
-        ).unwrap();
+        db.update_interval_bell(&IntervalBell {
+            kind: IntervalBellKind::FixedFromStart,
+            minutes: 12,
+            jitter_pct: 25,
+            sound: "bell".into(),
+            enabled: false,
+            ..original.clone()
+        }).unwrap();
 
         let b = &db.list_interval_bells().unwrap()[0];
         assert_eq!(b.kind, IntervalBellKind::FixedFromStart);
@@ -501,25 +471,21 @@ mod tests {
         assert_eq!(b.jitter_pct, 25);
         assert_eq!(b.sound, "bell");
         assert!(!b.enabled);
-        assert_eq!(b.uuid, uuid);
+        assert_eq!(b.uuid, original.uuid);
     }
 
     #[test]
     fn update_interval_bell_emits_an_interval_bell_update_event() {
         let db = Database::open_in_memory().unwrap();
         db.insert_interval_bell(IntervalBellKind::Interval, 5, 0, "bowl", BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound).unwrap();
-        let uuid = db.list_interval_bells().unwrap()[0].uuid.clone();
+        let original = db.list_interval_bells().unwrap()[0].clone();
 
-        db.update_interval_bell(
-            &uuid,
-            IntervalBellKind::Interval,
-            9,
-            30,
-            "gong",
-            BUNDLED_PATTERN_PULSE_UUID,
-            SignalMode::Sound,
-            true,
-        ).unwrap();
+        db.update_interval_bell(&IntervalBell {
+            minutes: 9,
+            jitter_pct: 30,
+            sound: "gong".into(),
+            ..original.clone()
+        }).unwrap();
 
         let events = db.pending_events().unwrap();
         let updates: Vec<_> = events
@@ -528,7 +494,7 @@ mod tests {
             .collect();
         assert_eq!(updates.len(), 1);
         let payload: serde_json::Value = serde_json::from_str(&updates[0].1.payload).unwrap();
-        assert_eq!(payload["uuid"], uuid);
+        assert_eq!(payload["uuid"], original.uuid);
         assert_eq!(payload["kind"], "interval");
         assert_eq!(payload["minutes"], 9);
         assert_eq!(payload["jitter_pct"], 30);
@@ -539,16 +505,18 @@ mod tests {
     #[test]
     fn update_interval_bell_unknown_uuid_is_silent_noop() {
         let db = Database::open_in_memory().unwrap();
-        db.update_interval_bell(
-            "non-existent-uuid",
-            IntervalBellKind::Interval,
-            5,
-            0,
-            "bowl",
-            BUNDLED_PATTERN_PULSE_UUID,
-            SignalMode::Sound,
-            true,
-        ).unwrap();
+        db.update_interval_bell(&IntervalBell {
+            id: 0,
+            uuid: "non-existent-uuid".into(),
+            kind: IntervalBellKind::Interval,
+            minutes: 5,
+            jitter_pct: 0,
+            sound: "bowl".into(),
+            vibration_pattern_uuid: BUNDLED_PATTERN_PULSE_UUID.into(),
+            signal_mode: SignalMode::Sound,
+            enabled: true,
+            created_iso: String::new(),
+        }).unwrap();
         let updates: Vec<_> = db.pending_events().unwrap()
             .into_iter()
             .filter(|(_, e)| e.kind == "interval_bell_update")
@@ -697,11 +665,15 @@ mod tests {
     fn apply_event_interval_bell_replay_round_trip_across_peers() {
         let dev_a = Database::open_in_memory().unwrap();
         dev_a.insert_interval_bell(IntervalBellKind::Interval, 9, 30, "bell", BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound).unwrap();
-        let uuid = dev_a.list_interval_bells().unwrap()[0].uuid.clone();
-        dev_a.update_interval_bell(
-            &uuid, IntervalBellKind::FixedFromStart, 10, 0, "gong",
-            BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound, true,
-        ).unwrap();
+        let original = dev_a.list_interval_bells().unwrap()[0].clone();
+        dev_a.update_interval_bell(&IntervalBell {
+            kind: IntervalBellKind::FixedFromStart,
+            minutes: 10,
+            jitter_pct: 0,
+            sound: "gong".into(),
+            ..original.clone()
+        }).unwrap();
+        let uuid = original.uuid;
 
         let events: Vec<Event> = dev_a.pending_events().unwrap()
             .into_iter()

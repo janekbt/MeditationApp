@@ -387,20 +387,10 @@ impl Database {
 
     pub fn update_interval_bell(
         &self,
-        uuid: &str,
-        kind: meditate_core::db::IntervalBellKind,
-        minutes: u32,
-        jitter_pct: u32,
-        sound: &str,
-        vibration_pattern_uuid: &str,
-        signal_mode: meditate_core::SignalMode,
-        enabled: bool,
+        bell: &meditate_core::IntervalBell,
     ) -> Result<()> {
         self.inner
-            .update_interval_bell(
-                uuid, kind, minutes, jitter_pct, sound,
-                vibration_pattern_uuid, signal_mode, enabled,
-            )
+            .update_interval_bell(bell)
             .map_err(map_core_err)
     }
 

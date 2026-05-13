@@ -564,18 +564,7 @@ fn push_edit_page(
         on_changed: &(impl Fn() + Clone + 'static),
     ) {
         let s = snap.borrow();
-        app.with_db_mut(|db| {
-            db.update_interval_bell(
-                &s.uuid,
-                s.kind,
-                s.minutes,
-                s.jitter_pct,
-                &s.sound,
-                &s.vibration_pattern_uuid,
-                s.signal_mode,
-                s.enabled,
-            )
-        });
+        app.with_db_mut(|db| db.update_interval_bell(&s));
         if let Some(rb) = rebuilder.borrow().as_ref() {
             rb();
         }
