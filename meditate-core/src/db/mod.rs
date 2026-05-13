@@ -179,9 +179,12 @@ impl Database {
         // 0644 on Linux) — fine inside the Flatpak sandbox, but
         // exposes session contents on a non-Flatpak install where the
         // home dir isn't private. Existing files are left as-is; users
-        // who've explicitly chmod'd their DB don't get clobbered.
+        // who've explicitly chmod'd their DB don't get clobbered. Skip
+        // the touch for SQLite's `":memory:"` special path (callers
+        // should use `open_in_memory` for that, but a `Path` argument
+        // can technically carry the string).
         #[cfg(unix)]
-        if !path.exists() {
+        if path.to_str() != Some(":memory:") && !path.exists() {
             use std::os::unix::fs::OpenOptionsExt;
             let _ = std::fs::OpenOptions::new()
                 .create_new(true)

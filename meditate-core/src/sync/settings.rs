@@ -415,7 +415,7 @@ mod tests {
 
     fn fresh() -> Database {
         // In-memory DB so each test starts clean.
-        Database::open(std::path::Path::new(":memory:")).unwrap()
+        Database::open_in_memory().unwrap()
     }
 
     // ── NextcloudAccount round-trip ──────────────────────────────────────────
