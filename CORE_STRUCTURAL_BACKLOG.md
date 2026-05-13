@@ -435,15 +435,6 @@ rationale.
 
 ## Tier 0 — Correctness bugs (third pass, jump-the-queue)
 
-### `push_custom_sound_files` lacks the 10 MB cap that pull enforces
-- `meditate-core/src/sync/orchestrator.rs:419-450` reads the
-  local file with no size gate and PUTs it. The puller (`:397`)
-  drops oversized files only after consuming bandwidth.
-- Cap is per-design symmetric; pull-only enforcement is silent
-  asymmetry.
-- Fix: `if bytes.len() as u64 > MAX_CUSTOM_BELL_BYTES { continue; }`
-  after the `fs::read`.
-
 ## Tier 1 — Third-pass additions
 
 ### `sessions` table missing indexes on `start_iso` + `label_id`

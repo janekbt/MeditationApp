@@ -488,6 +488,14 @@ impl<'a, W: WebDav> Sync<'a, W> {
                     continue;
                 }
             };
+            // Symmetric cap with the pull side (orchestrator.rs:422):
+            // pull silently drops files larger than 10 MB. Pushing one
+            // would burn the user's upload bandwidth on a file every
+            // peer would then refuse — skip and don't mark it known,
+            // so a future shrink/replace can retry.
+            if bytes.len() as u64 > MAX_CUSTOM_BELL_BYTES {
+                continue;
+            }
             let remote = self.sound_remote_path(&bell.uuid, ext);
             // Atomic upload: PUT to .tmp + MOVE, so a half-uploaded
             // audio file can't show up at the canonical name and
