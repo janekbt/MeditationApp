@@ -212,6 +212,32 @@ impl Session {
     /// `preparation_time_active = false`. The Running stopwatch
     /// anchors at `now`.
     ///
+    /// # Lifecycle the caller is signing up for
+    ///
+    /// 1. **Construct** via this fn (or `start_prep` if prep is on).
+    ///    The returned `Session` is in `Running` (or `Prep`) phase,
+    ///    paused = false, clock anchored at `now`.
+    /// 2. **Tick** once per second from the caller's clock, passing
+    ///    a monotonic `now: Duration` (typically `boot_time_now()` so
+    ///    suspend doesn't freeze the clock). Each tick returns
+    ///    `Vec<Effect>` — fire bells / haptics / box-breath cues /
+    ///    UpdateOvertimeLabel from these on the shell side. The
+    ///    session's internal phase transitions (Prep → Running →
+    ///    Overtime, etc.) happen inside `tick`.
+    /// 3. **Optional pause/resume** via `pause(now)` / `resume(now)`.
+    ///    The phase clock freezes during pause; resume rebases off
+    ///    the new `now` so a 5-minute pause doesn't burn 5 minutes
+    ///    of session.
+    /// 4. **Terminate** via one of: `stop(now)` (user-initiated;
+    ///    persist the elapsed duration), `finish_overtime()` (user
+    ///    tapped Finish during overtime; persist the planned target),
+    ///    `add_overtime_and_finish(now)` (user tapped Add; persist
+    ///    elapsed-including-overtime). Each terminator returns the
+    ///    final `Effect::EndSession { duration_secs }` plus a
+    ///    `StopActiveSignals` to cut in-flight bells.
+    /// 5. **Drop** the session on the Done-view dismissal. The
+    ///    persisted DB row is the source of truth past that point.
+    ///
     /// # Example
     ///
     /// ```

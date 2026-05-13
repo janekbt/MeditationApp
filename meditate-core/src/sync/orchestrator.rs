@@ -142,6 +142,37 @@ impl<'a, W: WebDav> Sync<'a, W> {
         )
     }
 
+    /// Pull peer event batches from the remote and apply them locally.
+    ///
+    /// **What it mutates.** Local `events` table (new rows for any
+    /// `event_uuid` we didn't already have), the `known_remote_files`
+    /// table (records every parseable batch filename seen on the
+    /// remote, regardless of whether it carried new events), and the
+    /// cache tables via `apply_event` dispatch on each newly-ingested
+    /// event. Settings columns `nextcloud_last_sync_unix_ts` and
+    /// `nextcloud_last_sync_error` are NOT touched here — the runner
+    /// in `sync_runner.rs` writes those after the whole push/pull
+    /// pair completes.
+    ///
+    /// **Errors.**
+    /// - `WebDavError::*` — transport failures (`Network`,
+    ///   `Unauthorized`, `RateLimited`, ...). Recoverable: a later
+    ///   pull retries.
+    /// - `SyncError::RemoteDataLost` — we've previously synced
+    ///   (known_remote_files non-empty) but the current listing
+    ///   contains zero of those batch_uuids, meaning the user / a
+    ///   sync conflict / a manual delete wiped the remote dir. Fires
+    ///   BEFORE any local writes so the shell can prompt for recovery
+    ///   (`recovery_dialog.rs`) without partial state.
+    /// - `SyncError::InvalidEvent` — a remote batch JSON failed to
+    ///   parse OR an `event.target_id` failed validation
+    ///   (`target_id_is_well_formed_for`). Skipped events are
+    ///   recorded but not dispatched.
+    ///
+    /// **Idempotency.** Re-running `pull` against the same remote
+    /// state is a no-op past the listing — `known_remote_files` +
+    /// `known_event_uuids` short-circuit each filename and each
+    /// event_uuid.
     pub fn pull(&self) -> SyncResult<PullStats> {
         // Per the plan: pull is non-destructive — only adds events.
         // First sync against an empty remote dir is just an empty list.
@@ -233,6 +264,33 @@ impl<'a, W: WebDav> Sync<'a, W> {
         Ok(PullStats { new_events: count })
     }
 
+    /// Push the local pending event log to the remote as a single
+    /// bulk JSON file, then upload any custom bell-sound audio
+    /// referenced by those events.
+    ///
+    /// **What it mutates.** The remote: creates the events directory
+    /// if needed (idempotent — `Conflict` on MKCOL is treated as
+    /// success), PUTs one `<batch_uuid>.json` containing every
+    /// pending event, then PUTs each custom sound file. The local DB:
+    /// flips `events.synced` to 1 for every event in the batch via
+    /// `mark_events_synced` after the PUT returns successfully (NOT
+    /// before — a network failure leaves the events pending so the
+    /// next push retries them).
+    ///
+    /// **Errors.**
+    /// - `WebDavError::*` — transport failures. `RateLimited` is
+    ///   surfaced to the caller; the runner in `sync_runner.rs`
+    ///   wraps the call in `BackoffState::wait_for` to honor the
+    ///   server's Retry-After.
+    /// - `SyncError::InvalidEvent` — a sound-file write to the
+    ///   local sounds directory failed before the upload attempt
+    ///   (rare; e.g., disk full).
+    ///
+    /// **Idempotency.** Re-running `push` after the bulk PUT
+    /// succeeded but the local `mark_events_synced` write failed
+    /// would re-upload the same batch under a fresh `batch_uuid`
+    /// — wastes remote bytes but doesn't lose events; the peer's
+    /// `known_event_uuids` dedup catches it.
     pub fn push(&self) -> SyncResult<PushStats> {
         // Default: no progress reporting. Most callers (tests, the
         // happy path) don't need it. Long-running pushes (batch
