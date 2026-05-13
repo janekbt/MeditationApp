@@ -603,15 +603,6 @@ avoid silently losing items in a rewrite.
 - Solo-user model so impact is low. Standard fix (`zeroize` /
   `secrecy` crate on the `String` / `Vec<u8>`) is cheap.
 
-### Security: CSV-injection in export
-- `meditate-core/src/data_io.rs:101-122`. A label or note
-  starting with `=`, `+`, `-`, `@`, or `\t` becomes a formula
-  when the CSV is opened in Excel / LibreOffice / Sheets.
-- Janek-only today; if exported and shared, the risk
-  materializes.
-- Fix: OWASP-recommended prefix-with-single-quote on first-char
-  match.
-
 ### Security: `meditate.db` umask perms (0644 by default)
 - `meditate-core/src/db.rs:693-711` uses `Connection::open`
   with no perm step. On a non-flatpak Librem 5 install the DB

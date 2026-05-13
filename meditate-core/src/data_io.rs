@@ -91,6 +91,24 @@ impl From<crate::db::DbError> for DataIoError {
 
 // ── Export ──────────────────────────────────────────────────────────────
 
+/// OWASP-recommended CSV-injection guard. Excel / LibreOffice /
+/// Sheets treat a cell whose first character is `=`, `+`, `-`, `@`,
+/// or TAB as a formula — a malicious or unwary user-supplied label
+/// like `=HYPERLINK("http://evil/", "click")` would execute on
+/// open. Prefix any such cell with a literal single quote, which
+/// the spreadsheet renders as plain text and strips on copy.
+fn csv_inject_guard(s: &str) -> String {
+    match s.chars().next() {
+        Some('=') | Some('+') | Some('-') | Some('@') | Some('\t') => {
+            let mut out = String::with_capacity(s.len() + 1);
+            out.push('\'');
+            out.push_str(s);
+            out
+        }
+        _ => s.to_string(),
+    }
+}
+
 /// Write every session in the DB to `path` as CSV. Returns how many rows
 /// were written.
 pub fn export_csv(db: &Database, path: &Path) -> Result<usize, DataIoError> {
@@ -121,8 +139,8 @@ pub fn export_csv(db: &Database, path: &Path) -> Result<usize, DataIoError> {
             start_unix.to_string(),
             s.duration_secs.to_string(),
             s.mode.as_db_str().to_string(),
-            label,
-            note,
+            csv_inject_guard(&label),
+            csv_inject_guard(&note),
         ])?;
         n += 1;
     }
@@ -448,5 +466,26 @@ mod tests {
                 "label_id mismatch: import should have resolved case-insensitively back to the same row"
             );
         }
+    }
+
+    #[test]
+    fn csv_inject_guard_prefixes_formula_starters() {
+        // The five characters Excel / LibreOffice / Sheets treat as
+        // formula starters when at the head of a cell.
+        assert_eq!(csv_inject_guard("=HYPERLINK(\"a\",\"b\")"), "'=HYPERLINK(\"a\",\"b\")");
+        assert_eq!(csv_inject_guard("+1+1"), "'+1+1");
+        assert_eq!(csv_inject_guard("-2+2"), "'-2+2");
+        assert_eq!(csv_inject_guard("@SUM(A1:A9)"), "'@SUM(A1:A9)");
+        assert_eq!(csv_inject_guard("\tmischief"), "'\tmischief");
+    }
+
+    #[test]
+    fn csv_inject_guard_leaves_normal_cells_alone() {
+        // Plain text, leading digit, leading-space — all benign as
+        // first chars; no prefix added.
+        assert_eq!(csv_inject_guard("Morning sit"), "Morning sit");
+        assert_eq!(csv_inject_guard("4 minutes in"), "4 minutes in");
+        assert_eq!(csv_inject_guard(" leading space"), " leading space");
+        assert_eq!(csv_inject_guard(""), "");
     }
 }
