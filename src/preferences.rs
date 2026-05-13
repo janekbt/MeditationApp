@@ -261,7 +261,7 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
         #[weak] password_row,
         #[weak] test_btn,
         move |_| {
-            use meditate_core::sync::settings::{prepare_test, StoredPassword, TestPrereq};
+            use meditate_core::sync::credentials::{prepare_test, StoredPassword, TestPrereq};
             // Snapshot the raw fields so the keychain-lookup closure
             // can use the trimmed url/username if it fires.
             let raw_url = url_row.text().to_string();
@@ -360,7 +360,7 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
         #[weak] username_row,
         #[weak] password_row,
         move |_| {
-            use meditate_core::sync::settings::{prepare_save, PasswordAction, SaveSyncError};
+            use meditate_core::sync::credentials::{prepare_save, PasswordAction, SaveSyncError};
             let url = url_row.text().to_string();
             let username = username_row.text().to_string();
             let password = password_row.text().to_string();

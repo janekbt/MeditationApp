@@ -209,8 +209,8 @@ fn record_outcome(
 }
 
 // Connection test (TestConnectionResult + test_connection +
-// test_connection_with) lives in `meditate_core::sync::settings`.
-pub use meditate_core::sync::settings::{
+// test_connection_with) lives in `meditate_core::sync::credentials`.
+pub use meditate_core::sync::credentials::{
     test_connection, test_connection_with, TestConnectionResult,
 };
 

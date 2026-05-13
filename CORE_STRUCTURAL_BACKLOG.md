@@ -88,17 +88,6 @@ rationale.
 
 ## Tier 1 — Second-pass additions
 
-### Split `sync/settings.rs` (29 pub items) → `settings.rs` + `credentials.rs`
-- Module currently mixes three concerns: (a) key consts +
-  account CRUD + sync-status writers, (b) `prepare_save` /
-  `prepare_test` / `Credentials` / `TestConnectionResult` /
-  `SaveSyncError` / `TestPrereq` / `StoredPassword` / `PasswordAction`
-  validation state machines, (c) `test_connection_with<W: WebDav>`.
-- Split into `sync/settings.rs` (keys + account + status) and
-  `sync/credentials.rs` (prepare/test types + the validation
-  state machine). The Tier-2 "collapse SaveSyncError / TestPrereq"
-  item gets cleaner once the types live next to each other.
-
 ## Tier 2 — Second-pass additions
 
 ### Move sync-tier types out of `db.rs`
