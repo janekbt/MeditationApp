@@ -35,6 +35,7 @@ mod session_in_progress;
 mod sessions;
 mod settings;
 mod sync_state;
+mod uuids;
 mod vibration_patterns;
 
 #[cfg(test)]
@@ -49,6 +50,10 @@ pub use labels::Label;
 pub use presets::Preset;
 pub use session_in_progress::{FinalizedSession, SessionInProgress};
 pub use sessions::{Session, SessionFilter, SessionMode};
+pub use uuids::{
+    BellSoundUuid, GuidedFileUuid, IntervalBellUuid, LabelUuid, PresetUuid,
+    SessionUuid, VibrationPatternUuid,
+};
 pub use vibration_patterns::{ChartKind, VibrationPattern};
 pub use error::{target_id_is_well_formed_for, DbError, Result};
 pub(crate) use schema::{CACHE_SCHEMA_VERSION, CACHE_SCHEMA_VERSION_KEY, SCHEMA_VERSION};
