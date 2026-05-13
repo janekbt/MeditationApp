@@ -374,39 +374,9 @@ module.
 
 ## Documentation backlog (Tier 1 — onboarding blocker)
 
-The five passes confirmed the crate is internally well-commented at
-the type/function level, but **the map is missing**. A non-Janek
-contributor (or Janek six months from now, or a future Claude
-session with cleared memory) cannot reconstruct design intent from
-the code alone.
-
-### No `meditate-core/README.md`; root README doesn't mention the crate
-- A contributor entering via the subdirectory has zero entry
-  point. Root `README.md` has zero `meditate-core` hits.
-- Fill: a `meditate-core/README.md` with the same overview as the
-  `lib.rs` `//!`, plus a "build / test from the workspace root"
-  line. Add a paragraph in the root README pointing here.
-
-### Critical-path APIs lack `///` doc-comments
-- `Sync::pull` (`orchestrator.rs:145`) and `Sync::push` (`:220`)
-  — no caller-facing contract: what state mutates, what events
-  emit, what errors are recoverable.
-- `Session::start_running` — has a doc but doesn't describe the
-  lifecycle from the caller's perspective (call `tick(now)`
-  every second, observe `Effect`s, terminate on
-  `TickOutcome::Done`).
-
-### `ENTITIES.md` — how to add an 8th sync-able entity
-- Adding one touches 9 surfaces: schema CHECK list, insert/
-  update/delete CRUD, `existing_rowid_by_uuid` integration,
-  `emit_event` kind, `apply_event_inner` dispatch arm,
-  `recompute_*` writer, `wipe_local_event_log` DELETE (per
-  Tier-0 bug), seed UUIDs in `seeds.rs`, payload struct +
-  `to_event_payload` (per Tier-3 backlog item).
-- Tribal knowledge today; the `EventKind` enum gives compile-time
-  coverage of the emit/apply axes but doesn't replace the guide.
-- Fill: an `ENTITIES.md` walkthrough or a `//!`-block at the top
-  of `db/sync.rs` after the Tier-1 split.
+Six of the seven entries shipped (meditate-core/README.md,
+critical-path /// docs, ENTITIES.md, DECISIONS.md, BUILDING.md,
+CONTRIBUTING.md). One pending:
 
 ### Naming-convention doc (post Tier-1)
 - After the four-way DB-reader rename lands (existing Tier-1
@@ -414,35 +384,6 @@ the code alone.
   convention: "Read-only DB helpers are free functions named
   `*_from_db` in their domain module. Mutating helpers are
   methods on `Database`."
-
-### `DECISIONS.md` cross-referencing memory rules
-- 6+ binding design decisions live in
-  `/home/janek/.claude/projects/-home-janek-Claude/memory/`:
-  - `feedback_meditate_decisions_in_core`
-  - `feedback_meditate_no_compat`
-  - `feedback_meditate_keep_i18n`
-  - `feedback_meditate_guided_presets`
-  - `feedback_meditate_i18n_typed_keys`
-  - `reference_clock_boottime`
-- **None are surfaced in the codebase.** A non-Claude
-  contributor wouldn't see them.
-- Fill: a `DECISIONS.md` (or `lib.rs` `//!`-block) capturing
-  each as a one-paragraph statement.
-
-### `BUILDING.md` for cross-build + deploy
-- `build-aux/dev-xbuild.sh` is mentioned in root README:144 (one
-  paragraph), but `xbuild` quirks (lib-name suffix, NDK
-  `llvm-readobj` on PATH — per `reference_xbuild_quirks`) and
-  the Librem deploy cycle (wipe local DB after scp, wrap SSH in
-  `timeout 8` — per `feedback_meditate_librem_deploy`) are
-  tribal.
-- Fill: extend root README or add `BUILDING.md`.
-
-### `CONTRIBUTING.md`
-- `git log --oneline -20` shows consistent `area: short
-  imperative` style. Not documented anywhere.
-- One-line `CONTRIBUTING.md` locks the convention for outside
-  contributors / future Claude sessions.
 
 ## Meta-audit notes — backlog reorganization (apply when implementing)
 
