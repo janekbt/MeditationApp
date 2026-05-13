@@ -320,24 +320,6 @@ rationale.
 
 ## Tier 1 — Third-pass additions
 
-### `breath::BreathSession` is an entirely dead struct
-- `meditate-core/src/breath.rs:277-309` — `BreathSession::new`,
-  `phase_info`, `pause`, `resume`. Zero callers in the workspace.
-  Tested but never used.
-- Bigger than backlog's existing `timer::Countdown` finding.
-- Delete the whole struct + its tests.
-
-### `timer.rs` is dead-by-transitive-closure
-- The 263-line module's only non-test consumers are the
-  `bin/*_smoke.rs` harnesses + `breath.rs`'s dead `BreathSession`
-  (above). Once both move/delete, the whole module becomes a
-  deletion candidate, not just `timer::Countdown`.
-- Re-audit after Tier 3 smoke-bin cleanup + the BreathSession
-  deletion above.
-
-### `breath::BreathPattern::{four_seven_eight, from_durations, last_phase}` + `Phase::index` are dead
-- Only tested, no callers. Delete or downgrade to `pub(crate)`.
-
 ## Tier 2 — Third-pass additions
 
 ### `preset_config::snapshot` (~96 lines) + `apply` (~184 lines)
@@ -691,9 +673,6 @@ avoid silently losing items in a rewrite.
   → **Tier 2**. Bundle with the import-side fix (Tier 1
   `DbError::DateOutOfRange`); real surface is `import_csv`, not
   the streak path which only hits at year ±262144.
-- **`breath::BreathSession` dead struct + `timer.rs` dead-by-
-  transitive + `BreathPattern::four_seven_eight` etc.**: Tier 1
-  → **Tier 3**. Hygiene, not high-impact structural.
 - **`Vec::contains(&String)` allocation per iter**: Tier 2 →
   **inline / Tier 3**.
 

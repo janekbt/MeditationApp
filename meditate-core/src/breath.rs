@@ -10,7 +10,6 @@
 //! hold cycles through three active phases without ever returning
 //! `Phase::HoldOut`.
 
-use crate::timer::Stopwatch;
 use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -280,40 +279,6 @@ impl BreathPattern {
     }
 }
 
-/// Pattern + Stopwatch wrapper. Convenient when a shell wants
-/// "session" semantics — pause/resume freezes/continues the
-/// elapsed time without the caller plumbing the `now` arithmetic.
-pub struct BreathSession {
-    pattern: BreathPattern,
-    stopwatch: Stopwatch,
-}
-
-impl BreathSession {
-    pub fn new(pattern: BreathPattern, stopwatch: Stopwatch) -> Self {
-        Self { pattern, stopwatch }
-    }
-
-    pub fn phase_info(&self, now: Duration) -> PhaseInfo {
-        self.pattern.phase_at(self.stopwatch.elapsed(now))
-    }
-
-    pub fn pause(self, now: Duration) -> Self {
-        let Self { pattern, stopwatch } = self;
-        Self {
-            pattern,
-            stopwatch: stopwatch.paused_at(now),
-        }
-    }
-
-    pub fn resume(self, now: Duration) -> Self {
-        let Self { pattern, stopwatch } = self;
-        Self {
-            pattern,
-            stopwatch: stopwatch.resumed_at(now),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -528,34 +493,6 @@ mod tests {
         assert_eq!(four_seven_eight().last_phase(), Phase::Out);
         let only_in = BreathPattern::from_durations(5, 0, 0, 0);
         assert_eq!(only_in.last_phase(), Phase::In);
-    }
-
-    // ── BreathSession ──────────────────────────────────────────────────
-
-    #[test]
-    fn breath_session_phase_info_via_stopwatch_elapsed() {
-        let session = BreathSession::new(
-            box_pattern(),
-            Stopwatch::started_at(Duration::from_secs(100)),
-        );
-        // 4 s after start → HoldIn at 0 elapsed-into-phase.
-        let info = session.phase_info(Duration::from_secs(104));
-        assert_eq!(info.phase, Phase::HoldIn);
-        assert_eq!(info.elapsed_in_phase, Duration::ZERO);
-    }
-
-    #[test]
-    fn breath_session_pause_then_resume_freezes_then_continues() {
-        let session = BreathSession::new(
-            box_pattern(),
-            Stopwatch::started_at(Duration::from_secs(100)),
-        )
-        .pause(Duration::from_secs(102)) // 2 s into Inhale, paused
-        .resume(Duration::from_secs(200)); // 98 s of wall time skipped
-        // Active elapsed at t=210 = 2 s + (210-200) = 12 s. Box breath:
-        // In [0-4), HoldIn [4-8), Out [8-12), HoldOut [12-16).
-        let info = session.phase_info(Duration::from_secs(210));
-        assert_eq!(info.phase, Phase::HoldOut);
     }
 
     // ── Phase::index ───────────────────────────────────────────────────
