@@ -1224,7 +1224,7 @@ mod tests {
         db.apply_event(&synth_session_insert(
             SESSION_X, 5, DEVICE_A,
             "2026-04-30T10:00:00", 600,
-            Some(&label_uuid), None, SessionMode::Timer,
+            Some(label_uuid.as_str()), None, SessionMode::Timer,
         )).unwrap();
         let s = &db.list_sessions().unwrap()[0].1;
         assert_eq!(s.label_id, Some(local_label_id),
@@ -1328,7 +1328,7 @@ mod tests {
             guided_file_uuid: None,
         }).unwrap();
         let payload = event_payload(&db.pending_events().unwrap()[0].1);
-        assert_eq!(payload["label_uuid"], serde_json::Value::String(label_uuid));
+        assert_eq!(payload["label_uuid"], serde_json::Value::String(label_uuid.0));
     }
 
     #[test]
@@ -1533,7 +1533,7 @@ mod tests {
             guided_file_uuid: None,
         }).unwrap();
         let payload = event_payload(&db.pending_events().unwrap()[0].1);
-        assert_eq!(payload["label_uuid"], serde_json::Value::String(label_uuid));
+        assert_eq!(payload["label_uuid"], serde_json::Value::String(label_uuid.0));
     }
 
     #[test]

@@ -29,7 +29,7 @@
 macro_rules! entity_uuid {
     ($name:ident, $doc:literal) => {
         #[doc = $doc]
-        #[derive(Debug, Clone, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+        #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
         #[serde(transparent)]
         pub struct $name(pub String);
 
@@ -67,6 +67,33 @@ macro_rules! entity_uuid {
 
         impl AsRef<str> for $name {
             fn as_ref(&self) -> &str { &self.0 }
+        }
+
+        // Cross-type comparison so call sites that pre-date the
+        // newtype migration (`assert_eq!(label.uuid, "abc-123")`,
+        // `if row.uuid == some_string`, JSON-payload comparisons)
+        // continue to work without rewriting hundreds of tests.
+        // The type-safety guarantee is at the struct field level
+        // (you can't put a BellSoundUuid in a Label's uuid slot);
+        // letting str/String values compare equal to the wrapped
+        // string doesn't weaken that.
+        impl PartialEq<str> for $name {
+            fn eq(&self, other: &str) -> bool { self.0 == other }
+        }
+        impl PartialEq<&str> for $name {
+            fn eq(&self, other: &&str) -> bool { self.0 == *other }
+        }
+        impl PartialEq<String> for $name {
+            fn eq(&self, other: &String) -> bool { &self.0 == other }
+        }
+        impl PartialEq<$name> for str {
+            fn eq(&self, other: &$name) -> bool { self == other.0 }
+        }
+        impl PartialEq<$name> for &str {
+            fn eq(&self, other: &$name) -> bool { *self == other.0 }
+        }
+        impl PartialEq<$name> for String {
+            fn eq(&self, other: &$name) -> bool { self == &other.0 }
         }
 
         impl std::fmt::Display for $name {

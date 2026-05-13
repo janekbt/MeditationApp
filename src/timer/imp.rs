@@ -743,7 +743,7 @@ impl TimerView {
                 window.push_label_chooser(&app, current_id, move |label| {
                     let imp2 = this_for_pick.imp();
                     let mode = imp2.current_mode();
-                    imp2.persist_label_uuid_for_mode(mode, &label.uuid);
+                    imp2.persist_label_uuid_for_mode(mode, label.uuid.as_str());
                     imp2.refresh_setup_label_chooser_subtitle();
                 });
             }
@@ -2375,7 +2375,7 @@ impl TimerView {
             .unwrap_or_default();
         match meditate_core::labels::resolve_persist_action(label_id, &labels) {
             meditate_core::labels::PersistAction::SetUuidAndActivate { uuid } => {
-                self.persist_label_uuid_for_mode(mode, &uuid);
+                self.persist_label_uuid_for_mode(mode, uuid.as_str());
                 self.persist_label_active_for_mode(mode, true);
             }
             meditate_core::labels::PersistAction::Deactivate => {
@@ -3182,7 +3182,7 @@ impl TimerView {
             .and_then(|r| r.ok())
             .unwrap_or_default()
             .into_iter()
-            .map(|l| (l.uuid, l.name))
+            .map(|l| (l.uuid.0, l.name))
             .collect();
 
         let obj = self.obj();

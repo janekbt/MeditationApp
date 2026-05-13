@@ -143,7 +143,7 @@ pub fn default_presets() -> [(&'static str, &'static str, SessionMode, PresetCon
     let sitting = PresetConfig {
         label: PresetLabel {
             enabled: true,
-            uuid: Some(DEFAULT_TIMER_LABEL_UUID.to_string()),
+            uuid: Some(crate::db::LabelUuid::new(DEFAULT_TIMER_LABEL_UUID)),
         },
         starting_bell: PresetStartingBell { enabled: true, ..default_starting_bell_off() },
         interval_bells: PresetIntervalBells::default(),
@@ -161,7 +161,7 @@ pub fn default_presets() -> [(&'static str, &'static str, SessionMode, PresetCon
     let box_4444 = PresetConfig {
         label: PresetLabel {
             enabled: true,
-            uuid: Some(DEFAULT_BREATHING_LABEL_UUID.to_string()),
+            uuid: Some(crate::db::LabelUuid::new(DEFAULT_BREATHING_LABEL_UUID)),
         },
         starting_bell: default_starting_bell_off(),
         interval_bells: PresetIntervalBells::default(),

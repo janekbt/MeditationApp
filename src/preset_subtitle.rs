@@ -50,7 +50,7 @@ pub fn preset_subtitle(p: &Preset, label_names: &HashMap<String, String>) -> Str
         }
     }
     if let Some(uuid) = parts.label_uuid.as_ref() {
-        if let Some(name) = label_names.get(uuid) {
+        if let Some(name) = label_names.get(uuid.as_str()) {
             out.push(name.clone());
         }
     }

@@ -87,7 +87,7 @@ pub fn resolve_label_for_mode(db: &Database, mode: SessionMode) -> Option<Label>
 pub enum PersistAction {
     /// User picked an existing label — persist its uuid as the new
     /// per-mode default and flip the master toggle on.
-    SetUuidAndActivate { uuid: String },
+    SetUuidAndActivate { uuid: crate::db::LabelUuid },
     /// User cleared the per-session pick — flip the master toggle off
     /// so the next session starts un-labelled too. UUID is left as
     /// the prior value so re-enabling the toggle restores intent.

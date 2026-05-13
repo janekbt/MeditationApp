@@ -150,7 +150,7 @@ fn rebuild_chooser_rows(
         .and_then(|r| r.ok())
         .unwrap_or_default()
         .into_iter()
-        .map(|l| (l.uuid, l.name))
+        .map(|l| (l.uuid.0, l.name))
         .collect();
 
     // Synthetic "Create new preset…" entry — Save mode only. In

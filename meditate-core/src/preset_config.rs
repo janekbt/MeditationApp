@@ -68,7 +68,7 @@ pub struct PresetLabel {
     pub enabled: bool,
     /// `None` ⇒ apply mode default (Meditation in Timer, Box-Breathing
     /// in Box Breath). `Some(uuid)` ⇒ pinned to a specific label.
-    pub uuid: Option<String>,
+    pub uuid: Option<crate::db::LabelUuid>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -309,7 +309,8 @@ pub fn snapshot(db: &Database, mode: SessionMode, timing: PresetTiming) -> Prese
         uuid: db
             .get_setting(label_uuid_key_for_mode(mode), "")
             .ok()
-            .filter(|s| !s.is_empty()),
+            .filter(|s| !s.is_empty())
+            .map(crate::db::LabelUuid::new),
     };
 
     let starting_bell = PresetStartingBell {
@@ -478,7 +479,7 @@ pub fn apply(
 
     set(label_active_key_for_mode(mode), bool_str(cfg.label.enabled))?;
     if let Some(luuid) = cfg.label.uuid.as_ref() {
-        set(label_uuid_key_for_mode(mode), luuid)?;
+        set(label_uuid_key_for_mode(mode), luuid.as_str())?;
     }
     set("starting_bell_active", bool_str(cfg.starting_bell.enabled))?;
     if !cfg.starting_bell.sound_uuid.is_empty() {
@@ -593,7 +594,7 @@ mod tests {
         PresetConfig {
             label: PresetLabel {
                 enabled: true,
-                uuid: Some("label-uuid".to_string()),
+                uuid: Some("label-uuid".into()),
             },
             starting_bell: PresetStartingBell {
                 enabled: true,
@@ -771,7 +772,7 @@ mod tests {
         pattern_uuid: &str,
     ) -> PresetConfig {
         PresetConfig {
-            label: PresetLabel { enabled: true, uuid: Some("label-uuid".to_string()) },
+            label: PresetLabel { enabled: true, uuid: Some("label-uuid".into()) },
             starting_bell: PresetStartingBell {
                 enabled: true,
                 sound_uuid: sound_uuid.to_string(),

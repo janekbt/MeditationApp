@@ -465,7 +465,7 @@ pub struct PresetSubtitleParts {
     /// own label table; resolution failures (uuid missing from the
     /// table, e.g. label was deleted) collapse to no label part in
     /// the rendered subtitle.
-    pub label_uuid: Option<String>,
+    pub label_uuid: Option<crate::db::LabelUuid>,
     pub bells: Option<BellsCountKey>,
 }
 
@@ -991,7 +991,7 @@ mod tests {
         let json = cfg_to_json(&cfg);
         assert_eq!(
             preset_subtitle_parts(&json).unwrap().label_uuid,
-            Some("u-1".to_string())
+            Some(crate::db::LabelUuid::new("u-1"))
         );
 
         // Enabled but no uuid → None (mode-default fallback is the

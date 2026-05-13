@@ -6,7 +6,7 @@ use rusqlite::{params, OptionalExtension};
 use super::events::EventKind;
 use super::{
     conflict_suffixed_name, is_unique_constraint_error, map_unique_err,
-    Database, DbError, Result,
+    Database, DbError, LabelUuid, Result,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,7 +15,7 @@ pub struct Label {
     pub name: String,
     /// Stable cross-device identity, assigned by the DB at insert time.
     /// Same semantics as `Session::uuid` — populated on read.
-    pub uuid: String,
+    pub uuid: LabelUuid,
 }
 
 impl Database {
@@ -486,7 +486,7 @@ mod tests {
             rows.iter().map(|l| l.uuid.clone()).collect();
         assert_eq!(uuids.len(), 3);
         for label in &rows {
-            assert!(looks_like_uuid_v4(&label.uuid));
+            assert!(looks_like_uuid_v4(label.uuid.as_str()));
         }
         let by_name: std::collections::HashMap<_, _> =
             rows.iter().map(|l| (l.name.clone(), l.uuid.clone())).collect();
@@ -684,7 +684,7 @@ mod tests {
         db.insert_label("Morning").unwrap();
         let row_uuid = db.list_labels().unwrap()[0].uuid.clone();
         let payload = event_payload(&db.pending_events().unwrap()[0].1);
-        assert_eq!(payload["uuid"], serde_json::Value::String(row_uuid));
+        assert_eq!(payload["uuid"], serde_json::Value::String(row_uuid.0));
         assert_eq!(payload["name"], "Morning");
     }
 
@@ -709,7 +709,7 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].1.kind, "label_rename");
         let payload = event_payload(&events[0].1);
-        assert_eq!(payload["uuid"], serde_json::Value::String(row_uuid));
+        assert_eq!(payload["uuid"], serde_json::Value::String(row_uuid.0));
         assert_eq!(payload["name"], "Sunrise");
     }
 
@@ -743,7 +743,7 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].1.kind, "label_delete");
         let payload = event_payload(&events[0].1);
-        assert_eq!(payload["uuid"], serde_json::Value::String(row_uuid));
+        assert_eq!(payload["uuid"], serde_json::Value::String(row_uuid.0));
     }
 
     #[test]
@@ -854,7 +854,7 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         db.insert_label("Morning").unwrap();
         let uuid = &db.list_labels().unwrap()[0].uuid;
-        assert!(looks_like_uuid_v4(uuid),
+        assert!(looks_like_uuid_v4(uuid.as_str()),
             "label uuid `{uuid}` doesn't match v4 shape");
     }
     // ── Name-collision suffix on sync merge ───────────────────────────
