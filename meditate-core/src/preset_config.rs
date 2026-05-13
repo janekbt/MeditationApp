@@ -428,12 +428,12 @@ pub fn apply(
         }
     }
 
-    let known_patterns: std::collections::HashSet<String> = db
-        .list_vibration_patterns()
-        .map_err(|e| ApplyError::DbError(format!("{e:?}")))?
-        .into_iter()
-        .map(|p| p.uuid.0)
-        .collect();
+    let known_patterns: std::collections::HashSet<String> =
+        crate::db::list_vibration_patterns_from_db(db)
+            .map_err(|e| ApplyError::DbError(format!("{e:?}")))?
+            .into_iter()
+            .map(|p| p.uuid.0)
+            .collect();
     let mut needs_pattern: Vec<&str> = Vec::new();
     if !cfg.starting_bell.vibration_pattern_uuid.is_empty() {
         needs_pattern.push(cfg.starting_bell.vibration_pattern_uuid.as_str());

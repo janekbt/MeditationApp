@@ -1028,7 +1028,7 @@ mod tests {
         assert!(!db.list_bell_sounds().unwrap().is_empty());
         assert!(!crate::db::list_presets_from_db(&db).unwrap().is_empty());
         assert!(!crate::db::list_guided_files_from_db(&db).unwrap().is_empty());
-        assert!(!db.list_vibration_patterns().unwrap().is_empty());
+        assert!(!crate::db::list_vibration_patterns_from_db(&db).unwrap().is_empty());
         assert!(!db.known_remote_file_uuids().unwrap().is_empty());
         assert!(!db.known_remote_sound_uuids().unwrap().is_empty());
 
@@ -1048,7 +1048,7 @@ mod tests {
             "presets table must be empty");
         assert!(crate::db::list_guided_files_from_db(&db).unwrap().is_empty(),
             "guided_files table must be empty");
-        assert!(db.list_vibration_patterns().unwrap().is_empty(),
+        assert!(crate::db::list_vibration_patterns_from_db(&db).unwrap().is_empty(),
             "vibration_patterns table must be empty");
         assert!(db.known_remote_file_uuids().unwrap().is_empty(),
             "file dedup tracker must be empty");

@@ -64,7 +64,10 @@ pub use uuids::{
     BellSoundUuid, GuidedFileUuid, IntervalBellUuid, LabelUuid, PresetUuid,
     SessionUuid, VibrationPatternUuid,
 };
-pub use vibration_patterns::{ChartKind, VibrationPattern};
+pub use vibration_patterns::{
+    find_vibration_pattern_by_uuid_from_db, is_vibration_pattern_name_taken_from_db,
+    list_vibration_patterns_from_db, ChartKind, VibrationPattern,
+};
 pub use error::{target_id_is_well_formed_for, DbError, Result};
 pub(crate) use schema::{CACHE_SCHEMA_VERSION, CACHE_SCHEMA_VERSION_KEY, SCHEMA_VERSION};
 use error::{conflict_suffixed_name, is_unique_constraint_error, map_unique_err};

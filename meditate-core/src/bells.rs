@@ -248,7 +248,7 @@ pub fn resolve_pattern_name(db: &Database, uuid: &str) -> String {
     if uuid.is_empty() {
         return String::new();
     }
-    db.find_vibration_pattern_by_uuid(uuid)
+    crate::db::find_vibration_pattern_by_uuid_from_db(&db, uuid)
         .ok()
         .flatten()
         .map(|p| p.name)

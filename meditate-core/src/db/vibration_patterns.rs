@@ -62,6 +62,85 @@ impl ChartKind {
     }
 }
 
+pub fn list_vibration_patterns_from_db(db: &Database) -> Result<Vec<VibrationPattern>> {
+    // Custom rows first (is_bundled = 0), then the bundled seed
+    // set. Mirrors list_bell_sounds — a freshly authored custom
+    // pattern lives at the top of the chooser instead of being
+    // pushed to the bottom of the bundled list.
+    let mut stmt = db.conn.prepare(
+        "SELECT id, uuid, name, duration_ms, intensities_json,
+                chart_kind, is_bundled, created_iso, updated_iso
+         FROM vibration_patterns
+         ORDER BY is_bundled ASC, id ASC",
+    )?;
+    let rows = stmt
+        .query_map([], |row| {
+            let intensities_json: String = row.get(4)?;
+            let chart_str: String = row.get(5)?;
+            Ok(VibrationPattern {
+                id: row.get(0)?,
+                uuid: row.get(1)?,
+                name: row.get(2)?,
+                duration_ms: row.get::<_, i64>(3)? as u32,
+                intensities: serde_json::from_str(&intensities_json)
+                    .unwrap_or_default(),
+                chart_kind: ChartKind::from_db_str(&chart_str)
+                    .unwrap_or(ChartKind::Line),
+                is_bundled: row.get::<_, i64>(6)? != 0,
+                created_iso: row.get(7)?,
+                updated_iso: row.get(8)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+pub fn find_vibration_pattern_by_uuid_from_db(
+    db: &Database,
+    uuid_str: &str,
+) -> Result<Option<VibrationPattern>> {
+    let row = db.conn.query_row(
+        "SELECT id, uuid, name, duration_ms, intensities_json,
+                chart_kind, is_bundled, created_iso, updated_iso
+         FROM vibration_patterns WHERE uuid = ?1",
+        params![uuid_str],
+        |row| {
+            let intensities_json: String = row.get(4)?;
+            let chart_str: String = row.get(5)?;
+            Ok(VibrationPattern {
+                id: row.get(0)?,
+                uuid: row.get(1)?,
+                name: row.get(2)?,
+                duration_ms: row.get::<_, i64>(3)? as u32,
+                intensities: serde_json::from_str(&intensities_json)
+                    .unwrap_or_default(),
+                chart_kind: ChartKind::from_db_str(&chart_str)
+                    .unwrap_or(ChartKind::Line),
+                is_bundled: row.get::<_, i64>(6)? != 0,
+                created_iso: row.get(7)?,
+                updated_iso: row.get(8)?,
+            })
+        },
+    ).optional()?;
+    Ok(row)
+}
+/// True iff a row other than `except_uuid` already holds `name`
+/// (case-insensitive). The editor and chooser use this for live
+/// validation; `except_uuid` is the row currently being renamed
+/// (or "" for fresh inserts) so the user's own case-only renames
+/// don't false-positive.
+pub fn is_vibration_pattern_name_taken_from_db(
+    db: &Database,
+    name: &str,
+    except_uuid: &str,
+) -> Result<bool> {
+    let count: i64 = db.conn.query_row(
+        "SELECT COUNT(*) FROM vibration_patterns
+          WHERE name = ?1 COLLATE NOCASE AND uuid != ?2",
+        params![name, except_uuid],
+        |row| row.get(0),
+    )?;
+    Ok(count > 0)
+}
 impl Database {
     /// Insert a row keyed on `uuid_str`. Idempotent — a second call
     /// with the same uuid returns the existing rowid without touching
@@ -139,35 +218,6 @@ impl Database {
         Ok(uuid_str)
     }
 
-    pub fn find_vibration_pattern_by_uuid(
-        &self,
-        uuid_str: &str,
-    ) -> Result<Option<VibrationPattern>> {
-        let row = self.conn.query_row(
-            "SELECT id, uuid, name, duration_ms, intensities_json,
-                    chart_kind, is_bundled, created_iso, updated_iso
-             FROM vibration_patterns WHERE uuid = ?1",
-            params![uuid_str],
-            |row| {
-                let intensities_json: String = row.get(4)?;
-                let chart_str: String = row.get(5)?;
-                Ok(VibrationPattern {
-                    id: row.get(0)?,
-                    uuid: row.get(1)?,
-                    name: row.get(2)?,
-                    duration_ms: row.get::<_, i64>(3)? as u32,
-                    intensities: serde_json::from_str(&intensities_json)
-                        .unwrap_or_default(),
-                    chart_kind: ChartKind::from_db_str(&chart_str)
-                        .unwrap_or(ChartKind::Line),
-                    is_bundled: row.get::<_, i64>(6)? != 0,
-                    created_iso: row.get(7)?,
-                    updated_iso: row.get(8)?,
-                })
-            },
-        ).optional()?;
-        Ok(row)
-    }
 
     /// Focused rename: re-uses `update_vibration_pattern` internally
     /// but lets the shell skip the read-modify-write of all four
@@ -260,24 +310,6 @@ impl Database {
         Ok(())
     }
 
-    /// True iff a row other than `except_uuid` already holds `name`
-    /// (case-insensitive). The editor and chooser use this for live
-    /// validation; `except_uuid` is the row currently being renamed
-    /// (or "" for fresh inserts) so the user's own case-only renames
-    /// don't false-positive.
-    pub fn is_vibration_pattern_name_taken(
-        &self,
-        name: &str,
-        except_uuid: &str,
-    ) -> Result<bool> {
-        let count: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM vibration_patterns
-              WHERE name = ?1 COLLATE NOCASE AND uuid != ?2",
-            params![name, except_uuid],
-            |row| row.get(0),
-        )?;
-        Ok(count > 0)
-    }
 
     /// Drop a vibration-pattern row. Unknown uuids are silent no-ops
     /// AND emit no event — peers would otherwise see a tombstone for
@@ -300,38 +332,6 @@ impl Database {
         Ok(())
     }
 
-    pub fn list_vibration_patterns(&self) -> Result<Vec<VibrationPattern>> {
-        // Custom rows first (is_bundled = 0), then the bundled seed
-        // set. Mirrors list_bell_sounds — a freshly authored custom
-        // pattern lives at the top of the chooser instead of being
-        // pushed to the bottom of the bundled list.
-        let mut stmt = self.conn.prepare(
-            "SELECT id, uuid, name, duration_ms, intensities_json,
-                    chart_kind, is_bundled, created_iso, updated_iso
-             FROM vibration_patterns
-             ORDER BY is_bundled ASC, id ASC",
-        )?;
-        let rows = stmt
-            .query_map([], |row| {
-                let intensities_json: String = row.get(4)?;
-                let chart_str: String = row.get(5)?;
-                Ok(VibrationPattern {
-                    id: row.get(0)?,
-                    uuid: row.get(1)?,
-                    name: row.get(2)?,
-                    duration_ms: row.get::<_, i64>(3)? as u32,
-                    intensities: serde_json::from_str(&intensities_json)
-                        .unwrap_or_default(),
-                    chart_kind: ChartKind::from_db_str(&chart_str)
-                        .unwrap_or(ChartKind::Line),
-                    is_bundled: row.get::<_, i64>(6)? != 0,
-                    created_iso: row.get(7)?,
-                    updated_iso: row.get(8)?,
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
-    }
 
     /// Recompute the `vibration_patterns` row for `pattern_uuid` from
     /// the events table. Same precedence rules as guided_files /
@@ -411,7 +411,7 @@ mod tests {
     #[test]
     fn list_vibration_patterns_is_empty_on_a_fresh_database() {
         let db = Database::open_in_memory().unwrap();
-        assert!(db.list_vibration_patterns().unwrap().is_empty());
+        assert!(list_vibration_patterns_from_db(&db).unwrap().is_empty());
     }
 
     #[test]
@@ -425,7 +425,7 @@ mod tests {
             "vp-custom", "My Wave", 1000, &[0.0, 0.5, 0.0],
             ChartKind::Line, false,
         ).unwrap();
-        let rows = db.list_vibration_patterns().unwrap();
+        let rows = list_vibration_patterns_from_db(&db).unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].uuid, "vp-custom");
         assert_eq!(rows[1].uuid, "vp-bundled");
@@ -438,7 +438,7 @@ mod tests {
             "vp-1", "Heartbeat", 1500, &[0.0, 0.6, 0.0, 0.0, 1.0, 0.0],
             ChartKind::Line, false,
         ).unwrap();
-        let rows = db.list_vibration_patterns().unwrap();
+        let rows = list_vibration_patterns_from_db(&db).unwrap();
         assert_eq!(rows.len(), 1);
         let r = &rows[0];
         assert_eq!(r.uuid, "vp-1");
@@ -463,7 +463,7 @@ mod tests {
             ChartKind::Bar, false,
         ).unwrap();
         assert_eq!(id1, id2);
-        let rows = db.list_vibration_patterns().unwrap();
+        let rows = list_vibration_patterns_from_db(&db).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].name, "Pulse");
         assert_eq!(rows[0].duration_ms, 400);
@@ -493,7 +493,7 @@ mod tests {
             ChartKind::Line, false,
         ).unwrap();
         assert!(uuid::Uuid::parse_str(&uuid_str).is_ok());
-        let row = db.find_vibration_pattern_by_uuid(&uuid_str).unwrap()
+        let row = find_vibration_pattern_by_uuid_from_db(&db, &uuid_str).unwrap()
             .expect("row should exist under the returned uuid");
         assert_eq!(row.name, "Custom Wave");
     }
@@ -501,7 +501,7 @@ mod tests {
     #[test]
     fn find_vibration_pattern_by_uuid_returns_none_for_unknown_uuid() {
         let db = Database::open_in_memory().unwrap();
-        assert!(db.find_vibration_pattern_by_uuid("nope").unwrap().is_none());
+        assert!(find_vibration_pattern_by_uuid_from_db(&db, "nope").unwrap().is_none());
     }
 
     #[test]
@@ -515,7 +515,7 @@ mod tests {
             &uuid_str, "Slow Wave", 3000, &[0.0, 0.3, 0.6, 0.3, 0.0, 0.0, 0.0],
             ChartKind::Bar,
         ).unwrap();
-        let row = db.find_vibration_pattern_by_uuid(&uuid_str).unwrap().unwrap();
+        let row = find_vibration_pattern_by_uuid_from_db(&db, &uuid_str).unwrap().unwrap();
         assert_eq!(row.name, "Slow Wave");
         assert_eq!(row.duration_ms, 3000);
         assert_eq!(row.intensities, vec![0.0, 0.3, 0.6, 0.3, 0.0, 0.0, 0.0]);
@@ -528,12 +528,12 @@ mod tests {
         let uuid_str = db.insert_vibration_pattern(
             "Wave", 2000, &[0.0, 1.0, 0.0], ChartKind::Line, false,
         ).unwrap();
-        let before = db.find_vibration_pattern_by_uuid(&uuid_str).unwrap().unwrap();
+        let before = find_vibration_pattern_by_uuid_from_db(&db, &uuid_str).unwrap().unwrap();
         std::thread::sleep(std::time::Duration::from_millis(10));
         db.update_vibration_pattern(
             &uuid_str, "Wave", 2500, &[0.0, 1.0, 0.0], ChartKind::Line,
         ).unwrap();
-        let after = db.find_vibration_pattern_by_uuid(&uuid_str).unwrap().unwrap();
+        let after = find_vibration_pattern_by_uuid_from_db(&db, &uuid_str).unwrap().unwrap();
         assert_eq!(after.created_iso, before.created_iso);
         assert!(after.updated_iso > before.updated_iso);
     }
@@ -576,8 +576,8 @@ mod tests {
             "Wave", 2000, &[0.0, 1.0, 0.0], ChartKind::Line, false,
         ).unwrap();
         db.delete_vibration_pattern(&uuid_str).unwrap();
-        assert!(db.list_vibration_patterns().unwrap().is_empty());
-        assert!(db.find_vibration_pattern_by_uuid(&uuid_str).unwrap().is_none());
+        assert!(list_vibration_patterns_from_db(&db).unwrap().is_empty());
+        assert!(find_vibration_pattern_by_uuid_from_db(&db, &uuid_str).unwrap().is_none());
         let deletes: Vec<_> = db.pending_events().unwrap()
             .into_iter()
             .filter(|(_, e)| e.kind == "vibration_pattern_delete")
@@ -603,15 +603,15 @@ mod tests {
             "vp-1", "Pulse", 400, &[0.0, 1.0, 0.0],
             ChartKind::Line, false,
         ).unwrap();
-        assert!(db.is_vibration_pattern_name_taken("Pulse", "").unwrap());
-        assert!(db.is_vibration_pattern_name_taken("PULSE", "").unwrap());
-        assert!(db.is_vibration_pattern_name_taken("pulse", "").unwrap());
+        assert!(is_vibration_pattern_name_taken_from_db(&db, "Pulse", "").unwrap());
+        assert!(is_vibration_pattern_name_taken_from_db(&db, "PULSE", "").unwrap());
+        assert!(is_vibration_pattern_name_taken_from_db(&db, "pulse", "").unwrap());
     }
 
     #[test]
     fn is_vibration_pattern_name_taken_returns_false_for_missing_name() {
         let db = Database::open_in_memory().unwrap();
-        assert!(!db.is_vibration_pattern_name_taken("Anything", "").unwrap());
+        assert!(!is_vibration_pattern_name_taken_from_db(&db, "Anything", "").unwrap());
     }
 
     #[test]
@@ -621,8 +621,8 @@ mod tests {
             "vp-1", "Pulse", 400, &[0.0, 1.0, 0.0],
             ChartKind::Line, false,
         ).unwrap();
-        assert!(!db.is_vibration_pattern_name_taken("Pulse", "vp-1").unwrap());
-        assert!(db.is_vibration_pattern_name_taken("Pulse", "vp-2").unwrap());
+        assert!(!is_vibration_pattern_name_taken_from_db(&db, "Pulse", "vp-1").unwrap());
+        assert!(is_vibration_pattern_name_taken_from_db(&db, "Pulse", "vp-2").unwrap());
     }
 
     #[test]
@@ -641,7 +641,7 @@ mod tests {
         peer.apply_event(&synth_event(
             "vibration_pattern_insert", "vp-1", 5, DEVICE_A, payload,
         )).unwrap();
-        let rows = peer.list_vibration_patterns().unwrap();
+        let rows = list_vibration_patterns_from_db(&peer).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].name, "Wave");
         assert_eq!(rows[0].duration_ms, 2000);
@@ -674,7 +674,7 @@ mod tests {
                 "updated_iso": "2026-05-06T20:05:00Z",
             }),
         )).unwrap();
-        let rows = peer.list_vibration_patterns().unwrap();
+        let rows = list_vibration_patterns_from_db(&peer).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].name, "Slow Wave");
         assert_eq!(rows[0].duration_ms, 3000);
@@ -699,7 +699,7 @@ mod tests {
             "vibration_pattern_delete", "vp-1", 7, DEVICE_A,
             serde_json::json!({ "uuid": "vp-1" }),
         )).unwrap();
-        assert!(peer.list_vibration_patterns().unwrap().is_empty());
+        assert!(list_vibration_patterns_from_db(&peer).unwrap().is_empty());
     }
 
     #[test]
@@ -720,7 +720,7 @@ mod tests {
                 "updated_iso": "2026-05-06T20:00:00Z",
             }),
         )).unwrap();
-        assert!(peer.list_vibration_patterns().unwrap().is_empty());
+        assert!(list_vibration_patterns_from_db(&peer).unwrap().is_empty());
     }
 
     #[test]
@@ -739,7 +739,7 @@ mod tests {
 
         let dev_b = Database::open_in_memory().unwrap();
         dev_b.replay_events(&events).unwrap();
-        let rows = dev_b.list_vibration_patterns().unwrap();
+        let rows = list_vibration_patterns_from_db(&dev_b).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].name, "Slow Wave");
         assert_eq!(rows[0].chart_kind, ChartKind::Bar);

@@ -574,13 +574,13 @@ impl Database {
     // other UNIQUE-NOCASE name fields (labels, presets, guided files).
 
     pub fn list_vibration_patterns(&self) -> Result<Vec<VibrationPattern>> {
-        self.inner.list_vibration_patterns().map_err(map_core_err)
+        meditate_core::db::list_vibration_patterns_from_db(&self.inner).map_err(map_core_err)
     }
 
     pub fn find_vibration_pattern_by_uuid(
         &self, uuid: &str,
     ) -> Result<Option<VibrationPattern>> {
-        self.inner.find_vibration_pattern_by_uuid(uuid).map_err(map_core_err)
+        meditate_core::db::find_vibration_pattern_by_uuid_from_db(&self.inner, uuid).map_err(map_core_err)
     }
 
     pub fn insert_vibration_pattern(
@@ -636,9 +636,10 @@ impl Database {
     pub fn is_vibration_pattern_name_taken(
         &self, name: &str, except_uuid: &str,
     ) -> Result<bool> {
-        self.inner
-            .is_vibration_pattern_name_taken(name, except_uuid)
-            .map_err(map_core_err)
+        meditate_core::db::is_vibration_pattern_name_taken_from_db(
+            &self.inner, name, except_uuid,
+        )
+        .map_err(map_core_err)
     }
 
     // ── BoxBreath phases — pass-through wrappers ──────────────────────────────

@@ -314,7 +314,7 @@ mod tests {
     fn seed_bundled_vibration_patterns_inserts_each_pattern_with_expected_shape() {
         let db = Database::open_in_memory().unwrap();
         db.seed_bundled_vibration_patterns().unwrap();
-        let mut rows = db.list_vibration_patterns().unwrap();
+        let mut rows = crate::db::list_vibration_patterns_from_db(&db).unwrap();
         // Stable order — sort by uuid so the assertion doesn't depend
         // on the seed-list ordering.
         rows.sort_by(|a, b| a.uuid.cmp(&b.uuid));
@@ -344,7 +344,7 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         db.seed_bundled_vibration_patterns().unwrap();
         db.seed_bundled_vibration_patterns().unwrap();
-        assert_eq!(db.list_vibration_patterns().unwrap().len(), 5,
+        assert_eq!(crate::db::list_vibration_patterns_from_db(&db).unwrap().len(), 5,
             "second seed must not duplicate rows");
     }
 
@@ -359,7 +359,7 @@ mod tests {
         }
         let db2 = Database::open(&path).unwrap();
         db2.seed_bundled_vibration_patterns().unwrap();
-        let rows = db2.list_vibration_patterns().unwrap();
+        let rows = crate::db::list_vibration_patterns_from_db(&db2).unwrap();
         assert!(
             !rows.iter().any(|p| p.uuid == BUNDLED_PATTERN_PULSE_UUID),
             "deleted bundled pattern must stay deleted across reopen",
