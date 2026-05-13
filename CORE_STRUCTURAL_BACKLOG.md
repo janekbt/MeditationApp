@@ -11,17 +11,6 @@ rationale.
 
 ## Tier 1 — High-impact, mostly mechanical
 
-### Security: `ureq` Agent has no redirect or scheme policy
-- `meditate-core/src/sync/webdav.rs:122-129` builds the Agent
-  with only timeouts. Default = follow 5 redirects.
-  `Authorization` header IS preserved on same-host redirects.
-- ureq 2.x strips `Authorization` on cross-host redirects since
-  2.4, mitigating most credential-exfil — but mixed-case host
-  comparisons and IDN tricks have historical bypasses.
-- Fix: `.redirects(0)` on the Agent builder; surface a redirect
-  explicitly as a sync error so the user knows their server
-  config changed.
-
 ### i18n: `format_hm_compact` / `format_hm_mins` / `format_hm_secs` return English-baked strings
 - All three (`format.rs`) return `"1h 4m"` / `"1h"` / `"4m"`
   with hardcoded English unit suffixes. Called directly into

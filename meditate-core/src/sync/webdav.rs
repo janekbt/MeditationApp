@@ -62,6 +62,13 @@ pub enum WebDavError {
     /// caller-supplied cap in bytes — surfacing it in logs makes
     /// "which cap did we hit" obvious.
     ResponseTooLarge { limit: u64 },
+    /// Server returned a 3xx redirect. The client follows zero
+    /// redirects (`.redirects(0)` on the Agent) so the Authorization
+    /// header can never leak to a destination different from the
+    /// configured base URL. The user's recovery action is to update
+    /// their stored Nextcloud URL to the new location.
+    /// `location` is the `Location` header value when present.
+    Redirected { location: Option<String> },
 }
 
 impl fmt::Display for WebDavError {
@@ -85,6 +92,10 @@ impl fmt::Display for WebDavError {
             Self::ResponseTooLarge { limit } => {
                 write!(f, "WebDAV: response exceeded {limit}-byte cap")
             }
+            Self::Redirected { location } => match location {
+                Some(loc) => write!(f, "WebDAV: server redirected to {loc}"),
+                None => write!(f, "WebDAV: server redirected (no Location header)"),
+            },
         }
     }
 }
@@ -154,6 +165,15 @@ impl HttpWebDav {
                 .timeout_connect(TIMEOUT_CONNECT)
                 .timeout_read(TIMEOUT_READ)
                 .timeout_write(TIMEOUT_WRITE)
+                // No automatic redirect following: ureq 2.4+ strips
+                // Authorization on cross-host redirects, but mixed-
+                // case host / IDN tricks have historical bypasses
+                // and we'd rather not depend on the client library's
+                // defense. A redirect surfaces as `Redirected` so
+                // the user knows their stored URL needs updating
+                // rather than the client silently chasing a new
+                // host with their app password.
+                .redirects(0)
                 .build(),
             base_url: base_url.trim_end_matches('/').to_string(),
             auth_header: format!("Basic {encoded}"),
@@ -199,6 +219,22 @@ impl HttpWebDav {
             .and_then(|s| s.trim().parse::<u64>().ok());
         WebDavError::RateLimited { retry_after }
     }
+
+    /// Promote a 3xx response to `WebDavError::Redirected`. With
+    /// `.redirects(0)` on the Agent ureq lands 3xx in the `Ok(resp)`
+    /// arm rather than `Err(Status(...))` — every verb has to ask
+    /// "is this a redirect?" before treating the body as a success
+    /// payload, otherwise we'd silently process an empty redirect
+    /// body as data or claim a write succeeded against a non-
+    /// existent path.
+    fn reject_if_redirect(resp: &ureq::Response) -> WebDavResult<()> {
+        let status = resp.status();
+        if (300..400).contains(&status) {
+            let location = resp.header("Location").map(str::to_owned);
+            return Err(WebDavError::Redirected { location });
+        }
+        Ok(())
+    }
 }
 
 impl WebDav for HttpWebDav {
@@ -210,6 +246,7 @@ impl WebDav for HttpWebDav {
             .call()
         {
             Ok(resp) => {
+                Self::reject_if_redirect(&resp)?;
                 // `take(max_bytes + 1)` lets us detect overflow:
                 // a body at-or-under the cap fits in `max_bytes`
                 // bytes; a body OVER the cap reads exactly
@@ -246,6 +283,7 @@ impl WebDav for HttpWebDav {
             .send_bytes(body)
         {
             Ok(resp) => {
+                Self::reject_if_redirect(&resp)?;
                 drain_response_body(resp);
                 Ok(())
             }
@@ -266,7 +304,7 @@ impl WebDav for HttpWebDav {
             .set("Authorization", &self.auth_header)
             .call()
         {
-            Ok(resp) => { drain_response_body(resp); Ok(()) }
+            Ok(resp) => { Self::reject_if_redirect(&resp)?; drain_response_body(resp); Ok(()) }
             Err(ureq::Error::Status(status, resp)) => {
                 if status == 429 { return Err(Self::extract_rate_limit(&resp)); }
                 let body = resp.into_string().unwrap_or_default();
@@ -288,7 +326,7 @@ impl WebDav for HttpWebDav {
             .set("Destination", &self.url(to))
             .call()
         {
-            Ok(resp) => { drain_response_body(resp); Ok(()) }
+            Ok(resp) => { Self::reject_if_redirect(&resp)?; drain_response_body(resp); Ok(()) }
             Err(ureq::Error::Status(status, resp)) => {
                 if status == 429 { return Err(Self::extract_rate_limit(&resp)); }
                 let body = resp.into_string().unwrap_or_default();
@@ -304,7 +342,7 @@ impl WebDav for HttpWebDav {
             .set("Authorization", &self.auth_header)
             .call()
         {
-            Ok(resp) => { drain_response_body(resp); Ok(()) }
+            Ok(resp) => { Self::reject_if_redirect(&resp)?; drain_response_body(resp); Ok(()) }
             Err(ureq::Error::Status(status, resp)) => {
                 if status == 429 { return Err(Self::extract_rate_limit(&resp)); }
                 let body = resp.into_string().unwrap_or_default();
@@ -327,7 +365,7 @@ impl WebDav for HttpWebDav {
             .set("Content-Type", "application/xml")
             .send_string(BODY)
         {
-            Ok(resp) => resp,
+            Ok(resp) => { Self::reject_if_redirect(&resp)?; resp },
             Err(ureq::Error::Status(status, resp)) => {
                 if status == 429 { return Err(Self::extract_rate_limit(&resp)); }
                 let body = resp.into_string().unwrap_or_default();
@@ -560,6 +598,54 @@ mod tests {
         assert!(
             matches!(err, WebDavError::ResponseTooLarge { limit: 100 }),
             "expected ResponseTooLarge {{ limit: 100 }}, got {err:?}",
+        );
+    }
+
+    #[test]
+    fn get_3xx_returns_redirected_with_location() {
+        // Authorization on a 3xx is the credential-exfil shape we
+        // want to refuse. `.redirects(0)` keeps ureq from chasing
+        // the new host; this verb-level check turns the 3xx into a
+        // typed error so the shell can prompt the user to update
+        // their stored URL.
+        let mut server = mockito::Server::new();
+        let _mock = server.mock("GET", "/old.json")
+            .with_status(301)
+            .with_header("Location", "https://attacker.example/new.json")
+            .with_body("")
+            .create();
+
+        let client = HttpWebDav::new(&server.url(), "u", "p");
+        let err = client.get("/old.json", u64::MAX).unwrap_err();
+        match err {
+            WebDavError::Redirected { location } => {
+                assert_eq!(
+                    location.as_deref(),
+                    Some("https://attacker.example/new.json"),
+                );
+            }
+            other => panic!("expected Redirected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn put_3xx_returns_redirected() {
+        // Writes are the dangerous direction — if the client followed
+        // a 3xx, the app password would land on the redirect target.
+        let mut server = mockito::Server::new();
+        let mock = server.mock("PUT", "/x.json")
+            .with_status(301)
+            .with_header("Location", "https://attacker.example/x.json")
+            .with_body("")
+            .create();
+
+        let client = HttpWebDav::new(&server.url(), "u", "p");
+        let result = client.put("/x.json", b"payload");
+        mock.assert();
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, WebDavError::Redirected { .. }),
+            "expected Redirected, got {err:?}",
         );
     }
 

@@ -513,6 +513,7 @@ mod tests {
                     body_excerpt: body_excerpt.clone(),
                 },
                 E::ResponseTooLarge { limit } => E::ResponseTooLarge { limit: *limit },
+                E::Redirected { location } => E::Redirected { location: location.clone() },
             }
         }
     }

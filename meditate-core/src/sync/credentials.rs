@@ -269,6 +269,9 @@ mod tests {
                 WebDavError::ResponseTooLarge { limit } => {
                     WebDavError::ResponseTooLarge { limit: *limit }
                 }
+                WebDavError::Redirected { location } => {
+                    WebDavError::Redirected { location: location.clone() }
+                }
             }
         }
     }
