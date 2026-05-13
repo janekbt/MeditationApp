@@ -576,13 +576,6 @@ avoid silently losing items in a rewrite.
   `secrecy` crate on the `String` / `Vec<u8>`) is cheap.
 
 
-### i18n: `date_math::month_letter` returns hardcoded English ASCII
-- Returns `"J"/"F"/"M"/…` single letters used by
-  `src/stats/imp.rs:763` for the long-period X-axis. Doc says
-  "locale-independent" but is really Anglocentric — Japanese
-  months are "1月"-"12月", Russian uses Cyrillic.
-- Fix: return `MonthLetterKey { month: u32 }`; shell calls
-  `glib::DateTime::format("%b")` truncated to one char.
 
 ## Tier 3 — Sixth-pass additions
 

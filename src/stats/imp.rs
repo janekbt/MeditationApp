@@ -760,7 +760,10 @@ fn x_label_text(data: &[(String, i64)], i: usize, days: u32) -> String {
         XLabelKind::Weekday => weekday_for(date_str),
         XLabelKind::MonthShortDay => format!("{} {}", month_short(month), day_num),
         XLabelKind::MonthLetter => {
-            meditate_core::date_math::month_letter(month).to_string()
+            // First char of the locale's abbreviated month — Japanese
+            // "1月" → "1", Russian "Янв" → "Я", English "Jan" → "J".
+            // Same pattern as `month_short` above, just truncated.
+            month_short(month).chars().next().map(|c| c.to_string()).unwrap_or_default()
         }
         XLabelKind::Empty => String::new(),
     }

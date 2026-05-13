@@ -264,26 +264,6 @@ pub fn aggregate_for_chart_period(
     }
 }
 
-/// Single-letter month code (J/F/M/…) for month-number `1..=12`.
-/// Locale-independent — the longer chart views use this to label
-/// month boundaries without committing to a translated string.
-pub fn month_letter(month: u32) -> &'static str {
-    match month {
-        1 => "J",
-        2 => "F",
-        3 => "M",
-        4 => "A",
-        5 => "M",
-        6 => "J",
-        7 => "J",
-        8 => "A",
-        9 => "S",
-        10 => "O",
-        11 => "N",
-        _ => "D",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -366,12 +346,6 @@ mod tests {
         assert_eq!(x_label_kind(0, 365, &months), XLabelKind::MonthLetter);
     }
 
-    #[test]
-    fn month_letter_covers_full_year() {
-        let letters: Vec<&'static str> = (1..=12).map(month_letter).collect();
-        assert_eq!(letters, vec!["J","F","M","A","M","J","J","A","S","O","N","D"]);
-    }
-
     // ── ChartPeriod ───────────────────────────────────────────────────
 
     #[test]
@@ -450,14 +424,6 @@ mod tests {
         // First month: 3 × 10 = 30. Second: 3 × 20 = 60.
         assert_eq!(out[0].1, 30);
         assert_eq!(out[1].1, 60);
-    }
-
-    #[test]
-    fn month_letter_falls_back_to_december_for_out_of_range() {
-        // Defensive — match the pre-migration gtk behaviour.
-        assert_eq!(month_letter(0), "D");
-        assert_eq!(month_letter(13), "D");
-        assert_eq!(month_letter(99), "D");
     }
 
     // ── week_over_week ─────────────────────────────────────────────────
