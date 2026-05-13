@@ -348,12 +348,6 @@ rationale.
 
 ## Tier 3 — Third-pass additions
 
-### `breath.rs` mixes method-on-enum vs free-fn for the same `Phase`
-- `Phase::index()` is a method (24), but
-  `phase_running_label_key(Phase)` (46) is a free fn. Both do a
-  4-arm match on `Phase`.
-- Pick one (method-on-Phase is the more idiomatic choice).
-
 ### `preset_config.rs:400-405, 430-435` — covered above in Tier 2.
 
 ### `Sync::new` test boilerplate — covered above in Tier 2.

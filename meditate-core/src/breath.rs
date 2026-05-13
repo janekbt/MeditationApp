@@ -31,11 +31,13 @@ pub enum PhaseRunningLabelKey {
     BreatheOut,
 }
 
-pub fn phase_running_label_key(phase: Phase) -> PhaseRunningLabelKey {
-    match phase {
-        Phase::In => PhaseRunningLabelKey::BreatheIn,
-        Phase::HoldIn | Phase::HoldOut => PhaseRunningLabelKey::Hold,
-        Phase::Out => PhaseRunningLabelKey::BreatheOut,
+impl Phase {
+    pub fn running_label_key(self) -> PhaseRunningLabelKey {
+        match self {
+            Phase::In => PhaseRunningLabelKey::BreatheIn,
+            Phase::HoldIn | Phase::HoldOut => PhaseRunningLabelKey::Hold,
+            Phase::Out => PhaseRunningLabelKey::BreatheOut,
+        }
     }
 }
 

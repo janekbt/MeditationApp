@@ -459,7 +459,7 @@ impl MeditateWindow {
             let phase = info.phase;
 
             use meditate_core::breath::PhaseRunningLabelKey;
-            let phase_name = match meditate_core::breath::phase_running_label_key(phase) {
+            let phase_name = match phase.running_label_key() {
                 PhaseRunningLabelKey::BreatheIn => crate::i18n::gettext("Breathe in"),
                 PhaseRunningLabelKey::Hold => crate::i18n::gettext("Hold"),
                 PhaseRunningLabelKey::BreatheOut => crate::i18n::gettext("Breathe out"),
