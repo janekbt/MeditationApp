@@ -275,6 +275,12 @@ pub fn test_connection(url: &str, username: &str, password: &str) -> TestConnect
 pub enum SaveSyncError {
     EmptyUrl,
     EmptyUsername,
+    /// URL scheme isn't `https://` (or a missing scheme entirely).
+    /// HTTP would send the Basic-auth password in cleartext on every
+    /// request — the auth header is just `base64(user:pw)` over the
+    /// wire — so the sync layer refuses to attempt it. Shell maps
+    /// this to a user-facing "URL must start with https://" toast.
+    InsecureUrl,
 }
 
 /// What the shell should do with the password row's contents after
@@ -312,6 +318,11 @@ pub fn prepare_save(
     let url = url.trim();
     if url.is_empty() {
         return Err(SaveSyncError::EmptyUrl);
+    }
+    // URL schemes are case-insensitive per RFC 3986; lowercase
+    // before comparing so "HTTPS://…" and "Https://…" pass.
+    if !url.to_ascii_lowercase().starts_with("https://") {
+        return Err(SaveSyncError::InsecureUrl);
     }
     let username = username.trim();
     if username.is_empty() {
@@ -703,6 +714,47 @@ mod tests {
             prepare_save("https://nx.example", "  ", "pw"),
             Err(SaveSyncError::EmptyUsername),
         );
+    }
+
+    #[test]
+    fn prepare_save_rejects_http_url() {
+        // Basic-auth over HTTP sends `base64(user:pw)` in cleartext
+        // on every request — the sync layer refuses to attempt it.
+        assert_eq!(
+            prepare_save("http://nx.example", "user", "pw"),
+            Err(SaveSyncError::InsecureUrl),
+        );
+    }
+
+    #[test]
+    fn prepare_save_rejects_scheme_less_url() {
+        // A typo without scheme would otherwise fall through to ureq
+        // which infers http — also cleartext.
+        assert_eq!(
+            prepare_save("nx.example", "user", "pw"),
+            Err(SaveSyncError::InsecureUrl),
+        );
+    }
+
+    #[test]
+    fn prepare_save_rejects_non_http_schemes() {
+        // Belt-and-braces: only https is accepted. ftp, file,
+        // gemini, anything else gets the same insecure-url toast.
+        assert_eq!(
+            prepare_save("ftp://nx.example", "user", "pw"),
+            Err(SaveSyncError::InsecureUrl),
+        );
+    }
+
+    #[test]
+    fn prepare_save_accepts_https_url_case_insensitively() {
+        // RFC 3986: URL schemes are case-insensitive.
+        for scheme in ["https://", "HTTPS://", "Https://", "HttPs://"] {
+            let url = format!("{scheme}nx.example");
+            let plan = prepare_save(&url, "user", "pw")
+                .unwrap_or_else(|e| panic!("{url} should be accepted, got {e:?}"));
+            assert_eq!(plan.username, "user");
+        }
     }
 
     #[test]

@@ -374,6 +374,10 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
                     data_toast(&dialog, &gettext("Enter URL and username"));
                     return;
                 }
+                Err(SaveSyncError::InsecureUrl) => {
+                    data_toast(&dialog, &gettext("URL must start with https://"));
+                    return;
+                }
             };
             let url_trimmed: &str = &plan.url;
             let username_trimmed: &str = &plan.username;

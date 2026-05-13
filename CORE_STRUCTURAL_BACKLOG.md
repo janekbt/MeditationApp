@@ -976,13 +976,6 @@ avoid silently losing items in a rewrite.
   explicitly as a sync error so the user knows their server
   config changed.
 
-### Security: `http://` URL silently accepted
-- `meditate-core/src/sync/settings.rs:307-330` (`prepare_save`)
-  trims + rejects empty. A typo'd `http://nc.example.com`
-  sends the Basic-auth password in cleartext on every request.
-- Fix: reject scheme ≠ `https://` in `prepare_save`, OR surface
-  a save-time confirmation dialog so the user can opt in.
-
 ### i18n: `format_hm_compact` / `format_hm_mins` / `format_hm_secs` return English-baked strings
 - All three (`format.rs`) return `"1h 4m"` / `"1h"` / `"4m"`
   with hardcoded English unit suffixes. Called directly into
