@@ -5,7 +5,7 @@
 use rusqlite::{params, OptionalExtension};
 
 use super::events::EventKind;
-use super::{Database, DbError, Result};
+use super::{Database, Result};
 
 /// Bundled and user-imported audio files for cue playback. Categories
 /// are mutually exclusive — no row sits in both — and the chooser
@@ -278,32 +278,18 @@ impl Database {
     /// field plus created_iso so they self-suffice if the corresponding
     /// insert event hasn't arrived yet.
     pub(super) fn recompute_bell_sound(&self, sound_uuid: &str) -> Result<()> {
-        let delete_ts: Option<i64> = self.conn.query_row(
-            "SELECT MAX(lamport_ts) FROM events
-             WHERE target_id = ?1 AND kind = 'bell_sound_delete'",
-            params![sound_uuid],
-            |row| row.get::<_, Option<i64>>(0),
-        )?;
-        let mutate: Option<(i64, String)> = self.conn.query_row(
-            "SELECT lamport_ts, payload FROM events
-             WHERE target_id = ?1
-               AND kind IN ('bell_sound_insert', 'bell_sound_update')
-             ORDER BY lamport_ts DESC, device_id DESC
-             LIMIT 1",
-            params![sound_uuid],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
-        ).optional()?;
-
-        let row_should_exist = match (mutate.as_ref(), delete_ts) {
-            (Some(_), None) => true,
-            (None, _) => false,
-            (Some((m_ts, _)), Some(d_ts)) => *m_ts > d_ts,
+        let Some(v) = self.winning_mutate(
+            sound_uuid,
+            [EventKind::BellSoundInsert, EventKind::BellSoundUpdate],
+            EventKind::BellSoundDelete,
+        )? else {
+            self.conn.execute(
+                "DELETE FROM bell_sounds WHERE uuid = ?1",
+                params![sound_uuid],
+            )?;
+            return Ok(());
         };
-
-        if let Some((_, payload)) = mutate.filter(|_| row_should_exist) {
-            let v: serde_json::Value = serde_json::from_str(&payload)
-                .map_err(|e| DbError::Csv(
-                    format!("bell_sound event payload not valid JSON: {e}")))?;
+        {
             let name = v["name"].as_str().unwrap_or_default();
             let file_path = v["file_path"].as_str().unwrap_or_default();
             let is_bundled = v["is_bundled"].as_bool().unwrap_or(false);
@@ -333,11 +319,6 @@ impl Database {
                     category,
                     created_iso,
                 ],
-            )?;
-        } else {
-            self.conn.execute(
-                "DELETE FROM bell_sounds WHERE uuid = ?1",
-                params![sound_uuid],
             )?;
         }
         Ok(())

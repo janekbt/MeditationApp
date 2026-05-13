@@ -369,32 +369,18 @@ impl Database {
     /// plus created_iso so they self-suffice if the corresponding
     /// insert event hasn't arrived yet (out-of-order delivery).
     pub(super) fn recompute_preset(&self, preset_uuid: &str) -> Result<()> {
-        let delete_ts: Option<i64> = self.conn.query_row(
-            "SELECT MAX(lamport_ts) FROM events
-             WHERE target_id = ?1 AND kind = 'preset_delete'",
-            params![preset_uuid],
-            |row| row.get::<_, Option<i64>>(0),
-        )?;
-        let mutate: Option<(i64, String)> = self.conn.query_row(
-            "SELECT lamport_ts, payload FROM events
-             WHERE target_id = ?1
-               AND kind IN ('preset_insert', 'preset_update')
-             ORDER BY lamport_ts DESC, device_id DESC
-             LIMIT 1",
-            params![preset_uuid],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
-        ).optional()?;
-
-        let row_should_exist = match (mutate.as_ref(), delete_ts) {
-            (Some(_), None) => true,
-            (None, _) => false,
-            (Some((m_ts, _)), Some(d_ts)) => *m_ts > d_ts,
+        let Some(v) = self.winning_mutate(
+            preset_uuid,
+            [EventKind::PresetInsert, EventKind::PresetUpdate],
+            EventKind::PresetDelete,
+        )? else {
+            self.conn.execute(
+                "DELETE FROM presets WHERE uuid = ?1",
+                params![preset_uuid],
+            )?;
+            return Ok(());
         };
-
-        if let Some((_, payload)) = mutate.filter(|_| row_should_exist) {
-            let v: serde_json::Value = serde_json::from_str(&payload)
-                .map_err(|e| DbError::Csv(
-                    format!("preset event payload not valid JSON: {e}")))?;
+        {
             let name = v["name"].as_str().unwrap_or_default();
             let mode = v["mode"].as_str().unwrap_or("timer");
             let is_starred = v["is_starred"].as_bool().unwrap_or(false);
@@ -430,11 +416,6 @@ impl Database {
                 }
                 Err(e) => return Err(DbError::Sqlite(e)),
             }
-        } else {
-            self.conn.execute(
-                "DELETE FROM presets WHERE uuid = ?1",
-                params![preset_uuid],
-            )?;
         }
         Ok(())
     }

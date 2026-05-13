@@ -874,33 +874,19 @@ impl Database {
     /// so they self-suffice if the corresponding insert event hasn't
     /// arrived yet.
     pub(super) fn recompute_session(&self, session_uuid: &str) -> Result<()> {
-        let delete_ts: Option<i64> = self.conn.query_row(
-            "SELECT MAX(lamport_ts) FROM events
-             WHERE target_id = ?1 AND kind = 'session_delete'",
-            params![session_uuid],
-            |row| row.get::<_, Option<i64>>(0),
-        )?;
-
-        let mutate: Option<(i64, String)> = self.conn.query_row(
-            "SELECT lamport_ts, payload FROM events
-             WHERE target_id = ?1
-               AND kind IN ('session_insert', 'session_update')
-             ORDER BY lamport_ts DESC, device_id DESC
-             LIMIT 1",
-            params![session_uuid],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
-        ).optional()?;
-
-        let row_should_exist = match (mutate.as_ref(), delete_ts) {
-            (Some(_), None) => true,
-            (None, _) => false,
-            (Some((m_ts, _)), Some(d_ts)) => *m_ts > d_ts,
+        let Some(v) = self.winning_mutate(
+            session_uuid,
+            [EventKind::SessionInsert, EventKind::SessionUpdate],
+            EventKind::SessionDelete,
+        )? else {
+            // Tombstoned (or no mutate event yet) → ensure absent.
+            self.conn.execute(
+                "DELETE FROM sessions WHERE uuid = ?1",
+                params![session_uuid],
+            )?;
+            return Ok(());
         };
-
-        if let Some((_, payload)) = mutate.filter(|_| row_should_exist) {
-            let v: serde_json::Value = serde_json::from_str(&payload)
-                .map_err(|e| DbError::Csv(
-                    format!("session event payload not valid JSON: {e}")))?;
+        {
             let start_iso = v["start_iso"].as_str().unwrap_or_default();
             let duration_secs = v["duration_secs"].as_u64().unwrap_or(0) as u32;
             let label_uuid = v["label_uuid"].as_str();
@@ -931,12 +917,6 @@ impl Database {
                     mode             = excluded.mode,
                     guided_file_uuid = excluded.guided_file_uuid",
                 params![session_uuid, start_iso, duration_secs, label_id, notes, mode, guided_file_uuid],
-            )?;
-        } else {
-            // Tombstoned (or no mutate event yet) → ensure absent.
-            self.conn.execute(
-                "DELETE FROM sessions WHERE uuid = ?1",
-                params![session_uuid],
             )?;
         }
         Ok(())

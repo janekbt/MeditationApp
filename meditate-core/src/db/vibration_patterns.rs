@@ -352,32 +352,18 @@ impl Database {
     /// (lamport, device_id) mutate event drives the row. Update events
     /// carry every field so they self-suffice on out-of-order delivery.
     pub(super) fn recompute_vibration_pattern(&self, pattern_uuid: &str) -> Result<()> {
-        let delete_ts: Option<i64> = self.conn.query_row(
-            "SELECT MAX(lamport_ts) FROM events
-             WHERE target_id = ?1 AND kind = 'vibration_pattern_delete'",
-            params![pattern_uuid],
-            |row| row.get::<_, Option<i64>>(0),
-        )?;
-        let mutate: Option<(i64, String)> = self.conn.query_row(
-            "SELECT lamport_ts, payload FROM events
-             WHERE target_id = ?1
-               AND kind IN ('vibration_pattern_insert', 'vibration_pattern_update')
-             ORDER BY lamport_ts DESC, device_id DESC
-             LIMIT 1",
-            params![pattern_uuid],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
-        ).optional()?;
-
-        let row_should_exist = match (mutate.as_ref(), delete_ts) {
-            (Some(_), None) => true,
-            (None, _) => false,
-            (Some((m_ts, _)), Some(d_ts)) => *m_ts > d_ts,
+        let Some(v) = self.winning_mutate(
+            pattern_uuid,
+            [EventKind::VibrationPatternInsert, EventKind::VibrationPatternUpdate],
+            EventKind::VibrationPatternDelete,
+        )? else {
+            self.conn.execute(
+                "DELETE FROM vibration_patterns WHERE uuid = ?1",
+                params![pattern_uuid],
+            )?;
+            return Ok(());
         };
-
-        if let Some((_, payload)) = mutate.filter(|_| row_should_exist) {
-            let v: serde_json::Value = serde_json::from_str(&payload)
-                .map_err(|e| DbError::Csv(
-                    format!("vibration_pattern event payload not valid JSON: {e}")))?;
+        {
             let name = v["name"].as_str().unwrap_or_default();
             let duration_ms = v["duration_ms"].as_u64().unwrap_or(0) as u32;
             let intensities_json = v["intensities_json"].as_str().unwrap_or("[]");
@@ -416,11 +402,6 @@ impl Database {
                 }
                 Err(e) => return Err(DbError::Sqlite(e)),
             }
-        } else {
-            self.conn.execute(
-                "DELETE FROM vibration_patterns WHERE uuid = ?1",
-                params![pattern_uuid],
-            )?;
         }
         Ok(())
     }

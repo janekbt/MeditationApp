@@ -4,11 +4,11 @@
 //! `wipe_local_event_log`, and the apply/replay dispatch that
 //! materialises events into the per-entity cache rows.
 
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 
 use super::{
-    target_id_is_well_formed_for, BoxBreathPhaseId, Database, Result, CACHE_SCHEMA_VERSION,
-    CACHE_SCHEMA_VERSION_KEY,
+    target_id_is_well_formed_for, BoxBreathPhaseId, Database, DbError, Result,
+    CACHE_SCHEMA_VERSION, CACHE_SCHEMA_VERSION_KEY,
 };
 
 /// Typed variant of `Event.kind`. Replaces the bare string literals
@@ -531,6 +531,66 @@ impl Database {
             EntityKind::VibrationPattern => self.recompute_vibration_pattern(target_id),
             EntityKind::BoxBreathPhase => self.recompute_box_breath_phase(target_id),
             EntityKind::Setting => self.recompute_setting(target_id),
+        }
+    }
+
+    /// Resolve which mutate event (if any) currently drives the cache
+    /// row for `target_id`, returning its JSON payload. `None` means
+    /// the row should be absent — either no mutate events exist for
+    /// the target, or a delete event with `lamport_ts >= mutate_ts`
+    /// has tombstoned it.
+    ///
+    /// Centralises the LWW + tombstone-tiebreak rule that every
+    /// `recompute_X` family member relies on:
+    ///
+    ///   - highest (lamport_ts, device_id) mutate wins
+    ///   - a delete with lamport_ts >= the winning mutate's lamport_ts
+    ///     wins over the mutate (tombstones break ties in the delete's
+    ///     favour, so insert+delete arriving out of order still
+    ///     converges to deleted)
+    ///
+    /// Returns `Some(payload)` when the row should exist; the caller
+    /// destructures the JSON into its entity-specific column set and
+    /// UPSERTs. Returns `Ok(None)` when the row should be absent;
+    /// the caller issues a DELETE.
+    pub(super) fn winning_mutate(
+        &self,
+        target_id: &str,
+        mutate_kinds: [EventKind; 2],
+        delete_kind: EventKind,
+    ) -> Result<Option<serde_json::Value>> {
+        let delete_ts: Option<i64> = self.conn.query_row(
+            "SELECT MAX(lamport_ts) FROM events
+             WHERE target_id = ?1 AND kind = ?2",
+            params![target_id, delete_kind.as_db_str()],
+            |row| row.get::<_, Option<i64>>(0),
+        )?;
+        let mutate: Option<(i64, String)> = self.conn.query_row(
+            "SELECT lamport_ts, payload FROM events
+             WHERE target_id = ?1
+               AND kind IN (?2, ?3)
+             ORDER BY lamport_ts DESC, device_id DESC
+             LIMIT 1",
+            params![
+                target_id,
+                mutate_kinds[0].as_db_str(),
+                mutate_kinds[1].as_db_str(),
+            ],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?;
+        let row_should_exist = match (mutate.as_ref(), delete_ts) {
+            (Some(_), None) => true,
+            (None, _) => false,
+            (Some((m_ts, _)), Some(d_ts)) => *m_ts > d_ts,
+        };
+        if let Some((_, payload)) = mutate.filter(|_| row_should_exist) {
+            let v: serde_json::Value = serde_json::from_str(&payload)
+                .map_err(|e| DbError::Csv(
+                    format!("event payload not valid JSON: {e}")))?;
+            Ok(Some(v))
+        } else {
+            Ok(None)
         }
     }
 

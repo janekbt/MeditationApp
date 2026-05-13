@@ -195,32 +195,20 @@ impl Database {
     /// Same precedence rules as sessions: tombstone wins on tie/precedence,
     /// else the highest-(lamport, device_id) mutate event drives the name.
     pub(super) fn recompute_label(&self, label_uuid: &str) -> Result<()> {
-        let delete_ts: Option<i64> = self.conn.query_row(
-            "SELECT MAX(lamport_ts) FROM events
-             WHERE target_id = ?1 AND kind = 'label_delete'",
-            params![label_uuid],
-            |row| row.get::<_, Option<i64>>(0),
-        )?;
-        let mutate: Option<(i64, String)> = self.conn.query_row(
-            "SELECT lamport_ts, payload FROM events
-             WHERE target_id = ?1
-               AND kind IN ('label_insert', 'label_rename')
-             ORDER BY lamport_ts DESC, device_id DESC
-             LIMIT 1",
-            params![label_uuid],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
-        ).optional()?;
-
-        let row_should_exist = match (mutate.as_ref(), delete_ts) {
-            (Some(_), None) => true,
-            (None, _) => false,
-            (Some((m_ts, _)), Some(d_ts)) => *m_ts > d_ts,
+        let Some(v) = self.winning_mutate(
+            label_uuid,
+            [EventKind::LabelInsert, EventKind::LabelRename],
+            EventKind::LabelDelete,
+        )? else {
+            // Tombstoned. `ON DELETE SET NULL` on the FK clears
+            // label_id on any cached sessions that referenced this row.
+            self.conn.execute(
+                "DELETE FROM labels WHERE uuid = ?1",
+                params![label_uuid],
+            )?;
+            return Ok(());
         };
-
-        if let Some((_, payload)) = mutate.filter(|_| row_should_exist) {
-            let v: serde_json::Value = serde_json::from_str(&payload)
-                .map_err(|e| DbError::Csv(
-                    format!("label event payload not valid JSON: {e}")))?;
+        {
             let name = v["name"].as_str().unwrap_or_default();
             // UPSERT keyed on uuid. The `name` column is UNIQUE
             // COLLATE NOCASE — two peers offline can both pick the
@@ -276,13 +264,6 @@ impl Database {
                                       AND e2.device_id > e1.device_id))
                        )
                  )",
-                params![label_uuid],
-            )?;
-        } else {
-            // Tombstoned. `ON DELETE SET NULL` on the FK clears
-            // label_id on any cached sessions that referenced this row.
-            self.conn.execute(
-                "DELETE FROM labels WHERE uuid = ?1",
                 params![label_uuid],
             )?;
         }

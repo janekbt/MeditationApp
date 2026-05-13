@@ -11,22 +11,6 @@ rationale.
 
 ## Tier 1 — High-impact, mostly mechanical
 
-### Collapse the 7-way `recompute_*` template
-- `recompute_session`, `_label`, `_interval_bell`, `_preset`,
-  `_guided_file`, `_vibration_pattern`, `_bell_sound` in
-  `meditate-core/src/db.rs:1187-1755` all follow the same shape:
-    1. `SELECT MAX(lamport_ts) FROM events WHERE target_id=? AND kind=<X>_delete`
-    2. `SELECT lamport_ts, payload WHERE target_id=? AND kind IN (...)
-       ORDER BY lamport_ts DESC, device_id DESC LIMIT 1`
-    3. `row_should_exist` via match on (mutate, delete_ts)
-    4. UPSERT or DELETE
-- Extract `fn winning_mutate(target_id, mutate_kinds, delete_kind)
-  -> Result<Option<serde_json::Value>>`; each `recompute_X`
-  collapses to ~10 lines of "destructure JSON → UPSERT" (the
-  column lists differ per entity, so the UPSERT half stays
-  per-entity).
-- Estimated ~400 lines of mechanical repetition removed.
-
 ### Visibility fix on `db.rs`'s sync surface
 - ~10 `pub fn`s are the WebDAV engine's internal contract but
   currently callable from any shell code: `apply_event`,

@@ -268,32 +268,18 @@ impl Database {
     /// (name, file_path, duration, is_starred, both timestamps) so they
     /// self-suffice on out-of-order delivery.
     pub(super) fn recompute_guided_file(&self, file_uuid: &str) -> Result<()> {
-        let delete_ts: Option<i64> = self.conn.query_row(
-            "SELECT MAX(lamport_ts) FROM events
-             WHERE target_id = ?1 AND kind = 'guided_file_delete'",
-            params![file_uuid],
-            |row| row.get::<_, Option<i64>>(0),
-        )?;
-        let mutate: Option<(i64, String)> = self.conn.query_row(
-            "SELECT lamport_ts, payload FROM events
-             WHERE target_id = ?1
-               AND kind IN ('guided_file_insert', 'guided_file_update')
-             ORDER BY lamport_ts DESC, device_id DESC
-             LIMIT 1",
-            params![file_uuid],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
-        ).optional()?;
-
-        let row_should_exist = match (mutate.as_ref(), delete_ts) {
-            (Some(_), None) => true,
-            (None, _) => false,
-            (Some((m_ts, _)), Some(d_ts)) => *m_ts > d_ts,
+        let Some(v) = self.winning_mutate(
+            file_uuid,
+            [EventKind::GuidedFileInsert, EventKind::GuidedFileUpdate],
+            EventKind::GuidedFileDelete,
+        )? else {
+            self.conn.execute(
+                "DELETE FROM guided_files WHERE uuid = ?1",
+                params![file_uuid],
+            )?;
+            return Ok(());
         };
-
-        if let Some((_, payload)) = mutate.filter(|_| row_should_exist) {
-            let v: serde_json::Value = serde_json::from_str(&payload)
-                .map_err(|e| DbError::Csv(
-                    format!("guided_file event payload not valid JSON: {e}")))?;
+        {
             let name = v["name"].as_str().unwrap_or_default();
             let file_path = v["file_path"].as_str().unwrap_or_default();
             let duration_secs = v["duration_secs"].as_u64().unwrap_or(0) as u32;
@@ -329,11 +315,6 @@ impl Database {
                 }
                 Err(e) => return Err(DbError::Sqlite(e)),
             }
-        } else {
-            self.conn.execute(
-                "DELETE FROM guided_files WHERE uuid = ?1",
-                params![file_uuid],
-            )?;
         }
         Ok(())
     }
