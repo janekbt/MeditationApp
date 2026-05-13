@@ -81,3 +81,41 @@ pub mod sync;
 pub mod time;
 pub mod timer;
 pub mod vibration;
+
+// ── Crate-root re-exports — the intended public API surface ──────────
+//
+// Anything findable at `meditate_core::*` is "the contract" — types
+// and functions a shell is expected to use. Anything deeper
+// (`meditate_core::db::events::EventKind`, etc.) is implementation
+// detail. The re-exports also shield shells from future module-layout
+// refactors: moving `SignalMode` out of `db.rs` becomes a one-line
+// change here instead of touching every call site.
+
+/// Core data types the shells consume — model for sessions, labels,
+/// signal modes, bell + vibration libraries. `db::Session` (the row
+/// type) and `session::Session` (the in-flight state machine) both
+/// stay fully-pathed since re-exporting one at the crate root would
+/// create ambiguity with the other.
+pub use db::{
+    BellSound, Database, IntervalBell, Label, SessionMode, SignalMode,
+    VibrationPattern,
+};
+
+/// Diagnostic logging. Most-imported symbol in the crate (~40 shell
+/// call sites); top-level so call sites read `meditate_core::log(...)`
+/// instead of `meditate_core::diag::log(...)`.
+pub use diag::log;
+
+/// Settings-table read helpers + the bool-string parse/format pair.
+/// Heavy traffic from both the gtk shell and the per-mode UI sync
+/// paths.
+pub use settings_keys::{format_bool, parse_bool, read_bool};
+
+/// Pre-flight validator for user-supplied names (labels, sounds,
+/// presets, vibration patterns, guided files). Same rules across
+/// every entity flow.
+pub use naming::validate;
+
+/// Sync error / WebDAV surface — heavily used by sync_runner and
+/// the recovery flows.
+pub use sync::{SyncError, SyncResult, WebDavError, WebDavResult};

@@ -113,7 +113,7 @@ pub enum FireChannel {
 }
 
 /// Resolved routing info for a `Fire*` effect: the channel slot, a
-/// stable diag tag (logged via `meditate_core::diag::log`), and the
+/// stable diag tag (logged via `meditate_core::log`), and the
 /// three carried fields (sound uuid, vibration pattern uuid,
 /// effective signal_mode). The shell dispatches sound + vibration
 /// based on `signal_mode.includes_*` — no extra gating needed

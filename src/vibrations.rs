@@ -561,7 +561,7 @@ fn present_rename_dialog(
         Rc::new(move || {
             let text = entry.text();
             let trimmed = text.trim();
-            let validity = meditate_core::naming::validate(trimmed, |name| {
+            let validity = meditate_core::validate(trimmed, |name| {
                 app.with_db(|db| db.is_vibration_pattern_name_taken(name, &uuid))
                     .and_then(|r| r.ok())
                     .unwrap_or(false)

@@ -687,7 +687,7 @@ fn transcode_to_ogg(
         .build()
         .ok();
     if audioloudnorm.is_none() {
-        meditate_core::diag::log(
+        meditate_core::log(
             "transcode_to_ogg: audioloudnorm element not registered — \
              skipping loudness-normalisation step",
         );
@@ -793,7 +793,7 @@ fn present_rename_dialog(
         Rc::new(move || {
             let text = entry.text();
             let trimmed = text.trim();
-            let validity = meditate_core::naming::validate(trimmed, |name| {
+            let validity = meditate_core::validate(trimmed, |name| {
                 let library = app
                     .with_db(|db| db.list_bell_sounds())
                     .and_then(|r| r.ok())

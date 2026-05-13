@@ -142,7 +142,7 @@ mod imp {
                     // (startup is too early — no window exists yet).
                     match db.finalize_session_in_progress() {
                         Ok(Some(finalized)) => {
-                            meditate_core::diag::log(&format!(
+                            meditate_core::log(&format!(
                                 "session_recovery: finalised in-flight session uuid={} duration_secs={}",
                                 finalized.session_uuid, finalized.duration_secs,
                             ));
@@ -150,18 +150,18 @@ mod imp {
                         }
                         Ok(None) => {}
                         Err(e) => {
-                            meditate_core::diag::log(&format!(
+                            meditate_core::log(&format!(
                                 "session_recovery: finalize FAILED at startup: {e}"
                             ));
                         }
                     }
                     *self.db.lock().unwrap() = Some(db);
-                    meditate_core::diag::log(&format!("db open ok: {}", db_path.display()));
+                    meditate_core::log(&format!("db open ok: {}", db_path.display()));
                 }
                 Err(e) => {
                     let key = meditate_core::format::db_open_failure_key(&e);
                     eprintln!("Failed to open database: {e:?}");
-                    meditate_core::diag::log(&format!(
+                    meditate_core::log(&format!(
                         "db open FAILED at {}: {e:?}", db_path.display()
                     ));
                     *self.last_open_error.lock().unwrap() = Some(key);
@@ -195,7 +195,7 @@ mod imp {
             // it. Worst-case 500 ms; typical <50 ms.
             let has_haptic = crate::vibration::probe_haptic();
             self.has_haptic.set(has_haptic);
-            meditate_core::diag::log(&format!("haptic probe: {}", has_haptic));
+            meditate_core::log(&format!("haptic probe: {}", has_haptic));
 
             self.setup_actions();
             self.setup_accels();
@@ -394,7 +394,7 @@ mod imp {
             toast.connect_button_clicked(move |_| {
                 app_for_undo.with_db_mut(|db| {
                     if let Err(e) = db.delete_session_by_uuid(&session_uuid) {
-                        meditate_core::diag::log(&format!(
+                        meditate_core::log(&format!(
                             "session_recovery: Undo delete failed for uuid={session_uuid}: {e}"
                         ));
                     }
@@ -618,7 +618,7 @@ impl MeditateApplication {
                 coord.start_pass();
                 let result = crate::sync_runner::run_sync_attempt(&db_path);
                 if let Err(e) = &result {
-                    meditate_core::diag::log(&format!("sync: {e}"));
+                    meditate_core::log(&format!("sync: {e}"));
                 }
                 if !coord.should_run_again_after_pass() {
                     break;

@@ -1,4 +1,4 @@
-//! GTK-side `Database` — a thin wrapper around `meditate_core::db::Database`.
+//! GTK-side `Database` — a thin wrapper around `meditate_core::Database`.
 //!
 //! All persistence logic lives in core. This module owns:
 //! - The GTK-app's domain types (`Session`, `Label`, `SessionData`)
@@ -249,7 +249,7 @@ fn today_local_naive_date() -> chrono::NaiveDate {
 // ── Database ──────────────────────────────────────────────────────────────────
 
 pub struct Database {
-    inner: meditate_core::db::Database,
+    inner: meditate_core::Database,
 }
 
 impl std::fmt::Debug for Database {
@@ -261,10 +261,10 @@ impl std::fmt::Debug for Database {
 impl Database {
     /// Borrow the underlying core handle. Used by sibling modules in
     /// the gtk crate (e.g. `data_io`) that delegate work to functions
-    /// in `meditate_core::*` taking a `&meditate_core::db::Database`.
+    /// in `meditate_core::*` taking a `&meditate_core::Database`.
     /// `pub(crate)` rather than `pub` so the inner handle never
     /// escapes the crate's wrapper layer.
-    pub(crate) fn core(&self) -> &meditate_core::db::Database {
+    pub(crate) fn core(&self) -> &meditate_core::Database {
         &self.inner
     }
 
@@ -279,7 +279,7 @@ impl Database {
                 DbError::Csv(format!("mkdir {}: {e}", parent.display()))
             })?;
         }
-        let inner = meditate_core::db::Database::open(path)?;
+        let inner = meditate_core::Database::open(path)?;
         let db = Self { inner };
         // Bell sounds stay shell-side: the seed list carries gresource
         // paths that don't exist on Android.
@@ -358,13 +358,13 @@ impl Database {
     // Thin pass-throughs onto core's CRUD. Domain types are re-exported
     // from core verbatim — no shell-side translation needed.
 
-    pub fn list_interval_bells(&self) -> Result<Vec<meditate_core::db::IntervalBell>> {
+    pub fn list_interval_bells(&self) -> Result<Vec<meditate_core::IntervalBell>> {
         self.inner.list_interval_bells().map_err(map_core_err)
     }
 
     pub fn find_interval_bell_by_id(
         &self, rowid: i64,
-    ) -> Result<Option<meditate_core::db::IntervalBell>> {
+    ) -> Result<Option<meditate_core::IntervalBell>> {
         self.inner.find_interval_bell_by_id(rowid).map_err(map_core_err)
     }
 
@@ -375,7 +375,7 @@ impl Database {
         jitter_pct: u32,
         sound: &str,
         vibration_pattern_uuid: &str,
-        signal_mode: meditate_core::db::SignalMode,
+        signal_mode: meditate_core::SignalMode,
     ) -> Result<i64> {
         self.inner
             .insert_interval_bell(
@@ -393,7 +393,7 @@ impl Database {
         jitter_pct: u32,
         sound: &str,
         vibration_pattern_uuid: &str,
-        signal_mode: meditate_core::db::SignalMode,
+        signal_mode: meditate_core::SignalMode,
         enabled: bool,
     ) -> Result<()> {
         self.inner
@@ -881,7 +881,7 @@ impl Database {
 #[cfg(test)]
 pub(crate) fn test_db_in_memory() -> Database {
     let db = Database {
-        inner: meditate_core::db::Database::open_in_memory().unwrap(),
+        inner: meditate_core::Database::open_in_memory().unwrap(),
     };
     db.seed_bundled_bell_sounds().unwrap();
     db.inner.seed_default_labels().unwrap();
@@ -912,7 +912,7 @@ mod tests {
         assert_eq!(core.duration_secs, 1234);
         assert_eq!(core.label_id, Some(42));
         assert_eq!(core.notes, Some("hello".to_string()));
-        assert!(matches!(core.mode, meditate_core::db::SessionMode::BoxBreath));
+        assert!(matches!(core.mode, meditate_core::SessionMode::BoxBreath));
     }
 
     #[test]
@@ -948,7 +948,7 @@ mod tests {
             duration_secs: 600,
             label_id: Some(7),
             notes: Some("from core".to_string()),
-            mode: meditate_core::db::SessionMode::BoxBreath,
+            mode: meditate_core::SessionMode::BoxBreath,
             // Translation from core → shell drops the uuid (the GTK-side
             // Session doesn't carry one). This test pins the rest of the
             // mapping; uuid round-trip is covered in core's tests.

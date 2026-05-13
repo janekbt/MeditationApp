@@ -11,16 +11,6 @@ rationale.
 
 ## Tier 1 — High-impact, mostly mechanical
 
-### Add `pub use` at crate root
-- `lib.rs` has zero re-exports today; callers write
-  `meditate_core::db::SignalMode`, `meditate_core::db::Session`.
-- Add:
-  ```rust
-  pub use db::{Database, Session, SessionMode, SignalMode,
-               BellSound, Label, VibrationPattern, IntervalBell};
-  pub use time::{boot_time_now, unix_now, today_local};
-  ```
-
 ## Tier 2 — Medium impact, light design
 
 ### `bells::sound_label` / `pattern_label` / `resolve_sound_name` / `resolve_pattern_name` should return `Option<String>`
@@ -592,20 +582,6 @@ module.
   `since` after calling core. Push the filter into core
   (`get_daily_totals_since(since: NaiveDate)`); keep the
   stringification at the chart-axis rendering boundary.
-
-### Crate-root `pub use` additions (counts from actual imports)
-- The existing Tier 1 item lists the obvious cross-cutting types.
-  Add these based on the actual shell import tally:
-  - `meditate_core::diag::log` — **32 sites**, by far the most-
-    imported symbol.
-  - `meditate_core::settings_keys::{read_bool, format_bool}` —
-    14 combined sites.
-  - `meditate_core::naming::validate` — 6 sites across
-    `labels.rs`, `sounds.rs`, `vibrations.rs`, `presets.rs`.
-  - `meditate_core::sync::{WebDavError, WebDavResult, SyncError}`
-    — 34 combined sites in `sync_runner.rs` alone. Already
-    re-exported from `sync/mod.rs:26-27`, but not at the crate
-    root.
 
 ## Tier 2 — Fourth-pass additions
 

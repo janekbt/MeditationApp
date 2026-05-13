@@ -947,7 +947,7 @@ impl MeditateWindow {
                 crate::config::APP_ID,
             );
             eprintln!("note: {msg}");
-            meditate_core::diag::log(&msg);
+            meditate_core::log(&msg);
             return;
         }
         let settings = gio::Settings::new(crate::config::APP_ID);

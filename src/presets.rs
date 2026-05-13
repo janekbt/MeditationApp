@@ -446,7 +446,7 @@ fn present_create_preset_dialog(
         Rc::new(move || {
             let text = entry.text();
             let trimmed = text.trim();
-            let validity = meditate_core::naming::validate(trimmed, |name| {
+            let validity = meditate_core::validate(trimmed, |name| {
                 app.with_db(|db| db.is_preset_name_taken(name, ""))
                     .and_then(|r| r.ok())
                     .unwrap_or(false)
@@ -505,7 +505,7 @@ fn present_rename_preset_dialog(
         Rc::new(move || {
             let text = entry.text();
             let trimmed = text.trim();
-            let validity = meditate_core::naming::validate(trimmed, |name| {
+            let validity = meditate_core::validate(trimmed, |name| {
                 app.with_db(|db| db.is_preset_name_taken(name, &preset_uuid))
                     .and_then(|r| r.ok())
                     .unwrap_or(false)

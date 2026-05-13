@@ -49,12 +49,12 @@ pub enum TimerMode {
 /// `meditate_core::settings_keys` (which expect `SessionMode`).
 /// `Breathing` ↔ `BoxBreath` is the only naming difference; the
 /// variants are otherwise 1:1.
-impl From<TimerMode> for meditate_core::db::SessionMode {
+impl From<TimerMode> for meditate_core::SessionMode {
     fn from(m: TimerMode) -> Self {
         match m {
-            TimerMode::Timer => meditate_core::db::SessionMode::Timer,
-            TimerMode::Breathing => meditate_core::db::SessionMode::BoxBreath,
-            TimerMode::Guided => meditate_core::db::SessionMode::Guided,
+            TimerMode::Timer => meditate_core::SessionMode::Timer,
+            TimerMode::Breathing => meditate_core::SessionMode::BoxBreath,
+            TimerMode::Guided => meditate_core::SessionMode::Guided,
         }
     }
 }
@@ -379,7 +379,7 @@ impl TimerView {
                     app.with_db_mut(|db| {
                         let _ = db.set_setting(
                             key,
-                            meditate_core::settings_keys::format_bool(on),
+                            meditate_core::format_bool(on),
                         );
                     });
                 }
@@ -403,7 +403,7 @@ impl TimerView {
                     app.with_db_mut(|db| {
                         let _ = db.set_setting(
                             key,
-                            meditate_core::settings_keys::format_bool(on),
+                            meditate_core::format_bool(on),
                         );
                     });
                 }
@@ -624,7 +624,7 @@ impl TimerView {
                     app.with_db_mut(|db| {
                         let _ = db.set_setting(
                             "end_bell_active",
-                            meditate_core::settings_keys::format_bool(on),
+                            meditate_core::format_bool(on),
                         );
                     });
                     // Re-warm the preload so the next play_end_bell()
@@ -765,7 +765,7 @@ impl TimerView {
                     app.with_db_mut(|db| {
                         let _ = db.set_setting(
                             "starting_bell_active",
-                            meditate_core::settings_keys::format_bool(on),
+                            meditate_core::format_bool(on),
                         );
                     });
                 }
@@ -839,7 +839,7 @@ impl TimerView {
                     app.with_db_mut(|db| {
                         let _ = db.set_setting(
                             "preparation_time_active",
-                            meditate_core::settings_keys::format_bool(on),
+                            meditate_core::format_bool(on),
                         );
                     });
                 }
@@ -860,7 +860,7 @@ impl TimerView {
                     app.with_db_mut(|db| {
                         let _ = db.set_setting(
                             "interval_bells_active",
-                            meditate_core::settings_keys::format_bool(on),
+                            meditate_core::format_bool(on),
                         );
                     });
                 }
@@ -1118,7 +1118,7 @@ impl TimerView {
                 if let Some(app) = imp.get_app() {
                     app.with_db_mut(|db| db.set_setting(
                         "boxbreath_cues_active",
-                        meditate_core::settings_keys::format_bool(on),
+                        meditate_core::format_bool(on),
                     ));
                 }
             }
@@ -1317,7 +1317,7 @@ impl TimerView {
 
         // Master row.
         let master_on = app
-            .with_db(|db| meditate_core::settings_keys::read_bool(db.core(), "boxbreath_cues_active", false))
+            .with_db(|db| meditate_core::read_bool(db.core(), "boxbreath_cues_active", false))
             .unwrap_or(false);
         self.boxbreath_master_row.set_enable_expansion(master_on);
         self.boxbreath_master_row.set_expanded(master_on);
@@ -1732,7 +1732,7 @@ impl TimerView {
         if let Some(app) = self.get_app() {
             let key = stopwatch_key_for_mode(mode);
             let on = app
-                .with_db(|db| meditate_core::settings_keys::read_bool(db.core(), key, false))
+                .with_db(|db| meditate_core::read_bool(db.core(), key, false))
                 .unwrap_or(false);
             self.stopwatch_loading.set(true);
             self.stopwatch_mode_row.set_active(on);
@@ -2415,7 +2415,7 @@ impl TimerView {
                 let session = match result {
                     Some(Ok(s)) => s,
                     Some(Err(e)) => {
-                        meditate_core::diag::log(
+                        meditate_core::log(
                             &meditate_core::format::session_save_failure_log_message(
                                 meditate_core::format::SessionSaveFailureKind::StorageError,
                                 &e.to_string(),
@@ -2432,7 +2432,7 @@ impl TimerView {
                         return;
                     }
                     None => {
-                        meditate_core::diag::log(
+                        meditate_core::log(
                             &meditate_core::format::session_save_failure_log_message(
                                 meditate_core::format::SessionSaveFailureKind::DbUnopened,
                                 "with_db_blocking_mut returned None",
@@ -2559,12 +2559,12 @@ impl TimerView {
             return;
         }
         let mode = match self.current_mode() {
-            TimerMode::Timer => meditate_core::db::SessionMode::Timer,
-            TimerMode::Breathing => meditate_core::db::SessionMode::BoxBreath,
-            TimerMode::Guided => meditate_core::db::SessionMode::Guided,
+            TimerMode::Timer => meditate_core::SessionMode::Timer,
+            TimerMode::Breathing => meditate_core::SessionMode::BoxBreath,
+            TimerMode::Guided => meditate_core::SessionMode::Guided,
         };
         let label_id = self.setup_selected_label_id();
-        let guided_file_uuid = if matches!(mode, meditate_core::db::SessionMode::Guided) {
+        let guided_file_uuid = if matches!(mode, meditate_core::SessionMode::Guided) {
             self.guided_selected_uuid.borrow().clone()
         } else {
             None
@@ -2579,7 +2579,7 @@ impl TimerView {
         };
         app.with_db_mut(|db| {
             if let Err(e) = db.set_session_in_progress(&snapshot) {
-                meditate_core::diag::log(&format!(
+                meditate_core::log(&format!(
                     "session_recovery: set snapshot failed: {e}"
                 ));
             }
@@ -2595,7 +2595,7 @@ impl TimerView {
         let Some(app) = self.get_app() else { return; };
         app.with_db_mut(|db| {
             if let Err(e) = db.clear_session_in_progress() {
-                meditate_core::diag::log(&format!(
+                meditate_core::log(&format!(
                     "session_recovery: clear snapshot failed: {e}"
                 ));
             }
@@ -3035,7 +3035,7 @@ impl TimerView {
         let stopwatch_key = stopwatch_key_for_mode(self.current_mode());
         let (streak, stopwatch_on, bells, intervals) = app
             .with_db(|db| {
-                use meditate_core::settings_keys::read_bool;
+                use meditate_core::read_bool;
                 let core_db = db.core();
                 let streak  = db.get_streak().unwrap_or(0);
                 let stopwatch_on = read_bool(core_db, stopwatch_key, false);
@@ -3891,7 +3891,7 @@ impl TimerView {
             .get_app()
             .and_then(|app| {
                 app.with_db(|db| {
-                    let stopwatch_on = meditate_core::settings_keys::read_bool(
+                    let stopwatch_on = meditate_core::read_bool(
                         db.core(), stopwatch_key_for_mode(mode), false,
                     );
                     meditate_core::bells::interval_bells_count(db.core(), stopwatch_on)
@@ -3999,7 +3999,7 @@ impl TimerView {
         } else {
             None
         };
-        meditate_core::diag::log(&format!(
+        meditate_core::log(&format!(
             "{}: signal_mode={} fired={}",
             route.log_tag,
             route.signal_mode.as_db_str(),

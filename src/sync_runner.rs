@@ -8,7 +8,7 @@
 //! `HttpWebDav`. That separation keeps the unit tests fast and
 //! offline.
 
-use meditate_core::db::Database as CoreDb;
+use meditate_core::Database as CoreDb;
 use meditate_core::sync::{Sync, SyncStats, WebDav};
 use std::error::Error;
 use std::fmt;
@@ -46,7 +46,7 @@ pub enum SyncRunnerError {
     Db(meditate_core::db::DbError),
 
     /// The sync proper failed — pull/push couldn't complete.
-    Sync(meditate_core::sync::SyncError),
+    Sync(meditate_core::SyncError),
 
     /// The remote folder was wiped between sync attempts: every batch
     /// this device previously synced is gone. Surfaced distinctly from
@@ -87,13 +87,13 @@ impl From<KeychainError> for SyncRunnerError {
     fn from(e: KeychainError) -> Self { Self::Keychain(e) }
 }
 
-impl From<meditate_core::sync::SyncError> for SyncRunnerError {
-    fn from(e: meditate_core::sync::SyncError) -> Self {
+impl From<meditate_core::SyncError> for SyncRunnerError {
+    fn from(e: meditate_core::SyncError) -> Self {
         match e {
             // Promote the typed wipe-detection variant out of the
             // generic Sync bucket so the shell can pattern-match it
             // for the recovery-dialog routing.
-            meditate_core::sync::SyncError::RemoteDataLost => Self::RemoteDataLost,
+            meditate_core::SyncError::RemoteDataLost => Self::RemoteDataLost,
             other => Self::Sync(other),
         }
     }
@@ -125,7 +125,7 @@ pub fn run_sync_attempt(db_path: &Path) -> Result<SyncStats, SyncRunnerError> {
 
     let started = std::time::Instant::now();
     let pending_at_start = db.pending_events().map(|v| v.len()).unwrap_or(0);
-    meditate_core::diag::log(&format!(
+    meditate_core::log(&format!(
         "sync attempt starting: {pending_at_start} events pending",
     ));
 
@@ -135,7 +135,7 @@ pub fn run_sync_attempt(db_path: &Path) -> Result<SyncStats, SyncRunnerError> {
     // per-N-event throttle needed any more.
     let progress = |pushed: usize, total: usize| {
         let secs = started.elapsed().as_secs_f64().max(0.001);
-        meditate_core::diag::log(&format!(
+        meditate_core::log(&format!(
             "sync push progress: {pushed}/{total} in {secs:.1}s ({:.1}/s)",
             pushed as f64 / secs,
         ));
@@ -153,7 +153,7 @@ pub fn run_sync_attempt(db_path: &Path) -> Result<SyncStats, SyncRunnerError> {
         let total = stats.pulled + stats.pushed;
         if total > 0 {
             let secs = elapsed.as_secs_f64().max(0.001);
-            meditate_core::diag::log(&format!(
+            meditate_core::log(&format!(
                 "sync: pulled {} pushed {} in {:.2}s ({:.1}/s)",
                 stats.pulled, stats.pushed, secs, total as f64 / secs,
             ));
@@ -191,12 +191,12 @@ pub fn local_sounds_dir() -> std::path::PathBuf {
 /// when the most recent attempt failed).
 fn record_outcome(
     db: &CoreDb,
-    result: &Result<SyncStats, meditate_core::sync::SyncError>,
+    result: &Result<SyncStats, meditate_core::SyncError>,
 ) -> Result<(), SyncRunnerError> {
     use meditate_core::sync::settings::{
         record_remote_data_lost, record_successful_sync, record_sync_error,
     };
-    use meditate_core::sync::SyncError;
+    use meditate_core::SyncError;
     match result {
         Ok(_) => record_successful_sync(db, meditate_core::time::unix_now())?,
         // Tag remote-data-lost distinctly so the status-indicator click
@@ -287,26 +287,26 @@ mod tests {
         struct BrokenWebDav;
         impl WebDav for BrokenWebDav {
             fn list_collection(&self, _: &str)
-                -> meditate_core::sync::WebDavResult<Vec<String>>
-            { Err(meditate_core::sync::WebDavError::Server {
+                -> meditate_core::WebDavResult<Vec<String>>
+            { Err(meditate_core::WebDavError::Server {
                 status: 500, body: "boom".into() }) }
             fn get(&self, _: &str)
-                -> meditate_core::sync::WebDavResult<Vec<u8>>
+                -> meditate_core::WebDavResult<Vec<u8>>
             { unreachable!() }
             fn put(&self, _: &str, _: &[u8])
-                -> meditate_core::sync::WebDavResult<()>
-            { Err(meditate_core::sync::WebDavError::Server {
+                -> meditate_core::WebDavResult<()>
+            { Err(meditate_core::WebDavError::Server {
                 status: 500, body: "boom".into() }) }
             fn mkcol(&self, _: &str)
-                -> meditate_core::sync::WebDavResult<()>
-            { Err(meditate_core::sync::WebDavError::Server {
+                -> meditate_core::WebDavResult<()>
+            { Err(meditate_core::WebDavError::Server {
                 status: 500, body: "boom".into() }) }
             fn delete(&self, _: &str)
-                -> meditate_core::sync::WebDavResult<()>
+                -> meditate_core::WebDavResult<()>
             { unreachable!() }
             fn move_to(&self, _: &str, _: &str)
-                -> meditate_core::sync::WebDavResult<()>
-            { Err(meditate_core::sync::WebDavError::Server {
+                -> meditate_core::WebDavResult<()>
+            { Err(meditate_core::WebDavError::Server {
                 status: 500, body: "boom".into() }) }
         }
         let db = fresh_db_with_session();
@@ -331,23 +331,23 @@ mod tests {
         struct AlwaysFail;
         impl WebDav for AlwaysFail {
             fn list_collection(&self, _: &str)
-                -> meditate_core::sync::WebDavResult<Vec<String>>
-            { Err(meditate_core::sync::WebDavError::Network("offline".into())) }
+                -> meditate_core::WebDavResult<Vec<String>>
+            { Err(meditate_core::WebDavError::Network("offline".into())) }
             fn get(&self, _: &str)
-                -> meditate_core::sync::WebDavResult<Vec<u8>>
+                -> meditate_core::WebDavResult<Vec<u8>>
             { unreachable!() }
             fn put(&self, _: &str, _: &[u8])
-                -> meditate_core::sync::WebDavResult<()>
-            { Err(meditate_core::sync::WebDavError::Network("offline".into())) }
+                -> meditate_core::WebDavResult<()>
+            { Err(meditate_core::WebDavError::Network("offline".into())) }
             fn mkcol(&self, _: &str)
-                -> meditate_core::sync::WebDavResult<()>
-            { Err(meditate_core::sync::WebDavError::Network("offline".into())) }
+                -> meditate_core::WebDavResult<()>
+            { Err(meditate_core::WebDavError::Network("offline".into())) }
             fn delete(&self, _: &str)
-                -> meditate_core::sync::WebDavResult<()>
+                -> meditate_core::WebDavResult<()>
             { unreachable!() }
             fn move_to(&self, _: &str, _: &str)
-                -> meditate_core::sync::WebDavResult<()>
-            { Err(meditate_core::sync::WebDavError::Network("offline".into())) }
+                -> meditate_core::WebDavResult<()>
+            { Err(meditate_core::WebDavError::Network("offline".into())) }
         }
         let _ = run_with_webdav(&db, &AlwaysFail);
         assert_eq!(
@@ -480,25 +480,25 @@ mod tests {
     /// Tiny scripted WebDav that returns a fixed error from every method.
     /// Easier than per-test inline impls and lets us exercise the error
     /// mapping branches one variant at a time.
-    struct AlwaysErrs(meditate_core::sync::WebDavError);
+    struct AlwaysErrs(meditate_core::WebDavError);
     impl WebDav for AlwaysErrs {
         fn list_collection(&self, _: &str)
-            -> meditate_core::sync::WebDavResult<Vec<String>>
+            -> meditate_core::WebDavResult<Vec<String>>
         { Err(self.clone_err()) }
         fn get(&self, _: &str)
-            -> meditate_core::sync::WebDavResult<Vec<u8>> { unreachable!() }
+            -> meditate_core::WebDavResult<Vec<u8>> { unreachable!() }
         fn put(&self, _: &str, _: &[u8])
-            -> meditate_core::sync::WebDavResult<()> { unreachable!() }
+            -> meditate_core::WebDavResult<()> { unreachable!() }
         fn mkcol(&self, _: &str)
-            -> meditate_core::sync::WebDavResult<()> { unreachable!() }
+            -> meditate_core::WebDavResult<()> { unreachable!() }
         fn delete(&self, _: &str)
-            -> meditate_core::sync::WebDavResult<()> { unreachable!() }
+            -> meditate_core::WebDavResult<()> { unreachable!() }
         fn move_to(&self, _: &str, _: &str)
-            -> meditate_core::sync::WebDavResult<()> { unreachable!() }
+            -> meditate_core::WebDavResult<()> { unreachable!() }
     }
     impl AlwaysErrs {
-        fn clone_err(&self) -> meditate_core::sync::WebDavError {
-            use meditate_core::sync::WebDavError as E;
+        fn clone_err(&self) -> meditate_core::WebDavError {
+            use meditate_core::WebDavError as E;
             match &self.0 {
                 E::NotFound => E::NotFound,
                 E::Unauthorized => E::Unauthorized,
@@ -518,7 +518,7 @@ mod tests {
         // Wrong app password is THE failure mode users will hit most.
         // The toast must read "Authentication failed" so they know to
         // re-check the password (not the URL, not the network).
-        let w = AlwaysErrs(meditate_core::sync::WebDavError::Unauthorized);
+        let w = AlwaysErrs(meditate_core::WebDavError::Unauthorized);
         assert_eq!(test_connection_with(&w), TestConnectionResult::Unauthorized);
     }
 
@@ -528,7 +528,7 @@ mod tests {
         // resolver state — surface as Network, not as a generic Server
         // error, so the toast tells the user "couldn't reach" rather
         // than "server returned bad data".
-        let w = AlwaysErrs(meditate_core::sync::WebDavError::Network(
+        let w = AlwaysErrs(meditate_core::WebDavError::Network(
             "Dns Failed: ...".to_string()));
         assert_eq!(
             test_connection_with(&w),
@@ -541,7 +541,7 @@ mod tests {
         // Distinguishing 404 from generic-server-error matters because
         // the user-actionable advice is different: 404 means "fix the
         // URL"; 5xx means "wait / contact admin".
-        let w = AlwaysErrs(meditate_core::sync::WebDavError::NotFound);
+        let w = AlwaysErrs(meditate_core::WebDavError::NotFound);
         assert_eq!(
             test_connection_with(&w),
             TestConnectionResult::NotWebDavRoot,
@@ -553,7 +553,7 @@ mod tests {
         // Server-side 500 isn't a config bug on our end, so the toast
         // should be diagnostic ("unexpected response") rather than
         // pointing fingers at the user's credentials or path.
-        let w = AlwaysErrs(meditate_core::sync::WebDavError::Server {
+        let w = AlwaysErrs(meditate_core::WebDavError::Server {
             status: 500, body: "internal".to_string() });
         match test_connection_with(&w) {
             TestConnectionResult::Other(s) => {

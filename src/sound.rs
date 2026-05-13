@@ -155,7 +155,7 @@ fn wire_audio_error_handler(media: &gtk::MediaFile, sound_name: &str) {
     let sound_name = sound_name.to_owned();
     media.connect_error_notify(move |m| {
         let Some(err) = m.error() else { return; };
-        meditate_core::diag::log(&format!(
+        meditate_core::log(&format!(
             "sound: playback error for '{sound_name}': {err}"
         ));
         AUDIO_ERROR_TOASTED.with(|c| {
@@ -213,7 +213,7 @@ pub fn preload_end_bell(app: &MeditateApplication) {
 /// uuid doesn't resolve.
 pub fn play_end_bell(app: &MeditateApplication) {
     let active = app
-        .with_db(|db| meditate_core::settings_keys::read_bool(db.core(), "end_bell_active", true))
+        .with_db(|db| meditate_core::read_bool(db.core(), "end_bell_active", true))
         .unwrap_or(true);
     if !active {
         return;
@@ -250,7 +250,7 @@ pub fn play_end_bell(app: &MeditateApplication) {
 /// isn't disturbed.
 pub fn play_starting_sound(app: &MeditateApplication) {
     let active = app
-        .with_db(|db| meditate_core::settings_keys::read_bool(db.core(), "starting_bell_active", false))
+        .with_db(|db| meditate_core::read_bool(db.core(), "starting_bell_active", false))
         .unwrap_or(false);
     if !active {
         return;

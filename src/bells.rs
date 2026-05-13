@@ -111,10 +111,10 @@ fn rebuild_list(
     // build_session_bells with a real schedule), so the relevant
     // stopwatch toggle is Timer's.
     let stopwatch_key = meditate_core::settings_keys::stopwatch_key_for_mode(
-        meditate_core::db::SessionMode::Timer,
+        meditate_core::SessionMode::Timer,
     );
     let stopwatch_on = app
-        .with_db(|db| meditate_core::settings_keys::read_bool(db.core(), stopwatch_key, false))
+        .with_db(|db| meditate_core::read_bool(db.core(), stopwatch_key, false))
         .unwrap_or(false);
 
     let bells = app
