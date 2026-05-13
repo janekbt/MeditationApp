@@ -49,7 +49,19 @@ pub fn init(data_dir: &Path) {
     let path = data_dir.join("diagnostics.log");
     trim_to_tail(&path, MAX_LINES);
     let _ = LOG_PATH.set(path.clone());
-    if let Ok(f) = OpenOptions::new().create(true).append(true).open(&path) {
+    // 0600 on the create path so a non-flatpak (no app sandbox)
+    // install doesn't leave the log world-readable under the
+    // default umask. Belt-and-braces — every current `diag::log`
+    // call site has been audited as not logging secrets, but a
+    // future caller could regress without this gate.
+    let mut open = OpenOptions::new();
+    open.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        open.mode(0o600);
+    }
+    if let Ok(f) = open.open(&path) {
         let _ = LOG_FILE.set(Mutex::new(f));
     }
     install_panic_hook();

@@ -612,11 +612,6 @@ avoid silently losing items in a rewrite.
 - Fix: `OpenOptions::open` with mode 0600 on a touched file
   before `Connection::open`, or `chmod` post-open.
 
-### Security: `diagnostics.log` umask perms
-- `meditate-core/src/diag.rs:54` uses default `OpenOptions` →
-  0644. Currently logs no secrets (every `diag::log` call site
-  audited — clean), but the umask gap exists for future callers.
-- Fix: belt-and-braces 0600 at `init()`.
 
 ### i18n: `format::overtime_button_label` bakes word order
 - Takes a `prefix` and emits `"{prefix} MM:SS ?"`. German
