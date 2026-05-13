@@ -64,7 +64,7 @@ impl Editor {
     fn new(initial: Option<VibrationPattern>) -> Rc<Self> {
         let (edit_uuid, name, duration_s, intensities, chart_kind) = match initial {
             Some(p) => (
-                Some(p.uuid),
+                Some(p.uuid.0),
                 p.name,
                 p.duration_ms as f64 / 1000.0,
                 p.intensities,
@@ -552,7 +552,7 @@ pub fn push_pattern_editor(
                 let chart_kind = editor_for_preview.chart_kind.get();
                 let pattern = crate::db::VibrationPattern {
                     id: 0,
-                    uuid: String::new(),
+                    uuid: meditate_core::db::VibrationPatternUuid::new(""),
                     name: String::new(),
                     duration_ms,
                     intensities,

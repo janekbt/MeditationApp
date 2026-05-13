@@ -265,7 +265,7 @@ fn build_pattern_row(
         add_delete_button(&row, pattern, app, rebuilder, &selection.toast_overlay);
     }
 
-    let uuid = pattern.uuid.clone();
+    let uuid = pattern.uuid.0.clone();
     let on_selected = selection.on_selected.clone();
     let nav_view = selection.nav_view.clone();
     row.connect_activated(move |_| {
@@ -294,7 +294,7 @@ fn add_play_button(
     let btn_for_click = play_btn.clone();
     play_btn.connect_clicked(move |_| {
         use meditate_core::vibration::PreviewAction;
-        let action = preview_for_click.borrow_mut().toggle.request(&pattern.uuid);
+        let action = preview_for_click.borrow_mut().toggle.request(pattern.uuid.as_str());
         // The previous Stop-icon button (if any) always reverts
         // first — either we're toggling it off, or switching to a
         // different row.
@@ -419,7 +419,7 @@ fn add_rename_button(
         .valign(gtk::Align::Center)
         .build();
     let app = app.clone();
-    let uuid = pattern.uuid.clone();
+    let uuid = pattern.uuid.0.clone();
     let row_clone = row.clone();
     let toast_overlay = toast_overlay.clone();
     rename_btn.connect_clicked(move |btn| {
@@ -449,7 +449,7 @@ fn add_delete_button(
         .valign(gtk::Align::Center)
         .build();
     let app = app.clone();
-    let uuid = pattern.uuid.clone();
+    let uuid = pattern.uuid.0.clone();
     let toast_overlay = toast_overlay.clone();
     delete_btn.connect_clicked(move |btn| {
         present_delete_dialog(btn, &app, &uuid, rebuilder.clone(), &toast_overlay);
@@ -475,7 +475,7 @@ fn show_undo_edit_toast(
     toast.connect_button_clicked(move |t| {
         let _ = app.with_db_mut(|db| {
             db.update_vibration_pattern(
-                &before.uuid,
+                before.uuid.as_str(),
                 &before.name,
                 before.duration_ms,
                 &before.intensities,
@@ -509,7 +509,7 @@ fn show_undo_delete_toast(
     toast.connect_button_clicked(move |t| {
         let _ = app.with_db_mut(|db| {
             db.insert_vibration_pattern_with_uuid(
-                &snapshot.uuid,
+                snapshot.uuid.as_str(),
                 &snapshot.name,
                 snapshot.duration_ms,
                 &snapshot.intensities,

@@ -432,7 +432,7 @@ pub fn apply(
         .list_vibration_patterns()
         .map_err(|e| ApplyError::DbError(format!("{e:?}")))?
         .into_iter()
-        .map(|p| p.uuid)
+        .map(|p| p.uuid.0)
         .collect();
     let mut needs_pattern: Vec<&str> = Vec::new();
     if !cfg.starting_bell.vibration_pattern_uuid.is_empty() {

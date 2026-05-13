@@ -22,7 +22,7 @@ use super::{
 #[derive(Debug, Clone, PartialEq)]
 pub struct VibrationPattern {
     pub id: i64,
-    pub uuid: String,
+    pub uuid: super::VibrationPatternUuid,
     pub name: String,
     pub duration_ms: u32,
     /// Equally-spaced amplitude samples in `[0.0, 1.0]`. Length is the

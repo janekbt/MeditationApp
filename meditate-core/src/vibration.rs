@@ -508,7 +508,7 @@ mod tests {
     ) -> VibrationPattern {
         VibrationPattern {
             id: 0,
-            uuid: String::new(),
+            uuid: crate::db::VibrationPatternUuid::new(""),
             name: String::new(),
             duration_ms,
             intensities,
@@ -733,7 +733,7 @@ mod tests {
     fn patterns_equivalent_ignores_uuid_and_timestamps() {
         let a = pattern(1000, vec![0.5], ChartKind::Bar);
         let mut b = pattern(1000, vec![0.5], ChartKind::Bar);
-        b.uuid = "different-uuid".to_string();
+        b.uuid = "different-uuid".into();
         b.created_iso = "2026-01-01T00:00:00".to_string();
         b.updated_iso = "2026-05-10T00:00:00".to_string();
         assert!(patterns_equivalent(&a, &b));
