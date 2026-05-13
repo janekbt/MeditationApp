@@ -635,18 +635,6 @@ module.
   Duration::from_secs)`. Store duration as `u64`/`i64` in the
   import path.
 
-### `csv::Writer` and pull-side `fs::write` aren't `sync_all`'d
-- `meditate-core/src/data_io.rs:99-126` — `File::create → csv::
-  Writer → flush → drop`. No `sync_all()`. Power-loss after
-  `flush()` returns can leave a truncated or zero-byte CSV.
-- `meditate-core/src/sync/orchestrator.rs:400` — pulled bell-sound
-  files: `fs::write(&local, &bytes)` then `record_known_remote_
-  sound`. Crash between write and DB commit leaves a zero-byte
-  sound file marked as "known remote" — pull never retries it.
-- Fix: wrap export in `File::create → BufWriter → csv → flush →
-  into_inner → sync_all`. For the sound pull, `sync_all` before
-  the DB record.
-
 ### `SyncCoordinator` drop-trigger race
 - `meditate-core/src/sync/coordinator.rs:80-92`. Walkthrough:
   worker calls `should_run_again_after_pass() → false`. Concurrent

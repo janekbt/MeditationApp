@@ -422,9 +422,31 @@ impl<'a, W: WebDav> Sync<'a, W> {
             if bytes.len() as u64 > MAX_CUSTOM_BELL_BYTES {
                 continue;
             }
-            if let Err(e) = std::fs::write(&local, &bytes) {
-                return Err(SyncError::InvalidEvent(
-                    format!("can't write sound file {local:?}: {e}")));
+            // Write the file, fsync it, THEN mark it as known.
+            // Critical ordering: if record_known_remote_sound commits
+            // before the file's bytes are durable, a power loss
+            // leaves a zero-byte file marked as "already pulled" and
+            // every subsequent sync skips it — silent broken bell.
+            // The explicit File::create → write_all → sync_all dance
+            // replaces `fs::write`'s "create + write + close" because
+            // close alone does not flush the kernel page cache to
+            // disk. Errors are surfaced as InvalidEvent so the
+            // pull aborts and retries on the next sync (the row is
+            // still missing from known_remote_sounds).
+            {
+                use std::io::Write;
+                let mut file = std::fs::File::create(&local).map_err(|e| {
+                    SyncError::InvalidEvent(
+                        format!("can't create sound file {local:?}: {e}"))
+                })?;
+                file.write_all(&bytes).map_err(|e| {
+                    SyncError::InvalidEvent(
+                        format!("can't write sound file {local:?}: {e}"))
+                })?;
+                file.sync_all().map_err(|e| {
+                    SyncError::InvalidEvent(
+                        format!("can't fsync sound file {local:?}: {e}"))
+                })?;
             }
             self.db.record_known_remote_sound(&bell.uuid)?;
             pulled += 1;

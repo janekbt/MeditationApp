@@ -126,6 +126,13 @@ pub fn export_csv(db: &Database, path: &Path) -> Result<usize, DataIoError> {
         n += 1;
     }
     wtr.flush()?;
+    // Reclaim the underlying File from csv::Writer and fsync it. A
+    // power loss after `flush` returns can otherwise leave a
+    // truncated or zero-byte CSV — the buffered pages reach the
+    // kernel but not the disk. `sync_all` blocks until the data +
+    // metadata are durable, the standard exported-file contract.
+    let file = wtr.into_inner().map_err(|e| e.into_error())?;
+    file.sync_all()?;
     Ok(n)
 }
 
