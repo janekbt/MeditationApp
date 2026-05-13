@@ -144,6 +144,17 @@ impl Database {
     /// Like `open`, the caller still has to drive the seeds
     /// (`seed_all_non_audio`, `seed_bell_sounds_with_paths`) —
     /// `Database::open*` does the schema + integrity check only.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use meditate_core::Database;
+    /// let db = Database::open_in_memory().unwrap();
+    /// // Schema is applied; no seeds yet.
+    /// assert_eq!(db.list_labels().unwrap().len(), 0);
+    /// db.seed_default_labels().unwrap();
+    /// assert!(db.list_labels().unwrap().len() >= 2);
+    /// ```
     pub fn open_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
         Self::init(conn)

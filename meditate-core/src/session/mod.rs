@@ -211,6 +211,25 @@ impl Session {
     /// silence. Used when `prep_secs` is `None` or the user has
     /// `preparation_time_active = false`. The Running stopwatch
     /// anchors at `now`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use meditate_core::session::{Session, SessionSettings};
+    /// use std::time::Duration;
+    ///
+    /// let mut s = Session::start_running(
+    ///     SessionSettings::default(),
+    ///     Duration::from_secs(100),
+    /// );
+    /// // Shell drives by calling `tick(now)` once per second.
+    /// let _effects = s.tick(Duration::from_secs(101));
+    /// // Terminate via `stop`, `finish_overtime`, or
+    /// // `add_overtime_and_finish` — observe `Effect::EndSession`
+    /// // to know the user-visible duration to persist.
+    /// let end_effects = s.stop(Duration::from_secs(110));
+    /// assert!(!end_effects.is_empty());
+    /// ```
     pub fn start_running(mut settings: SessionSettings, now: Duration) -> Self {
         let bells = std::mem::take(&mut settings.bells);
         let bell_rng_state = settings.bell_rng_seed.max(1);

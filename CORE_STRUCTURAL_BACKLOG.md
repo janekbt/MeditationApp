@@ -195,17 +195,6 @@ rationale.
 - Wire-format consts stay `pub` (all `seeds::*`, `paths::*`,
   `sync::REMOTE_BASE_PATH`, `sync::settings::KEY_*`).
 
-### Three doc-tests on entry-point types
-- The crate has **zero** runnable doc examples. Conspicuously
-  missing on:
-  - `Database::open_in_memory` — entry point of the entire
-    crate.
-  - `Session::start_running` — state-machine surface.
-  - `PresetConfig::to_json` / `from_json` — wire-format
-    contract.
-- Add three doctests. Even three is a marked step up from zero
-  and forces the example to stay in sync with the API.
-
 ## Tier 4 — Second-pass additions
 
 ### Document Rust-tier referential-integrity contract

@@ -68,3 +68,25 @@ pub struct SessionSettings {
     /// sessions; ignored otherwise.
     pub box_breath_cues: Option<BoxBreathCueConfig>,
 }
+
+impl Default for SessionSettings {
+    /// A no-frills Timer session: 10-minute countdown, no prep, no
+    /// bells, no cues, signal-mode wide open. Useful as a starting
+    /// point in doctests and for shells that want to mutate one or
+    /// two fields without spelling out the other ten.
+    fn default() -> Self {
+        Self {
+            mode: SessionMode::Timer,
+            prep_secs: None,
+            target_secs: Some(600),
+            stopwatch_display: false,
+            breath_pattern: None,
+            bells: Vec::new(),
+            bell_rng_seed: 1,
+            signal_mode_override: SignalMode::Both,
+            starting_bell: None,
+            end_bell: None,
+            box_breath_cues: None,
+        }
+    }
+}

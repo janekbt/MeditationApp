@@ -12,7 +12,7 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct PresetConfig {
     #[serde(default)]
     pub label: PresetLabel,
@@ -53,6 +53,14 @@ pub enum PresetTiming {
         hold_empty_secs: u32,
         duration_secs: u32,
     },
+}
+
+impl Default for PresetTiming {
+    /// Timer + countdown, 10 minutes. Mirrors the bundled "Sitting"
+    /// preset's default mode/duration.
+    fn default() -> Self {
+        Self::Timer { stopwatch: false, duration_secs: 600 }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -131,6 +139,19 @@ impl PresetConfig {
     /// in `presets.config_json`. The infallible `expect` is honest:
     /// every field shape is round-trippable, so a failure here would
     /// indicate a serde derive bug, not a runtime condition.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use meditate_core::preset_config::{PresetConfig, PresetTiming};
+    /// let cfg = PresetConfig {
+    ///     timing: PresetTiming::Timer { stopwatch: false, duration_secs: 600 },
+    ///     ..Default::default()
+    /// };
+    /// let blob = cfg.to_json();
+    /// let round_tripped = PresetConfig::from_json(&blob).unwrap();
+    /// assert_eq!(cfg, round_tripped);
+    /// ```
     pub fn to_json(&self) -> String {
         serde_json::to_string(self)
             .expect("PresetConfig serializes to JSON")
