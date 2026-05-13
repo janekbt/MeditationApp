@@ -53,7 +53,7 @@ pub use vibration_patterns::{ChartKind, VibrationPattern};
 pub use error::{target_id_is_well_formed_for, DbError, Result};
 pub(crate) use schema::{CACHE_SCHEMA_VERSION, CACHE_SCHEMA_VERSION_KEY, SCHEMA_VERSION};
 use error::{conflict_suffixed_name, is_unique_constraint_error, map_unique_err};
-use schema::SCHEMA;
+use schema::schema;
 
 /// One audio file in the bell-sound library — bundled CC0 sounds the
 /// app ships with, plus user-imported custom files. Referenced by
@@ -198,7 +198,7 @@ impl Database {
         // OFF state. A future refactor that reorders these will
         // silently disable FK checks.
         conn.execute_batch("PRAGMA foreign_keys=ON;")?;
-        conn.execute_batch(SCHEMA)?;
+        conn.execute_batch(&schema())?;
         // Stamp the current version. `execute_batch` is required because
         // PRAGMA values aren't bindable via params.
         conn.execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION};"))?;

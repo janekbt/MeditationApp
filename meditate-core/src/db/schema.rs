@@ -1,5 +1,7 @@
 //! Version sentinels + the SQL schema string applied at DB init.
 
+use crate::seeds::{BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID};
+
 /// On-disk schema version. Bumped when the SQL in `SCHEMA` changes in
 /// a way that an older build cannot read safely. A DB whose
 /// `PRAGMA user_version` exceeds this constant is rejected at open
@@ -20,7 +22,13 @@ pub(crate) const CACHE_SCHEMA_VERSION: u32 = 1;
 /// `sync_state` key holding the device-local cache schema version.
 pub(crate) const CACHE_SCHEMA_VERSION_KEY: &str = "cache_schema_version";
 
-pub(super) const SCHEMA: &str = "
+/// Build the SQL schema string with the seed UUID constants
+/// substituted in. Called once per `Database::open`. The cost is one
+/// allocation; the gain is a single source of truth for bundled
+/// row UUIDs — schema defaults and `crate::seeds::*` agree by
+/// construction.
+pub(super) fn schema() -> String {
+    format!("
     CREATE TABLE IF NOT EXISTS labels (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL COLLATE NOCASE UNIQUE,
@@ -65,7 +73,7 @@ pub(super) const SCHEMA: &str = "
         -- (BUNDLED_PATTERN_PULSE_UUID in src/db/mod.rs). Kept literal
         -- here to avoid plumbing a shell-side const into the core
         -- schema string.
-        vibration_pattern_uuid TEXT NOT NULL DEFAULT '7e9c4d2f-5a8b-4f1d-9e3c-2d6f7a8b0001',
+        vibration_pattern_uuid TEXT NOT NULL DEFAULT '{BUNDLED_PATTERN_PULSE_UUID}',
         signal_mode            TEXT NOT NULL DEFAULT 'sound'
                                CHECK (signal_mode IN ('sound', 'vibration', 'both')),
         enabled                INTEGER NOT NULL DEFAULT 1,
@@ -160,18 +168,17 @@ pub(super) const SCHEMA: &str = "
     -- (one per phase id), seeded on first open. Shape mirrors
     -- per-bell signal config: enabled + signal_mode + sound_uuid +
     -- pattern_uuid. No insert / delete operations — only updates.
-    -- sound_uuid default points at BUNDLED_BOWL_UUID; pattern_uuid
-    -- default at BUNDLED_PATTERN_PULSE_UUID. Both are kept literal
-    -- here to avoid plumbing shell-side consts into the core schema
-    -- string.
+    -- The DEFAULTs point at the bundled bowl + pulse-pattern UUIDs,
+    -- substituted in at `schema()` build time so the schema text and
+    -- `crate::seeds::*` constants can't drift apart.
     CREATE TABLE IF NOT EXISTS box_breath_phases (
         phase        TEXT PRIMARY KEY
                      CHECK (phase IN ('in', 'holdin', 'out', 'holdout')),
         enabled      INTEGER NOT NULL DEFAULT 0,
         signal_mode  TEXT NOT NULL DEFAULT 'sound'
                      CHECK (signal_mode IN ('sound', 'vibration', 'both')),
-        sound_uuid   TEXT NOT NULL DEFAULT 'f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0001',
-        pattern_uuid TEXT NOT NULL DEFAULT '7e9c4d2f-5a8b-4f1d-9e3c-2d6f7a8b0001'
+        sound_uuid   TEXT NOT NULL DEFAULT '{BUNDLED_BOWL_UUID}',
+        pattern_uuid TEXT NOT NULL DEFAULT '{BUNDLED_PATTERN_PULSE_UUID}'
     );
     CREATE TABLE IF NOT EXISTS settings (
         key   TEXT PRIMARY KEY,
@@ -274,4 +281,5 @@ pub(super) const SCHEMA: &str = "
         label_id         INTEGER REFERENCES labels(id) ON DELETE SET NULL,
         guided_file_uuid TEXT
     );
-";
+")
+}

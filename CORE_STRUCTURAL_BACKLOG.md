@@ -238,16 +238,6 @@ rationale.
   so call sites become
   `assert_matches!(err, SyncError::WebDav(WebDavError::Unauthorized))`.
 
-### Schema-default UUIDs hardcoded as string literals
-- `db.rs:513, 607, 608` — SQL `DEFAULT 'f0c2e8a1-…'` etc.
-  Comments say "kept literal to avoid plumbing shell-side
-  const into core schema string", but now that
-  `crate::seeds::BUNDLED_*_UUID` lives inside core, the
-  rationale is stale.
-- Either `format!`-build the schema string at init with the
-  seed consts inlined, OR drop the column DEFAULT entirely
-  (writes always supply the value anyway).
-
 ### `query_sessions` four near-identical branches
 - `db.rs:4180-4248` — four `prepare_cached` branches each
   hardcode the same 8-column SELECT + ORDER BY; only the
