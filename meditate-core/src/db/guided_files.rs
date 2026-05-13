@@ -7,7 +7,8 @@ use rusqlite::{params, OptionalExtension};
 
 use super::events::EventKind;
 use super::{
-    conflict_suffixed_name, is_unique_constraint_error, Database, DbError, Result,
+    conflict_suffixed_name, is_unique_constraint_error, map_unique_err,
+    Database, DbError, Result,
 };
 
 /// One entry in the user's guided-meditation file library — an audio
@@ -52,28 +53,21 @@ impl Database {
             return Ok(existing);
         }
         let now_iso = chrono::Utc::now().to_rfc3339();
-        let result = self.conn.execute(
-            "INSERT INTO guided_files
-                (uuid, name, file_path, duration_secs, is_starred, created_iso, updated_iso)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
-            params![
-                uuid_str,
-                name,
-                file_path,
-                duration_secs,
-                is_starred as i64,
-                now_iso,
-            ],
-        );
-        match result {
-            Ok(_) => {}
-            Err(rusqlite::Error::SqliteFailure(err, _))
-                if err.code == rusqlite::ErrorCode::ConstraintViolation =>
-            {
-                return Err(DbError::DuplicateGuidedFile(name.to_string()));
-            }
-            Err(e) => return Err(DbError::Sqlite(e)),
-        }
+        self.conn
+            .execute(
+                "INSERT INTO guided_files
+                    (uuid, name, file_path, duration_secs, is_starred, created_iso, updated_iso)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+                params![
+                    uuid_str,
+                    name,
+                    file_path,
+                    duration_secs,
+                    is_starred as i64,
+                    now_iso,
+                ],
+            )
+            .map_err(|e| map_unique_err(e, || DbError::DuplicateGuidedFile(name.to_string())))?;
         let rowid = self.conn.last_insert_rowid();
         let payload = serde_json::json!({
             "uuid": uuid_str,
@@ -130,19 +124,12 @@ impl Database {
             return Ok(());
         };
         let now_iso = chrono::Utc::now().to_rfc3339();
-        let result = self.conn.execute(
-            "UPDATE guided_files SET name = ?1, updated_iso = ?2 WHERE uuid = ?3",
-            params![name, now_iso, uuid_str],
-        );
-        match result {
-            Ok(_) => {}
-            Err(rusqlite::Error::SqliteFailure(err, _))
-                if err.code == rusqlite::ErrorCode::ConstraintViolation =>
-            {
-                return Err(DbError::DuplicateGuidedFile(name.to_string()));
-            }
-            Err(e) => return Err(DbError::Sqlite(e)),
-        }
+        self.conn
+            .execute(
+                "UPDATE guided_files SET name = ?1, updated_iso = ?2 WHERE uuid = ?3",
+                params![name, now_iso, uuid_str],
+            )
+            .map_err(|e| map_unique_err(e, || DbError::DuplicateGuidedFile(name.to_string())))?;
         // Read back is_starred so the event payload carries every
         // field — peers that missed the insert can still materialise
         // from this single update event alone.

@@ -7,7 +7,8 @@ use rusqlite::{params, OptionalExtension};
 
 use super::events::EventKind;
 use super::{
-    conflict_suffixed_name, is_unique_constraint_error, Database, DbError, Result,
+    conflict_suffixed_name, is_unique_constraint_error, map_unique_err,
+    Database, DbError, Result,
 };
 
 /// One vibration pattern in the user's library. The pattern itself is
@@ -83,30 +84,25 @@ impl Database {
         let intensities_json = serde_json::to_string(intensities)
             .map_err(|e| DbError::Csv(format!("serialise intensities: {e}")))?;
         let now_iso = chrono::Utc::now().to_rfc3339();
-        let result = self.conn.execute(
-            "INSERT INTO vibration_patterns
-                (uuid, name, duration_ms, intensities_json, chart_kind,
-                 is_bundled, created_iso, updated_iso)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
-            params![
-                uuid_str,
-                name,
-                duration_ms,
-                intensities_json,
-                chart_kind.as_db_str(),
-                is_bundled as i64,
-                now_iso,
-            ],
-        );
-        match result {
-            Ok(_) => {}
-            Err(rusqlite::Error::SqliteFailure(err, _))
-                if err.code == rusqlite::ErrorCode::ConstraintViolation =>
-            {
-                return Err(DbError::DuplicateVibrationPattern(name.to_string()));
-            }
-            Err(e) => return Err(DbError::Sqlite(e)),
-        }
+        self.conn
+            .execute(
+                "INSERT INTO vibration_patterns
+                    (uuid, name, duration_ms, intensities_json, chart_kind,
+                     is_bundled, created_iso, updated_iso)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+                params![
+                    uuid_str,
+                    name,
+                    duration_ms,
+                    intensities_json,
+                    chart_kind.as_db_str(),
+                    is_bundled as i64,
+                    now_iso,
+                ],
+            )
+            .map_err(|e| {
+                map_unique_err(e, || DbError::DuplicateVibrationPattern(name.to_string()))
+            })?;
         let rowid = self.conn.last_insert_rowid();
         let payload = serde_json::json!({
             "uuid": uuid_str,
@@ -235,25 +231,20 @@ impl Database {
         let intensities_json = serde_json::to_string(intensities)
             .map_err(|e| DbError::Csv(format!("serialise intensities: {e}")))?;
         let now_iso = chrono::Utc::now().to_rfc3339();
-        let result = self.conn.execute(
-            "UPDATE vibration_patterns
-             SET name = ?1, duration_ms = ?2, intensities_json = ?3,
-                 chart_kind = ?4, updated_iso = ?5
-             WHERE uuid = ?6",
-            params![
-                name, duration_ms, intensities_json,
-                chart_kind.as_db_str(), now_iso, uuid_str,
-            ],
-        );
-        match result {
-            Ok(_) => {}
-            Err(rusqlite::Error::SqliteFailure(err, _))
-                if err.code == rusqlite::ErrorCode::ConstraintViolation =>
-            {
-                return Err(DbError::DuplicateVibrationPattern(name.to_string()));
-            }
-            Err(e) => return Err(DbError::Sqlite(e)),
-        }
+        self.conn
+            .execute(
+                "UPDATE vibration_patterns
+                 SET name = ?1, duration_ms = ?2, intensities_json = ?3,
+                     chart_kind = ?4, updated_iso = ?5
+                 WHERE uuid = ?6",
+                params![
+                    name, duration_ms, intensities_json,
+                    chart_kind.as_db_str(), now_iso, uuid_str,
+                ],
+            )
+            .map_err(|e| {
+                map_unique_err(e, || DbError::DuplicateVibrationPattern(name.to_string()))
+            })?;
         let payload = serde_json::json!({
             "uuid": uuid_str,
             "name": name,

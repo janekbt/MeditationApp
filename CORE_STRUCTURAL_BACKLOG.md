@@ -121,14 +121,6 @@ rationale.
 
 ## Tier 1 — Second-pass additions
 
-### `map_unique_err(e, dup)` helper
-- `Err(rusqlite::Error::SqliteFailure(err, _)) if err.extended_code
-  == SQLITE_CONSTRAINT_UNIQUE => Err(DbError::Duplicate*)` repeats
-  at `db.rs:1852, 1905, 2494, 2655, 2796, 2865, 3034, 3181` — 8
-  sites. Each has its own `DuplicateX` variant constructor.
-- Extract `fn map_unique_err(e: rusqlite::Error, dup: impl
-  FnOnce() -> DbError) -> DbError`.
-
 ### Date-arithmetic `.expect()`s → `DbError::DateOutOfRange`
 - `db.rs:3761, 3959, 3972` — `succ_opt().expect("date overflow")` /
   `pred_opt().expect(...)` on `chrono::NaiveDate`.

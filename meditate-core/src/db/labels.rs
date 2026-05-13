@@ -5,7 +5,8 @@ use rusqlite::{params, OptionalExtension};
 
 use super::events::EventKind;
 use super::{
-    conflict_suffixed_name, is_unique_constraint_error, Database, DbError, Result,
+    conflict_suffixed_name, is_unique_constraint_error, map_unique_err,
+    Database, DbError, Result,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,26 +78,19 @@ impl Database {
             |row| row.get::<_, String>(0),
         ).optional()?;
         let Some(label_uuid) = row_uuid else { return Ok(()); };
-        match self.conn.execute(
-            "UPDATE labels SET name = ?1 WHERE id = ?2",
-            params![name, id],
-        ) {
-            Ok(_) => {
-                let payload = serde_json::json!({
-                    "uuid": label_uuid,
-                    "name": name,
-                }).to_string();
-                self.emit_event(EventKind::LabelRename, &label_uuid, payload)?;
-                tx.commit()?;
-                Ok(())
-            }
-            Err(rusqlite::Error::SqliteFailure(err, _))
-                if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE =>
-            {
-                Err(DbError::DuplicateLabel(name.to_string()))
-            }
-            Err(e) => Err(DbError::Sqlite(e)),
-        }
+        self.conn
+            .execute(
+                "UPDATE labels SET name = ?1 WHERE id = ?2",
+                params![name, id],
+            )
+            .map_err(|e| map_unique_err(e, || DbError::DuplicateLabel(name.to_string())))?;
+        let payload = serde_json::json!({
+            "uuid": label_uuid,
+            "name": name,
+        }).to_string();
+        self.emit_event(EventKind::LabelRename, &label_uuid, payload)?;
+        tx.commit()?;
+        Ok(())
     }
 
     /// Insert a new label and return its AUTOINCREMENT rowid. Returns
@@ -120,27 +114,20 @@ impl Database {
         if let Some(existing) = self.existing_rowid_by_uuid("labels", uuid_str)? {
             return Ok(existing);
         }
-        match self.conn.execute(
-            "INSERT INTO labels (name, uuid) VALUES (?1, ?2)",
-            params![name, uuid_str],
-        ) {
-            Ok(_) => {
-                let rowid = self.conn.last_insert_rowid();
-                let payload = serde_json::json!({
-                    "uuid": uuid_str,
-                    "name": name,
-                }).to_string();
-                self.emit_event(EventKind::LabelInsert, uuid_str, payload)?;
-                tx.commit()?;
-                Ok(rowid)
-            }
-            Err(rusqlite::Error::SqliteFailure(err, _))
-                if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE =>
-            {
-                Err(DbError::DuplicateLabel(name.to_string()))
-            }
-            Err(e) => Err(DbError::Sqlite(e)),
-        }
+        self.conn
+            .execute(
+                "INSERT INTO labels (name, uuid) VALUES (?1, ?2)",
+                params![name, uuid_str],
+            )
+            .map_err(|e| map_unique_err(e, || DbError::DuplicateLabel(name.to_string())))?;
+        let rowid = self.conn.last_insert_rowid();
+        let payload = serde_json::json!({
+            "uuid": uuid_str,
+            "name": name,
+        }).to_string();
+        self.emit_event(EventKind::LabelInsert, uuid_str, payload)?;
+        tx.commit()?;
+        Ok(rowid)
     }
 
     pub fn count_labels(&self) -> Result<i64> {

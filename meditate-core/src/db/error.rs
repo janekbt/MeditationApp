@@ -44,6 +44,34 @@ pub(super) fn is_unique_constraint_error(e: &rusqlite::Error) -> bool {
     )
 }
 
+/// Map a rusqlite error into a `DbError`, calling `on_unique` to
+/// supply the typed duplicate variant when the error is a UNIQUE-
+/// constraint failure. Collapses the recurring match shape
+///
+/// ```text
+/// match res {
+///     Err(rusqlite::Error::SqliteFailure(err, _))
+///         if err.extended_code == SQLITE_CONSTRAINT_UNIQUE =>
+///             Err(DbError::DuplicateLabel(name.to_string())),
+///     Err(e) => Err(DbError::Sqlite(e)),
+/// }
+/// ```
+///
+/// into `Err(map_unique_err(e, || DbError::DuplicateLabel(name.into())))`.
+/// `on_unique` is `FnOnce` so callers don't pay the allocation for
+/// the duplicate variant's `String` body unless the lookup actually
+/// hit.
+pub(super) fn map_unique_err(
+    e: rusqlite::Error,
+    on_unique: impl FnOnce() -> DbError,
+) -> DbError {
+    if is_unique_constraint_error(&e) {
+        on_unique()
+    } else {
+        DbError::Sqlite(e)
+    }
+}
+
 /// Whether `target_id` is safe to use as part of a filesystem path
 /// component for the given event `kind`. The attack this defends
 /// against is a peer-authored `bell_sound_insert` whose target_id is

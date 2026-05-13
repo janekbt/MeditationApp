@@ -6,8 +6,8 @@ use rusqlite::{params, OptionalExtension};
 
 use super::events::EventKind;
 use super::{
-    conflict_suffixed_name, is_unique_constraint_error, mint_uuid, Database, DbError,
-    Result, SessionMode,
+    conflict_suffixed_name, is_unique_constraint_error, map_unique_err, mint_uuid,
+    Database, DbError, Result, SessionMode,
 };
 
 /// One named, full-fidelity session template. Captures the entire
@@ -74,40 +74,33 @@ impl Database {
             return Ok(existing);
         }
         let now_iso = chrono::Utc::now().to_rfc3339();
-        match self.conn.execute(
-            "INSERT INTO presets (uuid, name, mode, is_starred, config_json, created_iso, updated_iso)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
-            params![
-                uuid_str,
-                name,
-                mode.as_db_str(),
-                is_starred as i64,
-                config_json,
-                now_iso,
-            ],
-        ) {
-            Ok(_) => {
-                let rowid = self.conn.last_insert_rowid();
-                let payload = serde_json::json!({
-                    "uuid": uuid_str,
-                    "name": name,
-                    "mode": mode.as_db_str(),
-                    "is_starred": is_starred,
-                    "config_json": config_json,
-                    "created_iso": now_iso,
-                    "updated_iso": now_iso,
-                }).to_string();
-                self.emit_event(EventKind::PresetInsert, uuid_str, payload)?;
-                tx.commit()?;
-                Ok(rowid)
-            }
-            Err(rusqlite::Error::SqliteFailure(err, _))
-                if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE =>
-            {
-                Err(DbError::DuplicatePreset(name.to_string()))
-            }
-            Err(e) => Err(DbError::Sqlite(e)),
-        }
+        self.conn
+            .execute(
+                "INSERT INTO presets (uuid, name, mode, is_starred, config_json, created_iso, updated_iso)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+                params![
+                    uuid_str,
+                    name,
+                    mode.as_db_str(),
+                    is_starred as i64,
+                    config_json,
+                    now_iso,
+                ],
+            )
+            .map_err(|e| map_unique_err(e, || DbError::DuplicatePreset(name.to_string())))?;
+        let rowid = self.conn.last_insert_rowid();
+        let payload = serde_json::json!({
+            "uuid": uuid_str,
+            "name": name,
+            "mode": mode.as_db_str(),
+            "is_starred": is_starred,
+            "config_json": config_json,
+            "created_iso": now_iso,
+            "updated_iso": now_iso,
+        }).to_string();
+        self.emit_event(EventKind::PresetInsert, uuid_str, payload)?;
+        tx.commit()?;
+        Ok(rowid)
     }
 
     /// Every preset, ordered by mode (timer first, then box_breath)
@@ -257,18 +250,12 @@ impl Database {
         ).optional()?.unwrap_or(false);
         if !exists { return Ok(()); }
         let now_iso = chrono::Utc::now().to_rfc3339();
-        match self.conn.execute(
-            "UPDATE presets SET name = ?1, updated_iso = ?2 WHERE uuid = ?3",
-            params![name, now_iso, uuid_str],
-        ) {
-            Ok(_) => {}
-            Err(rusqlite::Error::SqliteFailure(err, _))
-                if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE =>
-            {
-                return Err(DbError::DuplicatePreset(name.to_string()));
-            }
-            Err(e) => return Err(DbError::Sqlite(e)),
-        }
+        self.conn
+            .execute(
+                "UPDATE presets SET name = ?1, updated_iso = ?2 WHERE uuid = ?3",
+                params![name, now_iso, uuid_str],
+            )
+            .map_err(|e| map_unique_err(e, || DbError::DuplicatePreset(name.to_string())))?;
         let row = self.find_preset_by_uuid(uuid_str)?
             .expect("just confirmed exists");
         let payload = serde_json::json!({
