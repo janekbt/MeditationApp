@@ -1,8 +1,9 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use gtk::prelude::*;
 
 use crate::application::MeditateApplication;
 use crate::db::BellSound;
+use crate::i18n::gettext;
 
 thread_local! {
     /// Keeps the currently-playing (or pre-warmed) end-sound MediaFile alive.
@@ -27,6 +28,12 @@ thread_local! {
     /// in-session slots so a preview in Settings can't fight with a
     /// running session's audio.
     static PREVIEW_MEDIA: RefCell<Option<gtk::MediaFile>> = const { RefCell::new(None) };
+    /// Process-lifetime latch: once an audio error has been surfaced
+    /// to the user via toast, subsequent errors only hit the
+    /// diagnostics log. Headphones unplugging then re-plugging
+    /// shouldn't spam toasts; one notification per process tells the
+    /// user "something's wrong with audio" without repeated yells.
+    static AUDIO_ERROR_TOASTED: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Stop whatever is currently playing in CURRENT_MEDIA (no-op if
@@ -125,14 +132,57 @@ fn lookup_bell_sound_by_uuid(app: &MeditateApplication, uuid: &str) -> Option<Be
 /// makes sure peers do, by pulling from WebDAV) finds it at the
 /// same relative location.
 fn media_for_bell_sound(sound: &BellSound) -> gtk::MediaFile {
-    if sound.is_bundled {
-        return gtk::MediaFile::for_resource(&sound.file_path);
-    }
-    let local_path = gtk::glib::user_data_dir()
-        .join("meditate")
-        .join("sounds")
-        .join(format!("{}.{}", sound.uuid, sound.extension()));
-    gtk::MediaFile::for_file(&gtk::gio::File::for_path(&local_path))
+    let media = if sound.is_bundled {
+        gtk::MediaFile::for_resource(&sound.file_path)
+    } else {
+        let local_path = gtk::glib::user_data_dir()
+            .join("meditate")
+            .join("sounds")
+            .join(format!("{}.{}", sound.uuid, sound.extension()));
+        gtk::MediaFile::for_file(&gtk::gio::File::for_path(&local_path))
+    };
+    wire_audio_error_handler(&media, &sound.name);
+    media
+}
+
+/// Hook a notify::error listener on the MediaFile so a broken audio
+/// pipeline (output device disappeared mid-session, file format the
+/// pipeline can't decode, etc.) reaches the diagnostics log and —
+/// once per process — surfaces a toast to the user. Without this,
+/// gtk::MediaFile errors are completely silent: the bell just doesn't
+/// ring and the session continues as if nothing happened.
+fn wire_audio_error_handler(media: &gtk::MediaFile, sound_name: &str) {
+    let sound_name = sound_name.to_owned();
+    media.connect_error_notify(move |m| {
+        let Some(err) = m.error() else { return; };
+        meditate_core::diag::log(&format!(
+            "sound: playback error for '{sound_name}': {err}"
+        ));
+        AUDIO_ERROR_TOASTED.with(|c| {
+            if c.get() {
+                return;
+            }
+            c.set(true);
+            surface_audio_error_toast();
+        });
+    });
+}
+
+fn surface_audio_error_toast() {
+    let Some(app) = gtk::gio::Application::default() else { return; };
+    let Ok(app) = app.downcast::<MeditateApplication>() else { return; };
+    let Some(win) = app
+        .active_window()
+        .and_then(|w| w.downcast::<crate::window::MeditateWindow>().ok())
+    else {
+        return;
+    };
+    win.add_toast(
+        adw::Toast::builder()
+            .title(gettext("Couldn't play bell sound"))
+            .timeout(6)
+            .build(),
+    );
 }
 
 /// Construct the MediaFile for the configured end bell and cache
