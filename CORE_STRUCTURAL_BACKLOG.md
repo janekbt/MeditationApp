@@ -645,13 +645,6 @@ avoid silently losing items in a rewrite.
 
 ## Tier 3 — Sixth-pass additions
 
-### Performance: `append_event_returning_newness` extra SELECT for rowid
-- `meditate-core/src/db.rs:840-865`. After `INSERT OR IGNORE`,
-  unconditionally runs `SELECT id FROM events WHERE event_uuid
-  = ?1` — even on the new-row path where
-  `conn.last_insert_rowid()` would answer for free.
-- Fix: `if was_new { conn.last_insert_rowid() } else { SELECT id }`.
-  Halves DB calls per event on bulk import.
 
 ### Performance: PRAGMA `cache_size` and `mmap_size` at SQLite defaults
 - `meditate-core/src/db.rs:709-718`. Default `cache_size = -2000`

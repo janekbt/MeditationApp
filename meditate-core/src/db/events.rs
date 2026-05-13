@@ -278,11 +278,18 @@ impl Database {
             ],
         )?;
         let was_new = rows_changed > 0;
-        let rowid = self.conn.query_row(
-            "SELECT id FROM events WHERE event_uuid = ?1",
-            params![event.event_uuid],
-            |row| row.get::<_, i64>(0),
-        )?;
+        // On the new-row path `last_insert_rowid()` already knows the
+        // id — saves a SELECT round-trip on the common path. Only the
+        // dup-ignore path needs to look up the existing rowid.
+        let rowid = if was_new {
+            self.conn.last_insert_rowid()
+        } else {
+            self.conn.query_row(
+                "SELECT id FROM events WHERE event_uuid = ?1",
+                params![event.event_uuid],
+                |row| row.get::<_, i64>(0),
+            )?
+        };
         Ok((rowid, was_new))
     }
 
