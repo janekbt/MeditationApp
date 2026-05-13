@@ -330,8 +330,7 @@ impl Database {
         // than synthesising a half-populated Label. `list_labels` is the
         // only existing read path; it's O(n) over labels but n stays
         // small (~tens) and label creation isn't a hot path.
-        self.inner
-            .list_labels()
+        meditate_core::db::list_labels_from_db(&self.inner)
             .map_err(map_core_err)?
             .into_iter()
             .find(|l| l.id == id)
@@ -339,13 +338,14 @@ impl Database {
     }
 
     pub fn list_labels(&self) -> Result<Vec<Label>> {
-        self.inner.list_labels().map_err(map_core_err)
+        meditate_core::db::list_labels_from_db(&self.inner).map_err(map_core_err)
     }
 
     /// True iff any label other than `except_id` already uses `name`
     /// (case-insensitive — the column is COLLATE NOCASE).
     pub fn is_label_name_taken(&self, name: &str, except_id: i64) -> Result<bool> {
-        self.inner.is_label_name_taken(name, except_id).map_err(map_core_err)
+        meditate_core::db::is_label_name_taken_from_db(&self.inner, name, except_id)
+            .map_err(map_core_err)
     }
 
     pub fn update_label(&self, id: i64, name: &str) -> Result<()> {
@@ -353,7 +353,7 @@ impl Database {
     }
 
     pub fn label_session_count(&self, id: i64) -> Result<i64> {
-        self.inner.label_session_count(id).map_err(map_core_err)
+        meditate_core::db::label_session_count_from_db(&self.inner, id).map_err(map_core_err)
     }
 
     pub fn delete_label(&self, id: i64) -> Result<()> {

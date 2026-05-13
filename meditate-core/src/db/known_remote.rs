@@ -147,13 +147,13 @@ mod tests {
         let label_id = db.insert_label("focus").unwrap();
         db.record_known_remote_file("a").unwrap();
         db.set_setting("k", "v").unwrap();
-        let labels_before = db.list_labels().unwrap().len();
+        let labels_before = crate::db::list_labels_from_db(&db).unwrap().len();
         let events_before = db.pending_events().unwrap().len();
 
         db.wipe_known_remote_files().unwrap();
 
-        assert_eq!(db.list_labels().unwrap().len(), labels_before);
-        assert!(db.list_labels().unwrap().iter().any(|l| l.id == label_id));
+        assert_eq!(crate::db::list_labels_from_db(&db).unwrap().len(), labels_before);
+        assert!(crate::db::list_labels_from_db(&db).unwrap().iter().any(|l| l.id == label_id));
         assert_eq!(db.pending_events().unwrap().len(), events_before);
         assert_eq!(db.get_setting("k", "default").unwrap(), "v");
     }

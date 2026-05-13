@@ -556,7 +556,7 @@ mod tests {
         assert!(pending_before > 0,
             "sanity: authoring a label must create a pending event");
         prepare_wipe_local_recovery(&db).unwrap();
-        assert_eq!(db.list_labels().unwrap().len(), 0);
+        assert_eq!(crate::db::list_labels_from_db(&db).unwrap().len(), 0);
         assert_eq!(db.pending_events().unwrap().len(), 0);
     }
 

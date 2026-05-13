@@ -46,7 +46,10 @@ pub use box_breath_phases::{BoxBreathPhase, BoxBreathPhaseId};
 pub use events::Event;
 pub use guided_files::GuidedFile;
 pub use interval_bells::{IntervalBell, IntervalBellKind};
-pub use labels::Label;
+pub use labels::{
+    count_labels_from_db, find_label_by_name_from_db, is_label_name_taken_from_db,
+    label_session_count_from_db, list_labels_from_db, Label,
+};
 pub use presets::Preset;
 pub use session_in_progress::{FinalizedSession, SessionInProgress};
 pub use sessions::{Session, SessionFilter, SessionMode};
@@ -156,9 +159,9 @@ impl Database {
     /// use meditate_core::Database;
     /// let db = Database::open_in_memory().unwrap();
     /// // Schema is applied; no seeds yet.
-    /// assert_eq!(db.list_labels().unwrap().len(), 0);
+    /// assert_eq!(meditate_core::db::list_labels_from_db(&db).unwrap().len(), 0);
     /// db.seed_default_labels().unwrap();
-    /// assert!(db.list_labels().unwrap().len() >= 2);
+    /// assert!(meditate_core::db::list_labels_from_db(&db).unwrap().len() >= 2);
     /// ```
     pub fn open_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
@@ -389,18 +392,18 @@ mod tests {
             // Author some events the normal way.
             db.insert_label("Focus").unwrap();
             db.insert_label("Calm").unwrap();
-            assert_eq!(db.list_labels().unwrap().len(), 2);
+            assert_eq!(crate::db::list_labels_from_db(&db).unwrap().len(), 2);
             // Manually delete the cache rows AND roll the cache
             // version back to 0 — pretending the previous build had
             // recorded these events without materialising them.
             db.conn.execute("DELETE FROM labels", []).unwrap();
             db.set_sync_state(CACHE_SCHEMA_VERSION_KEY, "0").unwrap();
-            assert!(db.list_labels().unwrap().is_empty(),
+            assert!(crate::db::list_labels_from_db(&db).unwrap().is_empty(),
                 "labels cache must be empty before the re-open");
         }
         // Reopen. init must walk and re-materialise the labels.
         let db = Database::open(&path).unwrap();
-        let labels = db.list_labels().unwrap();
+        let labels = crate::db::list_labels_from_db(&db).unwrap();
         assert_eq!(labels.len(), 2, "labels must be re-materialised from event log");
         let mut names: Vec<_> = labels.iter().map(|l| l.name.clone()).collect();
         names.sort();
@@ -434,7 +437,7 @@ mod tests {
         }
         let db = Database::open(&path).unwrap();
         assert!(
-            db.list_labels().unwrap().is_empty(),
+            crate::db::list_labels_from_db(&db).unwrap().is_empty(),
             "fast path must NOT have re-walked (labels stay empty)",
         );
     }

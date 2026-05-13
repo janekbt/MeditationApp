@@ -1218,7 +1218,7 @@ mod tests {
         // referential integrity survives the rowid-to-uuid translation.)
         let db = Database::open_in_memory().unwrap();
         let local_label_id = db.insert_label("Morning").unwrap();
-        let label_uuid = db.list_labels().unwrap()[0].uuid.clone();
+        let label_uuid = crate::db::list_labels_from_db(&db).unwrap()[0].uuid.clone();
         drain_events(&db);
 
         db.apply_event(&synth_session_insert(
@@ -1312,7 +1312,7 @@ mod tests {
         // device's rowid space.
         let db = Database::open_in_memory().unwrap();
         let label_id = db.insert_label("Morning").unwrap();
-        let label_uuid = db.list_labels().unwrap()[0].uuid.clone();
+        let label_uuid = crate::db::list_labels_from_db(&db).unwrap()[0].uuid.clone();
         // insert_label also emits an event — drain it before the session
         // insert so we can assert on a single event below.
         for (id, _) in db.pending_events().unwrap() {
@@ -1511,7 +1511,7 @@ mod tests {
         // the *new* label's uuid, not the old one or the rowid.
         let db = Database::open_in_memory().unwrap();
         let label_id = db.insert_label("Evening").unwrap();
-        let label_uuid = db.list_labels().unwrap()[0].uuid.clone();
+        let label_uuid = crate::db::list_labels_from_db(&db).unwrap()[0].uuid.clone();
         let id = db.insert_session(&Session {
             start_iso: "2026-04-30T10:00:00".to_string(),
             duration_secs: 600,
@@ -2730,7 +2730,7 @@ mod tests {
     fn list_sessions_for_label_filters_by_label_id() {
         let db = Database::open_in_memory().unwrap();
         db.insert_label("Morning").unwrap();
-        let morning = db.find_label_by_name("Morning").unwrap().unwrap();
+        let morning = crate::db::find_label_by_name_from_db(&db, "Morning").unwrap().unwrap();
         let mut labeled = Session {
             start_iso: "2026-04-27T10:00:00Z".to_string(),
             duration_secs: 600,
@@ -2836,7 +2836,7 @@ mod tests {
         }).unwrap();
 
         db.insert_label("Evening").unwrap();
-        let evening = db.find_label_by_name("Evening").unwrap().unwrap();
+        let evening = crate::db::find_label_by_name_from_db(&db, "Evening").unwrap().unwrap();
         let mut updated = Session {
             start_iso: "2026-04-28T19:00:00Z".to_string(),
             duration_secs: 1500,
@@ -2873,7 +2873,7 @@ mod tests {
         // with a label/note can have them cleared by update.
         let db = Database::open_in_memory().unwrap();
         db.insert_label("Morning").unwrap();
-        let morning = db.find_label_by_name("Morning").unwrap().unwrap();
+        let morning = crate::db::find_label_by_name_from_db(&db, "Morning").unwrap().unwrap();
         let id = db.insert_session(&Session {
             start_iso: "2026-04-27T10:00:00Z".to_string(),
             duration_secs: 600,
@@ -2976,7 +2976,7 @@ mod tests {
         // sessions side, not cascade-delete on the labels side.
         let db = Database::open_in_memory().unwrap();
         db.insert_label("Morning").unwrap();
-        let morning = db.find_label_by_name("Morning").unwrap().unwrap();
+        let morning = crate::db::find_label_by_name_from_db(&db, "Morning").unwrap().unwrap();
         let id = db.insert_session(&Session {
             start_iso: "2026-04-27T10:00:00Z".to_string(),
             duration_secs: 600,
@@ -2991,9 +2991,9 @@ mod tests {
 
         // Label outlives the session.
         let names: Vec<String> =
-            db.list_labels().unwrap().into_iter().map(|l| l.name).collect();
+            crate::db::list_labels_from_db(&db).unwrap().into_iter().map(|l| l.name).collect();
         assert_eq!(names, vec!["Morning"]);
-        assert_eq!(db.count_labels().unwrap(), 1);
+        assert_eq!(crate::db::count_labels_from_db(&db).unwrap(), 1);
     }
 
     #[test]
@@ -3029,7 +3029,7 @@ mod tests {
         // Returns the count for "imported N sessions" toasts.
         let db = Database::open_in_memory().unwrap();
         db.insert_label("Morning").unwrap();
-        let morning = db.find_label_by_name("Morning").unwrap().unwrap();
+        let morning = crate::db::find_label_by_name_from_db(&db, "Morning").unwrap().unwrap();
 
         let to_insert = vec![
             Session {
@@ -3175,7 +3175,7 @@ mod tests {
         // sessions" toasts. Labels survive (this is a sessions-only nuke).
         let db = Database::open_in_memory().unwrap();
         db.insert_label("Morning").unwrap();
-        let morning = db.find_label_by_name("Morning").unwrap().unwrap();
+        let morning = crate::db::find_label_by_name_from_db(&db, "Morning").unwrap().unwrap();
         for i in 0..3 {
             db.insert_session(&Session {
                 start_iso: format!("2026-04-2{i}T10:00:00Z"),
@@ -3196,7 +3196,7 @@ mod tests {
 
         // Labels untouched.
         let names: Vec<String> =
-            db.list_labels().unwrap().into_iter().map(|l| l.name).collect();
+            crate::db::list_labels_from_db(&db).unwrap().into_iter().map(|l| l.name).collect();
         assert_eq!(names, vec!["Morning"]);
     }
 
@@ -3213,7 +3213,7 @@ mod tests {
         // Filtered list must also carry ids — same contract.
         let db = Database::open_in_memory().unwrap();
         db.insert_label("Morning").unwrap();
-        let morning = db.find_label_by_name("Morning").unwrap().unwrap();
+        let morning = crate::db::find_label_by_name_from_db(&db, "Morning").unwrap().unwrap();
         let mut labeled = Session {
             start_iso: "2026-04-27T10:00:00Z".to_string(),
             duration_secs: 600,
@@ -3269,8 +3269,8 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         db.insert_label("Evening").unwrap();
         db.insert_label("Morning").unwrap();
-        let evening = db.find_label_by_name("Evening").unwrap();
-        let morning = db.find_label_by_name("Morning").unwrap();
+        let evening = crate::db::find_label_by_name_from_db(&db, "Evening").unwrap();
+        let morning = crate::db::find_label_by_name_from_db(&db, "Morning").unwrap();
         // Morning: 600 + 1200 = 1800s = 30m
         db.insert_session(&Session {
             duration_secs: 600,
@@ -3305,7 +3305,7 @@ mod tests {
     fn total_minutes_by_label_includes_unlabeled_as_none() {
         let db = Database::open_in_memory().unwrap();
         db.insert_label("Morning").unwrap();
-        let morning = db.find_label_by_name("Morning").unwrap();
+        let morning = crate::db::find_label_by_name_from_db(&db, "Morning").unwrap();
         db.insert_session(&Session {
             duration_secs: 600,
             label_id: morning,
@@ -3335,7 +3335,7 @@ mod tests {
     fn count_sessions_by_label_groups_per_label() {
         let db = Database::open_in_memory().unwrap();
         db.insert_label("Morning").unwrap();
-        let morning = db.find_label_by_name("Morning").unwrap();
+        let morning = crate::db::find_label_by_name_from_db(&db, "Morning").unwrap();
         db.insert_session(&Session {
             label_id: morning,
             ..session_on("2026-04-27")
@@ -3449,8 +3449,8 @@ mod tests {
         let today = date(2026, 4, 27);
         db.insert_label("Morning").unwrap();
         db.insert_label("Evening").unwrap();
-        let morning = db.find_label_by_name("Morning").unwrap().unwrap();
-        let evening = db.find_label_by_name("Evening").unwrap().unwrap();
+        let morning = crate::db::find_label_by_name_from_db(&db, "Morning").unwrap().unwrap();
+        let evening = crate::db::find_label_by_name_from_db(&db, "Evening").unwrap().unwrap();
         // Today: Morning + Evening sessions.
         db.insert_session(&Session {
             label_id: Some(morning),
@@ -3528,8 +3528,8 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         db.insert_label("Morning").unwrap();
         db.insert_label("Evening").unwrap();
-        let morning = db.find_label_by_name("Morning").unwrap().unwrap();
-        let evening = db.find_label_by_name("Evening").unwrap().unwrap();
+        let morning = crate::db::find_label_by_name_from_db(&db, "Morning").unwrap().unwrap();
+        let evening = crate::db::find_label_by_name_from_db(&db, "Evening").unwrap().unwrap();
         // Morning has a 3-day run.
         for d in ["2026-04-25", "2026-04-26", "2026-04-27"] {
             db.insert_session(&Session {
@@ -3640,7 +3640,7 @@ mod tests {
     fn daily_totals_for_label_filters_per_day() {
         let db = Database::open_in_memory().unwrap();
         db.insert_label("Morning").unwrap();
-        let morning = db.find_label_by_name("Morning").unwrap().unwrap();
+        let morning = crate::db::find_label_by_name_from_db(&db, "Morning").unwrap().unwrap();
         // Morning on Apr 26 (600s) and Apr 27 (1200s).
         db.insert_session(&Session {
             duration_secs: 600,
@@ -3673,7 +3673,7 @@ mod tests {
         let path = dir.path().join("test.db");
         let db = Database::open(&path).unwrap();
         db.insert_label("Morning").unwrap();
-        assert_eq!(db.count_labels().unwrap(), 1);
+        assert_eq!(crate::db::count_labels_from_db(&db).unwrap(), 1);
     }
 
     #[test]
@@ -3702,7 +3702,7 @@ mod tests {
         }
         let db = Database::open(&path).unwrap();
         let names: Vec<String> =
-            db.list_labels().unwrap().into_iter().map(|l| l.name).collect();
+            crate::db::list_labels_from_db(&db).unwrap().into_iter().map(|l| l.name).collect();
         assert_eq!(names, vec!["Morning"]);
         assert_eq!(db.count_sessions().unwrap(), 1);
     }
@@ -3803,7 +3803,7 @@ mod tests {
     fn csv_round_trips_sessions_with_labels() {
         let src = Database::open_in_memory().unwrap();
         src.insert_label("Morning").unwrap();
-        let morning_id = src.find_label_by_name("Morning").unwrap();
+        let morning_id = crate::db::find_label_by_name_from_db(&src, "Morning").unwrap();
         // Canonical naive-local ISO shape (no `Z`) — `unix_to_local_iso`
         // never emits one, and `import_sessions_csv` now rejects them.
         src.insert_session(&Session {
@@ -3836,9 +3836,9 @@ mod tests {
 
         // Label was created on import.
         let dst_names: Vec<String> =
-            dst.list_labels().unwrap().into_iter().map(|l| l.name).collect();
+            crate::db::list_labels_from_db(&dst).unwrap().into_iter().map(|l| l.name).collect();
         assert_eq!(dst_names, vec!["Morning"]);
-        let dst_morning_id = dst.find_label_by_name("Morning").unwrap();
+        let dst_morning_id = crate::db::find_label_by_name_from_db(&dst, "Morning").unwrap();
 
         // CSV import generates fresh v4 uuids on the destination DB
         // (uuids aren't part of the CSV format). Verify each row carries
@@ -3898,7 +3898,7 @@ mod tests {
     fn export_csv_writes_header_and_session_with_label_name() {
         let db = Database::open_in_memory().unwrap();
         db.insert_label("Morning").unwrap();
-        let label_id = db.find_label_by_name("Morning").unwrap();
+        let label_id = crate::db::find_label_by_name_from_db(&db, "Morning").unwrap();
         db.insert_session(&Session {
             start_iso: "2026-04-27T10:00:00Z".to_string(),
             duration_secs: 600,

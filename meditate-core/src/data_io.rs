@@ -112,11 +112,11 @@ fn csv_inject_guard(s: &str) -> String {
 /// Write every session in the DB to `path` as CSV. Returns how many rows
 /// were written.
 pub fn export_csv(db: &Database, path: &Path) -> Result<usize, DataIoError> {
-    let labels: std::collections::HashMap<i64, String> = db
-        .list_labels()?
-        .into_iter()
-        .map(|l| (l.id, l.name))
-        .collect();
+    let labels: std::collections::HashMap<i64, String> =
+        crate::db::list_labels_from_db(db)?
+            .into_iter()
+            .map(|l| (l.id, l.name))
+            .collect();
 
     let file = File::create(path)?;
     let mut wtr = csv::Writer::from_writer(file);

@@ -72,7 +72,7 @@ pub fn resolve_label_for_mode(db: &Database, mode: SessionMode) -> Option<Label>
     if uuid.is_empty() {
         return None;
     }
-    db.list_labels()
+    crate::db::list_labels_from_db(db)
         .ok()?
         .into_iter()
         .find(|l| l.uuid == uuid)

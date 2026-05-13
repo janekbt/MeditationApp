@@ -980,12 +980,12 @@ mod tests {
         let label_id = db.insert_label("focus").unwrap();
         db.set_setting("k", "v").unwrap();
         db.record_known_remote_file("a").unwrap();
-        let labels_before = db.list_labels().unwrap().len();
+        let labels_before = crate::db::list_labels_from_db(&db).unwrap().len();
 
         db.flag_all_events_unsynced().unwrap();
 
-        assert_eq!(db.list_labels().unwrap().len(), labels_before);
-        assert!(db.list_labels().unwrap().iter().any(|l| l.id == label_id));
+        assert_eq!(crate::db::list_labels_from_db(&db).unwrap().len(), labels_before);
+        assert!(crate::db::list_labels_from_db(&db).unwrap().iter().any(|l| l.id == label_id));
         assert_eq!(db.get_setting("k", "default").unwrap(), "v");
         assert!(db.known_remote_file_uuids().unwrap().contains("a"),
             "known_remote_files must be left alone — the caller wipes it \
@@ -1022,7 +1022,7 @@ mod tests {
         db.record_known_remote_sound("bs-1").unwrap();
         // Sanity: rows present before wipe.
         assert!(!db.pending_events().unwrap().is_empty());
-        assert!(!db.list_labels().unwrap().is_empty());
+        assert!(!crate::db::list_labels_from_db(&db).unwrap().is_empty());
         assert!(!db.list_sessions().unwrap().is_empty());
         assert!(!db.list_interval_bells().unwrap().is_empty());
         assert!(!db.list_bell_sounds().unwrap().is_empty());
@@ -1036,7 +1036,7 @@ mod tests {
 
         assert!(db.pending_events().unwrap().is_empty(),
             "events table must be empty");
-        assert!(db.list_labels().unwrap().is_empty(),
+        assert!(crate::db::list_labels_from_db(&db).unwrap().is_empty(),
             "labels table must be empty");
         assert!(db.list_sessions().unwrap().is_empty(),
             "sessions table must be empty");
@@ -1285,7 +1285,7 @@ mod tests {
     fn label_insert_event_target_id_is_the_label_uuid() {
         let db = Database::open_in_memory().unwrap();
         db.insert_label("Morning").unwrap();
-        let row_uuid = db.list_labels().unwrap()[0].uuid.clone();
+        let row_uuid = crate::db::list_labels_from_db(&db).unwrap()[0].uuid.clone();
         let events = db.pending_events().unwrap();
         assert_eq!(events[0].1.target_id, row_uuid);
     }
@@ -1312,7 +1312,7 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         db.replay_events(&[]).unwrap();
         assert!(db.list_sessions().unwrap().is_empty());
-        assert!(db.list_labels().unwrap().is_empty());
+        assert!(crate::db::list_labels_from_db(&db).unwrap().is_empty());
         assert!(db.pending_events().unwrap().is_empty());
     }
 
@@ -1606,7 +1606,7 @@ mod tests {
         db.replay_events(&events).unwrap();
 
         // Label is gone (deleted at lamport 4 after insert at 1).
-        assert!(db.list_labels().unwrap().is_empty());
+        assert!(crate::db::list_labels_from_db(&db).unwrap().is_empty());
         // Session is present with the lamport-3 update's values, but
         // its label_id is NULL because the label has been deleted.
         let s = &db.list_sessions().unwrap()[0].1;
@@ -1640,7 +1640,7 @@ mod tests {
         ];
         db.replay_events(&events).unwrap();
 
-        let labels = db.list_labels().unwrap();
+        let labels = crate::db::list_labels_from_db(&db).unwrap();
         assert_eq!(labels.len(), 1);
         let label = &labels[0];
         let s = &db.list_sessions().unwrap()[0].1;

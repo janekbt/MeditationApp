@@ -181,7 +181,7 @@ mod tests {
     fn seed_default_labels_creates_each_default_under_its_stable_uuid() {
         let db = Database::open_in_memory().unwrap();
         db.seed_default_labels().unwrap();
-        let labels = db.list_labels().unwrap();
+        let labels = crate::db::list_labels_from_db(&db).unwrap();
         assert!(
             labels.iter().any(|l| l.uuid == DEFAULT_TIMER_LABEL_UUID
                 && l.name == "Meditation"),
@@ -199,7 +199,7 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         db.seed_default_labels().unwrap();
         db.seed_default_labels().unwrap();
-        let labels = db.list_labels().unwrap();
+        let labels = crate::db::list_labels_from_db(&db).unwrap();
         assert_eq!(
             labels.iter().filter(|l| l.uuid == DEFAULT_TIMER_LABEL_UUID).count(),
             1,
@@ -223,7 +223,7 @@ mod tests {
         {
             let db = Database::open(&path).unwrap();
             db.seed_default_labels().unwrap();
-            let labels = db.list_labels().unwrap();
+            let labels = crate::db::list_labels_from_db(&db).unwrap();
             let meditation = labels.iter()
                 .find(|l| l.uuid == DEFAULT_TIMER_LABEL_UUID)
                 .expect("Meditation seeded on first open");
@@ -231,7 +231,7 @@ mod tests {
         }
         let db2 = Database::open(&path).unwrap();
         db2.seed_default_labels().unwrap();
-        let labels2 = db2.list_labels().unwrap();
+        let labels2 = crate::db::list_labels_from_db(&db2).unwrap();
         assert!(
             !labels2.iter().any(|l| l.uuid == DEFAULT_TIMER_LABEL_UUID),
             "deleted seed label must stay deleted across reopen",
