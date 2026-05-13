@@ -237,4 +237,27 @@ pub(super) const SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS known_remote_sounds (
         bell_uuid TEXT PRIMARY KEY
     );
+    -- Singleton table holding the current in-flight meditation
+    -- session's running state so a crash / OOM / battery-death
+    -- mid-session doesn't lose the work the user already did.
+    -- Lives OUTSIDE the event log: writes here do not call
+    -- emit_event, so sync sees nothing while a session is in
+    -- progress. The shell upserts on session start + tick boundaries
+    -- (~60s cadence); on the next launch core's finalize_session_in_progress
+    -- reads the row, emits one session_insert event with the
+    -- captured accumulated_secs, and clears the row — same code
+    -- path a normal end-of-session takes. Single-row CHECK keeps
+    -- the table honest about the at-most-one-in-flight-session
+    -- invariant. mode_payload is opaque JSON the shell defines
+    -- (mirrors the PresetConfig convention).
+    CREATE TABLE IF NOT EXISTS session_in_progress (
+        id               INTEGER PRIMARY KEY CHECK (id = 1),
+        start_iso        TEXT    NOT NULL,
+        accumulated_secs INTEGER NOT NULL,
+        mode             TEXT    NOT NULL
+                         CHECK (mode IN ('timer', 'box_breath', 'guided')),
+        mode_payload     TEXT    NOT NULL,
+        label_id         INTEGER REFERENCES labels(id) ON DELETE SET NULL,
+        guided_file_uuid TEXT
+    );
 ";

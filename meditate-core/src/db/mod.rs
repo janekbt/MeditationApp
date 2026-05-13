@@ -325,6 +325,103 @@ mod tests {
         Database::init(conn).expect("init succeeds at current version");
     }
 
+    // ── session_in_progress table ─────────────────────────────────────
+
+    #[test]
+    fn open_in_memory_creates_session_in_progress_table() {
+        // The table is created at init via CREATE TABLE IF NOT EXISTS
+        // alongside the others. Empty on a fresh DB — the shell writes
+        // the single row at session start.
+        let db = Database::open_in_memory().unwrap();
+        let count: i64 = db.conn
+            .query_row("SELECT COUNT(*) FROM session_in_progress", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0,
+            "session_in_progress is empty on a fresh DB");
+    }
+
+    #[test]
+    fn session_in_progress_rejects_id_not_equal_to_one() {
+        // The CHECK constraint enforces single-row semantics: the
+        // shell can have at most one in-flight session, period.
+        // Inserting id=2 must fail at the CHECK level (not just any
+        // SQLite error) so a buggy caller can't accidentally
+        // accumulate ghost rows.
+        let db = Database::open_in_memory().unwrap();
+        let res = db.conn.execute(
+            "INSERT INTO session_in_progress
+                (id, start_iso, accumulated_secs, mode, mode_payload, label_id, guided_file_uuid)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                2_i64,
+                "2026-05-13T10:00:00",
+                0_i64,
+                "timer",
+                "{}",
+                None::<i64>,
+                None::<String>,
+            ],
+        );
+        match res {
+            Err(rusqlite::Error::SqliteFailure(err, _))
+                if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_CHECK => {}
+            other => panic!("expected SQLITE_CONSTRAINT_CHECK, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn session_in_progress_accepts_a_single_row_with_id_one() {
+        // Sanity: the schema permits the legitimate single-row write
+        // the shell will issue. UPSERT on the id=1 PK keeps the row
+        // singleton; this test exercises the bare INSERT path.
+        let db = Database::open_in_memory().unwrap();
+        db.conn.execute(
+            "INSERT INTO session_in_progress
+                (id, start_iso, accumulated_secs, mode, mode_payload, label_id, guided_file_uuid)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                1_i64,
+                "2026-05-13T10:00:00",
+                60_i64,
+                "timer",
+                "{}",
+                None::<i64>,
+                None::<String>,
+            ],
+        ).expect("legitimate single-row write succeeds");
+        let count: i64 = db.conn
+            .query_row("SELECT COUNT(*) FROM session_in_progress", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn session_in_progress_rejects_unknown_mode() {
+        // CHECK constraint on the mode column mirrors `sessions.mode`
+        // — only the three known mode strings are accepted. Verifies
+        // the actual CHECK error specifically, not any failure.
+        let db = Database::open_in_memory().unwrap();
+        let res = db.conn.execute(
+            "INSERT INTO session_in_progress
+                (id, start_iso, accumulated_secs, mode, mode_payload, label_id, guided_file_uuid)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                1_i64,
+                "2026-05-13T10:00:00",
+                0_i64,
+                "stopwatch",
+                "{}",
+                None::<i64>,
+                None::<String>,
+            ],
+        );
+        match res {
+            Err(rusqlite::Error::SqliteFailure(err, _))
+                if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_CHECK => {}
+            other => panic!("expected SQLITE_CONSTRAINT_CHECK, got {other:?}"),
+        }
+    }
+
     // ── busy_timeout ──────────────────────────────────────────────────
 
     #[test]
