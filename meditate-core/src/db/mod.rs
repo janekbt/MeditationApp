@@ -11,6 +11,15 @@
 //! map_unique_err / winning_mutate) are crate-internal building
 //! blocks shared across the submodules.
 //!
+//! **Reader / writer convention.** Read-only helpers are free
+//! functions named `*_from_db` in their domain submodule (e.g.
+//! `labels::list_labels_from_db(db: &Database)`); mutating
+//! helpers stay as methods on `Database`. Free fns are re-exported
+//! at `meditate_core::db::*_from_db` so callers don't import the
+//! submodule. The naming makes reads vs writes visible at every
+//! call site — a `db.foo()` call mutates by inspection, a
+//! `foo_from_db(db)` call reads.
+//!
 //! No GTK dependencies; an Android shell consumes this crate
 //! verbatim. Mechanism conventions (per-connection PRAGMAs, the
 //! 8-second busy_timeout, prepare_cached for hot loops) live

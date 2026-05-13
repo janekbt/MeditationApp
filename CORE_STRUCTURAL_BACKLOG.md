@@ -108,26 +108,14 @@ rationale.
   state machine). The Tier-2 "collapse SaveSyncError / TestPrereq"
   item gets cleaner once the types live next to each other.
 
-### Read-only `Database` methods → `*_from_db` free fns
-- ~30 `pub fn`s on `Database` take `&Database`, return data,
-  never mutate. They should be free functions in their domain
-  modules following the established `*_from_db` convention.
-- Labels: `count_labels`, `list_labels`, `find_label_by_name`,
-  `is_label_name_taken`, `label_session_count` → `labels::*_from_db`.
-- Presets: `count_presets`, `list_presets*`, `find_preset_by_uuid`,
-  `is_preset_name_taken` → `presets::*_from_db` (new module).
-- Guided: `list_guided_files`, `find_guided_file_by_uuid`,
-  `is_guided_file_name_taken` → `guided::*_from_db`.
-- Vibration: `list_vibration_patterns`,
-  `find_vibration_pattern_by_uuid`, `is_vibration_pattern_name_taken`
-  → `vibration::*_from_db`.
-- Stats (~25 methods): `get_streak*`, `daily_totals*`,
-  `month_total_secs`, `hour_buckets`, `active_months`,
-  `active_days_in_month`, `total_*`, `get_median_duration_secs`,
-  `get_running_average_secs`, `label_totals_seconds`,
-  `count_sessions_by_label`, `total_minutes_by_label`,
-  `get_longest_session` → `stats/*::*_from_db`.
-- Aligns with the existing `stats/` consolidation in Tier 3.
+### Read-only `Database` methods → `*_from_db` free fns ✅ shipped 2026-05-13
+- Labels, Presets, Guided, Vibration, and the 24 session/stats
+  readers all moved to free `*_from_db` fns in their domain
+  modules. Shell wrapper methods kept (they own the rusqlite
+  `Result` translation); their bodies call core's free fns.
+- `export_sessions_csv<W: Write>` stays as a method — streaming
+  writer, not a SELECT helper.
+- Convention locked in `db/mod.rs` module-doc.
 
 ## Tier 2 — Second-pass additions
 
@@ -372,18 +360,11 @@ module.
 
 ## Tier 1 — Fifth-pass additions
 
-## Documentation backlog (Tier 1 — onboarding blocker)
+## Documentation backlog (Tier 1 — onboarding blocker) ✅ all shipped
 
-Six of the seven entries shipped (meditate-core/README.md,
-critical-path /// docs, ENTITIES.md, DECISIONS.md, BUILDING.md,
-CONTRIBUTING.md). One pending:
-
-### Naming-convention doc (post Tier-1)
-- After the four-way DB-reader rename lands (existing Tier-1
-  item), add a one-line `lib.rs` `//!` note locking the
-  convention: "Read-only DB helpers are free functions named
-  `*_from_db` in their domain module. Mutating helpers are
-  methods on `Database`."
+All seven entries shipped: meditate-core/README.md, critical-path
+`///` docs, ENTITIES.md, DECISIONS.md, BUILDING.md, CONTRIBUTING.md,
+naming-convention `//!` in `db/mod.rs`.
 
 ## Meta-audit notes — backlog reorganization (apply when implementing)
 
