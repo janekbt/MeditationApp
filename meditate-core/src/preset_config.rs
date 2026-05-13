@@ -127,11 +127,18 @@ pub struct PresetBoxBreathPhase {
 }
 
 impl PresetConfig {
+    /// Serialize the preset payload to the JSON blob stored verbatim
+    /// in `presets.config_json`. The infallible `expect` is honest:
+    /// every field shape is round-trippable, so a failure here would
+    /// indicate a serde derive bug, not a runtime condition.
     pub fn to_json(&self) -> String {
         serde_json::to_string(self)
             .expect("PresetConfig serializes to JSON")
     }
 
+    /// Parse a preset payload from its stored JSON blob. Returns the
+    /// underlying serde error verbatim so the caller can distinguish
+    /// "this row is corrupt" from "this column was empty".
     pub fn from_json(s: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(s)
     }
@@ -197,6 +204,9 @@ pub enum StarVisualState {
 }
 
 impl StarVisualState {
+    /// Map the persisted `is_starred` boolean to its rendering variant.
+    /// Trivial wrapper, but funnels every shell through one decision
+    /// point so the star/unstar visual policy stays consistent.
     pub fn from_is_starred(is_starred: bool) -> Self {
         if is_starred {
             StarVisualState::Starred

@@ -169,6 +169,14 @@ impl Database {
         // the intent is part of the source so it can't be silently
         // dropped by a dependency upgrade. The FK clause on
         // sessions.label_id only fires when this is ON.
+        //
+        // ORDER MATTERS: `PRAGMA foreign_keys=ON` MUST run before
+        // `execute_batch(SCHEMA)`. FK enforcement is per-connection
+        // and is only checked while DML executes — setting the pragma
+        // *after* the schema parse does not retroactively enforce
+        // existing rows or constraint declarations parsed under the
+        // OFF state. A future refactor that reorders these will
+        // silently disable FK checks.
         conn.execute_batch("PRAGMA foreign_keys=ON;")?;
         conn.execute_batch(SCHEMA)?;
         // Stamp the current version. `execute_batch` is required because

@@ -487,7 +487,7 @@ fn drain(db: &Database) -> Vec<Event> {
     let pending = db.pending_events().unwrap();
     let events: Vec<Event> = pending.iter().map(|(_, e)| e.clone()).collect();
     for (id, _) in pending {
-        db.mark_event_synced(id).unwrap();
+        db.mark_events_synced(&[id]).unwrap();
     }
     events
 }

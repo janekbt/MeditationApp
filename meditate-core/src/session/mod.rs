@@ -36,10 +36,9 @@ pub use settings::SessionSettings;
 ///
 /// Resolved through `Session::ui_state()` (for in-flight sessions)
 /// or the free fn `ui_state(session)` which handles `None → Idle`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UiState {
     /// No session in flight — the Setup view is showing.
-    #[default]
     Idle,
     /// Prep-silence countdown before the starting bell.
     Preparing,

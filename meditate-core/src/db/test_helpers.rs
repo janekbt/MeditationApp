@@ -166,7 +166,7 @@ pub(super) fn synth_setting_changed(
 /// drain, emit again, observe the second emission in isolation.
 pub(super) fn drain_events(db: &Database) {
     for (id, _) in db.pending_events().unwrap() {
-        db.mark_event_synced(id).unwrap();
+        db.mark_events_synced(&[id]).unwrap();
     }
 }
 

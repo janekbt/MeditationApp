@@ -13,7 +13,7 @@
 use crate::db::ChartKind;
 
 // ── Bell-sound UUIDs ───────────────────────────────────────────────
-// Public so callers (B.4.4 migration site, etc.) can map old
+// Public so the legacy-key compatibility layer can map old
 // "bowl" / "bell" / "gong" string keys to their bundled UUIDs
 // without re-deriving the table here.
 

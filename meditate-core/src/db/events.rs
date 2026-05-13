@@ -143,7 +143,7 @@ impl Database {
 
     /// All events not yet pushed to remote, ordered by `lamport_ts` ASC
     /// (then by local `id` as a stable tie-break). Sync's push phase
-    /// drains this list in order; mark each entry with `mark_event_synced`
+    /// drains this list in order; mark each entry with `mark_events_synced`
     /// once the WebDAV PUT succeeds.
     pub fn pending_events(&self) -> Result<Vec<(i64, Event)>> {
         let mut stmt = self.conn.prepare(
@@ -180,18 +180,6 @@ impl Database {
             .query_map([], |row| row.get::<_, String>(0))?
             .collect::<rusqlite::Result<std::collections::HashSet<_>>>()?;
         Ok(ids)
-    }
-
-    /// Flip the `synced` flag on the event with this local rowid so it
-    /// drops out of `pending_events`. Unknown ids are silently no-ops —
-    /// SQLite's UPDATE-on-no-match behaviour, exposed verbatim so a
-    /// stale id from a partial sync doesn't escalate to an error.
-    pub fn mark_event_synced(&self, id: i64) -> Result<()> {
-        self.conn.execute(
-            "UPDATE events SET synced = 1 WHERE id = ?1",
-            params![id],
-        )?;
-        Ok(())
     }
 
     /// Reset the synced flag on every event row to 0, putting all of
@@ -248,12 +236,15 @@ impl Database {
         Ok(())
     }
 
-    /// Same as `mark_event_synced`, but for a batch of ids in a single
-    /// transaction. Used by the bulk-push path: after one PUT covers
-    /// all pending events, a single transaction flips the synced flag
-    /// on every contained event_id. Marking N rows one-at-a-time would
-    /// fire N autocommit fsyncs; this batches them into the WAL's
-    /// usual one-fsync-per-commit. Empty input is a no-op.
+    /// Flip the `synced` flag on every event with one of the given local
+    /// rowids so they drop out of `pending_events`. Used by the bulk-
+    /// push path: after one PUT covers all pending events, a single
+    /// transaction flips the synced flag on every contained event_id.
+    /// Marking N rows one-at-a-time would fire N autocommit fsyncs;
+    /// batching them folds into the WAL's usual one-fsync-per-commit.
+    /// Unknown ids are silently no-ops (SQLite's UPDATE-on-no-match
+    /// behaviour) so a stale id from a partial sync doesn't escalate.
+    /// Empty input is a no-op.
     pub fn mark_events_synced(&self, ids: &[i64]) -> Result<()> {
         if ids.is_empty() { return Ok(()); }
         let tx = self.conn.unchecked_transaction()?;
@@ -494,11 +485,11 @@ mod tests {
     }
 
     #[test]
-    fn mark_event_synced_removes_it_from_pending_events() {
+    fn mark_events_synced_marks_a_single_id() {
         let db = Database::open_in_memory().unwrap();
         let id_a = db.append_event(&sample_event(1)).unwrap();
         let _id_b = db.append_event(&sample_event(2)).unwrap();
-        db.mark_event_synced(id_a).unwrap();
+        db.mark_events_synced(&[id_a]).unwrap();
         let pending: Vec<i64> = db.pending_events().unwrap()
             .iter().map(|(_, e)| e.lamport_ts).collect();
         assert_eq!(pending, vec![2],
@@ -506,13 +497,13 @@ mod tests {
     }
 
     #[test]
-    fn mark_event_synced_unknown_id_is_a_silent_no_op() {
+    fn mark_events_synced_unknown_id_is_a_silent_no_op() {
         // Defensive: a stale id from a partial sync attempt must not
         // panic or surface an error. SQLite UPDATE on no-match is
         // already a no-op; the wrapper preserves that.
         let db = Database::open_in_memory().unwrap();
         db.append_event(&sample_event(1)).unwrap();
-        let res = db.mark_event_synced(999);
+        let res = db.mark_events_synced(&[999]);
         assert!(res.is_ok());
         assert_eq!(db.pending_events().unwrap().len(), 1,
             "the existing event must still be pending — nothing was marked");
@@ -520,8 +511,8 @@ mod tests {
 
     #[test]
     fn mark_events_synced_batch_marks_every_provided_id() {
-        // The batch variant must produce the same end state as N calls
-        // to `mark_event_synced`. Used by the bulk-push path to flip
+        // The batch variant must produce the same end state as a
+        // single-id mark — exercised by the bulk-push path to flip
         // every event in a successful batch in a single transaction.
         let db = Database::open_in_memory().unwrap();
         let id_a = db.append_event(&sample_event(1)).unwrap();
@@ -835,8 +826,8 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         let id_a = db.append_event(&sample_event(1)).unwrap();
         let id_b = db.append_event(&sample_event(2)).unwrap();
-        db.mark_event_synced(id_a).unwrap();
-        db.mark_event_synced(id_b).unwrap();
+        db.mark_events_synced(&[id_a]).unwrap();
+        db.mark_events_synced(&[id_b]).unwrap();
         assert!(db.pending_events().unwrap().is_empty());
     }
 

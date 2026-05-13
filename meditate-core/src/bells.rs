@@ -13,8 +13,8 @@
 //! free to pick its own deterministic source for tests / replay.
 
 use crate::db::{
-    BellSound, BoxBreathPhaseId, Database, IntervalBell, IntervalBellKind, SignalMode,
-    VibrationPattern,
+    BellSound, BoxBreathPhaseId, Database, IntervalBell, IntervalBellKind, SessionMode,
+    SignalMode, VibrationPattern,
 };
 use crate::seeds::{BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID};
 use crate::settings_keys::parse_bool;
@@ -377,9 +377,12 @@ fn read_signal_mode(db: &Database, key: &str, default: SignalMode) -> SignalMode
 
 /// Read the per-mode signal-mode override the user picked on the
 /// Setup view's "Cues" toggle group. Defaults to `Both` (no extra
-/// cap on top of per-bell signal_mode). The `key` is the mode-keyed
-/// setting from `settings_keys::signal_mode_key_for_mode`.
-pub fn signal_mode_override_from_db(db: &Database, key: &str) -> SignalMode {
+/// cap on top of per-bell signal_mode). Resolves the mode-keyed
+/// setting internally via `settings_keys::signal_mode_key_for_mode`
+/// so call sites stay in the `(db, SessionMode)` shape that every
+/// other per-mode reader uses.
+pub fn signal_mode_override_from_db(db: &Database, mode: SessionMode) -> SignalMode {
+    let key = crate::settings_keys::signal_mode_key_for_mode(mode);
     read_signal_mode(db, key, SignalMode::Both)
 }
 
@@ -473,6 +476,9 @@ pub struct EndBellRowState {
     pub sensitive: bool,
 }
 
+/// Compose the Setup-view End Bell row state from the persisted
+/// master toggle and the active mode's stopwatch flag. Stopwatch
+/// forces inactive + insensitive regardless of the persisted value.
 pub fn end_bell_row_state(db: &Database, stopwatch_on: bool) -> EndBellRowState {
     if stopwatch_on {
         return EndBellRowState { active: false, sensitive: false };
@@ -499,6 +505,9 @@ pub struct BellRowSwitchState {
     pub sensitive: bool,
 }
 
+/// Compose the per-row switch state for an interval-bell library
+/// entry. Inert-in-stopwatch bells visually flip OFF + insensitive
+/// without touching the persisted `enabled` flag.
 pub fn bell_row_switch_state(
     enabled: bool,
     kind: IntervalBellKind,
@@ -583,7 +592,7 @@ pub fn is_bell_inert_in_stopwatch(kind: IntervalBellKind, stopwatch_on: bool) ->
 ///
 /// `total_target_secs` is the planned session duration: required for
 /// `FixedFromEnd` resolution, ignored otherwise.
-pub fn build_active_bells(
+pub(crate) fn build_active_bells(
     rows: &[IntervalBell],
     total_target_secs: Option<u64>,
     stopwatch_on: bool,
@@ -1154,7 +1163,7 @@ mod tests {
     fn signal_mode_override_from_db_defaults_to_both() {
         let db = Database::open_in_memory().unwrap();
         assert_eq!(
-            signal_mode_override_from_db(&db, "timer_signal_mode"),
+            signal_mode_override_from_db(&db, SessionMode::Timer),
             SignalMode::Both,
         );
     }
@@ -1164,7 +1173,7 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         db.set_setting("timer_signal_mode", "sound").unwrap();
         assert_eq!(
-            signal_mode_override_from_db(&db, "timer_signal_mode"),
+            signal_mode_override_from_db(&db, SessionMode::Timer),
             SignalMode::Sound,
         );
     }

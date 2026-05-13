@@ -114,6 +114,10 @@ pub enum DeleteImpactKey {
     Unused,
 }
 
+/// Pick the typed key the shell renders in the "Delete label?"
+/// confirmation dialog. Positive count → `InUse(n)` ("12 sessions
+/// will be untagged"); zero or negative → `Unused`. Stays out of
+/// the shell so the count→variant boundary is unit-testable.
 pub fn delete_impact_key(session_count: i64) -> DeleteImpactKey {
     if session_count > 0 {
         DeleteImpactKey::InUse(session_count)

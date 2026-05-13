@@ -22,6 +22,9 @@ pub enum Phase {
 }
 
 impl Phase {
+    /// Zero-based positional index in cycle order (In, HoldIn, Out,
+    /// HoldOut). Used for `BreathPattern::phase_min_secs` and any
+    /// shell-side iteration that needs a stable integer offset.
     pub fn index(self) -> usize {
         match self {
             Phase::In => 0,
@@ -124,6 +127,9 @@ pub struct PhaseInfo {
 }
 
 impl BreathPattern {
+    /// Build a pattern from raw per-phase second counts. No clamping —
+    /// the caller is responsible for the active-phase ≥1 invariant.
+    /// `BreathPattern::clamp_from_raw` is the validated alternative.
     pub fn from_durations(in_secs: u32, hold_in: u32, out_secs: u32, hold_out: u32) -> Self {
         Self { in_secs, hold_in, out_secs, hold_out }
     }
@@ -179,6 +185,9 @@ impl BreathPattern {
         }
     }
 
+    /// Duration of one named phase. `Phase::HoldIn` / `HoldOut` may
+    /// be zero (e.g. 4-7-8); `Phase::In` / `Out` are always ≥1 in a
+    /// well-formed pattern.
     pub fn duration_for(&self, phase: Phase) -> Duration {
         let secs = match phase {
             Phase::In => self.in_secs,

@@ -38,7 +38,7 @@ rationale.
 - ~10 `pub fn`s are the WebDAV engine's internal contract but
   currently callable from any shell code: `apply_event`,
   `apply_event_inner`, `replay_events`, `append_event*`,
-  `pending_events`, `mark_event_synced(s)`,
+  `pending_events`, `mark_events_synced`,
   `flag_all_events_unsynced`, `wipe_local_event_log`,
   `known_event_uuids`, `known_remote_*`, `record_known_remote_*`,
   `wipe_known_remote_*`, `device_id`, `lamport_clock`,
@@ -178,15 +178,6 @@ rationale.
 - Option B: add a sibling `*_silent(db, …)` variant that logs to
   `diag::log` and returns `()`.
 - Subjective; pick one when next touching these helpers.
-
-### `signal_mode_override_from_db` takes `key: &str` while sibling readers take `SessionMode`
-- `bells::signal_mode_override_from_db(db, key)` requires the
-  caller to resolve via `settings_keys::signal_mode_key_for_mode(
-  mode)` first. Every other per-mode reader (`read_keep_screen_
-  awake`, `persisted_active_for_mode`, `persisted_uuid_for_mode`)
-  takes `SessionMode` directly.
-- Change signature to `signal_mode_override_from_db(db, mode:
-  SessionMode)`. Trivial; one call site in shell.
 
 ### `seed_default_presets` body of literal `PresetConfig` data
 - `meditate-core/src/db.rs:3447-3539` — 92 lines of `PresetConfig`
@@ -542,14 +533,6 @@ rationale.
 ### `breath::BreathPattern::{four_seven_eight, from_durations, last_phase}` + `Phase::index` are dead
 - Only tested, no callers. Delete or downgrade to `pub(crate)`.
 
-### `bells::build_active_bells` should be `pub(crate)`
-- `meditate-core/src/bells.rs:518` — only called by
-  `bells::session_bells_from_db`. No shell callers.
-
-### `mark_event_synced` (singular) has zero callers
-- `meditate-core/src/db.rs:978`. Plural `mark_events_synced` is
-  the live API. Delete the singular form.
-
 ## Tier 2 — Third-pass additions
 
 ### `preset_config::snapshot` (~96 lines) + `apply` (~184 lines)
@@ -599,13 +582,6 @@ rationale.
 
 ## Tier 3 — Third-pass additions
 
-### `Database::open` PRAGMA-ordering is load-bearing but undocumented
-- `db.rs:718-720` does `PRAGMA foreign_keys=ON` BEFORE
-  `execute_batch(SCHEMA)`. This is load-bearing: FK enforcement
-  is per-connection — `PRAGMA` set AFTER the schema parse
-  doesn't retroactively enforce existing rows.
-- Add a one-line comment so a future refactor doesn't reorder it.
-
 ### `breath.rs` mixes method-on-enum vs free-fn for the same `Phase`
 - `Phase::index()` is a method (24), but
   `phase_running_label_key(Phase)` (46) is a free fn. Both do a
@@ -619,23 +595,6 @@ rationale.
   `CYCLE_MIN_SECS`, `PHASE_MAX_SECS`, `SESSION_MIN_SECS`,
   `SESSION_MAX_SECS`.
 
-### Doc-comment gaps on named `pub` items
-- ~12 items lack `///` despite well-documented surrounding types:
-  - `bells::end_bell_row_state`, `bell_row_switch_state`,
-    `interval_bells_count`.
-  - `preset_config::PresetConfig::{to_json, from_json}`,
-    `StarVisualState::from_is_starred`.
-  - `vibration::PreviewToggle::{new, active_id, is_playing}`.
-  - `breath::Phase::index`, `BreathPattern::{from_durations,
-    duration_for}`, `BreathSession::*` (if not deleted).
-  - `labels::delete_impact_key`.
-- Mechanical add-docs sweep.
-
-### `seeds.rs:16` cites closed `B.4.4 migration site` phase-marker
-- Last stale phase-marker in the smaller modules. Replace
-  "(B.4.4 migration site, etc.)" with "(the legacy-key
-  compatibility layer)".
-
 ### `preset_config.rs:400-405, 430-435` — covered above in Tier 2.
 
 ### `Sync::new` test boilerplate — covered above in Tier 2.
@@ -645,12 +604,6 @@ rationale.
 ### `TIMER_DEFAULT_SECS: u64` vs `BREATHING_DEFAULT_SECS: u32`
 - `session.rs:96/101`. Pick one width or document why each
   module picks its own.
-
-### `UiState::Default` derive is dead
-- `session.rs:34` — `#[derive(Default)] enum UiState { #[default]
-  Idle, ... }`. `UiState::default()` is never called in the
-  workspace.
-- Drop the derive (or document the intended use).
 
 ### Document the seconds-numeric-type convention at the crate root
 - `u32` everywhere a single session duration is involved;
@@ -1049,17 +1002,6 @@ avoid silently losing items in a rewrite.
 - **`*_from_db` free-fn migration + `stats/` consolidation +
   `get_running_average_secs` move** are the same direction. One
   PR.
-
-### Do inline (remove from backlog when next touching the file)
-- `mark_event_synced` (singular) zero-callers delete.
-- `UiState::Default` derive drop.
-- `seeds.rs:16` `B.4.4` comment edit.
-- `Database::open` PRAGMA-ordering one-line comment.
-- `bells::build_active_bells` `pub(crate)` flip.
-- `signal_mode_override_from_db` takes-`&str`-key fix (one call
-  site, own description: "trivial").
-- 12 doc-comment gaps on named `pub` items (mechanical 20-minute
-  pass).
 
 ## Tier 0 — None (sixth-pass)
 

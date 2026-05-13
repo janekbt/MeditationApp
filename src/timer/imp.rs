@@ -1014,9 +1014,13 @@ impl TimerView {
                 t.set_enabled(false);
             }
         }
-        let setting_key = setting_key_for_mode(self.current_mode());
         let saved = app
-            .with_db(|db| meditate_core::bells::signal_mode_override_from_db(db.core(), setting_key))
+            .with_db(|db| {
+                meditate_core::bells::signal_mode_override_from_db(
+                    db.core(),
+                    self.current_mode().into(),
+                )
+            })
             .unwrap_or(crate::db::SignalMode::Both);
         let initial = meditate_core::bells::clamp_signal_mode_for_haptic(
             saved, app.has_haptic(),
@@ -1965,7 +1969,7 @@ impl TimerView {
                     bells: Vec::new(),
                     bell_rng_seed: 1,
                     signal_mode_override: self.read_signal_mode_override(
-                        &app, "boxbreath_signal_mode",
+                        &app, SessionMode::BoxBreath,
                     ),
                     starting_bell: None,
                     end_bell: self.build_end_bell_cue(&app),
@@ -2046,7 +2050,7 @@ impl TimerView {
                     bells: Vec::new(),
                     bell_rng_seed: 1,
                     signal_mode_override: self.read_signal_mode_override(
-                        &app, "guided_signal_mode",
+                        &app, SessionMode::Guided,
                     ),
                     // Guided sessions have no starting bell (the file
                     // is the "start"); end bell fires when the file
@@ -2088,7 +2092,7 @@ impl TimerView {
                 bells,
                 bell_rng_seed,
                 signal_mode_override: self.read_signal_mode_override(
-                    &app, "timer_signal_mode",
+                    &app, SessionMode::Timer,
                 ),
                 starting_bell: self.build_starting_bell_cue(&app),
                 end_bell: self.build_end_bell_cue(&app),
@@ -3717,9 +3721,9 @@ impl TimerView {
     fn read_signal_mode_override(
         &self,
         app: &crate::application::MeditateApplication,
-        mode_key: &'static str,
+        mode: SessionMode,
     ) -> crate::db::SignalMode {
-        app.with_db(|db| meditate_core::bells::signal_mode_override_from_db(db.core(), mode_key))
+        app.with_db(|db| meditate_core::bells::signal_mode_override_from_db(db.core(), mode))
             .unwrap_or(crate::db::SignalMode::Both)
     }
 

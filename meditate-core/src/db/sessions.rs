@@ -1242,7 +1242,7 @@ mod tests {
         // insert_label also emits an event — drain it before the session
         // insert so we can assert on a single event below.
         for (id, _) in db.pending_events().unwrap() {
-            db.mark_event_synced(id).unwrap();
+            db.mark_events_synced(&[id]).unwrap();
         }
         db.insert_session(&Session {
             start_iso: "2026-04-30T10:00:00".to_string(),

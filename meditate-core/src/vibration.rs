@@ -56,14 +56,23 @@ pub enum PreviewAction {
 }
 
 impl PreviewToggle {
+    /// Fresh toggle with nothing playing. Equivalent to `default()`;
+    /// kept named so call sites read as construction rather than as a
+    /// trait method invocation.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// The id of the currently-playing preview, or `None` if the
+    /// toggle is idle. Used by the chooser to highlight the active
+    /// row and by the auto-revert timer to confirm playback is still
+    /// the one that started it.
     pub fn active_id(&self) -> Option<&str> {
         self.active_id.as_deref()
     }
 
+    /// Whether any preview is in flight. Mirror of
+    /// `active_id().is_some()`, exposed for readability.
     pub fn is_playing(&self) -> bool {
         self.active_id.is_some()
     }
