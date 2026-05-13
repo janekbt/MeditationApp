@@ -250,7 +250,7 @@ fn build_preset_row(
     }
 
     if let ChooserMode::Save { snapshot } = &**chooser_mode {
-        let preset_uuid = preset.uuid.clone();
+        let preset_uuid = preset.uuid.0.clone();
         let preset_name = preset.name.clone();
         let snapshot = snapshot.clone();
         let prior_config_json = preset.config_json.clone();
@@ -350,7 +350,7 @@ fn build_star_button(
                           // in scope to avoid signature churn through
                           // build_preset_row's call site.
     let app = app.clone();
-    let preset_uuid = preset.uuid.clone();
+    let preset_uuid = preset.uuid.0.clone();
     let new_starred = !preset.is_starred;
     btn.connect_clicked(move |_| {
         app.with_db_mut(|db| {
@@ -376,7 +376,7 @@ fn add_rename_button(
         .valign(gtk::Align::Center)
         .build();
     let app = app.clone();
-    let preset_uuid = preset.uuid.clone();
+    let preset_uuid = preset.uuid.0.clone();
     let preset_name = preset.name.clone();
     rename_btn.connect_clicked(move |btn| {
         present_rename_preset_dialog(
@@ -563,7 +563,7 @@ fn present_delete_preset_dialog(
     let toast_overlay = toast_overlay.clone();
     dialog.connect_response(None, move |_, id| {
         if id != "delete" { return; }
-        app.with_db_mut(|db| { let _ = db.delete_preset(&preset_full.uuid); });
+        app.with_db_mut(|db| { let _ = db.delete_preset(preset_full.uuid.as_str()); });
         on_changed();
         if let Some(rb) = rebuilder.borrow().as_ref() { rb(); }
 
@@ -583,7 +583,7 @@ fn present_delete_preset_dialog(
             move || {
                 app_undo.with_db_mut(|db| {
                     let _ = db.insert_preset_with_uuid(
-                        &preset_undo.uuid,
+                        preset_undo.uuid.as_str(),
                         &preset_undo.name,
                         preset_undo.mode,
                         preset_undo.is_starred,

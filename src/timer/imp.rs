@@ -3193,14 +3193,14 @@ impl TimerView {
                 .subtitle(preset_subtitle(&p, &label_names))
                 .activatable(true)
                 .build();
-            let uuid = p.uuid.clone();
+            let uuid = p.uuid.0.clone();
             row.connect_activated(glib::clone!(
                 #[weak(rename_to = this)] obj,
                 #[strong] uuid,
                 move |_| this.imp().on_preset_row_activated(&uuid),
             ));
             self.presets_group.add(&row);
-            tracked.push((row, p.uuid));
+            tracked.push((row, p.uuid.0));
         }
         *self.starred_preset_rows.borrow_mut() = tracked;
     }

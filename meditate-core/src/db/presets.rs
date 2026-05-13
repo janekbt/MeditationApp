@@ -25,7 +25,7 @@ use super::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Preset {
     pub id: i64,
-    pub uuid: String,
+    pub uuid: super::PresetUuid,
     pub name: String,
     pub mode: SessionMode,
     pub is_starred: bool,
