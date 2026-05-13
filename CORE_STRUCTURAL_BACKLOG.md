@@ -319,13 +319,6 @@ rationale.
 
 ## Tier 4 — Third-pass additions
 
-### Document the seconds-numeric-type convention at the crate root
-- `u32` everywhere a single session duration is involved;
-  `i64` for DB-aggregated totals (chrono uses `i64`); `u64`
-  where `Duration::as_secs()` feeds the value.
-- Defensible split, but worth a one-line `lib.rs` comment so a
-  future contributor doesn't pick yet another width.
-
 ### Dep bumps when next touching the dep tree
 - `ureq 2.12` → `3.x` (current is 3.x, released late 2024).
 - `rusqlite 0.32` → `0.36+`. Each is a breaking API bump in
@@ -443,14 +436,6 @@ module.
 - Identical `(lamport_ts, device_id)` is only reachable via
   corrupted wire-format input (local `bump_lamport_clock`
   guarantees uniqueness). Cosmetic; depends on malformed input.
-
-### `Session::final_duration_secs: u64` → DB `duration_secs: i64`
-- `meditate-core/src/session.rs:535, 552, 733` — stored as
-  `Option<u64>` and written to DB as `i64`. Implicit u64→i64
-  widening with `overflow-checks` off.
-- Impossible to hit in practice (millions of years), but every
-  other `secs` field in `Session` is `u32`. Pick one width or
-  document why each module picks its own.
 
 ## Tier 0 — Fifth-pass additions
 

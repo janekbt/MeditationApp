@@ -32,6 +32,12 @@
 //!   kinds are recorded but not dispatched; on the next cache-
 //!   schema bump (see `CACHE_SCHEMA_VERSION`) all events are
 //!   replayed so newly-understood kinds materialise.
+//! - **Seconds-numeric-type convention.** `u32` for a single session
+//!   duration (always < 86_400); `i64` for DB-aggregated totals
+//!   (chrono / SQLite both speak i64); `u64` where
+//!   `Duration::as_secs()` feeds the value directly. Pick the type
+//!   that matches the dominant source; only cast at the boundary
+//!   between groups, not inside a single computation.
 //!
 //! ## Module map
 //!

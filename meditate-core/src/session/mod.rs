@@ -172,6 +172,15 @@ pub struct Session {
     /// `Stopped` phase until the shell drops the Session at reset
     /// time, so the Done view can render the saved length without
     /// the shell having to shadow the value itself.
+    ///
+    /// Type: `u64`, not the `u32` the rest of `Session` uses for
+    /// session-duration seconds. The dominant write path is
+    /// `phase_clock.elapsed(now).as_secs()` (Duration's API is u64),
+    /// and the Effect-bus consumers (`EndSession { duration_secs: u64 }`,
+    /// `EndBoxBreath { duration_secs: u64 }`, the shell's `show_done`
+    /// / `end_overtime_session` u64 chain) inherit that width. Per
+    /// the crate-level convention (lib.rs): "u64 where Duration::as_secs()
+    /// feeds the value."
     final_duration_secs: Option<u64>,
 }
 
