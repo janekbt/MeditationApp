@@ -786,7 +786,40 @@ impl Database {
         let limit_val: i64 = filter.limit.map(|n| n as i64).unwrap_or(-1);
         let offset_val: i64 = filter.offset.map(|n| n as i64).unwrap_or(0);
 
-        let map_row = |row: &rusqlite::Row<'_>| -> rusqlite::Result<(i64, Session)> {
+        // Build the WHERE clause from the filter. `prepare_cached`
+        // dedupes by generated SQL text, so the four possible
+        // (label_id, only_with_notes) combinations each end up with
+        // their own cached statement just like the previous hand-
+        // unrolled branches.
+        let mut sql = String::from(
+            "SELECT id, start_iso, duration_secs, label_id, notes, mode, uuid, guided_file_uuid \
+             FROM sessions"
+        );
+        let mut clauses: Vec<&'static str> = Vec::new();
+        if filter.label_id.is_some() {
+            clauses.push("label_id = ?");
+        }
+        if filter.only_with_notes {
+            clauses.push("notes IS NOT NULL AND notes != ''");
+        }
+        if !clauses.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&clauses.join(" AND "));
+        }
+        sql.push_str(" ORDER BY start_iso DESC LIMIT ? OFFSET ?");
+
+        // Param order matches positional `?` placement: optional
+        // label_id first (only when the clause is included), then
+        // limit, then offset.
+        let mut params: Vec<&dyn rusqlite::ToSql> = Vec::new();
+        if let Some(lid) = filter.label_id.as_ref() {
+            params.push(lid);
+        }
+        params.push(&limit_val);
+        params.push(&offset_val);
+
+        let mut s = self.conn.prepare_cached(&sql)?;
+        let rows = s.query_map(rusqlite::params_from_iter(params), |row| {
             let mode_str: String = row.get(5)?;
             let mode = SessionMode::from_db_str(&mode_str)
                 .expect("DB CHECK constraint should restrict mode to known values");
@@ -802,54 +835,8 @@ impl Database {
                     guided_file_uuid: row.get(7)?,
                 },
             ))
-        };
-
-        let rows: rusqlite::Result<Vec<(i64, Session)>> = match (filter.only_with_notes, filter.label_id) {
-            (false, None) => {
-                let mut s = self.conn.prepare_cached(
-                    "SELECT id, start_iso, duration_secs, label_id, notes, mode, uuid, guided_file_uuid
-                     FROM sessions
-                     ORDER BY start_iso DESC
-                     LIMIT ?1 OFFSET ?2",
-                )?;
-                let it = s.query_map(params![limit_val, offset_val], map_row)?;
-                it.collect()
-            }
-            (true, None) => {
-                let mut s = self.conn.prepare_cached(
-                    "SELECT id, start_iso, duration_secs, label_id, notes, mode, uuid, guided_file_uuid
-                     FROM sessions
-                     WHERE notes IS NOT NULL AND notes != ''
-                     ORDER BY start_iso DESC
-                     LIMIT ?1 OFFSET ?2",
-                )?;
-                let it = s.query_map(params![limit_val, offset_val], map_row)?;
-                it.collect()
-            }
-            (false, Some(lid)) => {
-                let mut s = self.conn.prepare_cached(
-                    "SELECT id, start_iso, duration_secs, label_id, notes, mode, uuid, guided_file_uuid
-                     FROM sessions
-                     WHERE label_id = ?1
-                     ORDER BY start_iso DESC
-                     LIMIT ?2 OFFSET ?3",
-                )?;
-                let it = s.query_map(params![lid, limit_val, offset_val], map_row)?;
-                it.collect()
-            }
-            (true, Some(lid)) => {
-                let mut s = self.conn.prepare_cached(
-                    "SELECT id, start_iso, duration_secs, label_id, notes, mode, uuid, guided_file_uuid
-                     FROM sessions
-                     WHERE label_id = ?1 AND notes IS NOT NULL AND notes != ''
-                     ORDER BY start_iso DESC
-                     LIMIT ?2 OFFSET ?3",
-                )?;
-                let it = s.query_map(params![lid, limit_val, offset_val], map_row)?;
-                it.collect()
-            }
-        };
-        Ok(rows?)
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
     pub fn list_sessions(&self) -> Result<Vec<(i64, Session)>> {

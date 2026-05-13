@@ -88,14 +88,6 @@ rationale.
   `diag::log` and returns `()`.
 - Subjective; pick one when next touching these helpers.
 
-### `query_sessions` four near-identical branches
-- `meditate-core/src/db.rs:4180-4248` — four `prepare_cached`
-  branches each hardcode the same 8-column SELECT + ORDER BY;
-  only the WHERE clause varies.
-- Build the WHERE clause from the filter; rusqlite's
-  `prepare_cached` already deduplicates by generated SQL text.
-  Cuts ~50 lines.
-
 ### Split `format.rs` further
 - After Tier 1 redistribution (scheduling math + prep helpers
   move to `bells`), `format.rs` will still hold both number
@@ -222,14 +214,6 @@ rationale.
 - Add an `assert_matches!` mini-macro in a `test_macros` module
   so call sites become
   `assert_matches!(err, SyncError::WebDav(WebDavError::Unauthorized))`.
-
-### `query_sessions` four near-identical branches
-- `db.rs:4180-4248` — four `prepare_cached` branches each
-  hardcode the same 8-column SELECT + ORDER BY; only the
-  WHERE clause varies.
-- Build the WHERE clause from the filter; rusqlite's
-  `prepare_cached` already caches by generated SQL text. Cuts
-  ~50 lines.
 
 ## Tier 4 — Second-pass additions
 
@@ -536,8 +520,6 @@ avoid silently losing items in a rewrite.
   **inline / Tier 3**.
 
 ### Merge duplicates
-- **`query_sessions` four near-identical branches** appears
-  twice (Tier 4 + Tier 3). Dedupe.
 - **Test-fixture sprawl** is fragmented into 3 items (Tier 3 db,
   Tier 2 sync-orch boilerplate, Tier 3 scope-expansion). Merge
   into one Tier-2 "crate-wide `tests_common` module."
