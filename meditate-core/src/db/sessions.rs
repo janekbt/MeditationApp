@@ -444,11 +444,11 @@ impl Database {
         Ok(Some(durations[(durations.len() - 1) / 2]))
     }
 
-    pub fn get_running_average_secs(&self, today: chrono::NaiveDate, days: i64) -> Result<f64> {
-        if days <= 0 {
+    pub fn get_running_average_secs(&self, today: chrono::NaiveDate, days: u32) -> Result<f64> {
+        if days == 0 {
             return Ok(0.0);
         }
-        let cutoff = today - chrono::Duration::days(days - 1);
+        let cutoff = today - chrono::Duration::days((days - 1) as i64);
         let cutoff_str = cutoff.format("%Y-%m-%d").to_string();
         let total: i64 = self.conn.query_row(
             "SELECT COALESCE(SUM(duration_secs), 0) FROM sessions

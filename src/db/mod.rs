@@ -786,15 +786,13 @@ impl Database {
     }
 
     /// Average daily duration over the last `days` days. Days with no
-    /// sessions count as zero. Returns 0 for `days == 0` (guards against
-    /// the underflow `days - 1` would cause).
+    /// sessions count as zero. Returns 0 for `days == 0`. The shell's
+    /// only responsibility here is resolving "today" in the user's
+    /// local timezone before handing the window to core.
     pub fn get_running_average_secs(&self, days: u32) -> Result<f64> {
-        if days == 0 {
-            return Ok(0.0);
-        }
-        let since = today_local_naive_date() - chrono::Duration::days((days - 1) as i64);
-        let total = self.inner.total_secs_since(since).map_err(map_core_err)?;
-        Ok(total as f64 / days as f64)
+        self.inner
+            .get_running_average_secs(today_local_naive_date(), days)
+            .map_err(map_core_err)
     }
 
     /// `(local-date "YYYY-MM-DD", total_secs)` for each day on or after

@@ -410,12 +410,6 @@ module.
 - Fix path B: add `DbError::is_unique_violation() -> bool` so
   shells stop forging fake sqlite errors.
 
-### `get_running_average_secs` is stats math in a shell wrapper
-- `src/db/mod.rs:810-817` — computes `today - days + 1` and
-  divides. Pure statistics math, not GTK glue.
-- Fix: move to `meditate_core::stats` (paired with the existing
-  `goal::*`).
-
 ## Tier 4 — Fourth-pass additions
 
 ### Storage waste on push retry
