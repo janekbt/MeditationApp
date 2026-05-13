@@ -239,7 +239,6 @@ impl HttpWebDav {
 
 impl WebDav for HttpWebDav {
     fn get(&self, path: &str, max_bytes: u64) -> WebDavResult<Vec<u8>> {
-        use std::io::Read;
         match self.agent
             .get(&self.url(path))
             .set("Authorization", &self.auth_header)

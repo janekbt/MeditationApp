@@ -12,7 +12,7 @@ use meditate_core::format::{
     preset_subtitle_parts, BellsCountKey, BoxBreathAfter, TimingKey,
 };
 
-use crate::i18n::gettext;
+use crate::i18n::{gettext, ngettext};
 
 /// Compose the preset-row subtitle as
 /// "<timing> · <label name> · <bells>" (parts joined with " · ").
@@ -25,7 +25,7 @@ pub fn preset_subtitle(p: &Preset, label_names: &HashMap<String, String>) -> Str
     };
 
     let render_duration = |mins: u32| {
-        gettext("{n} min").replace("{n}", &mins.to_string())
+        ngettext("1 min", "{n} min", mins).replace("{n}", &mins.to_string())
     };
 
     let mut out: Vec<String> = Vec::new();
@@ -55,9 +55,12 @@ pub fn preset_subtitle(p: &Preset, label_names: &HashMap<String, String>) -> Str
         }
     }
     match parts.bells {
-        Some(BellsCountKey::One) => out.push(gettext("1 bell")),
+        Some(BellsCountKey::One) => out.push(ngettext("1 bell", "{n} bells", 1)),
         Some(BellsCountKey::Many(n)) => {
-            out.push(gettext("{n} bells").replace("{n}", &n.to_string()))
+            out.push(
+                ngettext("1 bell", "{n} bells", n as u32)
+                    .replace("{n}", &n.to_string()),
+            )
         }
         None => {}
     }

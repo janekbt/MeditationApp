@@ -318,17 +318,21 @@ impl StatsView {
     /// lives in core; locale-aware strings + glib::DateTime month
     /// formatting stay here.
     fn render_insight(&self, key: meditate_core::insights::InsightKey) {
-        use crate::i18n::gettext;
+        use crate::i18n::{gettext, ngettext};
         use meditate_core::insights::{HourBucket, InsightKey};
         let glyph = key.glyph();
         let accent = key.is_accent();
         let (title, body) = match &key {
             InsightKey::CurrentStreak { days, is_record, best } => {
                 let body = if *is_record {
-                    gettext("{n} days — new record")
+                    ngettext("1 day — new record", "{n} days — new record", *days as u32)
                         .replace("{n}", &days.to_string())
                 } else if *best > *days {
-                    gettext("{n} days · best was {best}")
+                    ngettext(
+                        "1 day · best was {best}",
+                        "{n} days · best was {best}",
+                        *days as u32,
+                    )
                         .replace("{n}", &days.to_string())
                         .replace("{best}", &best.to_string())
                 } else {
@@ -386,14 +390,13 @@ impl StatsView {
                 (gettext("Longest session"), body)
             }
             InsightKey::NextMilestone { target, remaining } => {
-                let body = if *remaining == 1 {
-                    gettext("1 session to your {target}th")
-                        .replace("{target}", &target.to_string())
-                } else {
-                    gettext("{n} sessions to your {target}th")
-                        .replace("{n}", &remaining.to_string())
-                        .replace("{target}", &target.to_string())
-                };
+                let body = ngettext(
+                    "1 session to your {target}th",
+                    "{n} sessions to your {target}th",
+                    *remaining as u32,
+                )
+                    .replace("{n}", &remaining.to_string())
+                    .replace("{target}", &target.to_string());
                 (gettext("Next milestone"), body)
             }
             InsightKey::DailyRhythm { avg_secs } => {

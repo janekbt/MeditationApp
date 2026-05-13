@@ -3117,9 +3117,10 @@ impl TimerView {
         use meditate_core::format::StreakKey;
         let text = match meditate_core::format::streak_key(streak) {
             StreakKey::Zero => crate::i18n::gettext("Start your streak today"),
-            StreakKey::One => crate::i18n::gettext("1 day streak"),
-            StreakKey::Many(n) => crate::i18n::gettext("{n} days streak")
-                .replace("{n}", &n.to_string()),
+            StreakKey::One => crate::i18n::ngettext("1 day streak", "{n} day streak", 1),
+            StreakKey::Many(n) =>
+                crate::i18n::ngettext("1 day streak", "{n} day streak", n as u32)
+                    .replace("{n}", &n.to_string()),
         };
         self.streak_label.set_label(&text);
 
@@ -4043,10 +4044,9 @@ fn intervals_count_subtitle(enabled_count: usize) -> String {
     use meditate_core::format::IntervalsCountKey;
     match meditate_core::format::intervals_count_key(enabled_count) {
         IntervalsCountKey::None => crate::i18n::gettext("None enabled"),
-        IntervalsCountKey::One => crate::i18n::gettext("1 enabled"),
-        IntervalsCountKey::Many(n) => {
-            crate::i18n::gettext("{n} enabled").replace("{n}", &n.to_string())
-        }
+        IntervalsCountKey::One => crate::i18n::ngettext("1 enabled", "{n} enabled", 1),
+        IntervalsCountKey::Many(n) => crate::i18n::ngettext("1 enabled", "{n} enabled", n as u32)
+            .replace("{n}", &n.to_string()),
     }
 }
 

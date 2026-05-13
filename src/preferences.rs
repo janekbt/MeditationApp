@@ -546,11 +546,11 @@ fn wire_data_actions(
                         let Ok(file) = result else { return; };
                         let Some(path) = file.path() else { return; };
                         match data_io::export_csv(&app, &path) {
-                            Ok(n) => data_toast(&dialog, &pluralize_sessions(
-                                &gettext("Exported 1 session"),
-                                &gettext("Exported {n} sessions"),
-                                n,
-                            )),
+                            Ok(n) => data_toast(&dialog, &crate::i18n::ngettext(
+                                "Exported 1 session",
+                                "Exported {n} sessions",
+                                n as u32,
+                            ).replace("{n}", &n.to_string())),
                             Err(e) => data_toast(&dialog, &gettext("Export failed: {error}")
                                 .replace("{error}", &e.to_string())),
                         }
@@ -604,11 +604,11 @@ fn wire_data_actions(
                     move |_, _| {
                         match data_io::delete_all(&app) {
                             Ok(n) => {
-                                data_toast(&dialog, &pluralize_sessions(
-                                    &gettext("Deleted 1 session"),
-                                    &gettext("Deleted {n} sessions"),
-                                    n,
-                                ));
+                                data_toast(&dialog, &crate::i18n::ngettext(
+                                    "Deleted 1 session",
+                                    "Deleted {n} sessions",
+                                    n as u32,
+                                ).replace("{n}", &n.to_string()));
                                 app.invalidate(crate::application::InvalidateScope::ALL);
                                 refresh_main_window(&app);
                             }
@@ -651,11 +651,11 @@ where F: FnOnce(&MeditateApplication, &std::path::Path) -> Result<usize, crate::
             let Some(path) = file.path() else { return; };
             match importer(&app, &path) {
                 Ok(n) => {
-                    data_toast(&dialog, &pluralize_sessions(
-                        &gettext("Imported 1 session"),
-                        &gettext("Imported {n} sessions"),
-                        n,
-                    ));
+                    data_toast(&dialog, &crate::i18n::ngettext(
+                        "Imported 1 session",
+                        "Imported {n} sessions",
+                        n as u32,
+                    ).replace("{n}", &n.to_string()));
                     app.invalidate(crate::application::InvalidateScope::ALL);
                     refresh_main_window(&app);
                 }
@@ -682,10 +682,3 @@ fn refresh_main_window(app: &MeditateApplication) {
 }
 
 
-/// Two-form pluralization for session counts. Uses the shipped `_one` /
-/// `_other` msgids directly — we don't need full ngettext support because
-/// English plurals are trivial and the catalogs cover enough locales that
-/// a 1 / ≥2 split is a reasonable approximation.
-fn pluralize_sessions(singular: &str, plural: &str, n: usize) -> String {
-    meditate_core::format::format_count(singular, plural, n)
-}

@@ -604,9 +604,10 @@ fn format_time_of_day(unix_secs: i64) -> String {
 fn section_caption_text(count: u32, total_secs: i64) -> String {
     use meditate_core::format::SessionCountKey;
     let base = match meditate_core::format::session_count_key(count as usize) {
-        SessionCountKey::One => crate::i18n::gettext("1 session"),
-        SessionCountKey::Many(n) => crate::i18n::gettext("{n} sessions")
-            .replace("{n}", &n.to_string()),
+        SessionCountKey::One => crate::i18n::ngettext("1 session", "{n} sessions", 1),
+        SessionCountKey::Many(n) =>
+            crate::i18n::ngettext("1 session", "{n} sessions", n as u32)
+                .replace("{n}", &n.to_string()),
     };
     let total = std::time::Duration::from_secs(total_secs.max(0) as u64);
     format!("{base} · {}", meditate_core::format::format_hm_compact(total))
@@ -629,12 +630,12 @@ impl LogView {
         self.pending_deletes.borrow_mut().push((session_id, session));
 
         let count = self.pending_deletes.borrow().len();
-        use meditate_core::format::SessionCountKey;
-        let title = match meditate_core::format::session_count_key(count) {
-            SessionCountKey::One => crate::i18n::gettext("Session deleted"),
-            SessionCountKey::Many(n) => crate::i18n::gettext("{n} sessions deleted")
-                .replace("{n}", &n.to_string()),
-        };
+        let title = crate::i18n::ngettext(
+            "Session deleted",
+            "{n} sessions deleted",
+            count as u32,
+        )
+            .replace("{n}", &count.to_string());
 
         let new_toast = adw::Toast::builder()
             .title(&title)

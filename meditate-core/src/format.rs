@@ -353,19 +353,6 @@ pub fn session_count_key(n: usize) -> SessionCountKey {
     }
 }
 
-/// Render a "{n} thing(s)" string from a singular form and a
-/// `{n}`-templated plural. Dispatches on `session_count_key`. The
-/// caller supplies the already-localized strings; this helper just
-/// owns the match + substitution so every shell stops re-deriving
-/// it. Singular case ignores `n` (the singular form is "1 thing" or
-/// "Session deleted", with no placeholder).
-pub fn format_count(singular: &str, plural_template: &str, n: usize) -> String {
-    match session_count_key(n) {
-        SessionCountKey::One => singular.to_string(),
-        SessionCountKey::Many(n) => plural_template.replace("{n}", &n.to_string()),
-    }
-}
-
 /// Log-card hero "minutes" display from a session's duration_secs.
 /// Negatives clamp to zero, rounds to the nearest minute, then
 /// floors at 1 so a Log row always shows a non-zero hero number.

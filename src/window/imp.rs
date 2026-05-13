@@ -711,17 +711,20 @@ fn sync_indicator_state_now(
 /// surrounding translatable templates. The bucket decision lives in
 /// `meditate_core::format::synced_ago_key`.
 fn format_synced_ago(unix_ts: i64) -> String {
-    use crate::i18n::gettext;
+    use crate::i18n::{gettext, ngettext};
     use meditate_core::format::SyncedAgoKey;
     let secs_ago = meditate_core::time::unix_now() - unix_ts;
     match meditate_core::format::synced_ago_key(secs_ago) {
         SyncedAgoKey::JustNow => gettext("Synced just now"),
-        SyncedAgoKey::Minutes(n) => gettext("Synced {n} minutes ago")
-            .replace("{n}", &n.to_string()),
-        SyncedAgoKey::Hours(n) => gettext("Synced {n} hours ago")
-            .replace("{n}", &n.to_string()),
-        SyncedAgoKey::Days(n) => gettext("Synced {n} days ago")
-            .replace("{n}", &n.to_string()),
+        SyncedAgoKey::Minutes(n) =>
+            ngettext("Synced 1 minute ago", "Synced {n} minutes ago", n as u32)
+                .replace("{n}", &n.to_string()),
+        SyncedAgoKey::Hours(n) =>
+            ngettext("Synced 1 hour ago", "Synced {n} hours ago", n as u32)
+                .replace("{n}", &n.to_string()),
+        SyncedAgoKey::Days(n) =>
+            ngettext("Synced 1 day ago", "Synced {n} days ago", n as u32)
+                .replace("{n}", &n.to_string()),
     }
 }
 

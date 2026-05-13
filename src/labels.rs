@@ -368,7 +368,11 @@ fn present_delete_label_dialog(
     let body = match meditate_core::labels::delete_impact_key(session_count) {
         DeleteImpactKey::InUse(n) => format!(
             "{} {}.",
-            gettext("Sessions tagged with this label will be un-labelled:"),
+            crate::i18n::ngettext(
+                "Session tagged with this label will be un-labelled:",
+                "Sessions tagged with this label will be un-labelled:",
+                n as u32,
+            ),
             n,
         ),
         DeleteImpactKey::Unused => gettext("This label is not used by any sessions."),

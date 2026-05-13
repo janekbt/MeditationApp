@@ -353,19 +353,22 @@ fn empty_state_row() -> adw::ActionRow {
 /// AdwActionRow title line on the Librem 5 portrait. Maps the
 /// typed key from core to the user-facing translated string.
 fn bell_title(bell: &IntervalBell) -> String {
+    use crate::i18n::ngettext;
     use meditate_core::bells::BellTitleKey;
     match meditate_core::bells::bell_title_key(bell) {
-        BellTitleKey::EveryNMin { minutes } => gettext("Every {n} min")
-            .replace("{n}", &minutes.to_string()),
-        BellTitleKey::EveryNMinWithJitter { minutes, jitter_pct } => {
-            gettext("Every {n} min ±{j}%")
+        BellTitleKey::EveryNMin { minutes } =>
+            ngettext("Every 1 min", "Every {n} min", minutes)
+                .replace("{n}", &minutes.to_string()),
+        BellTitleKey::EveryNMinWithJitter { minutes, jitter_pct } =>
+            ngettext("Every 1 min ±{j}%", "Every {n} min ±{j}%", minutes)
                 .replace("{n}", &minutes.to_string())
-                .replace("{j}", &jitter_pct.to_string())
-        }
-        BellTitleKey::AtNMin { minutes } => gettext("At {n} min")
-            .replace("{n}", &minutes.to_string()),
-        BellTitleKey::NMinBeforeEnd { minutes } => gettext("{n} min before end")
-            .replace("{n}", &minutes.to_string()),
+                .replace("{j}", &jitter_pct.to_string()),
+        BellTitleKey::AtNMin { minutes } =>
+            ngettext("At 1 min", "At {n} min", minutes)
+                .replace("{n}", &minutes.to_string()),
+        BellTitleKey::NMinBeforeEnd { minutes } =>
+            ngettext("1 min before end", "{n} min before end", minutes)
+                .replace("{n}", &minutes.to_string()),
     }
 }
 

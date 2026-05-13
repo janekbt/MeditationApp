@@ -379,8 +379,10 @@ mod imp {
             app.invalidate(crate::application::InvalidateScope::ALL);
 
             let minutes = finalized.duration_secs / 60;
-            let title = crate::i18n::gettext(
-                "Recovered {n} min session"
+            let title = crate::i18n::ngettext(
+                "Recovered 1 min session",
+                "Recovered {n} min session",
+                minutes as u32,
             ).replace("{n}", &minutes.to_string());
 
             let toast = adw::Toast::builder()
