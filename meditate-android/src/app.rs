@@ -42,6 +42,27 @@ impl From<TimerMode> for meditate_core::SessionMode {
     }
 }
 
+/// Helpers for the per-mode Cues SegmentedButton — bridge the
+/// Slint `current-index: int` to core's `SignalMode`. Index order
+/// matches GTK's `cues_signal_toggle_host` toggle list (Sound /
+/// Vibration / Both); changing the order here breaks the index
+/// encoding shared with the .blp.
+pub fn signal_mode_from_chip_index(idx: i32) -> meditate_core::SignalMode {
+    match idx {
+        0 => meditate_core::SignalMode::Sound,
+        1 => meditate_core::SignalMode::Vibration,
+        _ => meditate_core::SignalMode::Both,
+    }
+}
+
+pub fn signal_mode_to_chip_index(m: meditate_core::SignalMode) -> i32 {
+    match m {
+        meditate_core::SignalMode::Sound => 0,
+        meditate_core::SignalMode::Vibration => 1,
+        meditate_core::SignalMode::Both => 2,
+    }
+}
+
 impl TimerMode {
     /// Map the Slint chip group's `current-index` (Timer=0,
     /// Guided=1, Breathing=2 — mirroring the .blp `Adw.Toggle`
@@ -289,6 +310,41 @@ mod tests {
     fn chip_index_out_of_range_falls_back_to_default() {
         assert_eq!(TimerMode::from_chip_index(-1), TimerMode::Timer);
         assert_eq!(TimerMode::from_chip_index(99), TimerMode::Timer);
+    }
+
+    // ── SignalMode chip mapping ─────────────────────────────────
+
+    #[test]
+    fn signal_mode_chip_index_round_trips_for_every_variant() {
+        use meditate_core::SignalMode;
+        for m in [SignalMode::Sound, SignalMode::Vibration, SignalMode::Both] {
+            assert_eq!(
+                signal_mode_from_chip_index(signal_mode_to_chip_index(m)),
+                m,
+            );
+        }
+    }
+
+    #[test]
+    fn signal_mode_chip_index_order_matches_blp_toggle_order() {
+        // `timer_view.blp` builds the Cues toggle group as
+        // Sound (name "sound"), Vibration ("vibration"), Both
+        // ("both") — in that order. The Slint chip group has to
+        // agree so the same int round-trips through the DB.
+        use meditate_core::SignalMode;
+        assert_eq!(signal_mode_from_chip_index(0), SignalMode::Sound);
+        assert_eq!(signal_mode_from_chip_index(1), SignalMode::Vibration);
+        assert_eq!(signal_mode_from_chip_index(2), SignalMode::Both);
+    }
+
+    #[test]
+    fn signal_mode_chip_index_out_of_range_falls_back_to_both() {
+        // Falls back to Both because that's both the GTK shell's
+        // default and the safest "all channels on" mode for a
+        // user with a broken int.
+        use meditate_core::SignalMode;
+        assert_eq!(signal_mode_from_chip_index(-1), SignalMode::Both);
+        assert_eq!(signal_mode_from_chip_index(99), SignalMode::Both);
     }
 
     #[test]

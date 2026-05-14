@@ -220,6 +220,102 @@ component SwitchRow inherits Rectangle {
     }
 }
 
+// Compact 3-option toggle, sized to fit inline alongside an
+// action-row title without overflowing the row. Material's stock
+// `SegmentedButton` hard-codes 24 px horizontal padding per item
+// (plus a check-mark on the selected item), which made the GTK
+// labels "Sound / Vibration / Both" run past the BoxedList edge.
+// This component uses 10 px padding and no check-mark, keeping
+// the chip group narrow enough to sit inside the row.
+component CompactToggle inherits Rectangle {
+    in property <[string]> labels;
+    in-out property <int> current-index;
+    callback changed(int);
+
+    height: 32px;
+    border-radius: 16px;
+    border-width: 1px;
+    border-color: MaterialPalette.outline;
+    clip: true;
+
+    HorizontalLayout {
+        spacing: 0;
+        for label[idx] in root.labels : Rectangle {
+            background: idx == root.current-index
+                ? MaterialPalette.secondary-container
+                : transparent;
+
+            TouchArea {
+                clicked => {
+                    root.current-index = idx;
+                    root.changed(idx);
+                }
+            }
+
+            HorizontalLayout {
+                padding-left: 10px;
+                padding-right: 10px;
+                Text {
+                    text: label;
+                    font-size: 13px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    color: MaterialPalette.on-surface;
+                }
+            }
+
+            // Hair-line divider between items, mirroring the
+            // stock Material SegmentedButton's interior outline.
+            // Skipped after the last item.
+            if idx < root.labels.length - 1 : Rectangle {
+                x: parent.width - self.width;
+                width: 1px;
+                height: 100%;
+                background: MaterialPalette.outline;
+            }
+        }
+    }
+}
+
+// Adw.ActionRow-with-segmented-suffix analogue — title on the
+// left, inline three-option chip group on the right. Mirrors the
+// .blp `cues_signal_mode_row` (the GTK shell builds an
+// `Adw.ToggleGroup` programmatically in Rust; here Slint owns the
+// chip group directly so the .slint stays declarative).
+component CuesRow inherits Rectangle {
+    in property <string> title;
+    in-out property <int> current-index;
+    callback changed(int);
+
+    height: 64px;
+    background: transparent;
+
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        spacing: 12px;
+        alignment: stretch;
+
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            Text {
+                text: root.title;
+                font-size: 16px;
+                color: MaterialPalette.on-surface;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            CompactToggle {
+                labels: ["Sound", "Vibration", "Both"];
+                current-index <=> root.current-index;
+                changed(idx) => { root.changed(idx); }
+            }
+        }
+    }
+}
+
 // Boxed-list container — mirrors GTK's `Adw.PreferencesGroup`
 // boxed-list look: a single rounded surface that visually wraps
 // its child rows, with 1 px dividers between them and no
@@ -287,6 +383,17 @@ export component MainWindow inherits Window {
     // phase 8 (Android `Window.FLAG_KEEP_SCREEN_ON` / PowerManager).
     in-out property <bool> keep-awake-on: false;
 
+    // Cues per-mode signal toggle — mirrors the .blp
+    // `cues_signal_mode_row` (the toggle group is built in Rust
+    // for GTK; here Slint owns the SegmentedButton directly).
+    // Index encoding: 0=Sound, 1=Vibration, 2=Both, matching the
+    // GTK toggle order. Per-mode value persisted via
+    // `settings_keys::signal_mode_key_for_mode`. Default is Both
+    // (matches `clamp_signal_mode_for_haptic`'s default branch).
+    // Audio + haptic playback land in platform-edge phase 5;
+    // this slice is surface + persisted preference only.
+    in-out property <int> cues-mode: 2;
+
     in-out property <bool> duration-dialog-open: false;
     in-out property <int> dialog-hours: 0;
     in-out property <int> dialog-minutes: 10;
@@ -303,6 +410,7 @@ export component MainWindow inherits Window {
     callback discard-tap();
     callback mode-changed(int);
     callback keep-awake-toggled(bool);
+    callback cues-changed(int);
 
     // Slide offset driving the Running screen's slide-over. 0 px
     // means Running is parked at x=width (off-screen right) and
@@ -435,16 +543,32 @@ export component MainWindow inherits Window {
                 }
 
                 BoxedList {
-                    SwitchRow {
-                        title: "Stopwatch Mode";
-                        subtitle: "Count up from zero";
-                        checked <=> root.stopwatch-on;
+                    // Cues row sits FIRST — mirrors the GTK .blp
+                    // ordering (Cues → Stopwatch → Duration → Label →
+                    // Keep Awake). Visible in every mode in GTK; the
+                    // Session group is still Timer-gated here, so this
+                    // slice keeps it inside that gate.
+                    CuesRow {
+                        title: "Cues";
+                        current-index <=> root.cues-mode;
+                        changed(idx) => { root.cues-changed(idx); }
                     }
 
                     // 1 px divider — mirrors GTK's `Adw.PreferencesGroup`
                     // row separator. on-surface-variant has the right
                     // mid-tone for a hairline that's visible without
                     // shouting.
+                    Rectangle {
+                        height: 1px;
+                        background: MaterialPalette.outline-variant;
+                    }
+
+                    SwitchRow {
+                        title: "Stopwatch Mode";
+                        subtitle: "Count up from zero";
+                        checked <=> root.stopwatch-on;
+                    }
+
                     Rectangle {
                         height: 1px;
                         background: MaterialPalette.outline-variant;

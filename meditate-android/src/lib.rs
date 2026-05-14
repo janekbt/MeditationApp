@@ -5,6 +5,8 @@ mod service;
 slint::include_modules!();
 
 use app::{AppState, TimerMode};
+#[cfg(target_os = "android")]
+use app::{signal_mode_from_chip_index, signal_mode_to_chip_index};
 use std::cell::Cell;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -117,6 +119,36 @@ fn write_keep_awake_for_mode(mode: meditate_core::SessionMode, value: bool) {
         meditate_core::log(
             "settings.keep_awake",
             &format!("write FAILED mode={mode:?} value={value} err={e:?}"),
+        );
+    }
+}
+
+#[cfg(target_os = "android")]
+fn read_signal_mode_for_mode(mode: meditate_core::SessionMode) -> meditate_core::SignalMode {
+    let Some(db_arc) = DATABASE.get() else { return meditate_core::SignalMode::Both; };
+    let Ok(guard) = db_arc.lock() else { return meditate_core::SignalMode::Both; };
+    let Some(db) = guard.as_ref() else { return meditate_core::SignalMode::Both; };
+    let key = meditate_core::settings_keys::signal_mode_key_for_mode(mode);
+    meditate_core::settings_keys::read_signal_mode(
+        db,
+        key,
+        meditate_core::SignalMode::Both,
+    )
+}
+
+#[cfg(target_os = "android")]
+fn write_signal_mode_for_mode(
+    mode: meditate_core::SessionMode,
+    value: meditate_core::SignalMode,
+) {
+    let Some(db_arc) = DATABASE.get() else { return; };
+    let Ok(guard) = db_arc.lock() else { return; };
+    let Some(db) = guard.as_ref() else { return; };
+    let key = meditate_core::settings_keys::signal_mode_key_for_mode(mode);
+    if let Err(e) = db.set_setting(key, value.as_db_str()) {
+        meditate_core::log(
+            "settings.cues",
+            &format!("write FAILED mode={mode:?} value={value:?} err={e:?}"),
         );
     }
 }
@@ -398,8 +430,8 @@ fn build_ui() -> MainWindow {
     // next Save records the right SessionMode, and load any per-
     // mode persisted state into the Slint properties. Mirrors the
     // GTK shell's `on_mode_switched`, which also refreshes per-mode
-    // settings rows (Keep Awake here; Cues / Stopwatch / Label
-    // will join as those rows land).
+    // settings rows (Cues + Keep Awake here; Stopwatch / Label /
+    // others join as those rows land).
     {
         let weak = ui.as_weak();
         let current_mode = current_mode.clone();
@@ -409,6 +441,9 @@ fn build_ui() -> MainWindow {
             #[cfg(target_os = "android")]
             if let Some(ui) = weak.upgrade() {
                 ui.set_keep_awake_on(read_keep_awake_for_mode(new_mode.into()));
+                ui.set_cues_mode(signal_mode_to_chip_index(
+                    read_signal_mode_for_mode(new_mode.into()),
+                ));
             }
             // Touch the weak handle so the host build doesn't flag
             // it unused (the android-only block above is the sole
@@ -431,6 +466,22 @@ fn build_ui() -> MainWindow {
             // nothing else to do without a DB. Touching the
             // captures keeps the closure non-empty.
             let _ = (current_mode.get(), value);
+        });
+    }
+
+    // Cues SegmentedButton change — same persistence shape as
+    // Keep-Awake. The audio + haptic engines that actually consume
+    // the SignalMode value land in platform-edge phase 5; this
+    // slice just keeps the user's pick alive across launches.
+    {
+        let current_mode = current_mode.clone();
+        ui.on_cues_changed(move |idx| {
+            #[cfg(target_os = "android")]
+            write_signal_mode_for_mode(
+                current_mode.get().into(),
+                signal_mode_from_chip_index(idx),
+            );
+            let _ = (current_mode.get(), idx);
         });
     }
 
@@ -458,9 +509,14 @@ fn build_ui() -> MainWindow {
     // the default mode (Timer). Subsequent mode flips refresh the
     // same properties via the `on_mode_changed` handler above.
     #[cfg(target_os = "android")]
-    ui.set_keep_awake_on(read_keep_awake_for_mode(
-        current_mode.get().into(),
-    ));
+    {
+        ui.set_keep_awake_on(read_keep_awake_for_mode(
+            current_mode.get().into(),
+        ));
+        ui.set_cues_mode(signal_mode_to_chip_index(
+            read_signal_mode_for_mode(current_mode.get().into()),
+        ));
+    }
 
     refresh(&ui, &state.borrow(), now_since_epoch());
     ui
