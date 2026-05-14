@@ -96,14 +96,27 @@ pub fn log(msg: &str) {
     let Ok(mut state) = mutex.lock() else { return; };
     let ts = timestamp();
     let now_boot = crate::time::boot_time_now();
-    if let Some(prev) = state.last_boot {
-        let gap = now_boot.saturating_sub(prev);
-        if gap.as_secs() >= SUSPEND_MARKER_GAP_SECS {
-            let _ = writeln!(state.file, "{ts} [+{}s since prev log]", gap.as_secs());
-        }
+    if let Some(marker) = suspend_marker_text(now_boot, state.last_boot) {
+        let _ = writeln!(state.file, "{ts} {marker}");
     }
     state.last_boot = Some(now_boot);
     let _ = writeln!(state.file, "{ts} {msg}");
+}
+
+/// Decision-only half of the suspend-marker logic: `None` for "no
+/// marker needed," `Some("[+Ns since prev log]")` when the boot-time
+/// gap since the previous `log()` call exceeded
+/// `SUSPEND_MARKER_GAP_SECS`. Pure function so tests can drive the
+/// threshold with manufactured `Duration`s rather than waiting on a
+/// real clock or a real suspend cycle.
+fn suspend_marker_text(now_boot: Duration, prev_boot: Option<Duration>) -> Option<String> {
+    let prev = prev_boot?;
+    let gap = now_boot.saturating_sub(prev);
+    if gap.as_secs() >= SUSPEND_MARKER_GAP_SECS {
+        Some(format!("[+{}s since prev log]", gap.as_secs()))
+    } else {
+        None
+    }
 }
 
 /// Return the full log as a single string, or an empty string if the
@@ -204,5 +217,129 @@ mod tests {
         // "never initialised" branch, which is what library consumers hit
         // when the data dir couldn't be created.
         log("should not panic and should not create a file");
+    }
+
+    // ── Suspend-marker decision ──────────────────────────────────────────────
+
+    #[test]
+    fn suspend_marker_none_for_first_log_call() {
+        // No previous boot-time recorded yet → marker never fires
+        // (otherwise every fresh process would emit a confusing
+        // marker on its first line).
+        assert_eq!(suspend_marker_text(Duration::from_secs(1000), None), None);
+    }
+
+    #[test]
+    fn suspend_marker_none_below_threshold() {
+        // Gap of 4 s — under the 5-second SUSPEND_MARKER_GAP_SECS
+        // threshold. Normal "app was idle for a few seconds"
+        // ergonomic gap; not a suspend.
+        let now = Duration::from_secs(1004);
+        let prev = Duration::from_secs(1000);
+        assert_eq!(suspend_marker_text(now, Some(prev)), None);
+    }
+
+    #[test]
+    fn suspend_marker_fires_at_threshold() {
+        // Gap of exactly 5 s — boundary inclusive per `>= threshold`.
+        let now = Duration::from_secs(1005);
+        let prev = Duration::from_secs(1000);
+        assert_eq!(
+            suspend_marker_text(now, Some(prev)),
+            Some("[+5s since prev log]".to_string()),
+        );
+    }
+
+    #[test]
+    fn suspend_marker_carries_the_actual_gap_in_seconds() {
+        // 600-second gap (10 min suspend) — marker text must surface
+        // the real number, not just a generic "long pause" string.
+        let now = Duration::from_secs(1600);
+        let prev = Duration::from_secs(1000);
+        assert_eq!(
+            suspend_marker_text(now, Some(prev)),
+            Some("[+600s since prev log]".to_string()),
+        );
+    }
+
+    #[test]
+    fn suspend_marker_handles_clock_going_backwards_via_saturating_sub() {
+        // If `now < prev` (shouldn't happen under CLOCK_BOOTTIME but
+        // saturating_sub defends against it anyway), the gap is 0
+        // and the marker stays silent rather than panicking on
+        // underflow.
+        let now = Duration::from_secs(1000);
+        let prev = Duration::from_secs(1010);
+        assert_eq!(suspend_marker_text(now, Some(prev)), None);
+    }
+
+    // ── Panic hook (forked-process) ──────────────────────────────────────────
+
+    /// Env var the parent passes to the child to flip the test fn
+    /// into "panic-and-log" mode.
+    const PANIC_TEST_ENV: &str = "MEDITATE_DIAG_PANIC_TEST_DIR";
+
+    /// Recognisable sentinel string that ends up inside the panic
+    /// message → the diag log → the parent's assert. Specific enough
+    /// not to collide with anything else in normal output.
+    const PANIC_TEST_SENTINEL: &str = "diag_panic_hook_test_sentinel";
+
+    #[test]
+    fn panic_hook_writes_panic_line_to_diag_log() {
+        // OnceLock + `std::panic::set_hook` are both process-global,
+        // so verifying the panic hook in-process clobbers other
+        // tests. Solution: re-spawn the test binary in a subprocess,
+        // narrow libtest to just this one test, and inspect the log
+        // file the child wrote before its panic unwound.
+
+        // Child branch — env var present → init diag, deliberately
+        // panic. The hook fires (logs PANIC line), the chained
+        // default hook prints to stderr, the process exits nonzero.
+        if let Ok(dir) = std::env::var(PANIC_TEST_ENV) {
+            super::init(std::path::Path::new(&dir));
+            panic!("{PANIC_TEST_SENTINEL}");
+        }
+
+        // Parent branch — spawn ourselves with the env var pointing
+        // at a unique tempdir.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let exe = std::env::current_exe().expect("current_exe");
+        let status = std::process::Command::new(&exe)
+            .arg("--exact")
+            .arg("diag::tests::panic_hook_writes_panic_line_to_diag_log")
+            // libtest captures child stderr; --nocapture lets it
+            // flow to the Stdio::null'd pipe below so the
+            // intentional panic doesn't pollute the parent's output.
+            .arg("--nocapture")
+            .env(PANIC_TEST_ENV, dir.path())
+            .stderr(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .status()
+            .expect("spawn child");
+
+        assert!(
+            !status.success(),
+            "child must panic and exit nonzero, got {status:?}",
+        );
+
+        let log_path = dir.path().join("diagnostics.log");
+        let contents = std::fs::read_to_string(&log_path)
+            .expect("child should have written the diag log before unwind");
+
+        assert!(
+            contents.contains("PANIC"),
+            "log must contain the PANIC marker:\n{contents}",
+        );
+        assert!(
+            contents.contains(PANIC_TEST_SENTINEL),
+            "log must contain the panic message:\n{contents}",
+        );
+        // info.location() captures the panic site's source file —
+        // asserting just `diag.rs` (not the line number) keeps the
+        // test robust against unrelated edits in this file.
+        assert!(
+            contents.contains("diag.rs"),
+            "log must capture the panic source file:\n{contents}",
+        );
     }
 }

@@ -11,15 +11,6 @@ rationale.
 
 ## Tier 1 — High-impact, mostly mechanical
 
-### Panic-hook installation has no test verifying it writes
-- `diag.rs:102 install_panic_hook` is wired; only test
-  (`log_without_init_is_noop`) admits OnceLock prevents
-  real testing. A future refactor could silently drop the
-  hook and CI wouldn't notice.
-- Fix: forked-process test (`std::process::Command`
-  invoking the test binary with a `MEDITATE_PANIC_TEST=1`
-  env switch, asserting post-mortem log content).
-
 ### Zero integration tests — `meditate-core/tests/` does not exist
 - All 933 tests are `#[cfg(test)] mod tests` inline. Cross-
   module flows (create label → save preset → close DB →
