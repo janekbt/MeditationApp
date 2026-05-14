@@ -85,6 +85,7 @@ fn refresh(ui: &MainWindow, state: &AppState, now: Duration) {
     ui.set_action_label(state.primary_label().into());
     ui.set_stop_visible(state.can_stop());
     ui.set_running_page(state.is_running_page());
+    ui.set_done_page(state.is_done_page());
 }
 
 /// Snapshot of an in-flight session that the persistence layer needs
@@ -93,7 +94,7 @@ fn refresh(ui: &MainWindow, state: &AppState, now: Duration) {
 /// elapsed comes from the live core::Session and is captured BEFORE
 /// the AppState mutation drops the session.
 #[cfg(target_os = "android")]
-fn finalize_session(unix_start: i64, elapsed_secs: i64) {
+fn finalize_session(unix_start: i64, elapsed_secs: i64, note: Option<String>) {
     if elapsed_secs <= 0 {
         // Drop sessions that ended before any seconds elapsed —
         // matches the GTK shell, which also filters zero-duration
@@ -114,9 +115,9 @@ fn finalize_session(unix_start: i64, elapsed_secs: i64) {
         unix_start,
         elapsed_secs,
         // Phase 2 will add a label picker; for Phase 1 every session
-        // lands unlabeled. Same goes for notes (no notes editor yet).
+        // lands unlabeled.
         None,
-        None,
+        note,
         // Box Breath + Guided live behind their own Slint Setup mode
         // chips — UI Phase 2 / Phase 5 work. Until they ship the only
         // mode the shell can author is plain Timer.
@@ -140,7 +141,7 @@ fn finalize_session(unix_start: i64, elapsed_secs: i64) {
 fn build_ui() -> MainWindow {
     let ui = MainWindow::new().unwrap();
     let state = Rc::new(RefCell::new(AppState::idle()));
-    // Unix timestamp captured at session start, read+cleared at end.
+    // Unix timestamp captured at session start, taken at end.
     // Mirrors the GTK shell's `Timer::session_start_time` cell.
     // Holds None while idle; Some(unix_secs) while a session is
     // in flight. The core::Session itself uses monotonic boot-time
@@ -149,6 +150,16 @@ fn build_ui() -> MainWindow {
     // even allocate the cell on the desktop preview path.
     #[cfg(target_os = "android")]
     let session_start_unix: Rc<Cell<Option<i64>>> = Rc::new(Cell::new(None));
+
+    // When a session ends (Stop tap or auto-finish), we stash the
+    // (start_unix, elapsed_secs) pair here so the Done-screen
+    // Save / Discard handler can either commit it as a DB row or
+    // drop it. None while the Done screen isn't up. Mirrors the
+    // GTK shell's `Timer::pending_save_data` deferral: persistence
+    // is the *user's* call on the Done screen, not an automatic
+    // side-effect of Stop.
+    #[cfg(target_os = "android")]
+    let pending_done: Rc<Cell<Option<(i64, i64)>>> = Rc::new(Cell::new(None));
 
     // Seed the stepper-driven duration with the same default the
     // GTK shell opens at. The tick loop further down refreshes the
@@ -190,13 +201,14 @@ fn build_ui() -> MainWindow {
         let state = state.clone();
         #[cfg(target_os = "android")]
         let session_start_unix = session_start_unix.clone();
+        #[cfg(target_os = "android")]
+        let pending_done = pending_done.clone();
         ui.on_stop_tap(move || {
             let now = now_since_epoch();
             let mut s = state.borrow_mut();
-            // Capture elapsed BEFORE the mutation — AppState::stop
-            // returns Self::Idle and drops the core::Session, so we
-            // can't ask it for elapsed afterwards.
-            #[cfg(target_os = "android")]
+            // Capture elapsed BEFORE the mutation — once stop()
+            // advances to Finished the Box<Session> is dropped, so
+            // we can't ask it for elapsed afterwards.
             let elapsed_secs = match &*s {
                 AppState::Active(session) => session.elapsed(now).as_secs() as i64,
                 _ => 0,
@@ -204,11 +216,25 @@ fn build_ui() -> MainWindow {
             let was_active = s.is_active();
             *s = std::mem::replace(&mut *s, AppState::idle()).stop();
             let is_active = s.is_active();
+            // Active → Finished: stash the (start, elapsed) pair
+            // so the Save / Discard handler knows what to do, and
+            // push the elapsed readout into the Done view.
             #[cfg(target_os = "android")]
             if was_active && !is_active {
                 if let Some(unix_start) = session_start_unix.take() {
-                    finalize_session(unix_start, elapsed_secs);
+                    pending_done.set(Some((unix_start, elapsed_secs)));
                 }
+            }
+            if let Some(ui) = weak.upgrade() {
+                ui.set_elapsed_text(
+                    meditate_core::format::format_time(
+                        Duration::from_secs(elapsed_secs.max(0) as u64),
+                    )
+                    .into(),
+                );
+                // Clear the note from any previous session so the
+                // Done screen opens with an empty editor.
+                ui.set_note_text("".into());
             }
             on_state_changed(was_active, is_active);
             if let Some(ui) = weak.upgrade() {
@@ -240,15 +266,16 @@ fn build_ui() -> MainWindow {
         let state = state.clone();
         #[cfg(target_os = "android")]
         let session_start_unix = session_start_unix.clone();
+        #[cfg(target_os = "android")]
+        let pending_done = pending_done.clone();
         timer.start(slint::TimerMode::Repeated, TICK, move || {
             let now = now_since_epoch();
             let mut s = state.borrow_mut();
             // Capture before/after active-state so an auto-finish
             // (Active → Finished on Overtime cross) tears down the
-            // foreground service AND persists the session. tick on
-            // an inactive state is a no-op, so the equality check
-            // is the cheap path.
-            #[cfg(target_os = "android")]
+            // foreground service AND stashes the session for the
+            // Done screen. tick on an inactive state is a no-op,
+            // so the equality check is the cheap path.
             let elapsed_secs = match &*s {
                 AppState::Active(session) => session.elapsed(now).as_secs() as i64,
                 _ => 0,
@@ -259,12 +286,66 @@ fn build_ui() -> MainWindow {
             #[cfg(target_os = "android")]
             if was_active && !is_active {
                 if let Some(unix_start) = session_start_unix.take() {
-                    finalize_session(unix_start, elapsed_secs);
+                    pending_done.set(Some((unix_start, elapsed_secs)));
+                }
+                if let Some(ui) = weak.upgrade() {
+                    ui.set_elapsed_text(
+                        meditate_core::format::format_time(
+                            Duration::from_secs(elapsed_secs.max(0) as u64),
+                        )
+                        .into(),
+                    );
+                    ui.set_note_text("".into());
                 }
             }
             on_state_changed(was_active, is_active);
             if let Some(ui) = weak.upgrade() {
                 refresh(&ui, &s, now);
+            }
+        });
+    }
+
+    // Save tap on the Done screen: commit the pending session as a
+    // DB row (with the note text the user entered), then dismiss to
+    // Idle. The slide-off-right animation already revealed Done
+    // under Running on Stop; Save / Discard just instantly swap
+    // the base layer back to Setup ("the done page just disappears"
+    // per the GTK pattern).
+    {
+        let weak = ui.as_weak();
+        let state = state.clone();
+        #[cfg(target_os = "android")]
+        let pending_done = pending_done.clone();
+        ui.on_save_tap(move || {
+            let Some(ui) = weak.upgrade() else { return; };
+            #[cfg(target_os = "android")]
+            if let Some((unix_start, elapsed_secs)) = pending_done.take() {
+                let note = ui.get_note_text().to_string();
+                let note = if note.trim().is_empty() { None } else { Some(note) };
+                finalize_session(unix_start, elapsed_secs, note);
+            }
+            let mut s = state.borrow_mut();
+            *s = std::mem::replace(&mut *s, AppState::idle()).dismiss();
+            refresh(&ui, &s, now_since_epoch());
+        });
+    }
+
+    // Discard tap: drop the pending session without writing a row,
+    // then dismiss to Idle. Mirrors the GTK shell's `on_discard`.
+    {
+        let weak = ui.as_weak();
+        let state = state.clone();
+        #[cfg(target_os = "android")]
+        let pending_done = pending_done.clone();
+        ui.on_discard_tap(move || {
+            #[cfg(target_os = "android")]
+            {
+                pending_done.set(None);
+            }
+            let mut s = state.borrow_mut();
+            *s = std::mem::replace(&mut *s, AppState::idle()).dismiss();
+            if let Some(ui) = weak.upgrade() {
+                refresh(&ui, &s, now_since_epoch());
             }
         });
     }

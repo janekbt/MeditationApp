@@ -79,12 +79,30 @@ impl AppState {
         }
     }
 
-    /// Stop button. Always returns to Idle — the session is dropped
-    /// rather than persisted. The Android shell doesn't have a
-    /// sessions table yet; this is the simplest mapping until it
-    /// grows one.
+    /// Stop button. Active → Finished so the shell can present the
+    /// Done screen (elapsed readout + note field + Save / Discard).
+    /// Idle / Finished pass through unchanged — Stop is only
+    /// reachable from a live session, but defending against a
+    /// double-tap or stale callback is cheap. The actual persistence
+    /// decision happens later on the Done screen via `dismiss` (the
+    /// Android shell stores the in-flight unix_start + elapsed in
+    /// `lib.rs` cells; Finished is just a UI marker here).
     pub fn stop(self) -> Self {
-        Self::Idle
+        match self {
+            Self::Active(_) => Self::Finished,
+            other => other,
+        }
+    }
+
+    /// Done-screen Save or Discard tap. Always returns to Idle. The
+    /// Save vs Discard difference (write DB row or not) is handled
+    /// in `lib.rs` before this call; AppState itself only models the
+    /// UI screen transition.
+    pub fn dismiss(self) -> Self {
+        match self {
+            Self::Finished => Self::Idle,
+            other => other,
+        }
     }
 
     /// Called by the tick loop. Drives Session's internal phase
@@ -132,15 +150,25 @@ impl AppState {
         }
     }
 
-    /// Whether the Stop button should be visible / enabled.
+    /// Whether the Stop button should be visible / enabled. Only
+    /// true while a session is in flight — the Done screen has its
+    /// own Save / Discard buttons, not a Stop button.
     pub fn can_stop(&self) -> bool {
-        !matches!(self, Self::Idle)
+        self.is_active()
     }
 
-    /// Whether the running-page layout should be shown (vs. the
-    /// setup page). Idle is the only state that shows setup.
+    /// Whether the Running overlay should be visible. Only Active
+    /// (Running or Paused) qualifies; Finished swaps the base layer
+    /// to the Done view instead.
     pub fn is_running_page(&self) -> bool {
-        !self.is_idle()
+        self.is_active()
+    }
+
+    /// Whether the Done base layer should replace Setup. True
+    /// exactly when a session has just ended and the user hasn't
+    /// yet Save / Discard'd it.
+    pub fn is_done_page(&self) -> bool {
+        self.is_finished()
     }
 
     /// Big hero-label text. Setup shows `HH:MM` of the configured
@@ -288,25 +316,51 @@ mod tests {
     }
 
     #[test]
-    fn stop_from_running_returns_to_idle() {
+    fn stop_from_running_advances_to_finished() {
         let s = AppState::idle()
             .toggle(ten_minutes(), Duration::from_secs(100))
             .stop();
-        assert!(s.is_idle());
+        assert!(s.is_finished());
     }
 
     #[test]
-    fn stop_from_paused_returns_to_idle() {
+    fn stop_from_paused_advances_to_finished() {
         let s = AppState::idle()
             .toggle(ten_minutes(), Duration::from_secs(100))
             .toggle(ten_minutes(), Duration::from_secs(110))
             .stop();
-        assert!(s.is_idle());
+        assert!(s.is_finished());
     }
 
     #[test]
-    fn stop_from_finished_returns_to_idle() {
-        assert!(AppState::Finished.stop().is_idle());
+    fn stop_from_finished_stays_finished() {
+        // Stop button isn't reachable from Finished (Done screen has
+        // Save / Discard instead), but defending against a stale
+        // callback is cheap.
+        assert!(AppState::Finished.stop().is_finished());
+    }
+
+    // ── dismiss ─────────────────────────────────────────────────
+
+    #[test]
+    fn dismiss_from_finished_returns_to_idle() {
+        assert!(AppState::Finished.dismiss().is_idle());
+    }
+
+    #[test]
+    fn dismiss_from_idle_stays_idle() {
+        assert!(AppState::idle().dismiss().is_idle());
+    }
+
+    #[test]
+    fn dismiss_from_active_stays_active() {
+        // dismiss is the Save / Discard tap — only reachable when
+        // the Done screen is up, so Active passthrough is the
+        // defensive case.
+        let s = AppState::idle()
+            .toggle(ten_minutes(), Duration::from_secs(100))
+            .dismiss();
+        assert!(s.is_running());
     }
 
     // ── tick ────────────────────────────────────────────────────
@@ -434,9 +488,9 @@ mod tests {
     }
 
     #[test]
-    fn can_stop_finished_true() {
-        // Finished still wants Stop visible so the user can reset.
-        assert!(AppState::Finished.can_stop());
+    fn can_stop_finished_false() {
+        // Done screen has its own Save / Discard buttons, not Stop.
+        assert!(!AppState::Finished.can_stop());
     }
 
     #[test]
@@ -448,5 +502,29 @@ mod tests {
     fn is_running_page_running_true() {
         let s = AppState::idle().toggle(ten_minutes(), Duration::from_secs(0));
         assert!(s.is_running_page());
+    }
+
+    #[test]
+    fn is_running_page_finished_false() {
+        // Finished swaps the BASE layer (Setup → Done); the Running
+        // overlay slides off to the right rather than staying on
+        // top of Done. So is_running_page is false here.
+        assert!(!AppState::Finished.is_running_page());
+    }
+
+    #[test]
+    fn is_done_page_finished_true() {
+        assert!(AppState::Finished.is_done_page());
+    }
+
+    #[test]
+    fn is_done_page_idle_false() {
+        assert!(!AppState::idle().is_done_page());
+    }
+
+    #[test]
+    fn is_done_page_active_false() {
+        let s = AppState::idle().toggle(ten_minutes(), Duration::from_secs(0));
+        assert!(!s.is_done_page());
     }
 }

@@ -14,6 +14,64 @@ import {
 } from "@material";
 export { MaterialWindowAdapter } from "@material";
 
+// Multi-line note input — the Slint Material library's `TextField`
+// is hard-coded `single_line: true`, but the GTK shell's note view
+// is a 180-px-tall Gtk.TextView with word-wrap. This custom
+// component reproduces the Material 3 filled-text-field look
+// (rounded surface-container-highest with an active-indicator bar
+// under the input) while letting the user type multiple lines.
+component NoteField inherits Rectangle {
+    in property <string> label: "Note";
+    in-out property <string> text <=> input.text;
+
+    // Starts at a single-line height; the inner TextInput's
+    // `preferred-height` grows with every wrapped line, and because
+    // nothing in the layout caps the Rectangle, the box auto-expands
+    // line by line as the user types. Word-wrap on TextInput is what
+    // turns long pasted text into more lines instead of one runaway
+    // horizontal scroll.
+    min-height: 56px;
+    border-radius: 12px;
+    background: MaterialPalette.surface-container-highest;
+
+    VerticalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+        spacing: 4px;
+
+        Text {
+            text: root.label;
+            font-size: 12px;
+            color: input.has-focus
+                ? MaterialPalette.primary
+                : MaterialPalette.on-surface-variant;
+        }
+
+        input := TextInput {
+            single-line: false;
+            wrap: word-wrap;
+            font-size: 16px;
+            color: MaterialPalette.on-surface;
+            selection-background-color: MaterialPalette.primary;
+            selection-foreground-color: MaterialPalette.on-primary;
+            vertical-alignment: top;
+        }
+    }
+
+    // Active-indicator strip along the bottom — primary color
+    // while focused, on-surface-variant otherwise. Mirrors the
+    // Material 3 filled-text-field state.
+    Rectangle {
+        y: parent.height - self.height;
+        height: input.has-focus ? 3px : 1px;
+        background: input.has-focus
+            ? MaterialPalette.primary
+            : MaterialPalette.on-surface-variant;
+    }
+}
+
 // Vertical +/value/− stack mirroring the GTK shell's vertical
 // `gtk::SpinButton`. Used inside the Duration dialog.
 component VerticalSpinBox {
@@ -101,6 +159,14 @@ export component MainWindow inherits Window {
     in property <string> action-label: "Start Session";
     in property <bool> running-page: false;
     in property <bool> stop-visible: false;
+    // Done screen: replaces Setup as the base layer while it's up.
+    // running-page may also be true briefly during the transition
+    // (Done is set first, then running-page is cleared so the
+    // overlay slides off to the right, revealing Done underneath).
+    in property <bool> done-page: false;
+    // Elapsed time the user actually meditated, formatted MM:SS or
+    // HH:MM:SS by the Rust side. Shown big at the top of Done.
+    in property <string> elapsed-text: "00:00";
 
     in-out property <int> setup-hours: 0;
     in-out property <int> setup-minutes: 10;
@@ -109,9 +175,16 @@ export component MainWindow inherits Window {
     in-out property <int> dialog-hours: 0;
     in-out property <int> dialog-minutes: 10;
 
+    // Note field on the Done screen. Bound to Material's TextField
+    // so the on-screen keyboard / IME show up on focus, and the
+    // Rust side reads this value on Save.
+    in-out property <string> note-text: "";
+
     callback action-tap();
     callback stop-tap();
     callback duration-tap();
+    callback save-tap();
+    callback discard-tap();
 
     // Slide offset driving the Running screen's slide-over. 0 px
     // means Running is parked at x=width (off-screen right) and
@@ -126,8 +199,11 @@ export component MainWindow inherits Window {
 
     // ── Setup screen ─────────────────────────────────────────────
     // Pinned at x=0; Running slides over the top on Start and
-    // off to the right on Stop.
+    // off to the right on Stop. Hidden when the Done screen is up —
+    // the two base layers are mutually exclusive, mirroring the
+    // GTK shell's view_stack swap between "setup" and "done".
     Rectangle {
+        visible: !root.done-page;
         x: 0;
         width: parent.width;
         height: parent.height;
@@ -186,6 +262,83 @@ export component MainWindow inherits Window {
                 DurationRow {
                     value-text: root.duration-text;
                     tapped => { root.duration-tap(); }
+                }
+            }
+        }
+    }
+
+    // ── Done screen (base layer, replaces Setup) ────────────────
+    // Mirrors `meditate-gtk/data/ui/timer_view.blp`'s `done` stack
+    // page (lines 747-833): the outer Box uses `valign: center` so
+    // the whole content stack is centered vertically inside its
+    // ScrolledWindow viewport, with `spacing: 18` between elements
+    // and a small horizontal margin. Pinned at x=0; the Running
+    // overlay slides OFF to the right after Stop / auto-finish,
+    // revealing this underneath. No animation when the user taps
+    // Save / Discard — the screen just instantly swaps back to
+    // Setup, matching the GTK pattern.
+    Rectangle {
+        visible: root.done-page;
+        x: 0;
+        width: parent.width;
+        height: parent.height;
+        background: MaterialPalette.surface;
+
+        VerticalLayout {
+            alignment: center;
+            spacing: 18px;
+            padding-left: 24px;
+            padding-right: 24px;
+            padding-top: 24px;
+            padding-bottom: 24px;
+
+            // Elapsed time — the user's "this is what you did"
+            // readout. GTK uses `halign: center` on the label;
+            // mirrored via horizontal-alignment.
+            Text {
+                text: root.elapsed-text;
+                font-size: 80px;
+                horizontal-alignment: center;
+                color: MaterialPalette.on-surface;
+            }
+
+            // Note label + multi-line input. GTK uses a Gtk.TextView
+            // inside a 180px ScrolledWindow with word-wrap; `NoteField`
+            // above is the Slint equivalent. Caption is start-aligned
+            // with a 12px indent in GTK (`note_caption.margin-start: 12`).
+            VerticalLayout {
+                spacing: 6px;
+                Text {
+                    text: "Note (optional)";
+                    font-size: 12px;
+                    color: MaterialPalette.on-surface-variant;
+                    horizontal-alignment: left;
+                }
+                NoteField {
+                    label: "Note";
+                    text <=> root.note-text;
+                }
+            }
+
+            // Centered Discard / Save pill row — mirrors GTK's
+            // `halign: center, homogeneous: true` button row.
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: center;
+
+                // Discard: outline button, the closest Material 3
+                // ships to GTK's `destructive-action` pill.
+                OutlineButton {
+                    text: "Discard";
+                    height: 56px;
+                    clicked => { root.discard-tap(); }
+                }
+
+                // Save: filled / suggested action.
+                FilledButton {
+                    text: "Save";
+                    height: 56px;
+                    clicked => { root.save-tap(); }
                 }
             }
         }
