@@ -17,6 +17,7 @@ use meditate_core::session::{
     Effect as CoreSessionEffect,
     Session as CoreSession,
     SessionSettings as CoreSessionSettings,
+    SessionShape as CoreSessionShape,
 };
 
 // ── Per-mode independent state ────────────────────────────────────────────────
@@ -1940,23 +1941,22 @@ impl TimerView {
                     u64::from(self.breathing_session_secs.get()),
                 );
                 self.start_boot_time.set(Some(boot_time_now()));
-                // No target_secs → stopwatch-only Box Breath never
-                // auto-ends; user must press Stop.
-                let core_target = if self.stopwatch_toggle_on.get() {
-                    None
+                // Stopwatch toggle on → BoxBreathStopwatch (no auto-end;
+                // user must press Stop). Off → BoxBreathCountdown,
+                // cycle-aligned end fires off `target_secs`. Either
+                // way Box Breath shows count-up elapsed.
+                let shape = if self.stopwatch_toggle_on.get() {
+                    CoreSessionShape::BoxBreathStopwatch { pattern }
                 } else {
-                    Some(target as u32)
+                    CoreSessionShape::BoxBreathCountdown {
+                        pattern,
+                        target_secs: target as u32,
+                    }
                 };
                 let Some(app) = self.get_app() else { return; };
                 let core_settings = CoreSessionSettings {
-                    mode: SessionMode::BoxBreath,
+                    shape,
                     prep_secs: None,
-                    target_secs: core_target,
-                    // Box Breath always shows count-up elapsed
-                    // regardless of any toggle; the cycle-aligned
-                    // end still fires via target_secs.
-                    stopwatch_display: true,
-                    breath_pattern: Some(pattern),
                     bells: Vec::new(),
                     bell_rng_seed: 1,
                     signal_mode_override: self.read_signal_mode_override(
@@ -2027,17 +2027,16 @@ impl TimerView {
                 }
 
                 self.start_boot_time.set(Some(boot_time_now()));
-                // Always carries a target (the file's probed
-                // duration); the stopwatch toggle only affects the
-                // running display (count-up vs count-down), not the
-                // Session's target.
+                // Guided always carries a target (the file's probed
+                // duration); the stopwatch toggle only flips the
+                // running display between count-up and count-down.
                 let Some(app) = self.get_app() else { return; };
                 let core_settings = CoreSessionSettings {
-                    mode: SessionMode::Guided,
+                    shape: CoreSessionShape::Guided {
+                        duration_secs: target as u32,
+                        count_up_display: self.stopwatch_toggle_on.get(),
+                    },
                     prep_secs: None,
-                    target_secs: Some(target as u32),
-                    stopwatch_display: self.stopwatch_toggle_on.get(),
-                    breath_pattern: None,
                     bells: Vec::new(),
                     bell_rng_seed: 1,
                     signal_mode_override: self.read_signal_mode_override(
@@ -2065,21 +2064,20 @@ impl TimerView {
         let build_timer_settings = |prep_dur: Option<Duration>| {
             let app = self.get_app()?;
             let stopwatch_on = self.stopwatch_toggle_on.get();
-            let target_secs = if stopwatch_on {
-                None
+            let shape = if stopwatch_on {
+                CoreSessionShape::TimerStopwatch
             } else {
-                Some(self.countdown_target_secs.get())
+                CoreSessionShape::TimerCountdown {
+                    target_secs: self.countdown_target_secs.get(),
+                }
             };
             let (bells, bell_rng_seed) = self.build_session_bells(
-                target_secs.map(u64::from),
+                shape.target_secs().map(u64::from),
                 stopwatch_on,
             );
             Some(CoreSessionSettings {
-                mode: SessionMode::Timer,
+                shape,
                 prep_secs: prep_dur.map(|d| d.as_secs() as u32),
-                target_secs,
-                stopwatch_display: stopwatch_on,
-                breath_pattern: None,
                 bells,
                 bell_rng_seed,
                 signal_mode_override: self.read_signal_mode_override(

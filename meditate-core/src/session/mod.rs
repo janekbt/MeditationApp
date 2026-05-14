@@ -17,7 +17,7 @@
 //! a thin pump.
 
 use crate::bells::ActiveBell;
-use crate::breath::{Phase, PhaseInfo};
+use crate::breath::{BreathPattern, Phase, PhaseInfo};
 use crate::db::{BoxBreathPhaseId, SessionMode, SignalMode};
 use crate::timer::Stopwatch;
 use std::time::Duration;
@@ -25,7 +25,7 @@ use std::time::Duration;
 mod effect;
 mod settings;
 pub use effect::{Effect, FireChannel, FireRoute};
-pub use settings::SessionSettings;
+pub use settings::{SessionSettings, SessionShape};
 
 /// What the running-page view should reflect right now. Strict
 /// superset of `SessionPhase` plus `Idle` (no in-flight session)
@@ -352,10 +352,19 @@ impl Session {
         if self.phase != SessionPhase::Overtime {
             return Vec::new();
         }
-        let target_secs = u64::from(self
-            .settings
-            .target_secs
-            .expect("Overtime requires a target"));
+        // Overtime is only reachable from a shape that carries a
+        // target (TimerCountdown / Guided). Box-Breath ends via
+        // EndBoxBreath, never Overtime; stopwatch sessions never
+        // cross a countdown boundary. The exhaustive match makes
+        // that invariant load-bearing on the types instead of a
+        // runtime `.expect()`.
+        let target_secs = match self.settings.shape {
+            SessionShape::TimerCountdown { target_secs } => u64::from(target_secs),
+            SessionShape::Guided { duration_secs, .. } => u64::from(duration_secs),
+            SessionShape::TimerStopwatch
+            | SessionShape::BoxBreathCountdown { .. }
+            | SessionShape::BoxBreathStopwatch { .. } => return Vec::new(),
+        };
         self.phase = SessionPhase::Stopped;
         self.final_duration_secs = Some(target_secs);
         vec![
@@ -460,15 +469,23 @@ impl Session {
         let elapsed = self.phase_clock.elapsed(now);
 
         // Box Breath running has its own tick shape: phase-boundary
-        // detection + cycle-aligned end + elapsed counter.
-        if self.settings.breath_pattern.is_some() {
-            return self.tick_box_breath(elapsed);
+        // detection + cycle-aligned end + elapsed counter. The
+        // pattern + target are unpacked here so `tick_box_breath`
+        // gets exactly what it needs from the variant.
+        match self.settings.shape.clone() {
+            SessionShape::BoxBreathCountdown { pattern, target_secs } => {
+                return self.tick_box_breath(elapsed, &pattern, Some(target_secs));
+            }
+            SessionShape::BoxBreathStopwatch { pattern } => {
+                return self.tick_box_breath(elapsed, &pattern, None);
+            }
+            _ => {}
         }
 
         // Overtime transition is independent of display mode — Guided
-        // with `stopwatch_display=true` still has a `target_secs` to
-        // cross (the audio file's natural length).
-        if let Some(target_secs) = self.settings.target_secs {
+        // with count-up display still has a `target_secs` to cross
+        // (the audio file's natural length).
+        if let Some(target_secs) = self.settings.shape.target_secs() {
             let target = Duration::from_secs(u64::from(target_secs));
             if target.saturating_sub(elapsed).is_zero() {
                 // Bells skip this tick — gtk's historical behaviour is
@@ -482,7 +499,7 @@ impl Session {
             }
         }
 
-        let display_secs = display_secs_for_running(&self.settings, elapsed);
+        let display_secs = display_secs_for_running(&self.settings.shape, elapsed);
         let mut effects = vec![Effect::UpdateDisplay { secs: display_secs }];
         effects.extend(fire_due_bells(
             &mut self.bells,
@@ -501,10 +518,12 @@ impl Session {
         // keep firing on the original session timeline because
         // their `next_ring_secs` was rolled against `elapsed` from
         // the Running phase, which continues to accumulate.
-        let target_secs = self
-            .settings
-            .target_secs
-            .expect("Overtime phase requires a target");
+        // Reachable only from shapes that carry a target — see
+        // the matching invariant in `finish_overtime`. Stopwatch
+        // arms short-circuit the tick instead of dividing by zero.
+        let Some(target_secs) = self.settings.shape.target_secs() else {
+            return Vec::new();
+        };
         let target = Duration::from_secs(u64::from(target_secs));
         let elapsed = self.phase_clock.elapsed(now);
         let overtime = elapsed.saturating_sub(target);
@@ -518,12 +537,12 @@ impl Session {
         effects
     }
 
-    fn tick_box_breath(&mut self, elapsed: Duration) -> Vec<Effect> {
-        let pattern = self
-            .settings
-            .breath_pattern
-            .as_ref()
-            .expect("tick_box_breath called without breath_pattern");
+    fn tick_box_breath(
+        &mut self,
+        elapsed: Duration,
+        pattern: &BreathPattern,
+        target_secs: Option<u32>,
+    ) -> Vec<Effect> {
         let mut effects: Vec<Effect> = Vec::new();
 
         // Phase boundary detection. The first Running tick seeds
@@ -548,9 +567,8 @@ impl Session {
         // duration UP to the next full cycle at start time, so
         // `elapsed >= target` already lands exactly on a cycle
         // boundary. Box Breath is finished when that crossing
-        // happens. Stopwatch-only Box Breath (target_secs None)
-        // never auto-ends.
-        if let Some(target_secs) = self.settings.target_secs {
+        // happens. BoxBreathStopwatch (target None) never auto-ends.
+        if let Some(target_secs) = target_secs {
             let target = Duration::from_secs(u64::from(target_secs));
             if elapsed >= target {
                 let duration_secs = elapsed.as_secs();
@@ -590,7 +608,11 @@ impl Session {
         if self.phase != SessionPhase::Running {
             return None;
         }
-        let pattern = self.settings.breath_pattern.as_ref()?;
+        let pattern = match &self.settings.shape {
+            SessionShape::BoxBreathCountdown { pattern, .. }
+            | SessionShape::BoxBreathStopwatch { pattern } => pattern,
+            _ => return None,
+        };
         let elapsed = self.phase_clock.elapsed(now);
         Some(pattern.phase_at(elapsed))
     }
@@ -617,13 +639,13 @@ impl Session {
     /// Duration the "session complete" system notification should
     /// show — the planned target, NOT the elapsed-with-overtime.
     /// Same value regardless of mode: Timer/Guided countdown's
-    /// `target_secs`, Box-Breath's cycle-aligned target. Stopwatch-
-    /// only sessions (no `target_secs`) collapse to 0; the shell
-    /// shouldn't reach this path for them since they never auto-
-    /// complete. Used at the Running→Overtime boundary (Timer/Guided)
-    /// and at Box-Breath's natural end.
+    /// `target_secs`, Box-Breath's cycle-aligned target. Stopwatch
+    /// shapes collapse to 0; the shell shouldn't reach this path
+    /// for them since they never auto-complete. Used at the
+    /// Running→Overtime boundary (Timer/Guided) and at Box-Breath's
+    /// natural end.
     pub fn completion_duration_secs(&self) -> u64 {
-        self.settings.target_secs.map_or(0, u64::from)
+        self.settings.shape.target_secs().map_or(0, u64::from)
     }
 
     /// Tick + fold: advance the session and inspect the effects
@@ -682,7 +704,7 @@ impl Session {
     /// Mode of the in-flight session. Captured at start; never
     /// changes during a session.
     pub fn mode(&self) -> SessionMode {
-        self.settings.mode
+        self.settings.shape.mode()
     }
 
     /// Ceiling-rounded remaining seconds of prep silence. `None`
@@ -727,7 +749,7 @@ impl Session {
         match self.phase {
             SessionPhase::Prep | SessionPhase::Stopped | SessionPhase::Paused => 0,
             SessionPhase::Running | SessionPhase::Overtime => {
-                display_secs_for_running(&self.settings, self.phase_clock.elapsed(now))
+                display_secs_for_running(&self.settings.shape, self.phase_clock.elapsed(now))
             }
         }
     }
@@ -743,32 +765,40 @@ fn phase_to_id(phase: Phase) -> BoxBreathPhaseId {
 }
 
 /// Display value (in whole seconds) for a Running session at the
-/// given `elapsed`. Encapsulates the ceiling-vs-floor rounding
-/// rule + the stopwatch-vs-countdown branch in one place; called
-/// from both `tick_running` (for per-tick UpdateDisplay) and
-/// `Session::display_secs` (for shell refreshes outside the tick
-/// loop).
+/// given `elapsed`. Dispatches on the shape variant: each variant
+/// already encodes which display rule applies, so there's no
+/// runtime stopwatch-display flag to consult.
 ///
-/// - `stopwatch_display` → floor-rounded elapsed regardless of
-///   whether `target_secs` is set. Guided + stopwatch toggle on
-///   is the motivating case: the file still has a probed duration
-///   (target_secs=Some) but the user picked count-up display.
-/// - Otherwise + `target_secs` set → ceiling-rounded remaining.
-///   `(k-1, k]` remaining → display `k` so a fresh "10:00"
-///   doesn't flicker to "09:59" on the first sub-1.0 s tick.
-/// - Otherwise (no target, no stopwatch flag) → floor elapsed,
-///   the natural stopwatch-only readout.
-fn display_secs_for_running(settings: &SessionSettings, elapsed: Duration) -> u64 {
-    if settings.stopwatch_display {
-        return elapsed.as_secs();
-    }
-    match settings.target_secs {
-        Some(target_secs) => {
-            let target = Duration::from_secs(u64::from(target_secs));
-            let remaining = target.saturating_sub(elapsed);
-            remaining.as_secs() + u64::from(remaining.subsec_nanos() > 0)
+/// - Stopwatch shapes (Timer + Box-Breath): floor-rounded elapsed,
+///   the natural count-up readout.
+/// - Box-Breath countdown: still elapsed (count-up); the
+///   cycle-aligned end fires off `target_secs` independently of
+///   what the running readout shows.
+/// - Timer countdown: ceiling-rounded remaining. `(k-1, k]`
+///   remaining → display `k` so a fresh "10:00" doesn't flicker
+///   to "09:59" on the first sub-1.0 s tick.
+/// - Guided: respects the per-variant `count_up_display` flag —
+///   the only case where countdown vs count-up is a user toggle
+///   rather than an implicit consequence of the variant.
+fn display_secs_for_running(shape: &SessionShape, elapsed: Duration) -> u64 {
+    let ceiling_remaining = |target_secs: u32| -> u64 {
+        let target = Duration::from_secs(u64::from(target_secs));
+        let remaining = target.saturating_sub(elapsed);
+        remaining.as_secs() + u64::from(remaining.subsec_nanos() > 0)
+    };
+    match shape {
+        SessionShape::TimerStopwatch | SessionShape::BoxBreathStopwatch { .. } => {
+            elapsed.as_secs()
         }
-        None => elapsed.as_secs(),
+        SessionShape::BoxBreathCountdown { .. } => elapsed.as_secs(),
+        SessionShape::TimerCountdown { target_secs } => ceiling_remaining(*target_secs),
+        SessionShape::Guided { duration_secs, count_up_display } => {
+            if *count_up_display {
+                elapsed.as_secs()
+            } else {
+                ceiling_remaining(*duration_secs)
+            }
+        }
     }
 }
 
@@ -887,11 +917,8 @@ mod tests {
 
     fn timer_settings_with_prep(prep_secs: u32) -> SessionSettings {
         SessionSettings {
-            mode: SessionMode::Timer,
+            shape: SessionShape::TimerCountdown { target_secs: 600 },
             prep_secs: Some(prep_secs),
-            target_secs: Some(600),
-            stopwatch_display: false,
-            breath_pattern: None,
             bells: Vec::new(),
             bell_rng_seed: 1,
             signal_mode_override: SignalMode::Both,
@@ -903,11 +930,8 @@ mod tests {
 
     fn timer_countdown_settings(target_secs: u32) -> SessionSettings {
         SessionSettings {
-            mode: SessionMode::Timer,
+            shape: SessionShape::TimerCountdown { target_secs },
             prep_secs: None,
-            target_secs: Some(target_secs),
-            stopwatch_display: false,
-            breath_pattern: None,
             bells: Vec::new(),
             bell_rng_seed: 1,
             signal_mode_override: SignalMode::Both,
@@ -925,11 +949,8 @@ mod tests {
 
     fn timer_stopwatch_settings() -> SessionSettings {
         SessionSettings {
-            mode: SessionMode::Timer,
+            shape: SessionShape::TimerStopwatch,
             prep_secs: None,
-            target_secs: None,
-            stopwatch_display: true,
-            breath_pattern: None,
             bells: Vec::new(),
             bell_rng_seed: 1,
             signal_mode_override: SignalMode::Both,
@@ -945,12 +966,14 @@ mod tests {
             vibration_pattern_uuid: "cue-pattern".into(),
             signal_mode: SignalMode::Both,
         };
+        let pattern = BreathPattern::box_breath();
+        let shape = match target_secs {
+            Some(target_secs) => SessionShape::BoxBreathCountdown { pattern, target_secs },
+            None => SessionShape::BoxBreathStopwatch { pattern },
+        };
         SessionSettings {
-            mode: SessionMode::BoxBreath,
+            shape,
             prep_secs: None,
-            target_secs,
-            stopwatch_display: true,
-            breath_pattern: Some(BreathPattern::box_breath()),
             bells: Vec::new(),
             bell_rng_seed: 1,
             signal_mode_override: SignalMode::Both,
@@ -1678,11 +1701,12 @@ mod tests {
 
     #[test]
     fn display_secs_guided_stopwatch_shows_elapsed_even_with_target() {
-        // Guided + stopwatch toggle: target_secs is Some (file's
-        // probed duration) but display is count-up.
-        let mut settings = timer_countdown_settings(600);
-        settings.mode = SessionMode::Guided;
-        settings.stopwatch_display = true;
+        // Guided + stopwatch toggle: file's probed duration is the
+        // target, but the user picked count-up display.
+        let settings = SessionSettings {
+            shape: SessionShape::Guided { duration_secs: 600, count_up_display: true },
+            ..timer_countdown_settings(600)
+        };
         let s = Session::start_running(settings, Duration::from_secs(100));
         assert_eq!(s.display_secs(Duration::from_secs(245)), 145);
     }

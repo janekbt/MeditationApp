@@ -11,21 +11,6 @@ rationale.
 
 ## Tier 1 — High-impact, mostly mechanical
 
-### `SessionSettings.target_secs: Option<u32>` collapses 3 distinct domain concepts
-- `None` means "stopwatch session, no end" (Timer),
-  "stopwatch box-breath" (BoxBreath), or "shouldn't
-  happen" (Guided always has it). Three `.expect("Overtime
-  requires a target")` panics at `session.rs:535, 684` are
-  the symptom. The phase-payload-hoist already in backlog
-  is the same root cause surfacing in `Session`; this is
-  the same in `SessionSettings`.
-- Fix: collapse `SessionSettings.mode + .target_secs +
-  .breath_pattern + .stopwatch_display` into one
-  `SessionShape` sum type: `Timer { target: SessionLength
-  }, BoxBreath { pattern, target }, Guided { duration_secs
-  }`. Eliminates four `.expect()`s and three "ignored
-  otherwise" doc comments.
-
 ### Free-fn vs method inconsistency on the same enum
 - `breath::Phase::index()` is a method (`breath.rs:24`);
   `breath::phase_running_label_key(Phase)` is a free fn
