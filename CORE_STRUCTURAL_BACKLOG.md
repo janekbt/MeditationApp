@@ -11,16 +11,6 @@ rationale.
 
 ## Tier 1 — High-impact, mostly mechanical
 
-### `Audio device disappears mid-playback` — no error wiring
-- `src/sound.rs`. `gtk::MediaFile::for_file(...)` returned
-  objects never have `connect_error` or `notify::error`
-  hooked. Headphones unplug mid-session = bell silently
-  doesn't ring; next bell creates new MediaFiles with the
-  same dead pipeline. Session can't tell the user "bells
-  are no longer playing".
-- Fix: `media.connect_error(|_, _| diag::log(...))` plus a
-  one-shot toast.
-
 ### No conditional PUT — concurrent push from two peers silently clobbers
 - `orchestrator.rs:91-94` trait `put()` is unconditional;
   `HttpWebDav::put` (`webdav.rs:197-214`) emits no
