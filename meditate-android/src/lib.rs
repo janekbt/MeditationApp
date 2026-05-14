@@ -216,6 +216,63 @@ fn write_label_uuid_for_mode(mode: meditate_core::SessionMode, uuid: &str) {
     }
 }
 
+/// Live name validation for the Create-Label dialog. Trims the
+/// candidate, then runs `meditate_core::validate` against the
+/// `is_label_name_taken_from_db` predicate (case-insensitive
+/// collision check). Returns `true` only on
+/// `NameValidity::Ok` — empty input + collisions disable Create.
+#[cfg(target_os = "android")]
+fn validate_label_name(name: &str) -> bool {
+    let trimmed = name.trim();
+    let Some(db_arc) = DATABASE.get() else { return false; };
+    let Ok(guard) = db_arc.lock() else { return false; };
+    let Some(db) = guard.as_ref() else { return false; };
+    let validity = meditate_core::validate(trimmed, |n| {
+        meditate_core::db::is_label_name_taken_from_db(db, n, 0).unwrap_or(false)
+    });
+    validity.is_savable()
+}
+
+/// Insert a new label row + return `(rowid, uuid)`. Mirrors the
+/// GTK shell's `create_label` wrapper (`meditate-gtk/src/db/mod.rs`):
+/// `insert_label` returns the rowid; the freshly inserted UUID is
+/// then read back via `list_labels_from_db` so the caller can
+/// persist it as the active mode's selection.
+#[cfg(target_os = "android")]
+fn create_label_in_db(name: &str) -> Option<(i64, String)> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let Some(db_arc) = DATABASE.get() else { return None; };
+    let Ok(guard) = db_arc.lock() else { return None; };
+    let Some(db) = guard.as_ref() else { return None; };
+    let id = match db.insert_label(trimmed) {
+        Ok(id) => id,
+        Err(e) => {
+            // Duplicate raced past live validation (UNIQUE
+            // constraint slipped through) — GTK surfaces this via
+            // a toast; we just log it. Acceptable since live
+            // validation already blocks the common path.
+            meditate_core::log(
+                "labels.create",
+                &format!("insert FAILED name={trimmed} err={e:?}"),
+            );
+            return None;
+        }
+    };
+    let uuid = meditate_core::db::list_labels_from_db(db)
+        .ok()?
+        .into_iter()
+        .find(|l| l.id == id)
+        .map(|l| l.uuid.0)?;
+    meditate_core::log(
+        "labels.create",
+        &format!("ok name={trimmed} id={id} uuid={uuid}"),
+    );
+    Some((id, uuid))
+}
+
 #[cfg(target_os = "android")]
 fn write_signal_mode_for_mode(
     mode: meditate_core::SessionMode,
@@ -636,6 +693,67 @@ fn build_ui() -> MainWindow {
             if let Some(ui) = weak.upgrade() {
                 ui.set_labels_page(false);
             }
+        });
+    }
+
+    // Synthetic "Create new label…" row tap — clear any prior
+    // entry text, mark Create disabled, and open the dialog.
+    // Mirrors the GTK `create_row.activated` handler at
+    // `labels.rs:118`.
+    {
+        let weak = ui.as_weak();
+        ui.on_create_label_tap(move || {
+            if let Some(ui) = weak.upgrade() {
+                ui.set_create_label_text("".into());
+                ui.set_create_label_valid(false);
+                ui.set_create_label_dialog_open(true);
+            }
+        });
+    }
+
+    // Create-label text changed — revalidate against
+    // `is_label_name_taken_from_db` and update Create's enabled
+    // state. Mirrors the GTK `entry.connect_changed` validate
+    // closure at `labels.rs:267`.
+    {
+        let weak = ui.as_weak();
+        ui.on_create_label_changed(move |text| {
+            if let Some(ui) = weak.upgrade() {
+                #[cfg(target_os = "android")]
+                ui.set_create_label_valid(validate_label_name(&text));
+                #[cfg(not(target_os = "android"))]
+                let _ = (ui, text);
+            }
+        });
+    }
+
+    // Create button pressed — insert the new label, persist its
+    // UUID as the active mode's pick, refresh the ExpanderRow's
+    // resolved name, close both the dialog AND the chooser
+    // overlay. Treating creation as selection mirrors the GTK
+    // flow at `labels.rs:125-134`.
+    {
+        let weak = ui.as_weak();
+        let current_mode = current_mode.clone();
+        ui.on_create_label_confirm(move || {
+            let Some(ui) = weak.upgrade() else { return; };
+            #[cfg(target_os = "android")]
+            {
+                let text = ui.get_create_label_text().to_string();
+                if let Some((_id, uuid)) = create_label_in_db(&text) {
+                    let mode: meditate_core::SessionMode = current_mode.get().into();
+                    write_label_uuid_for_mode(mode, &uuid);
+                    ui.set_label_name(
+                        resolved_label_for_mode(mode)
+                            .map(|(name, _)| name)
+                            .unwrap_or_default()
+                            .into(),
+                    );
+                }
+            }
+            ui.set_create_label_dialog_open(false);
+            ui.set_labels_page(false);
+            let _ = current_mode.get();
         });
     }
 

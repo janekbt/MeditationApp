@@ -10,7 +10,7 @@
 
 import {
     FilledButton, OutlineButton, TextButton, TonalButton,
-    SegmentedButton, Switch, IconButton,
+    SegmentedButton, Switch, IconButton, TextField,
     MaterialPalette,
 } from "@material";
 // Icons aren't re-exported through the `@material` alias the
@@ -568,6 +568,16 @@ export component MainWindow inherits Window {
     // resolved label.
     in property <[LabelItem]> label-items: [];
 
+    // Create-label dialog state. The synthetic "Create new
+    // label…" row at the top of the chooser opens it; Rust
+    // revalidates on every `create-label-changed` keystroke (via
+    // `meditate_core::validate` against `is_label_name_taken_from_db`)
+    // and writes the result back to `create-label-valid` so the
+    // Create button's `enabled` reflects the live validity.
+    in-out property <bool> create-label-dialog-open: false;
+    in-out property <string> create-label-text: "";
+    in property <bool> create-label-valid: false;
+
     in-out property <bool> duration-dialog-open: false;
     in-out property <int> dialog-hours: 0;
     in-out property <int> dialog-minutes: 10;
@@ -589,6 +599,9 @@ export component MainWindow inherits Window {
     callback label-tap();
     callback labels-back();
     callback label-picked(int);
+    callback create-label-tap();
+    callback create-label-changed(string);
+    callback create-label-confirm();
     // Hardware back button + Android predictive back gesture.
     // Wired through a root-level FocusScope so the key event
     // reaches us no matter which sub-element holds focus. Rust
@@ -1034,6 +1047,55 @@ export component MainWindow inherits Window {
             // Stopwatch / Duration / Label / Keep Awake in the
             // Session group.
             BoxedList {
+                // Synthetic "Create new label…" row — mirrors the
+                // top row that `rebuild_chooser_rows` adds in the
+                // GTK shell (`labels.rs:107-139`). Always present
+                // (no DB query needed) so the create-flow is one
+                // tap away on first launch when no user labels
+                // exist yet.
+                Rectangle {
+                    height: 56px;
+                    background: create-touch.has-hover
+                        ? MaterialPalette.surface-container-high
+                        : transparent;
+
+                    create-touch := TouchArea {
+                        clicked => { root.create-label-tap(); }
+                    }
+
+                    HorizontalLayout {
+                        padding-left: 16px;
+                        padding-right: 16px;
+                        spacing: 12px;
+                        alignment: stretch;
+
+                        Text {
+                            text: "Create new label…";
+                            font-size: 16px;
+                            color: MaterialPalette.on-surface;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+                        // Plus glyph — GTK uses `list-add-symbolic`;
+                        // Material's bundled Icons set has no add
+                        // SVG, so we render the ASCII "+" (always
+                        // rasterises, no font-coverage risk).
+                        Text {
+                            text: "+";
+                            font-size: 22px;
+                            color: MaterialPalette.on-surface-variant;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                // Divider separating the Create row from the
+                // first label row.
+                Rectangle {
+                    height: 1px;
+                    background: MaterialPalette.outline-variant;
+                }
+
                 for item[idx] in root.label-items : VerticalLayout {
                     spacing: 0;
 
@@ -1169,6 +1231,65 @@ export component MainWindow inherits Window {
                             }
                             root.duration-dialog-open = false;
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Create-label dialog (modal overlay) ─────────────────────
+    // Mirrors `meditate-gtk/src/labels.rs::present_create_label_dialog`:
+    // heading + single-line text entry + Cancel/Create buttons,
+    // with Create disabled until the live-validated name is
+    // non-empty AND not a case-insensitive collision against
+    // existing labels. The validation closure lives Rust-side and
+    // writes back to `create-label-valid` on every keystroke via
+    // the `create-label-changed` callback.
+    if root.create-label-dialog-open : Rectangle {
+        background: #00000080;
+        TouchArea {
+            clicked => { root.create-label-dialog-open = false; }
+        }
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 320px;
+            height: create-card-content.preferred-height;
+            background: MaterialPalette.surface-container-high;
+            border-radius: 28px;
+
+            TouchArea {}
+
+            create-card-content := VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+
+                Text {
+                    text: "Create Label";
+                    font-size: 22px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface;
+                }
+
+                TextField {
+                    label: "Label name";
+                    text <=> root.create-label-text;
+                    edited(text) => { root.create-label-changed(text); }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+
+                    TextButton {
+                        text: "Cancel";
+                        clicked => { root.create-label-dialog-open = false; }
+                    }
+                    TextButton {
+                        text: "Create";
+                        enabled: root.create-label-valid;
+                        clicked => { root.create-label-confirm(); }
                     }
                 }
             }
