@@ -1405,12 +1405,13 @@ mod tests {
 
     #[test]
     fn xorshift64_same_seed_yields_same_sequence() {
+        use crate::test_macros::assert_f64_eq;
         let mut a = 42u64;
         let mut b = 42u64;
         for _ in 0..100 {
             let (ua, na) = xorshift64(a);
             let (ub, nb) = xorshift64(b);
-            assert_eq!(ua, ub);
+            assert_f64_eq!(ua, ub);
             assert_eq!(na, nb);
             a = na;
             b = nb;
@@ -1434,14 +1435,16 @@ mod tests {
         // collapse to a constant. Not crypto — but if the algorithm
         // were broken (e.g. all-zero state), this would catch it.
         let mut state = 0xDEAD_BEEFu64;
-        let mut prev = -1.0;
+        let mut prev: Option<f64> = None;
         let mut all_same = true;
         for _ in 0..10_000 {
             let (u, next) = xorshift64(state);
-            if prev != -1.0 && (u - prev).abs() > 0.0 {
-                all_same = false;
+            if let Some(p) = prev {
+                if (u - p).abs() > 0.0 {
+                    all_same = false;
+                }
             }
-            prev = u;
+            prev = Some(u);
             state = next;
         }
         assert!(!all_same, "xorshift64 collapsed to a constant");

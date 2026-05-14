@@ -983,6 +983,7 @@ impl Database {
 mod tests {
     use super::*;
     use crate::db::test_helpers::*;
+    use crate::test_macros::assert_f64_eq;
 
     // ── B1.1: apply_event for session events ─────────────────────────────────
     //
@@ -3712,9 +3713,9 @@ mod tests {
     #[test]
     fn running_average_is_zero_for_empty_db() {
         let db = Database::open_in_memory().unwrap();
-        assert_eq!(
+        assert_f64_eq!(
             get_running_average_secs_from_db(&db, date(2026, 4, 27), 7).unwrap(),
-            0.0
+            0.0,
         );
     }
 
@@ -3722,9 +3723,9 @@ mod tests {
     fn running_average_handles_zero_days_without_divide_by_zero() {
         let db = Database::open_in_memory().unwrap();
         db.insert_session(&session_on("2026-04-27")).unwrap();
-        assert_eq!(
+        assert_f64_eq!(
             get_running_average_secs_from_db(&db, date(2026, 4, 27), 0).unwrap(),
-            0.0
+            0.0,
         );
     }
 
@@ -3737,14 +3738,14 @@ mod tests {
             ..session_on("2026-04-27")
         })
         .unwrap();
-        assert_eq!(
+        assert_f64_eq!(
             get_running_average_secs_from_db(&db, date(2026, 4, 27), 1).unwrap(),
-            600.0
+            600.0,
         );
         // Same data, window of 2 days → average = 300.
-        assert_eq!(
+        assert_f64_eq!(
             get_running_average_secs_from_db(&db, date(2026, 4, 27), 2).unwrap(),
-            300.0
+            300.0,
         );
     }
 

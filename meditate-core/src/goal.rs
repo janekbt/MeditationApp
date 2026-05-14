@@ -123,13 +123,14 @@ pub fn compute(week_secs: i64, goal_mins: i64) -> WeeklyGoal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_macros::assert_f64_eq;
 
     #[test]
     fn empty_week_is_in_progress_with_zero_pct() {
         let g = compute(0, 150);
         assert_eq!(g.week_mins, 0);
         assert_eq!(g.display_pct, 0);
-        assert_eq!(g.arc_pct, 0.0);
+        assert_f64_eq!(g.arc_pct, 0.0);
         assert_eq!(g.remaining_mins, 150);
         assert_eq!(g.status, GoalStatus::InProgress);
     }
@@ -138,7 +139,7 @@ mod tests {
     fn exact_target_is_reached() {
         let g = compute(150 * 60, 150);
         assert_eq!(g.display_pct, 100);
-        assert_eq!(g.arc_pct, 1.0);
+        assert_f64_eq!(g.arc_pct, 1.0);
         assert_eq!(g.remaining_mins, 0);
         assert_eq!(g.status, GoalStatus::Reached);
     }
@@ -148,7 +149,7 @@ mod tests {
         // 3 hours 45 min vs 150 min goal — 150% of goal.
         let g = compute(225 * 60, 150);
         assert_eq!(g.week_mins, 225);
-        assert_eq!(g.arc_pct, 1.0, "arc must cap so it doesn't wrap");
+        assert_f64_eq!(g.arc_pct, 1.0, "arc must cap so it doesn't wrap");
         assert_eq!(g.display_pct, 150, "label keeps climbing");
         assert_eq!(g.remaining_mins, 0);
         assert_eq!(g.status, GoalStatus::Reached);
@@ -171,7 +172,7 @@ mod tests {
     fn zero_or_negative_goal_collapses_to_safe_zero() {
         let g = compute(60 * 60, 0);
         assert_eq!(g.display_pct, 0);
-        assert_eq!(g.arc_pct, 0.0);
+        assert_f64_eq!(g.arc_pct, 0.0);
         assert_eq!(g.status, GoalStatus::InProgress);
     }
 

@@ -44,3 +44,36 @@ macro_rules! assert_matches {
 }
 
 pub(crate) use assert_matches;
+
+/// Assert that two `f64`s are bit-identical. For tests asserting on a
+/// function-under-test's exact return value where the math IS exact
+/// (integer divisions with non-zero divisors, capped ratios, sentinel
+/// 0.0 / 1.0), this is the clippy-clean alternative to
+/// `assert_eq!(actual, expected)` — the bit-pattern comparison
+/// sidesteps `clippy::float_cmp` without an epsilon dance.
+///
+/// Failure message is human-readable (the floats themselves, not the
+/// underlying u64 bits): `assert_f64_eq!: expected 0.0, got 0.0000…`.
+macro_rules! assert_f64_eq {
+    ($actual:expr, $expected:expr $(,)?) => {{
+        let actual: f64 = $actual;
+        let expected: f64 = $expected;
+        assert_eq!(
+            actual.to_bits(),
+            expected.to_bits(),
+            "assert_f64_eq!: expected {expected}, got {actual}",
+        );
+    }};
+    ($actual:expr, $expected:expr, $($msg:tt)+) => {{
+        let actual: f64 = $actual;
+        let expected: f64 = $expected;
+        assert_eq!(
+            actual.to_bits(),
+            expected.to_bits(),
+            "{}: expected {expected}, got {actual}",
+            format_args!($($msg)+),
+        );
+    }};
+}
+
+pub(crate) use assert_f64_eq;
