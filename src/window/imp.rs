@@ -364,7 +364,7 @@ impl MeditateWindow {
 
                 // Perimeter geometry lives in core so the Android
                 // running page draws the same path.
-                let (x, y) = meditate_core::breath::perimeter_point(phase, t, pad, side);
+                let (x, y) = phase.perimeter_point(t, pad, side);
 
                 // Halo (semi-transparent accent).
                 cr.set_source_rgba(ar, ag, ab, 0.30);

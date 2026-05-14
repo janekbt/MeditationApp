@@ -99,27 +99,28 @@ impl Phase {
             Phase::Out => PhaseRunningLabelKey::BreatheOut,
         }
     }
-}
 
-/// Position of the moving dot on the Box-Breath running page's
-/// square perimeter, given the current phase + intra-phase progress
-/// `t ∈ [0, 1]`. `pad` is the inset (top/left offset of the square
-/// inside the drawing area) and `side` is the square's side length.
-/// Phases run clockwise from the bottom-left corner so inhalation
-/// reads as upward motion and exhalation as downward — reinforcing
-/// the breath metaphor. The shell consumes `(x, y)` directly into
-/// its native drawing call.
-pub fn perimeter_point(phase: Phase, t: f64, pad: f64, side: f64) -> (f64, f64) {
-    let t = t.clamp(0.0, 1.0);
-    match phase {
-        // In: left edge, bottom → top.
-        Phase::In => (pad, pad + side * (1.0 - t)),
-        // HoldIn: top edge, left → right.
-        Phase::HoldIn => (pad + side * t, pad),
-        // Out: right edge, top → bottom.
-        Phase::Out => (pad + side, pad + side * t),
-        // HoldOut: bottom edge, right → left.
-        Phase::HoldOut => (pad + side * (1.0 - t), pad + side),
+    /// Position of the moving dot on the Box-Breath running page's
+    /// square perimeter, given the current phase + intra-phase
+    /// progress `t ∈ [0, 1]`. `pad` is the inset (top/left offset
+    /// of the square inside the drawing area) and `side` is the
+    /// square's side length. Phases run clockwise from the
+    /// bottom-left corner so inhalation reads as upward motion and
+    /// exhalation as downward — reinforcing the breath metaphor.
+    /// The shell consumes `(x, y)` directly into its native drawing
+    /// call.
+    pub fn perimeter_point(self, t: f64, pad: f64, side: f64) -> (f64, f64) {
+        let t = t.clamp(0.0, 1.0);
+        match self {
+            // In: left edge, bottom → top.
+            Phase::In => (pad, pad + side * (1.0 - t)),
+            // HoldIn: top edge, left → right.
+            Phase::HoldIn => (pad + side * t, pad),
+            // Out: right edge, top → bottom.
+            Phase::Out => (pad + side, pad + side * t),
+            // HoldOut: bottom edge, right → left.
+            Phase::HoldOut => (pad + side * (1.0 - t), pad + side),
+        }
     }
 }
 
@@ -513,38 +514,38 @@ mod tests {
         //   (110, 110) bottom-right
         //   (10, 110)  bottom-left
         // In starts at bottom-left, ends at top-left.
-        assert_eq!(perimeter_point(Phase::In, 0.0, 10.0, 100.0), (10.0, 110.0));
+        assert_eq!(Phase::In.perimeter_point(0.0, 10.0, 100.0), (10.0, 110.0));
         // HoldIn starts at top-left.
-        assert_eq!(perimeter_point(Phase::HoldIn, 0.0, 10.0, 100.0), (10.0, 10.0));
+        assert_eq!(Phase::HoldIn.perimeter_point(0.0, 10.0, 100.0), (10.0, 10.0));
         // Out starts at top-right.
-        assert_eq!(perimeter_point(Phase::Out, 0.0, 10.0, 100.0), (110.0, 10.0));
+        assert_eq!(Phase::Out.perimeter_point(0.0, 10.0, 100.0), (110.0, 10.0));
         // HoldOut starts at bottom-right.
-        assert_eq!(perimeter_point(Phase::HoldOut, 0.0, 10.0, 100.0), (110.0, 110.0));
+        assert_eq!(Phase::HoldOut.perimeter_point(0.0, 10.0, 100.0), (110.0, 110.0));
     }
 
     #[test]
     fn perimeter_point_ends_each_phase_at_the_next_corner() {
         // In ends at top-left.
-        assert_eq!(perimeter_point(Phase::In, 1.0, 10.0, 100.0), (10.0, 10.0));
+        assert_eq!(Phase::In.perimeter_point(1.0, 10.0, 100.0), (10.0, 10.0));
         // HoldIn ends at top-right.
-        assert_eq!(perimeter_point(Phase::HoldIn, 1.0, 10.0, 100.0), (110.0, 10.0));
+        assert_eq!(Phase::HoldIn.perimeter_point(1.0, 10.0, 100.0), (110.0, 10.0));
         // Out ends at bottom-right.
-        assert_eq!(perimeter_point(Phase::Out, 1.0, 10.0, 100.0), (110.0, 110.0));
+        assert_eq!(Phase::Out.perimeter_point(1.0, 10.0, 100.0), (110.0, 110.0));
         // HoldOut ends at bottom-left.
-        assert_eq!(perimeter_point(Phase::HoldOut, 1.0, 10.0, 100.0), (10.0, 110.0));
+        assert_eq!(Phase::HoldOut.perimeter_point(1.0, 10.0, 100.0), (10.0, 110.0));
     }
 
     #[test]
     fn perimeter_point_clamps_progress_outside_unit_range() {
         // t below 0 clamps to phase start.
         assert_eq!(
-            perimeter_point(Phase::In, -0.5, 10.0, 100.0),
-            perimeter_point(Phase::In, 0.0, 10.0, 100.0),
+            Phase::In.perimeter_point(-0.5, 10.0, 100.0),
+            Phase::In.perimeter_point(0.0, 10.0, 100.0),
         );
         // t above 1 clamps to phase end.
         assert_eq!(
-            perimeter_point(Phase::HoldIn, 2.0, 10.0, 100.0),
-            perimeter_point(Phase::HoldIn, 1.0, 10.0, 100.0),
+            Phase::HoldIn.perimeter_point(2.0, 10.0, 100.0),
+            Phase::HoldIn.perimeter_point(1.0, 10.0, 100.0),
         );
     }
 }

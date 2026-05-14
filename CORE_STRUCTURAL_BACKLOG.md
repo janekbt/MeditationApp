@@ -11,21 +11,6 @@ rationale.
 
 ## Tier 1 — High-impact, mostly mechanical
 
-### Free-fn vs method inconsistency on the same enum
-- `breath::Phase::index()` is a method (`breath.rs:24`);
-  `breath::phase_running_label_key(Phase)` is a free fn
-  (`:46`); `breath::perimeter_point(Phase, t, pad, side)`
-  is free (`:62`). All three do a 4-arm match on `Phase`.
-- Also: `session::Session::toggle_action(ui_state)` is
-  associated fn but `session::ui_state(Option<&Session>)`
-  is free — symmetric API, asymmetric placement.
-- Also: `bells::ActiveBell` has methods AND a free
-  `bells::session_bells_from_db` builder.
-- Fix: pick "method-on-enum/struct when the receiver type
-  is the primary subject; free fn otherwise" and audit.
-  `Phase::running_label_key()`, `Phase::perimeter_point(t,
-  pad, side)`, `BellCue::resolve_sound_name(library)`.
-
 ### `Audio device disappears mid-playback` — no error wiring
 - `src/sound.rs`. `gtk::MediaFile::for_file(...)` returned
   objects never have `connect_error` or `notify::error`
@@ -700,6 +685,19 @@ avoid silently losing items in a rewrite.
   PR.
 
 ## Skipped (intentionally not migrating)
+
+### Free-fn vs method inconsistency on the same enum (residual)
+- `Phase::perimeter_point` shipped as the one clear-win move
+  from the original entry. The rest is skipped:
+  `session::ui_state(Option<&Session>)` ↔
+  `Session::toggle_action(UiState)` is a real asymmetry but the
+  resolution isn't unambiguous (UiState is the primary subject
+  of both; promoting either would just shift the asymmetry).
+  `bells::session_bells_from_db` is part of a coherent `*_from_db`
+  family of free fns in `bells.rs` — calling it inconsistent is
+  a stretch. `BellCue::resolve_sound_name(library)` proposes a
+  different API shape (library snapshot vs `&Database`), so it's
+  a separate decision rather than a refactor of the current fn.
 
 ### Remaining `bool` parameters in public APIs
 - Skipped as a sweep: high-leverage sites already shipped
