@@ -186,8 +186,78 @@ fn android_main(android_app: slint::android::AndroidApp) {
     // it (cloned) later to fire the foreground-service start/stop
     // JNI calls. AndroidApp is Clone + Send + Sync, so this is sound.
     let _ = ANDROID_APP.set(android_app.clone());
+    open_database(&android_app);
     slint::android::init(android_app).unwrap();
     let ui = build_ui();
     MaterialWindowAdapter::get(&ui).set_disable_hover(true);
     ui.run().unwrap();
+}
+
+// First slice of DB persistence: open (or create) the SQLite DB in
+// the app's internal_data_path, store the handle in a OnceLock so
+// later slices (session-finish write, stats query, crash-recovery
+// finalize) can reach it. Mirrors the GTK shell's `Application::
+// startup` pattern: a fixed `meditate.db` filename inside a
+// `meditate/` subdirectory of the per-app data dir.
+//
+// internal_data_path is already per-app-private on Android
+// (/data/data/<pkg>/files), so the `meditate/` nesting is purely
+// for parity with the GTK layout — keeps export/import tooling
+// simple if we ever need it. The handle is `Arc<Mutex<...>>`-able
+// via meditate_core::Database if a future thread (sync worker)
+// needs concurrent access; for now nothing else touches it.
+// Arc<Mutex<Option<Database>>> mirrors the GTK shell's
+// `application::imp::Application::db` field: rusqlite's Connection
+// is !Sync (it caches prepared statements via RefCell), so the
+// Mutex is mandatory for a process-wide handle. Option<> models the
+// "open failed at startup, still alive without persistence" state
+// that Phase 3's recovery surface will resolve.
+#[cfg(target_os = "android")]
+static DATABASE: std::sync::OnceLock<
+    std::sync::Arc<std::sync::Mutex<Option<meditate_core::Database>>>,
+> = std::sync::OnceLock::new();
+
+#[cfg(target_os = "android")]
+fn open_database(android_app: &slint::android::AndroidApp) {
+    // The GTK shell's `Application::startup` mirrors this exactly,
+    // just with `glib::user_data_dir()` standing in for
+    // internal_data_path. Keeping the file layout identical
+    // (<data>/meditate/{diagnostics.log,meditate.db}) means
+    // future export/import tooling works across both shells.
+    let Some(data_root) = android_app.internal_data_path() else {
+        // No logger yet at this point, so eprintln + early return —
+        // this branch only fires on a wholly broken android-activity
+        // wiring, never in normal use.
+        eprintln!("db.open FAILED: internal_data_path unavailable");
+        return;
+    };
+    let dir = data_root.join("meditate");
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        eprintln!("db.open FAILED creating {}: {e}", dir.display());
+        return;
+    }
+    // Init the diag log first so the open-result line below has a
+    // place to land. diag::init creates dir if missing (we already
+    // did, but the call is idempotent) and installs a panic hook.
+    meditate_core::diag::init(&dir);
+    let db_path = dir.join("meditate.db");
+    let opened = match meditate_core::Database::open(&db_path) {
+        Ok(db) => {
+            meditate_core::log("db.open", &format!("ok path={}", db_path.display()));
+            Some(db)
+        }
+        Err(e) => {
+            // Phase 3 will add a Slint recovery surface mirroring the
+            // GTK shell's recovery window. For Phase 1's open-only
+            // slice the log line is the whole user-facing signal —
+            // a failed open just means stats / persistence is
+            // unavailable for this run; the timer still works.
+            meditate_core::log(
+                "db.open",
+                &format!("FAILED path={} err={e:?}", db_path.display()),
+            );
+            None
+        }
+    };
+    let _ = DATABASE.set(std::sync::Arc::new(std::sync::Mutex::new(opened)));
 }
