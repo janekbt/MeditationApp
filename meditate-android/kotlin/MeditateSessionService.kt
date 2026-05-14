@@ -29,6 +29,8 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.session.MediaSession
+import android.media.session.PlaybackState
 import android.os.Build
 import android.os.IBinder
 
@@ -104,9 +106,36 @@ class MeditateSessionService : Service() {
         }
     }
 
+    // MediaSession is the lever that pins our notification in the
+    // Media-controls section of the notification shade (the slot
+    // music players live in). Without it, the FGS notification lands
+    // in the regular swipeable section — Android 14+ relaxed the
+    // setOngoing-blocks-swipe rule, so Media is the only reliable
+    // pin path. The session itself doesn't drive any audio playback
+    // — Phase 5 will plug bell-cue audio into the same session.
+    private var mediaSession: MediaSession? = null
+
     override fun onCreate() {
         super.onCreate()
         createChannel()
+        mediaSession = MediaSession(this, "Meditate").apply {
+            setPlaybackState(
+                PlaybackState.Builder()
+                    // STATE_PLAYING + isActive=true is the combination
+                    // Android uses to decide "this is active media,
+                    // pin the notification". Position is unknown
+                    // because we're not actually streaming audio yet
+                    // (Phase 1) — speed 1.0 keeps the position
+                    // counter idle rather than scrubbing.
+                    .setState(
+                        PlaybackState.STATE_PLAYING,
+                        PlaybackState.PLAYBACK_POSITION_UNKNOWN,
+                        1.0f,
+                    )
+                    .build(),
+            )
+            isActive = true
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -129,6 +158,16 @@ class MeditateSessionService : Service() {
         // session on the next launch; we don't want a zombie
         // service running with no UI counterpart.
         return START_NOT_STICKY
+    }
+
+    override fun onDestroy() {
+        // MediaSession holds a system-side binder; leaking it shows
+        // up as a ghost media control until the next reboot. release()
+        // also clears isActive/playback state so a stray scan can't
+        // resurrect our pin slot.
+        mediaSession?.release()
+        mediaSession = null
+        super.onDestroy()
     }
 
     // No client binding — this is a started-service, not a bound-
@@ -157,12 +196,22 @@ class MeditateSessionService : Service() {
         // custom resource, and reads as "session in progress" at a
         // glance in the notification shade. Phase 8's theming pass
         // can swap to a meditate-branded vector drawable.
+        //
+        // MediaStyle + the session token is what lands us in the
+        // shade's Media-controls section instead of the regular
+        // dismissible list. setOngoing(true) still helps for the
+        // (uncommon) case where the session is briefly inactive but
+        // the service hasn't stopped yet.
+        val style = Notification.MediaStyle()
+        mediaSession?.let { style.setMediaSession(it.sessionToken) }
         return Notification.Builder(this, CHANNEL_ID)
             .setContentTitle("Meditate")
             .setContentText("Session in progress")
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setOngoing(true)
+            .setCategory(Notification.CATEGORY_TRANSPORT)
             .setContentIntent(buildContentIntent())
+            .setStyle(style)
             .build()
     }
 
