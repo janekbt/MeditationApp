@@ -1,0 +1,75 @@
+# xbuild config for the meditate-android crate. xbuild parses this
+# at `<package_root>/manifest.yaml` and emits AndroidManifest.xml from
+# the `manifest` block; an alternative `[package.metadata.android]`
+# table in Cargo.toml is NOT read by current xbuild.
+#
+# The Gradle pipeline (`gradle: true`) is required because we ship a
+# Kotlin foreground service (see `kotlin/MeditateSessionService.kt`);
+# the direct-APK pipeline can't link Kotlin sources. The corresponding
+# Gradle install lives in `build-aux/setup-android.sh`.
+#
+# Service declaration support comes from xbuild PR #224
+# (LAGonauta:add-services-field) — upstream xbuild's manifest struct
+# has no `<service>` element. setup-android.sh pins the fork.
+
+android:
+  gradle: true
+  manifest:
+    # Reverse-DNS app id matches the GTK shell's Flatpak app-id, so
+    # F-Droid / Play / Flathub all see the same canonical identity.
+    # The previous default (com.example.meditate_android) was a
+    # placeholder xbuild generated when no package was specified.
+    package: io.github.janekbt.Meditate
+    version_code: 1
+    version_name: "0.1.0"
+
+    sdk:
+      # API 26 (Oreo) covers >95% of in-use Android devices and is
+      # the floor for mediaPlayback's modern lifecycle behaviour.
+      # Target SDK temporarily pinned to 34 — build-tools 35.0.0 +
+      # android-35's android.jar trips aapt2's resource-table
+      # parser ("RES_TABLE_TYPE_TYPE entry offsets overlap actual
+      # entry data"). Revisit when newer build-tools land.
+      min_sdk_version: 26
+      target_sdk_version: 34
+
+    uses_permission:
+      # FOREGROUND_SERVICE: required for any foreground service since
+      # Android 9 (API 28).
+      - name: android.permission.FOREGROUND_SERVICE
+      # FOREGROUND_SERVICE_MEDIA_PLAYBACK: per-type permission gating
+      # added in Android 14 (API 34). Without it the service start
+      # throws SecurityException on 14+.
+      - name: android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK
+      # POST_NOTIFICATIONS: runtime permission for posting any
+      # notification on Android 13+ (API 33). The first session
+      # start triggers a system permission prompt; declining leaves
+      # the service running but invisible (no notification chrome).
+      - name: android.permission.POST_NOTIFICATIONS
+
+    application:
+      label: Meditate
+      # has_code=true tells Android the APK contains dex classes. xbuild
+      # defaults this to FALSE for non-wry apps because the canonical
+      # NativeActivity flow has no Java/Kotlin sources. With Gradle +
+      # Kotlin (foreground service), the dex files ARE present but the
+      # app classloader silently ignores them when hasCode=false —
+      # PathClassLoader sees empty DexPathList and every loadClass call
+      # for one of our own classes throws ClassNotFoundException. That
+      # was the exact crash we hit before flipping this.
+      has_code: true
+      services:
+        # MeditateSessionService keeps the timer alive across
+        # screen-off and app-switch. Lives in `kotlin/` and is
+        # compiled into the APK via the Gradle pipeline. Not
+        # exported — only this app's process binds to it.
+        #
+        # foreground_service_type=mediaPlayback claims the right
+        # type up front, even though Phase 1 has no bell audio yet.
+        # When Phase 5 lands real audio cues, the service will
+        # actually play them; switching the type later means
+        # promoting the app's permission set + re-installing, so we
+        # eat the future-permission cost now.
+        - name: .MeditateSessionService
+          exported: false
+          foreground_service_type: mediaPlayback

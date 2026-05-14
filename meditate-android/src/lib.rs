@@ -1,4 +1,6 @@
 pub mod app;
+#[cfg(target_os = "android")]
+mod service;
 
 slint::include_modules!();
 
@@ -7,6 +9,36 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
+
+// Process-wide handle to the AndroidApp. Stored at android_main
+// entry so the AppState transition callbacks (which live inside
+// closures and don't own the AndroidApp) can reach the JNI bridge.
+// android-activity's AndroidApp is `Clone + Send + Sync` per its
+// docs, so OnceLock storage is sound.
+#[cfg(target_os = "android")]
+static ANDROID_APP: OnceLock<slint::android::AndroidApp> = OnceLock::new();
+
+/// React to an AppState transition. If the session just started
+/// (Idle/Finished → Active), kick the foreground service. If it
+/// just ended (Active → Idle/Finished), tear it down. No-op on
+/// host builds — the foreground service only exists on Android.
+fn on_state_changed(was_active: bool, is_active: bool) {
+    #[cfg(target_os = "android")]
+    {
+        if !was_active && is_active {
+            if let Some(app) = ANDROID_APP.get() {
+                service::start(app);
+            }
+        } else if was_active && !is_active {
+            if let Some(app) = ANDROID_APP.get() {
+                service::stop(app);
+            }
+        }
+    }
+    // Touched the args so the host build doesn't complain about
+    // unused parameters under cfg-disabled code.
+    let _ = (was_active, is_active);
+}
 
 // Default duration the steppers seed with on first open. 10 minutes
 // mirrors the GTK shell's default starting position for a freshly
@@ -72,9 +104,11 @@ fn build_ui() -> MainWindow {
             let Some(ui) = weak.upgrade() else { return; };
             let target = configured_duration(&ui);
             let mut s = state.borrow_mut();
+            let was_active = s.is_active();
             let next = std::mem::replace(&mut *s, AppState::idle())
                 .toggle(target, now);
             *s = next;
+            on_state_changed(was_active, s.is_active());
             refresh(&ui, &s, now);
         });
     }
@@ -84,7 +118,9 @@ fn build_ui() -> MainWindow {
         let state = state.clone();
         ui.on_stop_tap(move || {
             let mut s = state.borrow_mut();
+            let was_active = s.is_active();
             *s = std::mem::replace(&mut *s, AppState::idle()).stop();
+            on_state_changed(was_active, s.is_active());
             if let Some(ui) = weak.upgrade() {
                 refresh(&ui, &s, now_since_epoch());
             }
@@ -115,7 +151,13 @@ fn build_ui() -> MainWindow {
         timer.start(slint::TimerMode::Repeated, TICK, move || {
             let now = now_since_epoch();
             let mut s = state.borrow_mut();
+            // Capture before/after active-state so an auto-finish
+            // (Active → Finished on Overtime cross) tears down the
+            // foreground service. tick on an inactive state is a
+            // no-op, so the equality check is the cheap path.
+            let was_active = s.is_active();
             *s = std::mem::replace(&mut *s, AppState::idle()).tick(now);
+            on_state_changed(was_active, s.is_active());
             if let Some(ui) = weak.upgrade() {
                 refresh(&ui, &s, now);
             }
@@ -139,6 +181,11 @@ pub fn main() {
 #[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 fn android_main(android_app: slint::android::AndroidApp) {
+    // Stash the AndroidApp before consuming it: slint::android::init
+    // takes it by value, but the AppState transition callbacks need
+    // it (cloned) later to fire the foreground-service start/stop
+    // JNI calls. AndroidApp is Clone + Send + Sync, so this is sound.
+    let _ = ANDROID_APP.set(android_app.clone());
     slint::android::init(android_app).unwrap();
     let ui = build_ui();
     MaterialWindowAdapter::get(&ui).set_disable_hover(true);

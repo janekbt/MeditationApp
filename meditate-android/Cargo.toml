@@ -40,14 +40,22 @@ slint = { version = "1.13", features = ["backend-android-activity-06"] }
 # turn meditate-core into a maintenance burden.
 meditate-core = { path = "../meditate-core" }
 
+# jni: thin wrapper over Android's JNI for calling the Kotlin
+# MeditateSessionService.start/stop static methods from Rust. Only
+# linked on android-targets via the cfg gate in `src/service.rs`;
+# host (`cargo run`) builds skip the dependency at link time.
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+# android-activity exposes the AndroidApp's vm()+activity() pointers
+# we need for the JNI bridge. Pin to whatever slint-1.13's
+# `backend-android-activity-06` feature resolves to (0.6.x).
+android-activity = "0.6"
+
 [build-dependencies]
 slint-build = "1.13"
 
-# `cargo apk` / `xbuild` read this block for the Android manifest.
-# Reverse-DNS package id matches the GTK shell's flatpak app-id.
-[package.metadata.android]
-package = "io.github.janekbt.Meditate"
-apk_name = "meditate-android"
-
-[package.metadata.android.application]
-label = "Meditate"
+# Android manifest config lives in `manifest.yaml` at the package
+# root, NOT here — current xbuild (LAGonauta fork tracking PR #224)
+# reads `<package_root>/manifest.yaml`, never the
+# `[package.metadata.android]` Cargo metadata table. A legacy
+# cargo-apk-era block previously sat here and was silently ignored.

@@ -44,6 +44,14 @@ impl AppState {
     pub fn is_finished(&self) -> bool {
         matches!(self, Self::Finished)
     }
+    /// Whether the timer is in flight (Running OR Paused). Distinct
+    /// from `is_running` because Paused is also "active": the
+    /// foreground service should stay up across pause, so the OS
+    /// doesn't reclaim the process and lose the frozen-elapsed
+    /// state stored in the Stopwatch.
+    pub fn is_active(&self) -> bool {
+        matches!(self, Self::Active(_))
+    }
 
     /// Primary action: Start / Pause / Resume / Restart depending
     /// on current state. `total` is consulted only when starting a
