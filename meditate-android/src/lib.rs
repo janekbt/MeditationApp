@@ -172,6 +172,36 @@ fn resolved_label_for_mode(
     Some((label.name, label.id))
 }
 
+/// Push the chooser's `label-items` + the ExpanderRow's resolved
+/// name into the Slint window. Called on chooser open + after any
+/// CRUD action (create / rename / delete) so the user sees the
+/// post-change state without manually re-entering the chooser.
+#[cfg(target_os = "android")]
+fn refresh_label_state(ui: &MainWindow, mode: meditate_core::SessionMode) {
+    let current_id = if read_label_active_for_mode(mode) {
+        resolved_label_for_mode(mode).map(|(_, id)| id)
+    } else {
+        None
+    };
+    let items: Vec<LabelItem> = list_labels_with_selection(current_id)
+        .into_iter()
+        .map(|(id, name, selected)| LabelItem {
+            id: id as i32,
+            name: name.into(),
+            selected,
+        })
+        .collect();
+    ui.set_label_items(
+        std::rc::Rc::new(slint::VecModel::from(items)).into(),
+    );
+    ui.set_label_name(
+        resolved_label_for_mode(mode)
+            .map(|(name, _)| name)
+            .unwrap_or_default()
+            .into(),
+    );
+}
+
 /// Build the row list for the label chooser overlay. Each row
 /// carries the local rowid (id), display name, and a `selected`
 /// flag that mirrors `current_id`. Returned as a plain Vec the
@@ -231,6 +261,66 @@ fn validate_label_name(name: &str) -> bool {
         meditate_core::db::is_label_name_taken_from_db(db, n, 0).unwrap_or(false)
     });
     validity.is_savable()
+}
+
+/// Rename-flavour of `validate_label_name`: pass the label's own
+/// id as `except_id` so the unchanged name (or a case-only edit
+/// of it) doesn't trip the collision check. Mirrors GTK's
+/// `is_label_name_taken(name, label_id)` call inside
+/// `present_rename_label_dialog`.
+#[cfg(target_os = "android")]
+fn validate_rename_label_name(name: &str, except_id: i64) -> bool {
+    let trimmed = name.trim();
+    let Some(db_arc) = DATABASE.get() else { return false; };
+    let Ok(guard) = db_arc.lock() else { return false; };
+    let Some(db) = guard.as_ref() else { return false; };
+    let validity = meditate_core::validate(trimmed, |n| {
+        meditate_core::db::is_label_name_taken_from_db(db, n, except_id).unwrap_or(false)
+    });
+    validity.is_savable()
+}
+
+/// Look up a label's current name by rowid — used to pre-fill
+/// the Rename dialog's text entry. Mirrors the GTK shell's
+/// `row.title()` read at `present_rename_label_dialog`'s call site
+/// (`labels.rs:204`).
+#[cfg(target_os = "android")]
+fn lookup_label_name(id: i64) -> Option<String> {
+    let db_arc = DATABASE.get()?;
+    let guard = db_arc.lock().ok()?;
+    let db = guard.as_ref()?;
+    meditate_core::db::list_labels_from_db(db)
+        .ok()?
+        .into_iter()
+        .find(|l| l.id == id)
+        .map(|l| l.name)
+}
+
+#[cfg(target_os = "android")]
+fn rename_label_in_db(id: i64, name: &str) -> bool {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let Some(db_arc) = DATABASE.get() else { return false; };
+    let Ok(guard) = db_arc.lock() else { return false; };
+    let Some(db) = guard.as_ref() else { return false; };
+    match db.update_label(id, trimmed) {
+        Ok(()) => {
+            meditate_core::log(
+                "labels.rename",
+                &format!("ok id={id} new_name={trimmed}"),
+            );
+            true
+        }
+        Err(e) => {
+            meditate_core::log(
+                "labels.rename",
+                &format!("update FAILED id={id} new_name={trimmed} err={e:?}"),
+            );
+            false
+        }
+    }
 }
 
 /// Insert a new label row + return `(rowid, uuid)`. Mirrors the
@@ -662,23 +752,7 @@ fn build_ui() -> MainWindow {
             #[cfg(target_os = "android")]
             {
                 let Some(ui) = weak.upgrade() else { return; };
-                let mode: meditate_core::SessionMode = current_mode.get().into();
-                let current_id = if read_label_active_for_mode(mode) {
-                    resolved_label_for_mode(mode).map(|(_, id)| id)
-                } else {
-                    None
-                };
-                let items: Vec<LabelItem> = list_labels_with_selection(current_id)
-                    .into_iter()
-                    .map(|(id, name, selected)| LabelItem {
-                        id: id as i32,
-                        name: name.into(),
-                        selected,
-                    })
-                    .collect();
-                ui.set_label_items(
-                    std::rc::Rc::new(slint::VecModel::from(items)).into(),
-                );
+                refresh_label_state(&ui, current_mode.get().into());
                 ui.set_labels_page(true);
             }
             let _ = (weak.clone(), current_mode.get());
@@ -743,16 +817,78 @@ fn build_ui() -> MainWindow {
                 if let Some((_id, uuid)) = create_label_in_db(&text) {
                     let mode: meditate_core::SessionMode = current_mode.get().into();
                     write_label_uuid_for_mode(mode, &uuid);
-                    ui.set_label_name(
-                        resolved_label_for_mode(mode)
-                            .map(|(name, _)| name)
-                            .unwrap_or_default()
-                            .into(),
-                    );
+                    refresh_label_state(&ui, mode);
                 }
             }
             ui.set_create_label_dialog_open(false);
             ui.set_labels_page(false);
+            let _ = current_mode.get();
+        });
+    }
+
+    // Rename pencil tap — pre-fill the dialog with the row's
+    // current name + open it. `rename-label-valid` starts true
+    // (the unchanged name is always valid against the row's own
+    // id, thanks to `except_id`). Mirrors GTK's
+    // `present_rename_label_dialog`'s initial `validate()` call
+    // at `labels.rs:333`.
+    {
+        let weak = ui.as_weak();
+        ui.on_rename_label_tap(move |id| {
+            let Some(ui) = weak.upgrade() else { return; };
+            #[cfg(target_os = "android")]
+            {
+                let current = lookup_label_name(id as i64).unwrap_or_default();
+                ui.set_rename_label_id(id);
+                ui.set_rename_label_text(current.into());
+                ui.set_rename_label_valid(true);
+                ui.set_rename_label_dialog_open(true);
+            }
+            #[cfg(not(target_os = "android"))]
+            let _ = (ui, id);
+        });
+    }
+
+    // Rename-label text changed — revalidate against the same
+    // collision check Create uses, but with the row's id as
+    // `except_id` so the user can keep typing the existing name
+    // (case-only edits, undo a typo, etc.). Mirrors GTK's
+    // `entry.connect_changed` at `labels.rs:335`.
+    {
+        let weak = ui.as_weak();
+        ui.on_rename_label_changed(move |text| {
+            if let Some(ui) = weak.upgrade() {
+                #[cfg(target_os = "android")]
+                {
+                    let id = ui.get_rename_label_id() as i64;
+                    ui.set_rename_label_valid(validate_rename_label_name(&text, id));
+                }
+                #[cfg(not(target_os = "android"))]
+                let _ = (ui, text);
+            }
+        });
+    }
+
+    // Rename button pressed — call `db.update_label` and refresh
+    // the chooser + ExpanderRow. The active-mode UUID setting
+    // doesn't need a write — the row's UUID is unchanged, only
+    // the name is. Mirrors GTK's `update_label + rebuilder()` at
+    // `labels.rs:344-350`.
+    {
+        let weak = ui.as_weak();
+        let current_mode = current_mode.clone();
+        ui.on_rename_label_confirm(move || {
+            let Some(ui) = weak.upgrade() else { return; };
+            #[cfg(target_os = "android")]
+            {
+                let id = ui.get_rename_label_id() as i64;
+                let text = ui.get_rename_label_text().to_string();
+                if rename_label_in_db(id, &text) {
+                    let mode: meditate_core::SessionMode = current_mode.get().into();
+                    refresh_label_state(&ui, mode);
+                }
+            }
+            ui.set_rename_label_dialog_open(false);
             let _ = current_mode.get();
         });
     }

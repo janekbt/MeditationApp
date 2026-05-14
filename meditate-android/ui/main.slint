@@ -578,6 +578,17 @@ export component MainWindow inherits Window {
     in-out property <string> create-label-text: "";
     in property <bool> create-label-valid: false;
 
+    // Rename-label dialog state. Same shape as the Create
+    // dialog, but Rust passes the label's own id as `except_id`
+    // when revalidating so a user retyping the existing name
+    // (e.g., to fix capitalisation) doesn't trip the collision
+    // check. Mirrors `present_rename_label_dialog` in
+    // `meditate-gtk/src/labels.rs`.
+    in-out property <bool> rename-label-dialog-open: false;
+    in-out property <int> rename-label-id: 0;
+    in-out property <string> rename-label-text: "";
+    in property <bool> rename-label-valid: false;
+
     in-out property <bool> duration-dialog-open: false;
     in-out property <int> dialog-hours: 0;
     in-out property <int> dialog-minutes: 10;
@@ -602,6 +613,9 @@ export component MainWindow inherits Window {
     callback create-label-tap();
     callback create-label-changed(string);
     callback create-label-confirm();
+    callback rename-label-tap(int);
+    callback rename-label-changed(string);
+    callback rename-label-confirm();
     // Hardware back button + Android predictive back gesture.
     // Wired through a root-level FocusScope so the key event
     // reaches us no matter which sub-element holds focus. Rust
@@ -1130,10 +1144,11 @@ export component MainWindow inherits Window {
                             // Check-mark suffix on the currently-
                             // selected row — mirrors GTK's
                             // `object-select-symbolic` indicator.
-                            // SVG via Material's bundled Icons.check.
-                            // VerticalLayout centers the image
-                            // inside the 56-px row (without the
-                            // wrapper the Image is top-aligned).
+                            // GTK adds this suffix BEFORE the rename
+                            // + delete buttons (labels.rs:171 vs
+                            // 174-175), so visually it lands to
+                            // their left. VerticalLayout centers
+                            // the image inside the 56-px row.
                             if item.selected : VerticalLayout {
                                 alignment: center;
                                 Image {
@@ -1141,6 +1156,17 @@ export component MainWindow inherits Window {
                                     colorize: MaterialPalette.primary;
                                     width: 20px;
                                     height: 20px;
+                                }
+                            }
+                            // Rename pencil button — mirrors GTK's
+                            // `add_rename_button` (labels.rs:187).
+                            // VerticalLayout centers the 40 px
+                            // IconButton in the 56 px row.
+                            VerticalLayout {
+                                alignment: center;
+                                IconButton {
+                                    icon: Icons.edit;
+                                    clicked => { root.rename-label-tap(item.id); }
                                 }
                             }
                         }
@@ -1290,6 +1316,64 @@ export component MainWindow inherits Window {
                         text: "Create";
                         enabled: root.create-label-valid;
                         clicked => { root.create-label-confirm(); }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Rename-label dialog (modal overlay) ─────────────────────
+    // Mirrors `meditate-gtk/src/labels.rs::present_rename_label_dialog`:
+    // single-line text entry pre-filled by Rust with the
+    // current name, Cancel + Rename buttons (Rename initially
+    // enabled since the unchanged name is a valid Ok). Rust
+    // tracks the row's id via `rename-label-id` so the live
+    // validator can pass it as `except_id`.
+    if root.rename-label-dialog-open : Rectangle {
+        background: #00000080;
+        TouchArea {
+            clicked => { root.rename-label-dialog-open = false; }
+        }
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 320px;
+            height: rename-card-content.preferred-height;
+            background: MaterialPalette.surface-container-high;
+            border-radius: 28px;
+
+            TouchArea {}
+
+            rename-card-content := VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+
+                Text {
+                    text: "Rename Label";
+                    font-size: 22px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface;
+                }
+
+                TextField {
+                    label: "Label name";
+                    text <=> root.rename-label-text;
+                    edited(text) => { root.rename-label-changed(text); }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+
+                    TextButton {
+                        text: "Cancel";
+                        clicked => { root.rename-label-dialog-open = false; }
+                    }
+                    TextButton {
+                        text: "Rename";
+                        enabled: root.rename-label-valid;
+                        clicked => { root.rename-label-confirm(); }
                     }
                 }
             }
