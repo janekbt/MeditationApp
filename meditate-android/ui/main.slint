@@ -10,7 +10,8 @@
 
 import {
     FilledButton, OutlineButton, TextButton, TonalButton,
-    SegmentedButton, Switch, IconButton, TextField,
+    SegmentedButton, Switch, IconButton, TextField, NavigationBar,
+    AppBar,
     MaterialPalette,
 } from "@material";
 // Icons aren't re-exported through the `@material` alias the
@@ -20,6 +21,34 @@ import {
 // carry ✓, which rendered as a tofu box).
 import { Icons } from "../material-1.0/ui/icons/icons.slint";
 export { MaterialWindowAdapter } from "@material";
+
+// One session card row in the Log feed. Mirrors GTK's
+// `build_card` content (`meditate-gtk/src/log/imp.rs:362`):
+// duration in minutes + time-of-day on the left, label chip +
+// note on the right.
+export struct LogCardItem {
+    id: int,
+    minutes: int,
+    time-of-day: string,
+    label-name: string,
+    note: string,
+    // Stable 0..7 colour-class index for the label name from
+    // `meditate_core::format::label_color_class_index`; -1 when
+    // the session has no label (Slint maps that to a dim grey
+    // stripe, mirroring GTK's `log-c-none` fallback).
+    color-index: int,
+}
+
+// One date section in the Log feed — a header (date + dimmed
+// count / total caption) plus the cards for that day. Built in
+// Rust via `build_section_frame` in the GTK shell; here Slint
+// renders the same shape via a `for section in log-sections`
+// inside the Log page.
+export struct LogDaySection {
+    date-display: string,
+    caption: string,
+    items: [LogCardItem],
+}
 
 // Row data for the Label chooser overlay screen. `id` is the
 // local DB rowid (matches `meditate_core::db::Label::id` and is
@@ -702,6 +731,18 @@ export component MainWindow inherits Window {
     in property <string> done-label-name: "";
     in-out property <int> done-label-id: 0;
 
+    // Top-level navigation: 0 = Timer page (Setup + Running +
+    // Done overlays; the existing single-screen experience),
+    // 1 = Log page (session feed grouped by day). Mirrors GTK's
+    // `AdwViewStack` with Timer / Log / Stats / Preferences
+    // children; this slice ships only the first two destinations.
+    in-out property <int> nav-page: 0;
+
+    // Sessions rendered in the Log page. Rust pre-groups by date
+    // and pushes a `[LogDaySection]`; Slint iterates sections +
+    // their items. Empty array → Log empty state.
+    in property <[LogDaySection]> log-sections: [];
+
     // Routing flag for the shared label chooser overlay:
     //   0 = opened from the Setup expander row (existing flow —
     //       picks write to the active mode's UUID setting).
@@ -798,6 +839,8 @@ export component MainWindow inherits Window {
     // decides whether to navigate up one level (close an overlay
     // / dismiss Done) or fall through to "close the app".
     callback back-pressed();
+    // Bottom NavigationBar selection changed.
+    callback nav-changed(int);
 
     // Slide offset driving the Running screen's slide-over. 0 px
     // means Running is parked at x=width (off-screen right) and
@@ -809,6 +852,39 @@ export component MainWindow inherits Window {
     // slow finish — so the two shells feel related, not just look it.
     property <length> screen-offset: root.running-page ? root.width : 0px;
     animate screen-offset { duration: 300ms; easing: ease-out; }
+
+    // Bottom NavigationBar reserves a fixed slab at the bottom
+    // of the window; every top-level page (Setup, Log) sizes its
+    // height to `parent.height - nav-bar-height` so the content
+    // never sits beneath the bar.
+    property <length> nav-bar-height: 80px;
+
+    // Top AppBar (title + Preferences button) on top of every
+    // main page. 64 px matches Material's stock AppBar min
+    // height. The base pages (Setup, Log) live below it; the
+    // Running / Done / Labels overlays cover the header since
+    // they're full-window destinations.
+    property <length> header-bar-height: 64px;
+
+    // System status-bar inset. Slint's android backend doesn't
+    // currently surface `WindowInsets`, so this is a hard-coded
+    // approximation tuned to Janek's Fairphone 5 (Android 15) —
+    // the AppBar content + Preferences icon both need padding
+    // out of the notch / status-symbol zone. Keep tweakable
+    // until safe-area-inset wiring lands (phase 8 polish).
+    property <length> status-bar-inset: 36px;
+
+    // Mirror inset along the bottom edge — half the top inset is
+    // enough to keep the NavigationBar + Pause/Stop / Save /
+    // Discard rows clear of the system gesture hint and the
+    // rounded screen-corner mask. Same hard-coded fallback
+    // pattern as `status-bar-inset` until proper insets land.
+    property <length> bottom-bar-inset: root.status-bar-inset / 2;
+
+    // Trailing icon button on the top header — taps will open
+    // a future Preferences sheet. No-op for now; placeholder
+    // until phase 7 lands the preferences UI.
+    callback preferences-tap();
 
     // Slide offset for the Label chooser overlay. Symmetric
     // 300 ms in both directions — mirrors the GTK
@@ -859,15 +935,28 @@ export component MainWindow inherits Window {
     // x=width on Save / Discard. Setup itself never moves and
     // never hides — it just gets covered.
     Rectangle {
+        visible: root.nav-page == 0;
         x: 0;
         width: parent.width;
         height: parent.height;
 
-        VerticalLayout {
+        // Setup is wrapped in a Flickable so the content scrolls
+        // past the bottom NavigationBar when it overflows —
+        // mirrors GTK's `Gtk.ScrolledWindow { hscrollbar-policy:
+        // never; vexpand: true }` wrapper on the setup StackPage.
+        // Bottom padding equals `nav-bar-height` so the last row
+        // is reachable above the bar after scrolling.
+        Flickable {
+            width: 100%;
+            height: 100%;
+            viewport-width: self.width;
+            viewport-height: setup-stack.preferred-height;
+
+            setup-stack := VerticalLayout {
             padding-left: 24px;
             padding-right: 24px;
-            padding-top: 56px;
-            padding-bottom: 24px;
+            padding-top: root.status-bar-inset + root.header-bar-height + 16px;
+            padding-bottom: root.nav-bar-height + root.bottom-bar-inset + 24px;
             spacing: 20px;
             alignment: start;
 
@@ -1175,8 +1264,9 @@ export component MainWindow inherits Window {
                     }
                 }
             }
-        }
-    }
+            }   // close setup-stack VerticalLayout
+        }       // close Flickable
+    }           // close Setup Rectangle
 
     // ── Done screen (overlay) ───────────────────────────────────
     // Mirrors `meditate-gtk/data/ui/timer_view.blp`'s `done` stack
@@ -1191,18 +1281,34 @@ export component MainWindow inherits Window {
     // instant view-stack swap for both edges — we keep the slide
     // out per Janek's preference for the Android shell.)
     Rectangle {
+        visible: root.nav-page == 0;
         x: parent.width - root.done-offset;
         width: parent.width;
         height: parent.height;
         background: MaterialPalette.surface;
 
-        VerticalLayout {
+        Flickable {
+            width: 100%;
+            height: 100%;
+            viewport-width: self.width;
+            // `max(self.height, content.preferred-height)` keeps
+            // short Done screens vertically centred (content
+            // shorter than viewport → viewport height takes over
+            // and the inner VerticalLayout's `alignment: center`
+            // has slack to centre with); a long note grows the
+            // viewport past Flickable's height and scrolling
+            // kicks in (no more centring then, which is desired).
+            viewport-height: max(self.height, done-stack.preferred-height);
+
+            done-stack := VerticalLayout {
+            width: 100%;
+            height: parent.viewport-height;
             alignment: center;
             spacing: 18px;
             padding-left: 24px;
             padding-right: 24px;
-            padding-top: 24px;
-            padding-bottom: 24px;
+            padding-top: root.status-bar-inset + 24px;
+            padding-bottom: root.bottom-bar-inset + 24px;
 
             // Elapsed time — the user's "this is what you did"
             // readout. GTK uses `halign: center` on the label;
@@ -1273,8 +1379,9 @@ export component MainWindow inherits Window {
                     clicked => { root.save-tap(); }
                 }
             }
-        }
-    }
+            }   // close done-stack VerticalLayout
+        }       // close Flickable
+    }           // close Done Rectangle
 
     // ── Running screen ──────────────────────────────────────────
     // Hero + controls vertically centered on a pure-black canvas.
@@ -1284,6 +1391,7 @@ export component MainWindow inherits Window {
     // hero (digit countdown) and Box Breath visualisation (square
     // + perimeter dot). `bb-running-active` switches between them.
     Rectangle {
+        visible: root.nav-page == 0;
         x: parent.width - root.screen-offset;
         width: parent.width;
         height: parent.height;
@@ -1294,8 +1402,8 @@ export component MainWindow inherits Window {
             spacing: 24px;
             padding-left: 24px;
             padding-right: 24px;
-            padding-top: 24px;
-            padding-bottom: 24px;
+            padding-top: root.status-bar-inset + 24px;
+            padding-bottom: root.bottom-bar-inset + 24px;
 
             // Timer mode hero — digit countdown.
             if !root.bb-running-active : Text {
@@ -1455,14 +1563,15 @@ export component MainWindow inherits Window {
     // (mirrors the Setup page background) so a partial-slide
     // doesn't show through to whatever's underneath.
     Rectangle {
+        visible: root.nav-page == 0;
         x: parent.width - root.labels-offset;
         width: parent.width;
         height: parent.height;
         background: MaterialPalette.surface;
 
         VerticalLayout {
-            padding-top: 24px;
-            padding-bottom: 24px;
+            padding-top: root.status-bar-inset + 24px;
+            padding-bottom: root.bottom-bar-inset + 24px;
             padding-left: 16px;
             padding-right: 16px;
             spacing: 16px;
@@ -1903,6 +2012,280 @@ export component MainWindow inherits Window {
                     }
                 }
             }
+        }
+    }
+
+    // ── Log page (base layer, nav-page == 1) ────────────────────
+    // Mirrors GTK's `log_view.blp` Stack: empty state vs. list.
+    // Scrollable via Flickable to match GTK's outer
+    // `Gtk.ScrolledWindow`. Date sections + cards are rendered
+    // from `log-sections` which Rust populates after every Save
+    // and on every navigation into the Log page.
+    Rectangle {
+        visible: root.nav-page == 1;
+        x: 0;
+        width: parent.width;
+        height: parent.height;
+        background: MaterialPalette.surface;
+
+        // Empty state — mirrors GTK's `Adw.StatusPage` with
+        // icon + title + description. No "Add Session" button
+        // for now (manual create lands when the edit-session
+        // dialog ships in L-4).
+        if root.log-sections.length == 0 : VerticalLayout {
+            alignment: center;
+            spacing: 12px;
+            padding-left: 32px;
+            padding-right: 32px;
+            padding-top: root.status-bar-inset + root.header-bar-height;
+            padding-bottom: root.nav-bar-height + root.bottom-bar-inset;
+
+            Text {
+                text: "No Sessions Yet";
+                font-size: 22px;
+                horizontal-alignment: center;
+                color: MaterialPalette.on-surface;
+            }
+            Text {
+                text: "Start meditating to see your sessions here.";
+                font-size: 14px;
+                horizontal-alignment: center;
+                color: MaterialPalette.on-surface-variant;
+                wrap: word-wrap;
+            }
+        }
+
+        if root.log-sections.length > 0 : Flickable {
+            width: 100%;
+            height: 100%;
+            viewport-width: self.width;
+            viewport-height: log-stack.preferred-height;
+
+            log-stack := VerticalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                padding-top: root.status-bar-inset + root.header-bar-height + 12px;
+                padding-bottom: root.nav-bar-height + root.bottom-bar-inset + 12px;
+                spacing: 14px;
+
+                for section in root.log-sections : VerticalLayout {
+                    spacing: 8px;
+
+                    // Date header — date label + dimmed
+                    // count/total caption. Mirrors GTK's
+                    // `build_section_frame` header at
+                    // `log/imp.rs:331-347`.
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text {
+                            text: section.date-display;
+                            font-size: 16px;
+                            font-weight: 700;
+                            color: MaterialPalette.on-surface;
+                            horizontal-alignment: left;
+                        }
+                        Text {
+                            text: section.caption;
+                            font-size: 12px;
+                            color: MaterialPalette.on-surface-variant;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                            horizontal-alignment: left;
+                        }
+                    }
+
+                    // Cards in this section. Height grows with
+                    // content (`min-height: 84px` keeps a sane
+                    // floor); the note text wraps + clips at
+                    // 2 lines via a fixed-height + clip wrapper
+                    // (Slint's `overflow: elide` doesn't clip
+                    // multi-line wrapped Text against `max-height`,
+                    // so the wrapper is the reliable cap —
+                    // mirrors GTK's `lines: 2; ellipsize: end` on
+                    // the note Label, minus the literal ellipsis
+                    // dots).
+                    for item in section.items : card := Rectangle {
+                        property <color> label-color:
+                            item.color-index == 0 ? #3584e4 :
+                            item.color-index == 1 ? #9141ac :
+                            item.color-index == 2 ? #2ec27e :
+                            item.color-index == 3 ? #e66100 :
+                            item.color-index == 4 ? #e5a50a :
+                            item.color-index == 5 ? #e01b24 :
+                            item.color-index == 6 ? #986a44 :
+                            item.color-index == 7 ? #1c71d8 :
+                            MaterialPalette.on-surface.with-alpha(0.15);
+
+                        min-height: 84px;
+                        border-radius: 12px;
+                        background: MaterialPalette.surface-container;
+
+                        HorizontalLayout {
+                            padding-left: 0px;
+                            padding-right: 16px;
+                            padding-top: 12px;
+                            padding-bottom: 12px;
+                            spacing: 12px;
+                            alignment: stretch;
+
+                            // Colored label stripe — 3 px wide,
+                            // colour-matched to the label name
+                            // via `label_color_class_index`
+                            // (palette mirrors GTK's
+                            // `log_c0`..`log_c7`). The dim grey
+                            // fallback (in `label-color` above)
+                            // matches GTK's `log-c-none` style
+                            // for unlabelled sessions.
+                            Rectangle {
+                                width: 3px;
+                                border-radius: 1.5px;
+                                background: card.label-color;
+                            }
+
+                            // Left column: minutes + "min" +
+                            // time of day. Mirrors GTK's
+                            // `left_col` at `log/imp.rs:401-407`.
+                            VerticalLayout {
+                                width: 64px;
+                                alignment: center;
+                                spacing: 0;
+                                Text {
+                                    text: item.minutes;
+                                    font-size: 22px;
+                                    font-weight: 700;
+                                    color: MaterialPalette.on-surface;
+                                    horizontal-alignment: left;
+                                }
+                                Text {
+                                    text: "min";
+                                    font-size: 10px;
+                                    color: MaterialPalette.on-surface-variant;
+                                    horizontal-alignment: left;
+                                }
+                                Text {
+                                    text: item.time-of-day;
+                                    font-size: 12px;
+                                    color: MaterialPalette.on-surface-variant;
+                                    horizontal-alignment: left;
+                                }
+                            }
+
+                            // Right column: label chip + note.
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                alignment: center;
+                                spacing: 4px;
+                                if item.label-name != "" : Text {
+                                    text: item.label-name;
+                                    font-size: 12px;
+                                    // Label name colour matches
+                                    // the stripe — mirrors GTK's
+                                    // `.log-label-chip.log-cN
+                                    // { color: @log_cN }` rule.
+                                    color: card.label-color;
+                                    horizontal-alignment: left;
+                                }
+                                // Note text. Truncation to ~120
+                                // chars + "…" happens Rust-side
+                                // (`truncate_note_for_card`) so
+                                // we don't have to coax Slint's
+                                // multi-line elide. The Text
+                                // grows naturally with `wrap:
+                                // word-wrap`; the card's
+                                // min-height keeps short notes
+                                // visually balanced.
+                                Text {
+                                    text: item.note != ""
+                                        ? item.note
+                                        : "No note added";
+                                    font-size: 14px;
+                                    color: item.note != ""
+                                        ? MaterialPalette.on-surface
+                                        : MaterialPalette.on-surface-variant;
+                                    horizontal-alignment: left;
+                                    wrap: word-wrap;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Top AppBar — title + Preferences trigger ────────────────
+    // Pinned at y=0 on the base pages (Setup, Log). Hidden when
+    // any overlay (Running / Done / Labels) is up — those
+    // destinations are full-window and don't need the app
+    // chrome. Trailing `Icons.menu` is a placeholder for the
+    // future Preferences page (phase 7 work).
+    //
+    // The outer Rectangle reserves `status-bar-inset` of vertical
+    // space above the AppBar so the notch / system clock /
+    // battery icons don't crash into the title or Preferences
+    // button. Background extends behind that zone too (surface
+    // colour) so the status bar reads against a matching tint.
+    Rectangle {
+        visible: !root.running-page && !root.done-page && !root.labels-page;
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: root.status-bar-inset + root.header-bar-height;
+        background: MaterialPalette.surface-container;
+
+        AppBar {
+            x: 0;
+            y: root.status-bar-inset;
+            width: 100%;
+            height: root.header-bar-height;
+            title: "Meditate";
+            show-background: true;
+            trailing-button: {
+                icon: Icons.menu,
+                tooltip: "Preferences",
+                enabled: true,
+            };
+            trailing-button-clicked => { root.preferences-tap(); }
+        }
+    }
+
+    // ── Bottom NavigationBar — visible on base pages only ───────
+    // Pinned at y = parent.height - nav-bar-height. Hidden
+    // during full-window overlays (Running / Done / Labels) so
+    // the user can't accidentally nav-switch mid-session or
+    // mid-edit. Selecting an item updates `nav-page` (in-out)
+    // and fires `nav-changed` so Rust can refresh per-page
+    // state (e.g. reload the Log feed when entering it).
+    Rectangle {
+        visible: !root.running-page && !root.done-page && !root.labels-page;
+        x: 0;
+        y: parent.height - root.nav-bar-height - root.bottom-bar-inset;
+        width: parent.width;
+        height: root.nav-bar-height + root.bottom-bar-inset;
+        // Background extends across the bottom inset so the
+        // strip below the NavigationBar reads as part of the
+        // bar rather than a gap to the screen edge.
+        background: MaterialPalette.surface-container;
+
+        NavigationBar {
+            x: 0;
+            y: 0;
+            width: 100%;
+            height: root.nav-bar-height;
+            items: [
+                {
+                    icon: Icons.schedule,
+                    selected-icon: Icons.schedule,
+                    text: "Timer",
+                },
+                {
+                    icon: Icons.calendar-today,
+                    selected-icon: Icons.calendar-today,
+                    text: "Log",
+                },
+            ];
+            current-index <=> root.nav-page;
+            index-changed(idx) => { root.nav-changed(idx); }
         }
     }
     } // root-focus FocusScope

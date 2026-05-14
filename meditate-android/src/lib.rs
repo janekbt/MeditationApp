@@ -478,6 +478,179 @@ fn validate_label_name(name: &str) -> bool {
     validity.is_savable()
 }
 
+/// Query the sessions table + group rows by day (newest first),
+/// formatting each group as a Slint `LogDaySection` ready for
+/// the bottom NavigationBar's Log page. Mirrors the GTK shell's
+/// `LogView::refresh` → `load_page` → `append_session_to_feed`
+/// chain (`meditate-gtk/src/log/imp.rs:122-237`), only without
+/// pagination — this slice loads everything in one go and lets
+/// L-2 add `LIMIT` / `OFFSET` paging.
+#[cfg(target_os = "android")]
+fn load_log_sections() -> Vec<LogDaySectionData> {
+    let Some(db_arc) = DATABASE.get() else { return Vec::new(); };
+    let Ok(guard) = db_arc.lock() else { return Vec::new(); };
+    let Some(db) = guard.as_ref() else { return Vec::new(); };
+
+    // `query_sessions_from_db` accepts an optional filter; we
+    // load everything in one go for L-1 (pagination = L-2).
+    // Returns `Vec<(i64 rowid, Session)>` so the rowid stays
+    // available for delete (L-3) + edit (L-4).
+    let sessions = meditate_core::db::query_sessions_from_db(
+        db,
+        &meditate_core::db::SessionFilter::default(),
+    )
+    .unwrap_or_default();
+    let labels = meditate_core::db::list_labels_from_db(db).unwrap_or_default();
+    let label_name_by_id: std::collections::HashMap<i64, String> = labels
+        .into_iter()
+        .map(|l| (l.id, l.name))
+        .collect();
+
+    // Group by date_key = "YYYY-MM-DD" of the local-ISO start.
+    // Order is preserved (the query returns newest first), so a
+    // simple linear scan + key-equality check is enough.
+    let mut sections: Vec<LogDaySectionData> = Vec::new();
+    for (rowid, s) in sessions {
+        let date_key = s.start_iso.get(..10).unwrap_or("").to_string();
+        let label_name = s
+            .label_id
+            .and_then(|id| label_name_by_id.get(&id).cloned())
+            .unwrap_or_default();
+        // -1 = no label (Slint maps that to a dim grey stripe);
+        // 0..7 = hashed colour-class index. Same hash core uses
+        // for the GTK stripe, so cross-shell parity is automatic.
+        let color_index = if label_name.is_empty() {
+            -1
+        } else {
+            meditate_core::format::label_color_class_index(&label_name) as i32
+        };
+        let item = LogCardItemData {
+            id: rowid as i32,
+            minutes: meditate_core::format::log_card_minutes(
+                s.duration_secs as i64,
+            ) as i32,
+            time_of_day: format_time_of_day(&s.start_iso),
+            label_name,
+            note: truncate_note_for_card(&s.notes.unwrap_or_default()),
+            color_index,
+        };
+        let duration_secs_i64 = i64::from(s.duration_secs);
+        if let Some(last) = sections.last_mut() {
+            if last.date_key == date_key {
+                last.count += 1;
+                last.total_secs += duration_secs_i64;
+                last.items.push(item);
+                continue;
+            }
+        }
+        sections.push(LogDaySectionData {
+            date_key,
+            date_display: format_date_group_display(&s.start_iso),
+            count: 1,
+            total_secs: duration_secs_i64,
+            items: vec![item],
+        });
+    }
+    sections
+}
+
+#[cfg(target_os = "android")]
+struct LogCardItemData {
+    id: i32,
+    minutes: i32,
+    time_of_day: String,
+    label_name: String,
+    note: String,
+    color_index: i32,
+}
+
+#[cfg(target_os = "android")]
+struct LogDaySectionData {
+    date_key: String,
+    date_display: String,
+    count: i64,
+    total_secs: i64,
+    items: Vec<LogCardItemData>,
+}
+
+/// Truncate a session note to ~120 characters + "…" so a long
+/// rant doesn't unbound-expand its Log card. Slint's `overflow:
+/// elide` doesn't reliably clip multi-line wrapped Text against
+/// a `max-height`, so we cap at the data level instead. GTK's
+/// `lines: 2; ellipsize: end` solves the same problem at the
+/// view layer; an Android-only deviation that yields the same
+/// outcome.
+#[cfg(target_os = "android")]
+fn truncate_note_for_card(note: &str) -> String {
+    const MAX_CHARS: usize = 120;
+    let chars: Vec<char> = note.chars().collect();
+    if chars.len() <= MAX_CHARS {
+        return note.to_string();
+    }
+    let mut head: String = chars.into_iter().take(MAX_CHARS - 1).collect();
+    head.push('…');
+    head
+}
+
+/// Extract the time-of-day portion ("14:32") from a local-ISO
+/// string ("2026-05-15T14:32:18+02:00"). Skips the date prefix
+/// + TZ offset suffix; safe for malformed inputs (returns "").
+#[cfg(target_os = "android")]
+fn format_time_of_day(start_iso: &str) -> String {
+    start_iso
+        .get(11..16)
+        .unwrap_or("")
+        .to_string()
+}
+
+/// Date-section header label for the Log feed. Today /
+/// Yesterday / weekday-or-full-date logic lives in core
+/// eventually; for L-1 we just show the YYYY-MM-DD prefix.
+#[cfg(target_os = "android")]
+fn format_date_group_display(start_iso: &str) -> String {
+    start_iso
+        .get(..10)
+        .unwrap_or("")
+        .to_string()
+}
+
+/// Push the loaded sections into the Slint `log-sections`
+/// model. Called on launch + after every Save so a freshly
+/// committed session shows up the next time the user opens
+/// the Log tab.
+#[cfg(target_os = "android")]
+fn refresh_log_sections(ui: &MainWindow) {
+    let sections = load_log_sections();
+    let items: Vec<LogDaySection> = sections
+        .into_iter()
+        .map(|sec| {
+            let cards: Vec<LogCardItem> = sec
+                .items
+                .into_iter()
+                .map(|it| LogCardItem {
+                    id: it.id,
+                    minutes: it.minutes,
+                    time_of_day: it.time_of_day.into(),
+                    label_name: it.label_name.into(),
+                    note: it.note.into(),
+                    color_index: it.color_index,
+                })
+                .collect();
+            LogDaySection {
+                date_display: sec.date_display.into(),
+                caption: format!(
+                    "{} sessions · {} min",
+                    sec.count,
+                    sec.total_secs / 60,
+                )
+                .into(),
+                items: std::rc::Rc::new(slint::VecModel::from(cards)).into(),
+            }
+        })
+        .collect();
+    ui.set_log_sections(std::rc::Rc::new(slint::VecModel::from(items)).into());
+}
+
 /// Write the crash-recovery snapshot row. Mirrors GTK's
 /// `write_in_progress_snapshot` at `imp.rs:2536`: captures
 /// (unix_start, accumulated_secs, mode, label_id) so a process
@@ -1204,6 +1377,9 @@ fn build_ui() -> MainWindow {
                 // subtitle reflect the post-Save mode state.
                 refresh_setup_label_name(&ui, mode);
                 ui.set_label_active(read_label_active_for_mode(mode));
+                // Push the freshly-inserted row into the Log feed
+                // so a quick nav-to-Log shows it without restart.
+                refresh_log_sections(&ui);
             }
             #[cfg(not(target_os = "android"))]
             let _ = current_mode.get();
@@ -1704,6 +1880,35 @@ fn build_ui() -> MainWindow {
                 .into(),
         );
         refresh_breathing_tiles(&ui, read_breathing_pattern());
+        refresh_log_sections(&ui);
+    }
+
+    // Preferences gear tap — no-op for now; Phase 7 hooks it up
+    // to the eventual Preferences screen.
+    ui.on_preferences_tap(move || {
+        #[cfg(target_os = "android")]
+        meditate_core::log(
+            "ui.preferences_tap",
+            "preferences screen pending (phase 7)",
+        );
+    });
+
+    // Bottom NavigationBar selection changed — Rust-side
+    // refresh of the page-specific state (just Log for now).
+    {
+        let weak = ui.as_weak();
+        ui.on_nav_changed(move |idx| {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                if idx == 1 {
+                    // Entering Log — reload from DB so a session
+                    // saved before opening the tab shows up.
+                    refresh_log_sections(&ui);
+                }
+            }
+            let _ = (weak.clone(), idx);
+        });
     }
 
     // Android back gesture / hardware back button — Slint maps
@@ -1715,6 +1920,7 @@ fn build_ui() -> MainWindow {
     //   * Done screen open → discard (same as the Discard button)
     //   * Running overlay up → swallow (don't kill an in-flight
     //     session via stray gesture)
+    //   * On the Log page → switch back to Timer
     //   * Otherwise: do nothing (the OS will close the app at the
     //     next press if no Slint handler accepted — or the user
     //     can swipe-up to Home).
@@ -1735,6 +1941,12 @@ fn build_ui() -> MainWindow {
                 let mut s = state.borrow_mut();
                 *s = std::mem::replace(&mut *s, AppState::idle()).dismiss();
                 refresh(&ui, &s, now_since_epoch());
+                return;
+            }
+            if ui.get_nav_page() == 1 {
+                // Log page → back navigates to Timer (canonical
+                // bottom-nav back behaviour on Android).
+                ui.set_nav_page(0);
                 return;
             }
             // Running page back is swallowed by the FocusScope
