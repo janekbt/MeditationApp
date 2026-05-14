@@ -146,7 +146,7 @@ is coherent.
 3. ✅ **Empty `meditate-android` crate** — Slint Material hello-screen (`fd0993f`).
 4. ✅ **Wire `meditate-core` to one screen** — originally `Countdown`, migrated to `Session` in `73c5cc4`. The dead Countdown/CountdownTimer primitives dropped in `61d56be`.
 5. ✅ **Mode toggle + Box Breath mode + per-mode stopwatch toggle** — chip group (`54a66c4`), Stopwatch SwitchRow (`46ae266`), Box Breath phase grid (`af3d38d`), Box Breath running visualisation (`da7383f`). State machine flows through `SessionShape::TimerCountdown` / `TimerStopwatch` / `BoxBreathCountdown` / `BoxBreathStopwatch`; per-mode session length backed by `breathing_session_secs` (Box Breath, DB-persisted) and an in-memory Timer cell.
-6. **DB persistence** — partly done: `Database::open` + `seed_all_non_audio` at `android_main` entry (`5b74887` + `bc1baab`); per-session insert on Save (`a741d2e`); settings persistence for `keep_screen_awake_*`, `*_signal_mode`, `label_*`, `breathing_*` (`45171ab`, `1625726`, `bc1baab`, `af3d38d`). Log view + edit-session dialog still pending (UI phase 3).
+6. ✅ **DB persistence** — `Database::open` + `seed_all_non_audio` at `android_main` entry (`5b74887` + `bc1baab`); per-session insert on Save (`a741d2e`); settings persistence for `keep_screen_awake_*`, `*_signal_mode`, `label_*`, `breathing_*`, `*_stopwatch_active` (`45171ab`, `1625726`, `bc1baab`, `af3d38d`, `c31e771`); crash-recovery snapshot heartbeat + startup `finalize_session_in_progress` (`f12eea4`). Log view + edit-session dialog + Undo toast surface are UI work (Phase 3).
 7. **Bells.** Audio playback via Android `MediaPlayer` JNI (or `oboe-rs`). Decision deferred to this milestone. Drives UI phase 5.
 8. **Haptics.** Android `Vibrator` / `VibratorManager` JNI. Reuse `meditate-core` envelope-quantising logic; map quantised levels to Android amplitude scale (0-255). Pairs with UI phase 5.
 9. ✅ **Foreground service + notification** — Kotlin `MediaSessionService` started via JNI bridge with classloader walk (`76dbe6f`), MediaStyle pin so the notification lives in the shade's Media-controls section (`ae6104f`). Phase-5 audio playback plugs into the same notification when it lands.
@@ -266,6 +266,10 @@ Landed early (session-save half):
 - Label expander on Done with chooser routing (`chooser-target`
   flag) + persist-back-to-mode on Save via `resolve_persist_action`
   (`68c5ba6`).
+- Crash-recovery: 60-second snapshot heartbeat tied to session
+  start / end + startup `finalize_session_in_progress` (`f12eea4`).
+  Undo toast for the recovered row deferred until the Snackbar
+  surface lands.
 
 Still to land:
 - Log screen: session cards grouped by day. Tap to edit; swipe to
@@ -273,9 +277,7 @@ Still to land:
 - Edit-session dialog (note, label, start time, duration).
 - Sync-status indicator surface (the icon at the corner — wired to
   `meditate_core::sync::settings::get_last_sync_*` readers).
-- Crash-recovery finalize at startup (`finalize_session_in_progress`)
-  + Undo toast for the recovered row. Mirrors GTK's
-  `Application::startup` recovery path.
+- Snackbar surface (Undo toasts for delete + crash-recovery).
 
 Verification: cross-device sync round trip — phone authors a
 session, GTK shell on the laptop sees it within one sync cycle.
