@@ -465,6 +465,98 @@ component ExpanderRow inherits Rectangle {
     }
 }
 
+// Box-Breath phase tile — one cell of the Setup view's 2×2
+// phase grid. Mirrors GTK's `build_phase_tile`
+// (`meditate-gtk/src/timer/imp.rs:4080-4153`): a small card with
+// the phase title on top + a `−  Ns  +` stepper below. Steppers
+// use TonalButton with "−" / "+" glyphs instead of Material
+// icons (the bundled Icons set has no "add" SVG).
+component PhaseTile inherits Rectangle {
+    in property <string> title;
+    in property <image> icon;
+    in property <int> seconds;
+    in property <int> min-seconds;
+    in property <int> index;
+    callback adjust(int, int);
+
+    height: 96px;
+    border-radius: 12px;
+    background: MaterialPalette.surface-container;
+
+    VerticalLayout {
+        padding-top: 10px;
+        padding-bottom: 10px;
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 6px;
+        alignment: stretch;
+
+        // Top row: icon + title — mirrors GTK's `build_phase_tile`
+        // head box (`imp.rs:4094-4111`), which places a 16 px
+        // accent-tinted icon to the left of a caption-dimmed
+        // title label.
+        HorizontalLayout {
+            spacing: 6px;
+            alignment: start;
+
+            Image {
+                source: root.icon;
+                colorize: MaterialPalette.primary;
+                width: 16px;
+                height: 16px;
+            }
+            Text {
+                text: root.title;
+                font-size: 12px;
+                color: MaterialPalette.on-surface-variant;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                horizontal-alignment: left;
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 6px;
+            alignment: center;
+
+            // Steppers wrapped in fixed-size Rectangles to stop
+            // Material's default ~64 px button width from pushing
+            // the two-column grid past the screen edge. 36×36 is
+            // small enough to fit two tiles in a 360 dp phone, big
+            // enough for a comfortable touch target.
+            Rectangle {
+                width: 36px;
+                height: 36px;
+                TonalButton {
+                    text: "−";
+                    enabled: root.seconds > root.min-seconds;
+                    clicked => { root.adjust(root.index, -1); }
+                }
+            }
+            Text {
+                text: root.seconds + "s";
+                font-size: 22px;
+                width: 44px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                color: MaterialPalette.on-surface;
+            }
+            Rectangle {
+                width: 36px;
+                height: 36px;
+                TonalButton {
+                    // PHASE_MAX_SECS = 20 in meditate_core::breath;
+                    // the shell-side max stays as a literal here
+                    // (Slint can't import const values from Rust).
+                    text: "+";
+                    enabled: root.seconds < 20;
+                    clicked => { root.adjust(root.index, 1); }
+                }
+            }
+        }
+    }
+}
+
 // Boxed-list container — mirrors GTK's `Adw.PreferencesGroup`
 // boxed-list look: a single rounded surface that visually wraps
 // its child rows, with 1 px dividers between them and no
@@ -619,6 +711,18 @@ export component MainWindow inherits Window {
     //       `resolve_persist_action`).
     in-out property <int> chooser-target: 0;
 
+    // Box Breath phase pattern (in / hold-in / out / hold-out, in
+    // seconds). Mirrors `meditate-gtk/src/timer/imp.rs::breathing_pattern`
+    // (a `Cell<BreathPattern>` with the four fields). Rust seeds
+    // these on launch from the DB settings (`breathing_in`,
+    // `breathing_hold_in`, `breathing_out`, `breathing_hold_out`)
+    // and writes back via `bb-adjust`. Defaults match
+    // `BreathPattern::box_breath()` = 4-4-4-4.
+    in property <int> bb-in: 4;
+    in property <int> bb-hold-in: 4;
+    in property <int> bb-out: 4;
+    in property <int> bb-hold-out: 4;
+
     in-out property <bool> duration-dialog-open: false;
     in-out property <int> dialog-hours: 0;
     in-out property <int> dialog-minutes: 10;
@@ -631,6 +735,14 @@ export component MainWindow inherits Window {
     callback action-tap();
     callback stop-tap();
     callback duration-tap();
+    // Fires after the Duration dialog's Set button commits new
+    // setup-hours / setup-minutes — Rust then routes the new
+    // total seconds to the active mode's storage (Timer keeps
+    // its value in-memory; Box Breath persists to
+    // `breathing_session_secs`). Mirrors GTK's separate
+    // `countdown_target_secs` / `breathing_session_secs` cells
+    // backing the otherwise-shared Adw.ActionRow.
+    callback duration-committed();
     callback save-tap();
     callback discard-tap();
     callback mode-changed(int);
@@ -650,6 +762,11 @@ export component MainWindow inherits Window {
     callback delete-label-confirm();
     callback done-label-active-toggled(bool);
     callback done-label-tap();
+    // Per-phase stepper. `index` is 0=In, 1=HoldIn, 2=Out, 3=HoldOut
+    // (matches `BreathPattern::phase_min_secs(index)` + the GTK
+    // shell's `adjust_phase(index, delta, min_val)` signature).
+    // `delta` is -1 or +1.
+    callback bb-adjust(int, int);
     // Hardware back button + Android predictive back gesture.
     // Wired through a root-level FocusScope so the key event
     // reaches us no matter which sub-element holds focus. Rust
@@ -781,16 +898,15 @@ export component MainWindow inherits Window {
             // Start Session button — above the settings, in thumb
             // reach. Taller than Material 3's 40 px default because
             // it's the single most-tapped surface on the app.
-            // Disabled for Guided / Box Breath until the running
-            // views for those modes ship (next slice). Stopwatch
-            // Mode bypasses the duration check — an open-ended
-            // count-up needs no target, mirroring the GTK shell's
-            // `on_start` which only validates `countdown_target_secs`
-            // when `!stopwatch_toggle_on.get()`.
+            // Guided stays disabled until the audio engine arrives
+            // (phase 5). Stopwatch Mode bypasses the duration check —
+            // an open-ended count-up needs no target, mirroring
+            // GTK's `on_start` which only validates
+            // `countdown_target_secs` when `!stopwatch_toggle_on.get()`.
             FilledButton {
                 text: "Start Session";
                 height: 56px;
-                enabled: root.setup-mode == 0
+                enabled: (root.setup-mode == 0 || root.setup-mode == 2)
                     && (root.stopwatch-on
                         || root.setup-hours > 0
                         || root.setup-minutes > 0);
@@ -906,12 +1022,90 @@ export component MainWindow inherits Window {
                 horizontal-alignment: center;
                 wrap: word-wrap;
             }
-            if root.setup-mode == 2 : Text {
-                text: "Box Breath inputs + running view land in the next slice.";
-                font-size: 14px;
-                color: MaterialPalette.on-surface-variant;
-                horizontal-alignment: center;
-                wrap: word-wrap;
+            // Box Breath body — Breath Phases heading + 2×2 phase
+            // tile grid + the shared Session group (Stopwatch, the
+            // shared Duration row drives both modes' session
+            // length, Label, Keep Awake). Mirrors GTK's
+            // `boxbreath_inputs` Box (`timer_view.blp:189-221`) +
+            // the shared `session_group` rows.
+            if root.setup-mode == 2 : VerticalLayout {
+                spacing: 8px;
+
+                Text {
+                    text: "Breath Phases";
+                    font-size: 14px;
+                    font-weight: 700;
+                    color: MaterialPalette.primary;
+                    horizontal-alignment: left;
+                }
+
+                GridLayout {
+                    spacing: 8px;
+
+                    // Per-phase icons mirror GTK's
+                    // `build_phase_tiles` spec at `imp.rs:4059`:
+                    //   Inhale       → go-up-symbolic
+                    //   Hold (full)  → media-playback-pause
+                    //   Exhale       → go-down-symbolic
+                    //   Hold (empty) → media-playback-pause
+                    // Material's bundled Icons set covers
+                    // arrow_drop_up / arrow_drop_down (filled
+                    // triangles, the closest analogue to GNOME's
+                    // outline chevrons); pause has no Material
+                    // equivalent so the shell ships its own SVG.
+                    Row {
+                        PhaseTile {
+                            title: "Inhale";
+                            icon: Icons.arrow-drop-up;
+                            index: 0;
+                            seconds: root.bb-in;
+                            min-seconds: 1;
+                            adjust(i, d) => { root.bb-adjust(i, d); }
+                        }
+                        PhaseTile {
+                            title: "Hold (full)";
+                            icon: @image-url("assets/pause.svg");
+                            index: 1;
+                            seconds: root.bb-hold-in;
+                            min-seconds: 0;
+                            adjust(i, d) => { root.bb-adjust(i, d); }
+                        }
+                    }
+                    Row {
+                        PhaseTile {
+                            title: "Exhale";
+                            icon: Icons.arrow-drop-down;
+                            index: 2;
+                            seconds: root.bb-out;
+                            min-seconds: 1;
+                            adjust(i, d) => { root.bb-adjust(i, d); }
+                        }
+                        PhaseTile {
+                            title: "Hold (empty)";
+                            icon: @image-url("assets/pause.svg");
+                            index: 3;
+                            seconds: root.bb-hold-out;
+                            min-seconds: 0;
+                            adjust(i, d) => { root.bb-adjust(i, d); }
+                        }
+                    }
+                }
+
+                Text {
+                    text: "Session";
+                    font-size: 14px;
+                    font-weight: 700;
+                    color: MaterialPalette.primary;
+                    horizontal-alignment: left;
+                }
+
+                BoxedList {
+                    DurationRow {
+                        value-text: root.duration-text;
+                        enabled: !root.stopwatch-on;
+                        tapped => { root.duration-tap(); }
+                    }
+                }
             }
         }
     }
@@ -1325,6 +1519,7 @@ export component MainWindow inherits Window {
                             if (root.dialog-hours > 0 || root.dialog-minutes > 0) {
                                 root.setup-hours = root.dialog-hours;
                                 root.setup-minutes = root.dialog-minutes;
+                                root.duration-committed();
                             }
                             root.duration-dialog-open = false;
                         }

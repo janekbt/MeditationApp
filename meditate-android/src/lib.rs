@@ -241,6 +241,92 @@ fn refresh_label_state(ui: &MainWindow, mode: meditate_core::SessionMode) {
     refresh_setup_label_name(ui, mode);
 }
 
+/// Read the persisted Box-Breath phase pattern from the DB
+/// settings keys the GTK shell uses (`breathing_in` /
+/// `breathing_hold_in` / `breathing_out` / `breathing_hold_out`).
+/// Defaults to `BreathPattern::box_breath()` (4-4-4-4) when no
+/// row exists yet. Runs `clamp_from_raw` so a stored value that
+/// drifts out of the 1..=20 / 0..=20 ranges still produces a
+/// well-formed pattern.
+#[cfg(target_os = "android")]
+fn read_breathing_pattern() -> meditate_core::breath::BreathPattern {
+    use meditate_core::breath::BreathPattern;
+    let Some(db_arc) = DATABASE.get() else { return BreathPattern::box_breath(); };
+    let Ok(guard) = db_arc.lock() else { return BreathPattern::box_breath(); };
+    let Some(db) = guard.as_ref() else { return BreathPattern::box_breath(); };
+    let read = |k: &str, default: u32| -> u32 {
+        meditate_core::settings_keys::read_u32(db, k, default)
+    };
+    BreathPattern::clamp_from_raw(
+        read("breathing_in", 4),
+        read("breathing_hold_in", 4),
+        read("breathing_out", 4),
+        read("breathing_hold_out", 4),
+    )
+}
+
+#[cfg(target_os = "android")]
+fn write_breathing_pattern(pattern: meditate_core::breath::BreathPattern) {
+    let Some(db_arc) = DATABASE.get() else { return; };
+    let Ok(guard) = db_arc.lock() else { return; };
+    let Some(db) = guard.as_ref() else { return; };
+    let _ = db.set_setting("breathing_in", &pattern.in_secs.to_string());
+    let _ = db.set_setting("breathing_hold_in", &pattern.hold_in.to_string());
+    let _ = db.set_setting("breathing_out", &pattern.out_secs.to_string());
+    let _ = db.set_setting("breathing_hold_out", &pattern.hold_out.to_string());
+}
+
+/// Box-Breath session length in seconds. Persisted alongside the
+/// phase pattern so toggling between modes restores the
+/// per-mode last value (mirrors GTK's `breathing_session_secs`
+/// Cell + the `breathing_session_secs` settings key at
+/// `imp.rs:4256`). Defaults to `BREATHING_DEFAULT_SECS` = 5 min.
+#[cfg(target_os = "android")]
+fn read_breathing_session_secs() -> u32 {
+    let Some(db_arc) = DATABASE.get() else {
+        return meditate_core::session::BREATHING_DEFAULT_SECS;
+    };
+    let Ok(guard) = db_arc.lock() else {
+        return meditate_core::session::BREATHING_DEFAULT_SECS;
+    };
+    let Some(db) = guard.as_ref() else {
+        return meditate_core::session::BREATHING_DEFAULT_SECS;
+    };
+    meditate_core::settings_keys::read_u32(
+        db,
+        "breathing_session_secs",
+        meditate_core::session::BREATHING_DEFAULT_SECS,
+    )
+}
+
+#[cfg(target_os = "android")]
+fn write_breathing_session_secs(secs: u32) {
+    let Some(db_arc) = DATABASE.get() else { return; };
+    let Ok(guard) = db_arc.lock() else { return; };
+    let Some(db) = guard.as_ref() else { return; };
+    let _ = db.set_setting("breathing_session_secs", &secs.to_string());
+}
+
+/// Update the Setup view's hours / minutes Slint properties from
+/// a total seconds value. Used on mode change to swap the
+/// otherwise-shared Duration row to the new mode's stored length.
+#[cfg(target_os = "android")]
+fn push_session_length_to_ui(ui: &MainWindow, total_secs: u32) {
+    ui.set_setup_hours((total_secs / 3600) as i32);
+    ui.set_setup_minutes(((total_secs % 3600) / 60) as i32);
+}
+
+/// Push the four phase seconds into the Slint `bb-*` properties.
+/// Called on launch + after every stepper-driven mutation so the
+/// tiles stay in sync with the in-memory pattern.
+#[cfg(target_os = "android")]
+fn refresh_breathing_tiles(ui: &MainWindow, pattern: meditate_core::breath::BreathPattern) {
+    ui.set_bb_in(pattern.in_secs as i32);
+    ui.set_bb_hold_in(pattern.hold_in as i32);
+    ui.set_bb_out(pattern.out_secs as i32);
+    ui.set_bb_hold_out(pattern.hold_out as i32);
+}
+
 /// Build the row list for the label chooser overlay. Each row
 /// carries the local rowid (id), display name, and a `selected`
 /// flag that mirrors `current_id`. Returned as a plain Vec the
@@ -528,6 +614,17 @@ fn build_ui() -> MainWindow {
     // wiring arrives. Shared with the mode-changed callback and
     // the Save handler so both read the same source of truth.
     let current_mode = Rc::new(Cell::new(TimerMode::default()));
+
+    // Per-mode session-length cells. Mirrors the GTK shell's
+    // pair of state Cells backing the shared `duration_row`
+    // widget (`countdown_target_secs` for Timer + Guided's
+    // duration / `breathing_session_secs` for Box Breath).
+    // Timer mode keeps its value in-memory only (defaults to the
+    // 0h 10m boot value); Box Breath persists to the DB so
+    // round-trips across launches.
+    let timer_session_secs: Rc<Cell<u32>> = Rc::new(Cell::new(
+        (DEFAULT_HOURS as u32) * 3600 + (DEFAULT_MINUTES as u32) * 60,
+    ));
     // Unix timestamp captured at session start, taken at end.
     // Mirrors the GTK shell's `Timer::session_start_time` cell.
     // Holds None while idle; Some(unix_secs) while a session is
@@ -564,17 +661,41 @@ fn build_ui() -> MainWindow {
             let now = now_since_epoch();
             let Some(ui) = weak.upgrade() else { return; };
             let target = configured_duration(&ui);
-            // Shape picked from the Stopwatch-Mode switch — same
-            // shell-side choice the GTK `on_start` makes via
-            // `stopwatch_toggle_on`. Box-Breath and Guided shapes
-            // arrive in the next phase-2 slices; for now only Timer
-            // mode reaches Start (the chip group's Guided/Box Breath
-            // selections disable the Start button).
-            let shape = if ui.get_stopwatch_on() {
-                meditate_core::session::SessionShape::TimerStopwatch
-            } else {
-                meditate_core::session::SessionShape::TimerCountdown {
-                    target_secs: target.as_secs() as u32,
+            // Shape picked from (mode chip × Stopwatch-Mode switch).
+            // Same shell-side choice the GTK `on_start` makes via
+            // `current_mode()` + `stopwatch_toggle_on`. Guided is
+            // still gated upstream by the disabled Start button
+            // until the audio engine ships (phase 5).
+            use meditate_core::session::SessionShape;
+            let shape = match TimerMode::from_chip_index(ui.get_setup_mode()) {
+                TimerMode::Breathing => {
+                    let pattern = meditate_core::breath::BreathPattern::clamp_from_raw(
+                        ui.get_bb_in().max(0) as u32,
+                        ui.get_bb_hold_in().max(0) as u32,
+                        ui.get_bb_out().max(0) as u32,
+                        ui.get_bb_hold_out().max(0) as u32,
+                    );
+                    if ui.get_stopwatch_on() {
+                        SessionShape::BoxBreathStopwatch { pattern }
+                    } else {
+                        // Cycle-aligned target so the session always
+                        // ends on a phase boundary, not mid-cycle.
+                        let raw = target.as_secs();
+                        let aligned = pattern.cycle_aligned_target_secs(raw) as u32;
+                        SessionShape::BoxBreathCountdown {
+                            pattern,
+                            target_secs: aligned,
+                        }
+                    }
+                }
+                _ => {
+                    if ui.get_stopwatch_on() {
+                        SessionShape::TimerStopwatch
+                    } else {
+                        SessionShape::TimerCountdown {
+                            target_secs: target.as_secs() as u32,
+                        }
+                    }
                 }
             };
             let mut s = state.borrow_mut();
@@ -786,6 +907,43 @@ fn build_ui() -> MainWindow {
         });
     }
 
+    // Per-phase stepper. Mirrors GTK's `adjust_phase(index, delta,
+    // min_val)` at `meditate-gtk/src/timer/imp.rs:4175`: read the
+    // current pattern, mutate the addressed phase, clamp into
+    // [min, PHASE_MAX_SECS], skip on no-op, persist + push back
+    // to the Slint tiles. min-policy lives in
+    // `BreathPattern::phase_min_secs(index)` so the same rule
+    // (inhale/exhale ≥ 1, holds ≥ 0) applies across both shells.
+    {
+        let weak = ui.as_weak();
+        ui.on_bb_adjust(move |index, delta| {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                let mut pattern = read_breathing_pattern();
+                let min = meditate_core::breath::BreathPattern::phase_min_secs(
+                    index.max(0) as u8,
+                );
+                let slot: &mut u32 = match index {
+                    0 => &mut pattern.in_secs,
+                    1 => &mut pattern.hold_in,
+                    2 => &mut pattern.out_secs,
+                    3 => &mut pattern.hold_out,
+                    _ => return,
+                };
+                let new_val = ((*slot as i32) + delta).clamp(
+                    min as i32,
+                    meditate_core::breath::PHASE_MAX_SECS as i32,
+                ) as u32;
+                if new_val == *slot { return; }
+                *slot = new_val;
+                write_breathing_pattern(pattern);
+                refresh_breathing_tiles(&ui, pattern);
+            }
+            let _ = (weak.clone(), index, delta);
+        });
+    }
+
     // Mode chip group changed — update the shared mode cell so the
     // next Save records the right SessionMode, and load any per-
     // mode persisted state into the Slint properties. Mirrors the
@@ -795,6 +953,7 @@ fn build_ui() -> MainWindow {
     {
         let weak = ui.as_weak();
         let current_mode = current_mode.clone();
+        let timer_session_secs = timer_session_secs.clone();
         ui.on_mode_changed(move |idx| {
             let new_mode = TimerMode::from_chip_index(idx);
             current_mode.set(new_mode);
@@ -812,11 +971,41 @@ fn build_ui() -> MainWindow {
                         .unwrap_or_default()
                         .into(),
                 );
+                // Swap the Duration row's displayed value to the
+                // mode's stored session length. Guided's length
+                // comes from the audio file (phase 5); for now
+                // it falls back to the Timer cell so the row
+                // isn't blank.
+                let new_secs = match new_mode {
+                    TimerMode::Breathing => read_breathing_session_secs(),
+                    _ => timer_session_secs.get(),
+                };
+                push_session_length_to_ui(&ui, new_secs);
             }
-            // Touch the weak handle so the host build doesn't flag
-            // it unused (the android-only block above is the sole
-            // consumer).
-            let _ = weak;
+            let _ = (weak.clone(), timer_session_secs.clone());
+        });
+    }
+
+    // Duration dialog Set committed — route the new total
+    // seconds to the active mode's storage. Timer mode keeps it
+    // in the in-memory cell; Box Breath persists to the DB
+    // (`breathing_session_secs`) so the value survives across
+    // launches, matching GTK's `set_breathing_duration_secs`.
+    {
+        let weak = ui.as_weak();
+        let current_mode = current_mode.clone();
+        let timer_session_secs = timer_session_secs.clone();
+        ui.on_duration_committed(move || {
+            let Some(ui) = weak.upgrade() else { return; };
+            let total_secs = (ui.get_setup_hours().max(0) as u32) * 3600
+                + (ui.get_setup_minutes().max(0) as u32) * 60;
+            match current_mode.get() {
+                TimerMode::Breathing => {
+                    #[cfg(target_os = "android")]
+                    write_breathing_session_secs(total_secs);
+                }
+                _ => timer_session_secs.set(total_secs),
+            }
         });
     }
 
@@ -1192,6 +1381,7 @@ fn build_ui() -> MainWindow {
                 .unwrap_or_default()
                 .into(),
         );
+        refresh_breathing_tiles(&ui, read_breathing_pattern());
     }
 
     // Android back gesture / hardware back button — Slint maps
