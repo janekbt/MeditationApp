@@ -212,13 +212,27 @@ export component MainWindow inherits Window {
     property <length> screen-offset: root.running-page ? root.width : 0px;
     animate screen-offset { duration: 300ms; easing: ease-out; }
 
+    // Slide offset for the Done overlay. Asymmetric duration:
+    // appearing is INSTANT (0 ms) so Done is already at x=0 by the
+    // time Running starts sliding off — the user experiences the
+    // Running overlay sliding right to *reveal* a static Done
+    // underneath, not two layers crisscrossing. Disappearing
+    // animates 300 ms so Save / Discard slides Done off to the
+    // right and reveals Setup. The conditional reads `done-page`
+    // at the moment of the change; transitioning into done-page=true
+    // picks 0 ms, transitioning out picks 300 ms.
+    property <length> done-offset: root.done-page ? root.width : 0px;
+    animate done-offset {
+        duration: root.done-page ? 0ms : 300ms;
+        easing: ease-out;
+    }
+
     // ── Setup screen ─────────────────────────────────────────────
-    // Pinned at x=0; Running slides over the top on Start and
-    // off to the right on Stop. Hidden when the Done screen is up —
-    // the two base layers are mutually exclusive, mirroring the
-    // GTK shell's view_stack swap between "setup" and "done".
+    // Permanent base layer at x=0. Running slides over the top on
+    // Start and off on Stop; Done slides over the top from x=0 to
+    // x=width on Save / Discard. Setup itself never moves and
+    // never hides — it just gets covered.
     Rectangle {
-        visible: !root.done-page;
         x: 0;
         width: parent.width;
         height: parent.height;
@@ -335,19 +349,20 @@ export component MainWindow inherits Window {
         }
     }
 
-    // ── Done screen (base layer, replaces Setup) ────────────────
+    // ── Done screen (overlay) ───────────────────────────────────
     // Mirrors `meditate-gtk/data/ui/timer_view.blp`'s `done` stack
-    // page (lines 747-833): the outer Box uses `valign: center` so
-    // the whole content stack is centered vertically inside its
-    // ScrolledWindow viewport, with `spacing: 18` between elements
-    // and a small horizontal margin. Pinned at x=0; the Running
-    // overlay slides OFF to the right after Stop / auto-finish,
-    // revealing this underneath. No animation when the user taps
-    // Save / Discard — the screen just instantly swaps back to
-    // Setup, matching the GTK pattern.
+    // page (lines 747-833) — outer Box uses `valign: center` so the
+    // whole stack centers vertically, with `spacing: 18` between
+    // elements and a small horizontal margin.
+    //
+    // Driven by `done-offset`. Appears instantly at x=0 the moment
+    // a session ends (Running overlay then slides off to the right,
+    // revealing this), and slides off to the right itself on
+    // Save / Discard, revealing Setup. (The GTK shell uses an
+    // instant view-stack swap for both edges — we keep the slide
+    // out per Janek's preference for the Android shell.)
     Rectangle {
-        visible: root.done-page;
-        x: 0;
+        x: parent.width - root.done-offset;
         width: parent.width;
         height: parent.height;
         background: MaterialPalette.surface;
