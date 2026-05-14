@@ -3,14 +3,14 @@ resolver = "2"
 members = [
     "meditate-core",
     "meditate-gtk",
+    "meditate-android",
 ]
 # `cargo build` / `cargo test` at the workspace root operates on the
 # GTK shell + its core dep — the host build that has shipped to
-# Flathub and the Librem 5 since 26.4.4. An Android shell on the
-# parallel `android` branch builds only when explicitly targeted
-# (`-p meditate-android`, xbuild / cargo apk), so the Linux flow
-# stays the default and a host `cargo build` doesn't pull
-# android-activity into the link graph.
+# Flathub and the Librem 5 since 26.4.4. The Android shell builds
+# only when explicitly targeted (xbuild / cargo apk / `-p meditate-android`)
+# so the Linux flow stays the default and a host `cargo build` doesn't
+# pull android-activity into the link graph.
 default-members = ["meditate-gtk"]
 
 [profile.release]

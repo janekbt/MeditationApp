@@ -1,15 +1,28 @@
-// Pure Rust adapter sitting between meditate-core's immutable
-// Countdown and the Slint UI's properties / callbacks. Lifted out
-// of lib.rs so it's unit-testable without a Slint runtime.
+// Pure Rust adapter sitting between meditate-core's Session state
+// machine and the Slint UI's properties / callbacks. Lifted out of
+// lib.rs so it's unit-testable without a Slint runtime.
+//
+// Sits one level above `meditate_core::session::Session`: the
+// adapter exposes the four-state Idle/Active/Finished UI model the
+// Slint screens want, while `Session` owns the underlying
+// phase clock + pause / resume / overtime mechanics. When the
+// session's target hits zero we auto-finalise (the Android shell
+// doesn't expose "Add time" yet); finalising drops the session and
+// lands us in `Finished`, so a subsequent `toggle` starts fresh.
 
-use meditate_core::timer::{Countdown, CountdownTimer, Stopwatch};
+use meditate_core::session::{Session, SessionSettings, SessionShape, UiState};
 use std::time::Duration;
 
 #[derive(Debug)]
 pub enum AppState {
     Idle,
-    Running(Countdown),
-    Paused(Countdown),
+    /// A live Session — its `ui_state()` distinguishes Running from
+    /// Paused (and Overtime, transiently, before `tick` finalises it
+    /// into `Finished` here). Boxed so the enum's largest-variant
+    /// size doesn't dominate the stack footprint of every `AppState`
+    /// store (Session carries a few hundred bytes; Idle / Finished
+    /// are unit variants).
+    Active(Box<Session>),
     Finished,
 }
 
@@ -22,48 +35,81 @@ impl AppState {
         matches!(self, Self::Idle)
     }
     pub fn is_running(&self) -> bool {
-        matches!(self, Self::Running(_))
+        matches!(self, Self::Active(s) if matches!(s.ui_state(), UiState::Running))
     }
     pub fn is_paused(&self) -> bool {
-        matches!(self, Self::Paused(_))
+        matches!(self, Self::Active(s) if matches!(s.ui_state(), UiState::Paused))
     }
     pub fn is_finished(&self) -> bool {
         matches!(self, Self::Finished)
     }
 
     /// Primary action: Start / Pause / Resume / Restart depending
-    /// on current state.
+    /// on current state. `total` is consulted only when starting a
+    /// fresh session; pause/resume ignore it (Session already
+    /// remembers its target).
     pub fn toggle(self, total: Duration, now: Duration) -> Self {
         match self {
-            Self::Idle | Self::Finished => Self::Running(Countdown::new(
-                CountdownTimer::new(total),
-                Stopwatch::started_at(now),
-            )),
-            Self::Running(c) => Self::Paused(c.pause(now)),
-            Self::Paused(c) => Self::Running(c.resume(now)),
+            Self::Idle | Self::Finished => {
+                let settings = SessionSettings {
+                    shape: SessionShape::TimerCountdown {
+                        target_secs: total.as_secs() as u32,
+                    },
+                    ..Default::default()
+                };
+                Self::Active(Box::new(Session::start_running(settings, now)))
+            }
+            Self::Active(mut s) => {
+                if matches!(s.ui_state(), UiState::Paused) {
+                    s.resume(now);
+                } else {
+                    let _ = s.pause(now);
+                }
+                Self::Active(s)
+            }
         }
     }
 
-    /// Stop button. Always returns to Idle.
+    /// Stop button. Always returns to Idle — the session is dropped
+    /// rather than persisted. The Android shell doesn't have a
+    /// sessions table yet; this is the simplest mapping until it
+    /// grows one.
     pub fn stop(self) -> Self {
         Self::Idle
     }
 
-    /// Called by the tick loop. Promotes Running → Finished once the
-    /// countdown's remaining hits zero. Paused does not auto-advance
-    /// because a paused countdown's remaining is frozen.
+    /// Called by the tick loop. Drives Session's internal phase
+    /// transitions; on Running→Overtime (target reached) we
+    /// auto-finalise so the Slint UI flips to the Finished screen
+    /// without needing a separate Finish-Overtime button.
     pub fn tick(self, now: Duration) -> Self {
         match self {
-            Self::Running(ref c) if c.is_finished(now) => Self::Finished,
+            Self::Active(mut s) => {
+                let _ = s.tick(now);
+                match s.ui_state() {
+                    UiState::Overtime => {
+                        // Auto-finish: the Android shell has no
+                        // Add-time affordance, so target-reached
+                        // is the end of the session.
+                        let _ = s.finish_overtime();
+                        Self::Finished
+                    }
+                    UiState::Done => Self::Finished,
+                    _ => Self::Active(s),
+                }
+            }
             other => other,
         }
     }
 
-    /// Remaining time the big mm:ss display should show.
+    /// Remaining time the big mm:ss display should show. `total` is
+    /// only consulted in the Idle branch; while a session is active
+    /// the remaining is `target − pause-aware-elapsed`, clamped at
+    /// zero post-target.
     pub fn remaining(&self, total: Duration, now: Duration) -> Duration {
         match self {
             Self::Idle => total,
-            Self::Running(c) | Self::Paused(c) => c.remaining(now),
+            Self::Active(s) => total.saturating_sub(s.elapsed(now)),
             Self::Finished => Duration::ZERO,
         }
     }
@@ -72,17 +118,14 @@ impl AppState {
     pub fn primary_label(&self) -> &'static str {
         match self {
             Self::Idle | Self::Finished => "Start Session",
-            Self::Running(_) => "Pause",
-            Self::Paused(_) => "Resume",
+            Self::Active(s) if matches!(s.ui_state(), UiState::Paused) => "Resume",
+            Self::Active(_) => "Pause",
         }
     }
 
     /// Whether the Stop button should be visible / enabled.
     pub fn can_stop(&self) -> bool {
-        matches!(
-            self,
-            Self::Running(_) | Self::Paused(_) | Self::Finished
-        )
+        !matches!(self, Self::Idle)
     }
 
     /// Whether the running-page layout should be shown (vs. the
