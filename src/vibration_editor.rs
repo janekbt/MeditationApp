@@ -42,6 +42,16 @@ const Y_LABEL_W: f64              = 38.0;
 const X_LABEL_H: f64              = 18.0;
 const PAD: f64                    = 10.0;
 
+/// Single preview-playback slot id for the editor. The PreviewToggle
+/// state machine keys on this so a stop/start/stop sequence stays
+/// associated with the same play.
+const EDITOR_SLOT: &str           = "editor";
+
+/// Minimum horizontal gap between adjacent X-axis labels (px). The
+/// label-thinning helper drops interior labels that would otherwise
+/// overlap a neighbouring anchor.
+const X_LABEL_MIN_GAP: f64        = 6.0;
+
 // Resampling helper lives in `meditate_core::vibration` (the
 // Android shell's editor uses it too). Re-exported so the call
 // sites in this file stay unprefixed.
@@ -66,7 +76,7 @@ impl Editor {
             Some(p) => (
                 Some(p.uuid.0),
                 p.name,
-                p.duration_ms as f64 / 1000.0,
+                f64::from(p.duration_ms) / 1000.0,
                 p.intensities,
                 p.chart_kind,
             ),
@@ -177,8 +187,8 @@ pub fn push_pattern_editor(
     let initial_max_points = max_points_for_duration_s(editor.duration_s.get());
     points_row.set_adjustment(Some(&gtk::Adjustment::new(
         editor.intensities.borrow().len() as f64,
-        POINTS_MIN as f64,
-        initial_max_points as f64,
+        f64::from(POINTS_MIN),
+        f64::from(initial_max_points),
         1.0,
         1.0,
         0.0,
@@ -317,7 +327,7 @@ pub fn push_pattern_editor(
     // ── Drawing ───────────────────────────────────────────────────────
     let editor_for_draw = editor.clone();
     drawing_area.set_draw_func(move |area, cr, w, h| {
-        draw_chart(area, cr, w as f64, h as f64, &editor_for_draw);
+        draw_chart(area, cr, f64::from(w), f64::from(h), &editor_for_draw);
     });
 
     // ── Drag interaction (handle pick + drag-y to adjust intensity) ───
@@ -332,8 +342,8 @@ pub fn push_pattern_editor(
     let drag_for_begin = drag.clone();
     drag.connect_drag_begin(move |_, x, y| {
         let (cx, cy, cw, ch) = chart_rect(
-            area_for_begin.width() as f64,
-            area_for_begin.height() as f64,
+            f64::from(area_for_begin.width()),
+            f64::from(area_for_begin.height()),
         );
         let intensities = editor_for_begin.intensities.borrow();
         let n = intensities.len();
@@ -346,7 +356,7 @@ pub fn push_pattern_editor(
         let mut best_dist = f64::MAX;
         for i in 0..n {
             let px = cx + (i as f64 / denom) * cw;
-            let py = cy + (1.0 - intensities[i] as f64) * ch;
+            let py = cy + (1.0 - f64::from(intensities[i])) * ch;
             let dist = ((px - x).powi(2) + (py - y).powi(2)).sqrt();
             if dist < best_dist {
                 best_dist = dist;
@@ -374,8 +384,8 @@ pub fn push_pattern_editor(
             return;
         };
         let (_cx, _cy, _cw, ch) = chart_rect(
-            area_for_update.width() as f64,
-            area_for_update.height() as f64,
+            f64::from(area_for_update.width()),
+            f64::from(area_for_update.height()),
         );
         // Negative oy = drag up = higher intensity. Map drag distance
         // to an intensity delta proportional to chart height, snap to
@@ -405,9 +415,9 @@ pub fn push_pattern_editor(
         // consistent. Otherwise just bump the upper bound.
         let new_max = max_points_for_duration_s(d);
         let adj = points_row_for_dur.adjustment();
-        adj.set_upper(new_max as f64);
-        if adj.value() > new_max as f64 {
-            adj.set_value(new_max as f64);
+        adj.set_upper(f64::from(new_max));
+        if adj.value() > f64::from(new_max) {
+            adj.set_value(f64::from(new_max));
         }
         points_row_for_dur.set_subtitle(&format!(
             "{} (up to {} for this duration)",
@@ -423,7 +433,7 @@ pub fn push_pattern_editor(
         let max_for_dur = max_points_for_duration_s(editor_for_pts.duration_s.get());
         let new_n = row.value()
             .round()
-            .clamp(POINTS_MIN as f64, max_for_dur as f64) as usize;
+            .clamp(f64::from(POINTS_MIN), f64::from(max_for_dur)) as usize;
         editor_for_pts.resample_to(new_n);
         // Selected index may now be out of range — clear it.
         if let Some(idx) = editor_for_pts.selected.get() {
@@ -461,7 +471,7 @@ pub fn push_pattern_editor(
             let except = editor.edit_uuid.borrow().clone().unwrap_or_default();
             let collision = app
                 .with_db(|db| db.is_vibration_pattern_name_taken(&name, &except))
-                .and_then(|r| r.ok())
+                .and_then(std::result::Result::ok)
                 .unwrap_or(false);
             save_btn.set_sensitive(!collision);
         })
@@ -532,9 +542,9 @@ pub fn push_pattern_editor(
     // pending auto-revert timeouts whenever the user re-taps (so a
     // stop, start, stop sequence doesn't get its second-stop undone
     // by the first-start's leftover timeout).
-    // Toggle / supersede / auto-revert state lives in core.
-    // Editor has a single playback slot so we use a sentinel id.
-    const EDITOR_SLOT: &str = "editor";
+    // Toggle / supersede / auto-revert state lives in core. The
+    // single-slot id used to address this editor's playback is the
+    // file-scope `EDITOR_SLOT` constant.
     let preview_toggle: Rc<RefCell<meditate_core::vibration::PreviewToggle>> =
         Rc::new(RefCell::new(meditate_core::vibration::PreviewToggle::new()));
     let editor_for_preview = editor.clone();
@@ -582,7 +592,7 @@ pub fn push_pattern_editor(
                 let preview_toggle_for_t = preview_toggle.clone();
                 let btn_for_t = btn_for_preview.clone();
                 glib::timeout_add_local_once(
-                    std::time::Duration::from_millis(duration_ms as u64),
+                    std::time::Duration::from_millis(u64::from(duration_ms)),
                     move || {
                         if preview_toggle_for_t.borrow_mut().timer_should_revert(generation) {
                             btn_for_t.set_icon_name("media-playback-start-symbolic");
@@ -599,6 +609,12 @@ pub fn push_pattern_editor(
 }
 
 // ── Drawing helpers ──────────────────────────────────────────────────────
+
+/// One X-axis label's measured layout — used by `draw_chart`'s
+/// label-thinning pass before any text is drawn. Kept at file scope
+/// so the lint about items-after-statements stays happy; it's
+/// otherwise local to `draw_chart`'s lifetime.
+struct LabelLayout { lx: f64, lw: f64, text: String }
 
 fn chart_rect(w: f64, h: f64) -> (f64, f64, f64, f64) {
     let cx = Y_LABEL_W;
@@ -635,7 +651,7 @@ fn draw_chart(
         let y = cy + (1.0 - frac) * ch;
         cr.set_source_rgba(0.55, 0.55, 0.55, 1.0);
         let extents = cr.text_extents(label).ok();
-        let lw = extents.map(|e| e.width()).unwrap_or(0.0);
+        let lw = extents.map_or(0.0, |e| e.width());
         cr.move_to(Y_LABEL_W - lw - 4.0, y + 3.5);
         let _ = cr.show_text(label);
 
@@ -648,7 +664,7 @@ fn draw_chart(
 
     // ── Geometry ──────────────────────────────────────────────────────
     let xs: Vec<f64> = (0..n).map(|i| cx + (i as f64 / denom) * cw).collect();
-    let ys: Vec<f64> = intensities.iter().map(|&v| cy + (1.0 - v as f64) * ch).collect();
+    let ys: Vec<f64> = intensities.iter().map(|&v| cy + (1.0 - f64::from(v)) * ch).collect();
 
     // ── Curve ─────────────────────────────────────────────────────────
     match editor.chart_kind.get() {
@@ -681,7 +697,7 @@ fn draw_chart(
                 let center = xs[i];
                 let left = if i == 0 { cx } else { center - step / 2.0 };
                 let right = if i == n - 1 { cx + cw } else { center + step / 2.0 };
-                let height = intensities[i] as f64 * ch;
+                let height = f64::from(intensities[i]) * ch;
                 let top = cy + ch - height;
                 cr.rectangle(left, top, (right - left).max(0.0), height);
             }
@@ -720,14 +736,12 @@ fn draw_chart(
     cr.set_font_size(10.0);
     let label_y = cy + ch + X_LABEL_H - 4.0;
     let duration_s = editor.duration_s.get();
-    const X_LABEL_MIN_GAP: f64 = 6.0;
 
-    struct LabelLayout { lx: f64, lw: f64, text: String }
     let layouts: Vec<LabelLayout> = (0..n).map(|i| {
         let t = duration_s * (i as f64) / denom;
         let text = format_seconds(t);
         let extents = cr.text_extents(&text).ok();
-        let lw = extents.map(|e| e.width()).unwrap_or(0.0);
+        let lw = extents.map_or(0.0, |e| e.width());
         let lx = (xs[i] - lw / 2.0).clamp(cx, cx + cw - lw);
         LabelLayout { lx, lw, text }
     }).collect();
@@ -751,7 +765,7 @@ fn draw_chart(
 }
 
 fn format_seconds(secs: f64) -> String {
-    format!("{:.1}s", secs)
+    format!("{secs:.1}s")
 }
 
 #[cfg(test)]

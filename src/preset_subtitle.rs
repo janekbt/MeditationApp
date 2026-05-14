@@ -40,8 +40,7 @@ pub fn preset_subtitle(p: &Preset, label_names: &HashMap<String, String>) -> Str
             after,
         } => {
             out.push(format!(
-                "{}-{}-{}-{}",
-                inhale_secs, hold_full_secs, exhale_secs, hold_empty_secs,
+                "{inhale_secs}-{hold_full_secs}-{exhale_secs}-{hold_empty_secs}",
             ));
             match after {
                 BoxBreathAfter::Stopwatch => out.push(gettext("Stopwatch")),

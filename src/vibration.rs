@@ -190,7 +190,7 @@ impl PatternPlayback {
             } else {
                 let delay_ms = chunk_start_offset_ms(&master, k);
                 glib::timeout_add_local_once(
-                    std::time::Duration::from_millis(delay_ms as u64),
+                    std::time::Duration::from_millis(u64::from(delay_ms)),
                     fire,
                 );
             }

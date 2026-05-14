@@ -150,7 +150,7 @@ pub fn export_csv(db: &Database, path: &Path) -> Result<usize, DataIoError> {
     // truncated or zero-byte CSV — the buffered pages reach the
     // kernel but not the disk. `sync_all` blocks until the data +
     // metadata are durable, the standard exported-file contract.
-    let file = wtr.into_inner().map_err(|e| e.into_error())?;
+    let file = wtr.into_inner().map_err(csv::IntoInnerError::into_error)?;
     file.sync_all()?;
     Ok(n)
 }
@@ -192,7 +192,7 @@ pub fn import_csv(db: &Database, path: &Path) -> Result<usize, DataIoError> {
         }
         // Unknown / typo'd mode values default to Timer — that
         // preserves the row rather than discarding it on import.
-        let mode = SessionMode::from_db_str(rec.get(2).map(|s| s.trim()).unwrap_or(""))
+        let mode = SessionMode::from_db_str(rec.get(2).map_or("", str::trim))
             .unwrap_or(SessionMode::Timer);
         let label_txt = rec.get(3).map(|s| s.trim().to_string()).unwrap_or_default();
         let note_txt = rec.get(4).map(|s| s.trim().to_string()).unwrap_or_default();

@@ -91,7 +91,7 @@ impl Database {
                     sound_uuid = ?3, pattern_uuid = ?4
               WHERE phase = ?5",
             params![
-                enabled as i64,
+                i64::from(enabled),
                 signal_mode.as_db_str(),
                 sound_uuid,
                 pattern_uuid,
@@ -150,7 +150,7 @@ impl Database {
                 pattern_uuid = excluded.pattern_uuid",
             params![
                 phase_id_str,
-                enabled as i64,
+                i64::from(enabled),
                 signal_mode,
                 sound_uuid,
                 pattern_uuid,

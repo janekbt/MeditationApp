@@ -208,7 +208,7 @@ impl Database {
                     uuid_str,
                     name,
                     mode.as_db_str(),
-                    is_starred as i64,
+                    i64::from(is_starred),
                     config_json,
                     now_iso,
                 ],
@@ -309,7 +309,7 @@ impl Database {
         let is_starred = starred.is_starred();
         self.conn.execute(
             "UPDATE presets SET is_starred = ?1, updated_iso = ?2 WHERE uuid = ?3",
-            params![is_starred as i64, now_iso, uuid_str],
+            params![i64::from(is_starred), now_iso, uuid_str],
         )?;
         let payload = serde_json::json!({
             "uuid": uuid_str,
@@ -382,7 +382,7 @@ impl Database {
                     created_iso = excluded.created_iso,
                     updated_iso = excluded.updated_iso";
             let first = self.conn.execute(upsert_sql, params![
-                preset_uuid, name, mode, is_starred as i64,
+                preset_uuid, name, mode, i64::from(is_starred),
                 config_json, created_iso, updated_iso,
             ]);
             match first {
@@ -394,7 +394,7 @@ impl Database {
                          original={name:?} resolved={suffixed:?}"
                     ));
                     self.conn.execute(upsert_sql, params![
-                        preset_uuid, suffixed, mode, is_starred as i64,
+                        preset_uuid, suffixed, mode, i64::from(is_starred),
                         config_json, created_iso, updated_iso,
                     ])?;
                 }

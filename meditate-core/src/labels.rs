@@ -24,8 +24,7 @@ use crate::settings_keys::{
 pub fn label_active_from_db(db: &Database, mode: SessionMode) -> bool {
     let fallback = mode == SessionMode::Guided;
     db.get_setting(label_active_key_for_mode(mode), format_bool(fallback))
-        .map(|v| parse_bool(&v))
-        .unwrap_or(fallback)
+        .map_or(fallback, |v| parse_bool(&v))
 }
 
 /// Read the persisted label UUID for `mode`. `None` when the setting
@@ -137,8 +136,7 @@ pub fn resolve_persist_action(picked: Option<i64>, labels: &[Label]) -> PersistA
         Some(id) => labels
             .iter()
             .find(|l| l.id == id)
-            .map(|l| PersistAction::SetUuidAndActivate { uuid: l.uuid.clone() })
-            .unwrap_or(PersistAction::NoOp),
+            .map_or(PersistAction::NoOp, |l| PersistAction::SetUuidAndActivate { uuid: l.uuid.clone() }),
         None => PersistAction::Deactivate,
     }
 }

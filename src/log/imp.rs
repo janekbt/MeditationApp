@@ -124,8 +124,8 @@ impl LogView {
 
         // Fetch labels first (needed for card rendering)
         let labels = app
-            .with_db(|db| db.list_labels())
-            .and_then(|r| r.ok())
+            .with_db(super::super::db::Database::list_labels)
+            .and_then(std::result::Result::ok)
             .unwrap_or_default();
         *self.labels.borrow_mut() = labels;
 
@@ -172,7 +172,7 @@ impl LogView {
         };
         let page = app
             .with_db(|db| db.list_sessions(&filter))
-            .and_then(|r| r.ok())
+            .and_then(std::result::Result::ok)
             .unwrap_or_default();
 
         let n = page.len();
@@ -249,8 +249,8 @@ impl LogView {
         // "Box-breathing" label on first Box Breath save), our cache
         // doesn't know about it yet and the card would render unlabelled.
         if let Some(app) = self.get_app() {
-            if let Some(fresh) = app.with_db(|db| db.list_labels())
-                .and_then(|r| r.ok())
+            if let Some(fresh) = app.with_db(super::super::db::Database::list_labels)
+                .and_then(std::result::Result::ok)
             {
                 *self.labels.borrow_mut() = fresh;
             }
@@ -665,8 +665,7 @@ impl LogView {
         new_toast.connect_dismissed(move |t| {
             let imp = obj_dismiss.imp();
             let still_active = imp.active_delete_toast.borrow().as_ref()
-                .map(|a| a.as_ptr() == t.as_ptr())
-                .unwrap_or(false);
+                .is_some_and(|a| a.as_ptr() == t.as_ptr());
             if !still_active { return; }
             imp.commit_all_pending();
         });
@@ -770,7 +769,7 @@ impl LogView {
         // dialog default to Timer for new entries (the dialog has no
         // mode selector — Box Breath / Guided sessions are produced
         // by the live timer view, not the log dialog).
-        let original_mode = session.map(|s| s.mode).unwrap_or(SessionMode::Timer);
+        let original_mode = session.map_or(SessionMode::Timer, |s| s.mode);
         let original_guided_file_uuid = session
             .and_then(|s| s.guided_file_uuid.clone());
 
@@ -792,10 +791,10 @@ impl LogView {
         }
 
         // ── Date row with calendar picker ──────────────────────────────
-        let init_time = session.map(|s| s.start_time).unwrap_or_else(meditate_core::time::unix_now);
+        let init_time = session.map_or_else(meditate_core::time::unix_now, |s| s.start_time);
         let init_dt = glib::DateTime::from_unix_local(init_time).ok();
-        let init_hour   = init_dt.as_ref().map(|d| d.hour()).unwrap_or(0);
-        let init_minute = init_dt.as_ref().map(|d| d.minute()).unwrap_or(0);
+        let init_hour   = init_dt.as_ref().map_or(0, glib::DateTime::hour);
+        let init_minute = init_dt.as_ref().map_or(0, glib::DateTime::minute);
 
         let date_row = adw::ActionRow::builder()
             .title(crate::i18n::gettext("Date"))
@@ -841,12 +840,12 @@ impl LogView {
         // ── Start time (hour + minute as AdwSpinRows) ─────────────────
         let time_hours_spin = adw::SpinRow::builder()
             .title(crate::i18n::gettext("Hour"))
-            .adjustment(&gtk::Adjustment::new(init_hour as f64, 0.0, 23.0, 1.0, 5.0, 0.0))
+            .adjustment(&gtk::Adjustment::new(f64::from(init_hour), 0.0, 23.0, 1.0, 5.0, 0.0))
             .digits(0)
             .build();
         let time_minutes_spin = adw::SpinRow::builder()
             .title(crate::i18n::gettext("Minute"))
-            .adjustment(&gtk::Adjustment::new(init_minute as f64, 0.0, 59.0, 1.0, 5.0, 0.0))
+            .adjustment(&gtk::Adjustment::new(f64::from(init_minute), 0.0, 59.0, 1.0, 5.0, 0.0))
             .digits(0)
             .build();
 
@@ -1077,7 +1076,7 @@ impl LogView {
                     time_hours_spin.value() as i32,
                     time_minutes_spin.value() as i32,
                     0.0,
-                ).ok().map(|d| d.to_unix()).unwrap_or_else(meditate_core::time::unix_now);
+                ).ok().map_or_else(meditate_core::time::unix_now, |d| d.to_unix());
                 let label_id = if label_expander.enables_expansion() {
                     selected_label_id_for_save.get()
                 } else {

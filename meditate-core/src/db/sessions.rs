@@ -120,7 +120,7 @@ pub fn get_running_average_secs_from_db(db: &Database, today: chrono::NaiveDate,
     if days == 0 {
         return Ok(0.0);
     }
-    let cutoff = today - chrono::Duration::days((days - 1) as i64);
+    let cutoff = today - chrono::Duration::days(i64::from(days - 1));
     let cutoff_str = cutoff.format("%Y-%m-%d").to_string();
     let total: i64 = db.conn.query_row(
         "SELECT COALESCE(SUM(duration_secs), 0) FROM sessions
@@ -128,7 +128,7 @@ pub fn get_running_average_secs_from_db(db: &Database, today: chrono::NaiveDate,
         [cutoff_str],
         |row| row.get(0),
     )?;
-    Ok(total as f64 / days as f64)
+    Ok(total as f64 / f64::from(days))
 }
 pub fn get_daily_totals_from_db(db: &Database) -> Result<Vec<(chrono::NaiveDate, i64)>> {
     db.daily_totals_filtered(None)
@@ -370,8 +370,8 @@ pub fn total_minutes_by_label_from_db(db: &Database) -> Result<Vec<(Option<Strin
 /// filter, notes-only. Rows are ordered `start_iso DESC` so the
 /// caller's first page is the newest sessions.
 pub fn query_sessions_from_db(db: &Database, filter: &SessionFilter) -> Result<Vec<(i64, Session)>> {
-    let limit_val: i64 = filter.limit.map(|n| n as i64).unwrap_or(-1);
-    let offset_val: i64 = filter.offset.map(|n| n as i64).unwrap_or(0);
+    let limit_val: i64 = filter.limit.map_or(-1, i64::from);
+    let offset_val: i64 = filter.offset.map_or(0, i64::from);
 
     // Build the WHERE clause from the filter. `prepare_cached`
     // dedupes by generated SQL text, so the four possible
@@ -1041,7 +1041,7 @@ mod tests {
         db.apply_event(&event).unwrap();
         let rows = list_sessions_from_db(&db).unwrap();
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].1.guided_file_uuid.as_ref().map(|u| u.as_str()), Some(file_uuid));
+        assert_eq!(rows[0].1.guided_file_uuid.as_ref().map(super::super::uuids::GuidedFileUuid::as_str), Some(file_uuid));
     }
 
     #[test]
@@ -1396,7 +1396,7 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         for i in 0..2 {
             db.insert_session(&Session {
-                start_iso: format!("2026-04-3{}T10:00:00", i),
+                start_iso: format!("2026-04-3{i}T10:00:00"),
                 duration_secs: 600,
                 label_id: None,
                 notes: None,
@@ -2703,7 +2703,7 @@ mod tests {
         db.insert_session(&session).unwrap();
         let rows = query_sessions_from_db(&db, &SessionFilter::default()).unwrap();
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].1.guided_file_uuid.as_ref().map(|u| u.as_str()), Some(file_uuid));
+        assert_eq!(rows[0].1.guided_file_uuid.as_ref().map(super::super::uuids::GuidedFileUuid::as_str), Some(file_uuid));
     }
 
     #[test]

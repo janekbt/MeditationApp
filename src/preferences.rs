@@ -4,6 +4,10 @@ use gtk::{gio, glib};
 
 use crate::application::MeditateApplication;
 use crate::i18n::gettext;
+use meditate_core::goal::{
+    weekly_goal_mins_from_db, write_weekly_goal_mins,
+    WEEKLY_GOAL_DEFAULT, WEEKLY_GOAL_MAX, WEEKLY_GOAL_MIN, WEEKLY_GOAL_STEP,
+};
 
 pub fn show_preferences(app: &MeditateApplication) {
     show_preferences_on_page(app, None);
@@ -80,10 +84,6 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
         .build();
 
     // Weekly meditation goal — drives the ring on the Stats tab.
-    use meditate_core::goal::{
-        weekly_goal_mins_from_db, write_weekly_goal_mins,
-        WEEKLY_GOAL_DEFAULT, WEEKLY_GOAL_MAX, WEEKLY_GOAL_MIN, WEEKLY_GOAL_STEP,
-    };
     let current_goal_mins = app
         .with_db(|db| weekly_goal_mins_from_db(db.core()))
         .unwrap_or(WEEKLY_GOAL_DEFAULT);
@@ -218,7 +218,7 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
     // design — we don't echo what's in the keychain.
     if let Some(account) = app
         .with_db(|db| meditate_core::sync::settings::nextcloud_account_from_db(db.core()))
-        .and_then(|r| r.ok())
+        .and_then(std::result::Result::ok)
         .flatten()
     {
         url_row.set_text(&account.url);

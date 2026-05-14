@@ -113,11 +113,11 @@ pub fn next_interval_ring_secs(
     jitter_pct: u32,
     random_unit: f64,
 ) -> u64 {
-    let base_secs = (base_min as u64).saturating_mul(60).max(1);
+    let base_secs = u64::from(base_min).saturating_mul(60).max(1);
     if jitter_pct == 0 {
         return last_ring_secs + base_secs;
     }
-    let span = base_secs as f64 * (jitter_pct as f64) / 100.0;
+    let span = base_secs as f64 * f64::from(jitter_pct) / 100.0;
     // [0, 1) → [-span, +span). Centre (0.5) lands on zero offset.
     let offset = (random_unit - 0.5) * 2.0 * span;
     let next_secs = ((base_secs as f64) + offset).round().max(1.0) as u64;
@@ -134,7 +134,7 @@ pub fn fixed_from_start_target_secs(
     offset_min: u32,
     total_target_secs: Option<u64>,
 ) -> Option<u64> {
-    let offset_secs = (offset_min as u64) * 60;
+    let offset_secs = u64::from(offset_min) * 60;
     if offset_secs == 0 {
         return None;
     }
@@ -153,7 +153,7 @@ pub fn fixed_from_end_target_secs(
     offset_min: u32,
     total_target_secs: u64,
 ) -> Option<u64> {
-    let offset_secs = (offset_min as u64) * 60;
+    let offset_secs = u64::from(offset_min) * 60;
     if offset_secs == 0 || offset_secs >= total_target_secs {
         return None;
     }
@@ -1323,21 +1323,21 @@ mod tests {
         // random_unit just below 1.0 → just below +span. For base=9 ±30%,
         // upper bound is 540 + 162 = 702.
         let v = next_interval_ring_secs(0, 9, 30, 0.9999);
-        assert!((700..=702).contains(&v), "got {}", v);
+        assert!((700..=702).contains(&v), "got {v}");
     }
 
     #[test]
     fn next_interval_ring_stays_within_jitter_window_for_every_unit() {
         let base = 9 * 60u64;
         let jitter_pct = 30u32;
-        let span = base as f64 * jitter_pct as f64 / 100.0;
+        let span = base as f64 * f64::from(jitter_pct) / 100.0;
         let lo = (base as f64 - span).round() as u64;
         let hi = (base as f64 + span).round() as u64;
         for i in 0..=10 {
-            let u = (i as f64) / 10.0;
+            let u = f64::from(i) / 10.0;
             let v = next_interval_ring_secs(0, 9, jitter_pct, u);
             assert!(v >= lo && v <= hi,
-                "u={} produced {} outside [{}, {}]", u, v, lo, hi);
+                "u={u} produced {v} outside [{lo}, {hi}]");
         }
     }
 

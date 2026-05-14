@@ -113,8 +113,8 @@ fn lookup_bell_sound_by_uuid(app: &MeditateApplication, uuid: &str) -> Option<Be
     if uuid.is_empty() {
         return None;
     }
-    app.with_db(|db| db.list_bell_sounds())
-        .and_then(|r| r.ok())
+    app.with_db(super::db::Database::list_bell_sounds)
+        .and_then(std::result::Result::ok)
         .unwrap_or_default()
         .into_iter()
         .find(|s| s.uuid == uuid)
@@ -196,7 +196,7 @@ fn surface_audio_error_toast() {
 pub fn preload_end_bell(app: &MeditateApplication) {
     let uuid = app
         .with_db(|db| db.get_setting("end_bell_sound", crate::db::BUNDLED_BOWL_UUID))
-        .and_then(|r| r.ok())
+        .and_then(std::result::Result::ok)
         .unwrap_or_else(|| crate::db::BUNDLED_BOWL_UUID.to_string());
     let media_opt = lookup_bell_sound_by_uuid(app, &uuid).map(|s| media_for_bell_sound(&s));
     CURRENT_MEDIA.with(|cell| {
@@ -235,7 +235,7 @@ pub fn play_end_bell(app: &MeditateApplication) {
     // No pre-loaded pipeline — load on the spot.
     let uuid = app
         .with_db(|db| db.get_setting("end_bell_sound", crate::db::BUNDLED_BOWL_UUID))
-        .and_then(|r| r.ok())
+        .and_then(std::result::Result::ok)
         .unwrap_or_default();
     let Some(sound) = lookup_bell_sound_by_uuid(app, &uuid) else {
         return;
@@ -257,7 +257,7 @@ pub fn play_starting_sound(app: &MeditateApplication) {
     }
     let uuid = app
         .with_db(|db| db.get_setting("starting_bell_sound", crate::db::BUNDLED_BOWL_UUID))
-        .and_then(|r| r.ok())
+        .and_then(std::result::Result::ok)
         .unwrap_or_default();
     let Some(sound) = lookup_bell_sound_by_uuid(app, &uuid) else {
         return;

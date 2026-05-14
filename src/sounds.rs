@@ -140,14 +140,14 @@ fn rebuild_chooser_rows(
     rows.borrow_mut().push(import_row.upcast());
 
     let selection = SelectionContext {
-        current_uuid: current_uuid.map(|s| s.to_string()),
+        current_uuid: current_uuid.map(std::string::ToString::to_string),
         on_selected,
         nav_view: nav_view.clone(),
     };
 
     let sounds = app
         .with_db(|db| db.list_bell_sounds_for_category(category))
-        .and_then(|r| r.ok())
+        .and_then(std::result::Result::ok)
         .unwrap_or_default();
     if sounds.is_empty() && category == BellSoundCategory::BoxBreath {
         // Phase chooser starts empty for new users until the
@@ -347,7 +347,7 @@ fn present_file_picker(
             let Some(path) = file.path() else { return; };
 
             // Size cap.
-            let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+            let size = std::fs::metadata(&path).map_or(0, |m| m.len());
             if !meditate_core::sound::is_within_size_limit(size) {
                 present_size_toast(&anchor);
                 return;
@@ -461,8 +461,8 @@ fn present_import_confirm_dialog(
             let text = entry.text();
             let trimmed = text.trim();
             let library = app
-                .with_db(|db| db.list_bell_sounds())
-                .and_then(|r| r.ok())
+                .with_db(super::db::Database::list_bell_sounds)
+                .and_then(std::result::Result::ok)
                 .unwrap_or_default();
             let collision = meditate_core::sound::name_collides(trimmed, &library);
             let valid = !trimmed.is_empty() && !collision;
@@ -602,9 +602,7 @@ fn do_import_io(
 ) -> std::result::Result<(String, std::path::PathBuf, &'static str), String> {
     let source_ext = source
         .extension()
-        .and_then(|s| s.to_str())
-        .map(|s| s.to_ascii_lowercase())
-        .unwrap_or_else(|| "wav".to_string());
+        .and_then(|s| s.to_str()).map_or_else(|| "wav".to_string(), str::to_ascii_lowercase);
 
     // wav and ogg pass through; everything else transcodes to
     // OGG/Vorbis on import. Mapping lives in core so the Android
@@ -795,8 +793,8 @@ fn present_rename_dialog(
             let trimmed = text.trim();
             let validity = meditate_core::validate(trimmed, |name| {
                 let library = app
-                    .with_db(|db| db.list_bell_sounds())
-                    .and_then(|r| r.ok())
+                    .with_db(super::db::Database::list_bell_sounds)
+                    .and_then(std::result::Result::ok)
                     .unwrap_or_default();
                 meditate_core::sound::name_collides_excluding(name, &library, &uuid)
             });

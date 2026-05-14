@@ -139,7 +139,7 @@ impl Database {
                 bell.sound_uuid,
                 bell.vibration_pattern_uuid,
                 bell.signal_mode.as_db_str(),
-                bell.enabled as i64,
+                i64::from(bell.enabled),
                 bell.uuid,
             ],
         )?;
@@ -288,7 +288,7 @@ impl Database {
                     sound_uuid,
                     vibration_pattern_uuid,
                     signal_mode,
-                    enabled as i64,
+                    i64::from(enabled),
                     created_iso,
                 ],
             )?;

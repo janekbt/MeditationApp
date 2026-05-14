@@ -73,7 +73,7 @@ impl Database {
                 guided_file_uuid = excluded.guided_file_uuid",
             params![
                 snapshot.start_iso,
-                snapshot.accumulated_secs as i64,
+                i64::from(snapshot.accumulated_secs),
                 snapshot.mode.as_db_str(),
                 snapshot.mode_payload,
                 snapshot.label_id,
@@ -426,7 +426,7 @@ mod tests {
         );
         let sessions = crate::db::list_sessions_from_db(&db).unwrap();
         assert_eq!(
-            sessions[0].1.guided_file_uuid.as_ref().map(|u| u.as_str()),
+            sessions[0].1.guided_file_uuid.as_ref().map(super::super::uuids::GuidedFileUuid::as_str),
             Some("ffffffff-ffff-4fff-8fff-ffffffffffff"),
         );
         assert_eq!(sessions[0].1.mode, SessionMode::Guided);

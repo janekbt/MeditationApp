@@ -10,6 +10,9 @@ use meditate_core::format::format_time;
 use crate::log::LogView;
 use crate::stats::StatsView;
 use crate::timer::TimerView;
+use meditate_core::breath::PhaseRunningLabelKey;
+use meditate_core::sync::indicator::{action_for, SyncIndicatorAction};
+use glib::subclass::prelude::ObjectSubclassIsExt;
 
 #[derive(Debug, Default, CompositeTemplate)]
 #[template(resource = "/io/github/janekbt/Meditate/ui/window.ui")]
@@ -324,7 +327,7 @@ impl MeditateWindow {
             let pattern_cell = pattern_cell.clone();
             let obj = self.obj().clone();
             drawing_area.set_draw_func(move |widget, cr, w, h| {
-                let size = w.min(h) as f64;
+                let size = f64::from(w.min(h));
                 let pad = 12.0;
                 let side = size - 2.0 * pad;
                 let radius = 20.0;
@@ -458,7 +461,6 @@ impl MeditateWindow {
             let info = pattern_for_tick.phase_at(elapsed);
             let phase = info.phase;
 
-            use meditate_core::breath::PhaseRunningLabelKey;
             let phase_name = match phase.running_label_key() {
                 PhaseRunningLabelKey::BreatheIn => crate::i18n::gettext("Breathe in"),
                 PhaseRunningLabelKey::Hold => crate::i18n::gettext("Hold"),
@@ -576,7 +578,6 @@ impl MeditateWindow {
                 let Some(app) = obj.application()
                     .and_then(|a| a.downcast::<crate::application::MeditateApplication>().ok())
                 else { return; };
-                use meditate_core::sync::indicator::{action_for, SyncIndicatorAction};
                 let state = sync_indicator_state_now(&app);
                 match action_for(&state) {
                     SyncIndicatorAction::OpenRecovery => crate::recovery_dialog::show(&app),
@@ -615,7 +616,6 @@ impl MeditateWindow {
                     if !w.is_mapped() {
                         return glib::ControlFlow::Continue;
                     }
-                    use glib::subclass::prelude::ObjectSubclassIsExt;
                     w.imp().refresh_sync_status();
                     glib::ControlFlow::Continue
                 }
@@ -733,7 +733,7 @@ fn format_synced_ago(unix_ts: i64) -> String {
 /// Adwaita blue only if the lookup somehow misses.
 fn accent_rgb(_widget: &impl IsA<gtk::Widget>) -> (f64, f64, f64) {
     let rgba = adw::StyleManager::default().accent_color_rgba();
-    (rgba.red() as f64, rgba.green() as f64, rgba.blue() as f64)
+    (f64::from(rgba.red()), f64::from(rgba.green()), f64::from(rgba.blue()))
 }
 
 /// Append a rounded-rectangle path to the current cairo context.
@@ -921,8 +921,7 @@ mod sync_status_tests {
     fn ago(unix_ts_offset_secs: i64) -> String {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
+            .map_or(0, |d| d.as_secs() as i64);
         format_synced_ago(now + unix_ts_offset_secs)
     }
 

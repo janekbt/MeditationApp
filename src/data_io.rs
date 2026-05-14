@@ -69,9 +69,7 @@ impl From<meditate_core::data_io::DataIoError> for DataIoError {
 /// Suggested filename for an export, e.g. `meditate-backup-2026-04-20_142030.csv`.
 pub fn suggested_export_filename() -> String {
     let now = crate::time::now_local();
-    let ts  = now.format("%Y-%m-%d_%H%M%S")
-        .map(|s| s.to_string())
-        .unwrap_or_else(|_| "unknown".to_string());
+    let ts  = now.format("%Y-%m-%d_%H%M%S").map_or_else(|_| "unknown".to_string(), |s| s.to_string());
     format!("meditate-backup-{ts}.csv")
 }
 
@@ -132,7 +130,7 @@ pub(crate) fn import_insighttimer_to_db(db: &Database, path: &Path) -> Result<us
 // ── Delete all ────────────────────────────────────────────────────────────────
 
 pub fn delete_all(app: &MeditateApplication) -> Result<usize, DataIoError> {
-    app.with_db_mut(|db| db.delete_all_sessions())
+    app.with_db_mut(super::db::Database::delete_all_sessions)
         .ok_or(DataIoError::NoDatabase)?
         .map_err(Into::into)
 }
@@ -149,7 +147,7 @@ fn parse_insighttimer_datetime(s: &str) -> Option<i64> {
     let glib_dt = gtk::glib::DateTime::new(
         &gtk::glib::TimeZone::local(),
         dt.year(), dt.month() as i32, dt.day() as i32,
-        dt.hour() as i32, dt.minute() as i32, dt.second() as f64,
+        dt.hour() as i32, dt.minute() as i32, f64::from(dt.second()),
     ).ok()?;
     Some(glib_dt.to_unix())
 }

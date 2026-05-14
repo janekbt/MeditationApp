@@ -74,8 +74,7 @@ fn round_2_concurrent_edits_converge_over_two_sync_passes() {
     let laptop_notes = meditate_core::db::list_sessions_from_db(&laptop).unwrap()[0].1.notes.clone();
     assert_eq!(phone_notes, laptop_notes,
         "both devices must converge on the same winning value");
-    println!("✓ both devices converged on notes={:?} (one device's edit won deterministically)\n",
-        phone_notes);
+    println!("✓ both devices converged on notes={phone_notes:?} (one device's edit won deterministically)\n");
 }
 
 fn round_3_tombstone_propagation() {
@@ -122,7 +121,7 @@ fn round_4_three_device_chain_through_shared_remote() {
     let c_starts: std::collections::HashSet<String> = meditate_core::db::list_sessions_from_db(&c).unwrap()
         .iter().map(|(_, s)| s.start_iso.clone()).collect();
     let expected: std::collections::HashSet<_> =
-        ["from A", "from B"].iter().map(|s| s.to_string()).collect();
+        ["from A", "from B"].iter().map(std::string::ToString::to_string).collect();
     assert_eq!(c_starts, expected);
 
     // C authors something of its own and goes back online — both A
@@ -136,7 +135,7 @@ fn round_4_three_device_chain_through_shared_remote() {
     let b_starts: std::collections::HashSet<String> = meditate_core::db::list_sessions_from_db(&b).unwrap()
         .iter().map(|(_, s)| s.start_iso.clone()).collect();
     let three_way: std::collections::HashSet<_> =
-        ["from A", "from B", "from C"].iter().map(|s| s.to_string()).collect();
+        ["from A", "from B", "from C"].iter().map(std::string::ToString::to_string).collect();
     assert_eq!(a_starts, three_way);
     assert_eq!(b_starts, three_way);
     println!("✓ three-device chain converged: all three peers see all three sessions\n");
@@ -160,8 +159,7 @@ fn round_5_idempotency_under_repeated_calls() {
     let phone_count_converged  = meditate_core::db::list_sessions_from_db(&phone).unwrap().len();
     let laptop_count_converged = meditate_core::db::list_sessions_from_db(&laptop).unwrap().len();
     let remote_files_converged = nc.file_count();
-    println!("After convergence: phone={} sessions, laptop={} sessions, remote={} files",
-        phone_count_converged, laptop_count_converged, remote_files_converged);
+    println!("After convergence: phone={phone_count_converged} sessions, laptop={laptop_count_converged} sessions, remote={remote_files_converged} files");
 
     // Another 3 rounds — nothing should change.
     for _ in 0..3 {
@@ -213,7 +211,7 @@ fn insert_session(db: &Database, start_iso: &str, secs: u32, notes: Option<&str>
         start_iso: start_iso.into(),
         duration_secs: secs,
         label_id: None,
-        notes: notes.map(|s| s.to_string()),
+        notes: notes.map(std::string::ToString::to_string),
         mode: SessionMode::Timer,
         uuid: meditate_core::db::SessionUuid::new(""),
         guided_file_uuid: None,

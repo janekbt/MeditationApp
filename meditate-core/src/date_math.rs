@@ -70,7 +70,7 @@ pub fn locale_week_start_dow() -> i32 {
         // 1 = Sun … 7 = Sat (POSIX)  →  1 = Mon … 7 = Sun (1=Mon).
         match byte {
             1 => 7,         // Sunday → 7 in 1=Mon convention
-            2..=7 => (byte - 1) as i32,
+            2..=7 => i32::from(byte - 1),
             _ => 1,         // Unset / empty — default to Monday
         }
     }
@@ -111,7 +111,7 @@ pub fn week_over_week(
     let sum_range = |start_offset: i32| -> i64 {
         (0..days_elapsed)
             .filter_map(|i| {
-                let offset = (start_offset - i) as i64;
+                let offset = i64::from(start_offset - i);
                 let dt = today.checked_add_signed(Duration::days(offset))?;
                 let key = dt.format("%Y-%m-%d").to_string();
                 Some(map.get(key.as_str()).copied().unwrap_or(0))
@@ -241,8 +241,7 @@ pub fn aggregate_for_chart_period(
             // first 7 chars are YYYY-MM.
             let same = months
                 .last()
-                .map(|(k, _)| k.len() >= 7 && date_str.len() >= 7 && k[..7] == date_str[..7])
-                .unwrap_or(false);
+                .is_some_and(|(k, _)| k.len() >= 7 && date_str.len() >= 7 && k[..7] == date_str[..7]);
             if same {
                 months.last_mut().unwrap().1 += dur;
             } else {

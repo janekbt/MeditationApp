@@ -237,7 +237,7 @@ impl<'a, W: WebDav> Sync<'a, W> {
                 continue;
             };
             if known_files.contains(&batch_uuid) { continue; }
-            let path = format!("{}/{}", events_dir, name);
+            let path = format!("{events_dir}/{name}");
             let body = self.webdav.get(&path, MAX_EVENT_BUNDLE_BYTES)?;
             let events: Vec<Event> = serde_json::from_slice(&body)
                 .map_err(|e| SyncError::InvalidEvent(format!("{name}: {e}")))?;
@@ -800,7 +800,7 @@ mod tests {
         assert_eq!(listing.len(), 1);
         let name = &listing[0];
         // Prefix must be the 14-digit zero-padded min lamport.
-        let expected_prefix = format!("{:014}__", min_lamport);
+        let expected_prefix = format!("{min_lamport:014}__");
         assert!(name.starts_with(&expected_prefix),
             "filename `{name}` must begin with the min lamport prefix `{expected_prefix}`");
         // Suffix portion before .json must be parseable as a batch_uuid.
@@ -1093,7 +1093,7 @@ mod tests {
             .unwrap().iter().map(|(_, s)| s.start_iso.clone()).collect();
         assert_eq!(starts_a, starts_b, "both devices must converge");
         let expected: std::collections::HashSet<_> =
-            ["from A", "from B"].iter().map(|s| s.to_string()).collect();
+            ["from A", "from B"].iter().map(std::string::ToString::to_string).collect();
         assert_eq!(starts_a, expected);
     }
 
@@ -1161,8 +1161,7 @@ mod tests {
             .map(|(_, e)| e.lamport_ts)
             .unwrap();
         assert!(our_event_lamport > peer_max_lamport,
-            "post-sync local event at lamport {} must exceed peer's max {}",
-            our_event_lamport, peer_max_lamport);
+            "post-sync local event at lamport {our_event_lamport} must exceed peer's max {peer_max_lamport}");
     }
 
     // ── Remote data lost — fail-safe on wiped Nextcloud ──────────────────
@@ -1235,7 +1234,7 @@ mod tests {
         assert_eq!(db.known_remote_file_uuids().unwrap().len(), 1);
         // Wipe the remote.
         for name in fs.list_collection("/Meditate/events/").unwrap() {
-            fs.delete(&format!("/Meditate/events/{}", name)).unwrap();
+            fs.delete(&format!("/Meditate/events/{name}")).unwrap();
         }
 
         let err = Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap_err();
@@ -1254,7 +1253,7 @@ mod tests {
         Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap();
         // Wipe the remote.
         for name in fs.list_collection("/Meditate/events/").unwrap() {
-            fs.delete(&format!("/Meditate/events/{}", name)).unwrap();
+            fs.delete(&format!("/Meditate/events/{name}")).unwrap();
         }
         // Peer authors and pushes its own data.
         let (peer_db, _) = setup();
@@ -1279,13 +1278,13 @@ mod tests {
         insert_session(&db, "first", 100);
         Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap();
         for name in fs.list_collection("/Meditate/events/").unwrap() {
-            fs.delete(&format!("/Meditate/events/{}", name)).unwrap();
+            fs.delete(&format!("/Meditate/events/{name}")).unwrap();
         }
         // Operator action: clear the dedup tracker.
         db.wipe_known_remote_files().unwrap();
         // Mark events un-synced so push has work to do.
         for name in fs.list_collection("/Meditate/events/").unwrap() {
-            fs.delete(&format!("/Meditate/events/{}", name)).unwrap();
+            fs.delete(&format!("/Meditate/events/{name}")).unwrap();
         }
 
         let result = Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new()).sync();
@@ -1309,7 +1308,7 @@ mod tests {
 
         // Wipe remote.
         for name in fs.list_collection("/Meditate/events/").unwrap() {
-            fs.delete(&format!("/Meditate/events/{}", name)).unwrap();
+            fs.delete(&format!("/Meditate/events/{name}")).unwrap();
         }
 
         let _ = Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap_err();
@@ -1498,7 +1497,7 @@ mod tests {
         db.insert_bell_sound_with_uuid(
             &uuid,
             name,
-            &format!("/some/source/path/{}.{}", uuid, ext),
+            &format!("/some/source/path/{uuid}.{ext}"),
             false,
             mime,
             BellSoundCategory::General,

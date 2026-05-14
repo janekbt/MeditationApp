@@ -481,7 +481,7 @@ mod tests {
         // or rejecting.
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(&format!(
-            "PRAGMA user_version = {};", SCHEMA_VERSION
+            "PRAGMA user_version = {SCHEMA_VERSION};"
         )).unwrap();
         Database::init(conn).expect("init succeeds at current version");
     }

@@ -146,8 +146,8 @@ fn rebuild_chooser_rows(
     // Resolve the labels table once per rebuild so every row's
     // subtitle lookup is O(1) against the in-memory map.
     let label_names: HashMap<String, String> = app
-        .with_db(|db| db.list_labels())
-        .and_then(|r| r.ok())
+        .with_db(super::db::Database::list_labels)
+        .and_then(std::result::Result::ok)
         .unwrap_or_default()
         .into_iter()
         .map(|l| (l.uuid.0, l.name))
@@ -207,7 +207,7 @@ fn rebuild_chooser_rows(
 
     let presets = app
         .with_db(|db| db.list_presets_for_mode(mode))
-        .and_then(|r| r.ok())
+        .and_then(std::result::Result::ok)
         .unwrap_or_default();
     for preset in presets {
         let row = build_preset_row(
@@ -455,7 +455,7 @@ fn present_create_preset_dialog(
             let trimmed = text.trim();
             let validity = meditate_core::validate(trimmed, |name| {
                 app.with_db(|db| db.is_preset_name_taken(name, ""))
-                    .and_then(|r| r.ok())
+                    .and_then(std::result::Result::ok)
                     .unwrap_or(false)
             });
             dialog.set_response_enabled("create", validity.is_savable());
@@ -514,7 +514,7 @@ fn present_rename_preset_dialog(
             let trimmed = text.trim();
             let validity = meditate_core::validate(trimmed, |name| {
                 app.with_db(|db| db.is_preset_name_taken(name, &preset_uuid))
-                    .and_then(|r| r.ok())
+                    .and_then(std::result::Result::ok)
                     .unwrap_or(false)
             });
             dialog.set_response_enabled("rename", validity.is_savable());
@@ -702,8 +702,7 @@ fn build_undo_toast(
         let should_clear = toast_slot_dismiss
             .borrow()
             .as_ref()
-            .map(|cur| cur == t)
-            .unwrap_or(false);
+            .is_some_and(|cur| cur == t);
         if should_clear {
             toast_slot_dismiss.replace(None);
         }

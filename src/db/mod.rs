@@ -244,7 +244,7 @@ pub use meditate_core::db::SessionFilter;
 fn session_data_to_core(s: &SessionData) -> meditate_core::db::Session {
     meditate_core::db::Session {
         start_iso: meditate_core::time::unix_to_local_iso(s.start_time),
-        duration_secs: s.duration_secs.clamp(0, u32::MAX as i64) as u32,
+        duration_secs: s.duration_secs.clamp(0, i64::from(u32::MAX)) as u32,
         label_id: s.label_id,
         notes: s.note.clone(),
         mode: s.mode,
@@ -262,7 +262,7 @@ fn session_from_core(id: i64, core: &meditate_core::db::Session) -> Session {
     Session {
         id,
         start_time: meditate_core::time::local_iso_to_unix(&core.start_iso),
-        duration_secs: core.duration_secs as i64,
+        duration_secs: i64::from(core.duration_secs),
         mode: core.mode,
         label_id: core.label_id,
         note: core.notes.clone(),
@@ -891,7 +891,7 @@ impl Database {
     pub fn get_longest_session(&self) -> Result<Option<(i64, i64)>> {
         let row = meditate_core::db::get_longest_session_from_db(&self.inner).map_err(map_core_err)?;
         Ok(row.map(|(_id, c)| {
-            (c.duration_secs as i64, meditate_core::time::local_iso_to_unix(&c.start_iso))
+            (i64::from(c.duration_secs), meditate_core::time::local_iso_to_unix(&c.start_iso))
         }))
     }
 
@@ -900,7 +900,7 @@ impl Database {
     pub fn get_median_duration_secs(&self) -> Result<Option<i64>> {
         Ok(meditate_core::db::get_median_duration_secs_from_db(&self.inner)
             .map_err(map_core_err)?
-            .map(|s| s as i64))
+            .map(i64::from))
     }
 
     pub fn hour_buckets(&self) -> Result<(i64, i64, i64)> {

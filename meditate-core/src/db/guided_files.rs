@@ -122,7 +122,7 @@ impl Database {
                     name,
                     file_path,
                     duration_secs,
-                    is_starred as i64,
+                    i64::from(is_starred),
                     now_iso,
                 ],
             )
@@ -206,7 +206,7 @@ impl Database {
         let is_starred = starred.is_starred();
         self.conn.execute(
             "UPDATE guided_files SET is_starred = ?1, updated_iso = ?2 WHERE uuid = ?3",
-            params![is_starred as i64, now_iso, uuid_str],
+            params![i64::from(is_starred), now_iso, uuid_str],
         )?;
         let payload = serde_json::json!({
             "uuid": uuid_str,
@@ -282,7 +282,7 @@ impl Database {
                     updated_iso   = excluded.updated_iso";
             let first = self.conn.execute(upsert_sql, params![
                 file_uuid, name, file_path, duration_secs,
-                is_starred as i64, created_iso, updated_iso,
+                i64::from(is_starred), created_iso, updated_iso,
             ]);
             match first {
                 Ok(_) => {}
@@ -294,7 +294,7 @@ impl Database {
                     ));
                     self.conn.execute(upsert_sql, params![
                         file_uuid, suffixed, file_path, duration_secs,
-                        is_starred as i64, created_iso, updated_iso,
+                        i64::from(is_starred), created_iso, updated_iso,
                     ])?;
                 }
                 Err(e) => return Err(DbError::Sqlite(e)),

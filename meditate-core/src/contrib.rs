@@ -77,7 +77,7 @@ pub fn build_grid(
 ) -> Vec<ContribCell> {
     let today_dow = today.weekday().number_from_monday() as i32;
     let cur_week_start = today
-        - Duration::days(days_since_week_start(today_dow, locale_first_dow) as i64);
+        - Duration::days(i64::from(days_since_week_start(today_dow, locale_first_dow)));
 
     let mut cells = Vec::with_capacity(CONTRIB_COLS * CONTRIB_ROWS);
     for col in 0..CONTRIB_COLS as i64 {

@@ -185,7 +185,7 @@ impl BreathPattern {
     /// Total cycle length. Sum of the four phase durations.
     pub fn cycle(&self) -> Duration {
         Duration::from_secs(
-            (self.in_secs + self.hold_in + self.out_secs + self.hold_out) as u64,
+            u64::from(self.in_secs + self.hold_in + self.out_secs + self.hold_out),
         )
     }
 
@@ -233,7 +233,7 @@ impl BreathPattern {
             Phase::Out => self.out_secs,
             Phase::HoldOut => self.hold_out,
         };
-        Duration::from_secs(secs as u64)
+        Duration::from_secs(u64::from(secs))
     }
 
     /// The four phases paired with their durations, in cycle order.
@@ -270,7 +270,7 @@ impl BreathPattern {
             if dur_secs == 0 {
                 continue;
             }
-            let dur_nanos: u128 = (dur_secs as u128) * 1_000_000_000;
+            let dur_nanos: u128 = u128::from(dur_secs) * 1_000_000_000;
             let next = acc + dur_nanos;
             if t_nanos < next {
                 let into = t_nanos - acc;
@@ -292,7 +292,7 @@ impl BreathPattern {
             .rev()
             .find(|(_, d)| *d > 0)
             .expect("phase_at: zero-length cycle");
-        let dur = Duration::from_secs(last.1 as u64);
+        let dur = Duration::from_secs(u64::from(last.1));
         PhaseInfo {
             phase: last.0,
             elapsed_in_phase: dur,

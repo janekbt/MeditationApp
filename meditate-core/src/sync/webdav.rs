@@ -428,7 +428,7 @@ fn parse_multistatus_filenames(body: &str, requested_path: &str)
         // Also normalise away any trailing slash.
         let trimmed = raw.trim_end_matches('/');
         // Final path segment.
-        let last_slash = trimmed.rfind('/').map(|i| i + 1).unwrap_or(0);
+        let last_slash = trimmed.rfind('/').map_or(0, |i| i + 1);
         let raw_name = &trimmed[last_slash..];
         let name = url_decode(raw_name);
 
@@ -451,7 +451,7 @@ fn parse_multistatus_filenames(body: &str, requested_path: &str)
 /// the "self" entry of a PROPFIND response. For "Meditate/events"
 /// returns "events"; for "" returns "".
 fn self_segment(normalised: &str) -> String {
-    let last_slash = normalised.rfind('/').map(|i| i + 1).unwrap_or(0);
+    let last_slash = normalised.rfind('/').map_or(0, |i| i + 1);
     normalised[last_slash..].to_string()
 }
 

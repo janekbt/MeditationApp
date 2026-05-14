@@ -124,7 +124,7 @@ pub fn run_sync_attempt(db_path: &Path) -> Result<SyncStats, SyncRunnerError> {
     let webdav = meditate_core::sync::HttpWebDav::new(&url, &username, &password);
 
     let started = std::time::Instant::now();
-    let pending_at_start = db.pending_events().map(|v| v.len()).unwrap_or(0);
+    let pending_at_start = db.pending_events().map_or(0, |v| v.len());
     meditate_core::log(&format!(
         "sync attempt starting: {pending_at_start} events pending",
     ));
@@ -240,6 +240,32 @@ mod tests {
         db
     }
 
+    /// Test impl whose every verb fails with `Network("offline")` —
+    /// used by tests that exercise the failure-recording side of the
+    /// runner. Hoisted to module scope so the lint about items
+    /// declared after statements stays happy.
+    struct AlwaysFail;
+    impl WebDav for AlwaysFail {
+        fn list_collection(&self, _: &str)
+            -> meditate_core::WebDavResult<Vec<String>>
+        { Err(meditate_core::WebDavError::Network("offline".into())) }
+        fn get(&self, _: &str, _: u64)
+            -> meditate_core::WebDavResult<Vec<u8>>
+        { unreachable!() }
+        fn put(&self, _: &str, _: &[u8])
+            -> meditate_core::WebDavResult<()>
+        { Err(meditate_core::WebDavError::Network("offline".into())) }
+        fn mkcol(&self, _: &str)
+            -> meditate_core::WebDavResult<()>
+        { Err(meditate_core::WebDavError::Network("offline".into())) }
+        fn delete(&self, _: &str)
+            -> meditate_core::WebDavResult<()>
+        { unreachable!() }
+        fn move_to(&self, _: &str, _: &str)
+            -> meditate_core::WebDavResult<()>
+        { Err(meditate_core::WebDavError::Network("offline".into())) }
+    }
+
     #[test]
     fn run_with_webdav_pushes_local_event_to_remote() {
         // The integration: runner → Sync::sync → push.
@@ -328,27 +354,6 @@ mod tests {
         // Seed a known successful-sync timestamp.
         db.set_sync_state(KEY_LAST_SYNC_UNIX_TS, "1700000000").unwrap();
 
-        struct AlwaysFail;
-        impl WebDav for AlwaysFail {
-            fn list_collection(&self, _: &str)
-                -> meditate_core::WebDavResult<Vec<String>>
-            { Err(meditate_core::WebDavError::Network("offline".into())) }
-            fn get(&self, _: &str, _: u64)
-                -> meditate_core::WebDavResult<Vec<u8>>
-            { unreachable!() }
-            fn put(&self, _: &str, _: &[u8])
-                -> meditate_core::WebDavResult<()>
-            { Err(meditate_core::WebDavError::Network("offline".into())) }
-            fn mkcol(&self, _: &str)
-                -> meditate_core::WebDavResult<()>
-            { Err(meditate_core::WebDavError::Network("offline".into())) }
-            fn delete(&self, _: &str)
-                -> meditate_core::WebDavResult<()>
-            { unreachable!() }
-            fn move_to(&self, _: &str, _: &str)
-                -> meditate_core::WebDavResult<()>
-            { Err(meditate_core::WebDavError::Network("offline".into())) }
-        }
         let _ = run_with_webdav(&db, &AlwaysFail);
         assert_eq!(
             db.get_sync_state(KEY_LAST_SYNC_UNIX_TS, "").unwrap(),
@@ -424,7 +429,7 @@ mod tests {
         // Wipe the remote.
         for name in fake.list_collection("/Meditate/events/").unwrap() {
             use meditate_core::sync::WebDav;
-            fake.delete(&format!("/Meditate/events/{}", name)).unwrap();
+            fake.delete(&format!("/Meditate/events/{name}")).unwrap();
         }
         let err = run_with_webdav(&db, &fake).unwrap_err();
         assert!(matches!(err, SyncRunnerError::RemoteDataLost),
@@ -456,7 +461,7 @@ mod tests {
         assert!(!ts_before.is_empty());
         for name in fake.list_collection("/Meditate/events/").unwrap() {
             use meditate_core::sync::WebDav;
-            fake.delete(&format!("/Meditate/events/{}", name)).unwrap();
+            fake.delete(&format!("/Meditate/events/{name}")).unwrap();
         }
         let _ = run_with_webdav(&db, &fake).unwrap_err();
         assert_eq!(

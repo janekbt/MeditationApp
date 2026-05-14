@@ -170,7 +170,6 @@ impl StatsView {
             format_hm_mins(g.week_mins),
             format_hm_mins(g.goal_mins),
         ));
-        use meditate_core::goal::GoalStatus;
         let sub = match g.status {
             GoalStatus::Reached => crate::i18n::gettext("Goal reached ✓ · {duration} this week")
                 .replace("{duration}", &format_hm_mins(g.week_mins)),
@@ -242,9 +241,7 @@ impl StatsView {
             let date_dt = crate::time::glib_datetime_from_iso(&c.date_iso);
             let readable = date_dt
                 .as_ref()
-                .and_then(|d| d.format("%A, %B %e").ok())
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| c.date_iso.clone());
+                .and_then(|d| d.format("%A, %B %e").ok()).map_or_else(|| c.date_iso.clone(), |s| s.to_string());
             let name = if c.is_goal_exceeded() {
                 crate::i18n::gettext("{date} — goal exceeded, {mins} minutes")
                     .replace("{date}", &readable)
@@ -450,12 +447,12 @@ impl StatsView {
         let sparse = self
             .get_app()
             .and_then(|app| app.with_db(|db| db.get_daily_totals(&since)))
-            .and_then(|r| r.ok())
+            .and_then(std::result::Result::ok)
             .unwrap_or_default();
         let sparse_map: std::collections::HashMap<String, i64> =
             sparse.into_iter().collect();
 
-        let daily: Vec<(String, i64)> = (0..days as i64)
+        let daily: Vec<(String, i64)> = (0..i64::from(days))
             .map(|i| {
                 let dt = today.add_days(-(days as i32 - 1) + i as i32).unwrap();
                 let date_str = dt.format("%Y-%m-%d").unwrap().to_string();
@@ -472,7 +469,7 @@ impl StatsView {
         }
 
         let bars_h = 120i32;
-        let chart_h = bars_h as f64;
+        let chart_h = f64::from(bars_h);
         let series: Vec<i64> = data.iter().map(|(_, d)| *d).collect();
         let ticks = meditate_core::date_math::chart_y_axis_ticks(&series);
         let max_val = ticks.max;
@@ -636,13 +633,13 @@ fn draw_chart_plot(cr: &cairo::Context, w: i32, h: i32, values: &[i64], max_val:
     let n = values.len();
     if n == 0 || max_val == 0 { return; }
 
-    let w_f = w as f64;
-    let h_f = h as f64;
+    let w_f = f64::from(w);
+    let h_f = f64::from(h);
     let accent = adw::StyleManager::default().accent_color_rgba();
     let (ar, ag, ab) = (
-        accent.red()   as f64,
-        accent.green() as f64,
-        accent.blue()  as f64,
+        f64::from(accent.red()),
+        f64::from(accent.green()),
+        f64::from(accent.blue()),
     );
     let slot_w = w_f / n as f64;
 
@@ -707,19 +704,19 @@ fn draw_chart_plot(cr: &cairo::Context, w: i32, h: i32, values: &[i64], max_val:
 fn draw_goal_ring(area: &gtk::DrawingArea, cr: &cairo::Context, w: i32, h: i32, pct: f64) {
     use std::f64::consts::PI;
     let stroke = 8.0f64;
-    let size = w.min(h) as f64;
+    let size = f64::from(w.min(h));
     let r = (size - stroke) / 2.0;
-    let cx = w as f64 / 2.0;
-    let cy = h as f64 / 2.0;
+    let cx = f64::from(w) / 2.0;
+    let cy = f64::from(h) / 2.0;
 
     // libadwaita 1.6+ resolves the current accent color for us, honouring
     // the system accent preference set in gnome-control-center.
     let _ = area;
     let accent = adw::StyleManager::default().accent_color_rgba();
     let (fr, fg, fb) = (
-        accent.red()   as f64,
-        accent.green() as f64,
-        accent.blue()  as f64,
+        f64::from(accent.red()),
+        f64::from(accent.green()),
+        f64::from(accent.blue()),
     );
 
     // Background track: same hue, 15% alpha
@@ -787,4 +784,5 @@ fn weekday_for(date_str: &str) -> String {
 
 // HmKey-rendering shims live in `crate::format`; this view imports them.
 use crate::format::{format_hm_compact, format_hm_mins, format_hm_secs};
+use meditate_core::goal::GoalStatus;
 

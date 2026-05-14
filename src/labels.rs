@@ -16,6 +16,7 @@ use adw::prelude::*;
 use crate::application::MeditateApplication;
 use crate::db::Label;
 use crate::i18n::gettext;
+use meditate_core::labels::DeleteImpactKey;
 
 /// Selection-mode parameters: the row tapped becomes the active
 /// pick, the chooser pops, and `on_selected` fires with the chosen
@@ -138,8 +139,8 @@ fn rebuild_chooser_rows(
     rows.borrow_mut().push(create_row.upcast());
 
     let labels = app
-        .with_db(|db| db.list_labels())
-        .and_then(|r| r.ok())
+        .with_db(super::db::Database::list_labels)
+        .and_then(std::result::Result::ok)
         .unwrap_or_default();
     let selection = SelectionContext {
         current_label_id,
@@ -256,7 +257,7 @@ fn present_create_label_dialog(
             let trimmed = text.trim();
             let validity = meditate_core::validate(trimmed, |name| {
                 app.with_db(|db| db.is_label_name_taken(name, 0))
-                    .and_then(|r| r.ok())
+                    .and_then(std::result::Result::ok)
                     .unwrap_or(false)
             });
             dialog.set_response_enabled("create", validity.is_savable());
@@ -323,7 +324,7 @@ fn present_rename_label_dialog(
             let trimmed = text.trim();
             let validity = meditate_core::validate(trimmed, |name| {
                 app.with_db(|db| db.is_label_name_taken(name, label_id))
-                    .and_then(|r| r.ok())
+                    .and_then(std::result::Result::ok)
                     .unwrap_or(false)
             });
             dialog.set_response_enabled("rename", validity.is_savable());
@@ -370,9 +371,8 @@ fn present_delete_label_dialog(
     // strings stay shell-side at the i18n boundary).
     let session_count = app
         .with_db(|db| db.label_session_count(label_id))
-        .and_then(|r| r.ok())
+        .and_then(std::result::Result::ok)
         .unwrap_or(0);
-    use meditate_core::labels::DeleteImpactKey;
     let body = match meditate_core::labels::delete_impact_key(session_count) {
         DeleteImpactKey::InUse(n) => format!(
             "{} {}.",

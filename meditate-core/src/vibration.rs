@@ -185,13 +185,13 @@ const LINE_TICK_MS: u32 = 100;
 /// case in favour of rounding away from zero, matching the
 /// editor's snap behaviour and giving deterministic RLE output.
 fn quantise_amplitude(v: f32) -> f64 {
-    let v = v.clamp(0.0, 1.0) as f64;
+    let v = f64::from(v.clamp(0.0, 1.0));
     let scaled = v * 10.0 + 1e-6;
     let bin = (scaled.round() as i32).clamp(0, 10);
     // Compute the quantum via f64 division (not f32 multiplication)
     // so the output values are clean (0.5, 1.0, …) instead of
     // f32-precision residuals like 0.5000000074.
-    bin as f64 / 10.0
+    f64::from(bin) / 10.0
 }
 
 /// Run-length-encode a sequence of (amplitude, duration_ms) ticks
@@ -359,7 +359,7 @@ pub const EDITOR_INTENSITY_STEP: f32 = 0.10;
 /// so very short patterns still have something to author.
 pub fn max_points_for_duration_s(duration_s: f64) -> u32 {
     let by_spacing =
-        (duration_s * 1000.0 / EDITOR_MIN_POINT_SPACING_MS as f64).floor() as u32;
+        (duration_s * 1000.0 / f64::from(EDITOR_MIN_POINT_SPACING_MS)).floor() as u32;
     EDITOR_POINTS_MAX.min(by_spacing).max(EDITOR_POINTS_MIN)
 }
 

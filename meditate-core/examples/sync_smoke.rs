@@ -134,7 +134,7 @@ fn main() {
         .iter()
         .find(|(_, s)| s.start_iso == "2026-04-30T07:00:00")
         .and_then(|(_, s)| s.notes.clone());
-    println!("✓ both devices agree the winning notes are: {:?}", winning_notes);
+    println!("✓ both devices agree the winning notes are: {winning_notes:?}");
     println!("  (whichever device had the higher lamport_ts at edit time wins;");
     println!("   on tie, the lex-larger device_id wins)");
 
@@ -225,7 +225,7 @@ fn main() {
     let c_notes: std::collections::HashSet<_> = meditate_core::db::list_sessions_from_db(&device_c).unwrap()
         .iter().filter_map(|(_, s)| s.notes.clone()).collect();
     let expected_c: std::collections::HashSet<_> = ["from A", "from B"]
-        .iter().map(|s| s.to_string()).collect();
+        .iter().map(std::string::ToString::to_string).collect();
     assert_eq!(c_notes, expected_c,
         "C must have A's session even though A and C never talked directly");
     println!("✓ C received A's session through the B hop (event identity preserved across forwarding)");
@@ -244,7 +244,7 @@ fn main() {
     let a_notes: std::collections::HashSet<_> = meditate_core::db::list_sessions_from_db(&device_a).unwrap()
         .iter().filter_map(|(_, s)| s.notes.clone()).collect();
     let expected_all: std::collections::HashSet<_> = ["from A", "from B", "from C"]
-        .iter().map(|s| s.to_string()).collect();
+        .iter().map(std::string::ToString::to_string).collect();
     assert_eq!(a_notes, expected_all,
         "A must end up with all three devices' sessions");
     println!("✓ A received B's and C's sessions; all three devices converged through hops");
@@ -257,7 +257,7 @@ fn main() {
     let n_sessions_after = meditate_core::db::list_sessions_from_db(&device_c).unwrap().len();
     assert_eq!(n_sessions_before, n_sessions_after,
         "duplicate replay must not duplicate sessions (event_uuid dedup)");
-    println!("✓ duplicate replay was a no-op ({} sessions before and after)", n_sessions_after);
+    println!("✓ duplicate replay was a no-op ({n_sessions_after} sessions before and after)");
 
     // ── Round 6: persistence across DB reopens ────────────────────────────
     println!("\n--- Round 6: persistence — close and reopen the file-based DB ---");

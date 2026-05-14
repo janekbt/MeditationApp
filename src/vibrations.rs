@@ -130,7 +130,7 @@ fn rebuild_chooser_rows(
     rows.borrow_mut().push(create_row.upcast());
 
     let selection = SelectionContext {
-        current_uuid: current_uuid.map(|s| s.to_string()),
+        current_uuid: current_uuid.map(std::string::ToString::to_string),
         on_selected,
         nav_view: nav_view.clone(),
         play_slot: play_slot.clone(),
@@ -139,8 +139,8 @@ fn rebuild_chooser_rows(
     };
 
     let patterns = app
-        .with_db(|db| db.list_vibration_patterns())
-        .and_then(|r| r.ok())
+        .with_db(super::db::Database::list_vibration_patterns)
+        .and_then(std::result::Result::ok)
         .unwrap_or_default();
     for pattern in patterns {
         let row = build_pattern_row(&pattern, app, rebuilder.clone(), &selection);
@@ -329,7 +329,7 @@ fn add_play_button(
                 // tapped Stop or switched rows in the meantime.
                 let preview_for_timeout = preview_for_click.clone();
                 glib::timeout_add_local_once(
-                    std::time::Duration::from_millis(pattern.duration_ms as u64),
+                    std::time::Duration::from_millis(u64::from(pattern.duration_ms)),
                     move || {
                         let mut state = preview_for_timeout.borrow_mut();
                         if state.toggle.timer_should_revert(generation) {
@@ -387,7 +387,7 @@ fn add_edit_button(
                 // tuple is enough; we don't have a "dirty" flag.
                 let after = app_for_saved
                     .with_db(|db| db.find_vibration_pattern_by_uuid(&saved_uuid))
-                    .and_then(|r| r.ok())
+                    .and_then(std::result::Result::ok)
                     .flatten();
                 if let Some(after) = after {
                     if !patterns_equivalent(&before, &after) {
@@ -563,7 +563,7 @@ fn present_rename_dialog(
             let trimmed = text.trim();
             let validity = meditate_core::validate(trimmed, |name| {
                 app.with_db(|db| db.is_vibration_pattern_name_taken(name, &uuid))
-                    .and_then(|r| r.ok())
+                    .and_then(std::result::Result::ok)
                     .unwrap_or(false)
             });
             dialog.set_response_enabled("rename", validity.is_savable());
@@ -591,14 +591,14 @@ fn present_rename_dialog(
         // rename, but update_vibration_pattern wants every field.
         let before = app
             .with_db(|db| db.find_vibration_pattern_by_uuid(&uuid))
-            .and_then(|r| r.ok())
+            .and_then(std::result::Result::ok)
             .flatten();
         // Core's `rename_vibration_pattern` handles the read-modify-
         // write and returns false on a no-op rename so the shell can
         // skip the undo toast.
         let changed = app
             .with_db_mut(|db| db.rename_vibration_pattern(&uuid, trimmed))
-            .and_then(|r| r.ok())
+            .and_then(std::result::Result::ok)
             .unwrap_or(false);
         if !changed {
             return;
@@ -649,7 +649,7 @@ fn present_delete_dialog(
         // with the same UUID.
         let snapshot = app
             .with_db(|db| db.find_vibration_pattern_by_uuid(&uuid))
-            .and_then(|r| r.ok())
+            .and_then(std::result::Result::ok)
             .flatten();
         app.with_db_mut(|db| db.delete_vibration_pattern(&uuid));
         if let Some(rb) = rebuilder.borrow().as_ref() {

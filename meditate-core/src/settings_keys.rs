@@ -104,8 +104,7 @@ pub fn format_bool(b: bool) -> &'static str {
 /// so callers only express their domain default.
 pub fn read_bool(db: &Database, key: &str, default: bool) -> bool {
     db.get_setting(key, format_bool(default))
-        .map(|v| parse_bool(&v))
-        .unwrap_or(default)
+        .map_or(default, |v| parse_bool(&v))
 }
 
 /// Read a string settings row, falling back to `default` when the

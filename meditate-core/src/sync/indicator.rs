@@ -106,8 +106,7 @@ pub fn state_from_db(
 ) -> SyncIndicatorState {
     use crate::sync::settings;
     let has_account = settings::nextcloud_account_from_db(db)
-        .map(|opt| opt.is_some())
-        .unwrap_or(false);
+        .is_ok_and(|opt| opt.is_some());
     let last_ts = settings::get_last_sync_unix_ts(db).unwrap_or(None);
     let last_error = settings::get_last_sync_error(db).unwrap_or(None);
     let is_data_lost = settings::is_last_sync_remote_data_lost(db).unwrap_or(false);

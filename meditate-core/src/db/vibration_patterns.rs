@@ -150,7 +150,7 @@ impl Database {
                     duration_ms,
                     intensities_json,
                     chart_kind.as_db_str(),
-                    is_bundled as i64,
+                    i64::from(is_bundled),
                     now_iso,
                 ],
             )
@@ -347,7 +347,7 @@ impl Database {
                     updated_iso      = excluded.updated_iso";
             let first = self.conn.execute(upsert_sql, params![
                 pattern_uuid, name, duration_ms, intensities_json,
-                chart_kind, is_bundled as i64, created_iso, updated_iso,
+                chart_kind, i64::from(is_bundled), created_iso, updated_iso,
             ]);
             match first {
                 Ok(_) => {}
@@ -359,7 +359,7 @@ impl Database {
                     ));
                     self.conn.execute(upsert_sql, params![
                         pattern_uuid, suffixed, duration_ms, intensities_json,
-                        chart_kind, is_bundled as i64, created_iso, updated_iso,
+                        chart_kind, i64::from(is_bundled), created_iso, updated_iso,
                     ])?;
                 }
                 Err(e) => return Err(DbError::Sqlite(e)),

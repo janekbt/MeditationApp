@@ -5,7 +5,7 @@ use gtk::{glib, CompositeTemplate};
 use glib::subclass::Signal;
 use std::sync::OnceLock;
 
-use crate::db::{Label, SessionData, SessionMode};
+use crate::db::{BoxBreathPhaseId, Label, SessionData, SessionMode};
 
 use std::time::Duration;
 use meditate_core::breath::BreathPattern;
@@ -657,7 +657,7 @@ impl TimerView {
                 else { return; };
                 let current = app
                     .with_db(|db| db.get_setting("end_bell_sound", crate::db::BUNDLED_BOWL_UUID))
-                    .and_then(|r| r.ok());
+                    .and_then(std::result::Result::ok);
                 let app_for_pick = app.clone();
                 let this_for_pick = this.clone();
                 window.push_sound_chooser(
@@ -688,7 +688,7 @@ impl TimerView {
                         "end_bell_pattern",
                         crate::db::BUNDLED_PATTERN_PULSE_UUID,
                     ))
-                    .and_then(|r| r.ok());
+                    .and_then(std::result::Result::ok);
                 let app_for_pick = app.clone();
                 let this_for_pick = this.clone();
                 window.push_vibrations_chooser(&app, current, move |uuid| {
@@ -785,7 +785,7 @@ impl TimerView {
                 else { return; };
                 let current = app
                     .with_db(|db| db.get_setting("starting_bell_sound", crate::db::BUNDLED_BOWL_UUID))
-                    .and_then(|r| r.ok());
+                    .and_then(std::result::Result::ok);
                 let app_for_pick = app.clone();
                 let this_for_pick = this.clone();
                 window.push_sound_chooser(
@@ -814,7 +814,7 @@ impl TimerView {
                         "starting_bell_pattern",
                         crate::db::BUNDLED_PATTERN_PULSE_UUID,
                     ))
-                    .and_then(|r| r.ok());
+                    .and_then(std::result::Result::ok);
                 let app_for_pick = app.clone();
                 let this_for_pick = this.clone();
                 window.push_vibrations_chooser(&app, current, move |uuid| {
@@ -892,8 +892,8 @@ impl TimerView {
                     if imp.bells_loading.get() { return; }
                     let v = row.value().round() as i64;
                     let v = v.clamp(
-                        meditate_core::format::PREP_SECS_MIN as i64,
-                        meditate_core::format::PREP_SECS_MAX as i64,
+                        i64::from(meditate_core::format::PREP_SECS_MIN),
+                        i64::from(meditate_core::format::PREP_SECS_MAX),
                     );
                     if let Some(app) = imp.get_app() {
                         app.with_db_mut(|db| {
@@ -910,9 +910,9 @@ impl TimerView {
     /// the DB by `refresh_streak`.
     fn configure_preparation_time_secs_row(&self) {
         let adj = gtk::Adjustment::new(
-            meditate_core::format::PREP_SECS_DEFAULT as f64,
-            meditate_core::format::PREP_SECS_MIN as f64,
-            meditate_core::format::PREP_SECS_MAX as f64,
+            f64::from(meditate_core::format::PREP_SECS_DEFAULT),
+            f64::from(meditate_core::format::PREP_SECS_MIN),
+            f64::from(meditate_core::format::PREP_SECS_MAX),
             5.0, 15.0, 0.0,
         );
         self.preparation_time_secs_row.set_adjustment(Some(&adj));
@@ -1126,9 +1126,8 @@ impl TimerView {
 
         // Per-phase wiring. Each phase has identical structure but
         // distinct template-children — call a small helper four times.
-        use crate::db::BoxBreathPhaseId as P;
         self.wire_boxbreath_phase(
-            P::In,
+            BoxBreathPhaseId::In,
             &self.boxbreath_phase_in_row,
             &self.boxbreath_phase_in_signal_toggle_host,
             &self.boxbreath_phase_in_sound_revealer,
@@ -1137,7 +1136,7 @@ impl TimerView {
             &self.boxbreath_phase_in_pattern_row,
         );
         self.wire_boxbreath_phase(
-            P::HoldIn,
+            BoxBreathPhaseId::HoldIn,
             &self.boxbreath_phase_holdin_row,
             &self.boxbreath_phase_holdin_signal_toggle_host,
             &self.boxbreath_phase_holdin_sound_revealer,
@@ -1146,7 +1145,7 @@ impl TimerView {
             &self.boxbreath_phase_holdin_pattern_row,
         );
         self.wire_boxbreath_phase(
-            P::Out,
+            BoxBreathPhaseId::Out,
             &self.boxbreath_phase_out_row,
             &self.boxbreath_phase_out_signal_toggle_host,
             &self.boxbreath_phase_out_sound_revealer,
@@ -1155,7 +1154,7 @@ impl TimerView {
             &self.boxbreath_phase_out_pattern_row,
         );
         self.wire_boxbreath_phase(
-            P::HoldOut,
+            BoxBreathPhaseId::HoldOut,
             &self.boxbreath_phase_holdout_row,
             &self.boxbreath_phase_holdout_signal_toggle_host,
             &self.boxbreath_phase_holdout_sound_revealer,
@@ -1199,7 +1198,7 @@ impl TimerView {
                 if let Some(app) = imp.get_app() {
                     if let Some(p) = app
                         .with_db(|db| db.get_box_breath_phase(phase))
-                        .and_then(|r| r.ok())
+                        .and_then(std::result::Result::ok)
                         .flatten()
                     {
                         app.with_db_mut(|db| db.set_box_breath_phase(
@@ -1226,7 +1225,7 @@ impl TimerView {
                 else { return; };
                 let p = match app
                     .with_db(|db| db.get_box_breath_phase(phase_for_sound))
-                    .and_then(|r| r.ok())
+                    .and_then(std::result::Result::ok)
                     .flatten()
                 {
                     Some(p) => p,
@@ -1265,7 +1264,7 @@ impl TimerView {
                 else { return; };
                 let p = match app
                     .with_db(|db| db.get_box_breath_phase(phase_for_pattern))
-                    .and_then(|r| r.ok())
+                    .and_then(std::result::Result::ok)
                     .flatten()
                 {
                     Some(p) => p,
@@ -1323,9 +1322,8 @@ impl TimerView {
         self.boxbreath_master_row.set_expanded(master_on);
 
         // Per-phase: enable + toggle + revealers + subtitles.
-        use crate::db::BoxBreathPhaseId as P;
         self.refresh_boxbreath_phase_row(
-            P::In,
+            BoxBreathPhaseId::In,
             &self.boxbreath_phase_in_row,
             &self.boxbreath_phase_in_signal_toggle_host,
             &self.boxbreath_phase_in_sound_revealer,
@@ -1333,7 +1331,7 @@ impl TimerView {
             &app,
         );
         self.refresh_boxbreath_phase_row(
-            P::HoldIn,
+            BoxBreathPhaseId::HoldIn,
             &self.boxbreath_phase_holdin_row,
             &self.boxbreath_phase_holdin_signal_toggle_host,
             &self.boxbreath_phase_holdin_sound_revealer,
@@ -1341,7 +1339,7 @@ impl TimerView {
             &app,
         );
         self.refresh_boxbreath_phase_row(
-            P::Out,
+            BoxBreathPhaseId::Out,
             &self.boxbreath_phase_out_row,
             &self.boxbreath_phase_out_signal_toggle_host,
             &self.boxbreath_phase_out_sound_revealer,
@@ -1349,14 +1347,14 @@ impl TimerView {
             &app,
         );
         self.refresh_boxbreath_phase_row(
-            P::HoldOut,
+            BoxBreathPhaseId::HoldOut,
             &self.boxbreath_phase_holdout_row,
             &self.boxbreath_phase_holdout_signal_toggle_host,
             &self.boxbreath_phase_holdout_sound_revealer,
             &self.boxbreath_phase_holdout_pattern_revealer,
             &app,
         );
-        for phase in P::all() {
+        for phase in BoxBreathPhaseId::all() {
             self.refresh_boxbreath_phase_subtitles(*phase);
         }
 
@@ -1374,7 +1372,7 @@ impl TimerView {
     ) {
         let p = match app
             .with_db(|db| db.get_box_breath_phase(phase))
-            .and_then(|r| r.ok())
+            .and_then(std::result::Result::ok)
             .flatten()
         {
             Some(p) => p,
@@ -1399,12 +1397,11 @@ impl TimerView {
         else { return; };
         let sound_subtitle = crate::bells::render_resolved_name(sound_name);
         let pattern_subtitle = crate::bells::render_resolved_name(pattern_name);
-        use crate::db::BoxBreathPhaseId as PP;
         let (sound_row, pattern_row): (&adw::ActionRow, &adw::ActionRow) = match phase {
-            PP::In      => (&self.boxbreath_phase_in_sound_row,      &self.boxbreath_phase_in_pattern_row),
-            PP::HoldIn  => (&self.boxbreath_phase_holdin_sound_row,  &self.boxbreath_phase_holdin_pattern_row),
-            PP::Out     => (&self.boxbreath_phase_out_sound_row,     &self.boxbreath_phase_out_pattern_row),
-            PP::HoldOut => (&self.boxbreath_phase_holdout_sound_row, &self.boxbreath_phase_holdout_pattern_row),
+            BoxBreathPhaseId::In      => (&self.boxbreath_phase_in_sound_row,      &self.boxbreath_phase_in_pattern_row),
+            BoxBreathPhaseId::HoldIn  => (&self.boxbreath_phase_holdin_sound_row,  &self.boxbreath_phase_holdin_pattern_row),
+            BoxBreathPhaseId::Out     => (&self.boxbreath_phase_out_sound_row,     &self.boxbreath_phase_out_pattern_row),
+            BoxBreathPhaseId::HoldOut => (&self.boxbreath_phase_holdout_sound_row, &self.boxbreath_phase_holdout_pattern_row),
         };
         sound_row.set_subtitle(&sound_subtitle);
         pattern_row.set_subtitle(&pattern_subtitle);
@@ -1492,7 +1489,7 @@ pub(crate) fn apply_signal_mode_state(
     // phone restores the user's intent.
     let saved = app
         .with_db(|db| db.get_setting(setting_key, "sound"))
-        .and_then(|r| r.ok())
+        .and_then(std::result::Result::ok)
         .and_then(|s| crate::db::SignalMode::from_db_str(&s))
         .unwrap_or(crate::db::SignalMode::Sound);
     let initial = meditate_core::bells::clamp_signal_mode_for_haptic(
@@ -1540,7 +1537,7 @@ pub(crate) fn build_phase_signal_mode_toggle_widget(
         if let Some(app) = get_app() {
             if let Some(p) = app
                 .with_db(|db| db.get_box_breath_phase(phase))
-                .and_then(|r| r.ok())
+                .and_then(std::result::Result::ok)
                 .flatten()
             {
                 app.with_db_mut(|db| db.set_box_breath_phase(
@@ -1654,7 +1651,7 @@ impl TimerView {
         // Cycle-aligned target lives on BreathPattern in core.
         self.breathing_pattern
             .get()
-            .cycle_aligned_target_secs(self.breathing_session_secs.get() as u64)
+            .cycle_aligned_target_secs(u64::from(self.breathing_session_secs.get()))
     }
 
 
@@ -1821,8 +1818,7 @@ impl TimerView {
             .guided_pick
             .borrow()
             .as_ref()
-            .map(|p| p.duration_secs)
-            .unwrap_or(0);
+            .map_or(0, |p| p.duration_secs);
         let label = meditate_core::format::idle_hero_label_from_modes(
             self.current_mode().into(),
             meditate_core::bells::DisplayMode::from_stopwatch_flag(
@@ -1941,7 +1937,7 @@ impl TimerView {
                 // next full cycle so the session always ends on an
                 // exhale/hold-out boundary.
                 let target = pattern.cycle_aligned_target_secs(
-                    self.breathing_session_secs.get() as u64,
+                    u64::from(self.breathing_session_secs.get()),
                 );
                 self.start_boot_time.set(Some(boot_time_now()));
                 // No target_secs → stopwatch-only Box Breath never
@@ -1987,7 +1983,7 @@ impl TimerView {
                 // honest even with sub-second drift between the two.
                 let pick = self.guided_pick.borrow().clone();
                 let Some(pick) = pick else { return; };
-                let target = pick.duration_secs as u64;
+                let target = u64::from(pick.duration_secs);
                 if target == 0 {
                     return;
                 }
@@ -2010,7 +2006,7 @@ impl TimerView {
                         // morph + notification ceremony here.
                         let imp = obj_for_eos.imp();
                         let effects = imp.core_session.borrow_mut().as_mut()
-                            .map(|s| s.enter_overtime())
+                            .map(meditate_core::session::Session::enter_overtime)
                             .unwrap_or_default();
                         imp.dispatch_session_effects(&effects);
                         if effects.iter().any(|e| matches!(e, CoreSessionEffect::EnterOvertime)) {
@@ -2075,7 +2071,7 @@ impl TimerView {
                 Some(self.countdown_target_secs.get())
             };
             let (bells, bell_rng_seed) = self.build_session_bells(
-                target_secs.map(|t| t as u64),
+                target_secs.map(u64::from),
                 stopwatch_on,
             );
             Some(CoreSessionSettings {
@@ -2242,7 +2238,7 @@ impl TimerView {
         // stop-during-prep, running elapsed mid-Running, running+
         // overtime elapsed mid-Overtime, paused-at value if paused).
         let elapsed = self
-            .core_session_end(|s, now| s.stop(now))
+            .core_session_end(meditate_core::session::Session::stop)
             .unwrap_or(0);
         // Session transitioned to Stopped and stashed `elapsed` as
         // its final duration — the Done view reads it back via
@@ -2290,7 +2286,7 @@ impl TimerView {
         self.core_session
             .borrow()
             .as_ref()
-            .and_then(|s| s.final_duration_secs())
+            .and_then(meditate_core::session::Session::final_duration_secs)
     }
 
     fn show_done(&self, elapsed_secs: u64) {
@@ -2374,8 +2370,8 @@ impl TimerView {
         // core::labels so the Android shell shares it.
         let labels = self
             .get_app()
-            .and_then(|app| app.with_db(|db| db.list_labels()))
-            .and_then(|r| r.ok())
+            .and_then(|app| app.with_db(super::super::db::Database::list_labels))
+            .and_then(std::result::Result::ok)
             .unwrap_or_default();
         match meditate_core::labels::resolve_persist_action(label_id, &labels) {
             meditate_core::labels::PersistAction::SetUuidAndActivate { uuid } => {
@@ -2741,7 +2737,7 @@ impl TimerView {
             // Only send a system notification when the app isn't
             // focused — the in-app overtime UI already signals
             // completion.
-            if !app.active_window().map(|w| w.is_active()).unwrap_or(false) {
+            if !app.active_window().is_some_and(|w| w.is_active()) {
                 let n = gtk::gio::Notification::new("Meditation Complete");
                 // Session knows its own planned target (Timer's
                 // countdown, Guided's probed duration via target_secs,
@@ -2751,8 +2747,7 @@ impl TimerView {
                     .core_session
                     .borrow()
                     .as_ref()
-                    .map(|s| s.completion_duration_secs())
-                    .unwrap_or(0);
+                    .map_or(0, meditate_core::session::Session::completion_duration_secs);
                 n.set_body(Some(&format!("Session: {}", format_time(Duration::from_secs(target)))));
                 app.send_notification(Some("timer-done"), &n);
             }
@@ -2782,7 +2777,7 @@ impl TimerView {
         // surfacing how much extra time they've accumulated.
         if let Some(label) = self.running_label.borrow().as_ref() {
             let target = self.countdown_target_secs.get();
-            label.set_label(&format_time(Duration::from_secs(target as u64)));
+            label.set_label(&format_time(Duration::from_secs(u64::from(target))));
         }
     }
 
@@ -2824,7 +2819,7 @@ impl TimerView {
             return;
         }
         let elapsed = self
-            .core_session_end(|s, now| s.add_overtime_and_finish(now))
+            .core_session_end(meditate_core::session::Session::add_overtime_and_finish)
             .unwrap_or(0);
         self.end_overtime_session(elapsed);
     }
@@ -2841,7 +2836,7 @@ impl TimerView {
         let target = self.countdown_target_secs.get();
         let elapsed = self
             .core_session_end(|s, _now| s.finish_overtime())
-            .unwrap_or(target as u64);
+            .unwrap_or(u64::from(target));
         self.end_overtime_session(elapsed);
     }
 
@@ -2911,14 +2906,13 @@ impl TimerView {
         // dispatch_session_effects on the frame-tick callback before
         // we get here. System notification stays in gtk.
         if let Some(app) = self.get_app() {
-            if !app.active_window().map(|w| w.is_active()).unwrap_or(false) {
+            if !app.active_window().is_some_and(|w| w.is_active()) {
                 let n = gtk::gio::Notification::new("Meditation Complete");
                 let target = self
                     .core_session
                     .borrow()
                     .as_ref()
-                    .map(|s| s.completion_duration_secs())
-                    .unwrap_or(elapsed);
+                    .map_or(elapsed, meditate_core::session::Session::completion_duration_secs);
                 n.set_body(Some(&format!("Session: {}", format_time(Duration::from_secs(target)))));
                 app.send_notification(Some("timer-done"), &n);
             }
@@ -3030,8 +3024,7 @@ impl TimerView {
                         "preparation_time_secs",
                         &meditate_core::format::PREP_SECS_DEFAULT.to_string(),
                     )
-                    .map(|s| meditate_core::format::parse_prep_secs(&s))
-                    .unwrap_or(meditate_core::format::PREP_SECS_DEFAULT);
+                    .map_or(meditate_core::format::PREP_SECS_DEFAULT, |s| meditate_core::format::parse_prep_secs(&s));
                 let intervals_on = read_bool(core_db, "interval_bells_active", false);
                 // Stopwatch mode mutes fixed-from-end bells — no end
                 // to count backwards from. The persisted enabled flag
@@ -3091,7 +3084,7 @@ impl TimerView {
         self.refresh_starting_bell_signal_mode_state();
         self.preparation_time_row.set_enable_expansion(prep_on);
         self.preparation_time_row.set_expanded(prep_on);
-        self.preparation_time_secs_row.set_value(prep_secs as f64);
+        self.preparation_time_secs_row.set_value(f64::from(prep_secs));
         // Interval-bells master toggle + count subtitle.
         let (intervals_on, intervals_enabled_count) = intervals;
         self.interval_bells_enabled_row.set_enable_expansion(intervals_on);
@@ -3114,7 +3107,6 @@ impl TimerView {
         // uppercase, so we keep the source text sentence-case here.
         // Core picks the variant; the gtk shell maps each to a
         // gettext-translated phrase at the i18n boundary.
-        use meditate_core::format::StreakKey;
         let text = match meditate_core::format::streak_key(streak) {
             StreakKey::Zero => crate::i18n::gettext("Start your streak today"),
             StreakKey::One => crate::i18n::ngettext("1 day streak", "{n} day streak", 1),
@@ -3169,7 +3161,7 @@ impl TimerView {
         let presets = app_opt
             .as_ref()
             .and_then(|app| app.with_db(|db| db.list_starred_presets_for_mode(session_mode)))
-            .and_then(|r| r.ok())
+            .and_then(std::result::Result::ok)
             .unwrap_or_default();
 
         if presets.is_empty() {
@@ -3184,8 +3176,8 @@ impl TimerView {
         // subtitle lookup is O(1) against the in-memory map.
         let label_names: std::collections::HashMap<String, String> = app_opt
             .as_ref()
-            .and_then(|app| app.with_db(|db| db.list_labels()))
-            .and_then(|r| r.ok())
+            .and_then(|app| app.with_db(super::super::db::Database::list_labels))
+            .and_then(std::result::Result::ok)
             .unwrap_or_default()
             .into_iter()
             .map(|l| (l.uuid.0, l.name))
@@ -3225,8 +3217,8 @@ impl TimerView {
         let app_opt = self.get_app();
         let files = app_opt
             .as_ref()
-            .and_then(|app| app.with_db(|db| db.list_guided_files()))
-            .and_then(|r| r.ok())
+            .and_then(|app| app.with_db(super::super::db::Database::list_guided_files))
+            .and_then(std::result::Result::ok)
             .unwrap_or_default()
             .into_iter()
             .filter(|f| f.is_starred)
@@ -3515,8 +3507,7 @@ impl TimerView {
             let should_clear = imp.current_apply_toast
                 .borrow()
                 .as_ref()
-                .map(|cur| cur == t)
-                .unwrap_or(false);
+                .is_some_and(|cur| cur == t);
             if should_clear {
                 imp.current_apply_toast.replace(None);
             }
@@ -3581,11 +3572,11 @@ impl TimerView {
         let (cur_h, cur_m) = match mode {
             TimerMode::Timer => {
                 let s = self.countdown_target_secs.get();
-                ((s / 3600) as f64, ((s % 3600) / 60) as f64)
+                (f64::from(s / 3600), f64::from((s % 3600) / 60))
             }
             TimerMode::Breathing => {
                 let m = self.breathing_session_secs.get() / 60;
-                ((m / 60) as f64, (m % 60) as f64)
+                (f64::from(m / 60), f64::from(m % 60))
             }
             TimerMode::Guided => unreachable!("guarded above"),
         };
@@ -3686,9 +3677,7 @@ impl TimerView {
         // We still update its subtitle so it's correct the moment
         // the user expands the row.
         let subtitle = if active {
-            self.resolve_label_for_mode(mode)
-                .map(|l| l.name)
-                .unwrap_or_else(|| crate::i18n::gettext("(none — pick one)"))
+            self.resolve_label_for_mode(mode).map_or_else(|| crate::i18n::gettext("(none — pick one)"), |l| l.name)
         } else {
             crate::i18n::gettext("Off")
         };
@@ -3708,8 +3697,8 @@ impl TimerView {
         let id = self.done_selected_label_id.get();
         let labels = app
             .as_ref()
-            .and_then(|a| a.with_db(|db| db.list_labels()))
-            .and_then(|r| r.ok())
+            .and_then(|a| a.with_db(super::super::db::Database::list_labels))
+            .and_then(std::result::Result::ok)
             .unwrap_or_default();
         let subtitle = id
             .and_then(|id| labels.iter().find(|l| l.id == id).map(|l| l.name.clone()))
@@ -3747,8 +3736,7 @@ impl TimerView {
         self.core_session
             .borrow()
             .as_ref()
-            .map(|s| s.display_secs(now))
-            .unwrap_or(0)
+            .map_or(0, |s| s.display_secs(now))
     }
 
     pub fn set_running_label(&self, label: gtk::Label) {
@@ -3969,7 +3957,7 @@ impl TimerView {
         }
         let handle = if route.signal_mode.includes_vibration() && app.has_haptic() {
             app.with_db(|db| db.find_vibration_pattern_by_uuid(route.vibration_pattern_uuid))
-                .and_then(|r| r.ok())
+                .and_then(std::result::Result::ok)
                 .flatten()
                 .map(|pattern| crate::vibration::PatternPlayback::play(app, &pattern))
         } else {
@@ -4054,6 +4042,7 @@ use meditate_core::time::unix_now;
 
 // Per-phase + cycle invariants live in meditate_core::breath.
 use meditate_core::breath::{clamp_session_secs, CYCLE_MIN_SECS, PHASE_MAX_SECS};
+use meditate_core::format::StreakKey;
 
 impl TimerView {
     fn build_breathing_setup(&self) {
@@ -4193,7 +4182,7 @@ impl TimerView {
             return;
         }
         *slot = new_val;
-        if p.cycle().as_secs() < CYCLE_MIN_SECS as u64 {
+        if p.cycle().as_secs() < u64::from(CYCLE_MIN_SECS) {
             // Defence in depth; shouldn't fire given the per-slot minimums
             // above enforce at least inhale=1 + exhale=1.
             return;

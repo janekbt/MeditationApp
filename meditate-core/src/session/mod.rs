@@ -56,7 +56,7 @@ pub enum UiState {
 /// `Option<Session>` slot. `None` → `Idle`; `Some(s)` delegates to
 /// `s.ui_state()`.
 pub fn ui_state(session: Option<&Session>) -> UiState {
-    session.map(|s| s.ui_state()).unwrap_or(UiState::Idle)
+    session.map_or(UiState::Idle, Session::ui_state)
 }
 
 /// Fold of the side-effect inspection every tick callsite does
@@ -352,10 +352,10 @@ impl Session {
         if self.phase != SessionPhase::Overtime {
             return Vec::new();
         }
-        let target_secs = self
+        let target_secs = u64::from(self
             .settings
             .target_secs
-            .expect("Overtime requires a target") as u64;
+            .expect("Overtime requires a target"));
         self.phase = SessionPhase::Stopped;
         self.final_duration_secs = Some(target_secs);
         vec![
@@ -428,7 +428,7 @@ impl Session {
     }
 
     fn tick_prep(&mut self, now: Duration) -> Vec<Effect> {
-        let target_secs = self.settings.prep_secs.unwrap_or(0) as u64;
+        let target_secs = u64::from(self.settings.prep_secs.unwrap_or(0));
         let target = Duration::from_secs(target_secs);
         let elapsed = self.phase_clock.elapsed(now);
 
@@ -469,7 +469,7 @@ impl Session {
         // with `stopwatch_display=true` still has a `target_secs` to
         // cross (the audio file's natural length).
         if let Some(target_secs) = self.settings.target_secs {
-            let target = Duration::from_secs(target_secs as u64);
+            let target = Duration::from_secs(u64::from(target_secs));
             if target.saturating_sub(elapsed).is_zero() {
                 // Bells skip this tick — gtk's historical behaviour is
                 // "transition first, bells fire on the next tick."
@@ -505,7 +505,7 @@ impl Session {
             .settings
             .target_secs
             .expect("Overtime phase requires a target");
-        let target = Duration::from_secs(target_secs as u64);
+        let target = Duration::from_secs(u64::from(target_secs));
         let elapsed = self.phase_clock.elapsed(now);
         let overtime = elapsed.saturating_sub(target);
         let mut effects = vec![Effect::UpdateOvertimeLabel { overtime }];
@@ -551,7 +551,7 @@ impl Session {
         // happens. Stopwatch-only Box Breath (target_secs None)
         // never auto-ends.
         if let Some(target_secs) = self.settings.target_secs {
-            let target = Duration::from_secs(target_secs as u64);
+            let target = Duration::from_secs(u64::from(target_secs));
             if elapsed >= target {
                 let duration_secs = elapsed.as_secs();
                 self.phase = SessionPhase::Stopped;
@@ -623,7 +623,7 @@ impl Session {
     /// complete. Used at the Running→Overtime boundary (Timer/Guided)
     /// and at Box-Breath's natural end.
     pub fn completion_duration_secs(&self) -> u64 {
-        self.settings.target_secs.map(|s| s as u64).unwrap_or(0)
+        self.settings.target_secs.map_or(0, u64::from)
     }
 
     /// Tick + fold: advance the session and inspect the effects
@@ -695,7 +695,7 @@ impl Session {
             return None;
         }
         let target_secs = self.settings.prep_secs?;
-        let target = Duration::from_secs(target_secs as u64);
+        let target = Duration::from_secs(u64::from(target_secs));
         let remaining = target.saturating_sub(self.phase_clock.elapsed(now));
         Some(remaining.as_secs() + u64::from(remaining.subsec_nanos() > 0))
     }
@@ -764,7 +764,7 @@ fn display_secs_for_running(settings: &SessionSettings, elapsed: Duration) -> u6
     }
     match settings.target_secs {
         Some(target_secs) => {
-            let target = Duration::from_secs(target_secs as u64);
+            let target = Duration::from_secs(u64::from(target_secs));
             let remaining = target.saturating_sub(elapsed);
             remaining.as_secs() + u64::from(remaining.subsec_nanos() > 0)
         }
@@ -988,7 +988,7 @@ mod tests {
             schedule: BellSchedule::Interval {
                 base_min,
                 jitter_pct: 0,
-                next_ring_secs: (base_min as u64) * 60,
+                next_ring_secs: u64::from(base_min) * 60,
             },
         }
     }
@@ -1157,8 +1157,7 @@ mod tests {
         let effects = s.tick(Duration::from_millis(100_500)); // 0.5 s in, still Phase::In
         assert!(
             !effects.iter().any(|e| matches!(e, Effect::FireBoxBreathCue { .. })),
-            "first tick must not fire a phase cue: {:?}",
-            effects
+            "first tick must not fire a phase cue: {effects:?}"
         );
         // Should produce a UpdateDisplay though.
         assert_eq!(effects, vec![Effect::UpdateDisplay { secs: 0 }]);
@@ -1177,8 +1176,7 @@ mod tests {
                 e,
                 Effect::FireBoxBreathCue { phase: BoxBreathPhaseId::HoldIn, .. }
             )),
-            "expected HoldIn cue, got {:?}",
-            effects
+            "expected HoldIn cue, got {effects:?}"
         );
     }
 
@@ -1233,8 +1231,7 @@ mod tests {
         let effects = s.tick(Duration::from_secs(116));
         assert!(
             effects.contains(&Effect::EndBoxBreath { duration_secs: 16 }),
-            "expected EndBoxBreath, got {:?}",
-            effects
+            "expected EndBoxBreath, got {effects:?}"
         );
         // EndBoxBreath is a terminal path — Session transitions to
         // Stopped and stashes the duration so the shell's Done view
@@ -1369,8 +1366,7 @@ mod tests {
                 e,
                 Effect::FireBell { sound_uuid, .. } if sound_uuid == "halftime"
             )),
-            "expected FireBell for 'halftime', got {:?}",
-            effects
+            "expected FireBell for 'halftime', got {effects:?}"
         );
     }
 
@@ -1383,8 +1379,7 @@ mod tests {
         let effects = s.tick(Duration::from_secs(180)); // shouldn't re-fire
         assert!(
             !effects.iter().any(|e| matches!(e, Effect::FireBell { .. })),
-            "fixed bell must not re-fire: {:?}",
-            effects
+            "fixed bell must not re-fire: {effects:?}"
         );
     }
 
@@ -1419,8 +1414,7 @@ mod tests {
         let effects = s.tick(Duration::from_secs(110));
         assert!(
             !effects.iter().any(|e| matches!(e, Effect::FireBell { .. })),
-            "bells must not fire during prep: {:?}",
-            effects
+            "bells must not fire during prep: {effects:?}"
         );
     }
 
@@ -1512,7 +1506,7 @@ mod tests {
         assert_eq!(first, vec![Effect::StopActiveSignals]);
         // Idempotent re-pause emits nothing.
         let second = s.pause(Duration::from_secs(115));
-        assert!(second.is_empty(), "redundant pause must emit nothing: {:?}", second);
+        assert!(second.is_empty(), "redundant pause must emit nothing: {second:?}");
     }
 
     #[test]
@@ -1540,7 +1534,7 @@ mod tests {
         // call it (the gtk shell stops the tick loop on pause), but
         // if it does, we don't update display or fire transitions.
         let effects = s.tick(Duration::from_secs(120));
-        assert!(effects.is_empty(), "paused tick must produce nothing: {:?}", effects);
+        assert!(effects.is_empty(), "paused tick must produce nothing: {effects:?}");
     }
 
     #[test]
@@ -1787,8 +1781,7 @@ mod tests {
         let second = s.stop(Duration::from_secs(140));
         assert!(
             second.is_empty(),
-            "second stop must be a no-op, got {:?}",
-            second
+            "second stop must be a no-op, got {second:?}"
         );
     }
 
@@ -1917,7 +1910,7 @@ mod tests {
         );
         let _ = s.stop(Duration::from_secs(120));
         let effects = s.tick(Duration::from_secs(125));
-        assert!(effects.is_empty(), "tick after stop must be silent: {:?}", effects);
+        assert!(effects.is_empty(), "tick after stop must be silent: {effects:?}");
     }
 
     #[test]

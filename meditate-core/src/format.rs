@@ -555,7 +555,7 @@ pub const PREP_SECS_DEFAULT: u32 = 30;
 /// Preparing for an instant would just create a flicker.
 pub fn prep_target_duration(prep_active: bool, prep_secs: u32) -> Option<Duration> {
     if prep_active && prep_secs > 0 {
-        Some(Duration::from_secs(prep_secs as u64))
+        Some(Duration::from_secs(u64::from(prep_secs)))
     } else {
         None
     }
@@ -581,15 +581,13 @@ pub fn prep_plan_from_db(db: &crate::db::Database) -> Option<Duration> {
     let starting = read_bool(db, "starting_bell_active", false);
     let secs = db
         .get_setting("preparation_time_secs", &PREP_SECS_DEFAULT.to_string())
-        .map(|s| parse_prep_secs(&s))
-        .unwrap_or(PREP_SECS_DEFAULT);
+        .map_or(PREP_SECS_DEFAULT, |s| parse_prep_secs(&s));
     prep_target_duration(active && starting, secs)
 }
 
 pub fn parse_prep_secs(s: &str) -> u32 {
     s.parse::<u32>()
-        .map(|n| n.clamp(PREP_SECS_MIN, PREP_SECS_MAX))
-        .unwrap_or(PREP_SECS_DEFAULT)
+        .map_or(PREP_SECS_DEFAULT, |n| n.clamp(PREP_SECS_MIN, PREP_SECS_MAX))
 }
 
 /// `YYYY-MM-DD` of the local-time day the unix timestamp falls on.
@@ -669,7 +667,7 @@ pub fn date_group_kind(unix_secs: i64, now_unix: i64) -> DateGroupKey {
 pub fn label_color_class_index(name: &str) -> usize {
     let mut h: u32 = 5381;
     for b in name.bytes() {
-        h = h.wrapping_mul(33).wrapping_add(b as u32);
+        h = h.wrapping_mul(33).wrapping_add(u32::from(b));
     }
     (h as usize) % 8
 }
@@ -1308,11 +1306,11 @@ mod tests {
         );
         assert_eq!(
             prep_target_duration(true, PREP_SECS_MIN),
-            Some(Duration::from_secs(PREP_SECS_MIN as u64))
+            Some(Duration::from_secs(u64::from(PREP_SECS_MIN)))
         );
         assert_eq!(
             prep_target_duration(true, PREP_SECS_MAX),
-            Some(Duration::from_secs(PREP_SECS_MAX as u64))
+            Some(Duration::from_secs(u64::from(PREP_SECS_MAX)))
         );
     }
 

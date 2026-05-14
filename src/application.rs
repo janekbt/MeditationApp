@@ -204,7 +204,7 @@ mod imp {
             // it. Worst-case 500 ms; typical <50 ms.
             let has_haptic = crate::vibration::probe_haptic();
             self.has_haptic.set(has_haptic);
-            meditate_core::log(&format!("haptic probe: {}", has_haptic));
+            meditate_core::log(&format!("haptic probe: {has_haptic}"));
 
             self.setup_actions();
             self.setup_accels();

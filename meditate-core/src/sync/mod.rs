@@ -36,6 +36,5 @@ pub use fake::FakeWebDav;
 /// as "not configured" so the predicate never raises.
 pub fn should_attempt(db: &crate::db::Database) -> bool {
     settings::nextcloud_account_from_db(db)
-        .map(|opt| opt.is_some())
-        .unwrap_or(false)
+        .is_ok_and(|opt| opt.is_some())
 }

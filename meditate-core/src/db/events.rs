@@ -237,8 +237,7 @@ impl Database {
         tx.commit()?;
         if count > 0 {
             crate::diag::log(&format!(
-                "cache_schema_upgrade: replayed {count} events from v{stored} to v{}",
-                CACHE_SCHEMA_VERSION,
+                "cache_schema_upgrade: replayed {count} events from v{stored} to v{CACHE_SCHEMA_VERSION}",
             ));
         }
         Ok(())
@@ -545,7 +544,7 @@ impl Database {
         }
 
         // Unknown kind → record but skip dispatch (forward-compat).
-        Ok(EventKind::from_db_str(&event.kind).map(|k| k.entity()))
+        Ok(EventKind::from_db_str(&event.kind).map(EventKind::entity))
     }
 
     /// Materialise the named entity's cache row from the events table.
@@ -1418,7 +1417,7 @@ mod tests {
         let notes_b: std::collections::HashSet<_> = sessions_b.iter()
             .filter_map(|(_, s)| s.notes.clone()).collect();
         let expected: std::collections::HashSet<_> = ["from A", "from B"]
-            .iter().map(|s| s.to_string()).collect();
+            .iter().map(std::string::ToString::to_string).collect();
         assert_eq!(notes_a, expected);
         assert_eq!(notes_b, expected,
             "after cross-replay, both devices must hold the same union of events");

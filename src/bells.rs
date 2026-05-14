@@ -118,8 +118,8 @@ fn rebuild_list(
         .unwrap_or(false);
 
     let bells = app
-        .with_db(|db| db.list_interval_bells())
-        .and_then(|r| r.ok())
+        .with_db(super::db::Database::list_interval_bells)
+        .and_then(std::result::Result::ok)
         .unwrap_or_default();
 
     if bells.is_empty() {
@@ -174,7 +174,7 @@ fn build_create_row(
                 crate::db::BUNDLED_PATTERN_PULSE_UUID,
                 meditate_core::bells::DEFAULT_NEW_BELL_SIGNAL_MODE,
             )
-        }).and_then(|r| r.ok());
+        }).and_then(std::result::Result::ok);
 
         if let Some(rb) = rebuilder_for_create.borrow().as_ref() {
             rb();
@@ -185,7 +185,7 @@ fn build_create_row(
         if let Some(rowid) = new_id {
             let new_uuid = app_for_create
                 .with_db(|db| db.find_interval_bell_by_id(rowid))
-                .and_then(|r| r.ok())
+                .and_then(std::result::Result::ok)
                 .flatten()
                 .map(|b| b.uuid.0);
             if let Some(uuid) = new_uuid {
@@ -405,6 +405,24 @@ fn pattern_name(app: &MeditateApplication, uuid: &str) -> String {
 
 /// Edit page for one bell — pushed when the user taps a row in the
 /// list. Save-as-you-go: every field change persists immediately
+/// Persist the current snapshot via the shell's `update_interval_bell`
+/// pass-through and fire the rebuild + on_changed pipeline. Hoisted
+/// out of `push_edit_page` so each field-handler can call it from
+/// its own captured clones without nesting an item inside a fn body.
+fn write_back_bell(
+    app: &MeditateApplication,
+    snap: &Rc<RefCell<IntervalBell>>,
+    rebuilder: &Rebuilder,
+    on_changed: &(impl Fn() + Clone + 'static),
+) {
+    let s = snap.borrow();
+    app.with_db_mut(|db| db.update_interval_bell(&s));
+    if let Some(rb) = rebuilder.borrow().as_ref() {
+        rb();
+    }
+    on_changed();
+}
+
 /// (with a populating-style guard during the initial load) and fires
 /// the same rebuilder/on_changed pipeline so the list page and the
 /// timer setup's subtitle stay in sync. Delete asks for confirmation
@@ -435,7 +453,7 @@ fn push_edit_page(
         gettext("At time from start"),
         gettext("Before end"),
     ];
-    let kind_refs: Vec<&str> = kind_choices.iter().map(|s| s.as_str()).collect();
+    let kind_refs: Vec<&str> = kind_choices.iter().map(std::string::String::as_str).collect();
     let kind_row = adw::ComboRow::builder()
         .title(gettext("Kind"))
         .model(&gtk::StringList::new(&kind_refs))
@@ -451,9 +469,9 @@ fn push_edit_page(
     let minutes_row = adw::SpinRow::builder()
         .title(gettext("Minutes"))
         .adjustment(&gtk::Adjustment::new(
-            bell.minutes as f64,
-            meditate_core::bells::BELL_MINUTES_MIN as f64,
-            meditate_core::bells::BELL_MINUTES_MAX as f64,
+            f64::from(bell.minutes),
+            f64::from(meditate_core::bells::BELL_MINUTES_MIN),
+            f64::from(meditate_core::bells::BELL_MINUTES_MAX),
             1.0, 5.0, 0.0,
         ))
         .build();
@@ -465,9 +483,9 @@ fn push_edit_page(
         .title(gettext("Jitter"))
         .subtitle(gettext("Percent — randomises the next ring"))
         .adjustment(&gtk::Adjustment::new(
-            bell.jitter_pct as f64,
-            meditate_core::bells::BELL_JITTER_PCT_MIN as f64,
-            meditate_core::bells::BELL_JITTER_PCT_MAX as f64,
+            f64::from(bell.jitter_pct),
+            f64::from(meditate_core::bells::BELL_JITTER_PCT_MIN),
+            f64::from(meditate_core::bells::BELL_JITTER_PCT_MAX),
             5.0, 10.0, 0.0,
         ))
         .visible(bell.kind == IntervalBellKind::Interval)
@@ -578,20 +596,6 @@ fn push_edit_page(
     let snapshot = Rc::new(RefCell::new(bell));
     let populating = Rc::new(std::cell::Cell::new(false));
 
-    fn write_back(
-        app: &MeditateApplication,
-        snap: &Rc<RefCell<IntervalBell>>,
-        rebuilder: &Rebuilder,
-        on_changed: &(impl Fn() + Clone + 'static),
-    ) {
-        let s = snap.borrow();
-        app.with_db_mut(|db| db.update_interval_bell(&s));
-        if let Some(rb) = rebuilder.borrow().as_ref() {
-            rb();
-        }
-        on_changed();
-    }
-
     // Kind changes also flip jitter row visibility.
     let snap_for_kind = snapshot.clone();
     let app_for_kind = app.clone();
@@ -608,7 +612,7 @@ fn push_edit_page(
         };
         snap_for_kind.borrow_mut().kind = new_kind;
         jitter_row_clone.set_visible(new_kind == IntervalBellKind::Interval);
-        write_back(&app_for_kind, &snap_for_kind, &rebuilder_for_kind, &on_changed_for_kind);
+        write_back_bell(&app_for_kind, &snap_for_kind, &rebuilder_for_kind, &on_changed_for_kind);
     });
 
     let snap_for_min = snapshot.clone();
@@ -619,10 +623,10 @@ fn push_edit_page(
     minutes_row.connect_notify_local(Some("value"), move |row, _| {
         if populating_for_min.get() { return; }
         snap_for_min.borrow_mut().minutes = row.value().round().clamp(
-            meditate_core::bells::BELL_MINUTES_MIN as f64,
-            meditate_core::bells::BELL_MINUTES_MAX as f64,
+            f64::from(meditate_core::bells::BELL_MINUTES_MIN),
+            f64::from(meditate_core::bells::BELL_MINUTES_MAX),
         ) as u32;
-        write_back(&app_for_min, &snap_for_min, &rebuilder_for_min, &on_changed_for_min);
+        write_back_bell(&app_for_min, &snap_for_min, &rebuilder_for_min, &on_changed_for_min);
     });
 
     let snap_for_jitter = snapshot.clone();
@@ -633,10 +637,10 @@ fn push_edit_page(
     jitter_row.connect_notify_local(Some("value"), move |row, _| {
         if populating_for_jitter.get() { return; }
         snap_for_jitter.borrow_mut().jitter_pct = row.value().round().clamp(
-            meditate_core::bells::BELL_JITTER_PCT_MIN as f64,
-            meditate_core::bells::BELL_JITTER_PCT_MAX as f64,
+            f64::from(meditate_core::bells::BELL_JITTER_PCT_MIN),
+            f64::from(meditate_core::bells::BELL_JITTER_PCT_MAX),
         ) as u32;
-        write_back(&app_for_jitter, &snap_for_jitter, &rebuilder_for_jitter, &on_changed_for_jitter);
+        write_back_bell(&app_for_jitter, &snap_for_jitter, &rebuilder_for_jitter, &on_changed_for_jitter);
     });
 
     // Sound activation: walk to window, push chooser, on pick update
@@ -665,7 +669,7 @@ fn push_edit_page(
             move |uuid| {
                 snap.borrow_mut().sound_uuid = uuid.clone().into();
                 sound_row.set_subtitle(&sound_name(&app_inner, &uuid));
-                write_back(&app_inner, &snap, &rebuilder, &on_changed);
+                write_back_bell(&app_inner, &snap, &rebuilder, &on_changed);
             },
         );
     });
@@ -690,7 +694,7 @@ fn push_edit_page(
         window.push_vibrations_chooser(&app_outer, current, move |uuid| {
             snap.borrow_mut().vibration_pattern_uuid = uuid.clone().into();
             pattern_row.set_subtitle(&pattern_name(&app_inner, &uuid));
-            write_back(&app_inner, &snap, &rebuilder, &on_changed);
+            write_back_bell(&app_inner, &snap, &rebuilder, &on_changed);
         });
     });
 
@@ -714,7 +718,7 @@ fn push_edit_page(
         snap_for_sig.borrow_mut().signal_mode = mode;
         sound_row_for_sig.set_visible(mode.includes_sound());
         pattern_row_for_sig.set_visible(mode.includes_vibration());
-        write_back(&app_for_sig, &snap_for_sig, &rebuilder_for_sig, &on_changed_for_sig);
+        write_back_bell(&app_for_sig, &snap_for_sig, &rebuilder_for_sig, &on_changed_for_sig);
     });
 
     // ── Delete ────────────────────────────────────────────────────
@@ -767,8 +771,8 @@ fn push_edit_page(
 }
 
 fn lookup_bell(app: &MeditateApplication, uuid: &str) -> Option<IntervalBell> {
-    app.with_db(|db| db.list_interval_bells())
-        .and_then(|r| r.ok())
+    app.with_db(super::db::Database::list_interval_bells)
+        .and_then(std::result::Result::ok)
         .unwrap_or_default()
         .into_iter()
         .find(|b| b.uuid == uuid)

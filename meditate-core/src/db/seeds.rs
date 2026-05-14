@@ -334,8 +334,8 @@ mod tests {
             assert_eq!(row.duration_ms, *dur);
             assert_eq!(row.chart_kind, *kind);
             assert_eq!(row.intensities.len(), *n,
-                "{} should have {} intensity samples", name, n);
-            assert!(row.is_bundled, "{} must be flagged as bundled", name);
+                "{name} should have {n} intensity samples");
+            assert!(row.is_bundled, "{name} must be flagged as bundled");
         }
     }
 

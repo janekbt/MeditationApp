@@ -218,7 +218,7 @@ pub fn import_picked_file(
             let collision = !trimmed.is_empty()
                 && app
                     .with_db(|db| db.is_guided_file_name_taken(trimmed, ""))
-                    .and_then(|r| r.ok())
+                    .and_then(std::result::Result::ok)
                     .unwrap_or(false);
             let valid = !trimmed.is_empty() && !collision;
             import_btn.set_sensitive(valid);
@@ -329,7 +329,7 @@ pub fn import_picked_file(
                         );
                     } else if let Some(row) = app
                         .with_db(|db| db.find_guided_file_by_uuid(&new_uuid))
-                        .and_then(|r| r.ok())
+                        .and_then(std::result::Result::ok)
                         .flatten()
                     {
                         on_done(row);
@@ -369,7 +369,7 @@ fn do_import_io(
     let source_ext = source
         .extension()
         .and_then(|s| s.to_str())
-        .map(|s| s.to_ascii_lowercase())
+        .map(str::to_ascii_lowercase)
         .unwrap_or_default();
 
     let new_uuid = crate::db::mint_uuid();
@@ -422,6 +422,7 @@ fn transcode_to_ogg_preserve_channels(
     cancel: &AtomicBool,
 ) -> std::result::Result<(), String> {
     use gst::prelude::*;
+    use gst::MessageView::{Eos, Error};
     use gstreamer as gst;
 
     gst::init().map_err(|e| format!("gst init failed: {e}"))?;
@@ -498,7 +499,6 @@ fn transcode_to_ogg_preserve_channels(
             // Timeout — re-check cancel flag and keep polling.
             continue;
         };
-        use gst::MessageView::*;
         match msg.view() {
             Eos(..) => break,
             Error(err) => {
@@ -607,8 +607,8 @@ fn rebuild_chooser_rows(
     rows.borrow_mut().push(create_row);
 
     let files = app
-        .with_db(|db| db.list_guided_files())
-        .and_then(|r| r.ok())
+        .with_db(super::db::Database::list_guided_files)
+        .and_then(std::result::Result::ok)
         .unwrap_or_default();
 
     if files.is_empty() {
@@ -847,7 +847,7 @@ fn present_rename_dialog(
             let collision = !trimmed.is_empty()
                 && app
                     .with_db(|db| db.is_guided_file_name_taken(trimmed, &uuid_for_validate))
-                    .and_then(|r| r.ok())
+                    .and_then(std::result::Result::ok)
                     .unwrap_or(false);
             let valid = !trimmed.is_empty() && !collision;
             dialog.set_response_enabled("rename", valid);
@@ -960,7 +960,7 @@ fn present_delete_dialog(
         // (sync race between two devices, say).
         let Some(file) = app
             .with_db(|db| db.find_guided_file_by_uuid(&uuid))
-            .and_then(|r| r.ok())
+            .and_then(std::result::Result::ok)
             .flatten()
         else {
             return;
@@ -1090,8 +1090,7 @@ fn build_undo_toast(
         let should_clear = toast_slot_dismiss
             .borrow()
             .as_ref()
-            .map(|cur| cur == t)
-            .unwrap_or(false);
+            .is_some_and(|cur| cur == t);
         if should_clear {
             toast_slot_dismiss.replace(None);
         }
