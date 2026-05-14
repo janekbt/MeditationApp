@@ -17,6 +17,8 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 
+use meditate_core::vibration::patterns_equivalent;
+
 use crate::application::MeditateApplication;
 use crate::db::VibrationPattern;
 use crate::i18n::gettext;
@@ -67,10 +69,7 @@ pub fn push_vibrations_chooser(
     // cancel for any in-flight preview.
     let play_slot: Rc<RefCell<Option<crate::vibration::PatternPlayback>>> =
         Rc::new(RefCell::new(None));
-    let preview: Rc<RefCell<PreviewState>> = Rc::new(RefCell::new(PreviewState {
-        active_uuid: None,
-        active_btn: None,
-    }));
+    let preview: Rc<RefCell<PreviewState>> = Rc::new(RefCell::new(PreviewState::default()));
 
     let group_for_rb = group.clone();
     let rows_for_rb = rows.clone();
@@ -131,7 +130,7 @@ fn rebuild_chooser_rows(
     rows.borrow_mut().push(create_row.upcast());
 
     let selection = SelectionContext {
-        current_uuid: current_uuid.map(|s| s.to_string()),
+        current_uuid: current_uuid.map(std::string::ToString::to_string),
         on_selected,
         nav_view: nav_view.clone(),
         play_slot: play_slot.clone(),
@@ -140,8 +139,8 @@ fn rebuild_chooser_rows(
     };
 
     let patterns = app
-        .with_db(|db| db.list_vibration_patterns())
-        .and_then(|r| r.ok())
+        .with_db(super::db::Database::list_vibration_patterns)
+        .and_then(std::result::Result::ok)
         .unwrap_or_default();
     for pattern in patterns {
         let row = build_pattern_row(&pattern, app, rebuilder.clone(), &selection);
@@ -170,9 +169,14 @@ struct SelectionContext {
 /// showing the Stop icon. Used to flip the icon back to Play when
 /// the preview ends — either because the user tapped the Stop
 /// button, started a different pattern, or the natural duration
-/// timeout fired.
+/// timeout fired. The portable state machine (which uuid is
+/// active, the auto-revert generation counter) lives in
+/// `meditate_core::vibration::PreviewToggle`; this struct adds the
+/// shell-only "which gtk::Button is the active Stop icon" handle
+/// so we know which row to revert.
+#[derive(Default)]
 struct PreviewState {
-    active_uuid: Option<String>,
+    toggle: meditate_core::vibration::PreviewToggle,
     active_btn: Option<gtk::Button>,
 }
 
@@ -261,7 +265,7 @@ fn build_pattern_row(
         add_delete_button(&row, pattern, app, rebuilder, &selection.toast_overlay);
     }
 
-    let uuid = pattern.uuid.clone();
+    let uuid = pattern.uuid.0.clone();
     let on_selected = selection.on_selected.clone();
     let nav_view = selection.nav_view.clone();
     row.connect_activated(move |_| {
@@ -289,67 +293,56 @@ fn add_play_button(
     let preview_for_click = preview.clone();
     let btn_for_click = play_btn.clone();
     play_btn.connect_clicked(move |_| {
-        let already_playing_this = preview_for_click
-            .borrow()
-            .active_uuid
-            .as_deref()
-            == Some(pattern.uuid.as_str());
-
-        // Always revert whichever button currently shows Stop —
-        // either we're toggling it off here, or we're switching to
-        // a different pattern.
+        use meditate_core::vibration::PreviewAction;
+        let action = preview_for_click.borrow_mut().toggle.request(pattern.uuid.as_str());
+        // The previous Stop-icon button (if any) always reverts
+        // first — either we're toggling it off, or switching to a
+        // different row.
         if let Some(prev_btn) = preview_for_click.borrow_mut().active_btn.take() {
             prev_btn.set_icon_name("media-playback-start-symbolic");
             prev_btn.set_tooltip_text(Some(&gettext("Preview pattern")));
         }
-        preview_for_click.borrow_mut().active_uuid = None;
-
-        if already_playing_this {
-            // Toggle off — clear the slot, its Drop fires the
-            // empty-array cancel at feedbackd.
-            *play_slot.borrow_mut() = None;
-            return;
-        }
-
-        // Start new preview. disarm-on-replace hands off cleanly to
-        // feedbackd's per-app supersede; no cancel race.
-        let new_handle = crate::vibration::PatternPlayback::play(&app, &pattern);
-        {
-            let mut slot = play_slot.borrow_mut();
-            if let Some(mut old) = slot.take() {
-                old.disarm();
+        match action {
+            PreviewAction::StopOnly => {
+                // Toggle off — clear the slot, its Drop fires the
+                // empty-array cancel at feedbackd.
+                *play_slot.borrow_mut() = None;
             }
-            *slot = Some(new_handle);
-        }
-
-        btn_for_click.set_icon_name("media-playback-stop-symbolic");
-        btn_for_click.set_tooltip_text(Some(&gettext("Stop preview")));
-        {
-            let mut state = preview_for_click.borrow_mut();
-            state.active_uuid = Some(pattern.uuid.clone());
-            state.active_btn = Some(btn_for_click.clone());
-        }
-
-        // Auto-revert on natural completion. The timeout fires after
-        // the pattern's full duration — if the same pattern is still
-        // active by then (no other Play tap in between), flip the
-        // icon back to Play. If another pattern took over in the
-        // meantime, this no-ops because active_uuid won't match.
-        let preview_for_timeout = preview_for_click.clone();
-        let uuid_for_timeout = pattern.uuid.clone();
-        glib::timeout_add_local_once(
-            std::time::Duration::from_millis(pattern.duration_ms as u64),
-            move || {
-                let mut state = preview_for_timeout.borrow_mut();
-                if state.active_uuid.as_deref() == Some(uuid_for_timeout.as_str()) {
-                    if let Some(btn) = state.active_btn.take() {
-                        btn.set_icon_name("media-playback-start-symbolic");
-                        btn.set_tooltip_text(Some(&gettext("Preview pattern")));
+            PreviewAction::StopAndStart { generation, .. } => {
+                // Start new preview. disarm-on-replace hands off
+                // cleanly to feedbackd's per-app supersede; no
+                // cancel race.
+                let new_handle = crate::vibration::PatternPlayback::play(&app, &pattern);
+                {
+                    let mut slot = play_slot.borrow_mut();
+                    if let Some(mut old) = slot.take() {
+                        old.disarm();
                     }
-                    state.active_uuid = None;
+                    *slot = Some(new_handle);
                 }
-            },
-        );
+                btn_for_click.set_icon_name("media-playback-stop-symbolic");
+                btn_for_click.set_tooltip_text(Some(&gettext("Stop preview")));
+                preview_for_click.borrow_mut().active_btn = Some(btn_for_click.clone());
+
+                // Auto-revert on natural completion. Core's
+                // `timer_should_revert` no-ops if the user already
+                // tapped Stop or switched rows in the meantime.
+                let preview_for_timeout = preview_for_click.clone();
+                glib::timeout_add_local_once(
+                    std::time::Duration::from_millis(u64::from(pattern.duration_ms)),
+                    move || {
+                        let mut state = preview_for_timeout.borrow_mut();
+                        if state.toggle.timer_should_revert(generation) {
+                            if let Some(btn) = state.active_btn.take() {
+                                btn.set_icon_name("media-playback-start-symbolic");
+                                btn.set_tooltip_text(Some(&gettext("Preview pattern")));
+                            }
+                        }
+                    },
+                );
+            }
+            PreviewAction::NoOp => {}
+        }
     });
     row.add_suffix(&play_btn);
 }
@@ -394,7 +387,7 @@ fn add_edit_button(
                 // tuple is enough; we don't have a "dirty" flag.
                 let after = app_for_saved
                     .with_db(|db| db.find_vibration_pattern_by_uuid(&saved_uuid))
-                    .and_then(|r| r.ok())
+                    .and_then(std::result::Result::ok)
                     .flatten();
                 if let Some(after) = after {
                     if !patterns_equivalent(&before, &after) {
@@ -426,7 +419,7 @@ fn add_rename_button(
         .valign(gtk::Align::Center)
         .build();
     let app = app.clone();
-    let uuid = pattern.uuid.clone();
+    let uuid = pattern.uuid.0.clone();
     let row_clone = row.clone();
     let toast_overlay = toast_overlay.clone();
     rename_btn.connect_clicked(move |btn| {
@@ -456,22 +449,12 @@ fn add_delete_button(
         .valign(gtk::Align::Center)
         .build();
     let app = app.clone();
-    let uuid = pattern.uuid.clone();
+    let uuid = pattern.uuid.0.clone();
     let toast_overlay = toast_overlay.clone();
     delete_btn.connect_clicked(move |btn| {
         present_delete_dialog(btn, &app, &uuid, rebuilder.clone(), &toast_overlay);
     });
     row.add_suffix(&delete_btn);
-}
-
-fn patterns_equivalent(a: &VibrationPattern, b: &VibrationPattern) -> bool {
-    a.name == b.name
-        && a.duration_ms == b.duration_ms
-        && a.chart_kind == b.chart_kind
-        && a.intensities.len() == b.intensities.len()
-        && a.intensities.iter()
-            .zip(b.intensities.iter())
-            .all(|(x, y)| (x - y).abs() < 1e-6)
 }
 
 /// Show an Undo toast for an edit/rename. Clicking Undo restores
@@ -483,8 +466,13 @@ fn show_undo_edit_toast(
     before: VibrationPattern,
     rebuilder: crate::Rebuilder,
 ) {
+    let title = crate::announcement::title(
+        &meditate_core::announcement::Announcement::PatternUpdated {
+            name: before.name.clone(),
+        },
+    );
     let toast = adw::Toast::builder()
-        .title(format!("{} {}", gettext("Updated"), &before.name))
+        .title(&title)
         .button_label(gettext("Undo"))
         .timeout(5)
         .build();
@@ -492,7 +480,7 @@ fn show_undo_edit_toast(
     toast.connect_button_clicked(move |t| {
         let _ = app.with_db_mut(|db| {
             db.update_vibration_pattern(
-                &before.uuid,
+                before.uuid.as_str(),
                 &before.name,
                 before.duration_ms,
                 &before.intensities,
@@ -517,8 +505,13 @@ fn show_undo_delete_toast(
     snapshot: VibrationPattern,
     rebuilder: crate::Rebuilder,
 ) {
+    let title = crate::announcement::title(
+        &meditate_core::announcement::Announcement::PatternDeleted {
+            name: snapshot.name.clone(),
+        },
+    );
     let toast = adw::Toast::builder()
-        .title(format!("{} {}", gettext("Deleted"), &snapshot.name))
+        .title(&title)
         .button_label(gettext("Undo"))
         .timeout(5)
         .build();
@@ -526,7 +519,7 @@ fn show_undo_delete_toast(
     toast.connect_button_clicked(move |t| {
         let _ = app.with_db_mut(|db| {
             db.insert_vibration_pattern_with_uuid(
-                &snapshot.uuid,
+                snapshot.uuid.as_str(),
                 &snapshot.name,
                 snapshot.duration_ms,
                 &snapshot.intensities,
@@ -578,12 +571,12 @@ fn present_rename_dialog(
         Rc::new(move || {
             let text = entry.text();
             let trimmed = text.trim();
-            let collision = app
-                .with_db(|db| db.is_vibration_pattern_name_taken(trimmed, &uuid))
-                .and_then(|r| r.ok())
-                .unwrap_or(false);
-            let valid = !trimmed.is_empty() && !collision;
-            dialog.set_response_enabled("rename", valid);
+            let validity = meditate_core::validate(trimmed, |name| {
+                app.with_db(|db| db.is_vibration_pattern_name_taken(name, &uuid))
+                    .and_then(std::result::Result::ok)
+                    .unwrap_or(false)
+            });
+            dialog.set_response_enabled("rename", validity.is_savable());
         })
     };
     validate();
@@ -608,17 +601,17 @@ fn present_rename_dialog(
         // rename, but update_vibration_pattern wants every field.
         let before = app
             .with_db(|db| db.find_vibration_pattern_by_uuid(&uuid))
-            .and_then(|r| r.ok())
+            .and_then(std::result::Result::ok)
             .flatten();
-        if let Some(ref p) = before {
-            if p.name == trimmed {
-                return; // No-op rename — skip the toast.
-            }
-            app.with_db_mut(|db| {
-                db.update_vibration_pattern(
-                    &uuid, trimmed, p.duration_ms, &p.intensities, p.chart_kind,
-                )
-            });
+        // Core's `rename_vibration_pattern` handles the read-modify-
+        // write and returns false on a no-op rename so the shell can
+        // skip the undo toast.
+        let changed = app
+            .with_db_mut(|db| db.rename_vibration_pattern(&uuid, trimmed))
+            .and_then(std::result::Result::ok)
+            .unwrap_or(false);
+        if !changed {
+            return;
         }
         if let Some(rb) = rebuilder.borrow().as_ref() {
             rb();
@@ -666,7 +659,7 @@ fn present_delete_dialog(
         // with the same UUID.
         let snapshot = app
             .with_db(|db| db.find_vibration_pattern_by_uuid(&uuid))
-            .and_then(|r| r.ok())
+            .and_then(std::result::Result::ok)
             .flatten();
         app.with_db_mut(|db| db.delete_vibration_pattern(&uuid));
         if let Some(rb) = rebuilder.borrow().as_ref() {

@@ -1,0 +1,12 @@
+# Pin clippy's MSRV so it stops suggesting fixes that use APIs
+# stable past our floor. `Option::is_none_or` (1.82) and
+# `Result::inspect_err` (1.76) both got auto-fix suggestions
+# despite Cargo.toml `rust-version = "1.75"`.
+msrv = "1.75"
+
+# GTK widget-glue helpers (rebuild_chooser_rows, present_*_dialog,
+# wire_boxbreath_phase, …) naturally take many widget + callback
+# references — that's the UI structure made explicit, not a design
+# smell. 12 covers every current call site without papering over a
+# genuine "this fn is doing too much" warning if one appears later.
+too-many-arguments-threshold = 12

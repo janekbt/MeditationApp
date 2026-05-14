@@ -11,6 +11,7 @@ path = "src/lib.rs"
 [dependencies]
 chrono = "0.4"
 csv = "1"
+libc = "0.2"
 roxmltree = "0.20"
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }

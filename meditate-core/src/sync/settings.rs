@@ -1,15 +1,19 @@
 //! Persisted Nextcloud sync configuration. Thin layer over the
 //! `Database`'s `sync_state` KV: server URL and username live here
-//! (the password is in libsecret via `keychain`). Offers a typed
-//! `NextcloudAccount` value so callers don't pass loose strings.
+//! (the password is in libsecret via the shell's `keychain` glue).
+//! Offers a typed `NextcloudAccount` value so callers don't pass
+//! loose strings.
 //!
 //! Account is `Some` only when both URL and username are non-empty —
 //! a half-configured state ("URL but no username", "username but no
 //! URL") is reported as `None` so the caller's "is sync set up?"
 //! check has a single clean predicate.
+//!
+//! Connection-test + save/test validation live in the sibling
+//! `sync::credentials` module — they don't touch the DB so they
+//! stayed split out.
 
-use crate::db::Database;
-use rusqlite::Result;
+use crate::db::{Database, Result};
 
 pub const KEY_URL: &str = "nextcloud_url";
 pub const KEY_USERNAME: &str = "nextcloud_username";
@@ -33,7 +37,7 @@ pub struct NextcloudAccount {
 /// Return the configured account, or `None` if either field is unset/
 /// empty. Callers use this as the "is sync set up?" predicate; they
 /// don't need to know which specific field was missing.
-pub fn get_nextcloud_account(db: &Database) -> Result<Option<NextcloudAccount>> {
+pub fn nextcloud_account_from_db(db: &Database) -> Result<Option<NextcloudAccount>> {
     let url = db.get_sync_state(KEY_URL, "")?;
     let username = db.get_sync_state(KEY_USERNAME, "")?;
     if url.is_empty() || username.is_empty() {
@@ -45,7 +49,7 @@ pub fn get_nextcloud_account(db: &Database) -> Result<Option<NextcloudAccount>> 
 
 /// Persist (or update) the configured account. Both fields are written
 /// in a single logical "save" — leaving one stale would create a
-/// half-configured state that `get_nextcloud_account` would still
+/// half-configured state that `nextcloud_account_from_db` would still
 /// report as `None`, but cleaner to just keep the pair consistent.
 ///
 /// On a real change to either URL or username the dedup tracker
@@ -59,17 +63,18 @@ pub fn set_nextcloud_account(db: &Database, url: &str, username: &str) -> Result
     let prev_username = db.get_sync_state(KEY_USERNAME, "")?;
     if prev_url != url || prev_username != username {
         db.wipe_known_remote_files()?;
-        // Bell-sound files belong to the previous account's storage
-        // — clear that tracker too so the new account doesn't think
-        // the audio files are already up there.
+        // Bell-sound + guided-file audio files belong to the previous
+        // account's storage — clear those trackers too so the new
+        // account doesn't think the audio files are already up there.
         db.wipe_known_remote_sounds()?;
+        db.wipe_known_remote_guided_files()?;
     }
     db.set_sync_state(KEY_URL, url)?;
     db.set_sync_state(KEY_USERNAME, username)?;
     Ok(())
 }
 
-/// Wipe the stored account. After this `get_nextcloud_account` returns
+/// Wipe the stored account. After this `nextcloud_account_from_db` returns
 /// `None`. The keychain entry for the password is the caller's
 /// responsibility — clearing the account doesn't touch libsecret
 /// (the user might want to keep the password for later).
@@ -160,6 +165,7 @@ pub fn clear_sync_error(db: &Database) -> Result<()> {
 pub fn prepare_push_local_recovery(db: &Database) -> Result<()> {
     db.wipe_known_remote_files()?;
     db.wipe_known_remote_sounds()?;
+    db.wipe_known_remote_guided_files()?;
     db.flag_all_events_unsynced()?;
     clear_sync_error(db)?;
     Ok(())
@@ -182,9 +188,8 @@ mod tests {
     use super::*;
 
     fn fresh() -> Database {
-        // In-memory DB so each test starts clean. The shell's Database
-        // wraps core's; either path works for these helpers.
-        Database::open(std::path::Path::new(":memory:")).unwrap()
+        // In-memory DB so each test starts clean.
+        Database::open_in_memory().unwrap()
     }
 
     // ── NextcloudAccount round-trip ──────────────────────────────────────────
@@ -192,7 +197,7 @@ mod tests {
     #[test]
     fn get_account_on_fresh_db_returns_none() {
         let db = fresh();
-        assert_eq!(get_nextcloud_account(&db).unwrap(), None);
+        assert_eq!(nextcloud_account_from_db(&db).unwrap(), None);
     }
 
     #[test]
@@ -200,7 +205,7 @@ mod tests {
         let db = fresh();
         set_nextcloud_account(&db, "https://nc.example.com/", "janek").unwrap();
         assert_eq!(
-            get_nextcloud_account(&db).unwrap(),
+            nextcloud_account_from_db(&db).unwrap(),
             Some(NextcloudAccount {
                 url: "https://nc.example.com/".to_string(),
                 username: "janek".to_string(),
@@ -210,12 +215,10 @@ mod tests {
 
     #[test]
     fn set_account_replaces_prior_values() {
-        // Reconfiguring against a different server must drop the old
-        // values, not produce some merged state.
         let db = fresh();
         set_nextcloud_account(&db, "https://old.example/",  "old-user").unwrap();
         set_nextcloud_account(&db, "https://new.example/",  "new-user").unwrap();
-        let got = get_nextcloud_account(&db).unwrap().unwrap();
+        let got = nextcloud_account_from_db(&db).unwrap().unwrap();
         assert_eq!(got.url, "https://new.example/");
         assert_eq!(got.username, "new-user");
     }
@@ -238,9 +241,6 @@ mod tests {
 
     #[test]
     fn set_account_wipes_known_remote_files_when_username_changes() {
-        // Same account swap rule but driven by username change. A user
-        // signing in as a different Nextcloud user is effectively a
-        // different account even on the same URL.
         let db = fresh();
         set_nextcloud_account(&db, "https://nc.example/", "alice").unwrap();
         db.record_known_remote_file("from-alice").unwrap();
@@ -280,10 +280,6 @@ mod tests {
 
     #[test]
     fn prepare_push_local_recovery_wipes_known_remote_files() {
-        // The dedup tracker must be flushed — its entries point at
-        // batches that are no longer on the (now-wiped) remote, and
-        // leaving them would re-trigger remote-data-lost detection
-        // immediately on the next pull.
         let db = fresh();
         db.record_known_remote_file("a").unwrap();
         db.record_known_remote_file("b").unwrap();
@@ -293,34 +289,19 @@ mod tests {
 
     #[test]
     fn prepare_push_local_recovery_flags_all_events_unsynced() {
-        // Every previously-synced event must go back into pending so
-        // the next push bundles them into a fresh batch. We exercise
-        // through the shell DB API: create a label (which emits an
-        // event), bulk-mark synced via flag-then-mark, then run the
-        // recovery and observe that pending is non-empty again.
         let db = fresh();
         // Authoring a label emits a `label_insert` event.
-        db.create_label("focus").unwrap();
-        let pending_before_recovery = db.pending_events_count().unwrap();
+        db.insert_label("focus").unwrap();
+        let pending_before_recovery = db.pending_events().unwrap().len();
         assert!(pending_before_recovery >= 1,
             "sanity: authoring must create a pending event");
-
-        // The unsynced-after-recovery state is guaranteed by
-        // `flag_all_events_unsynced` (covered by db.rs tests
-        // directly); here we just pin that the recovery wrapper
-        // delegates to it correctly — pending count is preserved
-        // (idempotent on already-pending) and the helper doesn't
-        // throw on this path.
         prepare_push_local_recovery(&db).unwrap();
-        assert_eq!(db.pending_events_count().unwrap(), pending_before_recovery,
+        assert_eq!(db.pending_events().unwrap().len(), pending_before_recovery,
             "recovery must leave events in pending state");
     }
 
     #[test]
     fn prepare_push_local_recovery_clears_error_and_kind() {
-        // The status indicator polls these. Clearing them lets it go
-        // back to "syncing" state immediately, so the user doesn't see
-        // the warning indicator while the recovery sync is in flight.
         let db = fresh();
         record_remote_data_lost(&db, "remote data appears wiped").unwrap();
         prepare_push_local_recovery(&db).unwrap();
@@ -330,9 +311,6 @@ mod tests {
 
     #[test]
     fn prepare_push_local_recovery_preserves_last_sync_unix_ts() {
-        // The user sees "synced N minutes ago" while the recovery
-        // sync runs. Don't clobber the previous successful timestamp;
-        // only `record_successful_sync` should bump it.
         let db = fresh();
         record_successful_sync(&db, 1_700_000_000).unwrap();
         record_remote_data_lost(&db, "remote data appears wiped").unwrap();
@@ -345,20 +323,14 @@ mod tests {
 
     #[test]
     fn prepare_wipe_local_recovery_clears_user_content() {
-        // The "wipe local" recovery branch erases every authored row
-        // so the next sync against the (empty) remote leaves the
-        // local DB matching it.
         let db = fresh();
-        db.create_label("focus").unwrap();
-        // Authoring a label + a session emits events into the log.
-        let pending_before = db.pending_events_count().unwrap();
+        db.insert_label("focus").unwrap();
+        let pending_before = db.pending_events().unwrap().len();
         assert!(pending_before > 0,
             "sanity: authoring a label must create a pending event");
-
         prepare_wipe_local_recovery(&db).unwrap();
-
-        assert_eq!(db.list_labels().unwrap().len(), 0);
-        assert_eq!(db.pending_events_count().unwrap(), 0);
+        assert_eq!(crate::db::list_labels_from_db(&db).unwrap().len(), 0);
+        assert_eq!(db.pending_events().unwrap().len(), 0);
     }
 
     #[test]
@@ -369,7 +341,7 @@ mod tests {
         let db = fresh();
         set_nextcloud_account(&db, "https://nc.example/", "alice").unwrap();
         prepare_wipe_local_recovery(&db).unwrap();
-        let account = get_nextcloud_account(&db).unwrap();
+        let account = nextcloud_account_from_db(&db).unwrap();
         assert_eq!(account, Some(NextcloudAccount {
             url: "https://nc.example/".to_string(),
             username: "alice".to_string(),
@@ -378,9 +350,6 @@ mod tests {
 
     #[test]
     fn prepare_wipe_local_recovery_clears_error_and_kind() {
-        // Same UX rule as the push-local-recovery: take the indicator
-        // out of warning state immediately so the user doesn't see
-        // the warning while the recovery sync runs.
         let db = fresh();
         record_remote_data_lost(&db, "remote data appears wiped").unwrap();
         prepare_wipe_local_recovery(&db).unwrap();
@@ -388,201 +357,36 @@ mod tests {
         assert!(!is_last_sync_remote_data_lost(&db).unwrap());
     }
 
-    // ── last_sync_error_kind: routing for the recovery dialog ────────────
+    // ── Error recording invariants ───────────────────────────────────────
 
     #[test]
-    fn is_last_sync_remote_data_lost_is_false_on_a_fresh_database() {
-        // Default state: no sync has run, no error has been recorded.
+    fn record_sync_error_does_not_clobber_last_success_ts() {
         let db = fresh();
+        record_successful_sync(&db, 1_700_000_000).unwrap();
+        record_sync_error(&db, "boom").unwrap();
+        assert_eq!(get_last_sync_unix_ts(&db).unwrap(), Some(1_700_000_000));
+        assert_eq!(get_last_sync_error(&db).unwrap(), Some("boom".to_string()));
+    }
+
+    #[test]
+    fn record_successful_sync_clears_prior_error_and_kind() {
+        let db = fresh();
+        record_remote_data_lost(&db, "wiped").unwrap();
+        record_successful_sync(&db, 1_700_000_100).unwrap();
+        assert_eq!(get_last_sync_error(&db).unwrap(), None);
         assert!(!is_last_sync_remote_data_lost(&db).unwrap());
     }
 
     #[test]
-    fn record_remote_data_lost_then_is_last_sync_remote_data_lost_returns_true() {
-        // After the orchestrator surfaces RemoteDataLost, sync_runner
-        // calls this helper. The status-indicator click handler can
-        // then route the click to the recovery dialog.
+    fn record_sync_error_resets_remote_data_lost_kind_to_generic() {
+        // After a remote-data-lost failure, the next *different*
+        // failure must NOT keep the remote-data-lost tag — that
+        // would route the indicator click to the recovery dialog
+        // for a generic error.
         let db = fresh();
-        record_remote_data_lost(&db, "remote data appears wiped").unwrap();
-        assert!(is_last_sync_remote_data_lost(&db).unwrap());
-        // The error message itself is still recorded so existing
-        // surfaces (tooltip, diagnostics log) stay informative.
-        assert_eq!(
-            get_last_sync_error(&db).unwrap(),
-            Some("remote data appears wiped".to_string()),
-        );
-    }
-
-    #[test]
-    fn record_sync_error_does_not_set_remote_data_lost_kind() {
-        // Generic errors (network, auth, server 5xx) MUST NOT route
-        // to the recovery dialog — that dialog is destructive and
-        // only valid when we've actually detected a wipe.
-        let db = fresh();
-        record_sync_error(&db, "WebDAV: unauthorized").unwrap();
-        assert!(!is_last_sync_remote_data_lost(&db).unwrap(),
-            "generic errors must not be tagged remote_data_lost");
-    }
-
-    #[test]
-    fn record_successful_sync_clears_the_remote_data_lost_kind() {
-        // If a previous attempt was tagged remote_data_lost and the
-        // user resolved it (e.g. via "push local up"), the next
-        // successful sync clears the tag so the indicator stops
-        // routing to the recovery dialog.
-        let db = fresh();
-        record_remote_data_lost(&db, "remote data appears wiped").unwrap();
-        assert!(is_last_sync_remote_data_lost(&db).unwrap());
-        record_successful_sync(&db, 1_700_000_000).unwrap();
-        assert!(!is_last_sync_remote_data_lost(&db).unwrap(),
-            "successful sync must clear the kind tag");
-    }
-
-    #[test]
-    fn record_sync_error_after_remote_data_lost_clears_the_kind() {
-        // Subtler case: a remote-data-lost error followed by a
-        // generic error (e.g. user's wifi dropped before they
-        // resolved the dialog). The kind tag must reset to "" so
-        // the indicator click goes to retry-sync, not the dialog.
-        let db = fresh();
-        record_remote_data_lost(&db, "remote data appears wiped").unwrap();
-        record_sync_error(&db, "WebDAV: network error").unwrap();
-        assert!(!is_last_sync_remote_data_lost(&db).unwrap(),
-            "newer non-wipe error must clear the kind tag");
-    }
-
-    #[test]
-    fn empty_url_is_treated_as_unconfigured() {
-        // Saving an empty URL (e.g. the user cleared the field and hit
-        // save) leaves the account in a half-state; the predicate
-        // returns None so callers don't accidentally try to sync to "".
-        let db = fresh();
-        set_nextcloud_account(&db, "", "janek").unwrap();
-        assert_eq!(get_nextcloud_account(&db).unwrap(), None);
-    }
-
-    #[test]
-    fn empty_username_is_treated_as_unconfigured() {
-        let db = fresh();
-        set_nextcloud_account(&db, "https://nc.example/", "").unwrap();
-        assert_eq!(get_nextcloud_account(&db).unwrap(), None);
-    }
-
-    #[test]
-    fn clear_account_wipes_both_fields() {
-        let db = fresh();
-        set_nextcloud_account(&db, "https://nc.example/", "janek").unwrap();
-        clear_nextcloud_account(&db).unwrap();
-        assert_eq!(get_nextcloud_account(&db).unwrap(), None);
-        // Each field is empty in storage too — not just "any one of
-        // them is empty so the predicate said None".
-        assert_eq!(db.get_sync_state(KEY_URL, "fallback").unwrap(), "");
-        assert_eq!(db.get_sync_state(KEY_USERNAME, "fallback").unwrap(), "");
-    }
-
-    #[test]
-    fn account_persists_across_database_reopens() {
-        // The values live in the `sync_state` table which persists
-        // across Database opens — this test pins that path through
-        // the shell wrapper, since the helpers here are the layer
-        // the UI talks to.
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("sync_settings.db");
-        {
-            let db = Database::open(&path).unwrap();
-            set_nextcloud_account(&db, "https://persist.example/", "user").unwrap();
-        }
-        let db = Database::open(&path).unwrap();
-        assert_eq!(
-            get_nextcloud_account(&db).unwrap(),
-            Some(NextcloudAccount {
-                url: "https://persist.example/".to_string(),
-                username: "user".to_string(),
-            }),
-        );
-    }
-
-    #[test]
-    fn url_round_trips_verbatim_with_no_normalisation() {
-        // Don't trim / canonicalise / lowercase — what the user typed
-        // is what gets stored. The HttpWebDav constructor already
-        // tolerates trailing slashes, so we don't need to be picky here.
-        let db = fresh();
-        let url = "  https://Example.COM:8443/nc/  ";  // weird but valid
-        set_nextcloud_account(&db, url, "janek").unwrap();
-        assert_eq!(get_nextcloud_account(&db).unwrap().unwrap().url, url);
-    }
-
-    // ── Last-sync timestamp ──────────────────────────────────────────────────
-
-    #[test]
-    fn last_sync_ts_on_fresh_db_is_none() {
-        let db = fresh();
-        assert_eq!(get_last_sync_unix_ts(&db).unwrap(), None);
-    }
-
-    #[test]
-    fn record_then_read_last_sync_ts() {
-        let db = fresh();
-        record_successful_sync(&db, 1_700_000_000).unwrap();
-        assert_eq!(get_last_sync_unix_ts(&db).unwrap(), Some(1_700_000_000));
-    }
-
-    #[test]
-    fn record_successful_sync_clears_any_prior_error() {
-        // Status display: once a sync succeeds, the previous error
-        // shouldn't keep showing. Recording success clears the error.
-        let db = fresh();
-        record_sync_error(&db, "401 Unauthorized").unwrap();
-        assert_eq!(get_last_sync_error(&db).unwrap(), Some("401 Unauthorized".to_string()));
-        record_successful_sync(&db, 1_700_000_000).unwrap();
-        assert_eq!(get_last_sync_error(&db).unwrap(), None,
-            "success must clear the previous error");
-    }
-
-    #[test]
-    fn last_sync_ts_garbage_value_is_reported_as_none() {
-        // Defensive: a corrupted sync_state row (file edited by hand,
-        // partial write, …) yields None rather than an error so the
-        // status indicator keeps working.
-        let db = fresh();
-        db.set_sync_state(KEY_LAST_SYNC_UNIX_TS, "not-a-number").unwrap();
-        assert_eq!(get_last_sync_unix_ts(&db).unwrap(), None);
-    }
-
-    // ── Last-sync error ──────────────────────────────────────────────────────
-
-    #[test]
-    fn last_sync_error_on_fresh_db_is_none() {
-        let db = fresh();
-        assert_eq!(get_last_sync_error(&db).unwrap(), None);
-    }
-
-    #[test]
-    fn record_then_read_sync_error() {
-        let db = fresh();
-        record_sync_error(&db, "Connection refused").unwrap();
-        assert_eq!(get_last_sync_error(&db).unwrap(),
-            Some("Connection refused".to_string()));
-    }
-
-    #[test]
-    fn record_sync_error_does_not_clobber_last_success_ts() {
-        // The user wants to see "last successful sync was 3 minutes
-        // ago" stay accurate even when the most recent attempt has
-        // failed. Recording an error must not touch the success ts.
-        let db = fresh();
-        record_successful_sync(&db, 1_700_000_000).unwrap();
-        record_sync_error(&db, "Network").unwrap();
-        assert_eq!(get_last_sync_unix_ts(&db).unwrap(), Some(1_700_000_000));
-    }
-
-    #[test]
-    fn empty_error_string_collapses_to_none_on_read() {
-        // Don't differentiate "explicitly recorded empty" from "never
-        // recorded" — both mean "no error to display". Simpler API.
-        let db = fresh();
-        record_sync_error(&db, "").unwrap();
-        assert_eq!(get_last_sync_error(&db).unwrap(), None);
+        record_remote_data_lost(&db, "wiped").unwrap();
+        record_sync_error(&db, "network down").unwrap();
+        assert_eq!(get_last_sync_error(&db).unwrap(), Some("network down".to_string()));
+        assert!(!is_last_sync_remote_data_lost(&db).unwrap());
     }
 }

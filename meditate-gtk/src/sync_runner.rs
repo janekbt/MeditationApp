@@ -8,17 +8,19 @@
 //! `HttpWebDav`. That separation keeps the unit tests fast and
 //! offline.
 
-use meditate_core::db::Database as CoreDb;
+use meditate_core::Database as CoreDb;
 use meditate_core::sync::{Sync, SyncStats, WebDav};
 use std::error::Error;
 use std::fmt;
 use std::path::Path;
 
 use crate::keychain::{self, KeychainError};
-use crate::sync_settings::{KEY_LAST_SYNC_ERROR, KEY_LAST_SYNC_UNIX_TS, KEY_URL, KEY_USERNAME};
+use meditate_core::sync::settings::{KEY_URL, KEY_USERNAME};
 
 /// Path under the WebDAV root where this app's data lives.
-pub const REMOTE_BASE_PATH: &str = "Meditate";
+/// Re-export of the core constant so existing call sites stay
+/// terse; core owns the canonical value.
+pub use meditate_core::sync::REMOTE_BASE_PATH;
 
 #[derive(Debug)]
 pub enum SyncRunnerError {
@@ -44,7 +46,7 @@ pub enum SyncRunnerError {
     Db(meditate_core::db::DbError),
 
     /// The sync proper failed — pull/push couldn't complete.
-    Sync(meditate_core::sync::SyncError),
+    Sync(meditate_core::SyncError),
 
     /// The remote folder was wiped between sync attempts: every batch
     /// this device previously synced is gone. Surfaced distinctly from
@@ -85,13 +87,13 @@ impl From<KeychainError> for SyncRunnerError {
     fn from(e: KeychainError) -> Self { Self::Keychain(e) }
 }
 
-impl From<meditate_core::sync::SyncError> for SyncRunnerError {
-    fn from(e: meditate_core::sync::SyncError) -> Self {
+impl From<meditate_core::SyncError> for SyncRunnerError {
+    fn from(e: meditate_core::SyncError) -> Self {
         match e {
             // Promote the typed wipe-detection variant out of the
             // generic Sync bucket so the shell can pattern-match it
             // for the recovery-dialog routing.
-            meditate_core::sync::SyncError::RemoteDataLost => Self::RemoteDataLost,
+            meditate_core::SyncError::RemoteDataLost => Self::RemoteDataLost,
             other => Self::Sync(other),
         }
     }
@@ -122,10 +124,11 @@ pub fn run_sync_attempt(db_path: &Path) -> Result<SyncStats, SyncRunnerError> {
     let webdav = meditate_core::sync::HttpWebDav::new(&url, &username, &password);
 
     let started = std::time::Instant::now();
-    let pending_at_start = db.pending_events().map(|v| v.len()).unwrap_or(0);
-    crate::diag::log(&format!(
-        "sync attempt starting: {pending_at_start} events pending",
-    ));
+    let pending_at_start = db.pending_events().map_or(0, |v| v.len());
+    meditate_core::log(
+        "sync.attempt",
+        &format!("starting pending={pending_at_start}"),
+    );
 
     // Progress callback. With the bulk-file format the push phase
     // does ONE PUT regardless of event count, so the callback fires
@@ -133,10 +136,13 @@ pub fn run_sync_attempt(db_path: &Path) -> Result<SyncStats, SyncRunnerError> {
     // per-N-event throttle needed any more.
     let progress = |pushed: usize, total: usize| {
         let secs = started.elapsed().as_secs_f64().max(0.001);
-        crate::diag::log(&format!(
-            "sync push progress: {pushed}/{total} in {secs:.1}s ({:.1}/s)",
-            pushed as f64 / secs,
-        ));
+        meditate_core::log(
+            "sync.push",
+            &format!(
+                "progress {pushed}/{total} in {secs:.1}s ({:.1}/s)",
+                pushed as f64 / secs,
+            ),
+        );
     };
 
     let result = meditate_core::sync::Sync::new(
@@ -144,6 +150,7 @@ pub fn run_sync_attempt(db_path: &Path) -> Result<SyncStats, SyncRunnerError> {
         &webdav,
         REMOTE_BASE_PATH,
         local_sounds_dir(),
+        local_guided_dir(),
     ).sync_with_progress(progress);
     let elapsed = started.elapsed();
 
@@ -151,10 +158,13 @@ pub fn run_sync_attempt(db_path: &Path) -> Result<SyncStats, SyncRunnerError> {
         let total = stats.pulled + stats.pushed;
         if total > 0 {
             let secs = elapsed.as_secs_f64().max(0.001);
-            crate::diag::log(&format!(
-                "sync: pulled {} pushed {} in {:.2}s ({:.1}/s)",
-                stats.pulled, stats.pushed, secs, total as f64 / secs,
-            ));
+            meditate_core::log(
+                "sync.done",
+                &format!(
+                    "pulled={} pushed={} in {:.2}s ({:.1}/s)",
+                    stats.pulled, stats.pushed, secs, total as f64 / secs,
+                ),
+            );
         }
     }
 
@@ -170,7 +180,9 @@ pub fn run_with_webdav<W: WebDav>(
     db: &CoreDb,
     webdav: &W,
 ) -> Result<SyncStats, SyncRunnerError> {
-    let result = Sync::new(db, webdav, REMOTE_BASE_PATH, local_sounds_dir()).sync();
+    let result = Sync::new(
+        db, webdav, REMOTE_BASE_PATH, local_sounds_dir(), local_guided_dir(),
+    ).sync();
     record_outcome(db, &result)?;
     result.map_err(SyncRunnerError::from)
 }
@@ -182,6 +194,13 @@ pub fn local_sounds_dir() -> std::path::PathBuf {
     gtk::glib::user_data_dir().join("meditate").join("sounds")
 }
 
+/// Canonical local directory for imported guided-meditation OGG
+/// files. Used by the guided import flow and the orchestrator's
+/// sync push/pull paths.
+pub fn local_guided_dir() -> std::path::PathBuf {
+    gtk::glib::user_data_dir().join("meditate").join("guided")
+}
+
 /// Persist the sync outcome so the status indicator (Phase E.5) can
 /// surface it. Success clears any previous error; failure leaves the
 /// previous successful timestamp intact (the user wants "last
@@ -189,117 +208,28 @@ pub fn local_sounds_dir() -> std::path::PathBuf {
 /// when the most recent attempt failed).
 fn record_outcome(
     db: &CoreDb,
-    result: &Result<SyncStats, meditate_core::sync::SyncError>,
+    result: &Result<SyncStats, meditate_core::SyncError>,
 ) -> Result<(), SyncRunnerError> {
-    use crate::sync_settings::KEY_LAST_SYNC_ERROR_KIND;
-    use meditate_core::sync::SyncError;
+    use meditate_core::sync::settings::{
+        record_remote_data_lost, record_successful_sync, record_sync_error,
+    };
+    use meditate_core::SyncError;
     match result {
-        Ok(_) => {
-            let now = unix_now();
-            db.set_sync_state(KEY_LAST_SYNC_UNIX_TS, &now.to_string())?;
-            db.set_sync_state(KEY_LAST_SYNC_ERROR, "")?;
-            db.set_sync_state(KEY_LAST_SYNC_ERROR_KIND, "")?;
-        }
-        Err(e) => {
-            // Tag remote-data-lost distinctly so the status-indicator
-            // click handler can route to the recovery dialog rather
-            // than the generic retry path.
-            let kind = match e {
-                SyncError::RemoteDataLost => "remote_data_lost",
-                _ => "",
-            };
-            db.set_sync_state(KEY_LAST_SYNC_ERROR, &e.to_string())?;
-            db.set_sync_state(KEY_LAST_SYNC_ERROR_KIND, kind)?;
-        }
+        Ok(_) => record_successful_sync(db, meditate_core::time::unix_now())?,
+        // Tag remote-data-lost distinctly so the status-indicator click
+        // handler can route to the recovery dialog rather than the
+        // generic retry path.
+        Err(e @ SyncError::RemoteDataLost) => record_remote_data_lost(db, &e.to_string())?,
+        Err(e) => record_sync_error(db, &e.to_string())?,
     }
     Ok(())
 }
 
-/// Current unix timestamp (UTC seconds). Defaults to 0 on the
-/// pathological "system clock before epoch" case rather than panicking.
-fn unix_now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
-}
-
-// ── Connection test ────────────────────────────────────────────────────────
-//
-// User-facing "Test connection" button in the sync settings dialog.
-// Validates a (URL, username, password) tuple by issuing a single
-// PROPFIND against the user's WebDAV root — cheap, doesn't touch the
-// local DB or keychain, doesn't write anything to the remote. Maps
-// the typed `WebDavError` variants to user-readable outcomes.
-
-/// Outcome of a connection test. Display impl is the toast text.
-#[derive(Debug, PartialEq, Eq)]
-pub enum TestConnectionResult {
-    /// PROPFIND returned 207 (Multi-Status) — auth + URL are good.
-    Ok,
-    /// 401 — credentials wrong (username, app-password, or both).
-    Unauthorized,
-    /// DNS / connection refused / timeout — couldn't reach the host.
-    /// The string is the underlying error for diagnostics.
-    Network(String),
-    /// 404 — the URL points somewhere that exists but isn't a WebDAV
-    /// folder. Almost always a typo in the path component.
-    NotWebDavRoot,
-    /// Anything else: 5xx, malformed XML, etc.
-    Other(String),
-}
-
-impl fmt::Display for TestConnectionResult {
-    /// Toast text — kept terse so it fits on narrow viewports
-    /// (Librem 5 truncates around 30 chars). Longer diagnostic
-    /// strings live in `detail()` and go to the diagnostics log.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Ok => write!(f, "Connection OK"),
-            Self::Unauthorized => write!(f, "Authentication failed"),
-            Self::Network(_) => write!(f, "Network error"),
-            Self::NotWebDavRoot => write!(f, "Not a WebDAV folder"),
-            Self::Other(_) => write!(f, "Server error"),
-        }
-    }
-}
-
-impl TestConnectionResult {
-    /// Detailed text for the diagnostics log — includes the
-    /// underlying error string for Network/Other so post-hoc
-    /// debugging has the full picture even though the toast is short.
-    pub fn detail(&self) -> String {
-        match self {
-            Self::Ok => "Connection OK".to_string(),
-            Self::Unauthorized => "Authentication failed (HTTP 401)".to_string(),
-            Self::Network(s) => format!("Network error: {s}"),
-            Self::NotWebDavRoot => "URL is not a WebDAV folder (HTTP 404)".to_string(),
-            Self::Other(s) => format!("Server error: {s}"),
-        }
-    }
-}
-
-/// Run a connection test using a real `HttpWebDav` against the given
-/// credentials. Synchronous — call from a worker thread so the UI
-/// doesn't freeze on slow networks. Doesn't read or write any local
-/// state.
-pub fn test_connection(url: &str, username: &str, password: &str) -> TestConnectionResult {
-    let webdav = meditate_core::sync::HttpWebDav::new(url, username, password);
-    test_connection_with(&webdav)
-}
-
-/// Transport-agnostic core. Lifts the WebDav trait so unit tests can
-/// pass a fake impl that produces specific error variants.
-pub fn test_connection_with<W: WebDav>(webdav: &W) -> TestConnectionResult {
-    use meditate_core::sync::WebDavError;
-    match webdav.list_collection("/") {
-        Ok(_) => TestConnectionResult::Ok,
-        Err(WebDavError::Unauthorized) => TestConnectionResult::Unauthorized,
-        Err(WebDavError::Network(s)) => TestConnectionResult::Network(s),
-        Err(WebDavError::NotFound) => TestConnectionResult::NotWebDavRoot,
-        Err(e) => TestConnectionResult::Other(e.to_string()),
-    }
-}
+// Connection test (TestConnectionResult + test_connection +
+// test_connection_with) lives in `meditate_core::sync::credentials`.
+pub use meditate_core::sync::credentials::{
+    test_connection, test_connection_with, TestConnectionResult,
+};
 
 #[cfg(test)]
 mod tests {
@@ -311,6 +241,7 @@ mod tests {
     use super::*;
     use meditate_core::db::{Session, SessionMode};
     use meditate_core::sync::FakeWebDav;
+    use meditate_core::sync::settings::{KEY_LAST_SYNC_ERROR, KEY_LAST_SYNC_UNIX_TS};
 
     fn fresh_db_with_session() -> CoreDb {
         let db = CoreDb::open_in_memory().unwrap();
@@ -320,10 +251,36 @@ mod tests {
             label_id: None,
             notes: None,
             mode: SessionMode::Timer,
-            uuid: String::new(),
+            uuid: meditate_core::db::SessionUuid::new(""),
             guided_file_uuid: None,
         }).unwrap();
         db
+    }
+
+    /// Test impl whose every verb fails with `Network("offline")` —
+    /// used by tests that exercise the failure-recording side of the
+    /// runner. Hoisted to module scope so the lint about items
+    /// declared after statements stays happy.
+    struct AlwaysFail;
+    impl WebDav for AlwaysFail {
+        fn list_collection(&self, _: &str)
+            -> meditate_core::WebDavResult<Vec<String>>
+        { Err(meditate_core::WebDavError::Network("offline".into())) }
+        fn get(&self, _: &str, _: u64)
+            -> meditate_core::WebDavResult<Vec<u8>>
+        { unreachable!() }
+        fn put(&self, _: &str, _: &[u8])
+            -> meditate_core::WebDavResult<()>
+        { Err(meditate_core::WebDavError::Network("offline".into())) }
+        fn mkcol(&self, _: &str)
+            -> meditate_core::WebDavResult<()>
+        { Err(meditate_core::WebDavError::Network("offline".into())) }
+        fn delete(&self, _: &str)
+            -> meditate_core::WebDavResult<()>
+        { unreachable!() }
+        fn move_to(&self, _: &str, _: &str)
+            -> meditate_core::WebDavResult<()>
+        { Err(meditate_core::WebDavError::Network("offline".into())) }
     }
 
     #[test]
@@ -373,23 +330,27 @@ mod tests {
         struct BrokenWebDav;
         impl WebDav for BrokenWebDav {
             fn list_collection(&self, _: &str)
-                -> meditate_core::sync::WebDavResult<Vec<String>>
-            { Err(meditate_core::sync::WebDavError::Server {
+                -> meditate_core::WebDavResult<Vec<String>>
+            { Err(meditate_core::WebDavError::Server {
                 status: 500, body: "boom".into() }) }
-            fn get(&self, _: &str)
-                -> meditate_core::sync::WebDavResult<Vec<u8>>
+            fn get(&self, _: &str, _: u64)
+                -> meditate_core::WebDavResult<Vec<u8>>
             { unreachable!() }
             fn put(&self, _: &str, _: &[u8])
-                -> meditate_core::sync::WebDavResult<()>
-            { Err(meditate_core::sync::WebDavError::Server {
+                -> meditate_core::WebDavResult<()>
+            { Err(meditate_core::WebDavError::Server {
                 status: 500, body: "boom".into() }) }
             fn mkcol(&self, _: &str)
-                -> meditate_core::sync::WebDavResult<()>
-            { Err(meditate_core::sync::WebDavError::Server {
+                -> meditate_core::WebDavResult<()>
+            { Err(meditate_core::WebDavError::Server {
                 status: 500, body: "boom".into() }) }
             fn delete(&self, _: &str)
-                -> meditate_core::sync::WebDavResult<()>
+                -> meditate_core::WebDavResult<()>
             { unreachable!() }
+            fn move_to(&self, _: &str, _: &str)
+                -> meditate_core::WebDavResult<()>
+            { Err(meditate_core::WebDavError::Server {
+                status: 500, body: "boom".into() }) }
         }
         let db = fresh_db_with_session();
         let result = run_with_webdav(&db, &BrokenWebDav);
@@ -410,24 +371,6 @@ mod tests {
         // Seed a known successful-sync timestamp.
         db.set_sync_state(KEY_LAST_SYNC_UNIX_TS, "1700000000").unwrap();
 
-        struct AlwaysFail;
-        impl WebDav for AlwaysFail {
-            fn list_collection(&self, _: &str)
-                -> meditate_core::sync::WebDavResult<Vec<String>>
-            { Err(meditate_core::sync::WebDavError::Network("offline".into())) }
-            fn get(&self, _: &str)
-                -> meditate_core::sync::WebDavResult<Vec<u8>>
-            { unreachable!() }
-            fn put(&self, _: &str, _: &[u8])
-                -> meditate_core::sync::WebDavResult<()>
-            { Err(meditate_core::sync::WebDavError::Network("offline".into())) }
-            fn mkcol(&self, _: &str)
-                -> meditate_core::sync::WebDavResult<()>
-            { Err(meditate_core::sync::WebDavError::Network("offline".into())) }
-            fn delete(&self, _: &str)
-                -> meditate_core::sync::WebDavResult<()>
-            { unreachable!() }
-        }
         let _ = run_with_webdav(&db, &AlwaysFail);
         assert_eq!(
             db.get_sync_state(KEY_LAST_SYNC_UNIX_TS, "").unwrap(),
@@ -450,7 +393,7 @@ mod tests {
             label_id: None,
             notes: None,
             mode: SessionMode::Timer,
-            uuid: String::new(),
+            uuid: meditate_core::db::SessionUuid::new(""),
             guided_file_uuid: None,
         }).unwrap();
         let shared = FakeWebDav::new();
@@ -460,12 +403,12 @@ mod tests {
         // A doesn't have B's session yet — needs another sync round.
         run_with_webdav(&db_a, &shared).unwrap();
 
-        let a_starts: std::collections::HashSet<String> = db_a
-            .list_sessions().unwrap()
-            .iter().map(|(_, s)| s.start_iso.clone()).collect();
-        let b_starts: std::collections::HashSet<String> = db_b
-            .list_sessions().unwrap()
-            .iter().map(|(_, s)| s.start_iso.clone()).collect();
+        let a_starts: std::collections::HashSet<String> =
+            meditate_core::db::list_sessions_from_db(&db_a).unwrap()
+                .iter().map(|(_, s)| s.start_iso.clone()).collect();
+        let b_starts: std::collections::HashSet<String> =
+            meditate_core::db::list_sessions_from_db(&db_b).unwrap()
+                .iter().map(|(_, s)| s.start_iso.clone()).collect();
         assert_eq!(a_starts, b_starts, "both devices converge on the same set");
         assert_eq!(a_starts.len(), 2);
     }
@@ -503,7 +446,7 @@ mod tests {
         // Wipe the remote.
         for name in fake.list_collection("/Meditate/events/").unwrap() {
             use meditate_core::sync::WebDav;
-            fake.delete(&format!("/Meditate/events/{}", name)).unwrap();
+            fake.delete(&format!("/Meditate/events/{name}")).unwrap();
         }
         let err = run_with_webdav(&db, &fake).unwrap_err();
         assert!(matches!(err, SyncRunnerError::RemoteDataLost),
@@ -535,7 +478,7 @@ mod tests {
         assert!(!ts_before.is_empty());
         for name in fake.list_collection("/Meditate/events/").unwrap() {
             use meditate_core::sync::WebDav;
-            fake.delete(&format!("/Meditate/events/{}", name)).unwrap();
+            fake.delete(&format!("/Meditate/events/{name}")).unwrap();
         }
         let _ = run_with_webdav(&db, &fake).unwrap_err();
         assert_eq!(
@@ -559,23 +502,25 @@ mod tests {
     /// Tiny scripted WebDav that returns a fixed error from every method.
     /// Easier than per-test inline impls and lets us exercise the error
     /// mapping branches one variant at a time.
-    struct AlwaysErrs(meditate_core::sync::WebDavError);
+    struct AlwaysErrs(meditate_core::WebDavError);
     impl WebDav for AlwaysErrs {
         fn list_collection(&self, _: &str)
-            -> meditate_core::sync::WebDavResult<Vec<String>>
+            -> meditate_core::WebDavResult<Vec<String>>
         { Err(self.clone_err()) }
-        fn get(&self, _: &str)
-            -> meditate_core::sync::WebDavResult<Vec<u8>> { unreachable!() }
+        fn get(&self, _: &str, _: u64)
+            -> meditate_core::WebDavResult<Vec<u8>> { unreachable!() }
         fn put(&self, _: &str, _: &[u8])
-            -> meditate_core::sync::WebDavResult<()> { unreachable!() }
+            -> meditate_core::WebDavResult<()> { unreachable!() }
         fn mkcol(&self, _: &str)
-            -> meditate_core::sync::WebDavResult<()> { unreachable!() }
+            -> meditate_core::WebDavResult<()> { unreachable!() }
         fn delete(&self, _: &str)
-            -> meditate_core::sync::WebDavResult<()> { unreachable!() }
+            -> meditate_core::WebDavResult<()> { unreachable!() }
+        fn move_to(&self, _: &str, _: &str)
+            -> meditate_core::WebDavResult<()> { unreachable!() }
     }
     impl AlwaysErrs {
-        fn clone_err(&self) -> meditate_core::sync::WebDavError {
-            use meditate_core::sync::WebDavError as E;
+        fn clone_err(&self) -> meditate_core::WebDavError {
+            use meditate_core::WebDavError as E;
             match &self.0 {
                 E::NotFound => E::NotFound,
                 E::Unauthorized => E::Unauthorized,
@@ -585,7 +530,12 @@ mod tests {
                     E::RateLimited { retry_after: *retry_after },
                 E::Server { status, body } => E::Server {
                     status: *status, body: body.clone() },
-                E::MalformedResponse(s) => E::MalformedResponse(s.clone()),
+                E::MalformedResponse { detail, body_excerpt } => E::MalformedResponse {
+                    detail: detail.clone(),
+                    body_excerpt: body_excerpt.clone(),
+                },
+                E::ResponseTooLarge { limit } => E::ResponseTooLarge { limit: *limit },
+                E::Redirected { location } => E::Redirected { location: location.clone() },
             }
         }
     }
@@ -595,7 +545,7 @@ mod tests {
         // Wrong app password is THE failure mode users will hit most.
         // The toast must read "Authentication failed" so they know to
         // re-check the password (not the URL, not the network).
-        let w = AlwaysErrs(meditate_core::sync::WebDavError::Unauthorized);
+        let w = AlwaysErrs(meditate_core::WebDavError::Unauthorized);
         assert_eq!(test_connection_with(&w), TestConnectionResult::Unauthorized);
     }
 
@@ -605,7 +555,7 @@ mod tests {
         // resolver state — surface as Network, not as a generic Server
         // error, so the toast tells the user "couldn't reach" rather
         // than "server returned bad data".
-        let w = AlwaysErrs(meditate_core::sync::WebDavError::Network(
+        let w = AlwaysErrs(meditate_core::WebDavError::Network(
             "Dns Failed: ...".to_string()));
         assert_eq!(
             test_connection_with(&w),
@@ -618,7 +568,7 @@ mod tests {
         // Distinguishing 404 from generic-server-error matters because
         // the user-actionable advice is different: 404 means "fix the
         // URL"; 5xx means "wait / contact admin".
-        let w = AlwaysErrs(meditate_core::sync::WebDavError::NotFound);
+        let w = AlwaysErrs(meditate_core::WebDavError::NotFound);
         assert_eq!(
             test_connection_with(&w),
             TestConnectionResult::NotWebDavRoot,
@@ -630,7 +580,7 @@ mod tests {
         // Server-side 500 isn't a config bug on our end, so the toast
         // should be diagnostic ("unexpected response") rather than
         // pointing fingers at the user's credentials or path.
-        let w = AlwaysErrs(meditate_core::sync::WebDavError::Server {
+        let w = AlwaysErrs(meditate_core::WebDavError::Server {
             status: 500, body: "internal".to_string() });
         match test_connection_with(&w) {
             TestConnectionResult::Other(s) => {

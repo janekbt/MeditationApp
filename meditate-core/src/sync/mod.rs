@@ -13,7 +13,28 @@ pub mod webdav;
 pub mod orchestrator;
 pub mod fake;
 pub mod backoff;
+pub mod coordinator;
+pub mod credentials;
+pub mod indicator;
+pub mod settings;
+
+/// Remote folder name the orchestrator uses as the base path for
+/// every WebDAV operation. Pinned across all shells so multiple
+/// devices syncing to the same Nextcloud account converge on the
+/// same `/Meditate/…` tree.
+pub const REMOTE_BASE_PATH: &str = "Meditate";
 
 pub use webdav::{HttpWebDav, WebDav, WebDavError, WebDavResult};
 pub use orchestrator::{Sync, SyncError, SyncResult, SyncStats, PullStats, PushStats};
 pub use fake::FakeWebDav;
+
+/// "Is sync set up at all?" predicate. Returns true iff a Nextcloud
+/// account is persisted (both URL and username are non-empty). The
+/// shell uses this as the fast-path gate before spawning a sync
+/// worker — skipping the keychain D-Bus round-trip when there's no
+/// account to authenticate against. Any DB read failure is treated
+/// as "not configured" so the predicate never raises.
+pub fn should_attempt(db: &crate::db::Database) -> bool {
+    settings::nextcloud_account_from_db(db)
+        .is_ok_and(|opt| opt.is_some())
+}

@@ -3,7 +3,6 @@ mod imp {
     use adw::subclass::prelude::*;
     use gtk::{gdk, gio, glib};
     use std::path::PathBuf;
-    use std::sync::atomic::AtomicBool;
     use std::sync::{Arc, Mutex};
 
     use crate::config;
@@ -37,18 +36,27 @@ mod imp {
         /// before `startup` runs.
         pub db_path: Mutex<Option<PathBuf>>,
 
-        /// True while a sync attempt is running. Triggers that arrive
-        /// during this window set `sync_re_trigger` instead of
-        /// spawning a second worker — at most one sync runs at a time.
-        pub sync_in_flight: Arc<AtomicBool>,
+        /// At-most-one-sync coordination. `request()` returns the
+        /// action the trigger should take; `start_pass` /
+        /// `should_run_again_after_pass` drive the worker's drain
+        /// loop; `release` frees the in-flight slot on exit. The
+        /// AtomicBool choreography (and the ordering invariants that
+        /// keep a re-trigger from being lost across a pass boundary)
+        /// live in core.
+        pub sync_coordinator: Arc<meditate_core::sync::coordinator::SyncCoordinator>,
 
-        /// Set by `trigger_sync` when a sync is already in flight; the
-        /// worker checks this on completion and runs another pass if
-        /// it's true. Bulk-mutation flurries (the user deleting 10
-        /// sessions in a row) trigger one sync, queue a re-trigger,
-        /// and end with one follow-up sync that captures everything
-        /// that arrived during the first.
-        pub sync_re_trigger: Arc<AtomicBool>,
+        /// Set by `startup` if `Database::open` failed. `activate`
+        /// reads it to present an error window instead of the main
+        /// window — without this, the user lands on an inert UI
+        /// whose every action silently no-ops.
+        pub last_open_error: Mutex<Option<meditate_core::format::DbOpenFailureKey>>,
+
+        /// Set by `startup` when `finalize_session_in_progress` rescued
+        /// an in-flight session left behind by a crash / OOM / battery
+        /// death. `activate` reads it once the window exists and
+        /// surfaces an Undo toast — startup itself can't toast because
+        /// no window exists yet.
+        pub pending_recovery_toast: Mutex<Option<meditate_core::db::FinalizedSession>>,
     }
 
     impl Default for MeditateApplication {
@@ -59,8 +67,11 @@ mod imp {
                 log_dirty:   std::cell::Cell::new(true),
                 has_haptic: std::cell::Cell::new(false),
                 db_path: Mutex::new(None),
-                sync_in_flight: Arc::new(AtomicBool::new(false)),
-                sync_re_trigger: Arc::new(AtomicBool::new(false)),
+                last_open_error: Mutex::new(None),
+                pending_recovery_toast: Mutex::new(None),
+                sync_coordinator: Arc::new(
+                    meditate_core::sync::coordinator::SyncCoordinator::new(),
+                ),
             }
         }
     }
@@ -79,6 +90,17 @@ mod imp {
             self.parent_activate();
             let app = self.obj();
 
+            // If the DB couldn't be opened in startup, show a recovery
+            // window instead of the main UI. Without this the user
+            // lands on an inert MeditateWindow whose every action
+            // silently no-ops because `with_db*` returns None.
+            if let Some(key) = self.last_open_error.lock().unwrap().clone() {
+                if app.active_window().is_none() {
+                    present_db_open_error_window(&app, &key);
+                }
+                return;
+            }
+
             if let Some(window) = app.active_window() {
                 window.present();
                 // Re-activation (user clicked the launcher again with
@@ -93,6 +115,13 @@ mod imp {
             // First activation after startup: pull whatever a peer
             // device authored while we were closed.
             app.trigger_sync();
+
+            // If startup's finalize_session_in_progress rescued a
+            // crash-leftover session, surface the Undo toast now that
+            // the window exists. The session is already in the log
+            // (and in pending sync events); the toast just tells the
+            // user it happened and gives them a one-tap undo.
+            self.present_recovery_toast_if_pending();
         }
 
         fn startup(&self) {
@@ -104,12 +133,52 @@ mod imp {
                 .join("meditate.db");
             match Database::open(&db_path) {
                 Ok(db) => {
+                    // Crash-recovery finalize. A session-in-progress
+                    // row left behind by a kernel OOM / battery-death
+                    // / panic mid-session becomes one session_insert
+                    // event here, so the work the user already did
+                    // shows up in the log as soon as activate runs.
+                    // The Undo toast happens later in activate
+                    // (startup is too early — no window exists yet).
+                    match db.finalize_session_in_progress() {
+                        Ok(Some(finalized)) => {
+                            meditate_core::log(
+                                "session.recovery",
+                                &format!(
+                                    "finalised in-flight uuid={} duration_secs={}",
+                                    finalized.session_uuid, finalized.duration_secs,
+                                ),
+                            );
+                            *self.pending_recovery_toast.lock().unwrap() = Some(finalized);
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            meditate_core::log(
+                                "session.recovery",
+                                &format!("finalize FAILED at startup: {e}"),
+                            );
+                        }
+                    }
                     *self.db.lock().unwrap() = Some(db);
-                    crate::diag::log(&format!("db open ok: {}", db_path.display()));
+                    meditate_core::log("db.open", &format!("ok path={}", db_path.display()));
                 }
                 Err(e) => {
-                    eprintln!("Failed to open database: {e}");
-                    crate::diag::log(&format!("db open FAILED at {}: {e}", db_path.display()));
+                    // Shell DbError → DbOpenFailureKey: only the
+                    // SchemaTooNew variant matters for the recovery
+                    // window's copy; everything else collapses to
+                    // Other.
+                    use meditate_core::format::DbOpenFailureKey;
+                    let key = match &e {
+                        crate::db::DbError::SchemaVersionTooNew { db, build } =>
+                            DbOpenFailureKey::SchemaTooNew { db: *db, build: *build },
+                        _ => DbOpenFailureKey::Other,
+                    };
+                    eprintln!("Failed to open database: {e:?}");
+                    meditate_core::log(
+                        "db.open",
+                        &format!("FAILED path={} err={e:?}", db_path.display()),
+                    );
+                    *self.last_open_error.lock().unwrap() = Some(key);
                 }
             }
             // Cache the path so the sync worker thread can open its own
@@ -140,7 +209,7 @@ mod imp {
             // it. Worst-case 500 ms; typical <50 ms.
             let has_haptic = crate::vibration::probe_haptic();
             self.has_haptic.set(has_haptic);
-            crate::diag::log(&format!("haptic probe: {}", has_haptic));
+            meditate_core::log("haptic.probe", &format!("has_haptic={has_haptic}"));
 
             self.setup_actions();
             self.setup_accels();
@@ -149,6 +218,77 @@ mod imp {
 
     impl GtkApplicationImpl for MeditateApplication {}
     impl AdwApplicationImpl for MeditateApplication {}
+
+    /// Present a recovery window for the case where `Database::open`
+    /// failed at startup. Renders an AdwStatusPage with mode-specific
+    /// copy plus an "Open Data Folder" affordance and a "Quit" button.
+    fn present_db_open_error_window(
+        app: &super::MeditateApplication,
+        key: &meditate_core::format::DbOpenFailureKey,
+    ) {
+        use meditate_core::format::DbOpenFailureKey;
+        let (title_txt, body_txt) = match key {
+            DbOpenFailureKey::SchemaTooNew { db, build } => (
+                crate::i18n::gettext("Database is newer than this app"),
+                crate::i18n::gettext(
+                    "The local database (version {db}) was written by a \
+                     newer build than this one (version {build}). Install \
+                     a matching version, or move the file aside to start \
+                     fresh."
+                )
+                .replace("{db}", &db.to_string())
+                .replace("{build}", &build.to_string()),
+            ),
+            DbOpenFailureKey::Other => (
+                crate::i18n::gettext("Couldn't open database"),
+                crate::i18n::gettext(
+                    "An unexpected error prevented opening the local \
+                     database. Check the diagnostics log in About → \
+                     Troubleshooting for details."
+                ),
+            ),
+        };
+
+        let status = adw::StatusPage::builder()
+            .icon_name("dialog-error-symbolic")
+            .title(&title_txt)
+            .description(&body_txt)
+            .build();
+
+        let buttons = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .spacing(12)
+            .halign(gtk::Align::Center)
+            .build();
+
+        let open_folder = gtk::Button::builder()
+            .label(crate::i18n::gettext("Open Data Folder"))
+            .build();
+        open_folder.connect_clicked(|_| {
+            let dir = glib::user_data_dir().join("meditate");
+            let _ = std::process::Command::new("xdg-open").arg(&dir).spawn();
+        });
+
+        let quit_btn = gtk::Button::builder()
+            .label(crate::i18n::gettext("Quit"))
+            .css_classes(["suggested-action"])
+            .build();
+        let app_for_quit = app.clone();
+        quit_btn.connect_clicked(move |_| app_for_quit.quit());
+
+        buttons.append(&open_folder);
+        buttons.append(&quit_btn);
+        status.set_child(Some(&buttons));
+
+        let window = adw::ApplicationWindow::builder()
+            .application(app)
+            .title(crate::i18n::gettext("Meditate"))
+            .default_width(480)
+            .default_height(380)
+            .content(&status)
+            .build();
+        window.present();
+    }
 
     impl MeditateApplication {
         fn setup_actions(&self) {
@@ -200,7 +340,7 @@ mod imp {
                         // Debug Info view in AdwAboutDialog has built-in
                         // Copy + Save buttons, so wiring the diag log here
                         // gives us the "Copy diagnostics" UX for free.
-                        .debug_info(crate::diag::read_all())
+                        .debug_info(meditate_core::diag::read_all())
                         .debug_info_filename("meditate-diagnostics.log")
                         .build();
 
@@ -217,6 +357,66 @@ mod imp {
                 move |_, _| app.quit()
             ));
             app.add_action(&quit_action);
+        }
+
+        /// If startup's `finalize_session_in_progress` rescued an
+        /// in-flight session, render an Undo toast on the active
+        /// window. Single-shot: takes the stashed FinalizedSession
+        /// out, so a subsequent re-activate doesn't re-toast the same
+        /// recovery.
+        ///
+        /// The recovered row already lives in `sessions` (and an
+        /// authored `session_insert` event is in the pending queue)
+        /// — the toast just narrates that to the user and offers a
+        /// one-tap undo. Tapping Undo calls `delete_session_by_uuid`,
+        /// which emits a tombstoning `session_delete` event so peers
+        /// converge on the deletion too.
+        fn present_recovery_toast_if_pending(&self) {
+            let Some(finalized) = self.pending_recovery_toast.lock().unwrap().take()
+            else { return; };
+            let app = self.obj();
+            let Some(win) = app
+                .active_window()
+                .and_then(|w| w.downcast::<MeditateWindow>().ok())
+            else {
+                // No window yet (shouldn't happen since we're called
+                // from activate after present, but defensive). Put the
+                // FinalizedSession back so the next activate gets it.
+                *self.pending_recovery_toast.lock().unwrap() = Some(finalized);
+                return;
+            };
+
+            // Refresh the log view + stats so the recovered session
+            // shows up immediately. invalidate-on-stats was already
+            // done implicitly via the event log mutation, but the
+            // log feed needs an explicit prepend.
+            app.invalidate(crate::application::InvalidateScope::ALL);
+
+            let minutes = finalized.duration_secs / 60;
+            let title = crate::announcement::title(
+                &meditate_core::announcement::Announcement::SessionRecovered { minutes },
+            );
+
+            let toast = adw::Toast::builder()
+                .title(&title)
+                .button_label(crate::i18n::gettext("Undo"))
+                .timeout(8)
+                .build();
+
+            let app_for_undo = app.clone();
+            let session_uuid = finalized.session_uuid.clone();
+            toast.connect_button_clicked(move |_| {
+                app_for_undo.with_db_mut(|db| {
+                    if let Err(e) = db.delete_session_by_uuid(&session_uuid) {
+                        meditate_core::log(
+                            "session.recovery",
+                            &format!("Undo delete failed uuid={session_uuid}: {e}"),
+                        );
+                    }
+                });
+                app_for_undo.invalidate(crate::application::InvalidateScope::ALL);
+            });
+            win.add_toast(toast);
         }
 
         fn setup_accels(&self) {
@@ -345,8 +545,7 @@ impl MeditateApplication {
     /// syncing icon during the run.
     pub fn is_syncing(&self) -> bool {
         use glib::subclass::prelude::ObjectSubclassIsExt;
-        use std::sync::atomic::Ordering;
-        self.imp().sync_in_flight.load(Ordering::SeqCst)
+        self.imp().sync_coordinator.is_in_flight()
     }
 
     /// `with_db` + a follow-up `trigger_sync()`. Use when the closure
@@ -390,62 +589,58 @@ impl MeditateApplication {
     /// semantics here.
     pub fn trigger_sync(&self) {
         use glib::subclass::prelude::ObjectSubclassIsExt;
-        use std::sync::atomic::Ordering;
+        use meditate_core::sync::coordinator::CoordinatorAction;
 
         // Fast-path: if sync isn't set up, skip everything below.
         // Saves spawning a worker (and pulling in the keychain D-Bus
         // round-trip) just to find out we have no account configured.
         let configured = self
-            .with_db(|db| {
-                crate::sync_settings::get_nextcloud_account(db)
-                    .map(|opt| opt.is_some())
-                    .unwrap_or(false)
-            })
+            .with_db(|db| meditate_core::sync::should_attempt(db.core()))
             .unwrap_or(false);
         if !configured {
             return;
         }
 
         let imp = self.imp();
-        // Mark the re-trigger flag first so a sync that finishes
-        // RIGHT NOW (before our `swap` below) still picks us up via
-        // the worker's completion check.
-        imp.sync_re_trigger.store(true, Ordering::SeqCst);
-
-        // Try to take the in-flight slot. If someone else already has
-        // it, we're done — they'll see our re-trigger and re-fire.
-        if imp.sync_in_flight.swap(true, Ordering::SeqCst) {
-            return;
+        // Core coordinator handles the at-most-one-in-flight
+        // choreography. Caller-side: if we don't get the Spawn
+        // action, another worker is running and will see the
+        // re-trigger we just set.
+        match imp.sync_coordinator.request() {
+            CoordinatorAction::Spawn => {}
+            CoordinatorAction::AlreadyRunning => return,
         }
 
         let Some(db_path) = imp.db_path.lock().unwrap().clone() else {
-            // No DB path → startup never ran or failed; clear the flag
-            // we just took and bail.
-            imp.sync_in_flight.store(false, Ordering::SeqCst);
+            // No DB path → startup never ran or failed; release the
+            // slot we just took and bail.
+            imp.sync_coordinator.abort();
             return;
         };
 
-        let in_flight = Arc::clone(&imp.sync_in_flight);
-        let re_trigger = Arc::clone(&imp.sync_re_trigger);
+        let coord = Arc::clone(&imp.sync_coordinator);
 
         std::thread::spawn(move || {
             // Run sync attempts in a loop while the re-trigger flag
-            // is set. Clearing it BEFORE each pass means a trigger
-            // arriving during the pass survives to schedule another.
+            // is set. The coordinator's `start_pass` clears the flag
+            // BEFORE each pass so a trigger arriving during the pass
+            // survives to schedule another.
             loop {
-                re_trigger.store(false, Ordering::SeqCst);
+                coord.start_pass();
                 let result = crate::sync_runner::run_sync_attempt(&db_path);
                 if let Err(e) = &result {
-                    crate::diag::log(&format!("sync: {e}"));
+                    meditate_core::log("sync.attempt", &format!("err={e}"));
                 }
-                if !re_trigger.load(Ordering::SeqCst) {
+                // Exit only when there's no fresh trigger AND release
+                // successfully clears the in-flight slot. release()
+                // returns false when a trigger landed in the narrow
+                // window between should_run_again_after_pass() and the
+                // slot-clear — in that case it re-took the slot and
+                // we owe another pass.
+                if !coord.should_run_again_after_pass() && coord.release() {
                     break;
                 }
             }
-            // Release the in-flight slot before we hop back to the
-            // main loop, so a trigger arriving on the main thread
-            // *during* the invoke can spawn a fresh worker if needed.
-            in_flight.store(false, Ordering::SeqCst);
 
             // Hop back to the GTK main loop to refresh UI. The closure
             // is Send (captures nothing); we look the application up

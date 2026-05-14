@@ -16,6 +16,7 @@ use adw::prelude::*;
 use crate::application::MeditateApplication;
 use crate::db::Label;
 use crate::i18n::gettext;
+use meditate_core::labels::DeleteImpactKey;
 
 /// Selection-mode parameters: the row tapped becomes the active
 /// pick, the chooser pops, and `on_selected` fires with the chosen
@@ -138,8 +139,8 @@ fn rebuild_chooser_rows(
     rows.borrow_mut().push(create_row.upcast());
 
     let labels = app
-        .with_db(|db| db.list_labels())
-        .and_then(|r| r.ok())
+        .with_db(super::db::Database::list_labels)
+        .and_then(std::result::Result::ok)
         .unwrap_or_default();
     let selection = SelectionContext {
         current_label_id,
@@ -254,14 +255,12 @@ fn present_create_label_dialog(
         Rc::new(move || {
             let text = entry.text();
             let trimmed = text.trim();
-            let lower = trimmed.to_lowercase();
-            let collision = app
-                .with_db(|db| db.list_labels())
-                .and_then(|r| r.ok())
-                .unwrap_or_default()
-                .into_iter()
-                .any(|l| l.name.to_lowercase() == lower);
-            dialog.set_response_enabled("create", !trimmed.is_empty() && !collision);
+            let validity = meditate_core::validate(trimmed, |name| {
+                app.with_db(|db| db.is_label_name_taken(name, 0))
+                    .and_then(std::result::Result::ok)
+                    .unwrap_or(false)
+            });
+            dialog.set_response_enabled("create", validity.is_savable());
         })
     };
     let validate_for_change = validate.clone();
@@ -270,15 +269,19 @@ fn present_create_label_dialog(
     let on_created = Rc::new(on_created);
     let app = app.clone();
     let entry_for_response = entry.clone();
+    let anchor_for_response = anchor.clone();
     dialog.connect_response(None, move |_, id| {
         if id != "create" { return; }
         let name = entry_for_response.text().trim().to_string();
         if name.is_empty() { return; }
-        let new_label: Option<Label> = app
-            .with_db_mut(|db| db.create_label(&name))
-            .and_then(|r| r.ok());
-        if let Some(label) = new_label {
-            on_created(label);
+        let outcome = app.with_db_mut(|db| db.create_label(&name));
+        match outcome {
+            Some(Ok(label)) => on_created(label),
+            // Duplicate raced past the live `is_label_name_taken`
+            // validation — surface as a toast so the user knows
+            // why the action did nothing.
+            Some(Err(e)) => crate::db::surface_duplicate_toast(&anchor_for_response, &e),
+            None => {} // DB unavailable; handled elsewhere.
         }
     });
 
@@ -319,11 +322,12 @@ fn present_rename_label_dialog(
         Rc::new(move || {
             let text = entry.text();
             let trimmed = text.trim();
-            let collision = app
-                .with_db(|db| db.is_label_name_taken(trimmed, label_id))
-                .and_then(|r| r.ok())
-                .unwrap_or(false);
-            dialog.set_response_enabled("rename", !trimmed.is_empty() && !collision);
+            let validity = meditate_core::validate(trimmed, |name| {
+                app.with_db(|db| db.is_label_name_taken(name, label_id))
+                    .and_then(std::result::Result::ok)
+                    .unwrap_or(false)
+            });
+            dialog.set_response_enabled("rename", validity.is_savable());
         })
     };
     validate();
@@ -332,11 +336,15 @@ fn present_rename_label_dialog(
 
     let app = app.clone();
     let entry_for_response = entry.clone();
+    let anchor_for_response = anchor.clone();
     dialog.connect_response(None, move |_, id| {
         if id != "rename" { return; }
         let new_name = entry_for_response.text().trim().to_string();
         if new_name.is_empty() { return; }
-        app.with_db_mut(|db| { let _ = db.update_label(label_id, &new_name); });
+        if let Some(Err(e)) = app.with_db_mut(|db| db.update_label(label_id, &new_name)) {
+            crate::db::surface_duplicate_toast(&anchor_for_response, &e);
+            return;
+        }
         if let Some(rb) = rebuilder.borrow().as_ref() {
             rb();
         }
@@ -358,19 +366,24 @@ fn present_delete_label_dialog(
 ) {
     // Show how many sessions still point at this label so the user
     // can decide knowingly. delete_label() un-labels each affected
-    // session (label_id → NULL); the dialog body captures that.
+    // session (label_id → NULL); the dialog body captures that. The
+    // "is anything tagged?" decision lives in core (the dialog body
+    // strings stay shell-side at the i18n boundary).
     let session_count = app
         .with_db(|db| db.label_session_count(label_id))
-        .and_then(|r| r.ok())
+        .and_then(std::result::Result::ok)
         .unwrap_or(0);
-    let body = if session_count > 0 {
-        format!(
+    let body = match meditate_core::labels::delete_impact_key(session_count) {
+        DeleteImpactKey::InUse(n) => format!(
             "{} {}.",
-            gettext("Sessions tagged with this label will be un-labelled:"),
-            session_count,
-        )
-    } else {
-        gettext("This label is not used by any sessions.")
+            crate::i18n::ngettext(
+                "Session tagged with this label will be un-labelled:",
+                "Sessions tagged with this label will be un-labelled:",
+                n as u32,
+            ),
+            n,
+        ),
+        DeleteImpactKey::Unused => gettext("This label is not used by any sessions."),
     };
 
     let dialog = adw::AlertDialog::builder()

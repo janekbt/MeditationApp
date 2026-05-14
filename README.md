@@ -38,6 +38,7 @@ Countdown and stopwatch, a browsable log, and weekly-goal stats to help you buil
 - Keyboard shortcuts for the common actions
 - Dark-mode and high-contrast safe; follows your system accent colour
 - About → Troubleshooting view with a rolling diagnostics log, for attaching to bug reports
+  - Log file lives at `~/.var/app/io.github.janekbt.Meditate/data/meditate/diagnostics.log` on Flatpak, `~/.local/share/meditate/diagnostics.log` otherwise — useful when the About dialog itself can't be opened
 
 ## Installation
 
@@ -54,6 +55,12 @@ flatpak run io.github.janekbt.Meditate
 ```
 
 ### Building from source
+
+The workspace splits into two crates: the GTK shell at the root (this
+README's subject) and the portable [`meditate-core`](meditate-core/README.md)
+crate that owns persistence, sync, and session logic. Most non-UI
+contributions land in `meditate-core/`; see its README for the
+architecture overview and a module map.
 
 **Dependencies**
 
@@ -142,6 +149,8 @@ flatpak run io.github.janekbt.Meditate
 **Cross-compile for aarch64 (developer iteration)**
 
 If you're working on Linux-phone perf, `build-aux/dev-xbuild.sh` cross-compiles a Librem 5–compatible binary in ~15 seconds on an x86_64 host — avoiding the 20–35 minute `flatpak-builder --arch=aarch64` QEMU build. Output goes to `target/aarch64-unknown-linux-gnu/release/meditate`, ready to `scp` straight over a Flatpak-installed binary on the phone for testing. One-time prerequisites are documented at the top of the script.
+
+See [`BUILDING.md`](BUILDING.md) for the full cross-compile + Librem 5 deploy cycle (including the kill-the-app + DB-wipe steps) and the xbuild quirks for the Android port.
 
 ## Data
 

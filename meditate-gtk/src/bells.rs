@@ -107,17 +107,19 @@ fn rebuild_list(
     // backwards from). The bell library is global, so we override the
     // visual switch state without writing to the DB — flipping
     // stopwatch off restores the user's persisted enabled flag.
+    // Interval bells fire in Timer mode (the only mode that calls
+    // build_session_bells with a real schedule), so the relevant
+    // stopwatch toggle is Timer's.
+    let stopwatch_key = meditate_core::settings_keys::stopwatch_key_for_mode(
+        meditate_core::SessionMode::Timer,
+    );
     let stopwatch_on = app
-        .with_db(|db| {
-            db.get_setting("stopwatch_mode_active", "false")
-                .map(|v| v == "true")
-                .unwrap_or(false)
-        })
+        .with_db(|db| meditate_core::read_bool(db.core(), stopwatch_key, false))
         .unwrap_or(false);
 
     let bells = app
-        .with_db(|db| db.list_interval_bells())
-        .and_then(|r| r.ok())
+        .with_db(super::db::Database::list_interval_bells)
+        .and_then(std::result::Result::ok)
         .unwrap_or_default();
 
     if bells.is_empty() {
@@ -165,14 +167,14 @@ fn build_create_row(
     row.connect_activated(move |_| {
         let new_id = app_for_create.with_db_mut(|db| {
             db.insert_interval_bell(
-                IntervalBellKind::Interval,
-                5,
-                0,
+                meditate_core::bells::DEFAULT_NEW_BELL_KIND,
+                meditate_core::bells::DEFAULT_NEW_BELL_MINUTES,
+                meditate_core::bells::DEFAULT_NEW_BELL_JITTER_PCT,
                 crate::db::BUNDLED_BOWL_UUID,
                 crate::db::BUNDLED_PATTERN_PULSE_UUID,
-                crate::db::SignalMode::Sound,
+                meditate_core::bells::DEFAULT_NEW_BELL_SIGNAL_MODE,
             )
-        }).and_then(|r| r.ok());
+        }).and_then(std::result::Result::ok);
 
         if let Some(rb) = rebuilder_for_create.borrow().as_ref() {
             rb();
@@ -182,12 +184,10 @@ fn build_create_row(
         // rowid, not the uuid) and drill into its edit page.
         if let Some(rowid) = new_id {
             let new_uuid = app_for_create
-                .with_db(|db| db.list_interval_bells())
-                .and_then(|r| r.ok())
-                .unwrap_or_default()
-                .into_iter()
-                .find(|b| b.id == rowid)
-                .map(|b| b.uuid);
+                .with_db(|db| db.find_interval_bell_by_id(rowid))
+                .and_then(std::result::Result::ok)
+                .flatten()
+                .map(|b| b.uuid.0);
             if let Some(uuid) = new_uuid {
                 push_edit_page(
                     &nav_view_for_create,
@@ -213,25 +213,34 @@ fn build_bell_row(
 ) -> adw::ActionRow {
     let row = adw::ActionRow::builder()
         .title(bell_title(bell))
-        .subtitle(sound_label(app, &bell.sound))
+        .subtitle(sound_name(app, bell.sound_uuid.as_str()))
         .activatable(true)
         .build();
 
     // Fixed-from-end bells are inert in stopwatch mode (no end to
     // count backwards from). Switch shows OFF + insensitive without
     // touching the persisted enabled flag — the user's previous
-    // intent comes back as soon as stopwatch flips off.
-    let inert = stopwatch_on && bell.kind == IntervalBellKind::FixedFromEnd;
+    // intent comes back as soon as stopwatch flips off. The row
+    // stays activatable so the user can still drill into Edit to
+    // change kind or delete.
+    let switch_state = meditate_core::bells::bell_row_switch_state(
+        bell.enabled,
+        bell.kind,
+        meditate_core::bells::DisplayMode::from_stopwatch_flag(stopwatch_on),
+    );
+    if !switch_state.sensitive {
+        row.add_css_class("dim-label");
+    }
     let switch = gtk::Switch::builder()
-        .active(bell.enabled && !inert)
-        .sensitive(!inert)
+        .active(switch_state.active)
+        .sensitive(switch_state.sensitive)
         .valign(gtk::Align::Center)
         .build();
 
     // Toggle persists immediately. No list rebuild needed for an
     // enabled flip — the row's title/subtitle don't change, only the
     // count subtitle on the timer setup page.
-    let bell_uuid_for_toggle = bell.uuid.clone();
+    let bell_uuid_for_toggle = bell.uuid.0.clone();
     let app_for_toggle = app.clone();
     let on_changed_for_toggle = on_changed.clone();
     switch.connect_active_notify(move |s| {
@@ -253,7 +262,7 @@ fn build_bell_row(
         .css_classes(["flat", "circular", "destructive-action"])
         .valign(gtk::Align::Center)
         .build();
-    let bell_uuid_for_del = bell.uuid.clone();
+    let bell_uuid_for_del = bell.uuid.0.clone();
     let app_for_del = app.clone();
     let rebuilder_for_del = rebuilder.clone();
     let on_changed_for_del = on_changed.clone();
@@ -272,7 +281,7 @@ fn build_bell_row(
     // emit `activated` and push the edit page; taps on the switch
     // and delete button handle themselves as their own widgets.
 
-    let bell_uuid_for_edit = bell.uuid.clone();
+    let bell_uuid_for_edit = bell.uuid.0.clone();
     let app_for_edit = app.clone();
     let nav_view_for_edit = nav_view.clone();
     let rebuilder_for_edit = rebuilder.clone();
@@ -341,53 +350,79 @@ fn empty_state_row() -> adw::ActionRow {
 }
 
 /// Concise human-readable summary of a bell — fits on a single
-/// AdwActionRow title line on the Librem 5 portrait. Subtitle carries
-/// the sound name; we don't pack everything into the title.
+/// AdwActionRow title line on the Librem 5 portrait. Maps the
+/// typed key from core to the user-facing translated string.
 fn bell_title(bell: &IntervalBell) -> String {
-    match bell.kind {
-        IntervalBellKind::Interval => {
-            if bell.jitter_pct == 0 {
-                format!("Every {} min", bell.minutes)
-            } else {
-                format!("Every {} min ±{}%", bell.minutes, bell.jitter_pct)
-            }
-        }
-        IntervalBellKind::FixedFromStart => format!("At {} min", bell.minutes),
-        IntervalBellKind::FixedFromEnd => format!("{} min before end", bell.minutes),
+    use crate::i18n::ngettext;
+    use meditate_core::bells::BellTitleKey;
+    match meditate_core::bells::bell_title_key(bell) {
+        BellTitleKey::EveryNMin { minutes } =>
+            ngettext("Every 1 min", "Every {n} min", minutes)
+                .replace("{n}", &minutes.to_string()),
+        BellTitleKey::EveryNMinWithJitter { minutes, jitter_pct } =>
+            ngettext("Every 1 min ±{j}%", "Every {n} min ±{j}%", minutes)
+                .replace("{n}", &minutes.to_string())
+                .replace("{j}", &jitter_pct.to_string()),
+        BellTitleKey::AtNMin { minutes } =>
+            ngettext("At 1 min", "At {n} min", minutes)
+                .replace("{n}", &minutes.to_string()),
+        BellTitleKey::NMinBeforeEnd { minutes } =>
+            ngettext("1 min before end", "{n} min before end", minutes)
+                .replace("{n}", &minutes.to_string()),
+    }
+}
+
+/// Render a core `ResolvedName` to subtitle text. `Resolved` passes
+/// through; `Missing` becomes a localized affordance so a user (or
+/// SR) sees that the row needs re-picking rather than just an empty
+/// subtitle. Single rendering point so the `gettext` call lives in
+/// one place — the Android shell will have its own equivalent using
+/// `strings.xml`.
+pub(crate) fn render_resolved_name(name: meditate_core::bells::ResolvedName) -> String {
+    match name {
+        meditate_core::bells::ResolvedName::Resolved(s) => s,
+        meditate_core::bells::ResolvedName::Missing => gettext("Missing"),
     }
 }
 
 /// Look up a bell-sound's display name from the bell_sounds library.
-/// Empty string if the uuid is empty or stale (post-wipe legacy
-/// values point at no row); the row will just have no subtitle until
-/// the user re-picks via the chooser.
-fn sound_label(app: &MeditateApplication, uuid: &str) -> String {
-    if uuid.is_empty() {
-        return String::new();
-    }
-    app.with_db(|db| db.list_bell_sounds())
-        .and_then(|r| r.ok())
-        .unwrap_or_default()
-        .into_iter()
-        .find(|s| s.uuid == uuid)
-        .map(|s| s.name)
-        .unwrap_or_default()
+/// Pulls the library from the DB and delegates the lookup to core,
+/// then renders core's `ResolvedName` to subtitle text.
+fn sound_name(app: &MeditateApplication, uuid: &str) -> String {
+    app.with_db(|db| render_resolved_name(
+        meditate_core::bells::resolve_sound_name(db.core(), uuid),
+    ))
+    .unwrap_or_default()
 }
 
-/// Same as sound_label but for vibration_patterns.
-fn pattern_label(app: &MeditateApplication, uuid: &str) -> String {
-    if uuid.is_empty() {
-        return String::new();
-    }
-    app.with_db(|db| db.find_vibration_pattern_by_uuid(uuid))
-        .and_then(|r| r.ok())
-        .flatten()
-        .map(|p| p.name)
-        .unwrap_or_default()
+/// Same as sound_name but for vibration_patterns.
+fn pattern_name(app: &MeditateApplication, uuid: &str) -> String {
+    app.with_db(|db| render_resolved_name(
+        meditate_core::bells::resolve_pattern_name(db.core(), uuid),
+    ))
+    .unwrap_or_default()
 }
 
 /// Edit page for one bell — pushed when the user taps a row in the
 /// list. Save-as-you-go: every field change persists immediately
+/// Persist the current snapshot via the shell's `update_interval_bell`
+/// pass-through and fire the rebuild + on_changed pipeline. Hoisted
+/// out of `push_edit_page` so each field-handler can call it from
+/// its own captured clones without nesting an item inside a fn body.
+fn write_back_bell(
+    app: &MeditateApplication,
+    snap: &Rc<RefCell<IntervalBell>>,
+    rebuilder: &Rebuilder,
+    on_changed: &(impl Fn() + Clone + 'static),
+) {
+    let s = snap.borrow();
+    app.with_db_mut(|db| db.update_interval_bell(&s));
+    if let Some(rb) = rebuilder.borrow().as_ref() {
+        rb();
+    }
+    on_changed();
+}
+
 /// (with a populating-style guard during the initial load) and fires
 /// the same rebuilder/on_changed pipeline so the list page and the
 /// timer setup's subtitle stay in sync. Delete asks for confirmation
@@ -418,7 +453,7 @@ fn push_edit_page(
         gettext("At time from start"),
         gettext("Before end"),
     ];
-    let kind_refs: Vec<&str> = kind_choices.iter().map(|s| s.as_str()).collect();
+    let kind_refs: Vec<&str> = kind_choices.iter().map(std::string::String::as_str).collect();
     let kind_row = adw::ComboRow::builder()
         .title(gettext("Kind"))
         .model(&gtk::StringList::new(&kind_refs))
@@ -434,7 +469,10 @@ fn push_edit_page(
     let minutes_row = adw::SpinRow::builder()
         .title(gettext("Minutes"))
         .adjustment(&gtk::Adjustment::new(
-            bell.minutes as f64, 1.0, 120.0, 1.0, 5.0, 0.0,
+            f64::from(bell.minutes),
+            f64::from(meditate_core::bells::BELL_MINUTES_MIN),
+            f64::from(meditate_core::bells::BELL_MINUTES_MAX),
+            1.0, 5.0, 0.0,
         ))
         .build();
     form.add(&minutes_row);
@@ -445,7 +483,10 @@ fn push_edit_page(
         .title(gettext("Jitter"))
         .subtitle(gettext("Percent — randomises the next ring"))
         .adjustment(&gtk::Adjustment::new(
-            bell.jitter_pct as f64, 0.0, 50.0, 5.0, 10.0, 0.0,
+            f64::from(bell.jitter_pct),
+            f64::from(meditate_core::bells::BELL_JITTER_PCT_MIN),
+            f64::from(meditate_core::bells::BELL_JITTER_PCT_MAX),
+            5.0, 10.0, 0.0,
         ))
         .visible(bell.kind == IntervalBellKind::Interval)
         .build();
@@ -486,23 +527,18 @@ fn push_edit_page(
     signal_toggle.add(toggle_sound);
     signal_toggle.add(toggle_vibration);
     signal_toggle.add(toggle_both);
-    let initial_mode = if !app.has_haptic() {
-        crate::db::SignalMode::Sound
-    } else {
-        bell.signal_mode
-    };
-    signal_toggle.set_active_name(Some(match initial_mode {
-        crate::db::SignalMode::Sound     => "sound",
-        crate::db::SignalMode::Vibration => "vibration",
-        crate::db::SignalMode::Both      => "both",
-    }));
+    let initial_mode = meditate_core::bells::clamp_signal_mode_for_haptic(
+        bell.signal_mode,
+        app.has_haptic(),
+    );
+    signal_toggle.set_active_name(Some(initial_mode.as_db_str()));
     signal_toggle_host.append(&signal_toggle);
 
     // Sound row — taps push the bell-sound chooser. Subtitle shows the
     // currently-selected sound's name (looked up by uuid).
     let sound_row = adw::ActionRow::builder()
         .title(gettext("Sound"))
-        .subtitle(sound_label(app, &bell.sound))
+        .subtitle(sound_name(app, bell.sound_uuid.as_str()))
         .activatable(true)
         .build();
     {
@@ -515,7 +551,7 @@ fn push_edit_page(
     // Pattern row — taps push the vibration-pattern chooser.
     let pattern_row = adw::ActionRow::builder()
         .title(gettext("Pattern"))
-        .subtitle(pattern_label(app, &bell.vibration_pattern_uuid))
+        .subtitle(pattern_name(app, bell.vibration_pattern_uuid.as_str()))
         .activatable(true)
         .build();
     {
@@ -526,14 +562,8 @@ fn push_edit_page(
     form.add(&pattern_row);
 
     // Initial visibility based on the saved signal mode.
-    sound_row.set_visible(matches!(
-        initial_mode,
-        crate::db::SignalMode::Sound | crate::db::SignalMode::Both,
-    ));
-    pattern_row.set_visible(matches!(
-        initial_mode,
-        crate::db::SignalMode::Vibration | crate::db::SignalMode::Both,
-    ));
+    sound_row.set_visible(initial_mode.includes_sound());
+    pattern_row.set_visible(initial_mode.includes_vibration());
 
     prefs_page.add(&form);
 
@@ -566,31 +596,6 @@ fn push_edit_page(
     let snapshot = Rc::new(RefCell::new(bell));
     let populating = Rc::new(std::cell::Cell::new(false));
 
-    fn write_back(
-        app: &MeditateApplication,
-        snap: &Rc<RefCell<IntervalBell>>,
-        rebuilder: &Rebuilder,
-        on_changed: &(impl Fn() + Clone + 'static),
-    ) {
-        let s = snap.borrow();
-        app.with_db_mut(|db| {
-            db.update_interval_bell(
-                &s.uuid,
-                s.kind,
-                s.minutes,
-                s.jitter_pct,
-                &s.sound,
-                &s.vibration_pattern_uuid,
-                s.signal_mode,
-                s.enabled,
-            )
-        });
-        if let Some(rb) = rebuilder.borrow().as_ref() {
-            rb();
-        }
-        on_changed();
-    }
-
     // Kind changes also flip jitter row visibility.
     let snap_for_kind = snapshot.clone();
     let app_for_kind = app.clone();
@@ -607,7 +612,7 @@ fn push_edit_page(
         };
         snap_for_kind.borrow_mut().kind = new_kind;
         jitter_row_clone.set_visible(new_kind == IntervalBellKind::Interval);
-        write_back(&app_for_kind, &snap_for_kind, &rebuilder_for_kind, &on_changed_for_kind);
+        write_back_bell(&app_for_kind, &snap_for_kind, &rebuilder_for_kind, &on_changed_for_kind);
     });
 
     let snap_for_min = snapshot.clone();
@@ -617,8 +622,11 @@ fn push_edit_page(
     let populating_for_min = populating.clone();
     minutes_row.connect_notify_local(Some("value"), move |row, _| {
         if populating_for_min.get() { return; }
-        snap_for_min.borrow_mut().minutes = row.value().round().max(1.0) as u32;
-        write_back(&app_for_min, &snap_for_min, &rebuilder_for_min, &on_changed_for_min);
+        snap_for_min.borrow_mut().minutes = row.value().round().clamp(
+            f64::from(meditate_core::bells::BELL_MINUTES_MIN),
+            f64::from(meditate_core::bells::BELL_MINUTES_MAX),
+        ) as u32;
+        write_back_bell(&app_for_min, &snap_for_min, &rebuilder_for_min, &on_changed_for_min);
     });
 
     let snap_for_jitter = snapshot.clone();
@@ -628,8 +636,11 @@ fn push_edit_page(
     let populating_for_jitter = populating.clone();
     jitter_row.connect_notify_local(Some("value"), move |row, _| {
         if populating_for_jitter.get() { return; }
-        snap_for_jitter.borrow_mut().jitter_pct = row.value().round().clamp(0.0, 50.0) as u32;
-        write_back(&app_for_jitter, &snap_for_jitter, &rebuilder_for_jitter, &on_changed_for_jitter);
+        snap_for_jitter.borrow_mut().jitter_pct = row.value().round().clamp(
+            f64::from(meditate_core::bells::BELL_JITTER_PCT_MIN),
+            f64::from(meditate_core::bells::BELL_JITTER_PCT_MAX),
+        ) as u32;
+        write_back_bell(&app_for_jitter, &snap_for_jitter, &rebuilder_for_jitter, &on_changed_for_jitter);
     });
 
     // Sound activation: walk to window, push chooser, on pick update
@@ -644,7 +655,7 @@ fn push_edit_page(
         let Some(window) = row.root()
             .and_then(|r| r.downcast::<crate::window::MeditateWindow>().ok())
         else { return; };
-        let current = Some(snap_for_sound.borrow().sound.clone());
+        let current = Some(snap_for_sound.borrow().sound_uuid.0.clone());
         let snap = snap_for_sound.clone();
         let app_outer = app_for_sound.clone();
         let app_inner = app_for_sound.clone();
@@ -656,9 +667,9 @@ fn push_edit_page(
             crate::db::BellSoundCategory::General,
             current,
             move |uuid| {
-                snap.borrow_mut().sound = uuid.clone();
-                sound_row.set_subtitle(&sound_label(&app_inner, &uuid));
-                write_back(&app_inner, &snap, &rebuilder, &on_changed);
+                snap.borrow_mut().sound_uuid = uuid.clone().into();
+                sound_row.set_subtitle(&sound_name(&app_inner, &uuid));
+                write_back_bell(&app_inner, &snap, &rebuilder, &on_changed);
             },
         );
     });
@@ -673,7 +684,7 @@ fn push_edit_page(
         let Some(window) = row.root()
             .and_then(|r| r.downcast::<crate::window::MeditateWindow>().ok())
         else { return; };
-        let current = Some(snap_for_pat.borrow().vibration_pattern_uuid.clone());
+        let current = Some(snap_for_pat.borrow().vibration_pattern_uuid.0.clone());
         let snap = snap_for_pat.clone();
         let app_outer = app_for_pat.clone();
         let app_inner = app_for_pat.clone();
@@ -681,9 +692,9 @@ fn push_edit_page(
         let on_changed = on_changed_for_pat.clone();
         let pattern_row = pattern_row_for_sub.clone();
         window.push_vibrations_chooser(&app_outer, current, move |uuid| {
-            snap.borrow_mut().vibration_pattern_uuid = uuid.clone();
-            pattern_row.set_subtitle(&pattern_label(&app_inner, &uuid));
-            write_back(&app_inner, &snap, &rebuilder, &on_changed);
+            snap.borrow_mut().vibration_pattern_uuid = uuid.clone().into();
+            pattern_row.set_subtitle(&pattern_name(&app_inner, &uuid));
+            write_back_bell(&app_inner, &snap, &rebuilder, &on_changed);
         });
     });
 
@@ -701,21 +712,13 @@ fn push_edit_page(
     let populating_for_sig = populating.clone();
     signal_toggle.connect_active_name_notify(move |tg| {
         if populating_for_sig.get() { return; }
-        let mode = match tg.active_name().as_deref() {
-            Some("vibration") => crate::db::SignalMode::Vibration,
-            Some("both")      => crate::db::SignalMode::Both,
-            _                 => crate::db::SignalMode::Sound,
-        };
+        let mode = tg.active_name()
+            .and_then(|n| crate::db::SignalMode::from_db_str(n.as_str()))
+            .unwrap_or(crate::db::SignalMode::Sound);
         snap_for_sig.borrow_mut().signal_mode = mode;
-        sound_row_for_sig.set_visible(matches!(
-            mode,
-            crate::db::SignalMode::Sound | crate::db::SignalMode::Both,
-        ));
-        pattern_row_for_sig.set_visible(matches!(
-            mode,
-            crate::db::SignalMode::Vibration | crate::db::SignalMode::Both,
-        ));
-        write_back(&app_for_sig, &snap_for_sig, &rebuilder_for_sig, &on_changed_for_sig);
+        sound_row_for_sig.set_visible(mode.includes_sound());
+        pattern_row_for_sig.set_visible(mode.includes_vibration());
+        write_back_bell(&app_for_sig, &snap_for_sig, &rebuilder_for_sig, &on_changed_for_sig);
     });
 
     // ── Delete ────────────────────────────────────────────────────
@@ -768,8 +771,8 @@ fn push_edit_page(
 }
 
 fn lookup_bell(app: &MeditateApplication, uuid: &str) -> Option<IntervalBell> {
-    app.with_db(|db| db.list_interval_bells())
-        .and_then(|r| r.ok())
+    app.with_db(super::db::Database::list_interval_bells)
+        .and_then(std::result::Result::ok)
         .unwrap_or_default()
         .into_iter()
         .find(|b| b.uuid == uuid)
@@ -779,14 +782,14 @@ fn lookup_bell(app: &MeditateApplication, uuid: &str) -> Option<IntervalBell> {
 mod tests {
     use super::*;
 
-    fn b(kind: IntervalBellKind, minutes: u32, jitter_pct: u32, sound: &str) -> IntervalBell {
+    fn b(kind: IntervalBellKind, minutes: u32, jitter_pct: u32, sound_uuid: &str) -> IntervalBell {
         IntervalBell {
             id: 0,
             uuid: "u".into(),
             kind,
             minutes,
             jitter_pct,
-            sound: sound.into(),
+            sound_uuid: sound_uuid.into(),
             vibration_pattern_uuid: crate::db::BUNDLED_PATTERN_PULSE_UUID.into(),
             signal_mode: crate::db::SignalMode::Sound,
             enabled: true,

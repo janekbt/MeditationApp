@@ -1,23 +1,23 @@
+mod announcement;
 mod application;
 pub mod bells;
 mod config;
 mod data_io;
 pub mod db;
-pub mod diag;
+pub mod format;
 pub mod guided;
 pub mod i18n;
 pub mod keychain;
 pub mod labels;
 pub mod log;
 mod preferences;
-pub mod preset_config;
+pub mod preset_subtitle;
 pub mod presets;
 mod recovery_dialog;
 pub mod sound;
 pub mod sounds;
 pub mod stats;
 pub mod sync_runner;
-pub mod sync_settings;
 pub mod time;
 pub mod timer;
 pub mod vibration;
@@ -45,8 +45,8 @@ fn main() -> glib::ExitCode {
     // `glib::user_data_dir()` is a pure XDG lookup and does not require
     // gtk::init, so this is safe before the renderer/gettext setup.
     let data_dir = glib::user_data_dir().join("meditate");
-    diag::init(&data_dir);
-    diag::log(&format!("--- startup: meditate {} ---", config::VERSION));
+    meditate_core::diag::init(&data_dir);
+    meditate_core::log("startup", &format!("meditate {}", config::VERSION));
 
     // Renderer must be selected before gtk::init runs, otherwise GTK has
     // already picked one and GSK_RENDERER is ignored.
@@ -96,13 +96,13 @@ fn setup_gettext() {
     if let Err(e) = bindtextdomain(config::GETTEXT_DOMAIN, locale_dir.as_str()) {
         let msg = format!("bindtextdomain failed ({e}); strings will stay in source language.");
         eprintln!("note: {msg}");
-        diag::log(&msg);
+        meditate_core::log("gettext", &msg);
         return;
     }
     let _ = bind_textdomain_codeset(config::GETTEXT_DOMAIN, "UTF-8");
     if let Err(e) = textdomain(config::GETTEXT_DOMAIN) {
         let msg = format!("textdomain failed ({e}); strings will stay in source language.");
         eprintln!("note: {msg}");
-        diag::log(&msg);
+        meditate_core::log("gettext", &msg);
     }
 }

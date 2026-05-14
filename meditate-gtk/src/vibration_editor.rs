@@ -19,22 +19,17 @@ use crate::db::{ChartKind, VibrationPattern};
 use crate::i18n::gettext;
 
 // ── Tunables ──────────────────────────────────────────────────────────────
-const DEFAULT_POINTS: usize       = 7;
-const DEFAULT_DURATION_S: f64     = 2.0;
-const POINTS_MIN: u32             = 3;
-const POINTS_MAX: u32             = 24;
-/// Minimum spacing between authored control points, in
-/// milliseconds. Below this the LRA can't render the steps as
-/// distinct, and feedbackd's chunking math (200 ms overlap, 10
-/// segments per chunk) starts to wobble. The Points spin row's
-/// upper bound is recomputed on every Duration change to enforce
-/// it: `max_points = min(POINTS_MAX, floor(D_secs * 10))`.
-const MIN_POINT_SPACING_MS: u32   = 100;
-
-fn max_points_for_duration_s(duration_s: f64) -> u32 {
-    let by_spacing = (duration_s * 1000.0 / MIN_POINT_SPACING_MS as f64).floor() as u32;
-    POINTS_MAX.min(by_spacing).max(POINTS_MIN)
-}
+// Editor invariants live in `meditate_core::vibration` so the Android
+// shell's editor inherits the same caps + snapping behaviour. These
+// thin aliases keep call-site readability identical to the pre-
+// migration code.
+use meditate_core::vibration::{
+    max_points_for_duration_s,
+    EDITOR_DEFAULT_DURATION_S as DEFAULT_DURATION_S,
+    EDITOR_DEFAULT_POINTS as DEFAULT_POINTS,
+    EDITOR_INTENSITY_STEP as INTENSITY_STEP,
+    EDITOR_POINTS_MIN as POINTS_MIN,
+};
 const DURATION_MIN_S: f64         = 0.5;
 const DURATION_MAX_S: f64         = 10.0;
 
@@ -47,44 +42,20 @@ const Y_LABEL_W: f64              = 38.0;
 const X_LABEL_H: f64              = 18.0;
 const PAD: f64                    = 10.0;
 
-// Snap to 5% increments.
-/// Vertical-axis snap on the chart. Matches the runtime sampler's
-/// 10% amplitude quantisation, so what the user authors equals
-/// what feedbackd renders. Finer steps would be invisible to the
-/// LRA and would defeat the run-length encoder that collapses
-/// held-amplitude stretches into single segments.
-const INTENSITY_STEP: f32         = 0.10;
+/// Single preview-playback slot id for the editor. The PreviewToggle
+/// state machine keys on this so a stop/start/stop sequence stays
+/// associated with the same play.
+const EDITOR_SLOT: &str           = "editor";
 
-// ── Linear-interpolating resample (free function — pure, testable) ───────
+/// Minimum horizontal gap between adjacent X-axis labels (px). The
+/// label-thinning helper drops interior labels that would otherwise
+/// overlap a neighbouring anchor.
+const X_LABEL_MIN_GAP: f64        = 6.0;
 
-/// Project `old` (an N-sample envelope) onto a new equally-spaced
-/// grid of `new_n` samples by linear interpolation. Preserves the
-/// curve shape across Points-spinner changes. Returns a fresh Vec.
-pub(crate) fn resample(old: &[f32], new_n: usize) -> Vec<f32> {
-    if new_n == 0 {
-        return Vec::new();
-    }
-    let old_n = old.len();
-    if old_n == 0 {
-        return vec![0.5; new_n];
-    }
-    if old_n == 1 {
-        return vec![old[0]; new_n];
-    }
-    if new_n == old_n {
-        return old.to_vec();
-    }
-    let mut out = Vec::with_capacity(new_n);
-    for i in 0..new_n {
-        let t = i as f32 / (new_n - 1).max(1) as f32;
-        let xf = t * (old_n - 1) as f32;
-        let lo = xf.floor() as usize;
-        let hi = (lo + 1).min(old_n - 1);
-        let frac = xf - lo as f32;
-        out.push(old[lo] * (1.0 - frac) + old[hi] * frac);
-    }
-    out
-}
+// Resampling helper lives in `meditate_core::vibration` (the
+// Android shell's editor uses it too). Re-exported so the call
+// sites in this file stay unprefixed.
+pub(crate) use meditate_core::vibration::resample_envelope as resample;
 
 // ── State ────────────────────────────────────────────────────────────────
 
@@ -103,9 +74,9 @@ impl Editor {
     fn new(initial: Option<VibrationPattern>) -> Rc<Self> {
         let (edit_uuid, name, duration_s, intensities, chart_kind) = match initial {
             Some(p) => (
-                Some(p.uuid),
+                Some(p.uuid.0),
                 p.name,
-                p.duration_ms as f64 / 1000.0,
+                f64::from(p.duration_ms) / 1000.0,
                 p.intensities,
                 p.chart_kind,
             ),
@@ -216,8 +187,8 @@ pub fn push_pattern_editor(
     let initial_max_points = max_points_for_duration_s(editor.duration_s.get());
     points_row.set_adjustment(Some(&gtk::Adjustment::new(
         editor.intensities.borrow().len() as f64,
-        POINTS_MIN as f64,
-        initial_max_points as f64,
+        f64::from(POINTS_MIN),
+        f64::from(initial_max_points),
         1.0,
         1.0,
         0.0,
@@ -356,7 +327,7 @@ pub fn push_pattern_editor(
     // ── Drawing ───────────────────────────────────────────────────────
     let editor_for_draw = editor.clone();
     drawing_area.set_draw_func(move |area, cr, w, h| {
-        draw_chart(area, cr, w as f64, h as f64, &editor_for_draw);
+        draw_chart(area, cr, f64::from(w), f64::from(h), &editor_for_draw);
     });
 
     // ── Drag interaction (handle pick + drag-y to adjust intensity) ───
@@ -371,8 +342,8 @@ pub fn push_pattern_editor(
     let drag_for_begin = drag.clone();
     drag.connect_drag_begin(move |_, x, y| {
         let (cx, cy, cw, ch) = chart_rect(
-            area_for_begin.width() as f64,
-            area_for_begin.height() as f64,
+            f64::from(area_for_begin.width()),
+            f64::from(area_for_begin.height()),
         );
         let intensities = editor_for_begin.intensities.borrow();
         let n = intensities.len();
@@ -385,7 +356,7 @@ pub fn push_pattern_editor(
         let mut best_dist = f64::MAX;
         for i in 0..n {
             let px = cx + (i as f64 / denom) * cw;
-            let py = cy + (1.0 - intensities[i] as f64) * ch;
+            let py = cy + (1.0 - f64::from(intensities[i])) * ch;
             let dist = ((px - x).powi(2) + (py - y).powi(2)).sqrt();
             if dist < best_dist {
                 best_dist = dist;
@@ -413,8 +384,8 @@ pub fn push_pattern_editor(
             return;
         };
         let (_cx, _cy, _cw, ch) = chart_rect(
-            area_for_update.width() as f64,
-            area_for_update.height() as f64,
+            f64::from(area_for_update.width()),
+            f64::from(area_for_update.height()),
         );
         // Negative oy = drag up = higher intensity. Map drag distance
         // to an intensity delta proportional to chart height, snap to
@@ -444,9 +415,9 @@ pub fn push_pattern_editor(
         // consistent. Otherwise just bump the upper bound.
         let new_max = max_points_for_duration_s(d);
         let adj = points_row_for_dur.adjustment();
-        adj.set_upper(new_max as f64);
-        if adj.value() > new_max as f64 {
-            adj.set_value(new_max as f64);
+        adj.set_upper(f64::from(new_max));
+        if adj.value() > f64::from(new_max) {
+            adj.set_value(f64::from(new_max));
         }
         points_row_for_dur.set_subtitle(&format!(
             "{} (up to {} for this duration)",
@@ -462,7 +433,7 @@ pub fn push_pattern_editor(
         let max_for_dur = max_points_for_duration_s(editor_for_pts.duration_s.get());
         let new_n = row.value()
             .round()
-            .clamp(POINTS_MIN as f64, max_for_dur as f64) as usize;
+            .clamp(f64::from(POINTS_MIN), f64::from(max_for_dur)) as usize;
         editor_for_pts.resample_to(new_n);
         // Selected index may now be out of range — clear it.
         if let Some(idx) = editor_for_pts.selected.get() {
@@ -500,7 +471,7 @@ pub fn push_pattern_editor(
             let except = editor.edit_uuid.borrow().clone().unwrap_or_default();
             let collision = app
                 .with_db(|db| db.is_vibration_pattern_name_taken(&name, &except))
-                .and_then(|r| r.ok())
+                .and_then(std::result::Result::ok)
                 .unwrap_or(false);
             save_btn.set_sensitive(!collision);
         })
@@ -525,6 +496,7 @@ pub fn push_pattern_editor(
     let editor_for_save = editor.clone();
     let on_saved = Rc::new(on_saved);
     let on_saved_for_save = on_saved.clone();
+    let save_btn_for_toast = save_btn.clone();
     save_btn.connect_clicked(move |_| {
         let name = editor_for_save.name.borrow().trim().to_string();
         if name.is_empty() {
@@ -534,27 +506,30 @@ pub fn push_pattern_editor(
         let intensities = editor_for_save.intensities.borrow().clone();
         let chart_kind = editor_for_save.chart_kind.get();
 
-        let saved_uuid = match editor_for_save.edit_uuid.borrow().clone() {
+        let result: Option<crate::db::Result<String>> = match editor_for_save.edit_uuid.borrow().clone() {
             None => app_for_save
                 .with_db_mut(|db| {
                     db.insert_vibration_pattern(
                         &name, duration_ms, &intensities, chart_kind, false,
                     )
-                })
-                .and_then(|r| r.ok()),
+                }),
             Some(uuid) => app_for_save
                 .with_db_mut(|db| {
                     db.update_vibration_pattern(
                         &uuid, &name, duration_ms, &intensities, chart_kind,
-                    )
-                })
-                .and_then(|r| r.ok())
-                .map(|()| uuid),
+                    ).map(|()| uuid.clone())
+                }),
         };
-        if let Some(uuid) = saved_uuid {
-            on_saved_for_save(uuid);
+        match result {
+            Some(Ok(uuid)) => {
+                on_saved_for_save(uuid);
+                nav_for_save.pop();
+            }
+            Some(Err(e)) => {
+                crate::db::surface_duplicate_toast(&save_btn_for_toast, &e);
+            }
+            None => {}
         }
-        nav_for_save.pop();
     });
 
     // Preview slot: replacing the previous handle disarms its Drop
@@ -567,74 +542,79 @@ pub fn push_pattern_editor(
     // pending auto-revert timeouts whenever the user re-taps (so a
     // stop, start, stop sequence doesn't get its second-stop undone
     // by the first-start's leftover timeout).
-    let is_playing: Rc<Cell<bool>> = Rc::new(Cell::new(false));
-    let play_gen: Rc<Cell<u64>> = Rc::new(Cell::new(0));
+    // Toggle / supersede / auto-revert state lives in core. The
+    // single-slot id used to address this editor's playback is the
+    // file-scope `EDITOR_SLOT` constant.
+    let preview_toggle: Rc<RefCell<meditate_core::vibration::PreviewToggle>> =
+        Rc::new(RefCell::new(meditate_core::vibration::PreviewToggle::new()));
     let editor_for_preview = editor.clone();
     let app_for_preview = app.clone();
     let btn_for_preview = preview_btn.clone();
     preview_btn.connect_clicked(move |_| {
-        if is_playing.get() {
-            // Stop. Drop the slot to fire the empty-array cancel.
-            *preview_slot.borrow_mut() = None;
-            is_playing.set(false);
-            // Bump generation so the previous play's revert-timeout
-            // no-ops if it was about to fire.
-            play_gen.set(play_gen.get().wrapping_add(1));
-            btn_for_preview.set_icon_name("media-playback-start-symbolic");
-            btn_for_preview.set_tooltip_text(Some(&gettext("Preview")));
-            return;
-        }
-
-        let intensities = editor_for_preview.intensities.borrow().clone();
-        let duration_ms = (editor_for_preview.duration_s.get() * 1000.0) as u32;
-        let chart_kind = editor_for_preview.chart_kind.get();
-        let pattern = crate::db::VibrationPattern {
-            id: 0,
-            uuid: String::new(),
-            name: String::new(),
-            duration_ms,
-            intensities,
-            chart_kind,
-            is_bundled: false,
-            created_iso: String::new(),
-            updated_iso: String::new(),
-        };
-        let new_handle = crate::vibration::PatternPlayback::play(&app_for_preview, &pattern);
-        {
-            let mut slot = preview_slot.borrow_mut();
-            if let Some(mut old) = slot.take() {
-                old.disarm();
+        use meditate_core::vibration::PreviewAction;
+        let action = preview_toggle.borrow_mut().request(EDITOR_SLOT);
+        match action {
+            PreviewAction::StopOnly => {
+                // Stop. Drop the slot to fire the empty-array cancel.
+                *preview_slot.borrow_mut() = None;
+                btn_for_preview.set_icon_name("media-playback-start-symbolic");
+                btn_for_preview.set_tooltip_text(Some(&gettext("Preview")));
             }
-            *slot = Some(new_handle);
-        }
-        is_playing.set(true);
-        let this_gen = play_gen.get().wrapping_add(1);
-        play_gen.set(this_gen);
-        btn_for_preview.set_icon_name("media-playback-stop-symbolic");
-        btn_for_preview.set_tooltip_text(Some(&gettext("Stop preview")));
-
-        // Auto-revert when the pattern finishes naturally. The
-        // generation check no-ops the timeout if the user already
-        // tapped Stop or restarted before this fires.
-        let is_playing_for_t = is_playing.clone();
-        let play_gen_for_t = play_gen.clone();
-        let btn_for_t = btn_for_preview.clone();
-        glib::timeout_add_local_once(
-            std::time::Duration::from_millis(duration_ms as u64),
-            move || {
-                if play_gen_for_t.get() == this_gen && is_playing_for_t.get() {
-                    is_playing_for_t.set(false);
-                    btn_for_t.set_icon_name("media-playback-start-symbolic");
-                    btn_for_t.set_tooltip_text(Some(&gettext("Preview")));
+            PreviewAction::StopAndStart { generation, .. } => {
+                let intensities = editor_for_preview.intensities.borrow().clone();
+                let duration_ms = (editor_for_preview.duration_s.get() * 1000.0) as u32;
+                let chart_kind = editor_for_preview.chart_kind.get();
+                let pattern = crate::db::VibrationPattern {
+                    id: 0,
+                    uuid: meditate_core::db::VibrationPatternUuid::new(""),
+                    name: String::new(),
+                    duration_ms,
+                    intensities,
+                    chart_kind,
+                    is_bundled: false,
+                    created_iso: String::new(),
+                    updated_iso: String::new(),
+                };
+                let new_handle = crate::vibration::PatternPlayback::play(&app_for_preview, &pattern);
+                {
+                    let mut slot = preview_slot.borrow_mut();
+                    if let Some(mut old) = slot.take() {
+                        old.disarm();
+                    }
+                    *slot = Some(new_handle);
                 }
-            },
-        );
+                btn_for_preview.set_icon_name("media-playback-stop-symbolic");
+                btn_for_preview.set_tooltip_text(Some(&gettext("Stop preview")));
+
+                // Auto-revert when the pattern finishes naturally.
+                // Core's `timer_should_revert` no-ops if the user
+                // already tapped Stop or restarted before this fires.
+                let preview_toggle_for_t = preview_toggle.clone();
+                let btn_for_t = btn_for_preview.clone();
+                glib::timeout_add_local_once(
+                    std::time::Duration::from_millis(u64::from(duration_ms)),
+                    move || {
+                        if preview_toggle_for_t.borrow_mut().timer_should_revert(generation) {
+                            btn_for_t.set_icon_name("media-playback-start-symbolic");
+                            btn_for_t.set_tooltip_text(Some(&gettext("Preview")));
+                        }
+                    },
+                );
+            }
+            PreviewAction::NoOp => {}
+        }
     });
 
     nav_view.push(&page);
 }
 
 // ── Drawing helpers ──────────────────────────────────────────────────────
+
+/// One X-axis label's measured layout — used by `draw_chart`'s
+/// label-thinning pass before any text is drawn. Kept at file scope
+/// so the lint about items-after-statements stays happy; it's
+/// otherwise local to `draw_chart`'s lifetime.
+struct LabelLayout { lx: f64, lw: f64, text: String }
 
 fn chart_rect(w: f64, h: f64) -> (f64, f64, f64, f64) {
     let cx = Y_LABEL_W;
@@ -671,7 +651,7 @@ fn draw_chart(
         let y = cy + (1.0 - frac) * ch;
         cr.set_source_rgba(0.55, 0.55, 0.55, 1.0);
         let extents = cr.text_extents(label).ok();
-        let lw = extents.map(|e| e.width()).unwrap_or(0.0);
+        let lw = extents.map_or(0.0, |e| e.width());
         cr.move_to(Y_LABEL_W - lw - 4.0, y + 3.5);
         let _ = cr.show_text(label);
 
@@ -684,7 +664,7 @@ fn draw_chart(
 
     // ── Geometry ──────────────────────────────────────────────────────
     let xs: Vec<f64> = (0..n).map(|i| cx + (i as f64 / denom) * cw).collect();
-    let ys: Vec<f64> = intensities.iter().map(|&v| cy + (1.0 - v as f64) * ch).collect();
+    let ys: Vec<f64> = intensities.iter().map(|&v| cy + (1.0 - f64::from(v)) * ch).collect();
 
     // ── Curve ─────────────────────────────────────────────────────────
     match editor.chart_kind.get() {
@@ -717,7 +697,7 @@ fn draw_chart(
                 let center = xs[i];
                 let left = if i == 0 { cx } else { center - step / 2.0 };
                 let right = if i == n - 1 { cx + cw } else { center + step / 2.0 };
-                let height = intensities[i] as f64 * ch;
+                let height = f64::from(intensities[i]) * ch;
                 let top = cy + ch - height;
                 cr.rectangle(left, top, (right - left).max(0.0), height);
             }
@@ -756,14 +736,12 @@ fn draw_chart(
     cr.set_font_size(10.0);
     let label_y = cy + ch + X_LABEL_H - 4.0;
     let duration_s = editor.duration_s.get();
-    const X_LABEL_MIN_GAP: f64 = 6.0;
 
-    struct LabelLayout { lx: f64, lw: f64, text: String }
     let layouts: Vec<LabelLayout> = (0..n).map(|i| {
         let t = duration_s * (i as f64) / denom;
         let text = format_seconds(t);
         let extents = cr.text_extents(&text).ok();
-        let lw = extents.map(|e| e.width()).unwrap_or(0.0);
+        let lw = extents.map_or(0.0, |e| e.width());
         let lx = (xs[i] - lw / 2.0).clamp(cx, cx + cw - lw);
         LabelLayout { lx, lw, text }
     }).collect();
@@ -773,33 +751,21 @@ fn draw_chart(
         let _ = cr.show_text(&l.text);
     };
 
-    if !layouts.is_empty() {
-        draw_label(cr, &layouts[0]);
-        let mut last_right = layouts[0].lx + layouts[0].lw;
-        let last_idx = layouts.len() - 1;
-        if last_idx >= 1 {
-            let last = &layouts[last_idx];
-            for li in &layouts[1..last_idx] {
-                if li.lx <= last_right + X_LABEL_MIN_GAP {
-                    continue;
-                }
-                if li.lx + li.lw + X_LABEL_MIN_GAP > last.lx {
-                    continue;
-                }
-                draw_label(cr, li);
-                last_right = li.lx + li.lw;
-            }
-            // Force-draw the last anchor unless it's literally on
-            // top of the first (degenerate chart_rect).
-            if last.lx > last_right + X_LABEL_MIN_GAP {
-                draw_label(cr, last);
-            }
-        }
+    // Greedy "minimum gap" interior-label selection lives in core
+    // so the Android shell's editor inherits the same overlap
+    // behaviour. Map our local layouts to the portable struct, pick
+    // the indices, dispatch cairo for those.
+    let core_layouts: Vec<meditate_core::vibration::XLabelLayout> = layouts
+        .iter()
+        .map(|l| meditate_core::vibration::XLabelLayout { lx: l.lx, lw: l.lw })
+        .collect();
+    for i in meditate_core::vibration::select_xlabel_indices(&core_layouts, X_LABEL_MIN_GAP) {
+        draw_label(cr, &layouts[i]);
     }
 }
 
 fn format_seconds(secs: f64) -> String {
-    format!("{:.1}s", secs)
+    format!("{secs:.1}s")
 }
 
 #[cfg(test)]

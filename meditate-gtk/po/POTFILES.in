@@ -3,18 +3,24 @@
 
 # Rust sources (every gettext(...) call site)
 src/application.rs
+src/bells.rs
 src/data_io.rs
 src/db/mod.rs
+src/format.rs
+src/guided.rs
 src/i18n.rs
+src/labels.rs
 src/log/imp.rs
 src/log/mod.rs
 src/main.rs
 src/preferences.rs
+src/presets.rs
 src/sound.rs
 src/stats/imp.rs
 src/stats/mod.rs
 src/timer/imp.rs
 src/timer/mod.rs
+src/vibration_editor.rs
 src/window/imp.rs
 src/window/mod.rs
 

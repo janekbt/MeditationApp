@@ -46,6 +46,16 @@ use crate::i18n::gettext;
 /// just done a NEW action, undoing the previous one would conflict.
 type ToastSlot = Rc<RefCell<Option<adw::Toast>>>;
 
+/// Shared preview state for the guided-files chooser. Mirrors the
+/// equivalent struct in `vibrations.rs` and `sounds.rs` so all three
+/// choosers route through the same `PreviewToggle` protocol — one
+/// shape for the gtk shell and the eventual Android shell to share.
+#[derive(Default)]
+struct PreviewState {
+    toggle: meditate_core::sound::PreviewToggle,
+    active_btn: Option<gtk::Button>,
+}
+
 /// Transient selection from "Open File". Lives in the Setup view's
 /// state until the session starts, the user picks something else, or
 /// the user imports it via Import File. Not persisted across app
@@ -86,7 +96,7 @@ pub fn pick_file_for_open(
     // not already OGG into OGG/Vorbis on the way in.
     let filter = gtk::FileFilter::new();
     filter.set_name(Some(&gettext("Audio files")));
-    for ext in ["ogg", "mp3", "m4a", "aac", "wav", "flac", "opus"] {
+    for ext in meditate_core::sound::IMPORTABLE_EXTENSIONS {
         filter.add_pattern(&format!("*.{ext}"));
         filter.add_pattern(&format!("*.{}", ext.to_uppercase()));
     }
@@ -218,7 +228,7 @@ pub fn import_picked_file(
             let collision = !trimmed.is_empty()
                 && app
                     .with_db(|db| db.is_guided_file_name_taken(trimmed, ""))
-                    .and_then(|r| r.ok())
+                    .and_then(std::result::Result::ok)
                     .unwrap_or(false);
             let valid = !trimmed.is_empty() && !collision;
             import_btn.set_sensitive(valid);
@@ -329,7 +339,7 @@ pub fn import_picked_file(
                         );
                     } else if let Some(row) = app
                         .with_db(|db| db.find_guided_file_by_uuid(&new_uuid))
-                        .and_then(|r| r.ok())
+                        .and_then(std::result::Result::ok)
                         .flatten()
                     {
                         on_done(row);
@@ -369,7 +379,7 @@ fn do_import_io(
     let source_ext = source
         .extension()
         .and_then(|s| s.to_str())
-        .map(|s| s.to_ascii_lowercase())
+        .map(str::to_ascii_lowercase)
         .unwrap_or_default();
 
     let new_uuid = crate::db::mint_uuid();
@@ -377,15 +387,19 @@ fn do_import_io(
     std::fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
     let dest_path = dest_dir.join(format!("{new_uuid}.ogg"));
 
-    if source_ext == "ogg" {
-        // OGG passthrough: a plain copy. fs::copy is a single
-        // syscall — too quick to interrupt; we just check the flag
-        // before and after so a cancel before copy starts skips
-        // straight through.
+    if meditate_core::sound::is_passthrough_ext(&source_ext) {
+        // OGG passthrough: a plain copy. Don't use std::fs::copy —
+        // it follows symlinks at the destination, which would let a
+        // pre-planted link at dest_path silently overwrite an
+        // arbitrary file. The core helper uses O_CREAT|O_EXCL plus
+        // O_NOFOLLOW to refuse a pre-existing or symlinked
+        // destination. Cancel-flag is still checked before and
+        // after; the copy itself is a single fast syscall sequence.
         if cancel.load(Ordering::Relaxed) {
             return Err(CANCELLED.into());
         }
-        std::fs::copy(source, &dest_path).map_err(|e| e.to_string())?;
+        meditate_core::sound::safe_copy_no_follow(source, &dest_path)
+            .map_err(|e| e.to_string())?;
     } else if let Err(e) = transcode_to_ogg_preserve_channels(source, &dest_path, cancel) {
         let _ = std::fs::remove_file(&dest_path);
         return Err(e);
@@ -418,6 +432,7 @@ fn transcode_to_ogg_preserve_channels(
     cancel: &AtomicBool,
 ) -> std::result::Result<(), String> {
     use gst::prelude::*;
+    use gst::MessageView::{Eos, Error};
     use gstreamer as gst;
 
     gst::init().map_err(|e| format!("gst init failed: {e}"))?;
@@ -494,7 +509,6 @@ fn transcode_to_ogg_preserve_channels(
             // Timeout — re-check cancel flag and keep polling.
             continue;
         };
-        use gst::MessageView::*;
         match msg.view() {
             Eos(..) => break,
             Error(err) => {
@@ -554,6 +568,14 @@ pub fn push_guided_files_chooser<F>(
     // the slot before showing their own — see ToastSlot's docs.
     let toast_slot: ToastSlot = Rc::new(RefCell::new(None));
 
+    // One shared preview slot across every row. Rebuilt-as-empty on
+    // each `rebuilder()` call indirectly: the chooser is a single
+    // NavigationPage instance, so a rebuild only swaps rows in/out;
+    // the toggle stays consistent across rebuilds within the page's
+    // lifetime. `connect_hidden` below stops in-flight playback so a
+    // preview doesn't outlast the user's choice to leave.
+    let preview: Rc<RefCell<PreviewState>> = Rc::new(RefCell::new(PreviewState::default()));
+
     let group_for_init = group.clone();
     let rows_for_init = rows.clone();
     let app_for_init = app.clone();
@@ -562,6 +584,7 @@ pub fn push_guided_files_chooser<F>(
     let rebuilder_for_init = rebuilder.clone();
     let toast_overlay_for_rb = toast_overlay.clone();
     let toast_slot_for_rb = toast_slot.clone();
+    let preview_for_rb = preview.clone();
     *rebuilder.borrow_mut() = Some(Box::new(move || {
         rebuild_chooser_rows(
             &group_for_init,
@@ -572,6 +595,7 @@ pub fn push_guided_files_chooser<F>(
             on_changed_for_init.clone(),
             &toast_overlay_for_rb,
             toast_slot_for_rb.clone(),
+            preview_for_rb.clone(),
         );
         on_changed_for_init();
     }));
@@ -579,6 +603,12 @@ pub fn push_guided_files_chooser<F>(
     if let Some(rb) = rebuilder.borrow().as_ref() {
         rb();
     }
+
+    // Stop any in-flight preview when the user pops the page so a
+    // guided meditation doesn't keep playing through the next setup
+    // screen.
+    page.connect_hidden(move |_| crate::sound::stop_preview());
+
     nav_view.push(&page);
 }
 
@@ -591,6 +621,7 @@ fn rebuild_chooser_rows(
     on_changed: impl Fn() + Clone + 'static,
     toast_overlay: &adw::ToastOverlay,
     toast_slot: ToastSlot,
+    preview: Rc<RefCell<PreviewState>>,
 ) {
     for row in rows.borrow_mut().drain(..) {
         group.remove(&row);
@@ -603,8 +634,8 @@ fn rebuild_chooser_rows(
     rows.borrow_mut().push(create_row);
 
     let files = app
-        .with_db(|db| db.list_guided_files())
-        .and_then(|r| r.ok())
+        .with_db(super::db::Database::list_guided_files)
+        .and_then(std::result::Result::ok)
         .unwrap_or_default();
 
     if files.is_empty() {
@@ -617,7 +648,7 @@ fn rebuild_chooser_rows(
     for file in files {
         let row = build_guided_file_row(
             &file, app, rebuilder.clone(), on_changed.clone(),
-            toast_overlay, toast_slot.clone(),
+            toast_overlay, toast_slot.clone(), preview.clone(),
         );
         group.add(&row);
         rows.borrow_mut().push(row);
@@ -676,6 +707,7 @@ fn build_guided_file_row(
     on_changed: impl Fn() + Clone + 'static,
     toast_overlay: &adw::ToastOverlay,
     toast_slot: ToastSlot,
+    preview: Rc<RefCell<PreviewState>>,
 ) -> adw::ActionRow {
     let row = adw::ActionRow::builder()
         .title(&file.name)
@@ -704,8 +736,8 @@ fn build_guided_file_row(
         .valign(gtk::Align::Center)
         .build();
     let app_for_star = app.clone();
-    let uuid_for_star = file.uuid.clone();
-    let new_starred = !file.is_starred;
+    let uuid_for_star = file.uuid.0.clone();
+    let new_starred = meditate_core::db::StarredState::from_flag(!file.is_starred);
     let rebuilder_for_star = rebuilder.clone();
     let on_changed_for_star = on_changed.clone();
     star_btn.connect_clicked(move |_| {
@@ -719,6 +751,8 @@ fn build_guided_file_row(
     });
     row.add_prefix(&star_btn);
 
+    add_play_button(&row, file, preview.clone());
+
     // Rename suffix.
     let rename_btn = gtk::Button::builder()
         .icon_name("document-edit-symbolic")
@@ -728,7 +762,7 @@ fn build_guided_file_row(
         .build();
     {
         let app = app.clone();
-        let uuid = file.uuid.clone();
+        let uuid = file.uuid.0.clone();
         let current_name = file.name.clone();
         let rebuilder = rebuilder.clone();
         let on_changed = on_changed.clone();
@@ -758,7 +792,7 @@ fn build_guided_file_row(
         .build();
     {
         let app = app.clone();
-        let uuid = file.uuid.clone();
+        let uuid = file.uuid.0.clone();
         let display_name = file.name.clone();
         let rebuilder = rebuilder.clone();
         let on_changed = on_changed.clone();
@@ -780,6 +814,75 @@ fn build_guided_file_row(
     row.add_suffix(&delete_btn);
 
     row
+}
+
+/// Per-row Play/Stop preview affordance. Routes the user's click
+/// through the shared `meditate_core::sound::PreviewToggle` so this
+/// chooser plays nicely with the bell-sound + vibration choosers'
+/// supersede semantics — only one preview audio source is ever
+/// active at a time. A guided meditation is typically several
+/// minutes; the user is expected to tap Stop after a snippet rather
+/// than listen through. The MediaFile's notify::playing signal feeds
+/// `timer_should_revert` for the natural-end case (which in practice
+/// only matters if the user really did wait it out).
+fn add_play_button(
+    row: &adw::ActionRow,
+    file: &GuidedFile,
+    preview: Rc<RefCell<PreviewState>>,
+) {
+    let play_btn = gtk::Button::builder()
+        .icon_name("media-playback-start-symbolic")
+        .tooltip_text(gettext("Preview"))
+        .css_classes(["flat", "circular"])
+        .valign(gtk::Align::Center)
+        .build();
+    let file_clone = file.clone();
+    let preview_for_click = preview.clone();
+    let btn_for_click = play_btn.clone();
+    play_btn.connect_clicked(move |_| {
+        use meditate_core::sound::PreviewAction;
+        let action = preview_for_click
+            .borrow_mut()
+            .toggle
+            .request(file_clone.uuid.as_str());
+        // The previously-active Stop-icon button (if any) reverts
+        // first — either we're toggling it off, or switching rows.
+        if let Some(prev_btn) = preview_for_click.borrow_mut().active_btn.take() {
+            prev_btn.set_icon_name("media-playback-start-symbolic");
+            prev_btn.set_tooltip_text(Some(&gettext("Preview")));
+        }
+        match action {
+            PreviewAction::StopOnly => {
+                crate::sound::stop_preview();
+            }
+            PreviewAction::StopAndStart { generation, .. } => {
+                let media = crate::sound::play_preview_for_guided_file(&file_clone);
+                btn_for_click.set_icon_name("media-playback-stop-symbolic");
+                btn_for_click.set_tooltip_text(Some(&gettext("Stop preview")));
+                preview_for_click.borrow_mut().active_btn = Some(btn_for_click.clone());
+
+                // Auto-revert on natural end. `timer_should_revert`
+                // returns false unless this generation is still the
+                // active one — i.e. only fires for the "let it
+                // finish" case, not for a user Stop or a row switch.
+                let preview_for_notify = preview_for_click.clone();
+                media.connect_notify_local(Some("playing"), move |m, _| {
+                    if m.is_playing() {
+                        return;
+                    }
+                    let mut state = preview_for_notify.borrow_mut();
+                    if state.toggle.timer_should_revert(generation) {
+                        if let Some(btn) = state.active_btn.take() {
+                            btn.set_icon_name("media-playback-start-symbolic");
+                            btn.set_tooltip_text(Some(&gettext("Preview")));
+                        }
+                    }
+                });
+            }
+            PreviewAction::NoOp => {}
+        }
+    });
+    row.add_suffix(&play_btn);
 }
 
 fn empty_state_row() -> adw::ActionRow {
@@ -843,7 +946,7 @@ fn present_rename_dialog(
             let collision = !trimmed.is_empty()
                 && app
                     .with_db(|db| db.is_guided_file_name_taken(trimmed, &uuid_for_validate))
-                    .and_then(|r| r.ok())
+                    .and_then(std::result::Result::ok)
                     .unwrap_or(false);
             let valid = !trimmed.is_empty() && !collision;
             dialog.set_response_enabled("rename", valid);
@@ -860,6 +963,7 @@ fn present_rename_dialog(
     let entry_for_response = entry.clone();
     let toast_overlay_for_response = toast_overlay.clone();
     let toast_slot_for_response = toast_slot.clone();
+    let anchor_for_response = anchor.clone();
     dialog.connect_response(None, move |_, id| {
         if id != "rename" {
             return;
@@ -868,9 +972,12 @@ fn present_rename_dialog(
         if new_name.is_empty() || new_name == old_name {
             return;
         }
-        app_for_response.with_db_mut(|db| {
+        if let Some(Err(e)) = app_for_response.with_db_mut(|db| {
             db.rename_guided_file(&uuid_for_response, &new_name)
-        });
+        }) {
+            crate::db::surface_duplicate_toast(&anchor_for_response, &e);
+            return;
+        }
         if let Some(rb) = rebuilder.borrow().as_ref() {
             rb();
         }
@@ -952,7 +1059,7 @@ fn present_delete_dialog(
         // (sync race between two devices, say).
         let Some(file) = app
             .with_db(|db| db.find_guided_file_by_uuid(&uuid))
-            .and_then(|r| r.ok())
+            .and_then(std::result::Result::ok)
             .flatten()
         else {
             return;
@@ -995,7 +1102,7 @@ fn present_delete_dialog(
             move || {
                 app_for_undo.with_db_mut(|db| {
                     db.insert_guided_file_with_uuid(
-                        &file_for_undo.uuid,
+                        file_for_undo.uuid.as_str(),
                         &file_for_undo.name,
                         &file_for_undo.file_path,
                         file_for_undo.duration_secs,
@@ -1082,8 +1189,7 @@ fn build_undo_toast(
         let should_clear = toast_slot_dismiss
             .borrow()
             .as_ref()
-            .map(|cur| cur == t)
-            .unwrap_or(false);
+            .is_some_and(|cur| cur == t);
         if should_clear {
             toast_slot_dismiss.replace(None);
         }
@@ -1095,27 +1201,7 @@ fn build_undo_toast(
 /// Truncate a string to `max_chars` Unicode scalar values, appending
 /// "…" if truncation happened. Used by the toast titles so a long
 /// guided-file name doesn't push the Undo button off-screen on phone.
-fn ellipsize(s: &str, max_chars: usize) -> String {
-    let count = s.chars().count();
-    if count <= max_chars {
-        s.to_string()
-    } else {
-        let mut out: String = s.chars().take(max_chars.saturating_sub(1)).collect();
-        out.push('…');
-        out
-    }
-}
-
-pub fn format_duration_brief(secs: u32) -> String {
-    let h = secs / 3600;
-    let m = (secs % 3600) / 60;
-    let s = secs % 60;
-    if h > 0 {
-        format!("{h}:{m:02}:{s:02}")
-    } else {
-        format!("{m}:{s:02}")
-    }
-}
+pub use meditate_core::format::{ellipsize, format_duration_brief};
 
 fn window_from(widget: &impl glib::object::IsA<gtk::Widget>) -> Option<crate::window::MeditateWindow> {
     widget
@@ -1199,11 +1285,14 @@ impl GuidedPlayback {
                 match msg.view() {
                     MessageView::Eos(_) => on_eos(),
                     MessageView::Error(err) => {
-                        crate::diag::log(&format!(
-                            "guided playback error: {} ({})",
-                            err.error(),
-                            err.debug().unwrap_or_default()
-                        ));
+                        meditate_core::log(
+                            "guided.playback",
+                            &format!(
+                                "error: {} ({})",
+                                err.error(),
+                                err.debug().unwrap_or_default(),
+                            ),
+                        );
                     }
                     _ => {}
                 }
@@ -1333,19 +1422,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn format_duration_brief_under_one_hour_is_m_ss() {
-        assert_eq!(format_duration_brief(0), "0:00");
-        assert_eq!(format_duration_brief(7), "0:07");
-        assert_eq!(format_duration_brief(60), "1:00");
-        assert_eq!(format_duration_brief(150), "2:30");
-        assert_eq!(format_duration_brief(59 * 60 + 59), "59:59");
-    }
-
-    #[test]
-    fn format_duration_brief_over_one_hour_is_h_mm_ss() {
-        assert_eq!(format_duration_brief(3600), "1:00:00");
-        assert_eq!(format_duration_brief(3661), "1:01:01");
-        assert_eq!(format_duration_brief(2 * 3600 + 5 * 60 + 9), "2:05:09");
-    }
 }

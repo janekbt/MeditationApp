@@ -8,6 +8,23 @@
 
 use std::error::Error;
 use std::fmt;
+use std::time::Duration;
+
+/// TCP connect cap. Network-unreachable / DNS-failure should
+/// surface as a `Network(_)` error quickly so the sync runner
+/// records the failure and the UI's spinner clears. ureq has no
+/// default — without this, a stuck connect blocks the worker
+/// thread indefinitely and the in-flight flag never clears.
+const TIMEOUT_CONNECT: Duration = Duration::from_secs(10);
+
+/// Per-read cap inside an established connection. Generous enough
+/// to absorb a slow phone uplink mid-PUT but short enough that a
+/// dead TCP session doesn't leave the worker hanging forever.
+const TIMEOUT_READ: Duration = Duration::from_secs(60);
+
+/// Per-write cap. Same logic as TIMEOUT_READ — bounded so a
+/// half-open connection eventually fails out rather than hanging.
+const TIMEOUT_WRITE: Duration = Duration::from_secs(60);
 
 #[derive(Debug)]
 pub enum WebDavError {
@@ -33,8 +50,25 @@ pub enum WebDavError {
     /// Body is included so logs can show what the server complained about.
     Server { status: u16, body: String },
     /// PROPFIND parser bailed — server responded but the XML wasn't a
-    /// shape we recognise.
-    MalformedResponse(String),
+    /// shape we recognise. `detail` is the parser's error string;
+    /// `body_excerpt` is the first ~512 bytes of the response so
+    /// a hand-debug doesn't have to reproduce the request to see what
+    /// the server actually sent (truncated to keep the diag log
+    /// readable for HTML error pages, multistatus dumps, etc.).
+    MalformedResponse { detail: String, body_excerpt: String },
+    /// GET body exceeded the per-call cap. A malicious or compromised
+    /// server could otherwise serve a multi-GB body and OOM the
+    /// client before any post-read size check fires. `limit` is the
+    /// caller-supplied cap in bytes — surfacing it in logs makes
+    /// "which cap did we hit" obvious.
+    ResponseTooLarge { limit: u64 },
+    /// Server returned a 3xx redirect. The client follows zero
+    /// redirects (`.redirects(0)` on the Agent) so the Authorization
+    /// header can never leak to a destination different from the
+    /// configured base URL. The user's recovery action is to update
+    /// their stored Nextcloud URL to the new location.
+    /// `location` is the `Location` header value when present.
+    Redirected { location: Option<String> },
 }
 
 impl fmt::Display for WebDavError {
@@ -51,7 +85,17 @@ impl fmt::Display for WebDavError {
             Self::Server { status, body } => {
                 write!(f, "WebDAV: server returned {status}: {body}")
             }
-            Self::MalformedResponse(s) => write!(f, "WebDAV: malformed response: {s}"),
+            Self::MalformedResponse { detail, body_excerpt } => write!(
+                f,
+                "WebDAV: malformed response: {detail} (body excerpt: {body_excerpt:?})",
+            ),
+            Self::ResponseTooLarge { limit } => {
+                write!(f, "WebDAV: response exceeded {limit}-byte cap")
+            }
+            Self::Redirected { location } => match location {
+                Some(loc) => write!(f, "WebDAV: server redirected to {loc}"),
+                None => write!(f, "WebDAV: server redirected (no Location header)"),
+            },
         }
     }
 }
@@ -68,8 +112,13 @@ pub trait WebDav {
     /// NOT included in the result.
     fn list_collection(&self, path: &str) -> WebDavResult<Vec<String>>;
 
-    /// Download a file's full body. `NotFound` for missing paths.
-    fn get(&self, path: &str) -> WebDavResult<Vec<u8>>;
+    /// Download a file's full body, capped at `max_bytes` to bound
+    /// the in-memory allocation. A server that serves a body
+    /// exceeding the cap surfaces `ResponseTooLarge { limit }`
+    /// without buffering the rest. `NotFound` for missing paths.
+    /// Each caller picks its own cap from the kind of body it
+    /// expects (event-bundle JSON vs custom-sound audio).
+    fn get(&self, path: &str, max_bytes: u64) -> WebDavResult<Vec<u8>>;
 
     /// Upload `body` to `path`, creating or overwriting. WebDAV PUT
     /// semantics — no atomic put-if-absent unless the impl negotiates
@@ -82,6 +131,16 @@ pub trait WebDav {
 
     /// Delete a file or empty collection.
     fn delete(&self, path: &str) -> WebDavResult<()>;
+
+    /// Atomically rename a remote resource via the WebDAV MOVE verb.
+    /// `from` and `to` are server-relative paths (same shape as the
+    /// other verbs). On success the resource at `to` reflects the
+    /// bytes that were at `from` and `from` no longer exists.
+    /// Used to commit a `.tmp` upload to its canonical name only
+    /// after the body bytes are durable on the server, so a
+    /// partial-PUT crash never leaves a half-written file at the
+    /// canonical path.
+    fn move_to(&self, from: &str, to: &str) -> WebDavResult<()>;
 }
 
 /// Production WebDAV client. Holds the base URL of the user's WebDAV
@@ -102,7 +161,20 @@ impl HttpWebDav {
         write!(&mut creds, "{username}:{password}").unwrap();
         let encoded = base64_encode(&creds);
         Self {
-            agent: ureq::AgentBuilder::new().build(),
+            agent: ureq::AgentBuilder::new()
+                .timeout_connect(TIMEOUT_CONNECT)
+                .timeout_read(TIMEOUT_READ)
+                .timeout_write(TIMEOUT_WRITE)
+                // No automatic redirect following: ureq 2.4+ strips
+                // Authorization on cross-host redirects, but mixed-
+                // case host / IDN tricks have historical bypasses
+                // and we'd rather not depend on the client library's
+                // defense. A redirect surfaces as `Redirected` so
+                // the user knows their stored URL needs updating
+                // rather than the client silently chasing a new
+                // host with their app password.
+                .redirects(0)
+                .build(),
             base_url: base_url.trim_end_matches('/').to_string(),
             auth_header: format!("Basic {encoded}"),
         }
@@ -140,6 +212,7 @@ impl HttpWebDav {
     /// - an HTTP-date — RFC-allowed but rare;
     /// - missing or unparseable — degrade to None and let exponential
     ///   backoff take over.
+    ///
     /// Splitting this out so every verb can call it on a 429 response
     /// before consuming the body, keeping the behaviour consistent.
     fn extract_rate_limit(resp: &ureq::Response) -> WebDavError {
@@ -147,19 +220,49 @@ impl HttpWebDav {
             .and_then(|s| s.trim().parse::<u64>().ok());
         WebDavError::RateLimited { retry_after }
     }
+
+    /// Promote a 3xx response to `WebDavError::Redirected`. With
+    /// `.redirects(0)` on the Agent ureq lands 3xx in the `Ok(resp)`
+    /// arm rather than `Err(Status(...))` — every verb has to ask
+    /// "is this a redirect?" before treating the body as a success
+    /// payload, otherwise we'd silently process an empty redirect
+    /// body as data or claim a write succeeded against a non-
+    /// existent path.
+    fn reject_if_redirect(resp: &ureq::Response) -> WebDavResult<()> {
+        let status = resp.status();
+        if (300..400).contains(&status) {
+            let location = resp.header("Location").map(str::to_owned);
+            return Err(WebDavError::Redirected { location });
+        }
+        Ok(())
+    }
 }
 
 impl WebDav for HttpWebDav {
-    fn get(&self, path: &str) -> WebDavResult<Vec<u8>> {
+    fn get(&self, path: &str, max_bytes: u64) -> WebDavResult<Vec<u8>> {
         match self.agent
             .get(&self.url(path))
             .set("Authorization", &self.auth_header)
             .call()
         {
             Ok(resp) => {
+                Self::reject_if_redirect(&resp)?;
+                // `take(max_bytes + 1)` lets us detect overflow:
+                // a body at-or-under the cap fits in `max_bytes`
+                // bytes; a body OVER the cap reads exactly
+                // `max_bytes + 1`. Bailing here keeps the in-
+                // memory allocation bounded even when a malicious
+                // server claims a small Content-Length and then
+                // streams gigabytes.
+                let cap = max_bytes.saturating_add(1);
                 let mut body = Vec::new();
-                resp.into_reader().read_to_end(&mut body)
+                resp.into_reader()
+                    .take(cap)
+                    .read_to_end(&mut body)
                     .map_err(|e| WebDavError::Network(e.to_string()))?;
+                if body.len() as u64 > max_bytes {
+                    return Err(WebDavError::ResponseTooLarge { limit: max_bytes });
+                }
                 Ok(body)
             }
             Err(ureq::Error::Status(status, resp)) => {
@@ -180,6 +283,7 @@ impl WebDav for HttpWebDav {
             .send_bytes(body)
         {
             Ok(resp) => {
+                Self::reject_if_redirect(&resp)?;
                 drain_response_body(resp);
                 Ok(())
             }
@@ -200,7 +304,29 @@ impl WebDav for HttpWebDav {
             .set("Authorization", &self.auth_header)
             .call()
         {
-            Ok(resp) => { drain_response_body(resp); Ok(()) }
+            Ok(resp) => { Self::reject_if_redirect(&resp)?; drain_response_body(resp); Ok(()) }
+            Err(ureq::Error::Status(status, resp)) => {
+                if status == 429 { return Err(Self::extract_rate_limit(&resp)); }
+                let body = resp.into_string().unwrap_or_default();
+                Err(Self::map_status_error(status, body))
+            }
+            Err(ureq::Error::Transport(t)) => Err(WebDavError::Network(t.to_string())),
+        }
+    }
+
+    fn move_to(&self, from: &str, to: &str) -> WebDavResult<()> {
+        // Per RFC 4918, MOVE carries the target in the `Destination`
+        // header as an absolute URL. `Overwrite: F` would make the
+        // verb refuse to clobber an existing target — we omit it
+        // because the caller (atomic-PUT helper) treats overwriting
+        // as the success case.
+        match self.agent
+            .request("MOVE", &self.url(from))
+            .set("Authorization", &self.auth_header)
+            .set("Destination", &self.url(to))
+            .call()
+        {
+            Ok(resp) => { Self::reject_if_redirect(&resp)?; drain_response_body(resp); Ok(()) }
             Err(ureq::Error::Status(status, resp)) => {
                 if status == 429 { return Err(Self::extract_rate_limit(&resp)); }
                 let body = resp.into_string().unwrap_or_default();
@@ -216,7 +342,7 @@ impl WebDav for HttpWebDav {
             .set("Authorization", &self.auth_header)
             .call()
         {
-            Ok(resp) => { drain_response_body(resp); Ok(()) }
+            Ok(resp) => { Self::reject_if_redirect(&resp)?; drain_response_body(resp); Ok(()) }
             Err(ureq::Error::Status(status, resp)) => {
                 if status == 429 { return Err(Self::extract_rate_limit(&resp)); }
                 let body = resp.into_string().unwrap_or_default();
@@ -239,7 +365,7 @@ impl WebDav for HttpWebDav {
             .set("Content-Type", "application/xml")
             .send_string(BODY)
         {
-            Ok(resp) => resp,
+            Ok(resp) => { Self::reject_if_redirect(&resp)?; resp },
             Err(ureq::Error::Status(status, resp)) => {
                 if status == 429 { return Err(Self::extract_rate_limit(&resp)); }
                 let body = resp.into_string().unwrap_or_default();
@@ -280,7 +406,10 @@ fn parse_multistatus_filenames(body: &str, requested_path: &str)
     -> WebDavResult<Vec<String>>
 {
     let doc = roxmltree::Document::parse(body)
-        .map_err(|e| WebDavError::MalformedResponse(e.to_string()))?;
+        .map_err(|e| WebDavError::MalformedResponse {
+            detail: e.to_string(),
+            body_excerpt: body.chars().take(512).collect(),
+        })?;
 
     // The "self" path: the directory we asked about. Strip leading /
     // and trailing / so the comparison is path-segment based.
@@ -299,7 +428,7 @@ fn parse_multistatus_filenames(body: &str, requested_path: &str)
         // Also normalise away any trailing slash.
         let trimmed = raw.trim_end_matches('/');
         // Final path segment.
-        let last_slash = trimmed.rfind('/').map(|i| i + 1).unwrap_or(0);
+        let last_slash = trimmed.rfind('/').map_or(0, |i| i + 1);
         let raw_name = &trimmed[last_slash..];
         let name = url_decode(raw_name);
 
@@ -322,7 +451,7 @@ fn parse_multistatus_filenames(body: &str, requested_path: &str)
 /// the "self" entry of a PROPFIND response. For "Meditate/events"
 /// returns "events"; for "" returns "".
 fn self_segment(normalised: &str) -> String {
-    let last_slash = normalised.rfind('/').map(|i| i + 1).unwrap_or(0);
+    let last_slash = normalised.rfind('/').map_or(0, |i| i + 1);
     normalised[last_slash..].to_string()
 }
 
@@ -362,7 +491,7 @@ fn hex_val(b: u8) -> Option<u8> {
 fn base64_encode(input: &[u8]) -> String {
     const ALPHABET: &[u8; 64] =
         b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity((input.len() + 2) / 3 * 4);
+    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
     for chunk in input.chunks(3) {
         let b0 = chunk[0];
         let b1 = chunk.get(1).copied().unwrap_or(0);
@@ -386,6 +515,7 @@ fn base64_encode(input: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_macros::assert_matches;
 
     // ── Basic-auth header construction ───────────────────────────────────
     //
@@ -445,9 +575,94 @@ mod tests {
             .create();
 
         let client = HttpWebDav::new(&server.url(), "u", "p");
-        let body = client.get("/file.json").unwrap();
+        let body = client.get("/file.json", u64::MAX).unwrap();
         assert_eq!(body, b"hello world");
         mock.assert();
+    }
+
+    #[test]
+    fn get_rejects_body_exceeding_cap() {
+        // A malicious or compromised Nextcloud could serve a multi-GB
+        // body and OOM the client if `get` read unbounded. The
+        // `max_bytes` cap stops the read at `max_bytes + 1` and
+        // surfaces `ResponseTooLarge` so the orchestrator drops the
+        // payload instead of buffering it.
+        let mut server = mockito::Server::new();
+        let _mock = server.mock("GET", "/big.json")
+            .with_status(200)
+            .with_body(vec![b'a'; 200])
+            .create();
+
+        let client = HttpWebDav::new(&server.url(), "u", "p");
+        let err = client.get("/big.json", 100).unwrap_err();
+        assert!(
+            matches!(err, WebDavError::ResponseTooLarge { limit: 100 }),
+            "expected ResponseTooLarge {{ limit: 100 }}, got {err:?}",
+        );
+    }
+
+    #[test]
+    fn get_3xx_returns_redirected_with_location() {
+        // Authorization on a 3xx is the credential-exfil shape we
+        // want to refuse. `.redirects(0)` keeps ureq from chasing
+        // the new host; this verb-level check turns the 3xx into a
+        // typed error so the shell can prompt the user to update
+        // their stored URL.
+        let mut server = mockito::Server::new();
+        let _mock = server.mock("GET", "/old.json")
+            .with_status(301)
+            .with_header("Location", "https://attacker.example/new.json")
+            .with_body("")
+            .create();
+
+        let client = HttpWebDav::new(&server.url(), "u", "p");
+        let err = client.get("/old.json", u64::MAX).unwrap_err();
+        match err {
+            WebDavError::Redirected { location } => {
+                assert_eq!(
+                    location.as_deref(),
+                    Some("https://attacker.example/new.json"),
+                );
+            }
+            other => panic!("expected Redirected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn put_3xx_returns_redirected() {
+        // Writes are the dangerous direction — if the client followed
+        // a 3xx, the app password would land on the redirect target.
+        let mut server = mockito::Server::new();
+        let mock = server.mock("PUT", "/x.json")
+            .with_status(301)
+            .with_header("Location", "https://attacker.example/x.json")
+            .with_body("")
+            .create();
+
+        let client = HttpWebDav::new(&server.url(), "u", "p");
+        let result = client.put("/x.json", b"payload");
+        mock.assert();
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, WebDavError::Redirected { .. }),
+            "expected Redirected, got {err:?}",
+        );
+    }
+
+    #[test]
+    fn get_at_cap_succeeds() {
+        // A body exactly at the cap must NOT trip the overflow check
+        // — the `take(max_bytes + 1)` boundary fires only when more
+        // than `max_bytes` bytes are read.
+        let mut server = mockito::Server::new();
+        let _mock = server.mock("GET", "/at-cap.json")
+            .with_status(200)
+            .with_body(vec![b'x'; 100])
+            .create();
+
+        let client = HttpWebDav::new(&server.url(), "u", "p");
+        let body = client.get("/at-cap.json", 100).unwrap();
+        assert_eq!(body.len(), 100);
     }
 
     #[test]
@@ -463,7 +678,7 @@ mod tests {
             .create();
 
         let client = HttpWebDav::new(&server.url(), "Aladdin", "open sesame");
-        client.get("/file.json").unwrap();
+        client.get("/file.json", u64::MAX).unwrap();
         mock.assert();
     }
 
@@ -476,7 +691,7 @@ mod tests {
             .create();
 
         let client = HttpWebDav::new(&server.url(), "u", "p");
-        let err = client.get("/missing.json").unwrap_err();
+        let err = client.get("/missing.json", u64::MAX).unwrap_err();
         assert!(matches!(err, WebDavError::NotFound),
             "expected NotFound, got {err:?}");
     }
@@ -490,7 +705,7 @@ mod tests {
             .create();
 
         let client = HttpWebDav::new(&server.url(), "u", "wrong-pass");
-        let err = client.get("/file.json").unwrap_err();
+        let err = client.get("/file.json", u64::MAX).unwrap_err();
         assert!(matches!(err, WebDavError::Unauthorized),
             "expected Unauthorized, got {err:?}");
     }
@@ -504,15 +719,15 @@ mod tests {
             .create();
 
         let client = HttpWebDav::new(&server.url(), "u", "p");
-        let err = client.get("/file.json").unwrap_err();
-        match err {
+        let err = client.get("/file.json", u64::MAX).unwrap_err();
+        assert_matches!(
+            err,
             WebDavError::Server { status, body } => {
                 assert_eq!(status, 500);
                 assert!(body.contains("DB connection"),
                     "body should be preserved for diagnostics, got: {body}");
             }
-            other => panic!("expected Server{{500}}, got {other:?}"),
-        }
+        );
     }
 
     #[test]
@@ -521,7 +736,7 @@ mod tests {
         // connection synchronously. We use a fixed unlikely port; if
         // this test flakes it means the port was actually in use.
         let client = HttpWebDav::new("http://127.0.0.1:1", "u", "p");
-        let err = client.get("/whatever").unwrap_err();
+        let err = client.get("/whatever", u64::MAX).unwrap_err();
         assert!(matches!(err, WebDavError::Network(_)),
             "expected Network, got {err:?}");
     }
@@ -608,13 +823,13 @@ mod tests {
             .create();
         let client = HttpWebDav::new(&server.url(), "u", "p");
         let err = client.put("/file.json", b"x").unwrap_err();
-        match err {
-            WebDavError::RateLimited { retry_after } => {
-                assert_eq!(retry_after, None,
-                    "no Retry-After header → retry_after must be None");
-            }
-            other => panic!("expected RateLimited, got {other:?}"),
-        }
+        assert_matches!(
+            err,
+            WebDavError::RateLimited { retry_after } => assert_eq!(
+                retry_after, None,
+                "no Retry-After header → retry_after must be None",
+            ),
+        );
     }
 
     #[test]
@@ -628,12 +843,10 @@ mod tests {
             .create();
         let client = HttpWebDav::new(&server.url(), "u", "p");
         let err = client.put("/file.json", b"x").unwrap_err();
-        match err {
-            WebDavError::RateLimited { retry_after } => {
-                assert_eq!(retry_after, Some(30));
-            }
-            other => panic!("expected RateLimited, got {other:?}"),
-        }
+        assert_matches!(
+            err,
+            WebDavError::RateLimited { retry_after } => assert_eq!(retry_after, Some(30)),
+        );
     }
 
     #[test]
@@ -875,7 +1088,7 @@ mod tests {
             .create();
         let client = HttpWebDav::new(&server.url(), "u", "p");
         let err = client.list_collection("/x/").unwrap_err();
-        assert!(matches!(err, WebDavError::MalformedResponse(_)),
+        assert!(matches!(err, WebDavError::MalformedResponse { .. }),
             "expected MalformedResponse, got {err:?}");
     }
 

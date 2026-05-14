@@ -124,8 +124,8 @@ impl LogView {
 
         // Fetch labels first (needed for card rendering)
         let labels = app
-            .with_db(|db| db.list_labels())
-            .and_then(|r| r.ok())
+            .with_db(super::super::db::Database::list_labels)
+            .and_then(std::result::Result::ok)
             .unwrap_or_default();
         *self.labels.borrow_mut() = labels;
 
@@ -172,7 +172,7 @@ impl LogView {
         };
         let page = app
             .with_db(|db| db.list_sessions(&filter))
-            .and_then(|r| r.ok())
+            .and_then(std::result::Result::ok)
             .unwrap_or_default();
 
         let n = page.len();
@@ -249,8 +249,8 @@ impl LogView {
         // "Box-breathing" label on first Box Breath save), our cache
         // doesn't know about it yet and the card would render unlabelled.
         if let Some(app) = self.get_app() {
-            if let Some(fresh) = app.with_db(|db| db.list_labels())
-                .and_then(|r| r.ok())
+            if let Some(fresh) = app.with_db(super::super::db::Database::list_labels)
+                .and_then(std::result::Result::ok)
             {
                 *self.labels.borrow_mut() = fresh;
             }
@@ -380,9 +380,9 @@ fn build_card(session: &Session, label_map: &std::collections::HashMap<i64, &str
         .build();
 
     // Left column: big duration, "MIN" unit, time-of-day.
-    let mins = (session.duration_secs.max(0) as u64 + 30) / 60;
+    let mins = meditate_core::format::log_card_minutes(session.duration_secs);
     let dur_label = gtk::Label::builder()
-        .label(mins.max(1).to_string())
+        .label(mins.to_string())
         .css_classes(["log-duration", "numeric"])
         .halign(gtk::Align::Start)
         .build();
@@ -552,64 +552,64 @@ fn build_label_chip(name: &str, color_cls: &str) -> gtk::Box {
 }
 
 /// Stable-per-name color class. We cycle through 8 HIG palette accents
-/// (defined in CSS as `.log-c0`..`.log-c7`). A DJB-ish string hash keeps
-/// the mapping stable across restarts without needing a per-label column.
+/// (defined in CSS as `.log-c0`..`.log-c7`). The deterministic 0..8
+/// index lives in core; the CSS-class mapping is gtk-side.
 fn label_color_class(name: &str) -> &'static str {
     const CLASSES: &[&str] = &[
         "log-c0", "log-c1", "log-c2", "log-c3",
         "log-c4", "log-c5", "log-c6", "log-c7",
     ];
-    let mut h: u32 = 5381;
-    for b in name.bytes() {
-        h = h.wrapping_mul(33).wrapping_add(b as u32);
-    }
-    CLASSES[(h as usize) % CLASSES.len()]
+    CLASSES[meditate_core::format::label_color_class_index(name)]
 }
 
-/// Local `YYYY-MM-DD` — used as a grouping key. Not shown to the user.
+/// Local `YYYY-MM-DD` — used as a grouping key. Not shown to the
+/// user. Delegates to core; gtk wrapper kept so the call sites
+/// don't all spell out `meditate_core::format::date_group_key`.
 fn date_group_key(unix_secs: i64) -> String {
-    glib::DateTime::from_unix_local(unix_secs)
-        .ok()
-        .and_then(|dt| dt.format("%Y-%m-%d").ok())
-        .map(|g| g.to_string())
-        .unwrap_or_default()
+    meditate_core::format::date_group_key(unix_secs)
 }
 
-/// Human-readable section header: "Today", "Yesterday", or "Apr 17".
-/// Year is elided for dates in the current calendar year, shown otherwise.
+/// Human-readable section header: "Today", "Yesterday", or "Apr 17"
+/// (year elided for dates in the current calendar year, shown
+/// otherwise). Classification lives in core; the locale-aware
+/// month/day rendering uses glib::DateTime so non-English locales
+/// get the right month abbreviations.
 fn date_group_display(unix_secs: i64) -> String {
-    let Some(dt) = glib::DateTime::from_unix_local(unix_secs).ok() else {
-        return String::new();
-    };
-    let now = crate::time::now_local();
-    let same_day = now.year() == dt.year() && now.day_of_year() == dt.day_of_year();
-    if same_day { return crate::i18n::gettext("Today"); }
-    if let Ok(yest) = now.add_days(-1) {
-        if yest.year() == dt.year() && yest.day_of_year() == dt.day_of_year() {
-            return crate::i18n::gettext("Yesterday");
+    use meditate_core::format::DateGroupKey;
+    let kind = meditate_core::format::date_group_kind(
+        unix_secs,
+        meditate_core::time::unix_now(),
+    );
+    match kind {
+        DateGroupKey::Today => crate::i18n::gettext("Today"),
+        DateGroupKey::Yesterday => crate::i18n::gettext("Yesterday"),
+        DateGroupKey::SameYearOther | DateGroupKey::EarlierYearOther => {
+            let Some(dt) = glib::DateTime::from_unix_local(unix_secs).ok() else {
+                return String::new();
+            };
+            // %b is the locale abbreviated month; no msgid needed.
+            let fmt = match kind {
+                DateGroupKey::SameYearOther => "%b %-d",
+                _ => "%b %-d, %Y",
+            };
+            dt.format(fmt).map(|g| g.to_string()).unwrap_or_default()
         }
     }
-    // %b is the locale abbreviated month; no msgid needed.
-    let fmt = if now.year() == dt.year() { "%b %-d" } else { "%b %-d, %Y" };
-    dt.format(fmt).map(|g| g.to_string()).unwrap_or_default()
 }
 
 fn format_time_of_day(unix_secs: i64) -> String {
-    glib::DateTime::from_unix_local(unix_secs)
-        .ok()
-        .and_then(|dt| dt.format("%H:%M").ok())
-        .map(|g| g.to_string())
-        .unwrap_or_default()
+    meditate_core::format::format_time_of_day(unix_secs)
 }
 
 fn section_caption_text(count: u32, total_secs: i64) -> String {
-    let base = if count == 1 {
-        crate::i18n::gettext("1 session")
-    } else {
-        crate::i18n::gettext("{n} sessions").replace("{n}", &count.to_string())
+    use meditate_core::format::SessionCountKey;
+    let base = match meditate_core::format::session_count_key(count as usize) {
+        SessionCountKey::One => crate::i18n::ngettext("1 session", "{n} sessions", 1),
+        SessionCountKey::Many(n) =>
+            crate::i18n::ngettext("1 session", "{n} sessions", n as u32)
+                .replace("{n}", &n.to_string()),
     };
-    let total = std::time::Duration::from_secs(total_secs.max(0) as u64);
-    format!("{base} · {}", meditate_core::format::format_hm_compact(total))
+    format!("{base} · {}", crate::format::format_hm_compact(total_secs))
 }
 
 // ── Delete with undo toast ────────────────────────────────────────────────────
@@ -629,11 +629,11 @@ impl LogView {
         self.pending_deletes.borrow_mut().push((session_id, session));
 
         let count = self.pending_deletes.borrow().len();
-        let title = if count == 1 {
-            crate::i18n::gettext("Session deleted")
-        } else {
-            crate::i18n::gettext("{n} sessions deleted").replace("{n}", &count.to_string())
-        };
+        let title = crate::announcement::title(
+            &meditate_core::announcement::Announcement::SessionDeleted {
+                count: count as u32,
+            },
+        );
 
         let new_toast = adw::Toast::builder()
             .title(&title)
@@ -664,8 +664,7 @@ impl LogView {
         new_toast.connect_dismissed(move |t| {
             let imp = obj_dismiss.imp();
             let still_active = imp.active_delete_toast.borrow().as_ref()
-                .map(|a| a.as_ptr() == t.as_ptr())
-                .unwrap_or(false);
+                .is_some_and(|a| a.as_ptr() == t.as_ptr());
             if !still_active { return; }
             imp.commit_all_pending();
         });
@@ -769,7 +768,7 @@ impl LogView {
         // dialog default to Timer for new entries (the dialog has no
         // mode selector — Box Breath / Guided sessions are produced
         // by the live timer view, not the log dialog).
-        let original_mode = session.map(|s| s.mode).unwrap_or(SessionMode::Timer);
+        let original_mode = session.map_or(SessionMode::Timer, |s| s.mode);
         let original_guided_file_uuid = session
             .and_then(|s| s.guided_file_uuid.clone());
 
@@ -791,10 +790,10 @@ impl LogView {
         }
 
         // ── Date row with calendar picker ──────────────────────────────
-        let init_time = session.map(|s| s.start_time).unwrap_or_else(unix_now);
+        let init_time = session.map_or_else(meditate_core::time::unix_now, |s| s.start_time);
         let init_dt = glib::DateTime::from_unix_local(init_time).ok();
-        let init_hour   = init_dt.as_ref().map(|d| d.hour()).unwrap_or(0);
-        let init_minute = init_dt.as_ref().map(|d| d.minute()).unwrap_or(0);
+        let init_hour   = init_dt.as_ref().map_or(0, glib::DateTime::hour);
+        let init_minute = init_dt.as_ref().map_or(0, glib::DateTime::minute);
 
         let date_row = adw::ActionRow::builder()
             .title(crate::i18n::gettext("Date"))
@@ -840,12 +839,12 @@ impl LogView {
         // ── Start time (hour + minute as AdwSpinRows) ─────────────────
         let time_hours_spin = adw::SpinRow::builder()
             .title(crate::i18n::gettext("Hour"))
-            .adjustment(&gtk::Adjustment::new(init_hour as f64, 0.0, 23.0, 1.0, 5.0, 0.0))
+            .adjustment(&gtk::Adjustment::new(f64::from(init_hour), 0.0, 23.0, 1.0, 5.0, 0.0))
             .digits(0)
             .build();
         let time_minutes_spin = adw::SpinRow::builder()
             .title(crate::i18n::gettext("Minute"))
-            .adjustment(&gtk::Adjustment::new(init_minute as f64, 0.0, 59.0, 1.0, 5.0, 0.0))
+            .adjustment(&gtk::Adjustment::new(f64::from(init_minute), 0.0, 59.0, 1.0, 5.0, 0.0))
             .digits(0)
             .build();
 
@@ -1076,7 +1075,7 @@ impl LogView {
                     time_hours_spin.value() as i32,
                     time_minutes_spin.value() as i32,
                     0.0,
-                ).ok().map(|d| d.to_unix()).unwrap_or_else(unix_now);
+                ).ok().map_or_else(meditate_core::time::unix_now, |d| d.to_unix());
                 let label_id = if label_expander.enables_expansion() {
                     selected_label_id_for_save.get()
                 } else {
@@ -1146,11 +1145,4 @@ fn format_date(unix_secs: i64) -> String {
         .unwrap_or_default()
 }
 
-
-fn unix_now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64
-}
 

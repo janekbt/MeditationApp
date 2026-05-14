@@ -22,14 +22,12 @@ impl FakeWebDav {
 
     /// Test helper: how many files are currently stored, regardless of
     /// path. Useful for "X events are visible on the remote" assertions.
-    #[allow(dead_code)]
     pub fn file_count(&self) -> usize {
         self.files.lock().unwrap().len()
     }
 
     /// Test helper: list every stored path. Sorted for deterministic
     /// assertions.
-    #[allow(dead_code)]
     pub fn paths(&self) -> Vec<String> {
         let mut v: Vec<String> = self.files.lock().unwrap().keys().cloned().collect();
         v.sort();
@@ -60,12 +58,16 @@ impl WebDav for FakeWebDav {
         Ok(names)
     }
 
-    fn get(&self, path: &str) -> WebDavResult<Vec<u8>> {
+    fn get(&self, path: &str, max_bytes: u64) -> WebDavResult<Vec<u8>> {
         let key = norm(path);
-        self.files.lock().unwrap()
+        let body = self.files.lock().unwrap()
             .get(&key)
             .cloned()
-            .ok_or(WebDavError::NotFound)
+            .ok_or(WebDavError::NotFound)?;
+        if body.len() as u64 > max_bytes {
+            return Err(WebDavError::ResponseTooLarge { limit: max_bytes });
+        }
+        Ok(body)
     }
 
     fn put(&self, path: &str, body: &[u8]) -> WebDavResult<()> {
@@ -89,6 +91,15 @@ impl WebDav for FakeWebDav {
             Err(WebDavError::NotFound)
         }
     }
+
+    fn move_to(&self, from: &str, to: &str) -> WebDavResult<()> {
+        let from_key = norm(from);
+        let to_key = norm(to);
+        let mut files = self.files.lock().unwrap();
+        let body = files.remove(&from_key).ok_or(WebDavError::NotFound)?;
+        files.insert(to_key, body);
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -99,7 +110,7 @@ mod tests {
     fn put_then_get_round_trips() {
         let fs = FakeWebDav::new();
         fs.put("/foo.json", b"hello").unwrap();
-        assert_eq!(fs.get("/foo.json").unwrap(), b"hello");
+        assert_eq!(fs.get("/foo.json", u64::MAX).unwrap(), b"hello");
     }
 
     #[test]
@@ -107,13 +118,13 @@ mod tests {
         let fs = FakeWebDav::new();
         fs.put("/foo.json", b"v1").unwrap();
         fs.put("/foo.json", b"v2").unwrap();
-        assert_eq!(fs.get("/foo.json").unwrap(), b"v2");
+        assert_eq!(fs.get("/foo.json", u64::MAX).unwrap(), b"v2");
     }
 
     #[test]
     fn get_missing_path_returns_not_found() {
         let fs = FakeWebDav::new();
-        assert!(matches!(fs.get("/missing").unwrap_err(), WebDavError::NotFound));
+        assert!(matches!(fs.get("/missing", u64::MAX).unwrap_err(), WebDavError::NotFound));
     }
 
     #[test]
@@ -152,7 +163,7 @@ mod tests {
         let fs = FakeWebDav::new();
         fs.put("/x.json", b"").unwrap();
         fs.delete("/x.json").unwrap();
-        assert!(matches!(fs.get("/x.json").unwrap_err(), WebDavError::NotFound));
+        assert!(matches!(fs.get("/x.json", u64::MAX).unwrap_err(), WebDavError::NotFound));
     }
 
     #[test]
@@ -162,12 +173,39 @@ mod tests {
     }
 
     #[test]
+    fn move_to_renames_file_atomically() {
+        let fs = FakeWebDav::new();
+        fs.put("/a.tmp", b"payload").unwrap();
+        fs.move_to("/a.tmp", "/a.json").unwrap();
+        assert!(matches!(fs.get("/a.tmp", u64::MAX).unwrap_err(), WebDavError::NotFound));
+        assert_eq!(fs.get("/a.json", u64::MAX).unwrap(), b"payload");
+    }
+
+    #[test]
+    fn move_to_missing_source_returns_not_found() {
+        let fs = FakeWebDav::new();
+        assert!(matches!(
+            fs.move_to("/nope", "/anywhere").unwrap_err(),
+            WebDavError::NotFound,
+        ));
+    }
+
+    #[test]
+    fn move_to_overwrites_existing_target() {
+        let fs = FakeWebDav::new();
+        fs.put("/a.tmp", b"new").unwrap();
+        fs.put("/a.json", b"old").unwrap();
+        fs.move_to("/a.tmp", "/a.json").unwrap();
+        assert_eq!(fs.get("/a.json", u64::MAX).unwrap(), b"new");
+    }
+
+    #[test]
     fn clones_share_the_same_underlying_store() {
         // The whole point of the Arc<Mutex<...>>: clones see each
         // other's writes. Two devices' Sync instances share one fake.
         let fs_a = FakeWebDav::new();
         let fs_b = fs_a.clone();
         fs_a.put("/x.json", b"from a").unwrap();
-        assert_eq!(fs_b.get("/x.json").unwrap(), b"from a");
+        assert_eq!(fs_b.get("/x.json", u64::MAX).unwrap(), b"from a");
     }
 }

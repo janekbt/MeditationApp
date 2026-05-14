@@ -1,7 +1,6 @@
 mod imp;
-pub mod breathing;
 
-pub use imp::{format_time, TimerMode, TimerState};
+pub use imp::TimerMode;
 
 use gtk::glib;
 use gtk::glib::prelude::*;
@@ -120,7 +119,7 @@ impl TimerView {
         self.imp().current_mode() == TimerMode::Breathing
     }
 
-    pub fn breathing_pattern(&self) -> breathing::Pattern {
+    pub fn breathing_pattern(&self) -> meditate_core::breath::BreathPattern {
         self.imp().breathing_pattern.get()
     }
 
@@ -137,10 +136,6 @@ impl TimerView {
     /// the counter as elapsed-only instead of elapsed/target when on.
     pub fn stopwatch_active(&self) -> bool {
         self.imp().stopwatch_toggle_on.get()
-    }
-
-    pub fn breath_is_finished(&self) -> bool {
-        self.imp().breath_is_finished()
     }
 
     pub fn finish_breath_session(&self) {

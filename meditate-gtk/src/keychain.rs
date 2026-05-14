@@ -220,8 +220,12 @@ async fn open_chosen_backend() -> Result<Backend> {
         Err(e) => {
             // Even opening the portal/D-Bus failed (e.g. neither
             // is available). Fall back unconditionally and remember.
-            crate::diag::log(&format!(
-                "keychain: portal/D-Bus open failed ({e}); using self-keyed file backend"));
+            meditate_core::log(
+                "keychain",
+                &format!(
+                    "portal/D-Bus open failed ({e}); using self-keyed file backend"
+                ),
+            );
             BACKEND_CHOICE.store(BACKEND_SELF_KEYED, Ordering::Release);
             open_self_keyed_backend().await
         }
@@ -239,9 +243,13 @@ fn mark_backend_ok(backend: &Backend) {
 }
 
 fn fall_back_log(err: &oo7::Error) {
-    crate::diag::log(&format!(
-        "keychain: portal returned an unusable master key ({err}); \
-         falling back to self-keyed file backend"));
+    meditate_core::log(
+        "keychain",
+        &format!(
+            "portal returned unusable master key ({err}); \
+             falling back to self-keyed file backend"
+        ),
+    );
     BACKEND_CHOICE.store(BACKEND_SELF_KEYED, Ordering::Release);
 }
 

@@ -1,0 +1,353 @@
+//! Tiny ring-buffer diagnostics log.
+//!
+//! Rationale: on a user's Librem 5 there's no terminal to tail stderr, so
+//! issues the user reports come with zero local context. This module
+//! appends boundary-event lines (startup, DB open result, import/export
+//! result, panics) to `<data_dir>/diagnostics.log` and surfaces the file
+//! via `AdwAboutDialog`'s Debug Info viewer (copy + save-to-file built in).
+//!
+//! Scope on purpose is tight:
+//! - One severity level. `log(msg)` takes a string and writes `<ts> msg`.
+//! - No structured fields, no per-frame logging, no per-session-save line.
+//!   Frame-clock spam would make the tail useless for triage.
+//! - Trim to the last 2000 lines on each `init()` — runs once per app
+//!   launch, so the file grows within a session but can never exceed
+//!   2000 lines across sessions. No timer-based rotation.
+//! - Panic hook installed once at `init()`. Runs before the default hook
+//!   (which prints to stderr and unwinds), so a crash shows up in the log
+//!   even if the user never saw stderr.
+//!
+//! Thread safety: a single `OnceLock<Mutex<File>>` opened at `init()`
+//! serialises writes. The previous design opened the file per `log()`
+//! call and relied on Linux O_APPEND line atomicity; sync flows fire
+//! 5–10 lines per pass and the open syscall dominates the cost on
+//! phone eMMC (hundreds of µs each). Trade-off: a user who deletes
+//! `diagnostics.log` mid-session would have their `log()` calls
+//! silently write to the deleted-but-still-open fd until next `init`;
+//! the only legitimate deleter is `init` itself, so this is fine.
+
+use std::fs::{File, OpenOptions};
+use std::io::{BufRead, BufReader, Write};
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
+
+const MAX_LINES: usize = 2000;
+
+/// Boot-time gap (between two consecutive `log()` calls) above which
+/// we annotate the second line with a `[+Ns since prev]` marker. A
+/// device suspend across midnight or DST otherwise leaves two
+/// adjacent log lines with wildly different wall-clock timestamps
+/// and no visible signal that any time-domain jump happened. The
+/// 5-second threshold conflates "device suspended" with "app was
+/// genuinely idle for a few seconds" — fine, the marker is
+/// informational, not diagnostic.
+const SUSPEND_MARKER_GAP_SECS: u64 = 5;
+
+struct LogState {
+    file: File,
+    /// Boot-time at the previous `log()` call. `None` until the
+    /// first line is written; the first marker fires on the second
+    /// call.
+    last_boot: Option<Duration>,
+}
+
+static LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
+static LOG_STATE: OnceLock<Mutex<LogState>> = OnceLock::new();
+
+/// Initialise the diag log at `<data_dir>/diagnostics.log`. Trims any
+/// existing log to the last `MAX_LINES` lines, opens the file once
+/// for append, then installs a panic hook that appends panic info
+/// before the default hook unwinds. Idempotent — safe to call more
+/// than once (subsequent calls are no-ops).
+pub fn init(data_dir: &Path) {
+    if LOG_PATH.get().is_some() {
+        return;
+    }
+    let _ = std::fs::create_dir_all(data_dir);
+    let path = data_dir.join("diagnostics.log");
+    trim_to_tail(&path, MAX_LINES);
+    let _ = LOG_PATH.set(path.clone());
+    // 0600 on the create path so a non-flatpak (no app sandbox)
+    // install doesn't leave the log world-readable under the
+    // default umask. Belt-and-braces — every current `diag::log`
+    // call site has been audited as not logging secrets, but a
+    // future caller could regress without this gate.
+    let mut open = OpenOptions::new();
+    open.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        open.mode(0o600);
+    }
+    if let Ok(f) = open.open(&path) {
+        let _ = LOG_STATE.set(Mutex::new(LogState { file: f, last_boot: None }));
+    }
+    install_panic_hook();
+}
+
+/// Append a single line to the diag log. Cheap no-op if `init` hasn't
+/// run or the file couldn't be opened — this is diagnostics, not
+/// business logic, so failure to log must never fail the caller.
+/// Poisoned mutex (a previous holder panicked mid-write) is treated
+/// the same: drop silently.
+///
+/// Format: `<rfc3339-local-ts> [<scope>] <msg>`. The structured tag
+/// lets future tooling (CLI grep, an Android Sentry/Bugsnag bridge,
+/// a future `meditate logs --json` exporter) key off scope without
+/// regex-tearing the free-text message. Scope is by convention a
+/// `dot.path` like `sync.push` or `keychain` — kebab-case, no
+/// spaces, no square brackets.
+pub fn log(scope: &str, msg: &str) {
+    let Some(mutex) = LOG_STATE.get() else { return; };
+    let Ok(mut state) = mutex.lock() else { return; };
+    let ts = timestamp();
+    let now_boot = crate::time::boot_time_now();
+    if let Some(marker) = suspend_marker_text(now_boot, state.last_boot) {
+        let _ = writeln!(state.file, "{ts} [diag] {marker}");
+    }
+    state.last_boot = Some(now_boot);
+    let _ = writeln!(state.file, "{ts} [{scope}] {msg}");
+}
+
+/// Decision-only half of the suspend-marker logic: `None` for "no
+/// marker needed," `Some("[+Ns since prev log]")` when the boot-time
+/// gap since the previous `log()` call exceeded
+/// `SUSPEND_MARKER_GAP_SECS`. Pure function so tests can drive the
+/// threshold with manufactured `Duration`s rather than waiting on a
+/// real clock or a real suspend cycle.
+fn suspend_marker_text(now_boot: Duration, prev_boot: Option<Duration>) -> Option<String> {
+    let prev = prev_boot?;
+    let gap = now_boot.saturating_sub(prev);
+    if gap.as_secs() >= SUSPEND_MARKER_GAP_SECS {
+        Some(format!("[+{}s since prev log]", gap.as_secs()))
+    } else {
+        None
+    }
+}
+
+/// Return the full log as a single string, or an empty string if the
+/// log isn't initialised / the file can't be read. Used to feed
+/// `AdwAboutDialog::set_debug_info`.
+pub fn read_all() -> String {
+    let Some(path) = LOG_PATH.get() else { return String::new(); };
+    std::fs::read_to_string(path).unwrap_or_default()
+}
+
+fn timestamp() -> String {
+    // RFC 3339 with local offset: machine-parseable (one regex covers
+    // every line a downstream tool sees) and still human-readable on
+    // the user's device — `2026-05-11T14:23:01+02:00` reads as 2:23pm
+    // local to anyone who knows their own offset. chrono's
+    // `Local::now()` is infallible (silently falls back to UTC when
+    // tzdata is missing rather than erroring), so the explicit
+    // "@<unix-secs>" last-resort branch the glib version had can't
+    // be reached and was dropped.
+    chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+}
+
+/// Rewrite `path` to contain only its last `max_lines` lines. No-op if
+/// the file doesn't exist yet or is already small enough. Writes via a
+/// `.tmp` sibling + rename so a kill mid-trim doesn't corrupt the log.
+fn trim_to_tail(path: &Path, max_lines: usize) {
+    let Ok(file) = File::open(path) else { return; };
+    let lines: Vec<String> = BufReader::new(file)
+        .lines()
+        .map_while(Result::ok)
+        .collect();
+    if lines.len() <= max_lines {
+        return;
+    }
+    let keep_from = lines.len() - max_lines;
+    let tmp = path.with_extension("log.tmp");
+    let Ok(mut out) = File::create(&tmp) else { return; };
+    for line in &lines[keep_from..] {
+        if writeln!(out, "{line}").is_err() {
+            return;
+        }
+    }
+    let _ = std::fs::rename(&tmp, path);
+}
+
+fn install_panic_hook() {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let loc = info
+            .location().map_or_else(|| "<unknown>".to_string(), |l| format!("{}:{}", l.file(), l.line()));
+        let payload = info.payload();
+        let msg = if let Some(s) = payload.downcast_ref::<&str>() {
+            *s
+        } else if let Some(s) = payload.downcast_ref::<String>() {
+            s.as_str()
+        } else {
+            "<non-string panic payload>"
+        };
+        log("panic", &format!("at {loc}: {msg}"));
+        default(info);
+    }));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trim_tail_no_op_when_short() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.log");
+        std::fs::write(&path, b"a\nb\nc\n").unwrap();
+        trim_to_tail(&path, 100);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "a\nb\nc\n");
+    }
+
+    #[test]
+    fn trim_tail_keeps_last_n_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.log");
+        let mut body = String::new();
+        for i in 0..50 {
+            body.push_str(&format!("line {i}\n"));
+        }
+        std::fs::write(&path, body).unwrap();
+        trim_to_tail(&path, 10);
+        let kept = std::fs::read_to_string(&path).unwrap();
+        let kept_lines: Vec<&str> = kept.lines().collect();
+        assert_eq!(kept_lines.len(), 10);
+        assert_eq!(kept_lines[0], "line 40");
+        assert_eq!(kept_lines[9], "line 49");
+    }
+
+    #[test]
+    fn log_without_init_is_noop() {
+        // LOG_PATH unset → log() must silently drop. OnceLock is per-process,
+        // so we can't robustly test the "set path then log" path here without
+        // clobbering state shared with other tests. This test covers the
+        // "never initialised" branch, which is what library consumers hit
+        // when the data dir couldn't be created.
+        log("test", "should not panic and should not create a file");
+    }
+
+    // ── Suspend-marker decision ──────────────────────────────────────────────
+
+    #[test]
+    fn suspend_marker_none_for_first_log_call() {
+        // No previous boot-time recorded yet → marker never fires
+        // (otherwise every fresh process would emit a confusing
+        // marker on its first line).
+        assert_eq!(suspend_marker_text(Duration::from_secs(1000), None), None);
+    }
+
+    #[test]
+    fn suspend_marker_none_below_threshold() {
+        // Gap of 4 s — under the 5-second SUSPEND_MARKER_GAP_SECS
+        // threshold. Normal "app was idle for a few seconds"
+        // ergonomic gap; not a suspend.
+        let now = Duration::from_secs(1004);
+        let prev = Duration::from_secs(1000);
+        assert_eq!(suspend_marker_text(now, Some(prev)), None);
+    }
+
+    #[test]
+    fn suspend_marker_fires_at_threshold() {
+        // Gap of exactly 5 s — boundary inclusive per `>= threshold`.
+        let now = Duration::from_secs(1005);
+        let prev = Duration::from_secs(1000);
+        assert_eq!(
+            suspend_marker_text(now, Some(prev)),
+            Some("[+5s since prev log]".to_string()),
+        );
+    }
+
+    #[test]
+    fn suspend_marker_carries_the_actual_gap_in_seconds() {
+        // 600-second gap (10 min suspend) — marker text must surface
+        // the real number, not just a generic "long pause" string.
+        let now = Duration::from_secs(1600);
+        let prev = Duration::from_secs(1000);
+        assert_eq!(
+            suspend_marker_text(now, Some(prev)),
+            Some("[+600s since prev log]".to_string()),
+        );
+    }
+
+    #[test]
+    fn suspend_marker_handles_clock_going_backwards_via_saturating_sub() {
+        // If `now < prev` (shouldn't happen under CLOCK_BOOTTIME but
+        // saturating_sub defends against it anyway), the gap is 0
+        // and the marker stays silent rather than panicking on
+        // underflow.
+        let now = Duration::from_secs(1000);
+        let prev = Duration::from_secs(1010);
+        assert_eq!(suspend_marker_text(now, Some(prev)), None);
+    }
+
+    // ── Panic hook (forked-process) ──────────────────────────────────────────
+
+    /// Env var the parent passes to the child to flip the test fn
+    /// into "panic-and-log" mode.
+    const PANIC_TEST_ENV: &str = "MEDITATE_DIAG_PANIC_TEST_DIR";
+
+    /// Recognisable sentinel string that ends up inside the panic
+    /// message → the diag log → the parent's assert. Specific enough
+    /// not to collide with anything else in normal output.
+    const PANIC_TEST_SENTINEL: &str = "diag_panic_hook_test_sentinel";
+
+    #[test]
+    fn panic_hook_writes_panic_line_to_diag_log() {
+        // OnceLock + `std::panic::set_hook` are both process-global,
+        // so verifying the panic hook in-process clobbers other
+        // tests. Solution: re-spawn the test binary in a subprocess,
+        // narrow libtest to just this one test, and inspect the log
+        // file the child wrote before its panic unwound.
+
+        // Child branch — env var present → init diag, deliberately
+        // panic. The hook fires (logs PANIC line), the chained
+        // default hook prints to stderr, the process exits nonzero.
+        if let Ok(dir) = std::env::var(PANIC_TEST_ENV) {
+            super::init(std::path::Path::new(&dir));
+            panic!("{PANIC_TEST_SENTINEL}");
+        }
+
+        // Parent branch — spawn ourselves with the env var pointing
+        // at a unique tempdir.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let exe = std::env::current_exe().expect("current_exe");
+        let status = std::process::Command::new(&exe)
+            .arg("--exact")
+            .arg("diag::tests::panic_hook_writes_panic_line_to_diag_log")
+            // libtest captures child stderr; --nocapture lets it
+            // flow to the Stdio::null'd pipe below so the
+            // intentional panic doesn't pollute the parent's output.
+            .arg("--nocapture")
+            .env(PANIC_TEST_ENV, dir.path())
+            .stderr(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .status()
+            .expect("spawn child");
+
+        assert!(
+            !status.success(),
+            "child must panic and exit nonzero, got {status:?}",
+        );
+
+        let log_path = dir.path().join("diagnostics.log");
+        let contents = std::fs::read_to_string(&log_path)
+            .expect("child should have written the diag log before unwind");
+
+        assert!(
+            contents.contains("[panic]"),
+            "log must carry the [panic] scope tag:\n{contents}",
+        );
+        assert!(
+            contents.contains(PANIC_TEST_SENTINEL),
+            "log must contain the panic message:\n{contents}",
+        );
+        // info.location() captures the panic site's source file —
+        // asserting just `diag.rs` (not the line number) keeps the
+        // test robust against unrelated edits in this file.
+        assert!(
+            contents.contains("diag.rs"),
+            "log must capture the panic source file:\n{contents}",
+        );
+    }
+}

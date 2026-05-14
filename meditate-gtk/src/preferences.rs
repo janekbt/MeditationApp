@@ -4,6 +4,10 @@ use gtk::{gio, glib};
 
 use crate::application::MeditateApplication;
 use crate::i18n::gettext;
+use meditate_core::goal::{
+    weekly_goal_mins_from_db, write_weekly_goal_mins,
+    WEEKLY_GOAL_DEFAULT, WEEKLY_GOAL_MAX, WEEKLY_GOAL_MIN, WEEKLY_GOAL_STEP,
+};
 
 pub fn show_preferences(app: &MeditateApplication) {
     show_preferences_on_page(app, None);
@@ -81,15 +85,20 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
 
     // Weekly meditation goal — drives the ring on the Stats tab.
     let current_goal_mins = app
-        .with_db(|db| db.get_setting("weekly_goal_mins", "150"))
-        .and_then(|r| r.ok())
-        .and_then(|s| s.parse::<f64>().ok())
-        .unwrap_or(150.0);
+        .with_db(|db| weekly_goal_mins_from_db(db.core()))
+        .unwrap_or(WEEKLY_GOAL_DEFAULT);
     let goal_row = adw::SpinRow::builder()
         .title(gettext("Weekly goal"))
         .subtitle(gettext("Minutes per week — drives the ring on the Stats tab"))
-        .adjustment(&gtk::Adjustment::new(current_goal_mins, 30.0, 1000.0, 15.0, 60.0, 0.0))
-        .climb_rate(15.0)
+        .adjustment(&gtk::Adjustment::new(
+            current_goal_mins as f64,
+            WEEKLY_GOAL_MIN as f64,
+            WEEKLY_GOAL_MAX as f64,
+            WEEKLY_GOAL_STEP as f64,
+            (WEEKLY_GOAL_STEP * 4) as f64,
+            0.0,
+        ))
+        .climb_rate(WEEKLY_GOAL_STEP as f64)
         .digits(0)
         .build();
     goal_row.connect_notify_local(
@@ -98,7 +107,9 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
             #[weak] app,
             move |row, _| {
                 let val = row.value() as i64;
-                app.with_db_mut(|db| db.set_setting("weekly_goal_mins", &val.to_string()));
+                app.with_db_mut(|db| {
+                    let _ = write_weekly_goal_mins(db.core(), val);
+                });
                 app.invalidate(crate::application::InvalidateScope::STATS);
             }
         ),
@@ -206,8 +217,8 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
     // Pre-fill from previously-saved values. Password stays blank by
     // design — we don't echo what's in the keychain.
     if let Some(account) = app
-        .with_db(crate::sync_settings::get_nextcloud_account)
-        .and_then(|r| r.ok())
+        .with_db(|db| meditate_core::sync::settings::nextcloud_account_from_db(db.core()))
+        .and_then(std::result::Result::ok)
         .flatten()
     {
         url_row.set_text(&account.url);
@@ -250,34 +261,54 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
         #[weak] password_row,
         #[weak] test_btn,
         move |_| {
-            let url = url_row.text().trim().to_string();
-            let username = username_row.text().trim().to_string();
-            if url.is_empty() || username.is_empty() {
-                data_toast(&dialog, &gettext("Enter URL and username"));
-                return;
-            }
-            // If the password field is blank, fall back to the saved
-            // keychain entry so testing doesn't require re-typing for
-            // the "URL+user are right, is the keyring still good?" case.
+            use meditate_core::sync::credentials::{prepare_test, SyncSettingsError};
+            // Snapshot the raw fields so the keychain-lookup closure
+            // can use the trimmed url/username if it fires.
+            let raw_url = url_row.text().to_string();
+            let raw_username = username_row.text().to_string();
             let typed_pw = password_row.text().to_string();
-            let password = if typed_pw.is_empty() {
-                match crate::keychain::read_password(&url, &username) {
-                    Ok(Some(p)) => p,
-                    Ok(None) => {
-                        data_toast(&dialog, &gettext("Enter a password"));
-                        return;
-                    }
+            let creds = prepare_test(&raw_url, &raw_username, &typed_pw, || {
+                let url = raw_url.trim();
+                let username = raw_username.trim();
+                // `Result::inspect_err` would be the idiomatic shape
+                // here, but it's stable since Rust 1.76 and the crate
+                // pins MSRV at 1.75 — match-then-log keeps the floor.
+                match crate::keychain::read_password(url, username) {
+                    Ok(opt) => Ok(opt),
                     Err(e) => {
-                        // Full error to diag log; toast stays narrow.
-                        crate::diag::log(&format!(
-                            "test_connection: keychain read failed: {e:?}"));
-                        data_toast(&dialog, &gettext("Keyring read failed"));
-                        return;
+                        meditate_core::log(
+                            "test_connection",
+                            &format!("keychain read failed: {e:?}"),
+                        );
+                        Err(e)
                     }
                 }
-            } else {
-                typed_pw
+            });
+            let creds = match creds {
+                Ok(c) => c,
+                Err(SyncSettingsError::EmptyUrl)
+                | Err(SyncSettingsError::EmptyUsername) => {
+                    data_toast(&dialog, &gettext("Enter URL and username"));
+                    return;
+                }
+                Err(SyncSettingsError::NoPassword) => {
+                    data_toast(&dialog, &gettext("Enter a password"));
+                    return;
+                }
+                Err(SyncSettingsError::KeyringFailed) => {
+                    data_toast(&dialog, &gettext("Keyring read failed"));
+                    return;
+                }
+                // prepare_test never emits InsecureUrl — the test
+                // path lets http:// through so the user can probe
+                // it; the save path is where that gets refused.
+                Err(SyncSettingsError::InsecureUrl) => unreachable!(
+                    "prepare_test does not validate URL scheme"
+                ),
             };
+            let url = creds.url;
+            let username = creds.username;
+            let password = creds.password;
 
             // Disable the button while the HTTP call is in flight.
             test_btn.set_sensitive(false);
@@ -308,7 +339,7 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
                             (m.clone(), "worker thread panicked".to_string())
                         }
                     };
-                    crate::diag::log(&format!("test_connection: {detail}"));
+                    meditate_core::log("test_connection", &detail);
                     dialog.add_toast(adw::Toast::builder()
                         .title(&toast).timeout(4).build());
                 }
@@ -340,6 +371,7 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
         #[weak] username_row,
         #[weak] password_row,
         move |_| {
+            use meditate_core::sync::credentials::{prepare_save, PasswordAction, SyncSettingsError};
             let url = url_row.text().to_string();
             let username = username_row.text().to_string();
             let password = password_row.text().to_string();
@@ -347,13 +379,27 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
             // Trim leading/trailing whitespace on URL and username only.
             // Password is taken verbatim — Nextcloud app-passwords are
             // hex blobs that don't need trimming.
-            let url_trimmed = url.trim();
-            let username_trimmed = username.trim();
-
-            if url_trimmed.is_empty() || username_trimmed.is_empty() {
-                data_toast(&dialog, &gettext("Enter URL and username"));
-                return;
-            }
+            let plan = match prepare_save(&url, &username, &password) {
+                Ok(p) => p,
+                Err(SyncSettingsError::EmptyUrl)
+                | Err(SyncSettingsError::EmptyUsername) => {
+                    data_toast(&dialog, &gettext("Enter URL and username"));
+                    return;
+                }
+                Err(SyncSettingsError::InsecureUrl) => {
+                    data_toast(&dialog, &gettext("URL must start with https://"));
+                    return;
+                }
+                // prepare_save never emits NoPassword/KeyringFailed —
+                // it doesn't touch the keychain. The shell stores the
+                // typed password AFTER this validates.
+                Err(SyncSettingsError::NoPassword)
+                | Err(SyncSettingsError::KeyringFailed) => unreachable!(
+                    "prepare_save does not consult the keychain"
+                ),
+            };
+            let url_trimmed: &str = &plan.url;
+            let username_trimmed: &str = &plan.username;
 
             // Order matters: store the password FIRST, then save the
             // account, then fire the sync trigger explicitly. The
@@ -366,15 +412,15 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
             //
             // Empty password = "keep what's in the keychain" — don't
             // clobber the saved one with "".
-            if !password.is_empty() {
-                match crate::keychain::store_password(url_trimmed, username_trimmed, &password) {
+            if let PasswordAction::Store(new_password) = &plan.password {
+                match crate::keychain::store_password(url_trimmed, username_trimmed, new_password) {
                     Ok(()) => password_row.set_text(""),
                     Err(e) => {
                         // Log the full error to diagnostics — toast text
                         // gets cut off in narrow viewports (Librem 5,
                         // GNOME Shell), but the diagnostics file is
                         // uncapped and visible via About → Troubleshooting.
-                        crate::diag::log(&format!("keychain store failed: {e:?}"));
+                        meditate_core::log("keychain", &format!("store failed: {e:?}"));
                         data_toast(&dialog, &gettext("Keyring write failed"));
                         return;
                     }
@@ -385,13 +431,15 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
             // so we control when the trigger fires — explicitly,
             // below, after BOTH credentials are in place.
             let account_result = app.with_db(|db| {
-                crate::sync_settings::set_nextcloud_account(db, url_trimmed, username_trimmed)
+                meditate_core::sync::settings::set_nextcloud_account(db.core(), url_trimmed, username_trimmed)
             });
             match account_result {
                 Some(Ok(())) => {}
                 Some(Err(e)) => {
-                    crate::diag::log(&format!(
-                        "sync settings save failed: {e:?}"));
+                    meditate_core::log(
+                        "sync.settings",
+                        &format!("save failed: {e:?}"),
+                    );
                     data_toast(&dialog, &gettext("Save failed"));
                     return;
                 }
@@ -509,11 +557,11 @@ fn wire_data_actions(
                         let Ok(file) = result else { return; };
                         let Some(path) = file.path() else { return; };
                         match data_io::export_csv(&app, &path) {
-                            Ok(n) => data_toast(&dialog, &pluralize_sessions(
-                                &gettext("Exported 1 session"),
-                                &gettext("Exported {n} sessions"),
-                                n,
-                            )),
+                            Ok(n) => data_toast(&dialog, &crate::i18n::ngettext(
+                                "Exported 1 session",
+                                "Exported {n} sessions",
+                                n as u32,
+                            ).replace("{n}", &n.to_string())),
                             Err(e) => data_toast(&dialog, &gettext("Export failed: {error}")
                                 .replace("{error}", &e.to_string())),
                         }
@@ -567,11 +615,11 @@ fn wire_data_actions(
                     move |_, _| {
                         match data_io::delete_all(&app) {
                             Ok(n) => {
-                                data_toast(&dialog, &pluralize_sessions(
-                                    &gettext("Deleted 1 session"),
-                                    &gettext("Deleted {n} sessions"),
-                                    n,
-                                ));
+                                data_toast(&dialog, &crate::i18n::ngettext(
+                                    "Deleted 1 session",
+                                    "Deleted {n} sessions",
+                                    n as u32,
+                                ).replace("{n}", &n.to_string()));
                                 app.invalidate(crate::application::InvalidateScope::ALL);
                                 refresh_main_window(&app);
                             }
@@ -614,11 +662,11 @@ where F: FnOnce(&MeditateApplication, &std::path::Path) -> Result<usize, crate::
             let Some(path) = file.path() else { return; };
             match importer(&app, &path) {
                 Ok(n) => {
-                    data_toast(&dialog, &pluralize_sessions(
-                        &gettext("Imported 1 session"),
-                        &gettext("Imported {n} sessions"),
-                        n,
-                    ));
+                    data_toast(&dialog, &crate::i18n::ngettext(
+                        "Imported 1 session",
+                        "Imported {n} sessions",
+                        n as u32,
+                    ).replace("{n}", &n.to_string()));
                     app.invalidate(crate::application::InvalidateScope::ALL);
                     refresh_main_window(&app);
                 }
@@ -645,14 +693,3 @@ fn refresh_main_window(app: &MeditateApplication) {
 }
 
 
-/// Two-form pluralization for session counts. Uses the shipped `_one` /
-/// `_other` msgids directly — we don't need full ngettext support because
-/// English plurals are trivial and the catalogs cover enough locales that
-/// a 1 / ≥2 split is a reasonable approximation.
-fn pluralize_sessions(singular: &str, plural: &str, n: usize) -> String {
-    if n == 1 {
-        singular.to_string()
-    } else {
-        plural.replace("{n}", &n.to_string())
-    }
-}

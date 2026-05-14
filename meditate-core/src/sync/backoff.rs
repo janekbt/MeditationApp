@@ -1,32 +1,46 @@
 //! Rate-limit backoff state for the bulk-push retry loop.
 //!
-//! Before each PUT attempt the caller checks `wait_until_now()` and
-//! sleeps for the returned duration if any. On a 429 they call
-//! `note_429()` which advances the "next attempt allowed at" instant
-//! according to the server's `Retry-After` (or an exponential
-//! fallback). On success they call `note_success()` which clears the
-//! consecutive-429 counter so a future 429 starts at a fresh small
-//! delay rather than at whatever exponent a previous burst left.
+//! Before each PUT attempt the caller sources a fresh `now` from
+//! `crate::time::boot_time_now()` (suspend-resilient CLOCK_BOOTTIME)
+//! and queries `wait_for(now)`. On a 429 they call `note_429_at(now,
+//! retry_after)` which advances the "next attempt allowed at"
+//! instant per the server's `Retry-After` (or an exponential
+//! fallback). On success they call `note_success()` which clears
+//! the consecutive-429 counter so a future 429 starts at a fresh
+//! small delay rather than at whatever exponent a previous burst
+//! left.
 //!
-//! Pure data + pure functions: no IO, no clock dependency in the
-//! tests (which pass an explicit `now`), so the unit tests are
-//! deterministic.
+//! `Duration` (relative to system boot) — NOT `Instant`
+//! (CLOCK_MONOTONIC) — because a backoff window must survive system
+//! suspend. A 30 s server-asked backoff straddling a 10 min suspend
+//! has to expire on resume; a `CLOCK_MONOTONIC` retry_at would
+//! freeze during suspend and re-impose its full duration after
+//! wake. Same discipline as the timer (see `DECISIONS.md` rule 6).
+//!
+//! Pure data + pure functions: no IO, no implicit clock — every
+//! mutator and predicate takes the `now` value from the caller, so
+//! tests pass a fixed baseline and run deterministically.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// Maximum exponential backoff in seconds when the server didn't send a
 /// Retry-After header. 30 s is small enough that a transient burst
 /// recovers within a normal sync attempt, large enough that we stop
 /// hammering a server that's actively asking us to back off.
-pub const MAX_BACKOFF_SECS: u64 = 30;
+pub(crate) const MAX_BACKOFF_SECS: u64 = 30;
 
 /// Per-push backoff state. Owned by the retry loop in
 /// `put_with_rate_limit_retry`; one fresh instance per push attempt.
+///
+/// `retry_at` is a `Duration` (time since system boot), not an
+/// `Instant` — the backoff window has to survive system suspend so
+/// CLOCK_BOOTTIME is the right clock. Callers source `now` via
+/// `crate::time::boot_time_now()` and pass it explicitly.
 #[derive(Debug, Default)]
 pub struct BackoffState {
-    /// Earliest instant at which the next PUT attempt is allowed.
+    /// Boot-time at which the next PUT attempt is allowed.
     /// `None` means no backoff active — proceed immediately.
-    retry_at: Option<Instant>,
+    retry_at: Option<Duration>,
     /// How many consecutive 429s have been recorded since the last
     /// successful PUT. Drives the exponential-backoff calculation
     /// when the server doesn't supply a Retry-After.
@@ -36,29 +50,26 @@ pub struct BackoffState {
 impl BackoffState {
     pub fn new() -> Self { Self::default() }
 
-    /// How long the caller should sleep before its next attempt, given
-    /// the current `now`. `None` means proceed immediately.
-    /// Parameterised on `now` so unit tests don't need a real clock.
-    pub fn wait_for(&self, now: Instant) -> Option<Duration> {
-        self.retry_at.and_then(|t| t.checked_duration_since(now))
+    /// How long the caller should sleep before its next attempt,
+    /// given the current `now` (boot-time). `None` means proceed
+    /// immediately. The clock is the caller's concern; production
+    /// passes `crate::time::boot_time_now()`, tests pass a fixed
+    /// baseline.
+    pub fn wait_for(&self, now: Duration) -> Option<Duration> {
+        self.retry_at.and_then(|t| t.checked_sub(now))
     }
 
-    /// Convenience wrapper that uses `Instant::now()` — what production
-    /// callers want. Tests prefer `wait_for(now)` for determinism.
-    pub fn wait_until_now(&self) -> Option<Duration> {
-        self.wait_for(Instant::now())
-    }
-
-    /// Record a 429. Updates `retry_at` to the later of (a) any current
-    /// backoff window and (b) the server-suggested or exponentially-
-    /// computed delay from `now`. Taking the later means a fresh 429
-    /// from a relaxed Retry-After can never shorten a stricter window
-    /// already in effect.
+    /// Record a 429. Updates `retry_at` to the later of (a) any
+    /// current backoff window and (b) the server-suggested or
+    /// exponentially-computed delay from `now`. Taking the later
+    /// means a fresh 429 from a relaxed Retry-After can never
+    /// shorten a stricter window already in effect.
     ///
-    /// `retry_after_secs` is the value of the `Retry-After` header the
-    /// server sent (None if missing). When supplied it's authoritative
-    /// — exponential backoff only kicks in when the server is silent.
-    pub fn note_429_at(&mut self, now: Instant, retry_after_secs: Option<u64>) {
+    /// `retry_after_secs` is the value of the `Retry-After` header
+    /// the server sent (None if missing). When supplied it's
+    /// authoritative — exponential backoff only kicks in when the
+    /// server is silent.
+    pub fn note_429_at(&mut self, now: Duration, retry_after_secs: Option<u64>) {
         self.consecutive = self.consecutive.saturating_add(1);
         let secs = retry_after_secs.unwrap_or_else(|| {
             // Exponential: 1, 2, 4, 8, 16, 32, … capped at MAX_BACKOFF_SECS.
@@ -72,17 +83,13 @@ impl BackoffState {
         }
     }
 
-    /// Test/production convenience: same as `note_429_at` with `Instant::now()`.
-    pub fn note_429(&mut self, retry_after_secs: Option<u64>) {
-        self.note_429_at(Instant::now(), retry_after_secs);
-    }
-
-    /// Record a successful PUT. Clears the consecutive-429 counter so
-    /// the next 429 (if any) starts a fresh exponential ramp from 1 s.
-    /// Does NOT clear `retry_at`: an in-flight backoff window is still
-    /// honored (the server explicitly asked for it). Future 429s will
-    /// compute their candidate from `now` again, so the window expires
-    /// naturally as `Instant::now()` overtakes it.
+    /// Record a successful PUT. Clears the consecutive-429 counter
+    /// so the next 429 (if any) starts a fresh exponential ramp
+    /// from 1 s. Does NOT clear `retry_at`: an in-flight backoff
+    /// window is still honored (the server explicitly asked for
+    /// it). Future 429s will compute their candidate from `now`
+    /// again, so the window expires naturally as boot-time
+    /// overtakes it.
     pub fn note_success(&mut self) {
         self.consecutive = 0;
     }
@@ -97,7 +104,12 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    fn t0() -> Instant { Instant::now() }
+    /// Fixed non-zero baseline so `checked_sub` underflow paths
+    /// behave the same as production (where boot-time is always
+    /// positive after the first second). Picking 1000 s rather
+    /// than `Duration::ZERO` catches an off-by-one that compares
+    /// against zero as a sentinel.
+    fn t0() -> Duration { Duration::from_secs(1000) }
 
     #[test]
     fn fresh_state_imposes_no_wait() {

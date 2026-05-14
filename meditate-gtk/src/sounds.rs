@@ -9,7 +9,7 @@
 //! B.4.5 reuses the same module's row builder for the Preferences
 //! tab in management mode (no selection, delete + rename).
 
-use std::cell::Cell;
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use adw::prelude::*;
@@ -17,6 +17,20 @@ use adw::prelude::*;
 use crate::application::MeditateApplication;
 use crate::db::{BellSound, BellSoundCategory};
 use crate::i18n::gettext;
+
+/// Which sound is currently previewing + the play-button widget
+/// showing the Stop icon. Mirrors the `PreviewState` in `vibrations.rs`
+/// so both choosers share the same toggle / supersede / auto-revert
+/// protocol. The portable state machine (which uuid is active, the
+/// auto-revert generation counter) lives in
+/// `meditate_core::sound::PreviewToggle`; this struct adds the
+/// shell-only "which gtk::Button is the active Stop icon" handle so
+/// we know which row to revert.
+#[derive(Default)]
+struct PreviewState {
+    toggle: meditate_core::sound::PreviewToggle,
+    active_btn: Option<gtk::Button>,
+}
 
 /// Push the bell-sound chooser onto the navigation view in selection
 /// mode. `current_uuid` is the row to mark with a checkmark when
@@ -140,14 +154,15 @@ fn rebuild_chooser_rows(
     rows.borrow_mut().push(import_row.upcast());
 
     let selection = SelectionContext {
-        current_uuid: current_uuid.map(|s| s.to_string()),
+        current_uuid: current_uuid.map(std::string::ToString::to_string),
         on_selected,
         nav_view: nav_view.clone(),
+        preview: Rc::new(RefCell::new(PreviewState::default())),
     };
 
     let sounds = app
         .with_db(|db| db.list_bell_sounds_for_category(category))
-        .and_then(|r| r.ok())
+        .and_then(std::result::Result::ok)
         .unwrap_or_default();
     if sounds.is_empty() && category == BellSoundCategory::BoxBreath {
         // Phase chooser starts empty for new users until the
@@ -179,6 +194,10 @@ pub struct SelectionContext {
     pub current_uuid: Option<String>,
     pub on_selected: Rc<dyn Fn(String)>,
     pub nav_view: adw::NavigationView,
+    /// Shared across all rows so tapping a different row's Play
+    /// supersedes the previous (single playback slot, single Stop
+    /// icon at any time).
+    preview: Rc<RefCell<PreviewState>>,
 }
 
 /// Build a sound-library row for the chooser: tap-to-pick body
@@ -209,7 +228,7 @@ fn build_sound_row(
         row.add_suffix(&check);
     }
 
-    add_play_button(&row, sound);
+    add_play_button(&row, sound, selection.preview.clone());
     add_rename_button(&row, sound, app, rebuilder.clone());
     if !sound.is_bundled {
         // Bundled rows stay permanent — the seed re-creates them on
@@ -218,7 +237,7 @@ fn build_sound_row(
         add_delete_button(&row, sound, app, rebuilder);
     }
 
-    let uuid = sound.uuid.clone();
+    let uuid = sound.uuid.0.clone();
     let on_selected = selection.on_selected.clone();
     let nav_view = selection.nav_view.clone();
     row.connect_activated(move |_| {
@@ -228,13 +247,24 @@ fn build_sound_row(
     row
 }
 
-fn add_play_button(row: &adw::ActionRow, sound: &BellSound) {
-    // Per-row preview button. Toggles between Play and Stop:
-    //   - Tap while idle → start playback, icon flips to stop.
-    //   - Tap while playing → stop, icon flips back to play.
-    //   - Sound finishes naturally / a different row's Play takes
-    //     over PREVIEW_MEDIA → notify::playing fires false on this
-    //     MediaFile, the listener flips our icon back too.
+fn add_play_button(
+    row: &adw::ActionRow,
+    sound: &BellSound,
+    preview: Rc<RefCell<PreviewState>>,
+) {
+    // Per-row preview button. Toggle / supersede / auto-revert
+    // protocol via the shared `meditate_core::sound::PreviewToggle`:
+    //   - Tap while idle → start playback, this row's icon flips to
+    //     Stop, recorded as `active_btn`.
+    //   - Tap while playing → toggle off, this row's icon flips
+    //     back to Play.
+    //   - Tap a different row's button while one is playing →
+    //     `active_btn` (the previous row's button) reverts first;
+    //     this row's Play starts and becomes the new `active_btn`.
+    //   - MediaFile transitions to not-playing (natural end / user
+    //     stop / supersede) → `timer_should_revert(gen)` only
+    //     returns true for the natural-end case (no other action
+    //     has bumped the generation), and the icon flips back.
     let play_btn = gtk::Button::builder()
         .icon_name("media-playback-start-symbolic")
         .tooltip_text(gettext("Preview sound"))
@@ -242,26 +272,52 @@ fn add_play_button(row: &adw::ActionRow, sound: &BellSound) {
         .valign(gtk::Align::Center)
         .build();
     let sound_clone = sound.clone();
-    let playing = Rc::new(Cell::new(false));
-    let play_btn_clone = play_btn.clone();
+    let preview_for_click = preview.clone();
+    let btn_for_click = play_btn.clone();
     play_btn.connect_clicked(move |_| {
-        if playing.get() {
-            crate::sound::stop_preview();
-            playing.set(false);
-            play_btn_clone.set_icon_name("media-playback-start-symbolic");
-            return;
+        use meditate_core::sound::PreviewAction;
+        let action = preview_for_click
+            .borrow_mut()
+            .toggle
+            .request(sound_clone.uuid.as_str());
+        // The previous Stop-icon button (if any) always reverts
+        // first — either we're toggling it off, or switching to a
+        // different row.
+        if let Some(prev_btn) = preview_for_click.borrow_mut().active_btn.take() {
+            prev_btn.set_icon_name("media-playback-start-symbolic");
+            prev_btn.set_tooltip_text(Some(&gettext("Preview sound")));
         }
-        let media = crate::sound::play_preview(&sound_clone);
-        playing.set(true);
-        play_btn_clone.set_icon_name("media-playback-stop-symbolic");
-        let playing_for_notify = playing.clone();
-        let btn_for_notify = play_btn_clone.clone();
-        media.connect_notify_local(Some("playing"), move |m, _| {
-            if !m.is_playing() && playing_for_notify.get() {
-                playing_for_notify.set(false);
-                btn_for_notify.set_icon_name("media-playback-start-symbolic");
+        match action {
+            PreviewAction::StopOnly => {
+                crate::sound::stop_preview();
             }
-        });
+            PreviewAction::StopAndStart { generation, .. } => {
+                let media = crate::sound::play_preview(&sound_clone);
+                btn_for_click.set_icon_name("media-playback-stop-symbolic");
+                btn_for_click.set_tooltip_text(Some(&gettext("Stop preview")));
+                preview_for_click.borrow_mut().active_btn = Some(btn_for_click.clone());
+
+                // Auto-revert when this play's MediaFile reaches
+                // not-playing. `timer_should_revert` no-ops if the
+                // user already tapped Stop / a different row in the
+                // meantime — generation will have advanced past
+                // `generation` and the call returns false.
+                let preview_for_notify = preview_for_click.clone();
+                media.connect_notify_local(Some("playing"), move |m, _| {
+                    if m.is_playing() {
+                        return;
+                    }
+                    let mut state = preview_for_notify.borrow_mut();
+                    if state.toggle.timer_should_revert(generation) {
+                        if let Some(btn) = state.active_btn.take() {
+                            btn.set_icon_name("media-playback-start-symbolic");
+                            btn.set_tooltip_text(Some(&gettext("Preview sound")));
+                        }
+                    }
+                });
+            }
+            PreviewAction::NoOp => {}
+        }
     });
     row.add_suffix(&play_btn);
 }
@@ -279,7 +335,7 @@ fn add_rename_button(
         .valign(gtk::Align::Center)
         .build();
     let app = app.clone();
-    let uuid = sound.uuid.clone();
+    let uuid = sound.uuid.0.clone();
     let row_clone = row.clone();
     rename_btn.connect_clicked(move |btn| {
         present_rename_dialog(btn, &app, &uuid, &row_clone.title(), rebuilder.clone());
@@ -300,17 +356,18 @@ fn add_delete_button(
         .valign(gtk::Align::Center)
         .build();
     let app = app.clone();
-    let uuid = sound.uuid.clone();
+    let uuid = sound.uuid.0.clone();
     delete_btn.connect_clicked(move |btn| {
         present_delete_dialog(btn, &app, &uuid, rebuilder.clone());
     });
     row.add_suffix(&delete_btn);
 }
 
-/// 10 MB cap matches the locked B.5 spec — same number is enforced
-/// on the inbound sync side in B.6 so a peer can't push a file
-/// bigger than what the local UI would accept.
-const MAX_CUSTOM_BELL_BYTES: u64 = 10 * 1024 * 1024;
+// 10 MB cap matches the locked B.5 spec — same number is enforced
+// on the inbound sync side in B.6 so a peer can't push a file bigger
+// than what the local UI would accept. Source of truth lives in
+// `meditate_core::sound::MAX_CUSTOM_BELL_BYTES` so the Android shell
+// + the sync gate read the same constant.
 
 /// Open a file picker, validate the chosen file, and (on confirm)
 /// import it into the bell-sound library. Calls `on_imported` after
@@ -327,7 +384,7 @@ fn present_file_picker(
 
     let filter = gtk::FileFilter::new();
     filter.set_name(Some(&gettext("Audio files")));
-    for ext in ["wav", "ogg", "mp3", "opus", "flac", "m4a"] {
+    for ext in meditate_core::sound::IMPORTABLE_EXTENSIONS {
         filter.add_suffix(ext);
     }
     file_dialog.set_default_filter(Some(&filter));
@@ -346,8 +403,8 @@ fn present_file_picker(
             let Some(path) = file.path() else { return; };
 
             // Size cap.
-            let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-            if size > MAX_CUSTOM_BELL_BYTES {
+            let size = std::fs::metadata(&path).map_or(0, |m| m.len());
+            if !meditate_core::sound::is_within_size_limit(size) {
                 present_size_toast(&anchor);
                 return;
             }
@@ -384,11 +441,7 @@ fn present_import_confirm_dialog(
     source_path: &std::path::Path,
     on_imported: Rc<Box<dyn Fn()>>,
 ) {
-    let stem = source_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("Custom sound")
-        .to_string();
+    let stem = meditate_core::sound::display_name_from_path(source_path);
     let filename = source_path
         .file_name()
         .and_then(|s| s.to_str())
@@ -463,13 +516,11 @@ fn present_import_confirm_dialog(
         Rc::new(move || {
             let text = entry.text();
             let trimmed = text.trim();
-            let lower = trimmed.to_lowercase();
-            let collision = app
-                .with_db(|db| db.list_bell_sounds())
-                .and_then(|r| r.ok())
-                .unwrap_or_default()
-                .into_iter()
-                .any(|s| s.name.to_lowercase() == lower);
+            let library = app
+                .with_db(super::db::Database::list_bell_sounds)
+                .and_then(std::result::Result::ok)
+                .unwrap_or_default();
+            let collision = meditate_core::sound::name_collides(trimmed, &library);
             let valid = !trimmed.is_empty() && !collision;
             import_btn.set_sensitive(valid);
             // Only show the collision message when the user has
@@ -607,20 +658,12 @@ fn do_import_io(
 ) -> std::result::Result<(String, std::path::PathBuf, &'static str), String> {
     let source_ext = source
         .extension()
-        .and_then(|s| s.to_str())
-        .map(|s| s.to_ascii_lowercase())
-        .unwrap_or_else(|| "wav".to_string());
+        .and_then(|s| s.to_str()).map_or_else(|| "wav".to_string(), str::to_ascii_lowercase);
 
-    // wav and ogg pass through gtk::MediaFile cleanly on every runtime
-    // we ship to. Everything else (mp3, m4a, opus, flac, …) becomes
-    // OGG/Vorbis on the way in. Vorbis at quality 0.4 (~128 kbps) is
-    // far below the 10 MB cap for any reasonable bell-length input
-    // and is plenty for short transient sounds.
-    let (dest_ext, mime): (&str, &'static str) = match source_ext.as_str() {
-        "wav" => ("wav", "audio/wav"),
-        "ogg" => ("ogg", "audio/ogg"),
-        _ => ("ogg", "audio/ogg"),
-    };
+    // wav and ogg pass through; everything else transcodes to
+    // OGG/Vorbis on import. Mapping lives in core so the Android
+    // shell's importer shares it.
+    let (dest_ext, mime) = meditate_core::sound::target_extension_and_mime(&source_ext);
 
     let new_uuid = crate::db::mint_uuid();
     let dest_dir = gtk::glib::user_data_dir()
@@ -630,7 +673,13 @@ fn do_import_io(
     let dest_path = dest_dir.join(format!("{new_uuid}.{dest_ext}"));
 
     if dest_ext == source_ext.as_str() {
-        std::fs::copy(source, &dest_path).map_err(|e| e.to_string())?;
+        // Don't use std::fs::copy — it follows symlinks at the
+        // destination, which would let a pre-planted link at
+        // dest_path silently overwrite an arbitrary file. The core
+        // helper uses O_CREAT|O_EXCL plus O_NOFOLLOW to refuse a
+        // pre-existing or symlinked destination.
+        meditate_core::sound::safe_copy_no_follow(source, &dest_path)
+            .map_err(|e| e.to_string())?;
     } else if let Err(e) = transcode_to_ogg(source, &dest_path) {
         let _ = std::fs::remove_file(&dest_path);
         return Err(e);
@@ -692,9 +741,9 @@ fn transcode_to_ogg(
         .build()
         .ok();
     if audioloudnorm.is_none() {
-        crate::diag::log(
-            "transcode_to_ogg: audioloudnorm element not registered — \
-             skipping loudness-normalisation step",
+        meditate_core::log(
+            "transcode.to_ogg",
+            "audioloudnorm element not registered — skipping loudness-normalisation step",
         );
     }
     let audioresample = make("audioresample")?;
@@ -798,15 +847,14 @@ fn present_rename_dialog(
         Rc::new(move || {
             let text = entry.text();
             let trimmed = text.trim();
-            let lower = trimmed.to_lowercase();
-            let collision = app
-                .with_db(|db| db.list_bell_sounds())
-                .and_then(|r| r.ok())
-                .unwrap_or_default()
-                .into_iter()
-                .any(|s| s.uuid != uuid && s.name.to_lowercase() == lower);
-            let valid = !trimmed.is_empty() && !collision;
-            dialog.set_response_enabled("rename", valid);
+            let validity = meditate_core::validate(trimmed, |name| {
+                let library = app
+                    .with_db(super::db::Database::list_bell_sounds)
+                    .and_then(std::result::Result::ok)
+                    .unwrap_or_default();
+                meditate_core::sound::name_collides_excluding(name, &library, &uuid)
+            });
+            dialog.set_response_enabled("rename", validity.is_savable());
         })
     };
     validate();

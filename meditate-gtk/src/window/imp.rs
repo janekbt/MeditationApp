@@ -1,12 +1,18 @@
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{glib, CompositeTemplate};
+use std::time::Duration;
 
 use gtk::gio;
 
+use meditate_core::format::format_time;
+
 use crate::log::LogView;
 use crate::stats::StatsView;
-use crate::timer::{format_time, TimerView};
+use crate::timer::TimerView;
+use meditate_core::breath::PhaseRunningLabelKey;
+use meditate_core::sync::indicator::{action_for, SyncIndicatorAction};
+use glib::subclass::prelude::ObjectSubclassIsExt;
 
 #[derive(Debug, Default, CompositeTemplate)]
 #[template(resource = "/io/github/janekbt/Meditate/ui/window.ui")]
@@ -166,7 +172,7 @@ impl MeditateWindow {
 
     fn push_time_running_page(&self) {
         let time_label = gtk::Label::builder()
-            .label(format_time(self.timer_view.current_display_secs()))
+            .label(format_time(Duration::from_secs(self.timer_view.current_display_secs())))
             .css_classes(["timer-setup-display"])
             .halign(gtk::Align::Center)
             .build();
@@ -246,7 +252,7 @@ impl MeditateWindow {
     /// animated square frame in the middle (cairo-drawn frame + perimeter
     /// dot), phase label + per-phase countdown inside, Pause/Stop below.
     fn push_breathing_running_page(&self) {
-        use crate::timer::breathing::{phase_at, Pattern, Phase};
+        use meditate_core::breath::BreathPattern;
         use std::cell::Cell;
         use std::rc::Rc;
 
@@ -262,11 +268,10 @@ impl MeditateWindow {
             .css_classes(["caption", "dimmed"])
             .halign(gtk::Align::Center)
             .build();
-        let initial_counter = if stopwatch_active {
-            "0:00".to_string()
-        } else {
-            format!("0:00 / {}", format_time(target_secs))
-        };
+        let initial_counter = meditate_core::format::box_breath_counter_label(
+            Duration::ZERO,
+            if stopwatch_active { None } else { Some(Duration::from_secs(target_secs)) },
+        );
         let counter_label = gtk::Label::builder()
             .label(&initial_counter)
             .css_classes(["title-3", "numeric"])
@@ -317,12 +322,12 @@ impl MeditateWindow {
         // and a single white-filled dot with accent halo travelling the
         // perimeter. Per user request the progress-stroke trail is omitted —
         // only the dot moves.
-        let pattern_cell: Rc<Cell<Pattern>> = Rc::new(Cell::new(pattern));
+        let pattern_cell: Rc<Cell<BreathPattern>> = Rc::new(Cell::new(pattern));
         {
             let pattern_cell = pattern_cell.clone();
             let obj = self.obj().clone();
             drawing_area.set_draw_func(move |widget, cr, w, h| {
-                let size = w.min(h) as f64;
+                let size = f64::from(w.min(h));
                 let pad = 12.0;
                 let side = size - 2.0 * pad;
                 let radius = 20.0;
@@ -348,26 +353,18 @@ impl MeditateWindow {
                 // frame (which is what the user sees for a split-second at
                 // start-of-session before the tick fires).
                 let p = pattern_cell.get();
-                if p.cycle_secs() == 0 {
+                if p.cycle().is_zero() {
                     return;
                 }
-                let elapsed = obj.imp().timer_view.breath_elapsed().as_secs_f64();
-                let (phase, phase_elapsed, phase_total) = phase_at(&p, elapsed);
-                let t = (phase_elapsed / phase_total as f64).clamp(0.0, 1.0);
+                let elapsed = obj.imp().timer_view.breath_elapsed();
+                let info = p.phase_at(elapsed);
+                let phase = info.phase;
+                let t = (info.elapsed_in_phase.as_secs_f64()
+                    / info.total.as_secs_f64()).clamp(0.0, 1.0);
 
-                // Phases are laid out clockwise from the bottom-left corner,
-                // so that inhalation is upward motion and exhalation is
-                // downward — reinforcing the breath metaphor.
-                //   In       → left edge (bottom→top)
-                //   HoldIn   → top edge (left→right)
-                //   Out      → right edge (top→bottom)
-                //   HoldOut  → bottom edge (right→left)
-                let (x, y) = match phase {
-                    Phase::In      => (pad,                    pad + side * (1.0 - t)),
-                    Phase::HoldIn  => (pad + side * t,         pad),
-                    Phase::Out     => (pad + side,             pad + side * t),
-                    Phase::HoldOut => (pad + side * (1.0 - t), pad + side),
-                };
+                // Perimeter geometry lives in core so the Android
+                // running page draws the same path.
+                let (x, y) = phase.perimeter_point(t, pad, side);
 
                 // Halo (semi-transparent accent).
                 cr.set_source_rgba(ar, ag, ab, 0.30);
@@ -438,67 +435,59 @@ impl MeditateWindow {
         let phase_sec_weak = phase_seconds_label.downgrade();
         let obj = self.obj().clone();
         let pattern_for_tick = pattern;
-        // Phase-boundary detection for cue firing. Seed with the
-        // initial phase so the very first tick (Phase::In at t=0)
-        // doesn't fire a duplicate of the starting bell.
-        let prev_phase: Rc<Cell<Option<Phase>>> = Rc::new(Cell::new(None));
+        // Stage 4 of item 13: phase-boundary cue firing + cycle-
+        // aligned end are owned by the portable Session. The frame
+        // tick still drives the visual rendering (phase label, dot,
+        // counter), but the *decisions* now flow through Session
+        // effects.
         drawing_area.add_tick_callback(move |_, _clock| {
+            use meditate_core::session::Effect as CoreSessionEffect;
             let tv = obj.imp().timer_view.clone();
-            let cur = tv.breath_elapsed().as_secs_f64();
 
-            let (phase, phase_elapsed, phase_total) = phase_at(&pattern_for_tick, cur);
+            let effects = tv.imp().box_breath_session_tick();
+            let session_ended = effects
+                .iter()
+                .any(|e| matches!(e, CoreSessionEffect::EndBoxBreath { .. }));
+            // FireBoxBreathCue + FireEndBell route through the shared
+            // dispatcher; UpdateDisplay stays redundant (counter reads
+            // breath_elapsed() at frame rate already).
+            tv.imp().dispatch_session_effects(&effects);
 
-            // Phase boundary: fire the new phase's cue. First tick
-            // seeds prev silently — the starting bell already played.
-            match prev_phase.get() {
-                None => prev_phase.set(Some(phase)),
-                Some(prev) if prev != phase => {
-                    prev_phase.set(Some(phase));
-                    if let Some(app) = obj.application()
-                        .and_then(|a| a.downcast::<crate::application::MeditateApplication>().ok())
-                    {
-                        let phase_id = match phase {
-                            Phase::In      => crate::db::BoxBreathPhaseId::In,
-                            Phase::HoldIn  => crate::db::BoxBreathPhaseId::HoldIn,
-                            Phase::Out     => crate::db::BoxBreathPhaseId::Out,
-                            Phase::HoldOut => crate::db::BoxBreathPhaseId::HoldOut,
-                        };
-                        tv.imp().fire_box_breath_phase_cue(&app, phase_id);
-                    }
-                }
-                _ => {}
-            }
+            // Visual render. breath_elapsed() is wall-clock anchored
+            // and freezes on pause, so it's the right input for both
+            // the dot's perimeter position and the counter.
+            let elapsed = tv.breath_elapsed();
+            let cur = elapsed.as_secs_f64();
+            let info = pattern_for_tick.phase_at(elapsed);
+            let phase = info.phase;
 
-            let phase_name = match phase {
-                Phase::In      => crate::i18n::gettext("Breathe in"),
-                Phase::HoldIn  => crate::i18n::gettext("Hold"),
-                Phase::Out     => crate::i18n::gettext("Breathe out"),
-                Phase::HoldOut => crate::i18n::gettext("Hold"),
+            let phase_name = match phase.running_label_key() {
+                PhaseRunningLabelKey::BreatheIn => crate::i18n::gettext("Breathe in"),
+                PhaseRunningLabelKey::Hold => crate::i18n::gettext("Hold"),
+                PhaseRunningLabelKey::BreatheOut => crate::i18n::gettext("Breathe out"),
             };
             if let Some(l) = phase_lbl_weak.upgrade() {
                 l.set_label(&phase_name);
             }
             if let Some(l) = phase_sec_weak.upgrade() {
-                let remaining = (phase_total as f64 - phase_elapsed).ceil().max(0.0) as i64;
+                let remaining = info.remaining.as_secs_f64().ceil().max(0.0) as i64;
                 l.set_label(&remaining.to_string());
             }
             if let Some(l) = counter_weak.upgrade() {
-                if stopwatch_active {
-                    l.set_label(&format_time(cur as u64));
-                } else {
-                    l.set_label(&format!("{} / {}",
-                        format_time(cur as u64), format_time(target_secs)));
-                }
+                l.set_label(&meditate_core::format::box_breath_counter_label(
+                    Duration::from_secs(cur as u64),
+                    if stopwatch_active { None } else { Some(Duration::from_secs(target_secs)) },
+                ));
             }
             if let Some(da) = da_weak.upgrade() {
                 da.queue_draw();
             }
 
-            // Cycle-aligned stop: target was rounded up to a full cycle in
-            // on_start, so crossing it lands exactly at a cycle boundary.
-            // Use finish_breath_session() (natural completion: plays chime,
-            // vibrates, notifies) rather than stop() (user-initiated, silent).
-            if tv.breath_is_finished() {
+            // Cycle-aligned stop, signalled by the Session's
+            // EndBoxBreath effect above. Use finish_breath_session
+            // (natural completion: chime, vibration, notification)
+            // rather than stop() (user-initiated, silent).
+            if session_ended {
                 tv.finish_breath_session();
                 return glib::ControlFlow::Break;
             }
@@ -589,19 +578,13 @@ impl MeditateWindow {
                 let Some(app) = obj.application()
                     .and_then(|a| a.downcast::<crate::application::MeditateApplication>().ok())
                 else { return; };
-                let (has_error, is_data_lost) = app.with_db(|db| {
-                    let err = crate::sync_settings::get_last_sync_error(db)
-                        .unwrap_or(None);
-                    let kind = crate::sync_settings::is_last_sync_remote_data_lost(db)
-                        .unwrap_or(false);
-                    (err.is_some(), kind)
-                }).unwrap_or((false, false));
-                if has_error && is_data_lost {
-                    crate::recovery_dialog::show(&app);
-                } else if has_error {
-                    app.trigger_sync();
-                } else {
-                    crate::preferences::show_preferences_on_page(&app, Some("data"));
+                let state = sync_indicator_state_now(&app);
+                match action_for(&state) {
+                    SyncIndicatorAction::OpenRecovery => crate::recovery_dialog::show(&app),
+                    SyncIndicatorAction::RetrySync => app.trigger_sync(),
+                    SyncIndicatorAction::OpenPrefsData => {
+                        crate::preferences::show_preferences_on_page(&app, Some("data"));
+                    }
                 }
             }
         ));
@@ -620,12 +603,19 @@ impl MeditateWindow {
 
         // Poll every 2s for state changes. The timer self-cancels via
         // the weak-ref upgrade failing once the window is destroyed;
-        // no manual SourceId tracking.
+        // no manual SourceId tracking. Skip the refresh when the
+        // window is unmapped (minimised, hidden, app backgrounded on
+        // Phosh / Android) — the user can't see the indicator anyway
+        // and the DB read costs eMMC IO + battery. `connect_map`
+        // above refreshes once on re-show, so the user sees the
+        // current state immediately when the window comes back.
         let weak = obj.downgrade();
         glib::timeout_add_seconds_local(2, move || {
             match weak.upgrade() {
                 Some(w) => {
-                    use glib::subclass::prelude::ObjectSubclassIsExt;
+                    if !w.is_mapped() {
+                        return glib::ControlFlow::Continue;
+                    }
                     w.imp().refresh_sync_status();
                     glib::ControlFlow::Continue
                 }
@@ -639,156 +629,102 @@ impl MeditateWindow {
     /// every timer tick (every 2s) without measurable load.
     pub fn refresh_sync_status(&self) {
         use crate::i18n::gettext;
+        use meditate_core::sync::indicator::SyncIndicatorState;
         let Some(app) = self.obj().application()
             .and_then(|a| a.downcast::<crate::application::MeditateApplication>().ok())
         else { return; };
 
-        // Single DB borrow — read all three values in one with_db call
-        // so a slow lock contention can't put state out of sync between
-        // them.
-        let snapshot = app.with_db(|db| (
-            crate::sync_settings::get_nextcloud_account(db).unwrap_or(None),
-            crate::sync_settings::get_last_sync_unix_ts(db).unwrap_or(None),
-            crate::sync_settings::get_last_sync_error(db).unwrap_or(None),
-        ));
-        let (account, last_ts, last_error) = match snapshot {
-            Some(t) => t,
-            None => return, // DB unavailable — leave the button alone.
-        };
+        let state = sync_indicator_state_now(&app);
 
         let btn     = &*self.sync_status_btn;
         let stack   = &*self.sync_status_stack;
         let icon    = &*self.sync_status_icon;
         let spinner = &*self.sync_status_spinner;
 
-        // Unconfigured: hide the indicator entirely. There's nothing
-        // useful for the user to see or click on.
-        if account.is_none() {
-            btn.set_visible(false);
-            spinner.set_spinning(false);
-            return;
-        }
-        btn.set_visible(true);
-
         // Icon-tint classes (`success`, `warning`) are exclusive — at
         // most one applies at a time. Reset between transitions.
         btn.remove_css_class("success");
         btn.remove_css_class("warning");
 
-        if app.is_syncing() {
-            // Animated Spinner is the only visual that distinguishes
-            // "actively syncing" from "idle" — there's no third
-            // reliably-available status icon across our targets.
-            spinner.set_spinning(true);
-            stack.set_visible_child_name("syncing");
-            btn.set_tooltip_text(Some(&gettext("Syncing with Nextcloud…")));
-        } else if let Some(err) = last_error {
-            spinner.set_spinning(false);
-            stack.set_visible_child_name("idle");
-            icon.set_icon_name(Some("dialog-warning-symbolic"));
-            btn.add_css_class("warning");
-            btn.set_tooltip_text(Some(
-                &format!("{}\n{}",
-                    gettext("Last sync failed — click to retry"),
-                    err)));
-        } else if let Some(ts) = last_ts {
-            // Synced successfully — checkmark, tinted via libadwaita's
-            // `.success` button class so it reads green and clearly
-            // signals "all good" without hinting at an action.
-            spinner.set_spinning(false);
-            stack.set_visible_child_name("idle");
-            icon.set_icon_name(Some("object-select-symbolic"));
-            btn.add_css_class("success");
-            btn.set_tooltip_text(Some(&format_synced_ago(ts)));
-        } else {
-            // Configured but no sync has completed yet — same
-            // checkmark in neutral foreground. Avoids a blank period
-            // between "save credentials" and "first sync done".
-            spinner.set_spinning(false);
-            stack.set_visible_child_name("idle");
-            icon.set_icon_name(Some("object-select-symbolic"));
-            btn.set_tooltip_text(Some(&gettext("Sync configured (waiting for first run)")));
+        match state {
+            SyncIndicatorState::Hidden => {
+                // No account: hide the indicator. Nothing useful for
+                // the user to see or click on.
+                btn.set_visible(false);
+                spinner.set_spinning(false);
+            }
+            SyncIndicatorState::Syncing => {
+                btn.set_visible(true);
+                // Animated Spinner is the only visual that
+                // distinguishes "actively syncing" from "idle".
+                spinner.set_spinning(true);
+                stack.set_visible_child_name("syncing");
+                btn.set_tooltip_text(Some(&gettext("Syncing with Nextcloud…")));
+            }
+            SyncIndicatorState::Error { detail, .. } => {
+                btn.set_visible(true);
+                spinner.set_spinning(false);
+                stack.set_visible_child_name("idle");
+                icon.set_icon_name(Some("dialog-warning-symbolic"));
+                btn.add_css_class("warning");
+                btn.set_tooltip_text(Some(
+                    &format!("{}\n{}",
+                        gettext("Last sync failed — click to retry"),
+                        detail)));
+            }
+            SyncIndicatorState::OkWithTs(ts) => {
+                btn.set_visible(true);
+                spinner.set_spinning(false);
+                stack.set_visible_child_name("idle");
+                icon.set_icon_name(Some("object-select-symbolic"));
+                btn.add_css_class("success");
+                btn.set_tooltip_text(Some(&format_synced_ago(ts)));
+            }
+            SyncIndicatorState::OkNoTs => {
+                btn.set_visible(true);
+                spinner.set_spinning(false);
+                stack.set_visible_child_name("idle");
+                icon.set_icon_name(Some("object-select-symbolic"));
+                btn.set_tooltip_text(Some(&gettext("Sync configured (waiting for first run)")));
+            }
         }
     }
+}
+
+/// Read the persisted sync state from the DB and derive the
+/// `SyncIndicatorState` via the core helper. Returns
+/// `SyncIndicatorState::Hidden` when the DB is unavailable so the
+/// button is silent rather than stale.
+fn sync_indicator_state_now(
+    app: &crate::application::MeditateApplication,
+) -> meditate_core::sync::indicator::SyncIndicatorState {
+    use meditate_core::sync::indicator;
+    let is_syncing = app.is_syncing();
+    app.with_db(|db| indicator::state_from_db(db.core(), is_syncing))
+        .unwrap_or(indicator::SyncIndicatorState::Hidden)
 }
 
 /// Render a unix timestamp as a human-friendly "synced N ago" tooltip.
 /// Granularity steps up the further back the timestamp lies — minutes
 /// for the first hour, hours within a day, days beyond. Doesn't
 /// localise the count words; gettext takes care of that via the
-/// surrounding translatable templates.
+/// surrounding translatable templates. The bucket decision lives in
+/// `meditate_core::format::synced_ago_key`.
 fn format_synced_ago(unix_ts: i64) -> String {
-    use crate::i18n::gettext;
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-    let secs_ago = (now - unix_ts).max(0);
-    if secs_ago < 60 {
-        gettext("Synced just now")
-    } else if secs_ago < 3600 {
-        gettext("Synced {n} minutes ago")
-            .replace("{n}", &(secs_ago / 60).to_string())
-    } else if secs_ago < 86400 {
-        gettext("Synced {n} hours ago")
-            .replace("{n}", &(secs_ago / 3600).to_string())
-    } else {
-        gettext("Synced {n} days ago")
-            .replace("{n}", &(secs_ago / 86400).to_string())
-    }
-}
-
-#[cfg(test)]
-mod sync_status_tests {
-    //! `format_synced_ago` is the only piece of E.5 worth a unit test —
-    //! the GTK glue (template wiring, tooltip text setting, CSS class
-    //! flips) is verified by running the app. The "ago" formatting is
-    //! pure logic and easy to pin: pick a fixed `now` via the formula
-    //! and step `unix_ts` through each bucket boundary.
-    use super::format_synced_ago;
-
-    fn ago(unix_ts_offset_secs: i64) -> String {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
-        format_synced_ago(now + unix_ts_offset_secs)
-    }
-
-    #[test]
-    fn under_a_minute_says_just_now() {
-        assert!(ago(-30).contains("just now"),
-            "30 s ago should fall into the 'just now' bucket, got `{}`", ago(-30));
-        assert!(ago(0).contains("just now"));
-    }
-
-    #[test]
-    fn between_one_minute_and_an_hour_uses_minutes() {
-        assert!(ago(-90).contains("minute"));
-        assert!(ago(-3540).contains("minute"),
-            "59 minutes still falls in the minutes bucket, got `{}`", ago(-3540));
-    }
-
-    #[test]
-    fn between_one_hour_and_a_day_uses_hours() {
-        assert!(ago(-3600).contains("hour"));
-        assert!(ago(-86399).contains("hour"));
-    }
-
-    #[test]
-    fn beyond_a_day_uses_days() {
-        assert!(ago(-86400).contains("day"));
-        assert!(ago(-86400 * 7).contains("day"));
-    }
-
-    #[test]
-    fn future_timestamps_clamp_to_just_now_rather_than_negative() {
-        // Defensive: clock skew between two devices can land a
-        // timestamp slightly in the future. Avoid showing "synced -3
-        // minutes ago" via the saturating max(0) clamp.
-        let s = ago(60);  // 60 s in the future
-        assert!(s.contains("just now"),
-            "future timestamps should clamp to 'just now', got `{s}`");
+    use crate::i18n::{gettext, ngettext};
+    use meditate_core::format::SyncedAgoKey;
+    let secs_ago = meditate_core::time::unix_now() - unix_ts;
+    match meditate_core::format::synced_ago_key(secs_ago) {
+        SyncedAgoKey::JustNow => gettext("Synced just now"),
+        SyncedAgoKey::Minutes(n) =>
+            ngettext("Synced 1 minute ago", "Synced {n} minutes ago", n as u32)
+                .replace("{n}", &n.to_string()),
+        SyncedAgoKey::Hours(n) =>
+            ngettext("Synced 1 hour ago", "Synced {n} hours ago", n as u32)
+                .replace("{n}", &n.to_string()),
+        SyncedAgoKey::Days(n) =>
+            ngettext("Synced 1 day ago", "Synced {n} days ago", n as u32)
+                .replace("{n}", &n.to_string()),
     }
 }
 
@@ -797,7 +733,7 @@ mod sync_status_tests {
 /// Adwaita blue only if the lookup somehow misses.
 fn accent_rgb(_widget: &impl IsA<gtk::Widget>) -> (f64, f64, f64) {
     let rgba = adw::StyleManager::default().accent_color_rgba();
-    (rgba.red() as f64, rgba.green() as f64, rgba.blue() as f64)
+    (f64::from(rgba.red()), f64::from(rgba.green()), f64::from(rgba.blue()))
 }
 
 /// Append a rounded-rectangle path to the current cairo context.
@@ -943,7 +879,7 @@ impl MeditateWindow {
                 crate::config::APP_ID,
             );
             eprintln!("note: {msg}");
-            crate::diag::log(&msg);
+            meditate_core::log("gsettings", &msg);
             return;
         }
         let settings = gio::Settings::new(crate::config::APP_ID);
@@ -970,5 +906,58 @@ impl MeditateWindow {
                 }
             ),
         );
+    }
+}
+
+#[cfg(test)]
+mod sync_status_tests {
+    //! `format_synced_ago` is the only piece of E.5 worth a unit test —
+    //! the GTK glue (template wiring, tooltip text setting, CSS class
+    //! flips) is verified by running the app. The "ago" formatting is
+    //! pure logic and easy to pin: pick a fixed `now` via the formula
+    //! and step `unix_ts` through each bucket boundary.
+    use super::format_synced_ago;
+
+    fn ago(unix_ts_offset_secs: i64) -> String {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64);
+        format_synced_ago(now + unix_ts_offset_secs)
+    }
+
+    #[test]
+    fn under_a_minute_says_just_now() {
+        assert!(ago(-30).contains("just now"),
+            "30 s ago should fall into the 'just now' bucket, got `{}`", ago(-30));
+        assert!(ago(0).contains("just now"));
+    }
+
+    #[test]
+    fn between_one_minute_and_an_hour_uses_minutes() {
+        assert!(ago(-90).contains("minute"));
+        assert!(ago(-3540).contains("minute"),
+            "59 minutes still falls in the minutes bucket, got `{}`", ago(-3540));
+    }
+
+    #[test]
+    fn between_one_hour_and_a_day_uses_hours() {
+        assert!(ago(-3600).contains("hour"));
+        assert!(ago(-86399).contains("hour"));
+    }
+
+    #[test]
+    fn beyond_a_day_uses_days() {
+        assert!(ago(-86400).contains("day"));
+        assert!(ago(-86400 * 7).contains("day"));
+    }
+
+    #[test]
+    fn future_timestamps_clamp_to_just_now_rather_than_negative() {
+        // Defensive: clock skew between two devices can land a
+        // timestamp slightly in the future. Avoid showing "synced -3
+        // minutes ago" via the saturating max(0) clamp.
+        let s = ago(60);  // 60 s in the future
+        assert!(s.contains("just now"),
+            "future timestamps should clamp to 'just now', got `{s}`");
     }
 }
