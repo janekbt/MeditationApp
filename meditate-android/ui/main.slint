@@ -589,6 +589,16 @@ export component MainWindow inherits Window {
     in-out property <string> rename-label-text: "";
     in property <bool> rename-label-valid: false;
 
+    // Delete-label dialog state. Rust computes the impact body
+    // ("This label is not used by any sessions." vs "N sessions
+    // tagged with this label will be un-labelled: N") via
+    // `meditate_core::labels::delete_impact_key`, pushes it into
+    // `delete-label-body` before opening the dialog. Mirrors
+    // `present_delete_label_dialog` in `labels.rs:361`.
+    in-out property <bool> delete-label-dialog-open: false;
+    in-out property <int> delete-label-id: 0;
+    in property <string> delete-label-body: "";
+
     in-out property <bool> duration-dialog-open: false;
     in-out property <int> dialog-hours: 0;
     in-out property <int> dialog-minutes: 10;
@@ -616,6 +626,8 @@ export component MainWindow inherits Window {
     callback rename-label-tap(int);
     callback rename-label-changed(string);
     callback rename-label-confirm();
+    callback delete-label-tap(int);
+    callback delete-label-confirm();
     // Hardware back button + Android predictive back gesture.
     // Wired through a root-level FocusScope so the key event
     // reaches us no matter which sub-element holds focus. Rust
@@ -1169,6 +1181,23 @@ export component MainWindow inherits Window {
                                     clicked => { root.rename-label-tap(item.id); }
                                 }
                             }
+                            // Delete X button — mirrors GTK's
+                            // `add_delete_button` (labels.rs:209)
+                            // which uses a `user-trash-symbolic`
+                            // tinted with `.destructive-action`.
+                            // Janek picked the X glyph for Android;
+                            // Icons.close gives us the SVG and
+                            // `has-error: true` colorises it with
+                            // the Material error palette so the
+                            // destructive intent reads at a glance.
+                            VerticalLayout {
+                                alignment: center;
+                                IconButton {
+                                    icon: Icons.close;
+                                    has-error: true;
+                                    clicked => { root.delete-label-tap(item.id); }
+                                }
+                            }
                         }
                     }
                 }
@@ -1374,6 +1403,71 @@ export component MainWindow inherits Window {
                         text: "Rename";
                         enabled: root.rename-label-valid;
                         clicked => { root.rename-label-confirm(); }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Delete-label confirmation dialog (modal overlay) ────────
+    // Mirrors `present_delete_label_dialog` in
+    // `meditate-gtk/src/labels.rs:361`: heading + impact body +
+    // Cancel/Delete buttons (Delete styled destructive). Rust
+    // composes the body string from
+    // `meditate_core::labels::delete_impact_key` before opening,
+    // so the text correctly shows N/0 affected sessions.
+    if root.delete-label-dialog-open : Rectangle {
+        background: #00000080;
+        TouchArea {
+            clicked => { root.delete-label-dialog-open = false; }
+        }
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 320px;
+            height: delete-card-content.preferred-height;
+            background: MaterialPalette.surface-container-high;
+            border-radius: 28px;
+
+            TouchArea {}
+
+            delete-card-content := VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+
+                Text {
+                    text: "Delete Label?";
+                    font-size: 22px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface;
+                }
+
+                Text {
+                    text: root.delete-label-body;
+                    font-size: 14px;
+                    color: MaterialPalette.on-surface-variant;
+                    wrap: word-wrap;
+                    horizontal-alignment: left;
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+
+                    TextButton {
+                        text: "Cancel";
+                        clicked => { root.delete-label-dialog-open = false; }
+                    }
+                    // No native "destructive" style on TextButton —
+                    // Material 3 has a `dangerButton` filled style
+                    // but it's not in our component set. Plain
+                    // TextButton keeps consistent with Cancel; the
+                    // dialog title + the X-icon trigger already
+                    // signal the destructive intent.
+                    TextButton {
+                        text: "Delete";
+                        clicked => { root.delete-label-confirm(); }
                     }
                 }
             }

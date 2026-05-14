@@ -296,6 +296,52 @@ fn lookup_label_name(id: i64) -> Option<String> {
         .map(|l| l.name)
 }
 
+/// Body text for the Delete-Label dialog. Mirrors GTK's
+/// `present_delete_label_dialog` body composition: pluralised
+/// "N sessions will be un-labelled" when the label tags any
+/// rows, "not used by any sessions" otherwise. Routes through
+/// `meditate_core::labels::delete_impact_key` so the count→variant
+/// boundary stays in core.
+#[cfg(target_os = "android")]
+fn delete_label_impact_text(id: i64) -> String {
+    use meditate_core::labels::DeleteImpactKey;
+    let Some(db_arc) = DATABASE.get() else { return String::new(); };
+    let Ok(guard) = db_arc.lock() else { return String::new(); };
+    let Some(db) = guard.as_ref() else { return String::new(); };
+    let count = meditate_core::db::label_session_count_from_db(db, id).unwrap_or(0);
+    match meditate_core::labels::delete_impact_key(count) {
+        DeleteImpactKey::InUse(1) => {
+            "1 session tagged with this label will be un-labelled.".to_string()
+        }
+        DeleteImpactKey::InUse(n) => {
+            format!("{n} sessions tagged with this label will be un-labelled.")
+        }
+        DeleteImpactKey::Unused => {
+            "This label is not used by any sessions.".to_string()
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+fn delete_label_in_db(id: i64) -> bool {
+    let Some(db_arc) = DATABASE.get() else { return false; };
+    let Ok(guard) = db_arc.lock() else { return false; };
+    let Some(db) = guard.as_ref() else { return false; };
+    match db.delete_label(id) {
+        Ok(()) => {
+            meditate_core::log("labels.delete", &format!("ok id={id}"));
+            true
+        }
+        Err(e) => {
+            meditate_core::log(
+                "labels.delete",
+                &format!("delete FAILED id={id} err={e:?}"),
+            );
+            false
+        }
+    }
+}
+
 #[cfg(target_os = "android")]
 fn rename_label_in_db(id: i64, name: &str) -> bool {
     let trimmed = name.trim();
@@ -889,6 +935,48 @@ fn build_ui() -> MainWindow {
                 }
             }
             ui.set_rename_label_dialog_open(false);
+            let _ = current_mode.get();
+        });
+    }
+
+    // Delete X-button tap — compose the impact body and open
+    // the confirmation dialog. Mirrors the open path in GTK's
+    // `present_delete_label_dialog` (labels.rs:361-407).
+    {
+        let weak = ui.as_weak();
+        ui.on_delete_label_tap(move |id| {
+            let Some(ui) = weak.upgrade() else { return; };
+            #[cfg(target_os = "android")]
+            {
+                ui.set_delete_label_id(id);
+                ui.set_delete_label_body(delete_label_impact_text(id as i64).into());
+                ui.set_delete_label_dialog_open(true);
+            }
+            #[cfg(not(target_os = "android"))]
+            let _ = (ui, id);
+        });
+    }
+
+    // Delete button pressed — call `db.delete_label` and
+    // refresh. `resolve_label_for_mode` falls back to the
+    // mode's seeded default UUID when the per-mode UUID setting
+    // points at a now-gone row, so deleting the currently-
+    // selected label just rolls the ExpanderRow subtitle back
+    // to the default (e.g. "Meditation" for Timer).
+    {
+        let weak = ui.as_weak();
+        let current_mode = current_mode.clone();
+        ui.on_delete_label_confirm(move || {
+            let Some(ui) = weak.upgrade() else { return; };
+            #[cfg(target_os = "android")]
+            {
+                let id = ui.get_delete_label_id() as i64;
+                if delete_label_in_db(id) {
+                    let mode: meditate_core::SessionMode = current_mode.get().into();
+                    refresh_label_state(&ui, mode);
+                }
+            }
+            ui.set_delete_label_dialog_open(false);
             let _ = current_mode.get();
         });
     }
