@@ -1,12 +1,67 @@
-// Milestone-4 Timer screen — mirrors the GTK timer setup + running
-// pages (`meditate-gtk/data/ui/timer_view.blp` and the running page
-// built in `meditate-gtk/src/window/imp.rs::push_time_running_page`).
-// Setup shows the configured duration and a Start button; running
-// shows the live countdown plus Pause / Stop. No mode toggle, no
-// presets, no inputs yet — those land in later milestones.
+// UI translation Phase 1 — Setup + Timer running view. Mirrors the
+// GTK timer setup page (`meditate-gtk/data/ui/timer_view.blp`) and
+// the running page built in `meditate-gtk/src/window/imp.rs`.
+//
+// Setup: hero showing the configured duration, hours/minutes stepper
+// rows, Start button. Running: hero showing live remaining time,
+// Pause / Stop / Add-time / Finish-overtime.
+//
+// Phase 2 will add the mode chip group + per-mode stopwatch toggle;
+// phase 3 wires the streak chip + label / preset rows to the DB.
 
-import { FilledButton, OutlineButton } from "@material";
+import { FilledButton, OutlineButton, TonalButton } from "@material";
 export { MaterialWindowAdapter } from "@material";
+
+// Stepper row mirroring the GTK shell's AdwSpinRow shape: title on
+// the left, decrement / value / increment on the right. The Slint
+// Material library doesn't ship a SpinBox, so this is the smallest
+// touch-friendly equivalent — large +/- TonalButtons flanking a
+// big-font value text.
+component StepperRow inherits HorizontalLayout {
+    in property <string> label;
+    in-out property <int> value;
+    in property <int> min-value;
+    in property <int> max-value;
+
+    spacing: 12px;
+    alignment: stretch;
+
+    Text {
+        text: root.label;
+        font-size: 16px;
+        vertical-alignment: center;
+        horizontal-alignment: left;
+    }
+
+    HorizontalLayout {
+        spacing: 8px;
+        alignment: end;
+
+        TonalButton {
+            text: "−";
+            enabled: root.value > root.min-value;
+            clicked => {
+                if (root.value > root.min-value) { root.value -= 1; }
+            }
+        }
+
+        Text {
+            text: root.value;
+            font-size: 28px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            min-width: 56px;
+        }
+
+        TonalButton {
+            text: "+";
+            enabled: root.value < root.max-value;
+            clicked => {
+                if (root.value < root.max-value) { root.value += 1; }
+            }
+        }
+    }
+}
 
 export component MainWindow inherits Window {
     title: "Meditate";
@@ -24,6 +79,12 @@ export component MainWindow inherits Window {
     // Running, Paused, or Finished (so they can reset the screen).
     in property <bool> stop-visible: false;
 
+    // Duration picker state. Hours capped at 3 (matches the GTK
+    // shell's spin-row upper bound); minutes 0–59. Rust reads these
+    // on Start to compute the session target.
+    in-out property <int> setup-hours: 0;
+    in-out property <int> setup-minutes: 10;
+
     callback action-tap();
     callback stop-tap();
 
@@ -33,9 +94,9 @@ export component MainWindow inherits Window {
         alignment: center;
 
         // Hero: streak chip placeholder + big mm:ss + caption.
-        // Streak chip is empty in milestone 4 (DB integration arrives
-        // in milestone 6); kept in the layout so the spacing matches
-        // the GTK setup-page hero the moment streaks land.
+        // Streak chip is empty in phase 1 (DB integration arrives in
+        // phase 3); kept in the layout so the spacing matches the GTK
+        // setup-page hero the moment streaks land.
         VerticalLayout {
             alignment: center;
             spacing: 4px;
@@ -60,12 +121,33 @@ export component MainWindow inherits Window {
             }
         }
 
+        // Duration picker — visible only on the setup page. The
+        // hero above reflects the steppers in real time so the user
+        // can see the resulting mm:ss as they adjust.
+        if !running-page : VerticalLayout {
+            spacing: 8px;
+
+            StepperRow {
+                label: "Hours";
+                value <=> setup-hours;
+                min-value: 0;
+                max-value: 3;
+            }
+            StepperRow {
+                label: "Minutes";
+                value <=> setup-minutes;
+                min-value: 0;
+                max-value: 59;
+            }
+        }
+
         HorizontalLayout {
             spacing: 12px;
             alignment: center;
 
             FilledButton {
                 text: action-label;
+                enabled: running-page || (setup-hours > 0 || setup-minutes > 0);
                 clicked => { action-tap(); }
             }
 

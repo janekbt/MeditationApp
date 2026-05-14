@@ -10,6 +10,7 @@
 // doesn't expose "Add time" yet); finalising drops the session and
 // lands us in `Finished`, so a subsequent `toggle` starts fresh.
 
+use meditate_core::format::{format_hhmm, format_time};
 use meditate_core::session::{Session, SessionSettings, SessionShape, UiState};
 use std::time::Duration;
 
@@ -133,71 +134,103 @@ impl AppState {
     pub fn is_running_page(&self) -> bool {
         !self.is_idle()
     }
-}
 
-/// mm:ss with ceiling-rounding at the sub-second boundary so a
-/// remaining of 599.999s reads "10:00" rather than "09:59" — matches
-/// the GTK shell's `format_time` semantics ("Countdown display
-/// ceiling-fixed (no skipped 0:59)" in 26.4.3 release notes).
-pub fn format_mmss(d: Duration) -> String {
-    let secs = d.as_secs() + u64::from(d.subsec_nanos() > 0);
-    let mins = secs / 60;
-    let secs = secs % 60;
-    format!("{mins:02}:{secs:02}")
+    /// Big hero-label text. Setup shows `HH:MM` of the configured
+    /// target (matching the GTK shell's `idle_hero_label` —
+    /// minute-precision since the user authors duration in minutes).
+    /// Running / Paused / Finished show `MM:SS` (or `HH:MM:SS` past
+    /// the hour) of the live remaining time, ceiling-rounded so
+    /// "10:00" doesn't flicker to "09:59" on the first sub-second
+    /// tick. The format pick mirrors core's
+    /// `format::idle_hero_label` + `format::format_time` split, so
+    /// both shells render identical strings for identical state.
+    pub fn hero_label(&self, total: Duration, now: Duration) -> String {
+        match self {
+            Self::Idle => format_hhmm(total.as_secs() as u32),
+            Self::Active(s) => {
+                // Session's `display_secs` is the canonical ceiling-
+                // rounded readout — same value the GTK shell renders.
+                format_time(Duration::from_secs(s.display_secs(now)))
+            }
+            Self::Finished => format_time(Duration::ZERO),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // ── format_mmss ─────────────────────────────────────────────
+    // ── hero_label ──────────────────────────────────────────────
 
     #[test]
-    fn format_mmss_zero() {
-        assert_eq!(format_mmss(Duration::ZERO), "00:00");
-    }
-
-    #[test]
-    fn format_mmss_one_second() {
-        assert_eq!(format_mmss(Duration::from_secs(1)), "00:01");
-    }
-
-    #[test]
-    fn format_mmss_pads_seconds_with_leading_zero() {
-        assert_eq!(format_mmss(Duration::from_secs(9)), "00:09");
-    }
-
-    #[test]
-    fn format_mmss_one_minute() {
-        assert_eq!(format_mmss(Duration::from_secs(60)), "01:00");
-    }
-
-    #[test]
-    fn format_mmss_ten_minutes() {
-        assert_eq!(format_mmss(Duration::from_secs(600)), "10:00");
-    }
-
-    #[test]
-    fn format_mmss_max_under_an_hour() {
-        assert_eq!(format_mmss(Duration::from_secs(3599)), "59:59");
-    }
-
-    #[test]
-    fn format_mmss_ceils_subsecond_remainder_up() {
-        // 599.999s → "10:00" (the GTK ceiling rule). If we floored,
-        // pressing Start on a 10-min timer would briefly show "09:59"
-        // because the very first tick captures elapsed > 0.
+    fn hero_label_idle_renders_target_as_hh_mm() {
+        // 10 min target → "00:10" (HH:MM, mirrors the GTK shell's
+        // idle hero formatter). This is the case the user's bug
+        // report flagged: previously the hero showed total-minutes
+        // (MM:SS) so 1h 10m read as "70:00".
+        let s = AppState::idle();
         assert_eq!(
-            format_mmss(Duration::from_millis(599_999)),
-            "10:00"
+            s.hero_label(Duration::from_secs(10 * 60), Duration::ZERO),
+            "00:10",
         );
     }
 
     #[test]
-    fn format_mmss_does_not_ceil_an_exact_second_boundary() {
-        // Exactly 600.000s stays at "10:00", does NOT bump to "10:01".
-        assert_eq!(format_mmss(Duration::from_secs(600)), "10:00");
+    fn hero_label_idle_with_hours_pads_zero_minutes() {
+        // 1h 10m → "01:10", not "70:00".
+        let s = AppState::idle();
+        assert_eq!(
+            s.hero_label(Duration::from_secs(70 * 60), Duration::ZERO),
+            "01:10",
+        );
     }
+
+    #[test]
+    fn hero_label_idle_three_hours_renders_as_three_zero_zero() {
+        let s = AppState::idle();
+        assert_eq!(
+            s.hero_label(Duration::from_secs(3 * 3600), Duration::ZERO),
+            "03:00",
+        );
+    }
+
+    #[test]
+    fn hero_label_finished_is_double_zero() {
+        let s = AppState::Finished;
+        assert_eq!(
+            s.hero_label(Duration::from_secs(600), Duration::ZERO),
+            "00:00",
+        );
+    }
+
+    #[test]
+    fn hero_label_running_renders_mm_ss_under_an_hour() {
+        // 10-min session started at t=100, viewed at t=150 → 8:20
+        // ceiling-remaining (Session does the ceiling-rounding).
+        // format_time picks MM:SS since remaining is under an hour.
+        let s = AppState::idle().toggle(
+            Duration::from_secs(10 * 60),
+            Duration::from_secs(100),
+        );
+        assert_eq!(s.hero_label(Duration::ZERO, Duration::from_secs(200)), "08:20");
+    }
+
+    #[test]
+    fn hero_label_running_switches_to_hh_mm_ss_over_an_hour() {
+        // 90-min session at t=0 viewed at t=1 → 1:29:59 remaining,
+        // so the hero must use HH:MM:SS format.
+        let s = AppState::idle().toggle(
+            Duration::from_secs(90 * 60),
+            Duration::ZERO,
+        );
+        assert_eq!(s.hero_label(Duration::ZERO, Duration::from_secs(1)), "01:29:59");
+    }
+
+    // (Legacy `format_mmss` tests dropped — the readout now flows
+    //  through `meditate_core::format::format_time` / `format_hhmm`,
+    //  both unit-tested in core. The hero_label cases above pin the
+    //  per-state dispatch.)
 
     // ── AppState transitions ────────────────────────────────────
 
