@@ -10,10 +10,28 @@
 
 import {
     FilledButton, OutlineButton, TextButton, TonalButton,
-    SegmentedButton, Switch,
+    SegmentedButton, Switch, IconButton,
     MaterialPalette,
 } from "@material";
+// Icons aren't re-exported through the `@material` alias the
+// Material library registers; import the global directly so the
+// chooser's check + back-arrow can render proper SVGs instead of
+// fallback Unicode glyphs (the system font on Android 15 doesn't
+// carry ✓, which rendered as a tofu box).
+import { Icons } from "../material-1.0/ui/icons/icons.slint";
 export { MaterialWindowAdapter } from "@material";
+
+// Row data for the Label chooser overlay screen. `id` is the
+// local DB rowid (matches `meditate_core::db::Label::id` and is
+// what `Session::from_unix` ultimately stores as label_id);
+// `selected` is the row that gets the check-mark suffix —
+// mirrors GTK's `object-select-symbolic` indicator on the row
+// matching `setup_selected_label_id`.
+export struct LabelItem {
+    id: int,
+    name: string,
+    selected: bool,
+}
 
 // Multi-line note input — the Slint Material library's `TextField`
 // is hard-coded `single_line: true`, but the GTK shell's note view
@@ -535,9 +553,20 @@ export component MainWindow inherits Window {
     // Resolved label name to display inside the expander when
     // `label-active` is true. Rust fills this from
     // `meditate_core::labels::resolve_label_for_mode` on launch +
-    // mode flip; the chooser screen (next slice) lets the user
-    // override it.
+    // mode flip; the chooser screen lets the user override it.
     in property <string> label-name: "";
+
+    // Label chooser overlay visibility — driven by the Rust side
+    // when the user taps the ExpanderRow's inner Selected row.
+    // Same slide-from-right pattern as Running / Done; mirrors
+    // GTK's AdwNavigationView push of `push_labels_chooser`.
+    in property <bool> labels-page: false;
+
+    // Rows displayed in the chooser. Rust populates this from
+    // `meditate_core::db::list_labels_from_db` and stamps the
+    // `selected` flag on the row matching the active mode's
+    // resolved label.
+    in property <[LabelItem]> label-items: [];
 
     in-out property <bool> duration-dialog-open: false;
     in-out property <int> dialog-hours: 0;
@@ -558,6 +587,14 @@ export component MainWindow inherits Window {
     callback cues-changed(int);
     callback label-active-toggled(bool);
     callback label-tap();
+    callback labels-back();
+    callback label-picked(int);
+    // Hardware back button + Android predictive back gesture.
+    // Wired through a root-level FocusScope so the key event
+    // reaches us no matter which sub-element holds focus. Rust
+    // decides whether to navigate up one level (close an overlay
+    // / dismiss Done) or fall through to "close the app".
+    callback back-pressed();
 
     // Slide offset driving the Running screen's slide-over. 0 px
     // means Running is parked at x=width (off-screen right) and
@@ -569,6 +606,13 @@ export component MainWindow inherits Window {
     // slow finish — so the two shells feel related, not just look it.
     property <length> screen-offset: root.running-page ? root.width : 0px;
     animate screen-offset { duration: 300ms; easing: ease-out; }
+
+    // Slide offset for the Label chooser overlay. Symmetric
+    // 300 ms in both directions — mirrors the GTK
+    // `AdwNavigationView` push transition. No coordination with
+    // Done/Running, so no asymmetric duration trick needed.
+    property <length> labels-offset: root.labels-page ? root.width : 0px;
+    animate labels-offset { duration: 300ms; easing: ease-out; }
 
     // Slide offset for the Done overlay. Asymmetric duration:
     // appearing is INSTANT (0 ms) so Done is already at x=0 by the
@@ -584,6 +628,27 @@ export component MainWindow inherits Window {
         duration: root.done-page ? 0ms : 300ms;
         easing: ease-out;
     }
+
+    // Route initial focus into a FocusScope wrapping every page so
+    // the Android back button / predictive-back gesture reaches
+    // our key-pressed handler. Slint maps `Keycode::Back` to
+    // `Key.Back` and bubbles it up through the focused element's
+    // parent chain — wrapping everything keeps the key reachable
+    // even after focus moves to a TextInput inside the Note field
+    // on the Done screen.
+    forward-focus: root-focus;
+
+    root-focus := FocusScope {
+        width: 100%;
+        height: 100%;
+
+        key-pressed(event) => {
+            if event.text == Key.Escape || event.text == Key.Back {
+                root.back-pressed();
+                return accept;
+            }
+            reject
+        }
 
     // ── Setup screen ─────────────────────────────────────────────
     // Permanent base layer at x=0. Running slides over the top on
@@ -911,6 +976,118 @@ export component MainWindow inherits Window {
         }
     }
 
+    // ── Label chooser (overlay, slides over everything) ─────────
+    // Mirrors GTK's `push_labels_chooser`: a navigation push with
+    // a back-button header bar + a list of label rows. C-2 ships
+    // the read+select half — CRUD lands in C-3 / C-4. Slides in
+    // from the right via `labels-offset`; the Setup, Running, and
+    // Done layers stay put underneath. Background is `surface`
+    // (mirrors the Setup page background) so a partial-slide
+    // doesn't show through to whatever's underneath.
+    Rectangle {
+        x: parent.width - root.labels-offset;
+        width: parent.width;
+        height: parent.height;
+        background: MaterialPalette.surface;
+
+        VerticalLayout {
+            padding-top: 24px;
+            padding-bottom: 24px;
+            padding-left: 16px;
+            padding-right: 16px;
+            spacing: 16px;
+            alignment: start;
+
+            // Header — back arrow + title. Mirrors the
+            // `Adw.HeaderBar { show-back-button: true }` +
+            // `NavigationPage.title` GTK uses. The back button is
+            // an IconButton (40 px touch target) on the left; an
+            // equal-width spacer on the right balances the row
+            // so the title actually centers in the page (rather
+            // than sitting to the right of the back button).
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: stretch;
+
+                IconButton {
+                    icon: Icons.arrow-back;
+                    clicked => { root.labels-back(); }
+                }
+                Text {
+                    text: "Choose Label";
+                    font-size: 18px;
+                    color: MaterialPalette.on-surface;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    horizontal-alignment: center;
+                }
+                Rectangle {
+                    width: 40px;
+                }
+            }
+
+            // Label list inside a BoxedList — same boxed look as
+            // the Session group, so the chooser feels consistent.
+            // Each iteration emits an optional 1 px hair-line
+            // divider above the row (skipped for the first row),
+            // mirroring the divider pattern between Cues /
+            // Stopwatch / Duration / Label / Keep Awake in the
+            // Session group.
+            BoxedList {
+                for item[idx] in root.label-items : VerticalLayout {
+                    spacing: 0;
+
+                    if idx > 0 : Rectangle {
+                        height: 1px;
+                        background: MaterialPalette.outline-variant;
+                    }
+
+                    Rectangle {
+                        height: 56px;
+                        background: row-touch.has-hover
+                            ? MaterialPalette.surface-container-high
+                            : transparent;
+
+                        row-touch := TouchArea {
+                            clicked => { root.label-picked(item.id); }
+                        }
+
+                        HorizontalLayout {
+                            padding-left: 16px;
+                            padding-right: 16px;
+                            spacing: 12px;
+                            alignment: stretch;
+
+                            Text {
+                                text: item.name;
+                                font-size: 16px;
+                                color: MaterialPalette.on-surface;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                            }
+                            // Check-mark suffix on the currently-
+                            // selected row — mirrors GTK's
+                            // `object-select-symbolic` indicator.
+                            // SVG via Material's bundled Icons.check.
+                            // VerticalLayout centers the image
+                            // inside the 56-px row (without the
+                            // wrapper the Image is top-aligned).
+                            if item.selected : VerticalLayout {
+                                alignment: center;
+                                Image {
+                                    source: Icons.check;
+                                    colorize: MaterialPalette.primary;
+                                    width: 20px;
+                                    height: 20px;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // ── Duration dialog (modal overlay, on top of both screens) ─
     if root.duration-dialog-open : Rectangle {
         // Scrim — taps outside the card cancel.
@@ -997,4 +1174,5 @@ export component MainWindow inherits Window {
             }
         }
     }
+    } // root-focus FocusScope
 }

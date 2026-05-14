@@ -172,6 +172,50 @@ fn resolved_label_for_mode(
     Some((label.name, label.id))
 }
 
+/// Build the row list for the label chooser overlay. Each row
+/// carries the local rowid (id), display name, and a `selected`
+/// flag that mirrors `current_id`. Returned as a plain Vec the
+/// caller wraps in a `slint::VecModel`.
+#[cfg(target_os = "android")]
+fn list_labels_with_selection(current_id: Option<i64>) -> Vec<(i64, String, bool)> {
+    let Some(db_arc) = DATABASE.get() else { return Vec::new(); };
+    let Ok(guard) = db_arc.lock() else { return Vec::new(); };
+    let Some(db) = guard.as_ref() else { return Vec::new(); };
+    meditate_core::db::list_labels_from_db(db)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|l| (l.id, l.name, Some(l.id) == current_id))
+        .collect()
+}
+
+/// Look up a label's UUID by local rowid — used by the chooser's
+/// pick handler to persist the user's selection via the per-mode
+/// UUID setting key (`label_uuid_key_for_mode`).
+#[cfg(target_os = "android")]
+fn lookup_label_uuid(id: i64) -> Option<String> {
+    let db_arc = DATABASE.get()?;
+    let guard = db_arc.lock().ok()?;
+    let db = guard.as_ref()?;
+    meditate_core::db::list_labels_from_db(db)
+        .ok()?
+        .into_iter()
+        .find(|l| l.id == id)
+        .map(|l| l.uuid.0)
+}
+
+#[cfg(target_os = "android")]
+fn write_label_uuid_for_mode(mode: meditate_core::SessionMode, uuid: &str) {
+    let Some(db_arc) = DATABASE.get() else { return; };
+    let Ok(guard) = db_arc.lock() else { return; };
+    let Some(db) = guard.as_ref() else { return; };
+    if let Err(e) = meditate_core::labels::persist_uuid_for_mode(db, mode, uuid) {
+        meditate_core::log(
+            "settings.label_uuid",
+            &format!("write FAILED mode={mode:?} uuid={uuid} err={e:?}"),
+        );
+    }
+}
+
 #[cfg(target_os = "android")]
 fn write_signal_mode_for_mode(
     mode: meditate_core::SessionMode,
@@ -550,13 +594,77 @@ fn build_ui() -> MainWindow {
         });
     }
 
-    // Label inner-row tap — placeholder until the chooser screen
-    // ships next slice. Logs to diag so the wiring is observable;
-    // no UI change.
-    ui.on_label_tap(move || {
-        #[cfg(target_os = "android")]
-        meditate_core::log("ui.label_tap", "chooser screen pending (slice C-2)");
-    });
+    // Label inner-row tap — load the labels list with the active
+    // mode's current selection marked, then open the chooser.
+    // Mirrors the GTK chain `setup_label_chooser_row.activated → resolve_label_for_mode →
+    // push_label_chooser(current_id, on_selected)`.
+    {
+        let weak = ui.as_weak();
+        let current_mode = current_mode.clone();
+        ui.on_label_tap(move || {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                let mode: meditate_core::SessionMode = current_mode.get().into();
+                let current_id = if read_label_active_for_mode(mode) {
+                    resolved_label_for_mode(mode).map(|(_, id)| id)
+                } else {
+                    None
+                };
+                let items: Vec<LabelItem> = list_labels_with_selection(current_id)
+                    .into_iter()
+                    .map(|(id, name, selected)| LabelItem {
+                        id: id as i32,
+                        name: name.into(),
+                        selected,
+                    })
+                    .collect();
+                ui.set_label_items(
+                    std::rc::Rc::new(slint::VecModel::from(items)).into(),
+                );
+                ui.set_labels_page(true);
+            }
+            let _ = (weak.clone(), current_mode.get());
+        });
+    }
+
+    // Chooser back arrow — just close the overlay. The selection
+    // hasn't changed, so no Slint property refresh is needed.
+    {
+        let weak = ui.as_weak();
+        ui.on_labels_back(move || {
+            if let Some(ui) = weak.upgrade() {
+                ui.set_labels_page(false);
+            }
+        });
+    }
+
+    // User picked a label row — persist the new UUID for the
+    // active mode, refresh the ExpanderRow's resolved name, and
+    // close the overlay. Mirrors the GTK chooser's `on_selected`
+    // callback at `imp.rs:744-749`.
+    {
+        let weak = ui.as_weak();
+        let current_mode = current_mode.clone();
+        ui.on_label_picked(move |id| {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                let mode: meditate_core::SessionMode = current_mode.get().into();
+                if let Some(uuid) = lookup_label_uuid(id as i64) {
+                    write_label_uuid_for_mode(mode, &uuid);
+                }
+                ui.set_label_name(
+                    resolved_label_for_mode(mode)
+                        .map(|(name, _)| name)
+                        .unwrap_or_default()
+                        .into(),
+                );
+                ui.set_labels_page(false);
+            }
+            let _ = (weak.clone(), current_mode.get(), id);
+        });
+    }
 
     // Discard tap: drop the pending session without writing a row,
     // then dismiss to Idle. Mirrors the GTK shell's `on_discard`.
@@ -595,6 +703,44 @@ fn build_ui() -> MainWindow {
                 .unwrap_or_default()
                 .into(),
         );
+    }
+
+    // Android back gesture / hardware back button — Slint maps
+    // `Keycode::Back` to `Key.Back`, dispatched via the normal
+    // key-event path. We catch it in the root FocusScope inside
+    // main.slint and surface it here so "back" consistently means
+    // "go up one level":
+    //   * Labels chooser open → close the chooser
+    //   * Done screen open → discard (same as the Discard button)
+    //   * Running overlay up → swallow (don't kill an in-flight
+    //     session via stray gesture)
+    //   * Otherwise: do nothing (the OS will close the app at the
+    //     next press if no Slint handler accepted — or the user
+    //     can swipe-up to Home).
+    {
+        let weak = ui.as_weak();
+        let state = state.clone();
+        #[cfg(target_os = "android")]
+        let pending_done = pending_done.clone();
+        ui.on_back_pressed(move || {
+            let Some(ui) = weak.upgrade() else { return; };
+            if ui.get_labels_page() {
+                ui.set_labels_page(false);
+                return;
+            }
+            if ui.get_done_page() {
+                #[cfg(target_os = "android")]
+                pending_done.set(None);
+                let mut s = state.borrow_mut();
+                *s = std::mem::replace(&mut *s, AppState::idle()).dismiss();
+                refresh(&ui, &s, now_since_epoch());
+                return;
+            }
+            // Running page back is swallowed by the FocusScope
+            // accepting the event but doing nothing here — keeps
+            // a session safe from a stray back gesture.
+            // Idle setup page: nothing to do.
+        });
     }
 
     refresh(&ui, &state.borrow(), now_since_epoch());
