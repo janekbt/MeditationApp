@@ -221,7 +221,7 @@ impl Database {
                     is_bundled: row.get::<_, i64>(4)? != 0,
                     mime_type: row.get(5)?,
                     category: BellSoundCategory::from_db_str(&cat_str)
-                        .unwrap_or(BellSoundCategory::General),
+                        .expect("bell_sounds.category violates CHECK constraint"),
                     created_iso: row.get(7)?,
                 })
             })?
@@ -254,7 +254,7 @@ impl Database {
                     is_bundled: row.get::<_, i64>(4)? != 0,
                     mime_type: row.get(5)?,
                     category: BellSoundCategory::from_db_str(&cat_str)
-                        .unwrap_or(BellSoundCategory::General),
+                        .expect("bell_sounds.category violates CHECK constraint"),
                     created_iso: row.get(7)?,
                 })
             })?

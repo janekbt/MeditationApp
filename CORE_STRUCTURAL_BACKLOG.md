@@ -45,16 +45,6 @@ rationale.
   in core + shell rewrite via a mechanical `BoxBreathPhaseId` →
   `Phase` rename.
 
-### Inconsistent corrupt-row handling
-- Some sites `.unwrap_or(default)` (silent coercion of bad
-  enum value), others `.expect()` (panic), others
-  `DbError::Csv`. Pick one rule:
-  - `.expect()` for CHECK-constrained columns (the constraint
-    guarantees the variant exists).
-  - `DbError::Decode(...)` for free-text columns (CSV import or
-    hand-edited rows can hit a typo).
-- Audit `from_db_str` call sites in `db.rs` and align.
-
 ### `Session` phase-variant payloads hoist
 - `session.rs:535, 684` — `target_secs.expect("Overtime requires
   a target")`. State-machine invariant only enforced by code path.

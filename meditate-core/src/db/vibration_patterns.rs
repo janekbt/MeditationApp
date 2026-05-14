@@ -60,7 +60,7 @@ pub fn list_vibration_patterns_from_db(db: &Database) -> Result<Vec<VibrationPat
                 intensities: serde_json::from_str(&intensities_json)
                     .unwrap_or_default(),
                 chart_kind: ChartKind::from_db_str(&chart_str)
-                    .unwrap_or(ChartKind::Line),
+                    .expect("vibration_patterns.chart_kind violates CHECK constraint"),
                 is_bundled: row.get::<_, i64>(6)? != 0,
                 created_iso: row.get(7)?,
                 updated_iso: row.get(8)?,
@@ -89,7 +89,7 @@ pub fn find_vibration_pattern_by_uuid_from_db(
                 intensities: serde_json::from_str(&intensities_json)
                     .unwrap_or_default(),
                 chart_kind: ChartKind::from_db_str(&chart_str)
-                    .unwrap_or(ChartKind::Line),
+                    .expect("vibration_patterns.chart_kind violates CHECK constraint"),
                 is_bundled: row.get::<_, i64>(6)? != 0,
                 created_iso: row.get(7)?,
                 updated_iso: row.get(8)?,
@@ -222,7 +222,7 @@ impl Database {
         let intensities: Vec<f32> = serde_json::from_str(&intensities_json)
             .map_err(|e| DbError::Decode(format!("deserialise intensities: {e}")))?;
         let chart_kind = ChartKind::from_db_str(&chart_kind_str)
-            .ok_or_else(|| DbError::Decode(format!("bad chart_kind: {chart_kind_str}")))?;
+            .expect("vibration_patterns.chart_kind violates CHECK constraint");
         self.update_vibration_pattern(
             uuid_str, new_name, duration_ms, &intensities, chart_kind,
         )?;

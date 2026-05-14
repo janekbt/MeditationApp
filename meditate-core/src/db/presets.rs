@@ -51,7 +51,7 @@ pub fn list_presets_from_db(db: &Database) -> Result<Vec<Preset>> {
                 uuid: row.get(1)?,
                 name: row.get(2)?,
                 mode: SessionMode::from_db_str(&mode_str)
-                    .unwrap_or(SessionMode::Timer),
+                    .expect("presets.mode violates CHECK constraint"),
                 is_starred: row.get::<_, i64>(4)? != 0,
                 config_json: row.get(5)?,
                 created_iso: row.get(6)?,
@@ -81,7 +81,7 @@ pub fn list_presets_for_mode_from_db(db: &Database, mode: SessionMode) -> Result
                 uuid: row.get(1)?,
                 name: row.get(2)?,
                 mode: SessionMode::from_db_str(&mode_str)
-                    .unwrap_or(SessionMode::Timer),
+                    .expect("presets.mode violates CHECK constraint"),
                 is_starred: row.get::<_, i64>(4)? != 0,
                 config_json: row.get(5)?,
                 created_iso: row.get(6)?,
@@ -110,7 +110,7 @@ pub fn list_starred_presets_for_mode_from_db(db: &Database, mode: SessionMode) -
                 uuid: row.get(1)?,
                 name: row.get(2)?,
                 mode: SessionMode::from_db_str(&mode_str)
-                    .unwrap_or(SessionMode::Timer),
+                    .expect("presets.mode violates CHECK constraint"),
                 is_starred: row.get::<_, i64>(4)? != 0,
                 config_json: row.get(5)?,
                 created_iso: row.get(6)?,
@@ -145,7 +145,7 @@ pub fn find_preset_by_uuid_from_db(db: &Database, uuid_str: &str) -> Result<Opti
                 uuid: row.get(1)?,
                 name: row.get(2)?,
                 mode: SessionMode::from_db_str(&mode_str)
-                    .unwrap_or(SessionMode::Timer),
+                    .expect("presets.mode violates CHECK constraint"),
                 is_starred: row.get::<_, i64>(4)? != 0,
                 config_json: row.get(5)?,
                 created_iso: row.get(6)?,
