@@ -10,6 +10,7 @@
 
 import {
     FilledButton, OutlineButton, TextButton, TonalButton,
+    SegmentedButton,
     MaterialPalette,
 } from "@material";
 export { MaterialWindowAdapter } from "@material";
@@ -159,6 +160,12 @@ export component MainWindow inherits Window {
     in property <string> action-label: "Start Session";
     in property <bool> running-page: false;
     in property <bool> stop-visible: false;
+    // Streak chip slot above the hero — matches `streak_label` in
+    // `meditate-gtk/data/ui/timer_view.blp` (line 32). Empty
+    // placeholder for now; phase 3 wires the real value from the
+    // DB. Defined as a property rather than a hard-coded blank
+    // Text so the layout doesn't reshape once phase 3 fills it in.
+    in property <string> streak-text: "";
     // Done screen: replaces Setup as the base layer while it's up.
     // running-page may also be true briefly during the transition
     // (Done is set first, then running-page is cleared so the
@@ -170,6 +177,13 @@ export component MainWindow inherits Window {
 
     in-out property <int> setup-hours: 0;
     in-out property <int> setup-minutes: 10;
+
+    // Mode chip group selection — 0=Timer, 1=Guided, 2=Box Breath.
+    // Mirrors the .blp `mode_toggle_group` toggle order. Rust echoes
+    // this back on launch (defaults to Timer); user taps update it
+    // via the `mode-changed` callback so we can refresh dependent
+    // surfaces (Start enabled / Setup body / persisted mode).
+    in-out property <int> setup-mode: 0;
 
     in-out property <bool> duration-dialog-open: false;
     in-out property <int> dialog-hours: 0;
@@ -185,6 +199,7 @@ export component MainWindow inherits Window {
     callback duration-tap();
     callback save-tap();
     callback discard-tap();
+    callback mode-changed(int);
 
     // Slide offset driving the Running screen's slide-over. 0 px
     // means Running is parked at x=width (off-screen right) and
@@ -216,10 +231,24 @@ export component MainWindow inherits Window {
             spacing: 20px;
             alignment: start;
 
-            // Hero + caption.
+            // Hero area — mirrors the GTK shell's hero block at
+            // `timer_view.blp` lines 26-51: streak chip on top,
+            // big time readout in the middle, mode-aware caption
+            // beneath. GTK puts this FIRST in the parent vbox;
+            // the mode chip group lives below it (next child).
             VerticalLayout {
                 spacing: 4px;
 
+                // Streak chip slot. Empty until phase 3's DB
+                // persistence lights it up; sized to leave the
+                // visual gap GTK's `streak_label` reserves even
+                // when its text is blank.
+                Text {
+                    text: root.streak-text;
+                    font-size: 14px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface-variant;
+                }
                 Text {
                     text: root.remaining-text;
                     font-size: 80px;
@@ -234,21 +263,40 @@ export component MainWindow inherits Window {
                 }
             }
 
+            // Mode chip group — mirrors GTK's
+            // `Adw.ToggleGroup mode_toggle_group` (Timer / Guided
+            // / Box Breath) just below the hero. Same toggle order
+            // as the .blp so a persisted index works across both
+            // shells. Guided + Box Breath are surface only in this
+            // slice (no audio engine / no Box Breath running view
+            // yet); Start stays disabled when either is selected.
+            SegmentedButton {
+                current-index <=> root.setup-mode;
+                items: [
+                    { text: "Timer" },
+                    { text: "Guided" },
+                    { text: "Box Breath" },
+                ];
+                index-changed(idx) => { root.mode-changed(idx); }
+            }
+
             // Start Session button — above the settings, in thumb
             // reach. Taller than Material 3's 40 px default because
             // it's the single most-tapped surface on the app.
+            // Disabled for Guided / Box Breath until the running
+            // views for those modes ship (next slice).
             FilledButton {
                 text: "Start Session";
                 height: 56px;
-                enabled: root.setup-hours > 0 || root.setup-minutes > 0;
+                enabled: root.setup-mode == 0
+                    && (root.setup-hours > 0 || root.setup-minutes > 0);
                 clicked => { root.action-tap(); }
             }
 
-            // Settings group, mirroring the GTK Adw.PreferencesGroup
-            // titled "Session". Phase 1 has only the Duration row;
-            // Stopwatch Mode / Label / Keep Screen Awake land in
-            // phase 2.
-            VerticalLayout {
+            // Timer body — Session group with Duration row.
+            // Visible in Timer mode only (matches the .blp's
+            // `countdown_inputs` visibility rule).
+            if root.setup-mode == 0 : VerticalLayout {
                 spacing: 8px;
 
                 Text {
@@ -263,6 +311,26 @@ export component MainWindow inherits Window {
                     value-text: root.duration-text;
                     tapped => { root.duration-tap(); }
                 }
+            }
+
+            // Placeholder body for Guided / Box Breath — the GTK
+            // shell builds full guided_section / boxbreath_inputs
+            // panes here. The Android counterparts land in the
+            // next phase-2 slices; for now a single-line note
+            // keeps the gap visible without faking functionality.
+            if root.setup-mode == 1 : Text {
+                text: "Guided mode lands with the audio engine in phase 5.";
+                font-size: 14px;
+                color: MaterialPalette.on-surface-variant;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
+            if root.setup-mode == 2 : Text {
+                text: "Box Breath inputs + running view land in the next slice.";
+                font-size: 14px;
+                color: MaterialPalette.on-surface-variant;
+                horizontal-alignment: center;
+                wrap: word-wrap;
             }
         }
     }

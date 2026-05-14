@@ -14,6 +14,60 @@ use meditate_core::format::{format_hhmm, format_time};
 use meditate_core::session::{Session, SessionSettings, SessionShape, UiState};
 use std::time::Duration;
 
+/// User-visible mode chip group at the top of the Setup view —
+/// mirrors `meditate-gtk/src/timer/imp.rs::TimerMode` so per-mode
+/// helpers in `meditate_core::settings_keys` (which expect the core
+/// `SessionMode` enum) map across the two shells identically.
+///
+/// Naming follows GTK exactly (`Breathing` is the shell name for
+/// what core calls `BoxBreath`); the From impl bridges the gap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TimerMode {
+    #[default]
+    Timer,
+    Breathing,
+    /// Guided meditation — user picks an audio file and the session
+    /// length is the file's natural duration. Surface placeholder
+    /// until phase 5's audio engine arrives.
+    Guided,
+}
+
+impl From<TimerMode> for meditate_core::SessionMode {
+    fn from(m: TimerMode) -> Self {
+        match m {
+            TimerMode::Timer => meditate_core::SessionMode::Timer,
+            TimerMode::Breathing => meditate_core::SessionMode::BoxBreath,
+            TimerMode::Guided => meditate_core::SessionMode::Guided,
+        }
+    }
+}
+
+impl TimerMode {
+    /// Map the Slint chip group's `current-index` (Timer=0,
+    /// Guided=1, Breathing=2 — mirroring the .blp `Adw.Toggle`
+    /// order) onto a TimerMode. Out-of-range falls back to the
+    /// default (Timer) rather than panicking.
+    pub fn from_chip_index(idx: i32) -> Self {
+        match idx {
+            0 => Self::Timer,
+            1 => Self::Guided,
+            2 => Self::Breathing,
+            _ => Self::default(),
+        }
+    }
+
+    /// Inverse of `from_chip_index` — used by the Rust side to
+    /// echo the model state back to Slint when the user picks a
+    /// mode out-of-band (e.g., default at startup).
+    pub fn to_chip_index(self) -> i32 {
+        match self {
+            Self::Timer => 0,
+            Self::Guided => 1,
+            Self::Breathing => 2,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum AppState {
     Idle,
@@ -196,6 +250,41 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── TimerMode chip mapping ──────────────────────────────────
+
+    #[test]
+    fn chip_index_round_trips_for_every_mode() {
+        for mode in [TimerMode::Timer, TimerMode::Breathing, TimerMode::Guided] {
+            assert_eq!(TimerMode::from_chip_index(mode.to_chip_index()), mode);
+        }
+    }
+
+    #[test]
+    fn chip_index_order_matches_blp_toggle_order() {
+        // `timer_view.blp` declares the Adw.ToggleGroup children in
+        // this exact order: countdown_toggle, guided_toggle,
+        // breathing_toggle. The Slint chip group must match so an
+        // index passed from either shell selects the same row.
+        assert_eq!(TimerMode::from_chip_index(0), TimerMode::Timer);
+        assert_eq!(TimerMode::from_chip_index(1), TimerMode::Guided);
+        assert_eq!(TimerMode::from_chip_index(2), TimerMode::Breathing);
+    }
+
+    #[test]
+    fn chip_index_out_of_range_falls_back_to_default() {
+        assert_eq!(TimerMode::from_chip_index(-1), TimerMode::Timer);
+        assert_eq!(TimerMode::from_chip_index(99), TimerMode::Timer);
+    }
+
+    #[test]
+    fn timer_mode_maps_to_core_session_mode() {
+        use meditate_core::SessionMode;
+        assert_eq!(SessionMode::from(TimerMode::Timer), SessionMode::Timer);
+        assert_eq!(SessionMode::from(TimerMode::Breathing), SessionMode::BoxBreath);
+        assert_eq!(SessionMode::from(TimerMode::Guided), SessionMode::Guided);
+    }
+
 
     // ── hero_label ──────────────────────────────────────────────
 

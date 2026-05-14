@@ -4,8 +4,7 @@ mod service;
 
 slint::include_modules!();
 
-use app::AppState;
-#[cfg(target_os = "android")]
+use app::{AppState, TimerMode};
 use std::cell::Cell;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -94,7 +93,12 @@ fn refresh(ui: &MainWindow, state: &AppState, now: Duration) {
 /// elapsed comes from the live core::Session and is captured BEFORE
 /// the AppState mutation drops the session.
 #[cfg(target_os = "android")]
-fn finalize_session(unix_start: i64, elapsed_secs: i64, note: Option<String>) {
+fn finalize_session(
+    unix_start: i64,
+    elapsed_secs: i64,
+    note: Option<String>,
+    mode: meditate_core::SessionMode,
+) {
     if elapsed_secs <= 0 {
         // Drop sessions that ended before any seconds elapsed —
         // matches the GTK shell, which also filters zero-duration
@@ -114,14 +118,16 @@ fn finalize_session(unix_start: i64, elapsed_secs: i64, note: Option<String>) {
     let session = meditate_core::db::Session::from_unix(
         unix_start,
         elapsed_secs,
-        // Phase 2 will add a label picker; for Phase 1 every session
+        // Phase 2 will add a label picker; for now every session
         // lands unlabeled.
         None,
         note,
-        // Box Breath + Guided live behind their own Slint Setup mode
-        // chips — UI Phase 2 / Phase 5 work. Until they ship the only
-        // mode the shell can author is plain Timer.
-        meditate_core::SessionMode::Timer,
+        mode,
+        // Guided file UUID: only meaningful when the user picked a
+        // library file via the Guided audio picker (Phase 5). Until
+        // then this is always None — both Timer and Box Breath
+        // sessions don't carry a guided-file reference, and even
+        // future transient "Open File" guided picks log None.
         None,
     );
     match db.insert_session(&session) {
@@ -141,6 +147,12 @@ fn finalize_session(unix_start: i64, elapsed_secs: i64, note: Option<String>) {
 fn build_ui() -> MainWindow {
     let ui = MainWindow::new().unwrap();
     let state = Rc::new(RefCell::new(AppState::idle()));
+    // Active mode chip — drives both the Setup body content and
+    // the `SessionMode` recorded on Save. Defaults to Timer at
+    // launch; persistence across launches lands when settings
+    // wiring arrives. Shared with the mode-changed callback and
+    // the Save handler so both read the same source of truth.
+    let current_mode = Rc::new(Cell::new(TimerMode::default()));
     // Unix timestamp captured at session start, taken at end.
     // Mirrors the GTK shell's `Timer::session_start_time` cell.
     // Holds None while idle; Some(unix_secs) while a session is
@@ -276,6 +288,7 @@ fn build_ui() -> MainWindow {
             // foreground service AND stashes the session for the
             // Done screen. tick on an inactive state is a no-op,
             // so the equality check is the cheap path.
+            #[cfg(target_os = "android")]
             let elapsed_secs = match &*s {
                 AppState::Active(session) => session.elapsed(now).as_secs() as i64,
                 _ => 0,
@@ -306,14 +319,16 @@ fn build_ui() -> MainWindow {
     }
 
     // Save tap on the Done screen: commit the pending session as a
-    // DB row (with the note text the user entered), then dismiss to
-    // Idle. The slide-off-right animation already revealed Done
-    // under Running on Stop; Save / Discard just instantly swap
-    // the base layer back to Setup ("the done page just disappears"
-    // per the GTK pattern).
+    // DB row (with the note text the user entered, and the mode
+    // that was active at session start), then dismiss to Idle.
+    // The slide-off-right animation already revealed Done under
+    // Running on Stop; Save / Discard just instantly swap the base
+    // layer back to Setup ("the done page just disappears" per the
+    // GTK pattern).
     {
         let weak = ui.as_weak();
         let state = state.clone();
+        let current_mode = current_mode.clone();
         #[cfg(target_os = "android")]
         let pending_done = pending_done.clone();
         ui.on_save_tap(move || {
@@ -322,11 +337,29 @@ fn build_ui() -> MainWindow {
             if let Some((unix_start, elapsed_secs)) = pending_done.take() {
                 let note = ui.get_note_text().to_string();
                 let note = if note.trim().is_empty() { None } else { Some(note) };
-                finalize_session(unix_start, elapsed_secs, note);
+                finalize_session(
+                    unix_start,
+                    elapsed_secs,
+                    note,
+                    current_mode.get().into(),
+                );
             }
+            #[cfg(not(target_os = "android"))]
+            let _ = current_mode.get();
             let mut s = state.borrow_mut();
             *s = std::mem::replace(&mut *s, AppState::idle()).dismiss();
             refresh(&ui, &s, now_since_epoch());
+        });
+    }
+
+    // Mode chip group changed — update the shared mode cell so the
+    // next Save records the right SessionMode. Mirrors the GTK
+    // shell's `on_mode_switched` (which also persists to a setting;
+    // that piece lands when settings wiring arrives).
+    {
+        let current_mode = current_mode.clone();
+        ui.on_mode_changed(move |idx| {
+            current_mode.set(TimerMode::from_chip_index(idx));
         });
     }
 
