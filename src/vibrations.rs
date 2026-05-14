@@ -466,8 +466,13 @@ fn show_undo_edit_toast(
     before: VibrationPattern,
     rebuilder: crate::Rebuilder,
 ) {
+    let title = crate::announcement::title(
+        &meditate_core::announcement::Announcement::PatternUpdated {
+            name: before.name.clone(),
+        },
+    );
     let toast = adw::Toast::builder()
-        .title(format!("{} {}", gettext("Updated"), &before.name))
+        .title(&title)
         .button_label(gettext("Undo"))
         .timeout(5)
         .build();
@@ -500,8 +505,13 @@ fn show_undo_delete_toast(
     snapshot: VibrationPattern,
     rebuilder: crate::Rebuilder,
 ) {
+    let title = crate::announcement::title(
+        &meditate_core::announcement::Announcement::PatternDeleted {
+            name: snapshot.name.clone(),
+        },
+    );
     let toast = adw::Toast::builder()
-        .title(format!("{} {}", gettext("Deleted"), &snapshot.name))
+        .title(&title)
         .button_label(gettext("Undo"))
         .timeout(5)
         .build();

@@ -288,10 +288,13 @@ impl Database {
                 Ok(_) => {}
                 Err(e) if is_unique_constraint_error(&e) => {
                     let suffixed = conflict_suffixed_name(name, file_uuid);
-                    crate::diag::log(&format!(
-                        "guided_file_name_collision: uuid={file_uuid} \
-                         original={name:?} resolved={suffixed:?}"
-                    ));
+                    crate::diag::log(
+                        "guided_file.name_collision",
+                        &format!(
+                            "uuid={file_uuid} original={name:?} \
+                             resolved={suffixed:?}"
+                        ),
+                    );
                     self.conn.execute(upsert_sql, params![
                         file_uuid, suffixed, file_path, duration_secs,
                         i64::from(is_starred), created_iso, updated_iso,

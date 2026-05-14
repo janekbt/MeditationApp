@@ -209,10 +209,13 @@ impl Database {
                 Ok(_) => {}
                 Err(e) if is_unique_constraint_error(&e) => {
                     let suffixed = conflict_suffixed_name(name, label_uuid);
-                    crate::diag::log(&format!(
-                        "label_name_collision: uuid={label_uuid} \
-                         original={name:?} resolved={suffixed:?}"
-                    ));
+                    crate::diag::log(
+                        "label.name_collision",
+                        &format!(
+                            "uuid={label_uuid} original={name:?} \
+                             resolved={suffixed:?}"
+                        ),
+                    );
                     self.conn.execute(
                         "INSERT INTO labels (uuid, name) VALUES (?1, ?2)
                          ON CONFLICT(uuid) DO UPDATE SET name = excluded.name",

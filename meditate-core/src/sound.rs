@@ -6,6 +6,14 @@
 
 use crate::db::BellSound;
 
+/// Shared preview-toggle state machine. The bell-sound chooser's
+/// current shell-side `play_preview` / `stop_preview` pair (mono
+/// `gtk::MediaFile` slot) is the thin equivalent; promoting it to
+/// `PreviewToggle` gives the typed toggle / supersede / auto-revert
+/// protocol the vibration chooser already uses, and one shape both
+/// the gtk and Android shells can share.
+pub use crate::preview::{PreviewAction, PreviewToggle};
+
 /// Cap on imported custom-bell file size. 10 MB is comfortably
 /// larger than any reasonable transient bell sound and keeps the
 /// data directory from growing without bound.

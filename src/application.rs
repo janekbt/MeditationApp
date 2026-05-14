@@ -142,21 +142,25 @@ mod imp {
                     // (startup is too early — no window exists yet).
                     match db.finalize_session_in_progress() {
                         Ok(Some(finalized)) => {
-                            meditate_core::log(&format!(
-                                "session_recovery: finalised in-flight session uuid={} duration_secs={}",
-                                finalized.session_uuid, finalized.duration_secs,
-                            ));
+                            meditate_core::log(
+                                "session.recovery",
+                                &format!(
+                                    "finalised in-flight uuid={} duration_secs={}",
+                                    finalized.session_uuid, finalized.duration_secs,
+                                ),
+                            );
                             *self.pending_recovery_toast.lock().unwrap() = Some(finalized);
                         }
                         Ok(None) => {}
                         Err(e) => {
-                            meditate_core::log(&format!(
-                                "session_recovery: finalize FAILED at startup: {e}"
-                            ));
+                            meditate_core::log(
+                                "session.recovery",
+                                &format!("finalize FAILED at startup: {e}"),
+                            );
                         }
                     }
                     *self.db.lock().unwrap() = Some(db);
-                    meditate_core::log(&format!("db open ok: {}", db_path.display()));
+                    meditate_core::log("db.open", &format!("ok path={}", db_path.display()));
                 }
                 Err(e) => {
                     // Shell DbError → DbOpenFailureKey: only the
@@ -170,9 +174,10 @@ mod imp {
                         _ => DbOpenFailureKey::Other,
                     };
                     eprintln!("Failed to open database: {e:?}");
-                    meditate_core::log(&format!(
-                        "db open FAILED at {}: {e:?}", db_path.display()
-                    ));
+                    meditate_core::log(
+                        "db.open",
+                        &format!("FAILED path={} err={e:?}", db_path.display()),
+                    );
                     *self.last_open_error.lock().unwrap() = Some(key);
                 }
             }
@@ -204,7 +209,7 @@ mod imp {
             // it. Worst-case 500 ms; typical <50 ms.
             let has_haptic = crate::vibration::probe_haptic();
             self.has_haptic.set(has_haptic);
-            meditate_core::log(&format!("haptic probe: {has_haptic}"));
+            meditate_core::log("haptic.probe", &format!("has_haptic={has_haptic}"));
 
             self.setup_actions();
             self.setup_accels();
@@ -388,11 +393,9 @@ mod imp {
             app.invalidate(crate::application::InvalidateScope::ALL);
 
             let minutes = finalized.duration_secs / 60;
-            let title = crate::i18n::ngettext(
-                "Recovered 1 min session",
-                "Recovered {n} min session",
-                minutes,
-            ).replace("{n}", &minutes.to_string());
+            let title = crate::announcement::title(
+                &meditate_core::announcement::Announcement::SessionRecovered { minutes },
+            );
 
             let toast = adw::Toast::builder()
                 .title(&title)
@@ -405,9 +408,10 @@ mod imp {
             toast.connect_button_clicked(move |_| {
                 app_for_undo.with_db_mut(|db| {
                     if let Err(e) = db.delete_session_by_uuid(&session_uuid) {
-                        meditate_core::log(&format!(
-                            "session_recovery: Undo delete failed for uuid={session_uuid}: {e}"
-                        ));
+                        meditate_core::log(
+                            "session.recovery",
+                            &format!("Undo delete failed uuid={session_uuid}: {e}"),
+                        );
                     }
                 });
                 app_for_undo.invalidate(crate::application::InvalidateScope::ALL);
@@ -625,7 +629,7 @@ impl MeditateApplication {
                 coord.start_pass();
                 let result = crate::sync_runner::run_sync_attempt(&db_path);
                 if let Err(e) = &result {
-                    meditate_core::log(&format!("sync: {e}"));
+                    meditate_core::log("sync.attempt", &format!("err={e}"));
                 }
                 // Exit only when there's no fresh trigger AND release
                 // successfully clears the in-flight slot. release()

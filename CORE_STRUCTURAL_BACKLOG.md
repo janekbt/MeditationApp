@@ -113,18 +113,6 @@ rationale.
 - Fix: `fn sync<'a>(db: &'a Database, fs: &'a FakeWebDav) ->
   Sync<'a>` inside the existing test mod. ~120 lines saved.
 
-### Eliminate `session_data_to_core` / `session_from_core`
-- `src/db/mod.rs:164-191` — the only substantive translation in
-  the shell DB wrapper. Reason: shell `Session.start_time: i64`
-  (unix) vs core `start_iso: String`; shell field name `note` vs
-  core `notes`.
-- Fix path A: add `meditate_core::db::Session::from_unix(unix,
-  dur, …)` and a `start_unix()` accessor.
-- Fix path B: rename core's `notes` field to `note` + ship a
-  unix-seconds constructor.
-- Saves ~30 lines + tests. Android shell would need this exact
-  translation; doing it twice is the smell.
-
 ### `src/db/mod.rs::map_core_err` synthesises fake sqlite errors
 - Lines 197-233 — re-builds `rusqlite::Error::SqliteFailure(
   SQLITE_CONSTRAINT_UNIQUE, …)` per `DbError::Duplicate*` variant
@@ -166,17 +154,6 @@ rationale.
   each to `ngettext`. Fold with the open sixth-pass `HmKey`
   item — one PR.
 
-### Accessibility: typed `Announcement` / `ToastKey` enum for live regions
-- `Effect`/`TickOutcome` lack a shell-portable surface for
-  SR live-region intents (session saved, sync complete,
-  undo toast, label saved, import done). Every shell composes
-  its own toast string today; Android will diverge.
-- Fix: typed `Announcement` enum (`SessionSaved`,
-  `SessionDeleted{count}`, `SyncOk{secs_ago}`, `SyncFailed
-  (SyncFailureKind)`, `ImportComplete{n}`, `UndoAvailable
-  {kind}`). Mirrors the shipped `SyncSettingsError` pattern in
-  `sync/credentials.rs` — typed key in core, shell renders.
-
 ### Accessibility: `MiniStatValue::{NoData,Value}` to keep dash glyphs out of SR
 - `format::mini_stat_or_dash` returns `"–"`; SR reads "minus"
   or "dash".
@@ -199,16 +176,6 @@ rationale.
 - See Tier-1 sync::backoff item — same code change resolves
   both the suspend correctness gap and the inconsistency
   with the rest of the codebase's `boot_time_now` discipline.
-
-### Operational: diag-log format not machine-parseable
-- `diag.rs:57 writeln!(f, "{} {msg}", timestamp())` produces
-  `2026-05-11 14:23:01 sync: …`. For an eventual Android
-  Sentry/Bugsnag bridge or `meditate logs --json` CLI this
-  requires regex parsing.
-- Fix: keep human format but prefix a structured tag:
-  `2026-05-11T14:23:01Z [sync.push] pulled=3 pushed=12`.
-  Backwards-compat for current 33 call sites = single-day
-  refactor.
 
 ### Operational: `SyncRunnerError` UX collapses 3 distinct conditions
 - `application.rs:432` logs every `SyncRunnerError` variant
@@ -339,12 +306,6 @@ rationale.
   PathBuf }`.
 
 ## Tier 3 — Judgment calls
-
-### Extract `vibration::PreviewToggle` into generic `preview.rs`
-- Currently named after its first consumer (vibration patterns).
-  Sound chooser will want the same toggle / cancel / auto-revert
-  state machine when Android sound preview lands.
-- Move to `preview.rs`. Both `vibration` and `sound` `pub use`.
 
 ### Consolidate `labels` + `goal` + `contrib` under `stats/`
 - All three are pure stats/score helpers (224, 210, 191 lines).

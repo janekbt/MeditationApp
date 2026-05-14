@@ -303,11 +303,15 @@ fn build_preset_row(
                     let preset_uuid_undo = preset_uuid.clone();
                     let on_changed_undo = on_changed.clone();
                     if let Some(window) = window.as_ref() {
+                        let title = crate::announcement::title(
+                            &meditate_core::announcement::Announcement::PresetOverridden {
+                                name: preset_name.clone(),
+                            },
+                        );
                         push_undo_toast_window(
                             window,
                             &toast_slot,
-                            &gettext("'{name}' overridden")
-                                .replace("{name}", &preset_name),
+                            &title,
                             move || {
                                 app_undo.with_db_mut(|db| {
                                     let _ = db.update_preset_config(
@@ -589,10 +593,15 @@ fn present_delete_preset_dialog(
         let preset_undo = preset_full.clone();
         let on_changed_undo = on_changed.clone();
         let rebuilder_undo = rebuilder.clone();
+        let title = crate::announcement::title(
+            &meditate_core::announcement::Announcement::PresetDeleted {
+                name: preset_full.name.clone(),
+            },
+        );
         push_undo_toast(
             &toast_overlay,
             &toast_slot,
-            &gettext("'{name}' deleted").replace("{name}", &preset_full.name),
+            &title,
             move || {
                 app_undo.with_db_mut(|db| {
                     let _ = db.insert_preset_with_uuid(

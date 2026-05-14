@@ -629,12 +629,11 @@ impl LogView {
         self.pending_deletes.borrow_mut().push((session_id, session));
 
         let count = self.pending_deletes.borrow().len();
-        let title = crate::i18n::ngettext(
-            "Session deleted",
-            "{n} sessions deleted",
-            count as u32,
-        )
-            .replace("{n}", &count.to_string());
+        let title = crate::announcement::title(
+            &meditate_core::announcement::Announcement::SessionDeleted {
+                count: count as u32,
+            },
+        );
 
         let new_toast = adw::Toast::builder()
             .title(&title)

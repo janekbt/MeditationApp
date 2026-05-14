@@ -125,9 +125,10 @@ pub fn run_sync_attempt(db_path: &Path) -> Result<SyncStats, SyncRunnerError> {
 
     let started = std::time::Instant::now();
     let pending_at_start = db.pending_events().map_or(0, |v| v.len());
-    meditate_core::log(&format!(
-        "sync attempt starting: {pending_at_start} events pending",
-    ));
+    meditate_core::log(
+        "sync.attempt",
+        &format!("starting pending={pending_at_start}"),
+    );
 
     // Progress callback. With the bulk-file format the push phase
     // does ONE PUT regardless of event count, so the callback fires
@@ -135,10 +136,13 @@ pub fn run_sync_attempt(db_path: &Path) -> Result<SyncStats, SyncRunnerError> {
     // per-N-event throttle needed any more.
     let progress = |pushed: usize, total: usize| {
         let secs = started.elapsed().as_secs_f64().max(0.001);
-        meditate_core::log(&format!(
-            "sync push progress: {pushed}/{total} in {secs:.1}s ({:.1}/s)",
-            pushed as f64 / secs,
-        ));
+        meditate_core::log(
+            "sync.push",
+            &format!(
+                "progress {pushed}/{total} in {secs:.1}s ({:.1}/s)",
+                pushed as f64 / secs,
+            ),
+        );
     };
 
     let result = meditate_core::sync::Sync::new(
@@ -153,10 +157,13 @@ pub fn run_sync_attempt(db_path: &Path) -> Result<SyncStats, SyncRunnerError> {
         let total = stats.pulled + stats.pushed;
         if total > 0 {
             let secs = elapsed.as_secs_f64().max(0.001);
-            meditate_core::log(&format!(
-                "sync: pulled {} pushed {} in {:.2}s ({:.1}/s)",
-                stats.pulled, stats.pushed, secs, total as f64 / secs,
-            ));
+            meditate_core::log(
+                "sync.done",
+                &format!(
+                    "pulled={} pushed={} in {:.2}s ({:.1}/s)",
+                    stats.pulled, stats.pushed, secs, total as f64 / secs,
+                ),
+            );
         }
     }
 

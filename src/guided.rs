@@ -46,6 +46,16 @@ use crate::i18n::gettext;
 /// just done a NEW action, undoing the previous one would conflict.
 type ToastSlot = Rc<RefCell<Option<adw::Toast>>>;
 
+/// Shared preview state for the guided-files chooser. Mirrors the
+/// equivalent struct in `vibrations.rs` and `sounds.rs` so all three
+/// choosers route through the same `PreviewToggle` protocol — one
+/// shape for the gtk shell and the eventual Android shell to share.
+#[derive(Default)]
+struct PreviewState {
+    toggle: meditate_core::sound::PreviewToggle,
+    active_btn: Option<gtk::Button>,
+}
+
 /// Transient selection from "Open File". Lives in the Setup view's
 /// state until the session starts, the user picks something else, or
 /// the user imports it via Import File. Not persisted across app
@@ -558,6 +568,14 @@ pub fn push_guided_files_chooser<F>(
     // the slot before showing their own — see ToastSlot's docs.
     let toast_slot: ToastSlot = Rc::new(RefCell::new(None));
 
+    // One shared preview slot across every row. Rebuilt-as-empty on
+    // each `rebuilder()` call indirectly: the chooser is a single
+    // NavigationPage instance, so a rebuild only swaps rows in/out;
+    // the toggle stays consistent across rebuilds within the page's
+    // lifetime. `connect_hidden` below stops in-flight playback so a
+    // preview doesn't outlast the user's choice to leave.
+    let preview: Rc<RefCell<PreviewState>> = Rc::new(RefCell::new(PreviewState::default()));
+
     let group_for_init = group.clone();
     let rows_for_init = rows.clone();
     let app_for_init = app.clone();
@@ -566,6 +584,7 @@ pub fn push_guided_files_chooser<F>(
     let rebuilder_for_init = rebuilder.clone();
     let toast_overlay_for_rb = toast_overlay.clone();
     let toast_slot_for_rb = toast_slot.clone();
+    let preview_for_rb = preview.clone();
     *rebuilder.borrow_mut() = Some(Box::new(move || {
         rebuild_chooser_rows(
             &group_for_init,
@@ -576,6 +595,7 @@ pub fn push_guided_files_chooser<F>(
             on_changed_for_init.clone(),
             &toast_overlay_for_rb,
             toast_slot_for_rb.clone(),
+            preview_for_rb.clone(),
         );
         on_changed_for_init();
     }));
@@ -583,6 +603,12 @@ pub fn push_guided_files_chooser<F>(
     if let Some(rb) = rebuilder.borrow().as_ref() {
         rb();
     }
+
+    // Stop any in-flight preview when the user pops the page so a
+    // guided meditation doesn't keep playing through the next setup
+    // screen.
+    page.connect_hidden(move |_| crate::sound::stop_preview());
+
     nav_view.push(&page);
 }
 
@@ -595,6 +621,7 @@ fn rebuild_chooser_rows(
     on_changed: impl Fn() + Clone + 'static,
     toast_overlay: &adw::ToastOverlay,
     toast_slot: ToastSlot,
+    preview: Rc<RefCell<PreviewState>>,
 ) {
     for row in rows.borrow_mut().drain(..) {
         group.remove(&row);
@@ -621,7 +648,7 @@ fn rebuild_chooser_rows(
     for file in files {
         let row = build_guided_file_row(
             &file, app, rebuilder.clone(), on_changed.clone(),
-            toast_overlay, toast_slot.clone(),
+            toast_overlay, toast_slot.clone(), preview.clone(),
         );
         group.add(&row);
         rows.borrow_mut().push(row);
@@ -680,6 +707,7 @@ fn build_guided_file_row(
     on_changed: impl Fn() + Clone + 'static,
     toast_overlay: &adw::ToastOverlay,
     toast_slot: ToastSlot,
+    preview: Rc<RefCell<PreviewState>>,
 ) -> adw::ActionRow {
     let row = adw::ActionRow::builder()
         .title(&file.name)
@@ -722,6 +750,8 @@ fn build_guided_file_row(
         on_changed_for_star();
     });
     row.add_prefix(&star_btn);
+
+    add_play_button(&row, file, preview.clone());
 
     // Rename suffix.
     let rename_btn = gtk::Button::builder()
@@ -784,6 +814,75 @@ fn build_guided_file_row(
     row.add_suffix(&delete_btn);
 
     row
+}
+
+/// Per-row Play/Stop preview affordance. Routes the user's click
+/// through the shared `meditate_core::sound::PreviewToggle` so this
+/// chooser plays nicely with the bell-sound + vibration choosers'
+/// supersede semantics — only one preview audio source is ever
+/// active at a time. A guided meditation is typically several
+/// minutes; the user is expected to tap Stop after a snippet rather
+/// than listen through. The MediaFile's notify::playing signal feeds
+/// `timer_should_revert` for the natural-end case (which in practice
+/// only matters if the user really did wait it out).
+fn add_play_button(
+    row: &adw::ActionRow,
+    file: &GuidedFile,
+    preview: Rc<RefCell<PreviewState>>,
+) {
+    let play_btn = gtk::Button::builder()
+        .icon_name("media-playback-start-symbolic")
+        .tooltip_text(gettext("Preview"))
+        .css_classes(["flat", "circular"])
+        .valign(gtk::Align::Center)
+        .build();
+    let file_clone = file.clone();
+    let preview_for_click = preview.clone();
+    let btn_for_click = play_btn.clone();
+    play_btn.connect_clicked(move |_| {
+        use meditate_core::sound::PreviewAction;
+        let action = preview_for_click
+            .borrow_mut()
+            .toggle
+            .request(file_clone.uuid.as_str());
+        // The previously-active Stop-icon button (if any) reverts
+        // first — either we're toggling it off, or switching rows.
+        if let Some(prev_btn) = preview_for_click.borrow_mut().active_btn.take() {
+            prev_btn.set_icon_name("media-playback-start-symbolic");
+            prev_btn.set_tooltip_text(Some(&gettext("Preview")));
+        }
+        match action {
+            PreviewAction::StopOnly => {
+                crate::sound::stop_preview();
+            }
+            PreviewAction::StopAndStart { generation, .. } => {
+                let media = crate::sound::play_preview_for_guided_file(&file_clone);
+                btn_for_click.set_icon_name("media-playback-stop-symbolic");
+                btn_for_click.set_tooltip_text(Some(&gettext("Stop preview")));
+                preview_for_click.borrow_mut().active_btn = Some(btn_for_click.clone());
+
+                // Auto-revert on natural end. `timer_should_revert`
+                // returns false unless this generation is still the
+                // active one — i.e. only fires for the "let it
+                // finish" case, not for a user Stop or a row switch.
+                let preview_for_notify = preview_for_click.clone();
+                media.connect_notify_local(Some("playing"), move |m, _| {
+                    if m.is_playing() {
+                        return;
+                    }
+                    let mut state = preview_for_notify.borrow_mut();
+                    if state.toggle.timer_should_revert(generation) {
+                        if let Some(btn) = state.active_btn.take() {
+                            btn.set_icon_name("media-playback-start-symbolic");
+                            btn.set_tooltip_text(Some(&gettext("Preview")));
+                        }
+                    }
+                });
+            }
+            PreviewAction::NoOp => {}
+        }
+    });
+    row.add_suffix(&play_btn);
 }
 
 fn empty_state_row() -> adw::ActionRow {
@@ -1186,11 +1285,14 @@ impl GuidedPlayback {
                 match msg.view() {
                     MessageView::Eos(_) => on_eos(),
                     MessageView::Error(err) => {
-                        meditate_core::log(&format!(
-                            "guided playback error: {} ({})",
-                            err.error(),
-                            err.debug().unwrap_or_default()
-                        ));
+                        meditate_core::log(
+                            "guided.playback",
+                            &format!(
+                                "error: {} ({})",
+                                err.error(),
+                                err.debug().unwrap_or_default(),
+                            ),
+                        );
                     }
                     _ => {}
                 }

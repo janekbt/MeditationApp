@@ -30,6 +30,42 @@ pub struct Session {
     pub guided_file_uuid: Option<super::GuidedFileUuid>,
 }
 
+impl Session {
+    /// Build a `Session` from shell-side scalar inputs: unix-second
+    /// start instant, signed duration, optional FK and notes. Centralises
+    /// the i64→u32 clamp on `duration_secs` and the unix→ISO time
+    /// formatting so shells don't each carry their own conversion.
+    /// `uuid` is left blank — `Database::insert_session` overwrites it
+    /// with a fresh v4 UUID. The two parallel-shell case (gtk + Android)
+    /// each picks the same canonical translation by going through here.
+    pub fn from_unix(
+        start_time: i64,
+        duration_secs: i64,
+        label_id: Option<i64>,
+        notes: Option<String>,
+        mode: SessionMode,
+        guided_file_uuid: Option<super::GuidedFileUuid>,
+    ) -> Self {
+        Self {
+            start_iso: crate::time::unix_to_local_iso(start_time),
+            duration_secs: duration_secs.clamp(0, i64::from(u32::MAX)) as u32,
+            label_id,
+            notes,
+            mode,
+            uuid: super::SessionUuid::new(""),
+            guided_file_uuid,
+        }
+    }
+
+    /// `start_iso` parsed back to a unix-second timestamp. Inverse of
+    /// `from_unix`'s `start_time` argument. Shells that store unix
+    /// timestamps for log grouping / stats math read it through here
+    /// rather than re-parsing the ISO string at every call site.
+    pub fn start_unix(&self) -> i64 {
+        crate::time::local_iso_to_unix(&self.start_iso)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionMode {
     /// Generic timer session — covers both targeted countdowns and
@@ -984,6 +1020,51 @@ mod tests {
     use super::*;
     use crate::db::test_helpers::*;
     use crate::test_macros::assert_f64_eq;
+
+    // ── Session::from_unix / start_unix — shell-facing translation ──────────
+
+    #[test]
+    fn from_unix_preserves_every_field() {
+        let s = Session::from_unix(
+            1_700_000_000,
+            1234,
+            Some(42),
+            Some("hello".into()),
+            SessionMode::BoxBreath,
+            None,
+        );
+        assert_eq!(crate::time::local_iso_to_unix(&s.start_iso), 1_700_000_000);
+        assert_eq!(s.duration_secs, 1234);
+        assert_eq!(s.label_id, Some(42));
+        assert_eq!(s.notes, Some("hello".into()));
+        assert_eq!(s.mode, SessionMode::BoxBreath);
+        // uuid is left blank; insert_session overwrites it.
+        assert_eq!(s.uuid.0, "");
+    }
+
+    #[test]
+    fn from_unix_clamps_negative_duration_to_zero() {
+        let s = Session::from_unix(
+            1_700_000_000, -1, None, None, SessionMode::Timer, None,
+        );
+        assert_eq!(s.duration_secs, 0);
+    }
+
+    #[test]
+    fn from_unix_clamps_overflowing_duration_to_u32_max() {
+        let s = Session::from_unix(
+            0, i64::MAX, None, None, SessionMode::Timer, None,
+        );
+        assert_eq!(s.duration_secs, u32::MAX);
+    }
+
+    #[test]
+    fn start_unix_round_trips_with_from_unix() {
+        let s = Session::from_unix(
+            1_700_000_000, 600, None, None, SessionMode::Timer, None,
+        );
+        assert_eq!(s.start_unix(), 1_700_000_000);
+    }
 
     // ── B1.1: apply_event for session events ─────────────────────────────────
     //

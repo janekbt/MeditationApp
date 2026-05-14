@@ -284,7 +284,7 @@ impl Database {
             "PRAGMA quick_check", [], |row| row.get(0),
         ).unwrap_or_else(|_| "ok".to_string());
         if integrity != "ok" {
-            crate::diag::log(&format!("db_integrity_check_failed: {integrity}"));
+            crate::diag::log("db.integrity_check", &format!("failed: {integrity}"));
         }
         // Bump the prepared-statement cache so the `recompute_*`
         // family + hot stats queries all stay parsed. rusqlite

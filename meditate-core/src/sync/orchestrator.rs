@@ -249,11 +249,14 @@ impl<'a, W: WebDav> Sync<'a, W> {
             newly_ingested_files.push(batch_uuid);
         }
         if !skipped_unparseable.is_empty() {
-            crate::diag::log(&format!(
-                "sync_pull: skipped {} unparseable filename(s): {}",
-                skipped_unparseable.len(),
-                skipped_unparseable.join(", "),
-            ));
+            crate::diag::log(
+                "sync.pull",
+                &format!(
+                    "skipped_unparseable={} names={}",
+                    skipped_unparseable.len(),
+                    skipped_unparseable.join(","),
+                ),
+            );
         }
 
         let count = new_events.len();
@@ -272,9 +275,10 @@ impl<'a, W: WebDav> Sync<'a, W> {
         let sounds_pulled = self.pull_custom_sound_files()?;
 
         if count > 0 || sounds_pulled > 0 {
-            crate::diag::log(&format!(
-                "sync_pull_ok: events={count} sounds={sounds_pulled}"
-            ));
+            crate::diag::log(
+                "sync.pull",
+                &format!("ok events={count} sounds={sounds_pulled}"),
+            );
         }
         Ok(PullStats { new_events: count })
     }
@@ -379,9 +383,10 @@ impl<'a, W: WebDav> Sync<'a, W> {
         let sounds_pushed = self.push_custom_sound_files()?;
 
         if pushed > 0 || sounds_pushed > 0 {
-            crate::diag::log(&format!(
-                "sync_push_ok: events={pushed} sounds={sounds_pushed}"
-            ));
+            crate::diag::log(
+                "sync.push",
+                &format!("ok events={pushed} sounds={sounds_pushed}"),
+            );
         }
         Ok(PushStats { pushed })
     }
@@ -608,16 +613,22 @@ fn put_with_rate_limit_retry<W: WebDav>(
             Err(WebDavError::RateLimited { retry_after }) => {
                 attempts = attempts.saturating_add(1);
                 if attempts >= MAX_429_RETRIES {
-                    crate::diag::log(&format!(
-                        "sync_rate_limit_exhausted: gave up on {path} after \
-                         {attempts} 429 retries (retry_after={retry_after:?})"
-                    ));
+                    crate::diag::log(
+                        "sync.rate_limit",
+                        &format!(
+                            "exhausted path={path} attempts={attempts} \
+                             retry_after={retry_after:?}"
+                        ),
+                    );
                     return Err(WebDavError::RateLimited { retry_after });
                 }
-                crate::diag::log(&format!(
-                    "sync_rate_limit_retry: {path} attempt={attempts} \
-                     retry_after={retry_after:?}"
-                ));
+                crate::diag::log(
+                    "sync.rate_limit",
+                    &format!(
+                        "retry path={path} attempt={attempts} \
+                         retry_after={retry_after:?}"
+                    ),
+                );
                 backoff.note_429_at(crate::time::boot_time_now(), retry_after);
                 continue;
             }
@@ -644,10 +655,12 @@ fn put_atomic_with_rate_limit_retry<W: WebDav>(
     match webdav.move_to(&tmp_path, path) {
         Ok(()) => Ok(()),
         Err(e) => {
-            crate::diag::log(&format!(
-                "sync_atomic_put: MOVE failed after successful PUT \
-                 ({tmp_path} → {path}): {e}"
-            ));
+            crate::diag::log(
+                "sync.atomic_put",
+                &format!(
+                    "MOVE failed after PUT ({tmp_path} → {path}): {e}"
+                ),
+            );
             let _ = webdav.delete(&tmp_path);
             Err(e)
         }

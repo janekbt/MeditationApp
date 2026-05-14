@@ -9,7 +9,7 @@
 //! B.4.5 reuses the same module's row builder for the Preferences
 //! tab in management mode (no selection, delete + rename).
 
-use std::cell::Cell;
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use adw::prelude::*;
@@ -17,6 +17,20 @@ use adw::prelude::*;
 use crate::application::MeditateApplication;
 use crate::db::{BellSound, BellSoundCategory};
 use crate::i18n::gettext;
+
+/// Which sound is currently previewing + the play-button widget
+/// showing the Stop icon. Mirrors the `PreviewState` in `vibrations.rs`
+/// so both choosers share the same toggle / supersede / auto-revert
+/// protocol. The portable state machine (which uuid is active, the
+/// auto-revert generation counter) lives in
+/// `meditate_core::sound::PreviewToggle`; this struct adds the
+/// shell-only "which gtk::Button is the active Stop icon" handle so
+/// we know which row to revert.
+#[derive(Default)]
+struct PreviewState {
+    toggle: meditate_core::sound::PreviewToggle,
+    active_btn: Option<gtk::Button>,
+}
 
 /// Push the bell-sound chooser onto the navigation view in selection
 /// mode. `current_uuid` is the row to mark with a checkmark when
@@ -143,6 +157,7 @@ fn rebuild_chooser_rows(
         current_uuid: current_uuid.map(std::string::ToString::to_string),
         on_selected,
         nav_view: nav_view.clone(),
+        preview: Rc::new(RefCell::new(PreviewState::default())),
     };
 
     let sounds = app
@@ -179,6 +194,10 @@ pub struct SelectionContext {
     pub current_uuid: Option<String>,
     pub on_selected: Rc<dyn Fn(String)>,
     pub nav_view: adw::NavigationView,
+    /// Shared across all rows so tapping a different row's Play
+    /// supersedes the previous (single playback slot, single Stop
+    /// icon at any time).
+    preview: Rc<RefCell<PreviewState>>,
 }
 
 /// Build a sound-library row for the chooser: tap-to-pick body
@@ -209,7 +228,7 @@ fn build_sound_row(
         row.add_suffix(&check);
     }
 
-    add_play_button(&row, sound);
+    add_play_button(&row, sound, selection.preview.clone());
     add_rename_button(&row, sound, app, rebuilder.clone());
     if !sound.is_bundled {
         // Bundled rows stay permanent — the seed re-creates them on
@@ -228,13 +247,24 @@ fn build_sound_row(
     row
 }
 
-fn add_play_button(row: &adw::ActionRow, sound: &BellSound) {
-    // Per-row preview button. Toggles between Play and Stop:
-    //   - Tap while idle → start playback, icon flips to stop.
-    //   - Tap while playing → stop, icon flips back to play.
-    //   - Sound finishes naturally / a different row's Play takes
-    //     over PREVIEW_MEDIA → notify::playing fires false on this
-    //     MediaFile, the listener flips our icon back too.
+fn add_play_button(
+    row: &adw::ActionRow,
+    sound: &BellSound,
+    preview: Rc<RefCell<PreviewState>>,
+) {
+    // Per-row preview button. Toggle / supersede / auto-revert
+    // protocol via the shared `meditate_core::sound::PreviewToggle`:
+    //   - Tap while idle → start playback, this row's icon flips to
+    //     Stop, recorded as `active_btn`.
+    //   - Tap while playing → toggle off, this row's icon flips
+    //     back to Play.
+    //   - Tap a different row's button while one is playing →
+    //     `active_btn` (the previous row's button) reverts first;
+    //     this row's Play starts and becomes the new `active_btn`.
+    //   - MediaFile transitions to not-playing (natural end / user
+    //     stop / supersede) → `timer_should_revert(gen)` only
+    //     returns true for the natural-end case (no other action
+    //     has bumped the generation), and the icon flips back.
     let play_btn = gtk::Button::builder()
         .icon_name("media-playback-start-symbolic")
         .tooltip_text(gettext("Preview sound"))
@@ -242,26 +272,52 @@ fn add_play_button(row: &adw::ActionRow, sound: &BellSound) {
         .valign(gtk::Align::Center)
         .build();
     let sound_clone = sound.clone();
-    let playing = Rc::new(Cell::new(false));
-    let play_btn_clone = play_btn.clone();
+    let preview_for_click = preview.clone();
+    let btn_for_click = play_btn.clone();
     play_btn.connect_clicked(move |_| {
-        if playing.get() {
-            crate::sound::stop_preview();
-            playing.set(false);
-            play_btn_clone.set_icon_name("media-playback-start-symbolic");
-            return;
+        use meditate_core::sound::PreviewAction;
+        let action = preview_for_click
+            .borrow_mut()
+            .toggle
+            .request(sound_clone.uuid.as_str());
+        // The previous Stop-icon button (if any) always reverts
+        // first — either we're toggling it off, or switching to a
+        // different row.
+        if let Some(prev_btn) = preview_for_click.borrow_mut().active_btn.take() {
+            prev_btn.set_icon_name("media-playback-start-symbolic");
+            prev_btn.set_tooltip_text(Some(&gettext("Preview sound")));
         }
-        let media = crate::sound::play_preview(&sound_clone);
-        playing.set(true);
-        play_btn_clone.set_icon_name("media-playback-stop-symbolic");
-        let playing_for_notify = playing.clone();
-        let btn_for_notify = play_btn_clone.clone();
-        media.connect_notify_local(Some("playing"), move |m, _| {
-            if !m.is_playing() && playing_for_notify.get() {
-                playing_for_notify.set(false);
-                btn_for_notify.set_icon_name("media-playback-start-symbolic");
+        match action {
+            PreviewAction::StopOnly => {
+                crate::sound::stop_preview();
             }
-        });
+            PreviewAction::StopAndStart { generation, .. } => {
+                let media = crate::sound::play_preview(&sound_clone);
+                btn_for_click.set_icon_name("media-playback-stop-symbolic");
+                btn_for_click.set_tooltip_text(Some(&gettext("Stop preview")));
+                preview_for_click.borrow_mut().active_btn = Some(btn_for_click.clone());
+
+                // Auto-revert when this play's MediaFile reaches
+                // not-playing. `timer_should_revert` no-ops if the
+                // user already tapped Stop / a different row in the
+                // meantime — generation will have advanced past
+                // `generation` and the call returns false.
+                let preview_for_notify = preview_for_click.clone();
+                media.connect_notify_local(Some("playing"), move |m, _| {
+                    if m.is_playing() {
+                        return;
+                    }
+                    let mut state = preview_for_notify.borrow_mut();
+                    if state.toggle.timer_should_revert(generation) {
+                        if let Some(btn) = state.active_btn.take() {
+                            btn.set_icon_name("media-playback-start-symbolic");
+                            btn.set_tooltip_text(Some(&gettext("Preview sound")));
+                        }
+                    }
+                });
+            }
+            PreviewAction::NoOp => {}
+        }
     });
     row.add_suffix(&play_btn);
 }
@@ -686,8 +742,8 @@ fn transcode_to_ogg(
         .ok();
     if audioloudnorm.is_none() {
         meditate_core::log(
-            "transcode_to_ogg: audioloudnorm element not registered — \
-             skipping loudness-normalisation step",
+            "transcode.to_ogg",
+            "audioloudnorm element not registered — skipping loudness-normalisation step",
         );
     }
     let audioresample = make("audioresample")?;

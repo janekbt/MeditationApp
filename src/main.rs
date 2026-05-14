@@ -1,3 +1,4 @@
+mod announcement;
 mod application;
 pub mod bells;
 mod config;
@@ -45,7 +46,7 @@ fn main() -> glib::ExitCode {
     // gtk::init, so this is safe before the renderer/gettext setup.
     let data_dir = glib::user_data_dir().join("meditate");
     meditate_core::diag::init(&data_dir);
-    meditate_core::log(&format!("--- startup: meditate {} ---", config::VERSION));
+    meditate_core::log("startup", &format!("meditate {}", config::VERSION));
 
     // Renderer must be selected before gtk::init runs, otherwise GTK has
     // already picked one and GSK_RENDERER is ignored.
@@ -95,13 +96,13 @@ fn setup_gettext() {
     if let Err(e) = bindtextdomain(config::GETTEXT_DOMAIN, locale_dir.as_str()) {
         let msg = format!("bindtextdomain failed ({e}); strings will stay in source language.");
         eprintln!("note: {msg}");
-        meditate_core::log(&msg);
+        meditate_core::log("gettext", &msg);
         return;
     }
     let _ = bind_textdomain_codeset(config::GETTEXT_DOMAIN, "UTF-8");
     if let Err(e) = textdomain(config::GETTEXT_DOMAIN) {
         let msg = format!("textdomain failed ({e}); strings will stay in source language.");
         eprintln!("note: {msg}");
-        meditate_core::log(&msg);
+        meditate_core::log("gettext", &msg);
     }
 }

@@ -67,6 +67,7 @@
 #[cfg(test)]
 mod test_macros;
 
+pub mod announcement;
 pub mod bells;
 pub mod breath;
 pub mod contrib;
@@ -80,6 +81,7 @@ pub mod insights;
 pub mod labels;
 pub mod naming;
 pub mod preset_config;
+pub mod preview;
 pub mod seeds;
 pub mod session;
 pub mod sound;

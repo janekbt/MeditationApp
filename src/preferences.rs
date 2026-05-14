@@ -276,8 +276,10 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
                 match crate::keychain::read_password(url, username) {
                     Ok(opt) => Ok(opt),
                     Err(e) => {
-                        meditate_core::log(&format!(
-                            "test_connection: keychain read failed: {e:?}"));
+                        meditate_core::log(
+                            "test_connection",
+                            &format!("keychain read failed: {e:?}"),
+                        );
                         Err(e)
                     }
                 }
@@ -337,7 +339,7 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
                             (m.clone(), "worker thread panicked".to_string())
                         }
                     };
-                    meditate_core::log(&format!("test_connection: {detail}"));
+                    meditate_core::log("test_connection", &detail);
                     dialog.add_toast(adw::Toast::builder()
                         .title(&toast).timeout(4).build());
                 }
@@ -418,7 +420,7 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
                         // gets cut off in narrow viewports (Librem 5,
                         // GNOME Shell), but the diagnostics file is
                         // uncapped and visible via About → Troubleshooting.
-                        meditate_core::log(&format!("keychain store failed: {e:?}"));
+                        meditate_core::log("keychain", &format!("store failed: {e:?}"));
                         data_toast(&dialog, &gettext("Keyring write failed"));
                         return;
                     }
@@ -434,8 +436,10 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
             match account_result {
                 Some(Ok(())) => {}
                 Some(Err(e)) => {
-                    meditate_core::log(&format!(
-                        "sync settings save failed: {e:?}"));
+                    meditate_core::log(
+                        "sync.settings",
+                        &format!("save failed: {e:?}"),
+                    );
                     data_toast(&dialog, &gettext("Save failed"));
                     return;
                 }

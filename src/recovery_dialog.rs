@@ -68,15 +68,17 @@ fn run_push_local_recovery(app: &MeditateApplication) {
     let prep = app.with_db(|db| meditate_core::sync::settings::prepare_push_local_recovery(db.core()));
     match prep {
         Some(Ok(())) => {
-            meditate_core::log("recovery: push local — prepared, triggering sync");
+            meditate_core::log("recovery.push_local", "prepared, triggering sync");
             app.trigger_sync();
         }
         Some(Err(e)) => {
-            meditate_core::log(&format!(
-                "recovery: push local — prepare failed: {e:?}"));
+            meditate_core::log(
+                "recovery.push_local",
+                &format!("prepare failed: {e:?}"),
+            );
         }
         None => {
-            meditate_core::log("recovery: push local — DB unavailable");
+            meditate_core::log("recovery.push_local", "DB unavailable");
         }
     }
 }
@@ -117,7 +119,7 @@ fn run_wipe_local_recovery(app: &MeditateApplication) {
     let prep = app.with_db_mut(|db| meditate_core::sync::settings::prepare_wipe_local_recovery(db.core()));
     match prep {
         Some(Ok(())) => {
-            meditate_core::log("recovery: wipe local — purged, triggering sync");
+            meditate_core::log("recovery.wipe_local", "purged, triggering sync");
             // Force every cached view to re-read from the (empty) DB.
             // with_db_mut already bumps the invalidate-all flag, but
             // a manual ALL invalidate ensures even non-mutating views
@@ -126,11 +128,13 @@ fn run_wipe_local_recovery(app: &MeditateApplication) {
             app.trigger_sync();
         }
         Some(Err(e)) => {
-            meditate_core::log(&format!(
-                "recovery: wipe local — prepare failed: {e:?}"));
+            meditate_core::log(
+                "recovery.wipe_local",
+                &format!("prepare failed: {e:?}"),
+            );
         }
         None => {
-            meditate_core::log("recovery: wipe local — DB unavailable");
+            meditate_core::log("recovery.wipe_local", "DB unavailable");
         }
     }
 }

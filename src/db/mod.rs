@@ -5,8 +5,10 @@
 //!   which use i64-unix timestamps and the `note` field name for
 //!   ergonomic UI integration. `SessionMode` is re-exported from
 //!   core directly — no separate enum.
-//! - Type translation at the API boundary (see `session_data_to_core` /
-//!   `session_from_core` and `meditate_core::time::unix_to_local_iso`).
+//! - Type translation at the API boundary — the canonical
+//!   unix↔ISO conversion lives in core via `Session::from_unix` /
+//!   `Session::start_unix`; this module just renames `note` ↔ `notes`
+//!   and threads the optional `id` through `session_from_core`.
 //! - The `rusqlite::Result<T>` return type so callers can keep using `?`
 //!   against this module without learning core's `DbError`.
 //!
@@ -238,30 +240,30 @@ pub use meditate_core::db::SessionFilter;
 
 // ── Translation: GTK-side ↔ meditate_core::db ─────────────────────────────────
 
-/// Convert this app's `SessionData` (i64 unix, `note`) into core's
-/// insert shape (ISO 8601 string, `notes`). Negative or overflowing
-/// durations clamp to the u32 range.
+/// Build core's `Session` from this shell's `SessionData`. The
+/// scalar→ISO + clamp logic lives on `meditate_core::db::Session`
+/// via `from_unix` so the Android shell can share the same canonical
+/// translation; this helper is just a thin field-name renamer
+/// (`note` → `notes`).
 fn session_data_to_core(s: &SessionData) -> meditate_core::db::Session {
-    meditate_core::db::Session {
-        start_iso: meditate_core::time::unix_to_local_iso(s.start_time),
-        duration_secs: s.duration_secs.clamp(0, i64::from(u32::MAX)) as u32,
-        label_id: s.label_id,
-        notes: s.note.clone(),
-        mode: s.mode,
-        // Empty placeholder — core's `insert_session` overwrites this
-        // with a freshly generated v4 uuid. Read paths see the real one.
-        uuid: meditate_core::db::SessionUuid::new(""),
-        guided_file_uuid: s.guided_file_uuid.clone().map(meditate_core::db::GuidedFileUuid::new),
-    }
+    meditate_core::db::Session::from_unix(
+        s.start_time,
+        s.duration_secs,
+        s.label_id,
+        s.note.clone(),
+        s.mode,
+        s.guided_file_uuid.clone().map(meditate_core::db::GuidedFileUuid::new),
+    )
 }
 
 /// Inverse of `session_data_to_core` for retrievals: takes core's
 /// `(id, Session)` shape and produces the GTK-side `Session` with
-/// embedded id and i64-unix `start_time`.
+/// embedded id and i64-unix `start_time`. Reads `start_unix()` off
+/// core so the ISO-parse logic is shared with future shells.
 fn session_from_core(id: i64, core: &meditate_core::db::Session) -> Session {
     Session {
         id,
-        start_time: meditate_core::time::local_iso_to_unix(&core.start_iso),
+        start_time: core.start_unix(),
         duration_secs: i64::from(core.duration_secs),
         mode: core.mode,
         label_id: core.label_id,
@@ -936,95 +938,6 @@ pub(crate) fn test_db_in_memory() -> Database {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ── core::Session translation helpers ─────────────────────────────────────
-
-    #[test]
-    fn session_data_to_core_preserves_every_field() {
-        let sd = SessionData {
-            start_time: 1_700_000_000,
-            duration_secs: 1234,
-            mode: SessionMode::BoxBreath,
-            label_id: Some(42),
-            note: Some("hello".to_string()),
-            guided_file_uuid: None,
-        };
-        let core = session_data_to_core(&sd);
-        assert_eq!(meditate_core::time::local_iso_to_unix(&core.start_iso), 1_700_000_000);
-        assert_eq!(core.duration_secs, 1234);
-        assert_eq!(core.label_id, Some(42));
-        assert_eq!(core.notes, Some("hello".to_string()));
-        assert!(matches!(core.mode, meditate_core::SessionMode::BoxBreath));
-    }
-
-    #[test]
-    fn session_data_to_core_clamps_negative_duration_to_zero() {
-        let sd = SessionData {
-            start_time: 1_700_000_000,
-            duration_secs: -1,
-            mode: SessionMode::Timer,
-            label_id: None,
-            note: None,
-            guided_file_uuid: None,
-        };
-        assert_eq!(session_data_to_core(&sd).duration_secs, 0);
-    }
-
-    #[test]
-    fn session_data_to_core_clamps_overflowing_duration_to_u32_max() {
-        let sd = SessionData {
-            start_time: 0,
-            duration_secs: i64::MAX,
-            mode: SessionMode::Timer,
-            label_id: None,
-            note: None,
-            guided_file_uuid: None,
-        };
-        assert_eq!(session_data_to_core(&sd).duration_secs, u32::MAX);
-    }
-
-    #[test]
-    fn session_from_core_preserves_every_field() {
-        let core = meditate_core::db::Session {
-            start_iso: meditate_core::time::unix_to_local_iso(1_700_000_000),
-            duration_secs: 600,
-            label_id: Some(7),
-            notes: Some("from core".to_string()),
-            mode: meditate_core::SessionMode::BoxBreath,
-            // Translation from core → shell drops the uuid (the GTK-side
-            // Session doesn't carry one). This test pins the rest of the
-            // mapping; uuid round-trip is covered in core's tests.
-            uuid: "ignored-by-shell".into(),
-            guided_file_uuid: None,
-        };
-        let s = session_from_core(99, &core);
-        assert_eq!(s.id, 99);
-        assert_eq!(s.start_time, 1_700_000_000);
-        assert_eq!(s.duration_secs, 600);
-        assert_eq!(s.label_id, Some(7));
-        assert_eq!(s.note, Some("from core".to_string()));
-        assert_eq!(s.mode, SessionMode::BoxBreath);
-    }
-
-    #[test]
-    fn session_data_round_trips_through_core_and_back() {
-        let original = SessionData {
-            start_time: 1_700_000_000,
-            duration_secs: 750,
-            mode: SessionMode::Timer,
-            label_id: Some(11),
-            note: Some("noted".to_string()),
-            guided_file_uuid: None,
-        };
-        let core = session_data_to_core(&original);
-        let restored = session_from_core(123, &core);
-        assert_eq!(restored.id, 123);
-        assert_eq!(restored.start_time, original.start_time);
-        assert_eq!(restored.duration_secs, original.duration_secs);
-        assert_eq!(restored.mode, original.mode);
-        assert_eq!(restored.label_id, original.label_id);
-        assert_eq!(restored.note, original.note);
-    }
 
     // ── Tier B: in-memory integration tests against the wrapper ──────────────
 

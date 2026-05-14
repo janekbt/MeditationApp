@@ -33,7 +33,7 @@ impl Database {
             )?;
         }
         self.set_setting(crate::seeds::BELLS_SEEDED_KEY, "1")?;
-        crate::diag::log(&format!("seed_bell_sounds: {} rows", rows.len()));
+        crate::diag::log("seed.bell_sounds", &format!("rows={}", rows.len()));
         Ok(())
     }
 
@@ -53,7 +53,7 @@ impl Database {
         }
         tx.commit()?;
         if new_rows > 0 {
-            crate::diag::log(&format!("seed_box_breath_phases: {new_rows} rows"));
+            crate::diag::log("seed.box_breath_phases", &format!("rows={new_rows}"));
         }
         Ok(())
     }
@@ -78,10 +78,10 @@ impl Database {
             }
         }
         self.set_setting(crate::seeds::LABELS_SEEDED_KEY, "1")?;
-        crate::diag::log(&format!(
-            "seed_default_labels: {} rows",
-            crate::seeds::DEFAULT_LABELS.len(),
-        ));
+        crate::diag::log(
+            "seed.default_labels",
+            &format!("rows={}", crate::seeds::DEFAULT_LABELS.len()),
+        );
         Ok(())
     }
 
@@ -101,10 +101,10 @@ impl Database {
             )?;
         }
         self.set_setting(crate::seeds::VIBRATION_PATTERNS_SEEDED_KEY, "1")?;
-        crate::diag::log(&format!(
-            "seed_bundled_vibration_patterns: {} rows",
-            crate::seeds::BUNDLED_VIBRATION_PATTERNS.len(),
-        ));
+        crate::diag::log(
+            "seed.bundled_vibration_patterns",
+            &format!("rows={}", crate::seeds::BUNDLED_VIBRATION_PATTERNS.len()),
+        );
         Ok(())
     }
 
@@ -131,7 +131,7 @@ impl Database {
             }
         }
         self.set_setting(crate::seeds::PRESETS_SEEDED_KEY, "1")?;
-        crate::diag::log(&format!("seed_default_presets: {n} rows"));
+        crate::diag::log("seed.default_presets", &format!("rows={n}"));
         Ok(())
     }
 

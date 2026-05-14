@@ -353,10 +353,13 @@ impl Database {
                 Ok(_) => {}
                 Err(e) if is_unique_constraint_error(&e) => {
                     let suffixed = conflict_suffixed_name(name, pattern_uuid);
-                    crate::diag::log(&format!(
-                        "vibration_pattern_name_collision: uuid={pattern_uuid} \
-                         original={name:?} resolved={suffixed:?}"
-                    ));
+                    crate::diag::log(
+                        "vibration_pattern.name_collision",
+                        &format!(
+                            "uuid={pattern_uuid} original={name:?} \
+                             resolved={suffixed:?}"
+                        ),
+                    );
                     self.conn.execute(upsert_sql, params![
                         pattern_uuid, suffixed, duration_ms, intensities_json,
                         chart_kind, i64::from(is_bundled), created_iso, updated_iso,

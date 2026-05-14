@@ -389,10 +389,13 @@ impl Database {
                 Ok(_) => {}
                 Err(e) if is_unique_constraint_error(&e) => {
                     let suffixed = conflict_suffixed_name(name, preset_uuid);
-                    crate::diag::log(&format!(
-                        "preset_name_collision: uuid={preset_uuid} \
-                         original={name:?} resolved={suffixed:?}"
-                    ));
+                    crate::diag::log(
+                        "preset.name_collision",
+                        &format!(
+                            "uuid={preset_uuid} original={name:?} \
+                             resolved={suffixed:?}"
+                        ),
+                    );
                     self.conn.execute(upsert_sql, params![
                         preset_uuid, suffixed, mode, i64::from(is_starred),
                         config_json, created_iso, updated_iso,

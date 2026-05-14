@@ -2397,6 +2397,7 @@ impl TimerView {
                     Some(Ok(s)) => s,
                     Some(Err(e)) => {
                         meditate_core::log(
+                            "session.save",
                             &meditate_core::format::session_save_failure_log_message(
                                 meditate_core::format::SessionSaveFailureKind::StorageError,
                                 &e.to_string(),
@@ -2414,6 +2415,7 @@ impl TimerView {
                     }
                     None => {
                         meditate_core::log(
+                            "session.save",
                             &meditate_core::format::session_save_failure_log_message(
                                 meditate_core::format::SessionSaveFailureKind::DbUnopened,
                                 "with_db_blocking_mut returned None",
@@ -2560,9 +2562,10 @@ impl TimerView {
         };
         app.with_db_mut(|db| {
             if let Err(e) = db.set_session_in_progress(&snapshot) {
-                meditate_core::log(&format!(
-                    "session_recovery: set snapshot failed: {e}"
-                ));
+                meditate_core::log(
+                    "session.recovery",
+                    &format!("set snapshot failed: {e}"),
+                );
             }
         });
     }
@@ -2576,9 +2579,10 @@ impl TimerView {
         let Some(app) = self.get_app() else { return; };
         app.with_db_mut(|db| {
             if let Err(e) = db.clear_session_in_progress() {
-                meditate_core::log(&format!(
-                    "session_recovery: clear snapshot failed: {e}"
-                ));
+                meditate_core::log(
+                    "session.recovery",
+                    &format!("clear snapshot failed: {e}"),
+                );
             }
         });
     }
@@ -3961,12 +3965,14 @@ impl TimerView {
         } else {
             None
         };
-        meditate_core::log(&format!(
-            "{}: signal_mode={} fired={}",
+        meditate_core::log(
             route.log_tag,
-            route.signal_mode.as_db_str(),
-            handle.is_some(),
-        ));
+            &format!(
+                "signal_mode={} fired={}",
+                route.signal_mode.as_db_str(),
+                handle.is_some(),
+            ),
+        );
         self.install_vibration_handle(handle);
     }
 

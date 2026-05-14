@@ -95,6 +95,29 @@ pub fn play_preview(sound: &BellSound) -> gtk::MediaFile {
     media
 }
 
+/// Play a guided-meditation file as a preview. Used by the guided-
+/// files chooser's per-row Play/Stop button. Shares the chooser
+/// preview slot with bell-sound previews (the user only has one
+/// chooser open at a time; if both somehow overlapped the supersede
+/// semantics still hold). The path comes from `guided_files.file_path`
+/// — the importing device's absolute path, which lives on every
+/// peer that synced through the orchestrator's audio transport.
+///
+/// Returns the MediaFile so the caller can listen for notify::playing
+/// transitions through the shared `PreviewToggle` and revert the
+/// row's icon.
+pub fn play_preview_for_guided_file(file: &crate::db::GuidedFile) -> gtk::MediaFile {
+    let media = gtk::MediaFile::for_file(&gtk::gio::File::for_path(&file.file_path));
+    wire_audio_error_handler(&media, &file.name);
+    PREVIEW_MEDIA.with(|cell| {
+        if let Some(old) = cell.replace(Some(media.clone())) {
+            old.set_playing(false);
+        }
+    });
+    media.set_playing(true);
+    media
+}
+
 /// Stop the active preview, if any. Called by the chooser page
 /// when it pops so a preview doesn't outlast the user's choice.
 pub fn stop_preview() {
@@ -155,9 +178,10 @@ fn wire_audio_error_handler(media: &gtk::MediaFile, sound_name: &str) {
     let sound_name = sound_name.to_owned();
     media.connect_error_notify(move |m| {
         let Some(err) = m.error() else { return; };
-        meditate_core::log(&format!(
-            "sound: playback error for '{sound_name}': {err}"
-        ));
+        meditate_core::log(
+            "sound.playback",
+            &format!("error for '{sound_name}': {err}"),
+        );
         AUDIO_ERROR_TOASTED.with(|c| {
             if c.get() {
                 return;

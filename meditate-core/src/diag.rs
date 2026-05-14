@@ -91,16 +91,23 @@ pub fn init(data_dir: &Path) {
 /// business logic, so failure to log must never fail the caller.
 /// Poisoned mutex (a previous holder panicked mid-write) is treated
 /// the same: drop silently.
-pub fn log(msg: &str) {
+///
+/// Format: `<rfc3339-local-ts> [<scope>] <msg>`. The structured tag
+/// lets future tooling (CLI grep, an Android Sentry/Bugsnag bridge,
+/// a future `meditate logs --json` exporter) key off scope without
+/// regex-tearing the free-text message. Scope is by convention a
+/// `dot.path` like `sync.push` or `keychain` — kebab-case, no
+/// spaces, no square brackets.
+pub fn log(scope: &str, msg: &str) {
     let Some(mutex) = LOG_STATE.get() else { return; };
     let Ok(mut state) = mutex.lock() else { return; };
     let ts = timestamp();
     let now_boot = crate::time::boot_time_now();
     if let Some(marker) = suspend_marker_text(now_boot, state.last_boot) {
-        let _ = writeln!(state.file, "{ts} {marker}");
+        let _ = writeln!(state.file, "{ts} [diag] {marker}");
     }
     state.last_boot = Some(now_boot);
-    let _ = writeln!(state.file, "{ts} {msg}");
+    let _ = writeln!(state.file, "{ts} [{scope}] {msg}");
 }
 
 /// Decision-only half of the suspend-marker logic: `None` for "no
@@ -128,14 +135,15 @@ pub fn read_all() -> String {
 }
 
 fn timestamp() -> String {
-    // chrono's `Local::now()` is infallible (silently falls back to UTC
-    // when tzdata is missing rather than erroring), so the explicit
-    // "@<unix-secs>" last-resort branch the glib version had can't be
-    // reached and was dropped. Format string and resulting layout are
-    // unchanged.
-    chrono::Local::now()
-        .format("%Y-%m-%d %H:%M:%S")
-        .to_string()
+    // RFC 3339 with local offset: machine-parseable (one regex covers
+    // every line a downstream tool sees) and still human-readable on
+    // the user's device — `2026-05-11T14:23:01+02:00` reads as 2:23pm
+    // local to anyone who knows their own offset. chrono's
+    // `Local::now()` is infallible (silently falls back to UTC when
+    // tzdata is missing rather than erroring), so the explicit
+    // "@<unix-secs>" last-resort branch the glib version had can't
+    // be reached and was dropped.
+    chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
 /// Rewrite `path` to contain only its last `max_lines` lines. No-op if
@@ -174,7 +182,7 @@ fn install_panic_hook() {
         } else {
             "<non-string panic payload>"
         };
-        log(&format!("PANIC at {loc}: {msg}"));
+        log("panic", &format!("at {loc}: {msg}"));
         default(info);
     }));
 }
@@ -216,7 +224,7 @@ mod tests {
         // clobbering state shared with other tests. This test covers the
         // "never initialised" branch, which is what library consumers hit
         // when the data dir couldn't be created.
-        log("should not panic and should not create a file");
+        log("test", "should not panic and should not create a file");
     }
 
     // ── Suspend-marker decision ──────────────────────────────────────────────
@@ -327,8 +335,8 @@ mod tests {
             .expect("child should have written the diag log before unwind");
 
         assert!(
-            contents.contains("PANIC"),
-            "log must contain the PANIC marker:\n{contents}",
+            contents.contains("[panic]"),
+            "log must carry the [panic] scope tag:\n{contents}",
         );
         assert!(
             contents.contains(PANIC_TEST_SENTINEL),

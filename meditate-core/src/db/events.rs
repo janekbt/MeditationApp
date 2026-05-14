@@ -236,9 +236,13 @@ impl Database {
         )?;
         tx.commit()?;
         if count > 0 {
-            crate::diag::log(&format!(
-                "cache_schema_upgrade: replayed {count} events from v{stored} to v{CACHE_SCHEMA_VERSION}",
-            ));
+            crate::diag::log(
+                "cache.schema_upgrade",
+                &format!(
+                    "replayed events={count} from=v{stored} \
+                     to=v{CACHE_SCHEMA_VERSION}"
+                ),
+            );
         }
         Ok(())
     }
@@ -536,10 +540,13 @@ impl Database {
         // soft-fail-don't-rollback so one bad event doesn't poison
         // the whole replay batch.
         if !target_id_is_well_formed_for(&event.kind, &event.target_id) {
-            crate::diag::log(&format!(
-                "apply_event_inner: rejected event kind={} target_id={:?} (invalid)",
-                event.kind, event.target_id,
-            ));
+            crate::diag::log(
+                "apply_event.rejected",
+                &format!(
+                    "kind={} target_id={:?} (invalid)",
+                    event.kind, event.target_id,
+                ),
+            );
             return Ok(None);
         }
 
