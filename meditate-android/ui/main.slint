@@ -1,9 +1,10 @@
 // UI translation Phase 1 — Setup + Timer running view. Mirrors the
 // GTK timer setup page (`meditate-gtk/data/ui/timer_view.blp`) +
 // the running page built by `meditate-gtk/src/window/imp.rs::
-// push_time_running_page`. The slide-from-right transition mirrors
-// `AdwNavigationView`'s push: Setup slides off to the left and the
-// Running screen slides in from the right when a session starts.
+// push_time_running_page`. The slide-over transition mirrors
+// `AdwNavigationView`'s push: Setup stays put at x=0 while the
+// Running screen slides over it from the right. Reverse on Stop:
+// Running slides back off to the right, revealing Setup underneath.
 // The Duration row's tap-to-open dialog mirrors
 // `show_custom_time_dialog` in `meditate-gtk/src/timer/imp.rs`.
 
@@ -112,19 +113,22 @@ export component MainWindow inherits Window {
     callback stop-tap();
     callback duration-tap();
 
-    // Slide offset driving the Setup ↔ Running transition. 0 px
-    // means Setup is fully visible at x=0 and Running is parked at
-    // x=width (off-screen right). Animating up to `root.width`
-    // pushes Setup to x=−width and brings Running to x=0. Easing
-    // matches the GTK shell's Adw.NavigationView push transition
-    // shape — quick first, slow finish — so the two shells feel
-    // related, not just look it.
+    // Slide offset driving the Running screen's slide-over. 0 px
+    // means Running is parked at x=width (off-screen right) and
+    // Setup is fully visible underneath. Animating up to `root.width`
+    // brings Running to x=0, covering Setup. Setup itself never
+    // moves — matches Adw.NavigationView push semantics where only
+    // the incoming page animates and the outgoing page sits in
+    // place beneath. Easing matches GTK's push curve — quick first,
+    // slow finish — so the two shells feel related, not just look it.
     property <length> screen-offset: root.running-page ? root.width : 0px;
     animate screen-offset { duration: 300ms; easing: ease-out; }
 
     // ── Setup screen ─────────────────────────────────────────────
+    // Pinned at x=0; Running slides over the top on Start and
+    // off to the right on Stop.
     Rectangle {
-        x: -root.screen-offset;
+        x: 0;
         width: parent.width;
         height: parent.height;
 
