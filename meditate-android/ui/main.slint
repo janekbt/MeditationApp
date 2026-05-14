@@ -882,6 +882,13 @@ export component MainWindow inherits Window {
     // through `db.update_session(id, &session)`.
     in property <bool> edit-session-page: false;
     in-out property <string> edit-note-text: "";
+    // Duration fields (L-4b) — Rust pre-fills both on card-tap
+    // from the tapped session's `duration_secs`, reads them back
+    // on edit-save-tap and recomposes `secs = h*3600 + m*60`.
+    // Ranges mirror GTK's adjustments at `log/imp.rs:778 / :784`
+    // (Hours 0-23, Minutes 0-59).
+    in-out property <int> edit-duration-hours: 0;
+    in-out property <int> edit-duration-minutes: 0;
     callback card-tap(int);
     callback edit-cancel-tap();
     callback edit-save-tap();
@@ -1798,94 +1805,6 @@ export component MainWindow inherits Window {
         }
     }
 
-    // ── Duration dialog (modal overlay, on top of both screens) ─
-    if root.duration-dialog-open : Rectangle {
-        // Scrim — taps outside the card cancel.
-        background: #00000080;
-        TouchArea {
-            clicked => { root.duration-dialog-open = false; }
-        }
-
-        // Card. Height tracks the inner layout's preferred-height
-        // so the card sizes to its content rather than stretching
-        // to the scrim's full height.
-        Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
-            width: 320px;
-            height: card-content.preferred-height;
-            background: MaterialPalette.surface-container-high;
-            border-radius: 28px;
-
-            // Catch clicks on the card itself so they don't reach
-            // the scrim's TouchArea and dismiss the dialog.
-            TouchArea {}
-
-            card-content := VerticalLayout {
-                padding: 24px;
-                spacing: 16px;
-
-                Text {
-                    text: "Custom Time";
-                    font-size: 22px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface;
-                }
-                Text {
-                    text: "Hours : Minutes";
-                    font-size: 14px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface-variant;
-                }
-
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: center;
-
-                    VerticalSpinBox {
-                        value <=> root.dialog-hours;
-                        min-value: 0;
-                        max-value: 23;
-                    }
-                    Text {
-                        text: ":";
-                        font-size: 40px;
-                        vertical-alignment: center;
-                        color: MaterialPalette.on-surface;
-                    }
-                    VerticalSpinBox {
-                        value <=> root.dialog-minutes;
-                        min-value: 0;
-                        max-value: 59;
-                    }
-                }
-
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: end;
-
-                    TextButton {
-                        text: "Cancel";
-                        clicked => { root.duration-dialog-open = false; }
-                    }
-                    TextButton {
-                        text: "Set";
-                        clicked => {
-                            // Refuse to commit a zero-duration set,
-                            // mirroring the GTK shell's guard.
-                            if (root.dialog-hours > 0 || root.dialog-minutes > 0) {
-                                root.setup-hours = root.dialog-hours;
-                                root.setup-minutes = root.dialog-minutes;
-                                root.duration-committed();
-                            }
-                            root.duration-dialog-open = false;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     // ── Create-label dialog (modal overlay) ─────────────────────
     // Mirrors `meditate-gtk/src/labels.rs::present_create_label_dialog`:
     // heading + single-line text entry + Cancel/Create buttons,
@@ -2368,6 +2287,28 @@ export component MainWindow inherits Window {
                 }
             }
 
+            // Duration row (L-4b). Deviation from GTK's inline
+            // AdwSpinRows: Android mirrors the Setup-screen
+            // pattern — a single tap-to-open `DurationRow` that
+            // reuses the existing `duration-dialog` (two
+            // VerticalSpinBoxes + Cancel/Set). On tap, Rust
+            // seeds dialog-hours / dialog-minutes from the
+            // current edit-duration-* and flips
+            // `duration-dialog-open`; the dialog's Set handler
+            // branches on `edit-session-page` to write back to
+            // edit-duration-* instead of setup-*.
+            BoxedList {
+                DurationRow {
+                    value-text: root.edit-duration-hours + "h "
+                        + root.edit-duration-minutes + "m";
+                    tapped => {
+                        root.dialog-hours = root.edit-duration-hours;
+                        root.dialog-minutes = root.edit-duration-minutes;
+                        root.duration-dialog-open = true;
+                    }
+                }
+            }
+
             // Note field — caption + multi-line input. Mirrors
             // GTK's `note_caption` + `note_view` at
             // `log/imp.rs:933 / :915`. The existing NoteField
@@ -2378,6 +2319,108 @@ export component MainWindow inherits Window {
             NoteField {
                 label: "Note (optional)";
                 text <=> root.edit-note-text;
+            }
+        }
+    }
+
+    // ── Duration dialog (modal overlay, on top of both screens) ─
+    // Declared AFTER the Edit-Session overlay so it draws on top
+    // of it (Slint renders later children above earlier ones).
+    // Without this z-order the popup opens but is occluded by
+    // the Edit-Session slide-over surface and the user just sees
+    // nothing happen on tap.
+    if root.duration-dialog-open : Rectangle {
+        // Scrim — taps outside the card cancel.
+        background: #00000080;
+        TouchArea {
+            clicked => { root.duration-dialog-open = false; }
+        }
+
+        // Card. Height tracks the inner layout's preferred-height
+        // so the card sizes to its content rather than stretching
+        // to the scrim's full height.
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 320px;
+            height: card-content.preferred-height;
+            background: MaterialPalette.surface-container-high;
+            border-radius: 28px;
+
+            // Catch clicks on the card itself so they don't reach
+            // the scrim's TouchArea and dismiss the dialog.
+            TouchArea {}
+
+            card-content := VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+
+                Text {
+                    text: "Custom Time";
+                    font-size: 22px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface;
+                }
+                Text {
+                    text: "Hours : Minutes";
+                    font-size: 14px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface-variant;
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: center;
+
+                    VerticalSpinBox {
+                        value <=> root.dialog-hours;
+                        min-value: 0;
+                        max-value: 23;
+                    }
+                    Text {
+                        text: ":";
+                        font-size: 40px;
+                        vertical-alignment: center;
+                        color: MaterialPalette.on-surface;
+                    }
+                    VerticalSpinBox {
+                        value <=> root.dialog-minutes;
+                        min-value: 0;
+                        max-value: 59;
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+
+                    TextButton {
+                        text: "Cancel";
+                        clicked => { root.duration-dialog-open = false; }
+                    }
+                    TextButton {
+                        text: "Set";
+                        clicked => {
+                            // Refuse to commit a zero-duration set,
+                            // mirroring the GTK shell's guard.
+                            if (root.dialog-hours > 0 || root.dialog-minutes > 0) {
+                                if (root.edit-session-page) {
+                                    // Edit-Session overlay owns this
+                                    // open — write the new value to
+                                    // the edit-duration-* pair so the
+                                    // Save handler picks it up.
+                                    root.edit-duration-hours = root.dialog-hours;
+                                    root.edit-duration-minutes = root.dialog-minutes;
+                                } else {
+                                    root.setup-hours = root.dialog-hours;
+                                    root.setup-minutes = root.dialog-minutes;
+                                    root.duration-committed();
+                                }
+                            }
+                            root.duration-dialog-open = false;
+                        }
+                    }
+                }
             }
         }
     }

@@ -2205,14 +2205,19 @@ fn build_ui() -> MainWindow {
             {
                 let Some(ui) = weak.upgrade() else { return; };
                 let id = rowid as i64;
-                let note = loaded_log_sessions
+                let session = loaded_log_sessions
                     .borrow()
                     .iter()
                     .find(|(id_, _)| *id_ == id)
-                    .map(|(_, s)| s.notes.clone().unwrap_or_default());
-                let Some(note) = note else { return; };
+                    .map(|(_, s)| s.clone());
+                let Some(session) = session else { return; };
                 editing_session_id.set(Some(id));
-                ui.set_edit_note_text(note.into());
+                ui.set_edit_note_text(
+                    session.notes.clone().unwrap_or_default().into(),
+                );
+                let total = session.duration_secs as i64;
+                ui.set_edit_duration_hours((total / 3600) as i32);
+                ui.set_edit_duration_minutes(((total % 3600) / 60) as i32);
                 ui.set_edit_session_page(true);
             }
             let _ = (weak.clone(), rowid);
@@ -2277,6 +2282,15 @@ fn build_ui() -> MainWindow {
                     return;
                 };
                 session.notes = new_note;
+                // Duration: recompose from the two SpinRows.
+                // GTK clamps with `.max(0)` (`log/imp.rs:1093`);
+                // the SpinRow min-value guards already keep both
+                // factors non-negative, but mirror the clamp on
+                // the product to stay defensive against future
+                // signed-typed inputs.
+                let hours = ui.get_edit_duration_hours().max(0) as i64;
+                let mins = ui.get_edit_duration_minutes().max(0) as i64;
+                session.duration_secs = (hours * 3600 + mins * 60).max(0) as u32;
                 if let Some(db_arc) = DATABASE.get() {
                     if let Ok(guard) = db_arc.lock() {
                         if let Some(db) = guard.as_ref() {
