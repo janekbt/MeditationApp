@@ -145,14 +145,14 @@ is coherent.
 2. ✅ **`setup-android.sh` lands** (`25c304e`).
 3. ✅ **Empty `meditate-android` crate** — Slint Material hello-screen (`fd0993f`).
 4. ✅ **Wire `meditate-core` to one screen** — originally `Countdown`, migrated to `Session` in `73c5cc4`. The dead Countdown/CountdownTimer primitives dropped in `61d56be`.
-5. **Mode toggle + Box Breath mode + per-mode stopwatch toggle.** In progress — the state-machine plumbing is in via the Session migration; UI surfaces land in UI phase 2.
-6. **DB persistence.** `rusqlite` bundled feature should compile for `aarch64-linux-android` unchanged. Wiring to the Slint screens lands in UI phase 3.
+5. ✅ **Mode toggle + Box Breath mode + per-mode stopwatch toggle** — chip group (`54a66c4`), Stopwatch SwitchRow (`46ae266`), Box Breath phase grid (`af3d38d`), Box Breath running visualisation (`da7383f`). State machine flows through `SessionShape::TimerCountdown` / `TimerStopwatch` / `BoxBreathCountdown` / `BoxBreathStopwatch`; per-mode session length backed by `breathing_session_secs` (Box Breath, DB-persisted) and an in-memory Timer cell.
+6. **DB persistence** — partly done: `Database::open` + `seed_all_non_audio` at `android_main` entry (`5b74887` + `bc1baab`); per-session insert on Save (`a741d2e`); settings persistence for `keep_screen_awake_*`, `*_signal_mode`, `label_*`, `breathing_*` (`45171ab`, `1625726`, `bc1baab`, `af3d38d`). Log view + edit-session dialog still pending (UI phase 3).
 7. **Bells.** Audio playback via Android `MediaPlayer` JNI (or `oboe-rs`). Decision deferred to this milestone. Drives UI phase 5.
 8. **Haptics.** Android `Vibrator` / `VibratorManager` JNI. Reuse `meditate-core` envelope-quantising logic; map quantised levels to Android amplitude scale (0-255). Pairs with UI phase 5.
-9. **Foreground service + notification.** Required so the timer survives screen-off. New code, no Linux equivalent. Lands alongside UI phase 1's running view as a cross-cutting concern.
+9. ✅ **Foreground service + notification** — Kotlin `MediaSessionService` started via JNI bridge with classloader walk (`76dbe6f`), MediaStyle pin so the notification lives in the shade's Media-controls section (`ae6104f`). Phase-5 audio playback plugs into the same notification when it lands.
 10. **Keychain.** Android `KeyStore` JNI for the Nextcloud app-password. `oo7` is host-only. Drives UI phase 7's password row.
 11. **Sync.** `meditate-core::sync` already abstracts the HTTP layer (`ureq`). Plug in the JNI keychain and run. Pairs with UI phase 7.
-12. **Polish: edge-to-edge, predictive back, IME insets, theming.** Lands as UI phase 8.
+12. **Polish: edge-to-edge, predictive back, IME insets, theming.** Predictive-back partly done (root `FocusScope` routes `Key.Back` through a Rust handler that closes the labels chooser → discards Done → swallows back during Running, commit `9e95a5d`). Edge-to-edge / IME insets / theming still pending.
 13. **F-Droid metadata + reproducible build.** Manifest, fastlane structure, `metadata/io.github.janekbt.Meditate.yml` for fdroiddata. Lands after every UI phase is at least partly usable.
 
 ## UI Translation Phases
@@ -169,50 +169,78 @@ before each phase, re-read the GTK shell's file for that screen;
 copy layout, copy text, and copy behaviour as closely as Material 3
 allows. Deviate only where MD3 demands it.
 
-### Phase 1 — Setup view + Timer running view
+### Phase 1 — Setup view + Timer running view ✅
 
 GTK reference: `meditate-gtk/data/ui/timer_view.blp` (setup) + the
-running-page builder in `meditate-gtk/src/window/imp.rs`. Slint shell
-currently has the bare scaffold (`meditate-android/ui/main.slint`):
-hardcoded 10-minute default, one button, no duration picker.
+running-page builder in `meditate-gtk/src/window/imp.rs`.
 
-To land:
-- Duration picker (hours + minutes; default 0h 10m). Mirrors the GTK
-  shell's two-column SpinRow.
-- Hero readout reflects the configured target in Setup and the live
-  remaining in Running (drives off `Session::display_secs` / the
-  shell's idle-hero formatter).
-- Streak chip slot above the hero (empty placeholder; lights up in
-  phase 3 once DB persistence lands).
-- Pause / Stop affordances on the running page; Add-time / Finish-
-  overtime when in Overtime.
-- Foreground service + notification scaffolding (systems milestone 9)
-  hooks in here so the timer survives screen-off from the very first
-  usable build.
+Landed:
+- Duration picker (tap-to-open H:M dialog, default 0h 10m) — mirrors
+  the GTK `Adw.ActionRow` + custom time dialog (`f8035c5`,
+  `fc71e80`).
+- Hero readout via `Session::display_secs` for Running / Paused /
+  Finished + `format_hhmm` for Idle (`a741d2e` and earlier).
+- Streak chip slot above the hero — empty placeholder property
+  (`streak-text`) so the layout doesn't reshape when phase 3 fills
+  it (`54a66c4`).
+- Pause / Stop affordances on the running page (the action button
+  morphs Start / Pause / Resume via `primary_label`; Stop is the
+  destructive sibling) (`a741d2e` and earlier).
+- Foreground-service scaffolding lands here cross-cutting from
+  systems milestone 9; the service survives screen-off + posts a
+  Media-style pinned notification (`76dbe6f`, `ae6104f`).
+- Setup → Running slide-over (only Running animates, Setup stays
+  put underneath, mirroring `AdwNavigationView.push` semantics)
+  (`c85a8c2`).
+
+Deferred:
+- Add-time / Finish-overtime affordances when in Overtime. Auto-end
+  on target-reached works; user-driven extension does not.
 
 Verification: 1-minute countdown round-trips Start → Pause → Resume
 → Stop with timings matching the GTK shell to ±100 ms; screen-off
 during a session doesn't kill it.
 
-### Phase 2 — Mode toggle + Box Breath mode
+### Phase 2 — Mode toggle + Box Breath mode ✅
 
 GTK reference: the three-mode segmented control at the top of
 `timer_view.blp`, plus the Box-Breath phase visualization built in
-`meditate-gtk/src/timer/imp.rs`. The Session migration already
-handles the state-machine shape variants
-(`TimerCountdown`/`TimerStopwatch`/`BoxBreathCountdown`/
-`BoxBreathStopwatch`); UI surface is what's missing.
+`meditate-gtk/src/timer/imp.rs`.
 
-To land:
-- Mode chip group: Timer / Guided / Box Breath. Guided stays a
-  placeholder until phase 5's audio engine arrives.
-- Per-mode stopwatch toggle that flips Countdown↔Stopwatch shape.
-- Box-Breath running view: the dot on a square, geometry via
-  `Phase::perimeter_point(t, pad, side)`. Per-phase countdown overlay.
-- Cues toggle (Sound / Vibration / Both) at the top of Setup —
-  surface only; the channels stay stub until phase 5.
-- "Keep screen awake" per-mode toggle — surface only; backend stub
-  until phase 8.
+Landed:
+- Mode chip group (Timer / Guided / Box Breath) below the hero,
+  mirroring `Adw.ToggleGroup mode_toggle_group` toggle order
+  (`54a66c4`). Guided is a placeholder — Start disabled, body
+  shows a "lands in phase 5" note.
+- Cues row with compact three-option toggle (Sound / Vibration /
+  Both), persisting per-mode via
+  `signal_mode_key_for_mode` (`1625726`). Audio + haptic engines
+  themselves are platform-edge phase 5.
+- Stopwatch Mode SwitchRow — flips
+  `TimerCountdown`/`BoxBreathCountdown` ↔ `TimerStopwatch`/
+  `BoxBreathStopwatch`, greys the Duration row, bypasses the
+  non-zero duration check on Start (`46ae266`).
+- Keep Screen Awake SwitchRow, per-mode persistence via
+  `keep_screen_awake_key_for_mode` (`45171ab`). Real WakeLock
+  acquisition is platform-edge phase 8.
+- Box Breath phase grid in Setup: 2×2 PhaseTile (Inhale /
+  Hold (full) / Exhale / Hold (empty)) with `−  Ns  +` steppers,
+  per-phase min-policy from `BreathPattern::phase_min_secs` (1
+  for inhale/exhale, 0 for holds), max 20 (`PHASE_MAX_SECS`).
+  Per-phase + session-length values persisted via the same
+  settings keys the GTK shell uses (`breathing_in`, …,
+  `breathing_session_secs`) (`af3d38d`).
+- Box Breath running visualisation: 220×220 container with a
+  196×196 rounded square frame + animated dot + centred phase
+  label + per-phase remaining seconds + "Box Breathing" eyebrow
+  + counter strip. Mirrors `push_breathing_running_page`. Dot
+  follows a rounded-corner trajectory (Android-only deviation
+  from core's `Phase::perimeter_point`, which keeps sharp 90°
+  turns for GTK) via the shell-side `rounded_perimeter_point`
+  helper. `Session::box_breath_phase_info` drives the per-tick
+  refresh; `bb_target_secs` shell-cell carries the cycle-aligned
+  target for the `box_breath_counter_label` "elapsed / target"
+  branch (`da7383f`).
 
 Verification: Box-Breath cycle alignment matches GTK end-of-cycle
 timing; stopwatch toggle on Box Breath produces a count-up readout.
@@ -224,13 +252,30 @@ Systems milestone 6 lands first / alongside. GTK reference:
 its typed `Announcement::SessionDeleted` variant in core (commit
 `9dd54a7`).
 
-To land:
-- Stop / Finish now persists via `Database::insert_session`.
+Landed early (session-save half):
+- Done screen with elapsed readout + auto-grow note field + Save /
+  Discard (`0ac7501`). Slide-out animation on Save / Discard
+  (Android-only deviation — GTK uses instant view-stack swap)
+  (`95a7a01`).
+- Stop / Finish persists via `Database::insert_session` with
+  start-unix, elapsed, mode, note, and resolved label_id
+  (`a741d2e`).
+- Label expander on Setup + chooser overlay + create / rename /
+  delete dialogs, per-mode UUID setting persistence
+  (`bc1baab`, `9e95a5d`, `3810ba8`, `8bbc73d`, `ef9047f`).
+- Label expander on Done with chooser routing (`chooser-target`
+  flag) + persist-back-to-mode on Save via `resolve_persist_action`
+  (`68c5ba6`).
+
+Still to land:
 - Log screen: session cards grouped by day. Tap to edit; swipe to
   delete with Undo toast.
 - Edit-session dialog (note, label, start time, duration).
 - Sync-status indicator surface (the icon at the corner — wired to
   `meditate_core::sync::settings::get_last_sync_*` readers).
+- Crash-recovery finalize at startup (`finalize_session_in_progress`)
+  + Undo toast for the recovered row. Mirrors GTK's
+  `Application::startup` recovery path.
 
 Verification: cross-device sync round trip — phone authors a
 session, GTK shell on the laptop sees it within one sync cycle.
