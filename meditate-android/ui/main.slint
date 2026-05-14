@@ -723,6 +723,30 @@ export component MainWindow inherits Window {
     in property <int> bb-out: 4;
     in property <int> bb-hold-out: 4;
 
+    // Box Breath running-view properties. Rust updates them
+    // every tick when the active session is a BoxBreathCountdown
+    // or BoxBreathStopwatch shape (detected via
+    // `Session::box_breath_phase_info`); `bb-running-active`
+    // flips the Running overlay's layout from Timer hero to
+    // the square + dot visualization.
+    in property <bool> bb-running-active: false;
+    // "Box Breathing" eyebrow counter — "M:SS / M:SS" for
+    // countdown shapes, just "M:SS" for stopwatch (see
+    // `meditate_core::format::box_breath_counter_label`).
+    in property <string> bb-counter-text: "0:00";
+    // Phase label ("Breathe in" / "Hold" / "Breathe out"),
+    // Rust-formatted from `PhaseRunningLabelKey`.
+    in property <string> bb-phase-label: "";
+    // Per-phase remaining seconds — the big numeric overlay
+    // centred inside the square.
+    in property <int> bb-phase-seconds: 0;
+    // Perimeter-point coordinates of the moving dot, computed
+    // by Rust via `Phase::perimeter_point(t, pad=12, side=196)`.
+    // The 220×220 SquareFrame below uses pad=12 / side=196 so
+    // these coordinates land inside its drawing area.
+    in property <length> bb-dot-x: 12px;
+    in property <length> bb-dot-y: 208px;
+
     in-out property <bool> duration-dialog-open: false;
     in-out property <int> dialog-hours: 0;
     in-out property <int> dialog-minutes: 10;
@@ -1212,7 +1236,9 @@ export component MainWindow inherits Window {
     // Hero + controls vertically centered on a pure-black canvas.
     // GTK shell uses libadwaita's background-fade-to-black on the
     // running page; Material 3 has no canonical equivalent, so we
-    // go straight to #000.
+    // go straight to #000. Two layouts share this overlay: Timer
+    // hero (digit countdown) and Box Breath visualisation (square
+    // + perimeter dot). `bb-running-active` switches between them.
     Rectangle {
         x: parent.width - root.screen-offset;
         width: parent.width;
@@ -1221,15 +1247,140 @@ export component MainWindow inherits Window {
 
         VerticalLayout {
             alignment: center;
-            spacing: 40px;
+            spacing: 24px;
             padding-left: 24px;
             padding-right: 24px;
+            padding-top: 24px;
+            padding-bottom: 24px;
 
-            Text {
+            // Timer mode hero — digit countdown.
+            if !root.bb-running-active : Text {
                 text: root.remaining-text;
                 font-size: 80px;
                 horizontal-alignment: center;
                 color: #ffffff;
+            }
+
+            // Box Breath visualisation — mirrors GTK's
+            // `push_breathing_running_page` content vbox at
+            // `meditate-gtk/src/window/imp.rs:254-498`. Top strip
+            // (eyebrow + counter) → 220×220 overlay (frame + dot
+            // + phase label + phase seconds) → buttons (the
+            // buttons live in the parent VerticalLayout, shared
+            // with Timer mode).
+            if root.bb-running-active : VerticalLayout {
+                spacing: 24px;
+                alignment: center;
+
+                // Top strip: "Box Breathing" eyebrow + counter.
+                VerticalLayout {
+                    spacing: 2px;
+                    Text {
+                        text: "Box Breathing";
+                        font-size: 12px;
+                        horizontal-alignment: center;
+                        color: #ffffffaa;
+                    }
+                    Text {
+                        text: root.bb-counter-text;
+                        font-size: 28px;
+                        horizontal-alignment: center;
+                        color: #ffffff;
+                    }
+                }
+
+                // Square + dot overlay. The frame is a 196×196
+                // rounded rectangle at (12, 12) inside a 220×220
+                // container — matches GTK's pad=12, side=196
+                // (cairo drawing area is 220px). Halo + dot are
+                // positioned at the perimeter point Rust computes
+                // via `Phase::perimeter_point(t, 12, 196)`; the
+                // -7 / -11 offsets centre them on that coordinate.
+                //
+                // HorizontalLayout { alignment: center } keeps the
+                // 220 px container horizontally centred in the
+                // parent column (default VerticalLayout
+                // packing left-aligns sub-parent-width children).
+                HorizontalLayout {
+                    alignment: center;
+                Rectangle {
+                    width: 220px;
+                    height: 220px;
+
+                    // Square frame — tinted fill + accent stroke.
+                    Rectangle {
+                        x: 12px;
+                        y: 12px;
+                        width: 196px;
+                        height: 196px;
+                        border-radius: 20px;
+                        background: MaterialPalette.primary.with-alpha(0.08);
+                        border-width: 1.5px;
+                        border-color: MaterialPalette.primary.with-alpha(0.45);
+                    }
+
+                    // Phase label + remaining-seconds overlay,
+                    // centred inside the square — mirrors GTK's
+                    // inner_stack at `imp.rs:305-312`.
+                    VerticalLayout {
+                        x: 12px;
+                        y: 12px;
+                        width: 196px;
+                        height: 196px;
+                        alignment: center;
+                        spacing: 2px;
+
+                        Text {
+                            text: root.bb-phase-label;
+                            font-size: 14px;
+                            horizontal-alignment: center;
+                            color: MaterialPalette.primary;
+                        }
+                        Text {
+                            text: root.bb-phase-seconds;
+                            font-size: 56px;
+                            horizontal-alignment: center;
+                            color: #ffffff;
+                        }
+                    }
+
+                    // Halo — semi-transparent accent disc behind
+                    // the dot. Drawn before the dot so the dot
+                    // body sits on top. `animate x, y` smooths the
+                    // 200 ms tick-driven steps into glide-y motion;
+                    // linear easing because the perimeter is
+                    // axis-aligned (only one of x / y changes per
+                    // phase) and corner crossings always land on
+                    // the same coordinate before / after, so
+                    // linear interpolation never cuts inside.
+                    Rectangle {
+                        x: root.bb-dot-x - 11px;
+                        y: root.bb-dot-y - 11px;
+                        width: 22px;
+                        height: 22px;
+                        border-radius: 11px;
+                        background: MaterialPalette.primary.with-alpha(0.30);
+                        animate x { duration: 200ms; easing: linear; }
+                        animate y { duration: 200ms; easing: linear; }
+                    }
+
+                    // Dot — white fill with accent ring. Matches
+                    // GTK's "white-filled, accent-bordered" dot
+                    // at `imp.rs:374-380`.
+                    Rectangle {
+                        x: root.bb-dot-x - 7px;
+                        y: root.bb-dot-y - 7px;
+                        width: 14px;
+                        height: 14px;
+                        border-radius: 7px;
+                        background: #ffffff;
+                        border-width: 2.5px;
+                        border-color: MaterialPalette.primary;
+                        animate x { duration: 200ms; easing: linear; }
+                        animate y { duration: 200ms; easing: linear; }
+                    }
+                }
+                }
             }
 
             HorizontalLayout {

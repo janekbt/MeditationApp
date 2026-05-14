@@ -316,6 +316,68 @@ fn push_session_length_to_ui(ui: &MainWindow, total_secs: u32) {
     ui.set_setup_minutes(((total_secs % 3600) / 60) as i32);
 }
 
+/// Position on a rounded-rect perimeter for the given phase +
+/// intra-phase progress `t ∈ [0, 1]`. `pad` is the inset, `side`
+/// the square's side length, `radius` the corner radius.
+///
+/// Each phase covers one full edge (the straight middle) plus
+/// the quarter-arc at its trailing corner, so consecutive phases
+/// connect tangentially and the dot follows the visible rounded
+/// outline instead of cutting through the corner with a sharp
+/// 90° pivot (which is what core's `Phase::perimeter_point` does
+/// — that one is a pure axis-aligned path, used by the GTK shell
+/// as-is).
+///
+/// Path per phase, all clockwise from the bottom-left corner:
+/// * `In`      — left edge bottom→top + top-left arc
+/// * `HoldIn`  — top edge left→right  + top-right arc
+/// * `Out`     — right edge top→bottom + bottom-right arc
+/// * `HoldOut` — bottom edge right→left + bottom-left arc
+#[cfg(target_os = "android")]
+fn rounded_perimeter_point(
+    phase: meditate_core::breath::Phase,
+    t: f64,
+    pad: f64,
+    side: f64,
+    radius: f64,
+) -> (f64, f64) {
+    use meditate_core::breath::Phase;
+    use std::f64::consts::FRAC_PI_2;
+    let t = t.clamp(0.0, 1.0);
+    let straight_len = (side - 2.0 * radius).max(0.0);
+    let arc_len = FRAC_PI_2 * radius;
+    let total = straight_len + arc_len;
+    let s = t * total;
+    // Returns (cx, cy, start_angle) for the trailing arc of each
+    // phase. Arc sweeps `FRAC_PI_2` from start_angle clockwise.
+    let arc_param = |phase: Phase| -> (f64, f64, f64) {
+        match phase {
+            // Top-left corner: angle sweeps π → 3π/2.
+            Phase::In => (pad + radius, pad + radius, std::f64::consts::PI),
+            // Top-right corner: 3π/2 → 2π.
+            Phase::HoldIn => (pad + side - radius, pad + radius, 3.0 * FRAC_PI_2),
+            // Bottom-right corner: 0 → π/2.
+            Phase::Out => (pad + side - radius, pad + side - radius, 0.0),
+            // Bottom-left corner: π/2 → π.
+            Phase::HoldOut => (pad + radius, pad + side - radius, FRAC_PI_2),
+        }
+    };
+    if s < straight_len {
+        // Straight portion of this phase's edge.
+        match phase {
+            Phase::In => (pad, pad + side - radius - s),
+            Phase::HoldIn => (pad + radius + s, pad),
+            Phase::Out => (pad + side, pad + radius + s),
+            Phase::HoldOut => (pad + side - radius - s, pad + side),
+        }
+    } else {
+        let arc_t = ((s - straight_len) / arc_len).clamp(0.0, 1.0);
+        let (cx, cy, start_angle) = arc_param(phase);
+        let angle = start_angle + arc_t * FRAC_PI_2;
+        (cx + radius * angle.cos(), cy + radius * angle.sin())
+    }
+}
+
 /// Push the four phase seconds into the Slint `bb-*` properties.
 /// Called on launch + after every stepper-driven mutation so the
 /// tiles stay in sync with the in-memory pattern.
@@ -625,6 +687,15 @@ fn build_ui() -> MainWindow {
     let timer_session_secs: Rc<Cell<u32>> = Rc::new(Cell::new(
         (DEFAULT_HOURS as u32) * 3600 + (DEFAULT_MINUTES as u32) * 60,
     ));
+
+    // Box Breath target for the in-flight session. Set in
+    // `on_action_tap` when starting a `BoxBreathCountdown` (the
+    // cycle-aligned seconds); `None` for stopwatch shapes or
+    // when no BB session is in flight. Read each tick to feed
+    // `box_breath_counter_label` the right "elapsed / target" vs
+    // "elapsed only" branch.
+    #[cfg(target_os = "android")]
+    let bb_target_secs: Rc<Cell<Option<u32>>> = Rc::new(Cell::new(None));
     // Unix timestamp captured at session start, taken at end.
     // Mirrors the GTK shell's `Timer::session_start_time` cell.
     // Holds None while idle; Some(unix_secs) while a session is
@@ -657,6 +728,8 @@ fn build_ui() -> MainWindow {
         let state = state.clone();
         #[cfg(target_os = "android")]
         let session_start_unix = session_start_unix.clone();
+        #[cfg(target_os = "android")]
+        let bb_target_secs = bb_target_secs.clone();
         ui.on_action_tap(move || {
             let now = now_since_epoch();
             let Some(ui) = weak.upgrade() else { return; };
@@ -703,6 +776,18 @@ fn build_ui() -> MainWindow {
             // pauses/resumes — both stay Active, so the session never
             // ends through this path. Only Idle/Finished → Active
             // matters for persistence wiring.
+            // Stash the BB target (if any) before consuming the
+            // shape — the tick loop reads it every frame to feed
+            // `box_breath_counter_label`.
+            #[cfg(target_os = "android")]
+            {
+                bb_target_secs.set(match &shape {
+                    SessionShape::BoxBreathCountdown { target_secs, .. } => {
+                        Some(*target_secs)
+                    }
+                    _ => None,
+                });
+            }
             let was_active = s.is_active();
             let next = std::mem::replace(&mut *s, AppState::idle())
                 .toggle(shape, now);
@@ -795,6 +880,8 @@ fn build_ui() -> MainWindow {
         let session_start_unix = session_start_unix.clone();
         #[cfg(target_os = "android")]
         let pending_done = pending_done.clone();
+        #[cfg(target_os = "android")]
+        let bb_target_secs = bb_target_secs.clone();
         timer.start(slint::TimerMode::Repeated, TICK, move || {
             let now = now_since_epoch();
             let mut s = state.borrow_mut();
@@ -816,6 +903,7 @@ fn build_ui() -> MainWindow {
                 if let Some(unix_start) = session_start_unix.take() {
                     pending_done.set(Some((unix_start, elapsed_secs)));
                 }
+                bb_target_secs.set(None);
                 if let Some(ui) = weak.upgrade() {
                     ui.set_elapsed_text(
                         meditate_core::format::format_time(
@@ -825,6 +913,68 @@ fn build_ui() -> MainWindow {
                     );
                     ui.set_note_text("".into());
                     mirror_setup_label_into_done(&ui, current_mode.get().into());
+                    ui.set_bb_running_active(false);
+                }
+            }
+            // While a Box-Breath session is running, push the
+            // per-frame visualisation properties (phase label,
+            // remaining seconds, dot perimeter coordinates,
+            // counter text). `box_breath_phase_info` returns
+            // None for non-BB or non-Running shapes, so this is
+            // a single guarded path that handles all the
+            // "not BB" cases correctly.
+            #[cfg(target_os = "android")]
+            if let AppState::Active(session) = &*s {
+                if let Some(info) = session.box_breath_phase_info(now) {
+                    if let Some(ui) = weak.upgrade() {
+                        let elapsed = session.elapsed(now);
+                        let target = bb_target_secs
+                            .get()
+                            .map(|s| Duration::from_secs(u64::from(s)));
+                        let counter = meditate_core::format::box_breath_counter_label(
+                            elapsed, target,
+                        );
+                        let label = match info.phase.running_label_key() {
+                            meditate_core::breath::PhaseRunningLabelKey::BreatheIn => {
+                                "Breathe in"
+                            }
+                            meditate_core::breath::PhaseRunningLabelKey::Hold => "Hold",
+                            meditate_core::breath::PhaseRunningLabelKey::BreatheOut => {
+                                "Breathe out"
+                            }
+                        };
+                        let phase_secs = info
+                            .remaining
+                            .as_secs_f64()
+                            .ceil()
+                            .max(0.0) as i32;
+                        let t = if info.total.as_secs_f64() > 0.0 {
+                            (info.elapsed_in_phase.as_secs_f64()
+                                / info.total.as_secs_f64())
+                            .clamp(0.0, 1.0)
+                        } else {
+                            0.0
+                        };
+                        // pad=12, side=196 matches the Slint
+                        // 220×220 container's 12 px inset + 196 px
+                        // inner square; radius=20 matches the
+                        // `border-radius: 20px` on the frame
+                        // Rectangle so the dot trajectory hugs the
+                        // visible corners instead of cutting them.
+                        let (x, y) = rounded_perimeter_point(
+                            info.phase, t, 12.0, 196.0, 20.0,
+                        );
+                        ui.set_bb_running_active(true);
+                        ui.set_bb_counter_text(counter.into());
+                        ui.set_bb_phase_label(label.into());
+                        ui.set_bb_phase_seconds(phase_secs);
+                        ui.set_bb_dot_x(x as f32);
+                        ui.set_bb_dot_y(y as f32);
+                    }
+                } else if let Some(ui) = weak.upgrade() {
+                    // Active but not BB (Timer mode) — make sure
+                    // the BB layout is hidden.
+                    ui.set_bb_running_active(false);
                 }
             }
             on_state_changed(was_active, is_active);
