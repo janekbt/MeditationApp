@@ -742,6 +742,12 @@ export component MainWindow inherits Window {
     // and pushes a `[LogDaySection]`; Slint iterates sections +
     // their items. Empty array → Log empty state.
     in property <[LogDaySection]> log-sections: [];
+    // True when the last page returned a full PAGE_SIZE rows
+    // (more might still exist). Drives the "Load more" button's
+    // visibility — mirrors GTK's
+    // `load_more_btn.set_visible(n == PAGE_SIZE)` at
+    // `meditate-gtk/src/log/imp.rs:195`.
+    in property <bool> log-has-more: false;
 
     // Routing flag for the shared label chooser overlay:
     //   0 = opened from the Setup expander row (existing flow —
@@ -841,6 +847,10 @@ export component MainWindow inherits Window {
     callback back-pressed();
     // Bottom NavigationBar selection changed.
     callback nav-changed(int);
+    // "Load more" button at the bottom of the Log feed taps —
+    // fetches the next page from the DB and appends to the
+    // existing sections. Mirrors GTK's `load_more_btn.connect_clicked`.
+    callback load-more-tap();
 
     // Slide offset driving the Running screen's slide-over. 0 px
     // means Running is parked at x=width (off-screen right) and
@@ -2207,6 +2217,20 @@ export component MainWindow inherits Window {
                                 }
                             }
                         }
+                    }
+                }
+
+                // Pagination button — visible only when the most
+                // recent page came back full (more rows might
+                // exist). Mirrors GTK's `load_more_btn` at
+                // `meditate-gtk/src/log/imp.rs:62`. TonalButton is
+                // the closest Material analogue to GTK's
+                // `pill` style.
+                if root.log-has-more : HorizontalLayout {
+                    alignment: center;
+                    TonalButton {
+                        text: "Load more";
+                        clicked => { root.load-more-tap(); }
                     }
                 }
             }

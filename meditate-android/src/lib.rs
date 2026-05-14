@@ -478,60 +478,61 @@ fn validate_label_name(name: &str) -> bool {
     validity.is_savable()
 }
 
-/// Query the sessions table + group rows by day (newest first),
-/// formatting each group as a Slint `LogDaySection` ready for
-/// the bottom NavigationBar's Log page. Mirrors the GTK shell's
-/// `LogView::refresh` → `load_page` → `append_session_to_feed`
-/// chain (`meditate-gtk/src/log/imp.rs:122-237`), only without
-/// pagination — this slice loads everything in one go and lets
-/// L-2 add `LIMIT` / `OFFSET` paging.
+/// Page size for the Log feed. Mirrors GTK's
+/// `meditate-gtk/src/log/imp.rs::load_page::PAGE_SIZE`.
 #[cfg(target_os = "android")]
-fn load_log_sections() -> Vec<LogDaySectionData> {
-    let Some(db_arc) = DATABASE.get() else { return Vec::new(); };
-    let Ok(guard) = db_arc.lock() else { return Vec::new(); };
-    let Some(db) = guard.as_ref() else { return Vec::new(); };
+const LOG_PAGE_SIZE: u32 = 15;
 
-    // `query_sessions_from_db` accepts an optional filter; we
-    // load everything in one go for L-1 (pagination = L-2).
-    // Returns `Vec<(i64 rowid, Session)>` so the rowid stays
-    // available for delete (L-3) + edit (L-4).
-    let sessions = meditate_core::db::query_sessions_from_db(
-        db,
-        &meditate_core::db::SessionFilter::default(),
-    )
-    .unwrap_or_default();
-    let labels = meditate_core::db::list_labels_from_db(db).unwrap_or_default();
-    let label_name_by_id: std::collections::HashMap<i64, String> = labels
-        .into_iter()
-        .map(|l| (l.id, l.name))
-        .collect();
+/// Fetch one page of sessions from the DB. Returns `(rows,
+/// returned_full_page)`; the caller uses the boolean to decide
+/// whether to show "Load more".
+#[cfg(target_os = "android")]
+fn load_log_page(offset: u32) -> (Vec<(i64, meditate_core::db::Session)>, bool) {
+    let Some(db_arc) = DATABASE.get() else { return (Vec::new(), false); };
+    let Ok(guard) = db_arc.lock() else { return (Vec::new(), false); };
+    let Some(db) = guard.as_ref() else { return (Vec::new(), false); };
+    let filter = meditate_core::db::SessionFilter {
+        limit: Some(LOG_PAGE_SIZE),
+        offset: Some(offset),
+        ..meditate_core::db::SessionFilter::default()
+    };
+    let rows = meditate_core::db::query_sessions_from_db(db, &filter)
+        .unwrap_or_default();
+    let full = rows.len() == LOG_PAGE_SIZE as usize;
+    (rows, full)
+}
 
-    // Group by date_key = "YYYY-MM-DD" of the local-ISO start.
-    // Order is preserved (the query returns newest first), so a
-    // simple linear scan + key-equality check is enough.
+/// Group an already-ordered (newest-first) flat list of
+/// sessions into day sections. Pure function — no DB / no
+/// global state — so the pagination handler can call it on
+/// every "Load more" press over the cumulative loaded list.
+#[cfg(target_os = "android")]
+fn group_log_sessions(
+    rows: &[(i64, meditate_core::db::Session)],
+    label_name_by_id: &std::collections::HashMap<i64, String>,
+) -> Vec<LogDaySectionData> {
     let mut sections: Vec<LogDaySectionData> = Vec::new();
-    for (rowid, s) in sessions {
+    for (rowid, s) in rows {
         let date_key = s.start_iso.get(..10).unwrap_or("").to_string();
         let label_name = s
             .label_id
             .and_then(|id| label_name_by_id.get(&id).cloned())
             .unwrap_or_default();
-        // -1 = no label (Slint maps that to a dim grey stripe);
-        // 0..7 = hashed colour-class index. Same hash core uses
-        // for the GTK stripe, so cross-shell parity is automatic.
         let color_index = if label_name.is_empty() {
             -1
         } else {
             meditate_core::format::label_color_class_index(&label_name) as i32
         };
         let item = LogCardItemData {
-            id: rowid as i32,
+            id: *rowid as i32,
             minutes: meditate_core::format::log_card_minutes(
                 s.duration_secs as i64,
             ) as i32,
             time_of_day: format_time_of_day(&s.start_iso),
             label_name,
-            note: truncate_note_for_card(&s.notes.unwrap_or_default()),
+            note: truncate_note_for_card(
+                s.notes.as_deref().unwrap_or_default(),
+            ),
             color_index,
         };
         let duration_secs_i64 = i64::from(s.duration_secs);
@@ -552,6 +553,20 @@ fn load_log_sections() -> Vec<LogDaySectionData> {
         });
     }
     sections
+}
+
+/// Load the label name lookup once per refresh. Cheap (a few
+/// rows) and keeps the grouping fn free of DB access.
+#[cfg(target_os = "android")]
+fn load_label_name_map() -> std::collections::HashMap<i64, String> {
+    let Some(db_arc) = DATABASE.get() else { return Default::default(); };
+    let Ok(guard) = db_arc.lock() else { return Default::default(); };
+    let Some(db) = guard.as_ref() else { return Default::default(); };
+    meditate_core::db::list_labels_from_db(db)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|l| (l.id, l.name))
+        .collect()
 }
 
 #[cfg(target_os = "android")]
@@ -614,13 +629,51 @@ fn format_date_group_display(start_iso: &str) -> String {
         .to_string()
 }
 
-/// Push the loaded sections into the Slint `log-sections`
-/// model. Called on launch + after every Save so a freshly
-/// committed session shows up the next time the user opens
-/// the Log tab.
+/// Reload the Log feed from scratch: clears the shadow list,
+/// fetches the first page, groups + pushes to UI. Called on
+/// app launch, on every Save, and on nav-changed-into-Log.
 #[cfg(target_os = "android")]
-fn refresh_log_sections(ui: &MainWindow) {
-    let sections = load_log_sections();
+fn reset_log_feed(
+    ui: &MainWindow,
+    loaded: &std::rc::Rc<std::cell::RefCell<Vec<(i64, meditate_core::db::Session)>>>,
+) {
+    let (rows, full) = load_log_page(0);
+    *loaded.borrow_mut() = rows;
+    let label_map = load_label_name_map();
+    let sections = group_log_sessions(&loaded.borrow(), &label_map);
+    push_log_sections_to_ui(ui, sections, full);
+}
+
+/// "Load more" — query the next page (offset = current loaded
+/// count), append to the shadow list, re-group, push. Mirrors
+/// GTK's `LogView::load_more` chain at `imp.rs:156-197`.
+#[cfg(target_os = "android")]
+fn extend_log_feed(
+    ui: &MainWindow,
+    loaded: &std::rc::Rc<std::cell::RefCell<Vec<(i64, meditate_core::db::Session)>>>,
+) {
+    let offset = loaded.borrow().len() as u32;
+    let (rows, full) = load_log_page(offset);
+    if rows.is_empty() {
+        // Defensive: button pressed but no more rows. Hide it.
+        ui.set_log_has_more(false);
+        return;
+    }
+    loaded.borrow_mut().extend(rows);
+    let label_map = load_label_name_map();
+    let sections = group_log_sessions(&loaded.borrow(), &label_map);
+    push_log_sections_to_ui(ui, sections, full);
+}
+
+/// Push the cumulative loaded session list (already grouped)
+/// into the Slint `log-sections` + `log-has-more` properties.
+/// Pure render — does not touch the DB.
+#[cfg(target_os = "android")]
+fn push_log_sections_to_ui(
+    ui: &MainWindow,
+    sections: Vec<LogDaySectionData>,
+    has_more: bool,
+) {
     let items: Vec<LogDaySection> = sections
         .into_iter()
         .map(|sec| {
@@ -649,6 +702,7 @@ fn refresh_log_sections(ui: &MainWindow) {
         })
         .collect();
     ui.set_log_sections(std::rc::Rc::new(slint::VecModel::from(items)).into());
+    ui.set_log_has_more(has_more);
 }
 
 /// Write the crash-recovery snapshot row. Mirrors GTK's
@@ -983,6 +1037,17 @@ fn build_ui() -> MainWindow {
     // "elapsed only" branch.
     #[cfg(target_os = "android")]
     let bb_target_secs: Rc<Cell<Option<u32>>> = Rc::new(Cell::new(None));
+
+    // Cumulative flat list of sessions loaded into the Log feed.
+    // The "Load more" button extends this; each page-load
+    // re-groups the whole list into `LogDaySection`s and pushes
+    // them to Slint. Mirrors GTK's `loaded_count` cell, just
+    // shaped as a Vec for direct iteration. Box::leak isn't
+    // strictly required (Rc<RefCell> would work) but keeping the
+    // pattern consistent with `bb_target_secs` etc.
+    #[cfg(target_os = "android")]
+    let loaded_log_sessions: Rc<RefCell<Vec<(i64, meditate_core::db::Session)>>>
+        = Rc::new(RefCell::new(Vec::new()));
 
     // Crash-recovery snapshot timer handle. Heartbeat is started
     // on the Idle/Finished → Active transition in `on_action_tap`
@@ -1327,6 +1392,8 @@ fn build_ui() -> MainWindow {
         let current_mode = current_mode.clone();
         #[cfg(target_os = "android")]
         let pending_done = pending_done.clone();
+        #[cfg(target_os = "android")]
+        let loaded_log_sessions = loaded_log_sessions.clone();
         ui.on_save_tap(move || {
             let Some(ui) = weak.upgrade() else { return; };
             #[cfg(target_os = "android")]
@@ -1379,7 +1446,7 @@ fn build_ui() -> MainWindow {
                 ui.set_label_active(read_label_active_for_mode(mode));
                 // Push the freshly-inserted row into the Log feed
                 // so a quick nav-to-Log shows it without restart.
-                refresh_log_sections(&ui);
+                reset_log_feed(&ui, &loaded_log_sessions);
             }
             #[cfg(not(target_os = "android"))]
             let _ = current_mode.get();
@@ -1880,7 +1947,23 @@ fn build_ui() -> MainWindow {
                 .into(),
         );
         refresh_breathing_tiles(&ui, read_breathing_pattern());
-        refresh_log_sections(&ui);
+        reset_log_feed(&ui, &loaded_log_sessions);
+    }
+
+    // "Load more" tap on the Log feed — fetch the next page,
+    // append + re-render. Mirrors GTK's `LogView::load_more`
+    // at `meditate-gtk/src/log/imp.rs:156`.
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let loaded_log_sessions = loaded_log_sessions.clone();
+        ui.on_load_more_tap(move || {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                extend_log_feed(&ui, &loaded_log_sessions);
+            }
+            let _ = weak.clone();
+        });
     }
 
     // Preferences gear tap — no-op for now; Phase 7 hooks it up
@@ -1897,6 +1980,8 @@ fn build_ui() -> MainWindow {
     // refresh of the page-specific state (just Log for now).
     {
         let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let loaded_log_sessions = loaded_log_sessions.clone();
         ui.on_nav_changed(move |idx| {
             #[cfg(target_os = "android")]
             {
@@ -1904,7 +1989,7 @@ fn build_ui() -> MainWindow {
                 if idx == 1 {
                     // Entering Log — reload from DB so a session
                     // saved before opening the tab shows up.
-                    refresh_log_sections(&ui);
+                    reset_log_feed(&ui, &loaded_log_sessions);
                 }
             }
             let _ = (weak.clone(), idx);
