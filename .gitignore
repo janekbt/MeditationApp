@@ -8,10 +8,12 @@
 # alternative lives in build-aux/dev-xbuild.sh.
 /.cargo/
 
-# Meson build directories
-/_build/
-/builddir/
-/build/
+# Meson build directories. After the workspace restructure these
+# are created inside meditate-gtk/ rather than the repo root, so
+# the patterns are no longer anchored.
+_build/
+builddir/
+build/
 
 # flatpak-builder scratch + exported repo
 /.flatpak-builder/
