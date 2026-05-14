@@ -41,6 +41,13 @@ fn now_since_epoch() -> Duration {
 fn refresh(ui: &MainWindow, state: &AppState, now: Duration) {
     let target = configured_duration(ui);
     ui.set_remaining_text(state.hero_label(target, now).into());
+    // Duration-row value suffix: always shows the configured target
+    // in HH:MM (mirrors the GTK Adw.ActionRow value label). On Setup
+    // it matches the hero; while Running the row is hidden, so it's
+    // safe for the formats to diverge.
+    ui.set_duration_text(
+        meditate_core::format::format_hhmm(target.as_secs() as u32).into(),
+    );
     ui.set_action_label(state.primary_label().into());
     ui.set_stop_visible(state.can_stop());
     ui.set_running_page(state.is_running_page());
@@ -81,6 +88,20 @@ fn build_ui() -> MainWindow {
             if let Some(ui) = weak.upgrade() {
                 refresh(&ui, &s, now_since_epoch());
             }
+        });
+    }
+
+    // Duration row tap: seed the dialog's edit-state copies from the
+    // currently configured target, then open the dialog. The Slint
+    // side commits dialog → setup on Set; the next tick refresh
+    // picks up the new HH:MM in both the hero and the row value.
+    {
+        let weak = ui.as_weak();
+        ui.on_duration_tap(move || {
+            let Some(ui) = weak.upgrade() else { return; };
+            ui.set_dialog_hours(ui.get_setup_hours());
+            ui.set_dialog_minutes(ui.get_setup_minutes());
+            ui.set_duration_dialog_open(true);
         });
     }
 

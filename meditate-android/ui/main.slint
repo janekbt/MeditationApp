@@ -1,57 +1,29 @@
 // UI translation Phase 1 — Setup + Timer running view. Mirrors the
-// GTK timer setup page (`meditate-gtk/data/ui/timer_view.blp`) and
-// the running page built in `meditate-gtk/src/window/imp.rs`.
-//
-// Setup: hero showing the configured duration, hours/minutes stepper
-// rows, Start button. Running: hero showing live remaining time,
-// Pause / Stop / Add-time / Finish-overtime.
-//
-// Phase 2 will add the mode chip group + per-mode stopwatch toggle;
-// phase 3 wires the streak chip + label / preset rows to the DB.
+// GTK timer setup page (`meditate-gtk/data/ui/timer_view.blp`) +
+// the running page built by `meditate-gtk/src/window/imp.rs::
+// push_time_running_page`. The slide-from-right transition mirrors
+// `AdwNavigationView`'s push: Setup slides off to the left and the
+// Running screen slides in from the right when a session starts.
+// The Duration row's tap-to-open dialog mirrors
+// `show_custom_time_dialog` in `meditate-gtk/src/timer/imp.rs`.
 
-import { FilledButton, OutlineButton, TonalButton } from "@material";
+import {
+    FilledButton, OutlineButton, TextButton, TonalButton,
+    MaterialPalette,
+} from "@material";
 export { MaterialWindowAdapter } from "@material";
 
-// Stepper row mirroring the GTK shell's AdwSpinRow shape: title on
-// the left, decrement / value / increment on the right. The Slint
-// Material library doesn't ship a SpinBox, so this is the smallest
-// touch-friendly equivalent — large +/- TonalButtons flanking a
-// big-font value text.
-component StepperRow inherits HorizontalLayout {
-    in property <string> label;
+// Vertical +/value/− stack mirroring the GTK shell's vertical
+// `gtk::SpinButton`. Used inside the Duration dialog.
+component VerticalSpinBox {
     in-out property <int> value;
     in property <int> min-value;
     in property <int> max-value;
+    width: 80px;
 
-    spacing: 12px;
-    alignment: stretch;
-
-    Text {
-        text: root.label;
-        font-size: 16px;
-        vertical-alignment: center;
-        horizontal-alignment: left;
-    }
-
-    HorizontalLayout {
-        spacing: 8px;
-        alignment: end;
-
-        TonalButton {
-            text: "−";
-            enabled: root.value > root.min-value;
-            clicked => {
-                if (root.value > root.min-value) { root.value -= 1; }
-            }
-        }
-
-        Text {
-            text: root.value;
-            font-size: 28px;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-            min-width: 56px;
-        }
+    VerticalLayout {
+        spacing: 6px;
+        alignment: center;
 
         TonalButton {
             text: "+";
@@ -60,100 +32,287 @@ component StepperRow inherits HorizontalLayout {
                 if (root.value < root.max-value) { root.value += 1; }
             }
         }
+        Text {
+            text: root.value < 10 ? "0" + root.value : "" + root.value;
+            font-size: 32px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+        TonalButton {
+            text: "−";
+            enabled: root.value > root.min-value;
+            clicked => {
+                if (root.value > root.min-value) { root.value -= 1; }
+            }
+        }
+    }
+}
+
+// Single tap-to-open Duration row, mirroring the GTK Adw.ActionRow
+// with title + value suffix + chevron. The whole row is the touch
+// target.
+component DurationRow inherits Rectangle {
+    in property <string> value-text;
+    callback tapped;
+
+    height: 56px;
+    border-radius: 12px;
+    background: touch.has-hover ? MaterialPalette.surface-container-high
+                                : MaterialPalette.surface-container;
+
+    touch := TouchArea {
+        clicked => { root.tapped(); }
+    }
+
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        spacing: 12px;
+        alignment: stretch;
+
+        Text {
+            text: "Duration";
+            font-size: 16px;
+            color: MaterialPalette.on-surface;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+        Text {
+            text: root.value-text;
+            font-size: 16px;
+            color: MaterialPalette.on-surface-variant;
+            vertical-alignment: center;
+        }
+        Text {
+            text: "›";
+            font-size: 22px;
+            color: MaterialPalette.on-surface-variant;
+            vertical-alignment: center;
+        }
     }
 }
 
 export component MainWindow inherits Window {
     title: "Meditate";
 
-    // The big mm:ss readout, formatted in Rust (handles ceiling
-    // rounding so a fresh "10:00" doesn't briefly flicker to "09:59").
-    in property <string> remaining-text: "00:00";
-    // Primary action button label: "Start Session" / "Pause" / "Resume".
+    in property <string> remaining-text: "00:10";
+    in property <string> duration-text: "00:10";
     in property <string> action-label: "Start Session";
-    // True once the session has started — switches between the
-    // setup-page chrome (caption + single button) and the running-page
-    // chrome (Pause + Stop). Idle is the only state that hides Stop.
     in property <bool> running-page: false;
-    // Stop is visible whenever the user has something to stop —
-    // Running, Paused, or Finished (so they can reset the screen).
     in property <bool> stop-visible: false;
 
-    // Duration picker state. Hours capped at 3 (matches the GTK
-    // shell's spin-row upper bound); minutes 0–59. Rust reads these
-    // on Start to compute the session target.
     in-out property <int> setup-hours: 0;
     in-out property <int> setup-minutes: 10;
 
+    in-out property <bool> duration-dialog-open: false;
+    in-out property <int> dialog-hours: 0;
+    in-out property <int> dialog-minutes: 10;
+
     callback action-tap();
     callback stop-tap();
+    callback duration-tap();
 
-    VerticalLayout {
-        padding: 24px;
-        spacing: 24px;
-        alignment: center;
+    // Slide offset driving the Setup ↔ Running transition. 0 px
+    // means Setup is fully visible at x=0 and Running is parked at
+    // x=width (off-screen right). Animating up to `root.width`
+    // pushes Setup to x=−width and brings Running to x=0. Easing
+    // matches the GTK shell's Adw.NavigationView push transition
+    // shape — quick first, slow finish — so the two shells feel
+    // related, not just look it.
+    property <length> screen-offset: root.running-page ? root.width : 0px;
+    animate screen-offset { duration: 300ms; easing: ease-out; }
 
-        // Hero: streak chip placeholder + big mm:ss + caption.
-        // Streak chip is empty in phase 1 (DB integration arrives in
-        // phase 3); kept in the layout so the spacing matches the GTK
-        // setup-page hero the moment streaks land.
+    // ── Setup screen ─────────────────────────────────────────────
+    Rectangle {
+        x: -root.screen-offset;
+        width: parent.width;
+        height: parent.height;
+
+        VerticalLayout {
+            padding-left: 24px;
+            padding-right: 24px;
+            padding-top: 56px;
+            padding-bottom: 24px;
+            spacing: 20px;
+            alignment: start;
+
+            // Hero + caption.
+            VerticalLayout {
+                spacing: 4px;
+
+                Text {
+                    text: root.remaining-text;
+                    font-size: 80px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface;
+                }
+                Text {
+                    text: "Hours · Minutes";
+                    font-size: 12px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface-variant;
+                }
+            }
+
+            // Start Session button — above the settings, in thumb
+            // reach. Taller than Material 3's 40 px default because
+            // it's the single most-tapped surface on the app.
+            FilledButton {
+                text: "Start Session";
+                height: 56px;
+                enabled: root.setup-hours > 0 || root.setup-minutes > 0;
+                clicked => { root.action-tap(); }
+            }
+
+            // Settings group, mirroring the GTK Adw.PreferencesGroup
+            // titled "Session". Phase 1 has only the Duration row;
+            // Stopwatch Mode / Label / Keep Screen Awake land in
+            // phase 2.
+            VerticalLayout {
+                spacing: 8px;
+
+                Text {
+                    text: "Session";
+                    font-size: 14px;
+                    font-weight: 700;
+                    color: MaterialPalette.primary;
+                    horizontal-alignment: left;
+                }
+
+                DurationRow {
+                    value-text: root.duration-text;
+                    tapped => { root.duration-tap(); }
+                }
+            }
+        }
+    }
+
+    // ── Running screen ──────────────────────────────────────────
+    // Hero + controls vertically centered on a pure-black canvas.
+    // GTK shell uses libadwaita's background-fade-to-black on the
+    // running page; Material 3 has no canonical equivalent, so we
+    // go straight to #000.
+    Rectangle {
+        x: parent.width - root.screen-offset;
+        width: parent.width;
+        height: parent.height;
+        background: #000000;
+
         VerticalLayout {
             alignment: center;
-            spacing: 4px;
-
-            if !running-page : Text {
-                text: "";
-                font-size: 14px;
-                horizontal-alignment: center;
-            }
+            spacing: 40px;
+            padding-left: 24px;
+            padding-right: 24px;
 
             Text {
-                text: remaining-text;
+                text: root.remaining-text;
                 font-size: 80px;
                 horizontal-alignment: center;
+                color: #ffffff;
             }
 
-            if !running-page : Text {
-                text: "Hours · Minutes";
-                font-size: 12px;
-                color: #888;
-                horizontal-alignment: center;
-            }
-        }
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: center;
 
-        // Duration picker — visible only on the setup page. The
-        // hero above reflects the steppers in real time so the user
-        // can see the resulting mm:ss as they adjust.
-        if !running-page : VerticalLayout {
-            spacing: 8px;
+                FilledButton {
+                    text: root.action-label;
+                    height: 56px;
+                    clicked => { root.action-tap(); }
+                }
 
-            StepperRow {
-                label: "Hours";
-                value <=> setup-hours;
-                min-value: 0;
-                max-value: 3;
-            }
-            StepperRow {
-                label: "Minutes";
-                value <=> setup-minutes;
-                min-value: 0;
-                max-value: 59;
+                if root.stop-visible : OutlineButton {
+                    text: "Stop";
+                    height: 56px;
+                    clicked => { root.stop-tap(); }
+                }
             }
         }
+    }
 
-        HorizontalLayout {
-            spacing: 12px;
-            alignment: center;
+    // ── Duration dialog (modal overlay, on top of both screens) ─
+    if root.duration-dialog-open : Rectangle {
+        // Scrim — taps outside the card cancel.
+        background: #00000080;
+        TouchArea {
+            clicked => { root.duration-dialog-open = false; }
+        }
 
-            FilledButton {
-                text: action-label;
-                enabled: running-page || (setup-hours > 0 || setup-minutes > 0);
-                clicked => { action-tap(); }
-            }
+        // Card. Height tracks the inner layout's preferred-height
+        // so the card sizes to its content rather than stretching
+        // to the scrim's full height.
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 320px;
+            height: card-content.preferred-height;
+            background: MaterialPalette.surface-container-high;
+            border-radius: 28px;
 
-            if stop-visible : OutlineButton {
-                text: "Stop";
-                clicked => { stop-tap(); }
+            // Catch clicks on the card itself so they don't reach
+            // the scrim's TouchArea and dismiss the dialog.
+            TouchArea {}
+
+            card-content := VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+
+                Text {
+                    text: "Custom Time";
+                    font-size: 22px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface;
+                }
+                Text {
+                    text: "Hours : Minutes";
+                    font-size: 14px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface-variant;
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: center;
+
+                    VerticalSpinBox {
+                        value <=> root.dialog-hours;
+                        min-value: 0;
+                        max-value: 23;
+                    }
+                    Text {
+                        text: ":";
+                        font-size: 40px;
+                        vertical-alignment: center;
+                        color: MaterialPalette.on-surface;
+                    }
+                    VerticalSpinBox {
+                        value <=> root.dialog-minutes;
+                        min-value: 0;
+                        max-value: 59;
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+
+                    TextButton {
+                        text: "Cancel";
+                        clicked => { root.duration-dialog-open = false; }
+                    }
+                    TextButton {
+                        text: "Set";
+                        clicked => {
+                            // Refuse to commit a zero-duration set,
+                            // mirroring the GTK shell's guard.
+                            if (root.dialog-hours > 0 || root.dialog-minutes > 0) {
+                                root.setup-hours = root.dialog-hours;
+                                root.setup-minutes = root.dialog-minutes;
+                            }
+                            root.duration-dialog-open = false;
+                        }
+                    }
+                }
             }
         }
     }
