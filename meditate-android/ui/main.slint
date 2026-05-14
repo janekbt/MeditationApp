@@ -912,9 +912,29 @@ export component MainWindow inherits Window {
     // always overwrites before user-visible).
     in-out property <Date> edit-start-date: { year: 2026, month: 1, day: 1 };
     in-out property <Time> edit-start-time: { hour: 0, minute: 0 };
+    // Label fields (L-4d). `edit-label-enabled` is the AdwExpander
+    // master switch — when off, Save writes `label_id = None` and
+    // the selected row is hidden. `edit-label-id` carries the rowid
+    // of the currently picked label (0 = none yet). `edit-label-
+    // name` is just the display string for the row, kept in sync
+    // by Rust on every prefill / pick.
+    in-out property <bool> edit-label-enabled: false;
+    in-out property <int> edit-label-id: 0;
+    in-out property <string> edit-label-name: "";
     callback card-tap(int);
     callback edit-cancel-tap();
     callback edit-save-tap();
+    // Tap on the "Selected" row inside the Edit-Session Label
+    // group → open the labels chooser (`labels-page`). Rust sets
+    // `chooser-target = 2` before flipping `labels-page = true` so
+    // the existing `on_label_picked` handler routes the pick back
+    // to `edit-label-*` instead of Setup or Done.
+    callback edit-label-row-tap();
+    // Master-switch toggle on the Label expander. Rust adopts the
+    // first available label on the off→on flip if no selection
+    // exists yet (mirrors GTK's `connect_enable_expansion_notify`
+    // at `meditate-gtk/src/log/imp.rs:890`).
+    callback edit-label-toggled(bool);
 
     // Slide offset driving the Running screen's slide-over. 0 px
     // means Running is parked at x=width (off-screen right) and
@@ -1637,197 +1657,6 @@ export component MainWindow inherits Window {
         }
     }
 
-    // ── Label chooser (overlay, slides over everything) ─────────
-    // Mirrors GTK's `push_labels_chooser`: a navigation push with
-    // a back-button header bar + a list of label rows. C-2 ships
-    // the read+select half — CRUD lands in C-3 / C-4. Slides in
-    // from the right via `labels-offset`; the Setup, Running, and
-    // Done layers stay put underneath. Background is `surface`
-    // (mirrors the Setup page background) so a partial-slide
-    // doesn't show through to whatever's underneath.
-    Rectangle {
-        visible: root.nav-page == 0;
-        x: parent.width - root.labels-offset;
-        width: parent.width;
-        height: parent.height;
-        background: MaterialPalette.surface;
-
-        VerticalLayout {
-            padding-top: root.status-bar-inset + 24px;
-            padding-bottom: root.bottom-bar-inset + 24px;
-            padding-left: 16px;
-            padding-right: 16px;
-            spacing: 16px;
-            alignment: start;
-
-            // Header — back arrow + title. Mirrors the
-            // `Adw.HeaderBar { show-back-button: true }` +
-            // `NavigationPage.title` GTK uses. The back button is
-            // an IconButton (40 px touch target) on the left; an
-            // equal-width spacer on the right balances the row
-            // so the title actually centers in the page (rather
-            // than sitting to the right of the back button).
-            HorizontalLayout {
-                spacing: 12px;
-                alignment: stretch;
-
-                IconButton {
-                    icon: Icons.arrow-back;
-                    clicked => { root.labels-back(); }
-                }
-                Text {
-                    text: "Choose Label";
-                    font-size: 18px;
-                    color: MaterialPalette.on-surface;
-                    vertical-alignment: center;
-                    horizontal-stretch: 1;
-                    horizontal-alignment: center;
-                }
-                Rectangle {
-                    width: 40px;
-                }
-            }
-
-            // Label list inside a BoxedList — same boxed look as
-            // the Session group, so the chooser feels consistent.
-            // Each iteration emits an optional 1 px hair-line
-            // divider above the row (skipped for the first row),
-            // mirroring the divider pattern between Cues /
-            // Stopwatch / Duration / Label / Keep Awake in the
-            // Session group.
-            BoxedList {
-                // Synthetic "Create new label…" row — mirrors the
-                // top row that `rebuild_chooser_rows` adds in the
-                // GTK shell (`labels.rs:107-139`). Always present
-                // (no DB query needed) so the create-flow is one
-                // tap away on first launch when no user labels
-                // exist yet.
-                Rectangle {
-                    height: 56px;
-                    background: create-touch.has-hover
-                        ? MaterialPalette.surface-container-high
-                        : transparent;
-
-                    create-touch := TouchArea {
-                        clicked => { root.create-label-tap(); }
-                    }
-
-                    HorizontalLayout {
-                        padding-left: 16px;
-                        padding-right: 16px;
-                        spacing: 12px;
-                        alignment: stretch;
-
-                        Text {
-                            text: "Create new label…";
-                            font-size: 16px;
-                            color: MaterialPalette.on-surface;
-                            vertical-alignment: center;
-                            horizontal-stretch: 1;
-                        }
-                        // Plus glyph — GTK uses `list-add-symbolic`;
-                        // Material's bundled Icons set has no add
-                        // SVG, so we render the ASCII "+" (always
-                        // rasterises, no font-coverage risk).
-                        Text {
-                            text: "+";
-                            font-size: 22px;
-                            color: MaterialPalette.on-surface-variant;
-                            vertical-alignment: center;
-                        }
-                    }
-                }
-
-                // Divider separating the Create row from the
-                // first label row.
-                Rectangle {
-                    height: 1px;
-                    background: MaterialPalette.outline-variant;
-                }
-
-                for item[idx] in root.label-items : VerticalLayout {
-                    spacing: 0;
-
-                    if idx > 0 : Rectangle {
-                        height: 1px;
-                        background: MaterialPalette.outline-variant;
-                    }
-
-                    Rectangle {
-                        height: 56px;
-                        background: row-touch.has-hover
-                            ? MaterialPalette.surface-container-high
-                            : transparent;
-
-                        row-touch := TouchArea {
-                            clicked => { root.label-picked(item.id); }
-                        }
-
-                        HorizontalLayout {
-                            padding-left: 16px;
-                            padding-right: 16px;
-                            spacing: 12px;
-                            alignment: stretch;
-
-                            Text {
-                                text: item.name;
-                                font-size: 16px;
-                                color: MaterialPalette.on-surface;
-                                vertical-alignment: center;
-                                horizontal-stretch: 1;
-                            }
-                            // Check-mark suffix on the currently-
-                            // selected row — mirrors GTK's
-                            // `object-select-symbolic` indicator.
-                            // GTK adds this suffix BEFORE the rename
-                            // + delete buttons (labels.rs:171 vs
-                            // 174-175), so visually it lands to
-                            // their left. VerticalLayout centers
-                            // the image inside the 56-px row.
-                            if item.selected : VerticalLayout {
-                                alignment: center;
-                                Image {
-                                    source: Icons.check;
-                                    colorize: MaterialPalette.primary;
-                                    width: 20px;
-                                    height: 20px;
-                                }
-                            }
-                            // Rename pencil button — mirrors GTK's
-                            // `add_rename_button` (labels.rs:187).
-                            // VerticalLayout centers the 40 px
-                            // IconButton in the 56 px row.
-                            VerticalLayout {
-                                alignment: center;
-                                IconButton {
-                                    icon: Icons.edit;
-                                    clicked => { root.rename-label-tap(item.id); }
-                                }
-                            }
-                            // Delete X button — mirrors GTK's
-                            // `add_delete_button` (labels.rs:209)
-                            // which uses a `user-trash-symbolic`
-                            // tinted with `.destructive-action`.
-                            // Janek picked the X glyph for Android;
-                            // Icons.close gives us the SVG and
-                            // `has-error: true` colorises it with
-                            // the Material error palette so the
-                            // destructive intent reads at a glance.
-                            VerticalLayout {
-                                alignment: center;
-                                IconButton {
-                                    icon: Icons.close;
-                                    has-error: true;
-                                    clicked => { root.delete-label-tap(item.id); }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     // ── Create-label dialog (modal overlay) ─────────────────────
     // Mirrors `meditate-gtk/src/labels.rs::present_create_label_dialog`:
     // heading + single-line text entry + Cancel/Create buttons,
@@ -2361,6 +2190,31 @@ export component MainWindow inherits Window {
                 }
             }
 
+            // Label group (L-4d). Master SwitchRow + (when on) a
+            // chooser row showing the current selection. Mirrors
+            // GTK's `adw::ExpanderRow` with show_enable_switch +
+            // inner "Selected" sub-row at `log/imp.rs:874`. Tap on
+            // the chooser row pushes the existing labels-page
+            // overlay; Rust uses `chooser-target = 2` to route the
+            // pick back to `edit-label-*`.
+            BoxedList {
+                SwitchRow {
+                    title: "Label";
+                    subtitle: "Tag this session";
+                    checked <=> root.edit-label-enabled;
+                    toggled(on) => { root.edit-label-toggled(on); }
+                }
+                if root.edit-label-enabled : Rectangle {
+                    height: 1px;
+                    background: MaterialPalette.outline-variant;
+                }
+                if root.edit-label-enabled : DurationRow {
+                    label: "Selected";
+                    value-text: root.edit-label-name;
+                    tapped => { root.edit-label-row-tap(); }
+                }
+            }
+
             // Note field — caption + multi-line input. Mirrors
             // GTK's `note_caption` + `note_view` at
             // `log/imp.rs:933 / :915`. The existing NoteField
@@ -2371,6 +2225,199 @@ export component MainWindow inherits Window {
             NoteField {
                 label: "Note (optional)";
                 text <=> root.edit-note-text;
+            }
+        }
+    }
+
+    // ── Label chooser (overlay, slides over everything) ─────────
+    // Mirrors GTK's `push_labels_chooser`: a navigation push with
+    // a back-button header bar + a list of label rows. Slides in
+    // from the right via `labels-offset`; Setup, Running, Done,
+    // Log, and Edit-Session all stay put underneath. Declared
+    // AFTER the Edit-Session overlay so Slint's later-children-
+    // on-top rule places this chooser z-above it — the chooser
+    // surface can be opened from either the Setup screen (mode
+    // label) or the Edit-Session overlay (per-session label),
+    // and either underlying surface stays visible behind the
+    // slide-in.
+    Rectangle {
+        x: parent.width - root.labels-offset;
+        width: parent.width;
+        height: parent.height;
+        background: MaterialPalette.surface;
+
+        VerticalLayout {
+            padding-top: root.status-bar-inset + 24px;
+            padding-bottom: root.bottom-bar-inset + 24px;
+            padding-left: 16px;
+            padding-right: 16px;
+            spacing: 16px;
+            alignment: start;
+
+            // Header — back arrow + title. Mirrors the
+            // `Adw.HeaderBar { show-back-button: true }` +
+            // `NavigationPage.title` GTK uses. The back button is
+            // an IconButton (40 px touch target) on the left; an
+            // equal-width spacer on the right balances the row
+            // so the title actually centers in the page (rather
+            // than sitting to the right of the back button).
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: stretch;
+
+                IconButton {
+                    icon: Icons.arrow-back;
+                    clicked => { root.labels-back(); }
+                }
+                Text {
+                    text: "Choose Label";
+                    font-size: 18px;
+                    color: MaterialPalette.on-surface;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    horizontal-alignment: center;
+                }
+                Rectangle {
+                    width: 40px;
+                }
+            }
+
+            // Label list inside a BoxedList — same boxed look as
+            // the Session group, so the chooser feels consistent.
+            // Each iteration emits an optional 1 px hair-line
+            // divider above the row (skipped for the first row),
+            // mirroring the divider pattern between Cues /
+            // Stopwatch / Duration / Label / Keep Awake in the
+            // Session group.
+            BoxedList {
+                // Synthetic "Create new label…" row — mirrors the
+                // top row that `rebuild_chooser_rows` adds in the
+                // GTK shell (`labels.rs:107-139`). Always present
+                // (no DB query needed) so the create-flow is one
+                // tap away on first launch when no user labels
+                // exist yet.
+                Rectangle {
+                    height: 56px;
+                    background: create-touch.has-hover
+                        ? MaterialPalette.surface-container-high
+                        : transparent;
+
+                    create-touch := TouchArea {
+                        clicked => { root.create-label-tap(); }
+                    }
+
+                    HorizontalLayout {
+                        padding-left: 16px;
+                        padding-right: 16px;
+                        spacing: 12px;
+                        alignment: stretch;
+
+                        Text {
+                            text: "Create new label…";
+                            font-size: 16px;
+                            color: MaterialPalette.on-surface;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+                        // Plus glyph — GTK uses `list-add-symbolic`;
+                        // Material's bundled Icons set has no add
+                        // SVG, so we render the ASCII "+" (always
+                        // rasterises, no font-coverage risk).
+                        Text {
+                            text: "+";
+                            font-size: 22px;
+                            color: MaterialPalette.on-surface-variant;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                // Divider separating the Create row from the
+                // first label row.
+                Rectangle {
+                    height: 1px;
+                    background: MaterialPalette.outline-variant;
+                }
+
+                for item[idx] in root.label-items : VerticalLayout {
+                    spacing: 0;
+
+                    if idx > 0 : Rectangle {
+                        height: 1px;
+                        background: MaterialPalette.outline-variant;
+                    }
+
+                    Rectangle {
+                        height: 56px;
+                        background: row-touch.has-hover
+                            ? MaterialPalette.surface-container-high
+                            : transparent;
+
+                        row-touch := TouchArea {
+                            clicked => { root.label-picked(item.id); }
+                        }
+
+                        HorizontalLayout {
+                            padding-left: 16px;
+                            padding-right: 16px;
+                            spacing: 12px;
+                            alignment: stretch;
+
+                            Text {
+                                text: item.name;
+                                font-size: 16px;
+                                color: MaterialPalette.on-surface;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                            }
+                            // Check-mark suffix on the currently-
+                            // selected row — mirrors GTK's
+                            // `object-select-symbolic` indicator.
+                            // GTK adds this suffix BEFORE the rename
+                            // + delete buttons (labels.rs:171 vs
+                            // 174-175), so visually it lands to
+                            // their left. VerticalLayout centers
+                            // the image inside the 56-px row.
+                            if item.selected : VerticalLayout {
+                                alignment: center;
+                                Image {
+                                    source: Icons.check;
+                                    colorize: MaterialPalette.primary;
+                                    width: 20px;
+                                    height: 20px;
+                                }
+                            }
+                            // Rename pencil button — mirrors GTK's
+                            // `add_rename_button` (labels.rs:187).
+                            // VerticalLayout centers the 40 px
+                            // IconButton in the 56 px row.
+                            VerticalLayout {
+                                alignment: center;
+                                IconButton {
+                                    icon: Icons.edit;
+                                    clicked => { root.rename-label-tap(item.id); }
+                                }
+                            }
+                            // Delete X button — mirrors GTK's
+                            // `add_delete_button` (labels.rs:209)
+                            // which uses a `user-trash-symbolic`
+                            // tinted with `.destructive-action`.
+                            // Janek picked the X glyph for Android;
+                            // Icons.close gives us the SVG and
+                            // `has-error: true` colorises it with
+                            // the Material error palette so the
+                            // destructive intent reads at a glance.
+                            VerticalLayout {
+                                alignment: center;
+                                IconButton {
+                                    icon: Icons.close;
+                                    has-error: true;
+                                    clicked => { root.delete-label-tap(item.id); }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

@@ -916,6 +916,23 @@ fn lookup_label_name(id: i64) -> Option<String> {
         .map(|l| l.name)
 }
 
+/// First label in the user's list, in DB-sort order. Used by
+/// the Edit-Session label-expander master-switch toggle (L-4d)
+/// to adopt a sensible default when flipping the switch on
+/// without any existing selection. Mirrors GTK's
+/// `labels_for_toggle.first()` at `log/imp.rs:897`.
+#[cfg(target_os = "android")]
+fn first_label() -> Option<(i64, String)> {
+    let db_arc = DATABASE.get()?;
+    let guard = db_arc.lock().ok()?;
+    let db = guard.as_ref()?;
+    meditate_core::db::list_labels_from_db(db)
+        .ok()?
+        .into_iter()
+        .next()
+        .map(|l| (l.id, l.name))
+}
+
 /// Body text for the Delete-Label dialog. Mirrors GTK's
 /// `present_delete_label_dialog` body composition: pluralised
 /// "N sessions will be un-labelled" when the label tags any
@@ -2093,20 +2110,33 @@ fn build_ui() -> MainWindow {
             #[cfg(target_os = "android")]
             {
                 let Some(ui) = weak.upgrade() else { return; };
-                if ui.get_chooser_target() == 1 {
-                    // Done flow
-                    if let Some(name) = lookup_label_name(id as i64) {
-                        ui.set_done_label_id(id);
-                        ui.set_done_label_name(name.into());
-                        ui.set_done_label_active(true);
+                match ui.get_chooser_target() {
+                    1 => {
+                        // Done flow
+                        if let Some(name) = lookup_label_name(id as i64) {
+                            ui.set_done_label_id(id);
+                            ui.set_done_label_name(name.into());
+                            ui.set_done_label_active(true);
+                        }
                     }
-                } else {
-                    // Setup flow (existing behavior)
-                    let mode: meditate_core::SessionMode = current_mode.get().into();
-                    if let Some(uuid) = lookup_label_uuid(id as i64) {
-                        write_label_uuid_for_mode(mode, &uuid);
+                    2 => {
+                        // Edit-Session flow (L-4d) — write back to
+                        // edit-label-* so the overlay re-appears
+                        // showing the new selection.
+                        if let Some(name) = lookup_label_name(id as i64) {
+                            ui.set_edit_label_id(id);
+                            ui.set_edit_label_name(name.into());
+                            ui.set_edit_label_enabled(true);
+                        }
                     }
-                    refresh_setup_label_name(&ui, mode);
+                    _ => {
+                        // Setup flow (existing behavior)
+                        let mode: meditate_core::SessionMode = current_mode.get().into();
+                        if let Some(uuid) = lookup_label_uuid(id as i64) {
+                            write_label_uuid_for_mode(mode, &uuid);
+                        }
+                        refresh_setup_label_name(&ui, mode);
+                    }
                 }
                 ui.set_labels_page(false);
             }
@@ -2316,6 +2346,21 @@ fn build_ui() -> MainWindow {
                     minute: dt.minute() as i32,
                     second: dt.second() as i32,
                 });
+                // Pre-fill label state (L-4d). `label_id` of None
+                // = expander off; Some(id) = expander on, with
+                // the row showing the resolved name. Mirrors
+                // GTK's initial-state read at `log/imp.rs:856`.
+                let (lbl_enabled, lbl_id, lbl_name) = match session.label_id {
+                    Some(id) => (
+                        true,
+                        id as i32,
+                        lookup_label_name(id).unwrap_or_default(),
+                    ),
+                    None => (false, 0, String::new()),
+                };
+                ui.set_edit_label_enabled(lbl_enabled);
+                ui.set_edit_label_id(lbl_id);
+                ui.set_edit_label_name(lbl_name.into());
                 ui.set_edit_session_page(true);
             }
             let _ = (weak.clone(), rowid);
@@ -2413,6 +2458,16 @@ fn build_ui() -> MainWindow {
                     .unwrap_or_else(|| session.start_unix());
                 session.start_iso =
                     meditate_core::time::unix_to_local_iso(new_start_unix);
+                // Label (L-4d). Mirrors GTK's
+                // `label_expander.enables_expansion() ?
+                // selected_label_id : None` branch at
+                // `log/imp.rs:1079`.
+                session.label_id = if ui.get_edit_label_enabled() {
+                    let id = ui.get_edit_label_id() as i64;
+                    if id > 0 { Some(id) } else { None }
+                } else {
+                    None
+                };
                 if let Some(db_arc) = DATABASE.get() {
                     if let Ok(guard) = db_arc.lock() {
                         if let Some(db) = guard.as_ref() {
@@ -2430,6 +2485,53 @@ fn build_ui() -> MainWindow {
                 reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
             }
             let _ = weak.clone();
+        });
+    }
+
+    // Tap on the "Selected" row inside the Edit-Session Label
+    // group → push the labels chooser overlay with
+    // `chooser-target = 2` so `on_label_picked` writes the pick
+    // back to `edit-label-*` rather than the Setup-mode label.
+    // Mirrors GTK's chooser-row activation at `log/imp.rs:1031`.
+    {
+        let weak = ui.as_weak();
+        ui.on_edit_label_row_tap(move || {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                ui.set_chooser_target(2);
+                let current = ui.get_edit_label_id() as i64;
+                refresh_chooser_items(
+                    &ui,
+                    if current > 0 { Some(current) } else { None },
+                );
+                ui.set_labels_page(true);
+            }
+            let _ = weak.clone();
+        });
+    }
+
+    // Master-switch toggle on the Edit-Session Label expander.
+    // Mirrors GTK's `connect_enable_expansion_notify` at
+    // `log/imp.rs:890`: when flipped on with no selection yet,
+    // adopt the first available label so subsequent reads
+    // resolve cleanly. When flipped off, the expander row hides
+    // (handled Slint-side via `if root.edit-label-enabled`) and
+    // Save will write `label_id = None`.
+    {
+        let weak = ui.as_weak();
+        ui.on_edit_label_toggled(move |on| {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                if on && ui.get_edit_label_id() == 0 {
+                    if let Some((id, name)) = first_label() {
+                        ui.set_edit_label_id(id as i32);
+                        ui.set_edit_label_name(name.into());
+                    }
+                }
+            }
+            let _ = (weak.clone(), on);
         });
     }
 
