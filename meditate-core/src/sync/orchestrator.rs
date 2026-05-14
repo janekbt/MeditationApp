@@ -48,6 +48,18 @@ const MAX_EVENT_BUNDLE_BYTES: u64 = 64 * 1024 * 1024;
 /// "the server tried to OOM us" security cap.
 const MAX_SOUND_GET_BYTES: u64 = 11 * 1024 * 1024;
 
+/// User-facing cap on imported guided-file size. Sessions are
+/// typically 5–30 min of speech, which encodes to a few MB at the
+/// OGG/Vorbis quality the importer uses. 100 MB gives generous
+/// headroom (an hour-long high-bitrate recording stays well below)
+/// without letting a runaway file fill the user's data dir or hit
+/// Nextcloud's per-file caps.
+const MAX_CUSTOM_GUIDED_BYTES: u64 = 100 * 1024 * 1024;
+
+/// Per-GET in-memory cap for guided-file pulls. Same +1 MB
+/// headroom-over-user-cap pattern as `MAX_SOUND_GET_BYTES`.
+const MAX_GUIDED_GET_BYTES: u64 = 101 * 1024 * 1024;
+
 #[derive(Debug)]
 pub enum SyncError {
     WebDav(WebDavError),
@@ -123,6 +135,12 @@ pub struct Sync<'a, W: WebDav> {
     /// sounds don't ride sync — they're baked into each device's
     /// binary via GResource.
     sounds_dir: std::path::PathBuf,
+    /// Local filesystem dir holding imported guided-meditation OGG
+    /// files, one per `guided_files` row. The push side reads
+    /// `<guided_dir>/<uuid>.ogg` to upload; the pull side writes
+    /// downloaded bytes to the same path. All guided files are
+    /// custom (no bundled equivalent).
+    guided_dir: std::path::PathBuf,
 }
 
 impl<'a, W: WebDav> Sync<'a, W> {
@@ -131,12 +149,14 @@ impl<'a, W: WebDav> Sync<'a, W> {
         webdav: &'a W,
         base_path: &str,
         sounds_dir: std::path::PathBuf,
+        guided_dir: std::path::PathBuf,
     ) -> Self {
         Self {
             db,
             webdav,
             base_path: base_path.trim_matches('/').to_string(),
             sounds_dir,
+            guided_dir,
         }
     }
 
@@ -270,14 +290,20 @@ impl<'a, W: WebDav> Sync<'a, W> {
             self.db.record_known_remote_file(&batch_uuid)?;
         }
 
-        // After event replay, fetch any custom bell-sound audio
-        // files referenced by newly-known bell_sounds rows.
+        // After event replay, fetch any custom audio binaries
+        // referenced by newly-known rows: bell-sound bytes + guided-
+        // meditation OGGs ride their own per-uuid transports gated
+        // by separate known_remote_* dedup trackers.
         let sounds_pulled = self.pull_custom_sound_files()?;
+        let guided_pulled = self.pull_custom_guided_files()?;
 
-        if count > 0 || sounds_pulled > 0 {
+        if count > 0 || sounds_pulled > 0 || guided_pulled > 0 {
             crate::diag::log(
                 "sync.pull",
-                &format!("ok events={count} sounds={sounds_pulled}"),
+                &format!(
+                    "ok events={count} sounds={sounds_pulled} \
+                     guided={guided_pulled}"
+                ),
             );
         }
         Ok(PullStats { new_events: count })
@@ -337,9 +363,10 @@ impl<'a, W: WebDav> Sync<'a, W> {
 
         let pending = self.db.pending_events()?;
         if pending.is_empty() {
-            // No events, but custom sound files may still need to
-            // ride up — try the sound push and return zero events.
+            // No events, but custom audio binaries may still need to
+            // ride up — try the file pushes and return zero events.
             self.push_custom_sound_files()?;
+            self.push_custom_guided_files()?;
             return Ok(PushStats::default());
         }
 
@@ -376,16 +403,20 @@ impl<'a, W: WebDav> Sync<'a, W> {
         let pushed = events.len();
         progress(pushed, pushed);
 
-        // Custom sound files ride up alongside the events batch.
+        // Custom audio binaries ride up alongside the events batch.
         // Failures here surface as a sync error so the user sees a
         // retry prompt; on success each file is recorded immediately
-        // in known_remote_sounds.
+        // in the matching known_remote_* table.
         let sounds_pushed = self.push_custom_sound_files()?;
+        let guided_pushed = self.push_custom_guided_files()?;
 
-        if pushed > 0 || sounds_pushed > 0 {
+        if pushed > 0 || sounds_pushed > 0 || guided_pushed > 0 {
             crate::diag::log(
                 "sync.push",
-                &format!("ok events={pushed} sounds={sounds_pushed}"),
+                &format!(
+                    "ok events={pushed} sounds={sounds_pushed} \
+                     guided={guided_pushed}"
+                ),
             );
         }
         Ok(PushStats { pushed })
@@ -585,6 +616,141 @@ impl<'a, W: WebDav> Sync<'a, W> {
         }
         Ok(pushed)
     }
+
+    // ── Custom guided-file audio sync ────────────────────────────────
+    //
+    // Mirrors the bell-sound transport above: guided_files rows
+    // sync via the event log; the underlying .ogg bytes ride their
+    // own per-uuid PUT/GET cycle gated by the
+    // known_remote_guided_files dedup tracker. Unlike bell sounds,
+    // every guided file is custom (no `is_bundled` flag).
+
+    fn guided_dir_remote(&self) -> String {
+        format!("{}/guided", self.base_path)
+    }
+
+    fn guided_remote_path(&self, uuid: &str) -> String {
+        format!("{}/{}.ogg", self.guided_dir_remote(), uuid)
+    }
+
+    fn guided_local_path(&self, uuid: &str) -> std::path::PathBuf {
+        self.guided_dir.join(format!("{uuid}.ogg"))
+    }
+
+    fn ensure_guided_dir_exists(&self) -> SyncResult<()> {
+        match self.webdav.mkcol(&self.guided_dir_remote()) {
+            Ok(()) | Err(WebDavError::Conflict) => Ok(()),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Pull every guided-file audio binary referenced by a
+    /// replayed `guided_file_insert` event whose .ogg isn't on this
+    /// device yet. GETs from `<base>/guided/<uuid>.ogg`, refuses
+    /// anything bigger than `MAX_CUSTOM_GUIDED_BYTES`, writes the
+    /// bytes to `<guided_dir>/<uuid>.ogg`.
+    ///
+    /// Files already in the known set are skipped (we either pulled
+    /// them in a prior round or pushed them ourselves). NotFound on
+    /// GET is transient — peer probably pushed the event but their
+    /// file PUT slipped past; the next pull retries.
+    fn pull_custom_guided_files(&self) -> SyncResult<usize> {
+        let known = self.db.known_remote_guided_file_uuids()?;
+        let files = crate::db::list_guided_files_from_db(self.db)?;
+        let pending: Vec<crate::db::GuidedFile> = files
+            .into_iter()
+            .filter(|f| !known.contains(f.uuid.as_str()))
+            .collect();
+        if pending.is_empty() {
+            return Ok(0);
+        }
+        if let Err(e) = std::fs::create_dir_all(&self.guided_dir) {
+            return Err(SyncError::InvalidEvent(
+                format!("can't create local guided dir: {e}")));
+        }
+        let mut pulled = 0;
+        for file in pending {
+            let local = self.guided_local_path(file.uuid.as_str());
+            if local.exists() {
+                // Already on disk locally. Don't mark known here —
+                // the push side records known after a confirmed PUT.
+                continue;
+            }
+            let remote = self.guided_remote_path(file.uuid.as_str());
+            let bytes = match self.webdav.get(&remote, MAX_GUIDED_GET_BYTES) {
+                Ok(b) => b,
+                Err(WebDavError::NotFound) => continue,
+                Err(WebDavError::ResponseTooLarge { .. }) => continue,
+                Err(e) => return Err(e.into()),
+            };
+            if bytes.len() as u64 > MAX_CUSTOM_GUIDED_BYTES {
+                continue;
+            }
+            // Same fsync ordering as the bell-sound pull: bytes
+            // durable on disk before record_known_remote_guided_file
+            // commits, so a power loss can't leave a zero-byte file
+            // marked as already-pulled.
+            {
+                use std::io::Write;
+                let mut f = std::fs::File::create(&local).map_err(|e| {
+                    SyncError::InvalidEvent(
+                        format!("can't create guided file {local:?}: {e}"))
+                })?;
+                f.write_all(&bytes).map_err(|e| {
+                    SyncError::InvalidEvent(
+                        format!("can't write guided file {local:?}: {e}"))
+                })?;
+                f.sync_all().map_err(|e| {
+                    SyncError::InvalidEvent(
+                        format!("can't fsync guided file {local:?}: {e}"))
+                })?;
+            }
+            self.db.record_known_remote_guided_file(file.uuid.as_str())?;
+            pulled += 1;
+        }
+        Ok(pulled)
+    }
+
+    /// Push every local guided-file .ogg that isn't yet in
+    /// `known_remote_guided_files`. Reads from `<guided_dir>/<uuid>.ogg`,
+    /// PUTs to `<base>/guided/<uuid>.ogg` atomically, marks the uuid
+    /// as known.
+    fn push_custom_guided_files(&self) -> SyncResult<usize> {
+        let known = self.db.known_remote_guided_file_uuids()?;
+        let files = crate::db::list_guided_files_from_db(self.db)?;
+        let pending: Vec<crate::db::GuidedFile> = files
+            .into_iter()
+            .filter(|f| !known.contains(f.uuid.as_str()))
+            .collect();
+        if pending.is_empty() {
+            return Ok(0);
+        }
+        self.ensure_guided_dir_exists()?;
+        let mut pushed = 0;
+        for file in pending {
+            let local = self.guided_local_path(file.uuid.as_str());
+            let bytes = match std::fs::read(&local) {
+                Ok(b) => b,
+                Err(_) => {
+                    // DB row exists but the file doesn't on this
+                    // device — typical when the row arrived via
+                    // event sync but the .ogg hasn't been pulled
+                    // yet. Skip silently; the puller will fetch it.
+                    continue;
+                }
+            };
+            if bytes.len() as u64 > MAX_CUSTOM_GUIDED_BYTES {
+                // Symmetric cap with pull. Skip and leave unmarked
+                // so a future shrink/replace can retry.
+                continue;
+            }
+            let remote = self.guided_remote_path(file.uuid.as_str());
+            put_atomic_with_rate_limit_retry(self.webdav, &remote, &bytes)?;
+            self.db.record_known_remote_guided_file(file.uuid.as_str())?;
+            pushed += 1;
+        }
+        Ok(pushed)
+    }
 }
 
 /// PUT with cooperative rate-limit handling. On `RateLimited`, the
@@ -750,7 +916,7 @@ mod tests {
         // events collection so the Meditate folder visibly appears on
         // the user's Nextcloud.
         let (db, fs) = setup();
-        let sync = Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new());
+        let sync = Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new());
         let stats = sync.push().unwrap();
         assert_eq!(stats.pushed, 0,
             "no pending events → zero files uploaded");
@@ -769,7 +935,7 @@ mod tests {
         // dedup tracker as garbage.
         let (db, fs) = setup();
         insert_session(&db, "x", 100);
-        Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new()).push().unwrap();
+        Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).push().unwrap();
         let paths = fs.paths();
         assert!(
             paths.iter().all(|p| !p.ends_with(".tmp")),
@@ -788,7 +954,7 @@ mod tests {
         for i in 0..3 {
             insert_session(&db, &format!("s-{i}"), 100 + i as u32);
         }
-        let stats = Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new()).push().unwrap();
+        let stats = Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).push().unwrap();
         assert_eq!(stats.pushed, 3);
         let listing = fs.list_collection("/Meditate/events/").unwrap();
         assert_eq!(listing.len(), 1,
@@ -808,7 +974,7 @@ mod tests {
         let pending = db.pending_events().unwrap();
         let min_lamport = pending.iter().map(|(_, e)| e.lamport_ts).min().unwrap();
 
-        Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new()).push().unwrap();
+        Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).push().unwrap();
         let listing = fs.list_collection("/Meditate/events/").unwrap();
         assert_eq!(listing.len(), 1);
         let name = &listing[0];
@@ -828,11 +994,11 @@ mod tests {
         // second push must do zero remote writes.
         let (db, fs) = setup();
         insert_session(&db, "2026-04-30T10:00:00", 600);
-        Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new()).push().unwrap();
+        Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).push().unwrap();
         assert!(db.pending_events().unwrap().is_empty(),
             "successful push must clear the pending queue");
         let count_after_first = fs.file_count();
-        let stats = Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new()).push().unwrap();
+        let stats = Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).push().unwrap();
         assert_eq!(stats.pushed, 0);
         assert_eq!(fs.file_count(), count_after_first,
             "second push must not write a new file");
@@ -846,7 +1012,7 @@ mod tests {
         // wasted bandwidth and a confusing trace in the logs.
         let (db, fs) = setup();
         insert_session(&db, "x", 100);
-        Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new()).push().unwrap();
+        Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).push().unwrap();
         let listing = fs.list_collection("/Meditate/events/").unwrap();
         let batch_uuid = parse_batch_uuid_from_filename(&listing[0]).unwrap();
         assert!(db.known_remote_file_uuids().unwrap().contains(&batch_uuid),
@@ -864,7 +1030,7 @@ mod tests {
         let original_events: Vec<Event> = db.pending_events().unwrap()
             .into_iter().map(|(_, e)| e).collect();
 
-        Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new()).push().unwrap();
+        Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).push().unwrap();
         let listing = fs.list_collection("/Meditate/events/").unwrap();
         let body = fs.get(&format!("/Meditate/events/{}", listing[0]), u64::MAX).unwrap();
         // Must parse as Vec<Event>.
@@ -881,7 +1047,7 @@ mod tests {
         // drop it; this catches that.
         let (db, fs) = setup();
         insert_session(&db, "2026-04-30T10:00:00", 600);
-        Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new()).push().unwrap();
+        Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).push().unwrap();
         let listing = fs.list_collection("/Meditate/events/").unwrap();
         let body = fs.get(&format!("/Meditate/events/{}", listing[0]), u64::MAX).unwrap();
         let body_str = String::from_utf8(body).unwrap();
@@ -897,7 +1063,7 @@ mod tests {
         // yet, so PROPFIND returns NotFound. Pull must treat that as
         // "nothing upstream" rather than an error.
         let (db, fs) = setup();
-        let stats = Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new()).pull().unwrap();
+        let stats = Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).pull().unwrap();
         assert_eq!(stats.new_events, 0);
     }
 
@@ -909,10 +1075,10 @@ mod tests {
         insert_session(&db_peer, "peer-a", 100);
         insert_session(&db_peer, "peer-b", 200);
         insert_session(&db_peer, "peer-c", 300);
-        Sync::new(&db_peer, &fs, "Meditate", std::path::PathBuf::new()).push().unwrap();
+        Sync::new(&db_peer, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).push().unwrap();
 
         let (db_us, _) = setup();
-        let stats = Sync::new(&db_us, &fs, "Meditate", std::path::PathBuf::new()).pull().unwrap();
+        let stats = Sync::new(&db_us, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).pull().unwrap();
         assert_eq!(stats.new_events, 3);
         let our_sessions = crate::db::list_sessions_from_db(&db_us).unwrap();
         assert_eq!(our_sessions.len(), 3);
@@ -953,20 +1119,20 @@ mod tests {
         // Peer pushes; we pull once.
         let db_peer = Database::open_in_memory().unwrap();
         insert_session(&db_peer, "from peer", 100);
-        Sync::new(&db_peer, &fs, "Meditate", std::path::PathBuf::new()).push().unwrap();
+        Sync::new(&db_peer, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).push().unwrap();
 
         let counting = CountingGet {
             inner: fs.clone(),
             gets: std::sync::atomic::AtomicUsize::new(0),
         };
         let db_us = Database::open_in_memory().unwrap();
-        Sync::new(&db_us, &counting, "Meditate", std::path::PathBuf::new()).pull().unwrap();
+        Sync::new(&db_us, &counting, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).pull().unwrap();
         assert_eq!(
             counting.gets.load(std::sync::atomic::Ordering::SeqCst), 1,
             "first pull must GET the file");
 
         // Second pull on the same device: no GETs.
-        Sync::new(&db_us, &counting, "Meditate", std::path::PathBuf::new()).pull().unwrap();
+        Sync::new(&db_us, &counting, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).pull().unwrap();
         assert_eq!(
             counting.gets.load(std::sync::atomic::Ordering::SeqCst), 1,
             "second pull must skip the already-ingested file via known_remote_files");
@@ -988,10 +1154,10 @@ mod tests {
         insert_session(&db_peer, "shared", 100);
         let original_event = db_peer.pending_events().unwrap()
             .into_iter().map(|(_, e)| e).next().unwrap();
-        Sync::new(&db_peer, &fs, "Meditate", std::path::PathBuf::new()).push().unwrap();
+        Sync::new(&db_peer, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).push().unwrap();
 
         let (db_us, _) = setup();
-        Sync::new(&db_us, &fs, "Meditate", std::path::PathBuf::new()).pull().unwrap();
+        Sync::new(&db_us, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).pull().unwrap();
         assert_eq!(crate::db::list_sessions_from_db(&db_us).unwrap().len(), 1);
 
         // Forge a second remote file with the same event under a new
@@ -1000,7 +1166,7 @@ mod tests {
         let body = serde_json::to_vec(&forged).unwrap();
         fs.put("/Meditate/events/00000000000099__forged-batch.json", &body).unwrap();
 
-        let stats = Sync::new(&db_us, &fs, "Meditate", std::path::PathBuf::new()).pull().unwrap();
+        let stats = Sync::new(&db_us, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).pull().unwrap();
         assert_eq!(stats.new_events, 0,
             "events whose UUIDs we already know must not be reapplied");
         assert_eq!(crate::db::list_sessions_from_db(&db_us).unwrap().len(), 1,
@@ -1015,7 +1181,7 @@ mod tests {
         let (db, fs) = setup();
         fs.put("/Meditate/events/snapshot.json", b"[]").unwrap();
         fs.put("/Meditate/events/random_garbage", b"junk").unwrap();
-        let stats = Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new()).pull().unwrap();
+        let stats = Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).pull().unwrap();
         assert_eq!(stats.new_events, 0);
     }
 
@@ -1029,7 +1195,7 @@ mod tests {
             "/Meditate/events/00000000000001__some-batch.json",
             b"this is not JSON",
         ).unwrap();
-        let err = Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new()).pull().unwrap_err();
+        let err = Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).pull().unwrap_err();
         assert!(matches!(err, SyncError::InvalidEvent(_)),
             "corrupt remote batch must surface as InvalidEvent, got {err:?}");
     }
@@ -1044,10 +1210,10 @@ mod tests {
         insert_session(&db_peer, "peer-session", 100);
         let peer_lamport = db_peer.pending_events().unwrap()
             .iter().map(|(_, e)| e.lamport_ts).max().unwrap();
-        Sync::new(&db_peer, &fs, "Meditate", std::path::PathBuf::new()).push().unwrap();
+        Sync::new(&db_peer, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).push().unwrap();
 
         let (db_us, _) = setup();
-        Sync::new(&db_us, &fs, "Meditate", std::path::PathBuf::new()).pull().unwrap();
+        Sync::new(&db_us, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).pull().unwrap();
         assert!(db_us.lamport_clock().unwrap() > peer_lamport,
             "local clock {} must exceed observed peer lamport {}",
             db_us.lamport_clock().unwrap(), peer_lamport);
@@ -1061,7 +1227,7 @@ mod tests {
         // local writes. sync() should surface them via push.
         let (db, fs) = setup();
         insert_session(&db, "2026-04-30T10:00:00", 600);
-        let stats = Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap();
+        let stats = Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync().unwrap();
         assert_eq!(stats.pulled, 0);
         assert_eq!(stats.pushed, 1);
         assert_eq!(fs.file_count(), 1);
@@ -1073,10 +1239,10 @@ mod tests {
         // now have the same state.
         let (phone_db, fs) = setup();
         insert_session(&phone_db, "phone-session", 600);
-        Sync::new(&phone_db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap();
+        Sync::new(&phone_db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync().unwrap();
 
         let (laptop_db, _) = setup();
-        Sync::new(&laptop_db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap();
+        Sync::new(&laptop_db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync().unwrap();
 
         let phone_sessions = crate::db::list_sessions_from_db(&phone_db).unwrap();
         let laptop_sessions = crate::db::list_sessions_from_db(&laptop_db).unwrap();
@@ -1095,10 +1261,10 @@ mod tests {
         insert_session(&a_db, "from A", 100);
         insert_session(&b_db, "from B", 200);
 
-        Sync::new(&a_db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap();
-        Sync::new(&b_db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap();
-        Sync::new(&a_db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap();
-        Sync::new(&b_db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap();
+        Sync::new(&a_db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync().unwrap();
+        Sync::new(&b_db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync().unwrap();
+        Sync::new(&a_db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync().unwrap();
+        Sync::new(&b_db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync().unwrap();
 
         let starts_a: std::collections::HashSet<String> = crate::db::list_sessions_from_db(&a_db)
             .unwrap().iter().map(|(_, s)| s.start_iso.clone()).collect();
@@ -1117,15 +1283,15 @@ mod tests {
         let (a_db, fs) = setup();
         let (b_db, _) = setup();
         let session_id = insert_session(&a_db, "to-be-deleted", 100);
-        Sync::new(&a_db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap();
-        Sync::new(&b_db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap();
+        Sync::new(&a_db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync().unwrap();
+        Sync::new(&b_db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync().unwrap();
         assert_eq!(crate::db::list_sessions_from_db(&b_db).unwrap().len(), 1);
 
         a_db.delete_session(session_id).unwrap();
-        Sync::new(&a_db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap();
+        Sync::new(&a_db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync().unwrap();
         assert!(crate::db::list_sessions_from_db(&a_db).unwrap().is_empty());
 
-        Sync::new(&b_db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap();
+        Sync::new(&b_db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync().unwrap();
         assert!(crate::db::list_sessions_from_db(&b_db).unwrap().is_empty(),
             "tombstone must propagate via pull");
     }
@@ -1140,15 +1306,15 @@ mod tests {
         insert_session(&b_db, "from B", 200);
 
         for _ in 0..4 {
-            Sync::new(&a_db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap();
-            Sync::new(&b_db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap();
+            Sync::new(&a_db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync().unwrap();
+            Sync::new(&b_db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync().unwrap();
         }
         assert_eq!(crate::db::list_sessions_from_db(&a_db).unwrap().len(), 2);
         assert_eq!(crate::db::list_sessions_from_db(&b_db).unwrap().len(), 2);
 
         for _ in 0..2 {
-            Sync::new(&a_db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap();
-            Sync::new(&b_db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap();
+            Sync::new(&a_db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync().unwrap();
+            Sync::new(&b_db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync().unwrap();
         }
         assert_eq!(crate::db::list_sessions_from_db(&a_db).unwrap().len(), 2);
         assert_eq!(crate::db::list_sessions_from_db(&b_db).unwrap().len(), 2);
@@ -1161,11 +1327,11 @@ mod tests {
         let (peer_db, fs) = setup();
         for _ in 0..50 { peer_db.bump_lamport_clock().unwrap(); }
         insert_session(&peer_db, "peer", 100);
-        Sync::new(&peer_db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap();
+        Sync::new(&peer_db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync().unwrap();
         let peer_max_lamport = peer_db.lamport_clock().unwrap();
 
         let (us_db, _) = setup();
-        Sync::new(&us_db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap();
+        Sync::new(&us_db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync().unwrap();
         insert_session(&us_db, "ours", 200);
         let our_event_lamport = us_db.pending_events().unwrap()
             .iter()
@@ -1194,7 +1360,7 @@ mod tests {
         // empty. Cannot trigger because the precondition (we've
         // previously synced) isn't met.
         let (db, fs) = setup();
-        let result = Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new()).sync();
+        let result = Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync();
         assert!(result.is_ok(),
             "fresh sync against empty remote must not trigger; got {result:?}");
     }
@@ -1206,10 +1372,10 @@ mod tests {
         // false), so pulling the peer's files must not trigger.
         let (peer_db, fs) = setup();
         insert_session(&peer_db, "peer", 100);
-        Sync::new(&peer_db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap();
+        Sync::new(&peer_db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync().unwrap();
 
         let (us_db, _) = setup();
-        let result = Sync::new(&us_db, &fs, "Meditate", std::path::PathBuf::new()).sync();
+        let result = Sync::new(&us_db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync();
         assert!(result.is_ok(),
             "first-time pull from a populated remote must not trigger");
     }
@@ -1221,9 +1387,9 @@ mod tests {
         // "everything got wiped" pattern. Don't trigger.
         let (db, fs) = setup();
         insert_session(&db, "first", 100);
-        Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap();
+        Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync().unwrap();
         insert_session(&db, "second", 200);
-        Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap();
+        Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync().unwrap();
         // Now the remote has 2 files; both batch_uuids are in
         // known_remote_files. Manually delete just one.
         let listing: Vec<String> = fs
@@ -1231,7 +1397,7 @@ mod tests {
         assert_eq!(listing.len(), 2);
         fs.delete(&format!("/Meditate/events/{}", listing[0])).unwrap();
 
-        let result = Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new()).sync();
+        let result = Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync();
         assert!(result.is_ok(),
             "partial wipe must not trigger fail-safe; got {result:?}");
     }
@@ -1243,14 +1409,14 @@ mod tests {
         // empty, but known_remote_files isn't → trigger.
         let (db, fs) = setup();
         insert_session(&db, "first", 100);
-        Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap();
+        Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync().unwrap();
         assert_eq!(db.known_remote_file_uuids().unwrap().len(), 1);
         // Wipe the remote.
         for name in fs.list_collection("/Meditate/events/").unwrap() {
             fs.delete(&format!("/Meditate/events/{name}")).unwrap();
         }
 
-        let err = Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap_err();
+        let err = Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync().unwrap_err();
         assert!(matches!(err, SyncError::RemoteDataLost),
             "wiped remote must surface RemoteDataLost; got {err:?}");
     }
@@ -1263,7 +1429,7 @@ mod tests {
         // view. Trigger so the user sees the prompt.
         let (db, fs) = setup();
         insert_session(&db, "ours", 100);
-        Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap();
+        Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync().unwrap();
         // Wipe the remote.
         for name in fs.list_collection("/Meditate/events/").unwrap() {
             fs.delete(&format!("/Meditate/events/{name}")).unwrap();
@@ -1271,11 +1437,11 @@ mod tests {
         // Peer authors and pushes its own data.
         let (peer_db, _) = setup();
         insert_session(&peer_db, "peer", 200);
-        Sync::new(&peer_db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap();
+        Sync::new(&peer_db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync().unwrap();
 
         // We sync. Remote has ONE file (the peer's), but it's not one
         // we've previously seen. Our known set has entries → trigger.
-        let err = Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap_err();
+        let err = Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync().unwrap_err();
         assert!(matches!(err, SyncError::RemoteDataLost),
             "peer-repopulated wipe must still trigger; got {err:?}");
     }
@@ -1289,7 +1455,7 @@ mod tests {
         // precondition false → no trigger.
         let (db, fs) = setup();
         insert_session(&db, "first", 100);
-        Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap();
+        Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync().unwrap();
         for name in fs.list_collection("/Meditate/events/").unwrap() {
             fs.delete(&format!("/Meditate/events/{name}")).unwrap();
         }
@@ -1300,7 +1466,7 @@ mod tests {
             fs.delete(&format!("/Meditate/events/{name}")).unwrap();
         }
 
-        let result = Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new()).sync();
+        let result = Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync();
         assert!(result.is_ok(),
             "after wipe_known_remote_files the next sync must succeed; got {result:?}");
     }
@@ -1313,7 +1479,7 @@ mod tests {
         // push or wipe, so we leave everything as-is.
         let (db, fs) = setup();
         insert_session(&db, "first", 100);
-        Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap();
+        Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync().unwrap();
         // Author a new pending event AFTER the successful sync.
         insert_session(&db, "second", 200);
         let pending_before = db.pending_events().unwrap().len();
@@ -1324,7 +1490,7 @@ mod tests {
             fs.delete(&format!("/Meditate/events/{name}")).unwrap();
         }
 
-        let _ = Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new()).sync().unwrap_err();
+        let _ = Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).sync().unwrap_err();
         let pending_after = db.pending_events().unwrap().len();
         let known_after = db.known_remote_file_uuids().unwrap();
         assert_eq!(pending_after, pending_before,
@@ -1358,7 +1524,7 @@ mod tests {
         for i in 0..2700 {
             insert_session(&db, &format!("import-{i:04}"), 100);
         }
-        let stats = Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new()).push().unwrap();
+        let stats = Sync::new(&db, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).push().unwrap();
         assert_eq!(stats.pushed, 2700);
         assert_eq!(fs.list_collection("/Meditate/events/").unwrap().len(), 1,
             "bulk import must produce exactly one remote file");
@@ -1373,10 +1539,10 @@ mod tests {
         for i in 0..2700 {
             insert_session(&db_a, &format!("a-{i:04}"), 100);
         }
-        Sync::new(&db_a, &fs, "Meditate", std::path::PathBuf::new()).push().unwrap();
+        Sync::new(&db_a, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).push().unwrap();
 
         let (db_b, _) = setup();
-        let stats = Sync::new(&db_b, &fs, "Meditate", std::path::PathBuf::new()).pull().unwrap();
+        let stats = Sync::new(&db_b, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).pull().unwrap();
         assert_eq!(stats.new_events, 2700);
         assert_eq!(crate::db::list_sessions_from_db(&db_b).unwrap().len(), 2700);
     }
@@ -1406,7 +1572,7 @@ mod tests {
         let (db, _) = setup();
         for i in 0..5 { insert_session(&db, &format!("e-{i}"), 100); }
         let bad = PutFails(FakeWebDav::new());
-        let err = Sync::new(&db, &bad, "Meditate", std::path::PathBuf::new()).push().unwrap_err();
+        let err = Sync::new(&db, &bad, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).push().unwrap_err();
         assert_matches!(err, SyncError::WebDav(WebDavError::Unauthorized));
         // No events get marked synced after a failure (we didn't reach
         // the post-PUT mark step). Pending stays full so the next sync
@@ -1453,7 +1619,7 @@ mod tests {
             inner: fs.clone(),
             remaining_429: std::sync::atomic::AtomicUsize::new(3),
         };
-        let stats = Sync::new(&db, &throttled, "Meditate", std::path::PathBuf::new()).push().unwrap();
+        let stats = Sync::new(&db, &throttled, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).push().unwrap();
         assert_eq!(stats.pushed, 4);
         assert!(db.pending_events().unwrap().is_empty());
     }
@@ -1481,7 +1647,7 @@ mod tests {
         let (db, _) = setup();
         insert_session(&db, "x", 100);
         let bad = AlwaysRateLimited(FakeWebDav::new());
-        let err = Sync::new(&db, &bad, "Meditate", std::path::PathBuf::new()).push().unwrap_err();
+        let err = Sync::new(&db, &bad, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new()).push().unwrap_err();
         assert!(matches!(err,
             SyncError::WebDav(WebDavError::RateLimited { .. })),
             "after MAX_429_RETRIES the error must surface as RateLimited, got {err:?}");
@@ -1526,7 +1692,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let uuid = seed_custom_bell_sound(&db, tmp.path(), "Custom A", b"AUDIO", "ogg");
 
-        let sync = Sync::new(&db, &fs, "Meditate", tmp.path().to_path_buf());
+        let sync = Sync::new(&db, &fs, "Meditate", tmp.path().to_path_buf(), tmp.path().to_path_buf());
         sync.push().unwrap();
 
         let put = fs.paths();
@@ -1549,7 +1715,7 @@ mod tests {
         // Pretend a previous sync already uploaded it.
         db.record_known_remote_sound(&uuid).unwrap();
 
-        Sync::new(&db, &fs, "Meditate", tmp.path().to_path_buf())
+        Sync::new(&db, &fs, "Meditate", tmp.path().to_path_buf(), tmp.path().to_path_buf())
             .push().unwrap();
 
         // Sounds dir on remote stays empty (no PUT issued).
@@ -1575,7 +1741,7 @@ mod tests {
             BellSoundCategory::General,
         ).unwrap();
 
-        Sync::new(&db, &fs, "Meditate", tmp.path().to_path_buf())
+        Sync::new(&db, &fs, "Meditate", tmp.path().to_path_buf(), tmp.path().to_path_buf())
             .push().unwrap();
 
         let put = fs.paths();
@@ -1604,7 +1770,7 @@ mod tests {
             BellSoundCategory::General,
         ).unwrap();
 
-        Sync::new(&db, &fs, "Meditate", tmp.path().to_path_buf())
+        Sync::new(&db, &fs, "Meditate", tmp.path().to_path_buf(), tmp.path().to_path_buf())
             .push().unwrap();
 
         let paths = fs.paths();
@@ -1626,13 +1792,13 @@ mod tests {
         let (db_src, fs) = setup();
         let tmp_src = tempfile::tempdir().unwrap();
         let uuid = seed_custom_bell_sound(&db_src, tmp_src.path(), "Custom A", b"AUDIO", "wav");
-        Sync::new(&db_src, &fs, "Meditate", tmp_src.path().to_path_buf())
+        Sync::new(&db_src, &fs, "Meditate", tmp_src.path().to_path_buf(), tmp_src.path().to_path_buf())
             .push().unwrap();
 
         // Peer side — fresh DB, fresh sounds dir.
         let db_peer = Database::open_in_memory().unwrap();
         let tmp_peer = tempfile::tempdir().unwrap();
-        Sync::new(&db_peer, &fs, "Meditate", tmp_peer.path().to_path_buf())
+        Sync::new(&db_peer, &fs, "Meditate", tmp_peer.path().to_path_buf(), tmp_peer.path().to_path_buf())
             .pull().unwrap();
 
         // Bell-sound row replicated.
@@ -1657,17 +1823,17 @@ mod tests {
         let (db_src, fs) = setup();
         let tmp_src = tempfile::tempdir().unwrap();
         let uuid = seed_custom_bell_sound(&db_src, tmp_src.path(), "Custom", b"AUDIO", "wav");
-        Sync::new(&db_src, &fs, "Meditate", tmp_src.path().to_path_buf())
+        Sync::new(&db_src, &fs, "Meditate", tmp_src.path().to_path_buf(), tmp_src.path().to_path_buf())
             .push().unwrap();
 
         let db_peer = Database::open_in_memory().unwrap();
         let tmp_peer = tempfile::tempdir().unwrap();
-        Sync::new(&db_peer, &fs, "Meditate", tmp_peer.path().to_path_buf())
+        Sync::new(&db_peer, &fs, "Meditate", tmp_peer.path().to_path_buf(), tmp_peer.path().to_path_buf())
             .pull().unwrap();
         // Delete the local file to prove the second pull skips the
         // GET (if it didn't, the file would be re-created).
         std::fs::remove_file(tmp_peer.path().join(format!("{uuid}.wav"))).unwrap();
-        Sync::new(&db_peer, &fs, "Meditate", tmp_peer.path().to_path_buf())
+        Sync::new(&db_peer, &fs, "Meditate", tmp_peer.path().to_path_buf(), tmp_peer.path().to_path_buf())
             .pull().unwrap();
 
         // File NOT re-pulled — known set already covered it.
@@ -1689,12 +1855,12 @@ mod tests {
             "audio/wav",
             BellSoundCategory::General,
         ).unwrap();
-        Sync::new(&db_src, &fs, "Meditate", tmp_src.path().to_path_buf())
+        Sync::new(&db_src, &fs, "Meditate", tmp_src.path().to_path_buf(), tmp_src.path().to_path_buf())
             .push().unwrap();
 
         let db_peer = Database::open_in_memory().unwrap();
         let tmp_peer = tempfile::tempdir().unwrap();
-        Sync::new(&db_peer, &fs, "Meditate", tmp_peer.path().to_path_buf())
+        Sync::new(&db_peer, &fs, "Meditate", tmp_peer.path().to_path_buf(), tmp_peer.path().to_path_buf())
             .pull().unwrap();
 
         // No file written for the bundled row.
@@ -1713,12 +1879,12 @@ mod tests {
         let tmp_src = tempfile::tempdir().unwrap();
         let big = vec![0u8; (10 * 1024 * 1024) + 1];
         let uuid = seed_custom_bell_sound(&db_src, tmp_src.path(), "Big", &big, "wav");
-        Sync::new(&db_src, &fs, "Meditate", tmp_src.path().to_path_buf())
+        Sync::new(&db_src, &fs, "Meditate", tmp_src.path().to_path_buf(), tmp_src.path().to_path_buf())
             .push().unwrap();
 
         let db_peer = Database::open_in_memory().unwrap();
         let tmp_peer = tempfile::tempdir().unwrap();
-        Sync::new(&db_peer, &fs, "Meditate", tmp_peer.path().to_path_buf())
+        Sync::new(&db_peer, &fs, "Meditate", tmp_peer.path().to_path_buf(), tmp_peer.path().to_path_buf())
             .pull().unwrap();
 
         // Row replicated but the file isn't saved.
@@ -1746,7 +1912,7 @@ mod tests {
         let uuid = seed_custom_bell_sound(&db, tmp.path(), "Custom A", b"AUDIO", "wav");
 
         // Full sync = pull THEN push, just like sync_with_progress.
-        Sync::new(&db, &fs, "Meditate", tmp.path().to_path_buf())
+        Sync::new(&db, &fs, "Meditate", tmp.path().to_path_buf(), tmp.path().to_path_buf())
             .sync().unwrap();
 
         // File landed on remote.
@@ -1771,7 +1937,7 @@ mod tests {
         insert_session(&db, "2026-05-04T08:00:00", 600);
         let uuid = seed_custom_bell_sound(&db, tmp.path(), "Custom", b"AUDIO", "wav");
 
-        Sync::new(&db, &fs, "Meditate", tmp.path().to_path_buf())
+        Sync::new(&db, &fs, "Meditate", tmp.path().to_path_buf(), tmp.path().to_path_buf())
             .push().unwrap();
 
         let paths = fs.paths();

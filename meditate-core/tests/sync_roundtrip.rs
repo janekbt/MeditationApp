@@ -37,8 +37,8 @@ fn open_test_db(tempdir: &tempfile::TempDir, name: &str) -> Database {
 }
 
 /// Build a `Sync` against the device's database + a shared remote.
-/// `sounds_dir` is per-device — `<tempdir>/<name>/sounds`. Sync push
-/// reads files from here; sync pull writes here.
+/// `sounds_dir` + `guided_dir` are per-device — `<tempdir>/<name>/<kind>`.
+/// Sync push reads files from here; sync pull writes here.
 fn sync_for<'a, W: meditate_core::sync::WebDav>(
     db: &'a Database,
     remote: &'a W,
@@ -46,8 +46,10 @@ fn sync_for<'a, W: meditate_core::sync::WebDav>(
     name: &str,
 ) -> Sync<'a, W> {
     let sounds_dir = tempdir.path().join(name).join("sounds");
+    let guided_dir = tempdir.path().join(name).join("guided");
     std::fs::create_dir_all(&sounds_dir).expect("mkdir sounds");
-    Sync::new(db, remote, "Meditate", sounds_dir)
+    std::fs::create_dir_all(&guided_dir).expect("mkdir guided");
+    Sync::new(db, remote, "Meditate", sounds_dir, guided_dir)
 }
 
 // ── Scenario 1: cross-entity round-trip across two devices ────────────────
@@ -431,6 +433,73 @@ fn custom_bell_sound_audio_file_round_trips_through_webdav() {
         .expect("audio file landed on B's disk");
     assert_eq!(pulled_bytes, sound_bytes,
         "pulled audio bytes must match A's original");
+}
+
+// ── Scenario 4b: custom guided-file audio push + pull ─────────────────────
+
+#[test]
+fn custom_guided_file_audio_round_trips_through_webdav() {
+    // The guided-file equivalent of scenario 4. Same shape: A
+    // authors a guided_files row + places the .ogg locally, syncs;
+    // B (clean device) syncs and ends up with both the DB row AND
+    // the audio bytes at `<guided_dir>/<uuid>.ogg`. Without the
+    // dedicated transport the row would arrive but the audio
+    // wouldn't — the bug this commit fixes.
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let remote = FakeWebDav::new();
+
+    let a = open_test_db(&tempdir, "device_a");
+    let guided_dir_a = tempdir.path().join("device_a").join("guided");
+    std::fs::create_dir_all(&guided_dir_a).expect("mkdir guided A");
+
+    let guided_uuid = "88888888-aaaa-bbbb-cccc-999999999999";
+    let guided_bytes = b"<vorbis-stream-payload>".to_vec();
+    let file_name = format!("{guided_uuid}.ogg");
+    std::fs::write(guided_dir_a.join(&file_name), &guided_bytes)
+        .expect("write A's local guided audio");
+
+    a.insert_guided_file_with_uuid(
+        guided_uuid,
+        "Morning Body Scan",
+        &file_name,
+        // 12 minutes — realistic guided session length.
+        720,
+        true,
+    )
+    .expect("insert guided file");
+
+    sync_for(&a, &remote, &tempdir, "device_a")
+        .sync()
+        .expect("device A push");
+
+    // Sanity-check the remote received the audio at the expected path.
+    let remote_audio_path = format!("/Meditate/guided/{guided_uuid}.ogg");
+    let remote_audio = remote
+        .get(&remote_audio_path, u64::MAX)
+        .expect("guided audio on remote");
+    assert_eq!(remote_audio, guided_bytes,
+        "remote guided bytes must match what A wrote");
+
+    let b = open_test_db(&tempdir, "device_b");
+    sync_for(&b, &remote, &tempdir, "device_b")
+        .sync()
+        .expect("device B sync");
+
+    let b_guided = meditate_core::db::list_guided_files_from_db(&b)
+        .expect("list guided on B")
+        .into_iter()
+        .find(|g| g.uuid.0 == guided_uuid)
+        .expect("guided row materialised on B");
+    assert_eq!(b_guided.name, "Morning Body Scan");
+    assert_eq!(b_guided.duration_secs, 720);
+
+    // The .ogg landed at <guided_dir>/<uuid>.ogg.
+    let guided_dir_b = tempdir.path().join("device_b").join("guided");
+    let local_audio_b = guided_dir_b.join(&file_name);
+    let pulled_bytes = std::fs::read(&local_audio_b)
+        .expect("guided audio landed on B's disk");
+    assert_eq!(pulled_bytes, guided_bytes,
+        "pulled guided bytes must match A's original");
 }
 
 // ── Scenario 5: last-writer-wins on a concurrent label rename ─────────────

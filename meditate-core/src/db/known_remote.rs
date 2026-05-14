@@ -75,6 +75,35 @@ impl Database {
         self.conn.execute("DELETE FROM known_remote_sounds", [])?;
         Ok(())
     }
+
+    /// Per-guided-file version of `known_remote_sound_uuids`. The
+    /// orchestrator's push side skips uuids in this set; the pull
+    /// side dittos.
+    pub(crate) fn known_remote_guided_file_uuids(&self) -> Result<std::collections::HashSet<String>> {
+        let mut stmt = self.conn
+            .prepare("SELECT guided_uuid FROM known_remote_guided_files")?;
+        let ids = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<std::collections::HashSet<_>>>()?;
+        Ok(ids)
+    }
+
+    /// INSERT-OR-IGNORE on the known-guided-file tracker. Idempotent
+    /// so a retry after a half-completed PUT can re-call without fuss.
+    pub(crate) fn record_known_remote_guided_file(&self, guided_uuid: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO known_remote_guided_files (guided_uuid) VALUES (?1)",
+            params![guided_uuid],
+        )?;
+        Ok(())
+    }
+
+    /// Clear the known-guided-file tracker. Same callers as
+    /// wipe_known_remote_sounds: account swap, push-after-wipe.
+    pub(crate) fn wipe_known_remote_guided_files(&self) -> Result<()> {
+        self.conn.execute("DELETE FROM known_remote_guided_files", [])?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

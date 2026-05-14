@@ -150,6 +150,7 @@ pub fn run_sync_attempt(db_path: &Path) -> Result<SyncStats, SyncRunnerError> {
         &webdav,
         REMOTE_BASE_PATH,
         local_sounds_dir(),
+        local_guided_dir(),
     ).sync_with_progress(progress);
     let elapsed = started.elapsed();
 
@@ -179,7 +180,9 @@ pub fn run_with_webdav<W: WebDav>(
     db: &CoreDb,
     webdav: &W,
 ) -> Result<SyncStats, SyncRunnerError> {
-    let result = Sync::new(db, webdav, REMOTE_BASE_PATH, local_sounds_dir()).sync();
+    let result = Sync::new(
+        db, webdav, REMOTE_BASE_PATH, local_sounds_dir(), local_guided_dir(),
+    ).sync();
     record_outcome(db, &result)?;
     result.map_err(SyncRunnerError::from)
 }
@@ -189,6 +192,13 @@ pub fn run_with_webdav<W: WebDav>(
 /// sync push/pull paths.
 pub fn local_sounds_dir() -> std::path::PathBuf {
     gtk::glib::user_data_dir().join("meditate").join("sounds")
+}
+
+/// Canonical local directory for imported guided-meditation OGG
+/// files. Used by the guided import flow and the orchestrator's
+/// sync push/pull paths.
+pub fn local_guided_dir() -> std::path::PathBuf {
+    gtk::glib::user_data_dir().join("meditate").join("guided")
 }
 
 /// Persist the sync outcome so the status indicator (Phase E.5) can

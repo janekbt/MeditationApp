@@ -31,12 +31,12 @@ fn round_1_basic_two_device_sync() {
     let nc = FakeWebDav::new();
 
     insert_session(&phone, "2026-04-30T07:00:00", 600, Some("phone-authored"));
-    let phone_stats = Sync::new(&phone, &nc, "Meditate", smoke_sounds_dir()).sync().unwrap();
+    let phone_stats = Sync::new(&phone, &nc, "Meditate", smoke_sounds_dir(), smoke_sounds_dir()).sync().unwrap();
     println!("Phone synced: pulled={}, pushed={}", phone_stats.pulled, phone_stats.pushed);
     assert_eq!(phone_stats.pulled, 0);
     assert_eq!(phone_stats.pushed, 1);
 
-    let laptop_stats = Sync::new(&laptop, &nc, "Meditate", smoke_sounds_dir()).sync().unwrap();
+    let laptop_stats = Sync::new(&laptop, &nc, "Meditate", smoke_sounds_dir(), smoke_sounds_dir()).sync().unwrap();
     println!("Laptop synced: pulled={}, pushed={}", laptop_stats.pulled, laptop_stats.pushed);
     assert_eq!(laptop_stats.pulled, 1, "laptop must pick up phone's session");
 
@@ -54,8 +54,8 @@ fn round_2_concurrent_edits_converge_over_two_sync_passes() {
 
     // Both devices start with the same shared session.
     let phone_session_id = insert_session(&phone, "shared", 600, None);
-    Sync::new(&phone, &nc, "Meditate", smoke_sounds_dir()).sync().unwrap();
-    Sync::new(&laptop, &nc, "Meditate", smoke_sounds_dir()).sync().unwrap();
+    Sync::new(&phone, &nc, "Meditate", smoke_sounds_dir(), smoke_sounds_dir()).sync().unwrap();
+    Sync::new(&laptop, &nc, "Meditate", smoke_sounds_dir(), smoke_sounds_dir()).sync().unwrap();
     let laptop_session_id = meditate_core::db::list_sessions_from_db(&laptop).unwrap()[0].0;
     println!("Both devices have the shared session");
 
@@ -66,8 +66,8 @@ fn round_2_concurrent_edits_converge_over_two_sync_passes() {
     // Two sync passes per device for full convergence:
     // - Pass 1 each pushes its update; pass 2 each pulls the other's.
     for _ in 0..2 {
-        Sync::new(&phone,  &nc, "Meditate", smoke_sounds_dir()).sync().unwrap();
-        Sync::new(&laptop, &nc, "Meditate", smoke_sounds_dir()).sync().unwrap();
+        Sync::new(&phone,  &nc, "Meditate", smoke_sounds_dir(), smoke_sounds_dir()).sync().unwrap();
+        Sync::new(&laptop, &nc, "Meditate", smoke_sounds_dir(), smoke_sounds_dir()).sync().unwrap();
     }
 
     let phone_notes  = meditate_core::db::list_sessions_from_db(&phone).unwrap()[0].1.notes.clone();
@@ -84,15 +84,15 @@ fn round_3_tombstone_propagation() {
     let nc = FakeWebDav::new();
 
     let phone_session_id = insert_session(&phone, "to-be-deleted", 600, None);
-    Sync::new(&phone,  &nc, "Meditate", smoke_sounds_dir()).sync().unwrap();
-    Sync::new(&laptop, &nc, "Meditate", smoke_sounds_dir()).sync().unwrap();
+    Sync::new(&phone,  &nc, "Meditate", smoke_sounds_dir(), smoke_sounds_dir()).sync().unwrap();
+    Sync::new(&laptop, &nc, "Meditate", smoke_sounds_dir(), smoke_sounds_dir()).sync().unwrap();
     assert_eq!(meditate_core::db::list_sessions_from_db(&laptop).unwrap().len(), 1);
 
     phone.delete_session(phone_session_id).unwrap();
-    Sync::new(&phone, &nc, "Meditate", smoke_sounds_dir()).sync().unwrap();
+    Sync::new(&phone, &nc, "Meditate", smoke_sounds_dir(), smoke_sounds_dir()).sync().unwrap();
     println!("Phone synced after delete; remote has the tombstone event");
 
-    Sync::new(&laptop, &nc, "Meditate", smoke_sounds_dir()).sync().unwrap();
+    Sync::new(&laptop, &nc, "Meditate", smoke_sounds_dir(), smoke_sounds_dir()).sync().unwrap();
     assert!(meditate_core::db::list_sessions_from_db(&laptop).unwrap().is_empty(),
         "laptop must drop the row after pulling the tombstone");
     println!("✓ tombstone propagated through Sync::sync\n");
@@ -106,13 +106,13 @@ fn round_4_three_device_chain_through_shared_remote() {
     let nc = FakeWebDav::new();
 
     insert_session(&a, "from A", 100, None);
-    Sync::new(&a, &nc, "Meditate", smoke_sounds_dir()).sync().unwrap();
+    Sync::new(&a, &nc, "Meditate", smoke_sounds_dir(), smoke_sounds_dir()).sync().unwrap();
 
     insert_session(&b, "from B", 200, None);
-    Sync::new(&b, &nc, "Meditate", smoke_sounds_dir()).sync().unwrap();
+    Sync::new(&b, &nc, "Meditate", smoke_sounds_dir(), smoke_sounds_dir()).sync().unwrap();
 
     // C joins late and pulls everything that's accumulated upstream.
-    let c_stats = Sync::new(&c, &nc, "Meditate", smoke_sounds_dir()).sync().unwrap();
+    let c_stats = Sync::new(&c, &nc, "Meditate", smoke_sounds_dir(), smoke_sounds_dir()).sync().unwrap();
     println!("C joined late, sync stats: pulled={}, pushed={}",
         c_stats.pulled, c_stats.pushed);
     assert_eq!(c_stats.pulled, 2,
@@ -127,9 +127,9 @@ fn round_4_three_device_chain_through_shared_remote() {
     // C authors something of its own and goes back online — both A
     // and B should pull it on their next sync.
     insert_session(&c, "from C", 300, None);
-    Sync::new(&c, &nc, "Meditate", smoke_sounds_dir()).sync().unwrap();
-    Sync::new(&a, &nc, "Meditate", smoke_sounds_dir()).sync().unwrap();
-    Sync::new(&b, &nc, "Meditate", smoke_sounds_dir()).sync().unwrap();
+    Sync::new(&c, &nc, "Meditate", smoke_sounds_dir(), smoke_sounds_dir()).sync().unwrap();
+    Sync::new(&a, &nc, "Meditate", smoke_sounds_dir(), smoke_sounds_dir()).sync().unwrap();
+    Sync::new(&b, &nc, "Meditate", smoke_sounds_dir(), smoke_sounds_dir()).sync().unwrap();
     let a_starts: std::collections::HashSet<String> = meditate_core::db::list_sessions_from_db(&a).unwrap()
         .iter().map(|(_, s)| s.start_iso.clone()).collect();
     let b_starts: std::collections::HashSet<String> = meditate_core::db::list_sessions_from_db(&b).unwrap()
@@ -153,8 +153,8 @@ fn round_5_idempotency_under_repeated_calls() {
     // Pump until convergence (4 rounds is plenty; this measures
     // stability AFTER convergence).
     for _ in 0..4 {
-        Sync::new(&phone,  &nc, "Meditate", smoke_sounds_dir()).sync().unwrap();
-        Sync::new(&laptop, &nc, "Meditate", smoke_sounds_dir()).sync().unwrap();
+        Sync::new(&phone,  &nc, "Meditate", smoke_sounds_dir(), smoke_sounds_dir()).sync().unwrap();
+        Sync::new(&laptop, &nc, "Meditate", smoke_sounds_dir(), smoke_sounds_dir()).sync().unwrap();
     }
     let phone_count_converged  = meditate_core::db::list_sessions_from_db(&phone).unwrap().len();
     let laptop_count_converged = meditate_core::db::list_sessions_from_db(&laptop).unwrap().len();
@@ -163,8 +163,8 @@ fn round_5_idempotency_under_repeated_calls() {
 
     // Another 3 rounds — nothing should change.
     for _ in 0..3 {
-        Sync::new(&phone,  &nc, "Meditate", smoke_sounds_dir()).sync().unwrap();
-        Sync::new(&laptop, &nc, "Meditate", smoke_sounds_dir()).sync().unwrap();
+        Sync::new(&phone,  &nc, "Meditate", smoke_sounds_dir(), smoke_sounds_dir()).sync().unwrap();
+        Sync::new(&laptop, &nc, "Meditate", smoke_sounds_dir(), smoke_sounds_dir()).sync().unwrap();
     }
     assert_eq!(meditate_core::db::list_sessions_from_db(&phone).unwrap().len(), phone_count_converged);
     assert_eq!(meditate_core::db::list_sessions_from_db(&laptop).unwrap().len(), laptop_count_converged);
@@ -182,7 +182,7 @@ fn round_6_http_webdav_against_unreachable_server_surfaces_network_error() {
 
     // 127.0.0.1:1 is reserved (tcpmux) — typically nothing listening.
     let unreachable = HttpWebDav::new("http://127.0.0.1:1", "u", "p");
-    let result = Sync::new(&phone, &unreachable, "Meditate", smoke_sounds_dir()).sync();
+    let result = Sync::new(&phone, &unreachable, "Meditate", smoke_sounds_dir(), smoke_sounds_dir()).sync();
     match result {
         Err(SyncError::WebDav(WebDavError::Network(msg))) => {
             println!("Sync failed as expected: Network({msg})");

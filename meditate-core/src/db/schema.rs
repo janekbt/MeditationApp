@@ -258,6 +258,17 @@ pub(super) fn schema() -> String {
     CREATE TABLE IF NOT EXISTS known_remote_sounds (
         bell_uuid TEXT PRIMARY KEY
     );
+    -- Per-guided-file tracker for the guided-meditation audio files
+    -- synced over WebDAV. Same pattern as known_remote_sounds but
+    -- keyed on guided_files.uuid — each imported guided file is its
+    -- own remote audio file with its own PUT/GET cycle. The DB row
+    -- syncs via the event log; the .ogg bytes ride this separate
+    -- transport so a peer that only has the row can fetch the audio
+    -- on next sync. Unlike bell sounds, no rows are bundled —
+    -- every guided file is custom by definition.
+    CREATE TABLE IF NOT EXISTS known_remote_guided_files (
+        guided_uuid TEXT PRIMARY KEY
+    );
     -- Singleton table holding the current in-flight meditation
     -- session's running state so a crash / OOM / battery-death
     -- mid-session doesn't lose the work the user already did.

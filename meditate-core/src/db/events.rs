@@ -366,6 +366,7 @@ impl Database {
         let tx = self.conn.unchecked_transaction()?;
         tx.execute("DELETE FROM known_remote_files", [])?;
         tx.execute("DELETE FROM known_remote_sounds", [])?;
+        tx.execute("DELETE FROM known_remote_guided_files", [])?;
         // The in-flight snapshot is device-local state derived from
         // local activity. If we kept it across a "throw away local,
         // pull from remote" recovery, the next launch would auto-

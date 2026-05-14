@@ -99,15 +99,25 @@ pub fn play_preview(sound: &BellSound) -> gtk::MediaFile {
 /// files chooser's per-row Play/Stop button. Shares the chooser
 /// preview slot with bell-sound previews (the user only has one
 /// chooser open at a time; if both somehow overlapped the supersede
-/// semantics still hold). The path comes from `guided_files.file_path`
-/// — the importing device's absolute path, which lives on every
-/// peer that synced through the orchestrator's audio transport.
+/// semantics still hold).
+///
+/// Derives the local path from `uuid` rather than trusting the
+/// stored `file_path` — the import path writes to
+/// `$XDG_DATA_HOME/meditate/guided/<uuid>.ogg`, but the row's
+/// `file_path` column is the *importing* device's absolute path at
+/// that moment, which doesn't resolve cleanly after a sync from a
+/// peer or after an XDG-dir relocation. Same trick as
+/// `media_for_bell_sound`.
 ///
 /// Returns the MediaFile so the caller can listen for notify::playing
 /// transitions through the shared `PreviewToggle` and revert the
 /// row's icon.
 pub fn play_preview_for_guided_file(file: &crate::db::GuidedFile) -> gtk::MediaFile {
-    let media = gtk::MediaFile::for_file(&gtk::gio::File::for_path(&file.file_path));
+    let local_path = gtk::glib::user_data_dir()
+        .join("meditate")
+        .join("guided")
+        .join(format!("{}.ogg", file.uuid));
+    let media = gtk::MediaFile::for_file(&gtk::gio::File::for_path(&local_path));
     wire_audio_error_handler(&media, &file.name);
     PREVIEW_MEDIA.with(|cell| {
         if let Some(old) = cell.replace(Some(media.clone())) {
