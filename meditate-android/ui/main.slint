@@ -852,6 +852,25 @@ export component MainWindow inherits Window {
     // existing sections. Mirrors GTK's `load_more_btn.connect_clicked`.
     callback load-more-tap();
 
+    // Trash IconButton on each Log card was tapped — Rust hides
+    // the row optimistically (shadow filter), pushes it into the
+    // pending-deletes list, and shows / refreshes the undo
+    // snackbar. Mirrors GTK's `delete_btn.connect_clicked` →
+    // `on_delete_clicked` flow in `meditate-gtk/src/log/imp.rs`.
+    callback delete-tap(int);
+
+    // Undo snackbar — the Material 3 analogue of GTK's coalescing
+    // `adw::Toast` ("N sessions deleted · Undo"). Rust drives both
+    // properties: `snackbar-visible` toggles the overlay, and
+    // `snackbar-text` is the localised "N sessions deleted" copy
+    // (`meditate_core::announcement::Announcement::SessionDeleted`
+    // rendered Rust-side). Tapping the Undo action raises the
+    // callback; auto-dismiss is a 5 s `slint::Timer` armed in Rust
+    // alongside the toggle.
+    in property <string> snackbar-text: "";
+    in property <bool> snackbar-visible: false;
+    callback snackbar-undo-tap();
+
     // Slide offset driving the Running screen's slide-over. 0 px
     // means Running is parked at x=width (off-screen right) and
     // Setup is fully visible underneath. Animating up to `root.width`
@@ -2216,6 +2235,22 @@ export component MainWindow inherits Window {
                                     wrap: word-wrap;
                                 }
                             }
+
+                            // Trash IconButton — destructive tint
+                            // via `has_error`, vertically centred
+                            // against the full card height (the
+                            // surrounding HorizontalLayout already
+                            // stretches each child, so the button's
+                            // base will park itself at the row's
+                            // middle without extra alignment glue).
+                            // Mirrors GTK's flat / circular /
+                            // destructive `delete_btn` at
+                            // `log/imp.rs:460`.
+                            IconButton {
+                                icon: @image-url("assets/delete.svg");
+                                has_error: true;
+                                clicked => { root.delete-tap(item.id); }
+                            }
                         }
                     }
                 }
@@ -2270,6 +2305,75 @@ export component MainWindow inherits Window {
                 enabled: true,
             };
             trailing-button-clicked => { root.preferences-tap(); }
+        }
+    }
+
+    // ── Undo snackbar — Material 3 analogue of GTK's adw::Toast ─
+    // Visible only while a delete is pending; Rust toggles
+    // `snackbar-visible` true on delete-tap, sets a 5 s timer,
+    // and toggles back to false from either the timer firing
+    // (commit deletes) or the Undo tap (restore hidden cards).
+    // The text is the rendered "N sessions deleted" string —
+    // Rust formats it via `meditate_core::announcement::
+    // Announcement::SessionDeleted { count }`.
+    //
+    // Visual recipe matches `material-1.0/ui/components/
+    // snack_bar.slint`: inverse-surface background, 4 px radius,
+    // 344 px max width, level-3 elevation (simulated with a
+    // single drop shadow since composing `Elevation` inside an
+    // `if` block is awkward), 16 px / 10 px padding, inverse text
+    // colour, inline TextButton with `inverse: true` so the
+    // accent reads on the dark surface.
+    //
+    // Parking position: above the NavigationBar by 12 px, with
+    // the bottom-bar-inset under it so the snackbar sits clear of
+    // the gesture hint when the NavigationBar is hidden during an
+    // overlay (though we currently only show the snackbar on the
+    // Log page, which always has the NavigationBar visible).
+    if root.snackbar-visible : Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: parent.height - root.nav-bar-height - root.bottom-bar-inset - self.height - 12px;
+        width: min(parent.width - 24px, 344px);
+        height: 60px;
+        border-radius: 4px;
+        background: MaterialPalette.inverse-surface;
+        drop-shadow-blur: 8px;
+        drop-shadow-color: #00000040;
+        drop-shadow-offset-y: 2px;
+
+        HorizontalLayout {
+            padding-left: 16px;
+            padding-right: 8px;
+            spacing: 4px;
+            alignment: stretch;
+
+            Text {
+                text: root.snackbar-text;
+                font-size: 14px;
+                color: MaterialPalette.inverse-on-surface;
+                vertical-alignment: center;
+                horizontal-alignment: left;
+                horizontal-stretch: 1;
+                wrap: word-wrap;
+            }
+
+            // TextButton's BaseButton internals add their own 10 px
+            // top/bottom padding and a `min_height: 40px`, so wrap
+            // it in a VerticalLayout-centered cell instead of
+            // letting the outer HorizontalLayout vertically stretch
+            // it — the stretch was clipping the bottom of the
+            // "Undo" glyphs even at 72 px snackbar height. With
+            // `alignment: center` the button sits at its preferred
+            // 40 px height inside the 60 px container, with 10 px
+            // of breathing room above and below.
+            VerticalLayout {
+                alignment: center;
+                TextButton {
+                    text: "Undo";
+                    inverse: true;
+                    clicked => { root.snackbar-undo-tap(); }
+                }
+            }
         }
     }
 

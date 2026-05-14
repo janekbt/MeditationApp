@@ -506,13 +506,22 @@ fn load_log_page(offset: u32) -> (Vec<(i64, meditate_core::db::Session)>, bool) 
 /// sessions into day sections. Pure function — no DB / no
 /// global state — so the pagination handler can call it on
 /// every "Load more" press over the cumulative loaded list.
+/// `hidden_ids` is the set of rowids currently being deleted
+/// (the in-flight undo-toast window) — they're skipped during
+/// grouping so section counts/totals stay consistent with the
+/// rendered cards. Mirrors GTK's `set_visible(false)` on the
+/// card widget — the row stays in `loaded_log_sessions` (so the
+/// undo path can restore it) but doesn't show up in the
+/// rendered feed until the snackbar dismisses without Undo.
 #[cfg(target_os = "android")]
 fn group_log_sessions(
     rows: &[(i64, meditate_core::db::Session)],
     label_name_by_id: &std::collections::HashMap<i64, String>,
+    hidden_ids: &std::collections::HashSet<i64>,
 ) -> Vec<LogDaySectionData> {
     let mut sections: Vec<LogDaySectionData> = Vec::new();
     for (rowid, s) in rows {
+        if hidden_ids.contains(rowid) { continue; }
         let date_key = s.start_iso.get(..10).unwrap_or("").to_string();
         let label_name = s
             .label_id
@@ -636,12 +645,12 @@ fn format_date_group_display(start_iso: &str) -> String {
 fn reset_log_feed(
     ui: &MainWindow,
     loaded: &std::rc::Rc<std::cell::RefCell<Vec<(i64, meditate_core::db::Session)>>>,
+    pending: &std::rc::Rc<std::cell::RefCell<Vec<(i64, meditate_core::db::Session)>>>,
 ) {
     let (rows, full) = load_log_page(0);
     *loaded.borrow_mut() = rows;
-    let label_map = load_label_name_map();
-    let sections = group_log_sessions(&loaded.borrow(), &label_map);
-    push_log_sections_to_ui(ui, sections, full);
+    ui.set_log_has_more(full);
+    render_log_feed(ui, loaded, pending);
 }
 
 /// "Load more" — query the next page (offset = current loaded
@@ -651,6 +660,7 @@ fn reset_log_feed(
 fn extend_log_feed(
     ui: &MainWindow,
     loaded: &std::rc::Rc<std::cell::RefCell<Vec<(i64, meditate_core::db::Session)>>>,
+    pending: &std::rc::Rc<std::cell::RefCell<Vec<(i64, meditate_core::db::Session)>>>,
 ) {
     let offset = loaded.borrow().len() as u32;
     let (rows, full) = load_log_page(offset);
@@ -660,19 +670,87 @@ fn extend_log_feed(
         return;
     }
     loaded.borrow_mut().extend(rows);
+    ui.set_log_has_more(full);
+    render_log_feed(ui, loaded, pending);
+}
+
+/// Drain `pending_deletes`, delete each row from the DB,
+/// remove the matching rows from `loaded_log_sessions`, hide
+/// the snackbar, and re-render. Mirrors GTK's
+/// `commit_all_pending` at
+/// `meditate-gtk/src/log/imp.rs:690`. Called from the 5 s
+/// `delete_timer` callback (auto-commit). No-ops gracefully if
+/// the DB lock can't be acquired — the rows stay queued and a
+/// later trash-tap can re-arm the timer.
+#[cfg(target_os = "android")]
+fn commit_pending_deletes(
+    ui: &MainWindow,
+    loaded: &std::rc::Rc<std::cell::RefCell<Vec<(i64, meditate_core::db::Session)>>>,
+    pending: &std::rc::Rc<std::cell::RefCell<Vec<(i64, meditate_core::db::Session)>>>,
+) {
+    let drained: Vec<(i64, meditate_core::db::Session)> =
+        std::mem::take(&mut *pending.borrow_mut());
+    if drained.is_empty() {
+        ui.set_snackbar_visible(false);
+        return;
+    }
+    if let Some(db_arc) = DATABASE.get() {
+        if let Ok(guard) = db_arc.lock() {
+            if let Some(db) = guard.as_ref() {
+                for (id, _) in &drained {
+                    if let Err(err) = db.delete_session(*id) {
+                        meditate_core::log(
+                            "log.delete.commit.failed",
+                            &format!("rowid {id}: {err:?}"),
+                        );
+                    }
+                }
+            }
+        }
+    }
+    // Drop the now-deleted rows from the in-memory shadow so
+    // pagination offsets stay consistent on the next "Load
+    // more".
+    let drained_ids: std::collections::HashSet<i64> =
+        drained.iter().map(|(id, _)| *id).collect();
+    loaded.borrow_mut().retain(|(id, _)| !drained_ids.contains(id));
+    ui.set_snackbar_visible(false);
+    render_log_feed(ui, loaded, pending);
+}
+
+/// Re-render the Log feed from the current shadow state.
+/// Hidden-ids = the rowids currently in `pending_deletes`
+/// (in-flight undo window) — they're filtered out during
+/// grouping so the cards visually disappear immediately on
+/// delete-tap and reappear on Undo. `log-has-more` is left
+/// untouched here; the page-fetching helpers (`reset_log_feed`
+/// / `extend_log_feed`) own it because they're the only paths
+/// that know whether the most recent page came back full.
+#[cfg(target_os = "android")]
+fn render_log_feed(
+    ui: &MainWindow,
+    loaded: &std::rc::Rc<std::cell::RefCell<Vec<(i64, meditate_core::db::Session)>>>,
+    pending: &std::rc::Rc<std::cell::RefCell<Vec<(i64, meditate_core::db::Session)>>>,
+) {
+    let hidden: std::collections::HashSet<i64> = pending
+        .borrow()
+        .iter()
+        .map(|(id, _)| *id)
+        .collect();
     let label_map = load_label_name_map();
-    let sections = group_log_sessions(&loaded.borrow(), &label_map);
-    push_log_sections_to_ui(ui, sections, full);
+    let sections = group_log_sessions(&loaded.borrow(), &label_map, &hidden);
+    push_log_sections_to_ui(ui, sections);
 }
 
 /// Push the cumulative loaded session list (already grouped)
-/// into the Slint `log-sections` + `log-has-more` properties.
-/// Pure render — does not touch the DB.
+/// into the Slint `log-sections` property. `log-has-more` is
+/// set by the caller — see `reset_log_feed` / `extend_log_feed`,
+/// which own the page-fetch full/non-full signal. Pure render
+/// — does not touch the DB.
 #[cfg(target_os = "android")]
 fn push_log_sections_to_ui(
     ui: &MainWindow,
     sections: Vec<LogDaySectionData>,
-    has_more: bool,
 ) {
     let items: Vec<LogDaySection> = sections
         .into_iter()
@@ -702,7 +780,6 @@ fn push_log_sections_to_ui(
         })
         .collect();
     ui.set_log_sections(std::rc::Rc::new(slint::VecModel::from(items)).into());
-    ui.set_log_has_more(has_more);
 }
 
 /// Write the crash-recovery snapshot row. Mirrors GTK's
@@ -1049,6 +1126,27 @@ fn build_ui() -> MainWindow {
     let loaded_log_sessions: Rc<RefCell<Vec<(i64, meditate_core::db::Session)>>>
         = Rc::new(RefCell::new(Vec::new()));
 
+    // In-flight delete batch — the rows the user has tapped trash
+    // on but where the undo window hasn't yet expired. Mirrors
+    // GTK's `pending_deletes` at `meditate-gtk/src/log/imp.rs:49`.
+    // The 5-second timer below is the commit gate; until it fires
+    // (or the user taps Undo) the rows stay in the DB and the
+    // cards stay hidden from the rendered feed via the hidden-ids
+    // filter in `group_log_sessions`.
+    #[cfg(target_os = "android")]
+    let pending_deletes: Rc<RefCell<Vec<(i64, meditate_core::db::Session)>>>
+        = Rc::new(RefCell::new(Vec::new()));
+
+    // 5-second auto-commit timer. Restarted on every trash-tap so
+    // a burst of deletes coalesces into a single snackbar — the
+    // GTK shell does the same coalescing via `dismiss()` +
+    // `add_toast()` swap. `Box::leak` to keep the handle alive
+    // across the whole window lifetime; we only ever call
+    // `start()` / `stop()` on it.
+    #[cfg(target_os = "android")]
+    let delete_timer: &'static slint::Timer =
+        Box::leak(Box::new(slint::Timer::default()));
+
     // Crash-recovery snapshot timer handle. Heartbeat is started
     // on the Idle/Finished → Active transition in `on_action_tap`
     // and cancelled on every transition out of Active, mirroring
@@ -1394,6 +1492,8 @@ fn build_ui() -> MainWindow {
         let pending_done = pending_done.clone();
         #[cfg(target_os = "android")]
         let loaded_log_sessions = loaded_log_sessions.clone();
+        #[cfg(target_os = "android")]
+        let pending_deletes = pending_deletes.clone();
         ui.on_save_tap(move || {
             let Some(ui) = weak.upgrade() else { return; };
             #[cfg(target_os = "android")]
@@ -1446,7 +1546,7 @@ fn build_ui() -> MainWindow {
                 ui.set_label_active(read_label_active_for_mode(mode));
                 // Push the freshly-inserted row into the Log feed
                 // so a quick nav-to-Log shows it without restart.
-                reset_log_feed(&ui, &loaded_log_sessions);
+                reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
             }
             #[cfg(not(target_os = "android"))]
             let _ = current_mode.get();
@@ -1947,7 +2047,7 @@ fn build_ui() -> MainWindow {
                 .into(),
         );
         refresh_breathing_tiles(&ui, read_breathing_pattern());
-        reset_log_feed(&ui, &loaded_log_sessions);
+        reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
     }
 
     // "Load more" tap on the Log feed — fetch the next page,
@@ -1957,10 +2057,107 @@ fn build_ui() -> MainWindow {
         let weak = ui.as_weak();
         #[cfg(target_os = "android")]
         let loaded_log_sessions = loaded_log_sessions.clone();
+        #[cfg(target_os = "android")]
+        let pending_deletes = pending_deletes.clone();
         ui.on_load_more_tap(move || {
             #[cfg(target_os = "android")]
             if let Some(ui) = weak.upgrade() {
-                extend_log_feed(&ui, &loaded_log_sessions);
+                extend_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
+            }
+            let _ = weak.clone();
+        });
+    }
+
+    // Trash IconButton on a Log card was tapped — push the row
+    // into `pending_deletes`, re-render the feed with that id
+    // filtered out (optimistic hide), show / refresh the undo
+    // snackbar, and (re)arm the 5-second auto-commit timer.
+    // Mirrors GTK's `on_delete_clicked` at
+    // `meditate-gtk/src/log/imp.rs:623`. The deviation is purely
+    // mechanical — Slint timer vs. adw::Toast's built-in timer,
+    // shadow-filter rebuild vs. `card.set_visible(false)` — the
+    // user-facing flow is identical (tap → row vanishes → 5 s
+    // window with "N sessions deleted · Undo" → dismiss commits,
+    // Undo restores).
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let loaded_log_sessions = loaded_log_sessions.clone();
+        #[cfg(target_os = "android")]
+        let pending_deletes = pending_deletes.clone();
+        ui.on_delete_tap(move |rowid| {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                let id = rowid as i64;
+                // Move row from `loaded_log_sessions` view into
+                // `pending_deletes`. We don't actually remove
+                // from `loaded` — Undo needs to find the Session
+                // to restore. The hidden-ids filter in
+                // `group_log_sessions` is what makes it disappear
+                // visually.
+                let session = loaded_log_sessions
+                    .borrow()
+                    .iter()
+                    .find(|(id_, _)| *id_ == id)
+                    .map(|(_, s)| s.clone());
+                let Some(session) = session else { return; };
+                pending_deletes.borrow_mut().push((id, session));
+
+                // Snackbar text — uses the same string keys as
+                // GTK's announcement renderer
+                // (`meditate-gtk/src/announcement.rs:23`). i18n
+                // isn't wired up on Android yet; once it is,
+                // route through gettext like the GTK shell does.
+                let count = pending_deletes.borrow().len();
+                let text = if count == 1 {
+                    "Session deleted".to_string()
+                } else {
+                    format!("{count} sessions deleted")
+                };
+                ui.set_snackbar_text(text.into());
+                ui.set_snackbar_visible(true);
+
+                render_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
+
+                // (Re)arm the commit timer — restart on every
+                // tap so a burst of deletes coalesces into one
+                // 5-second window.
+                let weak_inner = ui.as_weak();
+                let loaded_inner = loaded_log_sessions.clone();
+                let pending_inner = pending_deletes.clone();
+                delete_timer.start(
+                    slint::TimerMode::SingleShot,
+                    std::time::Duration::from_secs(5),
+                    move || {
+                        let Some(ui) = weak_inner.upgrade() else { return; };
+                        commit_pending_deletes(&ui, &loaded_inner, &pending_inner);
+                    },
+                );
+            }
+            let _ = (weak.clone(), rowid);
+        });
+    }
+
+    // Undo button on the snackbar — restore every hidden card
+    // (clear `pending_deletes`), hide the snackbar, cancel the
+    // commit timer, re-render. Mirrors GTK's
+    // `new_toast.connect_button_clicked` block at
+    // `meditate-gtk/src/log/imp.rs:649`.
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let loaded_log_sessions = loaded_log_sessions.clone();
+        #[cfg(target_os = "android")]
+        let pending_deletes = pending_deletes.clone();
+        ui.on_snackbar_undo_tap(move || {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                delete_timer.stop();
+                pending_deletes.borrow_mut().clear();
+                ui.set_snackbar_visible(false);
+                render_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
             }
             let _ = weak.clone();
         });
@@ -1982,6 +2179,8 @@ fn build_ui() -> MainWindow {
         let weak = ui.as_weak();
         #[cfg(target_os = "android")]
         let loaded_log_sessions = loaded_log_sessions.clone();
+        #[cfg(target_os = "android")]
+        let pending_deletes = pending_deletes.clone();
         ui.on_nav_changed(move |idx| {
             #[cfg(target_os = "android")]
             {
@@ -1989,7 +2188,7 @@ fn build_ui() -> MainWindow {
                 if idx == 1 {
                     // Entering Log — reload from DB so a session
                     // saved before opening the tab shows up.
-                    reset_log_feed(&ui, &loaded_log_sessions);
+                    reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
                 }
             }
             let _ = (weak.clone(), idx);
