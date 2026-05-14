@@ -93,6 +93,34 @@ fn refresh(ui: &MainWindow, state: &AppState, now: Duration) {
 /// transition (mirrors the GTK shell's `session_start_time` cell);
 /// elapsed comes from the live core::Session and is captured BEFORE
 /// the AppState mutation drops the session.
+// Per-mode setting helpers — wrap the DATABASE lock + the
+// `settings_keys` dispatchers in one place. `read_*` returns the
+// stored value or the meditate-core default; `write_*` is fire-
+// and-forget (errors land in the diag log). Mirrors the GTK
+// shell's pattern of "thin wrapper around `db.set_setting` /
+// `read_*_from_db` with a fallback for missing rows".
+#[cfg(target_os = "android")]
+fn read_keep_awake_for_mode(mode: meditate_core::SessionMode) -> bool {
+    let Some(db_arc) = DATABASE.get() else { return false; };
+    let Ok(guard) = db_arc.lock() else { return false; };
+    let Some(db) = guard.as_ref() else { return false; };
+    meditate_core::settings_keys::keep_screen_awake_from_db(db, mode)
+}
+
+#[cfg(target_os = "android")]
+fn write_keep_awake_for_mode(mode: meditate_core::SessionMode, value: bool) {
+    let Some(db_arc) = DATABASE.get() else { return; };
+    let Ok(guard) = db_arc.lock() else { return; };
+    let Some(db) = guard.as_ref() else { return; };
+    let key = meditate_core::settings_keys::keep_screen_awake_key_for_mode(mode);
+    if let Err(e) = db.set_setting(key, meditate_core::format_bool(value)) {
+        meditate_core::log(
+            "settings.keep_awake",
+            &format!("write FAILED mode={mode:?} value={value} err={e:?}"),
+        );
+    }
+}
+
 #[cfg(target_os = "android")]
 fn finalize_session(
     unix_start: i64,
@@ -367,13 +395,42 @@ fn build_ui() -> MainWindow {
     }
 
     // Mode chip group changed — update the shared mode cell so the
-    // next Save records the right SessionMode. Mirrors the GTK
-    // shell's `on_mode_switched` (which also persists to a setting;
-    // that piece lands when settings wiring arrives).
+    // next Save records the right SessionMode, and load any per-
+    // mode persisted state into the Slint properties. Mirrors the
+    // GTK shell's `on_mode_switched`, which also refreshes per-mode
+    // settings rows (Keep Awake here; Cues / Stopwatch / Label
+    // will join as those rows land).
     {
+        let weak = ui.as_weak();
         let current_mode = current_mode.clone();
         ui.on_mode_changed(move |idx| {
-            current_mode.set(TimerMode::from_chip_index(idx));
+            let new_mode = TimerMode::from_chip_index(idx);
+            current_mode.set(new_mode);
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                ui.set_keep_awake_on(read_keep_awake_for_mode(new_mode.into()));
+            }
+            // Touch the weak handle so the host build doesn't flag
+            // it unused (the android-only block above is the sole
+            // consumer).
+            let _ = weak;
+        });
+    }
+
+    // Keep-Screen-Awake toggle — write to the current mode's
+    // persisted setting. Real WakeLock acquisition is a phase-8
+    // platform-edge job; this slice just persists the user's
+    // pick so the eventual WakeLock wiring has a value to read.
+    {
+        let current_mode = current_mode.clone();
+        ui.on_keep_awake_toggled(move |value| {
+            #[cfg(target_os = "android")]
+            write_keep_awake_for_mode(current_mode.get().into(), value);
+            // Mirror the GTK behaviour on host builds — the
+            // property already updated via the in-out binding;
+            // nothing else to do without a DB. Touching the
+            // captures keeps the closure non-empty.
+            let _ = (current_mode.get(), value);
         });
     }
 
@@ -396,6 +453,14 @@ fn build_ui() -> MainWindow {
             }
         });
     }
+
+    // Seed per-mode persisted settings into Slint properties for
+    // the default mode (Timer). Subsequent mode flips refresh the
+    // same properties via the `on_mode_changed` handler above.
+    #[cfg(target_os = "android")]
+    ui.set_keep_awake_on(read_keep_awake_for_mode(
+        current_mode.get().into(),
+    ));
 
     refresh(&ui, &state.borrow(), now_since_epoch());
     ui

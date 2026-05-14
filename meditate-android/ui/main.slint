@@ -279,6 +279,14 @@ export component MainWindow inherits Window {
     // GTK's per-mode visibility rule.
     in-out property <bool> stopwatch-on: false;
 
+    // Keep-Screen-Awake switch state — mirrors the .blp
+    // `keep_screen_awake_row` SwitchRow. Per-mode value persisted
+    // in the DB via `settings_keys::keep_screen_awake_key_for_mode`;
+    // Rust reads it on launch + on each mode chip flip, writes on
+    // toggle. Real WakeLock acquisition lands in platform-edge
+    // phase 8 (Android `Window.FLAG_KEEP_SCREEN_ON` / PowerManager).
+    in-out property <bool> keep-awake-on: false;
+
     in-out property <bool> duration-dialog-open: false;
     in-out property <int> dialog-hours: 0;
     in-out property <int> dialog-minutes: 10;
@@ -294,6 +302,7 @@ export component MainWindow inherits Window {
     callback save-tap();
     callback discard-tap();
     callback mode-changed(int);
+    callback keep-awake-toggled(bool);
 
     // Slide offset driving the Running screen's slide-over. 0 px
     // means Running is parked at x=width (off-screen right) and
@@ -445,6 +454,24 @@ export component MainWindow inherits Window {
                         value-text: root.duration-text;
                         enabled: !root.stopwatch-on;
                         tapped => { root.duration-tap(); }
+                    }
+
+                    Rectangle {
+                        height: 1px;
+                        background: MaterialPalette.outline-variant;
+                    }
+
+                    // Keep Screen Awake — mirrors GTK's
+                    // `keep_screen_awake_row`. GTK shows this row in
+                    // every mode; this slice keeps it inside the
+                    // Timer-only Session group along with Stopwatch
+                    // and Duration. Restructuring lands when the
+                    // Box Breath / Guided bodies do.
+                    SwitchRow {
+                        title: "Keep Screen Awake";
+                        subtitle: "Prevent display sleep during a session";
+                        checked <=> root.keep-awake-on;
+                        toggled(value) => { root.keep-awake-toggled(value); }
                     }
                 }
             }
