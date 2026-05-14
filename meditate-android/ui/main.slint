@@ -316,6 +316,137 @@ component CuesRow inherits Rectangle {
     }
 }
 
+// Adw.ExpanderRow analogue — header with title + subtitle +
+// master switch, and an inner row that reveals when the switch
+// is on. Mirrors the .blp `setup_label_enabled_row`: master
+// toggle gates the "expansion body" (a single Adw.ActionRow
+// titled "Selected" with the current label name as subtitle).
+// Tapping the inner row will (in the next slice) push a label-
+// chooser navigation page; for now the body-tap callback is a
+// no-op stub so the surface is complete.
+component ExpanderRow inherits Rectangle {
+    in property <string> title;
+    in property <string> subtitle;
+    in property <string> body-title;
+    in property <string> body-subtitle;
+    in-out property <bool> active;
+    callback toggled(bool);
+    callback body-tapped();
+
+    background: transparent;
+
+    VerticalLayout {
+        spacing: 0;
+
+        // Header row — same metrics as SwitchRow.
+        Rectangle {
+            height: 64px;
+            background: transparent;
+
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                spacing: 12px;
+                alignment: stretch;
+
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 1;
+
+                    Text {
+                        text: root.title;
+                        font-size: 16px;
+                        color: MaterialPalette.on-surface;
+                    }
+                    if root.subtitle != "" : Text {
+                        text: root.subtitle;
+                        font-size: 12px;
+                        color: MaterialPalette.on-surface-variant;
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 52px;
+                        height: 32px;
+                        Switch {
+                            min-width: 52px;
+                            min-height: 32px;
+                            checked <=> root.active;
+                            checked-state-changed(value) => { root.toggled(value); }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Hair-line divider — always rendered, height animates
+        // between 0 and 1 px alongside the body. Without the
+        // animation the divider would pop in/out a frame ahead of
+        // the body slide.
+        Rectangle {
+            height: root.active ? 1px : 0px;
+            background: MaterialPalette.outline-variant;
+            clip: true;
+            animate height {
+                duration: 250ms;
+                easing: ease-in-out;
+            }
+        }
+
+        // Inner "Selected" row — mirrors the .blp
+        // `setup_label_chooser_row`. Always rendered so the slide-
+        // in/out can animate `height` between 56 px and 0 (Slint
+        // can't animate the appearance of an `if`-gated element).
+        // `clip: true` hides the inner content while collapsed.
+        Rectangle {
+            height: root.active ? 56px : 0px;
+            background: body-touch.has-hover && root.active
+                ? MaterialPalette.surface-container-high
+                : transparent;
+            clip: true;
+            animate height {
+                duration: 250ms;
+                easing: ease-in-out;
+            }
+
+            body-touch := TouchArea {
+                enabled: root.active;
+                clicked => { root.body-tapped(); }
+            }
+
+            HorizontalLayout {
+                padding-left: 32px;
+                padding-right: 16px;
+                spacing: 12px;
+                alignment: stretch;
+
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 1;
+
+                    Text {
+                        text: root.body-title;
+                        font-size: 14px;
+                        color: MaterialPalette.on-surface;
+                    }
+                    if root.body-subtitle != "" : Text {
+                        text: root.body-subtitle;
+                        font-size: 12px;
+                        color: MaterialPalette.on-surface-variant;
+                    }
+                }
+                Text {
+                    text: "›";
+                    font-size: 22px;
+                    color: MaterialPalette.on-surface-variant;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}
+
 // Boxed-list container — mirrors GTK's `Adw.PreferencesGroup`
 // boxed-list look: a single rounded surface that visually wraps
 // its child rows, with 1 px dividers between them and no
@@ -394,6 +525,20 @@ export component MainWindow inherits Window {
     // this slice is surface + persisted preference only.
     in-out property <int> cues-mode: 2;
 
+    // Label expander master switch — mirrors the .blp
+    // `setup_label_enabled_row` (Adw.ExpanderRow with
+    // show-enable-switch: true). When on, the inner Selected row
+    // shows the resolved label name; when off, the row collapses
+    // and Save commits the session without a label. Per-mode
+    // persistence via `meditate_core::labels::persist_active_for_mode`.
+    in-out property <bool> label-active: false;
+    // Resolved label name to display inside the expander when
+    // `label-active` is true. Rust fills this from
+    // `meditate_core::labels::resolve_label_for_mode` on launch +
+    // mode flip; the chooser screen (next slice) lets the user
+    // override it.
+    in property <string> label-name: "";
+
     in-out property <bool> duration-dialog-open: false;
     in-out property <int> dialog-hours: 0;
     in-out property <int> dialog-minutes: 10;
@@ -411,6 +556,8 @@ export component MainWindow inherits Window {
     callback mode-changed(int);
     callback keep-awake-toggled(bool);
     callback cues-changed(int);
+    callback label-active-toggled(bool);
+    callback label-tap();
 
     // Slide offset driving the Running screen's slide-over. 0 px
     // means Running is parked at x=width (off-screen right) and
@@ -578,6 +725,27 @@ export component MainWindow inherits Window {
                         value-text: root.duration-text;
                         enabled: !root.stopwatch-on;
                         tapped => { root.duration-tap(); }
+                    }
+
+                    Rectangle {
+                        height: 1px;
+                        background: MaterialPalette.outline-variant;
+                    }
+
+                    // Label expander — mirrors `setup_label_enabled_row`.
+                    // Master switch toggles per-mode label tagging;
+                    // when on, the inner Selected row shows the
+                    // resolved label name. Tap on the inner row will
+                    // push the label chooser screen in the next
+                    // phase-2 slice; for now it's a no-op stub.
+                    ExpanderRow {
+                        title: "Label";
+                        subtitle: "Tag this session";
+                        body-title: "Selected";
+                        body-subtitle: root.label-name;
+                        active <=> root.label-active;
+                        toggled(value) => { root.label-active-toggled(value); }
+                        body-tapped => { root.label-tap(); }
                     }
 
                     Rectangle {

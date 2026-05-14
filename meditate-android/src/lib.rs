@@ -137,6 +137,42 @@ fn read_signal_mode_for_mode(mode: meditate_core::SessionMode) -> meditate_core:
 }
 
 #[cfg(target_os = "android")]
+fn read_label_active_for_mode(mode: meditate_core::SessionMode) -> bool {
+    let Some(db_arc) = DATABASE.get() else { return false; };
+    let Ok(guard) = db_arc.lock() else { return false; };
+    let Some(db) = guard.as_ref() else { return false; };
+    meditate_core::labels::label_active_from_db(db, mode)
+}
+
+#[cfg(target_os = "android")]
+fn write_label_active_for_mode(mode: meditate_core::SessionMode, value: bool) {
+    let Some(db_arc) = DATABASE.get() else { return; };
+    let Ok(guard) = db_arc.lock() else { return; };
+    let Some(db) = guard.as_ref() else { return; };
+    if let Err(e) = meditate_core::labels::persist_active_for_mode(db, mode, value) {
+        meditate_core::log(
+            "settings.label_active",
+            &format!("write FAILED mode={mode:?} value={value} err={e:?}"),
+        );
+    }
+}
+
+/// Resolves the label name + id for `mode` via core's
+/// `resolve_label_for_mode`. Returns `(name, id)` so the Slint
+/// inner row can display the name and `finalize_session` can pass
+/// the id. None when the row was deleted and no default exists.
+#[cfg(target_os = "android")]
+fn resolved_label_for_mode(
+    mode: meditate_core::SessionMode,
+) -> Option<(String, i64)> {
+    let db_arc = DATABASE.get()?;
+    let guard = db_arc.lock().ok()?;
+    let db = guard.as_ref()?;
+    let label = meditate_core::labels::resolve_label_for_mode(db, mode)?;
+    Some((label.name, label.id))
+}
+
+#[cfg(target_os = "android")]
 fn write_signal_mode_for_mode(
     mode: meditate_core::SessionMode,
     value: meditate_core::SignalMode,
@@ -159,6 +195,7 @@ fn finalize_session(
     elapsed_secs: i64,
     note: Option<String>,
     mode: meditate_core::SessionMode,
+    label_id: Option<i64>,
 ) {
     if elapsed_secs <= 0 {
         // Drop sessions that ended before any seconds elapsed —
@@ -179,9 +216,10 @@ fn finalize_session(
     let session = meditate_core::db::Session::from_unix(
         unix_start,
         elapsed_secs,
-        // Phase 2 will add a label picker; for now every session
-        // lands unlabeled.
-        None,
+        // `label_id` arrives resolved from the per-mode label
+        // toggle + persisted UUID; None when the master switch is
+        // off OR the seeded default row got deleted.
+        label_id,
         note,
         mode,
         // Guided file UUID: only meaningful when the user picked a
@@ -411,12 +449,19 @@ fn build_ui() -> MainWindow {
             if let Some((unix_start, elapsed_secs)) = pending_done.take() {
                 let note = ui.get_note_text().to_string();
                 let note = if note.trim().is_empty() { None } else { Some(note) };
-                finalize_session(
-                    unix_start,
-                    elapsed_secs,
-                    note,
-                    current_mode.get().into(),
-                );
+                let mode: meditate_core::SessionMode = current_mode.get().into();
+                // Resolve the active-mode label only when the
+                // master toggle is on — mirrors the GTK shell's
+                // `setup_selected_label_id`. Done-screen-side
+                // override (`done_selected_label_id` in GTK) lands
+                // alongside C-2's chooser screen; until then Save
+                // commits the Setup's resolved label.
+                let label_id = if read_label_active_for_mode(mode) {
+                    resolved_label_for_mode(mode).map(|(_, id)| id)
+                } else {
+                    None
+                };
+                finalize_session(unix_start, elapsed_secs, note, mode, label_id);
             }
             #[cfg(not(target_os = "android"))]
             let _ = current_mode.get();
@@ -440,10 +485,18 @@ fn build_ui() -> MainWindow {
             current_mode.set(new_mode);
             #[cfg(target_os = "android")]
             if let Some(ui) = weak.upgrade() {
-                ui.set_keep_awake_on(read_keep_awake_for_mode(new_mode.into()));
+                let core_mode: meditate_core::SessionMode = new_mode.into();
+                ui.set_keep_awake_on(read_keep_awake_for_mode(core_mode));
                 ui.set_cues_mode(signal_mode_to_chip_index(
-                    read_signal_mode_for_mode(new_mode.into()),
+                    read_signal_mode_for_mode(core_mode),
                 ));
+                ui.set_label_active(read_label_active_for_mode(core_mode));
+                ui.set_label_name(
+                    resolved_label_for_mode(core_mode)
+                        .map(|(name, _)| name)
+                        .unwrap_or_default()
+                        .into(),
+                );
             }
             // Touch the weak handle so the host build doesn't flag
             // it unused (the android-only block above is the sole
@@ -485,6 +538,26 @@ fn build_ui() -> MainWindow {
         });
     }
 
+    // Label master switch — persist the active flag per mode.
+    // Mirrors GTK's `connect_enable_expansion_notify` handler
+    // (which writes via `meditate_core::labels::persist_active_for_mode`).
+    {
+        let current_mode = current_mode.clone();
+        ui.on_label_active_toggled(move |value| {
+            #[cfg(target_os = "android")]
+            write_label_active_for_mode(current_mode.get().into(), value);
+            let _ = (current_mode.get(), value);
+        });
+    }
+
+    // Label inner-row tap — placeholder until the chooser screen
+    // ships next slice. Logs to diag so the wiring is observable;
+    // no UI change.
+    ui.on_label_tap(move || {
+        #[cfg(target_os = "android")]
+        meditate_core::log("ui.label_tap", "chooser screen pending (slice C-2)");
+    });
+
     // Discard tap: drop the pending session without writing a row,
     // then dismiss to Idle. Mirrors the GTK shell's `on_discard`.
     {
@@ -510,12 +583,18 @@ fn build_ui() -> MainWindow {
     // same properties via the `on_mode_changed` handler above.
     #[cfg(target_os = "android")]
     {
-        ui.set_keep_awake_on(read_keep_awake_for_mode(
-            current_mode.get().into(),
-        ));
+        let core_mode: meditate_core::SessionMode = current_mode.get().into();
+        ui.set_keep_awake_on(read_keep_awake_for_mode(core_mode));
         ui.set_cues_mode(signal_mode_to_chip_index(
-            read_signal_mode_for_mode(current_mode.get().into()),
+            read_signal_mode_for_mode(core_mode),
         ));
+        ui.set_label_active(read_label_active_for_mode(core_mode));
+        ui.set_label_name(
+            resolved_label_for_mode(core_mode)
+                .map(|(name, _)| name)
+                .unwrap_or_default()
+                .into(),
+        );
     }
 
     refresh(&ui, &state.borrow(), now_since_epoch());
@@ -597,6 +676,20 @@ fn open_database(android_app: &slint::android::AndroidApp) {
     let db_path = dir.join("meditate.db");
     let opened = match meditate_core::Database::open(&db_path) {
         Ok(db) => {
+            // Mirror the GTK shell's `Database::open` (in
+            // `meditate-gtk/src/db/mod.rs`): seed non-audio rows
+            // (default labels, presets, vibration patterns,
+            // box-breath phases) on every open. Idempotent —
+            // each seed gates on a `*_seeded` settings flag, so a
+            // user-deleted row stays deleted. Bell-sound seeding
+            // stays shell-side (Android bundles its own asset
+            // paths in phase 5).
+            if let Err(e) = db.seed_all_non_audio() {
+                meditate_core::log(
+                    "db.seed",
+                    &format!("seed_all_non_audio FAILED err={e:?}"),
+                );
+            }
             meditate_core::log("db.open", &format!("ok path={}", db_path.display()));
             Some(db)
         }
