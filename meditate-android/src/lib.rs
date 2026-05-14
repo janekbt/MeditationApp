@@ -5,6 +5,8 @@ mod service;
 slint::include_modules!();
 
 use app::AppState;
+#[cfg(target_os = "android")]
+use std::cell::Cell;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::OnceLock;
@@ -85,9 +87,68 @@ fn refresh(ui: &MainWindow, state: &AppState, now: Duration) {
     ui.set_running_page(state.is_running_page());
 }
 
+/// Snapshot of an in-flight session that the persistence layer needs
+/// at end time. `unix_start` is captured at the Idle/Finished → Active
+/// transition (mirrors the GTK shell's `session_start_time` cell);
+/// elapsed comes from the live core::Session and is captured BEFORE
+/// the AppState mutation drops the session.
+#[cfg(target_os = "android")]
+fn finalize_session(unix_start: i64, elapsed_secs: i64) {
+    if elapsed_secs <= 0 {
+        // Drop sessions that ended before any seconds elapsed —
+        // matches the GTK shell, which also filters zero-duration
+        // rows out of insert. Avoids noise in stats from accidental
+        // Start→Stop double-taps.
+        return;
+    }
+    let Some(db_arc) = DATABASE.get() else { return; };
+    let Ok(guard) = db_arc.lock() else { return; };
+    let Some(db) = guard.as_ref() else {
+        meditate_core::log(
+            "session.insert",
+            "skipped: db not open (open failed at startup)",
+        );
+        return;
+    };
+    let session = meditate_core::db::Session::from_unix(
+        unix_start,
+        elapsed_secs,
+        // Phase 2 will add a label picker; for Phase 1 every session
+        // lands unlabeled. Same goes for notes (no notes editor yet).
+        None,
+        None,
+        // Box Breath + Guided live behind their own Slint Setup mode
+        // chips — UI Phase 2 / Phase 5 work. Until they ship the only
+        // mode the shell can author is plain Timer.
+        meditate_core::SessionMode::Timer,
+        None,
+    );
+    match db.insert_session(&session) {
+        Ok(rowid) => meditate_core::log(
+            "session.insert",
+            &format!("ok rowid={rowid} duration_secs={elapsed_secs} start_unix={unix_start}"),
+        ),
+        Err(e) => meditate_core::log(
+            "session.insert",
+            &format!(
+                "FAILED err={e:?} duration_secs={elapsed_secs} start_unix={unix_start}"
+            ),
+        ),
+    }
+}
+
 fn build_ui() -> MainWindow {
     let ui = MainWindow::new().unwrap();
     let state = Rc::new(RefCell::new(AppState::idle()));
+    // Unix timestamp captured at session start, read+cleared at end.
+    // Mirrors the GTK shell's `Timer::session_start_time` cell.
+    // Holds None while idle; Some(unix_secs) while a session is
+    // in flight. The core::Session itself uses monotonic boot-time
+    // durations, so wall-clock start has to be carried separately.
+    // android-only — host has no DB to persist into, so we don't
+    // even allocate the cell on the desktop preview path.
+    #[cfg(target_os = "android")]
+    let session_start_unix: Rc<Cell<Option<i64>>> = Rc::new(Cell::new(None));
 
     // Seed the stepper-driven duration with the same default the
     // GTK shell opens at. The tick loop further down refreshes the
@@ -99,16 +160,27 @@ fn build_ui() -> MainWindow {
     {
         let weak = ui.as_weak();
         let state = state.clone();
+        #[cfg(target_os = "android")]
+        let session_start_unix = session_start_unix.clone();
         ui.on_action_tap(move || {
             let now = now_since_epoch();
             let Some(ui) = weak.upgrade() else { return; };
             let target = configured_duration(&ui);
             let mut s = state.borrow_mut();
+            // No live elapsed capture needed here: action_tap on Active
+            // pauses/resumes — both stay Active, so the session never
+            // ends through this path. Only Idle/Finished → Active
+            // matters for persistence wiring.
             let was_active = s.is_active();
             let next = std::mem::replace(&mut *s, AppState::idle())
                 .toggle(target, now);
             *s = next;
-            on_state_changed(was_active, s.is_active());
+            let is_active = s.is_active();
+            #[cfg(target_os = "android")]
+            if !was_active && is_active {
+                session_start_unix.set(Some(meditate_core::time::unix_now()));
+            }
+            on_state_changed(was_active, is_active);
             refresh(&ui, &s, now);
         });
     }
@@ -116,13 +188,31 @@ fn build_ui() -> MainWindow {
     {
         let weak = ui.as_weak();
         let state = state.clone();
+        #[cfg(target_os = "android")]
+        let session_start_unix = session_start_unix.clone();
         ui.on_stop_tap(move || {
+            let now = now_since_epoch();
             let mut s = state.borrow_mut();
+            // Capture elapsed BEFORE the mutation — AppState::stop
+            // returns Self::Idle and drops the core::Session, so we
+            // can't ask it for elapsed afterwards.
+            #[cfg(target_os = "android")]
+            let elapsed_secs = match &*s {
+                AppState::Active(session) => session.elapsed(now).as_secs() as i64,
+                _ => 0,
+            };
             let was_active = s.is_active();
             *s = std::mem::replace(&mut *s, AppState::idle()).stop();
-            on_state_changed(was_active, s.is_active());
+            let is_active = s.is_active();
+            #[cfg(target_os = "android")]
+            if was_active && !is_active {
+                if let Some(unix_start) = session_start_unix.take() {
+                    finalize_session(unix_start, elapsed_secs);
+                }
+            }
+            on_state_changed(was_active, is_active);
             if let Some(ui) = weak.upgrade() {
-                refresh(&ui, &s, now_since_epoch());
+                refresh(&ui, &s, now);
             }
         });
     }
@@ -148,16 +238,31 @@ fn build_ui() -> MainWindow {
     {
         let weak = ui.as_weak();
         let state = state.clone();
+        #[cfg(target_os = "android")]
+        let session_start_unix = session_start_unix.clone();
         timer.start(slint::TimerMode::Repeated, TICK, move || {
             let now = now_since_epoch();
             let mut s = state.borrow_mut();
             // Capture before/after active-state so an auto-finish
             // (Active → Finished on Overtime cross) tears down the
-            // foreground service. tick on an inactive state is a
-            // no-op, so the equality check is the cheap path.
+            // foreground service AND persists the session. tick on
+            // an inactive state is a no-op, so the equality check
+            // is the cheap path.
+            #[cfg(target_os = "android")]
+            let elapsed_secs = match &*s {
+                AppState::Active(session) => session.elapsed(now).as_secs() as i64,
+                _ => 0,
+            };
             let was_active = s.is_active();
             *s = std::mem::replace(&mut *s, AppState::idle()).tick(now);
-            on_state_changed(was_active, s.is_active());
+            let is_active = s.is_active();
+            #[cfg(target_os = "android")]
+            if was_active && !is_active {
+                if let Some(unix_start) = session_start_unix.take() {
+                    finalize_session(unix_start, elapsed_secs);
+                }
+            }
+            on_state_changed(was_active, is_active);
             if let Some(ui) = weak.upgrade() {
                 refresh(&ui, &s, now);
             }
