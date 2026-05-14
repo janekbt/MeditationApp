@@ -56,15 +56,37 @@ RUST_ANDROID_TARGETS=(
     "armv7-linux-androideabi"   # older 32-bit ARM, still common in F-Droid bug reports
     "x86_64-linux-android"      # emulator
 )
-# xbuild has no crates.io release. Pinning by git is best-effort —
-# bump XBUILD_GIT_REV to update. Empty string = use whatever is at
-# the default branch tip (less reproducible).
-XBUILD_GIT_URL="https://github.com/rust-mobile/xbuild.git"
-XBUILD_GIT_REV=""
+# xbuild has no crates.io release. Pinning by git URL + revision is
+# best-effort — bump XBUILD_GIT_REV to update.
+#
+# We currently track LAGonauta's fork on the `add-services-field`
+# branch (open PR #224 against upstream). Upstream xbuild's
+# AndroidManifest struct has no `<service>` element support; that
+# blocks declaring a foreground service in the manifest, which
+# meditate-android needs for the session-survives-screen-off path.
+# Revert XBUILD_GIT_URL to https://github.com/rust-mobile/xbuild.git
+# the day that PR merges. If the PR is closed without merging, we
+# either keep tracking the fork or roll our own with the same patch
+# (~20 lines on the manifest struct).
+XBUILD_GIT_URL="https://github.com/LAGonauta/xbuild.git"
+XBUILD_GIT_REV="d0a4afff21b7e0992f36a2cbaa01aebc0e5a7f7f"
+
+# Gradle + Kotlin: needed by xbuild's gradle pipeline (the only path
+# that supports custom AndroidManifest + Kotlin/Java sources, which
+# meditate-android needs for the foreground service in Phase 1). The
+# direct apk pipeline can't declare a <service>. Versions chosen to
+# match xbuild's templates (AGP 7.3, Kotlin Gradle plugin 1.7.20):
+# Gradle 8.5 is the latest line still compatible with that AGP; the
+# Kotlin compiler version itself is forward-compatible past 1.7 so we
+# pin a recent LTS-ish for a more cohesive CLI.
+PINNED_GRADLE="8.5"
+PINNED_KOTLIN="1.9.25"
 
 # ── Paths ────────────────────────────────────────────────────────────
 ANDROID_HOME="${HOME}/Android/Sdk"
 ANDROID_NDK_ROOT="${ANDROID_HOME}/ndk/${PINNED_NDK}"
+GRADLE_HOME="${HOME}/Android/gradle-${PINNED_GRADLE}"
+KOTLIN_HOME="${HOME}/Android/kotlinc-${PINNED_KOTLIN}"
 # JAVA_HOME is detected from the installed JDK package — see Step 1.
 JAVA_HOME=""
 ENV_FILE="${HOME}/.config/meditate-android/env.sh"
@@ -85,6 +107,8 @@ Installs the Android toolchain needed by the meditate-android crate:
 - Android SDK platform-${PINNED_API_LEVEL}, build-tools ${PINNED_BUILD_TOOLS}, NDK ${PINNED_NDK}
 - Rust targets: ${RUST_ANDROID_TARGETS[*]}
 - xbuild (cargo install from git: ${XBUILD_GIT_URL})
+- Gradle ${PINNED_GRADLE} (binary distribution from gradle.org)
+- Kotlin ${PINNED_KOTLIN} compiler (binary distribution from JetBrains)
 
 Writes:
 - ${ENV_FILE}                   (env vars, owned by this script)
@@ -277,7 +301,60 @@ else
     fi
 fi
 
-# ── Step 6: Optional emulator ────────────────────────────────────────
+# ── Step 6: Gradle ───────────────────────────────────────────────────
+# Debian's apt `gradle` package lags upstream by years (Debian 13
+# ships a 4.x), so we install the official binary distribution
+# straight from gradle.org. The download is ~150 MB; idempotent via
+# the presence check below.
+if [[ -x "${GRADLE_HOME}/bin/gradle" ]]; then
+    log "gradle already at ${GRADLE_HOME}"
+else
+    log "Downloading Gradle ${PINNED_GRADLE}"
+    mkdir -p "$(dirname "${GRADLE_HOME}")"
+    tmpzip="$(mktemp --suffix=.zip)"
+    trap 'rm -f "${tmpzip}"' EXIT
+    wget -q --show-progress -O "${tmpzip}" \
+        "https://services.gradle.org/distributions/gradle-${PINNED_GRADLE}-bin.zip"
+    # The zip unpacks as `gradle-<version>/...`, which matches our
+    # ${GRADLE_HOME} path layout (one tree per pinned version, so
+    # bumping the pin doesn't leave the previous install behind).
+    unzip -q "${tmpzip}" -d "$(dirname "${GRADLE_HOME}")"
+    rm -f "${tmpzip}"
+    trap - EXIT
+    if [[ ! -x "${GRADLE_HOME}/bin/gradle" ]]; then
+        echo "Gradle install at ${GRADLE_HOME} doesn't have bin/gradle — bailing." >&2
+        exit 1
+    fi
+fi
+
+# ── Step 7: Kotlin compiler ──────────────────────────────────────────
+# `x doctor` checks for a `kotlin` binary on PATH (not just the Gradle
+# Kotlin plugin), so we install JetBrains' standalone kotlin-compiler
+# release. Same idempotent pattern as cmdline-tools above.
+if [[ -x "${KOTLIN_HOME}/bin/kotlinc" ]]; then
+    log "kotlin already at ${KOTLIN_HOME}"
+else
+    log "Downloading Kotlin compiler ${PINNED_KOTLIN}"
+    mkdir -p "$(dirname "${KOTLIN_HOME}")"
+    tmpzip="$(mktemp --suffix=.zip)"
+    trap 'rm -f "${tmpzip}"' EXIT
+    wget -q --show-progress -O "${tmpzip}" \
+        "https://github.com/JetBrains/kotlin/releases/download/v${PINNED_KOTLIN}/kotlin-compiler-${PINNED_KOTLIN}.zip"
+    # The zip unpacks as `kotlinc/...`; rename to the versioned path
+    # so future version bumps don't collide.
+    tmpdir="$(mktemp -d)"
+    unzip -q "${tmpzip}" -d "${tmpdir}"
+    mv "${tmpdir}/kotlinc" "${KOTLIN_HOME}"
+    rm -rf "${tmpdir}"
+    rm -f "${tmpzip}"
+    trap - EXIT
+    if [[ ! -x "${KOTLIN_HOME}/bin/kotlinc" ]]; then
+        echo "Kotlin install at ${KOTLIN_HOME} doesn't have bin/kotlinc — bailing." >&2
+        exit 1
+    fi
+fi
+
+# ── Step 8: Optional emulator ────────────────────────────────────────
 if [[ "${WITH_EMULATOR}" -eq 1 ]]; then
     sdk_install_if_missing "emulator"
     sdk_install_if_missing "system-images;android-${PINNED_API_LEVEL};google_apis;x86_64"
@@ -294,7 +371,7 @@ if [[ "${WITH_EMULATOR}" -eq 1 ]]; then
     fi
 fi
 
-# ── Step 7: Env file + bashrc snippet ────────────────────────────────
+# ── Step 9: Env file + bashrc snippet ────────────────────────────────
 mkdir -p "$(dirname "${ENV_FILE}")"
 cat > "${ENV_FILE}" <<EOF
 # Generated by build-aux/setup-android.sh — DO NOT EDIT.
@@ -303,6 +380,8 @@ export JAVA_HOME="${JAVA_HOME}"
 export ANDROID_HOME="${ANDROID_HOME}"
 export ANDROID_SDK_ROOT="\${ANDROID_HOME}"   # legacy alias some tools still read
 export ANDROID_NDK_ROOT="${ANDROID_NDK_ROOT}"
+export GRADLE_HOME="${GRADLE_HOME}"
+export KOTLIN_HOME="${KOTLIN_HOME}"
 case ":\${PATH}:" in
     *":\${JAVA_HOME}/bin:"*) ;;
     *) export PATH="\${JAVA_HOME}/bin:\${PATH}" ;;
@@ -326,6 +405,19 @@ case ":\${PATH}:" in
     *":\${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt/linux-x86_64/bin:"*) ;;
     *) export PATH="\${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt/linux-x86_64/bin:\${PATH}" ;;
 esac
+# Gradle + Kotlin compiler. \`x doctor\` checks for both on PATH; the
+# gradle pipeline (the one that supports custom AndroidManifest +
+# Kotlin sources, which the foreground service needs) requires the
+# \`gradle\` binary, and the Kotlin Gradle plugin shells out to
+# \`kotlinc\` for IDE-style standalone invocations.
+case ":\${PATH}:" in
+    *":\${GRADLE_HOME}/bin:"*) ;;
+    *) export PATH="\${GRADLE_HOME}/bin:\${PATH}" ;;
+esac
+case ":\${PATH}:" in
+    *":\${KOTLIN_HOME}/bin:"*) ;;
+    *) export PATH="\${KOTLIN_HOME}/bin:\${PATH}" ;;
+esac
 EOF
 log "Wrote ${ENV_FILE}"
 
@@ -342,7 +434,7 @@ ${BASHRC_MARKER_END}
 EOF
 log "Updated ${BASHRC} (sources ${ENV_FILE})"
 
-# ── Step 8: Smoke test ───────────────────────────────────────────────
+# ── Step 10: Smoke test ──────────────────────────────────────────────
 # Source the env so this same shell sees the new PATH for the smoke.
 . "${ENV_FILE}"
 
@@ -353,6 +445,8 @@ printf '  adb      : '; adb --version | head -1
 printf '  ndk      : '; head -1 "${ANDROID_NDK_ROOT}/source.properties"
 printf '  rustup targets:\n'; rustup target list --installed | grep linux-android | sed 's/^/    - /'
 printf '  xbuild   : '; x --version 2>&1 || echo "not on PATH yet — open a new shell"
+printf '  gradle   : '; gradle --version 2>/dev/null | grep '^Gradle' || echo "not on PATH yet — open a new shell"
+printf '  kotlinc  : '; kotlinc -version 2>&1 | head -1 || echo "not on PATH yet — open a new shell"
 
 echo
 echo "════════════════════════════════════════════════════════════════════"
