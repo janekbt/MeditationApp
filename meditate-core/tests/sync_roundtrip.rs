@@ -433,3 +433,419 @@ fn custom_bell_sound_audio_file_round_trips_through_webdav() {
         "pulled audio bytes must match A's original");
 }
 
+// ── Scenario 5: last-writer-wins on a concurrent label rename ─────────────
+
+#[test]
+fn last_writer_wins_when_two_devices_rename_the_same_label() {
+    // Both devices have label X (after an initial sync). A renames
+    // first and pushes. B pulls — its lamport clock now observes
+    // A's rename ts. B then renames at a strictly higher ts and
+    // pushes. A pulls. The recompute_label query picks the
+    // MAX(lamport_ts, device_id) event, so B's rename must win on
+    // both devices' final state.
+    //
+    // The ping-pong (A push → B pull → B rename → B push → A pull)
+    // is what makes the outcome deterministic — without B observing
+    // A's ts first, both renames would land at the same local
+    // counter value and the winner would depend on device_id lex
+    // order, which is randomly generated per Database.
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let remote = FakeWebDav::new();
+
+    // Initial state: A creates the label, both devices converge.
+    let a = open_test_db(&tempdir, "device_a");
+    let label_rowid_a = a.insert_label("Original").expect("insert label");
+    let label_uuid = list_labels_from_db(&a)
+        .expect("list labels A")
+        .into_iter()
+        .find(|l| l.id == label_rowid_a)
+        .expect("label exists on A")
+        .uuid
+        .0;
+    sync_for(&a, &remote, &tempdir, "device_a").sync().expect("A initial sync");
+
+    let b = open_test_db(&tempdir, "device_b");
+    sync_for(&b, &remote, &tempdir, "device_b").sync().expect("B initial pull");
+    let label_rowid_b = list_labels_from_db(&b)
+        .expect("list labels B")
+        .into_iter()
+        .find(|l| l.uuid.0 == label_uuid)
+        .expect("label exists on B")
+        .id;
+
+    // A renames first, pushes.
+    a.update_label(label_rowid_a, "A-Wins")
+        .expect("A rename");
+    sync_for(&a, &remote, &tempdir, "device_a").push().expect("A push rename");
+
+    // B pulls A's rename — B's lamport clock advances past A's ts.
+    // Then B renames at a strictly higher ts and pushes.
+    sync_for(&b, &remote, &tempdir, "device_b").pull().expect("B pull A");
+    b.update_label(label_rowid_b, "B-Wins-Last")
+        .expect("B rename");
+    sync_for(&b, &remote, &tempdir, "device_b").push().expect("B push rename");
+
+    // A pulls B's later rename. Both devices must agree on "B-Wins-Last".
+    sync_for(&a, &remote, &tempdir, "device_a").pull().expect("A pull B");
+
+    let final_a = list_labels_from_db(&a)
+        .unwrap()
+        .into_iter()
+        .find(|l| l.uuid.0 == label_uuid)
+        .expect("label still on A");
+    let final_b = list_labels_from_db(&b)
+        .unwrap()
+        .into_iter()
+        .find(|l| l.uuid.0 == label_uuid)
+        .expect("label still on B");
+    assert_eq!(final_a.name, "B-Wins-Last",
+        "A's recompute must adopt B's higher-ts rename");
+    assert_eq!(final_b.name, "B-Wins-Last",
+        "B keeps its own rename");
+    assert_eq!(final_a.name, final_b.name,
+        "both devices converge");
+}
+
+// ── Scenario 6: wipe-and-recover (disaster recovery from remote) ──────────
+
+#[test]
+fn fresh_device_recovers_full_state_from_remote_via_sync() {
+    // Janek's documented disaster-recovery flow: a device's local
+    // DB is gone (uninstall + reinstall, factory reset, new phone).
+    // The fix is to open a fresh Database at a new path and call
+    // sync() — the remote event log + sound files must reconstruct
+    // everything the lost device used to have. This pins down the
+    // contract: opening on an empty path + one sync() = a working
+    // device.
+    //
+    // Touches every entity kind so a regression in one recompute_*
+    // surfaces here even if the others stay healthy.
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let remote = FakeWebDav::new();
+
+    // Source-of-truth device authors one row of each entity kind
+    // (plus a custom audio file) and pushes.
+    let source = open_test_db(&tempdir, "source");
+    let sounds_dir_source = tempdir.path().join("source").join("sounds");
+    std::fs::create_dir_all(&sounds_dir_source).expect("mkdir source sounds");
+
+    source.insert_label("Recovery-Test").expect("label");
+    source.insert_preset_with_uuid(
+        "aaaa1111-bbbb-2222-cccc-333333333333",
+        "Recovery preset",
+        SessionMode::Timer,
+        true,
+        r#"{"duration_min":15}"#,
+    )
+    .expect("preset");
+    source.insert_guided_file_with_uuid(
+        "bbbb1111-cccc-2222-dddd-444444444444",
+        "Recovery guided",
+        "guided/recovery.ogg",
+        420,
+        false,
+    )
+    .expect("guided file");
+    let pattern_uuid = source
+        .insert_vibration_pattern(
+            "Recovery pulse",
+            300,
+            &[0.0, 1.0, 0.5, 0.0],
+            ChartKind::Line,
+            false,
+        )
+        .expect("pattern");
+    let sound_uuid = "cccc1111-dddd-2222-eeee-555555555555";
+    let sound_filename = format!("{sound_uuid}.ogg");
+    let sound_bytes = b"<recovery-audio-bytes>".to_vec();
+    std::fs::write(sounds_dir_source.join(&sound_filename), &sound_bytes)
+        .expect("write source audio");
+    source.insert_bell_sound_with_uuid(
+        sound_uuid,
+        "Recovery chime",
+        &sound_filename,
+        false,
+        "audio/ogg",
+        BellSoundCategory::General,
+    )
+    .expect("bell sound");
+    source.insert_interval_bell(
+        IntervalBellKind::Interval,
+        7,
+        10,
+        sound_uuid,
+        &pattern_uuid,
+        SignalMode::Sound,
+    )
+    .expect("interval bell");
+    let source_label_rowid = list_labels_from_db(&source)
+        .unwrap()
+        .into_iter()
+        .find(|l| l.name == "Recovery-Test")
+        .unwrap()
+        .id;
+    source
+        .insert_session(&Session {
+            start_iso: "2026-04-30T09:00:00".into(),
+            duration_secs: 900,
+            label_id: Some(source_label_rowid),
+            notes: Some("recovery session".into()),
+            mode: SessionMode::Timer,
+            uuid: meditate_core::db::SessionUuid::new(""),
+            guided_file_uuid: None,
+        })
+        .expect("session");
+    sync_for(&source, &remote, &tempdir, "source")
+        .sync()
+        .expect("source push");
+
+    // Recovery device: brand-new DB path, brand-new sounds_dir,
+    // single sync() call.
+    let fresh = open_test_db(&tempdir, "fresh");
+    sync_for(&fresh, &remote, &tempdir, "fresh")
+        .sync()
+        .expect("fresh sync");
+
+    // Every authored entity must be present on the fresh device.
+    assert!(
+        list_labels_from_db(&fresh)
+            .unwrap()
+            .iter()
+            .any(|l| l.name == "Recovery-Test"),
+        "label recovered",
+    );
+    assert!(
+        list_presets_for_mode_from_db(&fresh, SessionMode::Timer)
+            .unwrap()
+            .iter()
+            .any(|p| p.name == "Recovery preset"),
+        "preset recovered",
+    );
+    assert!(
+        meditate_core::db::list_guided_files_from_db(&fresh)
+            .unwrap()
+            .iter()
+            .any(|g| g.name == "Recovery guided"),
+        "guided file recovered",
+    );
+    assert!(
+        meditate_core::db::list_vibration_patterns_from_db(&fresh)
+            .unwrap()
+            .iter()
+            .any(|p| p.name == "Recovery pulse"),
+        "vibration pattern recovered",
+    );
+    assert!(
+        fresh
+            .list_bell_sounds()
+            .unwrap()
+            .iter()
+            .any(|s| s.name == "Recovery chime"),
+        "bell sound row recovered",
+    );
+    assert!(
+        !fresh.list_interval_bells().unwrap().is_empty(),
+        "interval bell recovered",
+    );
+    let recovered_sessions = list_sessions_from_db(&fresh).unwrap();
+    assert_eq!(recovered_sessions.len(), 1, "session recovered");
+    let recovered_label_id = list_labels_from_db(&fresh)
+        .unwrap()
+        .into_iter()
+        .find(|l| l.name == "Recovery-Test")
+        .unwrap()
+        .id;
+    assert_eq!(
+        recovered_sessions[0].1.label_id,
+        Some(recovered_label_id),
+        "recovered session keeps its label link",
+    );
+
+    // The custom audio file must land in the fresh device's local
+    // sounds_dir — no audio file == bell rings silently.
+    let sounds_dir_fresh = tempdir.path().join("fresh").join("sounds");
+    let local_audio = sounds_dir_fresh.join(&sound_filename);
+    let pulled_bytes = std::fs::read(&local_audio).expect("audio file recovered");
+    assert_eq!(pulled_bytes, sound_bytes, "audio bytes match source");
+}
+
+// ── Scenario 7: session delete propagates across devices ──────────────────
+
+#[test]
+fn session_delete_on_a_propagates_to_b() {
+    // The shell's delete-session button has to actually remove the
+    // row on the user's other devices, not just the device they
+    // tapped on. A `session_delete` event is emitted, and
+    // recompute_session sees the delete is the MAX-ts event and
+    // tombstones the row on replay.
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let remote = FakeWebDav::new();
+
+    let a = open_test_db(&tempdir, "device_a");
+    let session_rowid = a
+        .insert_session(&Session {
+            start_iso: "2026-04-30T10:00:00".into(),
+            duration_secs: 600,
+            label_id: None,
+            notes: None,
+            mode: SessionMode::Timer,
+            uuid: meditate_core::db::SessionUuid::new(""),
+            guided_file_uuid: None,
+        })
+        .expect("insert session");
+    sync_for(&a, &remote, &tempdir, "device_a").sync().expect("A push");
+
+    // Confirm B sees the session after first sync — without this
+    // assertion a later "session gone" check would pass trivially
+    // even if the insert never reached B.
+    let b = open_test_db(&tempdir, "device_b");
+    sync_for(&b, &remote, &tempdir, "device_b").sync().expect("B initial pull");
+    assert_eq!(
+        list_sessions_from_db(&b).unwrap().len(),
+        1,
+        "session must land on B after first sync",
+    );
+
+    // A deletes, A pushes, B pulls. Session must be gone on B too.
+    a.delete_session(session_rowid).expect("A delete");
+    sync_for(&a, &remote, &tempdir, "device_a").push().expect("A push delete");
+    sync_for(&b, &remote, &tempdir, "device_b").pull().expect("B pull delete");
+
+    assert!(
+        list_sessions_from_db(&b).unwrap().is_empty(),
+        "session must be tombstoned on B",
+    );
+    // And A is unambiguously rid of it locally.
+    assert!(
+        list_sessions_from_db(&a).unwrap().is_empty(),
+        "session must be gone on A",
+    );
+}
+
+// ── Scenario 8: re-syncing with no local changes is a no-op ───────────────
+
+#[test]
+fn second_sync_with_no_local_changes_is_a_no_op() {
+    // A bug class to guard against: sync() emits new events on every
+    // call (re-inserting things it already knows about, or re-PUTing
+    // bundles unnecessarily). Either would mean the event log grows
+    // monotonically with sync calls regardless of user activity — a
+    // slow leak that eventually pushes past size caps.
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let remote = FakeWebDav::new();
+
+    let a = open_test_db(&tempdir, "device_a");
+    a.insert_label("Idempotency").expect("label");
+    a.insert_session(&Session {
+        start_iso: "2026-04-30T11:00:00".into(),
+        duration_secs: 300,
+        label_id: None,
+        notes: None,
+        mode: SessionMode::Timer,
+        uuid: meditate_core::db::SessionUuid::new(""),
+        guided_file_uuid: None,
+    })
+    .expect("session");
+
+    // First sync drains pending events and uploads the bundle.
+    sync_for(&a, &remote, &tempdir, "device_a").sync().expect("first sync");
+    let paths_after_first = remote.paths();
+    let pending_after_first = a.pending_events().expect("pending").len();
+    let labels_after_first = list_labels_from_db(&a).unwrap().len();
+    let sessions_after_first = list_sessions_from_db(&a).unwrap().len();
+
+    assert_eq!(pending_after_first, 0,
+        "first sync must clear the pending-events queue");
+
+    // Second sync with nothing changed locally.
+    sync_for(&a, &remote, &tempdir, "device_a").sync().expect("second sync");
+
+    assert_eq!(
+        a.pending_events().expect("pending").len(),
+        0,
+        "second sync must not emit any new outgoing events",
+    );
+    assert_eq!(
+        list_labels_from_db(&a).unwrap().len(),
+        labels_after_first,
+        "label count must not change across the no-op sync",
+    );
+    assert_eq!(
+        list_sessions_from_db(&a).unwrap().len(),
+        sessions_after_first,
+        "session count must not change across the no-op sync",
+    );
+    assert_eq!(
+        remote.paths(),
+        paths_after_first,
+        "remote file set must not grow on a no-op sync",
+    );
+}
+
+// ── Scenario 9: A → B → C transitive propagation ──────────────────────────
+
+#[test]
+fn label_from_a_reaches_c_via_b_through_the_shared_remote() {
+    // Confirms there's no "only my own events get rebroadcast" bug.
+    // A authors a label and pushes; B pulls + authors a preset
+    // referencing A's label uuid + pushes; C (which never spoke
+    // directly to A) should see both rows after a single sync(),
+    // with the preset's config_json still resolving to A's label
+    // UUID — proving B forwarded A's event when B pushed its own
+    // bundle.
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let remote = FakeWebDav::new();
+
+    // A authors + pushes a label.
+    let a = open_test_db(&tempdir, "device_a");
+    let a_label_rowid = a.insert_label("Shared-Across-Chain").expect("A label");
+    let label_uuid = list_labels_from_db(&a)
+        .unwrap()
+        .into_iter()
+        .find(|l| l.id == a_label_rowid)
+        .unwrap()
+        .uuid
+        .0;
+    sync_for(&a, &remote, &tempdir, "device_a").sync().expect("A sync");
+
+    // B pulls A's label, authors a preset referencing it, pushes.
+    let b = open_test_db(&tempdir, "device_b");
+    sync_for(&b, &remote, &tempdir, "device_b").sync().expect("B initial sync");
+    let preset_uuid = "cccc2222-dddd-3333-eeee-444444444444";
+    let preset_config = format!(r#"{{"label_uuid":"{}"}}"#, label_uuid);
+    b.insert_preset_with_uuid(
+        preset_uuid,
+        "B-authored",
+        SessionMode::Timer,
+        false,
+        &preset_config,
+    )
+    .expect("B preset");
+    sync_for(&b, &remote, &tempdir, "device_b").sync().expect("B push preset");
+
+    // C (which never talked to A) pulls everything via the remote.
+    let c = open_test_db(&tempdir, "device_c");
+    sync_for(&c, &remote, &tempdir, "device_c").sync().expect("C sync");
+
+    // A's label reached C even though A never directly synced after
+    // B's involvement — proving the bundle B pushed carried A's
+    // event forward.
+    assert!(
+        list_labels_from_db(&c)
+            .unwrap()
+            .iter()
+            .any(|l| l.uuid.0 == label_uuid && l.name == "Shared-Across-Chain"),
+        "A's label must reach C via B's pushed bundle",
+    );
+    // B's preset reached C, AND its embedded label_uuid still
+    // matches A's label — so the cross-device link is intact.
+    let c_preset = list_presets_for_mode_from_db(&c, SessionMode::Timer)
+        .unwrap()
+        .into_iter()
+        .find(|p| p.uuid.0 == preset_uuid)
+        .expect("B's preset reaches C");
+    assert!(
+        c_preset.config_json.contains(&label_uuid),
+        "preset config_json must still resolve to A's label UUID on C",
+    );
+}

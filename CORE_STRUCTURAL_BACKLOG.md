@@ -299,15 +299,6 @@ Re-evaluate each individually if a touching commit lands nearby:
 - Fix: add `proptest` dev-dep; one property for sync replay
   invariance.
 
-### Operational: recovery flow has no integration test from user POV
-- `wipe_local_event_log` is unit-tested at `db.rs:7534`
-  (and the Tier-0 subset-bug it ships with is in backlog).
-  But the **recovery flow** (wipe → sync → pull → reach
-  steady state) only exists in `recovery_dialog.rs` glue
-  with no test.
-- Fix: integration test driving the full sequence against
-  a `FakeWebDav`.
-
 ### Operational: wall-clock test timing in `time.rs:114,138`
 - Two tests sleep 10 ms / 1 s and assert `>= 5 ms` /
   monotonic. On a loaded CI runner the 5 ms assertion is

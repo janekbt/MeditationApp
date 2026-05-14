@@ -22,14 +22,12 @@ impl FakeWebDav {
 
     /// Test helper: how many files are currently stored, regardless of
     /// path. Useful for "X events are visible on the remote" assertions.
-    #[allow(dead_code)]
     pub fn file_count(&self) -> usize {
         self.files.lock().unwrap().len()
     }
 
     /// Test helper: list every stored path. Sorted for deterministic
     /// assertions.
-    #[allow(dead_code)]
     pub fn paths(&self) -> Vec<String> {
         let mut v: Vec<String> = self.files.lock().unwrap().keys().cloned().collect();
         v.sort();
