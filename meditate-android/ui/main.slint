@@ -13,14 +13,21 @@ import {
     SegmentedButton, Switch, IconButton, TextField, NavigationBar,
     AppBar,
     MaterialPalette,
+    DatePickerPopup, DatePickerAdapter,
+    TimePickerPopup, Time,
 } from "@material";
+// `Date` isn't re-exported through `material.slint` (unlike its
+// sibling `Time`); import it directly from the picker module so
+// `edit-start-date` and the popup's `accepted(date)` callback can
+// type-check.
+import { Date } from "../material-1.0/ui/components/date_picker.slint";
 // Icons aren't re-exported through the `@material` alias the
 // Material library registers; import the global directly so the
 // chooser's check + back-arrow can render proper SVGs instead of
 // fallback Unicode glyphs (the system font on Android 15 doesn't
 // carry ✓, which rendered as a tofu box).
 import { Icons } from "../material-1.0/ui/icons/icons.slint";
-export { MaterialWindowAdapter } from "@material";
+export { MaterialWindowAdapter, DatePickerAdapter } from "@material";
 
 // One session card row in the Log feed. Mirrors GTK's
 // `build_card` content (`meditate-gtk/src/log/imp.rs:362`):
@@ -157,8 +164,12 @@ component VerticalSpinBox {
 
 // Single tap-to-open Duration row, mirroring the GTK Adw.ActionRow
 // with title + value suffix + chevron. The whole row is the touch
-// target.
+// target. The default `label` keeps existing callers (Setup
+// screen's Duration row) compiling unchanged; the Edit-Session
+// overlay overrides it to render Date / Time rows with the same
+// shape.
 component DurationRow inherits Rectangle {
+    in property <string> label: "Duration";
     in property <string> value-text;
     in property <bool> enabled: true;
     callback tapped;
@@ -188,7 +199,7 @@ component DurationRow inherits Rectangle {
         alignment: stretch;
 
         Text {
-            text: "Duration";
+            text: root.label;
             font-size: 16px;
             color: MaterialPalette.on-surface;
             vertical-alignment: center;
@@ -889,6 +900,18 @@ export component MainWindow inherits Window {
     // (Hours 0-23, Minutes 0-59).
     in-out property <int> edit-duration-hours: 0;
     in-out property <int> edit-duration-minutes: 0;
+    // Start-time fields (L-4c). Rust decomposes the tapped
+    // session's `start_time` (unix seconds, local-tz interpreted)
+    // into a `Date { year, month, day }` and a `Time { hour,
+    // minute }` on card-tap; the Material DatePickerPopup +
+    // TimePickerPopup write back to these on accept, and the
+    // Save handler recomposes a unix timestamp via chrono's
+    // `Local.with_ymd_and_hms`. Defaults are the chrono epoch /
+    // midnight so the picker has *some* date when the overlay
+    // opens before Rust populates them (defensive — card-tap
+    // always overwrites before user-visible).
+    in-out property <Date> edit-start-date: { year: 2026, month: 1, day: 1 };
+    in-out property <Time> edit-start-time: { hour: 0, minute: 0 };
     callback card-tap(int);
     callback edit-cancel-tap();
     callback edit-save-tap();
@@ -2299,6 +2322,7 @@ export component MainWindow inherits Window {
             // edit-duration-* instead of setup-*.
             BoxedList {
                 DurationRow {
+                    label: "Duration";
                     value-text: root.edit-duration-hours + "h "
                         + root.edit-duration-minutes + "m";
                     tapped => {
@@ -2306,6 +2330,34 @@ export component MainWindow inherits Window {
                         root.dialog-minutes = root.edit-duration-minutes;
                         root.duration-dialog-open = true;
                     }
+                }
+            }
+
+            // Start time group (L-4c). Two rows reusing
+            // `DurationRow`'s shape (label + value + chevron):
+            // Date opens Material's `DatePickerPopup`, Time opens
+            // `TimePickerPopup`. Mirrors GTK's "Start time"
+            // PreferencesGroup at `log/imp.rs:959` (Date row +
+            // Hour SpinRow + Minute SpinRow); the Material popups
+            // collapse Hour/Minute into a single picker.
+            BoxedList {
+                DurationRow {
+                    label: "Date";
+                    value-text: root.edit-start-date.year + "-"
+                        + (root.edit-start-date.month < 10 ? "0" : "") + root.edit-start-date.month + "-"
+                        + (root.edit-start-date.day < 10 ? "0" : "") + root.edit-start-date.day;
+                    tapped => { date-popup.show(); }
+                }
+                Rectangle {
+                    height: 1px;
+                    background: MaterialPalette.outline-variant;
+                }
+                DurationRow {
+                    label: "Time";
+                    value-text:
+                        (root.edit-start-time.hour < 10 ? "0" : "") + root.edit-start-time.hour + ":"
+                        + (root.edit-start-time.minute < 10 ? "0" : "") + root.edit-start-time.minute;
+                    tapped => { time-popup.show(); }
                 }
             }
 
@@ -2422,6 +2474,43 @@ export component MainWindow inherits Window {
                     }
                 }
             }
+        }
+    }
+
+    // ── Date + Time pickers (Material PopupWindows) ─────────────
+    // Imperative show / close, driven from the Edit-Session
+    // overlay's Date / Time row tap handlers. PopupWindows live
+    // at the root so they pop above everything (Slint's
+    // PopupWindow handles its own z-order separately from the
+    // child-order rule that other overlays follow).
+    // Explicit width/height: Material's PopupWindow components
+    // rely on their inner `BaseDialog`/`Modal` layout to size them
+    // via `layout_info.preferred`. On the Slint Android backend
+    // (no native top-level popups, ChildWindow fallback) the
+    // chain collapses to a 0x0 popup, which renders nothing but
+    // still consumes focus — match the popup to the full window
+    // so the inner centred Modal renders correctly.
+    date-popup := DatePickerPopup {
+        width: root.width;
+        height: root.height;
+        title: "Select session date";
+        date: root.edit-start-date;
+        accepted(date) => {
+            root.edit-start-date = date;
+            date-popup.close();
+        }
+        canceled => { date-popup.close(); }
+    }
+
+    time-popup := TimePickerPopup {
+        width: root.width;
+        height: root.height;
+        title: "Select session time";
+        use_24_hour_format: true;
+        time: root.edit-start-time;
+        ok => {
+            root.edit-start-time = time-popup.get_current_time();
+            time-popup.close();
         }
     }
 

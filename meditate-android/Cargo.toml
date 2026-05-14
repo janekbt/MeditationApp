@@ -40,6 +40,15 @@ slint = { version = "1.13", features = ["backend-android-activity-06"] }
 # turn meditate-core into a maintenance burden.
 meditate-core = { path = "../meditate-core" }
 
+# chrono: date arithmetic for the Material DatePickerAdapter
+# wiring (Edit-Session start-time editor). `default-features = false`
+# strips clock/now and the std-only "Format" path that pulls in
+# `iana-time-zone` — we get NaiveDate's day-count / parse / format
+# helpers without the timezone-DB churn. `clock` is re-enabled
+# explicitly because the adapter's `date_now` callback needs
+# `chrono::Local::now()` to seed the picker on first open.
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
 # jni: thin wrapper over Android's JNI for calling the Kotlin
 # MeditateSessionService.start/stop static methods from Rust. Only
 # linked on android-targets via the cfg gate in `src/service.rs`;

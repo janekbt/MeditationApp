@@ -1100,8 +1100,88 @@ fn finalize_session(
     }
 }
 
+/// Wire the six callbacks Material's `DatePickerAdapter` global
+/// expects. All implemented in terms of chrono::NaiveDate so the
+/// picker renders the same calendar grid GTK gives us (Sunday-
+/// first headers, locale-aware month names via strftime).
+#[cfg(target_os = "android")]
+fn wire_date_picker_adapter(ui: &MainWindow) {
+    use chrono::{Datelike, Local, NaiveDate};
+    use slint::ComponentHandle;
+
+    let adapter = ui.global::<DatePickerAdapter>();
+
+    adapter.on_month_day_count(|month, year| {
+        // Last day of month = (1st of next month) − 1 day.
+        let (ny, nm) = if month >= 12 {
+            (year + 1, 1)
+        } else {
+            (year, month + 1)
+        };
+        let first_next = NaiveDate::from_ymd_opt(ny, nm as u32, 1);
+        let first_this = NaiveDate::from_ymd_opt(year, month as u32, 1);
+        match (first_this, first_next) {
+            (Some(a), Some(b)) => b.signed_duration_since(a).num_days() as i32,
+            // Defensive: any out-of-range input falls back to 30
+            // so the calendar grid still renders.
+            _ => 30,
+        }
+    });
+
+    adapter.on_month_offset(|month, year| {
+        // Day-of-week of the 1st of the month, Sunday-indexed
+        // (0=Sun..6=Sat) to match the header row Material's
+        // calendar renders.
+        NaiveDate::from_ymd_opt(year, month as u32, 1)
+            .map(|d| d.weekday().num_days_from_sunday() as i32)
+            .unwrap_or(0)
+    });
+
+    adapter.on_format_date(|format, day, month, year| {
+        NaiveDate::from_ymd_opt(year, month as u32, day as u32)
+            .map(|d| d.format(format.as_str()).to_string())
+            .unwrap_or_default()
+            .into()
+    });
+
+    adapter.on_parse_date(|date, format| {
+        // Returns [day, month, year] on success, empty on parse
+        // failure. Material's input handler reads `.length == 3`
+        // as "valid parse" so an empty Vec signals invalid.
+        let parsed = NaiveDate::parse_from_str(date.as_str(), format.as_str())
+            .ok()
+            .map(|d| vec![d.day() as i32, d.month() as i32, d.year()])
+            .unwrap_or_default();
+        std::rc::Rc::new(slint::VecModel::from(parsed)).into()
+    });
+
+    adapter.on_valid_date(|date, format| {
+        NaiveDate::parse_from_str(date.as_str(), format.as_str()).is_ok()
+    });
+
+    adapter.on_date_now(|| {
+        let today = Local::now().date_naive();
+        std::rc::Rc::new(slint::VecModel::from(vec![
+            today.day() as i32,
+            today.month() as i32,
+            today.year(),
+        ]))
+        .into()
+    });
+}
+
 fn build_ui() -> MainWindow {
     let ui = MainWindow::new().unwrap();
+
+    // Wire Material's DatePickerAdapter globals (L-4c). The
+    // calendar widget calls these six pure callbacks to compute
+    // month-day-counts, render headers, and parse / format the
+    // text input. All six are stateless arithmetic over
+    // `chrono::NaiveDate`; the picker treats them as `pure` and
+    // can re-invoke arbitrarily.
+    #[cfg(target_os = "android")]
+    wire_date_picker_adapter(&ui);
+
     let state = Rc::new(RefCell::new(AppState::idle()));
     // Active mode chip — drives both the Setup body content and
     // the `SessionMode` recorded on Save. Defaults to Timer at
@@ -2203,6 +2283,7 @@ fn build_ui() -> MainWindow {
         ui.on_card_tap(move |rowid| {
             #[cfg(target_os = "android")]
             {
+                use chrono::{Datelike, Local, TimeZone, Timelike};
                 let Some(ui) = weak.upgrade() else { return; };
                 let id = rowid as i64;
                 let session = loaded_log_sessions
@@ -2218,6 +2299,23 @@ fn build_ui() -> MainWindow {
                 let total = session.duration_secs as i64;
                 ui.set_edit_duration_hours((total / 3600) as i32);
                 ui.set_edit_duration_minutes(((total % 3600) / 60) as i32);
+                // Decompose the session's unix start into a local
+                // Date + Time so the Material pickers seed with
+                // the user's wall-clock view of the session start.
+                let dt = Local
+                    .timestamp_opt(session.start_unix(), 0)
+                    .single()
+                    .unwrap_or_else(|| Local::now());
+                ui.set_edit_start_date(Date {
+                    year: dt.year(),
+                    month: dt.month() as i32,
+                    day: dt.day() as i32,
+                });
+                ui.set_edit_start_time(Time {
+                    hour: dt.hour() as i32,
+                    minute: dt.minute() as i32,
+                    second: dt.second() as i32,
+                });
                 ui.set_edit_session_page(true);
             }
             let _ = (weak.clone(), rowid);
@@ -2291,6 +2389,30 @@ fn build_ui() -> MainWindow {
                 let hours = ui.get_edit_duration_hours().max(0) as i64;
                 let mins = ui.get_edit_duration_minutes().max(0) as i64;
                 session.duration_secs = (hours * 3600 + mins * 60).max(0) as u32;
+                // Recompose start_time from the picker outputs.
+                // Falls back to the original `start_unix` if the
+                // user-edited Date / Time can't be turned into a
+                // valid Local moment (e.g., a date inside a DST
+                // gap). Mirrors GTK's `glib::DateTime::new(...)
+                // .map_or_else(unix_now, |d| d.to_unix())` at
+                // `log/imp.rs:1072`.
+                use chrono::{Local, TimeZone};
+                let d = ui.get_edit_start_date();
+                let t = ui.get_edit_start_time();
+                let new_start_unix = Local
+                    .with_ymd_and_hms(
+                        d.year,
+                        d.month as u32,
+                        d.day as u32,
+                        t.hour as u32,
+                        t.minute as u32,
+                        t.second as u32,
+                    )
+                    .single()
+                    .map(|dt| dt.timestamp())
+                    .unwrap_or_else(|| session.start_unix());
+                session.start_iso =
+                    meditate_core::time::unix_to_local_iso(new_start_unix);
                 if let Some(db_arc) = DATABASE.get() {
                     if let Ok(guard) = db_arc.lock() {
                         if let Some(db) = guard.as_ref() {
