@@ -108,16 +108,19 @@ impl AppState {
     }
 
     /// Primary action: Start / Pause / Resume / Restart depending
-    /// on current state. `total` is consulted only when starting a
+    /// on current state. `shape` is consulted only when starting a
     /// fresh session; pause/resume ignore it (Session already
-    /// remembers its target).
-    pub fn toggle(self, total: Duration, now: Duration) -> Self {
+    /// remembers its shape). The shell picks the variant based on
+    /// the active mode chip plus the Stopwatch-Mode switch — Timer
+    /// + stopwatch-off → `TimerCountdown`; Timer + stopwatch-on →
+    /// `TimerStopwatch`; etc. Keeping shape construction shell-side
+    /// matches the GTK shell's `on_start` (it builds the right
+    /// `CoreSessionShape` from `current_mode()` + `stopwatch_toggle_on`).
+    pub fn toggle(self, shape: SessionShape, now: Duration) -> Self {
         match self {
             Self::Idle | Self::Finished => {
                 let settings = SessionSettings {
-                    shape: SessionShape::TimerCountdown {
-                        target_secs: total.as_secs() as u32,
-                    },
+                    shape,
                     ..Default::default()
                 };
                 Self::Active(Box::new(Session::start_running(settings, now)))
@@ -228,18 +231,29 @@ impl AppState {
     /// Big hero-label text. Setup shows `HH:MM` of the configured
     /// target (matching the GTK shell's `idle_hero_label` —
     /// minute-precision since the user authors duration in minutes).
-    /// Running / Paused / Finished show `MM:SS` (or `HH:MM:SS` past
-    /// the hour) of the live remaining time, ceiling-rounded so
-    /// "10:00" doesn't flicker to "09:59" on the first sub-second
-    /// tick. The format pick mirrors core's
-    /// `format::idle_hero_label` + `format::format_time` split, so
-    /// both shells render identical strings for identical state.
-    pub fn hero_label(&self, total: Duration, now: Duration) -> String {
+    /// Stopwatch-on flips the Idle readout to `00:00` so the
+    /// stopwatch's count-up starts visibly from zero — mirrors GTK's
+    /// `refresh_stopwatch_dependent_ui` comment "stopwatch flips the
+    /// hero between 00:00 and the mode's target reading in every
+    /// mode". Running / Paused / Finished show `MM:SS` (or
+    /// `HH:MM:SS` past the hour) of the live remaining-or-elapsed
+    /// time — `Session::display_secs` handles the count-up vs
+    /// count-down branch per shape variant, so this layer can stay
+    /// shape-agnostic.
+    pub fn hero_label(&self, total: Duration, now: Duration, stopwatch_on: bool) -> String {
         match self {
-            Self::Idle => format_hhmm(total.as_secs() as u32),
+            Self::Idle => {
+                if stopwatch_on {
+                    format_time(Duration::ZERO)
+                } else {
+                    format_hhmm(total.as_secs() as u32)
+                }
+            }
             Self::Active(s) => {
-                // Session's `display_secs` is the canonical ceiling-
-                // rounded readout — same value the GTK shell renders.
+                // Session's `display_secs` is the canonical readout —
+                // ceiling-rounded remaining for countdowns, floor-
+                // rounded elapsed for stopwatches. Same value the
+                // GTK shell renders.
                 format_time(Duration::from_secs(s.display_secs(now)))
             }
             Self::Finished => format_time(Duration::ZERO),
@@ -296,7 +310,7 @@ mod tests {
         // (MM:SS) so 1h 10m read as "70:00".
         let s = AppState::idle();
         assert_eq!(
-            s.hero_label(Duration::from_secs(10 * 60), Duration::ZERO),
+            s.hero_label(Duration::from_secs(10 * 60), Duration::ZERO, false),
             "00:10",
         );
     }
@@ -306,7 +320,7 @@ mod tests {
         // 1h 10m → "01:10", not "70:00".
         let s = AppState::idle();
         assert_eq!(
-            s.hero_label(Duration::from_secs(70 * 60), Duration::ZERO),
+            s.hero_label(Duration::from_secs(70 * 60), Duration::ZERO, false),
             "01:10",
         );
     }
@@ -315,7 +329,7 @@ mod tests {
     fn hero_label_idle_three_hours_renders_as_three_zero_zero() {
         let s = AppState::idle();
         assert_eq!(
-            s.hero_label(Duration::from_secs(3 * 3600), Duration::ZERO),
+            s.hero_label(Duration::from_secs(3 * 3600), Duration::ZERO, false),
             "03:00",
         );
     }
@@ -324,7 +338,7 @@ mod tests {
     fn hero_label_finished_is_double_zero() {
         let s = AppState::Finished;
         assert_eq!(
-            s.hero_label(Duration::from_secs(600), Duration::ZERO),
+            s.hero_label(Duration::from_secs(600), Duration::ZERO, false),
             "00:00",
         );
     }
@@ -335,10 +349,34 @@ mod tests {
         // ceiling-remaining (Session does the ceiling-rounding).
         // format_time picks MM:SS since remaining is under an hour.
         let s = AppState::idle().toggle(
-            Duration::from_secs(10 * 60),
+            timer_countdown(Duration::from_secs(10 * 60)),
             Duration::from_secs(100),
         );
-        assert_eq!(s.hero_label(Duration::ZERO, Duration::from_secs(200)), "08:20");
+        assert_eq!(s.hero_label(Duration::ZERO, Duration::from_secs(200), false), "08:20");
+    }
+
+    #[test]
+    fn hero_label_idle_with_stopwatch_on_renders_zero() {
+        // Stopwatch flips the Idle hero from "configured target" to
+        // "00:00" — matches the GTK shell's
+        // `refresh_stopwatch_dependent_ui` comment ("stopwatch flips
+        // the hero between 00:00 and the mode's target reading").
+        let s = AppState::idle();
+        assert_eq!(
+            s.hero_label(Duration::from_secs(10 * 60), Duration::ZERO, true),
+            "00:00",
+        );
+    }
+
+    #[test]
+    fn hero_label_running_stopwatch_counts_up() {
+        // 50s into a TimerStopwatch session, hero shows "00:50".
+        let shape = SessionShape::TimerStopwatch;
+        let s = AppState::idle().toggle(shape, Duration::from_secs(100));
+        assert_eq!(
+            s.hero_label(Duration::ZERO, Duration::from_secs(150), true),
+            "00:50",
+        );
     }
 
     #[test]
@@ -346,10 +384,10 @@ mod tests {
         // 90-min session at t=0 viewed at t=1 → 1:29:59 remaining,
         // so the hero must use HH:MM:SS format.
         let s = AppState::idle().toggle(
-            Duration::from_secs(90 * 60),
+            timer_countdown(Duration::from_secs(90 * 60)),
             Duration::ZERO,
         );
-        assert_eq!(s.hero_label(Duration::ZERO, Duration::from_secs(1)), "01:29:59");
+        assert_eq!(s.hero_label(Duration::ZERO, Duration::from_secs(1), false), "01:29:59");
     }
 
     // (Legacy `format_mmss` tests dropped — the readout now flows
@@ -363,6 +401,14 @@ mod tests {
         Duration::from_secs(600)
     }
 
+    /// Test helper: a Timer-countdown shape with the given target
+    /// seconds. Mirrors how the gtk + android shells build settings
+    /// before calling `toggle` — extracted so test bodies stay
+    /// focused on the state-machine assertion they're making.
+    fn timer_countdown(target: Duration) -> SessionShape {
+        SessionShape::TimerCountdown { target_secs: target.as_secs() as u32 }
+    }
+
     #[test]
     fn fresh_state_is_idle() {
         assert!(AppState::idle().is_idle());
@@ -370,30 +416,30 @@ mod tests {
 
     #[test]
     fn toggle_from_idle_starts_running() {
-        let s = AppState::idle().toggle(ten_minutes(), Duration::from_secs(100));
+        let s = AppState::idle().toggle(timer_countdown(ten_minutes()), Duration::from_secs(100));
         assert!(s.is_running());
     }
 
     #[test]
     fn toggle_from_running_pauses() {
         let s = AppState::idle()
-            .toggle(ten_minutes(), Duration::from_secs(100))
-            .toggle(ten_minutes(), Duration::from_secs(110));
+            .toggle(timer_countdown(ten_minutes()), Duration::from_secs(100))
+            .toggle(timer_countdown(ten_minutes()), Duration::from_secs(110));
         assert!(s.is_paused());
     }
 
     #[test]
     fn toggle_from_paused_resumes() {
         let s = AppState::idle()
-            .toggle(ten_minutes(), Duration::from_secs(100))
-            .toggle(ten_minutes(), Duration::from_secs(110))
-            .toggle(ten_minutes(), Duration::from_secs(150));
+            .toggle(timer_countdown(ten_minutes()), Duration::from_secs(100))
+            .toggle(timer_countdown(ten_minutes()), Duration::from_secs(110))
+            .toggle(timer_countdown(ten_minutes()), Duration::from_secs(150));
         assert!(s.is_running());
     }
 
     #[test]
     fn toggle_from_finished_starts_a_fresh_countdown() {
-        let s = AppState::Finished.toggle(ten_minutes(), Duration::from_secs(100));
+        let s = AppState::Finished.toggle(timer_countdown(ten_minutes()), Duration::from_secs(100));
         assert!(s.is_running());
         // And the countdown is brand new — full duration remaining.
         assert_eq!(s.remaining(ten_minutes(), Duration::from_secs(100)), ten_minutes());
@@ -407,7 +453,7 @@ mod tests {
     #[test]
     fn stop_from_running_advances_to_finished() {
         let s = AppState::idle()
-            .toggle(ten_minutes(), Duration::from_secs(100))
+            .toggle(timer_countdown(ten_minutes()), Duration::from_secs(100))
             .stop();
         assert!(s.is_finished());
     }
@@ -415,8 +461,8 @@ mod tests {
     #[test]
     fn stop_from_paused_advances_to_finished() {
         let s = AppState::idle()
-            .toggle(ten_minutes(), Duration::from_secs(100))
-            .toggle(ten_minutes(), Duration::from_secs(110))
+            .toggle(timer_countdown(ten_minutes()), Duration::from_secs(100))
+            .toggle(timer_countdown(ten_minutes()), Duration::from_secs(110))
             .stop();
         assert!(s.is_finished());
     }
@@ -447,7 +493,7 @@ mod tests {
         // the Done screen is up, so Active passthrough is the
         // defensive case.
         let s = AppState::idle()
-            .toggle(ten_minutes(), Duration::from_secs(100))
+            .toggle(timer_countdown(ten_minutes()), Duration::from_secs(100))
             .dismiss();
         assert!(s.is_running());
     }
@@ -457,7 +503,7 @@ mod tests {
     #[test]
     fn tick_running_at_remaining_zero_advances_to_finished() {
         let s = AppState::idle()
-            .toggle(Duration::from_secs(60), Duration::from_secs(100))
+            .toggle(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100))
             .tick(Duration::from_secs(160));
         assert!(s.is_finished());
     }
@@ -465,7 +511,7 @@ mod tests {
     #[test]
     fn tick_running_with_time_left_stays_running() {
         let s = AppState::idle()
-            .toggle(ten_minutes(), Duration::from_secs(100))
+            .toggle(timer_countdown(ten_minutes()), Duration::from_secs(100))
             .tick(Duration::from_secs(150));
         assert!(s.is_running());
     }
@@ -480,8 +526,8 @@ mod tests {
         // Even if `now` is way past total, a paused countdown's
         // remaining is frozen — it must not auto-advance to Finished.
         let s = AppState::idle()
-            .toggle(Duration::from_secs(60), Duration::from_secs(100))
-            .toggle(Duration::from_secs(60), Duration::from_secs(110))
+            .toggle(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100))
+            .toggle(timer_countdown(Duration::from_secs(60)), Duration::from_secs(110))
             .tick(Duration::from_secs(9999));
         assert!(s.is_paused());
     }
@@ -511,7 +557,7 @@ mod tests {
 
     #[test]
     fn remaining_running_decrements_with_now() {
-        let s = AppState::idle().toggle(ten_minutes(), Duration::from_secs(100));
+        let s = AppState::idle().toggle(timer_countdown(ten_minutes()), Duration::from_secs(100));
         assert_eq!(
             s.remaining(ten_minutes(), Duration::from_secs(150)),
             Duration::from_secs(550)
@@ -521,8 +567,8 @@ mod tests {
     #[test]
     fn remaining_paused_freezes_at_pause_moment() {
         let s = AppState::idle()
-            .toggle(ten_minutes(), Duration::from_secs(100))
-            .toggle(ten_minutes(), Duration::from_secs(150));
+            .toggle(timer_countdown(ten_minutes()), Duration::from_secs(100))
+            .toggle(timer_countdown(ten_minutes()), Duration::from_secs(150));
         // 50s elapsed before pause — remaining at any later `now`
         // should still be 600 - 50 = 550s.
         assert_eq!(
@@ -540,15 +586,15 @@ mod tests {
 
     #[test]
     fn primary_label_running() {
-        let s = AppState::idle().toggle(ten_minutes(), Duration::from_secs(0));
+        let s = AppState::idle().toggle(timer_countdown(ten_minutes()), Duration::from_secs(0));
         assert_eq!(s.primary_label(), "Pause");
     }
 
     #[test]
     fn primary_label_paused() {
         let s = AppState::idle()
-            .toggle(ten_minutes(), Duration::from_secs(0))
-            .toggle(ten_minutes(), Duration::from_secs(10));
+            .toggle(timer_countdown(ten_minutes()), Duration::from_secs(0))
+            .toggle(timer_countdown(ten_minutes()), Duration::from_secs(10));
         assert_eq!(s.primary_label(), "Resume");
     }
 
@@ -564,15 +610,15 @@ mod tests {
 
     #[test]
     fn can_stop_running_true() {
-        let s = AppState::idle().toggle(ten_minutes(), Duration::from_secs(0));
+        let s = AppState::idle().toggle(timer_countdown(ten_minutes()), Duration::from_secs(0));
         assert!(s.can_stop());
     }
 
     #[test]
     fn can_stop_paused_true() {
         let s = AppState::idle()
-            .toggle(ten_minutes(), Duration::from_secs(0))
-            .toggle(ten_minutes(), Duration::from_secs(10));
+            .toggle(timer_countdown(ten_minutes()), Duration::from_secs(0))
+            .toggle(timer_countdown(ten_minutes()), Duration::from_secs(10));
         assert!(s.can_stop());
     }
 
@@ -589,7 +635,7 @@ mod tests {
 
     #[test]
     fn is_running_page_running_true() {
-        let s = AppState::idle().toggle(ten_minutes(), Duration::from_secs(0));
+        let s = AppState::idle().toggle(timer_countdown(ten_minutes()), Duration::from_secs(0));
         assert!(s.is_running_page());
     }
 
@@ -613,7 +659,7 @@ mod tests {
 
     #[test]
     fn is_done_page_active_false() {
-        let s = AppState::idle().toggle(ten_minutes(), Duration::from_secs(0));
+        let s = AppState::idle().toggle(timer_countdown(ten_minutes()), Duration::from_secs(0));
         assert!(!s.is_done_page());
     }
 }

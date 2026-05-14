@@ -10,7 +10,7 @@
 
 import {
     FilledButton, OutlineButton, TextButton, TonalButton,
-    SegmentedButton,
+    SegmentedButton, Switch,
     MaterialPalette,
 } from "@material";
 export { MaterialWindowAdapter } from "@material";
@@ -113,14 +113,24 @@ component VerticalSpinBox {
 // target.
 component DurationRow inherits Rectangle {
     in property <string> value-text;
+    in property <bool> enabled: true;
     callback tapped;
 
     height: 56px;
-    border-radius: 12px;
-    background: touch.has-hover ? MaterialPalette.surface-container-high
-                                : MaterialPalette.surface-container;
+    // Rows live inside a BoxedList container that owns the rounded
+    // surface — they paint a transparent base and only darken on
+    // hover for the touch affordance. Disabled state is just the
+    // overall opacity drop. Mirrors GTK's `boxed-list` styling
+    // where individual `Adw.ActionRow` rows don't carry their own
+    // background, only the parent `Adw.PreferencesGroup` does.
+    background: !root.enabled
+        ? transparent
+        : (touch.has-hover ? MaterialPalette.surface-container-high
+                           : transparent);
+    opacity: root.enabled ? 1.0 : MaterialPalette.disable-opacity;
 
     touch := TouchArea {
+        enabled: root.enabled;
         clicked => { root.tapped(); }
     }
 
@@ -149,6 +159,82 @@ component DurationRow inherits Rectangle {
             color: MaterialPalette.on-surface-variant;
             vertical-alignment: center;
         }
+    }
+}
+
+// Adw.SwitchRow analogue — title + subtitle on the left, suffix
+// Switch on the right. Mirrors `stopwatch_mode_row` shape in the
+// .blp (title "Stopwatch Mode", subtitle "Count up from zero").
+// Background is transparent because the parent BoxedList owns the
+// rounded surface, mirroring GTK's boxed-list pattern.
+component SwitchRow inherits Rectangle {
+    in property <string> title;
+    in property <string> subtitle;
+    in-out property <bool> checked;
+    callback toggled(bool);
+
+    height: 64px;
+    background: transparent;
+
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        spacing: 12px;
+        alignment: stretch;
+
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+
+            Text {
+                text: root.title;
+                font-size: 16px;
+                color: MaterialPalette.on-surface;
+            }
+            if root.subtitle != "" : Text {
+                text: root.subtitle;
+                font-size: 12px;
+                color: MaterialPalette.on-surface-variant;
+            }
+        }
+        // Material's stock Switch dimensions are 52×32. The fixed-
+        // size Rectangle wrapper is what stops the HorizontalLayout
+        // from stretching the Switch vertically to fill the 64-px
+        // row — without the wrapper, the Switch grows to row
+        // height and the indicator ball balloons (since the inner
+        // geometry is proportional to `self.height`). VerticalLayout
+        // alignment: center keeps the toggle centered in the row.
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 52px;
+                height: 32px;
+                Switch {
+                    min-width: 52px;
+                    min-height: 32px;
+                    checked <=> root.checked;
+                    checked-state-changed(value) => { root.toggled(value); }
+                }
+            }
+        }
+    }
+}
+
+// Boxed-list container — mirrors GTK's `Adw.PreferencesGroup`
+// boxed-list look: a single rounded surface that visually wraps
+// its child rows, with 1 px dividers between them and no
+// per-row background. Slint's `@children` lets callers pass in
+// any mix of SwitchRow / DurationRow / future Adw-row analogues;
+// `clip: true` keeps the rounded corners crisp over row hover
+// states that would otherwise paint over the corner radius.
+component BoxedList inherits Rectangle {
+    border-radius: 16px;
+    background: MaterialPalette.surface-container;
+    clip: true;
+
+    VerticalLayout {
+        spacing: 0;
+        @children
     }
 }
 
@@ -184,6 +270,14 @@ export component MainWindow inherits Window {
     // via the `mode-changed` callback so we can refresh dependent
     // surfaces (Start enabled / Setup body / persisted mode).
     in-out property <int> setup-mode: 0;
+
+    // Stopwatch-Mode switch state — mirrors the .blp
+    // `stopwatch_mode_row` SwitchRow. When true, sessions count up
+    // from zero with no target (SessionShape::TimerStopwatch);
+    // Duration row gets greyed; Start enables regardless of the
+    // configured hours/minutes. Visible in Timer mode only, same as
+    // GTK's per-mode visibility rule.
+    in-out property <bool> stopwatch-on: false;
 
     in-out property <bool> duration-dialog-open: false;
     in-out property <int> dialog-hours: 0;
@@ -298,18 +392,28 @@ export component MainWindow inherits Window {
             // reach. Taller than Material 3's 40 px default because
             // it's the single most-tapped surface on the app.
             // Disabled for Guided / Box Breath until the running
-            // views for those modes ship (next slice).
+            // views for those modes ship (next slice). Stopwatch
+            // Mode bypasses the duration check — an open-ended
+            // count-up needs no target, mirroring the GTK shell's
+            // `on_start` which only validates `countdown_target_secs`
+            // when `!stopwatch_toggle_on.get()`.
             FilledButton {
                 text: "Start Session";
                 height: 56px;
                 enabled: root.setup-mode == 0
-                    && (root.setup-hours > 0 || root.setup-minutes > 0);
+                    && (root.stopwatch-on
+                        || root.setup-hours > 0
+                        || root.setup-minutes > 0);
                 clicked => { root.action-tap(); }
             }
 
-            // Timer body — Session group with Duration row.
-            // Visible in Timer mode only (matches the .blp's
-            // `countdown_inputs` visibility rule).
+            // Timer body — Session group mirrors the GTK
+            // `session_group` (Adw.PreferencesGroup titled "Session"
+            // at `timer_view.blp` line 299). Phase-1 + this slice
+            // ship the Stopwatch and Duration rows; Cues, Label,
+            // and Keep-Screen-Awake land in their own slices.
+            // Visible in Timer mode only (Stopwatch / Duration are
+            // Timer-mode rows per the .blp visibility rules).
             if root.setup-mode == 0 : VerticalLayout {
                 spacing: 8px;
 
@@ -321,9 +425,27 @@ export component MainWindow inherits Window {
                     horizontal-alignment: left;
                 }
 
-                DurationRow {
-                    value-text: root.duration-text;
-                    tapped => { root.duration-tap(); }
+                BoxedList {
+                    SwitchRow {
+                        title: "Stopwatch Mode";
+                        subtitle: "Count up from zero";
+                        checked <=> root.stopwatch-on;
+                    }
+
+                    // 1 px divider — mirrors GTK's `Adw.PreferencesGroup`
+                    // row separator. on-surface-variant has the right
+                    // mid-tone for a hairline that's visible without
+                    // shouting.
+                    Rectangle {
+                        height: 1px;
+                        background: MaterialPalette.outline-variant;
+                    }
+
+                    DurationRow {
+                        value-text: root.duration-text;
+                        enabled: !root.stopwatch-on;
+                        tapped => { root.duration-tap(); }
+                    }
                 }
             }
 

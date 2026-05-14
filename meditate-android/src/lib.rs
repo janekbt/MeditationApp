@@ -73,7 +73,8 @@ fn now_since_epoch() -> Duration {
 
 fn refresh(ui: &MainWindow, state: &AppState, now: Duration) {
     let target = configured_duration(ui);
-    ui.set_remaining_text(state.hero_label(target, now).into());
+    let stopwatch_on = ui.get_stopwatch_on();
+    ui.set_remaining_text(state.hero_label(target, now, stopwatch_on).into());
     // Duration-row value suffix: always shows the configured target
     // in HH:MM (mirrors the GTK Adw.ActionRow value label). On Setup
     // it matches the hero; while Running the row is hidden, so it's
@@ -189,6 +190,19 @@ fn build_ui() -> MainWindow {
             let now = now_since_epoch();
             let Some(ui) = weak.upgrade() else { return; };
             let target = configured_duration(&ui);
+            // Shape picked from the Stopwatch-Mode switch — same
+            // shell-side choice the GTK `on_start` makes via
+            // `stopwatch_toggle_on`. Box-Breath and Guided shapes
+            // arrive in the next phase-2 slices; for now only Timer
+            // mode reaches Start (the chip group's Guided/Box Breath
+            // selections disable the Start button).
+            let shape = if ui.get_stopwatch_on() {
+                meditate_core::session::SessionShape::TimerStopwatch
+            } else {
+                meditate_core::session::SessionShape::TimerCountdown {
+                    target_secs: target.as_secs() as u32,
+                }
+            };
             let mut s = state.borrow_mut();
             // No live elapsed capture needed here: action_tap on Active
             // pauses/resumes — both stay Active, so the session never
@@ -196,7 +210,7 @@ fn build_ui() -> MainWindow {
             // matters for persistence wiring.
             let was_active = s.is_active();
             let next = std::mem::replace(&mut *s, AppState::idle())
-                .toggle(target, now);
+                .toggle(shape, now);
             *s = next;
             let is_active = s.is_active();
             #[cfg(target_os = "android")]
