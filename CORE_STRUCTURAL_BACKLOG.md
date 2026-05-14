@@ -11,16 +11,6 @@ rationale.
 
 ## Tier 1 — High-impact, mostly mechanical
 
-### Zero integration tests — `meditate-core/tests/` does not exist
-- All 933 tests are `#[cfg(test)] mod tests` inline. Cross-
-  module flows (create label → save preset → close DB →
-  reopen → sync push → wipe local → pull → verify preset
-  still references label by UUID) aren't covered. The 9-arm
-  `apply_event_inner` dispatch is tested per-arm but never
-  end-to-end across all entity types in one transaction.
-- Fix: start `meditate-core/tests/sync_roundtrip.rs` with one
-  such cross-cutting scenario; grow over time.
-
 ### Remaining `bool` parameters in public APIs
 High-leverage sites shipped (`DisplayMode`, `Channels`,
 `StarredState`); the original twelve-bool sweep proposed three
