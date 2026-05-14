@@ -172,17 +172,12 @@ fn resolved_label_for_mode(
     Some((label.name, label.id))
 }
 
-/// Push the chooser's `label-items` + the ExpanderRow's resolved
-/// name into the Slint window. Called on chooser open + after any
-/// CRUD action (create / rename / delete) so the user sees the
-/// post-change state without manually re-entering the chooser.
+/// Push the chooser's `label-items` array (with `selected`
+/// flagged on `current_id`'s row) into the Slint window. Used
+/// on every chooser open + after a CRUD action so the user
+/// sees the post-change state.
 #[cfg(target_os = "android")]
-fn refresh_label_state(ui: &MainWindow, mode: meditate_core::SessionMode) {
-    let current_id = if read_label_active_for_mode(mode) {
-        resolved_label_for_mode(mode).map(|(_, id)| id)
-    } else {
-        None
-    };
+fn refresh_chooser_items(ui: &MainWindow, current_id: Option<i64>) {
     let items: Vec<LabelItem> = list_labels_with_selection(current_id)
         .into_iter()
         .map(|(id, name, selected)| LabelItem {
@@ -194,12 +189,56 @@ fn refresh_label_state(ui: &MainWindow, mode: meditate_core::SessionMode) {
     ui.set_label_items(
         std::rc::Rc::new(slint::VecModel::from(items)).into(),
     );
+}
+
+/// Pull the active mode's resolved label name out of the DB and
+/// write it into the Setup ExpanderRow's `label-name` subtitle.
+#[cfg(target_os = "android")]
+fn refresh_setup_label_name(ui: &MainWindow, mode: meditate_core::SessionMode) {
     ui.set_label_name(
         resolved_label_for_mode(mode)
             .map(|(name, _)| name)
             .unwrap_or_default()
             .into(),
     );
+}
+
+/// Initialise the Done expander state from Setup's current pick.
+/// Called when entering the Done screen (Stop tap or auto-finish).
+/// Mirrors `show_done`'s `done_selected_label_id.set(setup_selected_label_id())`
+/// at `meditate-gtk/src/timer/imp.rs:2296`.
+#[cfg(target_os = "android")]
+fn mirror_setup_label_into_done(ui: &MainWindow, mode: meditate_core::SessionMode) {
+    let active = read_label_active_for_mode(mode);
+    if active {
+        if let Some((name, id)) = resolved_label_for_mode(mode) {
+            ui.set_done_label_active(true);
+            ui.set_done_label_name(name.into());
+            ui.set_done_label_id(id as i32);
+            return;
+        }
+    }
+    // Master off OR mode default got deleted — start the Done
+    // expander in the off state with no pick.
+    ui.set_done_label_active(false);
+    ui.set_done_label_name("".into());
+    ui.set_done_label_id(0);
+}
+
+/// Convenience: refresh BOTH the chooser list (with the mode's
+/// resolved id as the selection) AND the Setup row's subtitle.
+/// Most CRUD callsites in the Setup flow want this combined
+/// behaviour. The Done flow uses the two helpers separately so
+/// the chooser list reflects `done-label-id` instead.
+#[cfg(target_os = "android")]
+fn refresh_label_state(ui: &MainWindow, mode: meditate_core::SessionMode) {
+    let current_id = if read_label_active_for_mode(mode) {
+        resolved_label_for_mode(mode).map(|(_, id)| id)
+    } else {
+        None
+    };
+    refresh_chooser_items(ui, current_id);
+    refresh_setup_label_name(ui, mode);
 }
 
 /// Build the row list for the label chooser overlay. Each row
@@ -560,6 +599,7 @@ fn build_ui() -> MainWindow {
     {
         let weak = ui.as_weak();
         let state = state.clone();
+        let current_mode = current_mode.clone();
         #[cfg(target_os = "android")]
         let session_start_unix = session_start_unix.clone();
         #[cfg(target_os = "android")]
@@ -578,29 +618,33 @@ fn build_ui() -> MainWindow {
             *s = std::mem::replace(&mut *s, AppState::idle()).stop();
             let is_active = s.is_active();
             // Active → Finished: stash the (start, elapsed) pair
-            // so the Save / Discard handler knows what to do, and
-            // push the elapsed readout into the Done view.
-            #[cfg(target_os = "android")]
+            // so the Save / Discard handler knows what to do, push
+            // the elapsed readout into the Done view, and mirror
+            // Setup's resolved label into the Done expander state.
+            // Mirrors `show_done`'s `done_selected_label_id.set(setup_selected_label_id())`
+            // call at `meditate-gtk/src/timer/imp.rs:2296`.
             if was_active && !is_active {
+                #[cfg(target_os = "android")]
                 if let Some(unix_start) = session_start_unix.take() {
                     pending_done.set(Some((unix_start, elapsed_secs)));
                 }
-            }
-            if let Some(ui) = weak.upgrade() {
-                ui.set_elapsed_text(
-                    meditate_core::format::format_time(
-                        Duration::from_secs(elapsed_secs.max(0) as u64),
-                    )
-                    .into(),
-                );
-                // Clear the note from any previous session so the
-                // Done screen opens with an empty editor.
-                ui.set_note_text("".into());
+                if let Some(ui) = weak.upgrade() {
+                    ui.set_elapsed_text(
+                        meditate_core::format::format_time(
+                            Duration::from_secs(elapsed_secs.max(0) as u64),
+                        )
+                        .into(),
+                    );
+                    ui.set_note_text("".into());
+                    #[cfg(target_os = "android")]
+                    mirror_setup_label_into_done(&ui, current_mode.get().into());
+                }
             }
             on_state_changed(was_active, is_active);
             if let Some(ui) = weak.upgrade() {
                 refresh(&ui, &s, now);
             }
+            let _ = current_mode.get();
         });
     }
 
@@ -625,6 +669,7 @@ fn build_ui() -> MainWindow {
     {
         let weak = ui.as_weak();
         let state = state.clone();
+        let current_mode = current_mode.clone();
         #[cfg(target_os = "android")]
         let session_start_unix = session_start_unix.clone();
         #[cfg(target_os = "android")]
@@ -658,12 +703,14 @@ fn build_ui() -> MainWindow {
                         .into(),
                     );
                     ui.set_note_text("".into());
+                    mirror_setup_label_into_done(&ui, current_mode.get().into());
                 }
             }
             on_state_changed(was_active, is_active);
             if let Some(ui) = weak.upgrade() {
                 refresh(&ui, &s, now);
             }
+            let _ = current_mode.get();
         });
     }
 
@@ -687,18 +734,49 @@ fn build_ui() -> MainWindow {
                 let note = ui.get_note_text().to_string();
                 let note = if note.trim().is_empty() { None } else { Some(note) };
                 let mode: meditate_core::SessionMode = current_mode.get().into();
-                // Resolve the active-mode label only when the
-                // master toggle is on — mirrors the GTK shell's
-                // `setup_selected_label_id`. Done-screen-side
-                // override (`done_selected_label_id` in GTK) lands
-                // alongside C-2's chooser screen; until then Save
-                // commits the Setup's resolved label.
-                let label_id = if read_label_active_for_mode(mode) {
-                    resolved_label_for_mode(mode).map(|(_, id)| id)
+                // The Done expander's per-session pick drives both
+                // the session row's label_id AND the persist-back
+                // to the active mode's UUID setting (so the user's
+                // pick on Done becomes next session's default).
+                // Mirrors GTK's Save flow at `imp.rs:2336-2383`.
+                let picked: Option<i64> = if ui.get_done_label_active() {
+                    let id = ui.get_done_label_id() as i64;
+                    if id > 0 { Some(id) } else { None }
                 } else {
                     None
                 };
-                finalize_session(unix_start, elapsed_secs, note, mode, label_id);
+                // Apply the persist action — but read the labels
+                // list inside the same DB lock as the writes.
+                if let (Some(db_arc), Some(_)) = (DATABASE.get(), Some(())) {
+                    if let Ok(guard) = db_arc.lock() {
+                        if let Some(db) = guard.as_ref() {
+                            let labels = meditate_core::db::list_labels_from_db(db)
+                                .unwrap_or_default();
+                            match meditate_core::labels::resolve_persist_action(picked, &labels) {
+                                meditate_core::labels::PersistAction::SetUuidAndActivate { uuid } => {
+                                    let _ = meditate_core::labels::persist_uuid_for_mode(
+                                        db, mode, uuid.as_str(),
+                                    );
+                                    let _ = meditate_core::labels::persist_active_for_mode(
+                                        db, mode, true,
+                                    );
+                                }
+                                meditate_core::labels::PersistAction::Deactivate => {
+                                    let _ = meditate_core::labels::persist_active_for_mode(
+                                        db, mode, false,
+                                    );
+                                }
+                                meditate_core::labels::PersistAction::NoOp => {}
+                            }
+                        }
+                    }
+                }
+                finalize_session(unix_start, elapsed_secs, note, mode, picked);
+                // Refresh the Setup row so when Done slides off and
+                // reveals Setup, the ExpanderRow's master toggle +
+                // subtitle reflect the post-Save mode state.
+                refresh_setup_label_name(&ui, mode);
+                ui.set_label_active(read_label_active_for_mode(mode));
             }
             #[cfg(not(target_os = "android"))]
             let _ = current_mode.get();
@@ -787,10 +865,10 @@ fn build_ui() -> MainWindow {
         });
     }
 
-    // Label inner-row tap — load the labels list with the active
-    // mode's current selection marked, then open the chooser.
-    // Mirrors the GTK chain `setup_label_chooser_row.activated → resolve_label_for_mode →
-    // push_label_chooser(current_id, on_selected)`.
+    // Label inner-row tap (Setup) — load the labels list with the
+    // active mode's current selection marked, set chooser-target=0
+    // so picks route back to the mode setting, then open the
+    // chooser. Mirrors GTK's `setup_label_chooser_row.activated`.
     {
         let weak = ui.as_weak();
         let current_mode = current_mode.clone();
@@ -798,10 +876,60 @@ fn build_ui() -> MainWindow {
             #[cfg(target_os = "android")]
             {
                 let Some(ui) = weak.upgrade() else { return; };
+                ui.set_chooser_target(0);
                 refresh_label_state(&ui, current_mode.get().into());
                 ui.set_labels_page(true);
             }
             let _ = (weak.clone(), current_mode.get());
+        });
+    }
+
+    // Done expander master toggle — local state only (does NOT
+    // write the mode setting; the persist-back happens on Save
+    // via `resolve_persist_action`). Mirrors GTK's
+    // `done_label_enabled_row.connect_enable_expansion_notify`
+    // at `imp.rs:578-597`: toggling off clears the pick;
+    // toggling on adopts the mode-default when no pick is set.
+    {
+        let weak = ui.as_weak();
+        let current_mode = current_mode.clone();
+        ui.on_done_label_active_toggled(move |on| {
+            let Some(ui) = weak.upgrade() else { return; };
+            if !on {
+                ui.set_done_label_id(0);
+                ui.set_done_label_name("".into());
+                return;
+            }
+            #[cfg(target_os = "android")]
+            if ui.get_done_label_id() == 0 {
+                let mode: meditate_core::SessionMode = current_mode.get().into();
+                if let Some((name, id)) = resolved_label_for_mode(mode) {
+                    ui.set_done_label_id(id as i32);
+                    ui.set_done_label_name(name.into());
+                }
+            }
+            let _ = current_mode.get();
+        });
+    }
+
+    // Done inner-row tap — open the same label chooser, but with
+    // chooser-target=1 so picks update Done state rather than the
+    // mode's UUID setting. The check-mark inside the chooser
+    // reflects `done-label-id`. Mirrors GTK's
+    // `done_label_chooser_row.connect_activated` at `imp.rs:598`.
+    {
+        let weak = ui.as_weak();
+        ui.on_done_label_tap(move || {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                ui.set_chooser_target(1);
+                let id = ui.get_done_label_id() as i64;
+                let current_id = if id > 0 { Some(id) } else { None };
+                refresh_chooser_items(&ui, current_id);
+                ui.set_labels_page(true);
+            }
+            let _ = weak.clone();
         });
     }
 
@@ -847,11 +975,14 @@ fn build_ui() -> MainWindow {
         });
     }
 
-    // Create button pressed — insert the new label, persist its
-    // UUID as the active mode's pick, refresh the ExpanderRow's
-    // resolved name, close both the dialog AND the chooser
-    // overlay. Treating creation as selection mirrors the GTK
-    // flow at `labels.rs:125-134`.
+    // Create button pressed — insert the new label, then route
+    // by `chooser-target`:
+    //   0 = Setup flow → persist UUID, refresh Setup state, close.
+    //   1 = Done flow → adopt the new label as the Done pick,
+    //       close. Mode setting unchanged (Save will persist via
+    //       resolve_persist_action).
+    // Treating creation as selection mirrors GTK's
+    // `labels.rs:125-134`.
     {
         let weak = ui.as_weak();
         let current_mode = current_mode.clone();
@@ -860,10 +991,18 @@ fn build_ui() -> MainWindow {
             #[cfg(target_os = "android")]
             {
                 let text = ui.get_create_label_text().to_string();
-                if let Some((_id, uuid)) = create_label_in_db(&text) {
-                    let mode: meditate_core::SessionMode = current_mode.get().into();
-                    write_label_uuid_for_mode(mode, &uuid);
-                    refresh_label_state(&ui, mode);
+                if let Some((id, uuid)) = create_label_in_db(&text) {
+                    if ui.get_chooser_target() == 1 {
+                        // Done flow
+                        ui.set_done_label_id(id as i32);
+                        ui.set_done_label_name(text.trim().into());
+                        ui.set_done_label_active(true);
+                    } else {
+                        // Setup flow
+                        let mode: meditate_core::SessionMode = current_mode.get().into();
+                        write_label_uuid_for_mode(mode, &uuid);
+                        refresh_label_state(&ui, mode);
+                    }
                 }
             }
             ui.set_create_label_dialog_open(false);
@@ -981,10 +1120,13 @@ fn build_ui() -> MainWindow {
         });
     }
 
-    // User picked a label row — persist the new UUID for the
-    // active mode, refresh the ExpanderRow's resolved name, and
-    // close the overlay. Mirrors the GTK chooser's `on_selected`
-    // callback at `imp.rs:744-749`.
+    // User picked a label row — route based on `chooser-target`:
+    //   0 = Setup flow → persist UUID to the active mode's setting,
+    //       refresh the Setup ExpanderRow's subtitle. Mirrors GTK's
+    //       Setup `on_selected` at `imp.rs:744-749`.
+    //   1 = Done flow → update Done state ONLY; persistence to the
+    //       mode setting happens on Save via `resolve_persist_action`.
+    //       Mirrors GTK's Done `on_selected` at `imp.rs:608-612`.
     {
         let weak = ui.as_weak();
         let current_mode = current_mode.clone();
@@ -992,16 +1134,21 @@ fn build_ui() -> MainWindow {
             #[cfg(target_os = "android")]
             {
                 let Some(ui) = weak.upgrade() else { return; };
-                let mode: meditate_core::SessionMode = current_mode.get().into();
-                if let Some(uuid) = lookup_label_uuid(id as i64) {
-                    write_label_uuid_for_mode(mode, &uuid);
+                if ui.get_chooser_target() == 1 {
+                    // Done flow
+                    if let Some(name) = lookup_label_name(id as i64) {
+                        ui.set_done_label_id(id);
+                        ui.set_done_label_name(name.into());
+                        ui.set_done_label_active(true);
+                    }
+                } else {
+                    // Setup flow (existing behavior)
+                    let mode: meditate_core::SessionMode = current_mode.get().into();
+                    if let Some(uuid) = lookup_label_uuid(id as i64) {
+                        write_label_uuid_for_mode(mode, &uuid);
+                    }
+                    refresh_setup_label_name(&ui, mode);
                 }
-                ui.set_label_name(
-                    resolved_label_for_mode(mode)
-                        .map(|(name, _)| name)
-                        .unwrap_or_default()
-                        .into(),
-                );
                 ui.set_labels_page(false);
             }
             let _ = (weak.clone(), current_mode.get(), id);

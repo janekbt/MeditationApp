@@ -599,6 +599,26 @@ export component MainWindow inherits Window {
     in-out property <int> delete-label-id: 0;
     in property <string> delete-label-body: "";
 
+    // Per-session label pick that rides with the Done screen —
+    // mirrors GTK's `done_selected_label_id` Cell at
+    // `timer/imp.rs:211`. Initialized from Setup's resolved
+    // label when Done opens, mutable on the Done screen, and
+    // what `Save` ultimately writes as the session row's
+    // `label_id`. The Done choice also persists back to the
+    // mode's default on Save via `resolve_persist_action`.
+    in-out property <bool> done-label-active: false;
+    in property <string> done-label-name: "";
+    in-out property <int> done-label-id: 0;
+
+    // Routing flag for the shared label chooser overlay:
+    //   0 = opened from the Setup expander row (existing flow —
+    //       picks write to the active mode's UUID setting).
+    //   1 = opened from the Done expander row (new flow — picks
+    //       update `done-label-id` / `done-label-name` only;
+    //       persistence to the mode setting happens on Save via
+    //       `resolve_persist_action`).
+    in-out property <int> chooser-target: 0;
+
     in-out property <bool> duration-dialog-open: false;
     in-out property <int> dialog-hours: 0;
     in-out property <int> dialog-minutes: 10;
@@ -628,6 +648,8 @@ export component MainWindow inherits Window {
     callback rename-label-confirm();
     callback delete-label-tap(int);
     callback delete-label-confirm();
+    callback done-label-active-toggled(bool);
+    callback done-label-tap();
     // Hardware back button + Android predictive back gesture.
     // Wired through a root-level FocusScope so the key event
     // reaches us no matter which sub-element holds focus. Rust
@@ -945,6 +967,26 @@ export component MainWindow inherits Window {
                 NoteField {
                     label: "Note";
                     text <=> root.note-text;
+                }
+            }
+
+            // Done-screen Label expander — mirrors the .blp
+            // `done_label_enabled_row` (a sibling of the note +
+            // button rows under the Done stack page). Master
+            // toggle + inner Selected row are wired to the
+            // `done-label-*` properties; `chooser-target = 1`
+            // when this row's inner-row tap opens the chooser
+            // so picks route back to the Done state rather than
+            // the active mode's UUID setting.
+            BoxedList {
+                ExpanderRow {
+                    title: "Label";
+                    subtitle: "Tag this session";
+                    body-title: "Selected";
+                    body-subtitle: root.done-label-name;
+                    active <=> root.done-label-active;
+                    toggled(value) => { root.done-label-active-toggled(value); }
+                    body-tapped => { root.done-label-tap(); }
                 }
             }
 
