@@ -11,15 +11,6 @@ rationale.
 
 ## Tier 1 — High-impact, mostly mechanical
 
-### `SyncCoordinator::request` has zero multi-thread tests
-- All 6 tests in `sync/coordinator.rs:108-173` are single-
-  threaded — exercise the API, not the atomic ordering. The
-  Tier-0 drop-trigger race already in backlog slipped past
-  because nothing pumps two `request()`s from different
-  threads.
-- Fix: loom (or `std::thread::spawn` × N + barrier) test
-  that 1000 races never lose a request.
-
 ### Panic-hook installation has no test verifying it writes
 - `diag.rs:102 install_panic_hook` is wired; only test
   (`log_without_init_is_noop`) admits OnceLock prevents

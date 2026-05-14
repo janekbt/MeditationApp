@@ -252,4 +252,193 @@ mod tests {
         // That's the path inside release where it returns true (exit).
     }
 
+    // ── Multi-thread stochastic tests ─────────────────────────────────────────
+    //
+    // The single-threaded tests above walk the state machine manually
+    // and assume the atomic ordering pairs are correctly placed. These
+    // tests run the API under real thread contention so a future
+    // refactor that loosens an `Ordering::SeqCst` or transposes a
+    // store-then-load pair surfaces as a failure rather than a silent
+    // drop-trigger regression like the one the `release` double-check
+    // was eventually added to defend against.
+    //
+    // Stochastic, not exhaustive — every test loops MANY_ITERATIONS
+    // times to raise the probability of catching a misordering.
+    // `loom` would prove correctness across every interleaving but
+    // adds dependency weight; for two flags + five methods, threads-
+    // and-barrier is the right calibration.
+
+    use std::sync::{Arc, Barrier};
+    use std::thread;
+
+    /// How many times each multi-thread scenario re-runs. Random
+    /// scheduling means a single iteration might miss the racy
+    /// window; iterating raises the catch probability without
+    /// blowing past sub-second test runtimes.
+    const MANY_ITERATIONS: usize = 1000;
+
+    /// How many concurrent producer threads fan into `request()` per
+    /// iteration. 8 is enough to surface ordering errors on a 4-core
+    /// laptop without overwhelming the test scheduler.
+    const PRODUCERS: usize = 8;
+
+    #[test]
+    fn burst_of_concurrent_requests_has_exactly_one_spawn_winner() {
+        for _ in 0..MANY_ITERATIONS {
+            let c = Arc::new(SyncCoordinator::new());
+            let barrier = Arc::new(Barrier::new(PRODUCERS));
+            let producers: Vec<_> = (0..PRODUCERS).map(|_| {
+                let c = c.clone();
+                let barrier = barrier.clone();
+                thread::spawn(move || {
+                    barrier.wait();
+                    c.request()
+                })
+            }).collect();
+
+            let mut spawns = 0;
+            let mut already = 0;
+            for p in producers {
+                match p.join().unwrap() {
+                    CoordinatorAction::Spawn => spawns += 1,
+                    CoordinatorAction::AlreadyRunning => already += 1,
+                }
+            }
+            assert_eq!(spawns, 1, "exactly one thread wins the slot");
+            assert_eq!(already, PRODUCERS - 1, "the rest see AlreadyRunning");
+            assert!(c.is_in_flight(), "the winning thread now owns the slot");
+        }
+    }
+
+    #[test]
+    fn drain_loop_leaves_no_orphan_re_trigger_under_concurrent_requests() {
+        // Worker simulates the documented drain loop. Producers race
+        // request() against it. After producers + worker both quiesce,
+        // re_trigger MUST be false — a stranded `true` IS the lost-
+        // trigger symptom the release double-check defends against.
+        for _ in 0..MANY_ITERATIONS {
+            let c = Arc::new(SyncCoordinator::new());
+            assert_eq!(c.request(), CoordinatorAction::Spawn);
+
+            let worker = thread::spawn({
+                let c = c.clone();
+                move || {
+                    loop {
+                        c.start_pass();
+                        // Pass body. yield_now lets racers schedule
+                        // their request() at varying points.
+                        thread::yield_now();
+                        if !c.should_run_again_after_pass() && c.release() {
+                            return;
+                        }
+                    }
+                }
+            });
+
+            let barrier = Arc::new(Barrier::new(PRODUCERS));
+            let producers: Vec<_> = (0..PRODUCERS).map(|_| {
+                let c = c.clone();
+                let barrier = barrier.clone();
+                thread::spawn(move || {
+                    barrier.wait();
+                    c.request();
+                })
+            }).collect();
+
+            for p in producers { p.join().unwrap(); }
+            worker.join().unwrap();
+
+            // The post-drain invariant: `re_trigger=true` with
+            // `in_flight=false` is a lost trigger — release() exited
+            // while leaving a sync request stranded. Producers that
+            // race their request() AFTER the worker drains can
+            // legitimately leave both flags set (the "Spawn" winner
+            // took the slot; subsequent AlreadyRunnings set
+            // re_trigger). In real usage the Spawn winner would spawn
+            // a new worker; this test doesn't, so re_trigger=true is
+            // fine WHEN in_flight=true.
+            let in_flight = c.is_in_flight();
+            let re_trigger = c.re_trigger.load(Ordering::SeqCst);
+            // The shape of the bug this defends against: a re_trigger
+            // observable to a worker that no longer exists. Named so
+            // the assertion reads as "no orphan."
+            let orphan_trigger = re_trigger && !in_flight;
+            assert!(!orphan_trigger,
+                "lost trigger: re_trigger=true with in_flight=false");
+        }
+    }
+
+    #[test]
+    fn release_double_check_survives_real_contention() {
+        // Drive the exact race window the `release` double-check
+        // exists to close: between `should_run_again_after_pass()`
+        // observing false and `release()` clearing in_flight, an
+        // external `request()` lands and sets re_trigger=true. The
+        // worker must observe that on re-check inside release and
+        // either retake the slot OR let the racing request take it.
+        // Either way: no run ever ends with re_trigger=true AND
+        // in_flight=false.
+        for _ in 0..MANY_ITERATIONS {
+            let c = Arc::new(SyncCoordinator::new());
+            assert_eq!(c.request(), CoordinatorAction::Spawn);
+
+            let racer = thread::spawn({
+                let c = c.clone();
+                move || c.request()
+            });
+
+            // Worker side: run one pass + release, racing the request
+            // from `racer`. The race window is the sequence
+            // start_pass → yield_now → should_run_again_after_pass →
+            // release. On most iterations the racer's request lands
+            // outside the window; on some it lands inside; either
+            // way the invariant must hold.
+            c.start_pass();
+            thread::yield_now();
+            let again = c.should_run_again_after_pass();
+            if !again {
+                let released = c.release();
+                // `released == false` means release retook the slot;
+                // a real worker would loop and run another pass. We
+                // just need to confirm the state after — no orphan
+                // re_trigger paired with a cleared in_flight.
+                if !released {
+                    // Worker retook the slot, owns it. Drain it
+                    // cleanly so the invariant check below sees the
+                    // post-drain state.
+                    loop {
+                        c.start_pass();
+                        if !c.should_run_again_after_pass() && c.release() {
+                            break;
+                        }
+                    }
+                }
+            } else {
+                // Re-trigger observed during the first pass — run
+                // additional passes until the loop drains cleanly.
+                loop {
+                    c.start_pass();
+                    if !c.should_run_again_after_pass() && c.release() {
+                        break;
+                    }
+                }
+            }
+
+            racer.join().unwrap();
+
+            // The post-drain invariant: an exited worker never leaves
+            // re_trigger=true with in_flight=false. That combination
+            // is the "lost trigger" — a future request() would still
+            // start a fresh worker, but the racer's request would be
+            // silently coalesced into nothing.
+            let in_flight = c.is_in_flight();
+            let re_trigger = c.re_trigger.load(Ordering::SeqCst);
+            // The shape of the bug this defends against: a re_trigger
+            // observable to a worker that no longer exists. Named so
+            // the assertion reads as "no orphan."
+            let orphan_trigger = re_trigger && !in_flight;
+            assert!(!orphan_trigger,
+                "lost trigger: re_trigger=true with in_flight=false");
+        }
+    }
 }
