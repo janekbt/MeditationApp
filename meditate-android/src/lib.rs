@@ -478,6 +478,92 @@ fn validate_label_name(name: &str) -> bool {
     validity.is_savable()
 }
 
+/// Write the crash-recovery snapshot row. Mirrors GTK's
+/// `write_in_progress_snapshot` at `imp.rs:2536`: captures
+/// (unix_start, accumulated_secs, mode, label_id) so a process
+/// kill mid-session can be resurrected on the next launch via
+/// `finalize_session_in_progress`. mode_payload is "{}" until
+/// Box-Breath phase-progress capture lands (a v2 Resume feature,
+/// not Phase 2 work).
+#[cfg(target_os = "android")]
+fn write_session_in_progress_snapshot(
+    unix_start: i64,
+    elapsed_secs: u32,
+    mode: meditate_core::SessionMode,
+    label_id: Option<i64>,
+) {
+    let Some(db_arc) = DATABASE.get() else { return; };
+    let Ok(guard) = db_arc.lock() else { return; };
+    let Some(db) = guard.as_ref() else { return; };
+    let snapshot = meditate_core::db::SessionInProgress {
+        start_iso: meditate_core::time::unix_to_local_iso(unix_start),
+        accumulated_secs: elapsed_secs,
+        mode,
+        mode_payload: "{}".into(),
+        label_id,
+        guided_file_uuid: None,
+    };
+    if let Err(e) = db.set_session_in_progress(&snapshot) {
+        meditate_core::log(
+            "session.recovery",
+            &format!("set snapshot FAILED err={e:?}"),
+        );
+    }
+}
+
+/// Start (or restart) the 60 s snapshot heartbeat. Mirrors GTK's
+/// `start_snapshot_tick`: cancels any prior heartbeat then arms a
+/// fresh `Repeated` Timer aligned to session start. Each tick
+/// reads the live session's elapsed seconds and writes a
+/// `SessionInProgress` row capturing (start, accumulated_secs,
+/// mode, label_id).
+#[cfg(target_os = "android")]
+fn start_snapshot_heartbeat(
+    timer: &'static slint::Timer,
+    state: std::rc::Rc<std::cell::RefCell<AppState>>,
+    current_mode: std::rc::Rc<std::cell::Cell<TimerMode>>,
+    session_start_unix: std::rc::Rc<std::cell::Cell<Option<i64>>>,
+) {
+    timer.stop();
+    timer.start(
+        slint::TimerMode::Repeated,
+        Duration::from_secs(60),
+        move || {
+            let now = now_since_epoch();
+            let s = state.borrow();
+            let AppState::Active(session) = &*s else { return; };
+            let Some(unix_start) = session_start_unix.get() else { return; };
+            let elapsed = session.elapsed(now).as_secs() as u32;
+            let mode: meditate_core::SessionMode = current_mode.get().into();
+            let label_id = if read_label_active_for_mode(mode) {
+                resolved_label_for_mode(mode).map(|(_, id)| id)
+            } else {
+                None
+            };
+            write_session_in_progress_snapshot(unix_start, elapsed, mode, label_id);
+        },
+    );
+}
+
+/// Drop the crash-recovery snapshot. Called on every transition
+/// out of Active so a normal Stop / auto-finish leaves no row for
+/// the next launch to "recover" (which would double-count). DB
+/// errors are logged but swallowed — at worst the next launch
+/// auto-finalizes a stale row, which is harmless without the
+/// pending_done flow (we ignore it and move on).
+#[cfg(target_os = "android")]
+fn clear_session_in_progress_snapshot() {
+    let Some(db_arc) = DATABASE.get() else { return; };
+    let Ok(guard) = db_arc.lock() else { return; };
+    let Some(db) = guard.as_ref() else { return; };
+    if let Err(e) = db.clear_session_in_progress() {
+        meditate_core::log(
+            "session.recovery",
+            &format!("clear snapshot FAILED err={e:?}"),
+        );
+    }
+}
+
 /// Rename-flavour of `validate_label_name`: pass the label's own
 /// id as `except_id` so the unchanged name (or a case-only edit
 /// of it) doesn't trip the collision check. Mirrors GTK's
@@ -724,6 +810,17 @@ fn build_ui() -> MainWindow {
     // "elapsed only" branch.
     #[cfg(target_os = "android")]
     let bb_target_secs: Rc<Cell<Option<u32>>> = Rc::new(Cell::new(None));
+
+    // Crash-recovery snapshot timer handle. Heartbeat is started
+    // on the Idle/Finished → Active transition in `on_action_tap`
+    // and cancelled on every transition out of Active, mirroring
+    // GTK's `start_snapshot_tick` + `cancel_snapshot_tick` at
+    // `imp.rs:2600` / `imp.rs:2621`. `Box::leak` so the Timer
+    // outlives `build_ui`'s frame; we never drop it, only
+    // start/stop it.
+    #[cfg(target_os = "android")]
+    let snapshot_timer: &'static slint::Timer =
+        Box::leak(Box::new(slint::Timer::default()));
     // Unix timestamp captured at session start, taken at end.
     // Mirrors the GTK shell's `Timer::session_start_time` cell.
     // Holds None while idle; Some(unix_secs) while a session is
@@ -754,6 +851,8 @@ fn build_ui() -> MainWindow {
     {
         let weak = ui.as_weak();
         let state = state.clone();
+        #[cfg(target_os = "android")]
+        let current_mode = current_mode.clone();
         #[cfg(target_os = "android")]
         let session_start_unix = session_start_unix.clone();
         #[cfg(target_os = "android")]
@@ -824,6 +923,17 @@ fn build_ui() -> MainWindow {
             #[cfg(target_os = "android")]
             if !was_active && is_active {
                 session_start_unix.set(Some(meditate_core::time::unix_now()));
+                // Kick the snapshot heartbeat — fires every 60 s
+                // of session-elapsed (since GTK's
+                // `start_snapshot_tick` is also called from
+                // session start). Cancelled on the
+                // Active-out edges in stop_tap + tick.
+                start_snapshot_heartbeat(
+                    snapshot_timer,
+                    state.clone(),
+                    current_mode.clone(),
+                    session_start_unix.clone(),
+                );
             }
             on_state_changed(was_active, is_active);
             refresh(&ui, &s, now);
@@ -838,6 +948,8 @@ fn build_ui() -> MainWindow {
         let session_start_unix = session_start_unix.clone();
         #[cfg(target_os = "android")]
         let pending_done = pending_done.clone();
+        #[cfg(target_os = "android")]
+        let snapshot_timer_ref: &'static slint::Timer = snapshot_timer;
         ui.on_stop_tap(move || {
             let now = now_since_epoch();
             let mut s = state.borrow_mut();
@@ -861,6 +973,17 @@ fn build_ui() -> MainWindow {
                 #[cfg(target_os = "android")]
                 if let Some(unix_start) = session_start_unix.take() {
                     pending_done.set(Some((unix_start, elapsed_secs)));
+                }
+                // Drop the recovery snapshot — the session ended
+                // cleanly via user Stop. Done-screen Save / Discard
+                // will decide whether it becomes a persisted row;
+                // either way the next launch shouldn't recover.
+                // Cancel the heartbeat so it doesn't re-write a
+                // ghost row after we just cleared.
+                #[cfg(target_os = "android")]
+                {
+                    snapshot_timer_ref.stop();
+                    clear_session_in_progress_snapshot();
                 }
                 if let Some(ui) = weak.upgrade() {
                     ui.set_elapsed_text(
@@ -910,6 +1033,8 @@ fn build_ui() -> MainWindow {
         let pending_done = pending_done.clone();
         #[cfg(target_os = "android")]
         let bb_target_secs = bb_target_secs.clone();
+        #[cfg(target_os = "android")]
+        let snapshot_timer_ref: &'static slint::Timer = snapshot_timer;
         timer.start(slint::TimerMode::Repeated, TICK, move || {
             let now = now_since_epoch();
             let mut s = state.borrow_mut();
@@ -932,6 +1057,9 @@ fn build_ui() -> MainWindow {
                     pending_done.set(Some((unix_start, elapsed_secs)));
                 }
                 bb_target_secs.set(None);
+                // Cancel heartbeat + drop snapshot — see stop_tap.
+                snapshot_timer_ref.stop();
+                clear_session_in_progress_snapshot();
                 if let Some(ui) = weak.upgrade() {
                     ui.set_elapsed_text(
                         meditate_core::format::format_time(
@@ -1708,6 +1836,29 @@ fn open_database(android_app: &slint::android::AndroidApp) {
                     "db.seed",
                     &format!("seed_all_non_audio FAILED err={e:?}"),
                 );
+            }
+            // Crash-recovery finalize: if the previous run was
+            // killed mid-session (kernel OOM, battery death,
+            // panic), the `session_in_progress` row carries the
+            // last snapshot. `finalize_session_in_progress` turns
+            // it into a `sessions` row + clears the snapshot,
+            // both inside one transaction. Mirrors GTK's
+            // `Application::startup` recovery call. No Undo
+            // toast yet (Snackbar surface is Phase 3 UI work);
+            // the diag line is the user-visible signal.
+            match db.finalize_session_in_progress() {
+                Ok(Some(finalized)) => meditate_core::log(
+                    "session.recovery",
+                    &format!(
+                        "finalized uuid={} duration_secs={}",
+                        finalized.session_uuid, finalized.duration_secs,
+                    ),
+                ),
+                Ok(None) => {} // Clean shutdown last run.
+                Err(e) => meditate_core::log(
+                    "session.recovery",
+                    &format!("finalize FAILED at startup err={e:?}"),
+                ),
             }
             meditate_core::log("db.open", &format!("ok path={}", db_path.display()));
             Some(db)
