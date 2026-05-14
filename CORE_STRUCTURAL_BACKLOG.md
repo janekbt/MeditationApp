@@ -11,24 +11,6 @@ rationale.
 
 ## Tier 1 — High-impact, mostly mechanical
 
-### Remaining `bool` parameters in public APIs
-High-leverage sites shipped (`DisplayMode`, `Channels`,
-`StarredState`); the original twelve-bool sweep proposed three
-more conversions that turned out marginal at the call-site level.
-Re-evaluate each individually if a touching commit lands nearby:
-
-- `bells::clamp_signal_mode_for_haptic(mode, haptic_available: bool)`
-  — one consumer; an `enum HapticAvailability { Available, Absent }`
-  buys little versus a verb-named param.
-- `format::prep_target_duration(prep_active: bool, prep_secs: u32)`
-  — entangled with the `SessionSettings.target_secs: Option<u32>`
-  collapse below. Fold there.
-- `db::set_interval_bell_enabled(uuid, enabled: bool)` — the
-  method verb (`set_..._enabled`) already disambiguates the bool.
-- `db::is_label_name_taken_from_db(name, except_id: i64)` — not
-  actually a bool; the `0`-as-sentinel int is the footgun. Convert
-  to `Option<i64>` or `Except::{Any, Exclude(i64)}` independently.
-
 ### `SessionSettings.target_secs: Option<u32>` collapses 3 distinct domain concepts
 - `None` means "stopwatch session, no end" (Timer),
   "stopwatch box-breath" (BoxBreath), or "shouldn't
@@ -734,4 +716,11 @@ avoid silently losing items in a rewrite.
 
 ## Skipped (intentionally not migrating)
 
-(Empty for now — fill in as items get rejected.)
+### Remaining `bool` parameters in public APIs
+- Skipped as a sweep: high-leverage sites already shipped
+  (`DisplayMode`, `Channels`, `StarredState`). The four
+  remaining bools (`clamp_signal_mode_for_haptic`,
+  `prep_target_duration`, `set_interval_bell_enabled`,
+  `is_label_name_taken_from_db`) are verb-named or otherwise
+  unambiguous at the call site; revisit individually if a
+  touching commit lands nearby.
