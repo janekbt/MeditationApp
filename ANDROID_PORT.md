@@ -1,6 +1,11 @@
 # Android Port Plan
 
-Status: Planning. Branch `android` (off `beta` at `cef9cd0`) not yet created.
+Status: In progress on `beta`. Workspace restructure, toolchain script, Material
+hello-screen, Countdown→Session migration, and the consolidation back onto
+`beta` (2026-05-14) are all landed. UI translation work tracked under
+"UI Translation Phases" below; platform-edge milestones in their own section
+further down. Both lists progress in parallel.
+
 Owner: Janek (solo). No PRs; same `beta`-first discipline as the GTK shell.
 
 ## Goal
@@ -129,24 +134,242 @@ The setup script does not mitigate this — it's a workflow note for
 when iterating: pause Nextcloud sync before heavy builds, run one
 target at a time.
 
-## Milestones
+## Milestones — platform-edge build-out
 
-Each milestone is one or more `beta`-style commits on the `android`
-branch. Each ends in a state where the Linux build still passes.
+The systems-side path: toolchain, JNI bridges, services. Orthogonal
+to the UI translation phases below; each commit can advance either
+axis (or both). Shipping = both axes far enough along that a release
+is coherent.
 
-1. **Workspace restructure.** No Android code yet. Just split the tree, update `meson.build` / `dev-xbuild.sh` / Flatpak manifest paths, verify host build + tests still pass. Single commit.
-2. **`setup-android.sh` lands.** Run from a fresh state on this laptop, end up with a working toolchain. Re-run is a no-op. Document the flag set in the script's `--help`.
-3. **Empty `meditate-android` crate.** Slint Material "Hello" — one screen, one button. `cargo apk run --target aarch64-linux-android` installs and launches on a real device. No `meditate-core` integration yet.
-4. **Wire `meditate-core::timer::Countdown` to one screen.** Start / pause / stop a countdown; render mm:ss. No persistence, no bells, no haptics.
-5. **Mode toggle + Box Breath mode + per-mode stopwatch toggle.** Adds the three-option mode toggle (Timer / Guided / Box Breath — Guided is a placeholder until audio lands in milestone 7) and implements Box Breath alongside Timer. Same screen scaffold; the per-mode stopwatch toggle flips the active mode from countdown to count-up by using `meditate_core::timer::Stopwatch` directly instead of wrapping it in a `Countdown`. There is *no* separate "Stopwatch mode" — it's a per-mode boolean, mirroring the GTK shell.
-6. **DB persistence.** `rusqlite` bundled feature compiles for `aarch64-linux-android` unchanged. Sessions list view; per-label stats query.
-7. **Bells.** Audio playback via Android `MediaPlayer` JNI (or `oboe-rs`). Decision deferred to milestone 7.
-8. **Haptics.** Android `Vibrator` / `VibratorManager` JNI. Reuse `meditate-core` envelope-quantising logic; map quantised levels to Android amplitude scale (0-255).
-9. **Foreground service + notification.** Required so the timer survives screen-off. New code, no Linux equivalent.
-10. **Keychain.** Android `KeyStore` JNI for the Nextcloud app-password. `oo7` is host-only.
-11. **Sync.** `meditate-core::sync` already abstracts the HTTP layer (`ureq`). Plug in the JNI keychain and run.
-12. **Polish: edge-to-edge, predictive back, IME insets, theming.** First real user-facing exposure of the `NativeActivity` rough edges from caveat (2).
-13. **F-Droid metadata + reproducible build.** Manifest, fastlane structure, `metadata/io.github.janekbt.Meditate.yml` for fdroiddata once we want to submit.
+1. ✅ **Workspace restructure** (commit `51e5cda`, replicated on `beta` as `17440ea`).
+2. ✅ **`setup-android.sh` lands** (`25c304e`).
+3. ✅ **Empty `meditate-android` crate** — Slint Material hello-screen (`fd0993f`).
+4. ✅ **Wire `meditate-core` to one screen** — originally `Countdown`, migrated to `Session` in `73c5cc4`. The dead Countdown/CountdownTimer primitives dropped in `61d56be`.
+5. **Mode toggle + Box Breath mode + per-mode stopwatch toggle.** In progress — the state-machine plumbing is in via the Session migration; UI surfaces land in UI phase 2.
+6. **DB persistence.** `rusqlite` bundled feature should compile for `aarch64-linux-android` unchanged. Wiring to the Slint screens lands in UI phase 3.
+7. **Bells.** Audio playback via Android `MediaPlayer` JNI (or `oboe-rs`). Decision deferred to this milestone. Drives UI phase 5.
+8. **Haptics.** Android `Vibrator` / `VibratorManager` JNI. Reuse `meditate-core` envelope-quantising logic; map quantised levels to Android amplitude scale (0-255). Pairs with UI phase 5.
+9. **Foreground service + notification.** Required so the timer survives screen-off. New code, no Linux equivalent. Lands alongside UI phase 1's running view as a cross-cutting concern.
+10. **Keychain.** Android `KeyStore` JNI for the Nextcloud app-password. `oo7` is host-only. Drives UI phase 7's password row.
+11. **Sync.** `meditate-core::sync` already abstracts the HTTP layer (`ureq`). Plug in the JNI keychain and run. Pairs with UI phase 7.
+12. **Polish: edge-to-edge, predictive back, IME insets, theming.** Lands as UI phase 8.
+13. **F-Droid metadata + reproducible build.** Manifest, fastlane structure, `metadata/io.github.janekbt.Meditate.yml` for fdroiddata. Lands after every UI phase is at least partly usable.
+
+## UI Translation Phases
+
+The screen-by-screen path: each phase ports one or two GTK screens to
+Slint + Material 3 end-to-end. Slicing is by screen, not by feature,
+so the app is always shippable mid-port (just with fewer screens).
+Each phase ends with on-device verification on the Fairphone 5 + the
+GTK shell still passing `cargo test --workspace` + `cargo clippy
+--workspace --all-targets -- -D warnings`.
+
+**Principle.** Mirror GTK behavior per the saved feedback memory:
+before each phase, re-read the GTK shell's file for that screen;
+copy layout, copy text, and copy behaviour as closely as Material 3
+allows. Deviate only where MD3 demands it.
+
+### Phase 1 — Setup view + Timer running view
+
+GTK reference: `meditate-gtk/data/ui/timer_view.blp` (setup) + the
+running-page builder in `meditate-gtk/src/window/imp.rs`. Slint shell
+currently has the bare scaffold (`meditate-android/ui/main.slint`):
+hardcoded 10-minute default, one button, no duration picker.
+
+To land:
+- Duration picker (hours + minutes; default 0h 10m). Mirrors the GTK
+  shell's two-column SpinRow.
+- Hero readout reflects the configured target in Setup and the live
+  remaining in Running (drives off `Session::display_secs` / the
+  shell's idle-hero formatter).
+- Streak chip slot above the hero (empty placeholder; lights up in
+  phase 3 once DB persistence lands).
+- Pause / Stop affordances on the running page; Add-time / Finish-
+  overtime when in Overtime.
+- Foreground service + notification scaffolding (systems milestone 9)
+  hooks in here so the timer survives screen-off from the very first
+  usable build.
+
+Verification: 1-minute countdown round-trips Start → Pause → Resume
+→ Stop with timings matching the GTK shell to ±100 ms; screen-off
+during a session doesn't kill it.
+
+### Phase 2 — Mode toggle + Box Breath mode
+
+GTK reference: the three-mode segmented control at the top of
+`timer_view.blp`, plus the Box-Breath phase visualization built in
+`meditate-gtk/src/timer/imp.rs`. The Session migration already
+handles the state-machine shape variants
+(`TimerCountdown`/`TimerStopwatch`/`BoxBreathCountdown`/
+`BoxBreathStopwatch`); UI surface is what's missing.
+
+To land:
+- Mode chip group: Timer / Guided / Box Breath. Guided stays a
+  placeholder until phase 5's audio engine arrives.
+- Per-mode stopwatch toggle that flips Countdown↔Stopwatch shape.
+- Box-Breath running view: the dot on a square, geometry via
+  `Phase::perimeter_point(t, pad, side)`. Per-phase countdown overlay.
+- Cues toggle (Sound / Vibration / Both) at the top of Setup —
+  surface only; the channels stay stub until phase 5.
+- "Keep screen awake" per-mode toggle — surface only; backend stub
+  until phase 8.
+
+Verification: Box-Breath cycle alignment matches GTK end-of-cycle
+timing; stopwatch toggle on Box Breath produces a count-up readout.
+
+### Phase 3 — Persistence (Log view + session-save flow)
+
+Systems milestone 6 lands first / alongside. GTK reference:
+`meditate-gtk/src/log/imp.rs`. The undo-toast plumbing already has
+its typed `Announcement::SessionDeleted` variant in core (commit
+`9dd54a7`).
+
+To land:
+- Stop / Finish now persists via `Database::insert_session`.
+- Log screen: session cards grouped by day. Tap to edit; swipe to
+  delete with Undo toast.
+- Edit-session dialog (note, label, start time, duration).
+- Sync-status indicator surface (the icon at the corner — wired to
+  `meditate_core::sync::settings::get_last_sync_*` readers).
+
+Verification: cross-device sync round trip — phone authors a
+session, GTK shell on the laptop sees it within one sync cycle.
+
+### Phase 4 — Stats view
+
+GTK reference: `meditate-gtk/src/stats/imp.rs`. Most of this is
+rendering — every metric already has a `*_from_db` reader in
+`meditate-core`. The contribution heatmap is the highest-effort
+custom-painted bit.
+
+To land:
+- Numbers tile grid (total minutes, current streak, median, longest
+  session).
+- Daily-totals chart (bar chart per day for the active period).
+- Contribution heatmap (the 91-cell calendar grid, accessibility via
+  the existing `ContribCell::speech_role` backlog item).
+- Label aggregate row.
+- Hour-of-day buckets.
+- Period selector (week / 4 weeks / 3 months / 1 year — mirrors GTK).
+
+Verification: numbers match the GTK shell on the same DB; heatmap
+matches visually for the same period range.
+
+### Phase 5 — Bells + vibration patterns
+
+Two-layer phase. Systems milestones 7 + 8 (audio + haptics JNI)
+land in parallel with the UI work. GTK reference: bell-sound chooser
+(`meditate-gtk/src/sounds.rs`), vibration-pattern chooser
+(`meditate-gtk/src/vibrations.rs`). The `PreviewToggle` machinery is
+already typed in core (`meditate_core::sound::PreviewToggle`).
+
+To land:
+- Bell-sound chooser screen (per-row Play/Stop preview hooked via
+  `PreviewToggle`).
+- Vibration-pattern chooser screen (same shape).
+- Starting / Interval / End bell rows in Setup view.
+- Box-Breath per-phase cue config (re-uses the Setup-view rows in
+  the Box-Breath section).
+- Starting/Interval/End bell sounds + vibration patterns play on
+  the phone during a real session.
+
+Verification: starting a Timer countdown with all three bells +
+vibration enabled fires all three sounds + vibration at the right
+phase boundaries.
+
+### Phase 6 — Editors + Presets
+
+GTK reference: vibration pattern editor
+(`meditate-gtk/src/vibration_editor.rs`), preset chooser /
+manage page (`meditate-gtk/src/presets.rs`), label chooser
+(`meditate-gtk/src/labels.rs`).
+
+To land:
+- Vibration pattern editor (curve editor with point dragging — the
+  math is already in `meditate_core::vibration`; just need the touch
+  handlers).
+- Preset chooser (chip list above the duration picker).
+- Save / Override / Manage preset flow.
+- Label chooser screen + per-row rename / delete with Undo.
+
+Verification: a custom pattern authored on the phone syncs to the
+laptop and renders identically in the GTK shell's editor.
+
+### Phase 7 — Sync + Preferences
+
+Systems milestones 10 + 11 (keychain JNI + sync runner) land first.
+GTK reference: `meditate-gtk/src/preferences.rs`,
+`meditate-gtk/src/recovery_dialog.rs`.
+
+To land:
+- Preferences screen (Material 3 settings list pattern).
+- Nextcloud URL / username / password rows wired through the
+  Android `KeyStore`.
+- Account-test button rendering `SyncSettingsError` variants via the
+  shell-side gettext renderer.
+- Recovery dialog (push-local / wipe-local) — the `prepare_*_recovery`
+  helpers are pub on `meditate_core::sync::settings`.
+- Sync status indicator becomes interactive.
+
+Verification: real Nextcloud sync round-trip from the phone with
+the laptop GTK shell as a peer; the account-test toasts match the
+copy in the GTK shell.
+
+### Phase 8 — Polish
+
+Mostly fit-and-finish; corresponds to systems milestone 12.
+
+- Edge-to-edge layout (no system bars eating UI).
+- Predictive-back gesture works on every screen.
+- IME insets (text fields stay visible when the keyboard appears).
+- Material 3 light/dark theming — no Material You per the accepted
+  caveat.
+- TalkBack labels + roles on every interactive widget.
+- i18n: decision between `.po` parsed in Rust vs. Android string
+  resources lands here.
+
+Verification: every screen passes a TalkBack pass; rotate / multi-
+window / dark mode / keyboard interactions all behave; F-Droid
+build reproducibility check.
+
+## Cross-cutting concerns
+
+These don't live in any single phase but get touched throughout:
+
+- **Navigation.** Phone-first single-pane stack. Slint's
+  `NavigationStack` mirrors `AdwNavigationView`'s shape; back gesture
+  pops, the title bar's leading icon is the back arrow. The
+  desktop-adaptive sidebar concerns of libadwaita don't apply on
+  Android.
+- **Toast / SR-announcement plumbing.** Reuse
+  `meditate_core::announcement::Announcement` (six variants today);
+  render via Material 3 Snackbar. The same enum drives the GTK
+  shell's `crate::announcement::title()` helper.
+- **Tick loop.** Slint timer at ~200 ms feeds `Session::tick(now)`;
+  the same loop dispatches `Effect`s. Hooked up from phase 1; later
+  phases add Effect handlers (bell-fire, vibration-fire, etc.).
+- **State adapter.** `meditate-android/src/app.rs` keeps the AppState
+  pattern that the Session migration just landed. Every later phase
+  extends AppState with the next screen's state, not via a fresh
+  module — unit-testable below the Slint runtime, same shape that
+  has 36 tests today.
+
+## Discipline rules
+
+Borrowed from the GTK shell's process; non-negotiable:
+
+- On-device verification on the Fairphone 5 before commit of any
+  user-facing change (the "test on device before claiming fix works"
+  rule applies to both shells now).
+- Core changes touch both shells in the same commit; no separate-PR
+  dance. The branch consolidation makes this trivial.
+- The GTK shell stays green through every phase: `cargo test
+  --workspace` passes, `cargo clippy --workspace --all-targets --
+  -D warnings` passes.
+- Strict TDD on anything below the Slint runtime — the adapter layer
+  in `meditate-android/src/app.rs` style.
+- No `#[allow(dead_code)]` to silence warnings — fix the cause (the
+  recent Countdown removal is the template).
 
 ## Platform-edge replacement matrix
 
