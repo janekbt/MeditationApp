@@ -21,6 +21,21 @@ use std::time::{Duration, Instant};
 #[cfg(target_os = "android")]
 static ANDROID_APP: OnceLock<slint::android::AndroidApp> = OnceLock::new();
 
+/// Hide the soft keyboard. Slint's `clear-focus()` on a
+/// TextInput is supposed to dismiss the IME via the
+/// `InputMethodRequest::Disable` path, but on this slint+android-
+/// activity stack (1.16.1 / 0.6.1) tapping a non-input button
+/// like Save / Cancel doesn't dispatch a focus-lost event for the
+/// already-focused TextInput, so the IME stays parked. Going
+/// through `AndroidApp::hide_soft_input` directly side-steps
+/// Slint and asks Android to drop the IME unconditionally.
+#[cfg(target_os = "android")]
+fn hide_soft_keyboard() {
+    if let Some(app) = ANDROID_APP.get() {
+        app.hide_soft_input(false);
+    }
+}
+
 /// React to an AppState transition. If the session just started
 /// (Idle/Finished → Active), kick the foreground service. If it
 /// just ended (Active → Idle/Finished), tear it down. No-op on
@@ -1147,6 +1162,17 @@ fn build_ui() -> MainWindow {
     let delete_timer: &'static slint::Timer =
         Box::leak(Box::new(slint::Timer::default()));
 
+    // Session being edited via the Log card → Edit-Session
+    // overlay (L-4). Holds the rowid between `card-tap`
+    // (populates the dialog) and `edit-save-tap` (reads the
+    // dialog's `edit-note-text`, builds a Session with that
+    // single field swapped, and writes it back). None whenever
+    // the overlay is hidden. Mirrors GTK's `session_id` capture
+    // inside `show_session_dialog` at
+    // `meditate-gtk/src/log/imp.rs:765`.
+    #[cfg(target_os = "android")]
+    let editing_session_id: Rc<Cell<Option<i64>>> = Rc::new(Cell::new(None));
+
     // Crash-recovery snapshot timer handle. Heartbeat is started
     // on the Idle/Finished → Active transition in `on_action_tap`
     // and cancelled on every transition out of Active, mirroring
@@ -2163,6 +2189,114 @@ fn build_ui() -> MainWindow {
         });
     }
 
+    // Card tap on the Log feed → open the Edit-Session overlay
+    // pre-filled with the tapped session's data. L-4a only wires
+    // the Note field; future slices (L-4b/c/d) will populate
+    // duration / start time / label here too. Mirrors GTK's
+    // `show_edit_dialog` at `meditate-gtk/src/log/imp.rs:754`.
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let loaded_log_sessions = loaded_log_sessions.clone();
+        #[cfg(target_os = "android")]
+        let editing_session_id = editing_session_id.clone();
+        ui.on_card_tap(move |rowid| {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                let id = rowid as i64;
+                let note = loaded_log_sessions
+                    .borrow()
+                    .iter()
+                    .find(|(id_, _)| *id_ == id)
+                    .map(|(_, s)| s.notes.clone().unwrap_or_default());
+                let Some(note) = note else { return; };
+                editing_session_id.set(Some(id));
+                ui.set_edit_note_text(note.into());
+                ui.set_edit_session_page(true);
+            }
+            let _ = (weak.clone(), rowid);
+        });
+    }
+
+    // Cancel button on the Edit-Session overlay → discard edits,
+    // close the overlay. Mirrors GTK's
+    // `cancel_btn.connect_clicked` at `log/imp.rs:1050`.
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let editing_session_id = editing_session_id.clone();
+        ui.on_edit_cancel_tap(move || {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                hide_soft_keyboard();
+                editing_session_id.set(None);
+                ui.set_edit_session_page(false);
+            }
+            let _ = weak.clone();
+        });
+    }
+
+    // Save button on the Edit-Session overlay → write the edited
+    // Session row back to the DB and refresh the feed. L-4a only
+    // mutates the `notes` column; all other fields are pulled
+    // from the live shadow copy so they're preserved verbatim.
+    // Mirrors GTK's `save_btn.connect_clicked` save path at
+    // `log/imp.rs:1058`.
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let loaded_log_sessions = loaded_log_sessions.clone();
+        #[cfg(target_os = "android")]
+        let pending_deletes = pending_deletes.clone();
+        #[cfg(target_os = "android")]
+        let editing_session_id = editing_session_id.clone();
+        ui.on_edit_save_tap(move || {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                hide_soft_keyboard();
+                let Some(id) = editing_session_id.get() else {
+                    ui.set_edit_session_page(false);
+                    return;
+                };
+                let new_note_raw = ui.get_edit_note_text().to_string();
+                let new_note = if new_note_raw.is_empty() {
+                    None
+                } else {
+                    Some(new_note_raw)
+                };
+                let original = loaded_log_sessions
+                    .borrow()
+                    .iter()
+                    .find(|(id_, _)| *id_ == id)
+                    .map(|(_, s)| s.clone());
+                let Some(mut session) = original else {
+                    ui.set_edit_session_page(false);
+                    return;
+                };
+                session.notes = new_note;
+                if let Some(db_arc) = DATABASE.get() {
+                    if let Ok(guard) = db_arc.lock() {
+                        if let Some(db) = guard.as_ref() {
+                            if let Err(err) = db.update_session(id, &session) {
+                                meditate_core::log(
+                                    "log.edit.save.failed",
+                                    &format!("rowid {id}: {err:?}"),
+                                );
+                            }
+                        }
+                    }
+                }
+                editing_session_id.set(None);
+                ui.set_edit_session_page(false);
+                reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
+            }
+            let _ = weak.clone();
+        });
+    }
+
     // Preferences gear tap — no-op for now; Phase 7 hooks it up
     // to the eventual Preferences screen.
     ui.on_preferences_tap(move || {
@@ -2213,8 +2347,17 @@ fn build_ui() -> MainWindow {
         let state = state.clone();
         #[cfg(target_os = "android")]
         let pending_done = pending_done.clone();
+        #[cfg(target_os = "android")]
+        let editing_session_id = editing_session_id.clone();
         ui.on_back_pressed(move || {
             let Some(ui) = weak.upgrade() else { return; };
+            #[cfg(target_os = "android")]
+            if ui.get_edit_session_page() {
+                hide_soft_keyboard();
+                editing_session_id.set(None);
+                ui.set_edit_session_page(false);
+                return;
+            }
             if ui.get_labels_page() {
                 ui.set_labels_page(false);
                 return;

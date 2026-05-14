@@ -871,6 +871,21 @@ export component MainWindow inherits Window {
     in property <bool> snackbar-visible: false;
     callback snackbar-undo-tap();
 
+    // Edit-Session overlay (L-4). Tapping a Log card opens a full-
+    // window slide-in mirroring GTK's `show_session_dialog` in
+    // `meditate-gtk/src/log/imp.rs:762`. L-4a ships note-only —
+    // duration, start time, and label come in L-4b / L-4c / L-4d.
+    // Rust drives `edit-session-page` (visibility), pre-fills
+    // `edit-note-text` from the tapped Session's notes column on
+    // open, reads it back when `edit-save-tap` fires, builds a
+    // `Session` struct preserving every other field, and writes
+    // through `db.update_session(id, &session)`.
+    in property <bool> edit-session-page: false;
+    in-out property <string> edit-note-text: "";
+    callback card-tap(int);
+    callback edit-cancel-tap();
+    callback edit-save-tap();
+
     // Slide offset driving the Running screen's slide-over. 0 px
     // means Running is parked at x=width (off-screen right) and
     // Setup is fully visible underneath. Animating up to `root.width`
@@ -921,6 +936,15 @@ export component MainWindow inherits Window {
     // Done/Running, so no asymmetric duration trick needed.
     property <length> labels-offset: root.labels-page ? root.width : 0px;
     animate labels-offset { duration: 300ms; easing: ease-out; }
+
+    // Slide offset for the Edit-Session overlay. Symmetric 300 ms
+    // mirroring `AdwNavigationView` push of `show_session_dialog`
+    // — Adw.Dialog itself slides up on phone form-factors and the
+    // edit dialog here is the same kind of full-window
+    // destination, so push-from-the-right keeps animation
+    // direction consistent with the other overlays.
+    property <length> edit-session-offset: root.edit-session-page ? root.width : 0px;
+    animate edit-session-offset { duration: 300ms; easing: ease-out; }
 
     // Slide offset for the Done overlay. Asymmetric duration:
     // appearing is INSTANT (0 ms) so Done is already at x=0 by the
@@ -2149,6 +2173,19 @@ export component MainWindow inherits Window {
                         border-radius: 12px;
                         background: MaterialPalette.surface-container;
 
+                        // Card-tap → edit-session dialog. Declared
+                        // BEFORE the HorizontalLayout (and therefore
+                        // its child IconButton) so the trash button's
+                        // own click handler claims the trash hit-area
+                        // and the surrounding card area falls through
+                        // to this TouchArea — mirrors GTK's separate
+                        // `card.add_controller(click)` +
+                        // `delete_btn.connect_clicked` wiring at
+                        // `meditate-gtk/src/log/imp.rs:492 / :472`.
+                        TouchArea {
+                            clicked => { root.card-tap(item.id); }
+                        }
+
                         HorizontalLayout {
                             padding-left: 0px;
                             padding-right: 16px;
@@ -2272,6 +2309,79 @@ export component MainWindow inherits Window {
         }
     }
 
+    // ── Edit-Session overlay (slides over the Log page) ─────────
+    // Mirrors GTK's `show_session_dialog` at
+    // `meditate-gtk/src/log/imp.rs:762`. L-4a ships note-only —
+    // the Duration / Start time / Label sections come in L-4b /
+    // L-4c / L-4d. Declared AFTER the Log page Rectangle so the
+    // sliding overlay draws on TOP of the feed (Slint's later
+    // children render above earlier ones), not behind it. Header
+    // layout matches the dialog's `adw::HeaderBar` (Cancel left,
+    // title centre, Save right); background mirrors the Setup /
+    // Log surface so a partial slide doesn't show through.
+    Rectangle {
+        visible: root.nav-page == 1;
+        x: parent.width - root.edit-session-offset;
+        width: parent.width;
+        height: parent.height;
+        background: MaterialPalette.surface;
+
+        VerticalLayout {
+            padding-top: root.status-bar-inset + 16px;
+            padding-bottom: root.bottom-bar-inset + 16px;
+            padding-left: 16px;
+            padding-right: 16px;
+            spacing: 16px;
+            alignment: start;
+
+            // Header — Cancel (left) + title (centre) + Save
+            // (right). Mirrors GTK's `header.pack_start(&cancel_btn)
+            // / header.pack_end(&save_btn)` at
+            // `log/imp.rs:998-1000`. Save uses FilledButton to
+            // match the `suggested-action` CSS class on the GTK
+            // Save button.
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: stretch;
+
+                VerticalLayout {
+                    alignment: center;
+                    TextButton {
+                        text: "Cancel";
+                        clicked => { root.edit-cancel-tap(); }
+                    }
+                }
+                Text {
+                    text: "Edit Session";
+                    font-size: 18px;
+                    color: MaterialPalette.on-surface;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    horizontal-alignment: center;
+                }
+                VerticalLayout {
+                    alignment: center;
+                    FilledButton {
+                        text: "Save";
+                        clicked => { root.edit-save-tap(); }
+                    }
+                }
+            }
+
+            // Note field — caption + multi-line input. Mirrors
+            // GTK's `note_caption` + `note_view` at
+            // `log/imp.rs:933 / :915`. The existing NoteField
+            // component already styles a filled-surface multiline
+            // TextInput; binding `text` directly to
+            // `root.edit-note-text` keeps the editor's content in
+            // sync with the Rust-side property both ways.
+            NoteField {
+                label: "Note (optional)";
+                text <=> root.edit-note-text;
+            }
+        }
+    }
+
     // ── Top AppBar — title + Preferences trigger ────────────────
     // Pinned at y=0 on the base pages (Setup, Log). Hidden when
     // any overlay (Running / Done / Labels) is up — those
@@ -2285,7 +2395,7 @@ export component MainWindow inherits Window {
     // button. Background extends behind that zone too (surface
     // colour) so the status bar reads against a matching tint.
     Rectangle {
-        visible: !root.running-page && !root.done-page && !root.labels-page;
+        visible: !root.running-page && !root.done-page && !root.labels-page && !root.edit-session-page;
         x: 0;
         y: 0;
         width: parent.width;
@@ -2385,7 +2495,7 @@ export component MainWindow inherits Window {
     // and fires `nav-changed` so Rust can refresh per-page
     // state (e.g. reload the Log feed when entering it).
     Rectangle {
-        visible: !root.running-page && !root.done-page && !root.labels-page;
+        visible: !root.running-page && !root.done-page && !root.labels-page && !root.edit-session-page;
         x: 0;
         y: parent.height - root.nav-bar-height - root.bottom-bar-inset;
         width: parent.width;
