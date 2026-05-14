@@ -318,11 +318,14 @@ template $TimerView : Gtk.Widget {
                 }
               }
 
-              // Stopwatch toggle. Visible in Timer mode only; flipping
-              // on greys out the Duration row (the planned-duration
-              // concept doesn't apply when counting up from zero).
-              // Box Breath has no stopwatch analogue so the row hides
-              // under that mode.
+              // Stopwatch toggle. Shown in every mode that has a
+              // non-zero session length (Timer + Box Breath both
+              // back it with their own per-mode persisted flag via
+              // `stopwatch_key_for_mode`). Flipping on greys out
+              // the Duration row — the planned-duration concept
+              // doesn't apply when counting up from zero — and
+              // switches the session shape variant at start
+              // (`TimerStopwatch` / `BoxBreathStopwatch`).
               Adw.SwitchRow stopwatch_mode_row {
                 title: _("Stopwatch Mode");
                 subtitle: _("Count up from zero");

@@ -759,6 +759,7 @@ export component MainWindow inherits Window {
     callback action-tap();
     callback stop-tap();
     callback duration-tap();
+    callback stopwatch-toggled(bool);
     // Fires after the Duration dialog's Set button commits new
     // setup-hours / setup-minutes — Rust then routes the new
     // total seconds to the active mode's storage (Timer keeps
@@ -980,6 +981,7 @@ export component MainWindow inherits Window {
                         title: "Stopwatch Mode";
                         subtitle: "Count up from zero";
                         checked <=> root.stopwatch-on;
+                        toggled(value) => { root.stopwatch-toggled(value); }
                     }
 
                     Rectangle {
@@ -1124,10 +1126,52 @@ export component MainWindow inherits Window {
                 }
 
                 BoxedList {
+                    // Stopwatch — mirrors GTK's
+                    // `stopwatch_mode_row.set_visible(true)`
+                    // unconditional call in `on_mode_switched`
+                    // (the .blp comment claiming it's Timer-only
+                    // is stale). Flips
+                    // `BoxBreathCountdown` ↔ `BoxBreathStopwatch`
+                    // at session start.
+                    SwitchRow {
+                        title: "Stopwatch Mode";
+                        subtitle: "Count up from zero";
+                        checked <=> root.stopwatch-on;
+                        toggled(value) => { root.stopwatch-toggled(value); }
+                    }
+
+                    Rectangle {
+                        height: 1px;
+                        background: MaterialPalette.outline-variant;
+                    }
+
                     DurationRow {
                         value-text: root.duration-text;
                         enabled: !root.stopwatch-on;
                         tapped => { root.duration-tap(); }
+                    }
+
+                    Rectangle {
+                        height: 1px;
+                        background: MaterialPalette.outline-variant;
+                    }
+
+                    // Label expander — same component as the
+                    // Timer body's row, wired to the same
+                    // `label-*` properties + `label-tap`
+                    // callback. Per-mode persistence happens
+                    // Rust-side via the active mode chip, so the
+                    // master toggle on Box Breath writes
+                    // `label_active_breathing` and selects
+                    // through the seeded "Box-Breathing" default.
+                    ExpanderRow {
+                        title: "Label";
+                        subtitle: "Tag this session";
+                        body-title: "Selected";
+                        body-subtitle: root.label-name;
+                        active <=> root.label-active;
+                        toggled(value) => { root.label-active-toggled(value); }
+                        body-tapped => { root.label-tap(); }
                     }
                 }
             }

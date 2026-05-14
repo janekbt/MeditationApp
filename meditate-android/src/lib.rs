@@ -109,6 +109,34 @@ fn read_keep_awake_for_mode(mode: meditate_core::SessionMode) -> bool {
     meditate_core::settings_keys::keep_screen_awake_from_db(db, mode)
 }
 
+/// Per-mode Stopwatch flag — flips `*Countdown` ↔ `*Stopwatch`
+/// at session start. Same shape as the Keep-Awake / Cues
+/// readers; persists via `stopwatch_key_for_mode` ("timer
+/// _stopwatch_active" / "guided_stopwatch_active" /
+/// "boxbreath_stopwatch_active"). Defaults to `false`.
+#[cfg(target_os = "android")]
+fn read_stopwatch_for_mode(mode: meditate_core::SessionMode) -> bool {
+    let Some(db_arc) = DATABASE.get() else { return false; };
+    let Ok(guard) = db_arc.lock() else { return false; };
+    let Some(db) = guard.as_ref() else { return false; };
+    let key = meditate_core::settings_keys::stopwatch_key_for_mode(mode);
+    meditate_core::settings_keys::read_bool(db, key, false)
+}
+
+#[cfg(target_os = "android")]
+fn write_stopwatch_for_mode(mode: meditate_core::SessionMode, value: bool) {
+    let Some(db_arc) = DATABASE.get() else { return; };
+    let Ok(guard) = db_arc.lock() else { return; };
+    let Some(db) = guard.as_ref() else { return; };
+    let key = meditate_core::settings_keys::stopwatch_key_for_mode(mode);
+    if let Err(e) = db.set_setting(key, meditate_core::format_bool(value)) {
+        meditate_core::log(
+            "settings.stopwatch",
+            &format!("write FAILED mode={mode:?} value={value} err={e:?}"),
+        );
+    }
+}
+
 #[cfg(target_os = "android")]
 fn write_keep_awake_for_mode(mode: meditate_core::SessionMode, value: bool) {
     let Some(db_arc) = DATABASE.get() else { return; };
@@ -1114,6 +1142,7 @@ fn build_ui() -> MainWindow {
                 ui.set_cues_mode(signal_mode_to_chip_index(
                     read_signal_mode_for_mode(core_mode),
                 ));
+                ui.set_stopwatch_on(read_stopwatch_for_mode(core_mode));
                 ui.set_label_active(read_label_active_for_mode(core_mode));
                 ui.set_label_name(
                     resolved_label_for_mode(core_mode)
@@ -1172,6 +1201,20 @@ fn build_ui() -> MainWindow {
             // property already updated via the in-out binding;
             // nothing else to do without a DB. Touching the
             // captures keeps the closure non-empty.
+            let _ = (current_mode.get(), value);
+        });
+    }
+
+    // Stopwatch Mode toggle — per-mode persistence via
+    // `stopwatch_key_for_mode`. Toggling on flips the active
+    // mode's session-shape choice to `*Stopwatch` at next
+    // session start; the row visibility is identical across
+    // modes (mirrors GTK's unconditional `set_visible(true)`).
+    {
+        let current_mode = current_mode.clone();
+        ui.on_stopwatch_toggled(move |value| {
+            #[cfg(target_os = "android")]
+            write_stopwatch_for_mode(current_mode.get().into(), value);
             let _ = (current_mode.get(), value);
         });
     }
@@ -1524,6 +1567,7 @@ fn build_ui() -> MainWindow {
         ui.set_cues_mode(signal_mode_to_chip_index(
             read_signal_mode_for_mode(core_mode),
         ));
+        ui.set_stopwatch_on(read_stopwatch_for_mode(core_mode));
         ui.set_label_active(read_label_active_for_mode(core_mode));
         ui.set_label_name(
             resolved_label_for_mode(core_mode)
