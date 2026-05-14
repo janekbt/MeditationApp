@@ -1,31 +1,13 @@
-//! Standalone timer primitives — `CountdownTimer` and `Stopwatch`.
-//! `Stopwatch` is used inside `Session` for the pause-aware elapsed-
-//! time clock; `CountdownTimer` and `Countdown` survive primarily
-//! for the `bin/*_smoke.rs` harnesses. Production timing logic
-//! lives in `session/` (see `Session::tick`) which owns its own
-//! phase clocks.
+//! Standalone timer primitive — `Stopwatch`.
+//!
+//! Pause-aware elapsed-time clock used inside
+//! `meditate_core::session::Session` (which owns the higher-level
+//! phase/state machine). Stays a small leaf module so the
+//! `serde::{Serialize, Deserialize}` derive can ride through to
+//! crash-recovery persistence without dragging the Session types in.
 
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-
-#[derive(Debug, Clone)]
-pub struct CountdownTimer {
-    total: Duration,
-}
-
-impl CountdownTimer {
-    pub fn new(total: Duration) -> Self {
-        Self { total }
-    }
-
-    pub fn remaining(&self, elapsed: Duration) -> Duration {
-        self.total.saturating_sub(elapsed)
-    }
-
-    pub fn is_finished(&self, elapsed: Duration) -> bool {
-        elapsed >= self.total
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Stopwatch {
@@ -70,85 +52,9 @@ impl Stopwatch {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct Countdown {
-    timer: CountdownTimer,
-    stopwatch: Stopwatch,
-}
-
-impl Countdown {
-    pub fn new(timer: CountdownTimer, stopwatch: Stopwatch) -> Self {
-        Self { timer, stopwatch }
-    }
-
-    pub fn remaining(&self, now: Duration) -> Duration {
-        self.timer.remaining(self.stopwatch.elapsed(now))
-    }
-
-    pub fn elapsed(&self, now: Duration) -> Duration {
-        self.stopwatch.elapsed(now)
-    }
-
-    pub fn is_finished(&self, now: Duration) -> bool {
-        self.timer.is_finished(self.stopwatch.elapsed(now))
-    }
-
-    pub fn pause(self, now: Duration) -> Self {
-        let Self { timer, stopwatch } = self;
-        Self {
-            timer,
-            stopwatch: stopwatch.paused_at(now),
-        }
-    }
-
-    pub fn resume(self, now: Duration) -> Self {
-        let Self { timer, stopwatch } = self;
-        Self {
-            timer,
-            stopwatch: stopwatch.resumed_at(now),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn timer_at_start_has_full_duration_remaining() {
-        let timer = CountdownTimer::new(Duration::from_secs(600));
-        assert_eq!(timer.remaining(Duration::ZERO), Duration::from_secs(600));
-    }
-
-    #[test]
-    fn timer_subtracts_elapsed_from_total() {
-        let timer = CountdownTimer::new(Duration::from_secs(600));
-        assert_eq!(
-            timer.remaining(Duration::from_secs(60)),
-            Duration::from_secs(540)
-        );
-    }
-
-    #[test]
-    fn timer_clamps_remaining_at_zero_when_elapsed_exceeds_total() {
-        let timer = CountdownTimer::new(Duration::from_secs(600));
-        assert_eq!(
-            timer.remaining(Duration::from_secs(700)),
-            Duration::ZERO
-        );
-    }
-
-    #[test]
-    fn timer_is_finished_when_elapsed_equals_total() {
-        let timer = CountdownTimer::new(Duration::from_secs(600));
-        assert!(timer.is_finished(Duration::from_secs(600)));
-    }
-
-    #[test]
-    fn timer_is_not_finished_before_elapsed_reaches_total() {
-        let timer = CountdownTimer::new(Duration::from_secs(600));
-        assert!(!timer.is_finished(Duration::from_secs(599)));
-    }
 
     #[test]
     fn stopwatch_elapsed_is_now_minus_started_at() {
@@ -203,68 +109,6 @@ mod tests {
         assert_eq!(
             restored.elapsed(Duration::from_secs(500)),
             Duration::from_secs(400)
-        );
-    }
-
-    #[test]
-    fn countdown_elapsed_delegates_to_stopwatch() {
-        let countdown = Countdown::new(
-            CountdownTimer::new(Duration::from_secs(600)),
-            Stopwatch::started_at(Duration::from_secs(100)),
-        );
-        assert_eq!(
-            countdown.elapsed(Duration::from_secs(110)),
-            Duration::from_secs(10)
-        );
-    }
-
-    #[test]
-    fn countdown_remaining_is_total_minus_stopwatch_elapsed() {
-        let countdown = Countdown::new(
-            CountdownTimer::new(Duration::from_secs(600)),
-            Stopwatch::started_at(Duration::from_secs(100)),
-        );
-        assert_eq!(
-            countdown.remaining(Duration::from_secs(200)),
-            Duration::from_secs(500),
-        );
-    }
-
-    #[test]
-    fn countdown_is_finished_when_stopwatch_elapsed_reaches_total() {
-        let countdown = Countdown::new(
-            CountdownTimer::new(Duration::from_secs(60)),
-            Stopwatch::started_at(Duration::from_secs(0)),
-        );
-        assert!(countdown.is_finished(Duration::from_secs(60)));
-        assert!(!countdown.is_finished(Duration::from_secs(59)));
-    }
-
-    #[test]
-    fn paused_countdown_freezes_remaining_time() {
-        let countdown = Countdown::new(
-            CountdownTimer::new(Duration::from_secs(600)),
-            Stopwatch::started_at(Duration::from_secs(100)),
-        )
-        .pause(Duration::from_secs(150));
-        assert_eq!(
-            countdown.remaining(Duration::from_secs(999)),
-            Duration::from_secs(550),
-        );
-    }
-
-    #[test]
-    fn resumed_countdown_continues_counting_down() {
-        let countdown = Countdown::new(
-            CountdownTimer::new(Duration::from_secs(600)),
-            Stopwatch::started_at(Duration::from_secs(100)),
-        )
-        .pause(Duration::from_secs(150))
-        .resume(Duration::from_secs(200));
-        // 50s elapsed before pause + 10s after resume = 60s total elapsed.
-        assert_eq!(
-            countdown.remaining(Duration::from_secs(210)),
-            Duration::from_secs(540),
         );
     }
 }
