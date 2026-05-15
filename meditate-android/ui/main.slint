@@ -1132,6 +1132,7 @@ export component MainWindow inherits Window {
     // (`db.insert_interval_bell`). Mirrors GTK's bell editor
     // (`meditate-gtk/src/bells.rs:440`).
     callback interval-bell-delete(string);
+    callback interval-bell-edit(string);
     callback create-interval-bell-tap();
     in property <bool> interval-editor-page: false;
     // 0 = Every N min (Interval), 1 = At time from start
@@ -4130,6 +4131,19 @@ export component MainWindow inherits Window {
 
                     Rectangle {
                         height: 64px;
+                        background: ib-row-touch.has-hover
+                            ? MaterialPalette.surface-container-high
+                            : transparent;
+
+                        // Row tap → edit. Declared BEFORE the
+                        // HorizontalLayout so the trash
+                        // IconButton's own click claims the
+                        // delete hit-area and the rest of the row
+                        // falls through here (same pattern as the
+                        // Log card tap-vs-trash split).
+                        ib-row-touch := TouchArea {
+                            clicked => { root.interval-bell-edit(item.uuid); }
+                        }
 
                         HorizontalLayout {
                             padding-left: 16px;

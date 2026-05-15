@@ -2788,6 +2788,14 @@ fn build_ui() -> MainWindow {
     #[cfg(target_os = "android")]
     let bell_chooser_target: Rc<Cell<u8>> = Rc::new(Cell::new(0));
 
+    // Interval-bell editor mode (B-5c-3): `Some(original)` when
+    // editing an existing bell (Save → `update_interval_bell`,
+    // preserving uuid / created_iso / enabled / pattern),
+    // `None` when creating (Save → `insert_interval_bell`).
+    #[cfg(target_os = "android")]
+    let editing_ib: Rc<RefCell<Option<meditate_core::db::IntervalBell>>> =
+        Rc::new(RefCell::new(None));
+
     {
         ui.on_starting_bell_toggled(move |value| {
             #[cfg(target_os = "android")]
@@ -2976,14 +2984,17 @@ fn build_ui() -> MainWindow {
         });
     }
 
-    // ── Interval-bell editor (B-5c-2): create / delete ──────────
+    // ── Interval-bell editor (B-5c-2/3): create / edit / delete ─
     {
         let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let editing_ib = editing_ib.clone();
         ui.on_create_interval_bell_tap(move || {
             #[cfg(target_os = "android")]
             {
                 let Some(ui) = weak.upgrade() else { return; };
-                // Seed defaults for a fresh bell.
+                // Create mode — no original to preserve.
+                editing_ib.borrow_mut().take();
                 ui.set_ie_kind(0);
                 ui.set_ie_minutes(5);
                 ui.set_ie_jitter(0);
@@ -2997,6 +3008,41 @@ fn build_ui() -> MainWindow {
                 ui.set_interval_editor_page(true);
             }
             let _ = weak.clone();
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let editing_ib = editing_ib.clone();
+        ui.on_interval_bell_edit(move |uuid| {
+            #[cfg(target_os = "android")]
+            {
+                use meditate_core::db::IntervalBellKind;
+                let Some(ui) = weak.upgrade() else { return; };
+                let found = {
+                    let Some(db_arc) = DATABASE.get() else { return; };
+                    let Ok(guard) = db_arc.lock() else { return; };
+                    let Some(db) = guard.as_ref() else { return; };
+                    db.list_interval_bells()
+                        .unwrap_or_default()
+                        .into_iter()
+                        .find(|b| b.uuid.to_string() == uuid.as_str())
+                };
+                let Some(bell) = found else { return; };
+                ui.set_ie_kind(match bell.kind {
+                    IntervalBellKind::Interval => 0,
+                    IntervalBellKind::FixedFromStart => 1,
+                    IntervalBellKind::FixedFromEnd => 2,
+                });
+                ui.set_ie_minutes(bell.minutes as i32);
+                ui.set_ie_jitter(bell.jitter_pct as i32);
+                let su = bell.sound_uuid.to_string();
+                ui.set_ie_sound_name(bell_sound_name(&su).into());
+                ui.set_ie_sound_uuid(su.into());
+                *editing_ib.borrow_mut() = Some(bell);
+                ui.set_interval_editor_page(true);
+            }
+            let _ = (weak.clone(), uuid);
         });
     }
     {
@@ -3041,9 +3087,15 @@ fn build_ui() -> MainWindow {
     }
     {
         let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let editing_ib = editing_ib.clone();
         ui.on_interval_editor_cancel(move || {
             #[cfg(target_os = "android")]
-            if let Some(ui) = weak.upgrade() {
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                // Drop edit context so the next "Create" starts
+                // clean.
+                editing_ib.borrow_mut().take();
                 ui.set_interval_editor_page(false);
             }
             let _ = weak.clone();
@@ -3051,6 +3103,8 @@ fn build_ui() -> MainWindow {
     }
     {
         let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let editing_ib = editing_ib.clone();
         ui.on_interval_editor_save(move || {
             #[cfg(target_os = "android")]
             {
@@ -3070,24 +3124,44 @@ fn build_ui() -> MainWindow {
                     0
                 };
                 let sound = ui.get_ie_sound_uuid().to_string();
+                let original = editing_ib.borrow_mut().take();
                 if let Some(db_arc) = DATABASE.get() {
                     if let Ok(guard) = db_arc.lock() {
                         if let Some(db) = guard.as_ref() {
-                            // Sound-only (B-5c-2): a bundled
-                            // pattern uuid satisfies the NOT-NULL
-                            // FK; `SignalMode::Sound` makes it
-                            // inert. Real pattern picking folds
-                            // in with B-2.
-                            if let Err(e) = db.insert_interval_bell(
-                                kind,
-                                minutes,
-                                jitter,
-                                &sound,
-                                meditate_core::seeds::BUNDLED_PATTERN_PULSE_UUID,
-                                meditate_core::SignalMode::Sound,
-                            ) {
+                            let res = match original {
+                                Some(mut bell) => {
+                                    // Edit: preserve uuid /
+                                    // created_iso / enabled and
+                                    // the existing pattern +
+                                    // signal_mode (sound-only
+                                    // doesn't touch vibration —
+                                    // B-2 owns that), swap the
+                                    // editable fields.
+                                    bell.kind = kind;
+                                    bell.minutes = minutes;
+                                    bell.jitter_pct = jitter;
+                                    bell.sound_uuid = sound.clone().into();
+                                    db.update_interval_bell(&bell)
+                                        .map(|()| 0)
+                                }
+                                None => {
+                                    // Create. Bundled pattern
+                                    // uuid satisfies the NOT-NULL
+                                    // FK; `SignalMode::Sound`
+                                    // makes it inert until B-2.
+                                    db.insert_interval_bell(
+                                        kind,
+                                        minutes,
+                                        jitter,
+                                        &sound,
+                                        meditate_core::seeds::BUNDLED_PATTERN_PULSE_UUID,
+                                        meditate_core::SignalMode::Sound,
+                                    )
+                                }
+                            };
+                            if let Err(e) = res {
                                 meditate_core::log(
-                                    "interval_bell.insert.failed",
+                                    "interval_bell.save.failed",
                                     &format!("{e:?}"),
                                 );
                             }
