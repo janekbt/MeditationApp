@@ -270,14 +270,28 @@ Landed early (session-save half):
   start / end + startup `finalize_session_in_progress` (`f12eea4`).
   Undo toast for the recovered row deferred until the Snackbar
   surface lands.
+- Log screen (L-1/L-2): session cards grouped by day, read-only,
+  with NavigationBar + pagination ("Load more"), colour-matched
+  label stripe (`3cd1c42` + predecessors).
+- Delete + Undo snackbar (L-3): per-card trash button, coalescing
+  "N sessions deleted · Undo" Material Snackbar with 5 s
+  auto-commit timer (`acef04d`). This also landed the Snackbar
+  surface itself.
+- Edit-session overlay (L-4a–d): Note (`33ffd36`), Duration via
+  the Setup-screen popup (`bb0ce2a`), Start time via Material
+  DatePickerPopup + TimePickerPopup (`0543d52`), Label group
+  reusing the labels chooser (`99ad8e8`).
+- Log filters (L-5a–c): funnel button (Log-only) + filter sheet,
+  Has-Notes switch, Label DropDownMenu, "No Matching Sessions"
+  empty-state variant (`fc630ab`, `bcdd933`, `954f74a`).
 
 Still to land:
-- Log screen: session cards grouped by day. Tap to edit; swipe to
-  delete with Undo toast.
-- Edit-session dialog (note, label, start time, duration).
+- Crash-recovery Undo (L-6): resurface the auto-finalized
+  session in the delete-style Snackbar so the user can undo a
+  recovery. Snackbar surface already exists (L-3); this is just
+  wiring `finalize_session_in_progress`'s result into it.
 - Sync-status indicator surface (the icon at the corner — wired to
   `meditate_core::sync::settings::get_last_sync_*` readers).
-- Snackbar surface (Undo toasts for delete + crash-recovery).
 
 Verification: cross-device sync round trip — phone authors a
 session, GTK shell on the laptop sees it within one sync cycle.
