@@ -1025,6 +1025,19 @@ export component MainWindow inherits Window {
     in property <string> stat-total: "–";
     in property <string> stat-sessions: "–";
 
+    // Weekly-goal hero (S-2). All pre-resolved Rust-side from
+    // `meditate_core::goal::compute`: `stat-goal-pct` is the
+    // 0.0..1.0 arc-sweep fraction (clamped — a met goal is a
+    // full ring), `stat-goal-pct-label` the capped integer
+    // percent ("153%"), `stat-goal-progress` the "1h 48m /
+    // 2h 30m" pair, `stat-goal-sub` the Reached/InProgress
+    // status line. Mirrors GTK's `reload_goal_ring` at
+    // `meditate-gtk/src/stats/imp.rs:149`.
+    in property <float> stat-goal-pct: 0.0;
+    in property <string> stat-goal-pct-label: "0%";
+    in property <string> stat-goal-progress: "–";
+    in property <string> stat-goal-sub: "";
+
     // Has-Notes filter (L-5b). `filter-notes-only` is the live
     // flag the Rust paginator reads via `get_filter_notes_only`
     // when building the `SessionFilter`. `filter-notes-toggled`
@@ -2225,6 +2238,65 @@ export component MainWindow inherits Window {
                 padding-left: 14px;
                 padding-right: 14px;
                 spacing: 22px;
+
+                // Weekly-goal hero — progress ring + eyebrow /
+                // progress / status column. Mirrors GTK's
+                // horizontal goal box at
+                // `meditate-gtk/data/ui/stats_view.blp:23`
+                // (DrawingArea ring overlaid with a % label,
+                // beside a 3-line text column).
+                HorizontalLayout {
+                    spacing: 16px;
+
+                    Rectangle {
+                        width: 72px;
+                        height: 72px;
+
+                        CircularProgressIndicator {
+                            width: 72px;
+                            height: 72px;
+                            indeterminate: false;
+                            progress: root.stat-goal-pct;
+                        }
+                        Text {
+                            text: root.stat-goal-pct-label;
+                            font-size: 15px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            color: MaterialPalette.on-surface;
+                        }
+                    }
+
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 2px;
+                        horizontal-stretch: 1;
+
+                        Text {
+                            text: "WEEKLY GOAL";
+                            font-size: 11px;
+                            font-weight: 700;
+                            color: MaterialPalette.on-surface-variant;
+                            horizontal-alignment: left;
+                        }
+                        Text {
+                            text: root.stat-goal-progress;
+                            font-size: 20px;
+                            font-weight: 700;
+                            color: MaterialPalette.on-surface;
+                            horizontal-alignment: left;
+                            overflow: elide;
+                        }
+                        Text {
+                            text: root.stat-goal-sub;
+                            font-size: 12px;
+                            color: MaterialPalette.on-surface-variant;
+                            horizontal-alignment: left;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
 
                 // Mini-stats row — Streak / Total / Sessions.
                 // Mirrors GTK's homogeneous 3-column

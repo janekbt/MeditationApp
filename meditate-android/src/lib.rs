@@ -370,6 +370,55 @@ fn refresh_stats(ui: &MainWindow) {
     ui.set_stat_sessions(
         meditate_core::format::mini_stat_or_dash(count).into(),
     );
+
+    // Weekly-goal hero (S-2). Week-start = today minus
+    // `days_since_week_start` (locale week-start dow; Android's
+    // bionic falls back to Monday — see
+    // `date_math::locale_week_start_dow`). Mirrors GTK's
+    // `reload_goal_ring` at `meditate-gtk/src/stats/imp.rs:149`.
+    use chrono::Datelike;
+    let today = meditate_core::time::today_local();
+    let week_start_dow = meditate_core::date_math::locale_week_start_dow();
+    let today_dow = today.weekday().number_from_monday() as i32;
+    let back = meditate_core::date_math::days_since_week_start(
+        today_dow,
+        week_start_dow,
+    );
+    let week_start = today - chrono::Duration::days(back as i64);
+    let week_secs =
+        meditate_core::db::total_secs_since_from_db(db, week_start)
+            .unwrap_or(0);
+    let goal_mins = meditate_core::goal::weekly_goal_mins_from_db(db);
+    let g = meditate_core::goal::compute(week_secs, goal_mins);
+
+    let mins_dur =
+        |m: i64| std::time::Duration::from_secs((m.max(0) as u64) * 60);
+    let week_str = render_hm(meditate_core::format::hm_mins_key(
+        mins_dur(g.week_mins),
+    ));
+    let goal_str = render_hm(meditate_core::format::hm_mins_key(
+        mins_dur(g.goal_mins),
+    ));
+
+    ui.set_stat_goal_pct(g.arc_pct as f32);
+    ui.set_stat_goal_pct_label(format!("{}%", g.display_pct).into());
+    ui.set_stat_goal_progress(format!("{week_str} / {goal_str}").into());
+    let sub = match g.status {
+        // GTK appends a "✓" here, but the Android 15 system
+        // font has no U+2713 glyph (renders as a tofu box —
+        // same coverage gap that bit the labels chooser
+        // check-mark). Drop it; the copy reads fine without.
+        meditate_core::goal::GoalStatus::Reached => format!(
+            "Goal reached · {week_str} this week"
+        ),
+        meditate_core::goal::GoalStatus::InProgress => {
+            let remaining = render_hm(meditate_core::format::hm_mins_key(
+                mins_dur(g.remaining_mins),
+            ));
+            format!("{remaining} to go this week")
+        }
+    };
+    ui.set_stat_goal_sub(sub.into());
 }
 
 /// Initialise the Done expander state from Setup's current pick.
