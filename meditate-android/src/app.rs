@@ -11,7 +11,7 @@
 // lands us in `Finished`, so a subsequent `toggle` starts fresh.
 
 use meditate_core::format::{format_hhmm, format_time};
-use meditate_core::session::{Session, SessionSettings, SessionShape, UiState};
+use meditate_core::session::{Effect, Session, SessionSettings, SessionShape, UiState};
 use std::time::Duration;
 
 /// User-visible mode chip group at the top of the Setup view —
@@ -102,6 +102,81 @@ pub enum AppState {
     Finished,
 }
 
+/// An `AppState` transition plus the core `Session` effects it
+/// emitted. `toggle` / `tick` / `stop` return this so the shell
+/// can dispatch the effects (bell sound / vibration / cut
+/// in-flight signals) exactly the way GTK's
+/// `dispatch_session_effects` does — the decision (which cue, or
+/// none) stays in core; the shell only carries it out.
+///
+/// `Deref<Target = AppState>` so every read-only query
+/// (`is_running`, `remaining`, `hero_label`, …) and the unit
+/// tests that chain transitions keep working unchanged — they
+/// see through to the inner state; only the shell reaches for
+/// `.effects`.
+pub struct Transition {
+    pub state: AppState,
+    pub effects: Vec<Effect>,
+}
+
+impl std::ops::Deref for Transition {
+    type Target = AppState;
+    fn deref(&self) -> &AppState {
+        &self.state
+    }
+}
+
+impl Transition {
+    fn new(state: AppState, effects: Vec<Effect>) -> Self {
+        Self { state, effects }
+    }
+
+    /// Chain another transition off this one. The shell never
+    /// chains (it dispatches after each user action), but the
+    /// state-machine tests do (`toggle(..).toggle(..).tick(..)`);
+    /// prior effects are carried forward so nothing is silently
+    /// dropped if a caller ever does chain.
+    pub fn toggle(self, shape: SessionShape, now: Duration) -> Transition {
+        let mut t = self.state.toggle(shape, now);
+        prepend(&mut t.effects, self.effects);
+        t
+    }
+    pub fn tick(self, now: Duration) -> Transition {
+        let mut t = self.state.tick(now);
+        prepend(&mut t.effects, self.effects);
+        t
+    }
+    pub fn stop(self) -> Transition {
+        let mut t = self.state.stop();
+        prepend(&mut t.effects, self.effects);
+        t
+    }
+    pub fn finish_overtime(self) -> Transition {
+        let mut t = self.state.finish_overtime();
+        prepend(&mut t.effects, self.effects);
+        t
+    }
+    pub fn add_overtime(self, now: Duration) -> Transition {
+        let mut t = self.state.add_overtime(now);
+        prepend(&mut t.effects, self.effects);
+        t
+    }
+    /// Done-screen Save / Discard — a pure UI transition with no
+    /// core effects, so it returns the bare `AppState` (keeps the
+    /// `lib.rs` `*s = …dismiss();` sites unchanged).
+    pub fn dismiss(self) -> AppState {
+        self.state.dismiss()
+    }
+}
+
+fn prepend(effects: &mut Vec<Effect>, mut earlier: Vec<Effect>) {
+    if earlier.is_empty() {
+        return;
+    }
+    earlier.append(effects);
+    *effects = earlier;
+}
+
 impl AppState {
     pub fn idle() -> Self {
         Self::Idle
@@ -115,6 +190,13 @@ impl AppState {
     }
     pub fn is_paused(&self) -> bool {
         matches!(self, Self::Active(s) if matches!(s.ui_state(), UiState::Paused))
+    }
+    /// In overtime: the countdown crossed zero, the end bell rang,
+    /// and the session keeps ticking until the user taps Finish or
+    /// Add. The running overlay stays up but its buttons morph
+    /// (mirrors GTK's Overtime phase).
+    pub fn is_overtime(&self) -> bool {
+        matches!(self, Self::Active(s) if matches!(s.ui_state(), UiState::Overtime))
     }
     pub fn is_finished(&self) -> bool {
         matches!(self, Self::Finished)
@@ -137,22 +219,54 @@ impl AppState {
     /// `TimerStopwatch`; etc. Keeping shape construction shell-side
     /// matches the GTK shell's `on_start` (it builds the right
     /// `CoreSessionShape` from `current_mode()` + `stopwatch_toggle_on`).
-    pub fn toggle(self, shape: SessionShape, now: Duration) -> Self {
+    /// Start a fresh session from fully-built `SessionSettings`.
+    /// The shell assembles these from the DB (interval bells,
+    /// starting/end cue, per-mode signal-mode override, prep)
+    /// exactly like GTK's `build_timer_settings`, so core gets
+    /// the real cue config and emits the right `Fire*` / end
+    /// effects (instead of the old `..Default::default()` that
+    /// left every bell `None` and made core emit nothing).
+    /// Honours prep: `Some` prep secs → `start_prep` (silent
+    /// pre-roll, starting bell fires at the prep→Running edge),
+    /// else `start_running`. No effects on the start edge itself
+    /// (the starting bell, if any, arrives on a later tick).
+    pub fn start_session(settings: SessionSettings, now: Duration) -> Transition {
+        let session = if settings.prep_secs.is_some() {
+            Session::start_prep(settings, now)
+        } else {
+            Session::start_running(settings, now)
+        };
+        Transition::new(Self::Active(Box::new(session)), Vec::new())
+    }
+
+    pub fn toggle(self, shape: SessionShape, now: Duration) -> Transition {
         match self {
             Self::Idle | Self::Finished => {
-                let settings = SessionSettings {
-                    shape,
-                    ..Default::default()
-                };
-                Self::Active(Box::new(Session::start_running(settings, now)))
+                // Test / host convenience: a bare default session
+                // with no cues. The Android shell does NOT take
+                // this path to start — it calls `start_session`
+                // with DB-built settings so core has the real
+                // bell config (see lib.rs).
+                Self::start_session(
+                    SessionSettings {
+                        shape,
+                        ..Default::default()
+                    },
+                    now,
+                )
             }
             Self::Active(mut s) => {
-                if matches!(s.ui_state(), UiState::Paused) {
+                // Pause emits StopActiveSignals (the user wants
+                // everything to hush); resume emits nothing. Both
+                // flow back to the shell so a paused-mid-bell
+                // session cuts the cue, exactly like GTK.
+                let effects = if matches!(s.ui_state(), UiState::Paused) {
                     s.resume(now);
+                    Vec::new()
                 } else {
-                    let _ = s.pause(now);
-                }
-                Self::Active(s)
+                    s.pause(now)
+                };
+                Transition::new(Self::Active(s), effects)
             }
         }
     }
@@ -165,10 +279,22 @@ impl AppState {
     /// decision happens later on the Done screen via `dismiss` (the
     /// Android shell stores the in-flight unix_start + elapsed in
     /// `lib.rs` cells; Finished is just a UI marker here).
-    pub fn stop(self) -> Self {
+    pub fn stop(self) -> Transition {
         match self {
-            Self::Active(_) => Self::Finished,
-            other => other,
+            // The session is dropped here (persistence runs off
+            // the lib.rs pending_done cells, not core's
+            // EndSession), so we don't call core `Session::stop`
+            // — but Stop is still a user-driven boundary that
+            // must cut any in-flight bell / vibration, so we
+            // synthesize the one effect the dispatcher needs.
+            // Mirrors GTK's `stop_active_signals()`; the absence
+            // of `FireEndBell` here is exactly why Stop is silent
+            // while a natural countdown finish (which emits
+            // `FireEndBell` from `tick`) still rings.
+            Self::Active(_) => {
+                Transition::new(Self::Finished, vec![Effect::StopActiveSignals])
+            }
+            other => Transition::new(other, Vec::new()),
         }
     }
 
@@ -184,26 +310,63 @@ impl AppState {
     }
 
     /// Called by the tick loop. Drives Session's internal phase
-    /// transitions; on Running→Overtime (target reached) we
-    /// auto-finalise so the Slint UI flips to the Finished screen
-    /// without needing a separate Finish-Overtime button.
-    pub fn tick(self, now: Duration) -> Self {
+    /// transitions and surfaces the effects it emits.
+    ///
+    /// At the Running→Overtime zero-crossing core emits
+    /// `EnterOvertime` + `FireEndBell`; we stay `Active` (now
+    /// reporting `UiState::Overtime`) so the end bell rings and
+    /// the session keeps ticking — the user ends it explicitly
+    /// via Finish / Add (`finish_overtime` / `add_overtime`),
+    /// mirroring GTK. Subsequent overtime ticks emit
+    /// `UpdateOvertimeLabel { overtime }` (the Add-button text)
+    /// plus any interval `FireBell`. `UiState::Done` (Box-Breath
+    /// cycle-aligned end) still finalises directly.
+    pub fn tick(self, now: Duration) -> Transition {
         match self {
             Self::Active(mut s) => {
-                let _ = s.tick(now);
+                let effects = s.tick(now);
                 match s.ui_state() {
-                    UiState::Overtime => {
-                        // Auto-finish: the Android shell has no
-                        // Add-time affordance, so target-reached
-                        // is the end of the session.
-                        let _ = s.finish_overtime();
-                        Self::Finished
-                    }
-                    UiState::Done => Self::Finished,
-                    _ => Self::Active(s),
+                    UiState::Done => Transition::new(Self::Finished, effects),
+                    // Running, Paused, AND Overtime all stay
+                    // Active — overtime is no longer auto-finished.
+                    _ => Transition::new(Self::Active(s), effects),
                 }
             }
-            other => other,
+            other => Transition::new(other, Vec::new()),
+        }
+    }
+
+    /// Overtime "Finish" tap — record exactly the planned
+    /// countdown duration (the overtime delta is discarded).
+    /// `finish_overtime` emits `StopActiveSignals` + `EndSession
+    /// { duration_secs: target }`; the shell reads the latter for
+    /// the saved-row duration. No-op (passes through) outside
+    /// Overtime — defends a stale tap.
+    pub fn finish_overtime(self) -> Transition {
+        match self {
+            Self::Active(mut s)
+                if matches!(s.ui_state(), UiState::Overtime) =>
+            {
+                let effects = s.finish_overtime();
+                Transition::new(Self::Finished, effects)
+            }
+            other => Transition::new(other, Vec::new()),
+        }
+    }
+
+    /// Overtime "Add" tap — record the full elapsed time
+    /// including the overtime the user let run. `add_overtime_
+    /// and_finish` emits `StopActiveSignals` + `EndSession {
+    /// duration_secs: total }`.
+    pub fn add_overtime(self, now: Duration) -> Transition {
+        match self {
+            Self::Active(mut s)
+                if matches!(s.ui_state(), UiState::Overtime) =>
+            {
+                let effects = s.add_overtime_and_finish(now);
+                Transition::new(Self::Finished, effects)
+            }
+            other => Transition::new(other, Vec::new()),
         }
     }
 
@@ -557,11 +720,42 @@ mod tests {
     // ── tick ────────────────────────────────────────────────────
 
     #[test]
-    fn tick_running_at_remaining_zero_advances_to_finished() {
+    fn tick_running_at_remaining_zero_enters_overtime_not_finished() {
+        // Target crossed: stays Active in Overtime (end bell rang,
+        // session keeps ticking) — NOT auto-finished. The user
+        // ends it via Finish / Add.
         let s = AppState::idle()
             .toggle(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100))
             .tick(Duration::from_secs(160));
+        assert!(!s.is_finished());
+        assert!(s.is_overtime());
+    }
+
+    #[test]
+    fn finish_overtime_from_overtime_finishes() {
+        let s = AppState::idle()
+            .toggle(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100))
+            .tick(Duration::from_secs(160))
+            .finish_overtime();
         assert!(s.is_finished());
+    }
+
+    #[test]
+    fn add_overtime_from_overtime_finishes() {
+        let s = AppState::idle()
+            .toggle(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100))
+            .tick(Duration::from_secs(160))
+            .add_overtime(Duration::from_secs(175));
+        assert!(s.is_finished());
+    }
+
+    #[test]
+    fn finish_overtime_outside_overtime_is_a_passthrough() {
+        // Running (not yet overtime) → Finish is a no-op.
+        let s = AppState::idle()
+            .toggle(timer_countdown(ten_minutes()), Duration::from_secs(100))
+            .finish_overtime();
+        assert!(s.is_running());
     }
 
     #[test]

@@ -1064,6 +1064,15 @@ export component MainWindow inherits Window {
     in property <string> action-label: "Start Session";
     in property <bool> running-page: false;
     in property <bool> stop-visible: false;
+    // Overtime (B-6c): when the countdown crosses zero the
+    // session keeps running, the end bell rings, and the button
+    // row morphs — Pause/Stop hide, "Finish" (record planned
+    // duration) + "Add MM:SS ?" (record incl. overtime) appear.
+    // `overtime-add-label` is rebuilt every overtime tick from
+    // the core `UpdateOvertimeLabel` effect. Mirrors GTK's
+    // `transition_running_to_overtime`.
+    in property <bool> overtime-active: false;
+    in property <string> overtime-add-label: "Add 00:00 ?";
     // Streak chip slot above the hero — matches `streak_label` in
     // `meditate-gtk/data/ui/timer_view.blp` (line 32). Empty
     // placeholder for now; phase 3 wires the real value from the
@@ -1257,6 +1266,8 @@ export component MainWindow inherits Window {
 
     callback action-tap();
     callback stop-tap();
+    callback finish-tap();
+    callback add-tap();
     callback duration-tap();
     callback stopwatch-toggled(bool);
     // Fires after the Duration dialog's Set button commits new
@@ -2507,16 +2518,30 @@ export component MainWindow inherits Window {
                 spacing: 12px;
                 alignment: center;
 
-                FilledButton {
+                // Normal (Running / Paused) row.
+                if !root.overtime-active : FilledButton {
                     text: root.action-label;
                     height: 56px;
                     clicked => { root.action-tap(); }
                 }
-
-                if root.stop-visible : OutlineButton {
+                if !root.overtime-active && root.stop-visible : OutlineButton {
                     text: "Stop";
                     height: 56px;
                     clicked => { root.stop-tap(); }
+                }
+
+                // Overtime row — Finish (planned duration) +
+                // Add (incl. overtime). Mirrors GTK's morphed
+                // Pause→Finish button plus the revealed Add pill.
+                if root.overtime-active : FilledButton {
+                    text: "Finish";
+                    height: 56px;
+                    clicked => { root.finish-tap(); }
+                }
+                if root.overtime-active : FilledButton {
+                    text: root.overtime-add-label;
+                    height: 56px;
+                    clicked => { root.add-tap(); }
                 }
             }
         }

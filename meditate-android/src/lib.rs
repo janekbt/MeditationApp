@@ -53,10 +53,13 @@ fn hide_soft_keyboard() {
     }
 }
 
-/// React to an AppState transition. If the session just started
-/// (Idle/Finished → Active), kick the foreground service. If it
-/// just ended (Active → Idle/Finished), tear it down. No-op on
-/// host builds — the foreground service only exists on Android.
+/// React to an AppState transition's service side. If the session
+/// just started (Idle/Finished → Active), kick the foreground
+/// service. If it just ended (Active → Idle/Finished), tear it
+/// down. Bell / vibration cues are NOT handled here — they flow
+/// through `dispatch_effects` off the core `Session` effects, so
+/// the "ring on natural completion, stay silent on Stop" decision
+/// lives in core (mirrors GTK). No-op on host builds.
 fn on_state_changed(was_active: bool, is_active: bool) {
     #[cfg(target_os = "android")]
     {
@@ -67,52 +70,139 @@ fn on_state_changed(was_active: bool, is_active: bool) {
         } else if was_active && !is_active {
             if let Some(app) = ANDROID_APP.get() {
                 service::stop(app);
-                // B-2a test trigger: play the bundled Heartbeat
-                // pattern's waveform on session end — proves the
-                // `build_master_envelope` → JNI `createWaveform`
-                // path end to end. Heartbeat (soft thump, gap,
-                // strong thump over 1.5 s) is deliberately a
-                // rhythm a one-shot physically can't make, so the
-                // waveform path is unmistakable. B-6 replaces this
-                // with the real per-cue pattern playback.
-                if let Some(db_arc) = DATABASE.get() {
-                    if let Ok(guard) = db_arc.lock() {
-                        if let Some(db) = guard.as_ref() {
-                            if let Some(p) =
-                                meditate_core::db::list_vibration_patterns_from_db(db)
-                                    .unwrap_or_default()
-                                    .into_iter()
-                                    .find(|p| {
-                                        p.uuid.to_string()
-                                            == meditate_core::seeds::BUNDLED_PATTERN_HEARTBEAT_UUID
-                                    })
-                            {
-                                let env =
-                                    meditate_core::vibration::build_master_envelope(&p);
-                                haptics::cancel(app);
-                                haptics::vibrate_waveform(app, &env);
-                            }
-                        }
-                    }
-                }
-                // B-3b test trigger: play the configured End Bell
-                // sound on session end — proves the
-                // bell_sounds.file_path → JNI MediaPlayer path
-                // end to end. B-6 replaces this with the real
-                // per-cue audio playback.
-                let es = read_global_setting(
-                    "end_bell_sound",
-                    meditate_core::seeds::BUNDLED_BOWL_UUID,
-                );
-                let path = bell_sound_path(&es);
-                audio::stop(app);
-                audio::play(app, &path);
             }
         }
     }
     // Touched the args so the host build doesn't complain about
     // unused parameters under cfg-disabled code.
     let _ = (was_active, is_active);
+}
+
+/// Run portable core `Session` effects through the Android native
+/// layer — the direct analogue of GTK's
+/// `dispatch_session_effects` / `dispatch_fire_route`.
+///
+/// `StopActiveSignals` cuts any in-flight sound + vibration. Each
+/// `Fire*` effect resolves via `Effect::fire_route()` to an
+/// already-effective `signal_mode` (Session has AND'd per-cue
+/// with the per-mode override), so the shell just plays the sound
+/// when it `includes_sound()` and the vibration pattern when it
+/// `includes_vibration()` — no extra gating. Every other effect
+/// (UpdateDisplay / EndSession / EnterOvertime / …) is consumed
+/// at its tick callsite, not here.
+///
+/// This is why Stop is silent but a natural countdown finish
+/// rings: `stop` emits only `StopActiveSignals`, while `tick`
+/// emits `FireEndBell` at the zero-crossing.
+#[cfg(target_os = "android")]
+fn dispatch_effects(effects: &[meditate_core::session::Effect]) {
+    use meditate_core::session::Effect;
+    let Some(app) = ANDROID_APP.get() else { return; };
+    for effect in effects {
+        if matches!(effect, Effect::StopActiveSignals) {
+            audio::stop(app);
+            haptics::cancel(app);
+        }
+        let Some(route) = effect.fire_route() else { continue; };
+        if route.signal_mode.includes_sound() {
+            let path = bell_sound_path(route.sound_uuid);
+            audio::stop(app);
+            audio::play(app, &path);
+        }
+        if route.signal_mode.includes_vibration() {
+            if let Some(db_arc) = DATABASE.get() {
+                if let Ok(guard) = db_arc.lock() {
+                    if let Some(db) = guard.as_ref() {
+                        if let Ok(Some(p)) =
+                            meditate_core::db::find_vibration_pattern_by_uuid_from_db(
+                                db,
+                                route.vibration_pattern_uuid,
+                            )
+                        {
+                            let env =
+                                meditate_core::vibration::build_master_envelope(&p);
+                            haptics::cancel(app);
+                            haptics::vibrate_waveform(app, &env);
+                        }
+                    }
+                }
+            }
+        }
+        meditate_core::log(
+            route.log_tag,
+            &format!(
+                "signal_mode={} channel={:?}",
+                route.signal_mode.as_db_str(),
+                route.channel,
+            ),
+        );
+    }
+}
+
+/// Assemble the full `SessionSettings` from the persisted DB
+/// rows — the Android analogue of GTK's `build_timer_settings`
+/// (`meditate-gtk/src/timer/imp.rs`). Every cue decision lives in
+/// `meditate_core::bells::*_from_db`; this only wires the shell
+/// context (shape, stopwatch flag, mode) into those helpers. Prep
+/// is Timer-only (mirrors GTK gating prep to the timer path);
+/// box-breath cues only attach for BoxBreath. Falls back to a
+/// bare default session if the DB isn't available (shouldn't
+/// happen post-startup, but a no-cue session beats a panic).
+#[cfg(target_os = "android")]
+fn build_session_settings(
+    shape: meditate_core::session::SessionShape,
+    stopwatch_on: bool,
+    mode: meditate_core::SessionMode,
+) -> meditate_core::session::SessionSettings {
+    use meditate_core::bells;
+    use meditate_core::session::SessionSettings;
+
+    let display = bells::DisplayMode::from_stopwatch_flag(stopwatch_on);
+    let target = shape.target_secs().map(u64::from);
+
+    // Prep reads go through read_global_setting (which locks the
+    // DB itself) — done BEFORE we take the lock below so we don't
+    // re-enter the same Mutex and deadlock.
+    let prep_secs = if matches!(mode, meditate_core::SessionMode::Timer)
+        && read_global_setting("preparation_time_active", "false") == "true"
+    {
+        Some(meditate_core::format::parse_prep_secs(&read_global_setting(
+            "preparation_time_secs",
+            &meditate_core::format::PREP_SECS_DEFAULT.to_string(),
+        )))
+    } else {
+        None
+    };
+
+    let Some(db_arc) = DATABASE.get() else {
+        return SessionSettings { shape, ..Default::default() };
+    };
+    let Ok(guard) = db_arc.lock() else {
+        return SessionSettings { shape, ..Default::default() };
+    };
+    let Some(db) = guard.as_ref() else {
+        return SessionSettings { shape, ..Default::default() };
+    };
+
+    let (session_bells, bell_rng_seed) =
+        bells::session_bells_from_db(db, target, display);
+    let box_breath_cues =
+        if matches!(mode, meditate_core::SessionMode::BoxBreath) {
+            Some(bells::box_breath_cues_from_db(db))
+        } else {
+            None
+        };
+
+    SessionSettings {
+        shape,
+        prep_secs,
+        bells: session_bells,
+        bell_rng_seed,
+        signal_mode_override: bells::signal_mode_override_from_db(db, mode),
+        starting_bell: bells::starting_bell_cue_from_db(db),
+        end_bell: bells::end_bell_cue_from_db(db, display),
+        box_breath_cues,
+    }
 }
 
 // Default duration the steppers seed with on first open. 10 minutes
@@ -158,8 +248,42 @@ fn refresh(ui: &MainWindow, state: &AppState, now: Duration) {
     );
     ui.set_action_label(state.primary_label().into());
     ui.set_stop_visible(state.can_stop());
+    ui.set_overtime_active(state.is_overtime());
     ui.set_running_page(state.is_running_page());
     ui.set_done_page(state.is_done_page());
+}
+
+/// Pull the latest `UpdateOvertimeLabel { overtime }` out of a
+/// tick's effects and render the Add-button text the GTK way:
+/// `"Add MM:SS ?"` via `format::format_time` (ASCII "?" — the
+/// FP5 font lacks fancier glyphs). Returns `None` when this tick
+/// had no overtime update (so the caller leaves the label as-is).
+#[cfg(target_os = "android")]
+fn overtime_add_label(effects: &[meditate_core::session::Effect]) -> Option<String> {
+    use meditate_core::session::Effect;
+    effects.iter().rev().find_map(|e| match e {
+        Effect::UpdateOvertimeLabel { overtime } => Some(format!(
+            "Add {} ?",
+            meditate_core::format::format_time(*overtime),
+        )),
+        _ => None,
+    })
+}
+
+/// The `duration_secs` core wants recorded for this end —
+/// `finish_overtime` carries the planned target, `add_overtime_
+/// and_finish` the full elapsed. Used so the saved row matches
+/// the user's Finish-vs-Add choice exactly (mirrors GTK reading
+/// the same EndSession effect).
+#[cfg(target_os = "android")]
+fn end_session_duration(
+    effects: &[meditate_core::session::Effect],
+) -> Option<u64> {
+    use meditate_core::session::Effect;
+    effects.iter().rev().find_map(|e| match e {
+        Effect::EndSession { duration_secs } => Some(*duration_secs),
+        _ => None,
+    })
 }
 
 /// Snapshot of an in-flight session that the persistence layer needs
@@ -2453,9 +2577,37 @@ fn build_ui() -> MainWindow {
                 });
             }
             let was_active = s.is_active();
-            let next = std::mem::replace(&mut *s, AppState::idle())
-                .toggle(shape, now);
-            *s = next;
+            let prev = std::mem::replace(&mut *s, AppState::idle());
+            let transition = if was_active {
+                // Active → pause / resume (shape unused — Session
+                // remembers its own shape).
+                prev.toggle(shape, now)
+            } else {
+                // Idle/Finished → start. Build the real
+                // SessionSettings from the DB so core has the
+                // actual bell config and emits FireEndBell /
+                // FireBell / FireStartingBell — mirrors GTK's
+                // build_timer_settings. Host build keeps the bare
+                // default-settings start (no DB).
+                #[cfg(target_os = "android")]
+                {
+                    let _ = prev;
+                    let settings = build_session_settings(
+                        shape,
+                        ui.get_stopwatch_on(),
+                        TimerMode::from_chip_index(ui.get_setup_mode())
+                            .into(),
+                    );
+                    AppState::start_session(settings, now)
+                }
+                #[cfg(not(target_os = "android"))]
+                {
+                    prev.toggle(shape, now)
+                }
+            };
+            #[cfg(target_os = "android")]
+            dispatch_effects(&transition.effects);
+            *s = transition.state;
             let is_active = s.is_active();
             #[cfg(target_os = "android")]
             if !was_active && is_active {
@@ -2498,7 +2650,10 @@ fn build_ui() -> MainWindow {
                 _ => 0,
             };
             let was_active = s.is_active();
-            *s = std::mem::replace(&mut *s, AppState::idle()).stop();
+            let transition = std::mem::replace(&mut *s, AppState::idle()).stop();
+            #[cfg(target_os = "android")]
+            dispatch_effects(&transition.effects);
+            *s = transition.state;
             let is_active = s.is_active();
             // Active → Finished: stash the (start, elapsed) pair
             // so the Save / Discard handler knows what to do, push
@@ -2526,6 +2681,129 @@ fn build_ui() -> MainWindow {
                     ui.set_elapsed_text(
                         meditate_core::format::format_time(
                             Duration::from_secs(elapsed_secs.max(0) as u64),
+                        )
+                        .into(),
+                    );
+                    ui.set_note_text("".into());
+                    #[cfg(target_os = "android")]
+                    mirror_setup_label_into_done(&ui, current_mode.get().into());
+                }
+            }
+            on_state_changed(was_active, is_active);
+            if let Some(ui) = weak.upgrade() {
+                refresh(&ui, &s, now);
+            }
+            let _ = current_mode.get();
+        });
+    }
+
+    // Overtime Finish / Add (B-6c). Both end the session from the
+    // Overtime phase and land on the Done screen — same
+    // post-processing as Stop (pending_done stash, snapshot
+    // teardown, elapsed readout, label mirror, service stop) but
+    // the recorded duration comes from core's EndSession effect:
+    // Finish = planned target, Add = full elapsed incl. overtime.
+    {
+        let weak = ui.as_weak();
+        let state = state.clone();
+        let current_mode = current_mode.clone();
+        #[cfg(target_os = "android")]
+        let session_start_unix = session_start_unix.clone();
+        #[cfg(target_os = "android")]
+        let pending_done = pending_done.clone();
+        #[cfg(target_os = "android")]
+        let snapshot_timer_ref: &'static slint::Timer = snapshot_timer;
+        ui.on_finish_tap(move || {
+            let now = now_since_epoch();
+            let mut s = state.borrow_mut();
+            let pre_elapsed = match &*s {
+                AppState::Active(session) => session.elapsed(now).as_secs() as i64,
+                _ => 0,
+            };
+            let was_active = s.is_active();
+            let transition =
+                std::mem::replace(&mut *s, AppState::idle()).finish_overtime();
+            #[cfg(target_os = "android")]
+            dispatch_effects(&transition.effects);
+            #[cfg(target_os = "android")]
+            let final_secs = end_session_duration(&transition.effects)
+                .map_or(pre_elapsed, |d| d as i64);
+            #[cfg(not(target_os = "android"))]
+            let final_secs = pre_elapsed;
+            *s = transition.state;
+            let is_active = s.is_active();
+            if was_active && !is_active {
+                #[cfg(target_os = "android")]
+                if let Some(unix_start) = session_start_unix.take() {
+                    pending_done.set(Some((unix_start, final_secs)));
+                }
+                #[cfg(target_os = "android")]
+                {
+                    snapshot_timer_ref.stop();
+                    clear_session_in_progress_snapshot();
+                }
+                if let Some(ui) = weak.upgrade() {
+                    ui.set_elapsed_text(
+                        meditate_core::format::format_time(
+                            Duration::from_secs(final_secs.max(0) as u64),
+                        )
+                        .into(),
+                    );
+                    ui.set_note_text("".into());
+                    #[cfg(target_os = "android")]
+                    mirror_setup_label_into_done(&ui, current_mode.get().into());
+                }
+            }
+            on_state_changed(was_active, is_active);
+            if let Some(ui) = weak.upgrade() {
+                refresh(&ui, &s, now);
+            }
+            let _ = current_mode.get();
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        let state = state.clone();
+        let current_mode = current_mode.clone();
+        #[cfg(target_os = "android")]
+        let session_start_unix = session_start_unix.clone();
+        #[cfg(target_os = "android")]
+        let pending_done = pending_done.clone();
+        #[cfg(target_os = "android")]
+        let snapshot_timer_ref: &'static slint::Timer = snapshot_timer;
+        ui.on_add_tap(move || {
+            let now = now_since_epoch();
+            let mut s = state.borrow_mut();
+            let pre_elapsed = match &*s {
+                AppState::Active(session) => session.elapsed(now).as_secs() as i64,
+                _ => 0,
+            };
+            let was_active = s.is_active();
+            let transition =
+                std::mem::replace(&mut *s, AppState::idle()).add_overtime(now);
+            #[cfg(target_os = "android")]
+            dispatch_effects(&transition.effects);
+            #[cfg(target_os = "android")]
+            let final_secs = end_session_duration(&transition.effects)
+                .map_or(pre_elapsed, |d| d as i64);
+            #[cfg(not(target_os = "android"))]
+            let final_secs = pre_elapsed;
+            *s = transition.state;
+            let is_active = s.is_active();
+            if was_active && !is_active {
+                #[cfg(target_os = "android")]
+                if let Some(unix_start) = session_start_unix.take() {
+                    pending_done.set(Some((unix_start, final_secs)));
+                }
+                #[cfg(target_os = "android")]
+                {
+                    snapshot_timer_ref.stop();
+                    clear_session_in_progress_snapshot();
+                }
+                if let Some(ui) = weak.upgrade() {
+                    ui.set_elapsed_text(
+                        meditate_core::format::format_time(
+                            Duration::from_secs(final_secs.max(0) as u64),
                         )
                         .into(),
                     );
@@ -2586,7 +2864,19 @@ fn build_ui() -> MainWindow {
                 _ => 0,
             };
             let was_active = s.is_active();
-            *s = std::mem::replace(&mut *s, AppState::idle()).tick(now);
+            let transition = std::mem::replace(&mut *s, AppState::idle()).tick(now);
+            #[cfg(target_os = "android")]
+            dispatch_effects(&transition.effects);
+            // Overtime Add-button label tracks the running
+            // overtime delta (core's UpdateOvertimeLabel each
+            // tick), exactly like GTK's per-tick relabel.
+            #[cfg(target_os = "android")]
+            if let Some(lbl) = overtime_add_label(&transition.effects) {
+                if let Some(ui) = weak.upgrade() {
+                    ui.set_overtime_add_label(lbl.into());
+                }
+            }
+            *s = transition.state;
             let is_active = s.is_active();
             #[cfg(target_os = "android")]
             if was_active && !is_active {
