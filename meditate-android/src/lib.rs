@@ -3,6 +3,8 @@ pub mod app;
 mod haptics;
 #[cfg(target_os = "android")]
 mod service;
+#[cfg(target_os = "android")]
+mod sounds;
 
 slint::include_modules!();
 
@@ -4766,6 +4768,12 @@ fn open_database(android_app: &slint::android::AndroidApp) {
                     &format!("seed_all_non_audio FAILED err={e:?}"),
                 );
             }
+            // B-3a: bell-sound audio is the Android-specific bit
+            // the core seed deliberately omits — extract the
+            // bundled OGGs to disk and seed `bell_sounds` with
+            // their absolute paths (idempotent extraction,
+            // one-shot seed).
+            sounds::extract_and_seed(&db, &dir);
             // Crash-recovery finalize: if the previous run was
             // killed mid-session (kernel OOM, battery death,
             // panic), the `session_in_progress` row carries the
