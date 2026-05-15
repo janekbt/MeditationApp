@@ -322,6 +322,56 @@ fn sync_ago_text(unix_ts: i64) -> String {
     }
 }
 
+/// Android-side renderer for `meditate_core::format::HmKey`
+/// ("1h 4m" / "5m" / "–"). Mirrors GTK's `render_hm` at
+/// `meditate-gtk/src/format.rs:18` but inlines English — i18n
+/// isn't wired on Android yet (same deferral as the snackbar /
+/// sync-indicator text).
+#[cfg(target_os = "android")]
+fn render_hm(key: meditate_core::format::HmKey) -> String {
+    use meditate_core::format::HmKey;
+    match key {
+        HmKey::Empty => "–".to_string(),
+        HmKey::MinsOnly(m) => format!("{m}m"),
+        HmKey::HoursOnly(h) => format!("{h}h"),
+        HmKey::HoursMins(h, m) => format!("{h}h {m}m"),
+    }
+}
+
+/// Refresh the Stats page values. S-1 covers the Mini-stats
+/// row only: best-streak ("Nd" / "–"), all-time total via the
+/// HmKey renderer, and session count via
+/// `meditate_core::format::mini_stat_or_dash`. Mirrors GTK's
+/// `reload_mini_stats` at `meditate-gtk/src/stats/imp.rs:533`.
+#[cfg(target_os = "android")]
+fn refresh_stats(ui: &MainWindow) {
+    let Some(db_arc) = DATABASE.get() else { return; };
+    let Ok(guard) = db_arc.lock() else { return; };
+    let Some(db) = guard.as_ref() else { return; };
+
+    let streak = meditate_core::db::get_best_streak_from_db(db).unwrap_or(0);
+    let total = meditate_core::db::total_seconds_from_db(db).unwrap_or(0);
+    let count = meditate_core::db::count_sessions_from_db(db).unwrap_or(0);
+
+    ui.set_stat_streak(
+        if streak == 0 {
+            "–".to_string()
+        } else {
+            format!("{streak}d")
+        }
+        .into(),
+    );
+    ui.set_stat_total(
+        render_hm(meditate_core::format::hm_compact_key(
+            std::time::Duration::from_secs(total.max(0) as u64),
+        ))
+        .into(),
+    );
+    ui.set_stat_sessions(
+        meditate_core::format::mini_stat_or_dash(count).into(),
+    );
+}
+
 /// Initialise the Done expander state from Setup's current pick.
 /// Called when entering the Done screen (Stop tap or auto-finish).
 /// Mirrors `show_done`'s `done_selected_label_id.set(setup_selected_label_id())`
@@ -2355,6 +2405,7 @@ fn build_ui() -> MainWindow {
         refresh_breathing_tiles(&ui, read_breathing_pattern());
         reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
         refresh_sync_indicator(&ui);
+        refresh_stats(&ui);
     }
 
     // "Load more" tap on the Log feed — fetch the next page,
@@ -2862,10 +2913,19 @@ fn build_ui() -> MainWindow {
             #[cfg(target_os = "android")]
             {
                 let Some(ui) = weak.upgrade() else { return; };
-                if idx == 1 {
+                // Tab order mirrors GTK: 0 Timer, 1 Stats,
+                // 2 Log.
+                if idx == 2 {
                     // Entering Log — reload from DB so a session
                     // saved before opening the tab shows up.
                     reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
+                }
+                if idx == 1 {
+                    // Entering Stats — recompute from the DB so
+                    // a session saved this run is reflected.
+                    // Mirrors GTK's `reload_all` on stats-tab
+                    // entry.
+                    refresh_stats(&ui);
                 }
                 // Cheap re-read on every tab switch — mirrors
                 // GTK refreshing the indicator on view change
@@ -2922,9 +2982,10 @@ fn build_ui() -> MainWindow {
                 refresh(&ui, &s, now_since_epoch());
                 return;
             }
-            if ui.get_nav_page() == 1 {
-                // Log page → back navigates to Timer (canonical
-                // bottom-nav back behaviour on Android).
+            if ui.get_nav_page() != 0 {
+                // Any non-Timer base tab (Stats / Log) → back
+                // navigates to Timer, the start destination —
+                // canonical bottom-nav back behaviour on Android.
                 ui.set_nav_page(0);
                 return;
             }

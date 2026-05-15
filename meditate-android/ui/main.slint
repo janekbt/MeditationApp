@@ -1014,6 +1014,17 @@ export component MainWindow inherits Window {
     in property <string> sync-indicator-tooltip: "";
     callback sync-indicator-tap();
 
+    // Stats page (Phase 4). S-1 ships the Mini-stats row only;
+    // S-2+ layer the goal hero / insights / charts / heatmap
+    // above it. Rust formats each value (best-streak as "Nd",
+    // total via the HmKey renderer, sessions via
+    // `mini_stat_or_dash`) and pushes the display strings here.
+    // Mirrors GTK's `reload_mini_stats` at
+    // `meditate-gtk/src/stats/imp.rs:533`.
+    in property <string> stat-streak: "–";
+    in property <string> stat-total: "–";
+    in property <string> stat-sessions: "–";
+
     // Has-Notes filter (L-5b). `filter-notes-only` is the live
     // flag the Rust paginator reads via `get_filter_notes_only`
     // when building the `SessionFilter`. `filter-notes-toggled`
@@ -1918,14 +1929,14 @@ export component MainWindow inherits Window {
         }
     }
 
-    // ── Log page (base layer, nav-page == 1) ────────────────────
+    // ── Log page (base layer, nav-page == 2) ────────────────────
     // Mirrors GTK's `log_view.blp` Stack: empty state vs. list.
     // Scrollable via Flickable to match GTK's outer
     // `Gtk.ScrolledWindow`. Date sections + cards are rendered
     // from `log-sections` which Rust populates after every Save
     // and on every navigation into the Log page.
     Rectangle {
-        visible: root.nav-page == 1;
+        visible: root.nav-page == 2;
         x: 0;
         width: parent.width;
         height: parent.height;
@@ -2189,6 +2200,80 @@ export component MainWindow inherits Window {
         }
     }
 
+    // ── Stats page (base layer, nav-page == 1) ──────────────────
+    // Phase 4. S-1 ships the scaffold + Mini-stats row; later
+    // slices layer the goal hero, insights, charts, and the
+    // 13-week heatmap above it. Scrollable via Flickable to
+    // match GTK's outer `Gtk.ScrolledWindow` in
+    // `meditate-gtk/data/ui/stats_view.blp`.
+    Rectangle {
+        visible: root.nav-page == 1;
+        x: 0;
+        width: parent.width;
+        height: parent.height;
+        background: MaterialPalette.surface;
+
+        Flickable {
+            width: 100%;
+            height: 100%;
+            viewport-width: self.width;
+            viewport-height: stats-stack.preferred-height;
+
+            stats-stack := VerticalLayout {
+                padding-top: root.status-bar-inset + root.header-bar-height + 18px;
+                padding-bottom: root.nav-bar-height + root.bottom-bar-inset + 24px;
+                padding-left: 14px;
+                padding-right: 14px;
+                spacing: 22px;
+
+                // Mini-stats row — Streak / Total / Sessions.
+                // Mirrors GTK's homogeneous 3-column
+                // `.mini-stat` box row at
+                // `meditate-gtk/data/ui/stats_view.blp:213`.
+                HorizontalLayout {
+                    spacing: 10px;
+
+                    for cell in [
+                        { value: root.stat-streak, caption: "Streak", accent: true },
+                        { value: root.stat-total, caption: "Total", accent: false },
+                        { value: root.stat-sessions, caption: "Sessions", accent: false },
+                    ] : Rectangle {
+                        horizontal-stretch: 1;
+                        min-height: 76px;
+                        border-radius: 16px;
+                        background: MaterialPalette.surface-container;
+
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 2px;
+                            padding: 10px;
+
+                            Text {
+                                text: cell.value;
+                                font-size: 22px;
+                                font-weight: 700;
+                                horizontal-alignment: center;
+                                overflow: elide;
+                                // GTK tints only the streak value
+                                // with `.accent`; mirror with the
+                                // Material primary colour.
+                                color: cell.accent
+                                    ? MaterialPalette.primary
+                                    : MaterialPalette.on-surface;
+                            }
+                            Text {
+                                text: cell.caption;
+                                font-size: 12px;
+                                horizontal-alignment: center;
+                                color: MaterialPalette.on-surface-variant;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // ── Edit-Session overlay (slides over the Log page) ─────────
     // Mirrors GTK's `show_session_dialog` at
     // `meditate-gtk/src/log/imp.rs:762`. L-4a ships note-only —
@@ -2200,7 +2285,7 @@ export component MainWindow inherits Window {
     // title centre, Save right); background mirrors the Setup /
     // Log surface so a partial slide doesn't show through.
     Rectangle {
-        visible: root.nav-page == 1;
+        visible: root.nav-page == 2;
         x: parent.width - root.edit-session-offset;
         width: parent.width;
         height: parent.height;
@@ -2790,7 +2875,7 @@ export component MainWindow inherits Window {
         // Mirrors `SmallAppBar` visually (surface-container
         // background, 22 sp title in `on-surface`, IconButton
         // trailing children) but adds a 16 px title inset and
-        // gates the funnel on `nav-page == 1` so it only appears
+        // gates the funnel on `nav-page == 2` so it only appears
         // on the Log page. Mirrors GTK's window header at
         // `meditate-gtk/data/ui/window.blp:87` where
         // `log_filter_btn` is `visible: false` until the Log
@@ -2851,7 +2936,7 @@ export component MainWindow inherits Window {
                         }
                     }
                 }
-                if root.nav-page == 1 : VerticalLayout {
+                if root.nav-page == 2 : VerticalLayout {
                     alignment: center;
                     IconButton {
                         icon: @image-url("assets/filter.svg");
@@ -2961,11 +3046,19 @@ export component MainWindow inherits Window {
             y: 0;
             width: 100%;
             height: root.nav-bar-height;
+            // Order mirrors GTK's ViewSwitcher at
+            // `meditate-gtk/data/ui/window.blp:133`: Timer (0),
+            // Stats (1), Log (2).
             items: [
                 {
                     icon: Icons.schedule,
                     selected-icon: Icons.schedule,
                     text: "Timer",
+                },
+                {
+                    icon: @image-url("assets/bar_chart.svg"),
+                    selected-icon: @image-url("assets/bar_chart.svg"),
+                    text: "Stats",
                 },
                 {
                     icon: Icons.calendar-today,
