@@ -5,6 +5,8 @@ mod haptics;
 mod service;
 #[cfg(target_os = "android")]
 mod sounds;
+#[cfg(target_os = "android")]
+mod audio;
 
 slint::include_modules!();
 
@@ -93,6 +95,18 @@ fn on_state_changed(was_active: bool, is_active: bool) {
                         }
                     }
                 }
+                // B-3b test trigger: play the configured End Bell
+                // sound on session end — proves the
+                // bell_sounds.file_path → JNI MediaPlayer path
+                // end to end. B-6 replaces this with the real
+                // per-cue audio playback.
+                let es = read_global_setting(
+                    "end_bell_sound",
+                    meditate_core::seeds::BUNDLED_BOWL_UUID,
+                );
+                let path = bell_sound_path(&es);
+                audio::stop(app);
+                audio::play(app, &path);
             }
         }
     }
@@ -1958,6 +1972,25 @@ fn bell_sound_name(uuid: &str) -> String {
             v.into_iter()
                 .find(|b| b.uuid.to_string() == uuid)
                 .map(|b| b.name)
+        })
+        .unwrap_or_default()
+}
+
+/// Resolve a bell-sound uuid to its on-disk file path (the
+/// absolute `<data_dir>/sounds/*.ogg` `sounds::extract_and_seed`
+/// wrote). Empty when the row is gone — `audio::play` no-ops on
+/// an empty path. Sibling of `bell_sound_name`.
+#[cfg(target_os = "android")]
+fn bell_sound_path(uuid: &str) -> String {
+    let Some(db_arc) = DATABASE.get() else { return String::new(); };
+    let Ok(guard) = db_arc.lock() else { return String::new(); };
+    let Some(db) = guard.as_ref() else { return String::new(); };
+    db.list_bell_sounds()
+        .ok()
+        .and_then(|v| {
+            v.into_iter()
+                .find(|b| b.uuid.to_string() == uuid)
+                .map(|b| b.file_path)
         })
         .unwrap_or_default()
 }
