@@ -3060,6 +3060,46 @@ fn build_ui() -> MainWindow {
         });
     }
 
+    // Log "Add Session" button → open the Edit-Session overlay
+    // in create mode: clear `editing_session_id` (None ⇒ the
+    // Save handler inserts instead of updating), seed sensible
+    // defaults (empty note, 0h0m, start = now, label off).
+    // Mirrors GTK's `log_add_btn` → `show_session_dialog(None)`
+    // at `meditate-gtk/src/log/imp.rs:315`.
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let editing_session_id = editing_session_id.clone();
+        ui.on_log_add_tap(move || {
+            #[cfg(target_os = "android")]
+            {
+                use chrono::{Datelike, Local, Timelike};
+                let Some(ui) = weak.upgrade() else { return; };
+                editing_session_id.set(None);
+                ui.set_edit_session_title("Add Session".into());
+                ui.set_edit_note_text("".into());
+                ui.set_edit_duration_hours(0);
+                ui.set_edit_duration_minutes(0);
+                let now = Local::now();
+                ui.set_edit_start_date(Date {
+                    year: now.year(),
+                    month: now.month() as i32,
+                    day: now.day() as i32,
+                });
+                ui.set_edit_start_time(Time {
+                    hour: now.hour() as i32,
+                    minute: now.minute() as i32,
+                    second: now.second() as i32,
+                });
+                ui.set_edit_label_enabled(false);
+                ui.set_edit_label_id(0);
+                ui.set_edit_label_name("".into());
+                ui.set_edit_session_page(true);
+            }
+            let _ = weak.clone();
+        });
+    }
+
     // Card tap on the Log feed → open the Edit-Session overlay
     // pre-filled with the tapped session's data. L-4a only wires
     // the Note field; future slices (L-4b/c/d) will populate
@@ -3084,6 +3124,7 @@ fn build_ui() -> MainWindow {
                     .map(|(_, s)| s.clone());
                 let Some(session) = session else { return; };
                 editing_session_id.set(Some(id));
+                ui.set_edit_session_title("Edit Session".into());
                 ui.set_edit_note_text(
                     session.notes.clone().unwrap_or_default().into(),
                 );
@@ -3166,26 +3207,19 @@ fn build_ui() -> MainWindow {
             {
                 let Some(ui) = weak.upgrade() else { return; };
                 hide_soft_keyboard();
-                let Some(id) = editing_session_id.get() else {
-                    ui.set_edit_session_page(false);
-                    return;
-                };
+
+                // Field values are read the same way regardless
+                // of edit vs create; only the persistence call
+                // differs (`update_session` by rowid vs
+                // `insert_session` of a fresh row). Mirrors
+                // GTK's single `save_btn` handler that branches
+                // `session_id` Some/None at `log/imp.rs:1100`.
                 let new_note_raw = ui.get_edit_note_text().to_string();
                 let new_note = if new_note_raw.is_empty() {
                     None
                 } else {
                     Some(new_note_raw)
                 };
-                let original = loaded_log_sessions
-                    .borrow()
-                    .iter()
-                    .find(|(id_, _)| *id_ == id)
-                    .map(|(_, s)| s.clone());
-                let Some(mut session) = original else {
-                    ui.set_edit_session_page(false);
-                    return;
-                };
-                session.notes = new_note;
                 // Duration: recompose from the two SpinRows.
                 // GTK clamps with `.max(0)` (`log/imp.rs:1093`);
                 // the SpinRow min-value guards already keep both
@@ -3194,14 +3228,13 @@ fn build_ui() -> MainWindow {
                 // signed-typed inputs.
                 let hours = ui.get_edit_duration_hours().max(0) as i64;
                 let mins = ui.get_edit_duration_minutes().max(0) as i64;
-                session.duration_secs = (hours * 3600 + mins * 60).max(0) as u32;
+                let duration_secs = (hours * 3600 + mins * 60).max(0);
                 // Recompose start_time from the picker outputs.
-                // Falls back to the original `start_unix` if the
-                // user-edited Date / Time can't be turned into a
-                // valid Local moment (e.g., a date inside a DST
-                // gap). Mirrors GTK's `glib::DateTime::new(...)
-                // .map_or_else(unix_now, |d| d.to_unix())` at
-                // `log/imp.rs:1072`.
+                // Falls back to "now" if the user-edited Date /
+                // Time can't be turned into a valid Local moment
+                // (e.g., a date inside a DST gap). Mirrors GTK's
+                // `glib::DateTime::new(...).map_or_else(unix_now,
+                // |d| d.to_unix())` at `log/imp.rs:1072`.
                 use chrono::{Local, TimeZone};
                 let d = ui.get_edit_start_date();
                 let t = ui.get_edit_start_time();
@@ -3216,27 +3249,81 @@ fn build_ui() -> MainWindow {
                     )
                     .single()
                     .map(|dt| dt.timestamp())
-                    .unwrap_or_else(|| session.start_unix());
-                session.start_iso =
-                    meditate_core::time::unix_to_local_iso(new_start_unix);
+                    .unwrap_or_else(meditate_core::time::unix_now);
                 // Label (L-4d). Mirrors GTK's
                 // `label_expander.enables_expansion() ?
                 // selected_label_id : None` branch at
                 // `log/imp.rs:1079`.
-                session.label_id = if ui.get_edit_label_enabled() {
-                    let id = ui.get_edit_label_id() as i64;
-                    if id > 0 { Some(id) } else { None }
+                let label_id = if ui.get_edit_label_enabled() {
+                    let lid = ui.get_edit_label_id() as i64;
+                    if lid > 0 { Some(lid) } else { None }
                 } else {
                     None
                 };
+
                 if let Some(db_arc) = DATABASE.get() {
                     if let Ok(guard) = db_arc.lock() {
                         if let Some(db) = guard.as_ref() {
-                            if let Err(err) = db.update_session(id, &session) {
-                                meditate_core::log(
-                                    "log.edit.save.failed",
-                                    &format!("rowid {id}: {err:?}"),
-                                );
+                            match editing_session_id.get() {
+                                Some(id) => {
+                                    // Edit: clone the live row,
+                                    // swap the edited fields,
+                                    // keep mode + guided-file ref
+                                    // untouched (the overlay
+                                    // can't change them — matches
+                                    // GTK's `original_mode` /
+                                    // `original_guided_file_uuid`
+                                    // preservation).
+                                    let original = loaded_log_sessions
+                                        .borrow()
+                                        .iter()
+                                        .find(|(id_, _)| *id_ == id)
+                                        .map(|(_, s)| s.clone());
+                                    if let Some(mut session) = original {
+                                        session.notes = new_note;
+                                        session.duration_secs =
+                                            duration_secs as u32;
+                                        session.start_iso =
+                                            meditate_core::time::unix_to_local_iso(
+                                                new_start_unix,
+                                            );
+                                        session.label_id = label_id;
+                                        if let Err(err) =
+                                            db.update_session(id, &session)
+                                        {
+                                            meditate_core::log(
+                                                "log.edit.save.failed",
+                                                &format!("rowid {id}: {err:?}"),
+                                            );
+                                        }
+                                    }
+                                }
+                                None => {
+                                    // Create: a fresh manual
+                                    // entry. GTK's add-dialog
+                                    // defaults the mode to Timer
+                                    // (`original_mode = session
+                                    // .map_or(Timer, ...)` at
+                                    // `log/imp.rs:771`) and never
+                                    // carries a guided-file ref.
+                                    let session =
+                                        meditate_core::db::Session::from_unix(
+                                            new_start_unix,
+                                            duration_secs,
+                                            label_id,
+                                            new_note,
+                                            meditate_core::SessionMode::Timer,
+                                            None,
+                                        );
+                                    if let Err(err) =
+                                        db.insert_session(&session)
+                                    {
+                                        meditate_core::log(
+                                            "log.add.save.failed",
+                                            &format!("{err:?}"),
+                                        );
+                                    }
+                                }
                             }
                         }
                     }
@@ -3285,6 +3372,14 @@ fn build_ui() -> MainWindow {
             #[cfg(target_os = "android")]
             {
                 let Some(ui) = weak.upgrade() else { return; };
+                // No explicit `set_edit_label_enabled` — the
+                // ExpanderRow's `active <=> root.edit-label-enabled`
+                // two-way binding owns the flag (same as the
+                // Setup-screen Label expander, which only
+                // persists in its toggled handler). This callback
+                // just mirrors GTK's
+                // `connect_enable_expansion_notify`: adopt the
+                // first label when switched on with no selection.
                 if on && ui.get_edit_label_id() == 0 {
                     if let Some((id, name)) = first_label() {
                         ui.set_edit_label_id(id as i32);

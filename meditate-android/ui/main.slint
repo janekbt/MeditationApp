@@ -967,6 +967,17 @@ export component MainWindow inherits Window {
     // `Session` struct preserving every other field, and writes
     // through `db.update_session(id, &session)`.
     in property <bool> edit-session-page: false;
+    // Header title — "Edit Session" when a card was tapped,
+    // "Add Session" when opened via the Log Add button (create
+    // mode). Mirrors GTK's `is_edit ? "Edit Session" : "Add
+    // Session"` at `meditate-gtk/src/log/imp.rs:1012`.
+    in property <string> edit-session-title: "Edit Session";
+    // Log header "Add Session" button (create mode). Rust
+    // clears `editing_session_id`, seeds the overlay with
+    // defaults (empty note, 0h0m, start = now, label off), and
+    // opens it. Mirrors GTK's `log_add_btn` →
+    // `show_add_dialog` → `show_session_dialog(None)`.
+    callback log-add-tap();
     in-out property <string> edit-note-text: "";
     // Duration fields (L-4b) — Rust pre-fills both on card-tap
     // from the tapped session's `duration_secs`, reads them back
@@ -2900,7 +2911,7 @@ export component MainWindow inherits Window {
                     }
                 }
                 Text {
-                    text: "Edit Session";
+                    text: root.edit-session-title;
                     font-size: 18px;
                     color: MaterialPalette.on-surface;
                     vertical-alignment: center;
@@ -2974,21 +2985,25 @@ export component MainWindow inherits Window {
             // the chooser row pushes the existing labels-page
             // overlay; Rust uses `chooser-target = 2` to route the
             // pick back to `edit-label-*`.
+            // Reuses the proven `ExpanderRow` (same component the
+            // Setup screen's Label expander uses) rather than a
+            // SwitchRow + `if`-gated sub-rows. The body is always
+            // rendered and its height animates 0↔56 px with
+            // `clip` — Slint won't reactively re-render an
+            // `if`-gated child injected through a sub-component's
+            // `@children` (BoxedList), which is why the chooser
+            // sub-row never appeared on toggle. Mirrors GTK's
+            // AdwExpanderRow + the Setup-screen usage at
+            // `main.slint:1434`.
             BoxedList {
-                SwitchRow {
+                ExpanderRow {
                     title: "Label";
                     subtitle: "Tag this session";
-                    checked <=> root.edit-label-enabled;
-                    toggled(on) => { root.edit-label-toggled(on); }
-                }
-                if root.edit-label-enabled : Rectangle {
-                    height: 1px;
-                    background: MaterialPalette.outline-variant;
-                }
-                if root.edit-label-enabled : DurationRow {
-                    label: "Selected";
-                    value-text: root.edit-label-name;
-                    tapped => { root.edit-label-row-tap(); }
+                    body-title: "Selected";
+                    body-subtitle: root.edit-label-name;
+                    active <=> root.edit-label-enabled;
+                    toggled(value) => { root.edit-label-toggled(value); }
+                    body-tapped => { root.edit-label-row-tap(); }
                 }
             }
 
@@ -3320,7 +3335,13 @@ export component MainWindow inherits Window {
         title: "Select session date";
         date: root.edit-start-date;
         accepted(date) => {
-            root.edit-start-date = date;
+            // Material's DatePickerPopup emits `accepted(root.date)`
+            // — the *input* property, not the user's picked
+            // `current_date` (catalog bug at
+            // `date_picker.slint:495`). Read the real selection
+            // via `get_current_date()` instead, mirroring how the
+            // TimePickerPopup below uses `get_current_time()`.
+            root.edit-start-date = date-popup.get-current-date();
             date-popup.close();
         }
         canceled => { date-popup.close(); }
@@ -3517,6 +3538,13 @@ export component MainWindow inherits Window {
                             width: 22px;
                             height: 22px;
                         }
+                    }
+                }
+                if root.nav-page == 2 : VerticalLayout {
+                    alignment: center;
+                    IconButton {
+                        icon: @image-url("assets/add.svg");
+                        clicked => { root.log-add-tap(); }
                     }
                 }
                 if root.nav-page == 2 : VerticalLayout {
