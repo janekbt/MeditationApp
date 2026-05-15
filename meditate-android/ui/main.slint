@@ -11,7 +11,6 @@
 import {
     FilledButton, OutlineButton, TextButton, TonalButton,
     SegmentedButton, Switch, IconButton, TextField, NavigationBar,
-    AppBar,
     MaterialPalette,
     DatePickerPopup, DatePickerAdapter,
     TimePickerPopup, Time,
@@ -980,6 +979,24 @@ export component MainWindow inherits Window {
     // until phase 7 lands the preferences UI.
     callback preferences-tap();
 
+    // Filter sheet (L-5). Tapping the funnel IconButton in the
+    // Log AppBar flips `filter-sheet-open` true via the
+    // `log-filter-tap` callback; Rust then refreshes any sheet-
+    // populated state (label list for L-5c) before the sheet
+    // animates in. L-5a only ships the surface — the inner
+    // controls land in L-5b (Notes-only) and L-5c (Label).
+    in-out property <bool> filter-sheet-open: false;
+    callback log-filter-tap();
+
+    // True when any of the Log-feed filters is engaged. L-5a
+    // exposes this as the gate between the "No Sessions Yet"
+    // and "No Matching Sessions" empty states; L-5b / L-5c set
+    // it Rust-side as the Notes / Label filters activate. The
+    // Log-feed render path uses `filter-has-active` regardless
+    // of which specific filter is on — mirrors GTK's
+    // `has_filter` at `meditate-gtk/src/log/imp.rs:144`.
+    in property <bool> filter-has-active: false;
+
     // Slide offset for the Label chooser overlay. Symmetric
     // 300 ms in both directions — mirrors the GTK
     // `AdwNavigationView` push transition. No coordination with
@@ -1853,10 +1870,17 @@ export component MainWindow inherits Window {
         background: MaterialPalette.surface;
 
         // Empty state — mirrors GTK's `Adw.StatusPage` with
-        // icon + title + description. No "Add Session" button
-        // for now (manual create lands when the edit-session
-        // dialog ships in L-4).
-        if root.log-sections.length == 0 : VerticalLayout {
+        // icon + title + description. Two variants in GTK's
+        // `view_stack` at `data/ui/log_view.blp:10-33`:
+        //
+        //   * "empty"          → no rows in the DB at all
+        //   * "filtered-empty" → rows exist but the current filter
+        //                        masks all of them
+        //
+        // Same gating here via `filter-has-active`: Rust flips it
+        // true whenever any of the L-5b/c filters engage, and the
+        // empty state swaps copy + caption accordingly.
+        if root.log-sections.length == 0 && !root.filter-has-active : VerticalLayout {
             alignment: center;
             spacing: 12px;
             padding-left: 32px;
@@ -1872,6 +1896,29 @@ export component MainWindow inherits Window {
             }
             Text {
                 text: "Start meditating to see your sessions here.";
+                font-size: 14px;
+                horizontal-alignment: center;
+                color: MaterialPalette.on-surface-variant;
+                wrap: word-wrap;
+            }
+        }
+
+        if root.log-sections.length == 0 && root.filter-has-active : VerticalLayout {
+            alignment: center;
+            spacing: 12px;
+            padding-left: 32px;
+            padding-right: 32px;
+            padding-top: root.status-bar-inset + root.header-bar-height;
+            padding-bottom: root.nav-bar-height + root.bottom-bar-inset;
+
+            Text {
+                text: "No Matching Sessions";
+                font-size: 22px;
+                horizontal-alignment: center;
+                color: MaterialPalette.on-surface;
+            }
+            Text {
+                text: "Try changing your filters.";
                 font-size: 14px;
                 horizontal-alignment: center;
                 color: MaterialPalette.on-surface-variant;
@@ -2561,6 +2608,61 @@ export component MainWindow inherits Window {
         }
     }
 
+    // ── Filter sheet (L-5) ──────────────────────────────────────
+    // Modal overlay over the Log feed. L-5a only ships the
+    // surface (title bar + Close button); L-5b lands the
+    // Has Notes SwitchRow, L-5c lands the Label chooser. Same
+    // scrim-tap-dismiss + card-tap-stop pattern as the other
+    // modal dialogs in this file.
+    if root.filter-sheet-open : Rectangle {
+        background: #00000080;
+        TouchArea {
+            clicked => { root.filter-sheet-open = false; }
+        }
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 320px;
+            height: filter-card-content.preferred-height;
+            background: MaterialPalette.surface-container-high;
+            border-radius: 28px;
+
+            TouchArea {}
+
+            filter-card-content := VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+
+                Text {
+                    text: "Filter Sessions";
+                    font-size: 22px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface;
+                }
+
+                // Placeholder copy — controls land in L-5b/c.
+                Text {
+                    text: "Filter options coming soon.";
+                    font-size: 14px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface-variant;
+                    wrap: word-wrap;
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+
+                    TextButton {
+                        text: "Close";
+                        clicked => { root.filter-sheet-open = false; }
+                    }
+                }
+            }
+        }
+    }
+
     // ── Top AppBar — title + Preferences trigger ────────────────
     // Pinned at y=0 on the base pages (Setup, Log). Hidden when
     // any overlay (Running / Done / Labels) is up — those
@@ -2581,19 +2683,60 @@ export component MainWindow inherits Window {
         height: root.status-bar-inset + root.header-bar-height;
         background: MaterialPalette.surface-container;
 
-        AppBar {
+        // Hand-rolled left-aligned bar (replaces Material's
+        // `SmallAppBar`): the catalog wrapper doesn't expose
+        // `text_padding`, so its title sits ~4 px from the left
+        // edge, and its `trailing-buttons` only accepts an array
+        // value — an `if`-branched conditional array literal
+        // wouldn't type-check, so we couldn't hide the funnel
+        // outright (only dim it) via that path.
+        //
+        // Mirrors `SmallAppBar` visually (surface-container
+        // background, 22 sp title in `on-surface`, IconButton
+        // trailing children) but adds a 16 px title inset and
+        // gates the funnel on `nav-page == 1` so it only appears
+        // on the Log page. Mirrors GTK's window header at
+        // `meditate-gtk/data/ui/window.blp:87` where
+        // `log_filter_btn` is `visible: false` until the Log
+        // view is selected.
+        Rectangle {
             x: 0;
             y: root.status-bar-inset;
             width: 100%;
             height: root.header-bar-height;
-            title: "Meditate";
-            show-background: true;
-            trailing-button: {
-                icon: Icons.menu,
-                tooltip: "Preferences",
-                enabled: true,
-            };
-            trailing-button-clicked => { root.preferences-tap(); }
+            background: MaterialPalette.surface-container;
+
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 4px;
+                spacing: 4px;
+                alignment: stretch;
+
+                Text {
+                    text: "Meditate";
+                    font-size: 22px;
+                    font-weight: 400;
+                    color: MaterialPalette.on-surface;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    horizontal-alignment: left;
+                    overflow: elide;
+                }
+                if root.nav-page == 1 : VerticalLayout {
+                    alignment: center;
+                    IconButton {
+                        icon: @image-url("assets/filter.svg");
+                        clicked => { root.log-filter-tap(); }
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    IconButton {
+                        icon: Icons.menu;
+                        clicked => { root.preferences-tap(); }
+                    }
+                }
+            }
         }
     }
 

@@ -2535,6 +2535,22 @@ fn build_ui() -> MainWindow {
         });
     }
 
+    // Filter funnel tap on the Log AppBar — open the filter
+    // sheet. L-5a only flips the surface; L-5b/c will refresh
+    // the label list and seed the switch state from the
+    // current filter values before showing.
+    {
+        let weak = ui.as_weak();
+        ui.on_log_filter_tap(move || {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                ui.set_filter_sheet_open(true);
+            }
+            let _ = weak.clone();
+        });
+    }
+
     // Preferences gear tap — no-op for now; Phase 7 hooks it up
     // to the eventual Preferences screen.
     ui.on_preferences_tap(move || {
@@ -2589,6 +2605,11 @@ fn build_ui() -> MainWindow {
         let editing_session_id = editing_session_id.clone();
         ui.on_back_pressed(move || {
             let Some(ui) = weak.upgrade() else { return; };
+            #[cfg(target_os = "android")]
+            if ui.get_filter_sheet_open() {
+                ui.set_filter_sheet_open(false);
+                return;
+            }
             #[cfg(target_os = "android")]
             if ui.get_edit_session_page() {
                 hide_soft_keyboard();
