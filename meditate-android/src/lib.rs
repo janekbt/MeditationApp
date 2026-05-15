@@ -1960,6 +1960,45 @@ fn bell_sound_name(uuid: &str) -> String {
         .unwrap_or_default()
 }
 
+/// Resolve a vibration-pattern uuid to its display name (empty
+/// when the row is gone). Pattern sibling of `bell_sound_name`.
+#[cfg(target_os = "android")]
+fn pattern_name(uuid: &str) -> String {
+    let Some(db_arc) = DATABASE.get() else { return String::new(); };
+    let Ok(guard) = db_arc.lock() else { return String::new(); };
+    let Some(db) = guard.as_ref() else { return String::new(); };
+    match meditate_core::bells::resolve_pattern_name(db, uuid) {
+        meditate_core::bells::ResolvedName::Resolved(n) => n,
+        meditate_core::bells::ResolvedName::Missing => String::new(),
+    }
+}
+
+/// SignalMode db-string → CompactToggle index (0 Sound /
+/// 1 Vibration / 2 Both — the GTK ToggleGroup order). Unknown
+/// values fall back to Sound, matching `read_signal_mode`'s
+/// default contract.
+#[cfg(target_os = "android")]
+fn signal_mode_index(db_str: &str) -> i32 {
+    use meditate_core::bells::SignalMode;
+    match SignalMode::from_db_str(db_str) {
+        Some(SignalMode::Vibration) => 1,
+        Some(SignalMode::Both) => 2,
+        _ => 0,
+    }
+}
+
+/// CompactToggle index → SignalMode db string. Inverse of
+/// `signal_mode_index`; out-of-range indices clamp to Sound.
+#[cfg(target_os = "android")]
+fn signal_mode_db_str(index: i32) -> &'static str {
+    use meditate_core::bells::SignalMode;
+    match index {
+        1 => SignalMode::Vibration.as_db_str(),
+        2 => SignalMode::Both.as_db_str(),
+        _ => SignalMode::Sound.as_db_str(),
+    }
+}
+
 /// Push the current bell settings into the Setup Bells-group
 /// props: enable switches from `*_bell_active`, body subtitles
 /// from the resolved `*_bell_sound` name (defaulting to the
@@ -1983,6 +2022,28 @@ fn refresh_bell_rows(ui: &MainWindow) {
     );
     ui.set_starting_bell_sound_name(bell_sound_name(&ss).into());
     ui.set_end_bell_sound_name(bell_sound_name(&es).into());
+
+    // Signal Type + Pattern (B-2b). Defaults mirror core's
+    // `read_signal_mode(.., SignalMode::Sound)` and the
+    // `*_bell_pattern` → BUNDLED_PATTERN_PULSE_UUID fallback.
+    ui.set_starting_bell_signal_mode(signal_mode_index(&read_global_setting(
+        "starting_bell_signal_mode",
+        meditate_core::bells::SignalMode::Sound.as_db_str(),
+    )));
+    ui.set_end_bell_signal_mode(signal_mode_index(&read_global_setting(
+        "end_bell_signal_mode",
+        meditate_core::bells::SignalMode::Sound.as_db_str(),
+    )));
+    let sp = read_global_setting(
+        "starting_bell_pattern",
+        meditate_core::seeds::BUNDLED_PATTERN_PULSE_UUID,
+    );
+    let ep = read_global_setting(
+        "end_bell_pattern",
+        meditate_core::seeds::BUNDLED_PATTERN_PULSE_UUID,
+    );
+    ui.set_starting_bell_pattern_name(pattern_name(&sp).into());
+    ui.set_end_bell_pattern_name(pattern_name(&ep).into());
 
     // Preparation Time (B-5b).
     ui.set_prep_time_active(
@@ -2112,6 +2173,34 @@ fn populate_bell_chooser(ui: &MainWindow, current_uuid: &str) {
         })
         .collect();
     ui.set_bell_chooser_items(
+        std::rc::Rc::new(slint::VecModel::from(items)).into(),
+    );
+}
+
+/// Fill the pattern-chooser overlay from
+/// `list_vibration_patterns_from_db` (custom rows first, then
+/// the bundled set — the list helper already orders it), the
+/// row matching `current_uuid` check-marked. Per-row Play/Stop
+/// preview is wired separately via `pattern-preview-toggle`.
+#[cfg(target_os = "android")]
+fn populate_pattern_chooser(ui: &MainWindow, current_uuid: &str) {
+    let Some(db_arc) = DATABASE.get() else { return; };
+    let Ok(guard) = db_arc.lock() else { return; };
+    let Some(db) = guard.as_ref() else { return; };
+    let items: Vec<NameChoice> =
+        meditate_core::db::list_vibration_patterns_from_db(db)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|p| {
+                let u = p.uuid.to_string();
+                NameChoice {
+                    selected: u == current_uuid,
+                    uuid: u.into(),
+                    name: p.name.into(),
+                }
+            })
+            .collect();
+    ui.set_pattern_chooser_items(
         std::rc::Rc::new(slint::VecModel::from(items)).into(),
     );
 }
@@ -2818,6 +2907,20 @@ fn build_ui() -> MainWindow {
     let editing_ib: Rc<RefCell<Option<meditate_core::db::IntervalBell>>> =
         Rc::new(RefCell::new(None));
 
+    // Pattern-chooser routing (B-2b): 0 = Starting Bell,
+    // 1 = End Bell (the interval-bell editor's pattern is B-2c).
+    #[cfg(target_os = "android")]
+    let pattern_chooser_target: Rc<Cell<u8>> = Rc::new(Cell::new(0));
+
+    // Pattern-preview arbiter (B-2b). `PreviewToggle` keeps a
+    // single pattern buzzing at a time: tapping the active row's
+    // pill stops it, tapping another switches. Shared with the
+    // chooser's back/pick handlers so leaving the overlay always
+    // cancels an in-flight preview.
+    #[cfg(target_os = "android")]
+    let pattern_preview: Rc<RefCell<meditate_core::preview::PreviewToggle>> =
+        Rc::new(RefCell::new(meditate_core::preview::PreviewToggle::new()));
+
     {
         ui.on_starting_bell_toggled(move |value| {
             #[cfg(target_os = "android")]
@@ -2922,6 +3025,201 @@ fn build_ui() -> MainWindow {
                 ui.set_bell_chooser_page(false);
             }
             let _ = weak.clone();
+        });
+    }
+
+    // ── Signal Type + Pattern (B-2b) ────────────────────────────
+    // Type toggle persists `*_bell_signal_mode` then re-reads the
+    // Bells group so the conditional Sound/Pattern rows update.
+    {
+        let weak = ui.as_weak();
+        ui.on_starting_bell_signal_mode_changed(move |idx| {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                write_global_setting(
+                    "starting_bell_signal_mode",
+                    signal_mode_db_str(idx),
+                );
+                refresh_bell_rows(&ui);
+            }
+            let _ = (weak.clone(), idx);
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_end_bell_signal_mode_changed(move |idx| {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                write_global_setting(
+                    "end_bell_signal_mode",
+                    signal_mode_db_str(idx),
+                );
+                refresh_bell_rows(&ui);
+            }
+            let _ = (weak.clone(), idx);
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let pattern_chooser_target = pattern_chooser_target.clone();
+        ui.on_starting_bell_pattern_tap(move || {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                pattern_chooser_target.set(0);
+                let cur = read_global_setting(
+                    "starting_bell_pattern",
+                    meditate_core::seeds::BUNDLED_PATTERN_PULSE_UUID,
+                );
+                populate_pattern_chooser(&ui, &cur);
+                ui.set_pattern_chooser_page(true);
+            }
+            let _ = weak.clone();
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let pattern_chooser_target = pattern_chooser_target.clone();
+        ui.on_end_bell_pattern_tap(move || {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                pattern_chooser_target.set(1);
+                let cur = read_global_setting(
+                    "end_bell_pattern",
+                    meditate_core::seeds::BUNDLED_PATTERN_PULSE_UUID,
+                );
+                populate_pattern_chooser(&ui, &cur);
+                ui.set_pattern_chooser_page(true);
+            }
+            let _ = weak.clone();
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let pattern_chooser_target = pattern_chooser_target.clone();
+        #[cfg(target_os = "android")]
+        let pattern_preview = pattern_preview.clone();
+        ui.on_pattern_chooser_pick(move |uuid| {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                // Leaving the overlay always silences a preview.
+                let _ = pattern_preview.borrow_mut().stop();
+                if let Some(app) = ANDROID_APP.get() {
+                    haptics::cancel(app);
+                }
+                ui.set_pattern_preview_uuid(slint::SharedString::new());
+                let key = if pattern_chooser_target.get() == 1 {
+                    "end_bell_pattern"
+                } else {
+                    "starting_bell_pattern"
+                };
+                write_global_setting(key, uuid.as_str());
+                refresh_bell_rows(&ui);
+                ui.set_pattern_chooser_page(false);
+            }
+            let _ = (weak.clone(), uuid);
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let pattern_preview = pattern_preview.clone();
+        ui.on_pattern_chooser_back(move || {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                let _ = pattern_preview.borrow_mut().stop();
+                if let Some(app) = ANDROID_APP.get() {
+                    haptics::cancel(app);
+                }
+                ui.set_pattern_preview_uuid(slint::SharedString::new());
+                ui.set_pattern_chooser_page(false);
+            }
+            let _ = weak.clone();
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let pattern_preview = pattern_preview.clone();
+        ui.on_pattern_preview_toggle(move |uuid| {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                let action = pattern_preview.borrow_mut().request(uuid.as_str());
+                match action {
+                    meditate_core::preview::PreviewAction::StopAndStart {
+                        id,
+                        generation,
+                    } => {
+                        let mut dur_ms: u32 = 0;
+                        if let Some(app) = ANDROID_APP.get() {
+                            // Cancel the outgoing buzz before the
+                            // new one so they don't overlap.
+                            haptics::cancel(app);
+                            if let Some(db_arc) = DATABASE.get() {
+                                if let Ok(guard) = db_arc.lock() {
+                                    if let Some(db) = guard.as_ref() {
+                                        if let Ok(Some(p)) =
+                                            meditate_core::db::find_vibration_pattern_by_uuid_from_db(
+                                                db, &id,
+                                            )
+                                        {
+                                            dur_ms = p.duration_ms;
+                                            let env =
+                                                meditate_core::vibration::build_master_envelope(&p);
+                                            haptics::vibrate_waveform(app, &env);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        ui.set_pattern_preview_uuid(id.into());
+
+                        // The waveform is finite — nothing tells the
+                        // UI when it stops, so the pill would stay
+                        // "Stop" forever. Schedule a revert after the
+                        // pattern's own duration; `timer_should_revert`
+                        // no-ops if the user already stopped it or
+                        // started a different one (generation guard),
+                        // mirroring GTK's preview-timer logic.
+                        if dur_ms > 0 {
+                            let weak2 = weak.clone();
+                            let pp = pattern_preview.clone();
+                            slint::Timer::single_shot(
+                                std::time::Duration::from_millis(dur_ms as u64),
+                                move || {
+                                    if pp
+                                        .borrow_mut()
+                                        .timer_should_revert(generation)
+                                    {
+                                        if let Some(ui) = weak2.upgrade() {
+                                            ui.set_pattern_preview_uuid(
+                                                slint::SharedString::new(),
+                                            );
+                                        }
+                                    }
+                                },
+                            );
+                        }
+                    }
+                    meditate_core::preview::PreviewAction::StopOnly => {
+                        if let Some(app) = ANDROID_APP.get() {
+                            haptics::cancel(app);
+                        }
+                        ui.set_pattern_preview_uuid(slint::SharedString::new());
+                    }
+                    meditate_core::preview::PreviewAction::NoOp => {}
+                }
+            }
+            let _ = (weak.clone(), uuid);
         });
     }
 

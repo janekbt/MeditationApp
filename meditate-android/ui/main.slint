@@ -753,6 +753,59 @@ component ExpanderGroup inherits Rectangle {
     }
 }
 
+// A ChooserRow that reveals/collapses on a boolean, with a
+// hair-line divider above it (so it reads as a separated child
+// row, like GTK's revealer-wrapped Bell Sound / Pattern rows).
+// Structure mirrors ExpanderRow's body EXACTLY: a VerticalLayout
+// wrapper (so the root Rectangle's preferred-height propagates
+// into a parent ExpanderGroup — a bare Rectangle child does NOT
+// aggregate its children's height, which collapsed the Bells
+// body), a clip box whose height is a plain `reveal * <fixed>px`
+// binding (1 px divider + 56 px row = 57), and an inner column
+// pinned to that fixed height at y=0 so it slides rather than
+// compresses. The only animated quantity is `reveal`, so nested
+// in an ExpanderGroup the group height stays a pure function of
+// one scalar at a time (no two-phase collapse).
+component RevealChooser inherits Rectangle {
+    in property <bool> shown;
+    in property <string> title;
+    in property <string> subtitle;
+    callback tapped;
+
+    property <float> reveal: root.shown ? 1.0 : 0.0;
+    animate reveal {
+        duration: 250ms;
+        easing: ease-in-out;
+    }
+
+    background: transparent;
+
+    VerticalLayout {
+        spacing: 0;
+
+        Rectangle {
+            clip: true;
+            height: root.reveal * 57px;
+
+            VerticalLayout {
+                y: 0;
+                height: 57px;
+                spacing: 0;
+
+                Rectangle {
+                    height: 1px;
+                    background: MaterialPalette.outline-variant;
+                }
+                ChooserRow {
+                    title: root.title;
+                    subtitle: root.subtitle;
+                    tapped => { root.tapped(); }
+                }
+            }
+        }
+    }
+}
+
 // Box-Breath phase tile — one cell of the Setup view's 2×2
 // phase grid. Mirrors GTK's `build_phase_tile`
 // (`meditate-gtk/src/timer/imp.rs:4080-4153`): a small card with
@@ -1100,6 +1153,34 @@ export component MainWindow inherits Window {
     callback end-bell-toggled(bool);
     callback starting-bell-sound-tap();
     callback end-bell-sound-tap();
+
+    // Signal Type (B-2b): index 0 Sound / 1 Vibration / 2 Both —
+    // same order as GTK's `*_bell_signal_mode_row` ToggleGroup
+    // and `SignalMode::{Sound,Vibration,Both}`. The Bell Sound
+    // row shows when the mode includes sound (0|2); the Pattern
+    // row when it includes vibration (1|2) — mirroring GTK's two
+    // Revealers (`timer_view.blp:429/446`).
+    in-out property <int> starting-bell-signal-mode: 0;
+    in-out property <int> end-bell-signal-mode: 0;
+    in property <string> starting-bell-pattern-name: "";
+    in property <string> end-bell-pattern-name: "";
+    callback starting-bell-signal-mode-changed(int);
+    callback end-bell-signal-mode-changed(int);
+    callback starting-bell-pattern-tap();
+    callback end-bell-pattern-tap();
+
+    // Vibration-pattern chooser overlay (B-2b). Same slide-in
+    // shape as the bell-sound chooser, but each row carries a
+    // Play/Stop preview affordance (`pattern-preview-uuid` holds
+    // the uuid currently buzzing, "" = none) driven by
+    // `meditate_core::preview::PreviewToggle` + the B-2a waveform
+    // JNI. Rust-filled from `list_vibration_patterns_from_db`.
+    in property <bool> pattern-chooser-page: false;
+    in property <[NameChoice]> pattern-chooser-items: [];
+    in property <string> pattern-preview-uuid: "";
+    callback pattern-chooser-pick(string);
+    callback pattern-chooser-back();
+    callback pattern-preview-toggle(string);
 
     // Bell-sound chooser overlay (B-5a). Same slide-in shape as
     // the labels chooser; `bell-chooser-items` is Rust-filled
@@ -1480,6 +1561,11 @@ export component MainWindow inherits Window {
     property <length> bell-chooser-offset: root.bell-chooser-page ? root.width : 0px;
     animate bell-chooser-offset { duration: 300ms; easing: ease-out; }
 
+    // Vibration-pattern chooser slide-in (B-2b). Same symmetric
+    // 300 ms push as the bell-sound chooser.
+    property <length> pattern-chooser-offset: root.pattern-chooser-page ? root.width : 0px;
+    animate pattern-chooser-offset { duration: 300ms; easing: ease-out; }
+
     property <length> interval-bells-offset: root.interval-bells-page ? root.width : 0px;
     animate interval-bells-offset { duration: 300ms; easing: ease-out; }
 
@@ -1761,10 +1847,28 @@ export component MainWindow inherits Window {
                         active <=> root.starting-bell-active;
                         toggled(value) => { root.starting-bell-toggled(value); }
 
-                        ChooserRow {
+                        CuesRow {
+                            title: "Type";
+                            current-index <=> root.starting-bell-signal-mode;
+                            changed(idx) => { root.starting-bell-signal-mode-changed(idx); }
+                        }
+
+                        // Bell Sound — revealed when the mode
+                        // includes sound (Sound|Both); Pattern when
+                        // it includes vibration (Vibration|Both).
+                        // Mirrors GTK's `starting_bell_sound_revealer`
+                        // / `starting_bell_pattern_revealer`.
+                        RevealChooser {
+                            shown: root.starting-bell-signal-mode != 1;
                             title: "Bell Sound";
                             subtitle: root.starting-bell-sound-name;
                             tapped => { root.starting-bell-sound-tap(); }
+                        }
+                        RevealChooser {
+                            shown: root.starting-bell-signal-mode != 0;
+                            title: "Pattern";
+                            subtitle: root.starting-bell-pattern-name;
+                            tapped => { root.starting-bell-pattern-tap(); }
                         }
 
                         Rectangle {
@@ -1809,14 +1913,34 @@ export component MainWindow inherits Window {
                         background: MaterialPalette.outline-variant;
                     }
 
-                    ExpanderRow {
+                    // End Bell — an ExpanderGroup (was a single-
+                    // body ExpanderRow) so it can hold Type +
+                    // Sound + Pattern, mirroring GTK's `end_bell_
+                    // row` (`timer_view.blp:506`).
+                    ExpanderGroup {
                         title: "End Bell";
                         subtitle: "Play a signal when the session ends";
-                        body-title: "Bell Sound";
-                        body-subtitle: root.end-bell-sound-name;
                         active <=> root.end-bell-active;
                         toggled(value) => { root.end-bell-toggled(value); }
-                        body-tapped => { root.end-bell-sound-tap(); }
+
+                        CuesRow {
+                            title: "Type";
+                            current-index <=> root.end-bell-signal-mode;
+                            changed(idx) => { root.end-bell-signal-mode-changed(idx); }
+                        }
+
+                        RevealChooser {
+                            shown: root.end-bell-signal-mode != 1;
+                            title: "Bell Sound";
+                            subtitle: root.end-bell-sound-name;
+                            tapped => { root.end-bell-sound-tap(); }
+                        }
+                        RevealChooser {
+                            shown: root.end-bell-signal-mode != 0;
+                            title: "Pattern";
+                            subtitle: root.end-bell-pattern-name;
+                            tapped => { root.end-bell-pattern-tap(); }
+                        }
                     }
                 }
             }
@@ -4374,6 +4498,143 @@ export component MainWindow inherits Window {
                                     colorize: MaterialPalette.primary;
                                     width: 20px;
                                     height: 20px;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Vibration-pattern chooser (overlay, B-2b) ───────────────
+    // Same slide-in shape as the bell-sound chooser, but every row
+    // carries a Play/Stop pill that previews the pattern through
+    // the B-2a waveform JNI (`PreviewToggle` arbitrates which one
+    // is buzzing). Declared after the bell-sound chooser so it
+    // z-stacks above the Setup screen it slides over (declare-
+    // overlays-last z-order rule). ASCII "Play"/"Stop" rather than
+    // a media glyph — the FP5 Android-15 font lacks the symbols
+    // and no play/stop SVG is bundled yet.
+    Rectangle {
+        x: parent.width - root.pattern-chooser-offset;
+        width: parent.width;
+        height: parent.height;
+        background: MaterialPalette.surface;
+
+        VerticalLayout {
+            padding-top: root.status-bar-inset + 24px;
+            padding-bottom: root.bottom-bar-inset + 24px;
+            padding-left: 16px;
+            padding-right: 16px;
+            spacing: 16px;
+            alignment: start;
+
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: stretch;
+
+                IconButton {
+                    icon: Icons.arrow-back;
+                    clicked => { root.pattern-chooser-back(); }
+                }
+                Text {
+                    text: "Choose Pattern";
+                    font-size: 18px;
+                    color: MaterialPalette.on-surface;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    horizontal-alignment: center;
+                }
+                Rectangle {
+                    width: 40px;
+                }
+            }
+
+            BoxedList {
+                for item[idx] in root.pattern-chooser-items : VerticalLayout {
+                    spacing: 0;
+
+                    if idx > 0 : Rectangle {
+                        height: 1px;
+                        background: MaterialPalette.outline-variant;
+                    }
+
+                    Rectangle {
+                        height: 56px;
+                        background: pat-row-touch.has-hover
+                            ? MaterialPalette.surface-container-high
+                            : transparent;
+
+                        pat-row-touch := TouchArea {
+                            clicked => { root.pattern-chooser-pick(item.uuid); }
+                        }
+
+                        HorizontalLayout {
+                            padding-left: 16px;
+                            padding-right: 16px;
+                            spacing: 12px;
+                            alignment: stretch;
+
+                            Text {
+                                text: item.name;
+                                font-size: 16px;
+                                color: MaterialPalette.on-surface;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                            }
+
+                            // Check slot — fixed width, always
+                            // present (Image just toggles visible)
+                            // so it can't be occluded by / land
+                            // behind the pill the way a bare
+                            // `if`-gated element inside this `for`
+                            // did. Declared before the pill so the
+                            // tick sits in front of (left of) it.
+                            VerticalLayout {
+                                alignment: center;
+                                Rectangle {
+                                    width: 20px;
+                                    height: 20px;
+                                    Image {
+                                        source: Icons.check;
+                                        colorize: MaterialPalette.primary;
+                                        width: 20px;
+                                        height: 20px;
+                                        visible: item.selected;
+                                    }
+                                }
+                            }
+
+                            // Play/Stop pill — toggles this
+                            // pattern's preview. `pattern-preview-
+                            // uuid` is the single buzzing uuid
+                            // (PreviewToggle keeps it exclusive).
+                            VerticalLayout {
+                                alignment: center;
+                                Rectangle {
+                                    width: 60px;
+                                    height: 32px;
+                                    border-radius: 16px;
+                                    border-width: 1px;
+                                    border-color: MaterialPalette.outline;
+                                    background: pill-touch.has-hover
+                                        ? MaterialPalette.secondary-container
+                                        : transparent;
+
+                                    pill-touch := TouchArea {
+                                        clicked => {
+                                            root.pattern-preview-toggle(item.uuid);
+                                        }
+                                    }
+                                    Text {
+                                        text: root.pattern-preview-uuid == item.uuid
+                                            ? "Stop" : "Play";
+                                        font-size: 13px;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                        color: MaterialPalette.on-surface;
+                                    }
                                 }
                             }
                         }
