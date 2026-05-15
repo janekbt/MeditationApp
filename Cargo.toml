@@ -19,3 +19,11 @@ lto = "thin"
 codegen-units = 1
 panic = "abort"
 strip = "symbols"
+
+# Strip debuginfo from the dev profile too: the Android native lib
+# (libmeditate_android.so) is ~329 MB unstripped, which makes every
+# wireless-adb deploy crawl. debuginfo-stripped it is ~20-40 MB and
+# installs in seconds. Local backtraces lose line numbers; logcat
+# panics still carry the message, which is enough for on-device work.
+[profile.dev]
+strip = "debuginfo"
