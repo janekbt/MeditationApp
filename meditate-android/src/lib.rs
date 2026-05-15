@@ -618,6 +618,35 @@ fn refresh_chart(ui: &MainWindow) {
         })
         .collect();
 
+    // Line + area SVG paths (S-5b) against a 1000×100 viewbox
+    // (Slint scales to the plot). Geometry mirrors GTK's Cairo
+    // line path at `meditate-gtk/src/stats/imp.rs:646`: point
+    // x = slot-centre, y inverted from the height ratio; the
+    // area is the same polyline closed down to the baseline.
+    // Empty when there's no point (Path then draws nothing).
+    let n = bars.len();
+    let (line_cmd, area_cmd) = if n == 0 {
+        (String::new(), String::new())
+    } else {
+        const VBW: f32 = 1000.0;
+        const VBH: f32 = 100.0;
+        let px = |i: usize| (i as f32 + 0.5) / n as f32 * VBW;
+        let py = |r: f32| VBH - r.clamp(0.0, 1.0) * VBH;
+        let mut line = String::new();
+        let mut area = format!("M {:.2} {:.2}", px(0), VBH);
+        for (i, b) in bars.iter().enumerate() {
+            let (x, y) = (px(i), py(b.ratio));
+            if i == 0 {
+                line.push_str(&format!("M {x:.2} {y:.2}"));
+            } else {
+                line.push_str(&format!(" L {x:.2} {y:.2}"));
+            }
+            area.push_str(&format!(" L {x:.2} {y:.2}"));
+        }
+        area.push_str(&format!(" L {:.2} {:.2} Z", px(n - 1), VBH));
+        (line, area)
+    };
+
     let hm = |secs: i64| {
         render_hm(meditate_core::format::hm_secs_key(
             std::time::Duration::from_secs(secs.max(0) as u64),
@@ -625,6 +654,8 @@ fn refresh_chart(ui: &MainWindow) {
     };
     ui.set_stat_chart_ymax(hm(ticks.max).into());
     ui.set_stat_chart_ymid(hm(ticks.mid).into());
+    ui.set_stat_chart_line_cmd(line_cmd.into());
+    ui.set_stat_chart_area_cmd(area_cmd.into());
     ui.set_stat_chart_bars(
         std::rc::Rc::new(slint::VecModel::from(bars)).into(),
     );
@@ -3301,6 +3332,23 @@ fn build_ui() -> MainWindow {
     {
         let weak = ui.as_weak();
         ui.on_chart_period_changed(move |_idx| {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                refresh_chart(&ui);
+            }
+            let _ = (weak.clone(), _idx);
+        });
+    }
+
+    // Chart Bars/Line toggle (S-5b). The data is identical
+    // between modes — `refresh_chart` always builds both the
+    // bar ratios and the line/area path strings — so a kind
+    // switch just needs a recompute (the Slint `if` picks the
+    // right renderer off `stat-chart-kind`).
+    {
+        let weak = ui.as_weak();
+        ui.on_chart_kind_changed(move |_idx| {
             #[cfg(target_os = "android")]
             {
                 let Some(ui) = weak.upgrade() else { return; };

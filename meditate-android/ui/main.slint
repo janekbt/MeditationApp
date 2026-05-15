@@ -1108,6 +1108,18 @@ export component MainWindow inherits Window {
     in-out property <int> stat-chart-period: 0;
     callback chart-period-changed(int);
 
+    // Bars/Line toggle (S-5b). `stat-chart-kind` (0 bars /
+    // 1 line) binds the kind SegmentedButton; Rust pre-builds
+    // the SVG `commands` for the stroked line and the closed
+    // area-fill against a 1000×100 viewbox (same geometry as
+    // GTK's Cairo line path at
+    // `meditate-gtk/src/stats/imp.rs:646`). Empty strings when
+    // there's no data — Path then draws nothing.
+    in-out property <int> stat-chart-kind: 0;
+    in property <string> stat-chart-line-cmd: "";
+    in property <string> stat-chart-area-cmd: "";
+    callback chart-kind-changed(int);
+
     // Has-Notes filter (L-5b). `filter-notes-only` is the live
     // flag the Rust paginator reads via `get_filter_notes_only`
     // when building the `SessionFilter`. `filter-notes-toggled`
@@ -2484,12 +2496,33 @@ export component MainWindow inherits Window {
                             padding: 12px;
                             spacing: 8px;
 
-                            Text {
-                                text: "MINUTES / DAY";
-                                font-size: 11px;
-                                font-weight: 700;
-                                color: MaterialPalette.on-surface-variant;
-                                horizontal-alignment: left;
+                            // Header: eyebrow + Bars/Line
+                            // toggle. Mirrors GTK's chart-card
+                            // header row at
+                            // `meditate-gtk/data/ui/stats_view.blp:174`.
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: stretch;
+
+                                Text {
+                                    text: "MINUTES / DAY";
+                                    font-size: 11px;
+                                    font-weight: 700;
+                                    color: MaterialPalette.on-surface-variant;
+                                    vertical-alignment: center;
+                                    horizontal-stretch: 1;
+                                    horizontal-alignment: left;
+                                }
+                                SegmentedButton {
+                                    current-index <=> root.stat-chart-kind;
+                                    items: [
+                                        { text: "Bars" },
+                                        { text: "Line" },
+                                    ];
+                                    index-changed(idx) => {
+                                        root.chart-kind-changed(idx);
+                                    }
+                                }
                             }
 
                             HorizontalLayout {
@@ -2530,7 +2563,9 @@ export component MainWindow inherits Window {
                                     // GTK's `.max(3.0)`).
                                     Rectangle {
                                         height: 120px;
-                                        HorizontalLayout {
+
+                                        // Bars (kind 0).
+                                        if root.stat-chart-kind == 0 : HorizontalLayout {
                                             spacing: 2px;
                                             for bar in root.stat-chart-bars : Rectangle {
                                                 horizontal-stretch: 1;
@@ -2545,6 +2580,33 @@ export component MainWindow inherits Window {
                                                     background: MaterialPalette.primary;
                                                 }
                                             }
+                                        }
+
+                                        // Line + area fill (kind 1).
+                                        // Rust pre-builds the SVG
+                                        // command strings against a
+                                        // 1000×100 viewbox; Slint
+                                        // scales them to the plot.
+                                        // Mirrors GTK's Cairo line
+                                        // path at `stats/imp.rs:646`
+                                        // (area at 0.18 alpha, 2 px
+                                        // stroke).
+                                        if root.stat-chart-kind == 1 : Path {
+                                            width: 100%;
+                                            height: 100%;
+                                            viewbox-width: 1000;
+                                            viewbox-height: 100;
+                                            commands: root.stat-chart-area-cmd;
+                                            fill: MaterialPalette.primary.with-alpha(0.18);
+                                        }
+                                        if root.stat-chart-kind == 1 : Path {
+                                            width: 100%;
+                                            height: 100%;
+                                            viewbox-width: 1000;
+                                            viewbox-height: 100;
+                                            commands: root.stat-chart-line-cmd;
+                                            stroke: MaterialPalette.primary;
+                                            stroke-width: 2px;
                                         }
                                     }
 
