@@ -35,7 +35,11 @@ object MeditateAudio {
         .build()
 
     @JvmStatic
-    fun play(context: Context, path: String) {
+    // Returns the clip duration in ms (0 if unknown / on
+    // failure). Rust uses it to schedule the preview pill's
+    // auto-revert — the Android equivalent of GTK reverting the
+    // Play icon on the MediaFile's notify::ended.
+    fun play(context: Context, path: String): Long {
         synchronized(lock) {
             releaseLocked()
             val mp = MediaPlayer()
@@ -53,9 +57,13 @@ object MeditateAudio {
                 mp.prepare()
                 mp.start()
                 player = mp
+                // Valid after prepare(); -1 for unseekable/live
+                // streams (not the case for our bundled OGGs).
+                return mp.duration.toLong().coerceAtLeast(0L)
             } catch (e: Exception) {
                 Log.w(TAG, "play failed path=$path: $e")
                 runCatching { mp.release() }
+                return 0L
             }
         }
     }

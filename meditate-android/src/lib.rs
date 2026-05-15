@@ -3312,6 +3312,14 @@ fn build_ui() -> MainWindow {
     let pattern_preview: Rc<RefCell<meditate_core::preview::PreviewToggle>> =
         Rc::new(RefCell::new(meditate_core::preview::PreviewToggle::new()));
 
+    // Bell-sound preview arbiter (B-4) — same PreviewToggle
+    // protocol as the pattern preview, but routed through the
+    // audio MediaPlayer. Shared with the bell chooser's back /
+    // pick so leaving the overlay silences any preview.
+    #[cfg(target_os = "android")]
+    let bell_preview: Rc<RefCell<meditate_core::preview::PreviewToggle>> =
+        Rc::new(RefCell::new(meditate_core::preview::PreviewToggle::new()));
+
     {
         ui.on_starting_bell_toggled(move |value| {
             #[cfg(target_os = "android")]
@@ -3374,10 +3382,18 @@ fn build_ui() -> MainWindow {
         let weak = ui.as_weak();
         #[cfg(target_os = "android")]
         let bell_chooser_target = bell_chooser_target.clone();
+        #[cfg(target_os = "android")]
+        let bell_preview = bell_preview.clone();
         ui.on_bell_chooser_pick(move |uuid| {
             #[cfg(target_os = "android")]
             {
                 let Some(ui) = weak.upgrade() else { return; };
+                // Leaving the overlay always silences a preview.
+                let _ = bell_preview.borrow_mut().stop();
+                if let Some(app) = ANDROID_APP.get() {
+                    audio::stop(app);
+                }
+                ui.set_bell_preview_uuid(slint::SharedString::new());
                 match bell_chooser_target.get() {
                     2 => {
                         // Interval-bell editor: just stage the
@@ -3410,9 +3426,16 @@ fn build_ui() -> MainWindow {
     }
     {
         let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let bell_preview = bell_preview.clone();
         ui.on_bell_chooser_back(move || {
             #[cfg(target_os = "android")]
             if let Some(ui) = weak.upgrade() {
+                let _ = bell_preview.borrow_mut().stop();
+                if let Some(app) = ANDROID_APP.get() {
+                    audio::stop(app);
+                }
+                ui.set_bell_preview_uuid(slint::SharedString::new());
                 ui.set_bell_chooser_page(false);
             }
             let _ = weak.clone();
@@ -3623,6 +3646,70 @@ fn build_ui() -> MainWindow {
                             haptics::cancel(app);
                         }
                         ui.set_pattern_preview_uuid(slint::SharedString::new());
+                    }
+                    meditate_core::preview::PreviewAction::NoOp => {}
+                }
+            }
+            let _ = (weak.clone(), uuid);
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let bell_preview = bell_preview.clone();
+        ui.on_bell_preview_toggle(move |uuid| {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                let action = bell_preview.borrow_mut().request(uuid.as_str());
+                match action {
+                    meditate_core::preview::PreviewAction::StopAndStart {
+                        id,
+                        generation,
+                    } => {
+                        let mut dur_ms: i64 = 0;
+                        if let Some(app) = ANDROID_APP.get() {
+                            // Single audio slot — play() supersedes
+                            // any in-flight clip; stop() first keeps
+                            // the swap clean.
+                            audio::stop(app);
+                            let path = bell_sound_path(&id);
+                            dur_ms = audio::play(app, &path);
+                        }
+                        ui.set_bell_preview_uuid(id.into());
+
+                        // Revert the pill when the clip finishes —
+                        // the Android analogue of GTK reverting the
+                        // Play icon on the MediaFile's notify::ended.
+                        // `play()` returned the clip length;
+                        // `timer_should_revert` no-ops if the user
+                        // already stopped it / started another
+                        // (generation guard).
+                        if dur_ms > 0 {
+                            let weak2 = weak.clone();
+                            let bp = bell_preview.clone();
+                            slint::Timer::single_shot(
+                                std::time::Duration::from_millis(dur_ms as u64),
+                                move || {
+                                    if bp
+                                        .borrow_mut()
+                                        .timer_should_revert(generation)
+                                    {
+                                        if let Some(ui) = weak2.upgrade() {
+                                            ui.set_bell_preview_uuid(
+                                                slint::SharedString::new(),
+                                            );
+                                        }
+                                    }
+                                },
+                            );
+                        }
+                    }
+                    meditate_core::preview::PreviewAction::StopOnly => {
+                        if let Some(app) = ANDROID_APP.get() {
+                            audio::stop(app);
+                        }
+                        ui.set_bell_preview_uuid(slint::SharedString::new());
                     }
                     meditate_core::preview::PreviewAction::NoOp => {}
                 }

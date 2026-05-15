@@ -1336,11 +1336,15 @@ export component MainWindow inherits Window {
     // Bell-sound chooser overlay (B-5a). Same slide-in shape as
     // the labels chooser; `bell-chooser-items` is Rust-filled
     // from `db.list_bell_sounds()` with `selected` on the
-    // active pick. Select-only here (no per-row preview — B-4).
+    // active pick. Per-row Play/Stop preview (B-4) mirrors the
+    // pattern chooser: `bell-preview-uuid` holds the uuid
+    // currently sounding (PreviewToggle keeps it exclusive).
     in property <bool> bell-chooser-page: false;
     in property <[NameChoice]> bell-chooser-items: [];
+    in property <string> bell-preview-uuid: "";
     callback bell-chooser-pick(string);
     callback bell-chooser-back();
+    callback bell-preview-toggle(string);
 
     // Interval Bells (B-5c-1). Enable ↔ global
     // `interval_bells_active`; "Manage Bells" opens a slide-in
@@ -4666,13 +4670,55 @@ export component MainWindow inherits Window {
                                 vertical-alignment: center;
                                 horizontal-stretch: 1;
                             }
-                            if item.selected : VerticalLayout {
+
+                            // Fixed check slot before the pill —
+                            // same layout as the pattern chooser
+                            // (B-4 mirrors B-2b): always present so
+                            // it can't land behind the pill.
+                            VerticalLayout {
                                 alignment: center;
-                                Image {
-                                    source: Icons.check;
-                                    colorize: MaterialPalette.primary;
+                                Rectangle {
                                     width: 20px;
                                     height: 20px;
+                                    Image {
+                                        source: Icons.check;
+                                        colorize: MaterialPalette.primary;
+                                        width: 20px;
+                                        height: 20px;
+                                        visible: item.selected;
+                                    }
+                                }
+                            }
+
+                            // Play/Stop pill — previews this bell
+                            // sound. `bell-preview-uuid` is the
+                            // single sounding uuid (PreviewToggle
+                            // keeps it exclusive).
+                            VerticalLayout {
+                                alignment: center;
+                                Rectangle {
+                                    width: 60px;
+                                    height: 32px;
+                                    border-radius: 16px;
+                                    border-width: 1px;
+                                    border-color: MaterialPalette.outline;
+                                    background: bell-pill-touch.has-hover
+                                        ? MaterialPalette.secondary-container
+                                        : transparent;
+
+                                    bell-pill-touch := TouchArea {
+                                        clicked => {
+                                            root.bell-preview-toggle(item.uuid);
+                                        }
+                                    }
+                                    Text {
+                                        text: root.bell-preview-uuid == item.uuid
+                                            ? "Stop" : "Play";
+                                        font-size: 13px;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                        color: MaterialPalette.on-surface;
+                                    }
                                 }
                             }
                         }

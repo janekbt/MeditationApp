@@ -28,16 +28,23 @@ const AUDIO_CLASS_DOTTED: &str = "io.github.janekbt.Meditate.MeditateAudio";
 /// playing — preview and the session-end cue share one slot, so
 /// a new tap stops the previous like the GTK preview slot does.
 /// Failures are logged, never propagated (a missing file or a
-/// JNI hiccup must not break the session flow).
-pub fn play(app: &AndroidApp, path: &str) {
+/// JNI hiccup must not break the session flow). Returns the clip
+/// duration in ms (0 if unknown / on failure) so the chooser
+/// preview can schedule its pill auto-revert; session-cue
+/// callers just ignore the value.
+pub fn play(app: &AndroidApp, path: &str) -> i64 {
     if path.is_empty() {
-        return;
+        return 0;
     }
-    if let Err(e) = invoke_play(app, path) {
-        meditate_core::log(
-            "audio.play",
-            &format!("play FAILED path={path}: {e:?}"),
-        );
+    match invoke_play(app, path) {
+        Ok(ms) => ms,
+        Err(e) => {
+            meditate_core::log(
+                "audio.play",
+                &format!("play FAILED path={path}: {e:?}"),
+            );
+            0
+        }
     }
 }
 
@@ -71,24 +78,25 @@ fn resolve_class<'a>(
 fn invoke_play(
     app: &AndroidApp,
     path: &str,
-) -> Result<(), jni::errors::Error> {
+) -> Result<i64, jni::errors::Error> {
     let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
     let mut env = vm.attach_current_thread()?;
     let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
 
     let jpath = env.new_string(path)?;
     let class = resolve_class(&mut env, &activity)?;
-    env.call_static_method(
+    let ret = env.call_static_method(
         class,
         "play",
-        "(Landroid/content/Context;Ljava/lang/String;)V",
+        "(Landroid/content/Context;Ljava/lang/String;)J",
         &[(&activity).into(), (&jpath).into()],
     )?;
 
     if env.exception_check()? {
         env.exception_clear()?;
+        return Ok(0);
     }
-    Ok(())
+    Ok(ret.j()?)
 }
 
 fn invoke_no_arg(
