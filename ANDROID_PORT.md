@@ -147,8 +147,8 @@ is coherent.
 4. ✅ **Wire `meditate-core` to one screen** — originally `Countdown`, migrated to `Session` in `73c5cc4`. The dead Countdown/CountdownTimer primitives dropped in `61d56be`.
 5. ✅ **Mode toggle + Box Breath mode + per-mode stopwatch toggle** — chip group (`54a66c4`), Stopwatch SwitchRow (`46ae266`), Box Breath phase grid (`af3d38d`), Box Breath running visualisation (`da7383f`). State machine flows through `SessionShape::TimerCountdown` / `TimerStopwatch` / `BoxBreathCountdown` / `BoxBreathStopwatch`; per-mode session length backed by `breathing_session_secs` (Box Breath, DB-persisted) and an in-memory Timer cell.
 6. ✅ **DB persistence** — `Database::open` + `seed_all_non_audio` at `android_main` entry (`5b74887` + `bc1baab`); per-session insert on Save (`a741d2e`); settings persistence for `keep_screen_awake_*`, `*_signal_mode`, `label_*`, `breathing_*`, `*_stopwatch_active` (`45171ab`, `1625726`, `bc1baab`, `af3d38d`, `c31e771`); crash-recovery snapshot heartbeat + startup `finalize_session_in_progress` (`f12eea4`). Log view + edit-session dialog + Undo toast surface are UI work (Phase 3).
-7. **Bells.** Audio playback via Android `MediaPlayer` JNI (or `oboe-rs`). Decision deferred to this milestone. Drives UI phase 5.
-8. **Haptics.** Android `Vibrator` / `VibratorManager` JNI. Reuse `meditate-core` envelope-quantising logic; map quantised levels to Android amplitude scale (0-255). Pairs with UI phase 5.
+7. ✅ **Bells.** Audio via Android `MediaPlayer` JNI — `MeditateAudio.kt` + `audio.rs` app-classloader bridge; bundled OGGs `include_bytes!`'d + extracted to `<data_dir>/sounds` and seeded into `bell_sounds` (`3d04ea6`, `fdd004e`); preview returns clip duration for pill auto-revert (`46b2485`).
+8. ✅ **Haptics.** Android `VibratorManager`/`Vibrator` JNI — `MeditateHaptics.kt` `createWaveform` + `cancel` with `USAGE_ALARM`; `haptics.rs` marshals the `meditate_core::vibration::build_master_envelope` `(amp, ms)` sequence to `long[]`/`int[]` (`3dd000f`).
 9. ✅ **Foreground service + notification** — Kotlin `MediaSessionService` started via JNI bridge with classloader walk (`76dbe6f`), MediaStyle pin so the notification lives in the shade's Media-controls section (`ae6104f`). Phase-5 audio playback plugs into the same notification when it lands.
 10. **Keychain.** Android `KeyStore` JNI for the Nextcloud app-password. `oo7` is host-only. Drives UI phase 7's password row.
 11. **Sync.** `meditate-core::sync` already abstracts the HTTP layer (`ureq`). Plug in the JNI keychain and run. Pairs with UI phase 7.
@@ -342,23 +342,36 @@ shipped.
 Verification: numbers match the GTK shell on the same DB; heatmap
 matches visually for the same period range.
 
-### Phase 5 — Bells + vibration patterns
+### Phase 5 — Bells + vibration patterns ✅
 
 Two-layer phase. Systems milestones 7 + 8 (audio + haptics JNI)
-land in parallel with the UI work. GTK reference: bell-sound chooser
+landed in parallel with the UI work. GTK reference: bell-sound chooser
 (`meditate-gtk/src/sounds.rs`), vibration-pattern chooser
 (`meditate-gtk/src/vibrations.rs`). The `PreviewToggle` machinery is
 already typed in core (`meditate_core::sound::PreviewToggle`).
 
-To land:
-- Bell-sound chooser screen (per-row Play/Stop preview hooked via
-  `PreviewToggle`).
-- Vibration-pattern chooser screen (same shape).
-- Starting / Interval / End bell rows in Setup view.
-- Box-Breath per-phase cue config (re-uses the Setup-view rows in
-  the Box-Breath section).
-- Starting/Interval/End bell sounds + vibration patterns play on
-  the phone during a real session.
+Landed:
+- ✅ Bell-sound chooser with per-row Play/Stop preview via
+  `PreviewToggle` + audio JNI (B-4, `46b2485`; back-gesture stop
+  `e8e4427`).
+- ✅ Vibration-pattern chooser, same shape, haptics JNI (B-2b,
+  `eb3a0b8`).
+- ✅ Starting / Interval / End bell rows in Setup view, incl.
+  Sound/Vibration/Both Type toggle + Pattern row (B-2b) and the
+  GTK-row interval-bell editor (B-2c, `fbdfd71`).
+- ✅ Box-Breath per-phase cue config (master toggle + 4 phase
+  expanders, B-7, `0ff829e`). Phase Sound chooser filtered to
+  `BellSoundCategory::BoxBreath` (GTK parity — empty until
+  voice-cue audio is sourced; documented TODO in both shells).
+- ✅ Bells + patterns fire during a real session — effect-driven
+  (`AppState`→`dispatch_effects`, mirrors GTK's
+  `dispatch_session_effects`) with proper Overtime (B-6,
+  `f7c5557`); Stop/Pause silent; duration persists (`4876de0`).
+
+**Phase 5 complete** — every bell/pattern/cue surface is
+configurable and fires correctly on the FP5. Only open follow-up
+is bundling soft Box-Breath voice/marker audio (shared TODO with
+the GTK shell, not an Android gap).
 
 Verification: starting a Timer countdown with all three bells +
 vibration enabled fires all three sounds + vibration at the right
