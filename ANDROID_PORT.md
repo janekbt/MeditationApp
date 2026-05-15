@@ -384,13 +384,28 @@ GTK reference: vibration pattern editor
 manage page (`meditate-gtk/src/presets.rs`), label chooser
 (`meditate-gtk/src/labels.rs`).
 
+Landed:
+- ✅ Preset chooser + Save / Override / Manage flow — the full
+  GTK-shaped shared overlay (P-1..P-5, `a01980c`, `15f8a72`,
+  `972cf4e`, `565b283`): starred-preset row list in Setup,
+  apply with snapshot-Undo, Save Settings → create dialog,
+  Manage (star / rename / delete + Undo), all through the
+  single-slot snackbar discriminators. Decisions stay in core
+  (`preset_config::{snapshot, apply}`).
+- ✅ Label chooser screen + per-row rename / delete with Undo —
+  landed earlier in Phase 3 (`bc1baab`, `9e95a5d`, `3810ba8`)
+  + the declare-overlays-last z-order fix (`0ff829e`); GTK
+  parity verified during P-4/P-5.
+
 To land:
-- Vibration pattern editor (curve editor with point dragging — the
-  math is already in `meditate_core::vibration`; just need the touch
-  handlers).
-- Preset chooser (chip list above the duration picker).
-- Save / Override / Manage preset flow.
-- Label chooser screen + per-row rename / delete with Undo.
+- ⬜ Vibration pattern editor (curve editor with point dragging —
+  the math is already in `meditate_core::vibration`; just the
+  Slint touch handlers on a `Path`). The one heavy item left;
+  no off-the-shelf Material component.
+
+**Phase 6 nearly complete** — only the vibration-pattern curve
+editor remains. Presets + label management are done and
+on-device confirmed (FP5).
 
 Verification: a custom pattern authored on the phone syncs to the
 laptop and renders identically in the GTK shell's editor.
