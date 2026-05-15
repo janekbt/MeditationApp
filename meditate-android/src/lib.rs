@@ -1971,6 +1971,70 @@ fn refresh_bell_rows(ui: &MainWindow) {
         &meditate_core::format::PREP_SECS_DEFAULT.to_string(),
     ));
     ui.set_prep_time_secs(secs as i32);
+
+    // Interval Bells enable (B-5c-1).
+    ui.set_interval_bells_active(
+        read_global_setting("interval_bells_active", "false") == "true",
+    );
+}
+
+/// Render an interval bell's summary title. Inline English —
+/// i18n is shell-deferred on Android (same as the snackbar /
+/// stats copy). The bucket decision lives in core
+/// (`meditate_core::bells::bell_title_key`); GTK uses "±" but
+/// the FP5 Android-15 font's symbol coverage is unreliable, so
+/// Android uses ASCII "+/-" (see the no-Unicode-glyphs rule).
+/// Mirrors GTK's `bell_title` at `meditate-gtk/src/bells.rs`.
+#[cfg(target_os = "android")]
+fn render_bell_title(bell: &meditate_core::db::IntervalBell) -> String {
+    use meditate_core::bells::BellTitleKey;
+    match meditate_core::bells::bell_title_key(bell) {
+        BellTitleKey::EveryNMin { minutes } => {
+            format!("Every {minutes} min")
+        }
+        BellTitleKey::EveryNMinWithJitter { minutes, jitter_pct } => {
+            format!("Every {minutes} min +/-{jitter_pct}%")
+        }
+        BellTitleKey::AtNMin { minutes } => format!("At {minutes} min"),
+        BellTitleKey::NMinBeforeEnd { minutes } => {
+            if minutes == 1 {
+                "1 min before end".to_string()
+            } else {
+                format!("{minutes} min before end")
+            }
+        }
+    }
+}
+
+/// Fill the Interval Bells library list (read-only, B-5c-1).
+/// Mirrors GTK's `rebuild_list` over `db.list_interval_bells`.
+#[cfg(target_os = "android")]
+fn populate_interval_bells(ui: &MainWindow) {
+    let Some(db_arc) = DATABASE.get() else { return; };
+    let Ok(guard) = db_arc.lock() else { return; };
+    let Some(db) = guard.as_ref() else { return; };
+    let items: Vec<IntervalBellRow> = db
+        .list_interval_bells()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|b| {
+            let sound = db
+                .list_bell_sounds()
+                .unwrap_or_default()
+                .into_iter()
+                .find(|s| s.uuid.to_string() == b.sound_uuid.to_string())
+                .map(|s| s.name)
+                .unwrap_or_default();
+            IntervalBellRow {
+                uuid: b.uuid.to_string().into(),
+                title: render_bell_title(&b).into(),
+                sound: sound.into(),
+            }
+        })
+        .collect();
+    ui.set_interval_bell_items(
+        std::rc::Rc::new(slint::VecModel::from(items)).into(),
+    );
 }
 
 /// Fill the bell-chooser overlay with every bell sound, the
@@ -2822,6 +2886,41 @@ fn build_ui() -> MainWindow {
                     &v.to_string(),
                 );
                 ui.set_prep_time_secs(v as i32);
+            }
+            let _ = weak.clone();
+        });
+    }
+
+    // Interval Bells (B-5c-1): enable toggle + Manage Bells →
+    // read-only library page.
+    {
+        ui.on_interval_bells_toggled(move |value| {
+            #[cfg(target_os = "android")]
+            write_global_setting(
+                "interval_bells_active",
+                if value { "true" } else { "false" },
+            );
+            let _ = value;
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_manage_bells_tap(move || {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                populate_interval_bells(&ui);
+                ui.set_interval_bells_page(true);
+            }
+            let _ = weak.clone();
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_interval_bells_back(move || {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                ui.set_interval_bells_page(false);
             }
             let _ = weak.clone();
         });
@@ -3857,6 +3956,11 @@ fn build_ui() -> MainWindow {
             #[cfg(target_os = "android")]
             if ui.get_bell_chooser_page() {
                 ui.set_bell_chooser_page(false);
+                return;
+            }
+            #[cfg(target_os = "android")]
+            if ui.get_interval_bells_page() {
+                ui.set_interval_bells_page(false);
                 return;
             }
             if ui.get_done_page() {

@@ -86,6 +86,19 @@ export struct NameChoice {
     selected: bool,
 }
 
+// One row in the Interval Bells library (B-5c). `title` is the
+// rendered `meditate_core::bells::bell_title_key` summary
+// ("Every 9 min +/-30%" / "At 10 min" / "5 min before end");
+// `sound` is the resolved bell-sound name. `uuid` carries the
+// row identity for the edit/delete slices (B-5c-2/3); the
+// list itself is read-only here. Mirrors GTK's `build_bell_row`
+// summary in `meditate-gtk/src/bells.rs:206`.
+export struct IntervalBellRow {
+    uuid: string,
+    title: string,
+    sound: string,
+}
+
 // One Stats "Insights" row. Rust runs
 // `meditate_core::insights::compute` and maps each typed
 // `InsightKey` to a rendered title + body (inline English —
@@ -1097,6 +1110,19 @@ export component MainWindow inherits Window {
     callback bell-chooser-pick(string);
     callback bell-chooser-back();
 
+    // Interval Bells (B-5c-1). Enable ↔ global
+    // `interval_bells_active`; "Manage Bells" opens a slide-in
+    // library page listing the configured interval bells
+    // (read-only here — add/edit/delete are B-5c-2/3). Mirrors
+    // GTK's `interval_bells_enabled_row` ExpanderRow +
+    // `push_bells_page` (`meditate-gtk/src/bells.rs:24`).
+    in-out property <bool> interval-bells-active: false;
+    in property <[IntervalBellRow]> interval-bell-items: [];
+    in property <bool> interval-bells-page: false;
+    callback interval-bells-toggled(bool);
+    callback manage-bells-tap();
+    callback interval-bells-back();
+
     // Preparation Time (B-5b). GTK nests this Adw.ExpanderRow
     // inside the Starting Bell expander
     // (`timer_view.blp:463`); Android's single-body ExpanderRow
@@ -1431,6 +1457,9 @@ export component MainWindow inherits Window {
     property <length> bell-chooser-offset: root.bell-chooser-page ? root.width : 0px;
     animate bell-chooser-offset { duration: 300ms; easing: ease-out; }
 
+    property <length> interval-bells-offset: root.interval-bells-page ? root.width : 0px;
+    animate interval-bells-offset { duration: 300ms; easing: ease-out; }
+
     // Slide offset for the Edit-Session overlay. Symmetric 300 ms
     // mirroring `AdwNavigationView` push of `show_session_dialog`
     // — Adw.Dialog itself slides up on phone form-factors and the
@@ -1728,6 +1757,25 @@ export component MainWindow inherits Window {
                             toggled(value) => { root.prep-time-toggled(value); }
                             body-tapped => { root.prep-time-tap(); }
                         }
+                    }
+
+                    Rectangle {
+                        height: 1px;
+                        background: MaterialPalette.outline-variant;
+                    }
+
+                    // Interval Bells — between Starting and End
+                    // Bell, mirroring GTK's group order
+                    // (`timer_view.blp:482`). Body row drills
+                    // into the library page.
+                    ExpanderRow {
+                        title: "Interval Bells";
+                        subtitle: "Ring during the session";
+                        body-title: "Manage Bells";
+                        body-subtitle: "";
+                        active <=> root.interval-bells-active;
+                        toggled(value) => { root.interval-bells-toggled(value); }
+                        body-tapped => { root.manage-bells-tap(); }
                     }
 
                     Rectangle {
@@ -4049,6 +4097,96 @@ export component MainWindow inherits Window {
                                     colorize: MaterialPalette.primary;
                                     width: 20px;
                                     height: 20px;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Interval Bells library (overlay, B-5c-1) ────────────────
+    // Slide-in list of the configured interval bells, opened
+    // from the Bells group's "Manage Bells" row. Read-only here
+    // (add / edit / delete are B-5c-2/3). Same slide + header
+    // shape as the labels / bell-sound choosers; declared after
+    // them so it z-stacks above the chrome (declare-overlays-
+    // last rule). Mirrors GTK's `push_bells_page`.
+    Rectangle {
+        x: parent.width - root.interval-bells-offset;
+        width: parent.width;
+        height: parent.height;
+        background: MaterialPalette.surface;
+
+        VerticalLayout {
+            padding-top: root.status-bar-inset + 24px;
+            padding-bottom: root.bottom-bar-inset + 24px;
+            padding-left: 16px;
+            padding-right: 16px;
+            spacing: 16px;
+            alignment: start;
+
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: stretch;
+
+                IconButton {
+                    icon: Icons.arrow-back;
+                    clicked => { root.interval-bells-back(); }
+                }
+                Text {
+                    text: "Interval Bells";
+                    font-size: 18px;
+                    color: MaterialPalette.on-surface;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    horizontal-alignment: center;
+                }
+                Rectangle {
+                    width: 40px;
+                }
+            }
+
+            if root.interval-bell-items.length == 0 : Text {
+                text: "No interval bells yet.";
+                font-size: 14px;
+                color: MaterialPalette.on-surface-variant;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
+
+            if root.interval-bell-items.length > 0 : BoxedList {
+                for item[idx] in root.interval-bell-items : VerticalLayout {
+                    spacing: 0;
+
+                    if idx > 0 : Rectangle {
+                        height: 1px;
+                        background: MaterialPalette.outline-variant;
+                    }
+
+                    Rectangle {
+                        height: 64px;
+
+                        HorizontalLayout {
+                            padding-left: 16px;
+                            padding-right: 16px;
+                            spacing: 12px;
+                            alignment: stretch;
+
+                            VerticalLayout {
+                                alignment: center;
+                                horizontal-stretch: 1;
+
+                                Text {
+                                    text: item.title;
+                                    font-size: 16px;
+                                    color: MaterialPalette.on-surface;
+                                }
+                                if item.sound != "" : Text {
+                                    text: item.sound;
+                                    font-size: 12px;
+                                    color: MaterialPalette.on-surface-variant;
                                 }
                             }
                         }
