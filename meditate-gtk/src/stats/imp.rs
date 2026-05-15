@@ -23,6 +23,7 @@ pub struct StatsView {
     // Chart
     #[template_child] pub period_toggle_group:  TemplateChild<adw::ToggleGroup>,
     #[template_child] pub chart_kind_toggle:    TemplateChild<adw::ToggleGroup>,
+    #[template_child] pub chart_unit_label:     TemplateChild<gtk::Label>,
     #[template_child] pub chart_container:      TemplateChild<gtk::Box>,
     // Mini-stats
     #[template_child] pub mini_streak_value:    TemplateChild<gtk::Label>,
@@ -463,6 +464,20 @@ impl StatsView {
 
         // Aggregate (monthly for 1y, weekly for 3m, else daily) lives in core.
         let data = meditate_core::date_math::aggregate_for_chart_period(&daily, days);
+
+        // Axis caption tracks the aggregation tier — "/ Day" for
+        // the daily views, "/ Week" for 3m, "/ Month" for 1y.
+        // The unit decision is portable (core); only the
+        // gettext rendering is shell-side.
+        {
+            use meditate_core::date_math::ChartUnit;
+            let label = match meditate_core::date_math::chart_unit_for_days(days) {
+                ChartUnit::Day => crate::i18n::gettext("Minutes / Day"),
+                ChartUnit::Week => crate::i18n::gettext("Minutes / Week"),
+                ChartUnit::Month => crate::i18n::gettext("Minutes / Month"),
+            };
+            self.chart_unit_label.set_label(&label);
+        }
 
         while let Some(child) = self.chart_container.first_child() {
             self.chart_container.remove(&child);

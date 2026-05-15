@@ -652,6 +652,18 @@ fn refresh_chart(ui: &MainWindow) {
             std::time::Duration::from_secs(secs.max(0) as u64),
         ))
     };
+    // Axis caption tracks the aggregation tier (the
+    // decision lives in core; this is just the English
+    // render — i18n shell-deferred, as elsewhere on Android).
+    use meditate_core::date_math::ChartUnit;
+    ui.set_stat_chart_unit(
+        match meditate_core::date_math::chart_unit_for_days(days) {
+            ChartUnit::Day => "MINUTES / DAY",
+            ChartUnit::Week => "MINUTES / WEEK",
+            ChartUnit::Month => "MINUTES / MONTH",
+        }
+        .into(),
+    );
     ui.set_stat_chart_ymax(hm(ticks.max).into());
     ui.set_stat_chart_ymid(hm(ticks.mid).into());
     ui.set_stat_chart_line_cmd(line_cmd.into());

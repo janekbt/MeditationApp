@@ -1105,6 +1105,13 @@ export component MainWindow inherits Window {
     in property <[ChartBar]> stat-chart-bars: [];
     in property <string> stat-chart-ymax: "0m";
     in property <string> stat-chart-ymid: "0m";
+    // Axis caption — "MINUTES / DAY" | "… / WEEK" | "… /
+    // MONTH" tracking the aggregation tier
+    // (`date_math::chart_unit_for_days`). Was hard-coded to
+    // DAY; that mis-labelled the 3-Months (weekly) and Year
+    // (monthly) views — a bug shared with the GTK shell,
+    // fixed in both.
+    in property <string> stat-chart-unit: "MINUTES / DAY";
     in-out property <int> stat-chart-period: 0;
     callback chart-period-changed(int);
 
@@ -2505,7 +2512,7 @@ export component MainWindow inherits Window {
                                 alignment: stretch;
 
                                 Text {
-                                    text: "MINUTES / DAY";
+                                    text: root.stat-chart-unit;
                                     font-size: 11px;
                                     font-weight: 700;
                                     color: MaterialPalette.on-surface-variant;

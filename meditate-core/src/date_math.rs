@@ -263,6 +263,32 @@ pub fn aggregate_for_chart_period(
     }
 }
 
+/// The time bucket each chart bar represents, given the period
+/// `days`. Mirrors the aggregation tiers in
+/// `aggregate_for_chart_period` exactly — keep the thresholds
+/// in lockstep. The shell renders the axis caption ("Minutes /
+/// Day" vs "… / Week" vs "… / Month") from this; the unit
+/// decision is portable so GTK and Android stay consistent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChartUnit {
+    Day,
+    Week,
+    Month,
+}
+
+/// Which `ChartUnit` `aggregate_for_chart_period` rolls a
+/// `days`-wide window into. Thresholds are identical to that
+/// function's by construction.
+pub fn chart_unit_for_days(days: u32) -> ChartUnit {
+    if days >= 365 {
+        ChartUnit::Month
+    } else if days >= 90 {
+        ChartUnit::Week
+    } else {
+        ChartUnit::Day
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -272,6 +298,27 @@ mod tests {
         assert_eq!(chart_y_axis_ticks(&[]).max, 1);
         assert_eq!(chart_y_axis_ticks(&[0, 0, 0]).max, 1);
         assert_eq!(chart_y_axis_ticks(&[0]).mid, 0);
+    }
+
+    #[test]
+    fn chart_unit_tracks_aggregate_tiers() {
+        // Boundaries match `aggregate_for_chart_period` and the
+        // four `ChartPeriod::days()` values (7 / 28 / 90 / 365).
+        assert_eq!(chart_unit_for_days(7), ChartUnit::Day);
+        assert_eq!(chart_unit_for_days(28), ChartUnit::Day);
+        assert_eq!(chart_unit_for_days(89), ChartUnit::Day);
+        assert_eq!(chart_unit_for_days(90), ChartUnit::Week);
+        assert_eq!(chart_unit_for_days(364), ChartUnit::Week);
+        assert_eq!(chart_unit_for_days(365), ChartUnit::Month);
+        for p in [
+            ChartPeriod::Week,
+            ChartPeriod::FourWeeks,
+            ChartPeriod::ThreeMonths,
+            ChartPeriod::OneYear,
+        ] {
+            // Smoke: every period maps to *some* unit without panic.
+            let _ = chart_unit_for_days(p.days());
+        }
     }
 
     #[test]
