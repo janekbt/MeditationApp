@@ -8,9 +8,9 @@
 //! through the activity's classloader (`loadClass`, dotted name) —
 //! the app classloader knows every class in our APK.
 //!
-//! B-1 exposes `vibrate_oneshot` only (the minimal end-to-end JNI +
-//! Vibrator proof). B-2 will add a waveform call carrying the
-//! `meditate_core::vibration` envelope.
+//! `vibrate_waveform` plays a `build_master_envelope`
+//! `(amplitude, duration_ms)` sequence; `cancel` stops an
+//! in-flight vibration (preview Stop / supersede).
 //!
 //! Module is `#[cfg(target_os = "android")]`-gated everywhere; the
 //! host `cargo run` path never compiles this file or its deps.
@@ -23,39 +23,41 @@ use jni::JavaVM;
 
 const HAPTICS_CLASS_DOTTED: &str = "io.github.janekbt.Meditate.MeditateHaptics";
 
-/// Fire a single `durationMs` vibration. Errors land in logcat
-/// rather than propagating — a JNI hiccup or a device with no
-/// vibration motor must not break the session flow (haptics are an
-/// enhancement, not a guarantee).
-pub fn vibrate_oneshot(app: &AndroidApp, duration_ms: i64) {
-    // Failures go to the diagnostics log (reaches the in-app log +
-    // logcat reliably, unlike `eprintln` → stderr which the
-    // Android runtime doesn't always route). Success is silent —
-    // haptics are an enhancement; a JNI hiccup or a motorless
-    // device must not break the session flow.
-    if let Err(e) = invoke_oneshot(app, duration_ms) {
+/// Play a vibration waveform (B-2a). `segments` is the
+/// `(amplitude 0.0..=1.0, duration_ms)` envelope
+/// `meditate_core::vibration::build_master_envelope` produces.
+/// Mapped to Android's `createWaveform(long[] timings, int[]
+/// amplitudes, -1)`: durations clamped ≥1 ms (0-length
+/// segments are rejected by the platform), amplitude →
+/// 0 (off) or 1..=255. Failures are logged, never propagated.
+pub fn vibrate_waveform(app: &AndroidApp, segments: &[(f64, u32)]) {
+    if segments.is_empty() {
+        return;
+    }
+    if let Err(e) = invoke_waveform(app, segments) {
         meditate_core::log(
             "haptics.vibrate",
-            &format!("vibrateOneShot FAILED duration_ms={duration_ms}: {e:?}"),
+            &format!("vibrateWaveform FAILED ({} seg): {e:?}", segments.len()),
         );
     }
 }
 
-fn invoke_oneshot(
-    app: &AndroidApp,
-    duration_ms: i64,
-) -> Result<(), jni::errors::Error> {
-    // SAFETY: identical contract to `service.rs::invoke` — the
-    // JavaVM pointer android-activity received at process start is
-    // valid for the process lifetime; the cast yields the C-level
-    // `*mut sys::JavaVM` `from_raw` expects.
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
-    let mut env = vm.attach_current_thread()?;
+/// Stop any in-flight vibration (preview Stop / supersede).
+pub fn cancel(app: &AndroidApp) {
+    if let Err(e) = invoke_no_arg(app, "cancel") {
+        meditate_core::log(
+            "haptics.vibrate",
+            &format!("cancel FAILED: {e:?}"),
+        );
+    }
+}
 
-    let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
-
+fn resolve_class<'a>(
+    env: &mut jni::JNIEnv<'a>,
+    activity: &JObject,
+) -> Result<JClass<'a>, jni::errors::Error> {
     let classloader = env
-        .call_method(&activity, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])?
+        .call_method(activity, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])?
         .l()?;
     let class_name = env.new_string(HAPTICS_CLASS_DOTTED)?;
     let class_obj = env
@@ -66,23 +68,71 @@ fn invoke_oneshot(
             &[(&class_name).into()],
         )?
         .l()?;
-    let class: JClass = class_obj.into();
+    Ok(class_obj.into())
+}
 
+fn invoke_waveform(
+    app: &AndroidApp,
+    segments: &[(f64, u32)],
+) -> Result<(), jni::errors::Error> {
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
+    let mut env = vm.attach_current_thread()?;
+    let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
+
+    let timings: Vec<i64> = segments
+        .iter()
+        .map(|(_, ms)| i64::from((*ms).max(1)))
+        .collect();
+    let amplitudes: Vec<i32> = segments
+        .iter()
+        .map(|(a, _)| {
+            if *a <= 0.0 {
+                0
+            } else {
+                ((a * 255.0).round() as i32).clamp(1, 255)
+            }
+        })
+        .collect();
+
+    let t_arr = env.new_long_array(timings.len() as i32)?;
+    env.set_long_array_region(&t_arr, 0, &timings)?;
+    let a_arr = env.new_int_array(amplitudes.len() as i32)?;
+    env.set_int_array_region(&a_arr, 0, &amplitudes)?;
+
+    let class = resolve_class(&mut env, &activity)?;
     env.call_static_method(
         class,
-        "vibrateOneShot",
-        "(Landroid/content/Context;J)V",
-        &[(&activity).into(), jni::objects::JValue::Long(duration_ms)],
+        "vibrateWaveform",
+        "(Landroid/content/Context;[J[I)V",
+        &[
+            (&activity).into(),
+            jni::objects::JValue::Object(&t_arr),
+            jni::objects::JValue::Object(&a_arr),
+        ],
     )?;
 
-    // Same defensive exception clear as the service bridge: a stray
-    // pending exception left for this thread's next JNI cycle aborts
-    // the JVM. The clean path won't leave one (the `?`s propagate
-    // Java exceptions as Err), but explicit clearing keeps a future
-    // regression from being a process death.
     if env.exception_check()? {
         env.exception_clear()?;
     }
+    Ok(())
+}
 
+fn invoke_no_arg(
+    app: &AndroidApp,
+    method: &str,
+) -> Result<(), jni::errors::Error> {
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
+    let mut env = vm.attach_current_thread()?;
+    let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
+    let class = resolve_class(&mut env, &activity)?;
+    env.call_static_method(
+        class,
+        method,
+        "(Landroid/content/Context;)V",
+        &[(&activity).into()],
+    )?;
+    if env.exception_check()? {
+        env.exception_clear()?;
+    }
     Ok(())
 }

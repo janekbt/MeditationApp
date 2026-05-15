@@ -63,12 +63,34 @@ fn on_state_changed(was_active: bool, is_active: bool) {
         } else if was_active && !is_active {
             if let Some(app) = ANDROID_APP.get() {
                 service::stop(app);
-                // B-1 test trigger: an unmistakable end-of-
-                // session buzz proves the haptics JNI bridge end
-                // to end. 400 ms so it can't be missed during
-                // verification; B-6 replaces this with the real
-                // per-cue vibration driven by the chosen pattern.
-                haptics::vibrate_oneshot(app, 400);
+                // B-2a test trigger: play the bundled Heartbeat
+                // pattern's waveform on session end — proves the
+                // `build_master_envelope` → JNI `createWaveform`
+                // path end to end. Heartbeat (soft thump, gap,
+                // strong thump over 1.5 s) is deliberately a
+                // rhythm a one-shot physically can't make, so the
+                // waveform path is unmistakable. B-6 replaces this
+                // with the real per-cue pattern playback.
+                if let Some(db_arc) = DATABASE.get() {
+                    if let Ok(guard) = db_arc.lock() {
+                        if let Some(db) = guard.as_ref() {
+                            if let Some(p) =
+                                meditate_core::db::list_vibration_patterns_from_db(db)
+                                    .unwrap_or_default()
+                                    .into_iter()
+                                    .find(|p| {
+                                        p.uuid.to_string()
+                                            == meditate_core::seeds::BUNDLED_PATTERN_HEARTBEAT_UUID
+                                    })
+                            {
+                                let env =
+                                    meditate_core::vibration::build_master_envelope(&p);
+                                haptics::cancel(app);
+                                haptics::vibrate_waveform(app, &env);
+                            }
+                        }
+                    }
+                }
             }
         }
     }
