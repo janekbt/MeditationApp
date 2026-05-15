@@ -21,6 +21,17 @@ use std::time::{Duration, Instant};
 #[cfg(target_os = "android")]
 static ANDROID_APP: OnceLock<slint::android::AndroidApp> = OnceLock::new();
 
+/// Single-shot hand-off for a crash-recovered session (L-6).
+/// `open_database` runs `finalize_session_in_progress` at
+/// `android_main` entry — before `build_ui` exists — so a
+/// rescued `(session_uuid, duration_secs)` is parked here and
+/// drained once by `build_ui` to raise the recovery Undo
+/// snackbar. Mirrors GTK's `pending_recovery_toast` stash at
+/// `meditate-gtk/src/application.rs:374`.
+#[cfg(target_os = "android")]
+static RECOVERED_SESSION: OnceLock<std::sync::Mutex<Option<(String, u32)>>> =
+    OnceLock::new();
+
 /// Hide the soft keyboard. Slint's `clear-focus()` on a
 /// TextInput is supposed to dismiss the IME via the
 /// `InputMethodRequest::Disable` path, but on this slint+android-
@@ -1341,6 +1352,18 @@ fn build_ui() -> MainWindow {
     let delete_timer: &'static slint::Timer =
         Box::leak(Box::new(slint::Timer::default()));
 
+    // Which action the currently-shown Snackbar's Undo button
+    // performs (L-6). The Snackbar surface is shared between the
+    // delete-undo flow (L-3) and the crash-recovery flow; the
+    // Undo handler branches on this. `Some(uuid)` ⇒ a recovery
+    // snackbar is up and Undo deletes that session by uuid;
+    // `None` ⇒ the delete-undo flow (restore pending deletes).
+    // A trash tap clears this back to None so a delete snackbar
+    // raised while a recovery one is visible behaves correctly.
+    #[cfg(target_os = "android")]
+    let recovery_uuid: Rc<RefCell<Option<String>>> =
+        Rc::new(RefCell::new(None));
+
     // Session being edited via the Log card → Edit-Session
     // overlay (L-4). Holds the rowid between `card-tap`
     // (populates the dialog) and `edit-save-tap` (reads the
@@ -2303,10 +2326,17 @@ fn build_ui() -> MainWindow {
         let loaded_log_sessions = loaded_log_sessions.clone();
         #[cfg(target_os = "android")]
         let pending_deletes = pending_deletes.clone();
+        #[cfg(target_os = "android")]
+        let recovery_uuid = recovery_uuid.clone();
         ui.on_delete_tap(move |rowid| {
             #[cfg(target_os = "android")]
             {
                 let Some(ui) = weak.upgrade() else { return; };
+                // A trash tap replaces any in-flight recovery
+                // snackbar with the delete one — clear the
+                // recovery context so the shared Undo handler
+                // routes to the delete-restore branch.
+                recovery_uuid.borrow_mut().take();
                 let id = rowid as i64;
                 // Move row from `loaded_log_sessions` view into
                 // `pending_deletes`. We don't actually remove
@@ -2368,14 +2398,53 @@ fn build_ui() -> MainWindow {
         let loaded_log_sessions = loaded_log_sessions.clone();
         #[cfg(target_os = "android")]
         let pending_deletes = pending_deletes.clone();
+        #[cfg(target_os = "android")]
+        let recovery_uuid = recovery_uuid.clone();
         ui.on_snackbar_undo_tap(move || {
             #[cfg(target_os = "android")]
             {
                 let Some(ui) = weak.upgrade() else { return; };
                 delete_timer.stop();
-                pending_deletes.borrow_mut().clear();
-                ui.set_snackbar_visible(false);
-                render_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
+                if let Some(uuid) = recovery_uuid.borrow_mut().take() {
+                    // Recovery-undo branch (L-6): the rescued
+                    // session row already exists; delete it by
+                    // uuid so the tombstoning `session_delete`
+                    // event propagates to sync peers too.
+                    // Mirrors GTK's recovery toast Undo at
+                    // `meditate-gtk/src/application.rs:408`.
+                    if let Some(db_arc) = DATABASE.get() {
+                        if let Ok(guard) = db_arc.lock() {
+                            if let Some(db) = guard.as_ref() {
+                                if let Err(e) =
+                                    db.delete_session_by_uuid(&uuid)
+                                {
+                                    meditate_core::log(
+                                        "session.recovery",
+                                        &format!(
+                                            "undo delete failed uuid={uuid}: {e:?}"
+                                        ),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    ui.set_snackbar_visible(false);
+                    reset_log_feed(
+                        &ui,
+                        &loaded_log_sessions,
+                        &pending_deletes,
+                    );
+                } else {
+                    // Delete-undo branch (L-3): restore every
+                    // hidden card, drop the pending batch.
+                    pending_deletes.borrow_mut().clear();
+                    ui.set_snackbar_visible(false);
+                    render_log_feed(
+                        &ui,
+                        &loaded_log_sessions,
+                        &pending_deletes,
+                    );
+                }
             }
             let _ = weak.clone();
         });
@@ -2783,6 +2852,49 @@ fn build_ui() -> MainWindow {
         });
     }
 
+    // Crash-recovery Undo snackbar (L-6). Drain the single-shot
+    // stash `open_database` parked the rescued session in; if
+    // present, raise the shared Snackbar in recovery mode.
+    // Mirrors GTK's `present_recovery_toast_if_pending` at
+    // `meditate-gtk/src/application.rs:374`: the row already
+    // exists, the snackbar just narrates it + offers a one-tap
+    // undo. 8 s timeout matches GTK's recovery toast (vs the
+    // 5 s delete toast); on expiry the session is simply kept.
+    #[cfg(target_os = "android")]
+    if let Some(slot) = RECOVERED_SESSION.get() {
+        let rescued = slot.lock().ok().and_then(|mut g| g.take());
+        if let Some((uuid, secs)) = rescued {
+            let minutes = secs / 60;
+            // Same wording as GTK's
+            // `Announcement::SessionRecovered` renderer at
+            // `meditate-gtk/src/announcement.rs:17`. i18n isn't
+            // wired on Android yet (see the delete-snackbar
+            // note); inline English until it is.
+            let text = if minutes == 1 {
+                "Recovered 1 min session".to_string()
+            } else {
+                format!("Recovered {minutes} min session")
+            };
+            *recovery_uuid.borrow_mut() = Some(uuid);
+            ui.set_snackbar_text(text.into());
+            ui.set_snackbar_visible(true);
+            let weak_inner = ui.as_weak();
+            delete_timer.start(
+                slint::TimerMode::SingleShot,
+                std::time::Duration::from_secs(8),
+                move || {
+                    let Some(ui) = weak_inner.upgrade() else { return; };
+                    // Timed out without Undo → keep the session,
+                    // just dismiss. (The recovery context is
+                    // cleared lazily by the next delete tap or
+                    // an Undo press; leaving it set is harmless
+                    // since the snackbar is hidden.)
+                    ui.set_snackbar_visible(false);
+                },
+            );
+        }
+    }
+
     refresh(&ui, &state.borrow(), now_since_epoch());
     ui
 }
@@ -2886,13 +2998,25 @@ fn open_database(android_app: &slint::android::AndroidApp) {
             // toast yet (Snackbar surface is Phase 3 UI work);
             // the diag line is the user-visible signal.
             match db.finalize_session_in_progress() {
-                Ok(Some(finalized)) => meditate_core::log(
-                    "session.recovery",
-                    &format!(
-                        "finalized uuid={} duration_secs={}",
-                        finalized.session_uuid, finalized.duration_secs,
-                    ),
-                ),
+                Ok(Some(finalized)) => {
+                    meditate_core::log(
+                        "session.recovery",
+                        &format!(
+                            "finalized uuid={} duration_secs={}",
+                            finalized.session_uuid, finalized.duration_secs,
+                        ),
+                    );
+                    // Park for `build_ui` to raise the recovery
+                    // Undo snackbar (L-6). Single-shot.
+                    let slot = RECOVERED_SESSION
+                        .get_or_init(|| std::sync::Mutex::new(None));
+                    if let Ok(mut guard) = slot.lock() {
+                        *guard = Some((
+                            finalized.session_uuid,
+                            finalized.duration_secs,
+                        ));
+                    }
+                }
                 Ok(None) => {} // Clean shutdown last run.
                 Err(e) => meditate_core::log(
                     "session.recovery",
