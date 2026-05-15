@@ -486,6 +486,33 @@ fn refresh_stats(ui: &MainWindow) {
     ui.set_stat_insights(
         std::rc::Rc::new(slint::VecModel::from(rows)).into(),
     );
+
+    // By-label totals (S-4). Empty Vec ⇒ the Slint section
+    // hides itself (`stat-label-totals.length > 0` gate),
+    // mirroring GTK's `reload_label_totals` visibility logic
+    // at `meditate-gtk/src/stats/imp.rs:553`.
+    let label_rows: Vec<LabelTotalRow> =
+        meditate_core::db::label_totals_seconds_from_db(db)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(name, secs, n)| {
+                let dur = render_hm(meditate_core::format::hm_secs_key(
+                    std::time::Duration::from_secs(secs.max(0) as u64),
+                ));
+                let subtitle = if n == 1 {
+                    format!("{dur} · 1 session")
+                } else {
+                    format!("{dur} · {n} sessions")
+                };
+                LabelTotalRow {
+                    name: name.into(),
+                    subtitle: subtitle.into(),
+                }
+            })
+            .collect();
+    ui.set_stat_label_totals(
+        std::rc::Rc::new(slint::VecModel::from(label_rows)).into(),
+    );
 }
 
 /// Bundled-SVG selector for an insight row, replacing GTK's

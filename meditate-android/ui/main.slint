@@ -99,6 +99,16 @@ export struct InsightRow {
     icon-id: int,
 }
 
+// One Stats "By label" row. Rust runs
+// `label_totals_seconds_from_db` and pre-composes the subtitle
+// ("1h 4m · 12 sessions"), mirroring GTK's `reload_label_totals`
+// at `meditate-gtk/src/stats/imp.rs:553`. The whole section is
+// hidden when no session carries a label.
+export struct LabelTotalRow {
+    name: string,
+    subtitle: string,
+}
+
 // Multi-line note input — the Slint Material library's `TextField`
 // is hard-coded `single_line: true`, but the GTK shell's note view
 // is a 180-px-tall Gtk.TextView with word-wrap. This custom
@@ -1067,6 +1077,11 @@ export component MainWindow inherits Window {
     // `meditate_core::insights::InsightKey` the compute pass
     // emits. Empty ⇒ section hidden.
     in property <[InsightRow]> stat-insights: [];
+
+    // By-label totals (S-4). Empty ⇒ section hidden (no
+    // labeled sessions yet), mirroring GTK's
+    // `label_totals_section.set_visible(false)`.
+    in property <[LabelTotalRow]> stat-label-totals: [];
 
     // Has-Notes filter (L-5b). `filter-notes-only` is the live
     // flag the Rust paginator reads via `get_filter_notes_only`
@@ -2451,6 +2466,61 @@ export component MainWindow inherits Window {
                                 font-size: 12px;
                                 horizontal-alignment: center;
                                 color: MaterialPalette.on-surface-variant;
+                            }
+                        }
+                    }
+                }
+
+                // By-label breakdown (S-4). Eyebrow + boxed
+                // list, hidden entirely when no session is
+                // labelled — mirrors GTK's
+                // `label_totals_section` visibility gate at
+                // `meditate-gtk/src/stats/imp.rs:564`.
+                if root.stat-label-totals.length > 0 : VerticalLayout {
+                    spacing: 8px;
+
+                    Text {
+                        text: "BY LABEL";
+                        font-size: 11px;
+                        font-weight: 700;
+                        color: MaterialPalette.on-surface-variant;
+                        horizontal-alignment: left;
+                    }
+
+                    BoxedList {
+                        for row[idx] in root.stat-label-totals : VerticalLayout {
+                            spacing: 0;
+
+                            if idx > 0 : Rectangle {
+                                height: 1px;
+                                background: MaterialPalette.outline-variant;
+                            }
+
+                            HorizontalLayout {
+                                padding-left: 16px;
+                                padding-right: 16px;
+                                padding-top: 12px;
+                                padding-bottom: 12px;
+
+                                VerticalLayout {
+                                    alignment: center;
+                                    spacing: 2px;
+                                    horizontal-stretch: 1;
+
+                                    Text {
+                                        text: row.name;
+                                        font-size: 15px;
+                                        font-weight: 700;
+                                        color: MaterialPalette.on-surface;
+                                        horizontal-alignment: left;
+                                    }
+                                    Text {
+                                        text: row.subtitle;
+                                        font-size: 13px;
+                                        color: MaterialPalette.on-surface-variant;
+                                        horizontal-alignment: left;
+                                    }
+                                }
                             }
                         }
                     }
