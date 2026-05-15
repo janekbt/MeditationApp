@@ -1392,6 +1392,39 @@ export component MainWindow inherits Window {
     // no-op stub until then).
     in property <[PresetItem]> presets-list: [];
     callback preset-chip-tap(string);
+
+    // Save / Manage (P-4). `presets-supported` mirrors GTK
+    // gating the whole presets section on
+    // `mode_supports_presets` — the Save/Manage buttons show for
+    // Timer/Box-Breath even with zero presets (GTK's button box
+    // stays visible when the group is empty). The shared
+    // preset-chooser overlay (slide-in like the bell/pattern
+    // choosers) is opened in Save or Manage mode:
+    //   * Save: a "Create new preset…" row + tapping an existing
+    //     preset asks to Override it with current settings.
+    //   * Manage: rename / delete / star per row (P-5).
+    in property <bool> presets-supported: false;
+    in property <bool> preset-chooser-page: false;
+    in property <bool> preset-chooser-save-mode: false;
+    in property <[PresetItem]> preset-chooser-items: [];
+    callback save-settings-tap();
+    callback manage-presets-tap();
+    callback preset-chooser-back();
+    callback preset-chooser-create();
+    callback preset-chooser-override(string, string);
+    // Create-preset dialog (modal). `create-preset-valid` is
+    // Rust-driven live validation (non-empty + no case-
+    // insensitive collision), mirroring GTK's
+    // `present_create_preset_dialog`.
+    in-out property <bool> create-preset-dialog-open: false;
+    in-out property <string> create-preset-text: "";
+    in property <bool> create-preset-valid: false;
+    callback create-preset-changed(string);
+    callback create-preset-confirm();
+    // Override-confirm dialog (modal).
+    in-out property <bool> override-preset-dialog-open: false;
+    in property <string> override-preset-name: "";
+    callback override-preset-confirm();
     callback label-active-toggled(bool);
     callback label-tap();
     callback labels-back();
@@ -1838,6 +1871,10 @@ export component MainWindow inherits Window {
     property <length> pattern-chooser-offset: root.pattern-chooser-page ? root.width : 0px;
     animate pattern-chooser-offset { duration: 300ms; easing: ease-out; }
 
+    // Preset chooser slide-in (P-4). Same symmetric 300 ms push.
+    property <length> preset-chooser-offset: root.preset-chooser-page ? root.width : 0px;
+    animate preset-chooser-offset { duration: 300ms; easing: ease-out; }
+
     property <length> interval-bells-offset: root.interval-bells-page ? root.width : 0px;
     animate interval-bells-offset { duration: 300ms; easing: ease-out; }
 
@@ -1987,15 +2024,15 @@ export component MainWindow inherits Window {
                 clicked => { root.action-tap(); }
             }
 
-            // Presets (Phase 6 / P-2) — starred presets for the
-            // active mode, above the per-mode body (so above the
-            // duration row), mirroring GTK's `presets_section`.
-            // Whole section hidden when empty (Guided, or no
-            // starred presets) — Rust only fills the list for
-            // preset-supporting modes. Tapping a row applies it
-            // (P-3). Save Settings / Manage Presets buttons land
-            // with P-4 / P-5.
-            if root.presets-list.length > 0 : VerticalLayout {
+            // Presets (Phase 6) — starred presets for the active
+            // mode + Save/Manage buttons, above the per-mode body
+            // (so above the duration row), mirroring GTK's
+            // `presets_section`. Section shows whenever the mode
+            // supports presets (Timer/Box-Breath); the starred
+            // row list only renders when non-empty (GTK hides the
+            // group but keeps the button box). Tapping a row
+            // applies it (P-3).
+            if root.presets-supported : VerticalLayout {
                 spacing: 8px;
 
                 Text {
@@ -2006,7 +2043,7 @@ export component MainWindow inherits Window {
                     horizontal-alignment: left;
                 }
 
-                BoxedList {
+                if root.presets-list.length > 0 : BoxedList {
                     for item[idx] in root.presets-list : VerticalLayout {
                         spacing: 0;
 
@@ -2050,6 +2087,23 @@ export component MainWindow inherits Window {
                                 }
                             }
                         }
+                    }
+                }
+
+                // Save Settings / Manage Presets — GTK's
+                // homogeneous pill button box under the group,
+                // always visible while the section is (even with
+                // no presets, so the first one can be created).
+                HorizontalLayout {
+                    spacing: 8px;
+
+                    FilledButton {
+                        text: "Save Settings";
+                        clicked => { root.save-settings-tap(); }
+                    }
+                    OutlineButton {
+                        text: "Manage Presets";
+                        clicked => { root.manage-presets-tap(); }
                     }
                 }
             }
@@ -4941,6 +4995,136 @@ export component MainWindow inherits Window {
         }
     }
 
+    // ── Preset chooser (overlay, P-4) ───────────────────────────
+    // Shared Save / Manage chooser, the Android analogue of GTK's
+    // `push_presets_chooser`. Save mode: a "Create new preset…"
+    // row + tapping an existing preset asks to Override it with
+    // the current settings. Manage mode: per-row rename / delete /
+    // star (wired in P-5 — rows are inert here). Declared after
+    // the bell/pattern choosers so it z-stacks above the Setup
+    // it slides over (declare-overlays-last rule).
+    Rectangle {
+        x: parent.width - root.preset-chooser-offset;
+        width: parent.width;
+        height: parent.height;
+        background: MaterialPalette.surface;
+
+        VerticalLayout {
+            padding-top: root.status-bar-inset + 24px;
+            padding-bottom: root.bottom-bar-inset + 24px;
+            padding-left: 16px;
+            padding-right: 16px;
+            spacing: 16px;
+            alignment: start;
+
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: stretch;
+
+                IconButton {
+                    icon: Icons.arrow-back;
+                    clicked => { root.preset-chooser-back(); }
+                }
+                Text {
+                    text: root.preset-chooser-save-mode
+                        ? "Save Preset" : "Manage Presets";
+                    font-size: 18px;
+                    color: MaterialPalette.on-surface;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    horizontal-alignment: center;
+                }
+                Rectangle {
+                    width: 40px;
+                }
+            }
+
+            BoxedList {
+                // "Create new preset…" — Save mode only (Manage
+                // has no snapshot to save into), mirroring GTK's
+                // synthetic create row.
+                if root.preset-chooser-save-mode : Rectangle {
+                    height: 56px;
+                    background: pc-create-touch.has-hover
+                        ? MaterialPalette.surface-container-high
+                        : transparent;
+                    pc-create-touch := TouchArea {
+                        clicked => { root.preset-chooser-create(); }
+                    }
+                    HorizontalLayout {
+                        padding-left: 16px;
+                        padding-right: 16px;
+                        spacing: 12px;
+                        alignment: stretch;
+                        Text {
+                            text: "Create new preset…";
+                            font-size: 16px;
+                            color: MaterialPalette.primary;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+                        Text {
+                            text: "+";
+                            font-size: 22px;
+                            color: MaterialPalette.primary;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                for item[idx] in root.preset-chooser-items : VerticalLayout {
+                    spacing: 0;
+
+                    if idx > 0 || root.preset-chooser-save-mode : Rectangle {
+                        height: 1px;
+                        background: MaterialPalette.outline-variant;
+                    }
+
+                    Rectangle {
+                        height: 64px;
+                        background: pc-row-touch.has-hover
+                            && root.preset-chooser-save-mode
+                            ? MaterialPalette.surface-container-high
+                            : transparent;
+
+                        pc-row-touch := TouchArea {
+                            // Save mode: tap = override-with-current.
+                            // Manage mode: inert until P-5.
+                            clicked => {
+                                if (root.preset-chooser-save-mode) {
+                                    root.preset-chooser-override(
+                                        item.uuid, item.name);
+                                }
+                            }
+                        }
+
+                        HorizontalLayout {
+                            padding-left: 16px;
+                            padding-right: 16px;
+                            spacing: 12px;
+                            alignment: stretch;
+
+                            VerticalLayout {
+                                alignment: center;
+                                horizontal-stretch: 1;
+                                Text {
+                                    text: item.name;
+                                    font-size: 16px;
+                                    color: MaterialPalette.on-surface;
+                                }
+                                if item.subtitle != "" : Text {
+                                    text: item.subtitle;
+                                    font-size: 12px;
+                                    color: MaterialPalette.on-surface-variant;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // ── Create-label dialog (modal overlay) ─────────────────────
     // Mirrors `meditate-gtk/src/labels.rs::present_create_label_dialog`:
     // heading + single-line text entry + Cancel/Create buttons,
@@ -5117,6 +5301,119 @@ export component MainWindow inherits Window {
                     TextButton {
                         text: "Delete";
                         clicked => { root.delete-label-confirm(); }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Create-preset dialog (modal, P-4) ───────────────────────
+    // Mirrors GTK's `present_create_preset_dialog`: name entry +
+    // Cancel/Create, Create gated on Rust live validation
+    // (non-empty + no case-insensitive collision). Declared after
+    // every chooser (incl. the preset overlay) so it z-stacks on
+    // top — declare-overlays-last rule.
+    if root.create-preset-dialog-open : Rectangle {
+        background: #00000080;
+        TouchArea {
+            clicked => { root.create-preset-dialog-open = false; }
+        }
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 320px;
+            height: create-preset-card.preferred-height;
+            background: MaterialPalette.surface-container-high;
+            border-radius: 28px;
+
+            TouchArea {}
+
+            create-preset-card := VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+
+                Text {
+                    text: "Create Preset";
+                    font-size: 22px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface;
+                }
+
+                TextField {
+                    label: "Preset name";
+                    text <=> root.create-preset-text;
+                    edited(text) => { root.create-preset-changed(text); }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+
+                    TextButton {
+                        text: "Cancel";
+                        clicked => { root.create-preset-dialog-open = false; }
+                    }
+                    TextButton {
+                        text: "Create";
+                        enabled: root.create-preset-valid;
+                        clicked => { root.create-preset-confirm(); }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Override-preset confirm dialog (modal, P-4) ──────────────
+    // Mirrors GTK's `present_override_dialog`.
+    if root.override-preset-dialog-open : Rectangle {
+        background: #00000080;
+        TouchArea {
+            clicked => { root.override-preset-dialog-open = false; }
+        }
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 320px;
+            height: override-preset-card.preferred-height;
+            background: MaterialPalette.surface-container-high;
+            border-radius: 28px;
+
+            TouchArea {}
+
+            override-preset-card := VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+
+                Text {
+                    text: "Override Preset?";
+                    font-size: 22px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface;
+                }
+                Text {
+                    text: "Replace '" + root.override-preset-name
+                        + "' with the current settings?";
+                    font-size: 14px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface-variant;
+                    wrap: word-wrap;
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+
+                    TextButton {
+                        text: "Cancel";
+                        clicked => {
+                            root.override-preset-dialog-open = false;
+                        }
+                    }
+                    TextButton {
+                        text: "Override";
+                        clicked => { root.override-preset-confirm(); }
                     }
                 }
             }

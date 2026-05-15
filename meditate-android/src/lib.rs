@@ -519,10 +519,70 @@ fn preset_subtitle(
 /// on mode switch + after preset CRUD.
 #[cfg(target_os = "android")]
 fn refresh_preset_chips(ui: &MainWindow, mode: meditate_core::SessionMode) {
+    // `presets-supported` shows the Save/Manage buttons even with
+    // zero presets (GTK keeps the button box visible while the
+    // section is); the row list hides itself when empty.
+    ui.set_presets_supported(presets_supported(mode));
     let items = list_starred_presets_for_mode(mode);
     ui.set_presets_list(
         std::rc::Rc::new(slint::VecModel::from(items)).into(),
     );
+}
+
+/// Every preset for the mode (Save/Manage chooser list — starred
+/// and unstarred). Mirrors GTK's `list_presets_for_mode` in
+/// `rebuild_chooser_rows`.
+#[cfg(target_os = "android")]
+fn list_presets_for_mode(
+    mode: meditate_core::SessionMode,
+) -> Vec<PresetItem> {
+    if !presets_supported(mode) {
+        return Vec::new();
+    }
+    let Some(db_arc) = DATABASE.get() else { return Vec::new(); };
+    let Ok(guard) = db_arc.lock() else { return Vec::new(); };
+    let Some(db) = guard.as_ref() else { return Vec::new(); };
+    let label_names: std::collections::HashMap<String, String> =
+        meditate_core::db::list_labels_from_db(db)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|l| (l.uuid.to_string(), l.name))
+            .collect();
+    meditate_core::db::list_presets_for_mode_from_db(db, mode)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|p| PresetItem {
+            uuid: p.uuid.to_string().into(),
+            subtitle: preset_subtitle(&p.config_json, &label_names).into(),
+            name: p.name.into(),
+            is_starred: p.is_starred,
+        })
+        .collect()
+}
+
+/// Fill the shared preset-chooser overlay list for `mode`.
+#[cfg(target_os = "android")]
+fn populate_preset_chooser(
+    ui: &MainWindow,
+    mode: meditate_core::SessionMode,
+) {
+    let items = list_presets_for_mode(mode);
+    ui.set_preset_chooser_items(
+        std::rc::Rc::new(slint::VecModel::from(items)).into(),
+    );
+}
+
+/// Case-insensitive preset-name collision check for the create
+/// dialog's live validation. `except_uuid` = `""` on create
+/// (rename's own-uuid exception lands with P-5). Mirrors GTK's
+/// `is_preset_name_taken` call in `present_create_preset_dialog`.
+#[cfg(target_os = "android")]
+fn preset_name_taken(name: &str, except_uuid: &str) -> bool {
+    let Some(db_arc) = DATABASE.get() else { return false; };
+    let Ok(guard) = db_arc.lock() else { return false; };
+    let Some(db) = guard.as_ref() else { return false; };
+    meditate_core::db::is_preset_name_taken_from_db(db, name, except_uuid)
+        .unwrap_or(false)
 }
 
 /// Resolve a preset by uuid to the core row (carries the
@@ -664,8 +724,6 @@ fn snapshot_setup_json(
     Some(snapshot(db, mode, timing).to_json())
 }
 
-// (list_presets_for_mode / preset_name_taken land with P-4/P-5
-// where they're first used — keeping each slice dead-code-free.)
 
 /// Push the chooser's `label-items` array (with `selected`
 /// flagged on `current_id`'s row) into the Slint window. Used
@@ -2925,6 +2983,19 @@ fn build_ui() -> MainWindow {
         RefCell<Option<(String, meditate_core::SessionMode)>>,
     > = Rc::new(RefCell::new(None));
 
+    // P-4 Save flow: the snapshot captured when "Save Settings"
+    // opened the chooser (GTK's `ChooserMode::Save { snapshot }`).
+    // Consumed by create-confirm (new preset) and override-confirm
+    // (replace an existing preset's config).
+    #[cfg(target_os = "android")]
+    let pending_save_snapshot: Rc<
+        RefCell<Option<(String, meditate_core::SessionMode)>>,
+    > = Rc::new(RefCell::new(None));
+    // Which preset the override-confirm dialog will replace.
+    #[cfg(target_os = "android")]
+    let pending_override_uuid: Rc<RefCell<Option<String>>> =
+        Rc::new(RefCell::new(None));
+
     // Session being edited via the Log card → Edit-Session
     // overlay (L-4). Holds the rowid between `card-tap`
     // (populates the dialog) and `edit-save-tap` (reads the
@@ -3681,6 +3752,210 @@ fn build_ui() -> MainWindow {
                 );
             }
             let _ = (weak.clone(), uuid, current_mode.get());
+        });
+    }
+
+    // ── Save / Manage presets (P-4) ─────────────────────────────
+    // Save Settings: snapshot current Setup, open the shared
+    // chooser in Save mode (Create row + tap-to-Override).
+    // Manage: same chooser, Manage mode (rename/delete/star are
+    // P-5; rows inert here). Mirrors GTK's save/manage btn →
+    // push_presets_chooser(ChooserMode::{Save,Manage}).
+    {
+        let weak = ui.as_weak();
+        let current_mode = current_mode.clone();
+        #[cfg(target_os = "android")]
+        let timer_session_secs = timer_session_secs.clone();
+        #[cfg(target_os = "android")]
+        let pending_save_snapshot = pending_save_snapshot.clone();
+        ui.on_save_settings_tap(move || {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                let core_mode: meditate_core::SessionMode =
+                    current_mode.get().into();
+                if !presets_supported(core_mode) {
+                    return;
+                }
+                let snap = snapshot_setup_json(
+                    &ui,
+                    core_mode,
+                    timer_session_secs.get(),
+                );
+                *pending_save_snapshot.borrow_mut() =
+                    snap.map(|j| (j, core_mode));
+                populate_preset_chooser(&ui, core_mode);
+                ui.set_preset_chooser_save_mode(true);
+                ui.set_preset_chooser_page(true);
+            }
+            let _ = (weak.clone(), current_mode.get());
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        let current_mode = current_mode.clone();
+        ui.on_manage_presets_tap(move || {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                let core_mode: meditate_core::SessionMode =
+                    current_mode.get().into();
+                if !presets_supported(core_mode) {
+                    return;
+                }
+                populate_preset_chooser(&ui, core_mode);
+                ui.set_preset_chooser_save_mode(false);
+                ui.set_preset_chooser_page(true);
+            }
+            let _ = (weak.clone(), current_mode.get());
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_preset_chooser_back(move || {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                ui.set_preset_chooser_page(false);
+            }
+            let _ = weak.clone();
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_preset_chooser_create(move || {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                ui.set_create_preset_text(slint::SharedString::new());
+                ui.set_create_preset_valid(false);
+                ui.set_create_preset_dialog_open(true);
+            }
+            let _ = weak.clone();
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_create_preset_changed(move |name| {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                let trimmed = name.trim();
+                let v = meditate_core::naming::validate(trimmed, |n| {
+                    preset_name_taken(n, "")
+                });
+                ui.set_create_preset_valid(v.is_savable());
+            }
+            let _ = (weak.clone(), name);
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let current_mode = current_mode.clone();
+        #[cfg(target_os = "android")]
+        let pending_save_snapshot = pending_save_snapshot.clone();
+        ui.on_create_preset_confirm(move || {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                let name = ui.get_create_preset_text().trim().to_string();
+                // Re-validate (defends a stale Enter / race).
+                let v = meditate_core::naming::validate(&name, |n| {
+                    preset_name_taken(n, "")
+                });
+                if !v.is_savable() {
+                    return;
+                }
+                let Some((json, mode)) =
+                    pending_save_snapshot.borrow_mut().take()
+                else {
+                    return;
+                };
+                let starred =
+                    meditate_core::preset_config::default_starred_on_save();
+                let res = {
+                    let Some(db_arc) = DATABASE.get() else { return; };
+                    let Ok(guard) = db_arc.lock() else { return; };
+                    let Some(db) = guard.as_ref() else { return; };
+                    db.insert_preset(&name, mode, starred, &json)
+                };
+                match res {
+                    Ok(_) => {
+                        ui.set_create_preset_dialog_open(false);
+                        ui.set_preset_chooser_page(false);
+                        refresh_preset_chips(&ui, mode);
+                    }
+                    Err(e) => {
+                        // GTK surfaces a duplicate toast; the
+                        // generic-message snackbar isn't wired for
+                        // a no-Undo info message yet, so log (the
+                        // create dialog stays open for a retry).
+                        meditate_core::log(
+                            "preset.save",
+                            &format!("insert_preset FAILED: {e:?}"),
+                        );
+                    }
+                }
+            }
+            let _ = weak.clone();
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let pending_override_uuid = pending_override_uuid.clone();
+        ui.on_preset_chooser_override(move |uuid, name| {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                *pending_override_uuid.borrow_mut() =
+                    Some(uuid.to_string());
+                ui.set_override_preset_name(name.clone());
+                ui.set_override_preset_dialog_open(true);
+            }
+            let _ = (weak.clone(), uuid, name);
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        let current_mode = current_mode.clone();
+        #[cfg(target_os = "android")]
+        let pending_save_snapshot = pending_save_snapshot.clone();
+        #[cfg(target_os = "android")]
+        let pending_override_uuid = pending_override_uuid.clone();
+        ui.on_override_preset_confirm(move || {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                let core_mode: meditate_core::SessionMode =
+                    current_mode.get().into();
+                let Some(uuid) =
+                    pending_override_uuid.borrow_mut().take()
+                else {
+                    return;
+                };
+                let Some((json, _mode)) =
+                    pending_save_snapshot.borrow_mut().take()
+                else {
+                    return;
+                };
+                {
+                    let Some(db_arc) = DATABASE.get() else { return; };
+                    let Ok(guard) = db_arc.lock() else { return; };
+                    let Some(db) = guard.as_ref() else { return; };
+                    if let Err(e) = db.update_preset_config(&uuid, &json) {
+                        meditate_core::log(
+                            "preset.override",
+                            &format!("update_preset_config FAILED: {e:?}"),
+                        );
+                    }
+                }
+                ui.set_override_preset_dialog_open(false);
+                ui.set_preset_chooser_page(false);
+                refresh_preset_chips(&ui, core_mode);
+                // GTK shows an override-Undo toast (restore the
+                // preset's prior config_json). Deferred — that's a
+                // distinct undo type from apply-Undo; folds in
+                // with the P-5 manage flow.
+            }
+            let _ = (weak.clone(), current_mode.get());
         });
     }
 
@@ -5727,6 +6002,23 @@ fn build_ui() -> MainWindow {
             #[cfg(target_os = "android")]
             if ui.get_prep_dialog_open() {
                 ui.set_prep_dialog_open(false);
+                return;
+            }
+            // Preset modals first, then the preset chooser
+            // overlay (innermost-out, like the other layers).
+            #[cfg(target_os = "android")]
+            if ui.get_create_preset_dialog_open() {
+                ui.set_create_preset_dialog_open(false);
+                return;
+            }
+            #[cfg(target_os = "android")]
+            if ui.get_override_preset_dialog_open() {
+                ui.set_override_preset_dialog_open(false);
+                return;
+            }
+            #[cfg(target_os = "android")]
+            if ui.get_preset_chooser_page() {
+                ui.set_preset_chooser_page(false);
                 return;
             }
             #[cfg(target_os = "android")]
