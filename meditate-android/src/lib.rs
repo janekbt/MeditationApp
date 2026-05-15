@@ -2276,6 +2276,138 @@ fn refresh_bell_rows(ui: &MainWindow) {
             }
         }
     }
+
+    // Box Breath per-phase cues (B-7).
+    refresh_boxbreath_cues(ui);
+}
+
+/// Map a Box-Breath phase tag to its core id. Tags match the
+/// Slint `bbc-<tag>-*` property prefixes.
+#[cfg(target_os = "android")]
+fn bb_phase(tag: &str) -> meditate_core::db::BoxBreathPhaseId {
+    use meditate_core::db::BoxBreathPhaseId as P;
+    match tag {
+        "holdin" => P::HoldIn,
+        "out" => P::Out,
+        "holdout" => P::HoldOut,
+        _ => P::In,
+    }
+}
+
+/// Read a Box-Breath phase's persisted sound / pattern uuid (for
+/// seeding the chooser check-mark). Defaults to the bundled
+/// bowl / pulse when the row is somehow missing.
+#[cfg(target_os = "android")]
+fn bb_phase_uuids(
+    phase: meditate_core::db::BoxBreathPhaseId,
+) -> (String, String) {
+    let bowl = meditate_core::seeds::BUNDLED_BOWL_UUID.to_string();
+    let pulse = meditate_core::seeds::BUNDLED_PATTERN_PULSE_UUID.to_string();
+    let Some(db_arc) = DATABASE.get() else { return (bowl, pulse); };
+    let Ok(guard) = db_arc.lock() else { return (bowl, pulse); };
+    let Some(db) = guard.as_ref() else { return (bowl, pulse); };
+    match db.get_box_breath_phase(phase) {
+        Ok(Some(r)) => {
+            (r.sound_uuid.to_string(), r.pattern_uuid.to_string())
+        }
+        _ => (bowl, pulse),
+    }
+}
+
+/// Read-modify-write one Box-Breath phase row. `set_box_breath_
+/// phase` is a whole-row setter, so we load the current row and
+/// override only the `Some(_)` fields — the Android analogue of
+/// GTK's per-field phase writes. Missing row falls back to the
+/// schema defaults (seeded, so this is just defensive).
+#[cfg(target_os = "android")]
+fn write_bb_phase(
+    phase: meditate_core::db::BoxBreathPhaseId,
+    enabled: Option<bool>,
+    signal_mode: Option<meditate_core::bells::SignalMode>,
+    sound_uuid: Option<&str>,
+    pattern_uuid: Option<&str>,
+) {
+    let Some(db_arc) = DATABASE.get() else { return; };
+    let Ok(guard) = db_arc.lock() else { return; };
+    let Some(db) = guard.as_ref() else { return; };
+    let (ce, csm, csu, cpu) = match db.get_box_breath_phase(phase) {
+        Ok(Some(r)) => (
+            r.enabled,
+            r.signal_mode,
+            r.sound_uuid.to_string(),
+            r.pattern_uuid.to_string(),
+        ),
+        _ => (
+            false,
+            meditate_core::bells::SignalMode::Sound,
+            meditate_core::seeds::BUNDLED_BOWL_UUID.to_string(),
+            meditate_core::seeds::BUNDLED_PATTERN_PULSE_UUID.to_string(),
+        ),
+    };
+    let e = enabled.unwrap_or(ce);
+    let sm = signal_mode.unwrap_or(csm);
+    let su = sound_uuid.map_or(csu, str::to_string);
+    let pu = pattern_uuid.map_or(cpu, str::to_string);
+    let _ = db.set_box_breath_phase(phase, e, sm, &su, &pu);
+}
+
+/// Push every Box-Breath phase's persisted cue state into the
+/// Setup props (master toggle + per-phase enable / Type / sound
+/// + pattern names). Names are resolved through the *locked* db
+/// (`resolve_*_name`) — calling `bell_sound_name` / `pattern_name`
+/// here would re-lock the same Mutex and deadlock.
+#[cfg(target_os = "android")]
+fn refresh_boxbreath_cues(ui: &MainWindow) {
+    use meditate_core::bells::ResolvedName;
+    use meditate_core::db::BoxBreathPhaseId as P;
+    ui.set_boxbreath_cues_active(
+        read_global_setting("boxbreath_cues_active", "false") == "true",
+    );
+    let Some(db_arc) = DATABASE.get() else { return; };
+    let Ok(guard) = db_arc.lock() else { return; };
+    let Some(db) = guard.as_ref() else { return; };
+    let name = |n: ResolvedName| match n {
+        ResolvedName::Resolved(s) => s,
+        ResolvedName::Missing => String::new(),
+    };
+    for p in [P::In, P::HoldIn, P::Out, P::HoldOut] {
+        let Ok(Some(r)) = db.get_box_breath_phase(p) else { continue; };
+        let si = signal_mode_index(r.signal_mode.as_db_str());
+        let sn = name(meditate_core::bells::resolve_sound_name(
+            db,
+            &r.sound_uuid.to_string(),
+        ));
+        let pn = name(meditate_core::bells::resolve_pattern_name(
+            db,
+            &r.pattern_uuid.to_string(),
+        ));
+        match p {
+            P::In => {
+                ui.set_bbc_in_active(r.enabled);
+                ui.set_bbc_in_signal_mode(si);
+                ui.set_bbc_in_sound_name(sn.into());
+                ui.set_bbc_in_pattern_name(pn.into());
+            }
+            P::HoldIn => {
+                ui.set_bbc_holdin_active(r.enabled);
+                ui.set_bbc_holdin_signal_mode(si);
+                ui.set_bbc_holdin_sound_name(sn.into());
+                ui.set_bbc_holdin_pattern_name(pn.into());
+            }
+            P::Out => {
+                ui.set_bbc_out_active(r.enabled);
+                ui.set_bbc_out_signal_mode(si);
+                ui.set_bbc_out_sound_name(sn.into());
+                ui.set_bbc_out_pattern_name(pn.into());
+            }
+            P::HoldOut => {
+                ui.set_bbc_holdout_active(r.enabled);
+                ui.set_bbc_holdout_signal_mode(si);
+                ui.set_bbc_holdout_sound_name(sn.into());
+                ui.set_bbc_holdout_pattern_name(pn.into());
+            }
+        }
+    }
 }
 
 /// "N enabled" / "1 enabled" / "None enabled" for the Manage
@@ -2359,16 +2491,24 @@ fn populate_interval_bells(ui: &MainWindow) {
     ui.set_interval_bells_summary(interval_bells_summary(db).into());
 }
 
-/// Fill the bell-chooser overlay with every bell sound, the
-/// row matching `current_uuid` check-marked. Select-only —
-/// per-row Play/Stop preview lands in B-4.
+/// Fill the bell-chooser overlay with the sounds in `category`,
+/// the row matching `current_uuid` check-marked. The Starting /
+/// End / interval-editor pickers pass `General`; Box-Breath
+/// phase pickers pass `BoxBreath` — mirrors GTK filtering its
+/// phase Sound chooser to `BellSoundCategory::BoxBreath` (that
+/// category is currently empty in both shells until voice-cue
+/// audio is sourced — a documented TODO, not a bug).
 #[cfg(target_os = "android")]
-fn populate_bell_chooser(ui: &MainWindow, current_uuid: &str) {
+fn populate_bell_chooser(
+    ui: &MainWindow,
+    current_uuid: &str,
+    category: meditate_core::db::BellSoundCategory,
+) {
     let Some(db_arc) = DATABASE.get() else { return; };
     let Ok(guard) = db_arc.lock() else { return; };
     let Some(db) = guard.as_ref() else { return; };
     let items: Vec<NameChoice> = db
-        .list_bell_sounds()
+        .list_bell_sounds_for_category(category)
         .unwrap_or_default()
         .into_iter()
         .map(|b| {
@@ -3353,7 +3493,7 @@ fn build_ui() -> MainWindow {
                     "starting_bell_sound",
                     meditate_core::seeds::BUNDLED_BOWL_UUID,
                 );
-                populate_bell_chooser(&ui, &cur);
+                populate_bell_chooser(&ui, &cur, meditate_core::db::BellSoundCategory::General);
                 ui.set_bell_chooser_page(true);
             }
             let _ = weak.clone();
@@ -3372,12 +3512,108 @@ fn build_ui() -> MainWindow {
                     "end_bell_sound",
                     meditate_core::seeds::BUNDLED_BOWL_UUID,
                 );
-                populate_bell_chooser(&ui, &cur);
+                populate_bell_chooser(&ui, &cur, meditate_core::db::BellSoundCategory::General);
                 ui.set_bell_chooser_page(true);
             }
             let _ = weak.clone();
         });
     }
+
+    // ── Box-Breath per-phase cues (B-7) ─────────────────────────
+    // Master toggle + per-phase enable / Type / Sound / Pattern.
+    // Cue firing is already wired (B-6); these only persist the
+    // config via boxbreath_cues_active + db.set_box_breath_phase.
+    {
+        ui.on_boxbreath_cues_toggled(move |v| {
+            #[cfg(target_os = "android")]
+            write_global_setting(
+                "boxbreath_cues_active",
+                if v { "true" } else { "false" },
+            );
+            let _ = v;
+        });
+    }
+    // Per-phase handlers. `tag` selects the core phase; the
+    // chooser-target ints (3=In 4=HoldIn 5=Out 6=HoldOut) match
+    // the `t @ 3..=6` arms in the pick handlers.
+    macro_rules! bbc_phase_handlers {
+        ($tag:literal, $tgt:literal,
+         $on_tog:ident, $on_sm:ident, $on_snd:ident, $on_pat:ident) => {
+            {
+                ui.$on_tog(move |v| {
+                    #[cfg(target_os = "android")]
+                    write_bb_phase(bb_phase($tag), Some(v), None, None, None);
+                    let _ = v;
+                });
+            }
+            {
+                ui.$on_sm(move |i| {
+                    #[cfg(target_os = "android")]
+                    write_bb_phase(
+                        bb_phase($tag),
+                        None,
+                        Some(signal_mode_from_index(i)),
+                        None,
+                        None,
+                    );
+                    let _ = i;
+                });
+            }
+            {
+                let weak = ui.as_weak();
+                #[cfg(target_os = "android")]
+                let bell_chooser_target = bell_chooser_target.clone();
+                ui.$on_snd(move || {
+                    #[cfg(target_os = "android")]
+                    {
+                        let Some(ui) = weak.upgrade() else { return; };
+                        bell_chooser_target.set($tgt);
+                        let (su, _) = bb_phase_uuids(bb_phase($tag));
+                        populate_bell_chooser(&ui, &su, meditate_core::db::BellSoundCategory::BoxBreath);
+                        ui.set_bell_chooser_page(true);
+                    }
+                    let _ = weak.clone();
+                });
+            }
+            {
+                let weak = ui.as_weak();
+                #[cfg(target_os = "android")]
+                let pattern_chooser_target = pattern_chooser_target.clone();
+                ui.$on_pat(move || {
+                    #[cfg(target_os = "android")]
+                    {
+                        let Some(ui) = weak.upgrade() else { return; };
+                        pattern_chooser_target.set($tgt);
+                        let (_, pu) = bb_phase_uuids(bb_phase($tag));
+                        populate_pattern_chooser(&ui, &pu);
+                        ui.set_pattern_chooser_page(true);
+                    }
+                    let _ = weak.clone();
+                });
+            }
+        };
+    }
+    bbc_phase_handlers!(
+        "in", 3,
+        on_bbc_in_toggled, on_bbc_in_signal_mode_changed,
+        on_bbc_in_sound_tap, on_bbc_in_pattern_tap
+    );
+    bbc_phase_handlers!(
+        "holdin", 4,
+        on_bbc_holdin_toggled, on_bbc_holdin_signal_mode_changed,
+        on_bbc_holdin_sound_tap, on_bbc_holdin_pattern_tap
+    );
+    bbc_phase_handlers!(
+        "out", 5,
+        on_bbc_out_toggled, on_bbc_out_signal_mode_changed,
+        on_bbc_out_sound_tap, on_bbc_out_pattern_tap
+    );
+    bbc_phase_handlers!(
+        "holdout", 6,
+        on_bbc_holdout_toggled, on_bbc_holdout_signal_mode_changed,
+        on_bbc_holdout_sound_tap, on_bbc_holdout_pattern_tap
+    );
+
     {
         let weak = ui.as_weak();
         #[cfg(target_os = "android")]
@@ -3408,6 +3644,23 @@ fn build_ui() -> MainWindow {
                         write_global_setting(
                             "end_bell_sound",
                             uuid.as_str(),
+                        );
+                        refresh_bell_rows(&ui);
+                    }
+                    t @ 3..=6 => {
+                        // Box-Breath phase sound (B-7).
+                        let phase = match t {
+                            3 => bb_phase("in"),
+                            4 => bb_phase("holdin"),
+                            5 => bb_phase("out"),
+                            _ => bb_phase("holdout"),
+                        };
+                        write_bb_phase(
+                            phase,
+                            None,
+                            None,
+                            Some(uuid.as_str()),
+                            None,
                         );
                         refresh_bell_rows(&ui);
                     }
@@ -3542,6 +3795,23 @@ fn build_ui() -> MainWindow {
                         write_global_setting(
                             "end_bell_pattern",
                             uuid.as_str(),
+                        );
+                        refresh_bell_rows(&ui);
+                    }
+                    t @ 3..=6 => {
+                        // Box-Breath phase pattern (B-7).
+                        let phase = match t {
+                            3 => bb_phase("in"),
+                            4 => bb_phase("holdin"),
+                            5 => bb_phase("out"),
+                            _ => bb_phase("holdout"),
+                        };
+                        write_bb_phase(
+                            phase,
+                            None,
+                            None,
+                            None,
+                            Some(uuid.as_str()),
                         );
                         refresh_bell_rows(&ui);
                     }
@@ -3912,7 +4182,7 @@ fn build_ui() -> MainWindow {
             {
                 let Some(ui) = weak.upgrade() else { return; };
                 bell_chooser_target.set(2);
-                populate_bell_chooser(&ui, ui.get_ie_sound_uuid().as_str());
+                populate_bell_chooser(&ui, ui.get_ie_sound_uuid().as_str(), meditate_core::db::BellSoundCategory::General);
                 ui.set_bell_chooser_page(true);
             }
             let _ = weak.clone();

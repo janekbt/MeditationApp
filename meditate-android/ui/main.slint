@@ -946,6 +946,49 @@ component RevealStepper inherits Rectangle {
     }
 }
 
+// One Box-Breath phase's cue config (B-7) — the Android
+// analogue of GTK's nested `boxbreath_phase_*_row` AdwExpanderRow
+// (`timer_view.blp:585`): an ExpanderGroup whose enable switch is
+// the per-phase `enabled` flag, body = a "Type" CuesRow
+// (Sound/Vibration/Both) + Sound / Pattern RevealChoosers shown
+// per the chosen Type. Sits inside the master "Cues during
+// phases" ExpanderGroup, so it keeps the default `child-shade`.
+component PhaseCue inherits Rectangle {
+    in property <string> title;
+    in-out property <bool> active;
+    in-out property <int> signal-mode;
+    in property <string> sound-name;
+    in property <string> pattern-name;
+    callback toggled(bool);
+    callback signal-mode-changed(int);
+    callback sound-tap();
+    callback pattern-tap();
+
+    ExpanderGroup {
+        title: root.title;
+        active <=> root.active;
+        toggled(v) => { root.toggled(v); }
+
+        CuesRow {
+            title: "Type";
+            current-index <=> root.signal-mode;
+            changed(idx) => { root.signal-mode-changed(idx); }
+        }
+        RevealChooser {
+            shown: root.signal-mode != 1;
+            title: "Sound";
+            subtitle: root.sound-name;
+            tapped => { root.sound-tap(); }
+        }
+        RevealChooser {
+            shown: root.signal-mode != 0;
+            title: "Pattern";
+            subtitle: root.pattern-name;
+            tapped => { root.pattern-tap(); }
+        }
+    }
+}
+
 // Box-Breath phase tile — one cell of the Setup view's 2×2
 // phase grid. Mirrors GTK's `build_phase_tile`
 // (`meditate-gtk/src/timer/imp.rs:4080-4153`): a small card with
@@ -1230,6 +1273,52 @@ export component MainWindow inherits Window {
     in property <int> bb-hold-in: 4;
     in property <int> bb-out: 4;
     in property <int> bb-hold-out: 4;
+
+    // Box-Breath per-phase cues (B-7). Master toggle =
+    // `boxbreath_cues_active`; each phase has its own enable
+    // flag, Type (0 Sound / 1 Vibration / 2 Both — SignalMode
+    // order), and resolved sound / pattern names. Rust seeds
+    // these from `db.list_box_breath_phases()` on Setup load and
+    // persists via `db.set_box_breath_phase`. Phase order matches
+    // `BoxBreathPhaseId::all()`: In, HoldIn, Out, HoldOut.
+    in-out property <bool> boxbreath-cues-active: false;
+    callback boxbreath-cues-toggled(bool);
+
+    in-out property <bool> bbc-in-active: false;
+    in-out property <int> bbc-in-signal-mode: 0;
+    in property <string> bbc-in-sound-name: "";
+    in property <string> bbc-in-pattern-name: "";
+    callback bbc-in-toggled(bool);
+    callback bbc-in-signal-mode-changed(int);
+    callback bbc-in-sound-tap();
+    callback bbc-in-pattern-tap();
+
+    in-out property <bool> bbc-holdin-active: false;
+    in-out property <int> bbc-holdin-signal-mode: 0;
+    in property <string> bbc-holdin-sound-name: "";
+    in property <string> bbc-holdin-pattern-name: "";
+    callback bbc-holdin-toggled(bool);
+    callback bbc-holdin-signal-mode-changed(int);
+    callback bbc-holdin-sound-tap();
+    callback bbc-holdin-pattern-tap();
+
+    in-out property <bool> bbc-out-active: false;
+    in-out property <int> bbc-out-signal-mode: 0;
+    in property <string> bbc-out-sound-name: "";
+    in property <string> bbc-out-pattern-name: "";
+    callback bbc-out-toggled(bool);
+    callback bbc-out-signal-mode-changed(int);
+    callback bbc-out-sound-tap();
+    callback bbc-out-pattern-tap();
+
+    in-out property <bool> bbc-holdout-active: false;
+    in-out property <int> bbc-holdout-signal-mode: 0;
+    in property <string> bbc-holdout-sound-name: "";
+    in property <string> bbc-holdout-pattern-name: "";
+    callback bbc-holdout-toggled(bool);
+    callback bbc-holdout-signal-mode-changed(int);
+    callback bbc-holdout-sound-tap();
+    callback bbc-holdout-pattern-tap();
 
     // Box Breath running-view properties. Rust updates them
     // every tick when the active session is a BoxBreathCountdown
@@ -2246,6 +2335,88 @@ export component MainWindow inherits Window {
                         body-tapped => { root.label-tap(); }
                     }
                 }
+
+                // Box Breath cues (B-7) — mirrors GTK's
+                // `boxbreath_phase_section` PreferencesGroup
+                // (`timer_view.blp:570`): a master "Cues during
+                // phases" expander wrapping the four phase cue
+                // expanders. Cue firing itself is already wired
+                // (B-6 feeds box_breath_cues_from_db into the
+                // session; dispatch_effects routes
+                // FireBoxBreathCue) — this is the config surface.
+                Text {
+                    text: "Box Breath cues";
+                    font-size: 14px;
+                    font-weight: 700;
+                    color: MaterialPalette.primary;
+                    horizontal-alignment: left;
+                }
+
+                BoxedList {
+                    ExpanderGroup {
+                        title: "Cues during phases";
+                        subtitle: "Different cue per phase to feel the cycle";
+                        active <=> root.boxbreath-cues-active;
+                        toggled(v) => { root.boxbreath-cues-toggled(v); }
+
+                        PhaseCue {
+                            title: "Inhale";
+                            active <=> root.bbc-in-active;
+                            signal-mode <=> root.bbc-in-signal-mode;
+                            sound-name: root.bbc-in-sound-name;
+                            pattern-name: root.bbc-in-pattern-name;
+                            toggled(v) => { root.bbc-in-toggled(v); }
+                            signal-mode-changed(i) => { root.bbc-in-signal-mode-changed(i); }
+                            sound-tap => { root.bbc-in-sound-tap(); }
+                            pattern-tap => { root.bbc-in-pattern-tap(); }
+                        }
+                        Rectangle {
+                            height: 1px;
+                            background: MaterialPalette.outline-variant;
+                        }
+                        PhaseCue {
+                            title: "Hold (full)";
+                            active <=> root.bbc-holdin-active;
+                            signal-mode <=> root.bbc-holdin-signal-mode;
+                            sound-name: root.bbc-holdin-sound-name;
+                            pattern-name: root.bbc-holdin-pattern-name;
+                            toggled(v) => { root.bbc-holdin-toggled(v); }
+                            signal-mode-changed(i) => { root.bbc-holdin-signal-mode-changed(i); }
+                            sound-tap => { root.bbc-holdin-sound-tap(); }
+                            pattern-tap => { root.bbc-holdin-pattern-tap(); }
+                        }
+                        Rectangle {
+                            height: 1px;
+                            background: MaterialPalette.outline-variant;
+                        }
+                        PhaseCue {
+                            title: "Exhale";
+                            active <=> root.bbc-out-active;
+                            signal-mode <=> root.bbc-out-signal-mode;
+                            sound-name: root.bbc-out-sound-name;
+                            pattern-name: root.bbc-out-pattern-name;
+                            toggled(v) => { root.bbc-out-toggled(v); }
+                            signal-mode-changed(i) => { root.bbc-out-signal-mode-changed(i); }
+                            sound-tap => { root.bbc-out-sound-tap(); }
+                            pattern-tap => { root.bbc-out-pattern-tap(); }
+                        }
+                        Rectangle {
+                            height: 1px;
+                            background: MaterialPalette.outline-variant;
+                        }
+                        PhaseCue {
+                            title: "Hold (empty)";
+                            active <=> root.bbc-holdout-active;
+                            signal-mode <=> root.bbc-holdout-signal-mode;
+                            sound-name: root.bbc-holdout-sound-name;
+                            pattern-name: root.bbc-holdout-pattern-name;
+                            toggled(v) => { root.bbc-holdout-toggled(v); }
+                            signal-mode-changed(i) => { root.bbc-holdout-signal-mode-changed(i); }
+                            sound-tap => { root.bbc-holdout-sound-tap(); }
+                            pattern-tap => { root.bbc-holdout-pattern-tap(); }
+                        }
+                    }
+                }
             }
             }   // close setup-stack VerticalLayout
         }       // close Flickable
@@ -2546,188 +2717,6 @@ export component MainWindow inherits Window {
                     text: root.overtime-add-label;
                     height: 56px;
                     clicked => { root.add-tap(); }
-                }
-            }
-        }
-    }
-
-    // ── Create-label dialog (modal overlay) ─────────────────────
-    // Mirrors `meditate-gtk/src/labels.rs::present_create_label_dialog`:
-    // heading + single-line text entry + Cancel/Create buttons,
-    // with Create disabled until the live-validated name is
-    // non-empty AND not a case-insensitive collision against
-    // existing labels. The validation closure lives Rust-side and
-    // writes back to `create-label-valid` on every keystroke via
-    // the `create-label-changed` callback.
-    if root.create-label-dialog-open : Rectangle {
-        background: #00000080;
-        TouchArea {
-            clicked => { root.create-label-dialog-open = false; }
-        }
-
-        Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
-            width: 320px;
-            height: create-card-content.preferred-height;
-            background: MaterialPalette.surface-container-high;
-            border-radius: 28px;
-
-            TouchArea {}
-
-            create-card-content := VerticalLayout {
-                padding: 24px;
-                spacing: 16px;
-
-                Text {
-                    text: "Create Label";
-                    font-size: 22px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface;
-                }
-
-                TextField {
-                    label: "Label name";
-                    text <=> root.create-label-text;
-                    edited(text) => { root.create-label-changed(text); }
-                }
-
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: end;
-
-                    TextButton {
-                        text: "Cancel";
-                        clicked => { root.create-label-dialog-open = false; }
-                    }
-                    TextButton {
-                        text: "Create";
-                        enabled: root.create-label-valid;
-                        clicked => { root.create-label-confirm(); }
-                    }
-                }
-            }
-        }
-    }
-
-    // ── Rename-label dialog (modal overlay) ─────────────────────
-    // Mirrors `meditate-gtk/src/labels.rs::present_rename_label_dialog`:
-    // single-line text entry pre-filled by Rust with the
-    // current name, Cancel + Rename buttons (Rename initially
-    // enabled since the unchanged name is a valid Ok). Rust
-    // tracks the row's id via `rename-label-id` so the live
-    // validator can pass it as `except_id`.
-    if root.rename-label-dialog-open : Rectangle {
-        background: #00000080;
-        TouchArea {
-            clicked => { root.rename-label-dialog-open = false; }
-        }
-
-        Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
-            width: 320px;
-            height: rename-card-content.preferred-height;
-            background: MaterialPalette.surface-container-high;
-            border-radius: 28px;
-
-            TouchArea {}
-
-            rename-card-content := VerticalLayout {
-                padding: 24px;
-                spacing: 16px;
-
-                Text {
-                    text: "Rename Label";
-                    font-size: 22px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface;
-                }
-
-                TextField {
-                    label: "Label name";
-                    text <=> root.rename-label-text;
-                    edited(text) => { root.rename-label-changed(text); }
-                }
-
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: end;
-
-                    TextButton {
-                        text: "Cancel";
-                        clicked => { root.rename-label-dialog-open = false; }
-                    }
-                    TextButton {
-                        text: "Rename";
-                        enabled: root.rename-label-valid;
-                        clicked => { root.rename-label-confirm(); }
-                    }
-                }
-            }
-        }
-    }
-
-    // ── Delete-label confirmation dialog (modal overlay) ────────
-    // Mirrors `present_delete_label_dialog` in
-    // `meditate-gtk/src/labels.rs:361`: heading + impact body +
-    // Cancel/Delete buttons (Delete styled destructive). Rust
-    // composes the body string from
-    // `meditate_core::labels::delete_impact_key` before opening,
-    // so the text correctly shows N/0 affected sessions.
-    if root.delete-label-dialog-open : Rectangle {
-        background: #00000080;
-        TouchArea {
-            clicked => { root.delete-label-dialog-open = false; }
-        }
-
-        Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
-            width: 320px;
-            height: delete-card-content.preferred-height;
-            background: MaterialPalette.surface-container-high;
-            border-radius: 28px;
-
-            TouchArea {}
-
-            delete-card-content := VerticalLayout {
-                padding: 24px;
-                spacing: 16px;
-
-                Text {
-                    text: "Delete Label?";
-                    font-size: 22px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface;
-                }
-
-                Text {
-                    text: root.delete-label-body;
-                    font-size: 14px;
-                    color: MaterialPalette.on-surface-variant;
-                    wrap: word-wrap;
-                    horizontal-alignment: left;
-                }
-
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: end;
-
-                    TextButton {
-                        text: "Cancel";
-                        clicked => { root.delete-label-dialog-open = false; }
-                    }
-                    // No native "destructive" style on TextButton —
-                    // Material 3 has a `dangerButton` filled style
-                    // but it's not in our component set. Plain
-                    // TextButton keeps consistent with Cancel; the
-                    // dialog title + the X-icon trigger already
-                    // signal the destructive intent.
-                    TextButton {
-                        text: "Delete";
-                        clicked => { root.delete-label-confirm(); }
-                    }
                 }
             }
         }
@@ -4859,6 +4848,188 @@ export component MainWindow inherits Window {
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Create-label dialog (modal overlay) ─────────────────────
+    // Mirrors `meditate-gtk/src/labels.rs::present_create_label_dialog`:
+    // heading + single-line text entry + Cancel/Create buttons,
+    // with Create disabled until the live-validated name is
+    // non-empty AND not a case-insensitive collision against
+    // existing labels. The validation closure lives Rust-side and
+    // writes back to `create-label-valid` on every keystroke via
+    // the `create-label-changed` callback.
+    if root.create-label-dialog-open : Rectangle {
+        background: #00000080;
+        TouchArea {
+            clicked => { root.create-label-dialog-open = false; }
+        }
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 320px;
+            height: create-card-content.preferred-height;
+            background: MaterialPalette.surface-container-high;
+            border-radius: 28px;
+
+            TouchArea {}
+
+            create-card-content := VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+
+                Text {
+                    text: "Create Label";
+                    font-size: 22px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface;
+                }
+
+                TextField {
+                    label: "Label name";
+                    text <=> root.create-label-text;
+                    edited(text) => { root.create-label-changed(text); }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+
+                    TextButton {
+                        text: "Cancel";
+                        clicked => { root.create-label-dialog-open = false; }
+                    }
+                    TextButton {
+                        text: "Create";
+                        enabled: root.create-label-valid;
+                        clicked => { root.create-label-confirm(); }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Rename-label dialog (modal overlay) ─────────────────────
+    // Mirrors `meditate-gtk/src/labels.rs::present_rename_label_dialog`:
+    // single-line text entry pre-filled by Rust with the
+    // current name, Cancel + Rename buttons (Rename initially
+    // enabled since the unchanged name is a valid Ok). Rust
+    // tracks the row's id via `rename-label-id` so the live
+    // validator can pass it as `except_id`.
+    if root.rename-label-dialog-open : Rectangle {
+        background: #00000080;
+        TouchArea {
+            clicked => { root.rename-label-dialog-open = false; }
+        }
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 320px;
+            height: rename-card-content.preferred-height;
+            background: MaterialPalette.surface-container-high;
+            border-radius: 28px;
+
+            TouchArea {}
+
+            rename-card-content := VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+
+                Text {
+                    text: "Rename Label";
+                    font-size: 22px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface;
+                }
+
+                TextField {
+                    label: "Label name";
+                    text <=> root.rename-label-text;
+                    edited(text) => { root.rename-label-changed(text); }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+
+                    TextButton {
+                        text: "Cancel";
+                        clicked => { root.rename-label-dialog-open = false; }
+                    }
+                    TextButton {
+                        text: "Rename";
+                        enabled: root.rename-label-valid;
+                        clicked => { root.rename-label-confirm(); }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Delete-label confirmation dialog (modal overlay) ────────
+    // Mirrors `present_delete_label_dialog` in
+    // `meditate-gtk/src/labels.rs:361`: heading + impact body +
+    // Cancel/Delete buttons (Delete styled destructive). Rust
+    // composes the body string from
+    // `meditate_core::labels::delete_impact_key` before opening,
+    // so the text correctly shows N/0 affected sessions.
+    if root.delete-label-dialog-open : Rectangle {
+        background: #00000080;
+        TouchArea {
+            clicked => { root.delete-label-dialog-open = false; }
+        }
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 320px;
+            height: delete-card-content.preferred-height;
+            background: MaterialPalette.surface-container-high;
+            border-radius: 28px;
+
+            TouchArea {}
+
+            delete-card-content := VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+
+                Text {
+                    text: "Delete Label?";
+                    font-size: 22px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface;
+                }
+
+                Text {
+                    text: root.delete-label-body;
+                    font-size: 14px;
+                    color: MaterialPalette.on-surface-variant;
+                    wrap: word-wrap;
+                    horizontal-alignment: left;
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+
+                    TextButton {
+                        text: "Cancel";
+                        clicked => { root.delete-label-dialog-open = false; }
+                    }
+                    // No native "destructive" style on TextButton —
+                    // Material 3 has a `dangerButton` filled style
+                    // but it's not in our component set. Plain
+                    // TextButton keeps consistent with Cancel; the
+                    // dialog title + the X-icon trigger already
+                    // signal the destructive intent.
+                    TextButton {
+                        text: "Delete";
+                        clicked => { root.delete-label-confirm(); }
                     }
                 }
             }
