@@ -284,17 +284,19 @@ Landed early (session-save half):
 - Log filters (L-5a–c): funnel button (Log-only) + filter sheet,
   Has-Notes switch, Label DropDownMenu, "No Matching Sessions"
   empty-state variant (`fc630ab`, `bcdd933`, `954f74a`).
+- Crash-recovery Undo (L-6): rescued session surfaced in the
+  shared Snackbar ("Recovered N min session" + Undo, 8 s),
+  Undo → `delete_session_by_uuid` (`b81cd97`).
+- Sync-status indicator surface: trailing AppBar
+  spinner/warning/check driven by
+  `meditate_core::sync::indicator::state_from_db`. Renders
+  Hidden on Android until the Phase 7 sync loop exists; tap is
+  a no-op placeholder until `action_for` targets land.
 
-Still to land:
-- Crash-recovery Undo (L-6): resurface the auto-finalized
-  session in the delete-style Snackbar so the user can undo a
-  recovery. Snackbar surface already exists (L-3); this is just
-  wiring `finalize_session_in_progress`'s result into it.
-- Sync-status indicator surface (the icon at the corner — wired to
-  `meditate_core::sync::settings::get_last_sync_*` readers).
-
-Verification: cross-device sync round trip — phone authors a
-session, GTK shell on the laptop sees it within one sync cycle.
+**Phase 3 complete.** Cross-device sync round-trip
+verification is deferred to Phase 7 (no Android sync loop
+yet) — the persistence + Log surfaces it depends on are all
+in place.
 
 ### Phase 4 — Stats view
 
