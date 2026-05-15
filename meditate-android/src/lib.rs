@@ -1999,6 +1999,19 @@ fn signal_mode_db_str(index: i32) -> &'static str {
     }
 }
 
+/// CompactToggle index → `SignalMode`. The interval-bell editor
+/// stores the mode as the enum (DB column), not a settings
+/// string, so it needs the typed value rather than `*_db_str`.
+#[cfg(target_os = "android")]
+fn signal_mode_from_index(index: i32) -> meditate_core::bells::SignalMode {
+    use meditate_core::bells::SignalMode;
+    match index {
+        1 => SignalMode::Vibration,
+        2 => SignalMode::Both,
+        _ => SignalMode::Sound,
+    }
+}
+
 /// Push the current bell settings into the Setup Bells-group
 /// props: enable switches from `*_bell_active`, body subtitles
 /// from the resolved `*_bell_sound` name (defaulting to the
@@ -3115,13 +3128,30 @@ fn build_ui() -> MainWindow {
                     haptics::cancel(app);
                 }
                 ui.set_pattern_preview_uuid(slint::SharedString::new());
-                let key = if pattern_chooser_target.get() == 1 {
-                    "end_bell_pattern"
-                } else {
-                    "starting_bell_pattern"
-                };
-                write_global_setting(key, uuid.as_str());
-                refresh_bell_rows(&ui);
+                match pattern_chooser_target.get() {
+                    2 => {
+                        // Interval-bell editor: stage only; the
+                        // pick is committed on the editor's Save.
+                        ui.set_ie_pattern_uuid(uuid.clone());
+                        ui.set_ie_pattern_name(
+                            pattern_name(uuid.as_str()).into(),
+                        );
+                    }
+                    1 => {
+                        write_global_setting(
+                            "end_bell_pattern",
+                            uuid.as_str(),
+                        );
+                        refresh_bell_rows(&ui);
+                    }
+                    _ => {
+                        write_global_setting(
+                            "starting_bell_pattern",
+                            uuid.as_str(),
+                        );
+                        refresh_bell_rows(&ui);
+                    }
+                }
                 ui.set_pattern_chooser_page(false);
             }
             let _ = (weak.clone(), uuid);
@@ -3325,6 +3355,17 @@ fn build_ui() -> MainWindow {
                     bell_sound_name(meditate_core::seeds::BUNDLED_BOWL_UUID)
                         .into(),
                 );
+                // B-2c: new bells default to Sound; the bundled
+                // Pulse pattern stages the (initially inert)
+                // vibration choice, matching the insert default.
+                ui.set_ie_signal_mode(0);
+                ui.set_ie_pattern_uuid(
+                    meditate_core::seeds::BUNDLED_PATTERN_PULSE_UUID.into(),
+                );
+                ui.set_ie_pattern_name(
+                    pattern_name(meditate_core::seeds::BUNDLED_PATTERN_PULSE_UUID)
+                        .into(),
+                );
                 ui.set_interval_editor_page(true);
             }
             let _ = weak.clone();
@@ -3359,6 +3400,13 @@ fn build_ui() -> MainWindow {
                 let su = bell.sound_uuid.to_string();
                 ui.set_ie_sound_name(bell_sound_name(&su).into());
                 ui.set_ie_sound_uuid(su.into());
+                // B-2c: load the bell's persisted Type + pattern.
+                ui.set_ie_signal_mode(signal_mode_index(
+                    bell.signal_mode.as_db_str(),
+                ));
+                let pu = bell.vibration_pattern_uuid.to_string();
+                ui.set_ie_pattern_name(pattern_name(&pu).into());
+                ui.set_ie_pattern_uuid(pu.into());
                 *editing_ib.borrow_mut() = Some(bell);
                 ui.set_interval_editor_page(true);
             }
@@ -3408,6 +3456,28 @@ fn build_ui() -> MainWindow {
     {
         let weak = ui.as_weak();
         #[cfg(target_os = "android")]
+        let pattern_chooser_target = pattern_chooser_target.clone();
+        ui.on_interval_editor_pattern_tap(move || {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                // Target 2 = interval-bell editor: the pick is
+                // staged into the `ie_pattern_*` fields and only
+                // committed when the editor's Save runs (same
+                // contract as the sound chooser's target 2).
+                pattern_chooser_target.set(2);
+                populate_pattern_chooser(
+                    &ui,
+                    ui.get_ie_pattern_uuid().as_str(),
+                );
+                ui.set_pattern_chooser_page(true);
+            }
+            let _ = weak.clone();
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
         let editing_ib = editing_ib.clone();
         ui.on_interval_editor_cancel(move || {
             #[cfg(target_os = "android")]
@@ -3444,6 +3514,9 @@ fn build_ui() -> MainWindow {
                     0
                 };
                 let sound = ui.get_ie_sound_uuid().to_string();
+                let signal_mode =
+                    signal_mode_from_index(ui.get_ie_signal_mode());
+                let pattern = ui.get_ie_pattern_uuid().to_string();
                 let original = editing_ib.borrow_mut().take();
                 if let Some(db_arc) = DATABASE.get() {
                     if let Ok(guard) = db_arc.lock() {
@@ -3451,31 +3524,29 @@ fn build_ui() -> MainWindow {
                             let res = match original {
                                 Some(mut bell) => {
                                     // Edit: preserve uuid /
-                                    // created_iso / enabled and
-                                    // the existing pattern +
-                                    // signal_mode (sound-only
-                                    // doesn't touch vibration —
-                                    // B-2 owns that), swap the
-                                    // editable fields.
+                                    // created_iso / enabled; swap
+                                    // every editable field incl.
+                                    // the B-2c Type + pattern.
                                     bell.kind = kind;
                                     bell.minutes = minutes;
                                     bell.jitter_pct = jitter;
                                     bell.sound_uuid = sound.clone().into();
+                                    bell.signal_mode = signal_mode;
+                                    bell.vibration_pattern_uuid =
+                                        pattern.clone().into();
                                     db.update_interval_bell(&bell)
                                         .map(|()| 0)
                                 }
                                 None => {
-                                    // Create. Bundled pattern
-                                    // uuid satisfies the NOT-NULL
-                                    // FK; `SignalMode::Sound`
-                                    // makes it inert until B-2.
+                                    // Create with the chosen Type
+                                    // + pattern (B-2c).
                                     db.insert_interval_bell(
                                         kind,
                                         minutes,
                                         jitter,
                                         &sound,
-                                        meditate_core::seeds::BUNDLED_PATTERN_PULSE_UUID,
-                                        meditate_core::SignalMode::Sound,
+                                        &pattern,
+                                        signal_mode,
                                     )
                                 }
                             };

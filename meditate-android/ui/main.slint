@@ -442,6 +442,10 @@ component CompactToggle inherits Rectangle {
 // chip group directly so the .slint stays declarative).
 component CuesRow inherits Rectangle {
     in property <string> title;
+    // Defaults keep the Bells "Type" callers unchanged; the
+    // interval-bell editor's Kind row overrides with its own
+    // three labels.
+    in property <[string]> labels: ["Sound", "Vibration", "Both"];
     in-out property <int> current-index;
     callback changed(int);
 
@@ -466,7 +470,7 @@ component CuesRow inherits Rectangle {
         VerticalLayout {
             alignment: center;
             CompactToggle {
-                labels: ["Sound", "Vibration", "Both"];
+                labels: root.labels;
                 current-index <=> root.current-index;
                 changed(idx) => { root.changed(idx); }
             }
@@ -490,12 +494,23 @@ component ChooserRow inherits Rectangle {
     in property <string> title;
     in property <string> subtitle;
     in property <bool> enabled: true;
+    // `child-shade` true → the `.darker(0.35)` grouped fill used
+    // when this row is nested inside an expander body (a "child"
+    // of another row). false → the regular boxed-list look
+    // (transparent on the parent surface, surface-container-high
+    // on hover) for when it's a top-level row in its own group,
+    // like the interval-bell editor.
+    in property <bool> child-shade: true;
     callback tapped;
 
     height: 56px;
-    background: touch.has-hover && root.enabled
-        ? MaterialPalette.surface-container.darker(0.22)
-        : MaterialPalette.surface-container.darker(0.35);
+    background: root.child-shade
+        ? (touch.has-hover && root.enabled
+            ? MaterialPalette.surface-container.darker(0.22)
+            : MaterialPalette.surface-container.darker(0.35))
+        : (touch.has-hover && root.enabled
+            ? MaterialPalette.surface-container-high
+            : transparent);
 
     touch := TouchArea {
         enabled: root.enabled;
@@ -770,6 +785,7 @@ component RevealChooser inherits Rectangle {
     in property <bool> shown;
     in property <string> title;
     in property <string> subtitle;
+    in property <bool> child-shade: true;
     callback tapped;
 
     property <float> reveal: root.shown ? 1.0 : 0.0;
@@ -799,7 +815,131 @@ component RevealChooser inherits Rectangle {
                 ChooserRow {
                     title: root.title;
                     subtitle: root.subtitle;
+                    child-shade: root.child-shade;
                     tapped => { root.tapped(); }
+                }
+            }
+        }
+    }
+}
+
+// GTK Adw.SpinRow analogue — title on the left, an inline
+// "−  value  +" stepper on the right, in a 56 px boxed-list row
+// (transparent base, surface-container-high hover for the touch
+// affordance). Used by the interval-bell editor's Minutes /
+// Jitter rows.
+component StepperRow inherits Rectangle {
+    in property <string> label;
+    in-out property <int> value;
+    in property <int> min-value;
+    in property <int> max-value;
+
+    height: 56px;
+    background: transparent;
+
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        spacing: 12px;
+        alignment: stretch;
+
+        Text {
+            text: root.label;
+            font-size: 16px;
+            color: MaterialPalette.on-surface;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+        // VerticalLayout{alignment:center} so the 36 px stepper
+        // sits centred in the 56 px row instead of pinning to
+        // the top.
+        VerticalLayout {
+            alignment: center;
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: center;
+
+                Rectangle {
+                    width: 36px;
+                    height: 36px;
+                    TonalButton {
+                        text: "−";
+                    enabled: root.value > root.min-value;
+                    clicked => {
+                        if (root.value > root.min-value) {
+                            root.value -= 1;
+                        }
+                    }
+                }
+            }
+            Text {
+                text: root.value;
+                font-size: 18px;
+                width: 40px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                color: MaterialPalette.on-surface;
+            }
+            Rectangle {
+                width: 36px;
+                height: 36px;
+                TonalButton {
+                    text: "+";
+                    enabled: root.value < root.max-value;
+                    clicked => {
+                        if (root.value < root.max-value) {
+                            root.value += 1;
+                        }
+                    }
+                }
+            }
+            }
+        }
+    }
+}
+
+// StepperRow with the same boolean reveal+divider scaffold as
+// RevealChooser (single animated scalar, fixed 57 px clip, inner
+// column pinned at y=0). The interval-bell editor's Jitter row
+// only applies to the Interval kind; GTK toggles its `visible`,
+// but inside a BoxedList an `if`-gated child doesn't reactively
+// re-render, so it collapses via this reveal instead.
+component RevealStepper inherits Rectangle {
+    in property <bool> shown;
+    in property <string> label;
+    in-out property <int> value;
+    in property <int> min-value;
+    in property <int> max-value;
+
+    property <float> reveal: root.shown ? 1.0 : 0.0;
+    animate reveal {
+        duration: 250ms;
+        easing: ease-in-out;
+    }
+
+    background: transparent;
+
+    VerticalLayout {
+        spacing: 0;
+
+        Rectangle {
+            clip: true;
+            height: root.reveal * 57px;
+
+            VerticalLayout {
+                y: 0;
+                height: 57px;
+                spacing: 0;
+
+                Rectangle {
+                    height: 1px;
+                    background: MaterialPalette.outline-variant;
+                }
+                StepperRow {
+                    label: root.label;
+                    value <=> root.value;
+                    min-value: root.min-value;
+                    max-value: root.max-value;
                 }
             }
         }
@@ -1223,7 +1363,15 @@ export component MainWindow inherits Window {
     in-out property <int> ie-jitter: 0;
     in-out property <string> ie-sound-uuid: "";
     in property <string> ie-sound-name: "";
+    // Signal Type for this interval bell (B-2c): 0 Sound /
+    // 1 Vibration / 2 Both — same order as the Setup Bells
+    // CompactToggle and `SignalMode`. Sound row shows for 0|2,
+    // Pattern row for 1|2 (mirrors GTK's interval-bell editor).
+    in-out property <int> ie-signal-mode: 0;
+    in-out property <string> ie-pattern-uuid: "";
+    in property <string> ie-pattern-name: "";
     callback interval-editor-sound-tap();
+    callback interval-editor-pattern-tap();
     callback interval-editor-cancel();
     callback interval-editor-save();
 
@@ -4357,62 +4505,64 @@ export component MainWindow inherits Window {
                 }
             }
 
-            HorizontalLayout {
-                alignment: center;
-                SegmentedButton {
-                    current-index <=> root.ie-kind;
-                    items: [
-                        { text: "Every N min" },
-                        { text: "From start" },
-                        { text: "Before end" },
-                    ];
-                }
-            }
-
-            // Minutes + (Interval-only) Jitter vertical
-            // spinboxes, same control the duration / prep
-            // dialogs use. Bounds mirror
-            // `meditate_core::bells::BELL_*`.
-            HorizontalLayout {
-                spacing: 24px;
-                alignment: center;
-
-                VerticalLayout {
-                    spacing: 4px;
-                    Text {
-                        text: "Minutes";
-                        font-size: 12px;
-                        color: MaterialPalette.on-surface-variant;
-                        horizontal-alignment: center;
-                    }
-                    VerticalSpinBox {
-                        value <=> root.ie-minutes;
-                        min-value: 1;
-                        max-value: 120;
-                    }
-                }
-
-                if root.ie-kind == 0 : VerticalLayout {
-                    spacing: 4px;
-                    Text {
-                        text: "Jitter %";
-                        font-size: 12px;
-                        color: MaterialPalette.on-surface-variant;
-                        horizontal-alignment: center;
-                    }
-                    VerticalSpinBox {
-                        value <=> root.ie-jitter;
-                        min-value: 0;
-                        max-value: 50;
-                    }
-                }
-            }
-
+            // The whole editor is one regular boxed-list card —
+            // GTK's interval-bell edit page is a single
+            // Adw.PreferencesGroup (Kind ComboRow, Minutes /
+            // Jitter SpinRows, Type toggle row, Sound / Pattern
+            // rows). Regular surface (NOT the `.darker` "child"
+            // shade) since this group isn't nested inside another
+            // row here. Conditional rows (Jitter, Sound, Pattern)
+            // collapse via the reveal scaffold — an `if`-gated
+            // child inside a BoxedList doesn't reactively
+            // re-render, so `if` can't be used here.
             BoxedList {
-                DurationRow {
-                    label: "Bell Sound";
-                    value-text: root.ie-sound-name;
+                CuesRow {
+                    title: "Kind";
+                    labels: ["Every N min", "From start", "Before end"];
+                    current-index <=> root.ie-kind;
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: MaterialPalette.outline-variant;
+                }
+                StepperRow {
+                    label: "Minutes";
+                    value <=> root.ie-minutes;
+                    min-value: 1;
+                    max-value: 120;
+                }
+                // Jitter applies only to the "Every N min" kind
+                // (index 0), mirroring GTK gating its visibility.
+                RevealStepper {
+                    shown: root.ie-kind == 0;
+                    label: "Jitter %";
+                    value <=> root.ie-jitter;
+                    min-value: 0;
+                    max-value: 50;
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: MaterialPalette.outline-variant;
+                }
+                CuesRow {
+                    title: "Type";
+                    current-index <=> root.ie-signal-mode;
+                }
+                RevealChooser {
+                    shown: root.ie-signal-mode != 1;
+                    title: "Bell Sound";
+                    subtitle: root.ie-sound-name;
+                    child-shade: false;
                     tapped => { root.interval-editor-sound-tap(); }
+                }
+                RevealChooser {
+                    shown: root.ie-signal-mode != 0;
+                    title: "Pattern";
+                    subtitle: root.ie-pattern-name;
+                    child-shade: false;
+                    tapped => { root.interval-editor-pattern-tap(); }
                 }
             }
         }
