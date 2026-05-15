@@ -46,6 +46,10 @@ android:
       # start triggers a system permission prompt; declining leaves
       # the service running but invisible (no notification chrome).
       - name: android.permission.POST_NOTIFICATIONS
+      # VIBRATE: haptics for bell-cue vibration patterns (Phase 5).
+      # Install-time / normal permission — no runtime prompt; the
+      # grant is implicit once declared.
+      - name: android.permission.VIBRATE
 
     application:
       label: Meditate

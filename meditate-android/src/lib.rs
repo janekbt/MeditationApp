@@ -1,5 +1,7 @@
 pub mod app;
 #[cfg(target_os = "android")]
+mod haptics;
+#[cfg(target_os = "android")]
 mod service;
 
 slint::include_modules!();
@@ -61,6 +63,12 @@ fn on_state_changed(was_active: bool, is_active: bool) {
         } else if was_active && !is_active {
             if let Some(app) = ANDROID_APP.get() {
                 service::stop(app);
+                // B-1 test trigger: an unmistakable end-of-
+                // session buzz proves the haptics JNI bridge end
+                // to end. 400 ms so it can't be missed during
+                // verification; B-6 replaces this with the real
+                // per-cue vibration driven by the chosen pattern.
+                haptics::vibrate_oneshot(app, 400);
             }
         }
     }
