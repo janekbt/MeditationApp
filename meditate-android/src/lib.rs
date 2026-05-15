@@ -5035,6 +5035,14 @@ fn build_ui() -> MainWindow {
         let pending_done = pending_done.clone();
         #[cfg(target_os = "android")]
         let editing_session_id = editing_session_id.clone();
+        // The system back gesture closes the chooser overlays
+        // here, bypassing their in-app back-button handlers — so
+        // it must silence any in-flight preview too, or the
+        // bell / vibration keeps playing after the page is gone.
+        #[cfg(target_os = "android")]
+        let bell_preview = bell_preview.clone();
+        #[cfg(target_os = "android")]
+        let pattern_preview = pattern_preview.clone();
         ui.on_back_pressed(move || {
             let Some(ui) = weak.upgrade() else { return; };
             #[cfg(target_os = "android")]
@@ -5060,7 +5068,22 @@ fn build_ui() -> MainWindow {
             }
             #[cfg(target_os = "android")]
             if ui.get_bell_chooser_page() {
+                let _ = bell_preview.borrow_mut().stop();
+                if let Some(app) = ANDROID_APP.get() {
+                    audio::stop(app);
+                }
+                ui.set_bell_preview_uuid(slint::SharedString::new());
                 ui.set_bell_chooser_page(false);
+                return;
+            }
+            #[cfg(target_os = "android")]
+            if ui.get_pattern_chooser_page() {
+                let _ = pattern_preview.borrow_mut().stop();
+                if let Some(app) = ANDROID_APP.get() {
+                    haptics::cancel(app);
+                }
+                ui.set_pattern_preview_uuid(slint::SharedString::new());
+                ui.set_pattern_chooser_page(false);
                 return;
             }
             #[cfg(target_os = "android")]
