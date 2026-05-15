@@ -160,20 +160,6 @@ fn build_session_settings(
     let display = bells::DisplayMode::from_stopwatch_flag(stopwatch_on);
     let target = shape.target_secs().map(u64::from);
 
-    // Prep reads go through read_global_setting (which locks the
-    // DB itself) — done BEFORE we take the lock below so we don't
-    // re-enter the same Mutex and deadlock.
-    let prep_secs = if matches!(mode, meditate_core::SessionMode::Timer)
-        && read_global_setting("preparation_time_active", "false") == "true"
-    {
-        Some(meditate_core::format::parse_prep_secs(&read_global_setting(
-            "preparation_time_secs",
-            &meditate_core::format::PREP_SECS_DEFAULT.to_string(),
-        )))
-    } else {
-        None
-    };
-
     let Some(db_arc) = DATABASE.get() else {
         return SessionSettings { shape, ..Default::default() };
     };
@@ -182,6 +168,20 @@ fn build_session_settings(
     };
     let Some(db) = guard.as_ref() else {
         return SessionSettings { shape, ..Default::default() };
+    };
+
+    // Prep is Timer-only (GTK gates it to the timer path) and the
+    // core helper AND-gates `preparation_time_active &&
+    // starting_bell_active` — no starting bell ⇒ no prep. Routing
+    // through `prep_plan_from_db` (the exact call GTK's on_start
+    // uses) keeps that decision in core for both shells; the
+    // earlier direct `preparation_time_active` read skipped the
+    // starting-bell gate (the bug Janek hit).
+    let prep_secs = if matches!(mode, meditate_core::SessionMode::Timer) {
+        meditate_core::format::prep_plan_from_db(db)
+            .map(|d| d.as_secs() as u32)
+    } else {
+        None
     };
 
     let (session_bells, bell_rng_seed) =
@@ -205,11 +205,14 @@ fn build_session_settings(
     }
 }
 
-// Default duration the steppers seed with on first open. 10 minutes
-// mirrors the GTK shell's default starting position for a freshly
-// opened Timer mode. After phase 3's DB persistence lands, this
-// becomes the last-used duration loaded from settings.
+// Host-only fallback duration (no DB on the desktop dev build).
+// On Android the Timer length is restored from the persisted
+// `timer_session_secs` (see `read_timer_session_secs`), so these
+// are unused there and cfg-scoped to the host to stay warning-
+// clean. 10 min mirrors GTK's default opening position.
+#[cfg(not(target_os = "android"))]
 const DEFAULT_HOURS: i32 = 0;
+#[cfg(not(target_os = "android"))]
 const DEFAULT_MINUTES: i32 = 10;
 
 // Tick interval driving the mm:ss redraw + Running→Finished detection.
@@ -1137,6 +1140,39 @@ fn write_breathing_session_secs(secs: u32) {
     let Ok(guard) = db_arc.lock() else { return; };
     let Some(db) = guard.as_ref() else { return; };
     let _ = db.set_setting("breathing_session_secs", &secs.to_string());
+}
+
+/// Persisted Timer-mode countdown length. Mirrors GTK's
+/// `timer_session_secs` settings key + `set_countdown_target` /
+/// `load_timer_settings` (`meditate-gtk/src/timer/imp.rs`):
+/// every duration commit writes it, startup restores it.
+/// Defaults to `TIMER_DEFAULT_SECS` = 10 min when missing.
+/// (Timer mode previously kept this in-memory only, so it reset
+/// on every app restart — the bug Janek hit.)
+#[cfg(target_os = "android")]
+fn read_timer_session_secs() -> u32 {
+    let Some(db_arc) = DATABASE.get() else {
+        return meditate_core::session::TIMER_DEFAULT_SECS;
+    };
+    let Ok(guard) = db_arc.lock() else {
+        return meditate_core::session::TIMER_DEFAULT_SECS;
+    };
+    let Some(db) = guard.as_ref() else {
+        return meditate_core::session::TIMER_DEFAULT_SECS;
+    };
+    meditate_core::settings_keys::read_u32(
+        db,
+        "timer_session_secs",
+        meditate_core::session::TIMER_DEFAULT_SECS,
+    )
+}
+
+#[cfg(target_os = "android")]
+fn write_timer_session_secs(secs: u32) {
+    let Some(db_arc) = DATABASE.get() else { return; };
+    let Ok(guard) = db_arc.lock() else { return; };
+    let Some(db) = guard.as_ref() else { return; };
+    let _ = db.set_setting("timer_session_secs", &secs.to_string());
 }
 
 /// Update the Setup view's hours / minutes Slint properties from
@@ -2404,9 +2440,16 @@ fn build_ui() -> MainWindow {
     // Timer mode keeps its value in-memory only (defaults to the
     // 0h 10m boot value); Box Breath persists to the DB so
     // round-trips across launches.
-    let timer_session_secs: Rc<Cell<u32>> = Rc::new(Cell::new(
-        (DEFAULT_HOURS as u32) * 3600 + (DEFAULT_MINUTES as u32) * 60,
-    ));
+    let timer_session_secs: Rc<Cell<u32>> = Rc::new(Cell::new({
+        #[cfg(target_os = "android")]
+        {
+            read_timer_session_secs()
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            (DEFAULT_HOURS as u32) * 3600 + (DEFAULT_MINUTES as u32) * 60
+        }
+    }));
 
     // Box Breath target for the in-flight session. Set in
     // `on_action_tap` when starting a `BoxBreathCountdown` (the
@@ -2502,12 +2545,18 @@ fn build_ui() -> MainWindow {
     #[cfg(target_os = "android")]
     let pending_done: Rc<Cell<Option<(i64, i64)>>> = Rc::new(Cell::new(None));
 
-    // Seed the stepper-driven duration with the same default the
-    // GTK shell opens at. The tick loop further down refreshes the
+    // Seed the stepper-driven duration from the persisted Timer
+    // length (mirrors GTK's `load_timer_settings` restoring
+    // `timer_session_secs` at startup) rather than the bare
+    // default — Timer mode is the launch mode, so this is what
+    // the user last set. The tick loop further down refreshes the
     // Setup hero every 200 ms so stepper changes flow into the
     // big mm:ss readout without a dedicated change-notification path.
-    ui.set_setup_hours(DEFAULT_HOURS);
-    ui.set_setup_minutes(DEFAULT_MINUTES);
+    {
+        let secs = timer_session_secs.get();
+        ui.set_setup_hours((secs / 3600) as i32);
+        ui.set_setup_minutes(((secs % 3600) / 60) as i32);
+    }
 
     {
         let weak = ui.as_weak();
@@ -3145,7 +3194,11 @@ fn build_ui() -> MainWindow {
                     #[cfg(target_os = "android")]
                     write_breathing_session_secs(total_secs);
                 }
-                _ => timer_session_secs.set(total_secs),
+                _ => {
+                    timer_session_secs.set(total_secs);
+                    #[cfg(target_os = "android")]
+                    write_timer_session_secs(total_secs);
+                }
             }
         });
     }
