@@ -461,6 +461,64 @@ component CuesRow inherits Rectangle {
     }
 }
 
+// The canonical selector body row used inside every expander
+// (Label expanders on Timer / Box-Breath / Edit-Session, the
+// Bells group's Sound rows, nested Preparation Time). Single
+// definition so every one looks + behaves identically:
+// 14 px title / 12 px subtitle / "›" chevron, the
+// `.darker(0.35)` child-grouping fill with a subtle
+// `.darker(0.22)` hover. 56 px fixed — the parent expander
+// owns the reveal height-animation + clip. (Previously the
+// Starting Bell used a `DurationRow` here, which has 16 px
+// text and a bright `surface-container-high` hover — visibly
+// inconsistent with the other selectors; that's the bug this
+// component fixes.)
+component ChooserRow inherits Rectangle {
+    in property <string> title;
+    in property <string> subtitle;
+    in property <bool> enabled: true;
+    callback tapped;
+
+    height: 56px;
+    background: touch.has-hover && root.enabled
+        ? MaterialPalette.surface-container.darker(0.22)
+        : MaterialPalette.surface-container.darker(0.35);
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.tapped(); }
+    }
+
+    HorizontalLayout {
+        padding-left: 32px;
+        padding-right: 16px;
+        spacing: 12px;
+        alignment: stretch;
+
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+
+            Text {
+                text: root.title;
+                font-size: 14px;
+                color: MaterialPalette.on-surface;
+            }
+            if root.subtitle != "" : Text {
+                text: root.subtitle;
+                font-size: 12px;
+                color: MaterialPalette.on-surface-variant;
+            }
+        }
+        Text {
+            text: "›";
+            font-size: 22px;
+            color: MaterialPalette.on-surface-variant;
+            vertical-alignment: center;
+        }
+    }
+}
+
 // Adw.ExpanderRow analogue — header with title + subtitle +
 // master switch, and an inner row that reveals when the switch
 // is on. Mirrors the .blp `setup_label_enabled_row`: master
@@ -477,6 +535,20 @@ component ExpanderRow inherits Rectangle {
     in-out property <bool> active;
     callback toggled(bool);
     callback body-tapped();
+
+    // Single animated quantity for the whole collapse. Every
+    // sub-height below is a plain (un-animated) `reveal * H`
+    // binding, so when this is nested in an ExpanderGroup the
+    // parent's height is a pure function of this scalar each
+    // frame → perfect lockstep, one coherent slide. (Two
+    // stacked `animate height` boxes produced a two-phase
+    // collapse: inner finished sliding while the outer was
+    // still chasing its lagging preferred-height.)
+    property <float> reveal: root.active ? 1.0 : 0.0;
+    animate reveal {
+        duration: 250ms;
+        easing: ease-in-out;
+    }
 
     background: transparent;
 
@@ -525,68 +597,30 @@ component ExpanderRow inherits Rectangle {
             }
         }
 
-        // Hair-line divider — always rendered, height animates
-        // between 0 and 1 px alongside the body. Without the
-        // animation the divider would pop in/out a frame ahead of
-        // the body slide.
+        // Hair-line divider — height is a plain `reveal * 1px`
+        // binding (no `animate height`); it eases purely via the
+        // shared `reveal` scalar, in lockstep with the body.
         Rectangle {
-            height: root.active ? 1px : 0px;
+            height: root.reveal * 1px;
             background: MaterialPalette.outline-variant;
             clip: true;
-            animate height {
-                duration: 250ms;
-                easing: ease-in-out;
-            }
         }
 
-        // Inner "Selected" row — mirrors the .blp
-        // `setup_label_chooser_row`. Always rendered so the slide-
-        // in/out can animate `height` between 56 px and 0 (Slint
-        // can't animate the appearance of an `if`-gated element).
-        // `clip: true` hides the inner content while collapsed.
+        // Body — fixed-height `ChooserRow` inside a clipping box
+        // whose height is `reveal * 56px`. The row keeps its
+        // natural 56 px at y=0; as `reveal` eases 1→0 the box
+        // shrinks and clips it from the bottom → the content
+        // slides up. No `animate height` here; the only animated
+        // thing is `reveal`.
         Rectangle {
-            height: root.active ? 56px : 0px;
-            background: body-touch.has-hover && root.active
-                ? MaterialPalette.surface-container-high
-                : transparent;
             clip: true;
-            animate height {
-                duration: 250ms;
-                easing: ease-in-out;
-            }
+            height: root.reveal * 56px;
 
-            body-touch := TouchArea {
+            ChooserRow {
+                title: root.body-title;
+                subtitle: root.body-subtitle;
                 enabled: root.active;
-                clicked => { root.body-tapped(); }
-            }
-
-            HorizontalLayout {
-                padding-left: 32px;
-                padding-right: 16px;
-                spacing: 12px;
-                alignment: stretch;
-
-                VerticalLayout {
-                    alignment: center;
-                    horizontal-stretch: 1;
-
-                    Text {
-                        text: root.body-title;
-                        font-size: 14px;
-                        color: MaterialPalette.on-surface;
-                    }
-                    if root.body-subtitle != "" : Text {
-                        text: root.body-subtitle;
-                        font-size: 12px;
-                        color: MaterialPalette.on-surface-variant;
-                    }
-                }
-                Text {
-                    text: "›";
-                    font-size: 22px;
-                    color: MaterialPalette.on-surface-variant;
-                    vertical-alignment: center;
-                }
+                tapped => { root.body-tapped(); }
             }
         }
     }
@@ -606,6 +640,21 @@ component ExpanderGroup inherits Rectangle {
     in property <string> subtitle;
     in-out property <bool> active;
     callback toggled(bool);
+
+    // Same single-scalar reveal model as ExpanderRow. The body
+    // height is `reveal * bodyContent.preferred-height` with NO
+    // `animate height`: when this group's own switch toggles,
+    // `reveal` eases (single animation); when a *nested*
+    // ExpanderRow toggles, `reveal` stays 1 and
+    // `bodyContent.preferred-height` tracks the child's own
+    // `reveal` scalar — so the group height is a pure function
+    // of one animating scalar at a time. No animation ever
+    // chases another → no two-phase collapse.
+    property <float> reveal: root.active ? 1.0 : 0.0;
+    animate reveal {
+        duration: 250ms;
+        easing: ease-in-out;
+    }
 
     background: transparent;
 
@@ -654,43 +703,32 @@ component ExpanderGroup inherits Rectangle {
             }
         }
 
-        // Header→body hair-line — always rendered, height
-        // animates 0 ↔ 1 px with the body so it doesn't pop a
-        // frame ahead. Same idiom as ExpanderRow's divider; it
-        // was missing here, which is why the Bell Sound row had
-        // no separator under the Starting Bell header.
+        // Header→body hair-line — plain `reveal * 1px` binding,
+        // eases via the shared scalar in lockstep with the body.
         Rectangle {
-            height: root.active ? 1px : 0px;
+            height: root.reveal * 1px;
             background: MaterialPalette.outline-variant;
             clip: true;
-            animate height {
-                duration: 250ms;
-                easing: ease-in-out;
-            }
         }
 
-        // Body — always built; height animates between 0 and the
-        // children's natural height, `clip` hiding it collapsed.
-        // A shade-darker fill + a left inset make the contained
-        // rows read as children of this expander (mirrors the
-        // old single-body ExpanderRow's 32 px body indent; the
-        // surface-container-high tint groups them visually
-        // against the BoxedList's surface-container).
+        // Body — a clipping box whose height is
+        // `reveal * bodyContent.preferred-height`. `bodyContent`
+        // is pinned to its OWN natural (preferred) height at
+        // y=0, so it is never compressed: the shorter clip box
+        // just hides its bottom → the children slide. No
+        // `animate height` — `reveal` is the only animated
+        // quantity (and a nested ExpanderRow's own `reveal`
+        // flows in through `preferred-height` with no second
+        // animator). The `.darker(0.35)` fill + 16 px inset
+        // group the rows as children of this expander.
         Rectangle {
             clip: true;
-            height: root.active ? body.preferred-height : 0px;
-            // `.darker()` rather than the next palette step —
-            // surface-container-high was barely distinguishable
-            // from the BoxedList's surface-container. A fixed
-            // darken factor gives a clearly-visible, theme-
-            // independent grouping tint.
+            height: root.reveal * bodyContent.preferred-height;
             background: MaterialPalette.surface-container.darker(0.35);
-            animate height {
-                duration: 250ms;
-                easing: ease-in-out;
-            }
 
-            body := VerticalLayout {
+            bodyContent := VerticalLayout {
+                y: 0;
+                height: self.preferred-height;
                 spacing: 0;
                 // 16 px here + each child row's own 16 px =
                 // 32 px effective indent, matching the prior
@@ -1668,9 +1706,9 @@ export component MainWindow inherits Window {
                         active <=> root.starting-bell-active;
                         toggled(value) => { root.starting-bell-toggled(value); }
 
-                        DurationRow {
-                            label: "Bell Sound";
-                            value-text: root.starting-bell-sound-name;
+                        ChooserRow {
+                            title: "Bell Sound";
+                            subtitle: root.starting-bell-sound-name;
                             tapped => { root.starting-bell-sound-tap(); }
                         }
 
