@@ -502,13 +502,17 @@ const LOG_PAGE_SIZE: u32 = 15;
 /// returned_full_page)`; the caller uses the boolean to decide
 /// whether to show "Load more".
 #[cfg(target_os = "android")]
-fn load_log_page(offset: u32) -> (Vec<(i64, meditate_core::db::Session)>, bool) {
+fn load_log_page(
+    offset: u32,
+    notes_only: bool,
+) -> (Vec<(i64, meditate_core::db::Session)>, bool) {
     let Some(db_arc) = DATABASE.get() else { return (Vec::new(), false); };
     let Ok(guard) = db_arc.lock() else { return (Vec::new(), false); };
     let Some(db) = guard.as_ref() else { return (Vec::new(), false); };
     let filter = meditate_core::db::SessionFilter {
         limit: Some(LOG_PAGE_SIZE),
         offset: Some(offset),
+        only_with_notes: notes_only,
         ..meditate_core::db::SessionFilter::default()
     };
     let rows = meditate_core::db::query_sessions_from_db(db, &filter)
@@ -662,7 +666,7 @@ fn reset_log_feed(
     loaded: &std::rc::Rc<std::cell::RefCell<Vec<(i64, meditate_core::db::Session)>>>,
     pending: &std::rc::Rc<std::cell::RefCell<Vec<(i64, meditate_core::db::Session)>>>,
 ) {
-    let (rows, full) = load_log_page(0);
+    let (rows, full) = load_log_page(0, ui.get_filter_notes_only());
     *loaded.borrow_mut() = rows;
     ui.set_log_has_more(full);
     render_log_feed(ui, loaded, pending);
@@ -678,7 +682,7 @@ fn extend_log_feed(
     pending: &std::rc::Rc<std::cell::RefCell<Vec<(i64, meditate_core::db::Session)>>>,
 ) {
     let offset = loaded.borrow().len() as u32;
-    let (rows, full) = load_log_page(offset);
+    let (rows, full) = load_log_page(offset, ui.get_filter_notes_only());
     if rows.is_empty() {
         // Defensive: button pressed but no more rows. Hide it.
         ui.set_log_has_more(false);
@@ -2548,6 +2552,32 @@ fn build_ui() -> MainWindow {
                 ui.set_filter_sheet_open(true);
             }
             let _ = weak.clone();
+        });
+    }
+
+    // Has-Notes filter toggle (L-5b). Instant apply: update
+    // `filter-has-active`, reload the feed from page 0 with the
+    // new filter, then close the sheet — mirrors GTK's
+    // `filter_notes_row` notify handler at
+    // `meditate-gtk/src/window/imp.rs:783` (set filter →
+    // refresh → popdown). The paginator reads the live
+    // `filter-notes-only` property, so just calling
+    // `reset_log_feed` after the toggle picks up the new value.
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let loaded_log_sessions = loaded_log_sessions.clone();
+        #[cfg(target_os = "android")]
+        let pending_deletes = pending_deletes.clone();
+        ui.on_filter_notes_toggled(move |_on| {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                ui.set_filter_has_active(ui.get_filter_notes_only());
+                reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
+                ui.set_filter_sheet_open(false);
+            }
+            let _ = (weak.clone(), _on);
         });
     }
 

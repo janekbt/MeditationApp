@@ -988,6 +988,16 @@ export component MainWindow inherits Window {
     in-out property <bool> filter-sheet-open: false;
     callback log-filter-tap();
 
+    // Has-Notes filter (L-5b). `filter-notes-only` is the live
+    // flag the Rust paginator reads via `get_filter_notes_only`
+    // when building the `SessionFilter`. `filter-notes-toggled`
+    // fires on every switch flip — Rust resets the feed to
+    // page 0 with the new filter and closes the sheet, mirroring
+    // GTK's instant-apply + popdown at
+    // `meditate-gtk/src/window/imp.rs:792`.
+    in-out property <bool> filter-notes-only: false;
+    callback filter-notes-toggled(bool);
+
     // True when any of the Log-feed filters is engaged. L-5a
     // exposes this as the gate between the "No Sessions Yet"
     // and "No Matching Sessions" empty states; L-5b / L-5c set
@@ -2641,13 +2651,21 @@ export component MainWindow inherits Window {
                     color: MaterialPalette.on-surface;
                 }
 
-                // Placeholder copy — controls land in L-5b/c.
-                Text {
-                    text: "Filter options coming soon.";
-                    font-size: 14px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface-variant;
-                    wrap: word-wrap;
+                // Has Notes toggle — mirrors GTK's
+                // `Adw.SwitchRow filter_notes_row { title:
+                // _("Has Notes"); }` at
+                // `meditate-gtk/data/ui/window.blp:102`. Instant
+                // apply: flipping the switch fires
+                // `filter-notes-toggled`, Rust reloads page 0
+                // with the new filter and closes the sheet (the
+                // Label chooser row lands in L-5c).
+                BoxedList {
+                    SwitchRow {
+                        title: "Has Notes";
+                        subtitle: "Only sessions with a note";
+                        checked <=> root.filter-notes-only;
+                        toggled(on) => { root.filter-notes-toggled(on); }
+                    }
                 }
 
                 HorizontalLayout {
