@@ -74,6 +74,18 @@ export struct LabelItem {
     selected: bool,
 }
 
+// One row in the bell-sound chooser (B-5a). `uuid` is the
+// `bell_sounds` row key persisted into `starting_bell_sound` /
+// `end_bell_sound`; `selected` check-marks the active pick.
+// Mirrors GTK's `build_sound_row` selection list in
+// `meditate-gtk/src/sounds.rs` (preview Play/Stop is B-4 —
+// this slice is select-only).
+export struct NameChoice {
+    uuid: string,
+    name: string,
+    selected: bool,
+}
+
 // One Stats "Insights" row. Rust runs
 // `meditate_core::insights::compute` and maps each typed
 // `InsightKey` to a rendered title + body (inline English —
@@ -910,6 +922,32 @@ export component MainWindow inherits Window {
     callback label-tap();
     callback labels-back();
     callback label-picked(int);
+
+    // Bells group (B-5a). Starting / End bell enable +
+    // selected-sound name, mirroring GTK's `starting_bell_row`
+    // / `end_bell_row` ExpanderRows
+    // (`meditate-gtk/data/ui/timer_view.blp:413 / :506`). Global
+    // settings (`starting_bell_active` / `_sound`,
+    // `end_bell_active` / `_sound`) — not per-mode. Type
+    // (Sound/Vibration/Both) toggle + Pattern row are the next
+    // B-5a increment; preview is B-4.
+    in-out property <bool> starting-bell-active: false;
+    in property <string> starting-bell-sound-name: "";
+    in-out property <bool> end-bell-active: false;
+    in property <string> end-bell-sound-name: "";
+    callback starting-bell-toggled(bool);
+    callback end-bell-toggled(bool);
+    callback starting-bell-sound-tap();
+    callback end-bell-sound-tap();
+
+    // Bell-sound chooser overlay (B-5a). Same slide-in shape as
+    // the labels chooser; `bell-chooser-items` is Rust-filled
+    // from `db.list_bell_sounds()` with `selected` on the
+    // active pick. Select-only here (no per-row preview — B-4).
+    in property <bool> bell-chooser-page: false;
+    in property <[NameChoice]> bell-chooser-items: [];
+    callback bell-chooser-pick(string);
+    callback bell-chooser-back();
     callback create-label-tap();
     callback create-label-changed(string);
     callback create-label-confirm();
@@ -1220,6 +1258,11 @@ export component MainWindow inherits Window {
     property <length> labels-offset: root.labels-page ? root.width : 0px;
     animate labels-offset { duration: 300ms; easing: ease-out; }
 
+    // Bell-sound chooser slide-in (B-5a). Same symmetric 300 ms
+    // push as the labels chooser.
+    property <length> bell-chooser-offset: root.bell-chooser-page ? root.width : 0px;
+    animate bell-chooser-offset { duration: 300ms; easing: ease-out; }
+
     // Slide offset for the Edit-Session overlay. Symmetric 300 ms
     // mirroring `AdwNavigationView` push of `show_session_dialog`
     // — Adw.Dialog itself slides up on phone form-factors and the
@@ -1457,6 +1500,55 @@ export component MainWindow inherits Window {
                         subtitle: "Prevent display sleep during a session";
                         checked <=> root.keep-awake-on;
                         toggled(value) => { root.keep-awake-toggled(value); }
+                    }
+                }
+            }
+
+            // Bells group (B-5a) — Starting Bell + End Bell.
+            // Mirrors GTK's `bells_group`
+            // (`timer_view.blp:401`). Timer-gated for now, same
+            // as the Session group above (the full mode
+            // restructure is deferred — see the Session-group
+            // note). Each row is an `ExpanderRow`: enable
+            // switch ↔ the global `*_bell_active` setting; the
+            // body row is the "Bell Sound" picker (subtitle =
+            // resolved sound name) → bell-chooser overlay. Type
+            // (Sound/Vibration/Both) + Pattern come next.
+            if root.setup-mode == 0 : VerticalLayout {
+                spacing: 8px;
+
+                Text {
+                    text: "Bells";
+                    font-size: 14px;
+                    font-weight: 700;
+                    color: MaterialPalette.primary;
+                    horizontal-alignment: left;
+                }
+
+                BoxedList {
+                    ExpanderRow {
+                        title: "Starting Bell";
+                        subtitle: "Play a signal when the session begins";
+                        body-title: "Bell Sound";
+                        body-subtitle: root.starting-bell-sound-name;
+                        active <=> root.starting-bell-active;
+                        toggled(value) => { root.starting-bell-toggled(value); }
+                        body-tapped => { root.starting-bell-sound-tap(); }
+                    }
+
+                    Rectangle {
+                        height: 1px;
+                        background: MaterialPalette.outline-variant;
+                    }
+
+                    ExpanderRow {
+                        title: "End Bell";
+                        subtitle: "Play a signal when the session ends";
+                        body-title: "Bell Sound";
+                        body-subtitle: root.end-bell-sound-name;
+                        active <=> root.end-bell-active;
+                        toggled(value) => { root.end-bell-toggled(value); }
+                        body-tapped => { root.end-bell-sound-tap(); }
                     }
                 }
             }
@@ -3021,198 +3113,6 @@ export component MainWindow inherits Window {
         }
     }
 
-    // ── Label chooser (overlay, slides over everything) ─────────
-    // Mirrors GTK's `push_labels_chooser`: a navigation push with
-    // a back-button header bar + a list of label rows. Slides in
-    // from the right via `labels-offset`; Setup, Running, Done,
-    // Log, and Edit-Session all stay put underneath. Declared
-    // AFTER the Edit-Session overlay so Slint's later-children-
-    // on-top rule places this chooser z-above it — the chooser
-    // surface can be opened from either the Setup screen (mode
-    // label) or the Edit-Session overlay (per-session label),
-    // and either underlying surface stays visible behind the
-    // slide-in.
-    Rectangle {
-        x: parent.width - root.labels-offset;
-        width: parent.width;
-        height: parent.height;
-        background: MaterialPalette.surface;
-
-        VerticalLayout {
-            padding-top: root.status-bar-inset + 24px;
-            padding-bottom: root.bottom-bar-inset + 24px;
-            padding-left: 16px;
-            padding-right: 16px;
-            spacing: 16px;
-            alignment: start;
-
-            // Header — back arrow + title. Mirrors the
-            // `Adw.HeaderBar { show-back-button: true }` +
-            // `NavigationPage.title` GTK uses. The back button is
-            // an IconButton (40 px touch target) on the left; an
-            // equal-width spacer on the right balances the row
-            // so the title actually centers in the page (rather
-            // than sitting to the right of the back button).
-            HorizontalLayout {
-                spacing: 12px;
-                alignment: stretch;
-
-                IconButton {
-                    icon: Icons.arrow-back;
-                    clicked => { root.labels-back(); }
-                }
-                Text {
-                    text: "Choose Label";
-                    font-size: 18px;
-                    color: MaterialPalette.on-surface;
-                    vertical-alignment: center;
-                    horizontal-stretch: 1;
-                    horizontal-alignment: center;
-                }
-                Rectangle {
-                    width: 40px;
-                }
-            }
-
-            // Label list inside a BoxedList — same boxed look as
-            // the Session group, so the chooser feels consistent.
-            // Each iteration emits an optional 1 px hair-line
-            // divider above the row (skipped for the first row),
-            // mirroring the divider pattern between Cues /
-            // Stopwatch / Duration / Label / Keep Awake in the
-            // Session group.
-            BoxedList {
-                // Synthetic "Create new label…" row — mirrors the
-                // top row that `rebuild_chooser_rows` adds in the
-                // GTK shell (`labels.rs:107-139`). Always present
-                // (no DB query needed) so the create-flow is one
-                // tap away on first launch when no user labels
-                // exist yet.
-                Rectangle {
-                    height: 56px;
-                    background: create-touch.has-hover
-                        ? MaterialPalette.surface-container-high
-                        : transparent;
-
-                    create-touch := TouchArea {
-                        clicked => { root.create-label-tap(); }
-                    }
-
-                    HorizontalLayout {
-                        padding-left: 16px;
-                        padding-right: 16px;
-                        spacing: 12px;
-                        alignment: stretch;
-
-                        Text {
-                            text: "Create new label…";
-                            font-size: 16px;
-                            color: MaterialPalette.on-surface;
-                            vertical-alignment: center;
-                            horizontal-stretch: 1;
-                        }
-                        // Plus glyph — GTK uses `list-add-symbolic`;
-                        // Material's bundled Icons set has no add
-                        // SVG, so we render the ASCII "+" (always
-                        // rasterises, no font-coverage risk).
-                        Text {
-                            text: "+";
-                            font-size: 22px;
-                            color: MaterialPalette.on-surface-variant;
-                            vertical-alignment: center;
-                        }
-                    }
-                }
-
-                // Divider separating the Create row from the
-                // first label row.
-                Rectangle {
-                    height: 1px;
-                    background: MaterialPalette.outline-variant;
-                }
-
-                for item[idx] in root.label-items : VerticalLayout {
-                    spacing: 0;
-
-                    if idx > 0 : Rectangle {
-                        height: 1px;
-                        background: MaterialPalette.outline-variant;
-                    }
-
-                    Rectangle {
-                        height: 56px;
-                        background: row-touch.has-hover
-                            ? MaterialPalette.surface-container-high
-                            : transparent;
-
-                        row-touch := TouchArea {
-                            clicked => { root.label-picked(item.id); }
-                        }
-
-                        HorizontalLayout {
-                            padding-left: 16px;
-                            padding-right: 16px;
-                            spacing: 12px;
-                            alignment: stretch;
-
-                            Text {
-                                text: item.name;
-                                font-size: 16px;
-                                color: MaterialPalette.on-surface;
-                                vertical-alignment: center;
-                                horizontal-stretch: 1;
-                            }
-                            // Check-mark suffix on the currently-
-                            // selected row — mirrors GTK's
-                            // `object-select-symbolic` indicator.
-                            // GTK adds this suffix BEFORE the rename
-                            // + delete buttons (labels.rs:171 vs
-                            // 174-175), so visually it lands to
-                            // their left. VerticalLayout centers
-                            // the image inside the 56-px row.
-                            if item.selected : VerticalLayout {
-                                alignment: center;
-                                Image {
-                                    source: Icons.check;
-                                    colorize: MaterialPalette.primary;
-                                    width: 20px;
-                                    height: 20px;
-                                }
-                            }
-                            // Rename pencil button — mirrors GTK's
-                            // `add_rename_button` (labels.rs:187).
-                            // VerticalLayout centers the 40 px
-                            // IconButton in the 56 px row.
-                            VerticalLayout {
-                                alignment: center;
-                                IconButton {
-                                    icon: Icons.edit;
-                                    clicked => { root.rename-label-tap(item.id); }
-                                }
-                            }
-                            // Delete X button — mirrors GTK's
-                            // `add_delete_button` (labels.rs:209)
-                            // which uses a `user-trash-symbolic`
-                            // tinted with `.destructive-action`.
-                            // Janek picked the X glyph for Android;
-                            // Icons.close gives us the SVG and
-                            // `has-error: true` colorises it with
-                            // the Material error palette so the
-                            // destructive intent reads at a glance.
-                            VerticalLayout {
-                                alignment: center;
-                                IconButton {
-                                    icon: Icons.close;
-                                    has-error: true;
-                                    clicked => { root.delete-label-tap(item.id); }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
 
     // ── Duration dialog (modal overlay, on top of both screens) ─
     // Declared AFTER the Edit-Session overlay so it draws on top
@@ -3461,7 +3361,7 @@ export component MainWindow inherits Window {
     // button. Background extends behind that zone too (surface
     // colour) so the status bar reads against a matching tint.
     Rectangle {
-        visible: !root.running-page && !root.done-page && !root.labels-page && !root.edit-session-page;
+        visible: !root.running-page && !root.done-page && !root.edit-session-page;
         x: 0;
         y: 0;
         width: parent.width;
@@ -3642,7 +3542,7 @@ export component MainWindow inherits Window {
     // and fires `nav-changed` so Rust can refresh per-page
     // state (e.g. reload the Log feed when entering it).
     Rectangle {
-        visible: !root.running-page && !root.done-page && !root.labels-page && !root.edit-session-page;
+        visible: !root.running-page && !root.done-page && !root.edit-session-page;
         x: 0;
         y: parent.height - root.nav-bar-height - root.bottom-bar-inset;
         width: parent.width;
@@ -3679,6 +3579,288 @@ export component MainWindow inherits Window {
             ];
             current-index <=> root.nav-page;
             index-changed(idx) => { root.nav-changed(idx); }
+        }
+    }
+
+    // ── Label chooser (overlay, slides over everything) ─────────
+    // Mirrors GTK's `push_labels_chooser`: a navigation push with
+    // a back-button header bar + a list of label rows. Slides in
+    // from the right via `labels-offset`; Setup, Running, Done,
+    // Log, and Edit-Session all stay put underneath. Declared
+    // AFTER the Edit-Session overlay so Slint's later-children-
+    // on-top rule places this chooser z-above it — the chooser
+    // surface can be opened from either the Setup screen (mode
+    // label) or the Edit-Session overlay (per-session label),
+    // and either underlying surface stays visible behind the
+    // slide-in.
+    Rectangle {
+        x: parent.width - root.labels-offset;
+        width: parent.width;
+        height: parent.height;
+        background: MaterialPalette.surface;
+
+        VerticalLayout {
+            padding-top: root.status-bar-inset + 24px;
+            padding-bottom: root.bottom-bar-inset + 24px;
+            padding-left: 16px;
+            padding-right: 16px;
+            spacing: 16px;
+            alignment: start;
+
+            // Header — back arrow + title. Mirrors the
+            // `Adw.HeaderBar { show-back-button: true }` +
+            // `NavigationPage.title` GTK uses. The back button is
+            // an IconButton (40 px touch target) on the left; an
+            // equal-width spacer on the right balances the row
+            // so the title actually centers in the page (rather
+            // than sitting to the right of the back button).
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: stretch;
+
+                IconButton {
+                    icon: Icons.arrow-back;
+                    clicked => { root.labels-back(); }
+                }
+                Text {
+                    text: "Choose Label";
+                    font-size: 18px;
+                    color: MaterialPalette.on-surface;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    horizontal-alignment: center;
+                }
+                Rectangle {
+                    width: 40px;
+                }
+            }
+
+            // Label list inside a BoxedList — same boxed look as
+            // the Session group, so the chooser feels consistent.
+            // Each iteration emits an optional 1 px hair-line
+            // divider above the row (skipped for the first row),
+            // mirroring the divider pattern between Cues /
+            // Stopwatch / Duration / Label / Keep Awake in the
+            // Session group.
+            BoxedList {
+                // Synthetic "Create new label…" row — mirrors the
+                // top row that `rebuild_chooser_rows` adds in the
+                // GTK shell (`labels.rs:107-139`). Always present
+                // (no DB query needed) so the create-flow is one
+                // tap away on first launch when no user labels
+                // exist yet.
+                Rectangle {
+                    height: 56px;
+                    background: create-touch.has-hover
+                        ? MaterialPalette.surface-container-high
+                        : transparent;
+
+                    create-touch := TouchArea {
+                        clicked => { root.create-label-tap(); }
+                    }
+
+                    HorizontalLayout {
+                        padding-left: 16px;
+                        padding-right: 16px;
+                        spacing: 12px;
+                        alignment: stretch;
+
+                        Text {
+                            text: "Create new label…";
+                            font-size: 16px;
+                            color: MaterialPalette.on-surface;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+                        // Plus glyph — GTK uses `list-add-symbolic`;
+                        // Material's bundled Icons set has no add
+                        // SVG, so we render the ASCII "+" (always
+                        // rasterises, no font-coverage risk).
+                        Text {
+                            text: "+";
+                            font-size: 22px;
+                            color: MaterialPalette.on-surface-variant;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                // Divider separating the Create row from the
+                // first label row.
+                Rectangle {
+                    height: 1px;
+                    background: MaterialPalette.outline-variant;
+                }
+
+                for item[idx] in root.label-items : VerticalLayout {
+                    spacing: 0;
+
+                    if idx > 0 : Rectangle {
+                        height: 1px;
+                        background: MaterialPalette.outline-variant;
+                    }
+
+                    Rectangle {
+                        height: 56px;
+                        background: row-touch.has-hover
+                            ? MaterialPalette.surface-container-high
+                            : transparent;
+
+                        row-touch := TouchArea {
+                            clicked => { root.label-picked(item.id); }
+                        }
+
+                        HorizontalLayout {
+                            padding-left: 16px;
+                            padding-right: 16px;
+                            spacing: 12px;
+                            alignment: stretch;
+
+                            Text {
+                                text: item.name;
+                                font-size: 16px;
+                                color: MaterialPalette.on-surface;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                            }
+                            // Check-mark suffix on the currently-
+                            // selected row — mirrors GTK's
+                            // `object-select-symbolic` indicator.
+                            // GTK adds this suffix BEFORE the rename
+                            // + delete buttons (labels.rs:171 vs
+                            // 174-175), so visually it lands to
+                            // their left. VerticalLayout centers
+                            // the image inside the 56-px row.
+                            if item.selected : VerticalLayout {
+                                alignment: center;
+                                Image {
+                                    source: Icons.check;
+                                    colorize: MaterialPalette.primary;
+                                    width: 20px;
+                                    height: 20px;
+                                }
+                            }
+                            // Rename pencil button — mirrors GTK's
+                            // `add_rename_button` (labels.rs:187).
+                            // VerticalLayout centers the 40 px
+                            // IconButton in the 56 px row.
+                            VerticalLayout {
+                                alignment: center;
+                                IconButton {
+                                    icon: Icons.edit;
+                                    clicked => { root.rename-label-tap(item.id); }
+                                }
+                            }
+                            // Delete X button — mirrors GTK's
+                            // `add_delete_button` (labels.rs:209)
+                            // which uses a `user-trash-symbolic`
+                            // tinted with `.destructive-action`.
+                            // Janek picked the X glyph for Android;
+                            // Icons.close gives us the SVG and
+                            // `has-error: true` colorises it with
+                            // the Material error palette so the
+                            // destructive intent reads at a glance.
+                            VerticalLayout {
+                                alignment: center;
+                                IconButton {
+                                    icon: Icons.close;
+                                    has-error: true;
+                                    clicked => { root.delete-label-tap(item.id); }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Bell-sound chooser (overlay, B-5a) ──────────────────────
+    // Same slide-in shape as the labels chooser; opened from the
+    // Setup Bells group's Starting/End "Bell Sound" body rows.
+    // Select-only (tap a row → pick + back); per-row Play/Stop
+    // preview lands in B-4. Declared after the labels chooser so
+    // it z-stacks above the Setup screen it slides over.
+    Rectangle {
+        x: parent.width - root.bell-chooser-offset;
+        width: parent.width;
+        height: parent.height;
+        background: MaterialPalette.surface;
+
+        VerticalLayout {
+            padding-top: root.status-bar-inset + 24px;
+            padding-bottom: root.bottom-bar-inset + 24px;
+            padding-left: 16px;
+            padding-right: 16px;
+            spacing: 16px;
+            alignment: start;
+
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: stretch;
+
+                IconButton {
+                    icon: Icons.arrow-back;
+                    clicked => { root.bell-chooser-back(); }
+                }
+                Text {
+                    text: "Choose Bell Sound";
+                    font-size: 18px;
+                    color: MaterialPalette.on-surface;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    horizontal-alignment: center;
+                }
+                Rectangle {
+                    width: 40px;
+                }
+            }
+
+            BoxedList {
+                for item[idx] in root.bell-chooser-items : VerticalLayout {
+                    spacing: 0;
+
+                    if idx > 0 : Rectangle {
+                        height: 1px;
+                        background: MaterialPalette.outline-variant;
+                    }
+
+                    Rectangle {
+                        height: 56px;
+                        background: bell-row-touch.has-hover
+                            ? MaterialPalette.surface-container-high
+                            : transparent;
+
+                        bell-row-touch := TouchArea {
+                            clicked => { root.bell-chooser-pick(item.uuid); }
+                        }
+
+                        HorizontalLayout {
+                            padding-left: 16px;
+                            padding-right: 16px;
+                            spacing: 12px;
+                            alignment: stretch;
+
+                            Text {
+                                text: item.name;
+                                font-size: 16px;
+                                color: MaterialPalette.on-surface;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                            }
+                            if item.selected : VerticalLayout {
+                                alignment: center;
+                                Image {
+                                    source: Icons.check;
+                                    colorize: MaterialPalette.primary;
+                                    width: 20px;
+                                    height: 20px;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
     } // root-focus FocusScope

@@ -1896,6 +1896,99 @@ fn wire_date_picker_adapter(ui: &MainWindow) {
     });
 }
 
+/// Read a global (non-per-mode) string setting. Bell settings
+/// (`starting_bell_active` / `_sound`, `end_bell_active` /
+/// `_sound`) are app-wide, not per-mode — same as the GTK
+/// shell's plain `db.get_setting` keys.
+#[cfg(target_os = "android")]
+fn read_global_setting(key: &str, default: &str) -> String {
+    let Some(db_arc) = DATABASE.get() else { return default.to_string(); };
+    let Ok(guard) = db_arc.lock() else { return default.to_string(); };
+    let Some(db) = guard.as_ref() else { return default.to_string(); };
+    db.get_setting(key, default)
+        .unwrap_or_else(|_| default.to_string())
+}
+
+#[cfg(target_os = "android")]
+fn write_global_setting(key: &str, value: &str) {
+    if let Some(db_arc) = DATABASE.get() {
+        if let Ok(guard) = db_arc.lock() {
+            if let Some(db) = guard.as_ref() {
+                let _ = db.set_setting(key, value);
+            }
+        }
+    }
+}
+
+/// Resolve a bell-sound uuid to its display name (empty string
+/// if the row is gone — a deleted custom sound that a setting
+/// still points at; the chooser re-pick fixes it).
+#[cfg(target_os = "android")]
+fn bell_sound_name(uuid: &str) -> String {
+    let Some(db_arc) = DATABASE.get() else { return String::new(); };
+    let Ok(guard) = db_arc.lock() else { return String::new(); };
+    let Some(db) = guard.as_ref() else { return String::new(); };
+    db.list_bell_sounds()
+        .ok()
+        .and_then(|v| {
+            v.into_iter()
+                .find(|b| b.uuid.to_string() == uuid)
+                .map(|b| b.name)
+        })
+        .unwrap_or_default()
+}
+
+/// Push the current bell settings into the Setup Bells-group
+/// props: enable switches from `*_bell_active`, body subtitles
+/// from the resolved `*_bell_sound` name (defaulting to the
+/// bundled bowl). Mirrors GTK's `refresh_*_bell_sound_subtitle`
+/// + enable-expansion init.
+#[cfg(target_os = "android")]
+fn refresh_bell_rows(ui: &MainWindow) {
+    ui.set_starting_bell_active(
+        read_global_setting("starting_bell_active", "false") == "true",
+    );
+    ui.set_end_bell_active(
+        read_global_setting("end_bell_active", "false") == "true",
+    );
+    let ss = read_global_setting(
+        "starting_bell_sound",
+        meditate_core::seeds::BUNDLED_BOWL_UUID,
+    );
+    let es = read_global_setting(
+        "end_bell_sound",
+        meditate_core::seeds::BUNDLED_BOWL_UUID,
+    );
+    ui.set_starting_bell_sound_name(bell_sound_name(&ss).into());
+    ui.set_end_bell_sound_name(bell_sound_name(&es).into());
+}
+
+/// Fill the bell-chooser overlay with every bell sound, the
+/// row matching `current_uuid` check-marked. Select-only —
+/// per-row Play/Stop preview lands in B-4.
+#[cfg(target_os = "android")]
+fn populate_bell_chooser(ui: &MainWindow, current_uuid: &str) {
+    let Some(db_arc) = DATABASE.get() else { return; };
+    let Ok(guard) = db_arc.lock() else { return; };
+    let Some(db) = guard.as_ref() else { return; };
+    let items: Vec<NameChoice> = db
+        .list_bell_sounds()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|b| {
+            let u = b.uuid.to_string();
+            NameChoice {
+                selected: u == current_uuid,
+                uuid: u.into(),
+                name: b.name.into(),
+            }
+        })
+        .collect();
+    ui.set_bell_chooser_items(
+        std::rc::Rc::new(slint::VecModel::from(items)).into(),
+    );
+}
+
 fn build_ui() -> MainWindow {
     let ui = MainWindow::new().unwrap();
 
@@ -2581,6 +2674,103 @@ fn build_ui() -> MainWindow {
         });
     }
 
+    // ── Bells group (B-5a) ──────────────────────────────────────
+    // Starting / End bell enable + sound-pick wiring. Settings
+    // are global (not per-mode). `bell_chooser_is_end` records
+    // which row opened the chooser so the pick persists to the
+    // right `*_bell_sound` key.
+    #[cfg(target_os = "android")]
+    let bell_chooser_is_end: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+
+    {
+        ui.on_starting_bell_toggled(move |value| {
+            #[cfg(target_os = "android")]
+            write_global_setting(
+                "starting_bell_active",
+                if value { "true" } else { "false" },
+            );
+            let _ = value;
+        });
+    }
+    {
+        ui.on_end_bell_toggled(move |value| {
+            #[cfg(target_os = "android")]
+            write_global_setting(
+                "end_bell_active",
+                if value { "true" } else { "false" },
+            );
+            let _ = value;
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let bell_chooser_is_end = bell_chooser_is_end.clone();
+        ui.on_starting_bell_sound_tap(move || {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                bell_chooser_is_end.set(false);
+                let cur = read_global_setting(
+                    "starting_bell_sound",
+                    meditate_core::seeds::BUNDLED_BOWL_UUID,
+                );
+                populate_bell_chooser(&ui, &cur);
+                ui.set_bell_chooser_page(true);
+            }
+            let _ = weak.clone();
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let bell_chooser_is_end = bell_chooser_is_end.clone();
+        ui.on_end_bell_sound_tap(move || {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                bell_chooser_is_end.set(true);
+                let cur = read_global_setting(
+                    "end_bell_sound",
+                    meditate_core::seeds::BUNDLED_BOWL_UUID,
+                );
+                populate_bell_chooser(&ui, &cur);
+                ui.set_bell_chooser_page(true);
+            }
+            let _ = weak.clone();
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let bell_chooser_is_end = bell_chooser_is_end.clone();
+        ui.on_bell_chooser_pick(move |uuid| {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                let key = if bell_chooser_is_end.get() {
+                    "end_bell_sound"
+                } else {
+                    "starting_bell_sound"
+                };
+                write_global_setting(key, uuid.as_str());
+                refresh_bell_rows(&ui);
+                ui.set_bell_chooser_page(false);
+            }
+            let _ = (weak.clone(), uuid);
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_bell_chooser_back(move || {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                ui.set_bell_chooser_page(false);
+            }
+            let _ = weak.clone();
+        });
+    }
+
     // Done expander master toggle — local state only (does NOT
     // write the mode setting; the persist-back happens on Save
     // via `resolve_persist_action`). Mirrors GTK's
@@ -2907,6 +3097,7 @@ fn build_ui() -> MainWindow {
         reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
         refresh_sync_indicator(&ui);
         refresh_stats(&ui);
+        refresh_bell_rows(&ui);
     }
 
     // "Load more" tap on the Log feed — fetch the next page,
@@ -3600,6 +3791,11 @@ fn build_ui() -> MainWindow {
             }
             if ui.get_labels_page() {
                 ui.set_labels_page(false);
+                return;
+            }
+            #[cfg(target_os = "android")]
+            if ui.get_bell_chooser_page() {
+                ui.set_bell_chooser_page(false);
                 return;
             }
             if ui.get_done_page() {
