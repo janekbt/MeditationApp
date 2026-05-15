@@ -1972,10 +1972,40 @@ fn refresh_bell_rows(ui: &MainWindow) {
     ));
     ui.set_prep_time_secs(secs as i32);
 
-    // Interval Bells enable (B-5c-1).
+    // Interval Bells enable (B-5c-1) + count subtitle (B-5c-2).
     ui.set_interval_bells_active(
         read_global_setting("interval_bells_active", "false") == "true",
     );
+    if let Some(db_arc) = DATABASE.get() {
+        if let Ok(guard) = db_arc.lock() {
+            if let Some(db) = guard.as_ref() {
+                ui.set_interval_bells_summary(
+                    interval_bells_summary(db).into(),
+                );
+            }
+        }
+    }
+}
+
+/// "N enabled" / "1 enabled" / "None enabled" for the Manage
+/// Bells row subtitle. Mirrors GTK's `intervals_count_subtitle`
+/// (`meditate-gtk/src/timer/imp.rs:4031`); the count +
+/// bucketing live in core. `DisplayMode::Countdown` — the
+/// subtitle is informational and the per-mode stopwatch state
+/// isn't wired into this surface yet (FixedFromEnd bells only
+/// drop out of the count in a stopwatch session).
+#[cfg(target_os = "android")]
+fn interval_bells_summary(db: &meditate_core::db::Database) -> String {
+    use meditate_core::format::IntervalsCountKey;
+    let n = meditate_core::bells::interval_bells_count(
+        db,
+        meditate_core::bells::DisplayMode::Countdown,
+    );
+    match meditate_core::format::intervals_count_key(n) {
+        IntervalsCountKey::None => "None enabled".to_string(),
+        IntervalsCountKey::One => "1 enabled".to_string(),
+        IntervalsCountKey::Many(n) => format!("{n} enabled"),
+    }
 }
 
 /// Render an interval bell's summary title. Inline English —
@@ -2035,6 +2065,7 @@ fn populate_interval_bells(ui: &MainWindow) {
     ui.set_interval_bell_items(
         std::rc::Rc::new(slint::VecModel::from(items)).into(),
     );
+    ui.set_interval_bells_summary(interval_bells_summary(db).into());
 }
 
 /// Fill the bell-chooser overlay with every bell sound, the
@@ -2750,11 +2781,12 @@ fn build_ui() -> MainWindow {
 
     // ── Bells group (B-5a) ──────────────────────────────────────
     // Starting / End bell enable + sound-pick wiring. Settings
-    // are global (not per-mode). `bell_chooser_is_end` records
-    // which row opened the chooser so the pick persists to the
-    // right `*_bell_sound` key.
+    // are global (not per-mode). `bell_chooser_target` records
+    // which caller opened the chooser so the pick routes back
+    // correctly: 0 = Starting Bell, 1 = End Bell, 2 = the
+    // interval-bell editor (B-5c-2).
     #[cfg(target_os = "android")]
-    let bell_chooser_is_end: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+    let bell_chooser_target: Rc<Cell<u8>> = Rc::new(Cell::new(0));
 
     {
         ui.on_starting_bell_toggled(move |value| {
@@ -2779,12 +2811,12 @@ fn build_ui() -> MainWindow {
     {
         let weak = ui.as_weak();
         #[cfg(target_os = "android")]
-        let bell_chooser_is_end = bell_chooser_is_end.clone();
+        let bell_chooser_target = bell_chooser_target.clone();
         ui.on_starting_bell_sound_tap(move || {
             #[cfg(target_os = "android")]
             {
                 let Some(ui) = weak.upgrade() else { return; };
-                bell_chooser_is_end.set(false);
+                bell_chooser_target.set(0);
                 let cur = read_global_setting(
                     "starting_bell_sound",
                     meditate_core::seeds::BUNDLED_BOWL_UUID,
@@ -2798,12 +2830,12 @@ fn build_ui() -> MainWindow {
     {
         let weak = ui.as_weak();
         #[cfg(target_os = "android")]
-        let bell_chooser_is_end = bell_chooser_is_end.clone();
+        let bell_chooser_target = bell_chooser_target.clone();
         ui.on_end_bell_sound_tap(move || {
             #[cfg(target_os = "android")]
             {
                 let Some(ui) = weak.upgrade() else { return; };
-                bell_chooser_is_end.set(true);
+                bell_chooser_target.set(1);
                 let cur = read_global_setting(
                     "end_bell_sound",
                     meditate_core::seeds::BUNDLED_BOWL_UUID,
@@ -2817,18 +2849,36 @@ fn build_ui() -> MainWindow {
     {
         let weak = ui.as_weak();
         #[cfg(target_os = "android")]
-        let bell_chooser_is_end = bell_chooser_is_end.clone();
+        let bell_chooser_target = bell_chooser_target.clone();
         ui.on_bell_chooser_pick(move |uuid| {
             #[cfg(target_os = "android")]
             {
                 let Some(ui) = weak.upgrade() else { return; };
-                let key = if bell_chooser_is_end.get() {
-                    "end_bell_sound"
-                } else {
-                    "starting_bell_sound"
-                };
-                write_global_setting(key, uuid.as_str());
-                refresh_bell_rows(&ui);
+                match bell_chooser_target.get() {
+                    2 => {
+                        // Interval-bell editor: just stage the
+                        // pick into the editor fields; it's
+                        // committed when the editor's Save runs.
+                        ui.set_ie_sound_uuid(uuid.clone());
+                        ui.set_ie_sound_name(
+                            bell_sound_name(uuid.as_str()).into(),
+                        );
+                    }
+                    1 => {
+                        write_global_setting(
+                            "end_bell_sound",
+                            uuid.as_str(),
+                        );
+                        refresh_bell_rows(&ui);
+                    }
+                    _ => {
+                        write_global_setting(
+                            "starting_bell_sound",
+                            uuid.as_str(),
+                        );
+                        refresh_bell_rows(&ui);
+                    }
+                }
                 ui.set_bell_chooser_page(false);
             }
             let _ = (weak.clone(), uuid);
@@ -2921,6 +2971,131 @@ fn build_ui() -> MainWindow {
             #[cfg(target_os = "android")]
             if let Some(ui) = weak.upgrade() {
                 ui.set_interval_bells_page(false);
+            }
+            let _ = weak.clone();
+        });
+    }
+
+    // ── Interval-bell editor (B-5c-2): create / delete ──────────
+    {
+        let weak = ui.as_weak();
+        ui.on_create_interval_bell_tap(move || {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                // Seed defaults for a fresh bell.
+                ui.set_ie_kind(0);
+                ui.set_ie_minutes(5);
+                ui.set_ie_jitter(0);
+                ui.set_ie_sound_uuid(
+                    meditate_core::seeds::BUNDLED_BOWL_UUID.into(),
+                );
+                ui.set_ie_sound_name(
+                    bell_sound_name(meditate_core::seeds::BUNDLED_BOWL_UUID)
+                        .into(),
+                );
+                ui.set_interval_editor_page(true);
+            }
+            let _ = weak.clone();
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_interval_bell_delete(move |uuid| {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                if let Some(db_arc) = DATABASE.get() {
+                    if let Ok(guard) = db_arc.lock() {
+                        if let Some(db) = guard.as_ref() {
+                            if let Err(e) =
+                                db.delete_interval_bell(uuid.as_str())
+                            {
+                                meditate_core::log(
+                                    "interval_bell.delete.failed",
+                                    &format!("{uuid}: {e:?}"),
+                                );
+                            }
+                        }
+                    }
+                }
+                populate_interval_bells(&ui);
+            }
+            let _ = (weak.clone(), uuid);
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let bell_chooser_target = bell_chooser_target.clone();
+        ui.on_interval_editor_sound_tap(move || {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                bell_chooser_target.set(2);
+                populate_bell_chooser(&ui, ui.get_ie_sound_uuid().as_str());
+                ui.set_bell_chooser_page(true);
+            }
+            let _ = weak.clone();
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_interval_editor_cancel(move || {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                ui.set_interval_editor_page(false);
+            }
+            let _ = weak.clone();
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_interval_editor_save(move || {
+            #[cfg(target_os = "android")]
+            {
+                use meditate_core::db::IntervalBellKind;
+                let Some(ui) = weak.upgrade() else { return; };
+                let kind = match ui.get_ie_kind() {
+                    1 => IntervalBellKind::FixedFromStart,
+                    2 => IntervalBellKind::FixedFromEnd,
+                    _ => IntervalBellKind::Interval,
+                };
+                let minutes = (ui.get_ie_minutes().max(1) as u32).min(120);
+                // Jitter is only meaningful for the Interval
+                // kind (mirrors GTK gating it on kind).
+                let jitter = if kind == IntervalBellKind::Interval {
+                    (ui.get_ie_jitter().max(0) as u32).min(50)
+                } else {
+                    0
+                };
+                let sound = ui.get_ie_sound_uuid().to_string();
+                if let Some(db_arc) = DATABASE.get() {
+                    if let Ok(guard) = db_arc.lock() {
+                        if let Some(db) = guard.as_ref() {
+                            // Sound-only (B-5c-2): a bundled
+                            // pattern uuid satisfies the NOT-NULL
+                            // FK; `SignalMode::Sound` makes it
+                            // inert. Real pattern picking folds
+                            // in with B-2.
+                            if let Err(e) = db.insert_interval_bell(
+                                kind,
+                                minutes,
+                                jitter,
+                                &sound,
+                                meditate_core::seeds::BUNDLED_PATTERN_PULSE_UUID,
+                                meditate_core::SignalMode::Sound,
+                            ) {
+                                meditate_core::log(
+                                    "interval_bell.insert.failed",
+                                    &format!("{e:?}"),
+                                );
+                            }
+                        }
+                    }
+                }
+                ui.set_interval_editor_page(false);
+                populate_interval_bells(&ui);
             }
             let _ = weak.clone();
         });
@@ -3956,6 +4131,11 @@ fn build_ui() -> MainWindow {
             #[cfg(target_os = "android")]
             if ui.get_bell_chooser_page() {
                 ui.set_bell_chooser_page(false);
+                return;
+            }
+            #[cfg(target_os = "android")]
+            if ui.get_interval_editor_page() {
+                ui.set_interval_editor_page(false);
                 return;
             }
             #[cfg(target_os = "android")]
