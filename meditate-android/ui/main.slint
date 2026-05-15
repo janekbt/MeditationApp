@@ -14,7 +14,12 @@ import {
     MaterialPalette,
     DatePickerPopup, DatePickerAdapter,
     TimePickerPopup, Time,
+    DropDownMenu,
 } from "@material";
+// `MenuItem` (DropDownMenu's `items` element type) isn't
+// re-exported through `material.slint`; pull it from the source
+// module so the Log-filter label dropdown can be typed.
+import { MenuItem } from "../material-1.0/ui/items/menu_item.slint";
 // `Date` isn't re-exported through `material.slint` (unlike its
 // sibling `Time`); import it directly from the picker module so
 // `edit-start-date` and the popup's `accepted(date)` callback can
@@ -997,6 +1002,32 @@ export component MainWindow inherits Window {
     // `meditate-gtk/src/window/imp.rs:792`.
     in-out property <bool> filter-notes-only: false;
     callback filter-notes-toggled(bool);
+
+    // Label filter (L-5c). Mirrors GTK's `filter_label_row`
+    // ComboRow at `meditate-gtk/data/ui/window.blp:106` +
+    // `refresh_filter_labels` at
+    // `meditate-gtk/src/log/imp.rs:305`. `filter-label-items`
+    // is Rust-populated as ["All labels", <name>, …]; index 0
+    // clears the filter. `filter-label-index` is the dropdown's
+    // current selection (kept in sync both ways);
+    // `filter-label-selected` fires on pick — Rust resolves
+    // index→rowid, reloads page 0, and closes the sheet.
+    in property <[MenuItem]> filter-label-items: [];
+    // Defaults to -1 (not 0) so the first Rust-driven
+    // `refresh_filter_label_items` — which sets the real active
+    // index (0 = "All labels") — is always a genuine value
+    // *change*. DropDownMenu only refreshes its displayed text
+    // from inside `changed current_index`, so a -1 → 0 first
+    // sync is what makes "All labels" actually render on the
+    // very first open.
+    in-out property <int> filter-label-index: -1;
+    // Resolved label rowid the paginator filters on (0 = "All
+    // labels" / no filter). Rust maps the picked dropdown index
+    // to this via the loaded label list; kept separate from
+    // `filter-label-index` because the dropdown row order is a
+    // UI concern while the rowid is what `SessionFilter` needs.
+    in-out property <int> filter-label-id: 0;
+    callback filter-label-selected(int);
 
     // True when any of the Log-feed filters is engaged. L-5a
     // exposes this as the gate between the "No Sessions Yet"
@@ -2619,12 +2650,24 @@ export component MainWindow inherits Window {
     }
 
     // ── Filter sheet (L-5) ──────────────────────────────────────
-    // Modal overlay over the Log feed. L-5a only ships the
-    // surface (title bar + Close button); L-5b lands the
-    // Has Notes SwitchRow, L-5c lands the Label chooser. Same
-    // scrim-tap-dismiss + card-tap-stop pattern as the other
-    // modal dialogs in this file.
-    if root.filter-sheet-open : Rectangle {
+    // Modal overlay over the Log feed. Has Notes SwitchRow +
+    // Label DropDownMenu; same scrim-tap-dismiss + card-tap-stop
+    // pattern as the other modal dialogs.
+    //
+    // NB: gated by `visible:` rather than `if:` (unlike the
+    // sibling dialogs). Material's `DropDownMenu` keeps its
+    // displayed text in a private `text_field.text` that's only
+    // refreshed from inside its own `changed current_index`
+    // handler — there's no `in` text/selection setter. An
+    // `if`-gated sheet rebuilds the DropDownMenu on every open,
+    // and a freshly-constructed instance whose bound
+    // `current-index` already equals the active value never
+    // fires `changed`, so it renders blank. Keeping the subtree
+    // alive (just hidden) preserves the dropdown's display
+    // state across opens. `visible: false` elements don't render
+    // or receive input, so the scrim still behaves modally.
+    Rectangle {
+        visible: root.filter-sheet-open;
         background: #00000080;
         TouchArea {
             clicked => { root.filter-sheet-open = false; }
@@ -2666,6 +2709,20 @@ export component MainWindow inherits Window {
                         checked <=> root.filter-notes-only;
                         toggled(on) => { root.filter-notes-toggled(on); }
                     }
+                }
+
+                // Label filter dropdown — Material's ComboRow
+                // analogue. Index 0 is the synthetic "All labels"
+                // entry (clears the filter). Instant-apply: a
+                // pick fires `filter-label-selected`, Rust
+                // reloads + closes the sheet, matching GTK's
+                // `filter_label_row` notify handler at
+                // `meditate-gtk/src/window/imp.rs:799`.
+                DropDownMenu {
+                    label: "Label";
+                    items: root.filter-label-items;
+                    current-index <=> root.filter-label-index;
+                    selected(idx) => { root.filter-label-selected(idx); }
                 }
 
                 HorizontalLayout {

@@ -505,6 +505,7 @@ const LOG_PAGE_SIZE: u32 = 15;
 fn load_log_page(
     offset: u32,
     notes_only: bool,
+    label_id: Option<i64>,
 ) -> (Vec<(i64, meditate_core::db::Session)>, bool) {
     let Some(db_arc) = DATABASE.get() else { return (Vec::new(), false); };
     let Ok(guard) = db_arc.lock() else { return (Vec::new(), false); };
@@ -513,6 +514,7 @@ fn load_log_page(
         limit: Some(LOG_PAGE_SIZE),
         offset: Some(offset),
         only_with_notes: notes_only,
+        label_id,
         ..meditate_core::db::SessionFilter::default()
     };
     let rows = meditate_core::db::query_sessions_from_db(db, &filter)
@@ -666,10 +668,34 @@ fn reset_log_feed(
     loaded: &std::rc::Rc<std::cell::RefCell<Vec<(i64, meditate_core::db::Session)>>>,
     pending: &std::rc::Rc<std::cell::RefCell<Vec<(i64, meditate_core::db::Session)>>>,
 ) {
-    let (rows, full) = load_log_page(0, ui.get_filter_notes_only());
+    let (rows, full) = load_log_page(
+        0,
+        ui.get_filter_notes_only(),
+        filter_label_id(ui),
+    );
     *loaded.borrow_mut() = rows;
     ui.set_log_has_more(full);
     render_log_feed(ui, loaded, pending);
+}
+
+/// Resolve the Slint `filter-label-id` property (0 = "All
+/// labels") into the `Option<i64>` the `SessionFilter` expects.
+#[cfg(target_os = "android")]
+fn filter_label_id(ui: &MainWindow) -> Option<i64> {
+    let id = ui.get_filter_label_id() as i64;
+    if id > 0 { Some(id) } else { None }
+}
+
+/// Recompute `filter-has-active` from the live filter
+/// properties. Drives the "No Sessions Yet" vs "No Matching
+/// Sessions" empty-state split. Mirrors GTK's `has_filter`
+/// (`notes_only || label_id.is_some()`) at
+/// `meditate-gtk/src/log/imp.rs:144`.
+#[cfg(target_os = "android")]
+fn sync_filter_has_active(ui: &MainWindow) {
+    ui.set_filter_has_active(
+        ui.get_filter_notes_only() || filter_label_id(ui).is_some(),
+    );
 }
 
 /// "Load more" — query the next page (offset = current loaded
@@ -682,7 +708,11 @@ fn extend_log_feed(
     pending: &std::rc::Rc<std::cell::RefCell<Vec<(i64, meditate_core::db::Session)>>>,
 ) {
     let offset = loaded.borrow().len() as u32;
-    let (rows, full) = load_log_page(offset, ui.get_filter_notes_only());
+    let (rows, full) = load_log_page(
+        offset,
+        ui.get_filter_notes_only(),
+        filter_label_id(ui),
+    );
     if rows.is_empty() {
         // Defensive: button pressed but no more rows. Hide it.
         ui.set_log_has_more(false);
@@ -902,6 +932,54 @@ fn validate_rename_label_name(name: &str, except_id: i64) -> bool {
         meditate_core::db::is_label_name_taken_from_db(db, n, except_id).unwrap_or(false)
     });
     validity.is_savable()
+}
+
+/// Ordered (rowid, name) list of all labels — index 0 in the
+/// filter dropdown is the synthetic "All labels" entry, so the
+/// returned Vec maps 1:1 onto dropdown indices 1..=N. Mirrors
+/// GTK's `refresh_filter_labels` model build at
+/// `meditate-gtk/src/log/imp.rs:305`.
+#[cfg(target_os = "android")]
+fn all_labels_ordered() -> Vec<(i64, String)> {
+    let Some(db_arc) = DATABASE.get() else { return Vec::new(); };
+    let Ok(guard) = db_arc.lock() else { return Vec::new(); };
+    let Some(db) = guard.as_ref() else { return Vec::new(); };
+    meditate_core::db::list_labels_from_db(db)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|l| (l.id, l.name))
+        .collect()
+}
+
+/// Rebuild the Log-filter label dropdown: a synthetic "All
+/// labels" row followed by every label. Also re-syncs
+/// `filter-label-index` so the dropdown shows the currently
+/// active filter when the sheet reopens.
+#[cfg(target_os = "android")]
+fn refresh_filter_label_items(ui: &MainWindow) {
+    let labels = all_labels_ordered();
+    let active_id = ui.get_filter_label_id() as i64;
+    let mut items: Vec<MenuItem> = Vec::with_capacity(labels.len() + 1);
+    items.push(MenuItem {
+        text: "All labels".into(),
+        enabled: true,
+        ..Default::default()
+    });
+    let mut active_index = 0;
+    for (i, (id, name)) in labels.iter().enumerate() {
+        if *id == active_id {
+            active_index = (i + 1) as i32;
+        }
+        items.push(MenuItem {
+            text: name.clone().into(),
+            enabled: true,
+            ..Default::default()
+        });
+    }
+    ui.set_filter_label_items(
+        std::rc::Rc::new(slint::VecModel::from(items)).into(),
+    );
+    ui.set_filter_label_index(active_index);
 }
 
 /// Look up a label's current name by rowid — used to pre-fill
@@ -2549,6 +2627,7 @@ fn build_ui() -> MainWindow {
             #[cfg(target_os = "android")]
             {
                 let Some(ui) = weak.upgrade() else { return; };
+                refresh_filter_label_items(&ui);
                 ui.set_filter_sheet_open(true);
             }
             let _ = weak.clone();
@@ -2573,11 +2652,43 @@ fn build_ui() -> MainWindow {
             #[cfg(target_os = "android")]
             {
                 let Some(ui) = weak.upgrade() else { return; };
-                ui.set_filter_has_active(ui.get_filter_notes_only());
+                sync_filter_has_active(&ui);
                 reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
                 ui.set_filter_sheet_open(false);
             }
             let _ = (weak.clone(), _on);
+        });
+    }
+
+    // Label filter pick (L-5c). Index 0 is the synthetic "All
+    // labels" row → clear the filter; index N → the Nth label
+    // in `all_labels_ordered`. Instant-apply + sheet close,
+    // mirroring GTK's `filter_label_row` notify handler at
+    // `meditate-gtk/src/window/imp.rs:799`.
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let loaded_log_sessions = loaded_log_sessions.clone();
+        #[cfg(target_os = "android")]
+        let pending_deletes = pending_deletes.clone();
+        ui.on_filter_label_selected(move |idx| {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                let resolved = if idx <= 0 {
+                    0
+                } else {
+                    all_labels_ordered()
+                        .get((idx - 1) as usize)
+                        .map(|(id, _)| *id as i32)
+                        .unwrap_or(0)
+                };
+                ui.set_filter_label_id(resolved);
+                sync_filter_has_active(&ui);
+                reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
+                ui.set_filter_sheet_open(false);
+            }
+            let _ = (weak.clone(), idx);
         });
     }
 
