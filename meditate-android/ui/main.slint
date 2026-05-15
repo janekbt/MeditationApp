@@ -109,6 +109,19 @@ export struct LabelTotalRow {
     subtitle: string,
 }
 
+// One bar in the Stats chart. Rust pre-resolves everything:
+// `ratio` is the 0.0..1.0 bar height fraction (value / y-axis
+// max, clamped), `label` the (sparse) x-axis caption already
+// rendered for the active period. Mirrors GTK's
+// `draw_chart_plot` bar path + `x_label_text` at
+// `meditate-gtk/src/stats/imp.rs:677 / :742`; the GTK shell
+// custom-paints with Cairo, here each bar is a declarative
+// bottom-anchored Rectangle.
+export struct ChartBar {
+    ratio: float,
+    label: string,
+}
+
 // Multi-line note input — the Slint Material library's `TextField`
 // is hard-coded `single_line: true`, but the GTK shell's note view
 // is a 180-px-tall Gtk.TextView with word-wrap. This custom
@@ -1082,6 +1095,18 @@ export component MainWindow inherits Window {
     // labeled sessions yet), mirroring GTK's
     // `label_totals_section.set_visible(false)`.
     in property <[LabelTotalRow]> stat-label-totals: [];
+
+    // Chart (S-5a). `stat-chart-period` is the active segment
+    // (0 Week / 1 Month / 2 3-Months / 3 Year), kept in sync
+    // with the SegmentedButton; `chart-period-changed` fires
+    // on a pick and Rust recomputes `stat-chart-bars` +
+    // y-axis labels. Mirrors GTK's `period_toggle_group` +
+    // `reload_chart` at `meditate-gtk/src/stats/imp.rs:437`.
+    in property <[ChartBar]> stat-chart-bars: [];
+    in property <string> stat-chart-ymax: "0m";
+    in property <string> stat-chart-ymid: "0m";
+    in-out property <int> stat-chart-period: 0;
+    callback chart-period-changed(int);
 
     // Has-Notes filter (L-5b). `filter-notes-only` is the live
     // flag the Rust paginator reads via `get_filter_notes_only`
@@ -2419,6 +2444,123 @@ export component MainWindow inherits Window {
                                         color: MaterialPalette.on-surface-variant;
                                         horizontal-alignment: left;
                                         wrap: word-wrap;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Period toggle + chart card (S-5a). Mirrors
+                // GTK's `period_toggle_group` + chart_card at
+                // `meditate-gtk/data/ui/stats_view.blp:143`.
+                // The bar plot is declarative here (one bottom-
+                // anchored Rectangle per `ChartBar`) rather than
+                // Cairo-painted; the line variant is S-5b.
+                VerticalLayout {
+                    spacing: 12px;
+
+                    HorizontalLayout {
+                        alignment: center;
+                        SegmentedButton {
+                            current-index <=> root.stat-chart-period;
+                            items: [
+                                { text: "Week" },
+                                { text: "Month" },
+                                { text: "3 Months" },
+                                { text: "Year" },
+                            ];
+                            index-changed(idx) => {
+                                root.chart-period-changed(idx);
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        border-radius: 16px;
+                        background: MaterialPalette.surface-container;
+
+                        VerticalLayout {
+                            padding: 12px;
+                            spacing: 8px;
+
+                            Text {
+                                text: "MINUTES / DAY";
+                                font-size: 11px;
+                                font-weight: 700;
+                                color: MaterialPalette.on-surface-variant;
+                                horizontal-alignment: left;
+                            }
+
+                            HorizontalLayout {
+                                spacing: 8px;
+
+                                // Y-axis: max / mid labels,
+                                // spaced top + middle. Mirrors
+                                // GTK's `y_axis` box at
+                                // `stats/imp.rs:478`.
+                                VerticalLayout {
+                                    width: 44px;
+                                    Text {
+                                        text: root.stat-chart-ymax;
+                                        font-size: 10px;
+                                        color: MaterialPalette.on-surface-variant;
+                                        horizontal-alignment: right;
+                                    }
+                                    Rectangle { vertical-stretch: 1; }
+                                    Text {
+                                        text: root.stat-chart-ymid;
+                                        font-size: 10px;
+                                        color: MaterialPalette.on-surface-variant;
+                                        horizontal-alignment: right;
+                                    }
+                                    Rectangle { vertical-stretch: 1; }
+                                }
+
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    spacing: 4px;
+
+                                    // Plot — fixed 120 px tall,
+                                    // one slot per bar. Each bar
+                                    // is bottom-anchored; height
+                                    // = ratio * plot height,
+                                    // floored at 3 px for
+                                    // non-zero values (mirrors
+                                    // GTK's `.max(3.0)`).
+                                    Rectangle {
+                                        height: 120px;
+                                        HorizontalLayout {
+                                            spacing: 2px;
+                                            for bar in root.stat-chart-bars : Rectangle {
+                                                horizontal-stretch: 1;
+                                                bar-rect := Rectangle {
+                                                    width: parent.width * 0.7;
+                                                    x: (parent.width - self.width) / 2;
+                                                    height: bar.ratio <= 0
+                                                        ? 0px
+                                                        : max(3px, parent.height * bar.ratio);
+                                                    y: parent.height - self.height;
+                                                    border-radius: 2px;
+                                                    background: MaterialPalette.primary;
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // X-axis labels — sparse;
+                                    // Rust emits "" for slots
+                                    // GTK would leave blank.
+                                    HorizontalLayout {
+                                        spacing: 2px;
+                                        for bar in root.stat-chart-bars : Text {
+                                            horizontal-stretch: 1;
+                                            text: bar.label;
+                                            font-size: 9px;
+                                            color: MaterialPalette.on-surface-variant;
+                                            horizontal-alignment: center;
+                                            overflow: elide;
+                                        }
                                     }
                                 }
                             }

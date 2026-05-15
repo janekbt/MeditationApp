@@ -513,6 +513,121 @@ fn refresh_stats(ui: &MainWindow) {
     ui.set_stat_label_totals(
         std::rc::Rc::new(slint::VecModel::from(label_rows)).into(),
     );
+
+    // Chart (S-5a). Drop the DB guard first — `refresh_chart`
+    // re-locks it itself, and holding two nested locks on the
+    // same Mutex would deadlock.
+    drop(guard);
+    refresh_chart(ui);
+}
+
+/// Map the Stats chart SegmentedButton index (0 Week / 1
+/// Month / 2 3-Months / 3 Year) to a `ChartPeriod`. Order
+/// matches the Slint `items` array.
+#[cfg(target_os = "android")]
+fn chart_period_from_index(i: i32) -> meditate_core::date_math::ChartPeriod {
+    use meditate_core::date_math::ChartPeriod;
+    match i {
+        1 => ChartPeriod::FourWeeks,
+        2 => ChartPeriod::ThreeMonths,
+        3 => ChartPeriod::OneYear,
+        _ => ChartPeriod::Week,
+    }
+}
+
+/// Sparse x-axis caption for chart bar `i`. Mirrors GTK's
+/// `x_label_text` at `meditate-gtk/src/stats/imp.rs:742`: the
+/// `x_label_kind` decision lives in core, the locale-aware
+/// rendering is shell-side. Android uses chrono's English
+/// `%a` / `%b` (i18n shell-deferred, as elsewhere).
+#[cfg(target_os = "android")]
+fn chart_x_label(
+    date_str: &str,
+    i: usize,
+    days: u32,
+    months: &[u32],
+) -> String {
+    use meditate_core::date_math::{x_label_kind, XLabelKind};
+    let parse = || chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d").ok();
+    match x_label_kind(i, days, months) {
+        XLabelKind::Empty => String::new(),
+        XLabelKind::Weekday => parse()
+            .map(|d| d.format("%a").to_string())
+            .unwrap_or_default(),
+        XLabelKind::MonthShortDay => parse()
+            .map(|d| d.format("%b %-d").to_string())
+            .unwrap_or_default(),
+        XLabelKind::MonthLetter => parse()
+            .and_then(|d| {
+                d.format("%b").to_string().chars().next().map(|c| c.to_string())
+            })
+            .unwrap_or_default(),
+    }
+}
+
+/// Recompute the Stats chart from the active period. Builds a
+/// dense (0-filled) daily series for the trailing window,
+/// aggregates it (monthly ≥1y, weekly ≥3m, else daily) via
+/// core, derives the y-axis ticks, and emits one `ChartBar`
+/// per data point. Mirrors GTK's `reload_chart` at
+/// `meditate-gtk/src/stats/imp.rs:437` (S-5a = bars only; the
+/// line variant is S-5b).
+#[cfg(target_os = "android")]
+fn refresh_chart(ui: &MainWindow) {
+    let Some(db_arc) = DATABASE.get() else { return; };
+    let Ok(guard) = db_arc.lock() else { return; };
+    let Some(db) = guard.as_ref() else { return; };
+
+    let period = chart_period_from_index(ui.get_stat_chart_period());
+    let days = period.days();
+    let today = meditate_core::time::today_local();
+    let since = today - chrono::Duration::days(i64::from(days) - 1);
+
+    let sparse: std::collections::HashMap<String, i64> =
+        meditate_core::db::get_daily_totals_since_from_db(db, since)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(d, secs)| (d.format("%Y-%m-%d").to_string(), secs))
+            .collect();
+
+    let daily: Vec<(String, i64)> = (0..i64::from(days))
+        .map(|i| {
+            let dt = since + chrono::Duration::days(i);
+            let key = dt.format("%Y-%m-%d").to_string();
+            let secs = sparse.get(&key).copied().unwrap_or(0);
+            (key, secs)
+        })
+        .collect();
+
+    let data = meditate_core::date_math::aggregate_for_chart_period(
+        &daily, days,
+    );
+    let series: Vec<i64> = data.iter().map(|(_, d)| *d).collect();
+    let ticks = meditate_core::date_math::chart_y_axis_ticks(&series);
+    let months: Vec<u32> = data
+        .iter()
+        .map(|(d, _)| d.get(5..7).and_then(|s| s.parse().ok()).unwrap_or(0))
+        .collect();
+
+    let bars: Vec<ChartBar> = data
+        .iter()
+        .enumerate()
+        .map(|(i, (date_str, v))| ChartBar {
+            ratio: (*v as f32 / ticks.max as f32).clamp(0.0, 1.0),
+            label: chart_x_label(date_str, i, days, &months).into(),
+        })
+        .collect();
+
+    let hm = |secs: i64| {
+        render_hm(meditate_core::format::hm_secs_key(
+            std::time::Duration::from_secs(secs.max(0) as u64),
+        ))
+    };
+    ui.set_stat_chart_ymax(hm(ticks.max).into());
+    ui.set_stat_chart_ymid(hm(ticks.mid).into());
+    ui.set_stat_chart_bars(
+        std::rc::Rc::new(slint::VecModel::from(bars)).into(),
+    );
 }
 
 /// Bundled-SVG selector for an insight row, replacing GTK's
@@ -3179,6 +3294,21 @@ fn build_ui() -> MainWindow {
             "sync action pending (phase 7: recovery / prefs / retry)",
         );
     });
+
+    // Chart period toggle (S-5a). Recompute just the chart —
+    // mirrors GTK's `period_toggle_group` notify → `reload_chart`
+    // (the other stats sections don't depend on the period).
+    {
+        let weak = ui.as_weak();
+        ui.on_chart_period_changed(move |_idx| {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                refresh_chart(&ui);
+            }
+            let _ = (weak.clone(), _idx);
+        });
+    }
 
     // Bottom NavigationBar selection changed — Rust-side
     // refresh of the page-specific state (just Log for now).
