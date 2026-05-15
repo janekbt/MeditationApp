@@ -514,6 +514,62 @@ fn refresh_stats(ui: &MainWindow) {
         std::rc::Rc::new(slint::VecModel::from(label_rows)).into(),
     );
 
+    // Contribution heatmap (S-6). 91 cells column-major from
+    // core; chunk into 13 week-columns of 7. Mirrors GTK's
+    // `reload_contrib_grid` at
+    // `meditate-gtk/src/stats/imp.rs:191`.
+    {
+        let totals: std::collections::HashMap<chrono::NaiveDate, i64> =
+            meditate_core::db::get_daily_totals_from_db(db)
+                .unwrap_or_default()
+                .into_iter()
+                .collect();
+        let daily_expected =
+            meditate_core::goal::daily_expected_mins(goal_mins);
+        let core_cells = meditate_core::contrib::build_grid(
+            today,
+            meditate_core::date_math::locale_week_start_dow(),
+            &totals,
+            daily_expected,
+        );
+        let cols: Vec<ContribCol> = core_cells
+            .chunks(7)
+            .map(|week| {
+                let cells: Vec<ContribCellData> = week
+                    .iter()
+                    .map(|c| ContribCellData {
+                        level: c.level as i32,
+                        future: c.is_future,
+                        today: c.is_today,
+                    })
+                    .collect();
+                ContribCol {
+                    cells: std::rc::Rc::new(slint::VecModel::from(cells))
+                        .into(),
+                }
+            })
+            .collect();
+        // Range caption: oldest-cell month – current month.
+        let month_abbr = |iso: &str| {
+            chrono::NaiveDate::parse_from_str(iso, "%Y-%m-%d")
+                .ok()
+                .map(|d| d.format("%b").to_string())
+                .unwrap_or_default()
+        };
+        let range = match core_cells.first() {
+            Some(first) => format!(
+                "{} – {}",
+                month_abbr(&first.date_iso),
+                today.format("%b"),
+            ),
+            None => String::new(),
+        };
+        ui.set_stat_contrib_cols(
+            std::rc::Rc::new(slint::VecModel::from(cols)).into(),
+        );
+        ui.set_stat_contrib_range(range.into());
+    }
+
     // Chart (S-5a). Drop the DB guard first — `refresh_chart`
     // re-locks it itself, and holding two nested locks on the
     // same Mutex would deadlock.

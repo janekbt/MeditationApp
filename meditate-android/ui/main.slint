@@ -122,6 +122,28 @@ export struct ChartBar {
     label: string,
 }
 
+// One cell of the 13×7 contribution heatmap. `level` 0..4 is
+// `meditate_core::contrib::ContribCell.level` (daily-goal
+// share buckets); `future` dims the cell, `today` rings it.
+// GTK adds a ★ on level-4 (goal-exceeded) days, but that code
+// point tofus on the FP5 Android-15 font (see
+// [[feedback_android_no_unicode_glyphs]]) — the full-intensity
+// colour already carries the signal, so the Android grid skips
+// the glyph.
+export struct ContribCellData {
+    level: int,
+    future: bool,
+    today: bool,
+}
+
+// One column (week) of the heatmap — 7 cells, top-to-bottom
+// from the locale's first weekday. Rust emits 13 of these in
+// column-major order. Nested-array shape mirrors the
+// LogDaySection { items: [..] } pattern.
+export struct ContribCol {
+    cells: [ContribCellData],
+}
+
 // Multi-line note input — the Slint Material library's `TextField`
 // is hard-coded `single_line: true`, but the GTK shell's note view
 // is a 180-px-tall Gtk.TextView with word-wrap. This custom
@@ -1095,6 +1117,14 @@ export component MainWindow inherits Window {
     // labeled sessions yet), mirroring GTK's
     // `label_totals_section.set_visible(false)`.
     in property <[LabelTotalRow]> stat-label-totals: [];
+
+    // Contribution heatmap (S-6). 13 week-columns × 7 days,
+    // column-major. `stat-contrib-range` is the "May – Aug"
+    // caption (oldest cell month – current month). Mirrors
+    // GTK's `reload_contrib_grid` at
+    // `meditate-gtk/src/stats/imp.rs:191`.
+    in property <[ContribCol]> stat-contrib-cols: [];
+    in property <string> stat-contrib-range: "";
 
     // Chart (S-5a). `stat-chart-period` is the active segment
     // (0 Week / 1 Month / 2 3-Months / 3 Year), kept in sync
@@ -2383,6 +2413,93 @@ export component MainWindow inherits Window {
                             color: MaterialPalette.on-surface-variant;
                             horizontal-alignment: left;
                             wrap: word-wrap;
+                        }
+                    }
+                }
+
+                // Contribution heatmap (S-6). Eyebrow + range
+                // caption, the 13×7 grid, then a Less→More
+                // legend. Mirrors GTK's `contrib_grid` block at
+                // `meditate-gtk/data/ui/stats_view.blp:71`. Each
+                // cell colour ramps with `level` (0..4) — GTK
+                // uses a HIG green scale; Android uses the
+                // Material primary at increasing alpha. Level 0
+                // is a faint surface tint; future days reuse it
+                // dimmed; today gets a primary ring.
+                if root.stat-contrib-cols.length > 0 : VerticalLayout {
+                    spacing: 8px;
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text {
+                            text: "LAST 13 WEEKS";
+                            font-size: 11px;
+                            font-weight: 700;
+                            color: MaterialPalette.on-surface-variant;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                            horizontal-alignment: left;
+                        }
+                        Text {
+                            text: root.stat-contrib-range;
+                            font-size: 11px;
+                            color: MaterialPalette.on-surface-variant;
+                            vertical-alignment: center;
+                            horizontal-alignment: right;
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 3px;
+                        alignment: stretch;
+
+                        for col in root.stat-contrib-cols : VerticalLayout {
+                            horizontal-stretch: 1;
+                            spacing: 3px;
+
+                            for cell in col.cells : Rectangle {
+                                height: self.width;
+                                border-radius: 2px;
+                                opacity: cell.future ? 0.3 : 1.0;
+                                background:
+                                    cell.level == 1 ? MaterialPalette.primary.with-alpha(0.30) :
+                                    cell.level == 2 ? MaterialPalette.primary.with-alpha(0.52) :
+                                    cell.level == 3 ? MaterialPalette.primary.with-alpha(0.76) :
+                                    cell.level == 4 ? MaterialPalette.primary :
+                                    MaterialPalette.on-surface.with-alpha(0.08);
+                                border-width: cell.today ? 1.5px : 0px;
+                                border-color: MaterialPalette.primary;
+                            }
+                        }
+                    }
+
+                    // Less → More legend (levels 0..4).
+                    HorizontalLayout {
+                        spacing: 4px;
+                        alignment: end;
+
+                        Text {
+                            text: "Less";
+                            font-size: 10px;
+                            color: MaterialPalette.on-surface-variant;
+                            vertical-alignment: center;
+                        }
+                        for lvl in [0, 1, 2, 3, 4] : Rectangle {
+                            width: 11px;
+                            height: 11px;
+                            border-radius: 2px;
+                            background:
+                                lvl == 1 ? MaterialPalette.primary.with-alpha(0.30) :
+                                lvl == 2 ? MaterialPalette.primary.with-alpha(0.52) :
+                                lvl == 3 ? MaterialPalette.primary.with-alpha(0.76) :
+                                lvl == 4 ? MaterialPalette.primary :
+                                MaterialPalette.on-surface.with-alpha(0.08);
+                        }
+                        Text {
+                            text: "More";
+                            font-size: 10px;
+                            color: MaterialPalette.on-surface-variant;
+                            vertical-alignment: center;
                         }
                     }
                 }
