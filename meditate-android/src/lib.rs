@@ -2996,6 +2996,38 @@ fn build_ui() -> MainWindow {
     let pending_override_uuid: Rc<RefCell<Option<String>>> =
         Rc::new(RefCell::new(None));
 
+    // P-5 Manage state. `rename_preset_uuid` / `delete_preset_uuid`
+    // pin which row the rename / delete dialog targets. The
+    // shared single-slot snackbar gains two more discriminators
+    // (same pattern as `pending_preset_undo`): a deleted preset
+    // to re-insert on Undo (full row, GTK's
+    // `insert_preset_with_uuid` resurrection), and an override's
+    // prior config_json to restore on Undo (the P-4 deferral,
+    // folded in here). The undo handler checks them in priority
+    // order; every snackbar raise clears the others (single slot).
+    #[cfg(target_os = "android")]
+    let rename_preset_uuid: Rc<RefCell<Option<String>>> =
+        Rc::new(RefCell::new(None));
+    #[cfg(target_os = "android")]
+    let delete_preset_uuid: Rc<RefCell<Option<String>>> =
+        Rc::new(RefCell::new(None));
+    #[cfg(target_os = "android")]
+    let pending_preset_delete: Rc<
+        RefCell<
+            Option<(
+                String,
+                String,
+                meditate_core::SessionMode,
+                bool,
+                String,
+            )>,
+        >,
+    > = Rc::new(RefCell::new(None));
+    #[cfg(target_os = "android")]
+    let pending_override_restore: Rc<
+        RefCell<Option<(String, String, meditate_core::SessionMode)>>,
+    > = Rc::new(RefCell::new(None));
+
     // Session being edited via the Log card → Edit-Session
     // overlay (L-4). Holds the rowid between `card-tap`
     // (populates the dialog) and `edit-save-tap` (reads the
@@ -3687,6 +3719,10 @@ fn build_ui() -> MainWindow {
         #[cfg(target_os = "android")]
         let pending_preset_undo = pending_preset_undo.clone();
         #[cfg(target_os = "android")]
+        let pending_preset_delete = pending_preset_delete.clone();
+        #[cfg(target_os = "android")]
+        let pending_override_restore = pending_override_restore.clone();
+        #[cfg(target_os = "android")]
         let recovery_uuid = recovery_uuid.clone();
         #[cfg(target_os = "android")]
         let delete_timer: &'static slint::Timer = delete_timer;
@@ -3732,6 +3768,8 @@ fn build_ui() -> MainWindow {
                 // slot, newest flow owns Undo). No snapshot ⇒ show
                 // the message without Undo wiring rather than skip.
                 recovery_uuid.borrow_mut().take();
+                pending_preset_delete.borrow_mut().take();
+                pending_override_restore.borrow_mut().take();
                 *pending_preset_undo.borrow_mut() =
                     snapshot.map(|j| (j, core_mode));
                 ui.set_snackbar_text(
@@ -3849,8 +3887,6 @@ fn build_ui() -> MainWindow {
     {
         let weak = ui.as_weak();
         #[cfg(target_os = "android")]
-        let current_mode = current_mode.clone();
-        #[cfg(target_os = "android")]
         let pending_save_snapshot = pending_save_snapshot.clone();
         ui.on_create_preset_confirm(move || {
             #[cfg(target_os = "android")]
@@ -3920,6 +3956,16 @@ fn build_ui() -> MainWindow {
         let pending_save_snapshot = pending_save_snapshot.clone();
         #[cfg(target_os = "android")]
         let pending_override_uuid = pending_override_uuid.clone();
+        #[cfg(target_os = "android")]
+        let pending_override_restore = pending_override_restore.clone();
+        #[cfg(target_os = "android")]
+        let pending_preset_undo = pending_preset_undo.clone();
+        #[cfg(target_os = "android")]
+        let pending_preset_delete = pending_preset_delete.clone();
+        #[cfg(target_os = "android")]
+        let recovery_uuid = recovery_uuid.clone();
+        #[cfg(target_os = "android")]
+        let delete_timer: &'static slint::Timer = delete_timer;
         ui.on_override_preset_confirm(move || {
             #[cfg(target_os = "android")]
             {
@@ -3936,6 +3982,10 @@ fn build_ui() -> MainWindow {
                 else {
                     return;
                 };
+                // Capture the prior config BEFORE overwriting so
+                // Undo can restore it (GTK's override-Undo).
+                let prior =
+                    find_preset_by_uuid(&uuid).map(|p| p.config_json);
                 {
                     let Some(db_arc) = DATABASE.get() else { return; };
                     let Ok(guard) = db_arc.lock() else { return; };
@@ -3950,10 +4000,234 @@ fn build_ui() -> MainWindow {
                 ui.set_override_preset_dialog_open(false);
                 ui.set_preset_chooser_page(false);
                 refresh_preset_chips(&ui, core_mode);
-                // GTK shows an override-Undo toast (restore the
-                // preset's prior config_json). Deferred — that's a
-                // distinct undo type from apply-Undo; folds in
-                // with the P-5 manage flow.
+
+                // Shared snackbar with Undo (restore prior cfg).
+                // Single slot → clear the other discriminators.
+                recovery_uuid.borrow_mut().take();
+                pending_preset_undo.borrow_mut().take();
+                pending_preset_delete.borrow_mut().take();
+                *pending_override_restore.borrow_mut() =
+                    prior.map(|p| (uuid.clone(), p, core_mode));
+                ui.set_snackbar_text("Preset overridden".into());
+                ui.set_snackbar_visible(true);
+                let weak_inner = ui.as_weak();
+                let por = pending_override_restore.clone();
+                delete_timer.start(
+                    slint::TimerMode::SingleShot,
+                    std::time::Duration::from_secs(5),
+                    move || {
+                        por.borrow_mut().take();
+                        if let Some(ui) = weak_inner.upgrade() {
+                            ui.set_snackbar_visible(false);
+                        }
+                    },
+                );
+            }
+            let _ = (weak.clone(), current_mode.get());
+        });
+    }
+
+    // ── Manage-mode row actions (P-5): star / rename / delete ───
+    // Mirrors GTK's per-row star toggle + rename/delete buttons.
+    {
+        let weak = ui.as_weak();
+        let current_mode = current_mode.clone();
+        ui.on_preset_star_tap(move |uuid| {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                let core_mode: meditate_core::SessionMode =
+                    current_mode.get().into();
+                let Some(p) = find_preset_by_uuid(uuid.as_str()) else {
+                    return;
+                };
+                let next = meditate_core::db::StarredState::from_flag(
+                    !p.is_starred,
+                );
+                {
+                    let Some(db_arc) = DATABASE.get() else { return; };
+                    let Ok(guard) = db_arc.lock() else { return; };
+                    let Some(db) = guard.as_ref() else { return; };
+                    let _ = db.update_preset_starred(uuid.as_str(), next);
+                }
+                populate_preset_chooser(&ui, core_mode);
+                refresh_preset_chips(&ui, core_mode);
+            }
+            let _ = (weak.clone(), uuid, current_mode.get());
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let rename_preset_uuid = rename_preset_uuid.clone();
+        ui.on_preset_rename_tap(move |uuid, name| {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                *rename_preset_uuid.borrow_mut() = Some(uuid.to_string());
+                ui.set_rename_preset_text(name.clone());
+                // Unchanged name is valid (own-uuid exception).
+                let v = meditate_core::naming::validate(
+                    name.trim(),
+                    |n| preset_name_taken(n, uuid.as_str()),
+                );
+                ui.set_rename_preset_valid(v.is_savable());
+                ui.set_rename_preset_dialog_open(true);
+            }
+            let _ = (weak.clone(), uuid, name);
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let rename_preset_uuid = rename_preset_uuid.clone();
+        ui.on_rename_preset_changed(move |name| {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                let uuid =
+                    rename_preset_uuid.borrow().clone().unwrap_or_default();
+                let v = meditate_core::naming::validate(
+                    name.trim(),
+                    |n| preset_name_taken(n, &uuid),
+                );
+                ui.set_rename_preset_valid(v.is_savable());
+            }
+            let _ = (weak.clone(), name);
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        let current_mode = current_mode.clone();
+        #[cfg(target_os = "android")]
+        let rename_preset_uuid = rename_preset_uuid.clone();
+        ui.on_rename_preset_confirm(move || {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                let core_mode: meditate_core::SessionMode =
+                    current_mode.get().into();
+                let Some(uuid) =
+                    rename_preset_uuid.borrow_mut().take()
+                else {
+                    return;
+                };
+                let name =
+                    ui.get_rename_preset_text().trim().to_string();
+                let v = meditate_core::naming::validate(&name, |n| {
+                    preset_name_taken(n, &uuid)
+                });
+                if !v.is_savable() {
+                    return;
+                }
+                {
+                    let Some(db_arc) = DATABASE.get() else { return; };
+                    let Ok(guard) = db_arc.lock() else { return; };
+                    let Some(db) = guard.as_ref() else { return; };
+                    if let Err(e) = db.update_preset_name(&uuid, &name) {
+                        meditate_core::log(
+                            "preset.rename",
+                            &format!("update_preset_name FAILED: {e:?}"),
+                        );
+                    }
+                }
+                ui.set_rename_preset_dialog_open(false);
+                populate_preset_chooser(&ui, core_mode);
+                refresh_preset_chips(&ui, core_mode);
+            }
+            let _ = (weak.clone(), current_mode.get());
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let delete_preset_uuid = delete_preset_uuid.clone();
+        ui.on_preset_delete_tap(move |uuid| {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                let Some(p) = find_preset_by_uuid(uuid.as_str()) else {
+                    return;
+                };
+                *delete_preset_uuid.borrow_mut() = Some(uuid.to_string());
+                ui.set_delete_preset_name(p.name.into());
+                ui.set_delete_preset_dialog_open(true);
+            }
+            let _ = (weak.clone(), uuid);
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        let current_mode = current_mode.clone();
+        #[cfg(target_os = "android")]
+        let delete_preset_uuid = delete_preset_uuid.clone();
+        #[cfg(target_os = "android")]
+        let pending_preset_delete = pending_preset_delete.clone();
+        #[cfg(target_os = "android")]
+        let pending_preset_undo = pending_preset_undo.clone();
+        #[cfg(target_os = "android")]
+        let pending_override_restore = pending_override_restore.clone();
+        #[cfg(target_os = "android")]
+        let recovery_uuid = recovery_uuid.clone();
+        #[cfg(target_os = "android")]
+        let delete_timer: &'static slint::Timer = delete_timer;
+        ui.on_delete_preset_confirm(move || {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                let core_mode: meditate_core::SessionMode =
+                    current_mode.get().into();
+                let Some(uuid) =
+                    delete_preset_uuid.borrow_mut().take()
+                else {
+                    return;
+                };
+                // Capture the full row so Undo can resurrect it
+                // identically (GTK's insert_preset_with_uuid).
+                let Some(row) = find_preset_by_uuid(&uuid) else {
+                    return;
+                };
+                {
+                    let Some(db_arc) = DATABASE.get() else { return; };
+                    let Ok(guard) = db_arc.lock() else { return; };
+                    let Some(db) = guard.as_ref() else { return; };
+                    if let Err(e) = db.delete_preset(&uuid) {
+                        meditate_core::log(
+                            "preset.delete",
+                            &format!("delete_preset FAILED: {e:?}"),
+                        );
+                    }
+                }
+                ui.set_delete_preset_dialog_open(false);
+                ui.set_preset_chooser_page(false);
+                populate_preset_chooser(&ui, core_mode);
+                refresh_preset_chips(&ui, core_mode);
+
+                // Shared snackbar + Undo (re-insert). Single slot
+                // → clear the other discriminators.
+                recovery_uuid.borrow_mut().take();
+                pending_preset_undo.borrow_mut().take();
+                pending_override_restore.borrow_mut().take();
+                *pending_preset_delete.borrow_mut() = Some((
+                    row.uuid.to_string(),
+                    row.name.clone(),
+                    row.mode,
+                    row.is_starred,
+                    row.config_json.clone(),
+                ));
+                ui.set_snackbar_text(
+                    format!("'{}' deleted", row.name).into(),
+                );
+                ui.set_snackbar_visible(true);
+                let weak_inner = ui.as_weak();
+                let ppd = pending_preset_delete.clone();
+                delete_timer.start(
+                    slint::TimerMode::SingleShot,
+                    std::time::Duration::from_secs(5),
+                    move || {
+                        ppd.borrow_mut().take();
+                        if let Some(ui) = weak_inner.upgrade() {
+                            ui.set_snackbar_visible(false);
+                        }
+                    },
+                );
             }
             let _ = (weak.clone(), current_mode.get());
         });
@@ -5313,16 +5587,22 @@ fn build_ui() -> MainWindow {
         let recovery_uuid = recovery_uuid.clone();
         #[cfg(target_os = "android")]
         let pending_preset_undo = pending_preset_undo.clone();
+        #[cfg(target_os = "android")]
+        let pending_preset_delete = pending_preset_delete.clone();
+        #[cfg(target_os = "android")]
+        let pending_override_restore = pending_override_restore.clone();
         ui.on_delete_tap(move |rowid| {
             #[cfg(target_os = "android")]
             {
                 let Some(ui) = weak.upgrade() else { return; };
                 // A trash tap replaces any in-flight recovery /
-                // preset snackbar with the delete one — clear both
-                // discriminators so the shared Undo handler routes
-                // to the delete-restore branch (single slot).
+                // preset snackbar with the delete one — clear every
+                // other discriminator so the shared Undo handler
+                // routes to the delete-restore branch (single slot).
                 recovery_uuid.borrow_mut().take();
                 pending_preset_undo.borrow_mut().take();
+                pending_preset_delete.borrow_mut().take();
+                pending_override_restore.borrow_mut().take();
                 let id = rowid as i64;
                 // Move row from `loaded_log_sessions` view into
                 // `pending_deletes`. We don't actually remove
@@ -5389,12 +5669,20 @@ fn build_ui() -> MainWindow {
         #[cfg(target_os = "android")]
         let pending_preset_undo = pending_preset_undo.clone();
         #[cfg(target_os = "android")]
+        let pending_preset_delete = pending_preset_delete.clone();
+        #[cfg(target_os = "android")]
+        let pending_override_restore = pending_override_restore.clone();
+        #[cfg(target_os = "android")]
+        let current_mode = current_mode.clone();
+        #[cfg(target_os = "android")]
         let timer_session_secs = timer_session_secs.clone();
         ui.on_snackbar_undo_tap(move || {
             #[cfg(target_os = "android")]
             {
                 let Some(ui) = weak.upgrade() else { return; };
                 delete_timer.stop();
+                let core_mode: meditate_core::SessionMode =
+                    current_mode.get().into();
                 // Preset-apply Undo branch (P-3) — checked FIRST
                 // (single slot; the preset snackbar, if up, owns
                 // Undo). Re-apply the pre-apply snapshot through
@@ -5409,6 +5697,40 @@ fn build_ui() -> MainWindow {
                         mode,
                         &timer_session_secs,
                     );
+                    ui.set_snackbar_visible(false);
+                    return;
+                }
+                // Preset-delete Undo (P-5): re-insert the captured
+                // row with its original uuid — GTK's
+                // insert_preset_with_uuid resurrection.
+                if let Some((u, name, mode, starred, json)) =
+                    pending_preset_delete.borrow_mut().take()
+                {
+                    {
+                        let Some(db_arc) = DATABASE.get() else { return; };
+                        let Ok(g) = db_arc.lock() else { return; };
+                        let Some(db) = g.as_ref() else { return; };
+                        let _ = db.insert_preset_with_uuid(
+                            &u, &name, mode, starred, &json,
+                        );
+                    }
+                    populate_preset_chooser(&ui, core_mode);
+                    refresh_preset_chips(&ui, core_mode);
+                    ui.set_snackbar_visible(false);
+                    return;
+                }
+                // Preset-override Undo (P-5 / P-4 deferral):
+                // restore the preset's prior config_json.
+                if let Some((u, prior, mode)) =
+                    pending_override_restore.borrow_mut().take()
+                {
+                    {
+                        let Some(db_arc) = DATABASE.get() else { return; };
+                        let Ok(g) = db_arc.lock() else { return; };
+                        let Some(db) = g.as_ref() else { return; };
+                        let _ = db.update_preset_config(&u, &prior);
+                    }
+                    refresh_preset_chips(&ui, mode);
                     ui.set_snackbar_visible(false);
                     return;
                 }
@@ -6007,6 +6329,16 @@ fn build_ui() -> MainWindow {
             // Preset modals first, then the preset chooser
             // overlay (innermost-out, like the other layers).
             #[cfg(target_os = "android")]
+            if ui.get_rename_preset_dialog_open() {
+                ui.set_rename_preset_dialog_open(false);
+                return;
+            }
+            #[cfg(target_os = "android")]
+            if ui.get_delete_preset_dialog_open() {
+                ui.set_delete_preset_dialog_open(false);
+                return;
+            }
+            #[cfg(target_os = "android")]
             if ui.get_create_preset_dialog_open() {
                 ui.set_create_preset_dialog_open(false);
                 return;
@@ -6098,8 +6430,10 @@ fn build_ui() -> MainWindow {
             };
             *recovery_uuid.borrow_mut() = Some(uuid);
             // Single slot: a recovery snackbar supersedes any
-            // in-flight preset-Undo context.
+            // in-flight preset Undo context.
             pending_preset_undo.borrow_mut().take();
+            pending_preset_delete.borrow_mut().take();
+            pending_override_restore.borrow_mut().take();
             ui.set_snackbar_text(text.into());
             ui.set_snackbar_visible(true);
             let weak_inner = ui.as_weak();

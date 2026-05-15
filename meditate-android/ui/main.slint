@@ -1425,6 +1425,23 @@ export component MainWindow inherits Window {
     in-out property <bool> override-preset-dialog-open: false;
     in property <string> override-preset-name: "";
     callback override-preset-confirm();
+
+    // Manage-mode per-row actions (P-5): star toggle, rename,
+    // delete. Mirrors GTK's `build_star_button` /
+    // `add_rename_button` / `add_delete_button`. Rename reuses a
+    // pre-filled validated dialog (own-uuid name exception);
+    // delete confirms then offers Undo via the shared snackbar.
+    callback preset-star-tap(string);
+    callback preset-rename-tap(string, string);
+    callback preset-delete-tap(string);
+    in-out property <bool> rename-preset-dialog-open: false;
+    in-out property <string> rename-preset-text: "";
+    in property <bool> rename-preset-valid: false;
+    callback rename-preset-changed(string);
+    callback rename-preset-confirm();
+    in-out property <bool> delete-preset-dialog-open: false;
+    in property <string> delete-preset-name: "";
+    callback delete-preset-confirm();
     callback label-active-toggled(bool);
     callback label-tap();
     callback labels-back();
@@ -5104,6 +5121,36 @@ export component MainWindow inherits Window {
                             spacing: 12px;
                             alignment: stretch;
 
+                            // Star prefix (Manage mode) — LEFT of
+                            // the title + vertically centred, like
+                            // GTK's `add_prefix(star_button)`.
+                            // Filled accent star when starred,
+                            // outline dimmed when not (GTK's
+                            // starred-symbolic / non-starred-
+                            // symbolic + preset-star-on / dimmed).
+                            if !root.preset-chooser-save-mode : VerticalLayout {
+                                alignment: center;
+                                Rectangle {
+                                    width: 40px;
+                                    height: 40px;
+                                    star-touch := TouchArea {
+                                        clicked => {
+                                            root.preset-star-tap(item.uuid);
+                                        }
+                                    }
+                                    Image {
+                                        source: item.is-starred
+                                            ? @image-url("assets/star_filled.svg")
+                                            : @image-url("assets/star.svg");
+                                        width: 22px;
+                                        height: 22px;
+                                        colorize: item.is-starred
+                                            ? MaterialPalette.primary
+                                            : MaterialPalette.on-surface-variant;
+                                    }
+                                }
+                            }
+
                             VerticalLayout {
                                 alignment: center;
                                 horizontal-stretch: 1;
@@ -5116,6 +5163,28 @@ export component MainWindow inherits Window {
                                     text: item.subtitle;
                                     font-size: 12px;
                                     color: MaterialPalette.on-surface-variant;
+                                }
+                            }
+
+                            // Manage-mode rename / delete suffix
+                            // (star moved to the prefix above).
+                            if !root.preset-chooser-save-mode : HorizontalLayout {
+                                spacing: 4px;
+                                alignment: center;
+
+                                IconButton {
+                                    icon: Icons.edit;
+                                    clicked => {
+                                        root.preset-rename-tap(
+                                            item.uuid, item.name);
+                                    }
+                                }
+                                IconButton {
+                                    icon: @image-url("assets/delete.svg");
+                                    has_error: true;
+                                    clicked => {
+                                        root.preset-delete-tap(item.uuid);
+                                    }
                                 }
                             }
                         }
@@ -5414,6 +5483,118 @@ export component MainWindow inherits Window {
                     TextButton {
                         text: "Override";
                         clicked => { root.override-preset-confirm(); }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Rename-preset dialog (modal, P-5) ───────────────────────
+    // Mirrors GTK's `present_rename_preset_dialog`: pre-filled
+    // name, Cancel/Rename, Rename gated on Rust live validation
+    // (own-uuid name exception so an unchanged name stays valid).
+    if root.rename-preset-dialog-open : Rectangle {
+        background: #00000080;
+        TouchArea {
+            clicked => { root.rename-preset-dialog-open = false; }
+        }
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 320px;
+            height: rename-preset-card.preferred-height;
+            background: MaterialPalette.surface-container-high;
+            border-radius: 28px;
+
+            TouchArea {}
+
+            rename-preset-card := VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+
+                Text {
+                    text: "Rename Preset";
+                    font-size: 22px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface;
+                }
+
+                TextField {
+                    label: "Preset name";
+                    text <=> root.rename-preset-text;
+                    edited(text) => { root.rename-preset-changed(text); }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+
+                    TextButton {
+                        text: "Cancel";
+                        clicked => { root.rename-preset-dialog-open = false; }
+                    }
+                    TextButton {
+                        text: "Rename";
+                        enabled: root.rename-preset-valid;
+                        clicked => { root.rename-preset-confirm(); }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Delete-preset confirm dialog (modal, P-5) ───────────────
+    // Mirrors GTK's `present_delete_preset_dialog`; Undo is
+    // offered via the shared snackbar (re-insert with same uuid).
+    if root.delete-preset-dialog-open : Rectangle {
+        background: #00000080;
+        TouchArea {
+            clicked => { root.delete-preset-dialog-open = false; }
+        }
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 320px;
+            height: delete-preset-card.preferred-height;
+            background: MaterialPalette.surface-container-high;
+            border-radius: 28px;
+
+            TouchArea {}
+
+            delete-preset-card := VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+
+                Text {
+                    text: "Delete Preset?";
+                    font-size: 22px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface;
+                }
+                Text {
+                    text: "'" + root.delete-preset-name
+                        + "' will be removed from this device and any synced peers.";
+                    font-size: 14px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface-variant;
+                    wrap: word-wrap;
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+
+                    TextButton {
+                        text: "Cancel";
+                        clicked => {
+                            root.delete-preset-dialog-open = false;
+                        }
+                    }
+                    TextButton {
+                        text: "Delete";
+                        clicked => { root.delete-preset-confirm(); }
                     }
                 }
             }
