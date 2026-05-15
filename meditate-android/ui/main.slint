@@ -86,6 +86,17 @@ export struct NameChoice {
     selected: bool,
 }
 
+// One preset (Phase 6 / P-1). `uuid` is the row identity used
+// for apply / override / rename / delete; `is-starred` drives
+// the home chip-list visibility + the Manage star toggle.
+// Mirrors GTK's `Preset` row consumed by `presets.rs`.
+export struct PresetItem {
+    uuid: string,
+    name: string,
+    subtitle: string,
+    is-starred: bool,
+}
+
 // One row in the Interval Bells library (B-5c). `title` is the
 // rendered `meditate_core::bells::bell_title_key` summary
 // ("Every 9 min +/-30%" / "At 10 min" / "5 min before end");
@@ -1372,6 +1383,15 @@ export component MainWindow inherits Window {
     callback mode-changed(int);
     callback keep-awake-toggled(bool);
     callback cues-changed(int);
+
+    // Presets (Phase 6 / P-2). Rust fills `presets-list` with the
+    // starred presets for the active mode (empty → section
+    // hidden, mirroring GTK gating the group on
+    // `mode_supports_presets` + non-empty starred list). Tapping
+    // a row applies it (apply path is P-3 — the callback is a
+    // no-op stub until then).
+    in property <[PresetItem]> presets-list: [];
+    callback preset-chip-tap(string);
     callback label-active-toggled(bool);
     callback label-tap();
     callback labels-back();
@@ -1965,6 +1985,73 @@ export component MainWindow inherits Window {
                         || root.setup-hours > 0
                         || root.setup-minutes > 0);
                 clicked => { root.action-tap(); }
+            }
+
+            // Presets (Phase 6 / P-2) — starred presets for the
+            // active mode, above the per-mode body (so above the
+            // duration row), mirroring GTK's `presets_section`.
+            // Whole section hidden when empty (Guided, or no
+            // starred presets) — Rust only fills the list for
+            // preset-supporting modes. Tapping a row applies it
+            // (P-3). Save Settings / Manage Presets buttons land
+            // with P-4 / P-5.
+            if root.presets-list.length > 0 : VerticalLayout {
+                spacing: 8px;
+
+                Text {
+                    text: "Presets";
+                    font-size: 14px;
+                    font-weight: 700;
+                    color: MaterialPalette.primary;
+                    horizontal-alignment: left;
+                }
+
+                BoxedList {
+                    for item[idx] in root.presets-list : VerticalLayout {
+                        spacing: 0;
+
+                        if idx > 0 : Rectangle {
+                            height: 1px;
+                            background: MaterialPalette.outline-variant;
+                        }
+
+                        Rectangle {
+                            height: 64px;
+                            background: preset-row-touch.has-hover
+                                ? MaterialPalette.surface-container-high
+                                : transparent;
+
+                            preset-row-touch := TouchArea {
+                                clicked => {
+                                    root.preset-chip-tap(item.uuid);
+                                }
+                            }
+
+                            HorizontalLayout {
+                                padding-left: 16px;
+                                padding-right: 16px;
+                                spacing: 12px;
+                                alignment: stretch;
+
+                                VerticalLayout {
+                                    alignment: center;
+                                    horizontal-stretch: 1;
+
+                                    Text {
+                                        text: item.name;
+                                        font-size: 16px;
+                                        color: MaterialPalette.on-surface;
+                                    }
+                                    if item.subtitle != "" : Text {
+                                        text: item.subtitle;
+                                        font-size: 12px;
+                                        color: MaterialPalette.on-surface-variant;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             // Timer body — Session group mirrors the GTK

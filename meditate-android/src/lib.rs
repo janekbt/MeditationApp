@@ -399,6 +399,136 @@ fn resolved_label_for_mode(
     Some((label.name, label.id))
 }
 
+// ── Preset read/validate wrappers (Phase 6 / P-1) ───────────
+// Thin DATABASE-lock shims over `meditate_core::db` preset
+// queries, mirroring GTK's `presets.rs` data flow exactly:
+// the home chip list uses *starred* presets gated on
+// `mode_supports_presets` (Guided has its own files library,
+// no presets — `timer/imp.rs:3159`); the Manage / chooser list
+// uses *all* presets for the mode (`presets.rs:209`); name
+// validation is `is_preset_name_taken(name, except_uuid)` with
+// `""` on create and the preset's own uuid on rename
+// (`presets.rs:461,520`). Apply / Save / Manage plumbing builds
+// on these in P-2..P-5; decisions stay in core
+// (`preset_config::{snapshot, apply, mode_supports_presets}`).
+
+/// Whether `mode` exposes presets at all. Mirrors GTK gating
+/// the whole presets section on this.
+#[cfg(target_os = "android")]
+fn presets_supported(mode: meditate_core::SessionMode) -> bool {
+    meditate_core::preset_config::mode_supports_presets(mode)
+}
+
+/// Starred presets for the home chip list. Empty (chips hidden)
+/// when the mode doesn't support presets or none are starred —
+/// same as GTK's `list_starred_presets_for_mode` behind the
+/// `mode_supports_presets` guard.
+#[cfg(target_os = "android")]
+fn list_starred_presets_for_mode(
+    mode: meditate_core::SessionMode,
+) -> Vec<PresetItem> {
+    if !presets_supported(mode) {
+        return Vec::new();
+    }
+    let Some(db_arc) = DATABASE.get() else { return Vec::new(); };
+    let Ok(guard) = db_arc.lock() else { return Vec::new(); };
+    let Some(db) = guard.as_ref() else { return Vec::new(); };
+    // One labels roundtrip per rebuild → O(1) subtitle label
+    // lookup, exactly like GTK's `label_names` map.
+    let label_names: std::collections::HashMap<String, String> =
+        meditate_core::db::list_labels_from_db(db)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|l| (l.uuid.to_string(), l.name))
+            .collect();
+    meditate_core::db::list_starred_presets_for_mode_from_db(db, mode)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|p| PresetItem {
+            uuid: p.uuid.to_string().into(),
+            subtitle: preset_subtitle(&p.config_json, &label_names).into(),
+            name: p.name.into(),
+            is_starred: p.is_starred,
+        })
+        .collect()
+}
+
+/// Compose a preset-row subtitle — the Android mirror of GTK's
+/// `crate::preset_subtitle::preset_subtitle`. The structural
+/// decomposition is core's (`format::preset_subtitle_parts`);
+/// this stitches the parts with " · ", inline English (Android
+/// i18n is shell-deferred like the rest of the port). Empty
+/// string on unparseable config_json (matches GTK).
+#[cfg(target_os = "android")]
+fn preset_subtitle(
+    config_json: &str,
+    label_names: &std::collections::HashMap<String, String>,
+) -> String {
+    use meditate_core::format::{
+        BellsCountKey, BoxBreathAfter, TimingKey,
+    };
+    let Some(parts) = meditate_core::format::preset_subtitle_parts(config_json)
+    else {
+        return String::new();
+    };
+    let mins = |m: u32| {
+        if m == 1 {
+            "1 min".to_string()
+        } else {
+            format!("{m} min")
+        }
+    };
+    let mut out: Vec<String> = Vec::new();
+    match parts.timing {
+        TimingKey::Stopwatch => out.push("Stopwatch".to_string()),
+        TimingKey::Duration { mins: m } => out.push(mins(m)),
+        TimingKey::BoxBreath {
+            inhale_secs,
+            hold_full_secs,
+            exhale_secs,
+            hold_empty_secs,
+            after,
+        } => {
+            out.push(format!(
+                "{inhale_secs}-{hold_full_secs}-{exhale_secs}-{hold_empty_secs}"
+            ));
+            match after {
+                BoxBreathAfter::Stopwatch => {
+                    out.push("Stopwatch".to_string())
+                }
+                BoxBreathAfter::Duration { mins: m } => out.push(mins(m)),
+            }
+        }
+    }
+    if let Some(uuid) = parts.label_uuid.as_ref() {
+        if let Some(name) = label_names.get(uuid.as_str()) {
+            out.push(name.clone());
+        }
+    }
+    match parts.bells {
+        Some(BellsCountKey::One) => out.push("1 bell".to_string()),
+        Some(BellsCountKey::Many(n)) => out.push(format!("{n} bells")),
+        None => {}
+    }
+    out.join(" · ")
+}
+
+/// Push the active mode's starred presets into the Setup
+/// `presets-list` (empty for Guided / no-presets → the section
+/// hides itself). Mirrors GTK's `rebuild_starred_preset_rows`
+/// on mode switch + after preset CRUD.
+#[cfg(target_os = "android")]
+fn refresh_preset_chips(ui: &MainWindow, mode: meditate_core::SessionMode) {
+    let items = list_starred_presets_for_mode(mode);
+    ui.set_presets_list(
+        std::rc::Rc::new(slint::VecModel::from(items)).into(),
+    );
+}
+
+// (list_presets_for_mode / find_preset_by_uuid /
+// preset_name_taken land with P-4/P-5 where they're first
+// used — keeping each slice dead-code-free.)
+
 /// Push the chooser's `label-items` array (with `selected`
 /// flagged on `current_id`'s row) into the Slint window. Used
 /// on every chooser open + after a CRUD action so the user
@@ -3311,8 +3441,24 @@ fn build_ui() -> MainWindow {
                     _ => timer_session_secs.get(),
                 };
                 push_session_length_to_ui(&ui, new_secs);
+                // Starred presets are per-mode (P-2).
+                refresh_preset_chips(&ui, core_mode);
             }
             let _ = (weak.clone(), timer_session_secs.clone());
+        });
+    }
+
+    // Preset row tap (P-2 stub). Apply fan-out is P-3 — for now
+    // just log so on-device testing can confirm the row + uuid
+    // wiring before the heavier apply path lands.
+    {
+        ui.on_preset_chip_tap(move |uuid| {
+            #[cfg(target_os = "android")]
+            meditate_core::log(
+                "preset.tap",
+                &format!("preset row tapped uuid={uuid} (apply: P-3)"),
+            );
+            let _ = uuid;
         });
     }
 
@@ -4628,6 +4774,7 @@ fn build_ui() -> MainWindow {
         refresh_sync_indicator(&ui);
         refresh_stats(&ui);
         refresh_bell_rows(&ui);
+        refresh_preset_chips(&ui, core_mode);
     }
 
     // "Load more" tap on the Log feed — fetch the next page,
