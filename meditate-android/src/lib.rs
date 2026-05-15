@@ -1961,6 +1961,16 @@ fn refresh_bell_rows(ui: &MainWindow) {
     );
     ui.set_starting_bell_sound_name(bell_sound_name(&ss).into());
     ui.set_end_bell_sound_name(bell_sound_name(&es).into());
+
+    // Preparation Time (B-5b).
+    ui.set_prep_time_active(
+        read_global_setting("preparation_time_active", "false") == "true",
+    );
+    let secs = meditate_core::format::parse_prep_secs(&read_global_setting(
+        "preparation_time_secs",
+        &meditate_core::format::PREP_SECS_DEFAULT.to_string(),
+    ));
+    ui.set_prep_time_secs(secs as i32);
 }
 
 /// Fill the bell-chooser overlay with every bell sound, the
@@ -2766,6 +2776,52 @@ fn build_ui() -> MainWindow {
             #[cfg(target_os = "android")]
             if let Some(ui) = weak.upgrade() {
                 ui.set_bell_chooser_page(false);
+            }
+            let _ = weak.clone();
+        });
+    }
+
+    // Preparation Time (B-5b): enable toggle + seconds modal.
+    {
+        ui.on_prep_time_toggled(move |value| {
+            #[cfg(target_os = "android")]
+            write_global_setting(
+                "preparation_time_active",
+                if value { "true" } else { "false" },
+            );
+            let _ = value;
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_prep_time_tap(move || {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                // Seed the working value from the committed one.
+                ui.set_prep_dialog_secs(ui.get_prep_time_secs());
+                ui.set_prep_dialog_open(true);
+            }
+            let _ = weak.clone();
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_prep_secs_committed(move || {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                // `parse_prep_secs` re-clamps to [MIN, MAX] even
+                // though the spinbox already bounds it — keeps the
+                // persisted string canonical.
+                let v = meditate_core::format::parse_prep_secs(
+                    &ui.get_prep_time_secs().to_string(),
+                );
+                write_global_setting(
+                    "preparation_time_secs",
+                    &v.to_string(),
+                );
+                ui.set_prep_time_secs(v as i32);
             }
             let _ = weak.clone();
         });
@@ -3791,6 +3847,11 @@ fn build_ui() -> MainWindow {
             }
             if ui.get_labels_page() {
                 ui.set_labels_page(false);
+                return;
+            }
+            #[cfg(target_os = "android")]
+            if ui.get_prep_dialog_open() {
+                ui.set_prep_dialog_open(false);
                 return;
             }
             #[cfg(target_os = "android")]

@@ -592,6 +592,116 @@ component ExpanderRow inherits Rectangle {
     }
 }
 
+// Like ExpanderRow but the revealed body is arbitrary
+// `@children` (one or more rows, including a *nested*
+// ExpanderRow) rather than a single fixed body row. Same
+// header + master-switch + height-animation-with-clip idiom
+// as ExpanderRow (Slint can't animate an `if`-gated child's
+// appearance, so the body is always built and its height
+// animates 0 ↔ content). Used for the Starting Bell expander,
+// which mirrors GTK's `starting_bell_row` AdwExpanderRow with
+// a nested Preparation Time expander inside it.
+component ExpanderGroup inherits Rectangle {
+    in property <string> title;
+    in property <string> subtitle;
+    in-out property <bool> active;
+    callback toggled(bool);
+
+    background: transparent;
+
+    VerticalLayout {
+        spacing: 0;
+
+        // Header — identical metrics to ExpanderRow's header.
+        Rectangle {
+            height: 64px;
+            background: transparent;
+
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                spacing: 12px;
+                alignment: stretch;
+
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 1;
+
+                    Text {
+                        text: root.title;
+                        font-size: 16px;
+                        color: MaterialPalette.on-surface;
+                    }
+                    if root.subtitle != "" : Text {
+                        text: root.subtitle;
+                        font-size: 12px;
+                        color: MaterialPalette.on-surface-variant;
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 52px;
+                        height: 32px;
+                        Switch {
+                            min-width: 52px;
+                            min-height: 32px;
+                            checked <=> root.active;
+                            checked-state-changed(value) => { root.toggled(value); }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Header→body hair-line — always rendered, height
+        // animates 0 ↔ 1 px with the body so it doesn't pop a
+        // frame ahead. Same idiom as ExpanderRow's divider; it
+        // was missing here, which is why the Bell Sound row had
+        // no separator under the Starting Bell header.
+        Rectangle {
+            height: root.active ? 1px : 0px;
+            background: MaterialPalette.outline-variant;
+            clip: true;
+            animate height {
+                duration: 250ms;
+                easing: ease-in-out;
+            }
+        }
+
+        // Body — always built; height animates between 0 and the
+        // children's natural height, `clip` hiding it collapsed.
+        // A shade-darker fill + a left inset make the contained
+        // rows read as children of this expander (mirrors the
+        // old single-body ExpanderRow's 32 px body indent; the
+        // surface-container-high tint groups them visually
+        // against the BoxedList's surface-container).
+        Rectangle {
+            clip: true;
+            height: root.active ? body.preferred-height : 0px;
+            // `.darker()` rather than the next palette step —
+            // surface-container-high was barely distinguishable
+            // from the BoxedList's surface-container. A fixed
+            // darken factor gives a clearly-visible, theme-
+            // independent grouping tint.
+            background: MaterialPalette.surface-container.darker(0.35);
+            animate height {
+                duration: 250ms;
+                easing: ease-in-out;
+            }
+
+            body := VerticalLayout {
+                spacing: 0;
+                // 16 px here + each child row's own 16 px =
+                // 32 px effective indent, matching the prior
+                // ExpanderRow body row.
+                padding-left: 16px;
+                @children
+            }
+        }
+    }
+}
+
 // Box-Breath phase tile — one cell of the Setup view's 2×2
 // phase grid. Mirrors GTK's `build_phase_tile`
 // (`meditate-gtk/src/timer/imp.rs:4080-4153`): a small card with
@@ -948,6 +1058,26 @@ export component MainWindow inherits Window {
     in property <[NameChoice]> bell-chooser-items: [];
     callback bell-chooser-pick(string);
     callback bell-chooser-back();
+
+    // Preparation Time (B-5b). GTK nests this Adw.ExpanderRow
+    // inside the Starting Bell expander
+    // (`timer_view.blp:463`); Android's single-body ExpanderRow
+    // can't nest, so it's a sibling row in the Bells group plus
+    // a small seconds-stepper modal. Settings:
+    // `preparation_time_active` / `preparation_time_secs`
+    // (5..300, default 30 — `meditate_core::format::PREP_SECS_*`).
+    in-out property <bool> prep-time-active: false;
+    in-out property <int> prep-time-secs: 30;
+    callback prep-time-toggled(bool);
+    callback prep-time-tap();
+    // Seconds-stepper modal. `prep-dialog-secs` is the working
+    // value; Set commits it to `prep-time-secs` and fires the
+    // persist callback (mirrors duration-dialog's dialog-hours
+    // → setup-hours → duration-committed flow).
+    in-out property <bool> prep-dialog-open: false;
+    in-out property <int> prep-dialog-secs: 30;
+    callback prep-secs-committed();
+
     callback create-label-tap();
     callback create-label-changed(string);
     callback create-label-confirm();
@@ -1526,14 +1656,40 @@ export component MainWindow inherits Window {
                 }
 
                 BoxedList {
-                    ExpanderRow {
+                    // Starting Bell — an ExpanderGroup so its
+                    // body can hold the Bell Sound row AND the
+                    // nested Preparation Time expander, exactly
+                    // like GTK's `starting_bell_row` with the
+                    // `preparation_time_row` AdwExpanderRow
+                    // nested inside it (`timer_view.blp:413`).
+                    ExpanderGroup {
                         title: "Starting Bell";
                         subtitle: "Play a signal when the session begins";
-                        body-title: "Bell Sound";
-                        body-subtitle: root.starting-bell-sound-name;
                         active <=> root.starting-bell-active;
                         toggled(value) => { root.starting-bell-toggled(value); }
-                        body-tapped => { root.starting-bell-sound-tap(); }
+
+                        DurationRow {
+                            label: "Bell Sound";
+                            value-text: root.starting-bell-sound-name;
+                            tapped => { root.starting-bell-sound-tap(); }
+                        }
+
+                        Rectangle {
+                            height: 1px;
+                            background: MaterialPalette.outline-variant;
+                        }
+
+                        // Nested Preparation Time expander —
+                        // child of Starting Bell, mirroring GTK.
+                        ExpanderRow {
+                            title: "Preparation Time";
+                            subtitle: "Silence before the starting bell";
+                            body-title: "Duration";
+                            body-subtitle: root.prep-time-secs + "s";
+                            active <=> root.prep-time-active;
+                            toggled(value) => { root.prep-time-toggled(value); }
+                            body-tapped => { root.prep-time-tap(); }
+                        }
                     }
 
                     Rectangle {
@@ -3857,6 +4013,76 @@ export component MainWindow inherits Window {
                                     height: 20px;
                                 }
                             }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Preparation-time seconds dialog (modal, B-5b) ────────────
+    // Single-spinbox modal mirroring the duration-dialog scrim +
+    // card. Declared LAST (after the choosers) so it z-stacks
+    // above them and the chrome — per the declare-overlays-last
+    // z-order rule. Range 5..300 (PREP_SECS_MIN..MAX);
+    // VerticalSpinBox steps by 1 (GTK's SpinRow steps 5 — minor
+    // Android deviation, acceptable for a transient picker).
+    if root.prep-dialog-open : Rectangle {
+        background: #00000080;
+        TouchArea {
+            clicked => { root.prep-dialog-open = false; }
+        }
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 280px;
+            height: prep-card.preferred-height;
+            background: MaterialPalette.surface-container-high;
+            border-radius: 28px;
+
+            TouchArea {}
+
+            prep-card := VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+
+                Text {
+                    text: "Preparation Time";
+                    font-size: 22px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface;
+                }
+                Text {
+                    text: "Seconds";
+                    font-size: 14px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface-variant;
+                }
+
+                HorizontalLayout {
+                    alignment: center;
+                    VerticalSpinBox {
+                        value <=> root.prep-dialog-secs;
+                        min-value: 5;
+                        max-value: 300;
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+
+                    TextButton {
+                        text: "Cancel";
+                        clicked => { root.prep-dialog-open = false; }
+                    }
+                    TextButton {
+                        text: "Set";
+                        clicked => {
+                            root.prep-time-secs = root.prep-dialog-secs;
+                            root.prep-secs-committed();
+                            root.prep-dialog-open = false;
                         }
                     }
                 }
