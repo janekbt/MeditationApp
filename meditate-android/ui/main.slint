@@ -15,6 +15,7 @@ import {
     DatePickerPopup, DatePickerAdapter,
     TimePickerPopup, Time,
     DropDownMenu,
+    CircularProgressIndicator,
 } from "@material";
 // `MenuItem` (DropDownMenu's `items` element type) isn't
 // re-exported through `material.slint`; pull it from the source
@@ -992,6 +993,26 @@ export component MainWindow inherits Window {
     // controls land in L-5b (Notes-only) and L-5c (Label).
     in-out property <bool> filter-sheet-open: false;
     callback log-filter-tap();
+
+    // Sync-status indicator (Phase 3 close-out). Mirrors GTK's
+    // `sync_status_btn` at `meditate-gtk/data/ui/window.blp:58`
+    // + `refresh_sync_status` at
+    // `meditate-gtk/src/window/imp.rs:630`. State is derived
+    // Rust-side via `meditate_core::sync::indicator::
+    // state_from_db`:
+    //   0 = Hidden  → not rendered (no Nextcloud account)
+    //   1 = Syncing → indeterminate CircularProgressIndicator
+    //   2 = Error   → warning glyph, error tint
+    //   3 = Ok      → check glyph, primary tint
+    // On Android the sync loop itself lands in Phase 7, so the
+    // realistic state today is Hidden — this wires the surface
+    // so Phase 7 only has to make sync actually run. The tap is
+    // a no-op placeholder until then (GTK's `action_for`
+    // targets — recovery dialog / prefs / retry — don't exist
+    // on Android yet).
+    in property <int> sync-indicator-state: 0;
+    in property <string> sync-indicator-tooltip: "";
+    callback sync-indicator-tap();
 
     // Has-Notes filter (L-5b). `filter-notes-only` is the live
     // flag the Rust paginator reads via `get_filter_notes_only`
@@ -2796,6 +2817,39 @@ export component MainWindow inherits Window {
                     horizontal-stretch: 1;
                     horizontal-alignment: left;
                     overflow: elide;
+                }
+                // Sync-status indicator — trailing side, before
+                // the funnel, matching GTK's `[end]` placement of
+                // `sync_status_btn` alongside the filter button.
+                // Not rendered in the Hidden state (no account).
+                if root.sync-indicator-state != 0 : VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 40px;
+                        height: 40px;
+
+                        sync-touch := TouchArea {
+                            clicked => { root.sync-indicator-tap(); }
+                        }
+
+                        if root.sync-indicator-state == 1 : CircularProgressIndicator {
+                            width: 22px;
+                            height: 22px;
+                            indeterminate: true;
+                        }
+                        if root.sync-indicator-state == 2 : Image {
+                            source: @image-url("assets/warning.svg");
+                            colorize: MaterialPalette.error;
+                            width: 22px;
+                            height: 22px;
+                        }
+                        if root.sync-indicator-state == 3 : Image {
+                            source: Icons.check;
+                            colorize: MaterialPalette.primary;
+                            width: 22px;
+                            height: 22px;
+                        }
+                    }
                 }
                 if root.nav-page == 1 : VerticalLayout {
                     alignment: center;

@@ -257,6 +257,71 @@ fn refresh_setup_label_name(ui: &MainWindow, mode: meditate_core::SessionMode) {
     );
 }
 
+/// Read the persisted sync state and push it into the
+/// sync-indicator Slint properties. `is_syncing` is hard-false
+/// on Android — the sync loop lands in Phase 7, so there's no
+/// in-flight sync to report yet; the indicator still resolves
+/// to Hidden / Error / Ok from the DB-persisted last-sync
+/// fields once an account exists. Mirrors GTK's
+/// `refresh_sync_status` at `meditate-gtk/src/window/imp.rs:630`
+/// + `sync_indicator_state_now`. Maps the core
+/// `SyncIndicatorState` enum to the int the Slint surface
+/// switches on (0 Hidden / 1 Syncing / 2 Error / 3 Ok).
+#[cfg(target_os = "android")]
+fn refresh_sync_indicator(ui: &MainWindow) {
+    use meditate_core::sync::indicator::{state_from_db, SyncIndicatorState};
+    let Some(db_arc) = DATABASE.get() else {
+        ui.set_sync_indicator_state(0);
+        return;
+    };
+    let Ok(guard) = db_arc.lock() else {
+        ui.set_sync_indicator_state(0);
+        return;
+    };
+    let Some(db) = guard.as_ref() else {
+        ui.set_sync_indicator_state(0);
+        return;
+    };
+    let (state, tooltip) = match state_from_db(db, false) {
+        SyncIndicatorState::Hidden => (0, String::new()),
+        SyncIndicatorState::Syncing => {
+            (1, "Syncing with Nextcloud…".to_string())
+        }
+        SyncIndicatorState::Error { detail, .. } => {
+            (2, format!("Last sync failed — tap to retry\n{detail}"))
+        }
+        SyncIndicatorState::OkWithTs(ts) => {
+            (3, sync_ago_text(ts))
+        }
+        SyncIndicatorState::OkNoTs => {
+            (3, "Sync configured (waiting for first run)".to_string())
+        }
+    };
+    ui.set_sync_indicator_state(state);
+    ui.set_sync_indicator_tooltip(tooltip.into());
+}
+
+/// "Synced N ago" tooltip. Bucket decision lives in core
+/// (`meditate_core::format::synced_ago_key`); this is the
+/// Android-side English renderer (i18n isn't wired on Android
+/// yet — same situation as the delete / recovery snackbars).
+/// Mirrors GTK's `format_synced_ago` at
+/// `meditate-gtk/src/window/imp.rs:713`.
+#[cfg(target_os = "android")]
+fn sync_ago_text(unix_ts: i64) -> String {
+    use meditate_core::format::SyncedAgoKey;
+    let secs_ago = meditate_core::time::unix_now() - unix_ts;
+    match meditate_core::format::synced_ago_key(secs_ago) {
+        SyncedAgoKey::JustNow => "Synced just now".to_string(),
+        SyncedAgoKey::Minutes(n) if n == 1 => "Synced 1 minute ago".to_string(),
+        SyncedAgoKey::Minutes(n) => format!("Synced {n} minutes ago"),
+        SyncedAgoKey::Hours(n) if n == 1 => "Synced 1 hour ago".to_string(),
+        SyncedAgoKey::Hours(n) => format!("Synced {n} hours ago"),
+        SyncedAgoKey::Days(n) if n == 1 => "Synced 1 day ago".to_string(),
+        SyncedAgoKey::Days(n) => format!("Synced {n} days ago"),
+    }
+}
+
 /// Initialise the Done expander state from Setup's current pick.
 /// Called when entering the Done screen (Stop tap or auto-finish).
 /// Mirrors `show_done`'s `done_selected_label_id.set(setup_selected_label_id())`
@@ -2289,6 +2354,7 @@ fn build_ui() -> MainWindow {
         );
         refresh_breathing_tiles(&ui, read_breathing_pattern());
         reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
+        refresh_sync_indicator(&ui);
     }
 
     // "Load more" tap on the Log feed — fetch the next page,
@@ -2771,6 +2837,19 @@ fn build_ui() -> MainWindow {
         );
     });
 
+    // Sync-indicator tap — no-op placeholder. GTK routes via
+    // `meditate_core::sync::indicator::action_for` to the
+    // recovery dialog / prefs-data page / retry-sync, none of
+    // which exist on Android until Phase 7. Logging the derived
+    // action keeps the eventual wiring obvious.
+    ui.on_sync_indicator_tap(move || {
+        #[cfg(target_os = "android")]
+        meditate_core::log(
+            "ui.sync_indicator_tap",
+            "sync action pending (phase 7: recovery / prefs / retry)",
+        );
+    });
+
     // Bottom NavigationBar selection changed — Rust-side
     // refresh of the page-specific state (just Log for now).
     {
@@ -2788,6 +2867,10 @@ fn build_ui() -> MainWindow {
                     // saved before opening the tab shows up.
                     reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
                 }
+                // Cheap re-read on every tab switch — mirrors
+                // GTK refreshing the indicator on view change
+                // (`wire_log_signals` visible-child notify).
+                refresh_sync_indicator(&ui);
             }
             let _ = (weak.clone(), idx);
         });
