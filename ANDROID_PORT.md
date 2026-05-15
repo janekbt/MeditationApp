@@ -326,11 +326,18 @@ GTK's ViewSwitcher):
 - Cross-shell fix: chart axis caption tracks the aggregation
   tier via new `date_math::chart_unit_for_days` (`a418e89`).
 
-Still to land:
-- Log "Add Session" button — GTK's `log_add_btn` →
-  `show_add_dialog` (the Edit-Session overlay in create mode,
-  `db.create_session`). Missed during the L-4 series; reuses
-  the existing overlay.
+- Log "Add Session" button: AppBar Add button (Log-only)
+  opens the Edit-Session overlay in create mode (None ⇒
+  `insert_session`, Timer-mode default); same overlay surface
+  as edit. Two overlay bugs fixed alongside: Material
+  DatePickerPopup emits the stale input date on OK (read
+  `get_current_date()` instead), and the label sub-row must
+  use the `ExpanderRow` component, not `if`-gated children
+  through `BoxedList`'s `@children` (Slint won't reactively
+  re-render those).
+
+**Phase 4 complete** — every Stats section + the Log Add path
+shipped.
 
 Verification: numbers match the GTK shell on the same DB; heatmap
 matches visually for the same period range.
