@@ -300,20 +300,37 @@ in place.
 
 ### Phase 4 — Stats view
 
-GTK reference: `meditate-gtk/src/stats/imp.rs`. Most of this is
-rendering — every metric already has a `*_from_db` reader in
-`meditate-core`. The contribution heatmap is the highest-effort
-custom-painted bit.
+GTK reference: `meditate-gtk/src/stats/imp.rs`. Mostly rendering —
+every metric has a `*_from_db` reader in `meditate-core`; the
+custom-painted bits (chart, heatmap) became declarative Slint
+(layout-positioned bars / `Path` line / Rectangle grid) rather
+than Cairo.
 
-To land:
-- Numbers tile grid (total minutes, current streak, median, longest
-  session).
-- Daily-totals chart (bar chart per day for the active period).
-- Contribution heatmap (the 91-cell calendar grid, accessibility via
-  the existing `ContribCell::speech_role` backlog item).
-- Label aggregate row.
-- Hour-of-day buckets.
-- Period selector (week / 4 weeks / 3 months / 1 year — mirrors GTK).
+Landed (S-series, 3rd nav tab — order Timer/Stats/Log to match
+GTK's ViewSwitcher):
+- S-1: scaffold + Mini-stats row (Streak / Total / Sessions)
+  (`e10718c`).
+- S-2: weekly-goal hero — `CircularProgressIndicator` ring +
+  progress / status labels (`0a8ffd1`).
+- S-3: insights boxed list — all 9 `InsightKey` variants, GTK
+  glyphs swapped for bundled SVGs (Android-font tofu) (`78441e8`).
+- S-4: by-label breakdown, hidden when no labelled sessions
+  (`6e1a4c2`).
+- S-5a: period toggle (Week/Month/3M/Year) + declarative bar
+  chart (`88991dd`).
+- S-5b: Bars/Line toggle — line + area via Rust-built SVG
+  `Path` commands (`e7696ae`).
+- S-6: 13-week contribution heatmap (`contrib::build_grid` →
+  13×7 Rectangle grid, primary-alpha level ramp) + range
+  caption + legend.
+- Cross-shell fix: chart axis caption tracks the aggregation
+  tier via new `date_math::chart_unit_for_days` (`a418e89`).
+
+Still to land:
+- Log "Add Session" button — GTK's `log_add_btn` →
+  `show_add_dialog` (the Edit-Session overlay in create mode,
+  `db.create_session`). Missed during the L-4 series; reuses
+  the existing overlay.
 
 Verification: numbers match the GTK shell on the same DB; heatmap
 matches visually for the same period range.
