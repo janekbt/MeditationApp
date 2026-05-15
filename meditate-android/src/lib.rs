@@ -525,9 +525,147 @@ fn refresh_preset_chips(ui: &MainWindow, mode: meditate_core::SessionMode) {
     );
 }
 
-// (list_presets_for_mode / find_preset_by_uuid /
-// preset_name_taken land with P-4/P-5 where they're first
-// used — keeping each slice dead-code-free.)
+/// Resolve a preset by uuid to the core row (carries the
+/// `config_json` Apply needs + the `mode` guard). `None` when
+/// the row is gone (raced a peer delete) — caller bails like
+/// GTK's `on_preset_row_activated` match.
+#[cfg(target_os = "android")]
+fn find_preset_by_uuid(uuid: &str) -> Option<meditate_core::db::Preset> {
+    let db_arc = DATABASE.get()?;
+    let guard = db_arc.lock().ok()?;
+    let db = guard.as_ref()?;
+    meditate_core::db::find_preset_by_uuid_from_db(db, uuid)
+        .ok()
+        .flatten()
+}
+
+/// Apply a `PresetConfig` JSON blob for `mode` and re-read the
+/// whole Setup surface — the Android analogue of GTK's
+/// `apply_config`. Used by both the row-tap (forward apply) and
+/// the snackbar Undo (re-apply the pre-apply snapshot), exactly
+/// as GTK's Undo calls the same `apply_config(&snapshot)`.
+///
+/// `apply()` does all the DB writes; the lock is dropped before
+/// the UI refreshes (they re-lock). The returned `PresetTiming`
+/// is shell-side reactive state (duration / stopwatch / BB
+/// pattern), persisted here like GTK's `set_countdown_target` /
+/// `set_breathing_duration_secs`. Returns `false` on parse or
+/// `ApplyError` (SyncPending is unreachable until the Phase-7
+/// sync loop — seeded presets reference bundled UUIDs).
+#[cfg(target_os = "android")]
+fn apply_preset_json(
+    ui: &MainWindow,
+    json: &str,
+    mode: meditate_core::SessionMode,
+    timer_session_secs: &std::rc::Rc<std::cell::Cell<u32>>,
+) -> bool {
+    use meditate_core::preset_config::{apply, PresetConfig, PresetTiming};
+    let Ok(cfg) = PresetConfig::from_json(json) else {
+        meditate_core::log("preset.apply", "config_json parse failed");
+        return false;
+    };
+    let outcome = {
+        let Some(db_arc) = DATABASE.get() else { return false; };
+        let Ok(guard) = db_arc.lock() else { return false; };
+        let Some(db) = guard.as_ref() else { return false; };
+        apply(db, &cfg, mode)
+    };
+    let timing = match outcome {
+        Ok(t) => t,
+        Err(e) => {
+            meditate_core::log(
+                "preset.apply",
+                &format!("apply FAILED: {e:?}"),
+            );
+            return false;
+        }
+    };
+    match timing {
+        PresetTiming::Timer {
+            stopwatch,
+            duration_secs,
+        } => {
+            timer_session_secs.set(duration_secs);
+            write_timer_session_secs(duration_secs);
+            ui.set_stopwatch_on(stopwatch);
+            push_session_length_to_ui(ui, duration_secs);
+        }
+        PresetTiming::BoxBreath {
+            stopwatch,
+            inhale_secs,
+            hold_full_secs,
+            exhale_secs,
+            hold_empty_secs,
+            duration_secs,
+        } => {
+            let pat = meditate_core::breath::BreathPattern::clamp_from_raw(
+                inhale_secs,
+                hold_full_secs,
+                exhale_secs,
+                hold_empty_secs,
+            );
+            write_breathing_pattern(pat);
+            write_breathing_session_secs(duration_secs);
+            ui.set_stopwatch_on(stopwatch);
+            push_session_length_to_ui(ui, duration_secs);
+            refresh_breathing_tiles(ui, pat);
+        }
+    }
+    // Re-read everything apply() persisted (settings / bells /
+    // box-breath cues / label / cues override / keep-awake).
+    ui.set_keep_awake_on(read_keep_awake_for_mode(mode));
+    ui.set_cues_mode(signal_mode_to_chip_index(
+        read_signal_mode_for_mode(mode),
+    ));
+    ui.set_label_active(read_label_active_for_mode(mode));
+    ui.set_label_name(
+        resolved_label_for_mode(mode)
+            .map(|(name, _)| name)
+            .unwrap_or_default()
+            .into(),
+    );
+    refresh_bell_rows(ui);
+    refresh_preset_chips(ui, mode);
+    true
+}
+
+/// Snapshot the current Setup into a `PresetConfig` JSON blob —
+/// the pre-apply state the snackbar Undo re-applies (mirrors
+/// GTK's `snapshot_current_setup`). Timing comes from live
+/// shell state (stopwatch + duration / BB pattern); core's
+/// `snapshot` reads everything else from the DB.
+#[cfg(target_os = "android")]
+fn snapshot_setup_json(
+    ui: &MainWindow,
+    mode: meditate_core::SessionMode,
+    timer_session_secs: u32,
+) -> Option<String> {
+    use meditate_core::preset_config::{snapshot, PresetTiming};
+    let timing = match mode {
+        meditate_core::SessionMode::BoxBreath => {
+            let p = read_breathing_pattern();
+            PresetTiming::BoxBreath {
+                stopwatch: ui.get_stopwatch_on(),
+                inhale_secs: p.in_secs,
+                hold_full_secs: p.hold_in,
+                exhale_secs: p.out_secs,
+                hold_empty_secs: p.hold_out,
+                duration_secs: read_breathing_session_secs(),
+            }
+        }
+        _ => PresetTiming::Timer {
+            stopwatch: ui.get_stopwatch_on(),
+            duration_secs: timer_session_secs,
+        },
+    };
+    let db_arc = DATABASE.get()?;
+    let guard = db_arc.lock().ok()?;
+    let db = guard.as_ref()?;
+    Some(snapshot(db, mode, timing).to_json())
+}
+
+// (list_presets_for_mode / preset_name_taken land with P-4/P-5
+// where they're first used — keeping each slice dead-code-free.)
 
 /// Push the chooser's `label-items` array (with `selected`
 /// flagged on `current_id`'s row) into the Slint window. Used
@@ -2774,6 +2912,19 @@ fn build_ui() -> MainWindow {
     let recovery_uuid: Rc<RefCell<Option<String>>> =
         Rc::new(RefCell::new(None));
 
+    // Third discriminator for the shared single-slot snackbar
+    // (P-3): a pending preset-apply Undo. `Some((snapshot_json,
+    // mode))` ⇒ a "'X' applied" snackbar is up and Undo
+    // re-applies that pre-apply snapshot via `apply_preset_json`
+    // (mirrors GTK's apply-toast Undo calling
+    // `apply_config(&snapshot)`). The Undo handler checks this
+    // FIRST; raising a delete / recovery snackbar clears it so
+    // the newest flow owns the single slot's Undo.
+    #[cfg(target_os = "android")]
+    let pending_preset_undo: Rc<
+        RefCell<Option<(String, meditate_core::SessionMode)>>,
+    > = Rc::new(RefCell::new(None));
+
     // Session being edited via the Log card → Edit-Session
     // overlay (L-4). Holds the rowid between `card-tap`
     // (populates the dialog) and `edit-save-tap` (reads the
@@ -3448,17 +3599,88 @@ fn build_ui() -> MainWindow {
         });
     }
 
-    // Preset row tap (P-2 stub). Apply fan-out is P-3 — for now
-    // just log so on-device testing can confirm the row + uuid
-    // wiring before the heavier apply path lands.
+    // Preset row tap → apply (P-3). Mirrors GTK's
+    // `on_preset_row_activated`: mode-guard, snapshot the
+    // pre-apply state, `apply_preset_json`, then raise the
+    // shared single-slot snackbar ("'X' applied" + Undo) exactly
+    // the way the delete / recovery flows use it — `delete_timer`
+    // restarted single-shot for auto-dismiss, `pending_preset_undo`
+    // discriminator routing the shared Undo handler. Undo
+    // re-applies the snapshot through the same `apply_preset_json`
+    // (GTK's Undo calls `apply_config(&snapshot)`).
     {
+        let weak = ui.as_weak();
+        let current_mode = current_mode.clone();
+        #[cfg(target_os = "android")]
+        let timer_session_secs = timer_session_secs.clone();
+        #[cfg(target_os = "android")]
+        let pending_preset_undo = pending_preset_undo.clone();
+        #[cfg(target_os = "android")]
+        let recovery_uuid = recovery_uuid.clone();
+        #[cfg(target_os = "android")]
+        let delete_timer: &'static slint::Timer = delete_timer;
         ui.on_preset_chip_tap(move |uuid| {
             #[cfg(target_os = "android")]
-            meditate_core::log(
-                "preset.tap",
-                &format!("preset row tapped uuid={uuid} (apply: P-3)"),
-            );
-            let _ = uuid;
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                let core_mode: meditate_core::SessionMode =
+                    current_mode.get().into();
+                if !presets_supported(core_mode) {
+                    return;
+                }
+                let Some(preset) = find_preset_by_uuid(uuid.as_str())
+                else {
+                    return;
+                };
+                // Stale cross-mode tap (callback retained across a
+                // mode switch) — refuse rather than mutate Setup.
+                if preset.mode != core_mode {
+                    return;
+                }
+                // Snapshot BEFORE apply so Undo can restore it.
+                let snapshot = snapshot_setup_json(
+                    &ui,
+                    core_mode,
+                    timer_session_secs.get(),
+                );
+                if !apply_preset_json(
+                    &ui,
+                    &preset.config_json,
+                    core_mode,
+                    &timer_session_secs,
+                ) {
+                    return;
+                }
+                meditate_core::log(
+                    "preset.apply",
+                    &format!("applied uuid={uuid}"),
+                );
+
+                // Raise the shared snackbar with the preset-Undo
+                // discriminator (clears the recovery one — single
+                // slot, newest flow owns Undo). No snapshot ⇒ show
+                // the message without Undo wiring rather than skip.
+                recovery_uuid.borrow_mut().take();
+                *pending_preset_undo.borrow_mut() =
+                    snapshot.map(|j| (j, core_mode));
+                ui.set_snackbar_text(
+                    format!("'{}' applied", preset.name).into(),
+                );
+                ui.set_snackbar_visible(true);
+                let weak_inner = ui.as_weak();
+                let ppu = pending_preset_undo.clone();
+                delete_timer.start(
+                    slint::TimerMode::SingleShot,
+                    std::time::Duration::from_secs(5),
+                    move || {
+                        ppu.borrow_mut().take();
+                        if let Some(ui) = weak_inner.upgrade() {
+                            ui.set_snackbar_visible(false);
+                        }
+                    },
+                );
+            }
+            let _ = (weak.clone(), uuid, current_mode.get());
         });
     }
 
@@ -4814,15 +5036,18 @@ fn build_ui() -> MainWindow {
         let pending_deletes = pending_deletes.clone();
         #[cfg(target_os = "android")]
         let recovery_uuid = recovery_uuid.clone();
+        #[cfg(target_os = "android")]
+        let pending_preset_undo = pending_preset_undo.clone();
         ui.on_delete_tap(move |rowid| {
             #[cfg(target_os = "android")]
             {
                 let Some(ui) = weak.upgrade() else { return; };
-                // A trash tap replaces any in-flight recovery
-                // snackbar with the delete one — clear the
-                // recovery context so the shared Undo handler
-                // routes to the delete-restore branch.
+                // A trash tap replaces any in-flight recovery /
+                // preset snackbar with the delete one — clear both
+                // discriminators so the shared Undo handler routes
+                // to the delete-restore branch (single slot).
                 recovery_uuid.borrow_mut().take();
+                pending_preset_undo.borrow_mut().take();
                 let id = rowid as i64;
                 // Move row from `loaded_log_sessions` view into
                 // `pending_deletes`. We don't actually remove
@@ -4886,11 +5111,32 @@ fn build_ui() -> MainWindow {
         let pending_deletes = pending_deletes.clone();
         #[cfg(target_os = "android")]
         let recovery_uuid = recovery_uuid.clone();
+        #[cfg(target_os = "android")]
+        let pending_preset_undo = pending_preset_undo.clone();
+        #[cfg(target_os = "android")]
+        let timer_session_secs = timer_session_secs.clone();
         ui.on_snackbar_undo_tap(move || {
             #[cfg(target_os = "android")]
             {
                 let Some(ui) = weak.upgrade() else { return; };
                 delete_timer.stop();
+                // Preset-apply Undo branch (P-3) — checked FIRST
+                // (single slot; the preset snackbar, if up, owns
+                // Undo). Re-apply the pre-apply snapshot through
+                // the same path the forward apply used, exactly
+                // like GTK's Undo calling `apply_config(&snapshot)`.
+                if let Some((json, mode)) =
+                    pending_preset_undo.borrow_mut().take()
+                {
+                    apply_preset_json(
+                        &ui,
+                        &json,
+                        mode,
+                        &timer_session_secs,
+                    );
+                    ui.set_snackbar_visible(false);
+                    return;
+                }
                 if let Some(uuid) = recovery_uuid.borrow_mut().take() {
                     // Recovery-undo branch (L-6): the rescued
                     // session row already exists; delete it by
@@ -5559,6 +5805,9 @@ fn build_ui() -> MainWindow {
                 format!("Recovered {minutes} min session")
             };
             *recovery_uuid.borrow_mut() = Some(uuid);
+            // Single slot: a recovery snackbar supersedes any
+            // in-flight preset-Undo context.
+            pending_preset_undo.borrow_mut().take();
             ui.set_snackbar_text(text.into());
             ui.set_snackbar_visible(true);
             let weak_inner = ui.as_weak();
