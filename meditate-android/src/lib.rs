@@ -419,6 +419,209 @@ fn refresh_stats(ui: &MainWindow) {
         }
     };
     ui.set_stat_goal_sub(sub.into());
+
+    // Insights (S-3). Batch every insight-driving read inside
+    // this same DB borrow, run the portable compute pass, then
+    // render each typed key to a card. Mirrors GTK's
+    // `reload_insights` + `render_insight` at
+    // `meditate-gtk/src/stats/imp.rs:275`.
+    let (ty, tm) = (today.year(), today.month());
+    let (ly, lm) = if tm == 1 { (ty - 1, 12) } else { (ty, tm - 1) };
+    let fourteen_since = today - chrono::Duration::days(13);
+    let daily_totals: Vec<(String, i64)> =
+        meditate_core::db::get_daily_totals_since_from_db(db, fourteen_since)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(d, secs)| (d.format("%Y-%m-%d").to_string(), secs))
+            .collect();
+    let input = meditate_core::insights::InsightInput {
+        current_streak: meditate_core::db::get_streak_from_db(db, today)
+            .unwrap_or(0),
+        best_streak: meditate_core::db::get_best_streak_from_db(db)
+            .unwrap_or(0),
+        this_month_secs: meditate_core::db::month_total_secs_from_db(
+            db, ty, tm,
+        )
+        .unwrap_or(0),
+        last_month_secs: meditate_core::db::month_total_secs_from_db(
+            db, ly, lm,
+        )
+        .unwrap_or(0),
+        daily_totals,
+        longest: meditate_core::db::get_longest_session_from_db(db)
+            .unwrap_or(None)
+            .map(|(_rowid, s)| {
+                (s.duration_secs as i64, s.start_unix())
+            }),
+        typical_secs: meditate_core::db::get_median_duration_secs_from_db(db)
+            .unwrap_or(None)
+            .unwrap_or(0) as i64,
+        avg_secs_7d: meditate_core::db::get_running_average_secs_from_db(
+            db, today, 7,
+        )
+        .unwrap_or(0.0) as i64,
+        hour_buckets: meditate_core::db::hour_buckets_from_db(db)
+            .unwrap_or((0, 0, 0)),
+        session_count: count,
+    };
+    let keys = meditate_core::insights::compute(
+        &input,
+        meditate_core::time::unix_now(),
+        meditate_core::date_math::locale_week_start_dow(),
+    );
+    let rows: Vec<InsightRow> = keys
+        .into_iter()
+        .map(|k| {
+            let accent = k.is_accent();
+            let icon_id = insight_icon_id(&k);
+            let (title, body) = render_insight(&k);
+            InsightRow {
+                title: title.into(),
+                body: body.into(),
+                accent,
+                icon_id,
+            }
+        })
+        .collect();
+    ui.set_stat_insights(
+        std::rc::Rc::new(slint::VecModel::from(rows)).into(),
+    );
+}
+
+/// Bundled-SVG selector for an insight row, replacing GTK's
+/// per-variant glyph (which tofus on the FP5 Android-15 font —
+/// see [[feedback_android_no_unicode_glyphs]]). Trend variants
+/// pick the up/down icon by sign, matching GTK's "↑"/"↓" glyph
+/// switch at `meditate-core/src/insights.rs:104`. IDs are
+/// decoded to `@image-url`s in main.slint's InsightRow.
+#[cfg(target_os = "android")]
+fn insight_icon_id(key: &meditate_core::insights::InsightKey) -> i32 {
+    use meditate_core::insights::InsightKey;
+    match key {
+        InsightKey::CurrentStreak { .. } => 0,
+        InsightKey::WeekOverWeek { pct, .. }
+        | InsightKey::MonthTrend { pct, .. } => {
+            if *pct >= 0 { 1 } else { 2 }
+        }
+        InsightKey::PreferredTime { .. } => 3,
+        InsightKey::TypicalSession { .. } => 4,
+        InsightKey::LongestSession { .. } => 5,
+        InsightKey::NextMilestone { .. } => 6,
+        InsightKey::DailyRhythm { .. } => 7,
+        InsightKey::NoData => 8,
+    }
+}
+
+/// Map a `meditate_core::insights::InsightKey` to its rendered
+/// (title, body) pair. Inline English — i18n is shell-deferred
+/// on Android (same as the snackbars / sync / goal copy).
+/// Mirrors GTK's `render_insight` at
+/// `meditate-gtk/src/stats/imp.rs:317`; durations go through
+/// `render_hm(hm_secs_key(..))` (the seconds-precision variant
+/// GTK uses via `format_hm_secs`). The leading per-variant
+/// glyph GTK draws is intentionally dropped — those code
+/// points tofu on the FP5 Android-15 font.
+#[cfg(target_os = "android")]
+fn render_insight(
+    key: &meditate_core::insights::InsightKey,
+) -> (String, String) {
+    use meditate_core::insights::{HourBucket, InsightKey};
+    let hm = |secs: i64| {
+        render_hm(meditate_core::format::hm_secs_key(
+            std::time::Duration::from_secs(secs.max(0) as u64),
+        ))
+    };
+    match key {
+        InsightKey::CurrentStreak { days, is_record, best } => {
+            let body = if *is_record {
+                if *days == 1 {
+                    "1 day — new record".to_string()
+                } else {
+                    format!("{days} days — new record")
+                }
+            } else if *best > *days {
+                if *days == 1 {
+                    format!("1 day · best was {best}")
+                } else {
+                    format!("{days} days · best was {best}")
+                }
+            } else {
+                "1 day · keep going".to_string()
+            };
+            ("Current streak".to_string(), body)
+        }
+        InsightKey::WeekOverWeek { pct, this_secs, last_secs } => {
+            let dir = if *pct >= 0 { "up" } else { "down" };
+            (
+                "This week's practice".to_string(),
+                format!(
+                    "{}% {dir} vs last week ({} vs {})",
+                    pct.abs(),
+                    hm(*this_secs),
+                    hm(*last_secs),
+                ),
+            )
+        }
+        InsightKey::MonthTrend { pct, this_secs, last_secs } => {
+            let title = if *pct >= 0 {
+                "Practising more"
+            } else {
+                "Practising less"
+            };
+            (
+                title.to_string(),
+                format!(
+                    "{pct:+}% vs last month ({} vs {})",
+                    hm(*this_secs),
+                    hm(*last_secs),
+                ),
+            )
+        }
+        InsightKey::PreferredTime { bucket, pct } => {
+            let when = match bucket {
+                HourBucket::Morning => "morning",
+                HourBucket::Afternoon => "afternoon",
+                HourBucket::Evening => "evening",
+            };
+            (
+                "Preferred time".to_string(),
+                format!("{pct}% of sessions are in the {when}"),
+            )
+        }
+        InsightKey::TypicalSession { duration_secs } => (
+            "Typical session".to_string(),
+            format!("About {}", hm(*duration_secs)),
+        ),
+        InsightKey::LongestSession { duration_secs, start_unix } => {
+            use chrono::TimeZone;
+            let when = chrono::Local
+                .timestamp_opt(*start_unix, 0)
+                .single()
+                .map(|d| d.format("%b %-d").to_string());
+            let body = match when {
+                Some(d) => format!("{} on {d}", hm(*duration_secs)),
+                None => hm(*duration_secs),
+            };
+            ("Longest session".to_string(), body)
+        }
+        InsightKey::NextMilestone { target, remaining } => {
+            let body = if *remaining == 1 {
+                format!("1 session to your {target}th")
+            } else {
+                format!("{remaining} sessions to your {target}th")
+            };
+            ("Next milestone".to_string(), body)
+        }
+        InsightKey::DailyRhythm { avg_secs } => (
+            "Daily rhythm".to_string(),
+            format!("{} average over last 7 days", hm(*avg_secs)),
+        ),
+        InsightKey::NoData => (
+            "No sessions yet".to_string(),
+            "Complete a meditation to start seeing insights here"
+                .to_string(),
+        ),
+    }
 }
 
 /// Initialise the Done expander state from Setup's current pick.

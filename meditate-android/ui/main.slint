@@ -74,6 +74,31 @@ export struct LabelItem {
     selected: bool,
 }
 
+// One Stats "Insights" row. Rust runs
+// `meditate_core::insights::compute` and maps each typed
+// `InsightKey` to a rendered title + body (inline English —
+// i18n shell-deferred), mirroring GTK's `render_insight` at
+// `meditate-gtk/src/stats/imp.rs:317`. `accent` tints the
+// title with the primary colour (GTK uses an accent CSS
+// class on record-streak / longest-session). GTK also draws
+// a leading glyph per variant; those are box-drawing /
+// symbol code points the FP5 Android-15 font doesn't carry
+// (tofu), so the Android rows are title + body only.
+// GTK draws a leading glyph per insight variant
+// (`InsightKey::glyph()` — box-drawing / symbol code points).
+// Those tofu on the FP5 Android-15 font, so the Android rows
+// use bundled SVGs instead, selected by `icon-id`:
+//   0 streak (bolt)        1 trend-up      2 trend-down
+//   3 preferred-time(clock) 4 typical(timer) 5 longest(star)
+//   6 milestone(flag)      7 daily-rhythm(calendar)
+//   8 no-data(bar chart)
+export struct InsightRow {
+    title: string,
+    body: string,
+    accent: bool,
+    icon-id: int,
+}
+
 // Multi-line note input — the Slint Material library's `TextField`
 // is hard-coded `single_line: true`, but the GTK shell's note view
 // is a 180-px-tall Gtk.TextView with word-wrap. This custom
@@ -1037,6 +1062,11 @@ export component MainWindow inherits Window {
     in property <string> stat-goal-pct-label: "0%";
     in property <string> stat-goal-progress: "–";
     in property <string> stat-goal-sub: "";
+
+    // Insights (S-3). Rust-populated; one card per
+    // `meditate_core::insights::InsightKey` the compute pass
+    // emits. Empty ⇒ section hidden.
+    in property <[InsightRow]> stat-insights: [];
 
     // Has-Notes filter (L-5b). `filter-notes-only` is the live
     // flag the Rust paginator reads via `get_filter_notes_only`
@@ -2294,6 +2324,89 @@ export component MainWindow inherits Window {
                             color: MaterialPalette.on-surface-variant;
                             horizontal-alignment: left;
                             wrap: word-wrap;
+                        }
+                    }
+                }
+
+                // Insights — eyebrow + boxed list of cards.
+                // Mirrors GTK's `insights_list` boxed-list at
+                // `meditate-gtk/data/ui/stats_view.blp:126`.
+                // Hidden entirely when compute emits nothing
+                // (it always emits at least NoData on an empty
+                // library, so this only blanks if the DB read
+                // failed).
+                if root.stat-insights.length > 0 : VerticalLayout {
+                    spacing: 8px;
+
+                    Text {
+                        text: "INSIGHTS";
+                        font-size: 11px;
+                        font-weight: 700;
+                        color: MaterialPalette.on-surface-variant;
+                        horizontal-alignment: left;
+                    }
+
+                    BoxedList {
+                        for row[idx] in root.stat-insights : VerticalLayout {
+                            spacing: 0;
+
+                            if idx > 0 : Rectangle {
+                                height: 1px;
+                                background: MaterialPalette.outline-variant;
+                            }
+
+                            HorizontalLayout {
+                                padding-left: 16px;
+                                padding-right: 16px;
+                                padding-top: 12px;
+                                padding-bottom: 12px;
+                                spacing: 12px;
+                                alignment: stretch;
+
+                                VerticalLayout {
+                                    alignment: center;
+                                    Image {
+                                        width: 22px;
+                                        height: 22px;
+                                        colorize: row.accent
+                                            ? MaterialPalette.primary
+                                            : MaterialPalette.on-surface-variant;
+                                        source:
+                                            row.icon-id == 0 ? @image-url("assets/bolt.svg") :
+                                            row.icon-id == 1 ? @image-url("assets/trending_up.svg") :
+                                            row.icon-id == 2 ? @image-url("assets/trending_down.svg") :
+                                            row.icon-id == 3 ? Icons.schedule :
+                                            row.icon-id == 4 ? @image-url("assets/timer.svg") :
+                                            row.icon-id == 5 ? @image-url("assets/star.svg") :
+                                            row.icon-id == 6 ? @image-url("assets/flag.svg") :
+                                            row.icon-id == 7 ? Icons.calendar-today :
+                                            @image-url("assets/bar_chart.svg");
+                                    }
+                                }
+
+                                VerticalLayout {
+                                    alignment: center;
+                                    spacing: 2px;
+                                    horizontal-stretch: 1;
+
+                                    Text {
+                                        text: row.title;
+                                        font-size: 15px;
+                                        font-weight: 700;
+                                        color: row.accent
+                                            ? MaterialPalette.primary
+                                            : MaterialPalette.on-surface;
+                                        horizontal-alignment: left;
+                                    }
+                                    Text {
+                                        text: row.body;
+                                        font-size: 13px;
+                                        color: MaterialPalette.on-surface-variant;
+                                        horizontal-alignment: left;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
                         }
                     }
                 }
