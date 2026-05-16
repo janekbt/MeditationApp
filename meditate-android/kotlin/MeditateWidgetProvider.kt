@@ -120,6 +120,22 @@ class MeditateWidgetProvider : AppWidgetProvider() {
             PendingIntent.FLAG_UPDATE_CURRENT or mutableFlag,
         )
         views.setPendingIntentTemplate(R.id.widget_list, template)
+
+        // Title → just open the app (no preset, no autostart):
+        // a direct activity launch, distinct request code so it
+        // doesn't collide with the broadcast template, IMMUTABLE
+        // since nothing fills it in.
+        val openApp = context.packageManager
+            .getLaunchIntentForPackage(context.packageName)
+            ?.apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+            ?: Intent()
+        val openPi = PendingIntent.getActivity(
+            context,
+            1,
+            openApp,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        views.setOnClickPendingIntent(R.id.widget_title, openPi)
         return views
     }
 

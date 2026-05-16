@@ -12,15 +12,34 @@
     android:background="@drawable/widget_bg"
     android:padding="12dp">
 
-    <TextView
-        android:id="@+id/widget_title"
+    <!-- Header row: title (tap → open app) on the left, the app
+         icon's white lotus pinned top-right. center_vertical so
+         the glyph aligns with the title baseline-ish. -->
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Meditate"
-        android:textColor="@color/widget_fg"
-        android:textSize="14sp"
-        android:textStyle="bold"
-        android:paddingBottom="6dp" />
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingBottom="6dp">
+
+        <TextView
+            android:id="@+id/widget_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Meditate"
+            android:textColor="@color/widget_fg"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <ImageView
+            android:id="@+id/widget_lotus"
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:src="@drawable/widget_lotus"
+            android:contentDescription="@null" />
+
+    </LinearLayout>
 
     <TextView
         android:id="@+id/widget_empty"
