@@ -165,6 +165,7 @@ is coherent.
 11. **Sync.** `meditate-core::sync` already abstracts the HTTP layer (`ureq`). Plug in the JNI keychain and run. Pairs with UI phase 7.
 12. **Polish: edge-to-edge, predictive back, IME insets, theming.** Predictive-back partly done (root `FocusScope` routes `Key.Back` through a Rust handler that closes the labels chooser → discards Done → swallows back during Running, commit `9e95a5d`). Edge-to-edge / IME insets / theming still pending.
 13. **F-Droid metadata + reproducible build.** Manifest, fastlane structure, `metadata/io.github.janekbt.Meditate.yml` for fdroiddata. Lands after every UI phase is at least partly usable.
+14. ✅ **Home-screen preset widget** (Android-only — no GTK mirror). RemoteViews collection over a Rust-written JSON projection of starred presets across Timer + Box-Breath; `widget.rs` + `MeditateWidget*.kt`. Tap deep-links into an auto-started session via a broadcast → drop-file → `try_widget_deep_link` channel, cold and warm (NativeActivity forwards no `onNewIntent`). W-1/2/3 `6a2d66c`, W-4 `69be0ad`. Unblocked by the xbuild→Gradle migration (`<receiver>` + `res/`).
 
 ## UI Translation Phases
 
