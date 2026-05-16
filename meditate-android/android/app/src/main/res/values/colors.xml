@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Adaptive-icon background. Calm slate — placeholder until
+         Phase 8 ships a branded icon. -->
+    <color name="ic_launcher_background">#2E3440</color>
+</resources>

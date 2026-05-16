@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Hand-written replacement for xbuild's quick_xml-serialized
+     manifest. Two things xbuild could NOT emit and we now state
+     explicitly:
+       1. The <activity android:name="android.app.NativeActivity">
+          + android.app.lib_name meta-data. xbuild emitted NO
+          <activity> at all; slint's android-activity glue worked
+          implicitly. A hand-written manifest MUST declare it.
+          lib_name = the cdylib soname without lib/.so prefix
+          (libmeditate_android.so -> "meditate_android"); it is
+          also load-bearing for the JNI app-classloader dotted
+          path in service.rs.
+       2. android:hasCode="true" — NDK NativeActivity normally
+          uses hasCode="false", but we ship Kotlin (the
+          foreground service + audio/haptics JNI helpers); with
+          false the app classloader's DexPathList is empty and
+          every loadClass for our classes throws
+          ClassNotFoundException (the exact crash documented in
+          the old manifest.yaml). KEEP true.
+     applicationId / SDK levels / version live in build.gradle
+     (AGP 7.3 `namespace`), so this manifest carries no
+     package=/uses-sdk. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- FOREGROUND_SERVICE since API 28; the mediaPlayback
+         per-type permission is mandatory on API 34+ or the
+         service start throws SecurityException. POST_NOTIFICATIONS
+         is the API 33+ runtime prompt. VIBRATE is install-time. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <application
+        android:label="Meditate"
+        android:icon="@mipmap/ic_launcher"
+        android:hasCode="true"
+        android:theme="@style/Theme.Meditate">
+
+        <activity
+            android:name="android.app.NativeActivity"
+            android:exported="true"
+            android:configChanges="orientation|keyboardHidden|screenSize|screenLayout|density|uiMode">
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="meditate_android" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Keeps the timer alive across screen-off/app-switch.
+             Not exported — only this app binds it. -->
+        <service
+            android:name=".MeditateSessionService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
+    </application>
+
+</manifest>

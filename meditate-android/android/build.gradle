@@ -1,0 +1,13 @@
+// Top-level build file. Pins mirror xbuild's gradle/build.gradle
+// verbatim — AGP 7.3.0 + Kotlin Android 1.7.20 (Gradle 8.5 is the
+// documented ceiling for AGP 7.3). Do NOT bump in lockstep with
+// the migration; the resolved slint 1.16 / android-activity 0.6.1
+// stack is what xbuild already built against.
+plugins {
+    id 'com.android.application' version '7.3.0' apply false
+    id 'org.jetbrains.kotlin.android' version '1.7.20' apply false
+}
+
+task clean(type: Delete) {
+    delete rootProject.buildDir
+}

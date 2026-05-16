@@ -1,0 +1,37 @@
+// App module. Mirrors the app/build.gradle string xbuild
+// generated (gradle/mod.rs) — namespace/applicationId, the SDK
+// levels, version. No `assetPacks` (the OGGs are include_bytes!'d
+// in src/sounds.rs — the asset-pack path was always dead) and no
+// `dependencies` (manifest.yaml declared none).
+//
+// Additions over the xbuild template, all required to replace
+// what xbuild did implicitly / what its manifest struct couldn't
+// express:
+//   * kotlin srcDirs → ../../kotlin (xbuild flat-copied these;
+//     the .kt files declare their own package).
+//   * jniLibs srcDirs → cargo-ndk writes libmeditate_android.so
+//     here (wired by the cargoNdkBuild task in G-2).
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'io.github.janekbt.Meditate'
+    compileSdk 34
+    defaultConfig {
+        applicationId 'io.github.janekbt.Meditate'
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName '0.1.0'
+    }
+    sourceSets {
+        main {
+            kotlin.srcDirs += '../../kotlin'
+            jniLibs.srcDirs = ['src/main/jniLibs']
+        }
+    }
+    // Debug builds are auto-signed with AGP's ~/.android/debug.keystore
+    // (G-4). Release signing / F-Droid reproducible build is later.
+}

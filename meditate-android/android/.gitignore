@@ -1,0 +1,5 @@
+# Gradle build outputs / caches — never commit.
+.gradle/
+app/build/
+app/src/main/jniLibs/
+local.properties

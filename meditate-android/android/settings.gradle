@@ -1,0 +1,24 @@
+// Hand-maintained Gradle project replacing xbuild's generated one
+// (xbuild's manifest struct can't emit <receiver>/<res> — needed
+// for Phase 8 theming, F-Droid, and the preset widget). Mirrors
+// xbuild's gradle/settings.gradle verbatim, minus the dead
+// `:baseAssets` asset-pack (our OGGs are include_bytes!'d, the
+// asset-pack path was never used). Pins kept identical:
+// AGP 7.3.0, Kotlin Android 1.7.20, Gradle 8.5.
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        google()
+        mavenCentral()
+    }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.name = "meditate-android"
+include ':app'
