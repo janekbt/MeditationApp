@@ -23,21 +23,68 @@ use app::{signal_mode_from_chip_index, signal_mode_to_chip_index};
 use std::cell::Cell;
 use std::cell::RefCell;
 use std::rc::Rc;
-// All bare `OnceLock` users (ANDROID_APP / RECOVERED_SESSION)
-// are android-gated; DATABASE spells out `std::sync::OnceLock`.
+// `RECOVERED_SESSION` is the only remaining bare `OnceLock` user
+// (android-gated); `DATABASE` spells out `std::sync::OnceLock`.
 // So on the host build this import is dead — gate it rather
 // than carry an unused-import warning.
 #[cfg(target_os = "android")]
 use std::sync::OnceLock;
 use std::time::Duration;
 
-// Process-wide handle to the AndroidApp. Stored at android_main
-// entry so the AppState transition callbacks (which live inside
-// closures and don't own the AndroidApp) can reach the JNI bridge.
-// android-activity's AndroidApp is `Clone + Send + Sync` per its
-// docs, so OnceLock storage is sound.
+// Process-wide handle to the AndroidApp, reachable from the
+// AppState transition closures (which don't own it) for the JNI
+// bridges.
+//
+// NOT a write-once OnceLock: android-activity calls `android_main`
+// *again* every time the NativeActivity is destroyed and remade
+// while the process survives (USB attach/detach, low-memory
+// activity kill, back-then-relaunch, a config change we don't
+// list in `android:configChanges`). A OnceLock would pin the
+// FIRST AndroidApp; after a recreate its `internalDataPath` /
+// activity pointer is null, so `internal_data_path()` returns
+// None ("after NativeActivity has been destroyed") and every JNI
+// call targets a dead activity — the intermittent
+// `[widget] publish: no internal_data_path` and silently broken
+// service/audio/haptics. So the handle must be *refreshed* each
+// android_main.
+//
+// AndroidApp is `Clone + Send + Sync` and cheap (Arc inside). We
+// `Box::leak` the latest clone and publish the `&'static`
+// pointer through an `AtomicPtr`, so `android_app()` still hands
+// out `Option<&'static AndroidApp>` and the ~16 call sites stay
+// borrow-identical. The leak is bounded — one Arc-sized handle
+// per activity-recreate, a handful over a process lifetime — and
+// deliberate (the old handle's activity is dead anyway); it is
+// not a leak we could reclaim safely while `&'static` refs may
+// still be in flight on other threads.
 #[cfg(target_os = "android")]
-static ANDROID_APP: OnceLock<slint::android::AndroidApp> = OnceLock::new();
+static ANDROID_APP: std::sync::atomic::AtomicPtr<slint::android::AndroidApp> =
+    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+
+/// Publish (or replace) the process-wide AndroidApp handle.
+/// Called at the top of every `android_main`.
+#[cfg(target_os = "android")]
+fn set_android_app(app: slint::android::AndroidApp) {
+    let leaked: &'static slint::android::AndroidApp =
+        Box::leak(Box::new(app));
+    ANDROID_APP.store(
+        leaked as *const _ as *mut _,
+        std::sync::atomic::Ordering::Release,
+    );
+}
+
+/// Current AndroidApp handle, or None before the first
+/// `android_main`. The `&'static` is sound because the backing
+/// box is intentionally leaked (never freed).
+#[cfg(target_os = "android")]
+fn android_app() -> Option<&'static slint::android::AndroidApp> {
+    let p = ANDROID_APP.load(std::sync::atomic::Ordering::Acquire);
+    if p.is_null() {
+        None
+    } else {
+        Some(unsafe { &*p })
+    }
+}
 
 /// Single-shot hand-off for a crash-recovered session (L-6).
 /// `open_database` runs `finalize_session_in_progress` at
@@ -61,7 +108,7 @@ static RECOVERED_SESSION: OnceLock<std::sync::Mutex<Option<(String, u32)>>> =
 /// Slint and asks Android to drop the IME unconditionally.
 #[cfg(target_os = "android")]
 fn hide_soft_keyboard() {
-    if let Some(app) = ANDROID_APP.get() {
+    if let Some(app) = android_app() {
         app.hide_soft_input(false);
     }
 }
@@ -77,11 +124,11 @@ fn on_state_changed(was_active: bool, is_active: bool) {
     #[cfg(target_os = "android")]
     {
         if !was_active && is_active {
-            if let Some(app) = ANDROID_APP.get() {
+            if let Some(app) = android_app() {
                 service::start(app);
             }
         } else if was_active && !is_active {
-            if let Some(app) = ANDROID_APP.get() {
+            if let Some(app) = android_app() {
                 service::stop(app);
             }
         }
@@ -110,7 +157,7 @@ fn on_state_changed(was_active: bool, is_active: bool) {
 #[cfg(target_os = "android")]
 fn dispatch_effects(effects: &[meditate_core::session::Effect]) {
     use meditate_core::session::Effect;
-    let Some(app) = ANDROID_APP.get() else { return; };
+    let Some(app) = android_app() else { return; };
     for effect in effects {
         if matches!(effect, Effect::StopActiveSignals) {
             audio::stop(app);
@@ -649,7 +696,7 @@ fn widget_presets_snapshot() -> Vec<widget::WidgetPreset> {
 /// unconditionally — two indexed `WHERE is_starred` queries.
 #[cfg(target_os = "android")]
 fn refresh_widget() {
-    if let Some(app) = ANDROID_APP.get() {
+    if let Some(app) = android_app() {
         widget::publish(app, widget_presets_snapshot());
     }
 }
@@ -680,7 +727,7 @@ fn try_widget_deep_link(
     timer_session_secs: &std::rc::Rc<std::cell::Cell<u32>>,
     state: &std::rc::Rc<std::cell::RefCell<AppState>>,
 ) -> bool {
-    let Some(app) = ANDROID_APP.get() else { return false; };
+    let Some(app) = android_app() else { return false; };
     let Some(uuid) = widget::take_pending_launch(app) else {
         return false;
     };
@@ -4738,7 +4785,7 @@ fn build_ui() -> MainWindow {
                 let Some(ui) = weak.upgrade() else { return; };
                 // Leaving the overlay always silences a preview.
                 let _ = bell_preview.borrow_mut().stop();
-                if let Some(app) = ANDROID_APP.get() {
+                if let Some(app) = android_app() {
                     audio::stop(app);
                 }
                 ui.set_bell_preview_uuid(slint::SharedString::new());
@@ -4797,7 +4844,7 @@ fn build_ui() -> MainWindow {
             #[cfg(target_os = "android")]
             if let Some(ui) = weak.upgrade() {
                 let _ = bell_preview.borrow_mut().stop();
-                if let Some(app) = ANDROID_APP.get() {
+                if let Some(app) = android_app() {
                     audio::stop(app);
                 }
                 ui.set_bell_preview_uuid(slint::SharedString::new());
@@ -4890,7 +4937,7 @@ fn build_ui() -> MainWindow {
                 let Some(ui) = weak.upgrade() else { return; };
                 // Leaving the overlay always silences a preview.
                 let _ = pattern_preview.borrow_mut().stop();
-                if let Some(app) = ANDROID_APP.get() {
+                if let Some(app) = android_app() {
                     haptics::cancel(app);
                 }
                 ui.set_pattern_preview_uuid(slint::SharedString::new());
@@ -4949,7 +4996,7 @@ fn build_ui() -> MainWindow {
             {
                 let Some(ui) = weak.upgrade() else { return; };
                 let _ = pattern_preview.borrow_mut().stop();
-                if let Some(app) = ANDROID_APP.get() {
+                if let Some(app) = android_app() {
                     haptics::cancel(app);
                 }
                 ui.set_pattern_preview_uuid(slint::SharedString::new());
@@ -4973,7 +5020,7 @@ fn build_ui() -> MainWindow {
                         generation,
                     } => {
                         let mut dur_ms: u32 = 0;
-                        if let Some(app) = ANDROID_APP.get() {
+                        if let Some(app) = android_app() {
                             // Cancel the outgoing buzz before the
                             // new one so they don't overlap.
                             haptics::cancel(app);
@@ -5024,7 +5071,7 @@ fn build_ui() -> MainWindow {
                         }
                     }
                     meditate_core::preview::PreviewAction::StopOnly => {
-                        if let Some(app) = ANDROID_APP.get() {
+                        if let Some(app) = android_app() {
                             haptics::cancel(app);
                         }
                         ui.set_pattern_preview_uuid(slint::SharedString::new());
@@ -5050,7 +5097,7 @@ fn build_ui() -> MainWindow {
                         generation,
                     } => {
                         let mut dur_ms: i64 = 0;
-                        if let Some(app) = ANDROID_APP.get() {
+                        if let Some(app) = android_app() {
                             // Single audio slot — play() supersedes
                             // any in-flight clip; stop() first keeps
                             // the swap clean.
@@ -5088,7 +5135,7 @@ fn build_ui() -> MainWindow {
                         }
                     }
                     meditate_core::preview::PreviewAction::StopOnly => {
-                        if let Some(app) = ANDROID_APP.get() {
+                        if let Some(app) = android_app() {
                             audio::stop(app);
                         }
                         ui.set_bell_preview_uuid(slint::SharedString::new());
@@ -6555,7 +6602,7 @@ fn build_ui() -> MainWindow {
             #[cfg(target_os = "android")]
             if ui.get_bell_chooser_page() {
                 let _ = bell_preview.borrow_mut().stop();
-                if let Some(app) = ANDROID_APP.get() {
+                if let Some(app) = android_app() {
                     audio::stop(app);
                 }
                 ui.set_bell_preview_uuid(slint::SharedString::new());
@@ -6565,7 +6612,7 @@ fn build_ui() -> MainWindow {
             #[cfg(target_os = "android")]
             if ui.get_pattern_chooser_page() {
                 let _ = pattern_preview.borrow_mut().stop();
-                if let Some(app) = ANDROID_APP.get() {
+                if let Some(app) = android_app() {
                     haptics::cancel(app);
                 }
                 ui.set_pattern_preview_uuid(slint::SharedString::new());
@@ -6677,11 +6724,13 @@ pub fn main() {
 #[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 fn android_main(android_app: slint::android::AndroidApp) {
-    // Stash the AndroidApp before consuming it: slint::android::init
-    // takes it by value, but the AppState transition callbacks need
-    // it (cloned) later to fire the foreground-service start/stop
-    // JNI calls. AndroidApp is Clone + Send + Sync, so this is sound.
-    let _ = ANDROID_APP.set(android_app.clone());
+    // Publish the AndroidApp before slint::android::init consumes
+    // it: the AppState transition closures reach the JNI bridges
+    // through it later. `set_` (not OnceLock) because android_main
+    // re-runs on every NativeActivity recreate within a surviving
+    // process — each run must replace the handle or the JNI
+    // bridges keep targeting the destroyed activity.
+    set_android_app(android_app.clone());
     open_database(&android_app);
     slint::android::init(android_app).unwrap();
     let ui = build_ui();
