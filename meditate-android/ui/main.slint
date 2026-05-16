@@ -446,6 +446,67 @@ component CompactToggle inherits Rectangle {
     }
 }
 
+// Same static look as CompactToggle, but every segment is an
+// EQUAL width so the dividers are evenly spaced regardless of
+// label length. The trick: a plain HorizontalLayout splits its
+// width equally when every child has the same preferred width
+// and equal stretch — so each segment pins `preferred-width: 0`
+// (a constant, not derived from the parent width → no binding
+// loop) and `horizontal-stretch: 1`. The layout then hands each
+// exactly width/N. No `root.width` math, no conditional layout,
+// CompactToggle untouched. Used for the Timer/Guided/Box-Breath
+// mode chip; the parent VerticalLayout stretches it full-width.
+component ModeToggle inherits Rectangle {
+    in property <[string]> labels;
+    in-out property <int> current-index;
+    callback changed(int);
+
+    height: 32px;
+    border-radius: 16px;
+    border-width: 1px;
+    border-color: MaterialPalette.outline;
+    clip: true;
+
+    HorizontalLayout {
+        spacing: 0;
+        for label[idx] in root.labels : Rectangle {
+            horizontal-stretch: 1;
+            preferred-width: 0px;
+            min-width: 0px;
+            background: idx == root.current-index
+                ? MaterialPalette.secondary-container
+                : transparent;
+
+            TouchArea {
+                clicked => {
+                    root.current-index = idx;
+                    root.changed(idx);
+                }
+            }
+
+            Text {
+                width: 100%;
+                height: 100%;
+                text: label;
+                font-size: 13px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                color: MaterialPalette.on-surface;
+            }
+
+            // Divider on the segment's right edge (skipped after
+            // the last). Segments are equal width, so these land
+            // at exact 1/N, 2/N … — evenly spaced.
+            if idx < root.labels.length - 1 : Rectangle {
+                x: parent.width - self.width;
+                width: 1px;
+                height: 100%;
+                background: MaterialPalette.outline;
+            }
+        }
+    }
+}
+
 // Adw.ActionRow-with-segmented-suffix analogue — title on the
 // left, inline three-option chip group on the right. Mirrors the
 // .blp `cues_signal_mode_row` (the GTK shell builds an
@@ -2013,14 +2074,10 @@ export component MainWindow inherits Window {
             // shells. Guided + Box Breath are surface only in this
             // slice (no audio engine / no Box Breath running view
             // yet); Start stays disabled when either is selected.
-            SegmentedButton {
+            ModeToggle {
+                labels: ["Timer", "Guided", "Box Breath"];
                 current-index <=> root.setup-mode;
-                items: [
-                    { text: "Timer" },
-                    { text: "Guided" },
-                    { text: "Box Breath" },
-                ];
-                index-changed(idx) => { root.mode-changed(idx); }
+                changed(idx) => { root.mode-changed(idx); }
             }
 
             // Start Session button — above the settings, in thumb
