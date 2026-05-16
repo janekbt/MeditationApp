@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Adaptive-icon background layer: the GTK icon's vertical blue
+     gradient (#5BA4E8 top → #1A60BB bottom; SVG `linearGradient
+     y1=0 y2=1` ⇒ Android angle 270). Full-bleed — no rounding
+     here: the launcher applies its own mask (circle / squircle /
+     etc.), so baking the SVG's rx=24 squircle in would
+     double-round. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <gradient
+        android:startColor="#5BA4E8"
+        android:endColor="#1A60BB"
+        android:angle="270" />
+</shape>

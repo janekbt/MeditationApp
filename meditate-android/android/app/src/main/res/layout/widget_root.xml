@@ -34,9 +34,9 @@
 
         <ImageView
             android:id="@+id/widget_lotus"
-            android:layout_width="22dp"
-            android:layout_height="22dp"
-            android:src="@drawable/widget_lotus"
+            android:layout_width="30dp"
+            android:layout_height="30dp"
+            android:src="@drawable/widget_app_icon"
             android:contentDescription="@null" />
 
     </LinearLayout>

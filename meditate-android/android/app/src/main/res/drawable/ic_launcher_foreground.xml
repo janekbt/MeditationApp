@@ -1,19 +1,78 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Placeholder launcher foreground: a centred ring (meditation
-     "bell/breath" motif) on the 108dp adaptive canvas (inner
-     72dp safe zone). Vector so no density PNGs needed. Phase 8
-     swaps in the real branded mark. -->
+<!-- Adaptive-icon foreground layer: the white lotus from the GTK
+     app icon (meditate-gtk/.../io.github.janekbt.Meditate.svg).
+     The source art lives in a 128-unit space; this layer is the
+     108-unit adaptive canvas with a 72-unit safe zone. The outer
+     <group> maps source → canvas: scale 0.62 + translate
+     (14.32, 11.22) places the lotus bbox centre at ~(54,54) and
+     keeps every petal inside the safe zone under any launcher
+     mask (group matrix order = translate ∘ scale, pivot 0).
+     Inner <group>s carry the per-petal rotation about the
+     source-space pivot (64,92), drawn back-to-front (outer →
+     inner → centre) so the centre petal stays on top — same
+     ordering as the SVG. Each petal keeps the SVG's translucent
+     blue stroke (#64A0E6 @ 0.45, width 2): that outline is what
+     visually separates the overlapping white petals — without it
+     the flower reads as one uniform white blob. The base arc is
+     kept (slightly translucent white) as in the source. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <path
-        android:strokeColor="#D8DEE9"
-        android:strokeWidth="6"
-        android:fillColor="#00000000"
-        android:pathData="M54,30 a24,24 0 1,0 0.01,0 Z" />
-    <path
-        android:fillColor="#88C0D0"
-        android:pathData="M54,48 a6,6 0 1,0 0.01,0 Z" />
+
+    <group
+        android:scaleX="0.62"
+        android:scaleY="0.62"
+        android:translateX="14.32"
+        android:translateY="11.22">
+
+        <!-- Outer petals -->
+        <group android:rotation="-55" android:pivotX="64" android:pivotY="92">
+            <path android:fillColor="#FFFFFF"
+                android:strokeColor="#64A0E6"
+                android:strokeAlpha="0.45"
+                android:strokeWidth="2"
+                android:pathData="M64,92 C50,84 50,62 64,44 C78,62 78,84 64,92 Z" />
+        </group>
+        <group android:rotation="55" android:pivotX="64" android:pivotY="92">
+            <path android:fillColor="#FFFFFF"
+                android:strokeColor="#64A0E6"
+                android:strokeAlpha="0.45"
+                android:strokeWidth="2"
+                android:pathData="M64,92 C50,84 50,62 64,44 C78,62 78,84 64,92 Z" />
+        </group>
+
+        <!-- Inner side petals -->
+        <group android:rotation="-30" android:pivotX="64" android:pivotY="92">
+            <path android:fillColor="#FFFFFF"
+                android:strokeColor="#64A0E6"
+                android:strokeAlpha="0.45"
+                android:strokeWidth="2"
+                android:pathData="M64,92 C46,80 46,50 64,30 C82,50 82,80 64,92 Z" />
+        </group>
+        <group android:rotation="30" android:pivotX="64" android:pivotY="92">
+            <path android:fillColor="#FFFFFF"
+                android:strokeColor="#64A0E6"
+                android:strokeAlpha="0.45"
+                android:strokeWidth="2"
+                android:pathData="M64,92 C46,80 46,50 64,30 C82,50 82,80 64,92 Z" />
+        </group>
+
+        <!-- Centre petal (frontmost) -->
+        <path android:fillColor="#FFFFFF"
+            android:strokeColor="#64A0E6"
+            android:strokeAlpha="0.45"
+            android:strokeWidth="2"
+            android:pathData="M64,92 C46,80 46,50 64,30 C82,50 82,80 64,92 Z" />
+
+        <!-- Base arc (water-surface suggestion) -->
+        <path
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="2"
+            android:strokeAlpha="0.8"
+            android:strokeLineCap="round"
+            android:pathData="M16,94 Q64,108 112,94" />
+
+    </group>
 </vector>

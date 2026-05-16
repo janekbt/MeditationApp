@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The launcher app icon, reused in the widget header. A widget
+     ImageView gets no adaptive-icon mask, so we composite it
+     ourselves: the same blue gradient as ic_launcher_background
+     (#5BA4E8→#1A60BB, SVG y0→y1 ⇒ angle 270) but rounded so it
+     reads as the rounded app icon, with the shared
+     ic_launcher_foreground (the lotus + its blue petal-separation
+     strokes) on top. Single source of truth for the lotus art —
+     edits to the icon foreground flow here automatically. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:startColor="#5BA4E8"
+                android:endColor="#1A60BB"
+                android:angle="270" />
+            <corners android:radius="9dp" />
+        </shape>
+    </item>
+    <!-- Zoom the foreground ~2×: ic_launcher_foreground shrinks
+         the lotus into the adaptive safe zone, which leaves a big
+         blue margin at this small size. Negative insets blow the
+         foreground layer up to ~2× the 30dp box; the overflow is
+         clipped to the rounded square, so the flower doubles
+         while the icon stays the same size (a true zoom). Tune
+         by the inset magnitude (more negative = bigger flower). -->
+    <item
+        android:drawable="@drawable/ic_launcher_foreground"
+        android:left="-15dp"
+        android:top="-15dp"
+        android:right="-15dp"
+        android:bottom="-15dp" />
+</layer-list>
