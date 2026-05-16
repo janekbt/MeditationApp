@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Widget chrome: titled card whose body is the preset
+     collection. The empty TextView is wired via setEmptyView so
+     it shows only when the factory yields zero rows (no starred
+     presets / projection not written yet). RemoteViews supports
+     only this small layout/widget vocabulary — LinearLayout +
+     ListView + TextView is the whole toolbox. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@drawable/widget_bg"
+    android:padding="12dp">
+
+    <TextView
+        android:id="@+id/widget_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Meditate"
+        android:textColor="@color/widget_fg"
+        android:textSize="14sp"
+        android:textStyle="bold"
+        android:paddingBottom="6dp" />
+
+    <TextView
+        android:id="@+id/widget_empty"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:gravity="center"
+        android:text="No starred presets"
+        android:textColor="@color/widget_fg_muted"
+        android:textSize="13sp" />
+
+    <ListView
+        android:id="@+id/widget_list"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:divider="@null"
+        android:dividerHeight="0dp" />
+
+</LinearLayout>

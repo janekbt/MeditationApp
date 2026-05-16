@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One starred-preset row. The root id is the click target the
+     factory binds the fill-in Intent to (carries preset_uuid →
+     deep-link auto-start, W-3). Name over subtitle mirrors the
+     in-app preset chip's two-line layout; the subtitle is the
+     exact `preset_subtitle` string the Setup list shows. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_item_root"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingTop="10dp"
+    android:paddingBottom="10dp"
+    android:paddingStart="4dp"
+    android:paddingEnd="4dp">
+
+    <TextView
+        android:id="@+id/widget_item_name"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:textColor="@color/widget_fg"
+        android:textSize="15sp" />
+
+    <TextView
+        android:id="@+id/widget_item_subtitle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:textColor="@color/widget_fg_muted"
+        android:textSize="12sp" />
+
+</LinearLayout>

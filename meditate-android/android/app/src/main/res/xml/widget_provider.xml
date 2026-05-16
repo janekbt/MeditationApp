@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Widget metadata. updatePeriodMillis=0: we never poll — the
+     app pushes via AppWidgetManager.notifyAppWidgetViewDataChanged
+     after every starred-preset mutation (widget::publish). The
+     legacy min* fields size it on pre-31; targetCell* is the
+     API 31+ grid-cell sizing (≈3 wide × 3 tall). resizeMode lets
+     the user grow it for longer preset lists. previewLayout
+     reuses the real layout so the picker shows actual chrome. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="180dp"
+    android:minHeight="180dp"
+    android:minResizeWidth="110dp"
+    android:minResizeHeight="110dp"
+    android:targetCellWidth="3"
+    android:targetCellHeight="3"
+    android:updatePeriodMillis="0"
+    android:initialLayout="@layout/widget_root"
+    android:previewLayout="@layout/widget_root"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen" />

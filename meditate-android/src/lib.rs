@@ -7,6 +7,13 @@ mod service;
 mod sounds;
 #[cfg(target_os = "android")]
 mod audio;
+// android: the live JNI/fs widget bridge. test: the host
+// `cargo test --workspace` compiles + runs the pure
+// `build_projection_json` unit tests (strict-TDD). A plain host
+// build uses neither, so the module is absent there — keeps it
+// off the host dead-code path without an `#[allow]`.
+#[cfg(any(target_os = "android", test))]
+mod widget;
 
 slint::include_modules!();
 
@@ -16,6 +23,11 @@ use app::{signal_mode_from_chip_index, signal_mode_to_chip_index};
 use std::cell::Cell;
 use std::cell::RefCell;
 use std::rc::Rc;
+// All bare `OnceLock` users (ANDROID_APP / RECOVERED_SESSION /
+// PENDING_PRESET_LAUNCH) are android-gated; DATABASE spells out
+// `std::sync::OnceLock`. So on the host build this import is
+// dead — gate it rather than carry an unused-import warning.
+#[cfg(target_os = "android")]
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -36,6 +48,16 @@ static ANDROID_APP: OnceLock<slint::android::AndroidApp> = OnceLock::new();
 /// `meditate-gtk/src/application.rs:374`.
 #[cfg(target_os = "android")]
 static RECOVERED_SESSION: OnceLock<std::sync::Mutex<Option<(String, u32)>>> =
+    OnceLock::new();
+
+/// Single-shot hand-off for a home-screen-widget deep-link
+/// (W-3). `android_main` reads the launch Intent's `preset_uuid`
+/// extra before the Slint loop and parks it here; `build_ui`
+/// drains it once — switches to the preset's mode, applies it,
+/// and auto-starts the session, the widget-tap analogue of the
+/// recovery hand-off above.
+#[cfg(target_os = "android")]
+static PENDING_PRESET_LAUNCH: OnceLock<std::sync::Mutex<Option<String>>> =
     OnceLock::new();
 
 /// Hide the soft keyboard. Slint's `clear-focus()` on a
@@ -577,6 +599,68 @@ fn populate_preset_chooser(
     ui.set_preset_chooser_items(
         std::rc::Rc::new(slint::VecModel::from(items)).into(),
     );
+}
+
+/// Modes whose starred presets the home-screen widget lists.
+/// Fixed order → the widget list is stable across refreshes
+/// (the `RemoteViewsFactory` preserves array order). Guided is
+/// excluded by `mode_supports_presets`, so it never appears here;
+/// the explicit list keeps it that way without a runtime filter.
+#[cfg(target_os = "android")]
+const WIDGET_PRESET_MODES: [meditate_core::SessionMode; 2] = [
+    meditate_core::SessionMode::Timer,
+    meditate_core::SessionMode::BoxBreath,
+];
+
+/// Flatten every mode's starred presets into the widget
+/// projection. Reuses `preset_subtitle` (one labels roundtrip,
+/// shared across modes) so a widget row reads identically to its
+/// in-app chip. Empty when the DB is unopened or nothing is
+/// starred — the widget then shows its empty state.
+#[cfg(target_os = "android")]
+fn widget_presets_snapshot() -> Vec<widget::WidgetPreset> {
+    let Some(db_arc) = DATABASE.get() else { return Vec::new(); };
+    let Ok(guard) = db_arc.lock() else { return Vec::new(); };
+    let Some(db) = guard.as_ref() else { return Vec::new(); };
+    let label_names: std::collections::HashMap<String, String> =
+        meditate_core::db::list_labels_from_db(db)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|l| (l.uuid.to_string(), l.name))
+            .collect();
+    let mut out = Vec::new();
+    for mode in WIDGET_PRESET_MODES {
+        if !meditate_core::preset_config::mode_supports_presets(mode) {
+            continue;
+        }
+        let rows = meditate_core::db::list_starred_presets_for_mode_from_db(
+            db, mode,
+        )
+        .unwrap_or_default();
+        for p in rows {
+            out.push(widget::WidgetPreset {
+                uuid: p.uuid.to_string(),
+                subtitle: preset_subtitle(&p.config_json, &label_names),
+                name: p.name,
+                mode: mode.as_db_str(),
+            });
+        }
+    }
+    out
+}
+
+/// Rebuild + push the widget projection. Call after every preset
+/// mutation that can change the starred set (create / override /
+/// star toggle / rename / delete and their snackbar Undos) and
+/// once at startup. No-op when the AndroidApp handle isn't set
+/// yet (never the case post-`android_main`) or no widget is
+/// installed (the JNI side short-circuits). Cheap enough to call
+/// unconditionally — two indexed `WHERE is_starred` queries.
+#[cfg(target_os = "android")]
+fn refresh_widget() {
+    if let Some(app) = ANDROID_APP.get() {
+        widget::publish(app, widget_presets_snapshot());
+    }
 }
 
 /// Case-insensitive preset-name collision check for the create
@@ -3925,6 +4009,11 @@ fn build_ui() -> MainWindow {
                         ui.set_create_preset_dialog_open(false);
                         ui.set_preset_chooser_page(false);
                         refresh_preset_chips(&ui, mode);
+                        // New preset is starred by default → it
+                        // enters the widget projection. Lock-free
+                        // here: the `db` guard above dropped with
+                        // the `let res = { … }` scope.
+                        refresh_widget();
                     }
                     Err(e) => {
                         // GTK surfaces a duplicate toast; the
@@ -4007,6 +4096,9 @@ fn build_ui() -> MainWindow {
                 ui.set_override_preset_dialog_open(false);
                 ui.set_preset_chooser_page(false);
                 refresh_preset_chips(&ui, core_mode);
+                // Overriding a starred preset rewrites its
+                // subtitle on the widget too.
+                refresh_widget();
 
                 // Shared snackbar with Undo (restore prior cfg).
                 // Single slot → clear the other discriminators.
@@ -4059,6 +4151,9 @@ fn build_ui() -> MainWindow {
                 }
                 populate_preset_chooser(&ui, core_mode);
                 refresh_preset_chips(&ui, core_mode);
+                // The whole point of the widget: star/unstar is
+                // exactly what adds/removes a widget row.
+                refresh_widget();
             }
             let _ = (weak.clone(), uuid, current_mode.get());
         });
@@ -4139,6 +4234,9 @@ fn build_ui() -> MainWindow {
                 ui.set_rename_preset_dialog_open(false);
                 populate_preset_chooser(&ui, core_mode);
                 refresh_preset_chips(&ui, core_mode);
+                // Renaming a starred preset changes its widget
+                // title.
+                refresh_widget();
             }
             let _ = (weak.clone(), current_mode.get());
         });
@@ -4206,6 +4304,8 @@ fn build_ui() -> MainWindow {
                 ui.set_preset_chooser_page(false);
                 populate_preset_chooser(&ui, core_mode);
                 refresh_preset_chips(&ui, core_mode);
+                // Deleting a starred preset drops its widget row.
+                refresh_widget();
 
                 // Shared snackbar + Undo (re-insert). Single slot
                 // → clear the other discriminators.
@@ -5723,6 +5823,8 @@ fn build_ui() -> MainWindow {
                     }
                     populate_preset_chooser(&ui, core_mode);
                     refresh_preset_chips(&ui, core_mode);
+                    // Undone delete resurrects the widget row.
+                    refresh_widget();
                     ui.set_snackbar_visible(false);
                     return;
                 }
@@ -5738,6 +5840,8 @@ fn build_ui() -> MainWindow {
                         let _ = db.update_preset_config(&u, &prior);
                     }
                     refresh_preset_chips(&ui, mode);
+                    // Undone override reverts the widget subtitle.
+                    refresh_widget();
                     ui.set_snackbar_visible(false);
                     return;
                 }
@@ -6460,6 +6564,61 @@ fn build_ui() -> MainWindow {
         }
     }
 
+    // Widget deep-link drain (W-3). All callbacks are registered
+    // by here, so `invoke_mode_changed` / `invoke_action_tap`
+    // run the exact same closures a real chip switch + Start tap
+    // would — no behaviour fork. Order: select the preset's mode
+    // (loads its per-mode rows), apply the preset over it, then
+    // start, which also navigates to the running-session screen.
+    #[cfg(target_os = "android")]
+    if let Some(slot) = PENDING_PRESET_LAUNCH.get() {
+        let uuid = slot.lock().ok().and_then(|mut g| g.take());
+        if let Some(uuid) = uuid {
+            if let Some(preset) = find_preset_by_uuid(&uuid) {
+                let tmode = match preset.mode {
+                    meditate_core::SessionMode::Timer => Some(TimerMode::Timer),
+                    meditate_core::SessionMode::BoxBreath => {
+                        Some(TimerMode::Breathing)
+                    }
+                    // Guided has no presets (mode_supports_presets);
+                    // a uuid landing here would be a corrupt deep
+                    // link — ignore rather than mis-start.
+                    meditate_core::SessionMode::Guided => None,
+                };
+                match tmode {
+                    Some(tmode) if presets_supported(preset.mode) => {
+                        let idx = tmode.to_chip_index();
+                        ui.set_setup_mode(idx);
+                        ui.invoke_mode_changed(idx);
+                        if apply_preset_json(
+                            &ui,
+                            &preset.config_json,
+                            preset.mode,
+                            &timer_session_secs,
+                        ) {
+                            ui.invoke_action_tap();
+                            meditate_core::log(
+                                "widget",
+                                &format!("deep-link autostart uuid={uuid}"),
+                            );
+                        } else {
+                            meditate_core::log(
+                                "widget",
+                                &format!(
+                                    "deep-link apply FAILED uuid={uuid}"
+                                ),
+                            );
+                        }
+                    }
+                    _ => meditate_core::log(
+                        "widget",
+                        &format!("deep-link ignored (mode) uuid={uuid}"),
+                    ),
+                }
+            }
+        }
+    }
+
     refresh(&ui, &state.borrow(), now_since_epoch());
     ui
 }
@@ -6483,6 +6642,17 @@ fn android_main(android_app: slint::android::AndroidApp) {
     // JNI calls. AndroidApp is Clone + Send + Sync, so this is sound.
     let _ = ANDROID_APP.set(android_app.clone());
     open_database(&android_app);
+    // Widget deep-link (W-3): pull the tapped preset's uuid off
+    // the launch Intent now, while we still hold `android_app`
+    // (slint::android::init consumes it next). `build_ui` drains
+    // the park. `None` for a normal launch.
+    if let Some(uuid) = widget::launch_preset_uuid(&android_app) {
+        let slot =
+            PENDING_PRESET_LAUNCH.get_or_init(|| std::sync::Mutex::new(None));
+        if let Ok(mut g) = slot.lock() {
+            *g = Some(uuid);
+        }
+    }
     slint::android::init(android_app).unwrap();
     let ui = build_ui();
     MaterialWindowAdapter::get(&ui).set_disable_hover(true);
@@ -6611,4 +6781,12 @@ fn open_database(android_app: &slint::android::AndroidApp) {
         }
     };
     let _ = DATABASE.set(std::sync::Arc::new(std::sync::Mutex::new(opened)));
+    // Seed the widget projection once at startup so a widget
+    // added while the app was dead still renders the current
+    // starred set on first pull (the seeded default presets are
+    // starred). ANDROID_APP is set in `android_main` before this
+    // call, so the JNI poke resolves; it no-ops when no widget is
+    // installed. Must run after DATABASE.set — the snapshot locks
+    // it.
+    refresh_widget();
 }

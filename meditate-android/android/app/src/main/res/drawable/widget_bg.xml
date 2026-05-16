@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Rounded card behind the widget. Slight translucency (alpha
+     in @color/widget_bg) so it sits on any wallpaper without a
+     hard rectangle. 16dp corners match the in-app Material card
+     radius so the widget reads as the same app. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/widget_bg" />
+    <corners android:radius="16dp" />
+</shape>

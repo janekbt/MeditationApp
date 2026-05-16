@@ -57,6 +57,30 @@
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
 
+        <!-- Starred-preset home-screen widget (W-series).
+             exported=true is mandatory: the launcher / system
+             AppWidgetHost sends the APPWIDGET_UPDATE broadcast
+             from outside the app, and API 31+ rejects an
+             unexported receiver that carries an intent-filter. -->
+        <receiver
+            android:name=".MeditateWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_provider" />
+        </receiver>
+
+        <!-- Backs R.id.widget_list. BIND_REMOTEVIEWS is the
+             system-held permission that lets only the platform
+             AppWidget host bind it; not launchable by other apps. -->
+        <service
+            android:name=".MeditateWidgetService"
+            android:exported="false"
+            android:permission="android.permission.BIND_REMOTEVIEWS" />
+
     </application>
 
 </manifest>

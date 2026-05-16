@@ -3,4 +3,12 @@
     <!-- Adaptive-icon background. Calm slate — placeholder until
          Phase 8 ships a branded icon. -->
     <color name="ic_launcher_background">#2E3440</color>
+
+    <!-- Widget palette. Same calm slate as the icon; Nord-ish
+         fg pair (snow / muted). RemoteViews can't read theme
+         attrs, so these are fixed (Phase 8 theming will revisit
+         alongside the rest of res/). -->
+    <color name="widget_bg">#E62E3440</color>
+    <color name="widget_fg">#ECEFF4</color>
+    <color name="widget_fg_muted">#A3ABB8</color>
 </resources>

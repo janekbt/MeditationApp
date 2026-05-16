@@ -40,6 +40,15 @@ slint = { version = "1.13", features = ["backend-android-activity-06"] }
 # turn meditate-core into a maintenance burden.
 meditate-core = { path = "../meditate-core" }
 
+# Already resolved transitively (meditate-core depends on
+# serde_json 1) so this adds no extra compile to the build —
+# declaring it directly just lets `widget.rs` serialize the
+# home-screen-widget preset projection. Kept in the general
+# `[dependencies]` (not the android-only table) so the pure
+# `build_projection_json` + its tests compile and run on the
+# host `cargo test --workspace`. `json!` macro only — no derive.
+serde_json = "1"
+
 # chrono: date arithmetic for the Material DatePickerAdapter
 # wiring (Edit-Session start-time editor). `default-features = false`
 # strips clock/now and the std-only "Format" path that pulls in
