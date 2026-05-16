@@ -34,6 +34,27 @@ android {
     }
     // Debug builds are auto-signed with AGP's ~/.android/debug.keystore
     // (G-4). Release signing / F-Droid reproducible build is later.
+    //
+    // TEST-ONLY debug-signing shim: real release signing is
+    // deferred (F-Droid signs with its own key), so assembleRelease
+    // is normally unsigned and won't sideload. Point the release
+    // variant at the same throwaway debug keystore purely so an
+    // OPTIMIZED build can be installed on-device to measure real
+    // (shipped-quality) animation smoothness. NOT production
+    // signing; F-Droid ignores this and rebuilds + signs itself.
+    signingConfigs {
+        debugShim {
+            storeFile file("${System.getProperty('user.home')}/.android/debug.keystore")
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+    }
+    buildTypes {
+        release {
+            signingConfig signingConfigs.debugShim
+        }
+    }
 }
 
 // Build the Rust cdylib (arm64-v8a) into jniLibs before AGP
