@@ -91,19 +91,30 @@ Installed by `build-aux/setup-android.sh` (idempotent, Debian/Ubuntu only):
 | Android platform-tools (`adb`, `fastboot`) | `sdkmanager "platform-tools"` | latest |
 | Android NDK | `sdkmanager "ndk;27.2.12479018"` | r27 |
 | Rust targets | `rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android` | per current toolchain |
-| `xbuild` (`x` CLI) | `cargo install --git https://github.com/rust-mobile/xbuild.git` | pinned by git rev in script |
+| Gradle wrapper | committed at `meditate-android/android/gradlew` | 8.5 (AGP 7.3, Kotlin 1.7.20) |
 
-No Android Studio. No emulator image (opt-in via `--with-emulator`
-flag — uses `sdkmanager "system-images;android-35;google_apis;x86_64"`
-plus AVD creation). On-device testing via `x run --device adb:<id>`
-over USB or local network, mirroring the Librem 5 cycle.
+**xbuild was removed** (migrated to a hand-maintained Gradle
+project — its manifest struct couldn't emit `<receiver>`/custom
+`res/`, blocking Phase 8 theming, F-Droid, and the preset
+widget). No Android Studio. No emulator image (opt-in via
+`--with-emulator`). Build + on-device deploy:
 
-We deliberately do *not* write `~/.cargo/config.toml` cross-linker
-entries: `xbuild` invokes the NDK linker itself via `ANDROID_NDK_ROOT`
-detection. Adding global Cargo target stanzas would only matter for
-direct `cargo build --target aarch64-linux-android` invocations
-outside `x run`, which is not part of the documented Slint-on-Android
-flow. Skip until proven necessary.
+```
+. ~/.config/meditate-android/env.sh
+cd meditate-android/android
+./gradlew :app:assembleDebug          # runs rust-build.sh (cdylib→jniLibs)
+adb -s <serial> install -r app/build/outputs/apk/debug/app-debug.apk
+adb -s <serial> shell am start -n io.github.janekbt.Meditate/android.app.NativeActivity
+```
+
+We still do *not* commit `~/.cargo/config.toml` cross-linker
+entries: `meditate-android/android/rust-build.sh` exports the
+per-ABI NDK linker/CC/AR for that one `cargo build` invocation
+only. We deliberately do **not** use `cargo-ndk` — its 4.x
+runner sanitizes the build env so `i-slint-backend-android-
+activity`'s `build.rs` fails the SDK lookup ("No Android
+platforms found"); plain `cargo build --target` keeps
+`ANDROID_HOME` intact.
 
 Env vars (`ANDROID_HOME`, `ANDROID_NDK_ROOT`, `JAVA_HOME`, plus
 `PATH` extensions for `sdkmanager`, `adb`, etc.) live in a single

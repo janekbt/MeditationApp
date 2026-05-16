@@ -289,17 +289,17 @@ for tgt in "${RUST_ANDROID_TARGETS[@]}"; do
     fi
 done
 
-# ── Step 5: xbuild ───────────────────────────────────────────────────
-if command -v x >/dev/null 2>&1; then
-    log "xbuild (\`x\`) already on PATH at $(command -v x)"
-else
-    log "Installing xbuild from ${XBUILD_GIT_URL}"
-    if [[ -n "${XBUILD_GIT_REV}" ]]; then
-        cargo install --git "${XBUILD_GIT_URL}" --rev "${XBUILD_GIT_REV}"
-    else
-        cargo install --git "${XBUILD_GIT_URL}"
-    fi
-fi
+# ── Step 5: (xbuild removed) ──────────────────────────────────────────
+# Migrated off xbuild to a hand-maintained Gradle project at
+# meditate-android/android/ — xbuild's manifest struct can't emit
+# <receiver>/custom res (blocked Phase 8 theming, F-Droid, the
+# preset widget) and the LAGonauta fork pin was unmaintainable.
+# The Gradle wrapper (8.5) is committed in-repo; the Rust cdylib
+# is built by meditate-android/android/rust-build.sh (plain
+# `cargo build --target aarch64-linux-android` with the NDK
+# linker/CC/AR exported — NOT cargo-ndk, whose 4.x runner breaks
+# slint's build.rs SDK lookup). No `x`/xbuild install needed.
+log "xbuild step skipped — Gradle project at meditate-android/android (see ANDROID_PORT.md)"
 
 # ── Step 6: Gradle ───────────────────────────────────────────────────
 # Debian's apt `gradle` package lags upstream by years (Debian 13
@@ -398,9 +398,10 @@ case ":\${PATH}:" in
     *":\${ANDROID_HOME}/build-tools/${PINNED_BUILD_TOOLS}:"*) ;;
     *) export PATH="\${ANDROID_HOME}/build-tools/${PINNED_BUILD_TOOLS}:\${PATH}" ;;
 esac
-# NDK's clang toolchain. xbuild needs llvm-readobj on PATH at the
-# APK-packaging step to walk the cdylib's NEEDED entries; without it
-# the build fails with "Failed to run llvm-readobj ... No such file".
+# NDK's clang toolchain on PATH. rust-build.sh references the
+# per-ABI clang/llvm-ar by absolute path, but keeping the NDK bin
+# on PATH also lets the cc-rs build scripts of C deps (ring,
+# skia-bindings, libsqlite3-sys) find the right tools by name.
 case ":\${PATH}:" in
     *":\${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt/linux-x86_64/bin:"*) ;;
     *) export PATH="\${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt/linux-x86_64/bin:\${PATH}" ;;
