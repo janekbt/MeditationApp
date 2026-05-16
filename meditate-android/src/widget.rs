@@ -26,7 +26,7 @@
 #[cfg(target_os = "android")]
 use android_activity::AndroidApp;
 #[cfg(target_os = "android")]
-use jni::objects::{JClass, JObject, JString};
+use jni::objects::{JClass, JObject};
 #[cfg(target_os = "android")]
 use jni::JavaVM;
 
@@ -105,47 +105,35 @@ pub fn publish(app: &AndroidApp, presets: Vec<WidgetPreset>) {
     }
 }
 
-/// Read the `preset_uuid` extra off the activity's launch
-/// Intent (the widget tap's fill-in, merged into the launcher
-/// template). `None` when launched normally / no extra / blank.
-/// Cold-start only: `android_main` calls this once before the
-/// Slint loop; a warm process is just foregrounded by the
-/// launcher Intent and `onNewIntent` is not plumbed (documented
-/// W-3 limitation — a homescreen tap on a dead app is the case
-/// that matters). Best-effort: any JNI error → `None`, never a
-/// panic on the startup path.
+/// Drop file the widget tap leaves behind. `MeditateWidgetProvider.
+/// onReceive` (fired by the tap's broadcast PendingIntent) writes
+/// the tapped preset's uuid here, then foregrounds the app. This
+/// is the cross-context channel: NativeActivity does not forward
+/// `onNewIntent` to native code, so a warm process can't read the
+/// tap off an Intent — but it can poll this file. Cold start reads
+/// it the same way, so there is one path for both.
 #[cfg(target_os = "android")]
-pub fn launch_preset_uuid(app: &AndroidApp) -> Option<String> {
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }.ok()?;
-    let mut env = vm.attach_current_thread().ok()?;
-    let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
-    let intent = env
-        .call_method(&activity, "getIntent", "()Landroid/content/Intent;", &[])
-        .ok()?
-        .l()
-        .ok()?;
-    if intent.is_null() {
-        return None;
-    }
-    let key = env.new_string("preset_uuid").ok()?;
-    let val = env
-        .call_method(
-            &intent,
-            "getStringExtra",
-            "(Ljava/lang/String;)Ljava/lang/String;",
-            &[(&key).into()],
-        )
-        .ok()?
-        .l()
-        .ok()?;
-    if val.is_null() {
-        return None;
-    }
-    let s: String = env.get_string(&JString::from(val)).ok()?.into();
-    if s.is_empty() {
+const LAUNCH_FILENAME: &str = "widget_launch";
+
+/// Take the pending widget-launch uuid, if any: read the drop
+/// file and delete it (single-consumption — the next poll/start
+/// won't re-fire the same tap). `None` when no tap is pending /
+/// blank / unreadable. Called from `android_main` (cold start)
+/// and the tick loop (warm process), so it must be cheap when
+/// the common case is "no file": a failed open is one syscall.
+#[cfg(target_os = "android")]
+pub fn take_pending_launch(app: &AndroidApp) -> Option<String> {
+    let data_root = app.internal_data_path()?;
+    let path = data_root.join("meditate").join(LAUNCH_FILENAME);
+    let uuid = std::fs::read_to_string(&path).ok()?;
+    // Remove first so a parse/lock failure downstream still can't
+    // make the same tap loop on every tick.
+    let _ = std::fs::remove_file(&path);
+    let trimmed = uuid.trim();
+    if trimmed.is_empty() {
         None
     } else {
-        Some(s)
+        Some(trimmed.to_string())
     }
 }
 

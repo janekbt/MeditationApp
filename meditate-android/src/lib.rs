@@ -23,10 +23,10 @@ use app::{signal_mode_from_chip_index, signal_mode_to_chip_index};
 use std::cell::Cell;
 use std::cell::RefCell;
 use std::rc::Rc;
-// All bare `OnceLock` users (ANDROID_APP / RECOVERED_SESSION /
-// PENDING_PRESET_LAUNCH) are android-gated; DATABASE spells out
-// `std::sync::OnceLock`. So on the host build this import is
-// dead — gate it rather than carry an unused-import warning.
+// All bare `OnceLock` users (ANDROID_APP / RECOVERED_SESSION)
+// are android-gated; DATABASE spells out `std::sync::OnceLock`.
+// So on the host build this import is dead — gate it rather
+// than carry an unused-import warning.
 #[cfg(target_os = "android")]
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -50,15 +50,6 @@ static ANDROID_APP: OnceLock<slint::android::AndroidApp> = OnceLock::new();
 static RECOVERED_SESSION: OnceLock<std::sync::Mutex<Option<(String, u32)>>> =
     OnceLock::new();
 
-/// Single-shot hand-off for a home-screen-widget deep-link
-/// (W-3). `android_main` reads the launch Intent's `preset_uuid`
-/// extra before the Slint loop and parks it here; `build_ui`
-/// drains it once — switches to the preset's mode, applies it,
-/// and auto-starts the session, the widget-tap analogue of the
-/// recovery hand-off above.
-#[cfg(target_os = "android")]
-static PENDING_PRESET_LAUNCH: OnceLock<std::sync::Mutex<Option<String>>> =
-    OnceLock::new();
 
 /// Hide the soft keyboard. Slint's `clear-focus()` on a
 /// TextInput is supposed to dismiss the IME via the
@@ -661,6 +652,88 @@ fn refresh_widget() {
     if let Some(app) = ANDROID_APP.get() {
         widget::publish(app, widget_presets_snapshot());
     }
+}
+
+/// Consume a pending widget-tap deep-link, if one is waiting
+/// (W-3/W-4). The widget's broadcast receiver dropped the tapped
+/// preset's uuid in `<files>/meditate/widget_launch` and
+/// foregrounded us; this picks it up, switches to that preset's
+/// mode, applies it, and starts the session — driving the exact
+/// same `invoke_mode_changed` / `invoke_action_tap` a manual
+/// chip-switch + Start tap would, so there is no behaviour fork.
+///
+/// Called from two places, both reading the single-consumption
+/// file so they can't double-fire: `build_ui` once at startup
+/// (cold launch — app was dead) and the tick loop every frame
+/// (warm — NativeActivity gives native code no `onNewIntent`,
+/// so polling the drop file is the only channel). Returns
+/// `true` when it consumed a tap *this call* (the tick loop
+/// then skips its normal body for that frame to avoid touching
+/// the `state` borrow `invoke_action_tap` just took).
+///
+/// A tap arriving mid-session is dropped (logged): silently
+/// pausing a running meditation because a stray widget tap
+/// landed would be worse than ignoring it.
+#[cfg(target_os = "android")]
+fn try_widget_deep_link(
+    ui: &MainWindow,
+    timer_session_secs: &std::rc::Rc<std::cell::Cell<u32>>,
+    state: &std::rc::Rc<std::cell::RefCell<AppState>>,
+) -> bool {
+    let Some(app) = ANDROID_APP.get() else { return false; };
+    let Some(uuid) = widget::take_pending_launch(app) else {
+        return false;
+    };
+    if state.borrow().is_active() {
+        meditate_core::log(
+            "widget",
+            &format!("deep-link ignored (session active) uuid={uuid}"),
+        );
+        return true;
+    }
+    let Some(preset) = find_preset_by_uuid(&uuid) else {
+        meditate_core::log(
+            "widget",
+            &format!("deep-link preset gone uuid={uuid}"),
+        );
+        return true;
+    };
+    let tmode = match preset.mode {
+        meditate_core::SessionMode::Timer => Some(TimerMode::Timer),
+        meditate_core::SessionMode::BoxBreath => Some(TimerMode::Breathing),
+        // Guided has no presets (mode_supports_presets); a uuid
+        // landing here is a corrupt link — ignore, don't mis-start.
+        meditate_core::SessionMode::Guided => None,
+    };
+    match tmode {
+        Some(tmode) if presets_supported(preset.mode) => {
+            let idx = tmode.to_chip_index();
+            ui.set_setup_mode(idx);
+            ui.invoke_mode_changed(idx);
+            if apply_preset_json(
+                ui,
+                &preset.config_json,
+                preset.mode,
+                timer_session_secs,
+            ) {
+                ui.invoke_action_tap();
+                meditate_core::log(
+                    "widget",
+                    &format!("deep-link autostart uuid={uuid}"),
+                );
+            } else {
+                meditate_core::log(
+                    "widget",
+                    &format!("deep-link apply FAILED uuid={uuid}"),
+                );
+            }
+        }
+        _ => meditate_core::log(
+            "widget",
+            &format!("deep-link ignored (mode) uuid={uuid}"),
+        ),
+    }
+    true
 }
 
 /// Case-insensitive preset-name collision check for the create
@@ -3514,7 +3587,22 @@ fn build_ui() -> MainWindow {
         let bb_target_secs = bb_target_secs.clone();
         #[cfg(target_os = "android")]
         let snapshot_timer_ref: &'static slint::Timer = snapshot_timer;
+        #[cfg(target_os = "android")]
+        let timer_session_secs = timer_session_secs.clone();
         timer.start(slint::TimerMode::Repeated, TICK, move || {
+            // Warm-process widget deep-link (W-4). Polled here
+            // because NativeActivity never hands native code an
+            // onNewIntent; the drop file is single-consumption so
+            // this is a no-op syscall on every normal frame. Done
+            // before the `state` borrow below — the helper's
+            // invoke_action_tap takes its own borrow — and the
+            // frame is skipped when it consumed a tap.
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                if try_widget_deep_link(&ui, &timer_session_secs, &state) {
+                    return;
+                }
+            }
             let now = now_since_epoch();
             let mut s = state.borrow_mut();
             // Capture before/after active-state so an auto-finish
@@ -6564,60 +6652,13 @@ fn build_ui() -> MainWindow {
         }
     }
 
-    // Widget deep-link drain (W-3). All callbacks are registered
-    // by here, so `invoke_mode_changed` / `invoke_action_tap`
-    // run the exact same closures a real chip switch + Start tap
-    // would — no behaviour fork. Order: select the preset's mode
-    // (loads its per-mode rows), apply the preset over it, then
-    // start, which also navigates to the running-session screen.
+    // Cold-start widget deep-link: all callbacks are registered
+    // by here, so the helper's `invoke_*` calls run the real
+    // chip-switch + Start closures. Warm starts go through the
+    // tick loop instead (NativeActivity gives native code no
+    // onNewIntent — see `try_widget_deep_link`).
     #[cfg(target_os = "android")]
-    if let Some(slot) = PENDING_PRESET_LAUNCH.get() {
-        let uuid = slot.lock().ok().and_then(|mut g| g.take());
-        if let Some(uuid) = uuid {
-            if let Some(preset) = find_preset_by_uuid(&uuid) {
-                let tmode = match preset.mode {
-                    meditate_core::SessionMode::Timer => Some(TimerMode::Timer),
-                    meditate_core::SessionMode::BoxBreath => {
-                        Some(TimerMode::Breathing)
-                    }
-                    // Guided has no presets (mode_supports_presets);
-                    // a uuid landing here would be a corrupt deep
-                    // link — ignore rather than mis-start.
-                    meditate_core::SessionMode::Guided => None,
-                };
-                match tmode {
-                    Some(tmode) if presets_supported(preset.mode) => {
-                        let idx = tmode.to_chip_index();
-                        ui.set_setup_mode(idx);
-                        ui.invoke_mode_changed(idx);
-                        if apply_preset_json(
-                            &ui,
-                            &preset.config_json,
-                            preset.mode,
-                            &timer_session_secs,
-                        ) {
-                            ui.invoke_action_tap();
-                            meditate_core::log(
-                                "widget",
-                                &format!("deep-link autostart uuid={uuid}"),
-                            );
-                        } else {
-                            meditate_core::log(
-                                "widget",
-                                &format!(
-                                    "deep-link apply FAILED uuid={uuid}"
-                                ),
-                            );
-                        }
-                    }
-                    _ => meditate_core::log(
-                        "widget",
-                        &format!("deep-link ignored (mode) uuid={uuid}"),
-                    ),
-                }
-            }
-        }
-    }
+    try_widget_deep_link(&ui, &timer_session_secs, &state);
 
     refresh(&ui, &state.borrow(), now_since_epoch());
     ui
@@ -6642,17 +6683,6 @@ fn android_main(android_app: slint::android::AndroidApp) {
     // JNI calls. AndroidApp is Clone + Send + Sync, so this is sound.
     let _ = ANDROID_APP.set(android_app.clone());
     open_database(&android_app);
-    // Widget deep-link (W-3): pull the tapped preset's uuid off
-    // the launch Intent now, while we still hold `android_app`
-    // (slint::android::init consumes it next). `build_ui` drains
-    // the park. `None` for a normal launch.
-    if let Some(uuid) = widget::launch_preset_uuid(&android_app) {
-        let slot =
-            PENDING_PRESET_LAUNCH.get_or_init(|| std::sync::Mutex::new(None));
-        if let Ok(mut g) = slot.lock() {
-            *g = Some(uuid);
-        }
-    }
     slint::android::init(android_app).unwrap();
     let ui = build_ui();
     MaterialWindowAdapter::get(&ui).set_disable_hover(true);
