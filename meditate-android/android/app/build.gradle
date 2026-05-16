@@ -35,3 +35,16 @@ android {
     // Debug builds are auto-signed with AGP's ~/.android/debug.keystore
     // (G-4). Release signing / F-Droid reproducible build is later.
 }
+
+// Build the Rust cdylib (arm64-v8a) into jniLibs before AGP
+// packages natives. rust-build.sh owns the NDK linker/CC env
+// (cargo-ndk's 4.x runner breaks slint's build.rs SDK lookup, so
+// we drive plain `cargo build --target` ourselves). `release`
+// when assembling a release variant.
+tasks.register('cargoNdkBuild', Exec) {
+    workingDir projectDir
+    commandLine 'bash', '../rust-build.sh',
+        (gradle.startParameter.taskNames.any { it.toLowerCase().contains('release') }
+            ? 'release' : 'debug')
+}
+tasks.named('preBuild').configure { dependsOn 'cargoNdkBuild' }
