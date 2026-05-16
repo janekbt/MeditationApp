@@ -7,4 +7,9 @@
     <color name="widget_bg">#E62E3440</color>
     <color name="widget_fg">#ECEFF4</color>
     <color name="widget_fg_muted">#A3ABB8</color>
+    <!-- Row card: a faint white wash over the slate so each
+         preset reads as its own slightly-brighter container
+         (~10% white). Translucent on purpose — it lifts whatever
+         the widget sits on, like the mockup. -->
+    <color name="widget_row_bg">#1AFFFFFF</color>
 </resources>

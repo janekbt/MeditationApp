@@ -50,11 +50,14 @@
         android:textColor="@color/widget_fg_muted"
         android:textSize="13sp" />
 
+    <!-- Transparent divider = the gap between the row cards
+         (AbsListView ignores item layout_margin, so spacing is
+         done here). -->
     <ListView
         android:id="@+id/widget_list"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:divider="@null"
-        android:dividerHeight="0dp" />
+        android:divider="@android:color/transparent"
+        android:dividerHeight="8dp" />
 
 </LinearLayout>

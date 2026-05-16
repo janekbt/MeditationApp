@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Per-row card behind a starred preset. Faint white wash
+     (@color/widget_row_bg) so it sits slightly above the slate
+     widget background; 12dp corners (a touch tighter than the
+     16dp outer card) so the rows nest like the mockup. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/widget_row_bg" />
+    <corners android:radius="12dp" />
+</shape>

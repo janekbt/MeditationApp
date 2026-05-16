@@ -9,10 +9,11 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
+    android:background="@drawable/widget_item_bg"
     android:paddingTop="10dp"
     android:paddingBottom="10dp"
-    android:paddingStart="4dp"
-    android:paddingEnd="4dp">
+    android:paddingStart="14dp"
+    android:paddingEnd="14dp">
 
     <TextView
         android:id="@+id/widget_item_name"
