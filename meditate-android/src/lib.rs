@@ -17,7 +17,7 @@ use std::cell::Cell;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::OnceLock;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 // Process-wide handle to the AndroidApp. Stored at android_main
 // entry so the AppState transition callbacks (which live inside
@@ -229,13 +229,20 @@ fn configured_duration(ui: &MainWindow) -> Duration {
     Duration::from_secs(hours * 3600 + minutes * 60)
 }
 
-/// Monotonic seconds since process start. CLOCK_BOOTTIME-backed on
-/// Android (Rust 1.79+) and CLOCK_MONOTONIC on desktop Linux — the
-/// latter is fine for dev-iteration runs that never see a real
-/// suspend.
+/// Suspend-resilient monotonic time (Duration since boot) via
+/// `meditate_core::time::boot_time_now()` — libc
+/// `clock_gettime(CLOCK_BOOTTIME)`, the same clock GTK uses.
+///
+/// Earlier this used `std::time::Instant`, on the (wrong) belief
+/// that Rust's `Instant` is CLOCK_BOOTTIME on Android. It is NOT
+/// — `Instant` is CLOCK_MONOTONIC, which FREEZES during system
+/// suspend, so a session with the screen off in a pocket only
+/// counted awake time (e.g. a ~34 min stopwatch recorded ~15
+/// min). Core `Session` computes elapsed as `now - start`, so a
+/// since-boot origin is fine and the fix flows through session
+/// elapsed, the snapshot heartbeat, and the tick loop alike.
 fn now_since_epoch() -> Duration {
-    static EPOCH: OnceLock<Instant> = OnceLock::new();
-    Instant::now().duration_since(*EPOCH.get_or_init(Instant::now))
+    meditate_core::time::boot_time_now()
 }
 
 fn refresh(ui: &MainWindow, state: &AppState, now: Duration) {

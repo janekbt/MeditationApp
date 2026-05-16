@@ -15,10 +15,12 @@
 /// CLOCK_BOOTTIME counts time including suspend, which is what a meditation
 /// timer wants: real wall-clock progress regardless of OS power state.
 ///
-/// On Android, Rust's `Instant::now()` already uses CLOCK_BOOTTIME natively
-/// since 1.79 — but a single shared helper that callers depend on means
-/// every shell stays consistent regardless of which platform's std happens
-/// to do the right thing.
+/// NOTE: Rust's `Instant` is CLOCK_MONOTONIC on Linux *and Android*
+/// (it does NOT switch to CLOCK_BOOTTIME) — an earlier comment here
+/// claimed otherwise and the Android shell trusted `Instant`,
+/// silently dropping suspended time (a ~34 min screen-off stopwatch
+/// recorded ~15 min). Every shell — gtk and android — MUST source
+/// `now` from this helper, never `Instant`.
 pub fn boot_time_now() -> std::time::Duration {
     let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
     let rc = unsafe { libc::clock_gettime(libc::CLOCK_BOOTTIME, &mut ts) };
