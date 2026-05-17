@@ -156,6 +156,11 @@ impl Transition {
         prepend(&mut t.effects, self.effects);
         t
     }
+    pub fn enter_overtime(self) -> Transition {
+        let mut t = self.state.enter_overtime();
+        prepend(&mut t.effects, self.effects);
+        t
+    }
     pub fn add_overtime(self, now: Duration) -> Transition {
         let mut t = self.state.add_overtime(now);
         prepend(&mut t.effects, self.effects);
@@ -365,6 +370,25 @@ impl AppState {
             {
                 let effects = s.add_overtime_and_finish(now);
                 Transition::new(Self::Finished, effects)
+            }
+            other => Transition::new(other, Vec::new()),
+        }
+    }
+
+    /// Guided audio reached EOS — force the session into Overtime
+    /// now (core emits `EnterOvertime` + `FireEndBell`), instead
+    /// of waiting for the countdown tick to cross the *probed*
+    /// duration (which can be off by a beat). Idempotent: a no-op
+    /// passthrough if the tick already entered Overtime, or if
+    /// not Running — exactly GTK's EOS → `Session::enter_overtime`
+    /// (`meditate-core/src/session/mod.rs:401`).
+    pub fn enter_overtime(self) -> Transition {
+        match self {
+            Self::Active(mut s)
+                if matches!(s.ui_state(), UiState::Running) =>
+            {
+                let effects = s.enter_overtime();
+                Transition::new(Self::Active(s), effects)
             }
             other => Transition::new(other, Vec::new()),
         }
@@ -747,6 +771,77 @@ mod tests {
             .tick(Duration::from_secs(160))
             .add_overtime(Duration::from_secs(175));
         assert!(s.is_finished());
+    }
+
+    /// Guided shape helper — `duration_secs` is the picked
+    /// file's probed length; `count_up` mirrors the per-mode
+    /// stopwatch flag.
+    fn guided(target: Duration, count_up: bool) -> SessionShape {
+        SessionShape::Guided {
+            duration_secs: target.as_secs() as u32,
+            count_up_display: count_up,
+        }
+    }
+
+    #[test]
+    fn guided_lifecycle_start_overtime_finish() {
+        // Guided behaves like a countdown of the file length:
+        // before the end it's running; when the file's duration
+        // is crossed (audio EOS, or the tick crossing it) it
+        // enters Overtime (end bell), stays Active, and Finish
+        // ends it — exactly the Timer-countdown contract, just
+        // sourced from the file. Mirrors GTK's Guided session.
+        let running = AppState::idle().toggle(
+            guided(Duration::from_secs(120), false),
+            Duration::from_secs(100),
+        );
+        assert!(running.is_running());
+        // 30s in — still playing.
+        let mid = running.tick(Duration::from_secs(130));
+        assert!(mid.is_running() && !mid.is_overtime());
+        // Past the file length → overtime, NOT auto-finished.
+        let over = mid.tick(Duration::from_secs(225));
+        assert!(over.is_overtime() && !over.is_finished());
+        assert!(over.finish_overtime().is_finished());
+    }
+
+    #[test]
+    fn enter_overtime_from_running_enters_overtime_then_finish() {
+        // Guided audio EOS forces overtime early (probe was a
+        // beat short): Running → Overtime (stays Active), then
+        // Finish ends it.
+        let s = AppState::idle()
+            .toggle(guided(Duration::from_secs(300), false),
+                Duration::from_secs(0))
+            .enter_overtime();
+        assert!(s.is_overtime() && !s.is_finished());
+        assert!(s.finish_overtime().is_finished());
+    }
+
+    #[test]
+    fn enter_overtime_outside_running_is_a_passthrough() {
+        // Idle / already-overtime → no-op (defends a late EOS
+        // after the tick already crossed the probed duration).
+        assert!(AppState::idle().enter_overtime().is_idle());
+        let over = AppState::idle()
+            .toggle(timer_countdown(Duration::from_secs(60)),
+                Duration::from_secs(100))
+            .tick(Duration::from_secs(160));
+        assert!(over.is_overtime());
+        assert!(over.enter_overtime().is_overtime()); // still, no double
+    }
+
+    #[test]
+    fn guided_count_up_display_does_not_change_the_state_machine() {
+        // The count_up flag is display-only; the session still
+        // ends at the file's duration either way.
+        let s = AppState::idle()
+            .toggle(
+                guided(Duration::from_secs(60), true),
+                Duration::from_secs(0),
+            )
+            .tick(Duration::from_secs(120));
+        assert!(s.is_overtime() && !s.is_finished());
     }
 
     #[test]

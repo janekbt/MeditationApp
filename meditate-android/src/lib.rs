@@ -14,6 +14,8 @@ mod audio;
 // off the host dead-code path without an `#[allow]`.
 #[cfg(any(target_os = "android", test))]
 mod widget;
+#[cfg(target_os = "android")]
+mod guided;
 
 slint::include_modules!();
 
@@ -130,6 +132,12 @@ fn on_state_changed(was_active: bool, is_active: bool) {
         } else if was_active && !is_active {
             if let Some(app) = android_app() {
                 service::stop(app);
+                // Every session-end path (Stop / Finish / Add /
+                // tick-finish) routes through here, so this is
+                // the one place that guarantees the guided track
+                // is released. No-op for Timer/BoxBreath (no
+                // guided player running).
+                guided::stop(app);
             }
         }
     }
@@ -781,6 +789,31 @@ fn try_widget_deep_link(
         ),
     }
     true
+}
+
+/// Adopt a pending Guided SAF pick (GM-2), if the picker
+/// Activity dropped one. Sets the transient selection + the
+/// Setup row name (which also un-gates Start). Single-shot —
+/// `take_pending_pick` removes the drop-file.
+#[cfg(target_os = "android")]
+fn try_guided_pick(
+    ui: &MainWindow,
+    guided_sel: &std::rc::Rc<std::cell::RefCell<Option<GuidedSel>>>,
+) {
+    let Some(app) = android_app() else { return; };
+    let Some((path, name, dur)) = guided::take_pending_pick(app) else {
+        return;
+    };
+    meditate_core::log(
+        "guided",
+        &format!("pick: {name} ({dur}s)"),
+    );
+    *guided_sel.borrow_mut() = Some(GuidedSel {
+        name: name.clone(),
+        path,
+        duration_secs: dur,
+    });
+    ui.set_guided_name(name.into());
 }
 
 /// Case-insensitive preset-name collision check for the create
@@ -3090,6 +3123,17 @@ fn populate_pattern_chooser(ui: &MainWindow, current_uuid: &str) {
     );
 }
 
+/// A transient Guided-mode pick (Phase 6.5 MVP): the file the
+/// SAF picker copied into app storage + its display name and
+/// probed length. Not a DB row — transient picks log
+/// `guided_file_uuid = None`, exactly like GTK's `GuidedFilePick`.
+#[cfg(target_os = "android")]
+struct GuidedSel {
+    name: String,
+    path: String,
+    duration_secs: u32,
+}
+
 fn build_ui() -> MainWindow {
     let ui = MainWindow::new().unwrap();
 
@@ -3136,6 +3180,17 @@ fn build_ui() -> MainWindow {
     // "elapsed only" branch.
     #[cfg(target_os = "android")]
     let bb_target_secs: Rc<Cell<Option<u32>>> = Rc::new(Cell::new(None));
+
+    // Guided-mode current selection (Phase 6.5 MVP). `None` =
+    // nothing picked (Start disabled). Transient: the copied
+    // file path + display name + probed duration; the SAF picker
+    // (GM-2) fills it, on_action_tap reads the duration into
+    // SessionShape::Guided. Declared here (before the mode /
+    // action handlers that capture it). Mirrors GTK's transient
+    // `GuidedFilePick`.
+    #[cfg(target_os = "android")]
+    let guided_sel: Rc<RefCell<Option<GuidedSel>>> =
+        Rc::new(RefCell::new(None));
 
     // Cumulative flat list of sessions loaded into the Log feed.
     // The "Load more" button extends this; each page-load
@@ -3302,6 +3357,8 @@ fn build_ui() -> MainWindow {
         let session_start_unix = session_start_unix.clone();
         #[cfg(target_os = "android")]
         let bb_target_secs = bb_target_secs.clone();
+        #[cfg(target_os = "android")]
+        let guided_sel = guided_sel.clone();
         ui.on_action_tap(move || {
             let now = now_since_epoch();
             let Some(ui) = weak.upgrade() else { return; };
@@ -3331,6 +3388,33 @@ fn build_ui() -> MainWindow {
                             pattern,
                             target_secs: aligned,
                         }
+                    }
+                }
+                TimerMode::Guided => {
+                    // Length = the picked file's probed duration;
+                    // count_up_display = the per-mode stopwatch
+                    // flag (true → hero counts up, false → counts
+                    // down from the file length). Mirrors GTK's
+                    // SessionShape::Guided build in on_start.
+                    #[cfg(target_os = "android")]
+                    {
+                        let dur = guided_sel
+                            .borrow()
+                            .as_ref()
+                            .map(|g| g.duration_secs)
+                            .unwrap_or(0);
+                        SessionShape::Guided {
+                            duration_secs: dur,
+                            count_up_display: read_stopwatch_for_mode(
+                                meditate_core::SessionMode::Guided,
+                            ),
+                        }
+                    }
+                    // Host preview never starts Guided (no DB /
+                    // picker); harmless placeholder shape.
+                    #[cfg(not(target_os = "android"))]
+                    {
+                        SessionShape::TimerStopwatch
                     }
                 }
                 _ => {
@@ -3409,6 +3493,28 @@ fn build_ui() -> MainWindow {
                 );
             }
             on_state_changed(was_active, is_active);
+            // Guided audio follows the session: start it on the
+            // Idle→Active edge, mirror pause/resume on the
+            // Active→Active toggle (Stop/Finish release it via
+            // on_state_changed). Mode-gated; harmless otherwise.
+            #[cfg(target_os = "android")]
+            if current_mode.get() == TimerMode::Guided {
+                if let Some(app) = android_app() {
+                    if !was_active && is_active {
+                        if let Some(sel) =
+                            guided_sel.borrow().as_ref()
+                        {
+                            guided::play(app, &sel.path);
+                        }
+                    } else if was_active && is_active {
+                        if s.is_paused() {
+                            guided::pause(app);
+                        } else {
+                            guided::resume(app);
+                        }
+                    }
+                }
+            }
             refresh(&ui, &s, now);
         });
     }
@@ -3636,6 +3742,8 @@ fn build_ui() -> MainWindow {
         let snapshot_timer_ref: &'static slint::Timer = snapshot_timer;
         #[cfg(target_os = "android")]
         let timer_session_secs = timer_session_secs.clone();
+        #[cfg(target_os = "android")]
+        let guided_sel = guided_sel.clone();
         timer.start(slint::TimerMode::Repeated, TICK, move || {
             // Warm-process widget deep-link (W-4). Polled here
             // because NativeActivity never hands native code an
@@ -3648,6 +3756,27 @@ fn build_ui() -> MainWindow {
             if let Some(ui) = weak.upgrade() {
                 if try_widget_deep_link(&ui, &timer_session_secs, &state) {
                     return;
+                }
+                // Guided SAF-pick result (GM-2): the picker
+                // Activity dropped a file → adopt it as the
+                // current selection. Single-consumption file, so
+                // this is a no-op syscall on every normal frame.
+                try_guided_pick(&ui, &guided_sel);
+                // Guided audio reached its natural end (GM-3):
+                // force Overtime now → end bell fires exactly at
+                // the track end, robust to a probe-vs-real
+                // length mismatch. `enter_overtime` is a no-op
+                // if the tick already crossed the probed length.
+                if let Some(app) = android_app() {
+                    if guided::take_eos(app) {
+                        let prev = std::mem::replace(
+                            &mut *state.borrow_mut(),
+                            AppState::idle(),
+                        );
+                        let t = prev.enter_overtime();
+                        dispatch_effects(&t.effects);
+                        *state.borrow_mut() = t.state;
+                    }
                 }
             }
             let now = now_since_epoch();
@@ -3893,12 +4022,24 @@ fn build_ui() -> MainWindow {
         let weak = ui.as_weak();
         let current_mode = current_mode.clone();
         let timer_session_secs = timer_session_secs.clone();
+        #[cfg(target_os = "android")]
+        let guided_sel = guided_sel.clone();
         ui.on_mode_changed(move |idx| {
             let new_mode = TimerMode::from_chip_index(idx);
             current_mode.set(new_mode);
             #[cfg(target_os = "android")]
             if let Some(ui) = weak.upgrade() {
                 let core_mode: meditate_core::SessionMode = new_mode.into();
+                // Reflect the current Guided pick (if any) into
+                // the Setup row + Start gate.
+                ui.set_guided_name(
+                    guided_sel
+                        .borrow()
+                        .as_ref()
+                        .map(|g| g.name.clone())
+                        .unwrap_or_default()
+                        .into(),
+                );
                 ui.set_keep_awake_on(read_keep_awake_for_mode(core_mode));
                 ui.set_cues_mode(signal_mode_to_chip_index(
                     read_signal_mode_for_mode(core_mode),
@@ -3925,6 +4066,20 @@ fn build_ui() -> MainWindow {
                 refresh_preset_chips(&ui, core_mode);
             }
             let _ = (weak.clone(), timer_session_secs.clone());
+        });
+    }
+
+    // Guided "Open File" tap (Phase 6.5). GM-1 stub — the SAF
+    // picker shim lands in GM-2; until then this just logs so
+    // the wiring is in place and the row is visibly inert.
+    {
+        let weak = ui.as_weak();
+        ui.on_guided_open_tap(move || {
+            #[cfg(target_os = "android")]
+            if let Some(app) = android_app() {
+                guided::open_picker(app);
+            }
+            let _ = weak.clone();
         });
     }
 
@@ -4604,6 +4759,7 @@ fn build_ui() -> MainWindow {
     #[cfg(target_os = "android")]
     let ve_edit_uuid: Rc<RefCell<Option<String>>> =
         Rc::new(RefCell::new(None));
+
 
     // Shared intensities model — Rust owns it so a drag can
     // `set_row_data` a single sample and the chart re-renders

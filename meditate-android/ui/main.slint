@@ -1221,6 +1221,13 @@ export component MainWindow inherits Window {
     // surfaces (Start enabled / Setup body / persisted mode).
     in-out property <int> setup-mode: 0;
 
+    // Guided mode (Phase 6.5 MVP): the picked file's display
+    // name ("" = none → Start stays disabled), set by Rust after
+    // the SAF picker; `guided-open-tap` opens it. Mirrors GTK's
+    // guided_section Current-Selection row.
+    in property <string> guided-name: "";
+    callback guided-open-tap();
+
     // Stopwatch-Mode switch state — mirrors the .blp
     // `stopwatch_mode_row` SwitchRow. When true, sessions count up
     // from zero with no target (SessionShape::TimerStopwatch);
@@ -2186,10 +2193,11 @@ export component MainWindow inherits Window {
             FilledButton {
                 text: "Start Session";
                 height: 56px;
-                enabled: (root.setup-mode == 0 || root.setup-mode == 2)
+                enabled: ((root.setup-mode == 0 || root.setup-mode == 2)
                     && (root.stopwatch-on
                         || root.setup-hours > 0
-                        || root.setup-minutes > 0);
+                        || root.setup-minutes > 0))
+                    || (root.setup-mode == 1 && root.guided-name != "");
                 clicked => { root.action-tap(); }
             }
 
@@ -2507,17 +2515,46 @@ export component MainWindow inherits Window {
                 }
             }
 
-            // Placeholder body for Guided / Box Breath — the GTK
-            // shell builds full guided_section / boxbreath_inputs
-            // panes here. The Android counterparts land in the
-            // next phase-2 slices; for now a single-line note
-            // keeps the gap visible without faking functionality.
-            if root.setup-mode == 1 : Text {
-                text: "Guided mode lands with the audio engine in phase 5.";
-                font-size: 14px;
-                color: MaterialPalette.on-surface-variant;
-                horizontal-alignment: center;
-                wrap: word-wrap;
+            // Guided body (Phase 6.5 MVP) — mirrors GTK's
+            // guided_section Current-Selection row. The whole row
+            // is tap-to-open (acts as GTK's [Open File]); Import /
+            // starred library / Manage are the follow-up slice.
+            if root.setup-mode == 1 : VerticalLayout {
+                spacing: 8px;
+                BoxedList {
+                    Rectangle {
+                        height: 64px;
+                        background: g-touch.has-hover
+                            ? MaterialPalette.surface-container-high
+                            : transparent;
+                        g-touch := TouchArea {
+                            clicked => { root.guided-open-tap(); }
+                        }
+                        HorizontalLayout {
+                            padding-left: 16px;
+                            padding-right: 16px;
+                            spacing: 12px;
+                            alignment: stretch;
+                            VerticalLayout {
+                                alignment: center;
+                                horizontal-stretch: 1;
+                                Text {
+                                    text: "Guided File";
+                                    font-size: 16px;
+                                    color: MaterialPalette.on-surface;
+                                }
+                                Text {
+                                    text: root.guided-name != ""
+                                        ? root.guided-name
+                                        : "No file selected — tap to choose";
+                                    font-size: 13px;
+                                    color: MaterialPalette.on-surface-variant;
+                                    overflow: elide;
+                                }
+                            }
+                        }
+                    }
+                }
             }
             // Box Breath body — Breath Phases heading + 2×2 phase
             // tile grid + the shared Session group (Stopwatch, the

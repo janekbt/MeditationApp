@@ -430,6 +430,43 @@ vibration-pattern editor are all done and on-device confirmed
 Verification: a custom pattern authored on the phone syncs to the
 laptop and renders identically in the GTK shell's editor.
 
+### Phase 6.5 — Guided meditation mode
+
+Not in the original phase list (Guided was placeheld "lands with
+the audio engine"). `meditate-core` already supports it fully —
+`SessionMode::Guided`, `SessionShape::Guided { duration_secs,
+count_up_display }`, the `guided_files` table + ops, per-mode
+settings keys, the hero-label helper, and `Session`
+pause/resume/overtime/stop. **No core changes** — all Android
+shell. Mirror GTK (`meditate-gtk/src/guided.rs`).
+
+Decisions: import transcodes to **Ogg/Opus** (Android has no
+native Vorbis encoder; Opus-in-Ogg is native via
+MediaCodec+MediaMuxer and equally sync-safe — the Librem side's
+gstreamer `decodebin` plays it; only the codec inside the `.ogg`
+differs from GTK's Vorbis, invisible to the user). The SAF
+picker can't return through `NativeActivity.onActivityResult`,
+so a tiny Kotlin helper Activity runs `ACTION_OPEN_DOCUMENT`,
+copies the pick into app storage, and hands path+duration to
+Rust via a drop-file (same pattern as the widget launch).
+
+- ✅ **GM MVP** (transient Open-File path), GM-1..GM-4: Guided
+  Setup row + tap-to-pick; SAF picker via a Kotlin shim Activity
+  (NativeActivity can't `onActivityResult` → drop-file → Rust
+  tick poll, like the widget launch); `MeditateGuided`
+  MediaPlayer plays the picked file (USAGE_MEDIA/SPEECH),
+  pause/resume/stop follow the session, onCompletion/onError →
+  `guided_eos` drop-file → tick forces `AppState::enter_overtime`
+  → end bell (robust to probe-vs-real mismatch);
+  `SessionShape::Guided { duration_secs, count_up_display }`
+  built from the pick; persisted via the existing
+  `finalize_session` path with `guided_file_uuid = None`. No
+  core changes; new core-adapter `enter_overtime` + Guided
+  lifecycle tests (strict TDD). On-device confirmed (FP5).
+- ⬜ **GM follow-up**: Import (Ogg/Opus transcode + auto-star),
+  starred-files list in Setup, Manage-files chooser
+  (star/rename/delete/preview) — the full `guided.rs` parity.
+
 ### Phase 7 — Sync + Preferences
 
 Systems milestones 10 + 11 (keychain JNI + sync runner) land first.

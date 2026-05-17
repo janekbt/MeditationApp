@@ -57,6 +57,18 @@
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
 
+        <!-- Guided-mode SAF picker shim (Phase 6.5). Owns the
+             ACTION_OPEN_DOCUMENT request/result because
+             NativeActivity can't receive onActivityResult; hands
+             the pick back via a drop-file. Translucent + no UI of
+             its own (the system picker is the only visible UI),
+             not exported, kept out of recents. -->
+        <activity
+            android:name=".MeditateFilePickerActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
         <!-- Starred-preset home-screen widget (W-series).
              exported=true is mandatory: the launcher / system
              AppWidgetHost sends the APPWIDGET_UPDATE broadcast
