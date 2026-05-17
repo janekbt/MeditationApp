@@ -463,9 +463,25 @@ Rust via a drop-file (same pattern as the widget launch).
   `finalize_session` path with `guided_file_uuid = None`. No
   core changes; new core-adapter `enter_overtime` + Guided
   lifecycle tests (strict TDD). On-device confirmed (FP5).
-- ⬜ **GM follow-up**: Import (Ogg/Opus transcode + auto-star),
-  starred-files list in Setup, Manage-files chooser
-  (star/rename/delete/preview) — the full `guided.rs` parity.
+- ✅ **GM-F1**: Guided Stopwatch toggle in a "Session" group
+  (mirrors Timer's `session_group`); per-mode
+  `guided_stopwatch_active`, fed into `count_up_display`.
+- ✅ **GM-F2**: Import. GTK-faithful layout — non-tappable
+  "Current file" row + `[Open File] [Import File]` buttons
+  (Import disabled until a pick exists). `MeditateGuidedImport`
+  Kotlin worker: wav/ogg passthrough copy, else MediaExtractor →
+  decoder → linear resample to 48 kHz (Android Opus encoder is
+  48 k-only) → Opus encoder → `MediaMuxer(MUXER_OUTPUT_OGG)`,
+  API 29+ (older → clear error). Chunked encoder feed + interleaved
+  drain (one-shot `put` overflowed; native-endian PCM order).
+  Result/progress via drop-files → Rust tick poll; auto-starred
+  `guided_files` row via `insert_guided_file_with_uuid`; imported
+  file becomes the current selection. Converting… button is a
+  left→right progress-fill pill (worker ptsUs / probed duration).
+  On-device confirmed (FP5).
+- ⬜ **GM follow-up**: starred-files list in Setup, Manage-files
+  chooser (star/rename/delete/preview) — the rest of `guided.rs`
+  parity.
 
 ### Phase 7 — Sync + Preferences
 

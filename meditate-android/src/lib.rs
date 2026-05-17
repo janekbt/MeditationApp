@@ -839,6 +839,56 @@ fn preset_name_taken(name: &str, except_uuid: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Case-insensitive guided-file-name collision check for the
+/// import dialog's live validation. `except_uuid` = `""` on
+/// import (rename's own-uuid exception lands with GM-F4).
+/// Mirrors GTK's `is_guided_file_name_taken` call in
+/// `import_picked_file`.
+#[cfg(target_os = "android")]
+fn guided_name_taken(name: &str, except_uuid: &str) -> bool {
+    let Some(db_arc) = DATABASE.get() else { return false; };
+    let Ok(guard) = db_arc.lock() else { return false; };
+    let Some(db) = guard.as_ref() else { return false; };
+    meditate_core::db::is_guided_file_name_taken_from_db(
+        db, name, except_uuid,
+    )
+    .unwrap_or(false)
+}
+
+/// Insert the freshly-transcoded guided file as a starred
+/// `guided_files` row (auto-star mirrors GTK's import on_done,
+/// which stars on import like Save Preset). On a DB error the
+/// orphaned `<uuid>.ogg` is removed so disk state matches the
+/// (absent) row, exactly like GTK's `remove_file(&dest_path)`
+/// on insert failure.
+#[cfg(target_os = "android")]
+fn insert_guided_file(
+    uuid: &str,
+    name: &str,
+    dest: &str,
+    secs: u32,
+) -> Result<(), String> {
+    let res = {
+        let Some(db_arc) = DATABASE.get() else {
+            return Err("db unavailable".into());
+        };
+        let Ok(guard) = db_arc.lock() else {
+            return Err("db lock poisoned".into());
+        };
+        let Some(db) = guard.as_ref() else {
+            return Err("db not open".into());
+        };
+        db.insert_guided_file_with_uuid(uuid, name, dest, secs, true)
+    };
+    match res {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            let _ = std::fs::remove_file(dest);
+            Err(format!("{e:?}"))
+        }
+    }
+}
+
 /// Resolve a preset by uuid to the core row (carries the
 /// `config_json` Apply needs + the `mode` guard). `None` when
 /// the row is gone (raced a peer delete) — caller bails like
@@ -3202,6 +3252,23 @@ fn build_ui() -> MainWindow {
     let guided_sel: Rc<RefCell<Option<GuidedSel>>> =
         Rc::new(RefCell::new(None));
 
+    // GM-F2 import flow state. Mirrors GTK: the Import File
+    // button operates on the *current* Open-File pick (it's
+    // disabled until one exists), so there's no separate picker.
+    // `import_src` snapshots that pick's (path, probed secs) when
+    // Import is tapped, held until the name-dialog confirm.
+    // `import_finalize` holds (uuid, name, dest, secs) between the
+    // confirm (which kicks off the Kotlin worker) and the
+    // worker's result drop-file landing. Mirrors GTK's
+    // `GuidedFilePick` + `do_import_io` hand-off.
+    #[cfg(target_os = "android")]
+    let guided_import_src: Rc<RefCell<Option<(String, u32)>>> =
+        Rc::new(RefCell::new(None));
+    #[cfg(target_os = "android")]
+    let guided_import_finalize: Rc<
+        RefCell<Option<(String, String, String, u32)>>,
+    > = Rc::new(RefCell::new(None));
+
     // Cumulative flat list of sessions loaded into the Log feed.
     // The "Load more" button extends this; each page-load
     // re-groups the whole list into `LogDaySection`s and pushes
@@ -3754,6 +3821,8 @@ fn build_ui() -> MainWindow {
         let timer_session_secs = timer_session_secs.clone();
         #[cfg(target_os = "android")]
         let guided_sel = guided_sel.clone();
+        #[cfg(target_os = "android")]
+        let guided_import_finalize = guided_import_finalize.clone();
         timer.start(slint::TimerMode::Repeated, TICK, move || {
             // Warm-process widget deep-link (W-4). Polled here
             // because NativeActivity never hands native code an
@@ -3772,6 +3841,83 @@ fn build_ui() -> MainWindow {
                 // current selection. Single-consumption file, so
                 // this is a no-op syscall on every normal frame.
                 try_guided_pick(&ui, &guided_sel);
+                // Guided import transcode finished (GM-F2): the
+                // Kotlin worker dropped a result file. On success
+                // insert the starred `guided_files` row and adopt
+                // the imported track as the current selection
+                // (mirrors GTK's import on_done). On failure keep
+                // the dialog open so the user can retry / cancel.
+                // Clone the pending tuple out into its own `let`
+                // FIRST so the immutable borrow is dropped before
+                // the `borrow_mut()` below — an `if let
+                // x.borrow()…` keeps the temporary alive for the
+                // whole block (RefCell double-borrow panic).
+                let pending_finalize =
+                    guided_import_finalize.borrow().clone();
+                if let Some((uuid, name, dest, secs)) =
+                    pending_finalize
+                {
+                    if let Some(app) = android_app() {
+                        let result =
+                            guided::take_import_result(app);
+                        if result.is_none() {
+                            // Still transcoding — feed the
+                            // Converting… button's fill.
+                            if let Some(pct) =
+                                guided::take_import_progress(app)
+                            {
+                                ui.set_guided_import_progress(
+                                    f32::from(pct) / 100.0,
+                                );
+                            }
+                        }
+                        if let Some(res) = result {
+                            *guided_import_finalize.borrow_mut() =
+                                None;
+                            guided::clear_import_progress(app);
+                            match res.and_then(|()| {
+                                insert_guided_file(
+                                    &uuid, &name, &dest, secs,
+                                )
+                            }) {
+                                Ok(()) => {
+                                    *guided_sel.borrow_mut() =
+                                        Some(GuidedSel {
+                                            name: name.clone(),
+                                            path: dest,
+                                            duration_secs: secs,
+                                        });
+                                    ui.set_guided_name(
+                                        name.into(),
+                                    );
+                                    ui.set_guided_duration_secs(
+                                        secs as i32,
+                                    );
+                                    ui.set_guided_import_progress(
+                                        1.0,
+                                    );
+                                    ui.set_guided_import_busy(
+                                        false,
+                                    );
+                                    ui.set_guided_import_dialog_open(
+                                        false,
+                                    );
+                                }
+                                Err(e) => {
+                                    meditate_core::log(
+                                        "guided",
+                                        &format!(
+                                            "import failed: {e}"
+                                        ),
+                                    );
+                                    ui.set_guided_import_busy(
+                                        false,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
                 // Guided audio reached its natural end (GM-3):
                 // force Overtime now → end bell fires exactly at
                 // the track end, robust to a probe-vs-real
@@ -4085,15 +4231,152 @@ fn build_ui() -> MainWindow {
         });
     }
 
-    // Guided "Open File" tap (Phase 6.5). GM-1 stub — the SAF
-    // picker shim lands in GM-2; until then this just logs so
-    // the wiring is in place and the row is visibly inert.
+    // Guided "Open File" button (Phase 6.5). Opens the SAF
+    // picker for a transient play-now selection. Mirrors GTK's
+    // `open_file_btn`.
     {
         let weak = ui.as_weak();
         ui.on_guided_open_tap(move || {
             #[cfg(target_os = "android")]
             if let Some(app) = android_app() {
                 guided::open_picker(app);
+            }
+            let _ = weak.clone();
+        });
+    }
+
+    // Guided "Import File" button (GM-F2). Operates on the
+    // *current* Open-File pick (the button is disabled until one
+    // exists) — snapshots it and raises the name dialog; no
+    // separate picker. Mirrors GTK's `import_file_btn` →
+    // `import_picked_file`.
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let guided_sel = guided_sel.clone();
+        #[cfg(target_os = "android")]
+        let guided_import_src = guided_import_src.clone();
+        ui.on_guided_import_tap(move || {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                let Some((path, name, secs)) = guided_sel
+                    .borrow()
+                    .as_ref()
+                    .map(|s| {
+                        (
+                            s.path.clone(),
+                            s.name.clone(),
+                            s.duration_secs,
+                        )
+                    })
+                else {
+                    return; // no pick → button shouldn't be live
+                };
+                meditate_core::log(
+                    "guided",
+                    &format!("import: {name} ({secs}s)"),
+                );
+                *guided_import_src.borrow_mut() =
+                    Some((path, secs));
+                // Default name = display name minus its extension.
+                let default_name = name
+                    .rsplit_once('.')
+                    .map(|(stem, _)| stem)
+                    .unwrap_or(&name)
+                    .to_string();
+                ui.set_guided_import_subtitle(
+                    format!(
+                        "Importing: {name} ({})",
+                        meditate_core::format::format_duration_brief(
+                            secs,
+                        ),
+                    )
+                    .into(),
+                );
+                ui.set_guided_import_text(
+                    default_name.clone().into(),
+                );
+                let v = meditate_core::naming::validate(
+                    default_name.trim(),
+                    |n| guided_name_taken(n, ""),
+                );
+                ui.set_guided_import_valid(v.is_savable());
+                ui.set_guided_import_busy(false);
+                ui.set_guided_import_dialog_open(true);
+            }
+            let _ = weak.clone();
+        });
+    }
+
+    // Live-validate the import name (non-empty + no case-
+    // insensitive guided_files collision). Same shape as
+    // create-preset-changed.
+    {
+        let weak = ui.as_weak();
+        ui.on_guided_import_changed(move |name| {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                let v = meditate_core::naming::validate(
+                    name.trim(),
+                    |n| guided_name_taken(n, ""),
+                );
+                ui.set_guided_import_valid(v.is_savable());
+            }
+            let _ = (weak.clone(), name);
+        });
+    }
+
+    // Import confirm → kick off the Kotlin transcode worker. The
+    // result lands via the tick-loop poll (guided_import_finalize
+    // + guided::take_import_result). Mirrors GTK's import-button
+    // click spawning `do_import_io`.
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let guided_import_src = guided_import_src.clone();
+        #[cfg(target_os = "android")]
+        let guided_import_finalize = guided_import_finalize.clone();
+        ui.on_guided_import_confirm(move || {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                let name =
+                    ui.get_guided_import_text().trim().to_string();
+                // Re-validate (defends a stale Enter / race).
+                let v = meditate_core::naming::validate(&name, |n| {
+                    guided_name_taken(n, "")
+                });
+                if !v.is_savable() {
+                    return;
+                }
+                let Some((src, secs)) =
+                    guided_import_src.borrow_mut().take()
+                else {
+                    return;
+                };
+                let Some(app) = android_app() else { return; };
+                let Some(data_root) = app.internal_data_path()
+                else {
+                    return;
+                };
+                let uuid = meditate_core::db::mint_uuid();
+                let dest = data_root
+                    .join("meditate")
+                    .join("guided")
+                    .join(format!("{uuid}.ogg"));
+                let dest_str =
+                    dest.to_string_lossy().to_string();
+                *guided_import_finalize.borrow_mut() = Some((
+                    uuid,
+                    name,
+                    dest_str.clone(),
+                    secs,
+                ));
+                ui.set_guided_import_progress(0.0);
+                ui.set_guided_import_busy(true);
+                guided::start_import(
+                    app, &src, &dest_str, secs,
+                );
             }
             let _ = weak.clone();
         });

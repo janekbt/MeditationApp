@@ -1231,6 +1231,26 @@ export component MainWindow inherits Window {
     // duration stepper — the file's length is the duration).
     in property <int> guided-duration-secs: 0;
     callback guided-open-tap();
+    // Guided import (GM-F2): the "Import File" row opens the SAF
+    // picker, then a name dialog (live-validated, non-empty + no
+    // case-insensitive guided_files collision — Rust-driven, same
+    // shape as create-preset). On confirm Rust transcodes the
+    // pick to Opus-in-Ogg and inserts a starred guided_files row.
+    // Mirrors GTK's `import_picked_file`.
+    callback guided-import-tap();
+    in-out property <bool> guided-import-dialog-open: false;
+    in-out property <string> guided-import-text: "";
+    in property <bool> guided-import-valid: false;
+    // "Importing: <name> (m:ss)" body line (Rust-formatted).
+    in property <string> guided-import-subtitle: "";
+    // Worker running → swap Import for a "Converting…" label and
+    // freeze the form (Cancel stays live, like GTK).
+    in property <bool> guided-import-busy: false;
+    // Transcode progress 0.0–1.0, Rust-driven from the Kotlin
+    // worker. Fills the Converting… button left→right.
+    in property <float> guided-import-progress: 0.0;
+    callback guided-import-changed(string);
+    callback guided-import-confirm();
 
     // Stopwatch-Mode switch state — mirrors the .blp
     // `stopwatch_mode_row` SwitchRow. When true, sessions count up
@@ -2525,15 +2545,21 @@ export component MainWindow inherits Window {
             // starred library / Manage are the follow-up slice.
             if root.setup-mode == 1 : VerticalLayout {
                 spacing: 8px;
+                // Current file — a single NON-tappable display
+                // row (mirrors GTK's `guided_selected_group` /
+                // `guided_selected_row`: activatable: false,
+                // dim-label). Picking happens via the Open File
+                // button below, not by tapping this row.
+                Text {
+                    text: "Current file";
+                    font-size: 14px;
+                    font-weight: 700;
+                    color: MaterialPalette.primary;
+                    horizontal-alignment: left;
+                }
                 BoxedList {
                     Rectangle {
                         height: 64px;
-                        background: g-touch.has-hover
-                            ? MaterialPalette.surface-container-high
-                            : transparent;
-                        g-touch := TouchArea {
-                            clicked => { root.guided-open-tap(); }
-                        }
                         HorizontalLayout {
                             padding-left: 16px;
                             padding-right: 16px;
@@ -2543,20 +2569,38 @@ export component MainWindow inherits Window {
                                 alignment: center;
                                 horizontal-stretch: 1;
                                 Text {
-                                    text: "Guided File";
-                                    font-size: 16px;
-                                    color: MaterialPalette.on-surface;
-                                }
-                                Text {
                                     text: root.guided-name != ""
                                         ? root.guided-name
-                                        : "No file selected — tap to choose";
+                                        : "No file selected";
+                                    font-size: 16px;
+                                    color: MaterialPalette.on-surface;
+                                    overflow: elide;
+                                }
+                                Text {
+                                    text: "Tap Open File or pick from list below";
                                     font-size: 13px;
                                     color: MaterialPalette.on-surface-variant;
                                     overflow: elide;
                                 }
                             }
                         }
+                    }
+                }
+                // [Open File] [Import File] — GTK's homogeneous
+                // button box under the Current-file group. Import
+                // is disabled until there's a pick to convert
+                // (GTK's `import_file_btn` `sensitive: false`).
+                HorizontalLayout {
+                    spacing: 8px;
+
+                    FilledButton {
+                        text: "Open File";
+                        clicked => { root.guided-open-tap(); }
+                    }
+                    OutlineButton {
+                        text: "Import File";
+                        enabled: root.guided-name != "";
+                        clicked => { root.guided-import-tap(); }
                     }
                 }
                 // Session group — same "Session" heading + boxed
@@ -6241,6 +6285,126 @@ export component MainWindow inherits Window {
                             root.prep-time-secs = root.prep-dialog-secs;
                             root.prep-secs-committed();
                             root.prep-dialog-open = false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // ── Guided import name dialog (modal, GM-F2) ─────────────────
+    // Declared LAST → top of the z-stack (declare-overlays-last
+    // rule). `guided-import-valid` is Rust-driven live validation
+    // (non-empty + no case-insensitive guided_files collision).
+    // While the worker runs, the form freezes and Import becomes a
+    // "Converting…" label; Cancel stays live (mirrors GTK).
+    if root.guided-import-dialog-open : Rectangle {
+        background: #00000080;
+        TouchArea {
+            clicked => {
+                if (!root.guided-import-busy) {
+                    root.guided-import-dialog-open = false;
+                }
+            }
+        }
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 320px;
+            height: guided-import-card.preferred-height;
+            background: MaterialPalette.surface-container-high;
+            border-radius: 28px;
+
+            TouchArea {}
+
+            guided-import-card := VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+
+                Text {
+                    text: "Import Guided File";
+                    font-size: 22px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface;
+                }
+                Text {
+                    text: root.guided-import-subtitle;
+                    font-size: 13px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface-variant;
+                    wrap: word-wrap;
+                }
+
+                TextField {
+                    label: "Track name";
+                    text <=> root.guided-import-text;
+                    enabled: !root.guided-import-busy;
+                    edited(text) => { root.guided-import-changed(text); }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+
+                    TextButton {
+                        text: "Cancel";
+                        clicked => {
+                            root.guided-import-dialog-open = false;
+                        }
+                    }
+                    if !root.guided-import-busy : TextButton {
+                        text: "Import";
+                        enabled: root.guided-import-valid;
+                        clicked => { root.guided-import-confirm(); }
+                    }
+                    // Converting… progress pill — a clipped
+                    // rounded track with a primary fill that
+                    // grows left→right with the transcode percent
+                    // (Rust-driven from the Kotlin worker). The
+                    // label is drawn twice: on-surface on the bare
+                    // track, and an on-primary copy clipped to the
+                    // fill so it stays readable as the fill passes
+                    // under it.
+                    if root.guided-import-busy : import-pill := Rectangle {
+                        width: 156px;
+                        height: 40px;
+                        border-radius: 20px;
+                        clip: true;
+                        background: MaterialPalette.surface-container-highest;
+
+                        Text {
+                            width: parent.width;
+                            height: parent.height;
+                            text: "Converting… "
+                                + round(root.guided-import-progress * 100)
+                                + "%";
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            font-size: 14px;
+                            color: MaterialPalette.on-surface;
+                        }
+                        Rectangle {
+                            x: 0;
+                            y: 0;
+                            height: parent.height;
+                            width: parent.width
+                                * clamp(root.guided-import-progress, 0.0, 1.0);
+                            background: MaterialPalette.primary;
+                            clip: true;
+
+                            Text {
+                                x: 0;
+                                y: 0;
+                                width: import-pill.width;
+                                height: import-pill.height;
+                                text: "Converting… "
+                                    + round(root.guided-import-progress * 100)
+                                    + "%";
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                font-size: 14px;
+                                color: MaterialPalette.on-primary;
+                            }
                         }
                     }
                 }

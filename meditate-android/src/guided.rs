@@ -20,6 +20,15 @@ const PICKER_CLASS_DOTTED: &str =
     "io.github.janekbt.Meditate.MeditateGuidedPicker";
 const PLAYER_CLASS_DOTTED: &str =
     "io.github.janekbt.Meditate.MeditateGuided";
+const IMPORT_CLASS_DOTTED: &str =
+    "io.github.janekbt.Meditate.MeditateGuidedImport";
+/// Touched by `MeditateGuidedImport` when the background transcode
+/// finishes: "ok" or "err:<message>". Single-consumption.
+const IMPORT_RESULT_FILENAME: &str = "guided_import_result";
+/// Continuously rewritten by `MeditateGuidedImport` with the
+/// transcode percent (0–99). Polled every tick (NOT consumed —
+/// it's overwritten in place); removed at finalize.
+const IMPORT_PROGRESS_FILENAME: &str = "guided_import_progress";
 /// Drop-file the picker Activity writes: 3 lines —
 /// absolute path / display name / duration in whole seconds.
 const PICK_FILENAME: &str = "guided_pick";
@@ -144,6 +153,103 @@ pub fn take_eos(app: &AndroidApp) -> bool {
     } else {
         false
     }
+}
+
+// ── Guided import transcode (MeditateGuidedImport) ──────────────────
+
+/// Kick off the background transcode (or wav/ogg passthrough copy)
+/// of `src` → `dest` (`<data>/meditate/guided/<uuid>.ogg`). Fire-
+/// and-forget: the result lands in the `guided_import_result`
+/// drop-file; poll `take_import_result`. Mirrors GTK's
+/// `spawn_blocking(do_import_io)`.
+pub fn start_import(
+    app: &AndroidApp,
+    src: &str,
+    dest: &str,
+    duration_secs: u32,
+) {
+    if let Err(e) = invoke_import(app, src, dest, duration_secs) {
+        meditate_core::log(
+            "guided",
+            &format!("start_import FAILED: {e:?}"),
+        );
+    }
+}
+
+/// Current transcode percent (0–99) the worker is rewriting, or
+/// `None` if no progress file exists yet. Not consumed — the file
+/// is overwritten in place by the worker and removed at finalize.
+pub fn take_import_progress(app: &AndroidApp) -> Option<u8> {
+    let data_root = app.internal_data_path()?;
+    let path = data_root
+        .join("meditate")
+        .join(IMPORT_PROGRESS_FILENAME);
+    let raw = std::fs::read_to_string(&path).ok()?;
+    raw.trim().parse::<u8>().ok().map(|p| p.min(100))
+}
+
+/// Remove the progress drop-file once the import has been
+/// finalized (success or failure) so a stale value can't bleed
+/// into the next import's button fill.
+pub fn clear_import_progress(app: &AndroidApp) {
+    if let Some(data_root) = app.internal_data_path() {
+        let path = data_root
+            .join("meditate")
+            .join(IMPORT_PROGRESS_FILENAME);
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
+/// Take the transcode outcome — `Ok(())` on success, `Err(msg)` on
+/// failure — and delete the drop-file (single consumption). `None`
+/// while the worker is still running / nothing pending.
+pub fn take_import_result(
+    app: &AndroidApp,
+) -> Option<Result<(), String>> {
+    let data_root = app.internal_data_path()?;
+    let path =
+        data_root.join("meditate").join(IMPORT_RESULT_FILENAME);
+    let raw = std::fs::read_to_string(&path).ok()?;
+    let _ = std::fs::remove_file(&path);
+    let trimmed = raw.trim();
+    if trimmed == "ok" {
+        Some(Ok(()))
+    } else {
+        Some(Err(trimmed
+            .strip_prefix("err:")
+            .unwrap_or(trimmed)
+            .to_string()))
+    }
+}
+
+fn invoke_import(
+    app: &AndroidApp,
+    src: &str,
+    dest: &str,
+    duration_secs: u32,
+) -> Result<(), jni::errors::Error> {
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
+    let mut env = vm.attach_current_thread()?;
+    let activity =
+        unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
+    let jsrc = env.new_string(src)?;
+    let jdest = env.new_string(dest)?;
+    let class = resolve_class(&mut env, &activity, IMPORT_CLASS_DOTTED)?;
+    env.call_static_method(
+        class,
+        "startImport",
+        "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;J)V",
+        &[
+            (&activity).into(),
+            (&jsrc).into(),
+            (&jdest).into(),
+            jni::objects::JValue::Long(i64::from(duration_secs)),
+        ],
+    )?;
+    if env.exception_check()? {
+        env.exception_clear()?;
+    }
+    Ok(())
 }
 
 fn invoke_play(
