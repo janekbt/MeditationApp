@@ -2559,6 +2559,30 @@ export component MainWindow inherits Window {
                         }
                     }
                 }
+                // Session group — same "Session" heading + boxed
+                // list as Timer mode. Stopwatch Mode (count up
+                // from zero vs count down from the file length)
+                // reuses the shared `stopwatch-on` (mode_changed
+                // loads the per-mode value) + `stopwatch-toggled`
+                // (writes per current_mode = Guided). Mirrors
+                // GTK's session_group for Guided.
+                Text {
+                    text: "Session";
+                    font-size: 14px;
+                    font-weight: 700;
+                    color: MaterialPalette.primary;
+                    horizontal-alignment: left;
+                }
+                BoxedList {
+                    SwitchRow {
+                        title: "Stopwatch Mode";
+                        subtitle: "Count up from zero";
+                        checked <=> root.stopwatch-on;
+                        toggled(value) => {
+                            root.stopwatch-toggled(value);
+                        }
+                    }
+                }
             }
             // Box Breath body — Breath Phases heading + 2×2 phase
             // tile grid + the shared Session group (Stopwatch, the
