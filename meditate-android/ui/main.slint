@@ -112,6 +112,10 @@ export struct GuidedFileItem {
     uuid: string,
     name: string,
     subtitle: string,
+    // Manage-Files star toggle state. The Setup starred list
+    // only ever carries starred rows (always true there);
+    // Manage Files lists every file so the toggle can flip it.
+    is-starred: bool,
 }
 
 // One row in the Interval Bells library (B-5c). `title` is the
@@ -1270,6 +1274,19 @@ export component MainWindow inherits Window {
     // attribution). Mirrors GTK's `guided_files_group`.
     in property <[GuidedFileItem]> guided-files: [];
     callback guided-file-tap(string);
+    // Manage Files chooser (GM-F4) — full-screen slide-in,
+    // mirrors GTK's `push_guided_files_chooser`. Lists ALL
+    // files (starred + not); per-row star toggle + delete (+Undo
+    // via the shared snackbar); a "Create new guided file…" row
+    // re-enters the pick→import pipeline. Rename + Play/Stop
+    // preview land in GM-F4b.
+    in property <bool> guided-manage-page: false;
+    in property <[GuidedFileItem]> guided-manage-items: [];
+    callback manage-guided-tap();
+    callback guided-manage-back();
+    callback guided-manage-star-tap(string);
+    callback guided-manage-delete-tap(string);
+    callback guided-manage-create();
 
     // Stopwatch-Mode switch state — mirrors the .blp
     // `stopwatch_mode_row` SwitchRow. When true, sessions count up
@@ -2095,6 +2112,9 @@ export component MainWindow inherits Window {
     // Preset chooser slide-in (P-4). Same symmetric 300 ms push.
     property <length> preset-chooser-offset: root.preset-chooser-page ? root.width : 0px;
     animate preset-chooser-offset { duration: 300ms; easing: ease-out; }
+    // Guided Manage Files slide-in (GM-F4). Same symmetric push.
+    property <length> guided-manage-offset: root.guided-manage-page ? root.width : 0px;
+    animate guided-manage-offset { duration: 300ms; easing: ease-out; }
 
     property <length> interval-bells-offset: root.interval-bells-page ? root.width : 0px;
     animate interval-bells-offset { duration: 300ms; easing: ease-out; }
@@ -2701,6 +2721,12 @@ export component MainWindow inherits Window {
                             }
                         }
                     }
+                }
+                // Manage Files — opens the full chooser
+                // (GTK's `manage_guided_files_btn`).
+                OutlineButton {
+                    text: "Manage Files";
+                    clicked => { root.manage-guided-tap(); }
                 }
                 // Session group — same "Session" heading + boxed
                 // list as Timer mode. Stopwatch Mode (count up
@@ -4563,52 +4589,12 @@ export component MainWindow inherits Window {
     // the gesture hint when the NavigationBar is hidden during an
     // overlay (though we currently only show the snackbar on the
     // Log page, which always has the NavigationBar visible).
-    if root.snackbar-visible : Rectangle {
-        x: (parent.width - self.width) / 2;
-        y: parent.height - root.nav-bar-height - root.bottom-bar-inset - self.height - 12px;
-        width: min(parent.width - 24px, 344px);
-        height: 60px;
-        border-radius: 4px;
-        background: MaterialPalette.inverse-surface;
-        drop-shadow-blur: 8px;
-        drop-shadow-color: #00000040;
-        drop-shadow-offset-y: 2px;
-
-        HorizontalLayout {
-            padding-left: 16px;
-            padding-right: 8px;
-            spacing: 4px;
-            alignment: stretch;
-
-            Text {
-                text: root.snackbar-text;
-                font-size: 14px;
-                color: MaterialPalette.inverse-on-surface;
-                vertical-alignment: center;
-                horizontal-alignment: left;
-                horizontal-stretch: 1;
-                wrap: word-wrap;
-            }
-
-            // TextButton's BaseButton internals add their own 10 px
-            // top/bottom padding and a `min_height: 40px`, so wrap
-            // it in a VerticalLayout-centered cell instead of
-            // letting the outer HorizontalLayout vertically stretch
-            // it — the stretch was clipping the bottom of the
-            // "Undo" glyphs even at 72 px snackbar height. With
-            // `alignment: center` the button sits at its preferred
-            // 40 px height inside the 60 px container, with 10 px
-            // of breathing room above and below.
-            VerticalLayout {
-                alignment: center;
-                TextButton {
-                    text: "Undo";
-                    inverse: true;
-                    clicked => { root.snackbar-undo-tap(); }
-                }
-            }
-        }
-    }
+    // NOTE: the snackbar ELEMENT is declared later (just before
+    // the import dialog) so it z-stacks ABOVE the full-screen
+    // Guided Manage Files page — GM-F4 keeps that chooser open
+    // while showing the delete-Undo snackbar (GTK's in-page
+    // ToastOverlay equivalent). Declaration order = z-order;
+    // declaring it here left it hidden behind the chooser.
 
     // ── Bottom NavigationBar — visible on base pages only ───────
     // Pinned at y = parent.height - nav-bar-height. Hidden
@@ -6390,6 +6376,200 @@ export component MainWindow inherits Window {
             }
         }
     }
+    // ── Guided Manage Files chooser (GM-F4) ──────────────────────
+    // Full-screen slide-in (same push as the preset chooser).
+    // Declared after the preset chooser but BEFORE the import
+    // dialog so the Create→import name dialog z-stacks above it.
+    // Mirrors GTK's `push_guided_files_chooser` page.
+    Rectangle {
+        x: parent.width - root.guided-manage-offset;
+        width: parent.width;
+        height: parent.height;
+        background: MaterialPalette.surface;
+
+        VerticalLayout {
+            padding-top: root.status-bar-inset + 24px;
+            padding-bottom: root.bottom-bar-inset + 24px;
+            padding-left: 16px;
+            padding-right: 16px;
+            spacing: 16px;
+            alignment: start;
+
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: stretch;
+
+                IconButton {
+                    icon: Icons.arrow-back;
+                    clicked => { root.guided-manage-back(); }
+                }
+                Text {
+                    text: "Manage Files";
+                    font-size: 18px;
+                    color: MaterialPalette.on-surface;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    horizontal-alignment: center;
+                }
+                Rectangle {
+                    width: 40px;
+                }
+            }
+
+            BoxedList {
+                // "Create new guided file…" — re-enters the
+                // pick → import pipeline (GTK's synthetic
+                // create row).
+                Rectangle {
+                    height: 56px;
+                    background: gm-create-touch.has-hover
+                        ? MaterialPalette.surface-container-high
+                        : transparent;
+                    gm-create-touch := TouchArea {
+                        clicked => { root.guided-manage-create(); }
+                    }
+                    HorizontalLayout {
+                        padding-left: 16px;
+                        padding-right: 16px;
+                        spacing: 12px;
+                        alignment: stretch;
+                        Text {
+                            text: "Create new guided file…";
+                            font-size: 16px;
+                            color: MaterialPalette.primary;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+                        Text {
+                            text: "+";
+                            font-size: 22px;
+                            color: MaterialPalette.primary;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                for item[idx] in root.guided-manage-items : VerticalLayout {
+                    spacing: 0;
+
+                    Rectangle {
+                        height: 1px;
+                        background: MaterialPalette.outline-variant;
+                    }
+
+                    Rectangle {
+                        height: 64px;
+                        HorizontalLayout {
+                            padding-left: 16px;
+                            padding-right: 16px;
+                            spacing: 12px;
+                            alignment: stretch;
+
+                            // Star toggle prefix (GTK's
+                            // add_prefix(star_button)).
+                            VerticalLayout {
+                                alignment: center;
+                                Rectangle {
+                                    width: 40px;
+                                    height: 40px;
+                                    gm-star-touch := TouchArea {
+                                        clicked => {
+                                            root.guided-manage-star-tap(
+                                                item.uuid);
+                                        }
+                                    }
+                                    Image {
+                                        source: item.is-starred
+                                            ? @image-url("assets/star_filled.svg")
+                                            : @image-url("assets/star.svg");
+                                        width: 22px;
+                                        height: 22px;
+                                        colorize: item.is-starred
+                                            ? MaterialPalette.primary
+                                            : MaterialPalette.on-surface-variant;
+                                    }
+                                }
+                            }
+
+                            VerticalLayout {
+                                alignment: center;
+                                horizontal-stretch: 1;
+                                Text {
+                                    text: item.name;
+                                    font-size: 16px;
+                                    color: MaterialPalette.on-surface;
+                                    overflow: elide;
+                                }
+                                if item.subtitle != "" : Text {
+                                    text: item.subtitle;
+                                    font-size: 12px;
+                                    color: MaterialPalette.on-surface-variant;
+                                }
+                            }
+
+                            // Delete suffix (rename + preview
+                            // land in GM-F4b).
+                            VerticalLayout {
+                                alignment: center;
+                                IconButton {
+                                    icon: @image-url("assets/delete.svg");
+                                    has_error: true;
+                                    clicked => {
+                                        root.guided-manage-delete-tap(
+                                            item.uuid);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Undo snackbar (relocated for z-order, see note above) ───
+    // Declared AFTER the Guided Manage Files page so it renders
+    // over that still-open chooser; still parks at the bottom
+    // over Log/Setup exactly as before (declaration order only
+    // affects stacking, not its anchored position).
+    if root.snackbar-visible : Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: parent.height - root.nav-bar-height - root.bottom-bar-inset - self.height - 12px;
+        width: min(parent.width - 24px, 344px);
+        height: 60px;
+        border-radius: 4px;
+        background: MaterialPalette.inverse-surface;
+        drop-shadow-blur: 8px;
+        drop-shadow-color: #00000040;
+        drop-shadow-offset-y: 2px;
+
+        HorizontalLayout {
+            padding-left: 16px;
+            padding-right: 8px;
+            spacing: 4px;
+            alignment: stretch;
+
+            Text {
+                text: root.snackbar-text;
+                font-size: 14px;
+                color: MaterialPalette.inverse-on-surface;
+                vertical-alignment: center;
+                horizontal-alignment: left;
+                horizontal-stretch: 1;
+                wrap: word-wrap;
+            }
+
+            VerticalLayout {
+                alignment: center;
+                TextButton {
+                    text: "Undo";
+                    inverse: true;
+                    clicked => { root.snackbar-undo-tap(); }
+                }
+            }
+        }
+    }
+
     // ── Guided import name dialog (modal, GM-F2) ─────────────────
     // Declared LAST → top of the z-stack (declare-overlays-last
     // rule). `guided-import-valid` is Rust-driven live validation

@@ -806,6 +806,10 @@ fn try_widget_deep_link(
 fn try_guided_pick(
     ui: &MainWindow,
     guided_sel: &std::rc::Rc<std::cell::RefCell<Option<GuidedSel>>>,
+    create_import: &std::rc::Rc<std::cell::Cell<bool>>,
+    guided_import_src: &std::rc::Rc<
+        std::cell::RefCell<Option<(String, u32)>>,
+    >,
 ) {
     let Some(app) = android_app() else { return; };
     let Some((path, name, dur)) = guided::take_pending_pick(app) else {
@@ -817,14 +821,25 @@ fn try_guided_pick(
     );
     *guided_sel.borrow_mut() = Some(GuidedSel {
         name: name.clone(),
-        path,
+        path: path.clone(),
         duration_secs: dur,
         uuid: None, // transient Open-File pick
     });
-    ui.set_guided_name(name.into());
+    ui.set_guided_name(name.clone().into());
     // Feed the idle hero + countdown target (next refresh tick
     // picks it up via configured_duration).
     ui.set_guided_duration_secs(dur as i32);
+    // Create-from-Manage: route straight into the import dialog
+    // (GTK's create row calls import_picked_file directly).
+    if create_import.replace(false) {
+        present_guided_import_dialog(
+            ui,
+            guided_import_src,
+            &path,
+            &name,
+            dur,
+        );
+    }
 }
 
 /// Case-insensitive preset-name collision check for the create
@@ -906,18 +921,109 @@ fn refresh_guided_files(ui: &MainWindow) {
     }
     .into_iter()
     .filter(|f| f.is_starred)
-    .map(|f| GuidedFileItem {
+    .map(guided_file_item)
+    .collect();
+    ui.set_guided_files(
+        std::rc::Rc::new(slint::VecModel::from(items)).into(),
+    );
+}
+
+/// Map a core `GuidedFile` row to the Slint list item (shared by
+/// the Setup starred list and the Manage Files chooser).
+#[cfg(target_os = "android")]
+fn guided_file_item(
+    f: meditate_core::db::GuidedFile,
+) -> GuidedFileItem {
+    GuidedFileItem {
         uuid: f.uuid.0.into(),
         name: f.name.into(),
         subtitle: meditate_core::format::format_duration_brief(
             f.duration_secs,
         )
         .into(),
-    })
+        is_starred: f.is_starred,
+    }
+}
+
+/// Push EVERY guided file (starred + not) into the Manage Files
+/// chooser. Mirrors GTK's `rebuild_chooser_rows`.
+#[cfg(target_os = "android")]
+fn refresh_guided_manage(ui: &MainWindow) {
+    let items: Vec<GuidedFileItem> = {
+        let Some(db_arc) = DATABASE.get() else { return; };
+        let Ok(guard) = db_arc.lock() else { return; };
+        let Some(db) = guard.as_ref() else { return; };
+        meditate_core::db::list_guided_files_from_db(db)
+            .unwrap_or_default()
+    }
+    .into_iter()
+    .map(guided_file_item)
     .collect();
-    ui.set_guided_files(
+    ui.set_guided_manage_items(
         std::rc::Rc::new(slint::VecModel::from(items)).into(),
     );
+}
+
+/// Discard a pending guided-delete Undo (single-slot snackbar
+/// was preempted by another action, or its window elapsed):
+/// take the slot and run the deferred on-disk `.ogg` cleanup
+/// that Undo would otherwise have spared. Mirrors GTK's
+/// toast-dismissed deferred `remove_file`.
+#[cfg(target_os = "android")]
+fn discard_pending_guided_delete(
+    slot: &std::rc::Rc<
+        std::cell::RefCell<
+            Option<(String, String, String, u32, bool)>,
+        >,
+    >,
+) {
+    if let Some((_, _, path, _, _)) = slot.borrow_mut().take() {
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
+/// Populate + open the Guided import name dialog from a picked
+/// source (path, display name, probed secs). Shared by the
+/// "Import File" button (current pick) and the Manage Files
+/// "Create new…" row (fresh pick). Mirrors GTK's
+/// `import_picked_file` dialog setup.
+#[cfg(target_os = "android")]
+fn present_guided_import_dialog(
+    ui: &MainWindow,
+    guided_import_src: &std::rc::Rc<
+        std::cell::RefCell<Option<(String, u32)>>,
+    >,
+    src_path: &str,
+    display_name: &str,
+    secs: u32,
+) {
+    meditate_core::log(
+        "guided",
+        &format!("import: {display_name} ({secs}s)"),
+    );
+    *guided_import_src.borrow_mut() =
+        Some((src_path.to_string(), secs));
+    // Default name = display name minus its extension.
+    let default_name = display_name
+        .rsplit_once('.')
+        .map(|(stem, _)| stem)
+        .unwrap_or(display_name)
+        .to_string();
+    ui.set_guided_import_subtitle(
+        format!(
+            "Importing: {display_name} ({})",
+            meditate_core::format::format_duration_brief(secs),
+        )
+        .into(),
+    );
+    ui.set_guided_import_text(default_name.clone().into());
+    let v = meditate_core::naming::validate(
+        default_name.trim(),
+        |n| guided_name_taken(n, ""),
+    );
+    ui.set_guided_import_valid(v.is_savable());
+    ui.set_guided_import_busy(false);
+    ui.set_guided_import_dialog_open(true);
 }
 
 /// Resolve a starred-list tap to a `GuidedSel` (carries the uuid
@@ -3429,6 +3535,25 @@ fn build_ui() -> MainWindow {
     let pending_override_restore: Rc<
         RefCell<Option<(String, String, meditate_core::SessionMode)>>,
     > = Rc::new(RefCell::new(None));
+    // GM-F4 guided-file delete Undo discriminator: the deleted
+    // row's (uuid, name, file_path, duration_secs, is_starred).
+    // The DB row is removed immediately (it leaves the lists);
+    // the on-disk .ogg is deferred until the snackbar dismisses
+    // WITHOUT Undo (delete_timer callback), mirroring GTK's
+    // toast-dismissed deferred `remove_file`. Undo re-inserts
+    // the row (the file was never removed).
+    #[cfg(target_os = "android")]
+    let pending_guided_delete: Rc<
+        RefCell<Option<(String, String, String, u32, bool)>>,
+    > = Rc::new(RefCell::new(None));
+    // Create-from-Manage intent: set when the chooser's "Create
+    // new guided file…" row opens the picker, so the landed pick
+    // routes straight into the import dialog instead of just
+    // becoming the transient selection. Mirrors GTK's create row
+    // calling `import_picked_file` directly.
+    #[cfg(target_os = "android")]
+    let guided_create_import: Rc<Cell<bool>> =
+        Rc::new(Cell::new(false));
 
     // Session being edited via the Log card → Edit-Session
     // overlay (L-4). Holds the rowid between `card-tap`
@@ -3882,6 +4007,10 @@ fn build_ui() -> MainWindow {
         let guided_sel = guided_sel.clone();
         #[cfg(target_os = "android")]
         let guided_import_finalize = guided_import_finalize.clone();
+        #[cfg(target_os = "android")]
+        let guided_create_import = guided_create_import.clone();
+        #[cfg(target_os = "android")]
+        let guided_import_src_tick = guided_import_src.clone();
         timer.start(slint::TimerMode::Repeated, TICK, move || {
             // Warm-process widget deep-link (W-4). Polled here
             // because NativeActivity never hands native code an
@@ -3899,7 +4028,12 @@ fn build_ui() -> MainWindow {
                 // Activity dropped a file → adopt it as the
                 // current selection. Single-consumption file, so
                 // this is a no-op syscall on every normal frame.
-                try_guided_pick(&ui, &guided_sel);
+                try_guided_pick(
+                    &ui,
+                    &guided_sel,
+                    &guided_create_import,
+                    &guided_import_src_tick,
+                );
                 // Guided import transcode finished (GM-F2): the
                 // Kotlin worker dropped a result file. On success
                 // insert the starred `guided_files` row and adopt
@@ -3950,8 +4084,11 @@ fn build_ui() -> MainWindow {
                                             ),
                                         });
                                     // New import is auto-starred →
-                                    // surfaces in the list now.
+                                    // surfaces in both lists now
+                                    // (Manage page may be open via
+                                    // the Create row).
                                     refresh_guided_files(&ui);
+                                    refresh_guided_manage(&ui);
                                     ui.set_guided_name(
                                         name.into(),
                                     );
@@ -4353,37 +4490,13 @@ fn build_ui() -> MainWindow {
                 else {
                     return; // no pick → button shouldn't be live
                 };
-                meditate_core::log(
-                    "guided",
-                    &format!("import: {name} ({secs}s)"),
+                present_guided_import_dialog(
+                    &ui,
+                    &guided_import_src,
+                    &path,
+                    &name,
+                    secs,
                 );
-                *guided_import_src.borrow_mut() =
-                    Some((path, secs));
-                // Default name = display name minus its extension.
-                let default_name = name
-                    .rsplit_once('.')
-                    .map(|(stem, _)| stem)
-                    .unwrap_or(&name)
-                    .to_string();
-                ui.set_guided_import_subtitle(
-                    format!(
-                        "Importing: {name} ({})",
-                        meditate_core::format::format_duration_brief(
-                            secs,
-                        ),
-                    )
-                    .into(),
-                );
-                ui.set_guided_import_text(
-                    default_name.clone().into(),
-                );
-                let v = meditate_core::naming::validate(
-                    default_name.trim(),
-                    |n| guided_name_taken(n, ""),
-                );
-                ui.set_guided_import_valid(v.is_savable());
-                ui.set_guided_import_busy(false);
-                ui.set_guided_import_dialog_open(true);
             }
             let _ = weak.clone();
         });
@@ -4533,6 +4646,189 @@ fn build_ui() -> MainWindow {
         });
     }
 
+    // ── GM-F4: Manage Files chooser ──────────────────────────
+    // Open the chooser (GTK's `manage_guided_files_btn` →
+    // `push_guided_files_chooser`).
+    {
+        let weak = ui.as_weak();
+        ui.on_manage_guided_tap(move || {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                refresh_guided_manage(&ui);
+                ui.set_guided_manage_page(true);
+            }
+            let _ = weak.clone();
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_guided_manage_back(move || {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                ui.set_guided_manage_page(false);
+            }
+            let _ = weak.clone();
+        });
+    }
+    // Star toggle — flip is_starred, refresh the chooser AND the
+    // Setup starred list (GTK's star_btn → set_guided_file_starred
+    // → rebuilder + on_changed).
+    {
+        let weak = ui.as_weak();
+        ui.on_guided_manage_star_tap(move |uuid| {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                let cur = {
+                    let Some(db_arc) = DATABASE.get() else { return; };
+                    let Ok(g) = db_arc.lock() else { return; };
+                    let Some(db) = g.as_ref() else { return; };
+                    meditate_core::db::find_guided_file_by_uuid_from_db(
+                        db, &uuid,
+                    )
+                    .ok()
+                    .flatten()
+                };
+                let Some(row) = cur else { return; };
+                let next =
+                    meditate_core::db::StarredState::from_flag(
+                        !row.is_starred,
+                    );
+                {
+                    let Some(db_arc) = DATABASE.get() else { return; };
+                    let Ok(g) = db_arc.lock() else { return; };
+                    let Some(db) = g.as_ref() else { return; };
+                    if let Err(e) =
+                        db.set_guided_file_starred(&uuid, next)
+                    {
+                        meditate_core::log(
+                            "guided",
+                            &format!("star FAILED: {e:?}"),
+                        );
+                    }
+                }
+                refresh_guided_manage(&ui);
+                refresh_guided_files(&ui);
+            }
+            let _ = (weak.clone(), uuid);
+        });
+    }
+    // Create new guided file… → flag the create intent + open
+    // the picker; the landed pick routes into the import dialog
+    // (GTK's create row → pick_file_for_open → import_picked_file).
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let guided_create_import = guided_create_import.clone();
+        ui.on_guided_manage_create(move || {
+            #[cfg(target_os = "android")]
+            if let Some(app) = android_app() {
+                guided_create_import.set(true);
+                guided::open_picker(app);
+            }
+            let _ = weak.clone();
+        });
+    }
+    // Delete → remove the DB row now (it leaves every list);
+    // defer the on-disk .ogg removal until the snackbar dismisses
+    // WITHOUT Undo (delete_timer). Undo re-inserts the captured
+    // row (the file was never touched). Mirrors GTK's deferred
+    // toast-dismissed `remove_file` + insert-with-uuid Undo.
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let pending_guided_delete = pending_guided_delete.clone();
+        #[cfg(target_os = "android")]
+        let pending_preset_undo = pending_preset_undo.clone();
+        #[cfg(target_os = "android")]
+        let pending_preset_delete = pending_preset_delete.clone();
+        #[cfg(target_os = "android")]
+        let pending_override_restore =
+            pending_override_restore.clone();
+        #[cfg(target_os = "android")]
+        let recovery_uuid = recovery_uuid.clone();
+        #[cfg(target_os = "android")]
+        let guided_sel = guided_sel.clone();
+        #[cfg(target_os = "android")]
+        let delete_timer: &'static slint::Timer = delete_timer;
+        ui.on_guided_manage_delete_tap(move |uuid| {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                // Capture the full row so Undo can resurrect it
+                // identically (GTK's insert_guided_file_with_uuid).
+                let row = {
+                    let Some(db_arc) = DATABASE.get() else { return; };
+                    let Ok(g) = db_arc.lock() else { return; };
+                    let Some(db) = g.as_ref() else { return; };
+                    meditate_core::db::find_guided_file_by_uuid_from_db(
+                        db, &uuid,
+                    )
+                    .ok()
+                    .flatten()
+                };
+                let Some(row) = row else { return; };
+                {
+                    let Some(db_arc) = DATABASE.get() else { return; };
+                    let Ok(g) = db_arc.lock() else { return; };
+                    let Some(db) = g.as_ref() else { return; };
+                    if let Err(e) = db.delete_guided_file(&uuid) {
+                        meditate_core::log(
+                            "guided",
+                            &format!("delete FAILED: {e:?}"),
+                        );
+                        return;
+                    }
+                }
+                // If the deleted file was the current selection,
+                // clear it so a stale pick can't be started.
+                if guided_sel
+                    .borrow()
+                    .as_ref()
+                    .and_then(|s| s.uuid.as_deref())
+                    == Some(uuid.as_str())
+                {
+                    *guided_sel.borrow_mut() = None;
+                    ui.set_guided_name("".into());
+                    ui.set_guided_duration_secs(0);
+                }
+                refresh_guided_manage(&ui);
+                refresh_guided_files(&ui);
+
+                // Shared single-slot snackbar → clear the other
+                // discriminators, stash ours.
+                recovery_uuid.borrow_mut().take();
+                pending_preset_undo.borrow_mut().take();
+                pending_preset_delete.borrow_mut().take();
+                pending_override_restore.borrow_mut().take();
+                *pending_guided_delete.borrow_mut() = Some((
+                    row.uuid.0.clone(),
+                    row.name.clone(),
+                    row.file_path.clone(),
+                    row.duration_secs,
+                    row.is_starred,
+                ));
+                ui.set_snackbar_text(
+                    format!("'{}' deleted", row.name).into(),
+                );
+                ui.set_snackbar_visible(true);
+                let weak_inner = ui.as_weak();
+                let pgd = pending_guided_delete.clone();
+                delete_timer.start(
+                    slint::TimerMode::SingleShot,
+                    std::time::Duration::from_secs(5),
+                    move || {
+                        // Dismissed without Undo → now do the
+                        // deferred on-disk cleanup.
+                        discard_pending_guided_delete(&pgd);
+                        if let Some(ui) = weak_inner.upgrade() {
+                            ui.set_snackbar_visible(false);
+                        }
+                    },
+                );
+            }
+            let _ = (weak.clone(), uuid);
+        });
+    }
+
     // Preset row tap → apply (P-3). Mirrors GTK's
     // `on_preset_row_activated`: mode-guard, snapshot the
     // pre-apply state, `apply_preset_json`, then raise the
@@ -4557,6 +4853,8 @@ fn build_ui() -> MainWindow {
         let recovery_uuid = recovery_uuid.clone();
         #[cfg(target_os = "android")]
         let delete_timer: &'static slint::Timer = delete_timer;
+        #[cfg(target_os = "android")]
+        let pending_guided_delete = pending_guided_delete.clone();
         ui.on_preset_chip_tap(move |uuid| {
             #[cfg(target_os = "android")]
             {
@@ -4601,6 +4899,9 @@ fn build_ui() -> MainWindow {
                 recovery_uuid.borrow_mut().take();
                 pending_preset_delete.borrow_mut().take();
                 pending_override_restore.borrow_mut().take();
+                discard_pending_guided_delete(
+                    &pending_guided_delete,
+                );
                 *pending_preset_undo.borrow_mut() =
                     snapshot.map(|j| (j, core_mode));
                 ui.set_snackbar_text(
@@ -4802,6 +5103,8 @@ fn build_ui() -> MainWindow {
         let recovery_uuid = recovery_uuid.clone();
         #[cfg(target_os = "android")]
         let delete_timer: &'static slint::Timer = delete_timer;
+        #[cfg(target_os = "android")]
+        let pending_guided_delete = pending_guided_delete.clone();
         ui.on_override_preset_confirm(move || {
             #[cfg(target_os = "android")]
             {
@@ -4845,6 +5148,9 @@ fn build_ui() -> MainWindow {
                 recovery_uuid.borrow_mut().take();
                 pending_preset_undo.borrow_mut().take();
                 pending_preset_delete.borrow_mut().take();
+                discard_pending_guided_delete(
+                    &pending_guided_delete,
+                );
                 *pending_override_restore.borrow_mut() =
                     prior.map(|p| (uuid.clone(), p, core_mode));
                 ui.set_snackbar_text("Preset overridden".into());
@@ -5013,6 +5319,8 @@ fn build_ui() -> MainWindow {
         let recovery_uuid = recovery_uuid.clone();
         #[cfg(target_os = "android")]
         let delete_timer: &'static slint::Timer = delete_timer;
+        #[cfg(target_os = "android")]
+        let pending_guided_delete = pending_guided_delete.clone();
         ui.on_delete_preset_confirm(move || {
             #[cfg(target_os = "android")]
             {
@@ -5052,6 +5360,9 @@ fn build_ui() -> MainWindow {
                 recovery_uuid.borrow_mut().take();
                 pending_preset_undo.borrow_mut().take();
                 pending_override_restore.borrow_mut().take();
+                discard_pending_guided_delete(
+                    &pending_guided_delete,
+                );
                 *pending_preset_delete.borrow_mut() = Some((
                     row.uuid.to_string(),
                     row.name.clone(),
@@ -7134,6 +7445,8 @@ fn build_ui() -> MainWindow {
         let pending_preset_delete = pending_preset_delete.clone();
         #[cfg(target_os = "android")]
         let pending_override_restore = pending_override_restore.clone();
+        #[cfg(target_os = "android")]
+        let pending_guided_delete = pending_guided_delete.clone();
         ui.on_delete_tap(move |rowid| {
             #[cfg(target_os = "android")]
             {
@@ -7146,6 +7459,9 @@ fn build_ui() -> MainWindow {
                 pending_preset_undo.borrow_mut().take();
                 pending_preset_delete.borrow_mut().take();
                 pending_override_restore.borrow_mut().take();
+                discard_pending_guided_delete(
+                    &pending_guided_delete,
+                );
                 let id = rowid as i64;
                 // Move row from `loaded_log_sessions` view into
                 // `pending_deletes`. We don't actually remove
@@ -7216,6 +7532,8 @@ fn build_ui() -> MainWindow {
         #[cfg(target_os = "android")]
         let pending_override_restore = pending_override_restore.clone();
         #[cfg(target_os = "android")]
+        let pending_guided_delete = pending_guided_delete.clone();
+        #[cfg(target_os = "android")]
         let current_mode = current_mode.clone();
         #[cfg(target_os = "android")]
         let timer_session_secs = timer_session_secs.clone();
@@ -7261,6 +7579,26 @@ fn build_ui() -> MainWindow {
                     refresh_preset_chips(&ui, core_mode);
                     // Undone delete resurrects the widget row.
                     refresh_widget();
+                    ui.set_snackbar_visible(false);
+                    return;
+                }
+                // Guided-file delete Undo (GM-F4): re-insert the
+                // captured row with its original uuid. The .ogg
+                // was never removed (deferred to dismiss), so the
+                // file is intact. Mirrors GTK's insert-with-uuid.
+                if let Some((u, name, path, dur, starred)) =
+                    pending_guided_delete.borrow_mut().take()
+                {
+                    {
+                        let Some(db_arc) = DATABASE.get() else { return; };
+                        let Ok(g) = db_arc.lock() else { return; };
+                        let Some(db) = g.as_ref() else { return; };
+                        let _ = db.insert_guided_file_with_uuid(
+                            &u, &name, &path, dur, starred,
+                        );
+                    }
+                    refresh_guided_manage(&ui);
+                    refresh_guided_files(&ui);
                     ui.set_snackbar_visible(false);
                     return;
                 }
@@ -7992,6 +8330,7 @@ fn build_ui() -> MainWindow {
             pending_preset_undo.borrow_mut().take();
             pending_preset_delete.borrow_mut().take();
             pending_override_restore.borrow_mut().take();
+            discard_pending_guided_delete(&pending_guided_delete);
             ui.set_snackbar_text(text.into());
             ui.set_snackbar_visible(true);
             let weak_inner = ui.as_weak();

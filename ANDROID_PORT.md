@@ -491,8 +491,21 @@ Rust via a drop-file (same pattern as the widget launch).
   finalize slot + wipes stray drop-files; a cancelled worker
   writes no result (no cross-run contamination). Mirrors GTK's
   `cancel: &AtomicBool`. On-device confirmed (FP5).
-- ⬜ **GM follow-up**: Manage-files chooser (star/rename/delete/
-  preview) — the rest of `guided.rs` parity.
+- ◑ **GM-F4** (Manage Files chooser, mirrors
+  `push_guided_files_chooser`): full-screen slide-in from a
+  Setup "Manage Files" button.
+  - ✅ **GM-F4a**: lists every file (starred + not); per-row ★
+    toggle (`set_guided_file_starred`, refreshes chooser +
+    Setup list); "Create new guided file…" row → pick→import
+    pipeline; delete removes the DB row immediately + shared
+    single-slot Undo snackbar, on-disk `.ogg` removal deferred
+    to snackbar-dismiss-without-Undo (GTK parity), preempted by
+    any other snackbar (cleanup runs). Snackbar element
+    relocated AFTER the chooser in the .slint so it z-stacks
+    over the still-open page (declaration-order = z-order).
+    On-device confirmed (FP5).
+  - ⬜ **GM-F4b**: per-row rename dialog (live-validated,
+    except-uuid) + Play/Stop audio preview.
 
 ### Phase 7 — Sync + Preferences
 
