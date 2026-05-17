@@ -389,7 +389,7 @@ Verification: starting a Timer countdown with all three bells +
 vibration enabled fires all three sounds + vibration at the right
 phase boundaries.
 
-### Phase 6 — Editors + Presets
+### Phase 6 — Editors + Presets ✅
 
 GTK reference: vibration pattern editor
 (`meditate-gtk/src/vibration_editor.rs`), preset chooser /
@@ -408,16 +408,24 @@ Landed:
   landed earlier in Phase 3 (`bc1baab`, `9e95a5d`, `3810ba8`)
   + the declare-overlays-last z-order fix (`0ff829e`); GTK
   parity verified during P-4/P-5.
+- ✅ Vibration pattern editor (V-1..V-5, `713056a`, `59c7500`,
+  `13deb30`). Interactive curve: Slint `Path` rebuilt in plot
+  pixel space (viewbox pinned so curve + draggable handle dots
+  share one coord space), `TouchArea` drag → core pick / snap;
+  Bar = one solid stepped polygon, Line = polyline + soft fill;
+  GTK-shaped axis labels (Y %, X seconds overlap-thinned by
+  core `select_xlabel_indices`). Save/validate/preview through
+  the chooser Create/Edit entry; decisions in
+  `meditate_core::vibration` (geometry helpers, `binarize`),
+  strict TDD. Graceful degradation: vibrators with no
+  amplitude control (e.g. FP5) edit Bar-only binary patterns
+  (the platform can't render anything between 0/100% anyway;
+  PWM duty-cycle emulation was tried + reverted as it felt
+  bad). On-device confirmed (FP5).
 
-To land:
-- ⬜ Vibration pattern editor (curve editor with point dragging —
-  the math is already in `meditate_core::vibration`; just the
-  Slint touch handlers on a `Path`). The one heavy item left;
-  no off-the-shelf Material component.
-
-**Phase 6 nearly complete** — only the vibration-pattern curve
-editor remains. Presets + label management are done and
-on-device confirmed (FP5).
+**Phase 6 complete.** Presets, label management, and the
+vibration-pattern editor are all done and on-device confirmed
+(FP5).
 
 Verification: a custom pattern authored on the phone syncs to the
 laptop and renders identically in the GTK shell's editor.
