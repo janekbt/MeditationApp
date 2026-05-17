@@ -4597,6 +4597,32 @@ fn build_ui() -> MainWindow {
     let editing_ib: Rc<RefCell<Option<meditate_core::db::IntervalBell>>> =
         Rc::new(RefCell::new(None));
 
+    // Vibration-editor target (Phase 6, mirrors GTK Editor's
+    // `edit_uuid`): `None` = create / editing a bundled pattern
+    // (Save inserts a new row — bundled is immutable in core);
+    // `Some(uuid)` = editing a custom pattern (Save updates it).
+    #[cfg(target_os = "android")]
+    let ve_edit_uuid: Rc<RefCell<Option<String>>> =
+        Rc::new(RefCell::new(None));
+
+    // Shared intensities model — Rust owns it so a drag can
+    // `set_row_data` a single sample and the chart re-renders
+    // live (mirrors GTK mutating `editor.intensities` +
+    // `queue_draw`). `ve_drag_idx` = the control point grabbed
+    // by the current drag (-1 = none).
+    #[cfg(target_os = "android")]
+    let ve_model: Rc<slint::VecModel<f32>> =
+        Rc::new(slint::VecModel::default());
+    #[cfg(target_os = "android")]
+    let ve_drag_idx: Rc<Cell<i32>> = Rc::new(Cell::new(-1));
+
+    // Plot pixel size, reported by the chart's `ve-plot-size`.
+    // Rust builds the Path commands in these coords so the curve
+    // registers 1:1 with the handle dots (Slint Path viewbox
+    // scaling does not preserve the dots' aspect ratio).
+    #[cfg(target_os = "android")]
+    let ve_plot_size: Rc<Cell<(f32, f32)>> = Rc::new(Cell::new((0.0, 0.0)));
+
     // Pattern-chooser routing (B-2b): 0 = Starting Bell,
     // 1 = End Bell (the interval-bell editor's pattern is B-2c).
     #[cfg(target_os = "android")]
@@ -5002,6 +5028,420 @@ fn build_ui() -> MainWindow {
                 ui.set_pattern_preview_uuid(slint::SharedString::new());
                 ui.set_pattern_chooser_page(false);
             }
+            let _ = weak.clone();
+        });
+    }
+
+    // ── Vibration-pattern curve editor (Phase 6, V-2/V-3) ───────
+    // Seed defaults / load existing into the `ve-*` fields
+    // (mirrors GTK `Editor::new`); the chart is interactive — the
+    // shared `ve_model` backs the handle dots and Rust rebuilds
+    // the Path commands on every drag (mirrors GTK draw_chart +
+    // drag-update). Save / Preview land in V-4.
+    #[cfg(target_os = "android")]
+    ui.set_ve_intensities(ve_model.clone().into());
+
+    #[cfg(target_os = "android")]
+    fn ve_kind_index(k: meditate_core::db::ChartKind) -> i32 {
+        match k {
+            meditate_core::db::ChartKind::Bar => 0,
+            meditate_core::db::ChartKind::Line => 1,
+        }
+    }
+    // Rebuild the area + line/step Path commands in the plot's
+    // PIXEL space (`size` = its reported px w/h; the Path viewbox
+    // is pinned to the same size so scale is 1:1 and the curve
+    // sits exactly on the handle dots). No-op until the plot has
+    // a real size (init/resize fills it). Empty model → cleared.
+    // Plot edge inset (px). Shared by the Path builder, the
+    // Slint handle-dot positions, and the drag hit-test so all
+    // three use one coordinate space (mirrors GTK chart_rect).
+    #[cfg(target_os = "android")]
+    const VE_PLOT_PAD: f64 = 14.0;
+    #[cfg(target_os = "android")]
+    fn ve_rebuild_curve(
+        ui: &MainWindow,
+        model: &slint::VecModel<f32>,
+        size: (f32, f32),
+    ) {
+        use slint::Model;
+        let (w, h) = (f64::from(size.0), f64::from(size.1));
+        if w < 1.0 || h < 1.0 {
+            return; // plot not measured yet — keep prior commands
+        }
+        let v: Vec<f32> = model.iter().collect();
+        let n = v.len();
+        if n == 0 {
+            ui.set_ve_curve_cmd("".into());
+            ui.set_ve_area_cmd("".into());
+            return;
+        }
+        // Inset the control points off the plot edges (mirrors
+        // GTK's `chart_rect` padding): otherwise the first/last
+        // handle dots clip at x=0/x=w (half-dot + white-border
+        // sliver) and are awkward to grab at the screen edge.
+        // VE_PLOT_PAD is shared with the dot positions (Slint)
+        // and the hit-test, so the curve, dots and picking all
+        // line up. Bars still tile the full [0, w] (no gaps).
+        let pad = VE_PLOT_PAD;
+        let iw = (w - 2.0 * pad).max(1.0);
+        let ih = (h - 2.0 * pad).max(1.0);
+        let py = |val: f32| pad + (1.0 - f64::from(val)) * ih;
+        let px = |i: usize| {
+            pad + meditate_core::vibration::point_x_fraction(i, n) * iw
+        };
+        let mut line = String::new();
+        let mut area = String::new();
+        if ui.get_ve_chart_kind() == 0 {
+            // Bar: sample-and-hold. ONE closed stepped polygon
+            // (baseline → up at x=0 → stair profile holding each
+            // level until the midpoint to its neighbour → down at
+            // x=w → close), filled solid. NO separate stroke
+            // (`line` stays empty): a 2px outline over the same
+            // shape left a white hairline where its AA met the
+            // fill on the tall first/last edges — and GTK bar
+            // mode is just filled rects anyway. Cells tile [0, w].
+            let xs: Vec<f64> = (0..n).map(px).collect();
+            let ys: Vec<f64> = v.iter().map(|&val| py(val)).collect();
+            let mid = |i: usize| (xs[i] + xs[i + 1]) / 2.0;
+            area.push_str(&format!(
+                "M {:.2} {:.2} L {:.2} {:.2}",
+                0.0, h, 0.0, ys[0]
+            ));
+            for i in 0..n {
+                let xr = if i == n - 1 { w } else { mid(i) };
+                area.push_str(&format!(" L {xr:.2} {:.2}", ys[i]));
+                if i < n - 1 {
+                    area.push_str(&format!(
+                        " L {:.2} {:.2}",
+                        mid(i),
+                        ys[i + 1]
+                    ));
+                }
+            }
+            area.push_str(&format!(" L {w:.2} {h:.2} Z"));
+        } else {
+            // Line: polyline through the points; area = same,
+            // closed down to the baseline.
+            area.push_str(&format!("M {:.2} {:.2}", px(0), h));
+            for (i, &val) in v.iter().enumerate() {
+                let (x, y) = (px(i), py(val));
+                if i == 0 {
+                    line.push_str(&format!("M {x:.2} {y:.2}"));
+                } else {
+                    line.push_str(&format!(" L {x:.2} {y:.2}"));
+                }
+                area.push_str(&format!(" L {x:.2} {y:.2}"));
+            }
+            area.push_str(&format!(" L {:.2} {:.2} Z", px(n - 1), h));
+        }
+        ui.set_ve_curve_cmd(line.into());
+        ui.set_ve_area_cmd(area.into());
+    }
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let ve_edit_uuid = ve_edit_uuid.clone();
+        #[cfg(target_os = "android")]
+        let ve_model = ve_model.clone();
+        #[cfg(target_os = "android")]
+        let ve_plot_size = ve_plot_size.clone();
+        ui.on_pattern_create_tap(move || {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                ve_edit_uuid.borrow_mut().take();
+                let pts = meditate_core::vibration::EDITOR_DEFAULT_POINTS;
+                ui.set_ve_title("New Pattern".into());
+                ui.set_ve_name("".into());
+                ui.set_ve_save_enabled(false);
+                ui.set_ve_points_max(
+                    meditate_core::vibration::max_points_for_duration_s(
+                        meditate_core::vibration::EDITOR_DEFAULT_DURATION_S,
+                    ) as i32,
+                );
+                ui.set_ve_duration_tenths(
+                    (meditate_core::vibration::EDITOR_DEFAULT_DURATION_S
+                        * 10.0) as i32,
+                );
+                ui.set_ve_points(pts as i32);
+                ui.set_ve_chart_kind(1); // Line
+                ve_model.set_vec(
+                    meditate_core::vibration::resample_envelope(&[], pts),
+                );
+                ve_rebuild_curve(&ui, &ve_model, ve_plot_size.get());
+                ui.set_vibration_editor_page(true);
+            }
+            let _ = weak.clone();
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let ve_edit_uuid = ve_edit_uuid.clone();
+        #[cfg(target_os = "android")]
+        let ve_model = ve_model.clone();
+        #[cfg(target_os = "android")]
+        let ve_plot_size = ve_plot_size.clone();
+        ui.on_pattern_edit(move |uuid| {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                let found = {
+                    let Some(db_arc) = DATABASE.get() else { return; };
+                    let Ok(guard) = db_arc.lock() else { return; };
+                    let Some(db) = guard.as_ref() else { return; };
+                    meditate_core::db::find_vibration_pattern_by_uuid_from_db(
+                        db,
+                        uuid.as_str(),
+                    )
+                    .ok()
+                    .flatten()
+                };
+                let Some(p) = found else { return; };
+                ui.set_ve_points_max(
+                    meditate_core::vibration::max_points_for_duration_s(
+                        f64::from(p.duration_ms) / 1000.0,
+                    ) as i32,
+                );
+                ui.set_ve_duration_tenths((p.duration_ms / 100) as i32);
+                ui.set_ve_points(p.intensities.len() as i32);
+                ui.set_ve_chart_kind(ve_kind_index(p.chart_kind));
+                ve_model.set_vec(p.intensities.clone());
+                ve_rebuild_curve(&ui, &ve_model, ve_plot_size.get());
+                if p.is_bundled {
+                    // Bundled is immutable in core — open a copy
+                    // (Save inserts a new row). Suffix the name so
+                    // it doesn't instantly collide.
+                    ve_edit_uuid.borrow_mut().take();
+                    ui.set_ve_title("New Pattern".into());
+                    ui.set_ve_name(format!("{} copy", p.name).into());
+                } else {
+                    *ve_edit_uuid.borrow_mut() = Some(uuid.to_string());
+                    ui.set_ve_title("Edit Pattern".into());
+                    ui.set_ve_name(p.name.clone().into());
+                }
+                ui.set_ve_save_enabled(true);
+                ui.set_vibration_editor_page(true);
+            }
+            let _ = (weak.clone(), uuid);
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_vibration_editor_cancel(move || {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                // Just close — the pattern chooser is still
+                // underneath (it stays `page=true`).
+                ui.set_vibration_editor_page(false);
+            }
+            let _ = weak.clone();
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_ve_name_changed(move |t| {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                // V-3: empty-name gate; full collision check V-4.
+                ui.set_ve_save_enabled(!t.trim().is_empty());
+            }
+            let _ = (weak.clone(), t);
+        });
+    }
+    {
+        // Duration change → recompute the Points cap; clamping
+        // ve-points fires `changed ve-points` → resample.
+        let weak = ui.as_weak();
+        ui.on_ve_duration_changed(move |tenths| {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                let secs = f64::from(tenths) / 10.0;
+                let max =
+                    meditate_core::vibration::max_points_for_duration_s(
+                        secs,
+                    ) as i32;
+                ui.set_ve_points_max(max);
+                if ui.get_ve_points() > max {
+                    ui.set_ve_points(max);
+                }
+            }
+            let _ = (weak.clone(), tenths);
+        });
+    }
+    {
+        // Points change → resample onto the new grid (mirrors
+        // GTK's points spin-row `resample_envelope`).
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let ve_model = ve_model.clone();
+        #[cfg(target_os = "android")]
+        let ve_plot_size = ve_plot_size.clone();
+        ui.on_ve_points_changed(move |n| {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                use slint::Model;
+                let n = n.max(1) as usize;
+                if ve_model.row_count() != n {
+                    let old: Vec<f32> = ve_model.iter().collect();
+                    ve_model.set_vec(
+                        meditate_core::vibration::resample_envelope(
+                            &old, n,
+                        ),
+                    );
+                    ve_rebuild_curve(&ui, &ve_model, ve_plot_size.get());
+                }
+            }
+            let _ = (weak.clone(), n);
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let ve_model = ve_model.clone();
+        #[cfg(target_os = "android")]
+        let ve_plot_size = ve_plot_size.clone();
+        ui.on_ve_kind_changed(move |_idx| {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                ve_rebuild_curve(&ui, &ve_model, ve_plot_size.get());
+            }
+            let _ = weak.clone();
+        });
+    }
+    {
+        // Drag begin → core 2-D nearest-handle pick + first move.
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let ve_model = ve_model.clone();
+        #[cfg(target_os = "android")]
+        let ve_plot_size = ve_plot_size.clone();
+        #[cfg(target_os = "android")]
+        let ve_drag_idx = ve_drag_idx.clone();
+        ui.on_ve_drag_begin(move |px, py, w, h| {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                use slint::Model;
+                let v: Vec<f32> = ve_model.iter().collect();
+                // Translate the touch into the inset region so
+                // the pick matches the rendered points (same
+                // VE_PLOT_PAD as the Path / dots). Pure
+                // translation → distances stay px, hit radius
+                // unchanged.
+                let iw = (f64::from(w) - 2.0 * VE_PLOT_PAD).max(1.0);
+                let ih = (f64::from(h) - 2.0 * VE_PLOT_PAD).max(1.0);
+                let tx = f64::from(px) - VE_PLOT_PAD;
+                let ty = f64::from(py) - VE_PLOT_PAD;
+                match meditate_core::vibration::nearest_point(
+                    &v,
+                    tx,
+                    ty,
+                    iw,
+                    ih,
+                    meditate_core::vibration::EDITOR_HIT_RADIUS_PX,
+                ) {
+                    Some(i) => {
+                        ve_drag_idx.set(i as i32);
+                        ve_model.set_row_data(
+                            i,
+                            meditate_core::vibration::intensity_from_y(
+                                ty, ih,
+                            ),
+                        );
+                        ve_rebuild_curve(&ui, &ve_model, ve_plot_size.get());
+                    }
+                    None => ve_drag_idx.set(-1),
+                }
+            }
+            let _ = (weak.clone(), px, py, w, h);
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let ve_model = ve_model.clone();
+        #[cfg(target_os = "android")]
+        let ve_plot_size = ve_plot_size.clone();
+        #[cfg(target_os = "android")]
+        let ve_drag_idx = ve_drag_idx.clone();
+        ui.on_ve_drag_move(move |py, h| {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                use slint::Model;
+                let i = ve_drag_idx.get();
+                if i >= 0 && (i as usize) < ve_model.row_count() {
+                    // Same inset as the pick / Path mapping.
+                    let ih =
+                        (f64::from(h) - 2.0 * VE_PLOT_PAD).max(1.0);
+                    let ty = f64::from(py) - VE_PLOT_PAD;
+                    ve_model.set_row_data(
+                        i as usize,
+                        meditate_core::vibration::intensity_from_y(
+                            ty, ih,
+                        ),
+                    );
+                    ve_rebuild_curve(&ui, &ve_model, ve_plot_size.get());
+                }
+            }
+            let _ = (weak.clone(), py, h);
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let ve_drag_idx = ve_drag_idx.clone();
+        ui.on_ve_drag_end(move || {
+            #[cfg(target_os = "android")]
+            ve_drag_idx.set(-1);
+            let _ = weak.clone();
+        });
+    }
+    {
+        // Plot reported its pixel size — stash it and rebuild the
+        // curve in those coords (fires on init + every resize).
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let ve_model = ve_model.clone();
+        #[cfg(target_os = "android")]
+        let ve_plot_size = ve_plot_size.clone();
+        ui.on_ve_plot_size(move |w, h| {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                ve_plot_size.set((w, h));
+                ve_rebuild_curve(&ui, &ve_model, ve_plot_size.get());
+            }
+            let _ = (weak.clone(), w, h);
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let ve_edit_uuid = ve_edit_uuid.clone();
+        ui.on_vibration_editor_save(move || {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                // V-4 wires insert/update + chooser repopulate.
+                meditate_core::log(
+                    "vibration.editor",
+                    &format!(
+                        "TODO V-4 save edit_uuid={:?}",
+                        ve_edit_uuid.borrow()
+                    ),
+                );
+                ui.set_vibration_editor_page(false);
+            }
+            let _ = weak.clone();
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_vibration_editor_preview_toggle(move || {
+            #[cfg(target_os = "android")]
+            meditate_core::log(
+                "vibration.editor",
+                "TODO V-4 preview toggle",
+            );
             let _ = weak.clone();
         });
     }

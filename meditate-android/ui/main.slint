@@ -1552,6 +1552,12 @@ export component MainWindow inherits Window {
     callback pattern-chooser-pick(string);
     callback pattern-chooser-back();
     callback pattern-preview-toggle(string);
+    // Phase-6 curve editor entry: a synthetic "Create pattern"
+    // row (mirrors the preset chooser's create row) + per-row
+    // Edit. Editing a bundled pattern opens a copy (is_bundled is
+    // immutable in core), exactly like GTK.
+    callback pattern-create-tap();
+    callback pattern-edit(string);
 
     // Bell-sound chooser overlay (B-5a). Same slide-in shape as
     // the labels chooser; `bell-chooser-items` is Rust-filled
@@ -1609,6 +1615,77 @@ export component MainWindow inherits Window {
     callback interval-editor-pattern-tap();
     callback interval-editor-cancel();
     callback interval-editor-save();
+
+    // Vibration-pattern curve editor (Phase 6). Mirrors GTK's
+    // `push_pattern_editor`: name + Shape (Duration / Points) +
+    // a Bar/Line chart with draggable control points + Preview.
+    // Decisions live in `meditate_core::vibration` (snap, hit-
+    // test, resample, max-points, envelope); these are just the
+    // working fields Rust seeds on open and reads on Save.
+    in property <bool> vibration-editor-page: false;
+    // "New Pattern" / "Edit Pattern" — set by Rust on open.
+    in property <string> ve-title: "New Pattern";
+    in-out property <string> ve-name: "";
+    // Save gated on a non-empty, non-colliding name (Rust
+    // re-validates via is_vibration_pattern_name_taken_from_db).
+    in property <bool> ve-save-enabled: false;
+    // Duration in tenths of a second (5..=100 ⇒ 0.5..=10.0 s,
+    // matching GTK's 0.1-step SpinRow) so it rides the integer
+    // StepperRow. Rust converts to ms / seconds.
+    in-out property <int> ve-duration-tenths: 20;
+    in-out property <int> ve-points: 7;
+    // Dynamic cap = max_points_for_duration_s(duration); Rust
+    // recomputes it on every duration change.
+    in property <int> ve-points-max: 20;
+    // 0 = Bar, 1 = Line — same order as GTK's chart-kind toggle.
+    in-out property <int> ve-chart-kind: 1;
+    // The N equally-spaced amplitude samples in [0,1]. Rust owns
+    // it (seed / resample / drag write-back); the chart renders
+    // it and V-3 drags into it via `ve-point-drag`.
+    in property <[float]> ve-intensities: [];
+    // Rust-built SVG path commands against a 1000x100 viewbox
+    // (same technique as the stats chart): `ve-curve-cmd` =
+    // line/step outline, `ve-area-cmd` = same closed to the
+    // baseline for the soft fill. Rebuilt on open / resample /
+    // every drag move.
+    in property <string> ve-curve-cmd: "";
+    in property <string> ve-area-cmd: "";
+    // Editor Preview button state (separate slot from the
+    // chooser's `pattern-preview-uuid` — the pattern is unsaved).
+    in property <bool> ve-previewing: false;
+    callback ve-name-changed(string);
+    callback ve-duration-changed(int);
+    callback ve-points-changed(int);
+    callback ve-kind-changed(int);
+    // Curve drag (V-3). The chart TouchArea reports raw pixel
+    // coords + its own pixel size; Rust does the core
+    // nearest-point pick (begin) and intensity_from_y/snap +
+    // write-back (move), then rebuilds the path commands.
+    callback ve-drag-begin(float, float, float, float);
+    callback ve-drag-move(float, float);
+    callback ve-drag-end();
+    // Plot pixel size → Rust builds the Path commands in these
+    // exact pixel coords and the Path viewbox is pinned to the
+    // same size (scale factor 1), so the curve and the handle
+    // dots (which use plot px directly) coincide. Slint Path
+    // viewbox scaling does NOT preserve the dots' aspect ratio,
+    // so a fixed 1000x100 viewbox mis-registers the two.
+    callback ve-plot-size(float, float);
+    callback vibration-editor-preview-toggle();
+    callback vibration-editor-cancel();
+    callback vibration-editor-save();
+
+    // StepperRow mutates the bound in-out value directly (no
+    // change callback of its own), so bridge its edits to Rust
+    // here: duration → recompute the Points cap + resample;
+    // points → resample the curve. Mirrors GTK's spin-row
+    // `connect_changed` handlers.
+    changed ve-duration-tenths => {
+        root.ve-duration-changed(root.ve-duration-tenths);
+    }
+    changed ve-points => {
+        root.ve-points-changed(root.ve-points);
+    }
 
     // Preparation Time (B-5b). GTK nests this Adw.ExpanderRow
     // inside the Starting Bell expander
@@ -1958,6 +2035,8 @@ export component MainWindow inherits Window {
 
     property <length> interval-editor-offset: root.interval-editor-page ? root.width : 0px;
     animate interval-editor-offset { duration: 300ms; easing: ease-out; }
+    property <length> vibration-editor-offset: root.vibration-editor-page ? root.width : 0px;
+    animate vibration-editor-offset { duration: 300ms; easing: ease-out; }
 
     // Slide offset for the Edit-Session overlay. Symmetric 300 ms
     // mirroring `AdwNavigationView` push of `show_session_dialog`
@@ -4977,10 +5056,39 @@ export component MainWindow inherits Window {
             }
 
             BoxedList {
+                // Synthetic "Create pattern" row (mirrors the
+                // preset chooser's create row) → opens the curve
+                // editor in create mode.
+                Rectangle {
+                    height: 56px;
+                    background: pat-create-touch.has-hover
+                        ? MaterialPalette.surface-container-high
+                        : transparent;
+                    pat-create-touch := TouchArea {
+                        clicked => { root.pattern-create-tap(); }
+                    }
+                    HorizontalLayout {
+                        padding-left: 16px;
+                        padding-right: 16px;
+                        alignment: start;
+                        VerticalLayout {
+                            alignment: center;
+                            Text {
+                                text: "Create pattern";
+                                font-size: 16px;
+                                color: MaterialPalette.primary;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+
                 for item[idx] in root.pattern-chooser-items : VerticalLayout {
                     spacing: 0;
 
-                    if idx > 0 : Rectangle {
+                    // Separator above every row (there is always
+                    // the Create row above the first pattern now).
+                    Rectangle {
                         height: 1px;
                         background: MaterialPalette.outline-variant;
                     }
@@ -5031,6 +5139,31 @@ export component MainWindow inherits Window {
                                 }
                             }
 
+                            // Edit → open the curve editor for
+                            // this pattern (bundled ones open a
+                            // copy; Rust decides).
+                            VerticalLayout {
+                                alignment: center;
+                                Rectangle {
+                                    width: 44px;
+                                    height: 32px;
+                                    ve-edit-touch := TouchArea {
+                                        clicked => {
+                                            root.pattern-edit(item.uuid);
+                                        }
+                                    }
+                                    Text {
+                                        text: "Edit";
+                                        font-size: 13px;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                        color: ve-edit-touch.has-hover
+                                            ? MaterialPalette.primary
+                                            : MaterialPalette.on-surface-variant;
+                                    }
+                                }
+                            }
+
                             // Play/Stop pill — toggles this
                             // pattern's preview. `pattern-preview-
                             // uuid` is the single buzzing uuid
@@ -5062,6 +5195,273 @@ export component MainWindow inherits Window {
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Vibration-pattern curve editor (overlay, Phase 6) ───────
+    // The Android analogue of GTK's `push_pattern_editor`. Opened
+    // from the pattern chooser (Create row / per-row Edit), so it
+    // is declared AFTER that chooser to z-stack above it
+    // (declare-overlays-last rule). V-2 is the static scaffold —
+    // name + Shape steppers + Bar/Line toggle + Preview; the
+    // draggable curve fills the chart card in V-3.
+    Rectangle {
+        x: parent.width - root.vibration-editor-offset;
+        width: parent.width;
+        height: parent.height;
+        background: MaterialPalette.surface;
+
+        VerticalLayout {
+            padding-top: root.status-bar-inset + 16px;
+            padding-bottom: root.bottom-bar-inset + 16px;
+            padding-left: 16px;
+            padding-right: 16px;
+            spacing: 16px;
+            alignment: start;
+
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: stretch;
+                VerticalLayout {
+                    alignment: center;
+                    TextButton {
+                        text: "Cancel";
+                        clicked => { root.vibration-editor-cancel(); }
+                    }
+                }
+                Text {
+                    text: root.ve-title;
+                    font-size: 18px;
+                    color: MaterialPalette.on-surface;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    horizontal-alignment: center;
+                }
+                VerticalLayout {
+                    alignment: center;
+                    FilledButton {
+                        text: "Save";
+                        enabled: root.ve-save-enabled;
+                        clicked => { root.vibration-editor-save(); }
+                    }
+                }
+            }
+
+            BoxedList {
+                // Name — live-validated by Rust
+                // (is_vibration_pattern_name_taken_from_db); the
+                // Save button gates on `ve-save-enabled`.
+                Rectangle {
+                    height: 64px;
+                    HorizontalLayout {
+                        padding-left: 16px;
+                        padding-right: 16px;
+                        spacing: 12px;
+                        alignment: stretch;
+                        VerticalLayout {
+                            alignment: center;
+                            Text {
+                                text: "Name";
+                                font-size: 16px;
+                                color: MaterialPalette.on-surface;
+                            }
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            horizontal-stretch: 1;
+                            TextField {
+                                text <=> root.ve-name;
+                                edited(t) => { root.ve-name-changed(t); }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: MaterialPalette.outline-variant;
+                }
+                // Duration in tenths of a second (5..=100 ⇒
+                // 0.5..=10.0 s). Rust reacts to the change to
+                // recompute the Points cap (V-4 wiring).
+                StepperRow {
+                    label: "Duration (0.1 s)";
+                    value <=> root.ve-duration-tenths;
+                    min-value: 5;
+                    max-value: 100;
+                }
+                StepperRow {
+                    label: "Points";
+                    value <=> root.ve-points;
+                    min-value: 3;
+                    max-value: root.ve-points-max;
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: MaterialPalette.outline-variant;
+                }
+                // Bar / Line — same order + role as GTK's
+                // chart-kind toggle (0 Bar, 1 Line).
+                CuesRow {
+                    title: "Chart";
+                    labels: ["Bar", "Line"];
+                    current-index <=> root.ve-chart-kind;
+                    changed(idx) => { root.ve-kind-changed(idx); }
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: MaterialPalette.outline-variant;
+                }
+                // Preview the unsaved pattern (separate slot from
+                // the chooser's per-row preview).
+                Rectangle {
+                    height: 56px;
+                    TouchArea {
+                        clicked => {
+                            root.vibration-editor-preview-toggle();
+                        }
+                    }
+                    HorizontalLayout {
+                        padding-left: 16px;
+                        padding-right: 16px;
+                        alignment: start;
+                        VerticalLayout {
+                            alignment: center;
+                            Text {
+                                text: root.ve-previewing
+                                    ? "Stop" : "Preview";
+                                font-size: 16px;
+                                color: MaterialPalette.primary;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Chart card — interactive curve (V-3). Rust builds
+            // the area/line path commands (1000x100 viewbox, same
+            // technique as the stats chart) and owns the
+            // intensities model; the handle dots render straight
+            // off it; the top TouchArea reports raw pixel coords
+            // and Rust does the core pick / snap on every move.
+            Rectangle {
+                height: 200px;
+                border-width: 1px;
+                border-color: MaterialPalette.outline-variant;
+                border-radius: 12px;
+                background: MaterialPalette.surface;
+                clip: true;
+
+                ve-plot := Rectangle {
+                    x: 16px;
+                    y: 16px;
+                    width: parent.width - 32px;
+                    height: parent.height - 32px;
+
+                    // Report pixel size so Rust builds the Path
+                    // in matching coords (init + on resize).
+                    init => {
+                        root.ve-plot-size(
+                            self.width / 1px, self.height / 1px);
+                    }
+                    changed width => {
+                        root.ve-plot-size(
+                            self.width / 1px, self.height / 1px);
+                    }
+                    changed height => {
+                        root.ve-plot-size(
+                            self.width / 1px, self.height / 1px);
+                    }
+
+                    // 0% / 50% / 100% gridlines.
+                    for gy in [0.0, 0.5, 1.0] : Rectangle {
+                        x: 0;
+                        width: parent.width;
+                        height: 1px;
+                        y: gy * (parent.height - 1px);
+                        background: MaterialPalette.outline-variant
+                            .with-alpha(0.6);
+                    }
+
+                    // Viewbox pinned to the plot's pixel size so
+                    // the (Rust-built, pixel-coord) commands map
+                    // 1:1 onto the same space the dots use.
+                    // Soft fill under the curve.
+                    Path {
+                        width: 100%;
+                        height: 100%;
+                        viewbox-width: parent.width / 1px;
+                        viewbox-height: parent.height / 1px;
+                        commands: root.ve-area-cmd;
+                        // Bar: solid primary (= the outline
+                        // colour). Line: soft area under the curve.
+                        fill: root.ve-chart-kind == 0
+                            ? MaterialPalette.primary
+                            : MaterialPalette.primary.with-alpha(0.18);
+                    }
+                    // Line / step outline.
+                    Path {
+                        width: 100%;
+                        height: 100%;
+                        viewbox-width: parent.width / 1px;
+                        viewbox-height: parent.height / 1px;
+                        commands: root.ve-curve-cmd;
+                        stroke: MaterialPalette.primary;
+                        stroke-width: 2px;
+                    }
+
+                    // Draggable control-point handles, straight
+                    // off the Rust-owned intensities model.
+                    for v[i] in root.ve-intensities : Rectangle {
+                        property <int> cnt: root.ve-intensities.length;
+                        property <float> frac: self.cnt > 1
+                            ? (i * 1.0) / (self.cnt - 1)
+                            : 0.0;
+                        // White knob with a primary outline — a
+                        // conventional draggable handle that reads
+                        // cleanly on both the soft line fill and
+                        // the solid bars (a primary-filled dot left
+                        // only its white border showing as a sliver
+                        // on the dark bars).
+                        width: 16px;
+                        height: 16px;
+                        border-radius: 8px;
+                        background: MaterialPalette.surface;
+                        border-width: 2px;
+                        border-color: MaterialPalette.primary;
+                        // 14px inset must match VE_PLOT_PAD in
+                        // lib.rs (curve + hit-test use the same).
+                        x: 14px + self.frac * (parent.width - 28px)
+                            - self.width / 2;
+                        y: 14px + (1.0 - v) * (parent.height - 28px)
+                            - self.height / 2;
+                    }
+
+                    // Drag surface on top (transparent). Rust does
+                    // the nearest-point pick + snap; Slint just
+                    // forwards raw coords + the plot's pixel size.
+                    TouchArea {
+                        pointer-event(e) => {
+                            if (e.kind == PointerEventKind.down) {
+                                root.ve-drag-begin(
+                                    self.mouse-x / 1px,
+                                    self.mouse-y / 1px,
+                                    parent.width / 1px,
+                                    parent.height / 1px);
+                            } else if (e.kind == PointerEventKind.up) {
+                                root.ve-drag-end();
+                            }
+                        }
+                        moved => {
+                            root.ve-drag-move(
+                                self.mouse-y / 1px,
+                                parent.height / 1px);
                         }
                     }
                 }

@@ -331,6 +331,81 @@ pub fn select_xlabel_indices(layouts: &[XLabelLayout], min_gap: f64) -> Vec<usiz
     selected
 }
 
+// ── Editor chart geometry (shell-agnostic, decisions in core) ────────
+
+/// Touch/click pick radius (chart px) for grabbing a control-point
+/// handle. Mirrors the GTK editor's `HIT_RADIUS_PX` so the drag
+/// feel matches across shells.
+pub const EDITOR_HIT_RADIUS_PX: f64 = 28.0;
+
+/// X fraction (0..=1) of control point `i` of `n`, equally
+/// spaced. `n <= 1` → 0.0 (a lone point sits at the left edge).
+pub fn point_x_fraction(i: usize, n: usize) -> f64 {
+    if n <= 1 {
+        0.0
+    } else {
+        i as f64 / (n - 1) as f64
+    }
+}
+
+/// Index of the control point nearest `(px, py)` within
+/// `hit_radius`, for a chart of size `chart_w` × `chart_h` where
+/// point `i` sits at `x = point_x_fraction(i,n)*chart_w`,
+/// `y = (1 - intensity)*chart_h`. The Android mirror of the GTK
+/// editor's 2-D nearest-handle pick. `None` when the list is
+/// empty or nothing is in range.
+pub fn nearest_point(
+    intensities: &[f32],
+    px: f64,
+    py: f64,
+    chart_w: f64,
+    chart_h: f64,
+    hit_radius: f64,
+) -> Option<usize> {
+    let n = intensities.len();
+    if n == 0 {
+        return None;
+    }
+    let mut best_i = 0usize;
+    let mut best = f64::MAX;
+    for (i, &v) in intensities.iter().enumerate() {
+        let hx = point_x_fraction(i, n) * chart_w;
+        let hy = (1.0 - f64::from(v)) * chart_h;
+        let d = ((hx - px).powi(2) + (hy - py).powi(2)).sqrt();
+        if d < best {
+            best = d;
+            best_i = i;
+        }
+    }
+    if best < hit_radius {
+        Some(best_i)
+    } else {
+        None
+    }
+}
+
+/// Snap an intensity to the editor grid (`EDITOR_INTENSITY_STEP`)
+/// and clamp to `[0, 1]`. The single rounding rule the chart drag
+/// and any programmatic edit share, so authored == rendered.
+pub fn snap_intensity(raw: f32) -> f32 {
+    let snapped =
+        (raw / EDITOR_INTENSITY_STEP).round() * EDITOR_INTENSITY_STEP;
+    snapped.clamp(0.0, 1.0)
+}
+
+/// Intensity for a pointer at vertical position `y` in a chart of
+/// height `chart_h` (absolute mapping: `y = 0` top → 1.0,
+/// `y = chart_h` bottom → 0.0), snapped + clamped. The Slint
+/// shell uses this absolute form (`TouchArea.moved` gives
+/// absolute coords); GTK's delta form lands on the same grid via
+/// `snap_intensity`. `chart_h <= 0` → 0.0 (degenerate layout).
+pub fn intensity_from_y(y: f64, chart_h: f64) -> f32 {
+    if chart_h <= 0.0 {
+        return 0.0;
+    }
+    snap_intensity((1.0 - (y / chart_h)) as f32)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -709,5 +784,64 @@ mod tests {
     #[test]
     fn select_xlabels_empty_input_is_empty() {
         assert!(select_xlabel_indices(&[], 6.0).is_empty());
+    }
+
+    // ── Editor chart geometry ───────────────────────────────────
+
+    #[test]
+    fn point_x_fraction_spans_endpoints_evenly() {
+        assert_eq!(point_x_fraction(0, 5), 0.0);
+        assert_eq!(point_x_fraction(4, 5), 1.0);
+        assert!((point_x_fraction(2, 5) - 0.5).abs() < 1e-9);
+        // Degenerate counts pin to the left edge, never NaN/inf.
+        assert_eq!(point_x_fraction(0, 1), 0.0);
+        assert_eq!(point_x_fraction(0, 0), 0.0);
+    }
+
+    #[test]
+    fn snap_intensity_rounds_to_step_and_clamps() {
+        assert!((snap_intensity(0.46) - 0.5).abs() < 1e-6);
+        assert!((snap_intensity(0.44) - 0.4).abs() < 1e-6);
+        assert_eq!(snap_intensity(-0.3), 0.0);
+        assert_eq!(snap_intensity(1.7), 1.0);
+        // On-grid values are stable.
+        assert!((snap_intensity(0.3) - 0.3).abs() < 1e-6);
+    }
+
+    #[test]
+    fn intensity_from_y_is_inverted_and_snapped() {
+        // Top of the chart = full intensity, bottom = none.
+        assert_eq!(intensity_from_y(0.0, 200.0), 1.0);
+        assert_eq!(intensity_from_y(200.0, 200.0), 0.0);
+        // Mid maps to 0.5 (already on the 10% grid).
+        assert!((intensity_from_y(100.0, 200.0) - 0.5).abs() < 1e-6);
+        // Snaps: 30% down from top → 0.7.
+        assert!((intensity_from_y(60.0, 200.0) - 0.7).abs() < 1e-6);
+        // Degenerate height never divides by zero.
+        assert_eq!(intensity_from_y(10.0, 0.0), 0.0);
+    }
+
+    #[test]
+    fn nearest_point_picks_closest_handle_in_radius() {
+        // 3 points: left=full(top), mid=0, right=full. Chart
+        // 300x100 → handles at (0,0),(150,100),(300,0).
+        let ints = [1.0_f32, 0.0, 1.0];
+        // Right next to the middle handle.
+        assert_eq!(
+            nearest_point(&ints, 150.0, 95.0, 300.0, 100.0, 28.0),
+            Some(1)
+        );
+        // Near the left handle.
+        assert_eq!(
+            nearest_point(&ints, 5.0, 4.0, 300.0, 100.0, 28.0),
+            Some(0)
+        );
+        // Dead centre of the chart is far from every handle.
+        assert_eq!(
+            nearest_point(&ints, 150.0, 50.0, 300.0, 100.0, 28.0),
+            None
+        );
+        // Empty list never panics.
+        assert_eq!(nearest_point(&[], 0.0, 0.0, 10.0, 10.0, 5.0), None);
     }
 }
