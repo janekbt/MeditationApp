@@ -105,6 +105,15 @@ export struct PresetItem {
     is-starred: bool,
 }
 
+// One row in the Guided "Starred Files" list (GM-F3). `subtitle`
+// is the brief duration. Mirrors GTK's `rebuild_starred_guided_list`
+// rows under `guided_files_group`.
+export struct GuidedFileItem {
+    uuid: string,
+    name: string,
+    subtitle: string,
+}
+
 // One row in the Interval Bells library (B-5c). `title` is the
 // rendered `meditate_core::bells::bell_title_key` summary
 // ("Every 9 min +/-30%" / "At 10 min" / "5 min before end");
@@ -1251,6 +1260,16 @@ export component MainWindow inherits Window {
     in property <float> guided-import-progress: 0.0;
     callback guided-import-changed(string);
     callback guided-import-confirm();
+    // Cancel — aborts a running transcode (Rust flags the Kotlin
+    // worker) AND tears down dialog state. Mirrors GTK's Cancel
+    // staying live during the import.
+    callback guided-import-cancel();
+    // Starred-files list in Guided Setup (GM-F3). Rust-populated
+    // from the starred `guided_files` rows; tapping a row selects
+    // it (Current-file row updates; uuid recorded for save
+    // attribution). Mirrors GTK's `guided_files_group`.
+    in property <[GuidedFileItem]> guided-files: [];
+    callback guided-file-tap(string);
 
     // Stopwatch-Mode switch state — mirrors the .blp
     // `stopwatch_mode_row` SwitchRow. When true, sessions count up
@@ -2601,6 +2620,86 @@ export component MainWindow inherits Window {
                         text: "Import File";
                         enabled: root.guided-name != "";
                         clicked => { root.guided-import-tap(); }
+                    }
+                }
+                // Starred Files — the imported/starred library.
+                // Tapping a row promotes it to the Current file
+                // selection. Mirrors GTK's `guided_files_group`
+                // / `rebuild_starred_guided_list`.
+                Text {
+                    text: "Starred Files";
+                    font-size: 14px;
+                    font-weight: 700;
+                    color: MaterialPalette.primary;
+                    horizontal-alignment: left;
+                }
+                if root.guided-files.length > 0 : BoxedList {
+                    for item[idx] in root.guided-files : VerticalLayout {
+                        spacing: 0;
+                        if idx > 0 : Rectangle {
+                            height: 1px;
+                            background: MaterialPalette.outline-variant;
+                        }
+                        Rectangle {
+                            height: 64px;
+                            background: gf-touch.has-hover
+                                ? MaterialPalette.surface-container-high
+                                : transparent;
+                            gf-touch := TouchArea {
+                                clicked => {
+                                    root.guided-file-tap(item.uuid);
+                                }
+                            }
+                            HorizontalLayout {
+                                padding-left: 16px;
+                                padding-right: 16px;
+                                spacing: 12px;
+                                alignment: stretch;
+                                VerticalLayout {
+                                    alignment: center;
+                                    horizontal-stretch: 1;
+                                    Text {
+                                        text: item.name;
+                                        font-size: 16px;
+                                        color: MaterialPalette.on-surface;
+                                        overflow: elide;
+                                    }
+                                    Text {
+                                        text: item.subtitle;
+                                        font-size: 12px;
+                                        color: MaterialPalette.on-surface-variant;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // Empty state — same dim two-line row GTK shows
+                // inside the group when no file is starred yet.
+                if root.guided-files.length == 0 : BoxedList {
+                    Rectangle {
+                        height: 64px;
+                        HorizontalLayout {
+                            padding-left: 16px;
+                            padding-right: 16px;
+                            spacing: 12px;
+                            alignment: stretch;
+                            VerticalLayout {
+                                alignment: center;
+                                horizontal-stretch: 1;
+                                Text {
+                                    text: "No starred files";
+                                    font-size: 16px;
+                                    color: MaterialPalette.on-surface-variant;
+                                }
+                                Text {
+                                    text: "Tap Open File then Import File, or star a file in Manage Files";
+                                    font-size: 13px;
+                                    color: MaterialPalette.on-surface-variant;
+                                    overflow: elide;
+                                }
+                            }
+                        }
                     }
                 }
                 // Session group — same "Session" heading + boxed
@@ -6302,6 +6401,7 @@ export component MainWindow inherits Window {
         TouchArea {
             clicked => {
                 if (!root.guided-import-busy) {
+                    root.guided-import-cancel();
                     root.guided-import-dialog-open = false;
                 }
             }
@@ -6349,6 +6449,7 @@ export component MainWindow inherits Window {
                     TextButton {
                         text: "Cancel";
                         clicked => {
+                            root.guided-import-cancel();
                             root.guided-import-dialog-open = false;
                         }
                     }

@@ -29,6 +29,10 @@ const IMPORT_RESULT_FILENAME: &str = "guided_import_result";
 /// transcode percent (0–99). Polled every tick (NOT consumed —
 /// it's overwritten in place); removed at finalize.
 const IMPORT_PROGRESS_FILENAME: &str = "guided_import_progress";
+/// Written by Rust when the user taps Cancel mid-transcode; the
+/// Kotlin worker polls it each loop and aborts (deleting the
+/// partial dest), mirroring GTK's `cancel: &AtomicBool`.
+const IMPORT_CANCEL_FILENAME: &str = "guided_import_cancel";
 /// Drop-file the picker Activity writes: 3 lines —
 /// absolute path / display name / duration in whole seconds.
 const PICK_FILENAME: &str = "guided_pick";
@@ -196,6 +200,42 @@ pub fn clear_import_progress(app: &AndroidApp) {
         let path = data_root
             .join("meditate")
             .join(IMPORT_PROGRESS_FILENAME);
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
+/// Signal the running transcode worker to abort. The Kotlin
+/// loop polls this file every iteration and, on seeing it,
+/// deletes the partial dest and exits without writing "ok".
+/// Mirrors GTK's `cancel.store(true)`.
+pub fn request_import_cancel(app: &AndroidApp) {
+    if let Some(data_root) = app.internal_data_path() {
+        let path = data_root
+            .join("meditate")
+            .join(IMPORT_CANCEL_FILENAME);
+        let _ = std::fs::write(&path, b"1");
+    }
+}
+
+/// Remove the cancel flag before a fresh import so a prior
+/// cancellation can't abort the new run instantly.
+pub fn clear_import_cancel(app: &AndroidApp) {
+    if let Some(data_root) = app.internal_data_path() {
+        let path = data_root
+            .join("meditate")
+            .join(IMPORT_CANCEL_FILENAME);
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
+/// Discard any pending transcode result without acting on it —
+/// used by Cancel so a worker that finished a hair before the
+/// abort lands doesn't leave an "ok" that the next poll adopts.
+pub fn clear_import_result(app: &AndroidApp) {
+    if let Some(data_root) = app.internal_data_path() {
+        let path = data_root
+            .join("meditate")
+            .join(IMPORT_RESULT_FILENAME);
         let _ = std::fs::remove_file(&path);
     }
 }

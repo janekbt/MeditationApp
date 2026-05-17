@@ -58,16 +58,36 @@ object MeditateGuidedImport {
                 }
             }
             runCatching { progressFile.writeText("0") }
+            // Cancel flag: Rust writes guided_import_cancel on the
+            // Cancel tap; the transcode loop polls this and aborts.
+            // Clear any stale flag from a prior run first.
+            val cancelFile = File(dir, "guided_import_cancel")
+            runCatching { cancelFile.delete() }
+            val isCancelled: () -> Boolean = { cancelFile.exists() }
             val result = try {
-                doImport(src, dest, durationSecs, onProgress)
-                "ok"
+                doImport(
+                    src, dest, durationSecs, onProgress, isCancelled,
+                )
+                if (isCancelled()) {
+                    runCatching { File(dest).delete() }
+                    "err:cancelled"
+                } else {
+                    "ok"
+                }
             } catch (e: Throwable) {
                 Log.w(TAG, "import failed src=$src: $e")
                 runCatching { File(dest).delete() }
                 "err:" + (e.message ?: e.javaClass.simpleName)
             }
-            runCatching {
-                File(dir, "guided_import_result").writeText(result)
+            // A cancelled run writes NO result: Rust already
+            // dropped the finalize slot, and a late "err:cancelled"
+            // would otherwise be consumed as the *next* import's
+            // outcome (cross-run contamination).
+            if (!isCancelled()) {
+                runCatching {
+                    File(dir, "guided_import_result")
+                        .writeText(result)
+                }
             }
         }.start()
     }
@@ -77,19 +97,23 @@ object MeditateGuidedImport {
         dest: String,
         durationSecs: Long,
         onProgress: (Int) -> Unit,
+        isCancelled: () -> Boolean,
     ) {
         File(dest).parentFile?.mkdirs()
         val ext = src.substringAfterLast('.', "").lowercase()
         // Passthrough set matches meditate_core::sound::is_passthrough_ext
         // (wav | ogg). Everything else is transcoded.
         if (ext == "wav" || ext == "ogg") {
+            if (isCancelled()) return
             File(src).copyTo(File(dest), overwrite = true)
             return
         }
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             throw IllegalStateException("Import needs Android 10+")
         }
-        transcodeToOpusOgg(src, dest, durationSecs, onProgress)
+        transcodeToOpusOgg(
+            src, dest, durationSecs, onProgress, isCancelled,
+        )
     }
 
     private fun transcodeToOpusOgg(
@@ -97,6 +121,7 @@ object MeditateGuidedImport {
         dest: String,
         durationSecs: Long,
         onProgress: (Int) -> Unit,
+        isCancelled: () -> Boolean,
     ) {
         val extractor = MediaExtractor()
         extractor.setDataSource(src)
@@ -238,6 +263,11 @@ object MeditateGuidedImport {
 
         try {
             while (!encoderDone) {
+                // Cancel check (cheap file stat) — bail promptly
+                // when Rust flags the Cancel tap. startImport's
+                // isCancelled() re-check then deletes the partial
+                // dest and reports err:cancelled.
+                if (isCancelled()) break
                 // 1. Feed compressed input → decoder.
                 if (!extractorDone) {
                     val inIx = decoder.dequeueInputBuffer(timeoutUs)

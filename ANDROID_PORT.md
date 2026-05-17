@@ -479,9 +479,20 @@ Rust via a drop-file (same pattern as the widget launch).
   file becomes the current selection. Converting… button is a
   left→right progress-fill pill (worker ptsUs / probed duration).
   On-device confirmed (FP5).
-- ⬜ **GM follow-up**: starred-files list in Setup, Manage-files
-  chooser (star/rename/delete/preview) — the rest of `guided.rs`
-  parity.
+- ✅ **GM-F3**: Starred Files list in Guided Setup (mirrors
+  `guided_files_group` / `rebuild_starred_guided_list`) — starred
+  `guided_files` rows (name + brief duration), dim empty-state
+  row, tap promotes to Current selection. `GuidedSel` gained an
+  optional uuid (starred tap / fresh import → `Some`; transient
+  Open-File pick → `None`), threaded into `finalize_session` so
+  saved sessions carry `guided_file_uuid` (GTK parity). Real
+  import **Cancel**: a `guided_import_cancel` drop-file the
+  Kotlin loop polls (deletes the partial dest); Rust drops the
+  finalize slot + wipes stray drop-files; a cancelled worker
+  writes no result (no cross-run contamination). Mirrors GTK's
+  `cancel: &AtomicBool`. On-device confirmed (FP5).
+- ⬜ **GM follow-up**: Manage-files chooser (star/rename/delete/
+  preview) — the rest of `guided.rs` parity.
 
 ### Phase 7 — Sync + Preferences
 

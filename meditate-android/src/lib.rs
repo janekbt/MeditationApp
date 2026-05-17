@@ -819,6 +819,7 @@ fn try_guided_pick(
         name: name.clone(),
         path,
         duration_secs: dur,
+        uuid: None, // transient Open-File pick
     });
     ui.set_guided_name(name.into());
     // Feed the idle hero + countdown target (next refresh tick
@@ -887,6 +888,58 @@ fn insert_guided_file(
             Err(format!("{e:?}"))
         }
     }
+}
+
+/// Push the starred `guided_files` rows into the Guided Setup
+/// list (GM-F3). Mirrors GTK's `rebuild_starred_guided_list`:
+/// query all rows, keep `is_starred`, render name + brief
+/// duration. The Slint side shows a dim empty-state row when the
+/// model is empty.
+#[cfg(target_os = "android")]
+fn refresh_guided_files(ui: &MainWindow) {
+    let items: Vec<GuidedFileItem> = {
+        let Some(db_arc) = DATABASE.get() else { return; };
+        let Ok(guard) = db_arc.lock() else { return; };
+        let Some(db) = guard.as_ref() else { return; };
+        meditate_core::db::list_guided_files_from_db(db)
+            .unwrap_or_default()
+    }
+    .into_iter()
+    .filter(|f| f.is_starred)
+    .map(|f| GuidedFileItem {
+        uuid: f.uuid.0.into(),
+        name: f.name.into(),
+        subtitle: meditate_core::format::format_duration_brief(
+            f.duration_secs,
+        )
+        .into(),
+    })
+    .collect();
+    ui.set_guided_files(
+        std::rc::Rc::new(slint::VecModel::from(items)).into(),
+    );
+}
+
+/// Resolve a starred-list tap to a `GuidedSel` (carries the uuid
+/// for save attribution, unlike a transient Open-File pick).
+/// `None` if the row vanished (raced a Manage-Files delete) —
+/// the caller bails like GTK's row-activated handler.
+#[cfg(target_os = "android")]
+fn guided_file_by_uuid(uuid: &str) -> Option<GuidedSel> {
+    let db_arc = DATABASE.get()?;
+    let guard = db_arc.lock().ok()?;
+    let db = guard.as_ref()?;
+    let row = meditate_core::db::find_guided_file_by_uuid_from_db(
+        db, uuid,
+    )
+    .ok()
+    .flatten()?;
+    Some(GuidedSel {
+        name: row.name,
+        path: row.file_path,
+        duration_secs: row.duration_secs,
+        uuid: Some(row.uuid.0),
+    })
 }
 
 /// Resolve a preset by uuid to the core row (carries the
@@ -2607,6 +2660,7 @@ fn finalize_session(
     note: Option<String>,
     mode: meditate_core::SessionMode,
     label_id: Option<i64>,
+    guided_uuid: Option<String>,
 ) {
     if elapsed_secs <= 0 {
         // Drop sessions that ended before any seconds elapsed —
@@ -2633,12 +2687,11 @@ fn finalize_session(
         label_id,
         note,
         mode,
-        // Guided file UUID: only meaningful when the user picked a
-        // library file via the Guided audio picker (Phase 5). Until
-        // then this is always None — both Timer and Box Breath
-        // sessions don't carry a guided-file reference, and even
-        // future transient "Open File" guided picks log None.
-        None,
+        // Guided file UUID: `Some` only when the session ran a
+        // library file (starred-list tap or fresh import).
+        // Transient Open-File picks and Timer / Box Breath stay
+        // None. Mirrors GTK's `guided_selected_uuid` at save.
+        guided_uuid.map(meditate_core::db::GuidedFileUuid::new),
     );
     match db.insert_session(&session) {
         Ok(rowid) => meditate_core::log(
@@ -3192,6 +3245,12 @@ struct GuidedSel {
     name: String,
     path: String,
     duration_secs: u32,
+    /// `Some` when the selection is a library row (a starred-list
+    /// tap or a fresh import) → recorded as the session's
+    /// `guided_file_uuid` for per-file attribution. `None` for a
+    /// transient Open-File pick. Mirrors GTK's
+    /// `guided_selected_uuid`.
+    uuid: Option<String>,
 }
 
 fn build_ui() -> MainWindow {
@@ -3886,7 +3945,13 @@ fn build_ui() -> MainWindow {
                                             name: name.clone(),
                                             path: dest,
                                             duration_secs: secs,
+                                            uuid: Some(
+                                                uuid.clone(),
+                                            ),
                                         });
+                                    // New import is auto-starred →
+                                    // surfaces in the list now.
+                                    refresh_guided_files(&ui);
                                     ui.set_guided_name(
                                         name.into(),
                                     );
@@ -4069,6 +4134,8 @@ fn build_ui() -> MainWindow {
         let loaded_log_sessions = loaded_log_sessions.clone();
         #[cfg(target_os = "android")]
         let pending_deletes = pending_deletes.clone();
+        #[cfg(target_os = "android")]
+        let guided_sel = guided_sel.clone();
         ui.on_save_tap(move || {
             let Some(ui) = weak.upgrade() else { return; };
             #[cfg(target_os = "android")]
@@ -4113,7 +4180,17 @@ fn build_ui() -> MainWindow {
                         }
                     }
                 }
-                finalize_session(unix_start, elapsed_secs, note, mode, picked);
+                // Per-file attribution: only a library selection
+                // (starred tap / import) carries a uuid; transient
+                // Open-File picks stay None (GTK parity).
+                let guided_uuid = guided_sel
+                    .borrow()
+                    .as_ref()
+                    .and_then(|s| s.uuid.clone());
+                finalize_session(
+                    unix_start, elapsed_secs, note, mode, picked,
+                    guided_uuid,
+                );
                 // Refresh the Setup row so when Done slides off and
                 // reveals Setup, the ExpanderRow's master toggle +
                 // subtitle reflect the post-Save mode state.
@@ -4226,6 +4303,10 @@ fn build_ui() -> MainWindow {
                 push_session_length_to_ui(&ui, new_secs);
                 // Starred presets are per-mode (P-2).
                 refresh_preset_chips(&ui, core_mode);
+                // Guided starred-files list (GM-F3).
+                if new_mode == TimerMode::Guided {
+                    refresh_guided_files(&ui);
+                }
             }
             let _ = (weak.clone(), timer_session_secs.clone());
         });
@@ -4308,6 +4389,39 @@ fn build_ui() -> MainWindow {
         });
     }
 
+    // Starred-files row tap (GM-F3) → promote that library file
+    // to the Current selection, recording its uuid so the saved
+    // session gets per-file attribution. Mirrors GTK's
+    // `row.connect_activated` in `rebuild_starred_guided_list`.
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let guided_sel = guided_sel.clone();
+        ui.on_guided_file_tap(move |uuid| {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                let Some(sel) = guided_file_by_uuid(&uuid) else {
+                    // Row raced a delete — drop it from the list.
+                    refresh_guided_files(&ui);
+                    return;
+                };
+                meditate_core::log(
+                    "guided",
+                    &format!(
+                        "select starred: {} ({}s)",
+                        sel.name, sel.duration_secs,
+                    ),
+                );
+                ui.set_guided_name(sel.name.clone().into());
+                ui.set_guided_duration_secs(
+                    sel.duration_secs as i32,
+                );
+                *guided_sel.borrow_mut() = Some(sel);
+            }
+            let _ = (weak.clone(), uuid);
+        });
+    }
+
     // Live-validate the import name (non-empty + no case-
     // insensitive guided_files collision). Same shape as
     // create-preset-changed.
@@ -4372,11 +4486,48 @@ fn build_ui() -> MainWindow {
                     dest_str.clone(),
                     secs,
                 ));
+                // Wipe any stale drop-files from a prior failed /
+                // cancelled run so they can't be read as this
+                // import's outcome.
+                guided::clear_import_result(app);
+                guided::clear_import_cancel(app);
                 ui.set_guided_import_progress(0.0);
                 ui.set_guided_import_busy(true);
                 guided::start_import(
                     app, &src, &dest_str, secs,
                 );
+            }
+            let _ = weak.clone();
+        });
+    }
+
+    // Import Cancel — abort a running transcode and reset all
+    // import state. Without this, closing the dialog left the
+    // Kotlin worker running; it finished, wrote "ok", and the
+    // tick poll inserted + selected the file anyway (the bug
+    // the user hit cancelling at 13 %). Clearing the finalize
+    // slot ALSO defends the race where the worker completed a
+    // hair before the abort landed. Mirrors GTK's cancel flag.
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let guided_import_finalize = guided_import_finalize.clone();
+        #[cfg(target_os = "android")]
+        let guided_import_src = guided_import_src.clone();
+        ui.on_guided_import_cancel(move || {
+            #[cfg(target_os = "android")]
+            if let Some(app) = android_app() {
+                guided::request_import_cancel(app);
+                // Tell the tick poll to ignore whatever the
+                // worker writes, and drop any stray drop-files.
+                *guided_import_finalize.borrow_mut() = None;
+                *guided_import_src.borrow_mut() = None;
+                guided::clear_import_result(app);
+                guided::clear_import_progress(app);
+                if let Some(ui) = weak.upgrade() {
+                    ui.set_guided_import_busy(false);
+                    ui.set_guided_import_progress(0.0);
+                }
             }
             let _ = weak.clone();
         });
