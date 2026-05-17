@@ -292,6 +292,13 @@ const TICK: Duration = Duration::from_millis(200);
 /// The setup hours / minutes properties drive both the Setup hero
 /// readout and `AppState::toggle`'s start path.
 fn configured_duration(ui: &MainWindow) -> Duration {
+    // Guided has no duration stepper — the picked file's probed
+    // length IS the duration (idle hero + countdown target).
+    if ui.get_setup_mode() == 1 {
+        return Duration::from_secs(
+            ui.get_guided_duration_secs().max(0) as u64,
+        );
+    }
     let hours = ui.get_setup_hours().max(0) as u64;
     let minutes = ui.get_setup_minutes().max(0) as u64;
     Duration::from_secs(hours * 3600 + minutes * 60)
@@ -814,6 +821,9 @@ fn try_guided_pick(
         duration_secs: dur,
     });
     ui.set_guided_name(name.into());
+    // Feed the idle hero + countdown target (next refresh tick
+    // picks it up via configured_duration).
+    ui.set_guided_duration_secs(dur as i32);
 }
 
 /// Case-insensitive preset-name collision check for the create
@@ -4032,14 +4042,20 @@ fn build_ui() -> MainWindow {
                 let core_mode: meditate_core::SessionMode = new_mode.into();
                 // Reflect the current Guided pick (if any) into
                 // the Setup row + Start gate.
-                ui.set_guided_name(
-                    guided_sel
-                        .borrow()
-                        .as_ref()
-                        .map(|g| g.name.clone())
-                        .unwrap_or_default()
-                        .into(),
-                );
+                {
+                    let g = guided_sel.borrow();
+                    ui.set_guided_name(
+                        g.as_ref()
+                            .map(|s| s.name.clone())
+                            .unwrap_or_default()
+                            .into(),
+                    );
+                    ui.set_guided_duration_secs(
+                        g.as_ref()
+                            .map(|s| s.duration_secs as i32)
+                            .unwrap_or(0),
+                    );
+                }
                 ui.set_keep_awake_on(read_keep_awake_for_mode(core_mode));
                 ui.set_cues_mode(signal_mode_to_chip_index(
                     read_signal_mode_for_mode(core_mode),

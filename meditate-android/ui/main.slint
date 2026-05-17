@@ -1226,6 +1226,10 @@ export component MainWindow inherits Window {
     // the SAF picker; `guided-open-tap` opens it. Mirrors GTK's
     // guided_section Current-Selection row.
     in property <string> guided-name: "";
+    // Probed length of the picked file (s); 0 = none. Drives the
+    // idle hero + the Guided countdown target (Guided has no
+    // duration stepper — the file's length is the duration).
+    in property <int> guided-duration-secs: 0;
     callback guided-open-tap();
 
     // Stopwatch-Mode switch state — mirrors the .blp

@@ -13,7 +13,8 @@ package io.github.janekbt.Meditate
 
 import android.app.Activity
 import android.content.Intent
-import android.media.MediaMetadataRetriever
+import android.media.MediaExtractor
+import android.media.MediaFormat
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
@@ -101,15 +102,42 @@ class MeditateFilePickerActivity : Activity() {
     }
 
     // Whole seconds, ceil — mirrors GTK's probe_duration_secs.
+    // Demuxes with MediaExtractor and walks every audio frame to
+    // the LAST presentation timestamp. The container/header
+    // duration (also what MediaMetadataRetriever and
+    // MediaPlayer.getDuration return) is a bitrate*size estimate
+    // that is badly wrong for headerless VBR MP3 (a 1:07 file
+    // reported ~0:29). Walking the real frame timestamps is
+    // accurate and cheap — it parses frame headers only, no
+    // decode. Take max(header duration, last frame PTS).
     private fun probeSecs(f: File): Long {
         return try {
-            val r = MediaMetadataRetriever()
-            r.setDataSource(f.absolutePath)
-            val ms = r.extractMetadata(
-                MediaMetadataRetriever.METADATA_KEY_DURATION,
-            )?.toLongOrNull() ?: 0L
-            r.release()
-            (ms + 999) / 1000
+            val ex = MediaExtractor()
+            ex.setDataSource(f.absolutePath)
+            var bestUs = 0L
+            for (i in 0 until ex.trackCount) {
+                val fmt = ex.getTrackFormat(i)
+                val mime = fmt.getString(MediaFormat.KEY_MIME)
+                if (mime?.startsWith("audio/") != true) continue
+                if (fmt.containsKey(MediaFormat.KEY_DURATION)) {
+                    bestUs = maxOf(
+                        bestUs,
+                        fmt.getLong(MediaFormat.KEY_DURATION),
+                    )
+                }
+                ex.selectTrack(i)
+                var lastUs = 0L
+                while (true) {
+                    val t = ex.sampleTime
+                    if (t < 0) break
+                    lastUs = t
+                    if (!ex.advance()) break
+                }
+                bestUs = maxOf(bestUs, lastUs)
+                break
+            }
+            ex.release()
+            if (bestUs > 0) (bestUs + 999_999) / 1_000_000 else 0L
         } catch (e: Exception) {
             Log.w(TAG, "duration probe failed: $e")
             0L
