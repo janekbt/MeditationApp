@@ -4623,6 +4623,13 @@ fn build_ui() -> MainWindow {
     #[cfg(target_os = "android")]
     let ve_plot_size: Rc<Cell<(f32, f32)>> = Rc::new(Cell::new((0.0, 0.0)));
 
+    // Editor-preview generation guard: a finite waveform has no
+    // "done" signal, so a single-shot timer reverts `ve-previewing`
+    // after the pattern's duration — bumped on every toggle/close
+    // so a stale timer can't clear a newer preview.
+    #[cfg(target_os = "android")]
+    let ve_preview_gen: Rc<Cell<u64>> = Rc::new(Cell::new(0));
+
     // Pattern-chooser routing (B-2b): 0 = Starting Bell,
     // 1 = End Bell (the interval-bell editor's pattern is B-2c).
     #[cfg(target_os = "android")]
@@ -5138,6 +5145,64 @@ fn build_ui() -> MainWindow {
         ui.set_ve_curve_cmd(line.into());
         ui.set_ve_area_cmd(area.into());
     }
+    // Gate Save: non-empty, non-colliding name (case-insensitive,
+    // excluding the row being edited). Mirrors GTK's editor name
+    // validation via `is_vibration_pattern_name_taken`.
+    #[cfg(target_os = "android")]
+    fn ve_recompute_save(ui: &MainWindow, except_uuid: &str) {
+        let name = ui.get_ve_name().trim().to_string();
+        if name.is_empty() {
+            ui.set_ve_save_enabled(false);
+            return;
+        }
+        let taken = DATABASE
+            .get()
+            .and_then(|a| a.lock().ok())
+            .and_then(|g| {
+                g.as_ref().and_then(|db| {
+                    meditate_core::db::is_vibration_pattern_name_taken_from_db(
+                        db, &name, except_uuid,
+                    )
+                    .ok()
+                })
+            })
+            .unwrap_or(false);
+        ui.set_ve_save_enabled(!taken);
+    }
+    // Build a transient pattern from the live editor fields for
+    // Preview (it isn't saved yet). duration_ms = tenths * 100.
+    #[cfg(target_os = "android")]
+    fn ve_transient_pattern(
+        ui: &MainWindow,
+        model: &slint::VecModel<f32>,
+    ) -> meditate_core::db::VibrationPattern {
+        use slint::Model;
+        meditate_core::db::VibrationPattern {
+            id: 0,
+            uuid: meditate_core::db::VibrationPatternUuid::new(""),
+            name: String::new(),
+            duration_ms: (ui.get_ve_duration_tenths().max(0) as u32) * 100,
+            intensities: model.iter().collect(),
+            chart_kind: if ui.get_ve_chart_kind() == 0 {
+                meditate_core::db::ChartKind::Bar
+            } else {
+                meditate_core::db::ChartKind::Line
+            },
+            is_bundled: false,
+            created_iso: String::new(),
+            updated_iso: String::new(),
+        }
+    }
+    // Stop any in-flight editor preview (used by toggle-off,
+    // Cancel, Save and the back-dismiss chain).
+    #[cfg(target_os = "android")]
+    fn ve_stop_preview(ui: &MainWindow, pgen: &Cell<u64>) {
+        pgen.set(pgen.get().wrapping_add(1));
+        if let Some(app) = android_app() {
+            haptics::cancel(app);
+        }
+        ui.set_ve_previewing(false);
+    }
     {
         let weak = ui.as_weak();
         #[cfg(target_os = "android")]
@@ -5154,7 +5219,7 @@ fn build_ui() -> MainWindow {
                 let pts = meditate_core::vibration::EDITOR_DEFAULT_POINTS;
                 ui.set_ve_title("New Pattern".into());
                 ui.set_ve_name("".into());
-                ui.set_ve_save_enabled(false);
+                ve_recompute_save(&ui, ""); // empty → disabled
                 ui.set_ve_points_max(
                     meditate_core::vibration::max_points_for_duration_s(
                         meditate_core::vibration::EDITOR_DEFAULT_DURATION_S,
@@ -5209,19 +5274,21 @@ fn build_ui() -> MainWindow {
                 ui.set_ve_chart_kind(ve_kind_index(p.chart_kind));
                 ve_model.set_vec(p.intensities.clone());
                 ve_rebuild_curve(&ui, &ve_model, ve_plot_size.get());
-                if p.is_bundled {
+                let except = if p.is_bundled {
                     // Bundled is immutable in core — open a copy
                     // (Save inserts a new row). Suffix the name so
                     // it doesn't instantly collide.
                     ve_edit_uuid.borrow_mut().take();
                     ui.set_ve_title("New Pattern".into());
                     ui.set_ve_name(format!("{} copy", p.name).into());
+                    String::new()
                 } else {
                     *ve_edit_uuid.borrow_mut() = Some(uuid.to_string());
                     ui.set_ve_title("Edit Pattern".into());
                     ui.set_ve_name(p.name.clone().into());
-                }
-                ui.set_ve_save_enabled(true);
+                    uuid.to_string()
+                };
+                ve_recompute_save(&ui, &except);
                 ui.set_vibration_editor_page(true);
             }
             let _ = (weak.clone(), uuid);
@@ -5229,11 +5296,14 @@ fn build_ui() -> MainWindow {
     }
     {
         let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let ve_preview_gen = ve_preview_gen.clone();
         ui.on_vibration_editor_cancel(move || {
             #[cfg(target_os = "android")]
             if let Some(ui) = weak.upgrade() {
-                // Just close — the pattern chooser is still
-                // underneath (it stays `page=true`).
+                // Stop any preview, then close — the pattern
+                // chooser is still underneath (stays page=true).
+                ve_stop_preview(&ui, &ve_preview_gen);
                 ui.set_vibration_editor_page(false);
             }
             let _ = weak.clone();
@@ -5241,11 +5311,16 @@ fn build_ui() -> MainWindow {
     }
     {
         let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let ve_edit_uuid = ve_edit_uuid.clone();
         ui.on_ve_name_changed(move |t| {
             #[cfg(target_os = "android")]
             if let Some(ui) = weak.upgrade() {
-                // V-3: empty-name gate; full collision check V-4.
-                ui.set_ve_save_enabled(!t.trim().is_empty());
+                let except = ve_edit_uuid
+                    .borrow()
+                    .clone()
+                    .unwrap_or_default();
+                ve_recompute_save(&ui, &except);
             }
             let _ = (weak.clone(), t);
         });
@@ -5415,33 +5490,121 @@ fn build_ui() -> MainWindow {
         });
     }
     {
+        // Save → insert (create / bundled-copy) or update
+        // (custom edit); then close + repopulate the chooser with
+        // the saved pattern selected (mirrors GTK's on_saved).
         let weak = ui.as_weak();
         #[cfg(target_os = "android")]
         let ve_edit_uuid = ve_edit_uuid.clone();
+        #[cfg(target_os = "android")]
+        let ve_model = ve_model.clone();
+        #[cfg(target_os = "android")]
+        let ve_preview_gen = ve_preview_gen.clone();
         ui.on_vibration_editor_save(move || {
             #[cfg(target_os = "android")]
             if let Some(ui) = weak.upgrade() {
-                // V-4 wires insert/update + chooser repopulate.
-                meditate_core::log(
-                    "vibration.editor",
-                    &format!(
-                        "TODO V-4 save edit_uuid={:?}",
-                        ve_edit_uuid.borrow()
+                use slint::Model;
+                let name = ui.get_ve_name().trim().to_string();
+                if name.is_empty() {
+                    return; // gate should already prevent this
+                }
+                let duration_ms =
+                    (ui.get_ve_duration_tenths().max(0) as u32) * 100;
+                let intensities: Vec<f32> = ve_model.iter().collect();
+                let kind = if ui.get_ve_chart_kind() == 0 {
+                    meditate_core::db::ChartKind::Bar
+                } else {
+                    meditate_core::db::ChartKind::Line
+                };
+                let edit = ve_edit_uuid.borrow().clone();
+                let saved: Option<String> = {
+                    let Some(db_arc) = DATABASE.get() else { return; };
+                    let Ok(guard) = db_arc.lock() else { return; };
+                    let Some(db) = guard.as_ref() else { return; };
+                    match &edit {
+                        Some(uuid) => db
+                            .update_vibration_pattern(
+                                uuid,
+                                &name,
+                                duration_ms,
+                                &intensities,
+                                kind,
+                            )
+                            .map(|_| uuid.clone())
+                            .ok(),
+                        None => db
+                            .insert_vibration_pattern(
+                                &name,
+                                duration_ms,
+                                &intensities,
+                                kind,
+                                false,
+                            )
+                            .ok(),
+                    }
+                };
+                match saved {
+                    Some(uuid) => {
+                        ve_stop_preview(&ui, &ve_preview_gen);
+                        ui.set_vibration_editor_page(false);
+                        // Reselect the saved pattern in the chooser
+                        // (it stays open underneath).
+                        populate_pattern_chooser(&ui, &uuid);
+                    }
+                    None => meditate_core::log(
+                        "vibration.editor",
+                        "save FAILED (kept open)",
                     ),
-                );
-                ui.set_vibration_editor_page(false);
+                }
             }
             let _ = weak.clone();
         });
     }
     {
+        // Preview the unsaved pattern: build the envelope from the
+        // live fields + the same JNI haptics path the chooser
+        // uses. Toggle off / generation-guarded auto-revert after
+        // the pattern's own duration (no "done" signal).
         let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let ve_model = ve_model.clone();
+        #[cfg(target_os = "android")]
+        let ve_preview_gen = ve_preview_gen.clone();
         ui.on_vibration_editor_preview_toggle(move || {
             #[cfg(target_os = "android")]
-            meditate_core::log(
-                "vibration.editor",
-                "TODO V-4 preview toggle",
-            );
+            if let Some(ui) = weak.upgrade() {
+                if ui.get_ve_previewing() {
+                    ve_stop_preview(&ui, &ve_preview_gen);
+                    return;
+                }
+                let p = ve_transient_pattern(&ui, &ve_model);
+                let dur_ms = p.duration_ms;
+                if let Some(app) = android_app() {
+                    haptics::cancel(app);
+                    let env =
+                        meditate_core::vibration::build_master_envelope(&p);
+                    haptics::vibrate_waveform(app, &env);
+                }
+                let g = ve_preview_gen.get().wrapping_add(1);
+                ve_preview_gen.set(g);
+                ui.set_ve_previewing(true);
+                if dur_ms > 0 {
+                    let weak2 = weak.clone();
+                    let pg = ve_preview_gen.clone();
+                    slint::Timer::single_shot(
+                        std::time::Duration::from_millis(
+                            dur_ms as u64,
+                        ),
+                        move || {
+                            if pg.get() == g {
+                                if let Some(ui) = weak2.upgrade() {
+                                    ui.set_ve_previewing(false);
+                                }
+                            }
+                        },
+                    );
+                }
+            }
             let _ = weak.clone();
         });
     }
@@ -6989,6 +7152,8 @@ fn build_ui() -> MainWindow {
         let bell_preview = bell_preview.clone();
         #[cfg(target_os = "android")]
         let pattern_preview = pattern_preview.clone();
+        #[cfg(target_os = "android")]
+        let ve_preview_gen = ve_preview_gen.clone();
         ui.on_back_pressed(move || {
             let Some(ui) = weak.upgrade() else { return; };
             #[cfg(target_os = "android")]
@@ -7047,6 +7212,15 @@ fn build_ui() -> MainWindow {
                 }
                 ui.set_bell_preview_uuid(slint::SharedString::new());
                 ui.set_bell_chooser_page(false);
+                return;
+            }
+            // Vibration editor sits ABOVE the pattern chooser
+            // (declared after it) — back closes the editor first,
+            // returning to the chooser still underneath.
+            #[cfg(target_os = "android")]
+            if ui.get_vibration_editor_page() {
+                ve_stop_preview(&ui, &ve_preview_gen);
+                ui.set_vibration_editor_page(false);
                 return;
             }
             #[cfg(target_os = "android")]
