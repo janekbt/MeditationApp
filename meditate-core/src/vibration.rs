@@ -406,6 +406,23 @@ pub fn intensity_from_y(y: f64, chart_h: f64) -> f32 {
     snap_intensity((1.0 - (y / chart_h)) as f32)
 }
 
+// ── Graceful degradation for no-amplitude-control vibrators ──────────
+
+/// Collapse an authored intensity to ON/OFF. On a vibrator with
+/// no amplitude control the platform can only do 0% or 100%, so
+/// those devices edit binary patterns: a control point at or
+/// above the mid-line is ON (1.0), below it is OFF (0.0). Decision
+/// lives here (core) so the rule is one place + testable; the
+/// Android shell applies it when the device reports no amplitude
+/// control.
+pub fn binarize(v: f32) -> f32 {
+    if v >= 0.5 {
+        1.0
+    } else {
+        0.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -843,5 +860,14 @@ mod tests {
         );
         // Empty list never panics.
         assert_eq!(nearest_point(&[], 0.0, 0.0, 10.0, 10.0, 5.0), None);
+    }
+
+    #[test]
+    fn binarize_splits_at_the_midline() {
+        assert_eq!(binarize(0.0), 0.0);
+        assert_eq!(binarize(0.49), 0.0);
+        assert_eq!(binarize(0.5), 1.0); // mid-line counts as ON
+        assert_eq!(binarize(0.7), 1.0);
+        assert_eq!(binarize(1.0), 1.0);
     }
 }

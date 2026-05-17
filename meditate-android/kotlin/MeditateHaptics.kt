@@ -47,6 +47,17 @@ object MeditateHaptics {
         emit(vibrator, VibrationEffect.createWaveform(timings, amplitudes, -1))
     }
 
+    // Whether the device's vibrator can render graded amplitude.
+    // When false, createWaveform(timings, amplitudes, …) rounds
+    // every non-zero amplitude up to 100% (on/off only) — the
+    // Rust side then PWM-emulates amplitude instead. Device-
+    // constant; Rust caches the first answer.
+    @JvmStatic
+    fun hasAmplitudeControl(context: Context): Boolean {
+        val v = resolveVibrator(context) ?: return false
+        return v.hasVibrator() && v.hasAmplitudeControl()
+    }
+
     // Stop any in-flight vibration (preview supersede / Stop).
     @JvmStatic
     fun cancel(context: Context) {

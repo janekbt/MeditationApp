@@ -20,8 +20,15 @@
 use android_activity::AndroidApp;
 use jni::objects::{JClass, JObject};
 use jni::JavaVM;
+use std::sync::OnceLock;
 
 const HAPTICS_CLASS_DOTTED: &str = "io.github.janekbt.Meditate.MeditateHaptics";
+
+/// Device-constant amplitude-control flag, cached on first
+/// successful query. `false` ⇒ the vibrator can't grade
+/// amplitude, so we PWM-emulate it (the platform would otherwise
+/// snap every non-zero amplitude to 100% → on/off only).
+static AMP_CONTROL: OnceLock<bool> = OnceLock::new();
 
 /// Play a vibration waveform (B-2a). `segments` is the
 /// `(amplitude 0.0..=1.0, duration_ms)` envelope
@@ -40,6 +47,52 @@ pub fn vibrate_waveform(app: &AndroidApp, segments: &[(f64, u32)]) {
             &format!("vibrateWaveform FAILED ({} seg): {e:?}", segments.len()),
         );
     }
+}
+
+/// Whether the vibrator can render graded amplitude. Queried
+/// once via JNI then cached (device-constant). The editor reads
+/// this on open: no amplitude control ⇒ Bar-only + binary
+/// (0/100%) patterns, since the platform can't do anything in
+/// between anyway. On a JNI error we return `true` *without*
+/// caching — assume capable and retry next time rather than
+/// pinning a bogus `false`.
+pub fn has_amplitude_control(app: &AndroidApp) -> bool {
+    if let Some(v) = AMP_CONTROL.get() {
+        return *v;
+    }
+    match query_amp_control(app) {
+        Ok(v) => {
+            let _ = AMP_CONTROL.set(v);
+            v
+        }
+        Err(e) => {
+            meditate_core::log(
+                "haptics.vibrate",
+                &format!("hasAmplitudeControl query FAILED: {e:?}"),
+            );
+            true
+        }
+    }
+}
+
+fn query_amp_control(
+    app: &AndroidApp,
+) -> Result<bool, jni::errors::Error> {
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
+    let mut env = vm.attach_current_thread()?;
+    let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
+    let class = resolve_class(&mut env, &activity)?;
+    let ret = env.call_static_method(
+        class,
+        "hasAmplitudeControl",
+        "(Landroid/content/Context;)Z",
+        &[(&activity).into()],
+    )?;
+    if env.exception_check()? {
+        env.exception_clear()?;
+        return Ok(true);
+    }
+    Ok(ret.z()?)
 }
 
 /// Stop any in-flight vibration (preview Stop / supersede).

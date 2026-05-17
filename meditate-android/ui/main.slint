@@ -86,6 +86,14 @@ export struct NameChoice {
     selected: bool,
 }
 
+// One x-axis time label for the vibration editor chart. Rust
+// picks which to show (core `select_xlabel_indices`, overlap-
+// thinned like GTK) and gives each a plot-local px x + text.
+export struct VeXLabel {
+    x: float,
+    text: string,
+}
+
 // One preset (Phase 6 / P-1). `uuid` is the row identity used
 // for apply / override / rename / delete; `is-starred` drives
 // the home chip-list visibility + the Manage star toggle.
@@ -1650,6 +1658,14 @@ export component MainWindow inherits Window {
     // every drag move.
     in property <string> ve-curve-cmd: "";
     in property <string> ve-area-cmd: "";
+    // X-axis time labels (Rust-thinned via core
+    // select_xlabel_indices), each with a plot-local px x.
+    in property <[VeXLabel]> ve-x-labels: [];
+    // Device has no vibration amplitude control → Bar-only +
+    // binary (0/100%) editing (graceful degradation). Set by
+    // Rust on open from haptics::has_amplitude_control; the
+    // Chart toggle hides and drags snap to 0/1.
+    in property <bool> ve-binary: false;
     // Editor Preview button state (separate slot from the
     // chooser's `pattern-preview-uuid` — the pattern is unsaved).
     in property <bool> ve-previewing: false;
@@ -5294,6 +5310,10 @@ export component MainWindow inherits Window {
                     min-value: 5;
                     max-value: 100;
                 }
+                Rectangle {
+                    height: 1px;
+                    background: MaterialPalette.outline-variant;
+                }
                 StepperRow {
                     label: "Points";
                     value <=> root.ve-points;
@@ -5301,13 +5321,13 @@ export component MainWindow inherits Window {
                     max-value: root.ve-points-max;
                 }
 
-                Rectangle {
+                // Bar / Line toggle — hidden on no-amplitude-
+                // control devices (Bar-only, forced by Rust).
+                if !root.ve-binary : Rectangle {
                     height: 1px;
                     background: MaterialPalette.outline-variant;
                 }
-                // Bar / Line — same order + role as GTK's
-                // chart-kind toggle (0 Bar, 1 Line).
-                CuesRow {
+                if !root.ve-binary : CuesRow {
                     title: "Chart";
                     labels: ["Bar", "Line"];
                     current-index <=> root.ve-chart-kind;
@@ -5359,10 +5379,13 @@ export component MainWindow inherits Window {
                 clip: true;
 
                 ve-plot := Rectangle {
-                    x: 16px;
-                    y: 16px;
-                    width: parent.width - 32px;
-                    height: parent.height - 32px;
+                    // Left gutter for the Y labels, bottom strip
+                    // for the X time labels (mirrors GTK's
+                    // chart_rect leaving room for the axes).
+                    x: 38px;
+                    y: 14px;
+                    width: parent.width - 38px - 14px;
+                    height: parent.height - 14px - 22px;
 
                     // Report pixel size so Rust builds the Path
                     // in matching coords (init + on resize).
@@ -5379,12 +5402,14 @@ export component MainWindow inherits Window {
                             self.width / 1px, self.height / 1px);
                     }
 
-                    // 0% / 50% / 100% gridlines.
-                    for gy in [0.0, 0.5, 1.0] : Rectangle {
+                    // 100% / 50% / 0% gridlines, at the SAME 14px
+                    // inset the curve uses (VE_PLOT_PAD) so they
+                    // line up with the levels.
+                    for gl in [1.0, 0.5, 0.0] : Rectangle {
                         x: 0;
                         width: parent.width;
                         height: 1px;
-                        y: gy * (parent.height - 1px);
+                        y: 14px + (1.0 - gl) * (parent.height - 28px);
                         background: MaterialPalette.outline-variant
                             .with-alpha(0.6);
                     }
@@ -5464,6 +5489,36 @@ export component MainWindow inherits Window {
                                 parent.height / 1px);
                         }
                     }
+                }
+
+                // Y-axis labels, right-aligned in the gutter,
+                // aligned to the inset gridline levels (mirrors
+                // GTK's 100/50/0% labels).
+                for yl in [
+                    { f: 1.0, t: "100%" },
+                    { f: 0.5, t: "50%" },
+                    { f: 0.0, t: "0%" },
+                ] : Text {
+                    text: yl.t;
+                    font-size: 10px;
+                    color: MaterialPalette.on-surface-variant;
+                    width: 32px;
+                    x: 2px;
+                    horizontal-alignment: right;
+                    y: ve-plot.y + 14px
+                        + (1.0 - yl.f) * (ve-plot.height - 28px)
+                        - self.height / 2;
+                }
+
+                // X-axis time labels — Rust picks which to show
+                // (core select_xlabel_indices) and gives each a
+                // plot-local px x; placed just below the plot.
+                for l in root.ve-x-labels : Text {
+                    text: l.text;
+                    font-size: 10px;
+                    color: MaterialPalette.on-surface-variant;
+                    x: ve-plot.x + l.x * 1px;
+                    y: ve-plot.y + ve-plot.height + 4px;
                 }
             }
         }

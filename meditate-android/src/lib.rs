@@ -5065,6 +5065,36 @@ fn build_ui() -> MainWindow {
     // three use one coordinate space (mirrors GTK chart_rect).
     #[cfg(target_os = "android")]
     const VE_PLOT_PAD: f64 = 14.0;
+
+    // Graceful degradation: on no-amplitude-control devices the
+    // editor is binary (0/100%). One control-point value after a
+    // drag (snapped to the 10% grid, then collapsed to 0/1 when
+    // binary).
+    #[cfg(target_os = "android")]
+    fn ve_pt_value(ui: &MainWindow, raw: f32) -> f32 {
+        if ui.get_ve_binary() {
+            meditate_core::vibration::binarize(raw)
+        } else {
+            raw
+        }
+    }
+    // Whole-model variant for seed / load / resample.
+    #[cfg(target_os = "android")]
+    fn ve_maybe_binarize(ui: &MainWindow, v: Vec<f32>) -> Vec<f32> {
+        if ui.get_ve_binary() {
+            v.into_iter()
+                .map(meditate_core::vibration::binarize)
+                .collect()
+        } else {
+            v
+        }
+    }
+    #[cfg(target_os = "android")]
+    fn ve_device_binary() -> bool {
+        android_app()
+            .map(|a| !haptics::has_amplitude_control(a))
+            .unwrap_or(false)
+    }
     #[cfg(target_os = "android")]
     fn ve_rebuild_curve(
         ui: &MainWindow,
@@ -5144,6 +5174,43 @@ fn build_ui() -> MainWindow {
         }
         ui.set_ve_curve_cmd(line.into());
         ui.set_ve_area_cmd(area.into());
+
+        // X-axis time labels (mirrors GTK draw_chart's seconds
+        // labels). Which to show is decided by core's
+        // select_xlabel_indices (overlap-thinned, first/last
+        // always). No font metrics in Rust, so label width is
+        // estimated chars*6px at the 10px label font —
+        // deliberately a touch wide so labels never collide.
+        const VE_CHAR_W: f64 = 6.0;
+        let dur_s =
+            f64::from(ui.get_ve_duration_tenths().max(0)) / 10.0;
+        let denom = (n - 1).max(1) as f64;
+        let texts: Vec<String> = (0..n)
+            .map(|i| format!("{:.1}s", dur_s * i as f64 / denom))
+            .collect();
+        let layouts: Vec<meditate_core::vibration::XLabelLayout> =
+            (0..n)
+                .map(|i| {
+                    let lw =
+                        texts[i].chars().count() as f64 * VE_CHAR_W;
+                    let lx = (px(i) - lw / 2.0)
+                        .clamp(0.0, (w - lw).max(0.0));
+                    meditate_core::vibration::XLabelLayout { lx, lw }
+                })
+                .collect();
+        let xlabels: Vec<VeXLabel> =
+            meditate_core::vibration::select_xlabel_indices(
+                &layouts, 6.0,
+            )
+            .into_iter()
+            .map(|i| VeXLabel {
+                x: layouts[i].lx as f32,
+                text: texts[i].clone().into(),
+            })
+            .collect();
+        ui.set_ve_x_labels(
+            std::rc::Rc::new(slint::VecModel::from(xlabels)).into(),
+        );
     }
     // Gate Save: non-empty, non-colliding name (case-insensitive,
     // excluding the row being edited). Mirrors GTK's editor name
@@ -5229,11 +5296,14 @@ fn build_ui() -> MainWindow {
                     (meditate_core::vibration::EDITOR_DEFAULT_DURATION_S
                         * 10.0) as i32,
                 );
+                let binary = ve_device_binary();
+                ui.set_ve_binary(binary);
                 ui.set_ve_points(pts as i32);
-                ui.set_ve_chart_kind(1); // Line
-                ve_model.set_vec(
-                    meditate_core::vibration::resample_envelope(&[], pts),
-                );
+                // Bar-only when the device can't grade amplitude.
+                ui.set_ve_chart_kind(if binary { 0 } else { 1 });
+                let seed =
+                    meditate_core::vibration::resample_envelope(&[], pts);
+                ve_model.set_vec(ve_maybe_binarize(&ui, seed));
                 ve_rebuild_curve(&ui, &ve_model, ve_plot_size.get());
                 ui.set_vibration_editor_page(true);
             }
@@ -5269,10 +5339,18 @@ fn build_ui() -> MainWindow {
                         f64::from(p.duration_ms) / 1000.0,
                     ) as i32,
                 );
+                let binary = ve_device_binary();
+                ui.set_ve_binary(binary);
                 ui.set_ve_duration_tenths((p.duration_ms / 100) as i32);
                 ui.set_ve_points(p.intensities.len() as i32);
-                ui.set_ve_chart_kind(ve_kind_index(p.chart_kind));
-                ve_model.set_vec(p.intensities.clone());
+                ui.set_ve_chart_kind(if binary {
+                    0
+                } else {
+                    ve_kind_index(p.chart_kind)
+                });
+                ve_model.set_vec(
+                    ve_maybe_binarize(&ui, p.intensities.clone()),
+                );
                 ve_rebuild_curve(&ui, &ve_model, ve_plot_size.get());
                 let except = if p.is_bundled {
                     // Bundled is immutable in core — open a copy
@@ -5327,8 +5405,15 @@ fn build_ui() -> MainWindow {
     }
     {
         // Duration change → recompute the Points cap; clamping
-        // ve-points fires `changed ve-points` → resample.
+        // ve-points fires `changed ve-points` → resample. Then
+        // rebuild regardless: the x-axis time labels are
+        // duration-derived and won't refresh on their own when
+        // the point count is unchanged.
         let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let ve_model = ve_model.clone();
+        #[cfg(target_os = "android")]
+        let ve_plot_size = ve_plot_size.clone();
         ui.on_ve_duration_changed(move |tenths| {
             #[cfg(target_os = "android")]
             if let Some(ui) = weak.upgrade() {
@@ -5341,6 +5426,7 @@ fn build_ui() -> MainWindow {
                 if ui.get_ve_points() > max {
                     ui.set_ve_points(max);
                 }
+                ve_rebuild_curve(&ui, &ve_model, ve_plot_size.get());
             }
             let _ = (weak.clone(), tenths);
         });
@@ -5360,11 +5446,11 @@ fn build_ui() -> MainWindow {
                 let n = n.max(1) as usize;
                 if ve_model.row_count() != n {
                     let old: Vec<f32> = ve_model.iter().collect();
-                    ve_model.set_vec(
+                    let next =
                         meditate_core::vibration::resample_envelope(
                             &old, n,
-                        ),
-                    );
+                        );
+                    ve_model.set_vec(ve_maybe_binarize(&ui, next));
                     ve_rebuild_curve(&ui, &ve_model, ve_plot_size.get());
                 }
             }
@@ -5420,8 +5506,11 @@ fn build_ui() -> MainWindow {
                         ve_drag_idx.set(i as i32);
                         ve_model.set_row_data(
                             i,
-                            meditate_core::vibration::intensity_from_y(
-                                ty, ih,
+                            ve_pt_value(
+                                &ui,
+                                meditate_core::vibration::intensity_from_y(
+                                    ty, ih,
+                                ),
                             ),
                         );
                         ve_rebuild_curve(&ui, &ve_model, ve_plot_size.get());
@@ -5452,8 +5541,11 @@ fn build_ui() -> MainWindow {
                     let ty = f64::from(py) - VE_PLOT_PAD;
                     ve_model.set_row_data(
                         i as usize,
-                        meditate_core::vibration::intensity_from_y(
-                            ty, ih,
+                        ve_pt_value(
+                            &ui,
+                            meditate_core::vibration::intensity_from_y(
+                                ty, ih,
+                            ),
                         ),
                     );
                     ve_rebuild_curve(&ui, &ve_model, ve_plot_size.get());
