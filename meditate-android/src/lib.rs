@@ -3554,6 +3554,12 @@ fn build_ui() -> MainWindow {
     #[cfg(target_os = "android")]
     let guided_create_import: Rc<Cell<bool>> =
         Rc::new(Cell::new(false));
+    // GM-F4b: uuid of the row whose rename dialog is open, held
+    // between `guided-manage-rename-tap` and the live validator /
+    // confirm so the collision check can EXCEPT this own row.
+    #[cfg(target_os = "android")]
+    let guided_rename_uuid: Rc<RefCell<Option<String>>> =
+        Rc::new(RefCell::new(None));
 
     // Session being edited via the Log card → Edit-Session
     // overlay (L-4). Holds the rowid between `card-tap`
@@ -4127,6 +4133,19 @@ fn build_ui() -> MainWindow {
                 // if the tick already crossed the probed length.
                 if let Some(app) = android_app() {
                     if guided::take_eos(app) {
+                        // A Manage-Files preview that played to its
+                        // natural end shares the MeditateGuided
+                        // slot + the same eos drop-file. Revert the
+                        // row's Stop→Play icon; enter_overtime is a
+                        // passthrough here anyway (idle, no session).
+                        if !ui
+                            .get_guided_manage_preview_uuid()
+                            .is_empty()
+                        {
+                            ui.set_guided_manage_preview_uuid(
+                                "".into(),
+                            );
+                        }
                         let prev = std::mem::replace(
                             &mut *state.borrow_mut(),
                             AppState::idle(),
@@ -4665,6 +4684,16 @@ fn build_ui() -> MainWindow {
         ui.on_guided_manage_back(move || {
             #[cfg(target_os = "android")]
             if let Some(ui) = weak.upgrade() {
+                // Stop any in-flight preview so a guided track
+                // doesn't keep playing past the chooser (GTK's
+                // page.connect_hidden → stop_preview).
+                if !ui.get_guided_manage_preview_uuid().is_empty()
+                {
+                    if let Some(app) = android_app() {
+                        guided::stop(app);
+                    }
+                    ui.set_guided_manage_preview_uuid("".into());
+                }
                 ui.set_guided_manage_page(false);
             }
             let _ = weak.clone();
@@ -4826,6 +4855,147 @@ fn build_ui() -> MainWindow {
                 );
             }
             let _ = (weak.clone(), uuid);
+        });
+    }
+
+    // GM-F4b: per-row Play/Stop preview. Reuses the MeditateGuided
+    // slot (startAudio supersedes any prior playback, so a new tap
+    // implicitly stops the previous row). Tapping the active row
+    // stops. Natural end + page-leave reverts elsewhere.
+    {
+        let weak = ui.as_weak();
+        ui.on_guided_manage_preview_tap(move |uuid| {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                let Some(app) = android_app() else { return; };
+                if ui.get_guided_manage_preview_uuid() == uuid {
+                    guided::stop(app);
+                    ui.set_guided_manage_preview_uuid("".into());
+                    return;
+                }
+                let path = {
+                    let Some(db_arc) = DATABASE.get() else { return; };
+                    let Ok(g) = db_arc.lock() else { return; };
+                    let Some(db) = g.as_ref() else { return; };
+                    meditate_core::db::find_guided_file_by_uuid_from_db(
+                        db, &uuid,
+                    )
+                    .ok()
+                    .flatten()
+                    .map(|f| f.file_path)
+                };
+                let Some(path) = path else {
+                    // Row raced a delete — drop it.
+                    refresh_guided_manage(&ui);
+                    return;
+                };
+                guided::play(app, &path);
+                ui.set_guided_manage_preview_uuid(uuid.clone());
+            }
+            let _ = (weak.clone(), uuid);
+        });
+    }
+    // GM-F4b: rename. Open a live-validated dialog (collision
+    // check EXCEPTs this row's own uuid so an unchanged / case-
+    // only name stays valid). Mirrors GTK's present_rename_dialog.
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let guided_rename_uuid = guided_rename_uuid.clone();
+        ui.on_guided_manage_rename_tap(move |uuid, name| {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                *guided_rename_uuid.borrow_mut() =
+                    Some(uuid.to_string());
+                ui.set_guided_rename_text(name.clone());
+                let v = meditate_core::naming::validate(
+                    name.trim(),
+                    |n| guided_name_taken(n, &uuid),
+                );
+                ui.set_guided_rename_valid(v.is_savable());
+                ui.set_guided_rename_dialog_open(true);
+            }
+            let _ = (weak.clone(), uuid, name);
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let guided_rename_uuid = guided_rename_uuid.clone();
+        ui.on_guided_rename_changed(move |name| {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                let except = guided_rename_uuid
+                    .borrow()
+                    .clone()
+                    .unwrap_or_default();
+                let v = meditate_core::naming::validate(
+                    name.trim(),
+                    |n| guided_name_taken(n, &except),
+                );
+                ui.set_guided_rename_valid(v.is_savable());
+            }
+            let _ = (weak.clone(), name);
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let guided_rename_uuid = guided_rename_uuid.clone();
+        #[cfg(target_os = "android")]
+        let guided_sel = guided_sel.clone();
+        ui.on_guided_rename_confirm(move || {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                let Some(uuid) =
+                    guided_rename_uuid.borrow_mut().take()
+                else {
+                    return;
+                };
+                let new_name =
+                    ui.get_guided_rename_text().trim().to_string();
+                // Re-validate (defends a stale Enter / race).
+                let v = meditate_core::naming::validate(
+                    &new_name,
+                    |n| guided_name_taken(n, &uuid),
+                );
+                if !v.is_savable() {
+                    return;
+                }
+                {
+                    let Some(db_arc) = DATABASE.get() else { return; };
+                    let Ok(g) = db_arc.lock() else { return; };
+                    let Some(db) = g.as_ref() else { return; };
+                    if let Err(e) =
+                        db.rename_guided_file(&uuid, &new_name)
+                    {
+                        meditate_core::log(
+                            "guided",
+                            &format!("rename FAILED: {e:?}"),
+                        );
+                        return;
+                    }
+                }
+                // Keep the live selection's label in sync if it's
+                // the row we just renamed.
+                if guided_sel
+                    .borrow()
+                    .as_ref()
+                    .and_then(|s| s.uuid.as_deref())
+                    == Some(uuid.as_str())
+                {
+                    if let Some(s) =
+                        guided_sel.borrow_mut().as_mut()
+                    {
+                        s.name = new_name.clone();
+                    }
+                    ui.set_guided_name(new_name.clone().into());
+                }
+                ui.set_guided_rename_dialog_open(false);
+                refresh_guided_manage(&ui);
+                refresh_guided_files(&ui);
+            }
+            let _ = weak.clone();
         });
     }
 

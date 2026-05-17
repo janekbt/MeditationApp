@@ -491,7 +491,7 @@ Rust via a drop-file (same pattern as the widget launch).
   finalize slot + wipes stray drop-files; a cancelled worker
   writes no result (no cross-run contamination). Mirrors GTK's
   `cancel: &AtomicBool`. On-device confirmed (FP5).
-- ◑ **GM-F4** (Manage Files chooser, mirrors
+- ✅ **GM-F4** (Manage Files chooser, mirrors
   `push_guided_files_chooser`): full-screen slide-in from a
   Setup "Manage Files" button.
   - ✅ **GM-F4a**: lists every file (starred + not); per-row ★
@@ -504,8 +504,15 @@ Rust via a drop-file (same pattern as the widget launch).
     relocated AFTER the chooser in the .slint so it z-stacks
     over the still-open page (declaration-order = z-order).
     On-device confirmed (FP5).
-  - ⬜ **GM-F4b**: per-row rename dialog (live-validated,
-    except-uuid) + Play/Stop audio preview.
+  - ✅ **GM-F4b**: per-row Play/Stop preview (shared
+    MeditateGuided slot; supersede on new tap, auto-revert on
+    natural end + page-leave; bundled `play.svg`) + rename
+    dialog, live-validated with the row's own uuid excepted.
+    Rename-Undo deliberately skipped (a rename is trivially
+    reversible, unlike a delete) — minor GTK divergence.
+    On-device confirmed (FP5).
+
+GM follow-up complete; Phase 6.5 fully mirrors `guided.rs`.
 
 ### Phase 7 — Sync + Preferences
 

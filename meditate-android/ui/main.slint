@@ -1287,6 +1287,18 @@ export component MainWindow inherits Window {
     callback guided-manage-star-tap(string);
     callback guided-manage-delete-tap(string);
     callback guided-manage-create();
+    // GM-F4b: per-row rename + Play/Stop preview. The uuid
+    // currently previewing ("" = none) drives the play/stop
+    // icon; Rust supersedes any prior preview on a new tap and
+    // stops on page leave / natural end.
+    callback guided-manage-rename-tap(string, string);
+    callback guided-manage-preview-tap(string);
+    in property <string> guided-manage-preview-uuid: "";
+    in-out property <bool> guided-rename-dialog-open: false;
+    in-out property <string> guided-rename-text: "";
+    in property <bool> guided-rename-valid: false;
+    callback guided-rename-changed(string);
+    callback guided-rename-confirm();
 
     // Stopwatch-Mode switch state — mirrors the .blp
     // `stopwatch_mode_row` SwitchRow. When true, sessions count up
@@ -6507,10 +6519,31 @@ export component MainWindow inherits Window {
                                 }
                             }
 
-                            // Delete suffix (rename + preview
-                            // land in GM-F4b).
-                            VerticalLayout {
+                            // Preview / Rename / Delete suffix
+                            // (GTK's add_play_button + rename_btn
+                            // + delete_btn). Play toggles to a
+                            // pause glyph while this row is the
+                            // active preview.
+                            HorizontalLayout {
+                                spacing: 0px;
                                 alignment: center;
+                                IconButton {
+                                    icon: item.uuid
+                                        == root.guided-manage-preview-uuid
+                                        ? @image-url("assets/pause.svg")
+                                        : @image-url("assets/play.svg");
+                                    clicked => {
+                                        root.guided-manage-preview-tap(
+                                            item.uuid);
+                                    }
+                                }
+                                IconButton {
+                                    icon: Icons.edit;
+                                    clicked => {
+                                        root.guided-manage-rename-tap(
+                                            item.uuid, item.name);
+                                    }
+                                }
                                 IconButton {
                                     icon: @image-url("assets/delete.svg");
                                     has_error: true;
@@ -6687,6 +6720,64 @@ export component MainWindow inherits Window {
                                 color: MaterialPalette.on-primary;
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Guided rename dialog (modal, GM-F4b) ─────────────────────
+    // Declared LAST → tops the z-stack over the Manage Files
+    // page. Live-validated (non-empty + no case-insensitive
+    // collision EXCEPting this row's own uuid, so an unchanged
+    // name stays valid). Mirrors GTK's `present_rename_dialog`.
+    if root.guided-rename-dialog-open : Rectangle {
+        background: #00000080;
+        TouchArea {
+            clicked => { root.guided-rename-dialog-open = false; }
+        }
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 320px;
+            height: guided-rename-card.preferred-height;
+            background: MaterialPalette.surface-container-high;
+            border-radius: 28px;
+
+            TouchArea {}
+
+            guided-rename-card := VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+
+                Text {
+                    text: "Rename Guided File";
+                    font-size: 22px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface;
+                }
+
+                TextField {
+                    label: "Track name";
+                    text <=> root.guided-rename-text;
+                    edited(text) => { root.guided-rename-changed(text); }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+
+                    TextButton {
+                        text: "Cancel";
+                        clicked => {
+                            root.guided-rename-dialog-open = false;
+                        }
+                    }
+                    TextButton {
+                        text: "Rename";
+                        enabled: root.guided-rename-valid;
+                        clicked => { root.guided-rename-confirm(); }
                     }
                 }
             }
