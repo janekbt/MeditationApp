@@ -1,25 +1,41 @@
-# Android shell translations — harvested from the GTK
-# shell po files where msgids match; German gaps filled
-# by hand (2026-07-17). Untranslated ids fall back to
-# English at runtime.
+# Android shell translations — inline @tr() strings +
+# the Tr message catalogue (Rust-side strings). Harvested
+# from the GTK po files where msgids match; German is
+# hand-completed. Untranslated ids fall back to English.
 msgid ""
 msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgid "1 day · keep going"
+msgstr "1 день · продолжайте"
 
 msgid "Cancel"
 msgstr "Отмена"
 
+msgid "Complete a meditation to start seeing insights here"
+msgstr "Завершите медитацию, чтобы увидеть здесь аналитику"
+
 msgid "Create"
 msgstr "Создать"
 
+msgid "Current streak"
+msgstr "Текущая серия"
+
 msgid "Custom Time"
 msgstr "Своё время"
+
+msgid "Daily rhythm"
+msgstr "Ежедневный ритм"
 
 msgid "Danger Zone"
 msgstr "Опасная зона"
 
 msgid "Data"
 msgstr "Данные"
+
+msgid "Database unavailable"
+msgstr "База данных недоступна"
 
 msgid "Date"
 msgstr "Дата"
@@ -87,6 +103,9 @@ msgstr "Показать ещё"
 msgid "Log"
 msgstr "Журнал"
 
+msgid "Longest session"
+msgstr "Самая длинная сессия"
+
 msgid "Meditate"
 msgstr "Meditate"
 
@@ -95,6 +114,9 @@ msgstr "Минуты"
 
 msgid "More"
 msgstr "Больше"
+
+msgid "Next milestone"
+msgstr "Следующая веха"
 
 msgid "No Matching Sessions"
 msgstr "Нет подходящих сессий"
@@ -108,11 +130,23 @@ msgstr "Файл не выбран"
 msgid "No note added"
 msgstr "Без заметки"
 
+msgid "No sessions yet"
+msgstr "Пока нет сессий"
+
 msgid "Note (optional)"
 msgstr "Заметка (необязательно)"
 
+msgid "Practising less"
+msgstr "Меньше практики"
+
+msgid "Practising more"
+msgstr "Больше практики"
+
 msgid "Preferences"
 msgstr "Параметры"
+
+msgid "Preferred time"
+msgstr "Любимое время"
 
 msgid "Save"
 msgstr "Сохранить"
@@ -135,15 +169,20 @@ msgstr "Статистика"
 msgid "Stop"
 msgstr "Остановить"
 
+msgid "This week's practice"
+msgstr "Практика на этой неделе"
+
 msgid "Timer"
 msgstr "Таймер"
 
 msgid "Try changing your filters."
 msgstr "Попробуйте изменить фильтры."
 
+msgid "Typical session"
+msgstr "Типичная сессия"
+
 msgid "Undo"
 msgstr "Отменить"
 
 msgid "min"
 msgstr "мин"
-

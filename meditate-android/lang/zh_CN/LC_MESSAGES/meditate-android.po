@@ -1,25 +1,41 @@
-# Android shell translations — harvested from the GTK
-# shell po files where msgids match; German gaps filled
-# by hand (2026-07-17). Untranslated ids fall back to
-# English at runtime.
+# Android shell translations — inline @tr() strings +
+# the Tr message catalogue (Rust-side strings). Harvested
+# from the GTK po files where msgids match; German is
+# hand-completed. Untranslated ids fall back to English.
 msgid ""
 msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgid "1 day · keep going"
+msgstr "1 天 · 继续保持"
 
 msgid "Cancel"
 msgstr "取消"
 
+msgid "Complete a meditation to start seeing insights here"
+msgstr "完成一次冥想后，这里将显示分析"
+
 msgid "Create"
 msgstr "创建"
 
+msgid "Current streak"
+msgstr "当前连续天数"
+
 msgid "Custom Time"
 msgstr "自定义时间"
+
+msgid "Daily rhythm"
+msgstr "每日节奏"
 
 msgid "Danger Zone"
 msgstr "危险区域"
 
 msgid "Data"
 msgstr "数据"
+
+msgid "Database unavailable"
+msgstr "数据库不可用"
 
 msgid "Date"
 msgstr "日期"
@@ -87,6 +103,9 @@ msgstr "加载更多"
 msgid "Log"
 msgstr "记录"
 
+msgid "Longest session"
+msgstr "最长会话"
+
 msgid "Meditate"
 msgstr "Meditate"
 
@@ -95,6 +114,9 @@ msgstr "分钟"
 
 msgid "More"
 msgstr "更多"
+
+msgid "Next milestone"
+msgstr "下一里程碑"
 
 msgid "No Matching Sessions"
 msgstr "无匹配的会话"
@@ -108,11 +130,23 @@ msgstr "未选择文件"
 msgid "No note added"
 msgstr "无笔记"
 
+msgid "No sessions yet"
+msgstr "暂无会话"
+
 msgid "Note (optional)"
 msgstr "笔记（可选）"
 
+msgid "Practising less"
+msgstr "练习减少"
+
+msgid "Practising more"
+msgstr "练习增多"
+
 msgid "Preferences"
 msgstr "首选项"
+
+msgid "Preferred time"
+msgstr "偏好时段"
 
 msgid "Save"
 msgstr "保存"
@@ -135,15 +169,20 @@ msgstr "统计"
 msgid "Stop"
 msgstr "停止"
 
+msgid "This week's practice"
+msgstr "本周练习"
+
 msgid "Timer"
 msgstr "计时器"
 
 msgid "Try changing your filters."
 msgstr "尝试更改筛选条件。"
 
+msgid "Typical session"
+msgstr "典型时长"
+
 msgid "Undo"
 msgstr "撤销"
 
 msgid "min"
 msgstr "分钟"
-

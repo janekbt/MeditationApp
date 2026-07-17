@@ -1,25 +1,41 @@
-# Android shell translations — harvested from the GTK
-# shell po files where msgids match; German gaps filled
-# by hand (2026-07-17). Untranslated ids fall back to
-# English at runtime.
+# Android shell translations — inline @tr() strings +
+# the Tr message catalogue (Rust-side strings). Harvested
+# from the GTK po files where msgids match; German is
+# hand-completed. Untranslated ids fall back to English.
 msgid ""
 msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgid "1 day · keep going"
+msgstr "1 dia · continue assim"
 
 msgid "Cancel"
 msgstr "Cancelar"
 
+msgid "Complete a meditation to start seeing insights here"
+msgstr "Conclua uma meditação para ver análises aqui"
+
 msgid "Create"
 msgstr "Criar"
 
+msgid "Current streak"
+msgstr "Sequência atual"
+
 msgid "Custom Time"
 msgstr "Tempo personalizado"
+
+msgid "Daily rhythm"
+msgstr "Ritmo diário"
 
 msgid "Danger Zone"
 msgstr "Zona de perigo"
 
 msgid "Data"
 msgstr "Dados"
+
+msgid "Database unavailable"
+msgstr "Banco de dados indisponível"
 
 msgid "Date"
 msgstr "Data"
@@ -87,6 +103,9 @@ msgstr "Carregar mais"
 msgid "Log"
 msgstr "Histórico"
 
+msgid "Longest session"
+msgstr "Sessão mais longa"
+
 msgid "Meditate"
 msgstr "Meditate"
 
@@ -95,6 +114,9 @@ msgstr "Minutos"
 
 msgid "More"
 msgstr "Mais"
+
+msgid "Next milestone"
+msgstr "Próximo marco"
 
 msgid "No Matching Sessions"
 msgstr "Nenhuma sessão correspondente"
@@ -108,11 +130,23 @@ msgstr "Nenhum arquivo selecionado"
 msgid "No note added"
 msgstr "Sem anotações"
 
+msgid "No sessions yet"
+msgstr "Nenhuma sessão ainda"
+
 msgid "Note (optional)"
 msgstr "Anotação (opcional)"
 
+msgid "Practising less"
+msgstr "Menos prática"
+
+msgid "Practising more"
+msgstr "Mais prática"
+
 msgid "Preferences"
 msgstr "Preferências"
+
+msgid "Preferred time"
+msgstr "Horário preferido"
 
 msgid "Save"
 msgstr "Salvar"
@@ -135,15 +169,20 @@ msgstr "Estatísticas"
 msgid "Stop"
 msgstr "Parar"
 
+msgid "This week's practice"
+msgstr "Prática desta semana"
+
 msgid "Timer"
 msgstr "Temporizador"
 
 msgid "Try changing your filters."
 msgstr "Tente alterar os filtros."
 
+msgid "Typical session"
+msgstr "Sessão típica"
+
 msgid "Undo"
 msgstr "Desfazer"
 
 msgid "min"
 msgstr "min"
-

@@ -34,6 +34,82 @@ import { Date } from "../material-1.0/ui/components/date_picker.slint";
 import { Icons } from "../material-1.0/ui/icons/icons.slint";
 export { MaterialWindowAdapter, DatePickerAdapter, MaterialPalette, MaterialSchemes, MaterialScheme } from "@material";
 
+// ── Tr — Rust-side message catalogue (P8 i18n slice 2) ─────────
+// Every user-visible string COMPOSED IN RUST routes through one
+// of these functions so it rides the same bundled-translation
+// pipeline as the inline @tr() literals. The functions are the
+// "typed keys": Rust passes data, the catalogue owns wording +
+// plural forms. Grouped by surface.
+export global Tr {
+    // Snackbar / toasts
+    public pure function applied(name: string) -> string { return @tr("'{}' applied", name); }
+    public pure function deleted(name: string) -> string { return @tr("'{}' deleted", name); }
+    public pure function preset-overridden() -> string { return @tr("Preset overridden"); }
+    public pure function sync-settings-saved() -> string { return @tr("Sync settings saved"); }
+    public pure function enter-url-and-username() -> string { return @tr("Enter URL and username"); }
+    public pure function url-must-be-https() -> string { return @tr("URL must start with https://"); }
+    public pure function keystore-write-failed() -> string { return @tr("Keystore write failed"); }
+    public pure function save-failed() -> string { return @tr("Save failed"); }
+    public pure function db-unavailable() -> string { return @tr("Database unavailable"); }
+    public pure function enter-a-password() -> string { return @tr("Enter a password"); }
+    public pure function keystore-read-failed() -> string { return @tr("Keystore read failed"); }
+    public pure function exported() -> string { return @tr("Session log exported"); }
+    public pure function export-failed() -> string { return @tr("Export failed"); }
+    public pure function imported-n(n: int) -> string { return @tr("Imported {n} session" | "Imported {n} sessions" % n); }
+    public pure function import-failed() -> string { return @tr("Import failed — see Diagnostics"); }
+    public pure function recovered-min(n: int) -> string { return @tr("Recovered {} min session", n); }
+    // Test connection (core TestConnectionResult variants)
+    public pure function conn-ok() -> string { return @tr("Connection OK"); }
+    public pure function conn-unauthorized() -> string { return @tr("Authentication failed"); }
+    public pure function conn-not-webdav() -> string { return @tr("Not a WebDAV folder"); }
+    public pure function conn-network() -> string { return @tr("Network error"); }
+    public pure function conn-server() -> string { return @tr("Server error"); }
+    // Sync indicator tooltips
+    public pure function syncing() -> string { return @tr("Syncing with Nextcloud…"); }
+    public pure function sync-failed-tap(detail: string) -> string { return @tr("Last sync failed — tap to retry\n{}", detail); }
+    public pure function sync-waiting-first() -> string { return @tr("Sync configured (waiting for first run)"); }
+    public pure function synced-just-now() -> string { return @tr("Synced just now"); }
+    public pure function synced-min(n: int) -> string { return @tr("Synced {n} minute ago" | "Synced {n} minutes ago" % n); }
+    public pure function synced-hours(n: int) -> string { return @tr("Synced {n} hour ago" | "Synced {n} hours ago" % n); }
+    public pure function synced-days(n: int) -> string { return @tr("Synced {n} day ago" | "Synced {n} days ago" % n); }
+    // Daily-goal hero
+    public pure function goal-reached(t: string) -> string { return @tr("Goal reached · {} today", t); }
+    public pure function goal-to-go(t: string) -> string { return @tr("{} to go today", t); }
+    // Chart captions
+    public pure function minutes-per-day() -> string { return @tr("MINUTES / DAY"); }
+    public pure function minutes-per-week() -> string { return @tr("MINUTES / WEEK"); }
+    public pure function minutes-per-month() -> string { return @tr("MINUTES / MONTH"); }
+    // Insights
+    public pure function ins-streak-title() -> string { return @tr("Current streak"); }
+    public pure function ins-streak-record(days: int) -> string { return @tr("{n} day — new record" | "{n} days — new record" % days); }
+    public pure function ins-streak-best(days: int, best: int) -> string { return @tr("{n} day · best was {0}" | "{n} days · best was {0}" % days, best); }
+    public pure function ins-streak-keep-going() -> string { return @tr("1 day · keep going"); }
+    public pure function ins-week-title() -> string { return @tr("This week's practice"); }
+    public pure function ins-week-up(pct: int, this-hm: string, last-hm: string) -> string { return @tr("{}% up vs last week ({} vs {})", pct, this-hm, last-hm); }
+    public pure function ins-week-down(pct: int, this-hm: string, last-hm: string) -> string { return @tr("{}% down vs last week ({} vs {})", pct, this-hm, last-hm); }
+    public pure function ins-month-more() -> string { return @tr("Practising more"); }
+    public pure function ins-month-less() -> string { return @tr("Practising less"); }
+    public pure function ins-month-body(pct: string, this-hm: string, last-hm: string) -> string { return @tr("{}% vs last month ({} vs {})", pct, this-hm, last-hm); }
+    public pure function ins-preferred-title() -> string { return @tr("Preferred time"); }
+    public pure function ins-preferred-morning(pct: int) -> string { return @tr("{}% of sessions are in the morning", pct); }
+    public pure function ins-preferred-afternoon(pct: int) -> string { return @tr("{}% of sessions are in the afternoon", pct); }
+    public pure function ins-preferred-evening(pct: int) -> string { return @tr("{}% of sessions are in the evening", pct); }
+    public pure function ins-typical-title() -> string { return @tr("Typical session"); }
+    public pure function ins-typical-body(hm: string) -> string { return @tr("About {}", hm); }
+    public pure function ins-longest-title() -> string { return @tr("Longest session"); }
+    public pure function ins-longest-body(hm: string, date: string) -> string { return @tr("{} on {}", hm, date); }
+    public pure function ins-milestone-title() -> string { return @tr("Next milestone"); }
+    public pure function ins-milestone-body(remaining: int, target: int) -> string { return @tr("{n} session to your {0}th" | "{n} sessions to your {0}th" % remaining, target); }
+    public pure function ins-rhythm-title() -> string { return @tr("Daily rhythm"); }
+    public pure function ins-rhythm-body(hm: string) -> string { return @tr("{} average over last 7 days", hm); }
+    public pure function ins-nodata-title() -> string { return @tr("No sessions yet"); }
+    public pure function ins-nodata-body() -> string { return @tr("Complete a meditation to start seeing insights here"); }
+    // Import dialog (Rust-set title/subtitle)
+    public pure function import-guided-title() -> string { return @tr("Import Guided File"); }
+    public pure function import-bell-title() -> string { return @tr("Import Bell Sound"); }
+    public pure function importing(name: string, dur: string) -> string { return @tr("Importing: {} ({})", name, dur); }
+}
+
 // Single-glyph font (U+25CF, subset from DejaVu Sans, family
 // renamed "Meditate Mask") for the password field's mask dots:
 // Slint hardcodes '●' as the obscuring character and does no

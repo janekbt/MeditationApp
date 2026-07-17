@@ -118,7 +118,7 @@ static RECOVERED_SESSION: OnceLock<std::sync::Mutex<Option<(String, u32)>>> =
 /// drop-files, just in-process.
 #[cfg(target_os = "android")]
 static TEST_CONNECTION_RESULT: OnceLock<
-    std::sync::Mutex<Option<(String, String)>>,
+    std::sync::Mutex<Option<(u8, String)>>,
 > = OnceLock::new();
 
 /// True while a sync worker is running (SY-4). Guards against
@@ -1272,10 +1272,11 @@ fn present_guided_import_dialog(
     secs: u32,
     kind: u8,
 ) {
-    ui.set_guided_import_title(
-        if kind == 1 { "Import Bell Sound" } else { "Import Guided File" }
-            .into(),
-    );
+    ui.set_guided_import_title(if kind == 1 {
+        ui.global::<Tr>().invoke_import_bell_title()
+    } else {
+        ui.global::<Tr>().invoke_import_guided_title()
+    });
     meditate_core::log(
         "guided",
         &format!("import: {display_name} ({secs}s)"),
@@ -1288,13 +1289,10 @@ fn present_guided_import_dialog(
         .map(|(stem, _)| stem)
         .unwrap_or(display_name)
         .to_string();
-    ui.set_guided_import_subtitle(
-        format!(
-            "Importing: {display_name} ({})",
-            meditate_core::format::format_duration_brief(secs),
-        )
-        .into(),
-    );
+    ui.set_guided_import_subtitle(ui.global::<Tr>().invoke_importing(
+        display_name.into(),
+        meditate_core::format::format_duration_brief(secs).into(),
+    ));
     ui.set_guided_import_text(default_name.clone().into());
     let v = meditate_core::naming::validate(
         default_name.trim(),
@@ -1525,19 +1523,20 @@ fn refresh_sync_indicator(ui: &MainWindow) {
     };
     let syncing = SYNC_IN_FLIGHT
         .load(std::sync::atomic::Ordering::SeqCst);
+    let tr = ui.global::<Tr>();
     let (state, tooltip) = match state_from_db(db, syncing) {
         SyncIndicatorState::Hidden => (0, String::new()),
         SyncIndicatorState::Syncing => {
-            (1, "Syncing with Nextcloud…".to_string())
+            (1, tr.invoke_syncing().to_string())
         }
         SyncIndicatorState::Error { detail, .. } => {
-            (2, format!("Last sync failed — tap to retry\n{detail}"))
+            (2, tr.invoke_sync_failed_tap(detail.into()).to_string())
         }
         SyncIndicatorState::OkWithTs(ts) => {
-            (3, sync_ago_text(ts))
+            (3, sync_ago_text(ui, ts))
         }
         SyncIndicatorState::OkNoTs => {
-            (3, "Sync configured (waiting for first run)".to_string())
+            (3, tr.invoke_sync_waiting_first().to_string())
         }
     };
     ui.set_sync_indicator_state(state);
@@ -1551,17 +1550,15 @@ fn refresh_sync_indicator(ui: &MainWindow) {
 /// Mirrors GTK's `format_synced_ago` at
 /// `meditate-gtk/src/window/imp.rs:713`.
 #[cfg(target_os = "android")]
-fn sync_ago_text(unix_ts: i64) -> String {
+fn sync_ago_text(ui: &MainWindow, unix_ts: i64) -> String {
+    let tr = ui.global::<Tr>();
     use meditate_core::format::SyncedAgoKey;
     let secs_ago = meditate_core::time::unix_now() - unix_ts;
     match meditate_core::format::synced_ago_key(secs_ago) {
-        SyncedAgoKey::JustNow => "Synced just now".to_string(),
-        SyncedAgoKey::Minutes(n) if n == 1 => "Synced 1 minute ago".to_string(),
-        SyncedAgoKey::Minutes(n) => format!("Synced {n} minutes ago"),
-        SyncedAgoKey::Hours(n) if n == 1 => "Synced 1 hour ago".to_string(),
-        SyncedAgoKey::Hours(n) => format!("Synced {n} hours ago"),
-        SyncedAgoKey::Days(n) if n == 1 => "Synced 1 day ago".to_string(),
-        SyncedAgoKey::Days(n) => format!("Synced {n} days ago"),
+        SyncedAgoKey::JustNow => tr.invoke_synced_just_now().to_string(),
+        SyncedAgoKey::Minutes(n) => tr.invoke_synced_min(n as i32).to_string(),
+        SyncedAgoKey::Hours(n) => tr.invoke_synced_hours(n as i32).to_string(),
+        SyncedAgoKey::Days(n) => tr.invoke_synced_days(n as i32).to_string(),
     }
 }
 
@@ -1644,14 +1641,17 @@ fn refresh_stats(ui: &MainWindow) {
         // font has no U+2713 glyph (renders as a tofu box —
         // same coverage gap that bit the labels chooser
         // check-mark). Drop it; the copy reads fine without.
-        meditate_core::goal::GoalStatus::Reached => format!(
-            "Goal reached · {today_str} today"
-        ),
+        meditate_core::goal::GoalStatus::Reached => ui
+            .global::<Tr>()
+            .invoke_goal_reached(today_str.clone().into())
+            .to_string(),
         meditate_core::goal::GoalStatus::InProgress => {
             let remaining = render_hm(meditate_core::format::hm_mins_key(
                 mins_dur(g.remaining_mins),
             ));
-            format!("{remaining} to go today")
+            ui.global::<Tr>()
+                .invoke_goal_to_go(remaining.into())
+                .to_string()
         }
     };
     ui.set_stat_goal_sub(sub.into());
@@ -1710,7 +1710,7 @@ fn refresh_stats(ui: &MainWindow) {
         .map(|k| {
             let accent = k.is_accent();
             let icon_id = insight_icon_id(&k);
-            let (title, body) = render_insight(&k);
+            let (title, body) = render_insight(ui, &k);
             InsightRow {
                 title: title.into(),
                 body: body.into(),
@@ -1961,11 +1961,10 @@ fn refresh_chart(ui: &MainWindow) {
     use meditate_core::date_math::ChartUnit;
     ui.set_stat_chart_unit(
         match meditate_core::date_math::chart_unit_for_days(days) {
-            ChartUnit::Day => "MINUTES / DAY",
-            ChartUnit::Week => "MINUTES / WEEK",
-            ChartUnit::Month => "MINUTES / MONTH",
-        }
-        .into(),
+            ChartUnit::Day => ui.global::<Tr>().invoke_minutes_per_day(),
+            ChartUnit::Week => ui.global::<Tr>().invoke_minutes_per_week(),
+            ChartUnit::Month => ui.global::<Tr>().invoke_minutes_per_month(),
+        },
     );
     ui.set_stat_chart_ymax(hm(ticks.max).into());
     ui.set_stat_chart_ymid(hm(ticks.mid).into());
@@ -2011,9 +2010,11 @@ fn insight_icon_id(key: &meditate_core::insights::InsightKey) -> i32 {
 /// points tofu on the FP5 Android-15 font.
 #[cfg(target_os = "android")]
 fn render_insight(
+    ui: &MainWindow,
     key: &meditate_core::insights::InsightKey,
 ) -> (String, String) {
     use meditate_core::insights::{HourBucket, InsightKey};
+    let tr = ui.global::<Tr>();
     let hm = |secs: i64| {
         render_hm(meditate_core::format::hm_secs_key(
             std::time::Duration::from_secs(secs.max(0) as u64),
@@ -2022,63 +2023,68 @@ fn render_insight(
     match key {
         InsightKey::CurrentStreak { days, is_record, best } => {
             let body = if *is_record {
-                if *days == 1 {
-                    "1 day — new record".to_string()
-                } else {
-                    format!("{days} days — new record")
-                }
+                tr.invoke_ins_streak_record(*days as i32).to_string()
             } else if *best > *days {
-                if *days == 1 {
-                    format!("1 day · best was {best}")
-                } else {
-                    format!("{days} days · best was {best}")
-                }
+                tr.invoke_ins_streak_best(*days as i32, *best as i32)
+                    .to_string()
             } else {
-                "1 day · keep going".to_string()
+                tr.invoke_ins_streak_keep_going().to_string()
             };
-            ("Current streak".to_string(), body)
+            (tr.invoke_ins_streak_title().to_string(), body)
         }
         InsightKey::WeekOverWeek { pct, this_secs, last_secs } => {
-            let dir = if *pct >= 0 { "up" } else { "down" };
-            (
-                "This week's practice".to_string(),
-                format!(
-                    "{}% {dir} vs last week ({} vs {})",
+            let body = if *pct >= 0 {
+                tr.invoke_ins_week_up(
+                    *pct,
+                    hm(*this_secs).into(),
+                    hm(*last_secs).into(),
+                )
+            } else {
+                tr.invoke_ins_week_down(
                     pct.abs(),
-                    hm(*this_secs),
-                    hm(*last_secs),
-                ),
-            )
+                    hm(*this_secs).into(),
+                    hm(*last_secs).into(),
+                )
+            };
+            (tr.invoke_ins_week_title().to_string(), body.to_string())
         }
         InsightKey::MonthTrend { pct, this_secs, last_secs } => {
             let title = if *pct >= 0 {
-                "Practising more"
+                tr.invoke_ins_month_more()
             } else {
-                "Practising less"
+                tr.invoke_ins_month_less()
             };
             (
                 title.to_string(),
-                format!(
-                    "{pct:+}% vs last month ({} vs {})",
-                    hm(*this_secs),
-                    hm(*last_secs),
-                ),
+                tr.invoke_ins_month_body(
+                    format!("{pct:+}").into(),
+                    hm(*this_secs).into(),
+                    hm(*last_secs).into(),
+                )
+                .to_string(),
             )
         }
         InsightKey::PreferredTime { bucket, pct } => {
-            let when = match bucket {
-                HourBucket::Morning => "morning",
-                HourBucket::Afternoon => "afternoon",
-                HourBucket::Evening => "evening",
+            let body = match bucket {
+                HourBucket::Morning => {
+                    tr.invoke_ins_preferred_morning(*pct)
+                }
+                HourBucket::Afternoon => {
+                    tr.invoke_ins_preferred_afternoon(*pct)
+                }
+                HourBucket::Evening => {
+                    tr.invoke_ins_preferred_evening(*pct)
+                }
             };
             (
-                "Preferred time".to_string(),
-                format!("{pct}% of sessions are in the {when}"),
+                tr.invoke_ins_preferred_title().to_string(),
+                body.to_string(),
             )
         }
         InsightKey::TypicalSession { duration_secs } => (
-            "Typical session".to_string(),
-            format!("About {}", hm(*duration_secs)),
+            tr.invoke_ins_typical_title().to_string(),
+            tr.invoke_ins_typical_body(hm(*duration_secs).into())
+                .to_string(),
         ),
         InsightKey::LongestSession { duration_secs, start_unix } => {
             use chrono::TimeZone;
@@ -2087,27 +2093,32 @@ fn render_insight(
                 .single()
                 .map(|d| d.format("%b %-d").to_string());
             let body = match when {
-                Some(d) => format!("{} on {d}", hm(*duration_secs)),
+                Some(d) => tr
+                    .invoke_ins_longest_body(
+                        hm(*duration_secs).into(),
+                        d.into(),
+                    )
+                    .to_string(),
                 None => hm(*duration_secs),
             };
-            ("Longest session".to_string(), body)
+            (tr.invoke_ins_longest_title().to_string(), body)
         }
-        InsightKey::NextMilestone { target, remaining } => {
-            let body = if *remaining == 1 {
-                format!("1 session to your {target}th")
-            } else {
-                format!("{remaining} sessions to your {target}th")
-            };
-            ("Next milestone".to_string(), body)
-        }
+        InsightKey::NextMilestone { target, remaining } => (
+            tr.invoke_ins_milestone_title().to_string(),
+            tr.invoke_ins_milestone_body(
+                *remaining as i32,
+                *target as i32,
+            )
+            .to_string(),
+        ),
         InsightKey::DailyRhythm { avg_secs } => (
-            "Daily rhythm".to_string(),
-            format!("{} average over last 7 days", hm(*avg_secs)),
+            tr.invoke_ins_rhythm_title().to_string(),
+            tr.invoke_ins_rhythm_body(hm(*avg_secs).into())
+                .to_string(),
         ),
         InsightKey::NoData => (
-            "No sessions yet".to_string(),
-            "Complete a meditation to start seeing insights here"
-                .to_string(),
+            tr.invoke_ins_nodata_title().to_string(),
+            tr.invoke_ins_nodata_body().to_string(),
         ),
     }
 }
@@ -4520,7 +4531,7 @@ fn build_ui() -> MainWindow {
                 // thread parked (toast, detail) — log the detail,
                 // drop the busy state, raise the plain toast.
                 // Cheap uncontended lock on every normal frame.
-                if let Some((toast, detail)) =
+                if let Some((kind, detail)) =
                     TEST_CONNECTION_RESULT
                         .get_or_init(|| std::sync::Mutex::new(None))
                         .lock()
@@ -4528,6 +4539,16 @@ fn build_ui() -> MainWindow {
                         .and_then(|mut g| g.take())
                 {
                     meditate_core::log("test_connection", &detail);
+                    let toast = {
+                        let tr = ui.global::<Tr>();
+                        match kind {
+                            0 => tr.invoke_conn_ok(),
+                            1 => tr.invoke_conn_unauthorized(),
+                            2 => tr.invoke_conn_not_webdav(),
+                            3 => tr.invoke_conn_network(),
+                            _ => tr.invoke_conn_server(),
+                        }
+                    };
                     ui.set_prefs_test_busy(false);
                     // Bug-audit #2: see the handler raise sites.
                     commit_pending_deletes(
@@ -4546,7 +4567,7 @@ fn build_ui() -> MainWindow {
                     discard_pending_guided_delete(
                         &pending_guided_delete_tick,
                     );
-                    ui.set_snackbar_text(toast.into());
+                    ui.set_snackbar_text(toast);
                     ui.set_snackbar_show_undo(false);
                     ui.set_snackbar_visible(true);
                     let weak_inner = ui.as_weak();
@@ -4564,13 +4585,18 @@ fn build_ui() -> MainWindow {
                 // Export outcome (DP): toast success/failure.
                 if let Some(res) = android_app().and_then(|app| guided::take_export_result(app)) {
                     let text = match res {
-                        Ok(()) => "Session log exported".to_string(),
+                        Ok(()) => ui
+                            .global::<Tr>()
+                            .invoke_exported()
+                            .to_string(),
                         Err(e) => {
                             meditate_core::log(
                                 "data.export",
                                 &format!("copy failed: {e}"),
                             );
-                            "Export failed".to_string()
+                            ui.global::<Tr>()
+                                .invoke_export_failed()
+                                .to_string()
                         }
                     };
                     // Bug-audit #2: see the handler raise sites.
@@ -4646,14 +4672,17 @@ fn build_ui() -> MainWindow {
                             refresh_stats(&ui);
                             refresh_widget();
                             trigger_sync("csv import");
-                            format!("Imported {n} sessions")
+                            ui.global::<Tr>()
+                                .invoke_imported_n(n as i32)
+                                .to_string()
                         }
                         Err(e) => {
                             meditate_core::log(
                                 "data.import",
                                 &format!("kind={kind} FAILED: {e}"),
                             );
-                            "Import failed — see Diagnostics"
+                            ui.global::<Tr>()
+                                .invoke_import_failed()
                                 .to_string()
                         }
                     };
@@ -5586,7 +5615,8 @@ fn build_ui() -> MainWindow {
                     row.is_starred,
                 ));
                 ui.set_snackbar_text(
-                    format!("'{}' deleted", row.name).into(),
+                    ui.global::<Tr>()
+                        .invoke_deleted(row.name.clone().into()),
                 );
                 ui.set_snackbar_show_undo(true);
                 ui.set_snackbar_visible(true);
@@ -5836,7 +5866,8 @@ fn build_ui() -> MainWindow {
                 *pending_preset_undo.borrow_mut() =
                     snapshot.map(|j| (j, core_mode));
                 ui.set_snackbar_text(
-                    format!("'{}' applied", preset.name).into(),
+                    ui.global::<Tr>()
+                        .invoke_applied(preset.name.clone().into()),
                 );
                 ui.set_snackbar_show_undo(true);
                 ui.set_snackbar_visible(true);
@@ -6095,7 +6126,9 @@ fn build_ui() -> MainWindow {
                 );
                 *pending_override_restore.borrow_mut() =
                     prior.map(|p| (uuid.clone(), p, core_mode));
-                ui.set_snackbar_text("Preset overridden".into());
+                ui.set_snackbar_text(
+                    ui.global::<Tr>().invoke_preset_overridden(),
+                );
                 ui.set_snackbar_show_undo(true);
                 ui.set_snackbar_visible(true);
                 let weak_inner = ui.as_weak();
@@ -6324,7 +6357,8 @@ fn build_ui() -> MainWindow {
                     row.config_json.clone(),
                 ));
                 ui.set_snackbar_text(
-                    format!("'{}' deleted", row.name).into(),
+                    ui.global::<Tr>()
+                        .invoke_deleted(row.name.clone().into()),
                 );
                 ui.set_snackbar_show_undo(true);
                 ui.set_snackbar_visible(true);
@@ -9186,12 +9220,15 @@ fn build_ui() -> MainWindow {
                         Err(SyncSettingsError::EmptyUrl)
                         | Err(SyncSettingsError::EmptyUsername) => {
                             break 'save
-                                "Enter URL and username".into();
+                                ui.global::<Tr>()
+                                    .invoke_enter_url_and_username()
+                                    .to_string();
                         }
                         Err(SyncSettingsError::InsecureUrl) => {
                             break 'save
-                                "URL must start with https://"
-                                    .into();
+                                ui.global::<Tr>()
+                                    .invoke_url_must_be_https()
+                                    .to_string();
                         }
                         // prepare_save never consults the keychain.
                         Err(SyncSettingsError::NoPassword)
@@ -9206,7 +9243,10 @@ fn build_ui() -> MainWindow {
                         &plan.password
                     {
                         let Some(app) = android_app() else {
-                            break 'save "Save failed".into();
+                            break 'save ui
+                                .global::<Tr>()
+                                .invoke_save_failed()
+                                .to_string();
                         };
                         if !keychain::store_password(
                             app,
@@ -9215,7 +9255,9 @@ fn build_ui() -> MainWindow {
                             new_password,
                         ) {
                             break 'save
-                                "Keystore write failed".into();
+                                ui.global::<Tr>()
+                                    .invoke_keystore_write_failed()
+                                    .to_string();
                         }
                         // Stored → blank the field (GTK parity).
                         ui.set_prefs_password(
@@ -9225,15 +9267,21 @@ fn build_ui() -> MainWindow {
                     let account_result = {
                         let Some(db_arc) = DATABASE.get() else {
                             break 'save
-                                "Database unavailable".into();
+                                ui.global::<Tr>()
+                                    .invoke_db_unavailable()
+                                    .to_string();
                         };
                         let Ok(guard) = db_arc.lock() else {
                             break 'save
-                                "Database unavailable".into();
+                                ui.global::<Tr>()
+                                    .invoke_db_unavailable()
+                                    .to_string();
                         };
                         let Some(db) = guard.as_ref() else {
                             break 'save
-                                "Database unavailable".into();
+                                ui.global::<Tr>()
+                                    .invoke_db_unavailable()
+                                    .to_string();
                         };
                         meditate_core::sync::settings::set_nextcloud_account(
                             db,
@@ -9246,13 +9294,18 @@ fn build_ui() -> MainWindow {
                             "sync.settings",
                             &format!("save failed: {e:?}"),
                         );
-                        break 'save "Save failed".into();
+                        break 'save ui
+                            .global::<Tr>()
+                            .invoke_save_failed()
+                            .to_string();
                     }
                     // Both credential pieces are in place —
                     // kick off the first sync (GTK parity:
                     // app.trigger_sync() after save).
                     trigger_sync("prefs save");
-                    "Sync settings saved".into()
+                    ui.global::<Tr>()
+                        .invoke_sync_settings_saved()
+                        .to_string()
                 };
 
                 // Plain-toast raise (no Undo). Single slot: clear
@@ -9732,13 +9785,22 @@ fn build_ui() -> MainWindow {
                         let copy = match e {
                             SyncSettingsError::EmptyUrl
                             | SyncSettingsError::EmptyUsername => {
-                                "Enter URL and username"
+                                {
+                                    ui.global::<Tr>()
+                                        .invoke_enter_url_and_username()
+                                }
                             }
                             SyncSettingsError::NoPassword => {
-                                "Enter a password"
+                                {
+                                    ui.global::<Tr>()
+                                        .invoke_enter_a_password()
+                                }
                             }
                             SyncSettingsError::KeyringFailed => {
-                                "Keystore read failed"
+                                {
+                                    ui.global::<Tr>()
+                                        .invoke_keystore_read_failed()
+                                }
                             }
                             // prepare_test lets http:// through so
                             // the user can probe it; only Save
@@ -9793,7 +9855,15 @@ fn build_ui() -> MainWindow {
                     let slot = TEST_CONNECTION_RESULT
                         .get_or_init(|| std::sync::Mutex::new(None));
                     if let Ok(mut guard) = slot.lock() {
-                        *guard = Some((r.to_string(), r.detail()));
+                        use meditate_core::sync::credentials::TestConnectionResult as R;
+                        let kind: u8 = match &r {
+                            R::Ok => 0,
+                            R::Unauthorized => 1,
+                            R::NotWebDavRoot => 2,
+                            R::Network(_) => 3,
+                            R::Other(_) => 4,
+                        };
+                        *guard = Some((kind, r.detail()));
                     }
                 });
             }
@@ -10168,11 +10238,10 @@ fn build_ui() -> MainWindow {
             // `meditate-gtk/src/announcement.rs:17`. i18n isn't
             // wired on Android yet (see the delete-snackbar
             // note); inline English until it is.
-            let text = if minutes == 1 {
-                "Recovered 1 min session".to_string()
-            } else {
-                format!("Recovered {minutes} min session")
-            };
+            let text = ui
+                .global::<Tr>()
+                .invoke_recovered_min(minutes as i32)
+                .to_string();
             *recovery_uuid.borrow_mut() = Some(uuid);
             // Single slot: a recovery snackbar supersedes any
             // in-flight preset Undo context.

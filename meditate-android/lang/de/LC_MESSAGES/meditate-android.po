@@ -1,10 +1,11 @@
-# Android shell translations — harvested from the GTK
-# shell po files where msgids match; German gaps filled
-# by hand (2026-07-17). Untranslated ids fall back to
-# English at runtime.
+# Android shell translations — inline @tr() strings +
+# the Tr message catalogue (Rust-side strings). Harvested
+# from the GTK po files where msgids match; German is
+# hand-completed. Untranslated ids fall back to English.
 msgid ""
 msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
 msgid " min"
 msgstr " Min."
@@ -15,8 +16,20 @@ msgstr "' wird von diesem Gerät und allen synchronisierten Geräten entfernt."
 msgid "' with the current settings?"
 msgstr "' mit den aktuellen Einstellungen überschreiben?"
 
+msgid "'{}' applied"
+msgstr "„{}“ angewendet"
+
+msgid "'{}' deleted"
+msgstr "„{}“ gelöscht"
+
+msgid "1 day · keep going"
+msgstr "1 Tag · weiter so"
+
 msgid "About"
 msgstr "Über"
+
+msgid "About {}"
+msgstr "Etwa {}"
 
 msgid "Accent colour — tinting for buttons, rings, and highlights."
 msgstr "Akzentfarbe – Färbung für Knöpfe, Ringe und Hervorhebungen."
@@ -26,6 +39,9 @@ msgstr "App-Passwort"
 
 msgid "Appearance"
 msgstr "Erscheinungsbild"
+
+msgid "Authentication failed"
+msgstr "Anmeldung fehlgeschlagen"
 
 msgid "BY LABEL"
 msgstr "NACH LABEL"
@@ -72,6 +88,12 @@ msgstr "Muster wählen"
 msgid "Close"
 msgstr "Schließen"
 
+msgid "Complete a meditation to start seeing insights here"
+msgstr "Schließe eine Meditation ab, um hier Einblicke zu sehen"
+
+msgid "Connection OK"
+msgstr "Verbindung OK"
+
 msgid "Converting… "
 msgstr "Konvertiere… "
 
@@ -114,6 +136,9 @@ msgstr "Signale während der Phasen"
 msgid "Current file"
 msgstr "Aktuelle Datei"
 
+msgid "Current streak"
+msgstr "Aktuelle Serie"
+
 msgid "Custom Time"
 msgstr "Eigene Zeit"
 
@@ -126,11 +151,17 @@ msgstr "Tagesziel"
 msgid "Daily goal"
 msgstr "Tagesziel"
 
+msgid "Daily rhythm"
+msgstr "Tagesrhythmus"
+
 msgid "Danger Zone"
 msgstr "Gefahrenzone"
 
 msgid "Data"
 msgstr "Daten"
+
+msgid "Database unavailable"
+msgstr "Datenbank nicht verfügbar"
 
 msgid "Date"
 msgstr "Datum"
@@ -174,11 +205,20 @@ msgstr "Bearbeiten"
 msgid "End Bell"
 msgstr "Endglocke"
 
+msgid "Enter URL and username"
+msgstr "URL und Benutzername eingeben"
+
+msgid "Enter a password"
+msgstr "Passwort eingeben"
+
 msgid "Every N min"
 msgstr "Alle N Min."
 
 msgid "Exhale"
 msgstr "Ausatmen"
+
+msgid "Export failed"
+msgstr "Export fehlgeschlagen"
 
 msgid "Export session log"
 msgstr "Sitzungen exportieren"
@@ -194,6 +234,9 @@ msgstr "Beenden"
 
 msgid "From start"
 msgstr "Ab Beginn"
+
+msgid "Goal reached · {} today"
+msgstr "Ziel erreicht · {} heute"
 
 msgid "Guided"
 msgstr "Geführt"
@@ -219,8 +262,17 @@ msgstr "EINBLICKE"
 msgid "Import"
 msgstr "Importieren"
 
+msgid "Import Bell Sound"
+msgstr "Klang importieren"
+
 msgid "Import File"
 msgstr "Datei importieren"
+
+msgid "Import Guided File"
+msgstr "Geführte Meditation importieren"
+
+msgid "Import failed — see Diagnostics"
+msgstr "Import fehlgeschlagen – siehe Diagnose"
 
 msgid "Import from Insight Timer"
 msgstr "Aus Insight Timer importieren"
@@ -230,6 +282,9 @@ msgstr "Aus Meditate-CSV importieren"
 
 msgid "Import sound…"
 msgstr "Klang importieren…"
+
+msgid "Importing: {} ({})"
+msgstr "Importiere: {} ({})"
 
 msgid "Inhale"
 msgstr "Einatmen"
@@ -246,6 +301,12 @@ msgstr "Streuung %"
 msgid "Keep Screen Awake"
 msgstr "Bildschirm wachhalten"
 
+msgid "Keystore read failed"
+msgstr "Keystore-Lesen fehlgeschlagen"
+
+msgid "Keystore write failed"
+msgstr "Keystore-Schreiben fehlgeschlagen"
+
 msgid "Kind"
 msgstr "Art"
 
@@ -258,6 +319,9 @@ msgstr "Kategorie"
 msgid "Label name"
 msgstr "Kategoriename"
 
+msgid "Last sync failed — tap to retry\n{}"
+msgstr "Letzte Synchronisation fehlgeschlagen – zum Wiederholen tippen\n{}"
+
 msgid "Less"
 msgstr "Weniger"
 
@@ -269,6 +333,18 @@ msgstr "Mehr laden"
 
 msgid "Log"
 msgstr "Verlauf"
+
+msgid "Longest session"
+msgstr "Längste Sitzung"
+
+msgid "MINUTES / DAY"
+msgstr "MINUTEN / TAG"
+
+msgid "MINUTES / MONTH"
+msgstr "MINUTEN / MONAT"
+
+msgid "MINUTES / WEEK"
+msgstr "MINUTEN / WOCHE"
 
 msgid "Manage Bells"
 msgstr "Glocken verwalten"
@@ -300,6 +376,12 @@ msgstr "Mehr"
 msgid "Name"
 msgstr "Name"
 
+msgid "Network error"
+msgstr "Netzwerkfehler"
+
+msgid "Next milestone"
+msgstr "Nächster Meilenstein"
+
 msgid "Nextcloud Sync"
 msgstr "Nextcloud-Synchronisation"
 
@@ -315,8 +397,14 @@ msgstr "Keine Datei ausgewählt"
 msgid "No note added"
 msgstr "Keine Notiz"
 
+msgid "No sessions yet"
+msgstr "Noch keine Sitzungen"
+
 msgid "No starred files"
 msgstr "Keine markierten Dateien"
+
+msgid "Not a WebDAV folder"
+msgstr "Kein WebDAV-Ordner"
 
 msgid "Note"
 msgstr "Notiz"
@@ -351,14 +439,26 @@ msgstr "Signal beim Ende der Sitzung"
 msgid "Points"
 msgstr "Punkte"
 
+msgid "Practising less"
+msgstr "Weniger Praxis"
+
+msgid "Practising more"
+msgstr "Mehr Praxis"
+
 msgid "Preferences"
 msgstr "Einstellungen"
+
+msgid "Preferred time"
+msgstr "Bevorzugte Zeit"
 
 msgid "Preparation Time"
 msgstr "Vorbereitungszeit"
 
 msgid "Preset name"
 msgstr "Name der Voreinstellung"
+
+msgid "Preset overridden"
+msgstr "Voreinstellung überschrieben"
 
 msgid "Presets"
 msgstr "Voreinstellungen"
@@ -371,6 +471,9 @@ msgstr "Vorschau"
 
 msgid "Push My Data"
 msgstr "Meine Daten hochladen"
+
+msgid "Recovered {} min session"
+msgstr "{}-Min.-Sitzung wiederhergestellt"
 
 msgid "Remote data appears wiped"
 msgstr "Serverdaten scheinen gelöscht"
@@ -405,6 +508,9 @@ msgstr "Voreinstellung speichern"
 msgid "Save Settings"
 msgstr "Einstellungen speichern"
 
+msgid "Save failed"
+msgstr "Speichern fehlgeschlagen"
+
 msgid "Seconds"
 msgstr "Sekunden"
 
@@ -420,8 +526,14 @@ msgstr "Ausgewählt"
 msgid "Server URL"
 msgstr "Server-URL"
 
+msgid "Server error"
+msgstr "Serverfehler"
+
 msgid "Session"
 msgstr "Sitzung"
+
+msgid "Session log exported"
+msgstr "Sitzungsprotokoll exportiert"
 
 msgid "Set"
 msgstr "Festlegen"
@@ -459,8 +571,20 @@ msgstr "Stoppuhr-Modus"
 msgid "Stores URL and username locally; password goes to the Android Keystore. Leave the password blank to keep the stored one."
 msgstr "Speichert URL und Benutzername lokal; das Passwort landet im Android-Keystore. Feld leer lassen, um das gespeicherte Passwort zu behalten."
 
+msgid "Sync configured (waiting for first run)"
+msgstr "Sync eingerichtet (wartet auf ersten Lauf)"
+
 msgid "Sync sessions, labels, and preferences between your devices via your own Nextcloud server."
 msgstr "Synchronisiert Sitzungen, Labels und Einstellungen über deinen eigenen Nextcloud-Server."
+
+msgid "Sync settings saved"
+msgstr "Sync-Einstellungen gespeichert"
+
+msgid "Synced just now"
+msgstr "Gerade synchronisiert"
+
+msgid "Syncing with Nextcloud…"
+msgstr "Synchronisiere mit Nextcloud…"
 
 msgid "Tag this session"
 msgstr "Sitzung taggen"
@@ -486,6 +610,9 @@ msgstr "Löscht dauerhaft alle Sitzungen, Labels und Ereignisse auf diesem Gerä
 msgid "This permanently removes every logged session from this device — and, via sync, from your other devices.\n\nThis cannot be undone."
 msgstr "Entfernt dauerhaft alle aufgezeichneten Sitzungen von diesem Gerät – und per Sync auch von deinen anderen Geräten.\n\nDies kann nicht rückgängig gemacht werden."
 
+msgid "This week's practice"
+msgstr "Praxis diese Woche"
+
 msgid "Time"
 msgstr "Uhrzeit"
 
@@ -500,6 +627,12 @@ msgstr "Passe die Filter an."
 
 msgid "Type"
 msgstr "Typ"
+
+msgid "Typical session"
+msgstr "Typische Sitzung"
+
+msgid "URL must start with https://"
+msgstr "URL muss mit https:// beginnen"
 
 msgid "Undo"
 msgstr "Rückgängig"
@@ -522,3 +655,64 @@ msgstr "h "
 msgid "min"
 msgstr "Min."
 
+msgid "{} average over last 7 days"
+msgstr "{} Durchschnitt der letzten 7 Tage"
+
+msgid "{} on {}"
+msgstr "{} am {}"
+
+msgid "{} to go today"
+msgstr "Noch {} heute"
+
+msgid "{}% down vs last week ({} vs {})"
+msgstr "{} % weniger als letzte Woche ({} vs. {})"
+
+msgid "{}% of sessions are in the afternoon"
+msgstr "{} % der Sitzungen sind am Nachmittag"
+
+msgid "{}% of sessions are in the evening"
+msgstr "{} % der Sitzungen sind am Abend"
+
+msgid "{}% of sessions are in the morning"
+msgstr "{} % der Sitzungen sind am Morgen"
+
+msgid "{}% up vs last week ({} vs {})"
+msgstr "{} % mehr als letzte Woche ({} vs. {})"
+
+msgid "{}% vs last month ({} vs {})"
+msgstr "{} % vs. letzten Monat ({} vs. {})"
+
+msgid "Imported {n} session"
+msgid_plural "Imported {n} sessions"
+msgstr[0] "{n} Sitzung importiert"
+msgstr[1] "{n} Sitzungen importiert"
+
+msgid "Synced {n} day ago"
+msgid_plural "Synced {n} days ago"
+msgstr[0] "Vor {n} Tag synchronisiert"
+msgstr[1] "Vor {n} Tagen synchronisiert"
+
+msgid "Synced {n} hour ago"
+msgid_plural "Synced {n} hours ago"
+msgstr[0] "Vor {n} Stunde synchronisiert"
+msgstr[1] "Vor {n} Stunden synchronisiert"
+
+msgid "Synced {n} minute ago"
+msgid_plural "Synced {n} minutes ago"
+msgstr[0] "Vor {n} Minute synchronisiert"
+msgstr[1] "Vor {n} Minuten synchronisiert"
+
+msgid "{n} day · best was {0}"
+msgid_plural "{n} days · best was {0}"
+msgstr[0] "{n} Tag · Bestwert war {0}"
+msgstr[1] "{n} Tage · Bestwert war {0}"
+
+msgid "{n} day — new record"
+msgid_plural "{n} days — new record"
+msgstr[0] "{n} Tag – neuer Rekord"
+msgstr[1] "{n} Tage – neuer Rekord"
+
+msgid "{n} session to your {0}th"
+msgid_plural "{n} sessions to your {0}th"
+msgstr[0] "Noch {n} Sitzung bis zur {0}."
+msgstr[1] "Noch {n} Sitzungen bis zur {0}."

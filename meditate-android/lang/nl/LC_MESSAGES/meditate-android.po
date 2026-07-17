@@ -1,25 +1,41 @@
-# Android shell translations — harvested from the GTK
-# shell po files where msgids match; German gaps filled
-# by hand (2026-07-17). Untranslated ids fall back to
-# English at runtime.
+# Android shell translations — inline @tr() strings +
+# the Tr message catalogue (Rust-side strings). Harvested
+# from the GTK po files where msgids match; German is
+# hand-completed. Untranslated ids fall back to English.
 msgid ""
 msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgid "1 day · keep going"
+msgstr "1 dag · ga zo door"
 
 msgid "Cancel"
 msgstr "Annuleren"
 
+msgid "Complete a meditation to start seeing insights here"
+msgstr "Voltooi een meditatie om hier inzichten te zien"
+
 msgid "Create"
 msgstr "Aanmaken"
 
+msgid "Current streak"
+msgstr "Huidige reeks"
+
 msgid "Custom Time"
 msgstr "Aangepaste tijd"
+
+msgid "Daily rhythm"
+msgstr "Dagelijks ritme"
 
 msgid "Danger Zone"
 msgstr "Gevarenzone"
 
 msgid "Data"
 msgstr "Gegevens"
+
+msgid "Database unavailable"
+msgstr "Database niet beschikbaar"
 
 msgid "Date"
 msgstr "Datum"
@@ -87,6 +103,9 @@ msgstr "Meer laden"
 msgid "Log"
 msgstr "Logboek"
 
+msgid "Longest session"
+msgstr "Langste sessie"
+
 msgid "Meditate"
 msgstr "Meditate"
 
@@ -95,6 +114,9 @@ msgstr "Minuten"
 
 msgid "More"
 msgstr "Meer"
+
+msgid "Next milestone"
+msgstr "Volgende mijlpaal"
 
 msgid "No Matching Sessions"
 msgstr "Geen overeenkomende sessies"
@@ -108,11 +130,23 @@ msgstr "Geen bestand geselecteerd"
 msgid "No note added"
 msgstr "Geen notitie"
 
+msgid "No sessions yet"
+msgstr "Nog geen sessies"
+
 msgid "Note (optional)"
 msgstr "Notitie (optioneel)"
 
+msgid "Practising less"
+msgstr "Minder oefening"
+
+msgid "Practising more"
+msgstr "Meer oefening"
+
 msgid "Preferences"
 msgstr "Voorkeuren"
+
+msgid "Preferred time"
+msgstr "Voorkeurstijd"
 
 msgid "Save"
 msgstr "Opslaan"
@@ -135,15 +169,20 @@ msgstr "Statistieken"
 msgid "Stop"
 msgstr "Stoppen"
 
+msgid "This week's practice"
+msgstr "Praktijk deze week"
+
 msgid "Timer"
 msgstr "Timer"
 
 msgid "Try changing your filters."
 msgstr "Probeer je filters te wijzigen."
 
+msgid "Typical session"
+msgstr "Typische sessie"
+
 msgid "Undo"
 msgstr "Ongedaan maken"
 
 msgid "min"
 msgstr "min"
-
