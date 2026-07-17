@@ -19,6 +19,8 @@ mod guided;
 #[cfg(target_os = "android")]
 mod keychain;
 #[cfg(target_os = "android")]
+mod about;
+#[cfg(target_os = "android")]
 mod screen;
 #[cfg(target_os = "android")]
 mod sync_runner;
@@ -8753,6 +8755,11 @@ fn build_ui() -> MainWindow {
                     meditate_core::goal::daily_goal_mins_from_db(db)
                 };
                 ui.set_prefs_goal_mins(goal_mins as i32);
+                if let Some(app) = android_app() {
+                    ui.set_about_version(
+                        about::version_name(app).into(),
+                    );
+                }
                 ui.set_preferences_page(true);
             }
             let _ = weak.clone();
@@ -9034,6 +9041,96 @@ fn build_ui() -> MainWindow {
                     }
                 }
                 refresh_stats(&ui);
+            }
+            let _ = weak.clone();
+        });
+    }
+
+    // About + diagnostics (AB).
+    {
+        let weak = ui.as_weak();
+        ui.on_about_issue_tap(move || {
+            #[cfg(target_os = "android")]
+            if let Some(app) = android_app() {
+                about::open_url(
+                    app,
+                    "https://github.com/janekbt/MeditationApp/issues",
+                );
+            }
+            let _ = weak.clone();
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_diag_open_tap(move || {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                // Tail the log: the file grows unbounded-ish over
+                // months; a Text element with hundreds of KB is
+                // slow to lay out and the old entries aren't what
+                // a bug report needs. 64 KB ≈ the last few weeks.
+                const TAIL: usize = 64 * 1024;
+                let full = meditate_core::diag::read_all();
+                let text = if full.len() > TAIL {
+                    let cut = full.len() - TAIL;
+                    let start = full[cut..]
+                        .find('\n')
+                        .map(|i| cut + i + 1)
+                        .unwrap_or(cut);
+                    format!(
+                        "[… older entries truncated — Share sends this same tail]\n{}",
+                        &full[start..],
+                    )
+                } else {
+                    full
+                };
+                ui.set_diag_text(text.into());
+                ui.set_diag_page(true);
+            }
+            let _ = weak.clone();
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_diag_back(move || {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                ui.set_diag_page(false);
+                // Drop the big string so it isn't resident while
+                // the page is closed.
+                ui.set_diag_text(slint::SharedString::new());
+            }
+            let _ = weak.clone();
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_diag_copy_tap(move || {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                if let Some(app) = android_app() {
+                    about::copy_text(
+                        app,
+                        "meditate-diagnostics",
+                        ui.get_diag_text().as_str(),
+                    );
+                }
+            }
+            let _ = weak.clone();
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_diag_share_tap(move || {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                if let Some(app) = android_app() {
+                    about::share_text(
+                        app,
+                        "Meditate diagnostics log",
+                        ui.get_diag_text().as_str(),
+                    );
+                }
             }
             let _ = weak.clone();
         });
@@ -9387,6 +9484,11 @@ fn build_ui() -> MainWindow {
             #[cfg(target_os = "android")]
             if ui.get_goal_dialog_open() {
                 ui.set_goal_dialog_open(false);
+                return;
+            }
+            #[cfg(target_os = "android")]
+            if ui.get_diag_page() {
+                ui.invoke_diag_back();
                 return;
             }
             #[cfg(target_os = "android")]
