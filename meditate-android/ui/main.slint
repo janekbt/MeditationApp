@@ -4348,7 +4348,13 @@ export component MainWindow inherits Window {
         height: parent.height;
         background: MaterialPalette.surface;
 
-        VerticalLayout {
+        // Scrollable (bug-audit): long lists overflowed with no
+        // scroll at all — same Flickable treatment as Setup.
+        Flickable {
+            viewport-width: self.width;
+            viewport-height: es-scroll.preferred-height;
+
+            es-scroll := VerticalLayout {
             padding-top: root.status-bar-inset + 16px;
             padding-bottom: root.bottom-bar-inset + 16px;
             padding-left: 16px;
@@ -4482,110 +4488,9 @@ export component MainWindow inherits Window {
                 text <=> root.edit-note-text;
             }
         }
+        } // Flickable (es-scroll)
     }
 
-
-    // ── Duration dialog (modal overlay, on top of both screens) ─
-    // Declared AFTER the Edit-Session overlay so it draws on top
-    // of it (Slint renders later children above earlier ones).
-    // Without this z-order the popup opens but is occluded by
-    // the Edit-Session slide-over surface and the user just sees
-    // nothing happen on tap.
-    if root.duration-dialog-open : Rectangle {
-        // Scrim — taps outside the card cancel.
-        background: #00000080;
-        TouchArea {
-            clicked => { root.duration-dialog-open = false; }
-        }
-
-        // Card. Height tracks the inner layout's preferred-height
-        // so the card sizes to its content rather than stretching
-        // to the scrim's full height.
-        Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
-            width: 320px;
-            height: card-content.preferred-height;
-            background: MaterialPalette.surface-container-high;
-            border-radius: 28px;
-
-            // Catch clicks on the card itself so they don't reach
-            // the scrim's TouchArea and dismiss the dialog.
-            TouchArea {}
-
-            card-content := VerticalLayout {
-                padding: 24px;
-                spacing: 16px;
-
-                Text {
-                    text: "Custom Time";
-                    font-size: 22px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface;
-                }
-                Text {
-                    text: "Hours : Minutes";
-                    font-size: 14px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface-variant;
-                }
-
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: center;
-
-                    VerticalSpinBox {
-                        value <=> root.dialog-hours;
-                        min-value: 0;
-                        max-value: 23;
-                    }
-                    Text {
-                        text: ":";
-                        font-size: 40px;
-                        vertical-alignment: center;
-                        color: MaterialPalette.on-surface;
-                    }
-                    VerticalSpinBox {
-                        value <=> root.dialog-minutes;
-                        min-value: 0;
-                        max-value: 59;
-                    }
-                }
-
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: end;
-
-                    TextButton {
-                        text: "Cancel";
-                        clicked => { root.duration-dialog-open = false; }
-                    }
-                    TextButton {
-                        text: "Set";
-                        clicked => {
-                            // Refuse to commit a zero-duration set,
-                            // mirroring the GTK shell's guard.
-                            if (root.dialog-hours > 0 || root.dialog-minutes > 0) {
-                                if (root.edit-session-page) {
-                                    // Edit-Session overlay owns this
-                                    // open — write the new value to
-                                    // the edit-duration-* pair so the
-                                    // Save handler picks it up.
-                                    root.edit-duration-hours = root.dialog-hours;
-                                    root.edit-duration-minutes = root.dialog-minutes;
-                                } else {
-                                    root.setup-hours = root.dialog-hours;
-                                    root.setup-minutes = root.dialog-minutes;
-                                    root.duration-committed();
-                                }
-                            }
-                            root.duration-dialog-open = false;
-                        }
-                    }
-                }
-            }
-        }
-    }
 
     // ── Date + Time pickers (Material PopupWindows) ─────────────
     // Imperative show / close, driven from the Edit-Session
@@ -4627,95 +4532,6 @@ export component MainWindow inherits Window {
         ok => {
             root.edit-start-time = time-popup.get_current_time();
             time-popup.close();
-        }
-    }
-
-    // ── Filter sheet (L-5) ──────────────────────────────────────
-    // Modal overlay over the Log feed. Has Notes SwitchRow +
-    // Label DropDownMenu; same scrim-tap-dismiss + card-tap-stop
-    // pattern as the other modal dialogs.
-    //
-    // NB: gated by `visible:` rather than `if:` (unlike the
-    // sibling dialogs). Material's `DropDownMenu` keeps its
-    // displayed text in a private `text_field.text` that's only
-    // refreshed from inside its own `changed current_index`
-    // handler — there's no `in` text/selection setter. An
-    // `if`-gated sheet rebuilds the DropDownMenu on every open,
-    // and a freshly-constructed instance whose bound
-    // `current-index` already equals the active value never
-    // fires `changed`, so it renders blank. Keeping the subtree
-    // alive (just hidden) preserves the dropdown's display
-    // state across opens. `visible: false` elements don't render
-    // or receive input, so the scrim still behaves modally.
-    Rectangle {
-        visible: root.filter-sheet-open;
-        background: #00000080;
-        TouchArea {
-            clicked => { root.filter-sheet-open = false; }
-        }
-
-        Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
-            width: 320px;
-            height: filter-card-content.preferred-height;
-            background: MaterialPalette.surface-container-high;
-            border-radius: 28px;
-
-            TouchArea {}
-
-            filter-card-content := VerticalLayout {
-                padding: 24px;
-                spacing: 16px;
-
-                Text {
-                    text: "Filter Sessions";
-                    font-size: 22px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface;
-                }
-
-                // Has Notes toggle — mirrors GTK's
-                // `Adw.SwitchRow filter_notes_row { title:
-                // _("Has Notes"); }` at
-                // `meditate-gtk/data/ui/window.blp:102`. Instant
-                // apply: flipping the switch fires
-                // `filter-notes-toggled`, Rust reloads page 0
-                // with the new filter and closes the sheet (the
-                // Label chooser row lands in L-5c).
-                BoxedList {
-                    SwitchRow {
-                        title: "Has Notes";
-                        subtitle: "Only sessions with a note";
-                        checked <=> root.filter-notes-only;
-                        toggled(on) => { root.filter-notes-toggled(on); }
-                    }
-                }
-
-                // Label filter dropdown — Material's ComboRow
-                // analogue. Index 0 is the synthetic "All labels"
-                // entry (clears the filter). Instant-apply: a
-                // pick fires `filter-label-selected`, Rust
-                // reloads + closes the sheet, matching GTK's
-                // `filter_label_row` notify handler at
-                // `meditate-gtk/src/window/imp.rs:799`.
-                DropDownMenu {
-                    label: "Label";
-                    items: root.filter-label-items;
-                    current-index <=> root.filter-label-index;
-                    selected(idx) => { root.filter-label-selected(idx); }
-                }
-
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: end;
-
-                    TextButton {
-                        text: "Close";
-                        clicked => { root.filter-sheet-open = false; }
-                    }
-                }
-            }
         }
     }
 
@@ -4913,6 +4729,201 @@ export component MainWindow inherits Window {
         }
     }
 
+    // NOTE (bug-audit relocation): the Duration dialog and the Log
+    // filter sheet were declared BEFORE the AppBar + NavigationBar,
+    // which therefore rendered ON TOP of their modal scrims — tabs
+    // and AppBar buttons stayed tappable under an open modal and
+    // could strand it over another page. Both now live here, after
+    // the app chrome, so the scrim really is modal.
+    // ── Filter sheet (L-5) ──────────────────────────────────────
+    // Modal overlay over the Log feed. Has Notes SwitchRow +
+    // Label DropDownMenu; same scrim-tap-dismiss + card-tap-stop
+    // pattern as the other modal dialogs.
+    //
+    // NB: gated by `visible:` rather than `if:` (unlike the
+    // sibling dialogs). Material's `DropDownMenu` keeps its
+    // displayed text in a private `text_field.text` that's only
+    // refreshed from inside its own `changed current_index`
+    // handler — there's no `in` text/selection setter. An
+    // `if`-gated sheet rebuilds the DropDownMenu on every open,
+    // and a freshly-constructed instance whose bound
+    // `current-index` already equals the active value never
+    // fires `changed`, so it renders blank. Keeping the subtree
+    // alive (just hidden) preserves the dropdown's display
+    // state across opens. `visible: false` elements don't render
+    // or receive input, so the scrim still behaves modally.
+    Rectangle {
+        visible: root.filter-sheet-open;
+        background: #00000080;
+        TouchArea {
+            clicked => { root.filter-sheet-open = false; }
+        }
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 320px;
+            height: filter-card-content.preferred-height;
+            background: MaterialPalette.surface-container-high;
+            border-radius: 28px;
+
+            TouchArea {}
+
+            filter-card-content := VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+
+                Text {
+                    text: "Filter Sessions";
+                    font-size: 22px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface;
+                }
+
+                // Has Notes toggle — mirrors GTK's
+                // `Adw.SwitchRow filter_notes_row { title:
+                // _("Has Notes"); }` at
+                // `meditate-gtk/data/ui/window.blp:102`. Instant
+                // apply: flipping the switch fires
+                // `filter-notes-toggled`, Rust reloads page 0
+                // with the new filter and closes the sheet (the
+                // Label chooser row lands in L-5c).
+                BoxedList {
+                    SwitchRow {
+                        title: "Has Notes";
+                        subtitle: "Only sessions with a note";
+                        checked <=> root.filter-notes-only;
+                        toggled(on) => { root.filter-notes-toggled(on); }
+                    }
+                }
+
+                // Label filter dropdown — Material's ComboRow
+                // analogue. Index 0 is the synthetic "All labels"
+                // entry (clears the filter). Instant-apply: a
+                // pick fires `filter-label-selected`, Rust
+                // reloads + closes the sheet, matching GTK's
+                // `filter_label_row` notify handler at
+                // `meditate-gtk/src/window/imp.rs:799`.
+                DropDownMenu {
+                    label: "Label";
+                    items: root.filter-label-items;
+                    current-index <=> root.filter-label-index;
+                    selected(idx) => { root.filter-label-selected(idx); }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+
+                    TextButton {
+                        text: "Close";
+                        clicked => { root.filter-sheet-open = false; }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Duration dialog (modal overlay, on top of both screens) ─
+    // Declared after the Edit-Session overlay AND the AppBar /
+    // NavigationBar so its scrim covers all of them (Slint
+    // renders later children above earlier ones).
+    if root.duration-dialog-open : Rectangle {
+        // Scrim — taps outside the card cancel.
+        background: #00000080;
+        TouchArea {
+            clicked => { root.duration-dialog-open = false; }
+        }
+
+        // Card. Height tracks the inner layout's preferred-height
+        // so the card sizes to its content rather than stretching
+        // to the scrim's full height.
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 320px;
+            height: card-content.preferred-height;
+            background: MaterialPalette.surface-container-high;
+            border-radius: 28px;
+
+            // Catch clicks on the card itself so they don't reach
+            // the scrim's TouchArea and dismiss the dialog.
+            TouchArea {}
+
+            card-content := VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+
+                Text {
+                    text: "Custom Time";
+                    font-size: 22px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface;
+                }
+                Text {
+                    text: "Hours : Minutes";
+                    font-size: 14px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface-variant;
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: center;
+
+                    VerticalSpinBox {
+                        value <=> root.dialog-hours;
+                        min-value: 0;
+                        max-value: 23;
+                    }
+                    Text {
+                        text: ":";
+                        font-size: 40px;
+                        vertical-alignment: center;
+                        color: MaterialPalette.on-surface;
+                    }
+                    VerticalSpinBox {
+                        value <=> root.dialog-minutes;
+                        min-value: 0;
+                        max-value: 59;
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+
+                    TextButton {
+                        text: "Cancel";
+                        clicked => { root.duration-dialog-open = false; }
+                    }
+                    TextButton {
+                        text: "Set";
+                        clicked => {
+                            // Refuse to commit a zero-duration set,
+                            // mirroring the GTK shell's guard.
+                            if (root.dialog-hours > 0 || root.dialog-minutes > 0) {
+                                if (root.edit-session-page) {
+                                    // Edit-Session overlay owns this
+                                    // open — write the new value to
+                                    // the edit-duration-* pair so the
+                                    // Save handler picks it up.
+                                    root.edit-duration-hours = root.dialog-hours;
+                                    root.edit-duration-minutes = root.dialog-minutes;
+                                } else {
+                                    root.setup-hours = root.dialog-hours;
+                                    root.setup-minutes = root.dialog-minutes;
+                                    root.duration-committed();
+                                }
+                            }
+                            root.duration-dialog-open = false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // ── Label chooser (overlay, slides over everything) ─────────
     // Mirrors GTK's `push_labels_chooser`: a navigation push with
     // a back-button header bar + a list of label rows. Slides in
@@ -4930,7 +4941,13 @@ export component MainWindow inherits Window {
         height: parent.height;
         background: MaterialPalette.surface;
 
-        VerticalLayout {
+        // Scrollable (bug-audit): long lists overflowed with no
+        // scroll at all — same Flickable treatment as Setup.
+        Flickable {
+            viewport-width: self.width;
+            viewport-height: lab-scroll.preferred-height;
+
+            lab-scroll := VerticalLayout {
             padding-top: root.status-bar-inset + 24px;
             padding-bottom: root.bottom-bar-inset + 24px;
             padding-left: 16px;
@@ -5104,6 +5121,7 @@ export component MainWindow inherits Window {
                 }
             }
         }
+        } // Flickable (lab-scroll)
     }
 
     // ── Interval Bells library (overlay, B-5c-1) ────────────────
@@ -5119,7 +5137,13 @@ export component MainWindow inherits Window {
         height: parent.height;
         background: MaterialPalette.surface;
 
-        VerticalLayout {
+        // Scrollable (bug-audit): long lists overflowed with no
+        // scroll at all — same Flickable treatment as Setup.
+        Flickable {
+            viewport-width: self.width;
+            viewport-height: ib-scroll.preferred-height;
+
+            ib-scroll := VerticalLayout {
             padding-top: root.status-bar-inset + 24px;
             padding-bottom: root.bottom-bar-inset + 24px;
             padding-left: 16px;
@@ -5245,6 +5269,7 @@ export component MainWindow inherits Window {
                 }
             }
         }
+        } // Flickable (ib-scroll)
     }
 
     // ── Interval-bell editor (overlay, B-5c-2) ──────────────────
@@ -5371,7 +5396,13 @@ export component MainWindow inherits Window {
         height: parent.height;
         background: MaterialPalette.surface;
 
-        VerticalLayout {
+        // Scrollable (bug-audit): long lists overflowed with no
+        // scroll at all — same Flickable treatment as Setup.
+        Flickable {
+            viewport-width: self.width;
+            viewport-height: bc-scroll.preferred-height;
+
+            bc-scroll := VerticalLayout {
             padding-top: root.status-bar-inset + 24px;
             padding-bottom: root.bottom-bar-inset + 24px;
             padding-left: 16px;
@@ -5521,6 +5552,7 @@ export component MainWindow inherits Window {
                 }
             }
         }
+        } // Flickable (bc-scroll)
     }
 
     // ── Vibration-pattern chooser (overlay, B-2b) ───────────────
@@ -5538,7 +5570,13 @@ export component MainWindow inherits Window {
         height: parent.height;
         background: MaterialPalette.surface;
 
-        VerticalLayout {
+        // Scrollable (bug-audit): long lists overflowed with no
+        // scroll at all — same Flickable treatment as Setup.
+        Flickable {
+            viewport-width: self.width;
+            viewport-height: pc-scroll.preferred-height;
+
+            pc-scroll := VerticalLayout {
             padding-top: root.status-bar-inset + 24px;
             padding-bottom: root.bottom-bar-inset + 24px;
             padding-left: 16px;
@@ -5712,6 +5750,7 @@ export component MainWindow inherits Window {
                 }
             }
         }
+        } // Flickable (pc-scroll)
     }
 
     // ── Vibration-pattern curve editor (overlay, Phase 6) ───────
@@ -6034,7 +6073,13 @@ export component MainWindow inherits Window {
         height: parent.height;
         background: MaterialPalette.surface;
 
-        VerticalLayout {
+        // Scrollable (bug-audit): long lists overflowed with no
+        // scroll at all — same Flickable treatment as Setup.
+        Flickable {
+            viewport-width: self.width;
+            viewport-height: prc-scroll.preferred-height;
+
+            prc-scroll := VerticalLayout {
             padding-top: root.status-bar-inset + 24px;
             padding-bottom: root.bottom-bar-inset + 24px;
             padding-left: 16px;
@@ -6200,6 +6245,7 @@ export component MainWindow inherits Window {
                 }
             }
         }
+        } // Flickable (prc-scroll)
     }
 
     // ── Create-label dialog (modal overlay) ─────────────────────
@@ -6689,7 +6735,13 @@ export component MainWindow inherits Window {
         height: parent.height;
         background: MaterialPalette.surface;
 
-        VerticalLayout {
+        // Scrollable (bug-audit): long lists overflowed with no
+        // scroll at all — same Flickable treatment as Setup.
+        Flickable {
+            viewport-width: self.width;
+            viewport-height: gm-scroll.preferred-height;
+
+            gm-scroll := VerticalLayout {
             padding-top: root.status-bar-inset + 24px;
             padding-bottom: root.bottom-bar-inset + 24px;
             padding-left: 16px;
@@ -6848,6 +6900,7 @@ export component MainWindow inherits Window {
                 }
             }
         }
+        } // Flickable (gm-scroll)
     }
 
     // ── Preferences page (Phase 7 SY-2) ──────────────────────────

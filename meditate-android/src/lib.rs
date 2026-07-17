@@ -870,6 +870,50 @@ fn refresh_widget() {
 /// A tap arriving mid-session is dropped (logged): silently
 /// pausing a running meditation because a stray widget tap
 /// landed would be worse than ignoring it.
+/// Close every overlay page + modal dialog (bug-audit #9): the
+/// Running view is the lowest overlay layer, so anything left
+/// open would cover a session started underneath it. Preview
+/// audio/haptics are cut by the session start's
+/// StopActiveSignals effect; preview icon state is reset here.
+#[cfg(target_os = "android")]
+fn close_transient_overlays(ui: &MainWindow) {
+    ui.set_preferences_page(false);
+    ui.set_diag_page(false);
+    ui.set_guided_manage_page(false);
+    ui.set_guided_manage_preview_uuid(slint::SharedString::new());
+    ui.set_preset_chooser_page(false);
+    ui.set_bell_chooser_page(false);
+    ui.set_bell_preview_uuid(slint::SharedString::new());
+    ui.set_pattern_chooser_page(false);
+    ui.set_pattern_preview_uuid(slint::SharedString::new());
+    ui.set_vibration_editor_page(false);
+    ui.set_interval_editor_page(false);
+    ui.set_interval_bells_page(false);
+    ui.set_labels_page(false);
+    ui.set_edit_session_page(false);
+    ui.set_filter_sheet_open(false);
+    ui.set_duration_dialog_open(false);
+    ui.set_prep_dialog_open(false);
+    ui.set_goal_dialog_open(false);
+    ui.set_delete_all_dialog_open(false);
+    ui.set_create_label_dialog_open(false);
+    ui.set_rename_label_dialog_open(false);
+    ui.set_delete_label_dialog_open(false);
+    ui.set_create_preset_dialog_open(false);
+    ui.set_rename_preset_dialog_open(false);
+    ui.set_delete_preset_dialog_open(false);
+    ui.set_override_preset_dialog_open(false);
+    ui.set_guided_rename_dialog_open(false);
+    ui.set_recovery_dialog_open(false);
+    ui.set_recovery_wipe_confirm_open(false);
+    // NOT closed: the guided-import dialog while busy (an active
+    // transcode should finish; it sits above Running and shows
+    // its progress) — only when idle.
+    if !ui.get_guided_import_busy() {
+        ui.set_guided_import_dialog_open(false);
+    }
+}
+
 #[cfg(target_os = "android")]
 fn try_widget_deep_link(
     ui: &MainWindow,
@@ -880,14 +924,19 @@ fn try_widget_deep_link(
     let Some(uuid) = widget::take_pending_launch(app) else {
         return false;
     };
-    if state.borrow().is_active() {
+    // Bug-audit #1: `is_active()` is false in Finished, so a
+    // widget tap on the Done screen would autostart a new session
+    // and later OVERWRITE the pending unsaved one. Treat an open
+    // Done page like an active session: surface it, start nothing.
+    if state.borrow().is_active() || ui.get_done_page() {
         // No new session — but the tap still means "show me the
         // timer": bring the Timer tab forward so the already-
-        // running view is visible (it only renders on nav 0).
+        // running / Done view is visible (it only renders on nav 0).
         ui.set_nav_page(0);
+        close_transient_overlays(ui);
         meditate_core::log(
             "widget",
-            &format!("deep-link ignored (session active) uuid={uuid}"),
+            &format!("deep-link ignored (session/done active) uuid={uuid}"),
         );
         return true;
     }
@@ -912,8 +961,13 @@ fn try_widget_deep_link(
             // Stats/Log, the autostarted session would run
             // invisibly behind that tab until the user pressed
             // back. A widget tap means "start and SHOW me the
-            // session", so force the tab first.
+            // session", so force the tab first — and close every
+            // overlay page/dialog too: the Running view is the
+            // LOWEST overlay layer, so a stale Preferences page or
+            // chooser left open would otherwise cover the running
+            // session entirely (bug-audit #9).
             ui.set_nav_page(0);
+            close_transient_overlays(ui);
             let idx = tmode.to_chip_index();
             ui.set_setup_mode(idx);
             ui.invoke_mode_changed(idx);
@@ -2582,26 +2636,35 @@ fn commit_pending_deletes(
     loaded: &std::rc::Rc<std::cell::RefCell<Vec<(i64, meditate_core::db::Session)>>>,
     pending: &std::rc::Rc<std::cell::RefCell<Vec<(i64, meditate_core::db::Session)>>>,
 ) {
-    let drained: Vec<(i64, meditate_core::db::Session)> =
-        std::mem::take(&mut *pending.borrow_mut());
-    if drained.is_empty() {
+    if pending.borrow().is_empty() {
         ui.set_snackbar_visible(false);
         return;
     }
-    if let Some(db_arc) = DATABASE.get() {
-        if let Ok(guard) = db_arc.lock() {
-            if let Some(db) = guard.as_ref() {
-                for (id, _) in &drained {
-                    if let Err(err) = db.delete_session(*id) {
-                        meditate_core::log(
-                            "log.delete.commit.failed",
-                            &format!("rowid {id}: {err:?}"),
-                        );
-                    }
-                }
-            }
+    // Bug-audit #4: acquire the DB BEFORE draining the queue — the
+    // old order drained first, so a lock failure removed the rows
+    // from the UI shadow without deleting them (they ghosted back
+    // on the next feed reset). On failure the queue stays intact
+    // for a later commit, exactly what this fn's contract says.
+    let Some(db_arc) = DATABASE.get() else { return; };
+    let Ok(guard) = db_arc.lock() else {
+        meditate_core::log(
+            "log.delete.commit",
+            "db lock unavailable — batch stays queued",
+        );
+        return;
+    };
+    let Some(db) = guard.as_ref() else { return; };
+    let drained: Vec<(i64, meditate_core::db::Session)> =
+        std::mem::take(&mut *pending.borrow_mut());
+    for (id, _) in &drained {
+        if let Err(err) = db.delete_session(*id) {
+            meditate_core::log(
+                "log.delete.commit.failed",
+                &format!("rowid {id}: {err:?}"),
+            );
         }
     }
+    drop(guard);
     // Drop the now-deleted rows from the in-memory shadow so
     // pagination offsets stay consistent on the next "Load
     // more".
@@ -2610,6 +2673,11 @@ fn commit_pending_deletes(
     loaded.borrow_mut().retain(|(id, _)| !drained_ids.contains(id));
     ui.set_snackbar_visible(false);
     render_log_feed(ui, loaded, pending);
+    // Bug-audit #14: stats can be on screen when the timer-driven
+    // commit lands — re-derive so deleted sessions vanish from the
+    // ring/heatmap immediately. #13: deletions ride sync promptly.
+    refresh_stats(ui);
+    trigger_sync("session delete");
 }
 
 /// Re-render the Log feed from the current shadow state.
@@ -4399,6 +4467,12 @@ fn build_ui() -> MainWindow {
                 {
                     meditate_core::log("test_connection", &detail);
                     ui.set_prefs_test_busy(false);
+                    // Bug-audit #2: see the handler raise sites.
+                    commit_pending_deletes(
+                        &ui,
+                        &loaded_log_sessions_tick,
+                        &pending_deletes_tick,
+                    );
                     recovery_uuid_tick.borrow_mut().take();
                     pending_preset_undo_tick.borrow_mut().take();
                     pending_preset_delete_tick
@@ -4437,6 +4511,12 @@ fn build_ui() -> MainWindow {
                             "Export failed".to_string()
                         }
                     };
+                    // Bug-audit #2: see the handler raise sites.
+                    commit_pending_deletes(
+                        &ui,
+                        &loaded_log_sessions_tick,
+                        &pending_deletes_tick,
+                    );
                     recovery_uuid_tick.borrow_mut().take();
                     pending_preset_undo_tick.borrow_mut().take();
                     pending_preset_delete_tick.borrow_mut().take();
@@ -4515,6 +4595,12 @@ fn build_ui() -> MainWindow {
                                 .to_string()
                         }
                     };
+                    // Bug-audit #2: see the handler raise sites.
+                    commit_pending_deletes(
+                        &ui,
+                        &loaded_log_sessions_tick,
+                        &pending_deletes_tick,
+                    );
                     recovery_uuid_tick.borrow_mut().take();
                     pending_preset_undo_tick.borrow_mut().take();
                     pending_preset_delete_tick.borrow_mut().take();
@@ -4878,17 +4964,30 @@ fn build_ui() -> MainWindow {
                         }
                     }
                 }
-                // Per-file attribution: only a library selection
-                // (starred tap / import) carries a uuid; transient
-                // Open-File picks stay None (GTK parity).
-                let guided_uuid = guided_sel
-                    .borrow()
-                    .as_ref()
-                    .and_then(|s| s.uuid.clone());
+                // Per-file attribution: only a GUIDED session with a
+                // library selection (starred tap / import) carries a
+                // uuid — Timer / Box Breath must stay None even when
+                // a guided file is still selected in the other tab
+                // (bug-audit #3: the gate was missing and Timer rows
+                // got guided_file_uuid attribution).
+                let guided_uuid = if mode
+                    == meditate_core::SessionMode::Guided
+                {
+                    guided_sel
+                        .borrow()
+                        .as_ref()
+                        .and_then(|s| s.uuid.clone())
+                } else {
+                    None
+                };
                 finalize_session(
                     unix_start, elapsed_secs, note, mode, picked,
                     guided_uuid,
                 );
+                // Bug-audit #13: mutations sync promptly (GTK's
+                // with_db_mut auto-trigger analogue) instead of
+                // waiting for the next app launch.
+                trigger_sync("session save");
                 // Refresh the Setup row so when Done slides off and
                 // reveals Setup, the ExpanderRow's master toggle +
                 // subtitle reflect the post-Save mode state.
@@ -5018,9 +5117,16 @@ fn build_ui() -> MainWindow {
     // `open_file_btn`.
     {
         let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let guided_create_import = guided_create_import.clone();
         ui.on_guided_open_tap(move || {
             #[cfg(target_os = "android")]
             if let Some(app) = android_app() {
+                // Bug-audit #10: a cancelled Create-flow picker
+                // leaves the create-import intent set (no cancel
+                // drop-file exists); clear it so this plain pick
+                // isn't routed into the Import dialog.
+                guided_create_import.set(false);
                 guided::open_picker(app);
             }
             let _ = weak.clone();
@@ -5337,6 +5443,10 @@ fn build_ui() -> MainWindow {
     {
         let weak = ui.as_weak();
         #[cfg(target_os = "android")]
+        let loaded_log_sessions = loaded_log_sessions.clone();
+        #[cfg(target_os = "android")]
+        let pending_deletes = pending_deletes.clone();
+        #[cfg(target_os = "android")]
         let pending_guided_delete = pending_guided_delete.clone();
         #[cfg(target_os = "android")]
         let pending_preset_undo = pending_preset_undo.clone();
@@ -5396,6 +5506,12 @@ fn build_ui() -> MainWindow {
 
                 // Shared single-slot snackbar → clear the other
                 // discriminators, stash ours.
+                // Bug-audit #2: this raise steals the shared
+                // delete_timer - commit any pending log-feed
+                // deletes first so they can't be starved (rows
+                // stayed hidden but undeleted and resurrected on
+                // the next feed reload).
+                commit_pending_deletes(&ui, &loaded_log_sessions, &pending_deletes);
                 recovery_uuid.borrow_mut().take();
                 pending_preset_undo.borrow_mut().take();
                 pending_preset_delete.borrow_mut().take();
@@ -5583,6 +5699,10 @@ fn build_ui() -> MainWindow {
     // (GTK's Undo calls `apply_config(&snapshot)`).
     {
         let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let loaded_log_sessions = loaded_log_sessions.clone();
+        #[cfg(target_os = "android")]
+        let pending_deletes = pending_deletes.clone();
         let current_mode = current_mode.clone();
         #[cfg(target_os = "android")]
         let timer_session_secs = timer_session_secs.clone();
@@ -5639,6 +5759,12 @@ fn build_ui() -> MainWindow {
                 // discriminator (clears the recovery one — single
                 // slot, newest flow owns Undo). No snapshot ⇒ show
                 // the message without Undo wiring rather than skip.
+                // Bug-audit #2: this raise steals the shared
+                // delete_timer - commit any pending log-feed
+                // deletes first so they can't be starved (rows
+                // stayed hidden but undeleted and resurrected on
+                // the next feed reload).
+                commit_pending_deletes(&ui, &loaded_log_sessions, &pending_deletes);
                 recovery_uuid.borrow_mut().take();
                 pending_preset_delete.borrow_mut().take();
                 pending_override_restore.borrow_mut().take();
@@ -5832,6 +5958,10 @@ fn build_ui() -> MainWindow {
     }
     {
         let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let loaded_log_sessions = loaded_log_sessions.clone();
+        #[cfg(target_os = "android")]
+        let pending_deletes = pending_deletes.clone();
         let current_mode = current_mode.clone();
         #[cfg(target_os = "android")]
         let pending_save_snapshot = pending_save_snapshot.clone();
@@ -5889,6 +6019,12 @@ fn build_ui() -> MainWindow {
 
                 // Shared snackbar with Undo (restore prior cfg).
                 // Single slot → clear the other discriminators.
+                // Bug-audit #2: this raise steals the shared
+                // delete_timer - commit any pending log-feed
+                // deletes first so they can't be starved (rows
+                // stayed hidden but undeleted and resurrected on
+                // the next feed reload).
+                commit_pending_deletes(&ui, &loaded_log_sessions, &pending_deletes);
                 recovery_uuid.borrow_mut().take();
                 pending_preset_undo.borrow_mut().take();
                 pending_preset_delete.borrow_mut().take();
@@ -6051,6 +6187,10 @@ fn build_ui() -> MainWindow {
     }
     {
         let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let loaded_log_sessions = loaded_log_sessions.clone();
+        #[cfg(target_os = "android")]
+        let pending_deletes = pending_deletes.clone();
         let current_mode = current_mode.clone();
         #[cfg(target_os = "android")]
         let delete_preset_uuid = delete_preset_uuid.clone();
@@ -6102,6 +6242,12 @@ fn build_ui() -> MainWindow {
 
                 // Shared snackbar + Undo (re-insert). Single slot
                 // → clear the other discriminators.
+                // Bug-audit #2: this raise steals the shared
+                // delete_timer - commit any pending log-feed
+                // deletes first so they can't be starved (rows
+                // stayed hidden but undeleted and resurrected on
+                // the next feed reload).
+                commit_pending_deletes(&ui, &loaded_log_sessions, &pending_deletes);
                 recovery_uuid.borrow_mut().take();
                 pending_preset_undo.borrow_mut().take();
                 pending_override_restore.borrow_mut().take();
@@ -7327,6 +7473,9 @@ fn build_ui() -> MainWindow {
                         // Reselect the saved pattern in the chooser
                         // (it stays open underneath).
                         populate_pattern_chooser(&ui, &uuid);
+                // Bug-audit #12: a rename can affect the pattern a
+                // Setup bell row currently shows — re-read subtitles.
+                refresh_bell_rows(&ui);
                     }
                     None => meditate_core::log(
                         "vibration.editor",
@@ -8328,12 +8477,26 @@ fn build_ui() -> MainWindow {
                 if let Some((json, mode)) =
                     pending_preset_undo.borrow_mut().take()
                 {
-                    apply_preset_json(
-                        &ui,
-                        &json,
-                        mode,
-                        &timer_session_secs,
-                    );
+                    // Bug-audit #5: the snapshot belongs to the
+                    // mode it was taken in. After a mode-chip
+                    // switch the Setup shows another mode; blindly
+                    // re-applying would push the snapshot mode's
+                    // stopwatch/duration/label into the visible
+                    // page (the forward path has this guard, the
+                    // Undo path didn't). Mirror it: skip + hide.
+                    if mode == core_mode {
+                        apply_preset_json(
+                            &ui,
+                            &json,
+                            mode,
+                            &timer_session_secs,
+                        );
+                    } else {
+                        meditate_core::log(
+                            "preset.undo",
+                            "skipped: mode switched since apply",
+                        );
+                    }
                     ui.set_snackbar_visible(false);
                     return;
                 }
@@ -8710,6 +8873,8 @@ fn build_ui() -> MainWindow {
                 }
                 editing_session_id.set(None);
                 ui.set_edit_session_page(false);
+                // Bug-audit #13: prompt sync after an edit/insert.
+                trigger_sync("session edit");
                 reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
             }
             let _ = weak.clone();
@@ -8921,6 +9086,10 @@ fn build_ui() -> MainWindow {
     {
         let weak = ui.as_weak();
         #[cfg(target_os = "android")]
+        let loaded_log_sessions = loaded_log_sessions.clone();
+        #[cfg(target_os = "android")]
+        let pending_deletes = pending_deletes.clone();
+        #[cfg(target_os = "android")]
         let recovery_uuid = recovery_uuid.clone();
         #[cfg(target_os = "android")]
         let pending_preset_undo = pending_preset_undo.clone();
@@ -9026,6 +9195,12 @@ fn build_ui() -> MainWindow {
 
                 // Plain-toast raise (no Undo). Single slot: clear
                 // the other discriminators first.
+                // Bug-audit #2: this raise steals the shared
+                // delete_timer - commit any pending log-feed
+                // deletes first so they can't be starved (rows
+                // stayed hidden but undeleted and resurrected on
+                // the next feed reload).
+                commit_pending_deletes(&ui, &loaded_log_sessions, &pending_deletes);
                 recovery_uuid.borrow_mut().take();
                 pending_preset_undo.borrow_mut().take();
                 pending_preset_delete.borrow_mut().take();
@@ -9384,6 +9559,10 @@ fn build_ui() -> MainWindow {
     {
         let weak = ui.as_weak();
         #[cfg(target_os = "android")]
+        let loaded_log_sessions = loaded_log_sessions.clone();
+        #[cfg(target_os = "android")]
+        let pending_deletes = pending_deletes.clone();
+        #[cfg(target_os = "android")]
         let recovery_uuid = recovery_uuid.clone();
         #[cfg(target_os = "android")]
         let pending_preset_undo = pending_preset_undo.clone();
@@ -9446,7 +9625,13 @@ fn build_ui() -> MainWindow {
                                 )
                             }
                         };
-                        recovery_uuid.borrow_mut().take();
+                        // Bug-audit #2: this raise steals the shared
+                // delete_timer - commit any pending log-feed
+                // deletes first so they can't be starved (rows
+                // stayed hidden but undeleted and resurrected on
+                // the next feed reload).
+                commit_pending_deletes(&ui, &loaded_log_sessions, &pending_deletes);
+                recovery_uuid.borrow_mut().take();
                         pending_preset_undo.borrow_mut().take();
                         pending_preset_delete.borrow_mut().take();
                         pending_override_restore
@@ -9648,9 +9833,43 @@ fn build_ui() -> MainWindow {
         let ve_preview_gen = ve_preview_gen.clone();
         ui.on_back_pressed(move || {
             let Some(ui) = weak.upgrade() else { return; };
+            // Bug-audit #7: the Duration dialog + the three label
+            // dialogs had NO branch here — back used to close the
+            // page UNDERNEATH them (and the stranded Duration
+            // dialog could then mis-route its Set into the wrong
+            // context). Dialogs before pages, topmost first.
+            #[cfg(target_os = "android")]
+            if ui.get_duration_dialog_open() {
+                ui.set_duration_dialog_open(false);
+                return;
+            }
             #[cfg(target_os = "android")]
             if ui.get_filter_sheet_open() {
                 ui.set_filter_sheet_open(false);
+                return;
+            }
+            #[cfg(target_os = "android")]
+            if ui.get_create_label_dialog_open() {
+                ui.set_create_label_dialog_open(false);
+                return;
+            }
+            #[cfg(target_os = "android")]
+            if ui.get_rename_label_dialog_open() {
+                ui.set_rename_label_dialog_open(false);
+                return;
+            }
+            #[cfg(target_os = "android")]
+            if ui.get_delete_label_dialog_open() {
+                ui.set_delete_label_dialog_open(false);
+                return;
+            }
+            // Bug-audit #8: the labels chooser is declared AFTER
+            // the Edit-Session overlay (stacks above it) and can
+            // be pushed FROM it — so it must be closed first, or
+            // back during a label pick tears down the edit page
+            // (and its unsaved edits) underneath the chooser.
+            if ui.get_labels_page() {
+                ui.set_labels_page(false);
                 return;
             }
             #[cfg(target_os = "android")]
@@ -9658,10 +9877,6 @@ fn build_ui() -> MainWindow {
                 hide_soft_keyboard();
                 editing_session_id.set(None);
                 ui.set_edit_session_page(false);
-                return;
-            }
-            if ui.get_labels_page() {
-                ui.set_labels_page(false);
                 return;
             }
             #[cfg(target_os = "android")]
@@ -9837,6 +10052,7 @@ fn build_ui() -> MainWindow {
             *recovery_uuid.borrow_mut() = Some(uuid);
             // Single slot: a recovery snackbar supersedes any
             // in-flight preset Undo context.
+            commit_pending_deletes(&ui, &loaded_log_sessions, &pending_deletes);
             pending_preset_undo.borrow_mut().take();
             pending_preset_delete.borrow_mut().take();
             pending_override_restore.borrow_mut().take();
