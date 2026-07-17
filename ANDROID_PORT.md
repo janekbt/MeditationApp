@@ -559,12 +559,18 @@ Also landed 2026-07-17:
   policy). GTK converted + unit-tested; **Librem on-device pass
   still pending**.
 
-### Phase 8 — Polish
+### Phase 8 — Polish ✅ (2026-07-18, F-Droid parked)
 
-Landed 2026-07-17 (P8a): real WindowInsets (JNI, resize-requeried),
-IME adjustResize, and the Appearance accent-colour picker (six
-seeds over the Material lib's official `schemes` theming hook,
-`src/theme.rs` tone ladder).
+Landed: real WindowInsets (JNI, resize-requeried), IME
+adjustResize, the Appearance accent-colour picker (six seeds
+over the Material lib's official `schemes` theming hook,
+`src/theme.rs` tone ladder), dark mode (worked out of the box),
+and i18n via Slint bundled translations: 266 inline @tr()
+literals + the `Tr` Rust-side message catalogue (~60 typed-key
+functions, 7 plural pairs); German complete (232 entries),
+eight more languages partially harvested from the GTK po dir.
+Known edges: chrono %b month abbreviations stay English; widget
+Kotlin strings untranslated.
 
 **Deferred — blocked upstream (decided with Janek 2026-07-17):**
 - **TalkBack**: Slint's android-activity backend (≤1.17) contains
