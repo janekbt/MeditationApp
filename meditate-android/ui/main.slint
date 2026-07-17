@@ -32,7 +32,7 @@ import { Date } from "../material-1.0/ui/components/date_picker.slint";
 // fallback Unicode glyphs (the system font on Android 15 doesn't
 // carry ✓, which rendered as a tofu box).
 import { Icons } from "../material-1.0/ui/icons/icons.slint";
-export { MaterialWindowAdapter, DatePickerAdapter } from "@material";
+export { MaterialWindowAdapter, DatePickerAdapter, MaterialPalette, MaterialSchemes, MaterialScheme } from "@material";
 
 // Single-glyph font (U+25CF, subset from DejaVu Sans, family
 // renamed "Meditate Mask") for the password field's mask dots:
@@ -1345,6 +1345,13 @@ export component MainWindow inherits Window {
     // its Troubleshooting/debug-info view. Version is the real
     // installed APK versionName (JNI); the diagnostics page shows
     // the tail of core's rolling diag log with Copy / Share.
+    // Accent selection (P8): Rust rebuilds MaterialPalette.schemes
+    // from the picked accent (persisted android-side setting).
+    // `accent-swatches` are the preview circles; index 0 = the
+    // baseline blue.
+    in property <[color]> accent-swatches: [];
+    in property <int> prefs-accent: 0;
+    callback accent-picked(int);
     in property <string> about-version: "?";
     callback about-issue-tap();
     // Data page (DP): CSV backup export/import, Insight Timer
@@ -2019,14 +2026,19 @@ export component MainWindow inherits Window {
     // the AppBar content + Preferences icon both need padding
     // out of the notch / status-symbol zone. Keep tweakable
     // until safe-area-inset wiring lands (phase 8 polish).
-    property <length> status-bar-inset: 36px;
+    // P8: fed from real WindowInsets via Rust (MeditateInsets JNI,
+    // already density-converted); the defaults below only cover the
+    // first frames before the window attaches. Re-queried on every
+    // window resize (rotation / multi-window) via window-resized.
+    in-out property <length> status-bar-inset: 36px;
+    callback window-resized();
 
     // Mirror inset along the bottom edge — half the top inset is
     // enough to keep the NavigationBar + Pause/Stop / Save /
     // Discard rows clear of the system gesture hint and the
     // rounded screen-corner mask. Same hard-coded fallback
     // pattern as `status-bar-inset` until proper insets land.
-    property <length> bottom-bar-inset: root.status-bar-inset / 2;
+    in-out property <length> bottom-bar-inset: root.status-bar-inset / 2;
 
     // Trailing icon button on the top header — taps will open
     // a future Preferences sheet. No-op for now; placeholder
@@ -7094,6 +7106,54 @@ export component MainWindow inherits Window {
             }
 
             Text {
+                text: "Appearance";
+                font-size: 14px;
+                font-weight: 700;
+                color: MaterialPalette.primary;
+                horizontal-alignment: left;
+            }
+            Text {
+                text: "Accent colour — tinting for buttons, rings, and highlights.";
+                font-size: 13px;
+                color: MaterialPalette.on-surface-variant;
+                horizontal-alignment: left;
+                wrap: word-wrap;
+            }
+            BoxedList {
+                Rectangle {
+                    height: 64px;
+                    HorizontalLayout {
+                        padding-left: 16px;
+                        padding-right: 16px;
+                        spacing: 12px;
+                        alignment: center;
+
+                        // VerticalLayout wrapper = the codebase's
+                        // cross-axis centering idiom: a fixed-height
+                        // child in a HorizontalLayout otherwise pins
+                        // to the top edge.
+                        for c[i] in root.accent-swatches : VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: 40px;
+                                height: 40px;
+                                border-radius: 20px;
+                                background: c;
+                                // Selected ring — outline in the
+                                // on-surface colour so it reads on
+                                // every accent + theme.
+                                border-width: i == root.prefs-accent ? 3px : 0px;
+                                border-color: MaterialPalette.on-surface;
+                                TouchArea {
+                                    clicked => { root.accent-picked(i); }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Text {
                 text: "About";
                 font-size: 14px;
                 font-weight: 700;
@@ -7683,6 +7743,17 @@ export component MainWindow inherits Window {
                 }
             }
         }
+    }
+
+    // P8: watch the window size — rotation / split-screen resize
+    // means new insets; Rust re-queries on this callback.
+    Rectangle {
+        width: 0;
+        height: 0;
+        property <length> watch-w: root.width;
+        property <length> watch-h: root.height;
+        changed watch-w => { root.window-resized(); }
+        changed watch-h => { root.window-resized(); }
     }
     } // root-focus FocusScope
 }

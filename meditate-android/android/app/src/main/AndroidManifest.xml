@@ -43,7 +43,8 @@
         <activity
             android:name="android.app.NativeActivity"
             android:exported="true"
-            android:configChanges="orientation|keyboardHidden|screenSize|screenLayout|density|uiMode">
+            android:configChanges="orientation|keyboardHidden|screenSize|screenLayout|density|uiMode"
+            android:windowSoftInputMode="adjustResize">
             <meta-data
                 android:name="android.app.lib_name"
                 android:value="meditate_android" />
