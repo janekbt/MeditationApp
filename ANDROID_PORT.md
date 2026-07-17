@@ -561,6 +561,26 @@ Also landed 2026-07-17:
 
 ### Phase 8 — Polish
 
+Landed 2026-07-17 (P8a): real WindowInsets (JNI, resize-requeried),
+IME adjustResize, and the Appearance accent-colour picker (six
+seeds over the Material lib's official `schemes` theming hook,
+`src/theme.rs` tone ladder).
+
+**Deferred — blocked upstream (decided with Janek 2026-07-17):**
+- **TalkBack**: Slint's android-activity backend (≤1.17) contains
+  NO accessibility bridging (no AccessKit, no
+  AccessibilityNodeProvider) — `accessible-*` properties never
+  reach TalkBack; the app is one opaque NativeActivity surface.
+  Annotation would be inert and unverifiable. Revisit when Slint
+  ships Android a11y; the GTK shell's accessibility is real and
+  stays maintained.
+- **Predictive back**: enabling `enableOnBackInvokedCallback`
+  suppresses the KEYCODE_BACK path the entire 30-branch back
+  chain rides on, and NativeActivity+Slint has no predictive
+  animation story. Legacy back stays.
+- **F-Droid packaging**: parked per Janek (2026-07-17).
+
+
 Mostly fit-and-finish; corresponds to systems milestone 12.
 
 - Edge-to-edge layout (no system bars eating UI).
