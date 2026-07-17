@@ -1,0 +1,149 @@
+# Android shell translations — harvested from the GTK
+# shell po files where msgids match; German gaps filled
+# by hand (2026-07-17). Untranslated ids fall back to
+# English at runtime.
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+
+msgid "Cancel"
+msgstr "Отмена"
+
+msgid "Create"
+msgstr "Создать"
+
+msgid "Custom Time"
+msgstr "Своё время"
+
+msgid "Danger Zone"
+msgstr "Опасная зона"
+
+msgid "Data"
+msgstr "Данные"
+
+msgid "Date"
+msgstr "Дата"
+
+msgid "Delete"
+msgstr "Удалить"
+
+msgid "Delete All"
+msgstr "Удалить всё"
+
+msgid "Delete Label?"
+msgstr "Удалить метку?"
+
+msgid "Delete all sessions"
+msgstr "Удалить все сессии"
+
+msgid "Discard"
+msgstr "Отменить"
+
+msgid "Duration"
+msgstr "Длительность"
+
+msgid "Export session log"
+msgstr "Экспортировать журнал"
+
+msgid "Export your session log to a CSV file, or restore from one."
+msgstr "Экспорт журнала сессий в CSV-файл или восстановление из него."
+
+msgid "Filter Sessions"
+msgstr "Фильтр сессий"
+
+msgid "Has Notes"
+msgstr "С заметками"
+
+msgid "Hours : Minutes"
+msgstr "Часы : Минуты"
+
+msgid "Hours · Minutes"
+msgstr "Часы · Минуты"
+
+msgid "Import"
+msgstr "Импорт"
+
+msgid "Import from Insight Timer"
+msgstr "Импорт из Insight Timer"
+
+msgid "Import from Meditate CSV"
+msgstr "Импорт из CSV Meditate"
+
+msgid "Label"
+msgstr "Метка"
+
+msgid "Label name"
+msgstr "Имя метки"
+
+msgid "Less"
+msgstr "Меньше"
+
+msgid "Line"
+msgstr "Линия"
+
+msgid "Load more"
+msgstr "Показать ещё"
+
+msgid "Log"
+msgstr "Журнал"
+
+msgid "Meditate"
+msgstr "Meditate"
+
+msgid "Minutes"
+msgstr "Минуты"
+
+msgid "More"
+msgstr "Больше"
+
+msgid "No Matching Sessions"
+msgstr "Нет подходящих сессий"
+
+msgid "No Sessions Yet"
+msgstr "Пока нет сессий"
+
+msgid "No file selected"
+msgstr "Файл не выбран"
+
+msgid "No note added"
+msgstr "Без заметки"
+
+msgid "Note (optional)"
+msgstr "Заметка (необязательно)"
+
+msgid "Preferences"
+msgstr "Параметры"
+
+msgid "Save"
+msgstr "Сохранить"
+
+msgid "Session"
+msgstr "Сессия"
+
+msgid "Set"
+msgstr "Задать"
+
+msgid "Sound"
+msgstr "Звук"
+
+msgid "Start Session"
+msgstr "Начать сессию"
+
+msgid "Stats"
+msgstr "Статистика"
+
+msgid "Stop"
+msgstr "Остановить"
+
+msgid "Timer"
+msgstr "Таймер"
+
+msgid "Try changing your filters."
+msgstr "Попробуйте изменить фильтры."
+
+msgid "Undo"
+msgstr "Отменить"
+
+msgid "min"
+msgstr "мин"
+

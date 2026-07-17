@@ -1,0 +1,149 @@
+# Android shell translations — harvested from the GTK
+# shell po files where msgids match; German gaps filled
+# by hand (2026-07-17). Untranslated ids fall back to
+# English at runtime.
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+
+msgid "Cancel"
+msgstr "Annuler"
+
+msgid "Create"
+msgstr "Créer"
+
+msgid "Custom Time"
+msgstr "Temps personnalisé"
+
+msgid "Danger Zone"
+msgstr "Zone dangereuse"
+
+msgid "Data"
+msgstr "Données"
+
+msgid "Date"
+msgstr "Date"
+
+msgid "Delete"
+msgstr "Supprimer"
+
+msgid "Delete All"
+msgstr "Tout supprimer"
+
+msgid "Delete Label?"
+msgstr "Supprimer l’étiquette ?"
+
+msgid "Delete all sessions"
+msgstr "Supprimer toutes les séances"
+
+msgid "Discard"
+msgstr "Abandonner"
+
+msgid "Duration"
+msgstr "Durée"
+
+msgid "Export session log"
+msgstr "Exporter le journal"
+
+msgid "Export your session log to a CSV file, or restore from one."
+msgstr "Exportez votre journal de séances vers un fichier CSV, ou restaurez-le."
+
+msgid "Filter Sessions"
+msgstr "Filtrer les séances"
+
+msgid "Has Notes"
+msgstr "Avec notes"
+
+msgid "Hours : Minutes"
+msgstr "Heures : Minutes"
+
+msgid "Hours · Minutes"
+msgstr "Heures · Minutes"
+
+msgid "Import"
+msgstr "Importer"
+
+msgid "Import from Insight Timer"
+msgstr "Importer depuis Insight Timer"
+
+msgid "Import from Meditate CSV"
+msgstr "Importer depuis un CSV Meditate"
+
+msgid "Label"
+msgstr "Étiquette"
+
+msgid "Label name"
+msgstr "Nom de l'étiquette"
+
+msgid "Less"
+msgstr "Moins"
+
+msgid "Line"
+msgstr "Ligne"
+
+msgid "Load more"
+msgstr "Charger plus"
+
+msgid "Log"
+msgstr "Journal"
+
+msgid "Meditate"
+msgstr "Meditate"
+
+msgid "Minutes"
+msgstr "Minutes"
+
+msgid "More"
+msgstr "Plus"
+
+msgid "No Matching Sessions"
+msgstr "Aucune séance correspondante"
+
+msgid "No Sessions Yet"
+msgstr "Aucune séance pour l’instant"
+
+msgid "No file selected"
+msgstr "Aucun fichier sélectionné"
+
+msgid "No note added"
+msgstr "Aucune note"
+
+msgid "Note (optional)"
+msgstr "Note (facultative)"
+
+msgid "Preferences"
+msgstr "Préférences"
+
+msgid "Save"
+msgstr "Enregistrer"
+
+msgid "Session"
+msgstr "Séance"
+
+msgid "Set"
+msgstr "Définir"
+
+msgid "Sound"
+msgstr "Son"
+
+msgid "Start Session"
+msgstr "Démarrer la séance"
+
+msgid "Stats"
+msgstr "Statistiques"
+
+msgid "Stop"
+msgstr "Arrêter"
+
+msgid "Timer"
+msgstr "Minuteur"
+
+msgid "Try changing your filters."
+msgstr "Essayez de modifier vos filtres."
+
+msgid "Undo"
+msgstr "Annuler"
+
+msgid "min"
+msgstr "min"
+

@@ -26,6 +26,18 @@ pub fn version_name(app: &AndroidApp) -> String {
     })
 }
 
+/// System locale language code ("de", "en", …) for bundled-
+/// translation selection; "en" on any hiccup.
+pub fn locale_language(app: &AndroidApp) -> String {
+    invoke_locale_language(app).unwrap_or_else(|e| {
+        meditate_core::log(
+            "about",
+            &format!("locale_language FAILED: {e:?}"),
+        );
+        "en".into()
+    })
+}
+
 /// Copy `text` to the system clipboard under `label`.
 pub fn copy_text(app: &AndroidApp, label: &str, text: &str) {
     if let Err(e) = invoke_two_strings(app, "copyText", label, text) {
@@ -74,6 +86,31 @@ fn resolve_class<'a>(
         )?
         .l()?;
     Ok(class_obj.into())
+}
+
+fn invoke_locale_language(
+    app: &AndroidApp,
+) -> Result<String, jni::errors::Error> {
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
+    let mut env = vm.attach_current_thread()?;
+    let activity =
+        unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
+    let class = resolve_class(&mut env, &activity, ABOUT_CLASS_DOTTED)?;
+    let result = env
+        .call_static_method(
+            class,
+            "localeLanguage",
+            "()Ljava/lang/String;",
+            &[],
+        )?
+        .l()?;
+    if env.exception_check()? {
+        env.exception_clear()?;
+        return Ok("en".into());
+    }
+    let jstr = JString::from(result);
+    let s: String = env.get_string(&jstr)?.into();
+    Ok(s)
 }
 
 fn invoke_version_name(

@@ -1,0 +1,149 @@
+# Android shell translations — harvested from the GTK
+# shell po files where msgids match; German gaps filled
+# by hand (2026-07-17). Untranslated ids fall back to
+# English at runtime.
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+
+msgid "Cancel"
+msgstr "Annulla"
+
+msgid "Create"
+msgstr "Crea"
+
+msgid "Custom Time"
+msgstr "Tempo personalizzato"
+
+msgid "Danger Zone"
+msgstr "Zona pericolosa"
+
+msgid "Data"
+msgstr "Dati"
+
+msgid "Date"
+msgstr "Data"
+
+msgid "Delete"
+msgstr "Elimina"
+
+msgid "Delete All"
+msgstr "Elimina tutto"
+
+msgid "Delete Label?"
+msgstr "Eliminare l’etichetta?"
+
+msgid "Delete all sessions"
+msgstr "Elimina tutte le sessioni"
+
+msgid "Discard"
+msgstr "Scarta"
+
+msgid "Duration"
+msgstr "Durata"
+
+msgid "Export session log"
+msgstr "Esporta registro sessioni"
+
+msgid "Export your session log to a CSV file, or restore from one."
+msgstr "Esporta il registro delle sessioni in un file CSV o ripristinalo."
+
+msgid "Filter Sessions"
+msgstr "Filtra sessioni"
+
+msgid "Has Notes"
+msgstr "Con note"
+
+msgid "Hours : Minutes"
+msgstr "Ore : Minuti"
+
+msgid "Hours · Minutes"
+msgstr "Ore · Minuti"
+
+msgid "Import"
+msgstr "Importa"
+
+msgid "Import from Insight Timer"
+msgstr "Importa da Insight Timer"
+
+msgid "Import from Meditate CSV"
+msgstr "Importa da CSV di Meditate"
+
+msgid "Label"
+msgstr "Etichetta"
+
+msgid "Label name"
+msgstr "Nome dell'etichetta"
+
+msgid "Less"
+msgstr "Meno"
+
+msgid "Line"
+msgstr "Linea"
+
+msgid "Load more"
+msgstr "Carica altro"
+
+msgid "Log"
+msgstr "Registro"
+
+msgid "Meditate"
+msgstr "Meditate"
+
+msgid "Minutes"
+msgstr "Minuti"
+
+msgid "More"
+msgstr "Più"
+
+msgid "No Matching Sessions"
+msgstr "Nessuna sessione corrispondente"
+
+msgid "No Sessions Yet"
+msgstr "Ancora nessuna sessione"
+
+msgid "No file selected"
+msgstr "Nessun file selezionato"
+
+msgid "No note added"
+msgstr "Nessuna nota"
+
+msgid "Note (optional)"
+msgstr "Nota (facoltativa)"
+
+msgid "Preferences"
+msgstr "Preferenze"
+
+msgid "Save"
+msgstr "Salva"
+
+msgid "Session"
+msgstr "Sessione"
+
+msgid "Set"
+msgstr "Imposta"
+
+msgid "Sound"
+msgstr "Suono"
+
+msgid "Start Session"
+msgstr "Avvia sessione"
+
+msgid "Stats"
+msgstr "Statistiche"
+
+msgid "Stop"
+msgstr "Interrompi"
+
+msgid "Timer"
+msgstr "Timer"
+
+msgid "Try changing your filters."
+msgstr "Prova a modificare i filtri."
+
+msgid "Undo"
+msgstr "Annulla"
+
+msgid "min"
+msgstr "min"
+

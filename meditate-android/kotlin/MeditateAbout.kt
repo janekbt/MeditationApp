@@ -29,6 +29,12 @@ object MeditateAbout {
         "?"
     }
 
+    /// BCP-47-ish language code ("de", "en", …) for bundled-
+    /// translation selection (P8 i18n).
+    @JvmStatic
+    fun localeLanguage(): String =
+        java.util.Locale.getDefault().language ?: "en"
+
     @JvmStatic
     fun copyText(context: Context, label: String, text: String) {
         try {

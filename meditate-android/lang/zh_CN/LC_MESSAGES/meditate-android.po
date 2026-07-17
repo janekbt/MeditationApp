@@ -1,0 +1,149 @@
+# Android shell translations — harvested from the GTK
+# shell po files where msgids match; German gaps filled
+# by hand (2026-07-17). Untranslated ids fall back to
+# English at runtime.
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+
+msgid "Cancel"
+msgstr "取消"
+
+msgid "Create"
+msgstr "创建"
+
+msgid "Custom Time"
+msgstr "自定义时间"
+
+msgid "Danger Zone"
+msgstr "危险区域"
+
+msgid "Data"
+msgstr "数据"
+
+msgid "Date"
+msgstr "日期"
+
+msgid "Delete"
+msgstr "删除"
+
+msgid "Delete All"
+msgstr "全部删除"
+
+msgid "Delete Label?"
+msgstr "删除标签？"
+
+msgid "Delete all sessions"
+msgstr "删除所有会话"
+
+msgid "Discard"
+msgstr "放弃"
+
+msgid "Duration"
+msgstr "时长"
+
+msgid "Export session log"
+msgstr "导出会话记录"
+
+msgid "Export your session log to a CSV file, or restore from one."
+msgstr "将会话记录导出为 CSV 文件，或从中恢复。"
+
+msgid "Filter Sessions"
+msgstr "筛选会话"
+
+msgid "Has Notes"
+msgstr "包含笔记"
+
+msgid "Hours : Minutes"
+msgstr "小时 : 分钟"
+
+msgid "Hours · Minutes"
+msgstr "小时 · 分钟"
+
+msgid "Import"
+msgstr "导入"
+
+msgid "Import from Insight Timer"
+msgstr "从 Insight Timer 导入"
+
+msgid "Import from Meditate CSV"
+msgstr "从 Meditate CSV 导入"
+
+msgid "Label"
+msgstr "标签"
+
+msgid "Label name"
+msgstr "标签名称"
+
+msgid "Less"
+msgstr "更少"
+
+msgid "Line"
+msgstr "折线图"
+
+msgid "Load more"
+msgstr "加载更多"
+
+msgid "Log"
+msgstr "记录"
+
+msgid "Meditate"
+msgstr "Meditate"
+
+msgid "Minutes"
+msgstr "分钟"
+
+msgid "More"
+msgstr "更多"
+
+msgid "No Matching Sessions"
+msgstr "无匹配的会话"
+
+msgid "No Sessions Yet"
+msgstr "暂无会话"
+
+msgid "No file selected"
+msgstr "未选择文件"
+
+msgid "No note added"
+msgstr "无笔记"
+
+msgid "Note (optional)"
+msgstr "笔记（可选）"
+
+msgid "Preferences"
+msgstr "首选项"
+
+msgid "Save"
+msgstr "保存"
+
+msgid "Session"
+msgstr "会话"
+
+msgid "Set"
+msgstr "设置"
+
+msgid "Sound"
+msgstr "声音"
+
+msgid "Start Session"
+msgstr "开始会话"
+
+msgid "Stats"
+msgstr "统计"
+
+msgid "Stop"
+msgstr "停止"
+
+msgid "Timer"
+msgstr "计时器"
+
+msgid "Try changing your filters."
+msgstr "尝试更改筛选条件。"
+
+msgid "Undo"
+msgstr "撤销"
+
+msgid "min"
+msgstr "分钟"
+

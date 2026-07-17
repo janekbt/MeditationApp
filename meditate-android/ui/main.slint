@@ -1071,19 +1071,19 @@ component PhaseCue inherits Rectangle {
         toggled(v) => { root.toggled(v); }
 
         CuesRow {
-            title: "Type";
+            title: @tr("Type");
             current-index <=> root.signal-mode;
             changed(idx) => { root.signal-mode-changed(idx); }
         }
         RevealChooser {
             shown: root.signal-mode != 1;
-            title: "Sound";
+            title: @tr("Sound");
             subtitle: root.sound-name;
             tapped => { root.sound-tap(); }
         }
         RevealChooser {
             shown: root.signal-mode != 0;
-            title: "Pattern";
+            title: @tr("Pattern");
             subtitle: root.pattern-name;
             tapped => { root.pattern-tap(); }
         }
@@ -1201,7 +1201,7 @@ component BoxedList inherits Rectangle {
 }
 
 export component MainWindow inherits Window {
-    title: "Meditate";
+    title: @tr("Meditate");
 
     in property <string> remaining-text: "00:10";
     in property <string> duration-text: "00:10";
@@ -2340,7 +2340,7 @@ export component MainWindow inherits Window {
                     color: MaterialPalette.on-surface;
                 }
                 Text {
-                    text: "Hours · Minutes";
+                    text: @tr("Hours · Minutes");
                     font-size: 12px;
                     horizontal-alignment: center;
                     color: MaterialPalette.on-surface-variant;
@@ -2355,7 +2355,7 @@ export component MainWindow inherits Window {
             // slice (no audio engine / no Box Breath running view
             // yet); Start stays disabled when either is selected.
             ModeToggle {
-                labels: ["Timer", "Guided", "Box Breath"];
+                labels: [@tr("Timer"), @tr("Guided"), @tr("Box Breath")];
                 current-index <=> root.setup-mode;
                 changed(idx) => { root.mode-changed(idx); }
             }
@@ -2369,7 +2369,7 @@ export component MainWindow inherits Window {
             // GTK's `on_start` which only validates
             // `countdown_target_secs` when `!stopwatch_toggle_on.get()`.
             FilledButton {
-                text: "Start Session";
+                text: @tr("Start Session");
                 height: 56px;
                 enabled: ((root.setup-mode == 0 || root.setup-mode == 2)
                     && (root.stopwatch-on
@@ -2391,7 +2391,7 @@ export component MainWindow inherits Window {
                 spacing: 8px;
 
                 Text {
-                    text: "Presets";
+                    text: @tr("Presets");
                     font-size: 14px;
                     font-weight: 700;
                     color: MaterialPalette.primary;
@@ -2453,11 +2453,11 @@ export component MainWindow inherits Window {
                     spacing: 8px;
 
                     FilledButton {
-                        text: "Save Settings";
+                        text: @tr("Save Settings");
                         clicked => { root.save-settings-tap(); }
                     }
                     OutlineButton {
-                        text: "Manage Presets";
+                        text: @tr("Manage Presets");
                         clicked => { root.manage-presets-tap(); }
                     }
                 }
@@ -2474,7 +2474,7 @@ export component MainWindow inherits Window {
                 spacing: 8px;
 
                 Text {
-                    text: "Session";
+                    text: @tr("Session");
                     font-size: 14px;
                     font-weight: 700;
                     color: MaterialPalette.primary;
@@ -2488,7 +2488,7 @@ export component MainWindow inherits Window {
                     // Session group is still Timer-gated here, so this
                     // slice keeps it inside that gate.
                     CuesRow {
-                        title: "Cues";
+                        title: @tr("Cues");
                         current-index <=> root.cues-mode;
                         changed(idx) => { root.cues-changed(idx); }
                     }
@@ -2503,8 +2503,8 @@ export component MainWindow inherits Window {
                     }
 
                     SwitchRow {
-                        title: "Stopwatch Mode";
-                        subtitle: "Count up from zero";
+                        title: @tr("Stopwatch Mode");
+                        subtitle: @tr("Count up from zero");
                         checked <=> root.stopwatch-on;
                         toggled(value) => { root.stopwatch-toggled(value); }
                     }
@@ -2532,9 +2532,9 @@ export component MainWindow inherits Window {
                     // push the label chooser screen in the next
                     // phase-2 slice; for now it's a no-op stub.
                     ExpanderRow {
-                        title: "Label";
-                        subtitle: "Tag this session";
-                        body-title: "Selected";
+                        title: @tr("Label");
+                        subtitle: @tr("Tag this session");
+                        body-title: @tr("Selected");
                         body-subtitle: root.label-name;
                         active <=> root.label-active;
                         toggled(value) => { root.label-active-toggled(value); }
@@ -2553,8 +2553,8 @@ export component MainWindow inherits Window {
                     // and Duration. Restructuring lands when the
                     // Box Breath / Guided bodies do.
                     SwitchRow {
-                        title: "Keep Screen Awake";
-                        subtitle: "Prevent display sleep during a session";
+                        title: @tr("Keep Screen Awake");
+                        subtitle: @tr("Prevent display sleep during a session");
                         checked <=> root.keep-awake-on;
                         toggled(value) => { root.keep-awake-toggled(value); }
                     }
@@ -2575,7 +2575,7 @@ export component MainWindow inherits Window {
                 spacing: 8px;
 
                 Text {
-                    text: "Bells";
+                    text: @tr("Bells");
                     font-size: 14px;
                     font-weight: 700;
                     color: MaterialPalette.primary;
@@ -2590,13 +2590,13 @@ export component MainWindow inherits Window {
                     // `preparation_time_row` AdwExpanderRow
                     // nested inside it (`timer_view.blp:413`).
                     ExpanderGroup {
-                        title: "Starting Bell";
-                        subtitle: "Play a signal when the session begins";
+                        title: @tr("Starting Bell");
+                        subtitle: @tr("Play a signal when the session begins");
                         active <=> root.starting-bell-active;
                         toggled(value) => { root.starting-bell-toggled(value); }
 
                         CuesRow {
-                            title: "Type";
+                            title: @tr("Type");
                             current-index <=> root.starting-bell-signal-mode;
                             changed(idx) => { root.starting-bell-signal-mode-changed(idx); }
                         }
@@ -2608,13 +2608,13 @@ export component MainWindow inherits Window {
                         // / `starting_bell_pattern_revealer`.
                         RevealChooser {
                             shown: root.starting-bell-signal-mode != 1;
-                            title: "Bell Sound";
+                            title: @tr("Bell Sound");
                             subtitle: root.starting-bell-sound-name;
                             tapped => { root.starting-bell-sound-tap(); }
                         }
                         RevealChooser {
                             shown: root.starting-bell-signal-mode != 0;
-                            title: "Pattern";
+                            title: @tr("Pattern");
                             subtitle: root.starting-bell-pattern-name;
                             tapped => { root.starting-bell-pattern-tap(); }
                         }
@@ -2627,9 +2627,9 @@ export component MainWindow inherits Window {
                         // Nested Preparation Time expander —
                         // child of Starting Bell, mirroring GTK.
                         ExpanderRow {
-                            title: "Preparation Time";
-                            subtitle: "Silence before the starting bell";
-                            body-title: "Duration";
+                            title: @tr("Preparation Time");
+                            subtitle: @tr("Silence before the starting bell");
+                            body-title: @tr("Duration");
                             body-subtitle: root.prep-time-secs + "s";
                             active <=> root.prep-time-active;
                             toggled(value) => { root.prep-time-toggled(value); }
@@ -2647,9 +2647,9 @@ export component MainWindow inherits Window {
                     // (`timer_view.blp:482`). Body row drills
                     // into the library page.
                     ExpanderRow {
-                        title: "Interval Bells";
-                        subtitle: "Ring during the session";
-                        body-title: "Manage Bells";
+                        title: @tr("Interval Bells");
+                        subtitle: @tr("Ring during the session");
+                        body-title: @tr("Manage Bells");
                         body-subtitle: root.interval-bells-summary;
                         active <=> root.interval-bells-active;
                         toggled(value) => { root.interval-bells-toggled(value); }
@@ -2666,26 +2666,26 @@ export component MainWindow inherits Window {
                     // Sound + Pattern, mirroring GTK's `end_bell_
                     // row` (`timer_view.blp:506`).
                     ExpanderGroup {
-                        title: "End Bell";
-                        subtitle: "Play a signal when the session ends";
+                        title: @tr("End Bell");
+                        subtitle: @tr("Play a signal when the session ends");
                         active <=> root.end-bell-active;
                         toggled(value) => { root.end-bell-toggled(value); }
 
                         CuesRow {
-                            title: "Type";
+                            title: @tr("Type");
                             current-index <=> root.end-bell-signal-mode;
                             changed(idx) => { root.end-bell-signal-mode-changed(idx); }
                         }
 
                         RevealChooser {
                             shown: root.end-bell-signal-mode != 1;
-                            title: "Bell Sound";
+                            title: @tr("Bell Sound");
                             subtitle: root.end-bell-sound-name;
                             tapped => { root.end-bell-sound-tap(); }
                         }
                         RevealChooser {
                             shown: root.end-bell-signal-mode != 0;
-                            title: "Pattern";
+                            title: @tr("Pattern");
                             subtitle: root.end-bell-pattern-name;
                             tapped => { root.end-bell-pattern-tap(); }
                         }
@@ -2705,7 +2705,7 @@ export component MainWindow inherits Window {
                 // dim-label). Picking happens via the Open File
                 // button below, not by tapping this row.
                 Text {
-                    text: "Current file";
+                    text: @tr("Current file");
                     font-size: 14px;
                     font-weight: 700;
                     color: MaterialPalette.primary;
@@ -2725,13 +2725,13 @@ export component MainWindow inherits Window {
                                 Text {
                                     text: root.guided-name != ""
                                         ? root.guided-name
-                                        : "No file selected";
+                                        : @tr("No file selected");
                                     font-size: 16px;
                                     color: MaterialPalette.on-surface;
                                     overflow: elide;
                                 }
                                 Text {
-                                    text: "Tap Open File or pick from list below";
+                                    text: @tr("Tap Open File or pick from list below");
                                     font-size: 13px;
                                     color: MaterialPalette.on-surface-variant;
                                     overflow: elide;
@@ -2748,11 +2748,11 @@ export component MainWindow inherits Window {
                     spacing: 8px;
 
                     FilledButton {
-                        text: "Open File";
+                        text: @tr("Open File");
                         clicked => { root.guided-open-tap(); }
                     }
                     OutlineButton {
-                        text: "Import File";
+                        text: @tr("Import File");
                         enabled: root.guided-name != "";
                         clicked => { root.guided-import-tap(); }
                     }
@@ -2762,7 +2762,7 @@ export component MainWindow inherits Window {
                 // selection. Mirrors GTK's `guided_files_group`
                 // / `rebuild_starred_guided_list`.
                 Text {
-                    text: "Starred Files";
+                    text: @tr("Starred Files");
                     font-size: 14px;
                     font-weight: 700;
                     color: MaterialPalette.primary;
@@ -2823,12 +2823,12 @@ export component MainWindow inherits Window {
                                 alignment: center;
                                 horizontal-stretch: 1;
                                 Text {
-                                    text: "No starred files";
+                                    text: @tr("No starred files");
                                     font-size: 16px;
                                     color: MaterialPalette.on-surface-variant;
                                 }
                                 Text {
-                                    text: "Tap Open File then Import File, or star a file in Manage Files";
+                                    text: @tr("Tap Open File then Import File, or star a file in Manage Files");
                                     font-size: 13px;
                                     color: MaterialPalette.on-surface-variant;
                                     overflow: elide;
@@ -2840,7 +2840,7 @@ export component MainWindow inherits Window {
                 // Manage Files — opens the full chooser
                 // (GTK's `manage_guided_files_btn`).
                 OutlineButton {
-                    text: "Manage Files";
+                    text: @tr("Manage Files");
                     clicked => { root.manage-guided-tap(); }
                 }
                 // Session group — mirrors GTK's shared
@@ -2852,7 +2852,7 @@ export component MainWindow inherits Window {
                 // props/callbacks; mode-switch reloads them for
                 // Guided and the callbacks write per current_mode.
                 Text {
-                    text: "Session";
+                    text: @tr("Session");
                     font-size: 14px;
                     font-weight: 700;
                     color: MaterialPalette.primary;
@@ -2860,7 +2860,7 @@ export component MainWindow inherits Window {
                 }
                 BoxedList {
                     CuesRow {
-                        title: "Cues";
+                        title: @tr("Cues");
                         current-index <=> root.cues-mode;
                         changed(idx) => { root.cues-changed(idx); }
                     }
@@ -2871,8 +2871,8 @@ export component MainWindow inherits Window {
                     }
 
                     SwitchRow {
-                        title: "Stopwatch Mode";
-                        subtitle: "Count up from zero";
+                        title: @tr("Stopwatch Mode");
+                        subtitle: @tr("Count up from zero");
                         checked <=> root.stopwatch-on;
                         toggled(value) => {
                             root.stopwatch-toggled(value);
@@ -2885,9 +2885,9 @@ export component MainWindow inherits Window {
                     }
 
                     ExpanderRow {
-                        title: "Label";
-                        subtitle: "Tag this session";
-                        body-title: "Selected";
+                        title: @tr("Label");
+                        subtitle: @tr("Tag this session");
+                        body-title: @tr("Selected");
                         body-subtitle: root.label-name;
                         active <=> root.label-active;
                         toggled(value) => {
@@ -2902,8 +2902,8 @@ export component MainWindow inherits Window {
                     }
 
                     SwitchRow {
-                        title: "Keep Screen Awake";
-                        subtitle: "Prevent display sleep during a session";
+                        title: @tr("Keep Screen Awake");
+                        subtitle: @tr("Prevent display sleep during a session");
                         checked <=> root.keep-awake-on;
                         toggled(value) => {
                             root.keep-awake-toggled(value);
@@ -2917,7 +2917,7 @@ export component MainWindow inherits Window {
                 // the global `end-bell-*` props/callbacks (not
                 // per-mode), so no extra Rust wiring.
                 Text {
-                    text: "Bells";
+                    text: @tr("Bells");
                     font-size: 14px;
                     font-weight: 700;
                     color: MaterialPalette.primary;
@@ -2925,26 +2925,26 @@ export component MainWindow inherits Window {
                 }
                 BoxedList {
                     ExpanderGroup {
-                        title: "End Bell";
-                        subtitle: "Play a signal when the session ends";
+                        title: @tr("End Bell");
+                        subtitle: @tr("Play a signal when the session ends");
                         active <=> root.end-bell-active;
                         toggled(value) => { root.end-bell-toggled(value); }
 
                         CuesRow {
-                            title: "Type";
+                            title: @tr("Type");
                             current-index <=> root.end-bell-signal-mode;
                             changed(idx) => { root.end-bell-signal-mode-changed(idx); }
                         }
 
                         RevealChooser {
                             shown: root.end-bell-signal-mode != 1;
-                            title: "Bell Sound";
+                            title: @tr("Bell Sound");
                             subtitle: root.end-bell-sound-name;
                             tapped => { root.end-bell-sound-tap(); }
                         }
                         RevealChooser {
                             shown: root.end-bell-signal-mode != 0;
-                            title: "Pattern";
+                            title: @tr("Pattern");
                             subtitle: root.end-bell-pattern-name;
                             tapped => { root.end-bell-pattern-tap(); }
                         }
@@ -2961,7 +2961,7 @@ export component MainWindow inherits Window {
                 spacing: 8px;
 
                 Text {
-                    text: "Breath Phases";
+                    text: @tr("Breath Phases");
                     font-size: 14px;
                     font-weight: 700;
                     color: MaterialPalette.primary;
@@ -2984,7 +2984,7 @@ export component MainWindow inherits Window {
                     // equivalent so the shell ships its own SVG.
                     Row {
                         PhaseTile {
-                            title: "Inhale";
+                            title: @tr("Inhale");
                             icon: Icons.arrow-drop-up;
                             index: 0;
                             seconds: root.bb-in;
@@ -2992,7 +2992,7 @@ export component MainWindow inherits Window {
                             adjust(i, d) => { root.bb-adjust(i, d); }
                         }
                         PhaseTile {
-                            title: "Hold (full)";
+                            title: @tr("Hold (full)");
                             icon: @image-url("assets/pause.svg");
                             index: 1;
                             seconds: root.bb-hold-in;
@@ -3002,7 +3002,7 @@ export component MainWindow inherits Window {
                     }
                     Row {
                         PhaseTile {
-                            title: "Exhale";
+                            title: @tr("Exhale");
                             icon: Icons.arrow-drop-down;
                             index: 2;
                             seconds: root.bb-out;
@@ -3010,7 +3010,7 @@ export component MainWindow inherits Window {
                             adjust(i, d) => { root.bb-adjust(i, d); }
                         }
                         PhaseTile {
-                            title: "Hold (empty)";
+                            title: @tr("Hold (empty)");
                             icon: @image-url("assets/pause.svg");
                             index: 3;
                             seconds: root.bb-hold-out;
@@ -3021,7 +3021,7 @@ export component MainWindow inherits Window {
                 }
 
                 Text {
-                    text: "Session";
+                    text: @tr("Session");
                     font-size: 14px;
                     font-weight: 700;
                     color: MaterialPalette.primary;
@@ -3037,8 +3037,8 @@ export component MainWindow inherits Window {
                     // `BoxBreathCountdown` ↔ `BoxBreathStopwatch`
                     // at session start.
                     SwitchRow {
-                        title: "Stopwatch Mode";
-                        subtitle: "Count up from zero";
+                        title: @tr("Stopwatch Mode");
+                        subtitle: @tr("Count up from zero");
                         checked <=> root.stopwatch-on;
                         toggled(value) => { root.stopwatch-toggled(value); }
                     }
@@ -3068,9 +3068,9 @@ export component MainWindow inherits Window {
                     // `label_active_breathing` and selects
                     // through the seeded "Box-Breathing" default.
                     ExpanderRow {
-                        title: "Label";
-                        subtitle: "Tag this session";
-                        body-title: "Selected";
+                        title: @tr("Label");
+                        subtitle: @tr("Tag this session");
+                        body-title: @tr("Selected");
                         body-subtitle: root.label-name;
                         active <=> root.label-active;
                         toggled(value) => { root.label-active-toggled(value); }
@@ -3090,8 +3090,8 @@ export component MainWindow inherits Window {
                     // actually applied (FLAG_KEEP_SCREEN_ON) for
                     // a running session in any mode.
                     SwitchRow {
-                        title: "Keep Screen Awake";
-                        subtitle: "Prevent display sleep during a session";
+                        title: @tr("Keep Screen Awake");
+                        subtitle: @tr("Prevent display sleep during a session");
                         checked <=> root.keep-awake-on;
                         toggled(value) => {
                             root.keep-awake-toggled(value);
@@ -3106,7 +3106,7 @@ export component MainWindow inherits Window {
                 // parity). Global `end-bell-*` props/callbacks,
                 // no extra Rust wiring.
                 Text {
-                    text: "Bells";
+                    text: @tr("Bells");
                     font-size: 14px;
                     font-weight: 700;
                     color: MaterialPalette.primary;
@@ -3114,26 +3114,26 @@ export component MainWindow inherits Window {
                 }
                 BoxedList {
                     ExpanderGroup {
-                        title: "End Bell";
-                        subtitle: "Play a signal when the session ends";
+                        title: @tr("End Bell");
+                        subtitle: @tr("Play a signal when the session ends");
                         active <=> root.end-bell-active;
                         toggled(value) => { root.end-bell-toggled(value); }
 
                         CuesRow {
-                            title: "Type";
+                            title: @tr("Type");
                             current-index <=> root.end-bell-signal-mode;
                             changed(idx) => { root.end-bell-signal-mode-changed(idx); }
                         }
 
                         RevealChooser {
                             shown: root.end-bell-signal-mode != 1;
-                            title: "Bell Sound";
+                            title: @tr("Bell Sound");
                             subtitle: root.end-bell-sound-name;
                             tapped => { root.end-bell-sound-tap(); }
                         }
                         RevealChooser {
                             shown: root.end-bell-signal-mode != 0;
-                            title: "Pattern";
+                            title: @tr("Pattern");
                             subtitle: root.end-bell-pattern-name;
                             tapped => { root.end-bell-pattern-tap(); }
                         }
@@ -3149,7 +3149,7 @@ export component MainWindow inherits Window {
                 // session; dispatch_effects routes
                 // FireBoxBreathCue) — this is the config surface.
                 Text {
-                    text: "Box Breath cues";
+                    text: @tr("Box Breath cues");
                     font-size: 14px;
                     font-weight: 700;
                     color: MaterialPalette.primary;
@@ -3158,13 +3158,13 @@ export component MainWindow inherits Window {
 
                 BoxedList {
                     ExpanderGroup {
-                        title: "Cues during phases";
-                        subtitle: "Different cue per phase to feel the cycle";
+                        title: @tr("Cues during phases");
+                        subtitle: @tr("Different cue per phase to feel the cycle");
                         active <=> root.boxbreath-cues-active;
                         toggled(v) => { root.boxbreath-cues-toggled(v); }
 
                         PhaseCue {
-                            title: "Inhale";
+                            title: @tr("Inhale");
                             active <=> root.bbc-in-active;
                             signal-mode <=> root.bbc-in-signal-mode;
                             sound-name: root.bbc-in-sound-name;
@@ -3179,7 +3179,7 @@ export component MainWindow inherits Window {
                             background: MaterialPalette.outline-variant;
                         }
                         PhaseCue {
-                            title: "Hold (full)";
+                            title: @tr("Hold (full)");
                             active <=> root.bbc-holdin-active;
                             signal-mode <=> root.bbc-holdin-signal-mode;
                             sound-name: root.bbc-holdin-sound-name;
@@ -3194,7 +3194,7 @@ export component MainWindow inherits Window {
                             background: MaterialPalette.outline-variant;
                         }
                         PhaseCue {
-                            title: "Exhale";
+                            title: @tr("Exhale");
                             active <=> root.bbc-out-active;
                             signal-mode <=> root.bbc-out-signal-mode;
                             sound-name: root.bbc-out-sound-name;
@@ -3209,7 +3209,7 @@ export component MainWindow inherits Window {
                             background: MaterialPalette.outline-variant;
                         }
                         PhaseCue {
-                            title: "Hold (empty)";
+                            title: @tr("Hold (empty)");
                             active <=> root.bbc-holdout-active;
                             signal-mode <=> root.bbc-holdout-signal-mode;
                             sound-name: root.bbc-holdout-sound-name;
@@ -3285,13 +3285,13 @@ export component MainWindow inherits Window {
             VerticalLayout {
                 spacing: 6px;
                 Text {
-                    text: "Note (optional)";
+                    text: @tr("Note (optional)");
                     font-size: 12px;
                     color: MaterialPalette.on-surface-variant;
                     horizontal-alignment: left;
                 }
                 NoteField {
-                    label: "Note";
+                    label: @tr("Note");
                     text <=> root.note-text;
                 }
             }
@@ -3306,9 +3306,9 @@ export component MainWindow inherits Window {
             // the active mode's UUID setting.
             BoxedList {
                 ExpanderRow {
-                    title: "Label";
-                    subtitle: "Tag this session";
-                    body-title: "Selected";
+                    title: @tr("Label");
+                    subtitle: @tr("Tag this session");
+                    body-title: @tr("Selected");
                     body-subtitle: root.done-label-name;
                     active <=> root.done-label-active;
                     toggled(value) => { root.done-label-active-toggled(value); }
@@ -3325,14 +3325,14 @@ export component MainWindow inherits Window {
                 // Discard: outline button, the closest Material 3
                 // ships to GTK's `destructive-action` pill.
                 OutlineButton {
-                    text: "Discard";
+                    text: @tr("Discard");
                     height: 56px;
                     clicked => { root.discard-tap(); }
                 }
 
                 // Save: filled / suggested action.
                 FilledButton {
-                    text: "Save";
+                    text: @tr("Save");
                     height: 56px;
                     clicked => { root.save-tap(); }
                 }
@@ -3386,7 +3386,7 @@ export component MainWindow inherits Window {
                 VerticalLayout {
                     spacing: 2px;
                     Text {
-                        text: "Box Breathing";
+                        text: @tr("Box Breathing");
                         font-size: 12px;
                         horizontal-alignment: center;
                         color: #ffffffaa;
@@ -3504,7 +3504,7 @@ export component MainWindow inherits Window {
                     clicked => { root.action-tap(); }
                 }
                 if !root.overtime-active && root.stop-visible : OutlineButton {
-                    text: "Stop";
+                    text: @tr("Stop");
                     height: 56px;
                     clicked => { root.stop-tap(); }
                 }
@@ -3513,7 +3513,7 @@ export component MainWindow inherits Window {
                 // Add (incl. overtime). Mirrors GTK's morphed
                 // Pause→Finish button plus the revealed Add pill.
                 if root.overtime-active : FilledButton {
-                    text: "Finish";
+                    text: @tr("Finish");
                     height: 56px;
                     clicked => { root.finish-tap(); }
                 }
@@ -3559,13 +3559,13 @@ export component MainWindow inherits Window {
             padding-bottom: root.nav-bar-height + root.bottom-bar-inset;
 
             Text {
-                text: "No Sessions Yet";
+                text: @tr("No Sessions Yet");
                 font-size: 22px;
                 horizontal-alignment: center;
                 color: MaterialPalette.on-surface;
             }
             Text {
-                text: "Start meditating to see your sessions here.";
+                text: @tr("Start meditating to see your sessions here.");
                 font-size: 14px;
                 horizontal-alignment: center;
                 color: MaterialPalette.on-surface-variant;
@@ -3582,13 +3582,13 @@ export component MainWindow inherits Window {
             padding-bottom: root.nav-bar-height + root.bottom-bar-inset;
 
             Text {
-                text: "No Matching Sessions";
+                text: @tr("No Matching Sessions");
                 font-size: 22px;
                 horizontal-alignment: center;
                 color: MaterialPalette.on-surface;
             }
             Text {
-                text: "Try changing your filters.";
+                text: @tr("Try changing your filters.");
                 font-size: 14px;
                 horizontal-alignment: center;
                 color: MaterialPalette.on-surface-variant;
@@ -3711,7 +3711,7 @@ export component MainWindow inherits Window {
                                     horizontal-alignment: left;
                                 }
                                 Text {
-                                    text: "min";
+                                    text: @tr("min");
                                     font-size: 10px;
                                     color: MaterialPalette.on-surface-variant;
                                     horizontal-alignment: left;
@@ -3751,7 +3751,7 @@ export component MainWindow inherits Window {
                                 Text {
                                     text: item.note != ""
                                         ? item.note
-                                        : "No note added";
+                                        : @tr("No note added");
                                     font-size: 14px;
                                     color: item.note != ""
                                         ? MaterialPalette.on-surface
@@ -3789,7 +3789,7 @@ export component MainWindow inherits Window {
                 if root.log-has-more : HorizontalLayout {
                     alignment: center;
                     TonalButton {
-                        text: "Load more";
+                        text: @tr("Load more");
                         clicked => { root.load-more-tap(); }
                     }
                 }
@@ -3858,7 +3858,7 @@ export component MainWindow inherits Window {
                         horizontal-stretch: 1;
 
                         Text {
-                            text: "DAILY GOAL";
+                            text: @tr("DAILY GOAL");
                             font-size: 11px;
                             font-weight: 700;
                             color: MaterialPalette.on-surface-variant;
@@ -3897,7 +3897,7 @@ export component MainWindow inherits Window {
                     HorizontalLayout {
                         spacing: 8px;
                         Text {
-                            text: "LAST 13 WEEKS";
+                            text: @tr("LAST 13 WEEKS");
                             font-size: 11px;
                             font-weight: 700;
                             color: MaterialPalette.on-surface-variant;
@@ -3944,7 +3944,7 @@ export component MainWindow inherits Window {
                         alignment: end;
 
                         Text {
-                            text: "Less";
+                            text: @tr("Less");
                             font-size: 10px;
                             color: MaterialPalette.on-surface-variant;
                             vertical-alignment: center;
@@ -3961,7 +3961,7 @@ export component MainWindow inherits Window {
                                 MaterialPalette.on-surface.with-alpha(0.08);
                         }
                         Text {
-                            text: "More";
+                            text: @tr("More");
                             font-size: 10px;
                             color: MaterialPalette.on-surface-variant;
                             vertical-alignment: center;
@@ -3980,7 +3980,7 @@ export component MainWindow inherits Window {
                     spacing: 8px;
 
                     Text {
-                        text: "INSIGHTS";
+                        text: @tr("INSIGHTS");
                         font-size: 11px;
                         font-weight: 700;
                         color: MaterialPalette.on-surface-variant;
@@ -4294,7 +4294,7 @@ export component MainWindow inherits Window {
                     spacing: 8px;
 
                     Text {
-                        text: "BY LABEL";
+                        text: @tr("BY LABEL");
                         font-size: 11px;
                         font-weight: 700;
                         color: MaterialPalette.on-surface-variant;
@@ -4387,7 +4387,7 @@ export component MainWindow inherits Window {
                 VerticalLayout {
                     alignment: center;
                     TextButton {
-                        text: "Cancel";
+                        text: @tr("Cancel");
                         clicked => { root.edit-cancel-tap(); }
                     }
                 }
@@ -4402,7 +4402,7 @@ export component MainWindow inherits Window {
                 VerticalLayout {
                     alignment: center;
                     FilledButton {
-                        text: "Save";
+                        text: @tr("Save");
                         clicked => { root.edit-save-tap(); }
                     }
                 }
@@ -4420,8 +4420,8 @@ export component MainWindow inherits Window {
             // edit-duration-* instead of setup-*.
             BoxedList {
                 DurationRow {
-                    label: "Duration";
-                    value-text: root.edit-duration-hours + "h "
+                    label: @tr("Duration");
+                    value-text: root.edit-duration-hours + @tr("h ")
                         + root.edit-duration-minutes + "m";
                     tapped => {
                         root.dialog-hours = root.edit-duration-hours;
@@ -4440,7 +4440,7 @@ export component MainWindow inherits Window {
             // collapse Hour/Minute into a single picker.
             BoxedList {
                 DurationRow {
-                    label: "Date";
+                    label: @tr("Date");
                     value-text: root.edit-start-date.year + "-"
                         + (root.edit-start-date.month < 10 ? "0" : "") + root.edit-start-date.month + "-"
                         + (root.edit-start-date.day < 10 ? "0" : "") + root.edit-start-date.day;
@@ -4451,7 +4451,7 @@ export component MainWindow inherits Window {
                     background: MaterialPalette.outline-variant;
                 }
                 DurationRow {
-                    label: "Time";
+                    label: @tr("Time");
                     value-text:
                         (root.edit-start-time.hour < 10 ? "0" : "") + root.edit-start-time.hour + ":"
                         + (root.edit-start-time.minute < 10 ? "0" : "") + root.edit-start-time.minute;
@@ -4478,9 +4478,9 @@ export component MainWindow inherits Window {
             // `main.slint:1434`.
             BoxedList {
                 ExpanderRow {
-                    title: "Label";
-                    subtitle: "Tag this session";
-                    body-title: "Selected";
+                    title: @tr("Label");
+                    subtitle: @tr("Tag this session");
+                    body-title: @tr("Selected");
                     body-subtitle: root.edit-label-name;
                     active <=> root.edit-label-enabled;
                     toggled(value) => { root.edit-label-toggled(value); }
@@ -4496,7 +4496,7 @@ export component MainWindow inherits Window {
             // `root.edit-note-text` keeps the editor's content in
             // sync with the Rust-side property both ways.
             NoteField {
-                label: "Note (optional)";
+                label: @tr("Note (optional)");
                 text <=> root.edit-note-text;
             }
         }
@@ -4520,7 +4520,7 @@ export component MainWindow inherits Window {
     date-popup := DatePickerPopup {
         width: root.width;
         height: root.height;
-        title: "Select session date";
+        title: @tr("Select session date");
         date: root.edit-start-date;
         accepted(date) => {
             // Material's DatePickerPopup emits `accepted(root.date)`
@@ -4538,7 +4538,7 @@ export component MainWindow inherits Window {
     time-popup := TimePickerPopup {
         width: root.width;
         height: root.height;
-        title: "Select session time";
+        title: @tr("Select session time");
         use_24_hour_format: true;
         time: root.edit-start-time;
         ok => {
@@ -4597,7 +4597,7 @@ export component MainWindow inherits Window {
                 alignment: stretch;
 
                 Text {
-                    text: "Meditate";
+                    text: @tr("Meditate");
                     font-size: 22px;
                     font-weight: 400;
                     color: MaterialPalette.on-surface;
@@ -4723,17 +4723,17 @@ export component MainWindow inherits Window {
                 {
                     icon: Icons.schedule,
                     selected-icon: Icons.schedule,
-                    text: "Timer",
+                    text: @tr("Timer"),
                 },
                 {
                     icon: @image-url("assets/bar_chart.svg"),
                     selected-icon: @image-url("assets/bar_chart.svg"),
-                    text: "Stats",
+                    text: @tr("Stats"),
                 },
                 {
                     icon: Icons.calendar-today,
                     selected-icon: Icons.calendar-today,
-                    text: "Log",
+                    text: @tr("Log"),
                 },
             ];
             current-index <=> root.nav-page;
@@ -4786,7 +4786,7 @@ export component MainWindow inherits Window {
                 spacing: 16px;
 
                 Text {
-                    text: "Filter Sessions";
+                    text: @tr("Filter Sessions");
                     font-size: 22px;
                     horizontal-alignment: center;
                     color: MaterialPalette.on-surface;
@@ -4802,8 +4802,8 @@ export component MainWindow inherits Window {
                 // Label chooser row lands in L-5c).
                 BoxedList {
                     SwitchRow {
-                        title: "Has Notes";
-                        subtitle: "Only sessions with a note";
+                        title: @tr("Has Notes");
+                        subtitle: @tr("Only sessions with a note");
                         checked <=> root.filter-notes-only;
                         toggled(on) => { root.filter-notes-toggled(on); }
                     }
@@ -4817,7 +4817,7 @@ export component MainWindow inherits Window {
                 // `filter_label_row` notify handler at
                 // `meditate-gtk/src/window/imp.rs:799`.
                 DropDownMenu {
-                    label: "Label";
+                    label: @tr("Label");
                     items: root.filter-label-items;
                     current-index <=> root.filter-label-index;
                     selected(idx) => { root.filter-label-selected(idx); }
@@ -4828,7 +4828,7 @@ export component MainWindow inherits Window {
                     alignment: end;
 
                     TextButton {
-                        text: "Close";
+                        text: @tr("Close");
                         clicked => { root.filter-sheet-open = false; }
                     }
                 }
@@ -4867,13 +4867,13 @@ export component MainWindow inherits Window {
                 spacing: 16px;
 
                 Text {
-                    text: "Custom Time";
+                    text: @tr("Custom Time");
                     font-size: 22px;
                     horizontal-alignment: center;
                     color: MaterialPalette.on-surface;
                 }
                 Text {
-                    text: "Hours : Minutes";
+                    text: @tr("Hours : Minutes");
                     font-size: 14px;
                     horizontal-alignment: center;
                     color: MaterialPalette.on-surface-variant;
@@ -4906,11 +4906,11 @@ export component MainWindow inherits Window {
                     alignment: end;
 
                     TextButton {
-                        text: "Cancel";
+                        text: @tr("Cancel");
                         clicked => { root.duration-dialog-open = false; }
                     }
                     TextButton {
-                        text: "Set";
+                        text: @tr("Set");
                         clicked => {
                             // Refuse to commit a zero-duration set,
                             // mirroring the GTK shell's guard.
@@ -4983,7 +4983,7 @@ export component MainWindow inherits Window {
                     clicked => { root.labels-back(); }
                 }
                 Text {
-                    text: "Choose Label";
+                    text: @tr("Choose Label");
                     font-size: 18px;
                     color: MaterialPalette.on-surface;
                     vertical-alignment: center;
@@ -5026,7 +5026,7 @@ export component MainWindow inherits Window {
                         alignment: stretch;
 
                         Text {
-                            text: "Create new label…";
+                            text: @tr("Create new label…");
                             font-size: 16px;
                             color: MaterialPalette.on-surface;
                             vertical-alignment: center;
@@ -5172,7 +5172,7 @@ export component MainWindow inherits Window {
                     clicked => { root.interval-bells-back(); }
                 }
                 Text {
-                    text: "Interval Bells";
+                    text: @tr("Interval Bells");
                     font-size: 18px;
                     color: MaterialPalette.on-surface;
                     vertical-alignment: center;
@@ -5205,7 +5205,7 @@ export component MainWindow inherits Window {
                         alignment: stretch;
 
                         Text {
-                            text: "Create interval bell…";
+                            text: @tr("Create interval bell…");
                             font-size: 16px;
                             color: MaterialPalette.on-surface;
                             vertical-alignment: center;
@@ -5312,12 +5312,12 @@ export component MainWindow inherits Window {
                 VerticalLayout {
                     alignment: center;
                     TextButton {
-                        text: "Cancel";
+                        text: @tr("Cancel");
                         clicked => { root.interval-editor-cancel(); }
                     }
                 }
                 Text {
-                    text: "Interval Bell";
+                    text: @tr("Interval Bell");
                     font-size: 18px;
                     color: MaterialPalette.on-surface;
                     vertical-alignment: center;
@@ -5327,7 +5327,7 @@ export component MainWindow inherits Window {
                 VerticalLayout {
                     alignment: center;
                     FilledButton {
-                        text: "Save";
+                        text: @tr("Save");
                         clicked => { root.interval-editor-save(); }
                     }
                 }
@@ -5345,8 +5345,8 @@ export component MainWindow inherits Window {
             // re-render, so `if` can't be used here.
             BoxedList {
                 CuesRow {
-                    title: "Kind";
-                    labels: ["Every N min", "From start", "Before end"];
+                    title: @tr("Kind");
+                    labels: [@tr("Every N min"), @tr("From start"), @tr("Before end")];
                     current-index <=> root.ie-kind;
                 }
 
@@ -5355,7 +5355,7 @@ export component MainWindow inherits Window {
                     background: MaterialPalette.outline-variant;
                 }
                 StepperRow {
-                    label: "Minutes";
+                    label: @tr("Minutes");
                     value <=> root.ie-minutes;
                     min-value: 1;
                     max-value: 120;
@@ -5364,7 +5364,7 @@ export component MainWindow inherits Window {
                 // (index 0), mirroring GTK gating its visibility.
                 RevealStepper {
                     shown: root.ie-kind == 0;
-                    label: "Jitter %";
+                    label: @tr("Jitter %");
                     value <=> root.ie-jitter;
                     min-value: 0;
                     max-value: 50;
@@ -5375,19 +5375,19 @@ export component MainWindow inherits Window {
                     background: MaterialPalette.outline-variant;
                 }
                 CuesRow {
-                    title: "Type";
+                    title: @tr("Type");
                     current-index <=> root.ie-signal-mode;
                 }
                 RevealChooser {
                     shown: root.ie-signal-mode != 1;
-                    title: "Bell Sound";
+                    title: @tr("Bell Sound");
                     subtitle: root.ie-sound-name;
                     child-shade: false;
                     tapped => { root.interval-editor-sound-tap(); }
                 }
                 RevealChooser {
                     shown: root.ie-signal-mode != 0;
-                    title: "Pattern";
+                    title: @tr("Pattern");
                     subtitle: root.ie-pattern-name;
                     child-shade: false;
                     tapped => { root.interval-editor-pattern-tap(); }
@@ -5431,7 +5431,7 @@ export component MainWindow inherits Window {
                     clicked => { root.bell-chooser-back(); }
                 }
                 Text {
-                    text: "Choose Bell Sound";
+                    text: @tr("Choose Bell Sound");
                     font-size: 18px;
                     color: MaterialPalette.on-surface;
                     vertical-alignment: center;
@@ -5462,7 +5462,7 @@ export component MainWindow inherits Window {
                         spacing: 12px;
                         alignment: stretch;
                         Text {
-                            text: "Import sound…";
+                            text: @tr("Import sound…");
                             font-size: 16px;
                             color: MaterialPalette.primary;
                             vertical-alignment: center;
@@ -5551,7 +5551,7 @@ export component MainWindow inherits Window {
                                     }
                                     Text {
                                         text: root.bell-preview-uuid == item.uuid
-                                            ? "Stop" : "Play";
+                                            ? @tr("Stop") : @tr("Play");
                                         font-size: 13px;
                                         horizontal-alignment: center;
                                         vertical-alignment: center;
@@ -5605,7 +5605,7 @@ export component MainWindow inherits Window {
                     clicked => { root.pattern-chooser-back(); }
                 }
                 Text {
-                    text: "Choose Pattern";
+                    text: @tr("Choose Pattern");
                     font-size: 18px;
                     color: MaterialPalette.on-surface;
                     vertical-alignment: center;
@@ -5636,7 +5636,7 @@ export component MainWindow inherits Window {
                         VerticalLayout {
                             alignment: center;
                             Text {
-                                text: "Create pattern";
+                                text: @tr("Create pattern");
                                 font-size: 16px;
                                 color: MaterialPalette.primary;
                                 vertical-alignment: center;
@@ -5715,7 +5715,7 @@ export component MainWindow inherits Window {
                                         }
                                     }
                                     Text {
-                                        text: "Edit";
+                                        text: @tr("Edit");
                                         font-size: 13px;
                                         horizontal-alignment: center;
                                         vertical-alignment: center;
@@ -5749,7 +5749,7 @@ export component MainWindow inherits Window {
                                     }
                                     Text {
                                         text: root.pattern-preview-uuid == item.uuid
-                                            ? "Stop" : "Play";
+                                            ? @tr("Stop") : @tr("Play");
                                         font-size: 13px;
                                         horizontal-alignment: center;
                                         vertical-alignment: center;
@@ -5792,7 +5792,7 @@ export component MainWindow inherits Window {
                 VerticalLayout {
                     alignment: center;
                     TextButton {
-                        text: "Cancel";
+                        text: @tr("Cancel");
                         clicked => { root.vibration-editor-cancel(); }
                     }
                 }
@@ -5807,7 +5807,7 @@ export component MainWindow inherits Window {
                 VerticalLayout {
                     alignment: center;
                     FilledButton {
-                        text: "Save";
+                        text: @tr("Save");
                         enabled: root.ve-save-enabled;
                         clicked => { root.vibration-editor-save(); }
                     }
@@ -5828,7 +5828,7 @@ export component MainWindow inherits Window {
                         VerticalLayout {
                             alignment: center;
                             Text {
-                                text: "Name";
+                                text: @tr("Name");
                                 font-size: 16px;
                                 color: MaterialPalette.on-surface;
                             }
@@ -5852,7 +5852,7 @@ export component MainWindow inherits Window {
                 // 0.5..=10.0 s). Rust reacts to the change to
                 // recompute the Points cap (V-4 wiring).
                 StepperRow {
-                    label: "Duration (0.1 s)";
+                    label: @tr("Duration (0.1 s)");
                     value <=> root.ve-duration-tenths;
                     min-value: 5;
                     max-value: 100;
@@ -5862,7 +5862,7 @@ export component MainWindow inherits Window {
                     background: MaterialPalette.outline-variant;
                 }
                 StepperRow {
-                    label: "Points";
+                    label: @tr("Points");
                     value <=> root.ve-points;
                     min-value: 3;
                     max-value: root.ve-points-max;
@@ -5875,8 +5875,8 @@ export component MainWindow inherits Window {
                     background: MaterialPalette.outline-variant;
                 }
                 if !root.ve-binary : CuesRow {
-                    title: "Chart";
-                    labels: ["Bar", "Line"];
+                    title: @tr("Chart");
+                    labels: [@tr("Bar"), @tr("Line")];
                     current-index <=> root.ve-chart-kind;
                     changed(idx) => { root.ve-kind-changed(idx); }
                 }
@@ -5902,7 +5902,7 @@ export component MainWindow inherits Window {
                             alignment: center;
                             Text {
                                 text: root.ve-previewing
-                                    ? "Stop" : "Preview";
+                                    ? @tr("Stop") : @tr("Preview");
                                 font-size: 16px;
                                 color: MaterialPalette.primary;
                             }
@@ -6109,7 +6109,7 @@ export component MainWindow inherits Window {
                 }
                 Text {
                     text: root.preset-chooser-save-mode
-                        ? "Save Preset" : "Manage Presets";
+                        ? @tr("Save Preset") : @tr("Manage Presets");
                     font-size: 18px;
                     color: MaterialPalette.on-surface;
                     vertical-alignment: center;
@@ -6139,7 +6139,7 @@ export component MainWindow inherits Window {
                         spacing: 12px;
                         alignment: stretch;
                         Text {
-                            text: "Create new preset…";
+                            text: @tr("Create new preset…");
                             font-size: 16px;
                             color: MaterialPalette.primary;
                             vertical-alignment: center;
@@ -6289,14 +6289,14 @@ export component MainWindow inherits Window {
                 spacing: 16px;
 
                 Text {
-                    text: "Create Label";
+                    text: @tr("Create Label");
                     font-size: 22px;
                     horizontal-alignment: center;
                     color: MaterialPalette.on-surface;
                 }
 
                 TextField {
-                    label: "Label name";
+                    label: @tr("Label name");
                     text <=> root.create-label-text;
                     edited(text) => { root.create-label-changed(text); }
                 }
@@ -6306,11 +6306,11 @@ export component MainWindow inherits Window {
                     alignment: end;
 
                     TextButton {
-                        text: "Cancel";
+                        text: @tr("Cancel");
                         clicked => { root.create-label-dialog-open = false; }
                     }
                     TextButton {
-                        text: "Create";
+                        text: @tr("Create");
                         enabled: root.create-label-valid;
                         clicked => { root.create-label-confirm(); }
                     }
@@ -6347,14 +6347,14 @@ export component MainWindow inherits Window {
                 spacing: 16px;
 
                 Text {
-                    text: "Rename Label";
+                    text: @tr("Rename Label");
                     font-size: 22px;
                     horizontal-alignment: center;
                     color: MaterialPalette.on-surface;
                 }
 
                 TextField {
-                    label: "Label name";
+                    label: @tr("Label name");
                     text <=> root.rename-label-text;
                     edited(text) => { root.rename-label-changed(text); }
                 }
@@ -6364,11 +6364,11 @@ export component MainWindow inherits Window {
                     alignment: end;
 
                     TextButton {
-                        text: "Cancel";
+                        text: @tr("Cancel");
                         clicked => { root.rename-label-dialog-open = false; }
                     }
                     TextButton {
-                        text: "Rename";
+                        text: @tr("Rename");
                         enabled: root.rename-label-valid;
                         clicked => { root.rename-label-confirm(); }
                     }
@@ -6405,7 +6405,7 @@ export component MainWindow inherits Window {
                 spacing: 16px;
 
                 Text {
-                    text: "Delete Label?";
+                    text: @tr("Delete Label?");
                     font-size: 22px;
                     horizontal-alignment: center;
                     color: MaterialPalette.on-surface;
@@ -6424,7 +6424,7 @@ export component MainWindow inherits Window {
                     alignment: end;
 
                     TextButton {
-                        text: "Cancel";
+                        text: @tr("Cancel");
                         clicked => { root.delete-label-dialog-open = false; }
                     }
                     // No native "destructive" style on TextButton —
@@ -6434,7 +6434,7 @@ export component MainWindow inherits Window {
                     // dialog title + the X-icon trigger already
                     // signal the destructive intent.
                     TextButton {
-                        text: "Delete";
+                        text: @tr("Delete");
                         clicked => { root.delete-label-confirm(); }
                     }
                 }
@@ -6469,14 +6469,14 @@ export component MainWindow inherits Window {
                 spacing: 16px;
 
                 Text {
-                    text: "Create Preset";
+                    text: @tr("Create Preset");
                     font-size: 22px;
                     horizontal-alignment: center;
                     color: MaterialPalette.on-surface;
                 }
 
                 TextField {
-                    label: "Preset name";
+                    label: @tr("Preset name");
                     text <=> root.create-preset-text;
                     edited(text) => { root.create-preset-changed(text); }
                 }
@@ -6486,11 +6486,11 @@ export component MainWindow inherits Window {
                     alignment: end;
 
                     TextButton {
-                        text: "Cancel";
+                        text: @tr("Cancel");
                         clicked => { root.create-preset-dialog-open = false; }
                     }
                     TextButton {
-                        text: "Create";
+                        text: @tr("Create");
                         enabled: root.create-preset-valid;
                         clicked => { root.create-preset-confirm(); }
                     }
@@ -6522,14 +6522,14 @@ export component MainWindow inherits Window {
                 spacing: 16px;
 
                 Text {
-                    text: "Override Preset?";
+                    text: @tr("Override Preset?");
                     font-size: 22px;
                     horizontal-alignment: center;
                     color: MaterialPalette.on-surface;
                 }
                 Text {
-                    text: "Replace '" + root.override-preset-name
-                        + "' with the current settings?";
+                    text: @tr("Replace '") + root.override-preset-name
+                        + @tr("' with the current settings?");
                     font-size: 14px;
                     horizontal-alignment: center;
                     color: MaterialPalette.on-surface-variant;
@@ -6541,13 +6541,13 @@ export component MainWindow inherits Window {
                     alignment: end;
 
                     TextButton {
-                        text: "Cancel";
+                        text: @tr("Cancel");
                         clicked => {
                             root.override-preset-dialog-open = false;
                         }
                     }
                     TextButton {
-                        text: "Override";
+                        text: @tr("Override");
                         clicked => { root.override-preset-confirm(); }
                     }
                 }
@@ -6580,14 +6580,14 @@ export component MainWindow inherits Window {
                 spacing: 16px;
 
                 Text {
-                    text: "Rename Preset";
+                    text: @tr("Rename Preset");
                     font-size: 22px;
                     horizontal-alignment: center;
                     color: MaterialPalette.on-surface;
                 }
 
                 TextField {
-                    label: "Preset name";
+                    label: @tr("Preset name");
                     text <=> root.rename-preset-text;
                     edited(text) => { root.rename-preset-changed(text); }
                 }
@@ -6597,11 +6597,11 @@ export component MainWindow inherits Window {
                     alignment: end;
 
                     TextButton {
-                        text: "Cancel";
+                        text: @tr("Cancel");
                         clicked => { root.rename-preset-dialog-open = false; }
                     }
                     TextButton {
-                        text: "Rename";
+                        text: @tr("Rename");
                         enabled: root.rename-preset-valid;
                         clicked => { root.rename-preset-confirm(); }
                     }
@@ -6634,14 +6634,14 @@ export component MainWindow inherits Window {
                 spacing: 16px;
 
                 Text {
-                    text: "Delete Preset?";
+                    text: @tr("Delete Preset?");
                     font-size: 22px;
                     horizontal-alignment: center;
                     color: MaterialPalette.on-surface;
                 }
                 Text {
                     text: "'" + root.delete-preset-name
-                        + "' will be removed from this device and any synced peers.";
+                        + @tr("' will be removed from this device and any synced peers.");
                     font-size: 14px;
                     horizontal-alignment: center;
                     color: MaterialPalette.on-surface-variant;
@@ -6653,13 +6653,13 @@ export component MainWindow inherits Window {
                     alignment: end;
 
                     TextButton {
-                        text: "Cancel";
+                        text: @tr("Cancel");
                         clicked => {
                             root.delete-preset-dialog-open = false;
                         }
                     }
                     TextButton {
-                        text: "Delete";
+                        text: @tr("Delete");
                         clicked => { root.delete-preset-confirm(); }
                     }
                 }
@@ -6695,13 +6695,13 @@ export component MainWindow inherits Window {
                 spacing: 16px;
 
                 Text {
-                    text: "Preparation Time";
+                    text: @tr("Preparation Time");
                     font-size: 22px;
                     horizontal-alignment: center;
                     color: MaterialPalette.on-surface;
                 }
                 Text {
-                    text: "Seconds";
+                    text: @tr("Seconds");
                     font-size: 14px;
                     horizontal-alignment: center;
                     color: MaterialPalette.on-surface-variant;
@@ -6721,11 +6721,11 @@ export component MainWindow inherits Window {
                     alignment: end;
 
                     TextButton {
-                        text: "Cancel";
+                        text: @tr("Cancel");
                         clicked => { root.prep-dialog-open = false; }
                     }
                     TextButton {
-                        text: "Set";
+                        text: @tr("Set");
                         clicked => {
                             root.prep-time-secs = root.prep-dialog-secs;
                             root.prep-secs-committed();
@@ -6770,7 +6770,7 @@ export component MainWindow inherits Window {
                     clicked => { root.guided-manage-back(); }
                 }
                 Text {
-                    text: "Manage Files";
+                    text: @tr("Manage Files");
                     font-size: 18px;
                     color: MaterialPalette.on-surface;
                     vertical-alignment: center;
@@ -6800,7 +6800,7 @@ export component MainWindow inherits Window {
                         spacing: 12px;
                         alignment: stretch;
                         Text {
-                            text: "Create new guided file…";
+                            text: @tr("Create new guided file…");
                             font-size: 16px;
                             color: MaterialPalette.primary;
                             vertical-alignment: center;
@@ -6943,7 +6943,7 @@ export component MainWindow inherits Window {
                     clicked => { root.preferences-back(); }
                 }
                 Text {
-                    text: "Preferences";
+                    text: @tr("Preferences");
                     font-size: 18px;
                     color: MaterialPalette.on-surface;
                     vertical-alignment: center;
@@ -6970,14 +6970,14 @@ export component MainWindow inherits Window {
                 alignment: start;
 
             Text {
-                text: "Nextcloud Sync";
+                text: @tr("Nextcloud Sync");
                 font-size: 14px;
                 font-weight: 700;
                 color: MaterialPalette.primary;
                 horizontal-alignment: left;
             }
             Text {
-                text: "Sync sessions, labels, and preferences between your devices via your own Nextcloud server.";
+                text: @tr("Sync sessions, labels, and preferences between your devices via your own Nextcloud server.");
                 font-size: 13px;
                 color: MaterialPalette.on-surface-variant;
                 horizontal-alignment: left;
@@ -6985,15 +6985,15 @@ export component MainWindow inherits Window {
             }
 
             TextField {
-                label: "Server URL";
+                label: @tr("Server URL");
                 text <=> root.prefs-url;
             }
             TextField {
-                label: "Username";
+                label: @tr("Username");
                 text <=> root.prefs-username;
             }
             TextField {
-                label: "App password";
+                label: @tr("App password");
                 input-type: InputType.password;
                 // Bundled one-glyph font: the mask dot (U+25CF)
                 // is the only character this field ever renders.
@@ -7002,7 +7002,7 @@ export component MainWindow inherits Window {
             }
 
             Text {
-                text: "Stores URL and username locally; password goes to the Android Keystore. Leave the password blank to keep the stored one.";
+                text: @tr("Stores URL and username locally; password goes to the Android Keystore. Leave the password blank to keep the stored one.");
                 font-size: 13px;
                 color: MaterialPalette.on-surface-variant;
                 horizontal-alignment: left;
@@ -7013,27 +7013,27 @@ export component MainWindow inherits Window {
                 spacing: 8px;
 
                 FilledButton {
-                    text: "Save";
+                    text: @tr("Save");
                     clicked => { root.prefs-save-tap(); }
                 }
                 OutlineButton {
                     text: root.prefs-test-busy
-                        ? "Testing…"
-                        : "Test connection";
+                        ? @tr("Testing…")
+                        : @tr("Test connection");
                     enabled: !root.prefs-test-busy;
                     clicked => { root.prefs-test-tap(); }
                 }
             }
 
             Text {
-                text: "Stats";
+                text: @tr("Stats");
                 font-size: 14px;
                 font-weight: 700;
                 color: MaterialPalette.primary;
                 horizontal-alignment: left;
             }
             Text {
-                text: "Minutes per day — drives the ring on the Stats tab.";
+                text: @tr("Minutes per day — drives the ring on the Stats tab.");
                 font-size: 13px;
                 color: MaterialPalette.on-surface-variant;
                 horizontal-alignment: left;
@@ -7041,8 +7041,8 @@ export component MainWindow inherits Window {
             }
             BoxedList {
                 DurationRow {
-                    label: "Daily goal";
-                    value-text: root.prefs-goal-mins + " min";
+                    label: @tr("Daily goal");
+                    value-text: root.prefs-goal-mins + @tr(" min");
                     tapped => {
                         root.goal-dialog-text = "" + root.prefs-goal-mins;
                         root.goal-dialog-open = true;
@@ -7051,14 +7051,14 @@ export component MainWindow inherits Window {
             }
 
             Text {
-                text: "Data";
+                text: @tr("Data");
                 font-size: 14px;
                 font-weight: 700;
                 color: MaterialPalette.primary;
                 horizontal-alignment: left;
             }
             Text {
-                text: "Export your session log to a CSV file, or restore from one.";
+                text: @tr("Export your session log to a CSV file, or restore from one.");
                 font-size: 13px;
                 color: MaterialPalette.on-surface-variant;
                 horizontal-alignment: left;
@@ -7066,7 +7066,7 @@ export component MainWindow inherits Window {
             }
             BoxedList {
                 DurationRow {
-                    label: "Export session log";
+                    label: @tr("Export session log");
                     value-text: "";
                     tapped => { root.data-export-tap(); }
                 }
@@ -7075,7 +7075,7 @@ export component MainWindow inherits Window {
                     background: MaterialPalette.outline-variant;
                 }
                 DurationRow {
-                    label: "Import from Meditate CSV";
+                    label: @tr("Import from Meditate CSV");
                     value-text: "";
                     tapped => { root.data-import-tap(); }
                 }
@@ -7084,14 +7084,14 @@ export component MainWindow inherits Window {
                     background: MaterialPalette.outline-variant;
                 }
                 DurationRow {
-                    label: "Import from Insight Timer";
+                    label: @tr("Import from Insight Timer");
                     value-text: "";
                     tapped => { root.data-insight-tap(); }
                 }
             }
 
             Text {
-                text: "Danger Zone";
+                text: @tr("Danger Zone");
                 font-size: 14px;
                 font-weight: 700;
                 color: MaterialPalette.error;
@@ -7099,21 +7099,21 @@ export component MainWindow inherits Window {
             }
             BoxedList {
                 DurationRow {
-                    label: "Delete all sessions";
+                    label: @tr("Delete all sessions");
                     value-text: "";
                     tapped => { root.delete-all-dialog-open = true; }
                 }
             }
 
             Text {
-                text: "Appearance";
+                text: @tr("Appearance");
                 font-size: 14px;
                 font-weight: 700;
                 color: MaterialPalette.primary;
                 horizontal-alignment: left;
             }
             Text {
-                text: "Accent colour — tinting for buttons, rings, and highlights.";
+                text: @tr("Accent colour — tinting for buttons, rings, and highlights.");
                 font-size: 13px;
                 color: MaterialPalette.on-surface-variant;
                 horizontal-alignment: left;
@@ -7154,7 +7154,7 @@ export component MainWindow inherits Window {
             }
 
             Text {
-                text: "About";
+                text: @tr("About");
                 font-size: 14px;
                 font-weight: 700;
                 color: MaterialPalette.primary;
@@ -7168,7 +7168,7 @@ export component MainWindow inherits Window {
                         padding-right: 16px;
                         alignment: stretch;
                         Text {
-                            text: "Meditate";
+                            text: @tr("Meditate");
                             font-size: 16px;
                             color: MaterialPalette.on-surface;
                             vertical-alignment: center;
@@ -7187,7 +7187,7 @@ export component MainWindow inherits Window {
                     background: MaterialPalette.outline-variant;
                 }
                 DurationRow {
-                    label: "Report an issue";
+                    label: @tr("Report an issue");
                     value-text: "";
                     tapped => { root.about-issue-tap(); }
                 }
@@ -7196,7 +7196,7 @@ export component MainWindow inherits Window {
                     background: MaterialPalette.outline-variant;
                 }
                 DurationRow {
-                    label: "Diagnostics";
+                    label: @tr("Diagnostics");
                     value-text: "";
                     tapped => { root.diag-open-tap(); }
                 }
@@ -7234,7 +7234,7 @@ export component MainWindow inherits Window {
                     clicked => { root.diag-back(); }
                 }
                 Text {
-                    text: "Diagnostics";
+                    text: @tr("Diagnostics");
                     font-size: 18px;
                     color: MaterialPalette.on-surface;
                     vertical-alignment: center;
@@ -7270,11 +7270,11 @@ export component MainWindow inherits Window {
                 spacing: 8px;
 
                 FilledButton {
-                    text: "Copy";
+                    text: @tr("Copy");
                     clicked => { root.diag-copy-tap(); }
                 }
                 OutlineButton {
-                    text: "Share";
+                    text: @tr("Share");
                     clicked => { root.diag-share-tap(); }
                 }
             }
@@ -7316,7 +7316,7 @@ export component MainWindow inherits Window {
             if root.snackbar-show-undo : VerticalLayout {
                 alignment: center;
                 TextButton {
-                    text: "Undo";
+                    text: @tr("Undo");
                     inverse: true;
                     clicked => { root.snackbar-undo-tap(); }
                 }
@@ -7370,7 +7370,7 @@ export component MainWindow inherits Window {
                 }
 
                 TextField {
-                    label: "Track name";
+                    label: @tr("Track name");
                     text <=> root.guided-import-text;
                     enabled: !root.guided-import-busy;
                     edited(text) => { root.guided-import-changed(text); }
@@ -7381,14 +7381,14 @@ export component MainWindow inherits Window {
                     alignment: end;
 
                     TextButton {
-                        text: "Cancel";
+                        text: @tr("Cancel");
                         clicked => {
                             root.guided-import-cancel();
                             root.guided-import-dialog-open = false;
                         }
                     }
                     if !root.guided-import-busy : TextButton {
-                        text: "Import";
+                        text: @tr("Import");
                         enabled: root.guided-import-valid;
                         clicked => { root.guided-import-confirm(); }
                     }
@@ -7410,7 +7410,7 @@ export component MainWindow inherits Window {
                         Text {
                             width: parent.width;
                             height: parent.height;
-                            text: "Converting… "
+                            text: @tr("Converting… ")
                                 + round(root.guided-import-progress * 100)
                                 + "%";
                             horizontal-alignment: center;
@@ -7432,7 +7432,7 @@ export component MainWindow inherits Window {
                                 y: 0;
                                 width: import-pill.width;
                                 height: import-pill.height;
-                                text: "Converting… "
+                                text: @tr("Converting… ")
                                     + round(root.guided-import-progress * 100)
                                     + "%";
                                 horizontal-alignment: center;
@@ -7473,14 +7473,14 @@ export component MainWindow inherits Window {
                 spacing: 16px;
 
                 Text {
-                    text: "Rename Guided File";
+                    text: @tr("Rename Guided File");
                     font-size: 22px;
                     horizontal-alignment: center;
                     color: MaterialPalette.on-surface;
                 }
 
                 TextField {
-                    label: "Track name";
+                    label: @tr("Track name");
                     text <=> root.guided-rename-text;
                     edited(text) => { root.guided-rename-changed(text); }
                 }
@@ -7490,13 +7490,13 @@ export component MainWindow inherits Window {
                     alignment: end;
 
                     TextButton {
-                        text: "Cancel";
+                        text: @tr("Cancel");
                         clicked => {
                             root.guided-rename-dialog-open = false;
                         }
                     }
                     TextButton {
-                        text: "Rename";
+                        text: @tr("Rename");
                         enabled: root.guided-rename-valid;
                         clicked => { root.guided-rename-confirm(); }
                     }
@@ -7529,20 +7529,20 @@ export component MainWindow inherits Window {
                 spacing: 16px;
 
                 Text {
-                    text: "Daily Goal";
+                    text: @tr("Daily Goal");
                     font-size: 22px;
                     horizontal-alignment: center;
                     color: MaterialPalette.on-surface;
                 }
                 Text {
-                    text: "Minutes per day";
+                    text: @tr("Minutes per day");
                     font-size: 14px;
                     horizontal-alignment: center;
                     color: MaterialPalette.on-surface-variant;
                 }
 
                 TextField {
-                    label: "Minutes (5–240)";
+                    label: @tr("Minutes (5–240)");
                     input-type: InputType.number;
                     text <=> root.goal-dialog-text;
                 }
@@ -7552,11 +7552,11 @@ export component MainWindow inherits Window {
                     alignment: end;
 
                     TextButton {
-                        text: "Cancel";
+                        text: @tr("Cancel");
                         clicked => { root.goal-dialog-open = false; }
                     }
                     TextButton {
-                        text: "Set";
+                        text: @tr("Set");
                         enabled: root.goal-dialog-text.is-float()
                             && root.goal-dialog-text.to-float() >= 5
                             && root.goal-dialog-text.to-float() <= 240;
@@ -7596,13 +7596,13 @@ export component MainWindow inherits Window {
                 spacing: 16px;
 
                 Text {
-                    text: "Delete all sessions?";
+                    text: @tr("Delete all sessions?");
                     font-size: 22px;
                     horizontal-alignment: center;
                     color: MaterialPalette.on-surface;
                 }
                 Text {
-                    text: "This permanently removes every logged session from this device — and, via sync, from your other devices.\n\nThis cannot be undone.";
+                    text: @tr("This permanently removes every logged session from this device — and, via sync, from your other devices.\n\nThis cannot be undone.");
                     font-size: 14px;
                     color: MaterialPalette.on-surface-variant;
                     wrap: word-wrap;
@@ -7613,13 +7613,13 @@ export component MainWindow inherits Window {
                     alignment: end;
 
                     TextButton {
-                        text: "Cancel";
+                        text: @tr("Cancel");
                         clicked => {
                             root.delete-all-dialog-open = false;
                         }
                     }
                     TextButton {
-                        text: "Delete All";
+                        text: @tr("Delete All");
                         clicked => { root.delete-all-confirm(); }
                     }
                 }
@@ -7652,14 +7652,14 @@ export component MainWindow inherits Window {
                 spacing: 16px;
 
                 Text {
-                    text: "Remote data appears wiped";
+                    text: @tr("Remote data appears wiped");
                     font-size: 22px;
                     horizontal-alignment: center;
                     color: MaterialPalette.on-surface;
                     wrap: word-wrap;
                 }
                 Text {
-                    text: "The Nextcloud folder no longer contains any of the batches this device previously synced. Has the Meditate folder been deleted on the server?\n\nChoose how to recover:";
+                    text: @tr("The Nextcloud folder no longer contains any of the batches this device previously synced. Has the Meditate folder been deleted on the server?\n\nChoose how to recover:");
                     font-size: 14px;
                     color: MaterialPalette.on-surface-variant;
                     wrap: word-wrap;
@@ -7670,20 +7670,20 @@ export component MainWindow inherits Window {
                     alignment: end;
 
                     TextButton {
-                        text: "Cancel";
+                        text: @tr("Cancel");
                         clicked => {
                             root.recovery-dialog-open = false;
                         }
                     }
                     TextButton {
-                        text: "Wipe Local";
+                        text: @tr("Wipe Local");
                         clicked => {
                             root.recovery-dialog-open = false;
                             root.recovery-wipe-confirm-open = true;
                         }
                     }
                     TextButton {
-                        text: "Push My Data";
+                        text: @tr("Push My Data");
                         clicked => { root.recovery-push-tap(); }
                     }
                 }
@@ -7712,13 +7712,13 @@ export component MainWindow inherits Window {
                 spacing: 16px;
 
                 Text {
-                    text: "Wipe local data?";
+                    text: @tr("Wipe local data?");
                     font-size: 22px;
                     horizontal-alignment: center;
                     color: MaterialPalette.on-surface;
                 }
                 Text {
-                    text: "This permanently deletes every session, label, and event stored on this device. Your Nextcloud account, sync settings, and app preferences are kept.\n\nThis cannot be undone.";
+                    text: @tr("This permanently deletes every session, label, and event stored on this device. Your Nextcloud account, sync settings, and app preferences are kept.\n\nThis cannot be undone.");
                     font-size: 14px;
                     color: MaterialPalette.on-surface-variant;
                     wrap: word-wrap;
@@ -7729,13 +7729,13 @@ export component MainWindow inherits Window {
                     alignment: end;
 
                     TextButton {
-                        text: "Cancel";
+                        text: @tr("Cancel");
                         clicked => {
                             root.recovery-wipe-confirm-open = false;
                         }
                     }
                     TextButton {
-                        text: "Wipe Local Data";
+                        text: @tr("Wipe Local Data");
                         clicked => {
                             root.recovery-wipe-confirm-tap();
                         }

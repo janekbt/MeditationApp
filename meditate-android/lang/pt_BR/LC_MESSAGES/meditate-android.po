@@ -1,0 +1,149 @@
+# Android shell translations — harvested from the GTK
+# shell po files where msgids match; German gaps filled
+# by hand (2026-07-17). Untranslated ids fall back to
+# English at runtime.
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+
+msgid "Cancel"
+msgstr "Cancelar"
+
+msgid "Create"
+msgstr "Criar"
+
+msgid "Custom Time"
+msgstr "Tempo personalizado"
+
+msgid "Danger Zone"
+msgstr "Zona de perigo"
+
+msgid "Data"
+msgstr "Dados"
+
+msgid "Date"
+msgstr "Data"
+
+msgid "Delete"
+msgstr "Excluir"
+
+msgid "Delete All"
+msgstr "Excluir tudo"
+
+msgid "Delete Label?"
+msgstr "Excluir rótulo?"
+
+msgid "Delete all sessions"
+msgstr "Excluir todas as sessões"
+
+msgid "Discard"
+msgstr "Descartar"
+
+msgid "Duration"
+msgstr "Duração"
+
+msgid "Export session log"
+msgstr "Exportar histórico"
+
+msgid "Export your session log to a CSV file, or restore from one."
+msgstr "Exporte seu histórico de sessões para um arquivo CSV, ou restaure de um."
+
+msgid "Filter Sessions"
+msgstr "Filtrar sessões"
+
+msgid "Has Notes"
+msgstr "Com anotações"
+
+msgid "Hours : Minutes"
+msgstr "Horas : Minutos"
+
+msgid "Hours · Minutes"
+msgstr "Horas · Minutos"
+
+msgid "Import"
+msgstr "Importar"
+
+msgid "Import from Insight Timer"
+msgstr "Importar do Insight Timer"
+
+msgid "Import from Meditate CSV"
+msgstr "Importar do CSV do Meditate"
+
+msgid "Label"
+msgstr "Rótulo"
+
+msgid "Label name"
+msgstr "Nome do rótulo"
+
+msgid "Less"
+msgstr "Menos"
+
+msgid "Line"
+msgstr "Linha"
+
+msgid "Load more"
+msgstr "Carregar mais"
+
+msgid "Log"
+msgstr "Histórico"
+
+msgid "Meditate"
+msgstr "Meditate"
+
+msgid "Minutes"
+msgstr "Minutos"
+
+msgid "More"
+msgstr "Mais"
+
+msgid "No Matching Sessions"
+msgstr "Nenhuma sessão correspondente"
+
+msgid "No Sessions Yet"
+msgstr "Nenhuma sessão ainda"
+
+msgid "No file selected"
+msgstr "Nenhum arquivo selecionado"
+
+msgid "No note added"
+msgstr "Sem anotações"
+
+msgid "Note (optional)"
+msgstr "Anotação (opcional)"
+
+msgid "Preferences"
+msgstr "Preferências"
+
+msgid "Save"
+msgstr "Salvar"
+
+msgid "Session"
+msgstr "Sessão"
+
+msgid "Set"
+msgstr "Definir"
+
+msgid "Sound"
+msgstr "Som"
+
+msgid "Start Session"
+msgstr "Iniciar sessão"
+
+msgid "Stats"
+msgstr "Estatísticas"
+
+msgid "Stop"
+msgstr "Parar"
+
+msgid "Timer"
+msgstr "Temporizador"
+
+msgid "Try changing your filters."
+msgstr "Tente alterar os filtros."
+
+msgid "Undo"
+msgstr "Desfazer"
+
+msgid "min"
+msgstr "min"
+

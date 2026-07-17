@@ -1614,16 +1614,13 @@ fn refresh_stats(ui: &MainWindow) {
         meditate_core::format::mini_stat_or_dash(count).into(),
     );
 
-    // Weekly-goal hero (S-2). Week-start = today minus
-    // `days_since_week_start` (locale week-start dow; Android's
-    // bionic falls back to Monday — see
-    // `date_math::locale_week_start_dow`). Mirrors GTK's
-    // `reload_goal_ring` at `meditate-gtk/src/stats/imp.rs:149`.
+    // Daily-goal hero (was weekly until 2026-07-17 — the
+    // week-start derivation went with it; the heatmap's
+    // week-start comes from `locale_week_start_dow()` at its own
+    // call site). Mirrors GTK's `reload_goal_ring`.
     use chrono::Datelike;
     let today = meditate_core::time::today_local();
-    let week_start_dow = meditate_core::date_math::locale_week_start_dow();
-    let today_dow = today.weekday().number_from_monday() as i32;
-    // Daily goal (2026-07-17, was weekly): today's seconds only.
+    // Daily goal: today's seconds only.
     let today_secs =
         meditate_core::db::total_secs_since_from_db(db, today)
             .unwrap_or(0);
@@ -10237,6 +10234,20 @@ fn android_main(android_app: slint::android::AndroidApp) {
     // bridges keep targeting the destroyed activity.
     set_android_app(android_app.clone());
     open_database(&android_app);
+    // i18n (P8): pick the bundled translation matching the system
+    // locale BEFORE the UI is built (uses the local handle — the
+    // parameter shadows the android_app() accessor here, and init
+    // consumes it next). Unknown languages fail the select and
+    // silently keep English msgids — exactly the fallback we want.
+    {
+        let lang = about::locale_language(&android_app);
+        if let Err(e) = slint::select_bundled_translation(&lang) {
+            meditate_core::log(
+                "i18n",
+                &format!("no bundled translation for {lang}: {e:?}"),
+            );
+        }
+    }
     slint::android::init(android_app).unwrap();
     let ui = build_ui();
     MaterialWindowAdapter::get(&ui).set_disable_hover(true);

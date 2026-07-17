@@ -1,0 +1,149 @@
+# Android shell translations — harvested from the GTK
+# shell po files where msgids match; German gaps filled
+# by hand (2026-07-17). Untranslated ids fall back to
+# English at runtime.
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+
+msgid "Cancel"
+msgstr "Annuleren"
+
+msgid "Create"
+msgstr "Aanmaken"
+
+msgid "Custom Time"
+msgstr "Aangepaste tijd"
+
+msgid "Danger Zone"
+msgstr "Gevarenzone"
+
+msgid "Data"
+msgstr "Gegevens"
+
+msgid "Date"
+msgstr "Datum"
+
+msgid "Delete"
+msgstr "Verwijderen"
+
+msgid "Delete All"
+msgstr "Alles verwijderen"
+
+msgid "Delete Label?"
+msgstr "Label verwijderen?"
+
+msgid "Delete all sessions"
+msgstr "Alle sessies verwijderen"
+
+msgid "Discard"
+msgstr "Verwijderen"
+
+msgid "Duration"
+msgstr "Duur"
+
+msgid "Export session log"
+msgstr "Sessielogboek exporteren"
+
+msgid "Export your session log to a CSV file, or restore from one."
+msgstr "Exporteer je sessielogboek naar een CSV-bestand, of herstel het."
+
+msgid "Filter Sessions"
+msgstr "Sessies filteren"
+
+msgid "Has Notes"
+msgstr "Met notities"
+
+msgid "Hours : Minutes"
+msgstr "Uren : Minuten"
+
+msgid "Hours · Minutes"
+msgstr "Uren · Minuten"
+
+msgid "Import"
+msgstr "Importeren"
+
+msgid "Import from Insight Timer"
+msgstr "Importeren uit Insight Timer"
+
+msgid "Import from Meditate CSV"
+msgstr "Importeren uit Meditate-CSV"
+
+msgid "Label"
+msgstr "Label"
+
+msgid "Label name"
+msgstr "Labelnaam"
+
+msgid "Less"
+msgstr "Minder"
+
+msgid "Line"
+msgstr "Lijn"
+
+msgid "Load more"
+msgstr "Meer laden"
+
+msgid "Log"
+msgstr "Logboek"
+
+msgid "Meditate"
+msgstr "Meditate"
+
+msgid "Minutes"
+msgstr "Minuten"
+
+msgid "More"
+msgstr "Meer"
+
+msgid "No Matching Sessions"
+msgstr "Geen overeenkomende sessies"
+
+msgid "No Sessions Yet"
+msgstr "Nog geen sessies"
+
+msgid "No file selected"
+msgstr "Geen bestand geselecteerd"
+
+msgid "No note added"
+msgstr "Geen notitie"
+
+msgid "Note (optional)"
+msgstr "Notitie (optioneel)"
+
+msgid "Preferences"
+msgstr "Voorkeuren"
+
+msgid "Save"
+msgstr "Opslaan"
+
+msgid "Session"
+msgstr "Sessie"
+
+msgid "Set"
+msgstr "Instellen"
+
+msgid "Sound"
+msgstr "Geluid"
+
+msgid "Start Session"
+msgstr "Sessie starten"
+
+msgid "Stats"
+msgstr "Statistieken"
+
+msgid "Stop"
+msgstr "Stoppen"
+
+msgid "Timer"
+msgstr "Timer"
+
+msgid "Try changing your filters."
+msgstr "Probeer je filters te wijzigen."
+
+msgid "Undo"
+msgstr "Ongedaan maken"
+
+msgid "min"
+msgstr "min"
+

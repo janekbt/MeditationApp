@@ -1,0 +1,524 @@
+# Android shell translations — harvested from the GTK
+# shell po files where msgids match; German gaps filled
+# by hand (2026-07-17). Untranslated ids fall back to
+# English at runtime.
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+
+msgid " min"
+msgstr " Min."
+
+msgid "' will be removed from this device and any synced peers."
+msgstr "' wird von diesem Gerät und allen synchronisierten Geräten entfernt."
+
+msgid "' with the current settings?"
+msgstr "' mit den aktuellen Einstellungen überschreiben?"
+
+msgid "About"
+msgstr "Über"
+
+msgid "Accent colour — tinting for buttons, rings, and highlights."
+msgstr "Akzentfarbe – Färbung für Knöpfe, Ringe und Hervorhebungen."
+
+msgid "App password"
+msgstr "App-Passwort"
+
+msgid "Appearance"
+msgstr "Erscheinungsbild"
+
+msgid "BY LABEL"
+msgstr "NACH LABEL"
+
+msgid "Bar"
+msgstr "Balken"
+
+msgid "Before end"
+msgstr "Vor dem Ende"
+
+msgid "Bell Sound"
+msgstr "Klang"
+
+msgid "Bells"
+msgstr "Glocken"
+
+msgid "Box Breath"
+msgstr "Box-Atmung"
+
+msgid "Box Breath cues"
+msgstr "Box-Atmung-Signale"
+
+msgid "Box Breathing"
+msgstr "Box-Atmung"
+
+msgid "Breath Phases"
+msgstr "Atemphasen"
+
+msgid "Cancel"
+msgstr "Abbrechen"
+
+msgid "Chart"
+msgstr "Diagramm"
+
+msgid "Choose Bell Sound"
+msgstr "Klang wählen"
+
+msgid "Choose Label"
+msgstr "Label wählen"
+
+msgid "Choose Pattern"
+msgstr "Muster wählen"
+
+msgid "Close"
+msgstr "Schließen"
+
+msgid "Converting… "
+msgstr "Konvertiere… "
+
+msgid "Copy"
+msgstr "Kopieren"
+
+msgid "Count up from zero"
+msgstr "Von null hochzählen"
+
+msgid "Create"
+msgstr "Erstellen"
+
+msgid "Create Label"
+msgstr "Label erstellen"
+
+msgid "Create Preset"
+msgstr "Voreinstellung erstellen"
+
+msgid "Create interval bell…"
+msgstr "Intervallglocke erstellen…"
+
+msgid "Create new guided file…"
+msgstr "Neue geführte Meditation…"
+
+msgid "Create new label…"
+msgstr "Neues Label erstellen…"
+
+msgid "Create new preset…"
+msgstr "Neue Voreinstellung…"
+
+msgid "Create pattern"
+msgstr "Muster erstellen"
+
+msgid "Cues"
+msgstr "Signale"
+
+msgid "Cues during phases"
+msgstr "Signale während der Phasen"
+
+msgid "Current file"
+msgstr "Aktuelle Datei"
+
+msgid "Custom Time"
+msgstr "Eigene Zeit"
+
+msgid "DAILY GOAL"
+msgstr "TAGESZIEL"
+
+msgid "Daily Goal"
+msgstr "Tagesziel"
+
+msgid "Daily goal"
+msgstr "Tagesziel"
+
+msgid "Danger Zone"
+msgstr "Gefahrenzone"
+
+msgid "Data"
+msgstr "Daten"
+
+msgid "Date"
+msgstr "Datum"
+
+msgid "Delete"
+msgstr "Löschen"
+
+msgid "Delete All"
+msgstr "Alle löschen"
+
+msgid "Delete Label?"
+msgstr "Kategorie löschen?"
+
+msgid "Delete Preset?"
+msgstr "Voreinstellung löschen?"
+
+msgid "Delete all sessions"
+msgstr "Alle Sitzungen löschen"
+
+msgid "Delete all sessions?"
+msgstr "Alle Sitzungen löschen?"
+
+msgid "Diagnostics"
+msgstr "Diagnose"
+
+msgid "Different cue per phase to feel the cycle"
+msgstr "Eigenes Signal je Phase, um den Zyklus zu spüren"
+
+msgid "Discard"
+msgstr "Verwerfen"
+
+msgid "Duration"
+msgstr "Dauer"
+
+msgid "Duration (0.1 s)"
+msgstr "Dauer (0,1 s)"
+
+msgid "Edit"
+msgstr "Bearbeiten"
+
+msgid "End Bell"
+msgstr "Endglocke"
+
+msgid "Every N min"
+msgstr "Alle N Min."
+
+msgid "Exhale"
+msgstr "Ausatmen"
+
+msgid "Export session log"
+msgstr "Sitzungen exportieren"
+
+msgid "Export your session log to a CSV file, or restore from one."
+msgstr "Sicherung der Sitzungen als CSV-Datei oder Wiederherstellung daraus."
+
+msgid "Filter Sessions"
+msgstr "Sitzungen filtern"
+
+msgid "Finish"
+msgstr "Beenden"
+
+msgid "From start"
+msgstr "Ab Beginn"
+
+msgid "Guided"
+msgstr "Geführt"
+
+msgid "Has Notes"
+msgstr "Mit Notizen"
+
+msgid "Hold (empty)"
+msgstr "Halten (leer)"
+
+msgid "Hold (full)"
+msgstr "Halten (voll)"
+
+msgid "Hours : Minutes"
+msgstr "Stunden : Minuten"
+
+msgid "Hours · Minutes"
+msgstr "Stunden · Minuten"
+
+msgid "INSIGHTS"
+msgstr "EINBLICKE"
+
+msgid "Import"
+msgstr "Importieren"
+
+msgid "Import File"
+msgstr "Datei importieren"
+
+msgid "Import from Insight Timer"
+msgstr "Aus Insight Timer importieren"
+
+msgid "Import from Meditate CSV"
+msgstr "Aus Meditate-CSV importieren"
+
+msgid "Import sound…"
+msgstr "Klang importieren…"
+
+msgid "Inhale"
+msgstr "Einatmen"
+
+msgid "Interval Bell"
+msgstr "Intervallglocke"
+
+msgid "Interval Bells"
+msgstr "Intervallglocken"
+
+msgid "Jitter %"
+msgstr "Streuung %"
+
+msgid "Keep Screen Awake"
+msgstr "Bildschirm wachhalten"
+
+msgid "Kind"
+msgstr "Art"
+
+msgid "LAST 13 WEEKS"
+msgstr "LETZTE 13 WOCHEN"
+
+msgid "Label"
+msgstr "Kategorie"
+
+msgid "Label name"
+msgstr "Kategoriename"
+
+msgid "Less"
+msgstr "Weniger"
+
+msgid "Line"
+msgstr "Linie"
+
+msgid "Load more"
+msgstr "Mehr laden"
+
+msgid "Log"
+msgstr "Verlauf"
+
+msgid "Manage Bells"
+msgstr "Glocken verwalten"
+
+msgid "Manage Files"
+msgstr "Dateien verwalten"
+
+msgid "Manage Presets"
+msgstr "Voreinstellungen verwalten"
+
+msgid "Meditate"
+msgstr "Meditate"
+
+msgid "Minutes"
+msgstr "Minuten"
+
+msgid "Minutes (5–240)"
+msgstr "Minuten (5–240)"
+
+msgid "Minutes per day"
+msgstr "Minuten pro Tag"
+
+msgid "Minutes per day — drives the ring on the Stats tab."
+msgstr "Minuten pro Tag – bestimmt den Ring im Statistik-Tab."
+
+msgid "More"
+msgstr "Mehr"
+
+msgid "Name"
+msgstr "Name"
+
+msgid "Nextcloud Sync"
+msgstr "Nextcloud-Synchronisation"
+
+msgid "No Matching Sessions"
+msgstr "Keine passenden Sitzungen"
+
+msgid "No Sessions Yet"
+msgstr "Noch keine Sitzungen"
+
+msgid "No file selected"
+msgstr "Keine Datei ausgewählt"
+
+msgid "No note added"
+msgstr "Keine Notiz"
+
+msgid "No starred files"
+msgstr "Keine markierten Dateien"
+
+msgid "Note"
+msgstr "Notiz"
+
+msgid "Note (optional)"
+msgstr "Notiz (optional)"
+
+msgid "Only sessions with a note"
+msgstr "Nur Sitzungen mit Notiz"
+
+msgid "Open File"
+msgstr "Datei öffnen"
+
+msgid "Override"
+msgstr "Überschreiben"
+
+msgid "Override Preset?"
+msgstr "Voreinstellung überschreiben?"
+
+msgid "Pattern"
+msgstr "Muster"
+
+msgid "Play"
+msgstr "Abspielen"
+
+msgid "Play a signal when the session begins"
+msgstr "Signal beim Beginn der Sitzung"
+
+msgid "Play a signal when the session ends"
+msgstr "Signal beim Ende der Sitzung"
+
+msgid "Points"
+msgstr "Punkte"
+
+msgid "Preferences"
+msgstr "Einstellungen"
+
+msgid "Preparation Time"
+msgstr "Vorbereitungszeit"
+
+msgid "Preset name"
+msgstr "Name der Voreinstellung"
+
+msgid "Presets"
+msgstr "Voreinstellungen"
+
+msgid "Prevent display sleep during a session"
+msgstr "Display während einer Sitzung anlassen"
+
+msgid "Preview"
+msgstr "Vorschau"
+
+msgid "Push My Data"
+msgstr "Meine Daten hochladen"
+
+msgid "Remote data appears wiped"
+msgstr "Serverdaten scheinen gelöscht"
+
+msgid "Rename"
+msgstr "Umbenennen"
+
+msgid "Rename Guided File"
+msgstr "Geführte Meditation umbenennen"
+
+msgid "Rename Label"
+msgstr "Label umbenennen"
+
+msgid "Rename Preset"
+msgstr "Voreinstellung umbenennen"
+
+msgid "Replace '"
+msgstr "'"
+
+msgid "Report an issue"
+msgstr "Fehler melden"
+
+msgid "Ring during the session"
+msgstr "Läutet während der Sitzung"
+
+msgid "Save"
+msgstr "Speichern"
+
+msgid "Save Preset"
+msgstr "Voreinstellung speichern"
+
+msgid "Save Settings"
+msgstr "Einstellungen speichern"
+
+msgid "Seconds"
+msgstr "Sekunden"
+
+msgid "Select session date"
+msgstr "Datum der Sitzung wählen"
+
+msgid "Select session time"
+msgstr "Uhrzeit der Sitzung wählen"
+
+msgid "Selected"
+msgstr "Ausgewählt"
+
+msgid "Server URL"
+msgstr "Server-URL"
+
+msgid "Session"
+msgstr "Sitzung"
+
+msgid "Set"
+msgstr "Festlegen"
+
+msgid "Share"
+msgstr "Teilen"
+
+msgid "Silence before the starting bell"
+msgstr "Stille vor der Startglocke"
+
+msgid "Sound"
+msgstr "Klang"
+
+msgid "Starred Files"
+msgstr "Markierte Dateien"
+
+msgid "Start Session"
+msgstr "Sitzung starten"
+
+msgid "Start meditating to see your sessions here."
+msgstr "Beginne zu meditieren, um hier Sitzungen zu sehen."
+
+msgid "Starting Bell"
+msgstr "Startglocke"
+
+msgid "Stats"
+msgstr "Statistik"
+
+msgid "Stop"
+msgstr "Stopp"
+
+msgid "Stopwatch Mode"
+msgstr "Stoppuhr-Modus"
+
+msgid "Stores URL and username locally; password goes to the Android Keystore. Leave the password blank to keep the stored one."
+msgstr "Speichert URL und Benutzername lokal; das Passwort landet im Android-Keystore. Feld leer lassen, um das gespeicherte Passwort zu behalten."
+
+msgid "Sync sessions, labels, and preferences between your devices via your own Nextcloud server."
+msgstr "Synchronisiert Sitzungen, Labels und Einstellungen über deinen eigenen Nextcloud-Server."
+
+msgid "Tag this session"
+msgstr "Sitzung taggen"
+
+msgid "Tap Open File or pick from list below"
+msgstr "Tippe auf „Datei öffnen“ oder wähle unten aus der Liste"
+
+msgid "Tap Open File then Import File, or star a file in Manage Files"
+msgstr "Tippe auf „Datei öffnen“, dann „Datei importieren“ – oder markiere eine Datei unter „Dateien verwalten“"
+
+msgid "Test connection"
+msgstr "Verbindung testen"
+
+msgid "Testing…"
+msgstr "Teste…"
+
+msgid "The Nextcloud folder no longer contains any of the batches this device previously synced. Has the Meditate folder been deleted on the server?\n\nChoose how to recover:"
+msgstr "Der Nextcloud-Ordner enthält keine der zuvor von diesem Gerät synchronisierten Daten mehr. Wurde der Meditate-Ordner auf dem Server gelöscht?\n\nWie soll wiederhergestellt werden?"
+
+msgid "This permanently deletes every session, label, and event stored on this device. Your Nextcloud account, sync settings, and app preferences are kept.\n\nThis cannot be undone."
+msgstr "Löscht dauerhaft alle Sitzungen, Labels und Ereignisse auf diesem Gerät. Nextcloud-Konto, Sync-Einstellungen und App-Einstellungen bleiben erhalten.\n\nDies kann nicht rückgängig gemacht werden."
+
+msgid "This permanently removes every logged session from this device — and, via sync, from your other devices.\n\nThis cannot be undone."
+msgstr "Entfernt dauerhaft alle aufgezeichneten Sitzungen von diesem Gerät – und per Sync auch von deinen anderen Geräten.\n\nDies kann nicht rückgängig gemacht werden."
+
+msgid "Time"
+msgstr "Uhrzeit"
+
+msgid "Timer"
+msgstr "Timer"
+
+msgid "Track name"
+msgstr "Titelname"
+
+msgid "Try changing your filters."
+msgstr "Passe die Filter an."
+
+msgid "Type"
+msgstr "Typ"
+
+msgid "Undo"
+msgstr "Rückgängig"
+
+msgid "Username"
+msgstr "Benutzername"
+
+msgid "Wipe Local"
+msgstr "Lokal löschen"
+
+msgid "Wipe Local Data"
+msgstr "Lokale Daten löschen"
+
+msgid "Wipe local data?"
+msgstr "Lokale Daten löschen?"
+
+msgid "h "
+msgstr "h "
+
+msgid "min"
+msgstr "Min."
+
