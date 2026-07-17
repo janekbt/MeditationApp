@@ -1267,6 +1267,12 @@ export component MainWindow inherits Window {
     // Worker running → swap Import for a "Converting…" label and
     // freeze the form (Cancel stays live, like GTK).
     in property <bool> guided-import-busy: false;
+    // Dialog heading — the same dialog + worker machinery serves
+    // both the guided import and the bell-sound import (BI); Rust
+    // sets the heading per flow.
+    in property <string> guided-import-title: "Import Guided File";
+    // Bell chooser's Import sound… row (BI).
+    callback bell-import-tap();
     // Transcode progress 0.0–1.0, Rust-driven from the Kotlin
     // worker. Fills the Converting… button left→right.
     in property <float> guided-import-progress: 0.0;
@@ -5330,10 +5336,43 @@ export component MainWindow inherits Window {
             }
 
             BoxedList {
+                // Import sound… (BI) — SAF pick → name dialog →
+                // Opus-in-Ogg transcode → bell_sounds row in the
+                // chooser's current category. Mirrors GTK's
+                // import row in the sound chooser.
+                Rectangle {
+                    height: 56px;
+                    background: bell-import-touch.has-hover
+                        ? MaterialPalette.surface-container-high
+                        : transparent;
+                    bell-import-touch := TouchArea {
+                        clicked => { root.bell-import-tap(); }
+                    }
+                    HorizontalLayout {
+                        padding-left: 16px;
+                        padding-right: 16px;
+                        spacing: 12px;
+                        alignment: stretch;
+                        Text {
+                            text: "Import sound…";
+                            font-size: 16px;
+                            color: MaterialPalette.primary;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+                        Text {
+                            text: "+";
+                            font-size: 22px;
+                            color: MaterialPalette.primary;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
                 for item[idx] in root.bell-chooser-items : VerticalLayout {
                     spacing: 0;
 
-                    if idx > 0 : Rectangle {
+                    Rectangle {
                         height: 1px;
                         background: MaterialPalette.outline-variant;
                     }
@@ -6919,7 +6958,7 @@ export component MainWindow inherits Window {
                 spacing: 16px;
 
                 Text {
-                    text: "Import Guided File";
+                    text: root.guided-import-title;
                     font-size: 22px;
                     horizontal-alignment: center;
                     color: MaterialPalette.on-surface;

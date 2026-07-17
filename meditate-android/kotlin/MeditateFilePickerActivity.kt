@@ -25,6 +25,13 @@ class MeditateFilePickerActivity : Activity() {
 
     private val REQ = 4011
 
+    // "guided" (default) or "bell" — decides the transient-copy
+    // directory and the drop-file name so the two import flows
+    // can't consume each other's picks.
+    private val target: String
+        get() = intent.getStringExtra(MeditateGuidedPicker.EXTRA_TARGET)
+            ?: "guided"
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (savedInstanceState != null) return // picker already up
@@ -68,8 +75,10 @@ class MeditateFilePickerActivity : Activity() {
     }
 
     private fun copyAndProbe(uri: Uri) {
-        val name = queryDisplayName(uri) ?: "Guided file"
-        val dir = File(File(filesDir, "meditate"), "guided")
+        val name = queryDisplayName(uri) ?: "Audio file"
+        val subdir = if (target == "bell") "sounds" else "guided"
+        val dropFile = if (target == "bell") "sound_pick" else "guided_pick"
+        val dir = File(File(filesDir, "meditate"), subdir)
         dir.mkdirs()
         val dest = File(dir, "transient" + extOf(name))
         contentResolver.openInputStream(uri)?.use { input ->
@@ -79,7 +88,7 @@ class MeditateFilePickerActivity : Activity() {
             return
         }
         val durSecs = probeSecs(dest)
-        File(File(filesDir, "meditate"), "guided_pick")
+        File(File(filesDir, "meditate"), dropFile)
             .writeText("${dest.absolutePath}\n$name\n$durSecs")
     }
 

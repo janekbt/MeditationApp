@@ -942,6 +942,7 @@ fn try_guided_pick(
     guided_import_src: &std::rc::Rc<
         std::cell::RefCell<Option<(String, u32)>>,
     >,
+    import_kind: &std::rc::Rc<std::cell::Cell<u8>>,
 ) {
     let Some(app) = android_app() else { return; };
     let Some((path, name, dur)) = guided::take_pending_pick(app) else {
@@ -964,12 +965,14 @@ fn try_guided_pick(
     // Create-from-Manage: route straight into the import dialog
     // (GTK's create row calls import_picked_file directly).
     if create_import.replace(false) {
+        import_kind.set(0);
         present_guided_import_dialog(
             ui,
             guided_import_src,
             &path,
             &name,
             dur,
+            0,
         );
     }
 }
@@ -1119,6 +1122,75 @@ fn discard_pending_guided_delete(
 /// "Import File" button (current pick) and the Manage Files
 /// "Create new…" row (fresh pick). Mirrors GTK's
 /// `import_picked_file` dialog setup.
+/// Insert a freshly-transcoded bell sound (BI). Mirrors GTK's
+/// sounds.rs insert: is_bundled=false, mime audio/ogg (the
+/// Android transcode is Opus-in-Ogg — same container, same mime),
+/// category = the chooser the import was started from. Orphaned
+/// file removed on DB failure, like the guided insert.
+#[cfg(target_os = "android")]
+fn insert_bell_sound_import(
+    uuid: &str,
+    name: &str,
+    dest: &str,
+    category_idx: u8,
+) -> Result<(), String> {
+    let category = if category_idx == 1 {
+        meditate_core::db::BellSoundCategory::BoxBreath
+    } else {
+        meditate_core::db::BellSoundCategory::General
+    };
+    let res = {
+        let Some(db_arc) = DATABASE.get() else {
+            return Err("db unavailable".into());
+        };
+        let Ok(guard) = db_arc.lock() else {
+            return Err("db lock poisoned".into());
+        };
+        let Some(db) = guard.as_ref() else {
+            return Err("db not open".into());
+        };
+        db.insert_bell_sound_with_uuid(
+            uuid,
+            name,
+            dest,
+            false,
+            "audio/ogg",
+            category,
+        )
+    };
+    match res {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            let _ = std::fs::remove_file(dest);
+            Err(format!("{e:?}"))
+        }
+    }
+}
+
+/// Case-insensitive name collision against the FULL bell-sound
+/// library (both categories — a General and a BoxBreath sound
+/// sharing a name would be ambiguous everywhere a name renders).
+/// Mirrors GTK's `name_collides(trimmed, &library)` in sounds.rs.
+#[cfg(target_os = "android")]
+fn bell_name_taken(name: &str) -> bool {
+    let Some(db_arc) = DATABASE.get() else { return false; };
+    let Ok(guard) = db_arc.lock() else { return false; };
+    let Some(db) = guard.as_ref() else { return false; };
+    let library = db.list_bell_sounds().unwrap_or_default();
+    meditate_core::sound::name_collides(name, &library)
+}
+
+/// Name-collision check for the shared import dialog, routed by
+/// the flow the dialog currently serves (0 = guided, 1 = bell).
+#[cfg(target_os = "android")]
+fn import_name_taken(kind: u8, name: &str) -> bool {
+    if kind == 1 {
+        bell_name_taken(name)
+    } else {
+        guided_name_taken(name, "")
+    }
+}
+
 #[cfg(target_os = "android")]
 fn present_guided_import_dialog(
     ui: &MainWindow,
@@ -1128,7 +1200,12 @@ fn present_guided_import_dialog(
     src_path: &str,
     display_name: &str,
     secs: u32,
+    kind: u8,
 ) {
+    ui.set_guided_import_title(
+        if kind == 1 { "Import Bell Sound" } else { "Import Guided File" }
+            .into(),
+    );
     meditate_core::log(
         "guided",
         &format!("import: {display_name} ({secs}s)"),
@@ -1151,7 +1228,7 @@ fn present_guided_import_dialog(
     ui.set_guided_import_text(default_name.clone().into());
     let v = meditate_core::naming::validate(
         default_name.trim(),
-        |n| guided_name_taken(n, ""),
+        |n| import_name_taken(kind, n),
     );
     ui.set_guided_import_valid(v.is_savable());
     ui.set_guided_import_busy(false);
@@ -3694,6 +3771,20 @@ fn build_ui() -> MainWindow {
     #[cfg(target_os = "android")]
     let guided_rename_uuid: Rc<RefCell<Option<String>>> =
         Rc::new(RefCell::new(None));
+    // BI import context: the open chooser's category (0 = General,
+    // 1 = BoxBreath) + its currently-selected uuid, stashed at
+    // every chooser-open site so the Import sound… flow can insert
+    // into the right category and repopulate with the highlight
+    // intact.
+    #[cfg(target_os = "android")]
+    let bell_chooser_category: Rc<Cell<u8>> = Rc::new(Cell::new(0));
+    #[cfg(target_os = "android")]
+    let bell_chooser_current: Rc<RefCell<String>> =
+        Rc::new(RefCell::new(String::new()));
+    // Which flow the shared import dialog serves: 0 = guided,
+    // 1 = bell (category from bell_chooser_category at finalize).
+    #[cfg(target_os = "android")]
+    let guided_import_kind: Rc<Cell<u8>> = Rc::new(Cell::new(0));
 
     // Session being edited via the Log card → Edit-Session
     // overlay (L-4). Holds the rowid between `card-tap`
@@ -4170,6 +4261,12 @@ fn build_ui() -> MainWindow {
         let guided_create_import = guided_create_import.clone();
         #[cfg(target_os = "android")]
         let guided_import_src_tick = guided_import_src.clone();
+        #[cfg(target_os = "android")]
+        let guided_import_kind_tick = guided_import_kind.clone();
+        #[cfg(target_os = "android")]
+        let bell_chooser_category_tick = bell_chooser_category.clone();
+        #[cfg(target_os = "android")]
+        let bell_chooser_current_tick = bell_chooser_current.clone();
         // SY-3 toast raise from the tick poll needs the shared
         // single-slot snackbar context.
         #[cfg(target_os = "android")]
@@ -4209,7 +4306,29 @@ fn build_ui() -> MainWindow {
                     &guided_sel,
                     &guided_create_import,
                     &guided_import_src_tick,
+                    &guided_import_kind_tick,
                 );
+                // Bell-sound pick (BI): a target="bell" pick
+                // routes straight into the shared import dialog.
+                if let Some(app) = android_app() {
+                    if let Some((path, name, dur)) =
+                        guided::take_pending_sound_pick(app)
+                    {
+                        meditate_core::log(
+                            "sound.import",
+                            &format!("pick: {name} ({dur}s)"),
+                        );
+                        guided_import_kind_tick.set(1);
+                        present_guided_import_dialog(
+                            &ui,
+                            &guided_import_src_tick,
+                            &path,
+                            &name,
+                            dur,
+                            1,
+                        );
+                    }
+                }
                 // Sync started/finished (SY-4): refresh the
                 // indicator exactly on the edges the trigger +
                 // worker flag, not every frame.
@@ -4291,6 +4410,48 @@ fn build_ui() -> MainWindow {
                             *guided_import_finalize.borrow_mut() =
                                 None;
                             guided::clear_import_progress(app);
+                            let kind = guided_import_kind_tick.get();
+                            if kind == 1 {
+                                // Bell-sound import (BI): insert
+                                // into the chooser's category,
+                                // refresh the chooser (highlight
+                                // intact) + the Setup bell rows.
+                                match res.and_then(|()| {
+                                    insert_bell_sound_import(
+                                        &uuid,
+                                        &name,
+                                        &dest,
+                                        bell_chooser_category_tick
+                                            .get(),
+                                    )
+                                }) {
+                                    Ok(()) => {
+                                        let cat = if bell_chooser_category_tick.get() == 1 {
+                                            meditate_core::db::BellSoundCategory::BoxBreath
+                                        } else {
+                                            meditate_core::db::BellSoundCategory::General
+                                        };
+                                        populate_bell_chooser(
+                                            &ui,
+                                            &bell_chooser_current_tick
+                                                .borrow(),
+                                            cat,
+                                        );
+                                        refresh_bell_rows(&ui);
+                                        ui.set_guided_import_progress(1.0);
+                                        ui.set_guided_import_busy(false);
+                                        ui.set_guided_import_dialog_open(false);
+                                    }
+                                    Err(e) => {
+                                        meditate_core::log(
+                                            "sound.import",
+                                            &format!("import failed: {e}"),
+                                        );
+                                        ui.set_guided_import_busy(false);
+                                    }
+                                }
+                                return;
+                            }
                             match res.and_then(|()| {
                                 insert_guided_file(
                                     &uuid, &name, &dest, secs,
@@ -4714,6 +4875,8 @@ fn build_ui() -> MainWindow {
         let guided_sel = guided_sel.clone();
         #[cfg(target_os = "android")]
         let guided_import_src = guided_import_src.clone();
+        #[cfg(target_os = "android")]
+        let guided_import_kind = guided_import_kind.clone();
         ui.on_guided_import_tap(move || {
             #[cfg(target_os = "android")]
             if let Some(ui) = weak.upgrade() {
@@ -4730,12 +4893,14 @@ fn build_ui() -> MainWindow {
                 else {
                     return; // no pick → button shouldn't be live
                 };
+                guided_import_kind.set(0);
                 present_guided_import_dialog(
                     &ui,
                     &guided_import_src,
                     &path,
                     &name,
                     secs,
+                    0,
                 );
             }
             let _ = weak.clone();
@@ -4775,17 +4940,37 @@ fn build_ui() -> MainWindow {
         });
     }
 
-    // Live-validate the import name (non-empty + no case-
-    // insensitive guided_files collision). Same shape as
-    // create-preset-changed.
+    // Bell chooser "Import sound…" (BI): flag the bell kind and
+    // open the SAF picker on the bell route; the landed pick
+    // opens the shared import dialog from the tick poll.
     {
         let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let guided_import_kind = guided_import_kind.clone();
+        ui.on_bell_import_tap(move || {
+            #[cfg(target_os = "android")]
+            if let Some(app) = android_app() {
+                guided_import_kind.set(1);
+                guided::open_sound_picker(app);
+            }
+            let _ = weak.clone();
+        });
+    }
+
+    // Live-validate the import name (non-empty + no case-
+    // insensitive collision against the flow's library — guided
+    // files or the full bell-sound set, per import kind).
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let guided_import_kind = guided_import_kind.clone();
         ui.on_guided_import_changed(move |name| {
             #[cfg(target_os = "android")]
             if let Some(ui) = weak.upgrade() {
+                let kind = guided_import_kind.get();
                 let v = meditate_core::naming::validate(
                     name.trim(),
-                    |n| guided_name_taken(n, ""),
+                    |n| import_name_taken(kind, n),
                 );
                 ui.set_guided_import_valid(v.is_savable());
             }
@@ -4803,15 +4988,18 @@ fn build_ui() -> MainWindow {
         let guided_import_src = guided_import_src.clone();
         #[cfg(target_os = "android")]
         let guided_import_finalize = guided_import_finalize.clone();
+        #[cfg(target_os = "android")]
+        let guided_import_kind = guided_import_kind.clone();
         ui.on_guided_import_confirm(move || {
             #[cfg(target_os = "android")]
             {
                 let Some(ui) = weak.upgrade() else { return; };
+                let kind = guided_import_kind.get();
                 let name =
                     ui.get_guided_import_text().trim().to_string();
                 // Re-validate (defends a stale Enter / race).
                 let v = meditate_core::naming::validate(&name, |n| {
-                    guided_name_taken(n, "")
+                    import_name_taken(kind, n)
                 });
                 if !v.is_savable() {
                     return;
@@ -4829,7 +5017,7 @@ fn build_ui() -> MainWindow {
                 let uuid = meditate_core::db::mint_uuid();
                 let dest = data_root
                     .join("meditate")
-                    .join("guided")
+                    .join(if kind == 1 { "sounds" } else { "guided" })
                     .join(format!("{uuid}.ogg"));
                 let dest_str =
                     dest.to_string_lossy().to_string();
@@ -5900,6 +6088,7 @@ fn build_ui() -> MainWindow {
     #[cfg(target_os = "android")]
     let bell_chooser_target: Rc<Cell<u8>> = Rc::new(Cell::new(0));
 
+
     // Interval-bell editor mode (B-5c-3): `Some(original)` when
     // editing an existing bell (Save → `update_interval_bell`,
     // preserving uuid / created_iso / enabled / pattern),
@@ -5988,6 +6177,10 @@ fn build_ui() -> MainWindow {
         let weak = ui.as_weak();
         #[cfg(target_os = "android")]
         let bell_chooser_target = bell_chooser_target.clone();
+        #[cfg(target_os = "android")]
+        let bell_chooser_category = bell_chooser_category.clone();
+        #[cfg(target_os = "android")]
+        let bell_chooser_current = bell_chooser_current.clone();
         ui.on_starting_bell_sound_tap(move || {
             #[cfg(target_os = "android")]
             {
@@ -5997,6 +6190,8 @@ fn build_ui() -> MainWindow {
                     "starting_bell_sound",
                     meditate_core::seeds::BUNDLED_BOWL_UUID,
                 );
+                bell_chooser_category.set(0);
+                *bell_chooser_current.borrow_mut() = cur.clone();
                 populate_bell_chooser(&ui, &cur, meditate_core::db::BellSoundCategory::General);
                 ui.set_bell_chooser_page(true);
             }
@@ -6007,6 +6202,10 @@ fn build_ui() -> MainWindow {
         let weak = ui.as_weak();
         #[cfg(target_os = "android")]
         let bell_chooser_target = bell_chooser_target.clone();
+        #[cfg(target_os = "android")]
+        let bell_chooser_category = bell_chooser_category.clone();
+        #[cfg(target_os = "android")]
+        let bell_chooser_current = bell_chooser_current.clone();
         ui.on_end_bell_sound_tap(move || {
             #[cfg(target_os = "android")]
             {
@@ -6016,6 +6215,8 @@ fn build_ui() -> MainWindow {
                     "end_bell_sound",
                     meditate_core::seeds::BUNDLED_BOWL_UUID,
                 );
+                bell_chooser_category.set(0);
+                *bell_chooser_current.borrow_mut() = cur.clone();
                 populate_bell_chooser(&ui, &cur, meditate_core::db::BellSoundCategory::General);
                 ui.set_bell_chooser_page(true);
             }
@@ -6067,12 +6268,18 @@ fn build_ui() -> MainWindow {
                 let weak = ui.as_weak();
                 #[cfg(target_os = "android")]
                 let bell_chooser_target = bell_chooser_target.clone();
+                #[cfg(target_os = "android")]
+                let bell_chooser_category = bell_chooser_category.clone();
+                #[cfg(target_os = "android")]
+                let bell_chooser_current = bell_chooser_current.clone();
                 ui.$on_snd(move || {
                     #[cfg(target_os = "android")]
                     {
                         let Some(ui) = weak.upgrade() else { return; };
                         bell_chooser_target.set($tgt);
                         let (su, _) = bb_phase_uuids(bb_phase($tag));
+                        bell_chooser_category.set(1);
+                        *bell_chooser_current.borrow_mut() = su.clone();
                         populate_bell_chooser(&ui, &su, meditate_core::db::BellSoundCategory::BoxBreath);
                         ui.set_bell_chooser_page(true);
                     }
@@ -7343,11 +7550,18 @@ fn build_ui() -> MainWindow {
         let weak = ui.as_weak();
         #[cfg(target_os = "android")]
         let bell_chooser_target = bell_chooser_target.clone();
+        #[cfg(target_os = "android")]
+        let bell_chooser_category = bell_chooser_category.clone();
+        #[cfg(target_os = "android")]
+        let bell_chooser_current = bell_chooser_current.clone();
         ui.on_interval_editor_sound_tap(move || {
             #[cfg(target_os = "android")]
             {
                 let Some(ui) = weak.upgrade() else { return; };
                 bell_chooser_target.set(2);
+                bell_chooser_category.set(0);
+                *bell_chooser_current.borrow_mut() =
+                    ui.get_ie_sound_uuid().to_string();
                 populate_bell_chooser(&ui, ui.get_ie_sound_uuid().as_str(), meditate_core::db::BellSoundCategory::General);
                 ui.set_bell_chooser_page(true);
             }

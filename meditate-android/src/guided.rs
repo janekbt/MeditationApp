@@ -36,6 +36,10 @@ const IMPORT_CANCEL_FILENAME: &str = "guided_import_cancel";
 /// Drop-file the picker Activity writes: 3 lines —
 /// absolute path / display name / duration in whole seconds.
 const PICK_FILENAME: &str = "guided_pick";
+/// Same 3-line format, written when the picker was opened with
+/// target="bell" (BI custom-sound import) — separate file so the
+/// two import flows can't consume each other's picks.
+const SOUND_PICK_FILENAME: &str = "sound_pick";
 /// Touched by `MeditateGuided`'s onCompletion/onError — the
 /// audio reached its natural end; the tick loop forces the
 /// session into Overtime (robust to a probe-vs-real mismatch).
@@ -46,12 +50,43 @@ const EOS_FILENAME: &str = "guided_eos";
 /// `take_pending_pick`. Best-effort: a JNI hiccup is logged, the
 /// Guided row just stays unset.
 pub fn open_picker(app: &AndroidApp) {
-    if let Err(e) = invoke_open(app) {
+    if let Err(e) = invoke_open(app, "guided") {
         meditate_core::log(
             "guided",
             &format!("open_picker FAILED: {e:?}"),
         );
     }
+}
+
+/// Same picker, bell-import route: the transient copy lands in
+/// `sounds/` and the result in the `sound_pick` drop-file (BI).
+pub fn open_sound_picker(app: &AndroidApp) {
+    if let Err(e) = invoke_open(app, "bell") {
+        meditate_core::log(
+            "guided",
+            &format!("open_sound_picker FAILED: {e:?}"),
+        );
+    }
+}
+
+/// Bell-import twin of `take_pending_pick` — reads + removes the
+/// `sound_pick` drop-file.
+pub fn take_pending_sound_pick(
+    app: &AndroidApp,
+) -> Option<(String, String, u32)> {
+    let data_root = app.internal_data_path()?;
+    let path = data_root.join("meditate").join(SOUND_PICK_FILENAME);
+    let raw = std::fs::read_to_string(&path).ok()?;
+    let _ = std::fs::remove_file(&path);
+    let mut lines = raw.lines();
+    let file = lines.next()?.trim().to_string();
+    if file.is_empty() {
+        return None;
+    }
+    let name = lines.next().unwrap_or("").trim().to_string();
+    let dur: u32 =
+        lines.next().unwrap_or("0").trim().parse().unwrap_or(0);
+    Some((file, name, dur))
 }
 
 /// Take the pending pick — `(abs file path, display name,
@@ -102,17 +137,21 @@ fn resolve_class<'a>(
     Ok(class_obj.into())
 }
 
-fn invoke_open(app: &AndroidApp) -> Result<(), jni::errors::Error> {
+fn invoke_open(
+    app: &AndroidApp,
+    target: &str,
+) -> Result<(), jni::errors::Error> {
     let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
     let mut env = vm.attach_current_thread()?;
     let activity =
         unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
+    let jtarget = env.new_string(target)?;
     let class = resolve_class(&mut env, &activity, PICKER_CLASS_DOTTED)?;
     env.call_static_method(
         class,
-        "open",
-        "(Landroid/content/Context;)V",
-        &[(&activity).into()],
+        "openFor",
+        "(Landroid/content/Context;Ljava/lang/String;)V",
+        &[(&activity).into(), (&jtarget).into()],
     )?;
     if env.exception_check()? {
         env.exception_clear()?;
