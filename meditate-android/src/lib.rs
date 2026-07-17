@@ -149,7 +149,7 @@ fn trigger_sync(reason: &str) {
     meditate_core::log("sync.trigger", reason);
     SYNC_UI_DIRTY.store(true, Ordering::SeqCst);
     std::thread::spawn(|| {
-        let outcome = (|| -> Result<
+        let attempt = || -> Result<
             meditate_core::sync::SyncStats,
             sync_runner::SyncRunnerError,
         > {
@@ -166,7 +166,41 @@ fn trigger_sync(reason: &str) {
                 dir.join("sounds"),
                 dir.join("guided"),
             )
-        })();
+        };
+        // Network-error retry with backoff: on a phone the Wi-Fi
+        // + DNS stack often isn't awake in the first seconds
+        // after app start (radio power-save), so the launch sync
+        // reliably DNS-failed and painted the error triangle.
+        // Retry network-class failures a couple of times before
+        // accepting the outcome — the spinner keeps spinning
+        // (in-flight stays true) and only the final attempt's
+        // recorded state reaches the indicator. Auth / quota /
+        // data-lost errors are NOT retried; repeating those
+        // can't help and data-lost needs the user.
+        let mut outcome = attempt();
+        for backoff_secs in [5u64, 10] {
+            let retryable = matches!(
+                &outcome,
+                Err(sync_runner::SyncRunnerError::Sync(
+                    meditate_core::SyncError::WebDav(
+                        meditate_core::WebDavError::Network(_),
+                    ),
+                )),
+            );
+            if !retryable {
+                break;
+            }
+            meditate_core::log(
+                "sync.attempt",
+                &format!(
+                    "network error, retrying in {backoff_secs}s"
+                ),
+            );
+            std::thread::sleep(
+                std::time::Duration::from_secs(backoff_secs),
+            );
+            outcome = attempt();
+        }
         if let Err(e) = &outcome {
             meditate_core::log(
                 "sync.attempt",
@@ -8624,6 +8658,101 @@ fn build_ui() -> MainWindow {
         });
     }
 
+    // Recovery: Push My Data (SY-5). Core primitive + fresh sync;
+    // mirrors GTK's run_push_local_recovery.
+    {
+        let weak = ui.as_weak();
+        ui.on_recovery_push_tap(move || {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                let prep = {
+                    let Some(db_arc) = DATABASE.get() else { return; };
+                    let Ok(guard) = db_arc.lock() else { return; };
+                    let Some(db) = guard.as_ref() else { return; };
+                    meditate_core::sync::settings::prepare_push_local_recovery(db)
+                };
+                match prep {
+                    Ok(()) => {
+                        meditate_core::log(
+                            "recovery.push_local",
+                            "prepared, triggering sync",
+                        );
+                        trigger_sync("recovery push-local");
+                    }
+                    Err(e) => meditate_core::log(
+                        "recovery.push_local",
+                        &format!("prepare failed: {e:?}"),
+                    ),
+                }
+                ui.set_recovery_dialog_open(false);
+                refresh_sync_indicator(&ui);
+            }
+            let _ = weak.clone();
+        });
+    }
+
+    // Recovery: Wipe Local (SY-5, second-confirmation already
+    // passed on the Slint side). Core primitive erases every
+    // user-content row; then every visible surface re-reads and a
+    // fresh sync replays the remote into the empty store. Android
+    // has no GTK-style invalidate framework — the Setup surfaces
+    // are refreshed here directly; Log + Stats re-derive on their
+    // next nav visit.
+    {
+        let weak = ui.as_weak();
+        let current_mode = current_mode.clone();
+        #[cfg(target_os = "android")]
+        let loaded_log_sessions = loaded_log_sessions.clone();
+        #[cfg(target_os = "android")]
+        let pending_deletes = pending_deletes.clone();
+        ui.on_recovery_wipe_confirm_tap(move || {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                let core_mode: meditate_core::SessionMode =
+                    current_mode.get().into();
+                let prep = {
+                    let Some(db_arc) = DATABASE.get() else { return; };
+                    let Ok(guard) = db_arc.lock() else { return; };
+                    let Some(db) = guard.as_ref() else { return; };
+                    meditate_core::sync::settings::prepare_wipe_local_recovery(db)
+                };
+                match prep {
+                    Ok(()) => {
+                        meditate_core::log(
+                            "recovery.wipe_local",
+                            "purged, triggering sync",
+                        );
+                        // Re-read everything the wipe touched.
+                        refresh_preset_chips(&ui, core_mode);
+                        refresh_bell_rows(&ui);
+                        refresh_guided_files(&ui);
+                        refresh_guided_manage(&ui);
+                        refresh_setup_label_name(&ui, core_mode);
+                        ui.set_label_active(
+                            read_label_active_for_mode(core_mode),
+                        );
+                        reset_log_feed(
+                            &ui,
+                            &loaded_log_sessions,
+                            &pending_deletes,
+                        );
+                        refresh_widget();
+                        trigger_sync("recovery wipe-local");
+                    }
+                    Err(e) => meditate_core::log(
+                        "recovery.wipe_local",
+                        &format!("prepare failed: {e:?}"),
+                    ),
+                }
+                ui.set_recovery_wipe_confirm_open(false);
+                refresh_sync_indicator(&ui);
+            }
+            let _ = (weak.clone(), current_mode.get());
+        });
+    }
+
     // Test connection (SY-3). Mirrors GTK's test_btn handler:
     // core `prepare_test` resolves credentials (blank password →
     // Keystore fallback via the deferred closure), then the
@@ -8770,15 +8899,7 @@ fn build_ui() -> MainWindow {
                         trigger_sync("indicator tap (retry)");
                     }
                     SyncIndicatorAction::OpenRecovery => {
-                        // SY-5 dialog pending — surface the state
-                        // via the tooltip detail in the diag log
-                        // and open Preferences so the user can at
-                        // least see/fix the account.
-                        meditate_core::log(
-                            "ui.sync_indicator_tap",
-                            "remote-data-lost: recovery dialog pending (SY-5)",
-                        );
-                        ui.invoke_preferences_tap();
+                        ui.set_recovery_dialog_open(true);
                     }
                     SyncIndicatorAction::OpenPrefsData => {
                         ui.invoke_preferences_tap();
@@ -8929,6 +9050,17 @@ fn build_ui() -> MainWindow {
             #[cfg(target_os = "android")]
             if ui.get_override_preset_dialog_open() {
                 ui.set_override_preset_dialog_open(false);
+                return;
+            }
+            // Recovery dialogs (SY-5) — topmost overlays.
+            #[cfg(target_os = "android")]
+            if ui.get_recovery_wipe_confirm_open() {
+                ui.set_recovery_wipe_confirm_open(false);
+                return;
+            }
+            #[cfg(target_os = "android")]
+            if ui.get_recovery_dialog_open() {
+                ui.set_recovery_dialog_open(false);
                 return;
             }
             // Guided import/rename dialogs + Preferences +

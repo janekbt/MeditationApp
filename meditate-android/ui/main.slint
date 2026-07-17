@@ -34,6 +34,14 @@ import { Date } from "../material-1.0/ui/components/date_picker.slint";
 import { Icons } from "../material-1.0/ui/icons/icons.slint";
 export { MaterialWindowAdapter, DatePickerAdapter } from "@material";
 
+// Single-glyph font (U+25CF, subset from DejaVu Sans, family
+// renamed "Meditate Mask") for the password field's mask dots:
+// Slint hardcodes '●' as the obscuring character and does no
+// per-glyph font fallback on Android, so the FP5's Roboto
+// renders it as tofu. Regenerate with:
+//   python3 -m fontTools.subset DejaVuSans.ttf --unicodes=U+25CF
+import "assets/mask-dot.ttf";
+
 // One session card row in the Log feed. Mirrors GTK's
 // `build_card` content (`meditate-gtk/src/log/imp.rs:362`):
 // duration in minutes + time-of-day on the left, label chip +
@@ -1317,6 +1325,14 @@ export component MainWindow inherits Window {
     // back to the stored Keystore entry. Never persists anything.
     in property <bool> prefs-test-busy: false;
     callback prefs-test-tap();
+    // Remote-data-lost recovery (SY-5) — mirrors GTK's
+    // recovery_dialog.rs: choice dialog (Push My Data / Wipe
+    // Local / Cancel), with Wipe going through a second
+    // irreversibility confirmation.
+    in-out property <bool> recovery-dialog-open: false;
+    in-out property <bool> recovery-wipe-confirm-open: false;
+    callback recovery-push-tap();
+    callback recovery-wipe-confirm-tap();
 
     // Stopwatch-Mode switch state — mirrors the .blp
     // `stopwatch_mode_row` SwitchRow. When true, sessions count up
@@ -6796,6 +6812,9 @@ export component MainWindow inherits Window {
             TextField {
                 label: "App password";
                 input-type: InputType.password;
+                // Bundled one-glyph font: the mask dot (U+25CF)
+                // is the only character this field ever renders.
+                font-family: "Meditate Mask";
                 text <=> root.prefs-password;
             }
 
@@ -7043,6 +7062,123 @@ export component MainWindow inherits Window {
                         text: "Rename";
                         enabled: root.guided-rename-valid;
                         clicked => { root.guided-rename-confirm(); }
+                    }
+                }
+            }
+        }
+    }
+    // ── Remote-data-lost recovery dialogs (SY-5) ─────────────────
+    // Declared LAST → top the z-stack over everything including
+    // Preferences (the indicator tap that opens them lives in the
+    // AppBar). Copy mirrors GTK's recovery_dialog.rs verbatim.
+    if root.recovery-dialog-open : Rectangle {
+        background: #00000080;
+        TouchArea {
+            clicked => { root.recovery-dialog-open = false; }
+        }
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 340px;
+            height: recovery-card.preferred-height;
+            background: MaterialPalette.surface-container-high;
+            border-radius: 28px;
+
+            TouchArea {}
+
+            recovery-card := VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+
+                Text {
+                    text: "Remote data appears wiped";
+                    font-size: 22px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: "The Nextcloud folder no longer contains any of the batches this device previously synced. Has the Meditate folder been deleted on the server?\n\nChoose how to recover:";
+                    font-size: 14px;
+                    color: MaterialPalette.on-surface-variant;
+                    wrap: word-wrap;
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+
+                    TextButton {
+                        text: "Cancel";
+                        clicked => {
+                            root.recovery-dialog-open = false;
+                        }
+                    }
+                    TextButton {
+                        text: "Wipe Local";
+                        clicked => {
+                            root.recovery-dialog-open = false;
+                            root.recovery-wipe-confirm-open = true;
+                        }
+                    }
+                    TextButton {
+                        text: "Push My Data";
+                        clicked => { root.recovery-push-tap(); }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.recovery-wipe-confirm-open : Rectangle {
+        background: #00000080;
+        TouchArea {
+            clicked => { root.recovery-wipe-confirm-open = false; }
+        }
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 340px;
+            height: recovery-wipe-card.preferred-height;
+            background: MaterialPalette.surface-container-high;
+            border-radius: 28px;
+
+            TouchArea {}
+
+            recovery-wipe-card := VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+
+                Text {
+                    text: "Wipe local data?";
+                    font-size: 22px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface;
+                }
+                Text {
+                    text: "This permanently deletes every session, label, and event stored on this device. Your Nextcloud account, sync settings, and app preferences are kept.\n\nThis cannot be undone.";
+                    font-size: 14px;
+                    color: MaterialPalette.on-surface-variant;
+                    wrap: word-wrap;
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+
+                    TextButton {
+                        text: "Cancel";
+                        clicked => {
+                            root.recovery-wipe-confirm-open = false;
+                        }
+                    }
+                    TextButton {
+                        text: "Wipe Local Data";
+                        clicked => {
+                            root.recovery-wipe-confirm-tap();
+                        }
                     }
                 }
             }

@@ -19,11 +19,14 @@ export component TextField {
     in property <bool> enabled: true;
     in property <bool> read_only <=> input.read_only;
     // LOCAL PATCH (meditate-android): forward the inner TextInput's
-    // input-type so callers can request `InputType.password` masking
-    // (Preferences → Nextcloud app-password row). Upstream Slint has
-    // the property; the catalog component just doesn't expose it.
-    // Re-apply this line if material-1.0 is ever refreshed.
+    // input-type + font-family so callers can request
+    // `InputType.password` masking and point the field at the
+    // bundled mask-dot font (FP5's Roboto lacks U+25CF; Slint does
+    // no per-glyph fallback). Upstream Slint has both properties;
+    // the catalog component just doesn't expose them. Re-apply
+    // these two lines if material-1.0 is ever refreshed.
     in property <InputType> input_type <=> input.input_type;
+    in property <string> font_family <=> input.font_family;
     out property <bool> has_focus: input.has_focus;
     in_out property <string> text <=> input.text;
 
