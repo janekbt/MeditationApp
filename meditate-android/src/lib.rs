@@ -879,6 +879,10 @@ fn try_widget_deep_link(
         return false;
     };
     if state.borrow().is_active() {
+        // No new session — but the tap still means "show me the
+        // timer": bring the Timer tab forward so the already-
+        // running view is visible (it only renders on nav 0).
+        ui.set_nav_page(0);
         meditate_core::log(
             "widget",
             &format!("deep-link ignored (session active) uuid={uuid}"),
@@ -901,6 +905,13 @@ fn try_widget_deep_link(
     };
     match tmode {
         Some(tmode) if presets_supported(preset.mode) => {
+            // The Running view only renders on the Timer tab
+            // (`visible: nav-page == 0`) — if the app was left on
+            // Stats/Log, the autostarted session would run
+            // invisibly behind that tab until the user pressed
+            // back. A widget tap means "start and SHOW me the
+            // session", so force the tab first.
+            ui.set_nav_page(0);
             let idx = tmode.to_chip_index();
             ui.set_setup_mode(idx);
             ui.invoke_mode_changed(idx);
@@ -1842,9 +1853,16 @@ fn refresh_chart(ui: &MainWindow) {
         })
         .collect();
 
-    // Line + area SVG paths (S-5b) against a 1000×100 viewbox
-    // (Slint scales to the plot). Geometry mirrors GTK's Cairo
-    // line path at `meditate-gtk/src/stats/imp.rs:646`: point
+    // Line + area SVG paths (S-5b) in the plot's own pixel
+    // coords (BF-1): the Slint Path viewbox is pinned to the
+    // element size, because a fixed 1000×100 viewbox gets
+    // aspect-fit into the ~3:1 plot and renders as a squashed
+    // centered band (the mis-registration the vibration editor
+    // documents). Size arrives via `stat-plot-size` → the
+    // stat-plot-w/h props; before the first report, fall back
+    // to the layout's design size so an early refresh still
+    // draws something sane. Geometry mirrors GTK's Cairo line
+    // path at `meditate-gtk/src/stats/imp.rs:646`: point
     // x = slot-centre, y inverted from the height ratio; the
     // area is the same polyline closed down to the baseline.
     // Empty when there's no point (Path then draws nothing).
@@ -1852,12 +1870,17 @@ fn refresh_chart(ui: &MainWindow) {
     let (line_cmd, area_cmd) = if n == 0 {
         (String::new(), String::new())
     } else {
-        const VBW: f32 = 1000.0;
-        const VBH: f32 = 100.0;
-        let px = |i: usize| (i as f32 + 0.5) / n as f32 * VBW;
-        let py = |r: f32| VBH - r.clamp(0.0, 1.0) * VBH;
+        let reported_w = ui.get_stat_plot_w();
+        let reported_h = ui.get_stat_plot_h();
+        let (vbw, vbh) = if reported_w >= 1.0 && reported_h >= 1.0 {
+            (reported_w, reported_h)
+        } else {
+            (320.0, 120.0)
+        };
+        let px = |i: usize| (i as f32 + 0.5) / n as f32 * vbw;
+        let py = |r: f32| vbh - r.clamp(0.0, 1.0) * vbh;
         let mut line = String::new();
-        let mut area = format!("M {:.2} {:.2}", px(0), VBH);
+        let mut area = format!("M {:.2} {:.2}", px(0), vbh);
         for (i, b) in bars.iter().enumerate() {
             let (x, y) = (px(i), py(b.ratio));
             if i == 0 {
@@ -1867,7 +1890,7 @@ fn refresh_chart(ui: &MainWindow) {
             }
             area.push_str(&format!(" L {x:.2} {y:.2}"));
         }
-        area.push_str(&format!(" L {:.2} {:.2} Z", px(n - 1), VBH));
+        area.push_str(&format!(" L {:.2} {:.2} Z", px(n - 1), vbh));
         (line, area)
     };
 
@@ -9170,6 +9193,23 @@ fn build_ui() -> MainWindow {
                 }
             }
             let _ = weak.clone();
+        });
+    }
+
+    // Plot-size report (BF-1): stash the pixel size in the
+    // in-out props and rebuild the line/area commands so they
+    // always match the pinned viewbox. Fires at init + resize
+    // (rotation, window resize).
+    {
+        let weak = ui.as_weak();
+        ui.on_stat_plot_size(move |w, h| {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                ui.set_stat_plot_w(w);
+                ui.set_stat_plot_h(h);
+                refresh_chart(&ui);
+            }
+            let _ = (weak.clone(), w, h);
         });
     }
 

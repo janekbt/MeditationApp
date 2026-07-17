@@ -2110,6 +2110,15 @@ export component MainWindow inherits Window {
     // there's no data — Path then draws nothing.
     in-out property <int> stat-chart-kind: 0;
     in property <string> stat-chart-line-cmd: "";
+    // Plot pixel size (BF-1): the Path viewbox is pinned to the
+    // element size and Rust builds the line/area commands in the
+    // SAME pixel coords — a fixed 1000×100 viewbox gets aspect-
+    // fit into the ~3:1 plot and renders as a squashed band (the
+    // exact mis-registration the vibration editor documents on
+    // `ve-plot-size`). Written back by Rust from stat-plot-size.
+    in-out property <float> stat-plot-w: 0.0;
+    in-out property <float> stat-plot-h: 0.0;
+    callback stat-plot-size(float, float);
     in property <string> stat-chart-area-cmd: "";
     callback chart-kind-changed(int);
 
@@ -4107,6 +4116,26 @@ export component MainWindow inherits Window {
                                     Rectangle {
                                         height: 120px;
 
+                                        // Report pixel size so Rust
+                                        // builds the line/area Path
+                                        // in matching coords (init +
+                                        // on resize) — VE pattern.
+                                        init => {
+                                            root.stat-plot-size(
+                                                self.width / 1px,
+                                                self.height / 1px);
+                                        }
+                                        changed width => {
+                                            root.stat-plot-size(
+                                                self.width / 1px,
+                                                self.height / 1px);
+                                        }
+                                        changed height => {
+                                            root.stat-plot-size(
+                                                self.width / 1px,
+                                                self.height / 1px);
+                                        }
+
                                         // Bars (kind 0).
                                         if root.stat-chart-kind == 0 : HorizontalLayout {
                                             spacing: 2px;
@@ -4126,10 +4155,11 @@ export component MainWindow inherits Window {
                                         }
 
                                         // Line + area fill (kind 1).
-                                        // Rust pre-builds the SVG
-                                        // command strings against a
-                                        // 1000×100 viewbox; Slint
-                                        // scales them to the plot.
+                                        // Rust builds the SVG
+                                        // commands in the plot's own
+                                        // pixel coords; the viewbox
+                                        // is pinned to the element
+                                        // size (BF-1, VE pattern).
                                         // Mirrors GTK's Cairo line
                                         // path at `stats/imp.rs:646`
                                         // (area at 0.18 alpha, 2 px
@@ -4137,16 +4167,16 @@ export component MainWindow inherits Window {
                                         if root.stat-chart-kind == 1 : Path {
                                             width: 100%;
                                             height: 100%;
-                                            viewbox-width: 1000;
-                                            viewbox-height: 100;
+                                            viewbox-width: parent.width / 1px;
+                                            viewbox-height: parent.height / 1px;
                                             commands: root.stat-chart-area-cmd;
                                             fill: MaterialPalette.primary.with-alpha(0.18);
                                         }
                                         if root.stat-chart-kind == 1 : Path {
                                             width: 100%;
                                             height: 100%;
-                                            viewbox-width: 1000;
-                                            viewbox-height: 100;
+                                            viewbox-width: parent.width / 1px;
+                                            viewbox-height: parent.height / 1px;
                                             commands: root.stat-chart-line-cmd;
                                             stroke: MaterialPalette.primary;
                                             stroke-width: 2px;
