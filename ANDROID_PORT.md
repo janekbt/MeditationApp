@@ -560,25 +560,37 @@ narrow pick to confirm at start of work.
 3. Android (`meditate-android/src/lib.rs`): per-mode read on
    mode-switch + write per `current_mode`.
 
-### Phase 7 — Sync + Preferences
+### Phase 7 — Sync + Preferences ✅ (2026-07-17)
 
-Systems milestones 10 + 11 (keychain JNI + sync runner) land first.
-GTK reference: `meditate-gtk/src/preferences.rs`,
-`meditate-gtk/src/recovery_dialog.rs`.
+All landed, on-device verified on the FP5 against a real
+Nextcloud (full round-trip: pulled the laptop's 19,727-event
+history, pushed the phone's 16,910; the DNS-blip, quota-507 and
+error-triangle retry paths were all exercised in the wild):
+- ✅ SY-1 keychain (Android Keystore AES-GCM, `MeditateKeychain`
+  + `src/keychain.rs`) + INTERNET permission.
+- ✅ SY-2 Preferences page (sandwich button): Nextcloud URL /
+  username / masked app-password + Save (core `prepare_save`,
+  password-first ordering, blank = keep stored).
+- ✅ SY-3 Test connection (core `prepare_test` + PROPFIND on a
+  worker; GTK toast copy, "Keystore" for "Keyring").
+- ✅ SY-4 sync runner (own DB connection on the worker thread,
+  WAL concurrency) + interactive indicator (spinner / error-tap-
+  retry / synced-ago) + network-error launch retry (5 s / 10 s
+  backoff — phone Wi-Fi wakes lazily).
+- ✅ SY-5 recovery dialogs (Push My Data / Wipe Local with
+  second confirmation, GTK copy verbatim).
+- ✅ Password mask-dot font (13 KB U+25CF DejaVu subset,
+  "Meditate Mask"; Slint hardcodes the glyph and Android does no
+  per-glyph fallback).
 
-To land:
-- Preferences screen (Material 3 settings list pattern).
-- Nextcloud URL / username / password rows wired through the
-  Android `KeyStore`.
-- Account-test button rendering `SyncSettingsError` variants via the
-  shell-side gettext renderer.
-- Recovery dialog (push-local / wipe-local) — the `prepare_*_recovery`
-  helpers are pub on `meditate_core::sync::settings`.
-- Sync status indicator becomes interactive.
-
-Verification: real Nextcloud sync round-trip from the phone with
-the laptop GTK shell as a peer; the account-test toasts match the
-copy in the GTK shell.
+Also landed 2026-07-17:
+- ✅ **BI** custom bell-sound import (see commit `35f8445`).
+- ✅ **Goal model switched weekly → fully daily** in core + both
+  shells (`ca19a13`): ring = today vs `daily_goal_mins` (5–240,
+  default 20), heatmap threshold = the daily goal, Android prefs
+  entry is free-typed. No weekly-key migration (no-compat
+  policy). GTK converted + unit-tested; **Librem on-device pass
+  still pending**.
 
 ### Phase 8 — Polish
 
