@@ -2740,13 +2740,14 @@ export component MainWindow inherits Window {
                     text: "Manage Files";
                     clicked => { root.manage-guided-tap(); }
                 }
-                // Session group — same "Session" heading + boxed
-                // list as Timer mode. Stopwatch Mode (count up
-                // from zero vs count down from the file length)
-                // reuses the shared `stopwatch-on` (mode_changed
-                // loads the per-mode value) + `stopwatch-toggled`
-                // (writes per current_mode = Guided). Mirrors
-                // GTK's session_group for Guided.
+                // Session group — mirrors GTK's shared
+                // `session_group` for Guided: Cues → Stopwatch →
+                // Label → Keep Awake. The Duration row is omitted
+                // (core `setup_visibility` ⇒ duration:false for
+                // Guided — the length comes from the file, not a
+                // stepper). All rows reuse the per-mode shared
+                // props/callbacks; mode-switch reloads them for
+                // Guided and the callbacks write per current_mode.
                 Text {
                     text: "Session";
                     font-size: 14px;
@@ -2755,12 +2756,94 @@ export component MainWindow inherits Window {
                     horizontal-alignment: left;
                 }
                 BoxedList {
+                    CuesRow {
+                        title: "Cues";
+                        current-index <=> root.cues-mode;
+                        changed(idx) => { root.cues-changed(idx); }
+                    }
+
+                    Rectangle {
+                        height: 1px;
+                        background: MaterialPalette.outline-variant;
+                    }
+
                     SwitchRow {
                         title: "Stopwatch Mode";
                         subtitle: "Count up from zero";
                         checked <=> root.stopwatch-on;
                         toggled(value) => {
                             root.stopwatch-toggled(value);
+                        }
+                    }
+
+                    Rectangle {
+                        height: 1px;
+                        background: MaterialPalette.outline-variant;
+                    }
+
+                    ExpanderRow {
+                        title: "Label";
+                        subtitle: "Tag this session";
+                        body-title: "Selected";
+                        body-subtitle: root.label-name;
+                        active <=> root.label-active;
+                        toggled(value) => {
+                            root.label-active-toggled(value);
+                        }
+                        body-tapped => { root.label-tap(); }
+                    }
+
+                    Rectangle {
+                        height: 1px;
+                        background: MaterialPalette.outline-variant;
+                    }
+
+                    SwitchRow {
+                        title: "Keep Screen Awake";
+                        subtitle: "Prevent display sleep during a session";
+                        checked <=> root.keep-awake-on;
+                        toggled(value) => {
+                            root.keep-awake-toggled(value);
+                        }
+                    }
+                }
+                // Bells group — Guided shows ONLY the End Bell
+                // (core `setup_visibility` makes Starting +
+                // Interval Bells Timer-only; End Bell has no
+                // visibility gate → every mode, GTK parity). Uses
+                // the global `end-bell-*` props/callbacks (not
+                // per-mode), so no extra Rust wiring.
+                Text {
+                    text: "Bells";
+                    font-size: 14px;
+                    font-weight: 700;
+                    color: MaterialPalette.primary;
+                    horizontal-alignment: left;
+                }
+                BoxedList {
+                    ExpanderGroup {
+                        title: "End Bell";
+                        subtitle: "Play a signal when the session ends";
+                        active <=> root.end-bell-active;
+                        toggled(value) => { root.end-bell-toggled(value); }
+
+                        CuesRow {
+                            title: "Type";
+                            current-index <=> root.end-bell-signal-mode;
+                            changed(idx) => { root.end-bell-signal-mode-changed(idx); }
+                        }
+
+                        RevealChooser {
+                            shown: root.end-bell-signal-mode != 1;
+                            title: "Bell Sound";
+                            subtitle: root.end-bell-sound-name;
+                            tapped => { root.end-bell-sound-tap(); }
+                        }
+                        RevealChooser {
+                            shown: root.end-bell-signal-mode != 0;
+                            title: "Pattern";
+                            subtitle: root.end-bell-pattern-name;
+                            tapped => { root.end-bell-pattern-tap(); }
                         }
                     }
                 }
@@ -2889,6 +2972,68 @@ export component MainWindow inherits Window {
                         active <=> root.label-active;
                         toggled(value) => { root.label-active-toggled(value); }
                         body-tapped => { root.label-tap(); }
+                    }
+
+                    Rectangle {
+                        height: 1px;
+                        background: MaterialPalette.outline-variant;
+                    }
+
+                    // Keep Screen Awake — was missing from the
+                    // Box Breath Session group (Timer + Guided
+                    // had it). Per-mode shared prop/callback;
+                    // mode-switch reloads it for Box Breath and
+                    // the toggle writes the boxbreath_* key. Now
+                    // actually applied (FLAG_KEEP_SCREEN_ON) for
+                    // a running session in any mode.
+                    SwitchRow {
+                        title: "Keep Screen Awake";
+                        subtitle: "Prevent display sleep during a session";
+                        checked <=> root.keep-awake-on;
+                        toggled(value) => {
+                            root.keep-awake-toggled(value);
+                        }
+                    }
+                }
+
+                // Bells group — like Guided, Box Breath shows
+                // ONLY the End Bell (Starting + Interval Bells are
+                // Timer-only per core `setup_visibility`; End Bell
+                // has no visibility gate → every mode, GTK
+                // parity). Global `end-bell-*` props/callbacks,
+                // no extra Rust wiring.
+                Text {
+                    text: "Bells";
+                    font-size: 14px;
+                    font-weight: 700;
+                    color: MaterialPalette.primary;
+                    horizontal-alignment: left;
+                }
+                BoxedList {
+                    ExpanderGroup {
+                        title: "End Bell";
+                        subtitle: "Play a signal when the session ends";
+                        active <=> root.end-bell-active;
+                        toggled(value) => { root.end-bell-toggled(value); }
+
+                        CuesRow {
+                            title: "Type";
+                            current-index <=> root.end-bell-signal-mode;
+                            changed(idx) => { root.end-bell-signal-mode-changed(idx); }
+                        }
+
+                        RevealChooser {
+                            shown: root.end-bell-signal-mode != 1;
+                            title: "Bell Sound";
+                            subtitle: root.end-bell-sound-name;
+                            tapped => { root.end-bell-sound-tap(); }
+                        }
+                        RevealChooser {
+                            shown: root.end-bell-signal-mode != 0;
+                            title: "Pattern";
+                            subtitle: root.end-bell-pattern-name;
+                            tapped => { root.end-bell-pattern-tap(); }
+                        }
                     }
                 }
 

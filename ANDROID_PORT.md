@@ -514,6 +514,52 @@ Rust via a drop-file (same pattern as the widget launch).
 
 GM follow-up complete; Phase 6.5 fully mirrors `guided.rs`.
 
+Also shipped alongside GM follow-up (uncommitted pending
+on-device confirm at time of writing): the Guided + Box Breath
+**Session** groups filled to GTK parity (Cues / Stopwatch /
+Label / Keep Awake — no Duration for Guided per core
+`setup_visibility`); an **End Bell** Bells section added to
+Guided + Box Breath; the missing **Keep Screen Awake** row
+added to Box Breath; and keep-screen-awake **actually wired**
+(Kotlin `MeditateScreen` + `src/screen.rs` →
+`FLAG_KEEP_SCREEN_ON` set on session start when the mode's
+`*_keep_screen_awake` is on, cleared on every end path —
+per-mode, the Android analogue of GTK's
+`gtk_application_inhibit`).
+
+### Backlog — Per-mode End Bell (cross-shell, scheduled 2026-05-18)
+
+**Bug:** the End Bell config (`end_bell_active` / `end_bell_sound`
+/ `end_bell_pattern` / `end_bell_signal_mode`) is stored under
+single flat keys, so it is **shared across Timer / Guided / Box
+Breath** in BOTH shells (verified: GTK `timer/imp.rs:627,669,689`
+write flat keys; core `bells.rs:495–503` read them with no
+`mode`; `settings_keys.rs` has per-mode helpers for Cues /
+keep-awake / stopwatch / label but **none for bells**). A guided
+track and a Timer session should be able to want different end
+chimes — one shared config is wrong by design, not just on
+Android.
+
+**Decided scope (Janek):** decision lives in `meditate-core`;
+solo user so NO migration shim — old flat `end_bell_*` keys go
+dead, new per-mode keys default. Starting Bell + Preparation
+Time + Interval Bells stay as-is (Timer-only via
+`setup_visibility`; no observable cross-mode bug; Interval Bells
+are a DB table → schema change for zero gain). Final wide-vs-
+narrow pick to confirm at start of work.
+
+**Plan:**
+1. core: add `end_bell_*_key_for_mode(mode)` in
+   `settings_keys.rs` (mirror `keep_screen_awake_key_for_mode`);
+   thread `mode` into `bells.rs::end_bell_row_state` + the
+   end-bell readers. Tests FIRST (keys distinct per mode;
+   per-mode persistence); `cargo test --workspace` green.
+2. GTK (`meditate-gtk/src/timer/imp.rs`): read/write the
+   end-bell rows under the current mode's keys; reload on
+   mode-switch (already done for Cues / Keep-Awake).
+3. Android (`meditate-android/src/lib.rs`): per-mode read on
+   mode-switch + write per `current_mode`.
+
 ### Phase 7 — Sync + Preferences
 
 Systems milestones 10 + 11 (keychain JNI + sync runner) land first.

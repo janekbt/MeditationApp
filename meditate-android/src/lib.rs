@@ -16,6 +16,8 @@ mod audio;
 mod widget;
 #[cfg(target_os = "android")]
 mod guided;
+#[cfg(target_os = "android")]
+mod screen;
 
 slint::include_modules!();
 
@@ -122,12 +124,25 @@ fn hide_soft_keyboard() {
 /// through `dispatch_effects` off the core `Session` effects, so
 /// the "ring on natural completion, stay silent on Stop" decision
 /// lives in core (mirrors GTK). No-op on host builds.
-fn on_state_changed(was_active: bool, is_active: bool) {
+fn on_state_changed(
+    was_active: bool,
+    is_active: bool,
+    mode: meditate_core::SessionMode,
+) {
     #[cfg(target_os = "android")]
     {
         if !was_active && is_active {
             if let Some(app) = android_app() {
                 service::start(app);
+                // Keep the screen awake for the running session
+                // iff this mode's per-mode `*_keep_screen_awake`
+                // setting is on — the Android analogue of GTK's
+                // `gtk_application_inhibit` (which GTK also keys
+                // per-mode). Off→on only; the end path below
+                // always clears it.
+                if read_keep_awake_for_mode(mode) {
+                    screen::set_keep_awake(app, true);
+                }
             }
         } else if was_active && !is_active {
             if let Some(app) = android_app() {
@@ -138,12 +153,18 @@ fn on_state_changed(was_active: bool, is_active: bool) {
                 // is released. No-op for Timer/BoxBreath (no
                 // guided player running).
                 guided::stop(app);
+                // Release the keep-screen-awake inhibitor on
+                // every end path, unconditionally (clearing a
+                // flag that was never set is harmless) — mirrors
+                // GTK releasing the inhibitor on any
+                // timer-stopped emission.
+                screen::set_keep_awake(app, false);
             }
         }
     }
     // Touched the args so the host build doesn't complain about
     // unused parameters under cfg-disabled code.
-    let _ = (was_active, is_active);
+    let _ = (was_active, is_active, mode);
 }
 
 /// Run portable core `Session` effects through the Android native
@@ -3618,7 +3639,10 @@ fn build_ui() -> MainWindow {
     {
         let weak = ui.as_weak();
         let state = state.clone();
-        #[cfg(target_os = "android")]
+        // Unconditional: `on_state_changed`'s mode arg uses this
+        // on host builds too (the cfg-gated body is a no-op there
+        // but the arg is still evaluated, so the clone can't be
+        // android-only or the closure moves the outer binding).
         let current_mode = current_mode.clone();
         #[cfg(target_os = "android")]
         let session_start_unix = session_start_unix.clone();
@@ -3759,7 +3783,11 @@ fn build_ui() -> MainWindow {
                     session_start_unix.clone(),
                 );
             }
-            on_state_changed(was_active, is_active);
+            on_state_changed(
+                was_active,
+                is_active,
+                current_mode.get().into(),
+            );
             // Guided audio follows the session: start it on the
             // Idle→Active edge, mirror pause/resume on the
             // Active→Active toggle (Stop/Finish release it via
@@ -3846,7 +3874,11 @@ fn build_ui() -> MainWindow {
                     mirror_setup_label_into_done(&ui, current_mode.get().into());
                 }
             }
-            on_state_changed(was_active, is_active);
+            on_state_changed(
+                was_active,
+                is_active,
+                current_mode.get().into(),
+            );
             if let Some(ui) = weak.upgrade() {
                 refresh(&ui, &s, now);
             }
@@ -3911,7 +3943,11 @@ fn build_ui() -> MainWindow {
                     mirror_setup_label_into_done(&ui, current_mode.get().into());
                 }
             }
-            on_state_changed(was_active, is_active);
+            on_state_changed(
+                was_active,
+                is_active,
+                current_mode.get().into(),
+            );
             if let Some(ui) = weak.upgrade() {
                 refresh(&ui, &s, now);
             }
@@ -3969,7 +4005,11 @@ fn build_ui() -> MainWindow {
                     mirror_setup_label_into_done(&ui, current_mode.get().into());
                 }
             }
-            on_state_changed(was_active, is_active);
+            on_state_changed(
+                was_active,
+                is_active,
+                current_mode.get().into(),
+            );
             if let Some(ui) = weak.upgrade() {
                 refresh(&ui, &s, now);
             }
@@ -4265,7 +4305,11 @@ fn build_ui() -> MainWindow {
                     ui.set_bb_running_active(false);
                 }
             }
-            on_state_changed(was_active, is_active);
+            on_state_changed(
+                was_active,
+                is_active,
+                current_mode.get().into(),
+            );
             if let Some(ui) = weak.upgrade() {
                 refresh(&ui, &s, now);
             }
