@@ -1347,6 +1347,16 @@ export component MainWindow inherits Window {
     // the tail of core's rolling diag log with Copy / Share.
     in property <string> about-version: "?";
     callback about-issue-tap();
+    // Data page (DP): CSV backup export/import, Insight Timer
+    // migration, delete-all danger zone — parity with GTK's
+    // Preferences → Data page. Flows ride the SAF picker Activity
+    // (CREATE_DOCUMENT out, OPEN_DOCUMENT in) + tick-poll
+    // drop-files like every other platform hand-off.
+    callback data-export-tap();
+    callback data-import-tap();
+    callback data-insight-tap();
+    in-out property <bool> delete-all-dialog-open: false;
+    callback delete-all-confirm();
     in property <bool> diag-page: false;
     in property <string> diag-text: "";
     callback diag-open-tap();
@@ -6880,6 +6890,20 @@ export component MainWindow inherits Window {
                 }
             }
 
+            // Scrollable body (DP regression fix): the page grew
+            // past one screen when the Data + Danger Zone groups
+            // landed and the plain VerticalLayout just clipped the
+            // About group off the bottom — same Flickable wrapper
+            // the Setup page uses. Header stays pinned above.
+            Flickable {
+                vertical-stretch: 1;
+                viewport-width: self.width;
+                viewport-height: prefs-body.preferred-height;
+
+                prefs-body := VerticalLayout {
+                spacing: 16px;
+                alignment: start;
+
             Text {
                 text: "Nextcloud Sync";
                 font-size: 14px;
@@ -6962,6 +6986,61 @@ export component MainWindow inherits Window {
             }
 
             Text {
+                text: "Data";
+                font-size: 14px;
+                font-weight: 700;
+                color: MaterialPalette.primary;
+                horizontal-alignment: left;
+            }
+            Text {
+                text: "Export your session log to a CSV file, or restore from one.";
+                font-size: 13px;
+                color: MaterialPalette.on-surface-variant;
+                horizontal-alignment: left;
+                wrap: word-wrap;
+            }
+            BoxedList {
+                DurationRow {
+                    label: "Export session log";
+                    value-text: "";
+                    tapped => { root.data-export-tap(); }
+                }
+                Rectangle {
+                    height: 1px;
+                    background: MaterialPalette.outline-variant;
+                }
+                DurationRow {
+                    label: "Import from Meditate CSV";
+                    value-text: "";
+                    tapped => { root.data-import-tap(); }
+                }
+                Rectangle {
+                    height: 1px;
+                    background: MaterialPalette.outline-variant;
+                }
+                DurationRow {
+                    label: "Import from Insight Timer";
+                    value-text: "";
+                    tapped => { root.data-insight-tap(); }
+                }
+            }
+
+            Text {
+                text: "Danger Zone";
+                font-size: 14px;
+                font-weight: 700;
+                color: MaterialPalette.error;
+                horizontal-alignment: left;
+            }
+            BoxedList {
+                DurationRow {
+                    label: "Delete all sessions";
+                    value-text: "";
+                    tapped => { root.delete-all-dialog-open = true; }
+                }
+            }
+
+            Text {
                 text: "About";
                 font-size: 14px;
                 font-weight: 700;
@@ -7009,6 +7088,8 @@ export component MainWindow inherits Window {
                     tapped => { root.diag-open-tap(); }
                 }
             }
+                } // prefs-body
+            } // Flickable
         }
     }
 
@@ -7372,6 +7453,61 @@ export component MainWindow inherits Window {
                             root.goal-committed();
                             root.goal-dialog-open = false;
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Delete-all confirmation (DP) ─────────────────────────────
+    // Mirrors GTK's danger-zone confirm: explicit, destructive,
+    // no Undo (sessions emit tombstone events → peers converge).
+    if root.delete-all-dialog-open : Rectangle {
+        background: #00000080;
+        TouchArea {
+            clicked => { root.delete-all-dialog-open = false; }
+        }
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 340px;
+            height: delete-all-card.preferred-height;
+            background: MaterialPalette.surface-container-high;
+            border-radius: 28px;
+
+            TouchArea {}
+
+            delete-all-card := VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+
+                Text {
+                    text: "Delete all sessions?";
+                    font-size: 22px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface;
+                }
+                Text {
+                    text: "This permanently removes every logged session from this device — and, via sync, from your other devices.\n\nThis cannot be undone.";
+                    font-size: 14px;
+                    color: MaterialPalette.on-surface-variant;
+                    wrap: word-wrap;
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+
+                    TextButton {
+                        text: "Cancel";
+                        clicked => {
+                            root.delete-all-dialog-open = false;
+                        }
+                    }
+                    TextButton {
+                        text: "Delete All";
+                        clicked => { root.delete-all-confirm(); }
                     }
                 }
             }

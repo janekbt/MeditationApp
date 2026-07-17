@@ -40,6 +40,11 @@ const PICK_FILENAME: &str = "guided_pick";
 /// target="bell" (BI custom-sound import) — separate file so the
 /// two import flows can't consume each other's picks.
 const SOUND_PICK_FILENAME: &str = "sound_pick";
+/// Written by the export CREATE_DOCUMENT flow: "ok" / "err:<msg>".
+const EXPORT_RESULT_FILENAME: &str = "export_result";
+/// Written by the CSV-import OPEN_DOCUMENT flow:
+/// "<path>\n<kind>" with kind = meditate | insight.
+const CSV_PICK_FILENAME: &str = "csv_pick";
 /// Touched by `MeditateGuided`'s onCompletion/onError — the
 /// audio reached its natural end; the tick loop forces the
 /// session into Overtime (robust to a probe-vs-real mismatch).
@@ -112,6 +117,64 @@ pub fn take_pending_pick(
     Some((file, name, dur))
 }
 
+/// CSV-import picker route (DP): target "import-meditate" or
+/// "import-insight"; the landed copy arrives via `take_csv_pick`.
+pub fn open_picker_for_csv(app: &AndroidApp, target: &str) {
+    if let Err(e) = invoke_open(app, target) {
+        meditate_core::log(
+            "data.import",
+            &format!("open_picker_for_csv FAILED: {e:?}"),
+        );
+    }
+}
+
+/// Launch the export CREATE_DOCUMENT flow (DP): the CSV is
+/// pre-written to `src_path`; the Activity copies it to the pick
+/// and reports via `take_export_result`.
+pub fn open_export(app: &AndroidApp, src_path: &str, suggested: &str) {
+    if let Err(e) = invoke_open_export(app, src_path, suggested) {
+        meditate_core::log(
+            "data.export",
+            &format!("open_export FAILED: {e:?}"),
+        );
+    }
+}
+
+/// Take the export outcome (single consumption).
+pub fn take_export_result(
+    app: &AndroidApp,
+) -> Option<Result<(), String>> {
+    let data_root = app.internal_data_path()?;
+    let path = data_root.join("meditate").join(EXPORT_RESULT_FILENAME);
+    let raw = std::fs::read_to_string(&path).ok()?;
+    let _ = std::fs::remove_file(&path);
+    let trimmed = raw.trim();
+    if trimmed == "ok" {
+        Some(Ok(()))
+    } else {
+        Some(Err(trimmed
+            .strip_prefix("err:")
+            .unwrap_or(trimmed)
+            .to_string()))
+    }
+}
+
+/// Take a landed CSV import pick — `(abs path, kind)` with kind
+/// "meditate" | "insight". Single consumption.
+pub fn take_csv_pick(app: &AndroidApp) -> Option<(String, String)> {
+    let data_root = app.internal_data_path()?;
+    let path = data_root.join("meditate").join(CSV_PICK_FILENAME);
+    let raw = std::fs::read_to_string(&path).ok()?;
+    let _ = std::fs::remove_file(&path);
+    let mut lines = raw.lines();
+    let file = lines.next()?.trim().to_string();
+    if file.is_empty() {
+        return None;
+    }
+    let kind = lines.next().unwrap_or("meditate").trim().to_string();
+    Some((file, kind))
+}
+
 fn resolve_class<'a>(
     env: &mut jni::JNIEnv<'a>,
     activity: &JObject,
@@ -135,6 +198,30 @@ fn resolve_class<'a>(
         )?
         .l()?;
     Ok(class_obj.into())
+}
+
+fn invoke_open_export(
+    app: &AndroidApp,
+    src_path: &str,
+    suggested: &str,
+) -> Result<(), jni::errors::Error> {
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
+    let mut env = vm.attach_current_thread()?;
+    let activity =
+        unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
+    let jsrc = env.new_string(src_path)?;
+    let jname = env.new_string(suggested)?;
+    let class = resolve_class(&mut env, &activity, PICKER_CLASS_DOTTED)?;
+    env.call_static_method(
+        class,
+        "openExport",
+        "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)V",
+        &[(&activity).into(), (&jsrc).into(), (&jname).into()],
+    )?;
+    if env.exception_check()? {
+        env.exception_clear()?;
+    }
+    Ok(())
 }
 
 fn invoke_open(

@@ -30,4 +30,19 @@ object MeditateGuidedPicker {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(i)
     }
+
+    /// Backup export (DP): CREATE_DOCUMENT flow copying the
+    /// Rust-pre-written CSV at `srcPath` to the user's pick.
+    @JvmStatic
+    fun openExport(context: Context, srcPath: String, suggestedName: String) {
+        val i = Intent(context, MeditateFilePickerActivity::class.java)
+            .putExtra(EXTRA_TARGET, "export")
+            .putExtra(MeditateFilePickerActivity.EXTRA_SRC_PATH, srcPath)
+            .putExtra(
+                MeditateFilePickerActivity.EXTRA_SUGGESTED_NAME,
+                suggestedName,
+            )
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(i)
+    }
 }

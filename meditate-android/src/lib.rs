@@ -3227,6 +3227,21 @@ fn signal_mode_from_index(index: i32) -> meditate_core::bells::SignalMode {
     }
 }
 
+/// InsightTimer "Started At" → local unix seconds. Format
+/// detection lives in core (`parse_insighttimer_datetime`);
+/// this shim owns only the local-tz conversion — the chrono
+/// analogue of GTK's glib shim. `earliest()` resolves DST-gap
+/// ambiguity deterministically.
+#[cfg(target_os = "android")]
+fn insight_dt_to_unix(s: &str) -> Option<i64> {
+    use chrono::TimeZone;
+    let ndt = meditate_core::format::parse_insighttimer_datetime(s)?;
+    chrono::Local
+        .from_local_datetime(&ndt)
+        .earliest()
+        .map(|dt| dt.timestamp())
+}
+
 /// The live Setup mode from the two-way-bound mode chip — the
 /// per-mode End Bell surfaces read/write whichever mode is
 /// showing. Mirrors GTK's `current_mode()` lookups.
@@ -4297,6 +4312,10 @@ fn build_ui() -> MainWindow {
         let bell_chooser_category_tick = bell_chooser_category.clone();
         #[cfg(target_os = "android")]
         let bell_chooser_current_tick = bell_chooser_current.clone();
+        #[cfg(target_os = "android")]
+        let loaded_log_sessions_tick = loaded_log_sessions.clone();
+        #[cfg(target_os = "android")]
+        let pending_deletes_tick = pending_deletes.clone();
         // SY-3 toast raise from the tick poll needs the shared
         // single-slot snackbar context.
         #[cfg(target_os = "android")]
@@ -4401,6 +4420,117 @@ fn build_ui() -> MainWindow {
                         move || {
                             if let Some(ui) = weak_inner.upgrade()
                             {
+                                ui.set_snackbar_visible(false);
+                            }
+                        },
+                    );
+                }
+                // Export outcome (DP): toast success/failure.
+                if let Some(res) = android_app().and_then(|app| guided::take_export_result(app)) {
+                    let text = match res {
+                        Ok(()) => "Session log exported".to_string(),
+                        Err(e) => {
+                            meditate_core::log(
+                                "data.export",
+                                &format!("copy failed: {e}"),
+                            );
+                            "Export failed".to_string()
+                        }
+                    };
+                    recovery_uuid_tick.borrow_mut().take();
+                    pending_preset_undo_tick.borrow_mut().take();
+                    pending_preset_delete_tick.borrow_mut().take();
+                    pending_override_restore_tick.borrow_mut().take();
+                    discard_pending_guided_delete(
+                        &pending_guided_delete_tick,
+                    );
+                    ui.set_snackbar_text(text.into());
+                    ui.set_snackbar_show_undo(false);
+                    ui.set_snackbar_visible(true);
+                    let weak_inner = ui.as_weak();
+                    prefs_delete_timer.start(
+                        slint::TimerMode::SingleShot,
+                        std::time::Duration::from_secs(4),
+                        move || {
+                            if let Some(ui) = weak_inner.upgrade() {
+                                ui.set_snackbar_visible(false);
+                            }
+                        },
+                    );
+                }
+                // CSV import landed (DP): parse + insert via core,
+                // toast the count, refresh the session surfaces.
+                // Synchronous on the tick like GTK's main-loop
+                // import — thousands of rows bulk-insert in well
+                // under a second.
+                if let Some((path, kind)) =
+                    android_app().and_then(|app| guided::take_csv_pick(app))
+                {
+                    let p = std::path::PathBuf::from(&path);
+                    let outcome: Result<usize, String> = {
+                        let Some(db_arc) = DATABASE.get() else {
+                            return;
+                        };
+                        let Ok(guard) = db_arc.lock() else { return; };
+                        let Some(db) = guard.as_ref() else { return; };
+                        if kind == "insight" {
+                            meditate_core::data_io::parse_insighttimer_csv(
+                                &p,
+                                insight_dt_to_unix,
+                            )
+                            .and_then(|(labels, rows)| {
+                                meditate_core::data_io::insert_sessions_with_labels(
+                                    db, &labels, &rows,
+                                )
+                            })
+                            .map_err(|e| format!("{e:?}"))
+                        } else {
+                            meditate_core::data_io::import_csv(db, &p)
+                                .map_err(|e| format!("{e:?}"))
+                        }
+                    };
+                    let _ = std::fs::remove_file(&p);
+                    let text = match outcome {
+                        Ok(n) => {
+                            meditate_core::log(
+                                "data.import",
+                                &format!("kind={kind} imported {n}"),
+                            );
+                            reset_log_feed(
+                                &ui,
+                                &loaded_log_sessions_tick,
+                                &pending_deletes_tick,
+                            );
+                            refresh_stats(&ui);
+                            refresh_widget();
+                            trigger_sync("csv import");
+                            format!("Imported {n} sessions")
+                        }
+                        Err(e) => {
+                            meditate_core::log(
+                                "data.import",
+                                &format!("kind={kind} FAILED: {e}"),
+                            );
+                            "Import failed — see Diagnostics"
+                                .to_string()
+                        }
+                    };
+                    recovery_uuid_tick.borrow_mut().take();
+                    pending_preset_undo_tick.borrow_mut().take();
+                    pending_preset_delete_tick.borrow_mut().take();
+                    pending_override_restore_tick.borrow_mut().take();
+                    discard_pending_guided_delete(
+                        &pending_guided_delete_tick,
+                    );
+                    ui.set_snackbar_text(text.into());
+                    ui.set_snackbar_show_undo(false);
+                    ui.set_snackbar_visible(true);
+                    let weak_inner = ui.as_weak();
+                    prefs_delete_timer.start(
+                        slint::TimerMode::SingleShot,
+                        std::time::Duration::from_secs(4),
+                        move || {
+                            if let Some(ui) = weak_inner.upgrade() {
                                 ui.set_snackbar_visible(false);
                             }
                         },
@@ -9046,6 +9176,115 @@ fn build_ui() -> MainWindow {
         });
     }
 
+    // Data page (DP): export taps write the CSV to a temp file
+    // and hand it to the CREATE_DOCUMENT flow; import taps just
+    // open the picker (parse happens on the tick poll when the
+    // copy lands). Mirrors GTK's Data page flows.
+    {
+        let weak = ui.as_weak();
+        ui.on_data_export_tap(move || {
+            #[cfg(target_os = "android")]
+            {
+                let Some(_ui) = weak.upgrade() else { return; };
+                let Some(app) = android_app() else { return; };
+                let Some(root) = app.internal_data_path() else {
+                    return;
+                };
+                let tmp = root.join("meditate").join("export-transient.csv");
+                let n = {
+                    let Some(db_arc) = DATABASE.get() else { return; };
+                    let Ok(guard) = db_arc.lock() else { return; };
+                    let Some(db) = guard.as_ref() else { return; };
+                    meditate_core::data_io::export_csv(db, &tmp)
+                };
+                match n {
+                    Ok(n) => {
+                        meditate_core::log(
+                            "data.export",
+                            &format!("wrote {n} sessions to temp"),
+                        );
+                        let today = meditate_core::time::today_local()
+                            .format("%Y-%m-%d")
+                            .to_string();
+                        guided::open_export(
+                            app,
+                            &tmp.to_string_lossy(),
+                            &format!("meditate-sessions-{today}.csv"),
+                        );
+                    }
+                    Err(e) => meditate_core::log(
+                        "data.export",
+                        &format!("export_csv FAILED: {e:?}"),
+                    ),
+                }
+            }
+            let _ = weak.clone();
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_data_import_tap(move || {
+            #[cfg(target_os = "android")]
+            if let Some(app) = android_app() {
+                guided::open_picker_for_csv(app, "import-meditate");
+            }
+            let _ = weak.clone();
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_data_insight_tap(move || {
+            #[cfg(target_os = "android")]
+            if let Some(app) = android_app() {
+                guided::open_picker_for_csv(app, "import-insight");
+            }
+            let _ = weak.clone();
+        });
+    }
+    // Delete all sessions (DP danger zone). Tombstone events ride
+    // sync, so peers converge on the wipe too — the dialog copy
+    // says so. Refresh everything that renders sessions.
+    {
+        let weak = ui.as_weak();
+        let current_mode = current_mode.clone();
+        #[cfg(target_os = "android")]
+        let loaded_log_sessions = loaded_log_sessions.clone();
+        #[cfg(target_os = "android")]
+        let pending_deletes = pending_deletes.clone();
+        ui.on_delete_all_confirm(move || {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                let n = {
+                    let Some(db_arc) = DATABASE.get() else { return; };
+                    let Ok(guard) = db_arc.lock() else { return; };
+                    let Some(db) = guard.as_ref() else { return; };
+                    db.delete_all_sessions()
+                };
+                match n {
+                    Ok(n) => meditate_core::log(
+                        "data.delete_all",
+                        &format!("deleted {n} sessions"),
+                    ),
+                    Err(e) => meditate_core::log(
+                        "data.delete_all",
+                        &format!("FAILED: {e:?}"),
+                    ),
+                }
+                ui.set_delete_all_dialog_open(false);
+                reset_log_feed(
+                    &ui,
+                    &loaded_log_sessions,
+                    &pending_deletes,
+                );
+                refresh_stats(&ui);
+                refresh_widget();
+                trigger_sync("delete-all");
+            }
+            let _ = (weak.clone(), current_mode.get());
+        });
+    }
+
     // About + diagnostics (AB).
     {
         let weak = ui.as_weak();
@@ -9484,6 +9723,11 @@ fn build_ui() -> MainWindow {
             #[cfg(target_os = "android")]
             if ui.get_goal_dialog_open() {
                 ui.set_goal_dialog_open(false);
+                return;
+            }
+            #[cfg(target_os = "android")]
+            if ui.get_delete_all_dialog_open() {
+                ui.set_delete_all_dialog_open(false);
                 return;
             }
             #[cfg(target_os = "android")]

@@ -35,10 +35,35 @@ class MeditateFilePickerActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (savedInstanceState != null) return // picker already up
-        val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-            type = "audio/*"
-            addCategory(Intent.CATEGORY_OPENABLE)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        val i = when (target) {
+            // Backup export (DP): let the user pick where the CSV
+            // lands; the content is pre-written by Rust to the
+            // src_path extra and copied over in onActivityResult.
+            "export" -> Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                type = "text/csv"
+                addCategory(Intent.CATEGORY_OPENABLE)
+                putExtra(
+                    Intent.EXTRA_TITLE,
+                    intent.getStringExtra(EXTRA_SUGGESTED_NAME)
+                        ?: "meditate-sessions.csv",
+                )
+            }
+            // CSV imports (DP): Meditate backup or Insight Timer
+            // export. */* because CSV mime types are a mess across
+            // file managers (text/csv, text/comma-separated-values,
+            // application/csv, text/plain all occur in the wild).
+            "import-meditate", "import-insight" ->
+                Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                    type = "*/*"
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+            // Audio picks (guided / bell import).
+            else -> Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                type = "audio/*"
+                addCategory(Intent.CATEGORY_OPENABLE)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
         }
         try {
             startActivityForResult(i, REQ)
@@ -66,7 +91,12 @@ class MeditateFilePickerActivity : Activity() {
         // Copy off the main thread (large files would ANR).
         Thread {
             try {
-                copyAndProbe(uri)
+                when (target) {
+                    "export" -> copyOutForExport(uri)
+                    "import-meditate" -> copyInCsv(uri, "meditate")
+                    "import-insight" -> copyInCsv(uri, "insight")
+                    else -> copyAndProbe(uri)
+                }
             } catch (e: Exception) {
                 Log.w(TAG, "pick handling failed: $e")
             }
@@ -90,6 +120,43 @@ class MeditateFilePickerActivity : Activity() {
         val durSecs = probeSecs(dest)
         File(File(filesDir, "meditate"), dropFile)
             .writeText("${dest.absolutePath}\n$name\n$durSecs")
+    }
+
+    // Export: copy the Rust-pre-written CSV (src_path extra) to
+    // the user's chosen URI, then report via the export_result
+    // drop-file ("ok" / "err:<msg>"). The temp file is removed
+    // here so a consumed export can't be re-copied.
+    private fun copyOutForExport(uri: Uri) {
+        val srcPath = intent.getStringExtra(EXTRA_SRC_PATH)
+        val result = try {
+            val src = File(srcPath ?: throw IllegalStateException("no src"))
+            contentResolver.openOutputStream(uri, "wt")?.use { out ->
+                src.inputStream().use { it.copyTo(out) }
+            } ?: throw IllegalStateException("openOutputStream null")
+            src.delete()
+            "ok"
+        } catch (e: Exception) {
+            Log.w(TAG, "export copy failed: $e")
+            "err:" + (e.message ?: e.javaClass.simpleName)
+        }
+        File(File(filesDir, "meditate"), "export_result")
+            .writeText(result)
+    }
+
+    // Import: copy the chosen document into app storage and drop
+    // `csv_pick` = "<path>\n<kind>" for the Rust tick poll.
+    private fun copyInCsv(uri: Uri, kind: String) {
+        val dir = File(filesDir, "meditate")
+        dir.mkdirs()
+        val dest = File(dir, "import-transient.csv")
+        contentResolver.openInputStream(uri)?.use { input ->
+            dest.outputStream().use { out -> input.copyTo(out) }
+        } ?: run {
+            Log.w(TAG, "openInputStream returned null")
+            return
+        }
+        File(dir, "csv_pick")
+            .writeText("${dest.absolutePath}\n$kind")
     }
 
     private fun queryDisplayName(uri: Uri): String? {
@@ -153,7 +220,9 @@ class MeditateFilePickerActivity : Activity() {
         }
     }
 
-    private companion object {
-        const val TAG = "MeditateGuided"
+    companion object {
+        private const val TAG = "MeditateGuided"
+        const val EXTRA_SRC_PATH = "src_path"
+        const val EXTRA_SUGGESTED_NAME = "suggested_name"
     }
 }
