@@ -35,6 +35,47 @@ pub fn keep_screen_awake_key_for_mode(mode: SessionMode) -> &'static str {
     }
 }
 
+/// Per-mode End Bell config (2026-07-17, was one flat key set
+/// shared across modes in both shells — a design bug: a guided
+/// track and a Timer session should be able to want different end
+/// chimes). Four keys per mode; no fallback to the dead flat
+/// `end_bell_*` keys (solo-user no-compat policy — reconfigure
+/// once per mode).
+pub fn end_bell_active_key_for_mode(mode: SessionMode) -> &'static str {
+    match mode {
+        SessionMode::Timer => "timer_end_bell_active",
+        SessionMode::Guided => "guided_end_bell_active",
+        SessionMode::BoxBreath => "boxbreath_end_bell_active",
+    }
+}
+
+/// Per-mode End Bell sound uuid (see `end_bell_active_key_for_mode`).
+pub fn end_bell_sound_key_for_mode(mode: SessionMode) -> &'static str {
+    match mode {
+        SessionMode::Timer => "timer_end_bell_sound",
+        SessionMode::Guided => "guided_end_bell_sound",
+        SessionMode::BoxBreath => "boxbreath_end_bell_sound",
+    }
+}
+
+/// Per-mode End Bell vibration-pattern uuid.
+pub fn end_bell_pattern_key_for_mode(mode: SessionMode) -> &'static str {
+    match mode {
+        SessionMode::Timer => "timer_end_bell_pattern",
+        SessionMode::Guided => "guided_end_bell_pattern",
+        SessionMode::BoxBreath => "boxbreath_end_bell_pattern",
+    }
+}
+
+/// Per-mode End Bell type (sound / vibration / both).
+pub fn end_bell_signal_mode_key_for_mode(mode: SessionMode) -> &'static str {
+    match mode {
+        SessionMode::Timer => "timer_end_bell_signal_mode",
+        SessionMode::Guided => "guided_end_bell_signal_mode",
+        SessionMode::BoxBreath => "boxbreath_end_bell_signal_mode",
+    }
+}
+
 /// Per-mode stopwatch-active toggle. Each mode has its own stopwatch
 /// concept (Timer counts up; Box Breath runs without a target;
 /// Guided plays without an auto-end-bell at file EOS), so they don't
@@ -163,6 +204,30 @@ mod tests {
             signal_mode_key_for_mode(SessionMode::Guided),
             signal_mode_key_for_mode(SessionMode::BoxBreath),
         ]);
+    }
+
+    #[test]
+    fn end_bell_keys_are_distinct_per_mode_and_per_field() {
+        // 12 keys total (4 fields × 3 modes) — all must be unique,
+        // and none may collide with the dead flat `end_bell_*`
+        // keys (which would silently resurrect the shared-config
+        // bug for one mode).
+        let keys: Vec<&str> = [SessionMode::Timer, SessionMode::Guided, SessionMode::BoxBreath]
+            .into_iter()
+            .flat_map(|m| {
+                [
+                    end_bell_active_key_for_mode(m),
+                    end_bell_sound_key_for_mode(m),
+                    end_bell_pattern_key_for_mode(m),
+                    end_bell_signal_mode_key_for_mode(m),
+                ]
+            })
+            .collect();
+        let unique: std::collections::HashSet<&&str> = keys.iter().collect();
+        assert_eq!(unique.len(), 12, "every mode+field key must be unique");
+        for dead in ["end_bell_active", "end_bell_sound", "end_bell_pattern", "end_bell_signal_mode"] {
+            assert!(!keys.contains(&dead), "must not reuse dead flat key {dead}");
+        }
     }
 
     #[test]

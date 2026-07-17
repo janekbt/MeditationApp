@@ -622,16 +622,18 @@ impl TimerView {
                 if imp.bells_loading.get() { return; }
                 let on = row.enables_expansion();
                 if let Some(app) = imp.get_app() {
+                    let mode: meditate_core::SessionMode =
+                        imp.current_mode().into();
                     app.with_db_mut(|db| {
                         let _ = db.set_setting(
-                            "end_bell_active",
+                            meditate_core::settings_keys::end_bell_active_key_for_mode(mode),
                             meditate_core::format_bool(on),
                         );
                     });
                     // Re-warm the preload so the next play_end_bell()
                     // either has a MediaFile ready (active=true) or
                     // doesn't waste cycles trying to reuse a stale one.
-                    crate::sound::preload_end_bell(&app);
+                    crate::sound::preload_end_bell(&app, mode);
                 }
             }
         ));
@@ -656,8 +658,12 @@ impl TimerView {
                 let Some(window) = this.root()
                     .and_then(|r| r.downcast::<crate::window::MeditateWindow>().ok())
                 else { return; };
+                let mode: meditate_core::SessionMode = imp.current_mode().into();
                 let current = app
-                    .with_db(|db| db.get_setting("end_bell_sound", crate::db::BUNDLED_BOWL_UUID))
+                    .with_db(|db| db.get_setting(
+                        meditate_core::settings_keys::end_bell_sound_key_for_mode(mode),
+                        crate::db::BUNDLED_BOWL_UUID,
+                    ))
                     .and_then(std::result::Result::ok);
                 let app_for_pick = app.clone();
                 let this_for_pick = this.clone();
@@ -666,8 +672,11 @@ impl TimerView {
                     crate::db::BellSoundCategory::General,
                     current,
                     move |uuid| {
-                        app_for_pick.with_db_mut(|db| db.set_setting("end_bell_sound", &uuid));
-                        crate::sound::preload_end_bell(&app_for_pick);
+                        app_for_pick.with_db_mut(|db| db.set_setting(
+                            meditate_core::settings_keys::end_bell_sound_key_for_mode(mode),
+                            &uuid,
+                        ));
+                        crate::sound::preload_end_bell(&app_for_pick, mode);
                         this_for_pick.imp().refresh_end_bell_sound_subtitle();
                     },
                 );
@@ -684,16 +693,20 @@ impl TimerView {
                 let Some(window) = this.root()
                     .and_then(|r| r.downcast::<crate::window::MeditateWindow>().ok())
                 else { return; };
+                let mode: meditate_core::SessionMode = imp.current_mode().into();
                 let current = app
                     .with_db(|db| db.get_setting(
-                        "end_bell_pattern",
+                        meditate_core::settings_keys::end_bell_pattern_key_for_mode(mode),
                         crate::db::BUNDLED_PATTERN_PULSE_UUID,
                     ))
                     .and_then(std::result::Result::ok);
                 let app_for_pick = app.clone();
                 let this_for_pick = this.clone();
                 window.push_vibrations_chooser(&app, current, move |uuid| {
-                    app_for_pick.with_db_mut(|db| db.set_setting("end_bell_pattern", &uuid));
+                    app_for_pick.with_db_mut(|db| db.set_setting(
+                        meditate_core::settings_keys::end_bell_pattern_key_for_mode(mode),
+                        &uuid,
+                    ));
                     this_for_pick.imp().refresh_end_bell_pattern_subtitle();
                 });
             }
@@ -929,7 +942,7 @@ impl TimerView {
             &self.starting_bell_signal_toggle_host,
             &self.starting_bell_sound_revealer,
             &self.starting_bell_pattern_revealer,
-            "starting_bell_signal_mode",
+            || "starting_bell_signal_mode",
             glib::clone!(
                 #[weak] obj,
                 #[upgrade_or] None,
@@ -961,7 +974,13 @@ impl TimerView {
             &self.end_bell_signal_toggle_host,
             &self.end_bell_sound_revealer,
             &self.end_bell_pattern_revealer,
-            "end_bell_signal_mode",
+            glib::clone!(
+                #[weak] obj,
+                #[upgrade_or] "timer_end_bell_signal_mode",
+                move || meditate_core::settings_keys::end_bell_signal_mode_key_for_mode(
+                    obj.imp().current_mode().into(),
+                )
+            ),
             glib::clone!(
                 #[weak] obj,
                 #[upgrade_or] None,
@@ -980,7 +999,7 @@ impl TimerView {
             &self.end_bell_sound_revealer,
             &self.end_bell_pattern_revealer,
             &app,
-            "end_bell_signal_mode",
+            meditate_core::settings_keys::end_bell_signal_mode_key_for_mode(self.current_mode().into()),
         );
     }
 
@@ -1418,7 +1437,7 @@ pub(crate) fn build_signal_mode_toggle_widget(
     host: &gtk::Box,
     sound_revealer: &gtk::Revealer,
     pattern_revealer: &gtk::Revealer,
-    setting_key: &'static str,
+    key_for_write: impl Fn() -> &'static str + 'static,
     get_app: impl Fn() -> Option<crate::application::MeditateApplication> + 'static,
 ) {
     let toggle_group = adw::ToggleGroup::builder()
@@ -1455,7 +1474,7 @@ pub(crate) fn build_signal_mode_toggle_widget(
         let mode = crate::db::SignalMode::from_db_str(name.as_str())
             .unwrap_or(crate::db::SignalMode::Sound);
         if let Some(app) = get_app() {
-            app.with_db_mut(|db| db.set_setting(setting_key, mode.as_db_str()));
+            app.with_db_mut(|db| db.set_setting(key_for_write(), mode.as_db_str()));
         }
         sound_revealer.set_reveal_child(mode.includes_sound());
         pattern_revealer.set_reveal_child(mode.includes_vibration());
@@ -1724,6 +1743,13 @@ impl TimerView {
             self.stopwatch_loading.set(false);
         }
         self.refresh_stopwatch_dependent_ui();
+        // End Bell config is per-mode (2026-07-17) — reload its
+        // sound / pattern subtitles + Type toggle for the new
+        // mode. The row's active state already reloads inside
+        // refresh_stopwatch_dependent_ui via end_bell_row_state.
+        self.refresh_end_bell_sound_subtitle();
+        self.refresh_end_bell_pattern_subtitle();
+        self.refresh_end_bell_signal_mode_state();
 
         match self.ui_state() {
             UiState::Idle      => self.show_idle_ui(),
@@ -1882,7 +1908,11 @@ impl TimerView {
             .get_app()
             .and_then(|app| {
                 app.with_db(|db| {
-                    meditate_core::bells::end_bell_row_state(db.core(), meditate_core::bells::DisplayMode::from_stopwatch_flag(stopwatch_on))
+                    meditate_core::bells::end_bell_row_state(
+                        db.core(),
+                        meditate_core::bells::DisplayMode::from_stopwatch_flag(stopwatch_on),
+                        self.current_mode().into(),
+                    )
                 })
             })
             .unwrap_or(meditate_core::bells::EndBellRowState {
@@ -3835,8 +3865,14 @@ impl TimerView {
         app: &crate::application::MeditateApplication,
     ) -> Option<meditate_core::bells::BellCue> {
         let stopwatch_on = self.stopwatch_toggle_on.get();
-        app.with_db(|db| meditate_core::bells::end_bell_cue_from_db(db.core(), meditate_core::bells::DisplayMode::from_stopwatch_flag(stopwatch_on)))
-            .flatten()
+        app.with_db(|db| {
+            meditate_core::bells::end_bell_cue_from_db(
+                db.core(),
+                meditate_core::bells::DisplayMode::from_stopwatch_flag(stopwatch_on),
+                self.current_mode().into(),
+            )
+        })
+        .flatten()
     }
 
     fn build_box_breath_cues(
@@ -3882,7 +3918,9 @@ impl TimerView {
 
     /// Same for End Bell.
     pub(crate) fn refresh_end_bell_sound_subtitle(&self) {
-        let name = self.lookup_sound_name_for_setting("end_bell_sound");
+        let name = self.lookup_sound_name_for_setting(
+            meditate_core::settings_keys::end_bell_sound_key_for_mode(self.current_mode().into()),
+        );
         self.end_bell_sound_row.set_subtitle(&name);
     }
 
@@ -3977,7 +4015,9 @@ impl TimerView {
     }
 
     pub(crate) fn refresh_end_bell_pattern_subtitle(&self) {
-        let name = self.lookup_pattern_name_for_setting("end_bell_pattern");
+        let name = self.lookup_pattern_name_for_setting(
+            meditate_core::settings_keys::end_bell_pattern_key_for_mode(self.current_mode().into()),
+        );
         self.end_bell_pattern_row.set_subtitle(&name);
     }
 

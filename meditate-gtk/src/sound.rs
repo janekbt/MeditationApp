@@ -227,9 +227,10 @@ fn surface_audio_error_toast() {
 /// because playback starts before the idle pause fires. The first
 /// `play_end_bell()` call pays a small cold-start delay (~200 ms),
 /// which is imperceptible at the end of a meditation session.
-pub fn preload_end_bell(app: &MeditateApplication) {
+pub fn preload_end_bell(app: &MeditateApplication, mode: meditate_core::SessionMode) {
+    let key = meditate_core::settings_keys::end_bell_sound_key_for_mode(mode);
     let uuid = app
-        .with_db(|db| db.get_setting("end_bell_sound", crate::db::BUNDLED_BOWL_UUID))
+        .with_db(|db| db.get_setting(key, crate::db::BUNDLED_BOWL_UUID))
         .and_then(std::result::Result::ok)
         .unwrap_or_else(|| crate::db::BUNDLED_BOWL_UUID.to_string());
     let media_opt = lookup_bell_sound_by_uuid(app, &uuid).map(|s| media_for_bell_sound(&s));
@@ -238,44 +239,6 @@ pub fn preload_end_bell(app: &MeditateApplication) {
             old.set_playing(false);
         }
     });
-}
-
-/// Play the configured end bell at the end of a session. Gated on
-/// end_bell_active (default true). Reuses the pre-warmed pipeline
-/// from `preload_end_bell()` if available, falling back to a cold
-/// lookup. No-op when the master toggle is off or the configured
-/// uuid doesn't resolve.
-pub fn play_end_bell(app: &MeditateApplication) {
-    let active = app
-        .with_db(|db| meditate_core::read_bool(db.core(), "end_bell_active", true))
-        .unwrap_or(true);
-    if !active {
-        return;
-    }
-    // Try to resume the pre-warmed pipeline — no cold-start delay.
-    let reused = CURRENT_MEDIA.with(|cell| {
-        if let Some(m) = cell.borrow().as_ref() {
-            m.seek(0);
-            m.set_playing(true);
-            true
-        } else {
-            false
-        }
-    });
-    if reused {
-        return;
-    }
-
-    // No pre-loaded pipeline — load on the spot.
-    let uuid = app
-        .with_db(|db| db.get_setting("end_bell_sound", crate::db::BUNDLED_BOWL_UUID))
-        .and_then(std::result::Result::ok)
-        .unwrap_or_default();
-    let Some(sound) = lookup_bell_sound_by_uuid(app, &uuid) else {
-        return;
-    };
-    let media = media_for_bell_sound(&sound);
-    swap_and_play(media);
 }
 
 /// Play the starting bell at session start. No-op if the master

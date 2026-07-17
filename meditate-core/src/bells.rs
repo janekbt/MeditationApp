@@ -488,19 +488,27 @@ pub fn starting_bell_cue_from_db(db: &Database) -> Option<BellCue> {
 /// End-bell cue config from the persisted settings rows. `None`
 /// when the active session is stopwatch-only (no natural end) or
 /// when the master end-bell toggle is off.
-pub fn end_bell_cue_from_db(db: &Database, display: DisplayMode) -> Option<BellCue> {
+pub fn end_bell_cue_from_db(
+    db: &Database,
+    display: DisplayMode,
+    mode: crate::db::SessionMode,
+) -> Option<BellCue> {
+    use crate::settings_keys::{
+        end_bell_active_key_for_mode, end_bell_pattern_key_for_mode,
+        end_bell_signal_mode_key_for_mode, end_bell_sound_key_for_mode,
+    };
     if display.is_stopwatch() {
         return None;
     }
-    if !read_bool(db, "end_bell_active", true) {
+    if !read_bool(db, end_bell_active_key_for_mode(mode), true) {
         return None;
     }
     Some(BellCue {
-        sound_uuid: read_str(db, "end_bell_sound", BUNDLED_BOWL_UUID).into(),
+        sound_uuid: read_str(db, end_bell_sound_key_for_mode(mode), BUNDLED_BOWL_UUID).into(),
         vibration_pattern_uuid: read_str(
-            db, "end_bell_pattern", BUNDLED_PATTERN_PULSE_UUID,
+            db, end_bell_pattern_key_for_mode(mode), BUNDLED_PATTERN_PULSE_UUID,
         ).into(),
-        signal_mode: read_signal_mode(db, "end_bell_signal_mode", SignalMode::Sound),
+        signal_mode: read_signal_mode(db, end_bell_signal_mode_key_for_mode(mode), SignalMode::Sound),
     })
 }
 
@@ -562,11 +570,19 @@ pub struct EndBellRowState {
 /// Compose the Setup-view End Bell row state from the persisted
 /// master toggle and the active mode's stopwatch flag. Stopwatch
 /// forces inactive + insensitive regardless of the persisted value.
-pub fn end_bell_row_state(db: &Database, display: DisplayMode) -> EndBellRowState {
+pub fn end_bell_row_state(
+    db: &Database,
+    display: DisplayMode,
+    mode: crate::db::SessionMode,
+) -> EndBellRowState {
     if display.is_stopwatch() {
         return EndBellRowState { active: false, sensitive: false };
     }
-    let persisted_on = read_bool(db, "end_bell_active", true);
+    let persisted_on = read_bool(
+        db,
+        crate::settings_keys::end_bell_active_key_for_mode(mode),
+        true,
+    );
     EndBellRowState { active: persisted_on, sensitive: true }
 }
 
@@ -1243,18 +1259,62 @@ mod tests {
     #[test]
     fn end_bell_cue_from_db_is_none_for_stopwatch_session() {
         let db = Database::open_in_memory().unwrap();
-        db.set_setting("end_bell_active", "true").unwrap();
-        assert!(end_bell_cue_from_db(&db, DisplayMode::Stopwatch).is_none());
+        db.set_setting("timer_end_bell_active", "true").unwrap();
+        assert!(end_bell_cue_from_db(&db, DisplayMode::Stopwatch, SessionMode::Timer).is_none());
     }
 
     #[test]
     fn end_bell_cue_from_db_defaults_master_to_on() {
-        // First-launch state — no `end_bell_active` row at all.
-        // The default in core matches the gtk shell's prior default
-        // (`get_setting("end_bell_active", "true")`).
+        // First-launch state — no per-mode active row at all. The
+        // default matches the prior flat-key default (on).
         let db = Database::open_in_memory().unwrap();
-        let cue = end_bell_cue_from_db(&db, DisplayMode::Countdown).expect("default-on");
+        let cue = end_bell_cue_from_db(&db, DisplayMode::Countdown, SessionMode::Timer)
+            .expect("default-on");
         assert_eq!(cue.signal_mode, SignalMode::Sound);
+    }
+
+    #[test]
+    fn end_bell_config_is_independent_per_mode() {
+        // THE bug this change fixes: each mode's End Bell config
+        // must read/write its own keys — a Guided change may not
+        // leak into Timer.
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("guided_end_bell_active", "false").unwrap();
+        db.set_setting("timer_end_bell_sound", "timer-bowl").unwrap();
+        db.set_setting("guided_end_bell_sound", "guided-gong").unwrap();
+
+        assert!(
+            end_bell_cue_from_db(&db, DisplayMode::Countdown, SessionMode::Guided).is_none(),
+            "guided off must not silence timer",
+        );
+        let timer = end_bell_cue_from_db(&db, DisplayMode::Countdown, SessionMode::Timer)
+            .expect("timer stays default-on");
+        assert_eq!(timer.sound_uuid, "timer-bowl");
+
+        db.set_setting("guided_end_bell_active", "true").unwrap();
+        let guided = end_bell_cue_from_db(&db, DisplayMode::Countdown, SessionMode::Guided)
+            .expect("guided re-enabled");
+        assert_eq!(guided.sound_uuid, "guided-gong");
+    }
+
+    #[test]
+    fn end_bell_ignores_dead_flat_keys() {
+        // No-compat policy: a stale flat `end_bell_*` row (from a
+        // pre-2026-07 DB) must be invisible to the per-mode reader.
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("end_bell_active", "false").unwrap();
+        db.set_setting("end_bell_sound", "stale-uuid").unwrap();
+        let cue = end_bell_cue_from_db(&db, DisplayMode::Countdown, SessionMode::Timer)
+            .expect("per-mode default-on wins over the dead flat off");
+        assert_eq!(cue.sound_uuid, BUNDLED_BOWL_UUID, "stale flat sound ignored");
+    }
+
+    #[test]
+    fn end_bell_row_state_reads_the_given_mode() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("boxbreath_end_bell_active", "false").unwrap();
+        assert!(!end_bell_row_state(&db, DisplayMode::Countdown, SessionMode::BoxBreath).active);
+        assert!(end_bell_row_state(&db, DisplayMode::Countdown, SessionMode::Timer).active);
     }
 
     #[test]

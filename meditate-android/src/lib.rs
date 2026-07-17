@@ -400,7 +400,7 @@ fn build_session_settings(
         bell_rng_seed,
         signal_mode_override: bells::signal_mode_override_from_db(db, mode),
         starting_bell: bells::starting_bell_cue_from_db(db),
-        end_bell: bells::end_bell_cue_from_db(db, display),
+        end_bell: bells::end_bell_cue_from_db(db, display, mode),
         box_breath_cues,
     }
 }
@@ -3202,6 +3202,14 @@ fn signal_mode_from_index(index: i32) -> meditate_core::bells::SignalMode {
     }
 }
 
+/// The live Setup mode from the two-way-bound mode chip — the
+/// per-mode End Bell surfaces read/write whichever mode is
+/// showing. Mirrors GTK's `current_mode()` lookups.
+#[cfg(target_os = "android")]
+fn setup_session_mode(ui: &MainWindow) -> meditate_core::SessionMode {
+    TimerMode::from_chip_index(ui.get_setup_mode()).into()
+}
+
 /// Push the current bell settings into the Setup Bells-group
 /// props: enable switches from `*_bell_active`, body subtitles
 /// from the resolved `*_bell_sound` name (defaulting to the
@@ -3212,15 +3220,17 @@ fn refresh_bell_rows(ui: &MainWindow) {
     ui.set_starting_bell_active(
         read_global_setting("starting_bell_active", "false") == "true",
     );
+    let eb_mode = setup_session_mode(ui);
     ui.set_end_bell_active(
-        read_global_setting("end_bell_active", "false") == "true",
+        read_global_setting(meditate_core::settings_keys::end_bell_active_key_for_mode(eb_mode), "true")
+            == "true",
     );
     let ss = read_global_setting(
         "starting_bell_sound",
         meditate_core::seeds::BUNDLED_BOWL_UUID,
     );
     let es = read_global_setting(
-        "end_bell_sound",
+        meditate_core::settings_keys::end_bell_sound_key_for_mode(eb_mode),
         meditate_core::seeds::BUNDLED_BOWL_UUID,
     );
     ui.set_starting_bell_sound_name(bell_sound_name(&ss).into());
@@ -3234,7 +3244,7 @@ fn refresh_bell_rows(ui: &MainWindow) {
         meditate_core::bells::SignalMode::Sound.as_db_str(),
     )));
     ui.set_end_bell_signal_mode(signal_mode_index(&read_global_setting(
-        "end_bell_signal_mode",
+        meditate_core::settings_keys::end_bell_signal_mode_key_for_mode(eb_mode),
         meditate_core::bells::SignalMode::Sound.as_db_str(),
     )));
     let sp = read_global_setting(
@@ -3242,7 +3252,7 @@ fn refresh_bell_rows(ui: &MainWindow) {
         meditate_core::seeds::BUNDLED_PATTERN_PULSE_UUID,
     );
     let ep = read_global_setting(
-        "end_bell_pattern",
+        meditate_core::settings_keys::end_bell_pattern_key_for_mode(eb_mode),
         meditate_core::seeds::BUNDLED_PATTERN_PULSE_UUID,
     );
     ui.set_starting_bell_pattern_name(pattern_name(&sp).into());
@@ -4840,6 +4850,9 @@ fn build_ui() -> MainWindow {
                 if new_mode == TimerMode::Guided {
                     refresh_guided_files(&ui);
                 }
+                // End Bell is per-mode (2026-07-17) — reload its
+                // rows for the newly-shown mode.
+                refresh_bell_rows(&ui);
             }
             let _ = (weak.clone(), timer_session_secs.clone());
         });
@@ -6159,13 +6172,16 @@ fn build_ui() -> MainWindow {
         });
     }
     {
+        let weak = ui.as_weak();
         ui.on_end_bell_toggled(move |value| {
             #[cfg(target_os = "android")]
-            write_global_setting(
-                "end_bell_active",
-                if value { "true" } else { "false" },
-            );
-            let _ = value;
+            if let Some(ui) = weak.upgrade() {
+                write_global_setting(
+                    meditate_core::settings_keys::end_bell_active_key_for_mode(setup_session_mode(&ui)),
+                    if value { "true" } else { "false" },
+                );
+            }
+            let _ = (weak.clone(), value);
         });
     }
     {
@@ -6207,7 +6223,7 @@ fn build_ui() -> MainWindow {
                 let Some(ui) = weak.upgrade() else { return; };
                 bell_chooser_target.set(1);
                 let cur = read_global_setting(
-                    "end_bell_sound",
+                    meditate_core::settings_keys::end_bell_sound_key_for_mode(setup_session_mode(&ui)),
                     meditate_core::seeds::BUNDLED_BOWL_UUID,
                 );
                 bell_chooser_category.set(0);
@@ -6348,7 +6364,7 @@ fn build_ui() -> MainWindow {
                     }
                     1 => {
                         write_global_setting(
-                            "end_bell_sound",
+                            meditate_core::settings_keys::end_bell_sound_key_for_mode(setup_session_mode(&ui)),
                             uuid.as_str(),
                         );
                         refresh_bell_rows(&ui);
@@ -6426,7 +6442,7 @@ fn build_ui() -> MainWindow {
             {
                 let Some(ui) = weak.upgrade() else { return; };
                 write_global_setting(
-                    "end_bell_signal_mode",
+                    meditate_core::settings_keys::end_bell_signal_mode_key_for_mode(setup_session_mode(&ui)),
                     signal_mode_db_str(idx),
                 );
                 refresh_bell_rows(&ui);
@@ -6463,7 +6479,7 @@ fn build_ui() -> MainWindow {
                 let Some(ui) = weak.upgrade() else { return; };
                 pattern_chooser_target.set(1);
                 let cur = read_global_setting(
-                    "end_bell_pattern",
+                    meditate_core::settings_keys::end_bell_pattern_key_for_mode(setup_session_mode(&ui)),
                     meditate_core::seeds::BUNDLED_PATTERN_PULSE_UUID,
                 );
                 populate_pattern_chooser(&ui, &cur);
@@ -6499,7 +6515,7 @@ fn build_ui() -> MainWindow {
                     }
                     1 => {
                         write_global_setting(
-                            "end_bell_pattern",
+                            meditate_core::settings_keys::end_bell_pattern_key_for_mode(setup_session_mode(&ui)),
                             uuid.as_str(),
                         );
                         refresh_bell_rows(&ui);

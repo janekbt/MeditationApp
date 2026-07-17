@@ -187,6 +187,8 @@ use crate::db::{
 use crate::format::PREP_SECS_DEFAULT;
 use crate::seeds::{BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID};
 use crate::settings_keys::{
+    end_bell_active_key_for_mode, end_bell_pattern_key_for_mode,
+    end_bell_signal_mode_key_for_mode, end_bell_sound_key_for_mode,
     keep_screen_awake_key_for_mode, label_active_key_for_mode, label_uuid_key_for_mode,
     signal_mode_key_for_mode, stopwatch_key_for_mode,
 };
@@ -323,10 +325,10 @@ pub fn snapshot(db: &Database, mode: SessionMode, timing: PresetTiming) -> Prese
     };
 
     let end_bell = PresetEndBell {
-        enabled: read_bool("end_bell_active", true),
-        sound_uuid: read_str("end_bell_sound", BUNDLED_BOWL_UUID).into(),
-        signal_mode: read_str("end_bell_signal_mode", "sound"),
-        vibration_pattern_uuid: read_str("end_bell_pattern", BUNDLED_PATTERN_PULSE_UUID).into(),
+        enabled: read_bool(end_bell_active_key_for_mode(mode), true),
+        sound_uuid: read_str(end_bell_sound_key_for_mode(mode), BUNDLED_BOWL_UUID).into(),
+        signal_mode: read_str(end_bell_signal_mode_key_for_mode(mode), "sound"),
+        vibration_pattern_uuid: read_str(end_bell_pattern_key_for_mode(mode), BUNDLED_PATTERN_PULSE_UUID).into(),
     };
 
     let intervals_enabled = read_bool("interval_bells_active", false);
@@ -497,9 +499,9 @@ pub fn apply(
         "interval_bells_active",
         bool_str(cfg.interval_bells.enabled),
     )?;
-    set("end_bell_active", bool_str(cfg.end_bell.enabled))?;
+    set(end_bell_active_key_for_mode(mode), bool_str(cfg.end_bell.enabled))?;
     if !cfg.end_bell.sound_uuid.is_empty() {
-        set("end_bell_sound", cfg.end_bell.sound_uuid.as_str())?;
+        set(end_bell_sound_key_for_mode(mode), cfg.end_bell.sound_uuid.as_str())?;
     }
     set(stopwatch_key_for_mode(mode), bool_str(stopwatch_active))?;
     set("starting_bell_signal_mode", &cfg.starting_bell.signal_mode)?;
@@ -507,8 +509,8 @@ pub fn apply(
         "starting_bell_pattern",
         cfg.starting_bell.vibration_pattern_uuid.as_str(),
     )?;
-    set("end_bell_signal_mode", &cfg.end_bell.signal_mode)?;
-    set("end_bell_pattern", cfg.end_bell.vibration_pattern_uuid.as_str())?;
+    set(end_bell_signal_mode_key_for_mode(mode), &cfg.end_bell.signal_mode)?;
+    set(end_bell_pattern_key_for_mode(mode), cfg.end_bell.vibration_pattern_uuid.as_str())?;
     set(signal_mode_key_for_mode(mode), &cfg.cues_signal_mode)?;
     set(
         keep_screen_awake_key_for_mode(mode),
