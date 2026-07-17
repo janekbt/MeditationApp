@@ -20,6 +20,8 @@ mod guided;
 mod keychain;
 #[cfg(target_os = "android")]
 mod screen;
+#[cfg(target_os = "android")]
+mod sync_runner;
 
 slint::include_modules!();
 
@@ -113,6 +115,68 @@ static RECOVERED_SESSION: OnceLock<std::sync::Mutex<Option<(String, u32)>>> =
 static TEST_CONNECTION_RESULT: OnceLock<
     std::sync::Mutex<Option<(String, String)>>,
 > = OnceLock::new();
+
+/// True while a sync worker is running (SY-4). Guards against
+/// overlapping runs AND feeds `state_from_db(db, syncing)` so the
+/// indicator shows the spinner. Relaxed ordering is fine — the
+/// tick loop repolls every frame.
+#[cfg(target_os = "android")]
+static SYNC_IN_FLIGHT: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+/// Set by `trigger_sync` (start) and the worker (end) so the tick
+/// loop refreshes the indicator exactly on the edges instead of
+/// re-reading sync_state every frame.
+#[cfg(target_os = "android")]
+static SYNC_UI_DIRTY: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Kick off one background sync (SY-4) — the Android analogue of
+/// GTK's `app.trigger_sync()`. No-op if one is already running.
+/// The worker opens its own DB connection (see sync_runner docs),
+/// so the UI thread's DATABASE mutex is never held across the
+/// network round-trip. Outcome lands in sync_state; the tick loop
+/// picks up the dirty flag and refreshes the indicator.
+#[cfg(target_os = "android")]
+fn trigger_sync(reason: &str) {
+    use std::sync::atomic::Ordering;
+    if SYNC_IN_FLIGHT.swap(true, Ordering::SeqCst) {
+        meditate_core::log(
+            "sync.trigger",
+            &format!("{reason}: already in flight, skipped"),
+        );
+        return;
+    }
+    meditate_core::log("sync.trigger", reason);
+    SYNC_UI_DIRTY.store(true, Ordering::SeqCst);
+    std::thread::spawn(|| {
+        let outcome = (|| -> Result<
+            meditate_core::sync::SyncStats,
+            sync_runner::SyncRunnerError,
+        > {
+            let app = android_app().ok_or(
+                sync_runner::SyncRunnerError::Unconfigured,
+            )?;
+            let root = app.internal_data_path().ok_or(
+                sync_runner::SyncRunnerError::Unconfigured,
+            )?;
+            let dir = root.join("meditate");
+            sync_runner::run_sync_attempt(
+                app,
+                &dir.join("meditate.db"),
+                dir.join("sounds"),
+                dir.join("guided"),
+            )
+        })();
+        if let Err(e) = &outcome {
+            meditate_core::log(
+                "sync.attempt",
+                &format!("failed: {e}"),
+            );
+        }
+        SYNC_IN_FLIGHT.store(false, Ordering::SeqCst);
+        SYNC_UI_DIRTY.store(true, Ordering::SeqCst);
+    });
+}
 
 
 /// Hide the soft keyboard. Slint's `clear-focus()` on a
@@ -1278,7 +1342,9 @@ fn refresh_sync_indicator(ui: &MainWindow) {
         ui.set_sync_indicator_state(0);
         return;
     };
-    let (state, tooltip) = match state_from_db(db, false) {
+    let syncing = SYNC_IN_FLIGHT
+        .load(std::sync::atomic::Ordering::SeqCst);
+    let (state, tooltip) = match state_from_db(db, syncing) {
         SyncIndicatorState::Hidden => (0, String::new()),
         SyncIndicatorState::Syncing => {
             (1, "Syncing with Nextcloud…".to_string())
@@ -4110,6 +4176,14 @@ fn build_ui() -> MainWindow {
                     &guided_create_import,
                     &guided_import_src_tick,
                 );
+                // Sync started/finished (SY-4): refresh the
+                // indicator exactly on the edges the trigger +
+                // worker flag, not every frame.
+                if SYNC_UI_DIRTY
+                    .swap(false, std::sync::atomic::Ordering::SeqCst)
+                {
+                    refresh_sync_indicator(&ui);
+                }
                 // Test-connection outcome (SY-3): the worker
                 // thread parked (toast, detail) — log the detail,
                 // drop the busy state, raise the plain toast.
@@ -8516,6 +8590,10 @@ fn build_ui() -> MainWindow {
                         );
                         break 'save "Save failed".into();
                     }
+                    // Both credential pieces are in place —
+                    // kick off the first sync (GTK parity:
+                    // app.trigger_sync() after save).
+                    trigger_sync("prefs save");
                     "Sync settings saved".into()
                 };
 
@@ -8663,18 +8741,53 @@ fn build_ui() -> MainWindow {
         });
     }
 
-    // Sync-indicator tap — no-op placeholder. GTK routes via
-    // `meditate_core::sync::indicator::action_for` to the
-    // recovery dialog / prefs-data page / retry-sync, none of
-    // which exist on Android until Phase 7. Logging the derived
-    // action keeps the eventual wiring obvious.
-    ui.on_sync_indicator_tap(move || {
-        #[cfg(target_os = "android")]
-        meditate_core::log(
-            "ui.sync_indicator_tap",
-            "sync action pending (phase 7: recovery / prefs / retry)",
-        );
-    });
+    // Sync-indicator tap (SY-4): core `action_for` routes the
+    // current state — error → retry sync, data-lost → recovery
+    // dialog (SY-5; toasts the detail until it lands), anything
+    // else → open Preferences (GTK's OpenPrefsData). Reuses the
+    // prefill logic by invoking the sandwich-button callback.
+    {
+        let weak = ui.as_weak();
+        ui.on_sync_indicator_tap(move || {
+            #[cfg(target_os = "android")]
+            {
+                use meditate_core::sync::indicator::{
+                    action_for, state_from_db, SyncIndicatorAction,
+                };
+                let Some(ui) = weak.upgrade() else { return; };
+                let state = {
+                    let Some(db_arc) = DATABASE.get() else { return; };
+                    let Ok(guard) = db_arc.lock() else { return; };
+                    let Some(db) = guard.as_ref() else { return; };
+                    state_from_db(
+                        db,
+                        SYNC_IN_FLIGHT
+                            .load(std::sync::atomic::Ordering::SeqCst),
+                    )
+                };
+                match action_for(&state) {
+                    SyncIndicatorAction::RetrySync => {
+                        trigger_sync("indicator tap (retry)");
+                    }
+                    SyncIndicatorAction::OpenRecovery => {
+                        // SY-5 dialog pending — surface the state
+                        // via the tooltip detail in the diag log
+                        // and open Preferences so the user can at
+                        // least see/fix the account.
+                        meditate_core::log(
+                            "ui.sync_indicator_tap",
+                            "remote-data-lost: recovery dialog pending (SY-5)",
+                        );
+                        ui.invoke_preferences_tap();
+                    }
+                    SyncIndicatorAction::OpenPrefsData => {
+                        ui.invoke_preferences_tap();
+                    }
+                }
+            }
+            let _ = weak.clone();
+        });
+    }
 
     // Chart period toggle (S-5a). Recompute just the chart —
     // mirrors GTK's `period_toggle_group` notify → `reload_chart`
@@ -8998,6 +9111,11 @@ fn android_main(android_app: slint::android::AndroidApp) {
     slint::android::init(android_app).unwrap();
     let ui = build_ui();
     MaterialWindowAdapter::get(&ui).set_disable_hover(true);
+    // Launch sync (SY-4). The runner no-ops fast on an
+    // unconfigured account (one KV read on its own connection),
+    // so this is free until the user sets up Nextcloud. Mirrors
+    // GTK triggering a sync at startup.
+    trigger_sync("app launch");
     ui.run().unwrap();
 }
 
