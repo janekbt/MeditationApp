@@ -18,6 +18,12 @@ export component TextField {
     in property <image> trailing_icon;
     in property <bool> enabled: true;
     in property <bool> read_only <=> input.read_only;
+    // LOCAL PATCH (meditate-android): forward the inner TextInput's
+    // input-type so callers can request `InputType.password` masking
+    // (Preferences → Nextcloud app-password row). Upstream Slint has
+    // the property; the catalog component just doesn't expose it.
+    // Re-apply this line if material-1.0 is ever refreshed.
+    in property <InputType> input_type <=> input.input_type;
     out property <bool> has_focus: input.has_focus;
     in_out property <string> text <=> input.text;
 

@@ -17,6 +17,8 @@ mod widget;
 #[cfg(target_os = "android")]
 mod guided;
 #[cfg(target_os = "android")]
+mod keychain;
+#[cfg(target_os = "android")]
 mod screen;
 
 slint::include_modules!();
@@ -100,6 +102,17 @@ fn android_app() -> Option<&'static slint::android::AndroidApp> {
 #[cfg(target_os = "android")]
 static RECOVERED_SESSION: OnceLock<std::sync::Mutex<Option<(String, u32)>>> =
     OnceLock::new();
+
+/// Parking slot for the Test-connection worker's outcome
+/// (SY-3): `(toast_copy, diag_detail)`. The worker thread can't
+/// touch Slint state (!Send) nor the snackbar discriminators
+/// (Rc), so it parks here and the tick loop polls + raises the
+/// toast — the same hand-off pattern as the guided-import
+/// drop-files, just in-process.
+#[cfg(target_os = "android")]
+static TEST_CONNECTION_RESULT: OnceLock<
+    std::sync::Mutex<Option<(String, String)>>,
+> = OnceLock::new();
 
 
 /// Hide the soft keyboard. Slint's `clear-focus()` on a
@@ -4057,6 +4070,23 @@ fn build_ui() -> MainWindow {
         let guided_create_import = guided_create_import.clone();
         #[cfg(target_os = "android")]
         let guided_import_src_tick = guided_import_src.clone();
+        // SY-3 toast raise from the tick poll needs the shared
+        // single-slot snackbar context.
+        #[cfg(target_os = "android")]
+        let recovery_uuid_tick = recovery_uuid.clone();
+        #[cfg(target_os = "android")]
+        let pending_preset_undo_tick = pending_preset_undo.clone();
+        #[cfg(target_os = "android")]
+        let pending_preset_delete_tick =
+            pending_preset_delete.clone();
+        #[cfg(target_os = "android")]
+        let pending_override_restore_tick =
+            pending_override_restore.clone();
+        #[cfg(target_os = "android")]
+        let pending_guided_delete_tick =
+            pending_guided_delete.clone();
+        #[cfg(target_os = "android")]
+        let prefs_delete_timer: &'static slint::Timer = delete_timer;
         timer.start(slint::TimerMode::Repeated, TICK, move || {
             // Warm-process widget deep-link (W-4). Polled here
             // because NativeActivity never hands native code an
@@ -4080,6 +4110,45 @@ fn build_ui() -> MainWindow {
                     &guided_create_import,
                     &guided_import_src_tick,
                 );
+                // Test-connection outcome (SY-3): the worker
+                // thread parked (toast, detail) — log the detail,
+                // drop the busy state, raise the plain toast.
+                // Cheap uncontended lock on every normal frame.
+                if let Some((toast, detail)) =
+                    TEST_CONNECTION_RESULT
+                        .get_or_init(|| std::sync::Mutex::new(None))
+                        .lock()
+                        .ok()
+                        .and_then(|mut g| g.take())
+                {
+                    meditate_core::log("test_connection", &detail);
+                    ui.set_prefs_test_busy(false);
+                    recovery_uuid_tick.borrow_mut().take();
+                    pending_preset_undo_tick.borrow_mut().take();
+                    pending_preset_delete_tick
+                        .borrow_mut()
+                        .take();
+                    pending_override_restore_tick
+                        .borrow_mut()
+                        .take();
+                    discard_pending_guided_delete(
+                        &pending_guided_delete_tick,
+                    );
+                    ui.set_snackbar_text(toast.into());
+                    ui.set_snackbar_show_undo(false);
+                    ui.set_snackbar_visible(true);
+                    let weak_inner = ui.as_weak();
+                    prefs_delete_timer.start(
+                        slint::TimerMode::SingleShot,
+                        std::time::Duration::from_secs(4),
+                        move || {
+                            if let Some(ui) = weak_inner.upgrade()
+                            {
+                                ui.set_snackbar_visible(false);
+                            }
+                        },
+                    );
+                }
                 // Guided import transcode finished (GM-F2): the
                 // Kotlin worker dropped a result file. On success
                 // insert the starred `guided_files` row and adopt
@@ -4882,6 +4951,7 @@ fn build_ui() -> MainWindow {
                 ui.set_snackbar_text(
                     format!("'{}' deleted", row.name).into(),
                 );
+                ui.set_snackbar_show_undo(true);
                 ui.set_snackbar_visible(true);
                 let weak_inner = ui.as_weak();
                 let pgd = pending_guided_delete.clone();
@@ -5121,6 +5191,7 @@ fn build_ui() -> MainWindow {
                 ui.set_snackbar_text(
                     format!("'{}' applied", preset.name).into(),
                 );
+                ui.set_snackbar_show_undo(true);
                 ui.set_snackbar_visible(true);
                 let weak_inner = ui.as_weak();
                 let ppu = pending_preset_undo.clone();
@@ -5368,6 +5439,7 @@ fn build_ui() -> MainWindow {
                 *pending_override_restore.borrow_mut() =
                     prior.map(|p| (uuid.clone(), p, core_mode));
                 ui.set_snackbar_text("Preset overridden".into());
+                ui.set_snackbar_show_undo(true);
                 ui.set_snackbar_visible(true);
                 let weak_inner = ui.as_weak();
                 let por = pending_override_restore.clone();
@@ -5587,6 +5659,7 @@ fn build_ui() -> MainWindow {
                 ui.set_snackbar_text(
                     format!("'{}' deleted", row.name).into(),
                 );
+                ui.set_snackbar_show_undo(true);
                 ui.set_snackbar_visible(true);
                 let weak_inner = ui.as_weak();
                 let ppd = pending_preset_delete.clone();
@@ -7703,6 +7776,7 @@ fn build_ui() -> MainWindow {
                     format!("{count} sessions deleted")
                 };
                 ui.set_snackbar_text(text.into());
+                ui.set_snackbar_show_undo(true);
                 ui.set_snackbar_visible(true);
 
                 render_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
@@ -8284,15 +8358,310 @@ fn build_ui() -> MainWindow {
         });
     }
 
-    // Preferences gear tap — no-op for now; Phase 7 hooks it up
-    // to the eventual Preferences screen.
-    ui.on_preferences_tap(move || {
+    // Preferences sandwich tap (SY-2) → open the Preferences
+    // page, pre-filled from the saved account. Password field is
+    // ALWAYS blank on open — we never echo the stored secret
+    // (GTK parity: "the password row stays blank on reopen").
+    {
+        let weak = ui.as_weak();
+        ui.on_preferences_tap(move || {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                let account = {
+                    let Some(db_arc) = DATABASE.get() else { return; };
+                    let Ok(guard) = db_arc.lock() else { return; };
+                    let Some(db) = guard.as_ref() else { return; };
+                    meditate_core::sync::settings::nextcloud_account_from_db(db)
+                        .ok()
+                        .flatten()
+                };
+                ui.set_prefs_url(
+                    account
+                        .as_ref()
+                        .map(|a| a.url.clone())
+                        .unwrap_or_default()
+                        .into(),
+                );
+                ui.set_prefs_username(
+                    account
+                        .map(|a| a.username)
+                        .unwrap_or_default()
+                        .into(),
+                );
+                ui.set_prefs_password(slint::SharedString::new());
+                ui.set_preferences_page(true);
+            }
+            let _ = weak.clone();
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_preferences_back(move || {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                // Drop any typed-but-unsaved password on leave.
+                ui.set_prefs_password(slint::SharedString::new());
+                ui.set_preferences_page(false);
+            }
+            let _ = weak.clone();
+        });
+    }
+
+    // Preferences Save (SY-2). Mirrors GTK's save_btn handler:
+    // core `prepare_save` validates + plans; the password is
+    // stored FIRST (Keystore), then the account row — same
+    // ordering rationale as GTK (a future sync worker must never
+    // read an account whose secret hasn't landed yet). Empty
+    // password = PasswordAction::Keep (stored one untouched).
+    // `trigger_sync` lands with SY-4. Feedback goes through the
+    // shared snackbar in plain-toast mode (no Undo) — single
+    // slot, so the other discriminators are cleared like every
+    // raise site.
+    {
+        let weak = ui.as_weak();
         #[cfg(target_os = "android")]
-        meditate_core::log(
-            "ui.preferences_tap",
-            "preferences screen pending (phase 7)",
-        );
-    });
+        let recovery_uuid = recovery_uuid.clone();
+        #[cfg(target_os = "android")]
+        let pending_preset_undo = pending_preset_undo.clone();
+        #[cfg(target_os = "android")]
+        let pending_preset_delete = pending_preset_delete.clone();
+        #[cfg(target_os = "android")]
+        let pending_override_restore =
+            pending_override_restore.clone();
+        #[cfg(target_os = "android")]
+        let pending_guided_delete = pending_guided_delete.clone();
+        #[cfg(target_os = "android")]
+        let delete_timer: &'static slint::Timer = delete_timer;
+        ui.on_prefs_save_tap(move || {
+            #[cfg(target_os = "android")]
+            {
+                use meditate_core::sync::credentials::{
+                    prepare_save, PasswordAction, SyncSettingsError,
+                };
+                let Some(ui) = weak.upgrade() else { return; };
+                let url = ui.get_prefs_url().to_string();
+                let username = ui.get_prefs_username().to_string();
+                let password = ui.get_prefs_password().to_string();
+
+                // Labeled block: every outcome breaks out with the
+                // toast copy (GTK's data_toast strings), so the
+                // snackbar raise below happens exactly once.
+                let toast: String = 'save: {
+                    let plan =
+                        match prepare_save(&url, &username, &password)
+                    {
+                        Ok(p) => p,
+                        Err(SyncSettingsError::EmptyUrl)
+                        | Err(SyncSettingsError::EmptyUsername) => {
+                            break 'save
+                                "Enter URL and username".into();
+                        }
+                        Err(SyncSettingsError::InsecureUrl) => {
+                            break 'save
+                                "URL must start with https://"
+                                    .into();
+                        }
+                        // prepare_save never consults the keychain.
+                        Err(SyncSettingsError::NoPassword)
+                        | Err(SyncSettingsError::KeyringFailed) => {
+                            unreachable!(
+                                "prepare_save does not consult the keychain"
+                            )
+                        }
+                    };
+                    // Password FIRST (see ordering note above).
+                    if let PasswordAction::Store(new_password) =
+                        &plan.password
+                    {
+                        let Some(app) = android_app() else {
+                            break 'save "Save failed".into();
+                        };
+                        if !keychain::store_password(
+                            app,
+                            &plan.url,
+                            &plan.username,
+                            new_password,
+                        ) {
+                            break 'save
+                                "Keystore write failed".into();
+                        }
+                        // Stored → blank the field (GTK parity).
+                        ui.set_prefs_password(
+                            slint::SharedString::new(),
+                        );
+                    }
+                    let account_result = {
+                        let Some(db_arc) = DATABASE.get() else {
+                            break 'save
+                                "Database unavailable".into();
+                        };
+                        let Ok(guard) = db_arc.lock() else {
+                            break 'save
+                                "Database unavailable".into();
+                        };
+                        let Some(db) = guard.as_ref() else {
+                            break 'save
+                                "Database unavailable".into();
+                        };
+                        meditate_core::sync::settings::set_nextcloud_account(
+                            db,
+                            &plan.url,
+                            &plan.username,
+                        )
+                    };
+                    if let Err(e) = account_result {
+                        meditate_core::log(
+                            "sync.settings",
+                            &format!("save failed: {e:?}"),
+                        );
+                        break 'save "Save failed".into();
+                    }
+                    "Sync settings saved".into()
+                };
+
+                // Plain-toast raise (no Undo). Single slot: clear
+                // the other discriminators first.
+                recovery_uuid.borrow_mut().take();
+                pending_preset_undo.borrow_mut().take();
+                pending_preset_delete.borrow_mut().take();
+                pending_override_restore.borrow_mut().take();
+                discard_pending_guided_delete(
+                    &pending_guided_delete,
+                );
+                ui.set_snackbar_text(toast.into());
+                ui.set_snackbar_show_undo(false);
+                ui.set_snackbar_visible(true);
+                let weak_inner = ui.as_weak();
+                delete_timer.start(
+                    slint::TimerMode::SingleShot,
+                    std::time::Duration::from_secs(4),
+                    move || {
+                        if let Some(ui) = weak_inner.upgrade() {
+                            ui.set_snackbar_visible(false);
+                        }
+                    },
+                );
+            }
+            let _ = weak.clone();
+        });
+    }
+
+    // Test connection (SY-3). Mirrors GTK's test_btn handler:
+    // core `prepare_test` resolves credentials (blank password →
+    // Keystore fallback via the deferred closure), then the
+    // PROPFIND runs on a worker thread and parks its outcome in
+    // TEST_CONNECTION_RESULT for the tick loop to toast. Nothing
+    // is persisted.
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let recovery_uuid = recovery_uuid.clone();
+        #[cfg(target_os = "android")]
+        let pending_preset_undo = pending_preset_undo.clone();
+        #[cfg(target_os = "android")]
+        let pending_preset_delete = pending_preset_delete.clone();
+        #[cfg(target_os = "android")]
+        let pending_override_restore =
+            pending_override_restore.clone();
+        #[cfg(target_os = "android")]
+        let pending_guided_delete = pending_guided_delete.clone();
+        #[cfg(target_os = "android")]
+        let delete_timer: &'static slint::Timer = delete_timer;
+        ui.on_prefs_test_tap(move || {
+            #[cfg(target_os = "android")]
+            {
+                use meditate_core::sync::credentials::{
+                    prepare_test, SyncSettingsError,
+                };
+                let Some(ui) = weak.upgrade() else { return; };
+                let raw_url = ui.get_prefs_url().to_string();
+                let raw_username =
+                    ui.get_prefs_username().to_string();
+                let typed_pw = ui.get_prefs_password().to_string();
+
+                let creds = prepare_test(
+                    &raw_url,
+                    &raw_username,
+                    &typed_pw,
+                    || {
+                        let Some(app) = android_app() else {
+                            return Err(());
+                        };
+                        Ok(keychain::read_password(
+                            app,
+                            raw_url.trim(),
+                            raw_username.trim(),
+                        ))
+                    },
+                );
+                let creds = match creds {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let copy = match e {
+                            SyncSettingsError::EmptyUrl
+                            | SyncSettingsError::EmptyUsername => {
+                                "Enter URL and username"
+                            }
+                            SyncSettingsError::NoPassword => {
+                                "Enter a password"
+                            }
+                            SyncSettingsError::KeyringFailed => {
+                                "Keystore read failed"
+                            }
+                            // prepare_test lets http:// through so
+                            // the user can probe it; only Save
+                            // enforces https (GTK parity).
+                            SyncSettingsError::InsecureUrl => {
+                                unreachable!(
+                                    "prepare_test does not validate URL scheme"
+                                )
+                            }
+                        };
+                        recovery_uuid.borrow_mut().take();
+                        pending_preset_undo.borrow_mut().take();
+                        pending_preset_delete.borrow_mut().take();
+                        pending_override_restore
+                            .borrow_mut()
+                            .take();
+                        discard_pending_guided_delete(
+                            &pending_guided_delete,
+                        );
+                        ui.set_snackbar_text(copy.into());
+                        ui.set_snackbar_show_undo(false);
+                        ui.set_snackbar_visible(true);
+                        let weak_inner = ui.as_weak();
+                        delete_timer.start(
+                            slint::TimerMode::SingleShot,
+                            std::time::Duration::from_secs(4),
+                            move || {
+                                if let Some(ui) =
+                                    weak_inner.upgrade()
+                                {
+                                    ui.set_snackbar_visible(false);
+                                }
+                            },
+                        );
+                        return;
+                    }
+                };
+
+                ui.set_prefs_test_busy(true);
+                std::thread::spawn(move || {
+                    let r = meditate_core::sync::credentials::test_connection(
+                        &creds.url,
+                        &creds.username,
+                        &creds.password,
+                    );
+                    let slot = TEST_CONNECTION_RESULT
+                        .get_or_init(|| std::sync::Mutex::new(None));
+                    if let Ok(mut guard) = slot.lock() {
+                        *guard = Some((r.to_string(), r.detail()));
+                    }
+                });
+            }
+            let _ = weak.clone();
+        });
+    }
 
     // Sync-indicator tap — no-op placeholder. GTK routes via
     // `meditate_core::sync::indicator::action_for` to the
@@ -8449,6 +8818,34 @@ fn build_ui() -> MainWindow {
                 ui.set_override_preset_dialog_open(false);
                 return;
             }
+            // Guided import/rename dialogs + Preferences +
+            // Manage Files were missing from this chain (GM-F4 /
+            // SY-2 additions) — ordered top-of-z-stack first.
+            // Import dialog: back = Cancel, but NOT while a
+            // transcode is running (same gate as the scrim tap).
+            #[cfg(target_os = "android")]
+            if ui.get_guided_import_dialog_open() {
+                if !ui.get_guided_import_busy() {
+                    ui.invoke_guided_import_cancel();
+                    ui.set_guided_import_dialog_open(false);
+                }
+                return;
+            }
+            #[cfg(target_os = "android")]
+            if ui.get_guided_rename_dialog_open() {
+                ui.set_guided_rename_dialog_open(false);
+                return;
+            }
+            #[cfg(target_os = "android")]
+            if ui.get_preferences_page() {
+                ui.invoke_preferences_back();
+                return;
+            }
+            #[cfg(target_os = "android")]
+            if ui.get_guided_manage_page() {
+                ui.invoke_guided_manage_back();
+                return;
+            }
             #[cfg(target_os = "android")]
             if ui.get_preset_chooser_page() {
                 ui.set_preset_chooser_page(false);
@@ -8546,6 +8943,7 @@ fn build_ui() -> MainWindow {
             pending_override_restore.borrow_mut().take();
             discard_pending_guided_delete(&pending_guided_delete);
             ui.set_snackbar_text(text.into());
+            ui.set_snackbar_show_undo(true);
             ui.set_snackbar_visible(true);
             let weak_inner = ui.as_weak();
             delete_timer.start(

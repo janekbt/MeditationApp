@@ -1300,6 +1300,24 @@ export component MainWindow inherits Window {
     callback guided-rename-changed(string);
     callback guided-rename-confirm();
 
+    // Preferences page (Phase 7 SY-2). Slide-in from the AppBar
+    // sandwich button. The Sync group mirrors GTK's
+    // `preferences.rs` Nextcloud group: URL / username /
+    // app-password + Save. Password field is ALWAYS blank on
+    // open (we never echo the stored secret); leaving it blank
+    // on Save keeps the stored password (core PasswordAction).
+    in property <bool> preferences-page: false;
+    in-out property <string> prefs-url: "";
+    in-out property <string> prefs-username: "";
+    in-out property <string> prefs-password: "";
+    callback preferences-back();
+    callback prefs-save-tap();
+    // Test connection (SY-3): one PROPFIND against the entered
+    // credentials on a background thread; blank password falls
+    // back to the stored Keystore entry. Never persists anything.
+    in property <bool> prefs-test-busy: false;
+    callback prefs-test-tap();
+
     // Stopwatch-Mode switch state — mirrors the .blp
     // `stopwatch_mode_row` SwitchRow. When true, sessions count up
     // from zero with no target (SessionShape::TimerStopwatch);
@@ -1846,6 +1864,10 @@ export component MainWindow inherits Window {
     // alongside the toggle.
     in property <string> snackbar-text: "";
     in property <bool> snackbar-visible: false;
+    // False = plain toast (no Undo affordance) — used by the
+    // Preferences save/test feedback, mirroring GTK's add_toast.
+    // Every raise site must set this explicitly (single slot).
+    in property <bool> snackbar-show-undo: true;
     callback snackbar-undo-tap();
 
     // Edit-Session overlay (L-4). Tapping a Log card opens a full-
@@ -2127,6 +2149,9 @@ export component MainWindow inherits Window {
     // Guided Manage Files slide-in (GM-F4). Same symmetric push.
     property <length> guided-manage-offset: root.guided-manage-page ? root.width : 0px;
     animate guided-manage-offset { duration: 300ms; easing: ease-out; }
+    // Preferences slide-in (SY-2). Same symmetric push.
+    property <length> preferences-offset: root.preferences-page ? root.width : 0px;
+    animate preferences-offset { duration: 300ms; easing: ease-out; }
 
     property <length> interval-bells-offset: root.interval-bells-page ? root.width : 0px;
     animate interval-bells-offset { duration: 300ms; easing: ease-out; }
@@ -6705,6 +6730,101 @@ export component MainWindow inherits Window {
         }
     }
 
+    // ── Preferences page (Phase 7 SY-2) ──────────────────────────
+    // Full-screen slide-in from the AppBar sandwich button.
+    // Declared after the choosers and BEFORE the snackbar so the
+    // save/test toasts render on top of it. Sync group mirrors
+    // GTK's preferences.rs Nextcloud group (copy included).
+    Rectangle {
+        x: parent.width - root.preferences-offset;
+        width: parent.width;
+        height: parent.height;
+        background: MaterialPalette.surface;
+
+        VerticalLayout {
+            padding-top: root.status-bar-inset + 24px;
+            padding-bottom: root.bottom-bar-inset + 24px;
+            padding-left: 16px;
+            padding-right: 16px;
+            spacing: 16px;
+            alignment: start;
+
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: stretch;
+
+                IconButton {
+                    icon: Icons.arrow-back;
+                    clicked => { root.preferences-back(); }
+                }
+                Text {
+                    text: "Preferences";
+                    font-size: 18px;
+                    color: MaterialPalette.on-surface;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    horizontal-alignment: center;
+                }
+                Rectangle {
+                    width: 40px;
+                }
+            }
+
+            Text {
+                text: "Nextcloud Sync";
+                font-size: 14px;
+                font-weight: 700;
+                color: MaterialPalette.primary;
+                horizontal-alignment: left;
+            }
+            Text {
+                text: "Sync sessions, labels, and preferences between your devices via your own Nextcloud server.";
+                font-size: 13px;
+                color: MaterialPalette.on-surface-variant;
+                horizontal-alignment: left;
+                wrap: word-wrap;
+            }
+
+            TextField {
+                label: "Server URL";
+                text <=> root.prefs-url;
+            }
+            TextField {
+                label: "Username";
+                text <=> root.prefs-username;
+            }
+            TextField {
+                label: "App password";
+                input-type: InputType.password;
+                text <=> root.prefs-password;
+            }
+
+            Text {
+                text: "Stores URL and username locally; password goes to the Android Keystore. Leave the password blank to keep the stored one.";
+                font-size: 13px;
+                color: MaterialPalette.on-surface-variant;
+                horizontal-alignment: left;
+                wrap: word-wrap;
+            }
+
+            HorizontalLayout {
+                spacing: 8px;
+
+                FilledButton {
+                    text: "Save";
+                    clicked => { root.prefs-save-tap(); }
+                }
+                OutlineButton {
+                    text: root.prefs-test-busy
+                        ? "Testing…"
+                        : "Test connection";
+                    enabled: !root.prefs-test-busy;
+                    clicked => { root.prefs-test-tap(); }
+                }
+            }
+        }
+    }
+
     // ── Undo snackbar (relocated for z-order, see note above) ───
     // Declared AFTER the Guided Manage Files page so it renders
     // over that still-open chooser; still parks at the bottom
@@ -6737,7 +6857,7 @@ export component MainWindow inherits Window {
                 wrap: word-wrap;
             }
 
-            VerticalLayout {
+            if root.snackbar-show-undo : VerticalLayout {
                 alignment: center;
                 TextButton {
                     text: "Undo";
