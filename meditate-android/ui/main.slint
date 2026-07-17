@@ -1331,6 +1331,16 @@ export component MainWindow inherits Window {
     // back to the stored Keystore entry. Never persists anything.
     in property <bool> prefs-test-busy: false;
     callback prefs-test-tap();
+    // Daily goal (ST): Preferences row + entry dialog. Rust
+    // seeds prefs-goal-mins on page open and persists on commit;
+    // the value drives the Stats ring (today's progress) + the
+    // heatmap threshold (core goal::compute).
+    in-out property <int> prefs-goal-mins: 20;
+    in-out property <bool> goal-dialog-open: false;
+    // Free-typed minutes; Set gates on parseable + 5..240
+    // (core DAILY_GOAL_MIN/MAX), all Slint-side via to-float.
+    in-out property <string> goal-dialog-text: "20";
+    callback goal-committed();
     // Remote-data-lost recovery (SY-5) — mirrors GTK's
     // recovery_dialog.rs: choice dialog (Push My Data / Wipe
     // Local / Cancel), with Wipe going through a second
@@ -2041,7 +2051,7 @@ export component MainWindow inherits Window {
     in property <string> stat-total: "–";
     in property <string> stat-sessions: "–";
 
-    // Weekly-goal hero (S-2). All pre-resolved Rust-side from
+    // Daily-goal hero (S-2). All pre-resolved Rust-side from
     // `meditate_core::goal::compute`: `stat-goal-pct` is the
     // 0.0..1.0 arc-sweep fraction (clamped — a met goal is a
     // full ring), `stat-goal-pct-label` the capped integer
@@ -3767,7 +3777,7 @@ export component MainWindow inherits Window {
                 padding-right: 14px;
                 spacing: 22px;
 
-                // Weekly-goal hero — progress ring + eyebrow /
+                // Daily-goal hero — progress ring + eyebrow /
                 // progress / status column. Mirrors GTK's
                 // horizontal goal box at
                 // `meditate-gtk/data/ui/stats_view.blp:23`
@@ -3802,7 +3812,7 @@ export component MainWindow inherits Window {
                         horizontal-stretch: 1;
 
                         Text {
-                            text: "WEEKLY GOAL";
+                            text: "DAILY GOAL";
                             font-size: 11px;
                             font-weight: 700;
                             color: MaterialPalette.on-surface-variant;
@@ -6880,6 +6890,31 @@ export component MainWindow inherits Window {
                     clicked => { root.prefs-test-tap(); }
                 }
             }
+
+            Text {
+                text: "Stats";
+                font-size: 14px;
+                font-weight: 700;
+                color: MaterialPalette.primary;
+                horizontal-alignment: left;
+            }
+            Text {
+                text: "Minutes per day — drives the ring on the Stats tab.";
+                font-size: 13px;
+                color: MaterialPalette.on-surface-variant;
+                horizontal-alignment: left;
+                wrap: word-wrap;
+            }
+            BoxedList {
+                DurationRow {
+                    label: "Daily goal";
+                    value-text: root.prefs-goal-mins + " min";
+                    tapped => {
+                        root.goal-dialog-text = "" + root.prefs-goal-mins;
+                        root.goal-dialog-open = true;
+                    }
+                }
+            }
         }
     }
 
@@ -7106,6 +7141,74 @@ export component MainWindow inherits Window {
             }
         }
     }
+    // ── Daily-goal entry dialog (ST) ─────────────────────────────
+    // Free-typed minutes, validated 5–240 (core
+    // DAILY_GOAL_MIN/MAX). Declared with the other dialogs so it
+    // tops the Preferences page.
+    if root.goal-dialog-open : Rectangle {
+        background: #00000080;
+        TouchArea {
+            clicked => { root.goal-dialog-open = false; }
+        }
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 280px;
+            height: goal-card.preferred-height;
+            background: MaterialPalette.surface-container-high;
+            border-radius: 28px;
+
+            TouchArea {}
+
+            goal-card := VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+
+                Text {
+                    text: "Daily Goal";
+                    font-size: 22px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface;
+                }
+                Text {
+                    text: "Minutes per day";
+                    font-size: 14px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface-variant;
+                }
+
+                TextField {
+                    label: "Minutes (5–240)";
+                    input-type: InputType.number;
+                    text <=> root.goal-dialog-text;
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+
+                    TextButton {
+                        text: "Cancel";
+                        clicked => { root.goal-dialog-open = false; }
+                    }
+                    TextButton {
+                        text: "Set";
+                        enabled: root.goal-dialog-text.is-float()
+                            && root.goal-dialog-text.to-float() >= 5
+                            && root.goal-dialog-text.to-float() <= 240;
+                        clicked => {
+                            root.prefs-goal-mins = Math.round(
+                                root.goal-dialog-text.to-float());
+                            root.goal-committed();
+                            root.goal-dialog-open = false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // ── Remote-data-lost recovery dialogs (SY-5) ─────────────────
     // Declared LAST → top the z-stack over everything including
     // Preferences (the indicator tap that opens them lives in the

@@ -66,14 +66,14 @@ impl ContribCell {
 ///   which weekday sits on row 0.
 /// - `totals` is a date → seconds map. Days missing from the map
 ///   contribute zero.
-/// - `daily_expected_mins` is the daily share of the user's weekly
-///   goal that drives the level thresholds (so a 10-hour retreat
-///   day doesn't make on-target days look washed-out).
+/// - `daily_goal_mins` is the user's daily goal, driving the
+///   level thresholds directly (so a 10-hour retreat day doesn't
+///   make on-target days look washed-out).
 pub fn build_grid(
     today: NaiveDate,
     locale_first_dow: i32,
     totals: &HashMap<NaiveDate, i64>,
-    daily_expected_mins: i64,
+    daily_goal_mins: i64,
 ) -> Vec<ContribCell> {
     let today_dow = today.weekday().number_from_monday() as i32;
     let cur_week_start = today
@@ -92,7 +92,7 @@ pub fn build_grid(
             let level = if is_future {
                 0
             } else {
-                minutes_to_level(mins, daily_expected_mins)
+                minutes_to_level(mins, daily_goal_mins)
             };
             cells.push(ContribCell {
                 date_iso: date.format("%Y-%m-%d").to_string(),

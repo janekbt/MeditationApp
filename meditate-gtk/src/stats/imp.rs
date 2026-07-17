@@ -148,42 +148,41 @@ impl StatsView {
     }
 
     fn reload_goal_ring(&self) {
-        // Total time logged since the locale's current-week start. A fresh
-        // Monday (in a Monday-start locale) resets the ring to 0.
+        // Total time logged since local midnight — the daily-goal
+        // ring resets each day (was weekly until 2026-07-17).
         let now = crate::time::now_local();
-        let week_start = now.add_days(-meditate_core::date_math::days_since_week_start(now.day_of_week(), locale_week_start_dow())).unwrap();
-        let since = week_start.format("%Y-%m-%d").unwrap().to_string();
-        let (week_secs, goal_mins) = self.get_app()
+        let since = now.format("%Y-%m-%d").unwrap().to_string();
+        let (today_secs, goal_mins) = self.get_app()
             .and_then(|app| app.with_db(|db| {
                 let s = db.get_total_secs_since(&since).unwrap_or(0);
-                let goal = meditate_core::goal::weekly_goal_mins_from_db(db.core());
+                let goal = meditate_core::goal::daily_goal_mins_from_db(db.core());
                 (s, goal)
             }))
-            .unwrap_or((0, meditate_core::goal::WEEKLY_GOAL_DEFAULT));
-        let g = meditate_core::goal::compute(week_secs, goal_mins);
+            .unwrap_or((0, meditate_core::goal::DAILY_GOAL_DEFAULT));
+        let g = meditate_core::goal::compute(today_secs, goal_mins);
         self.goal_pct.set(g.arc_pct);
         self.goal_ring.queue_draw();
         self.goal_pct_label.set_label(&format!("{}%", g.display_pct));
 
-        // "1h 48m / 2h 30m"
+        // "18m / 20m"
         self.goal_progress_label.set_markup(&format!(
             "{} <span alpha=\"60%\" size=\"60%\">/ {}</span>",
-            format_hm_mins(g.week_mins),
+            format_hm_mins(g.today_mins),
             format_hm_mins(g.goal_mins),
         ));
         let sub = match g.status {
-            GoalStatus::Reached => crate::i18n::gettext("Goal reached ✓ · {duration} this week")
-                .replace("{duration}", &format_hm_mins(g.week_mins)),
-            GoalStatus::InProgress => crate::i18n::gettext("{duration} to go this week")
+            GoalStatus::Reached => crate::i18n::gettext("Goal reached ✓ · {duration} today")
+                .replace("{duration}", &format_hm_mins(g.today_mins)),
+            GoalStatus::InProgress => crate::i18n::gettext("{duration} to go today")
                 .replace("{duration}", &format_hm_mins(g.remaining_mins)),
         };
         self.goal_sub_label.set_label(&sub);
 
         // Accessible name for the Cairo-drawn ring — no intrinsic text for
         // screen readers to fall back on.
-        let ring_name = crate::i18n::gettext("Weekly goal: {pct}% — {done} of {goal}")
+        let ring_name = crate::i18n::gettext("Daily goal: {pct}% — {done} of {goal}")
             .replace("{pct}", &g.display_pct.to_string())
-            .replace("{done}", &format_hm_mins(g.week_mins))
+            .replace("{done}", &format_hm_mins(g.today_mins))
             .replace("{goal}", &format_hm_mins(g.goal_mins));
         self.goal_ring.update_property(&[gtk::accessible::Property::Label(&ring_name)]);
     }
@@ -192,18 +191,17 @@ impl StatsView {
         let now = crate::time::now_local();
 
         // Fetch 91 days of totals (12 weeks back through today) and
-        // the user's weekly goal in a single DB borrow. Core's
+        // the user's daily goal in a single DB borrow. Core's
         // `get_daily_totals` returns NaiveDate keys directly.
         let (totals_vec, goal_mins) = self.get_app()
             .and_then(|app| app.with_db(|db| {
                 let t = meditate_core::db::get_daily_totals_from_db(db.core()).unwrap_or_default();
-                let g = meditate_core::goal::weekly_goal_mins_from_db(db.core());
+                let g = meditate_core::goal::daily_goal_mins_from_db(db.core());
                 (t, g)
             }))
-            .unwrap_or_else(|| (Vec::new(), meditate_core::goal::WEEKLY_GOAL_DEFAULT));
+            .unwrap_or_else(|| (Vec::new(), meditate_core::goal::DAILY_GOAL_DEFAULT));
         let totals: std::collections::HashMap<chrono::NaiveDate, i64> =
             totals_vec.into_iter().collect();
-        let daily_expected_mins = meditate_core::goal::daily_expected_mins(goal_mins);
 
         // Core owns the cell classification (future / today / past +
         // level dispatch). Shell only renders.
@@ -212,7 +210,7 @@ impl StatsView {
             today_naive,
             locale_week_start_dow(),
             &totals,
-            daily_expected_mins,
+            goal_mins,
         );
 
         let cells = self.contrib_cells.borrow();

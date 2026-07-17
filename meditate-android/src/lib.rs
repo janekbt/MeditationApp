@@ -1553,21 +1553,17 @@ fn refresh_stats(ui: &MainWindow) {
     let today = meditate_core::time::today_local();
     let week_start_dow = meditate_core::date_math::locale_week_start_dow();
     let today_dow = today.weekday().number_from_monday() as i32;
-    let back = meditate_core::date_math::days_since_week_start(
-        today_dow,
-        week_start_dow,
-    );
-    let week_start = today - chrono::Duration::days(back as i64);
-    let week_secs =
-        meditate_core::db::total_secs_since_from_db(db, week_start)
+    // Daily goal (2026-07-17, was weekly): today's seconds only.
+    let today_secs =
+        meditate_core::db::total_secs_since_from_db(db, today)
             .unwrap_or(0);
-    let goal_mins = meditate_core::goal::weekly_goal_mins_from_db(db);
-    let g = meditate_core::goal::compute(week_secs, goal_mins);
+    let goal_mins = meditate_core::goal::daily_goal_mins_from_db(db);
+    let g = meditate_core::goal::compute(today_secs, goal_mins);
 
     let mins_dur =
         |m: i64| std::time::Duration::from_secs((m.max(0) as u64) * 60);
-    let week_str = render_hm(meditate_core::format::hm_mins_key(
-        mins_dur(g.week_mins),
+    let today_str = render_hm(meditate_core::format::hm_mins_key(
+        mins_dur(g.today_mins),
     ));
     let goal_str = render_hm(meditate_core::format::hm_mins_key(
         mins_dur(g.goal_mins),
@@ -1575,20 +1571,20 @@ fn refresh_stats(ui: &MainWindow) {
 
     ui.set_stat_goal_pct(g.arc_pct as f32);
     ui.set_stat_goal_pct_label(format!("{}%", g.display_pct).into());
-    ui.set_stat_goal_progress(format!("{week_str} / {goal_str}").into());
+    ui.set_stat_goal_progress(format!("{today_str} / {goal_str}").into());
     let sub = match g.status {
         // GTK appends a "✓" here, but the Android 15 system
         // font has no U+2713 glyph (renders as a tofu box —
         // same coverage gap that bit the labels chooser
         // check-mark). Drop it; the copy reads fine without.
         meditate_core::goal::GoalStatus::Reached => format!(
-            "Goal reached · {week_str} this week"
+            "Goal reached · {today_str} today"
         ),
         meditate_core::goal::GoalStatus::InProgress => {
             let remaining = render_hm(meditate_core::format::hm_mins_key(
                 mins_dur(g.remaining_mins),
             ));
-            format!("{remaining} to go this week")
+            format!("{remaining} to go today")
         }
     };
     ui.set_stat_goal_sub(sub.into());
@@ -1697,13 +1693,12 @@ fn refresh_stats(ui: &MainWindow) {
                 .unwrap_or_default()
                 .into_iter()
                 .collect();
-        let daily_expected =
-            meditate_core::goal::daily_expected_mins(goal_mins);
+
         let core_cells = meditate_core::contrib::build_grid(
             today,
             meditate_core::date_math::locale_week_start_dow(),
             &totals,
-            daily_expected,
+            goal_mins,
         );
         let cols: Vec<ContribCol> = core_cells
             .chunks(7)
@@ -8711,6 +8706,14 @@ fn build_ui() -> MainWindow {
                         .into(),
                 );
                 ui.set_prefs_password(slint::SharedString::new());
+                // Daily goal (ST) — seed the Stats group row.
+                let goal_mins = {
+                    let Some(db_arc) = DATABASE.get() else { return; };
+                    let Ok(guard) = db_arc.lock() else { return; };
+                    let Some(db) = guard.as_ref() else { return; };
+                    meditate_core::goal::daily_goal_mins_from_db(db)
+                };
+                ui.set_prefs_goal_mins(goal_mins as i32);
                 ui.set_preferences_page(true);
             }
             let _ = weak.clone();
@@ -8964,6 +8967,36 @@ fn build_ui() -> MainWindow {
                 refresh_sync_indicator(&ui);
             }
             let _ = (weak.clone(), current_mode.get());
+        });
+    }
+
+    // Daily-goal commit (ST): persist via core, re-derive the
+    // Stats surfaces (ring + insights + heatmap threshold) right
+    // away — mirrors GTK's write + InvalidateScope::STATS.
+    {
+        let weak = ui.as_weak();
+        ui.on_goal_committed(move || {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                let mins = i64::from(ui.get_prefs_goal_mins());
+                {
+                    let Some(db_arc) = DATABASE.get() else { return; };
+                    let Ok(guard) = db_arc.lock() else { return; };
+                    let Some(db) = guard.as_ref() else { return; };
+                    if let Err(e) =
+                        meditate_core::goal::write_daily_goal_mins(
+                            db, mins,
+                        )
+                    {
+                        meditate_core::log(
+                            "goal.write",
+                            &format!("failed mins={mins}: {e:?}"),
+                        );
+                    }
+                }
+                refresh_stats(&ui);
+            }
+            let _ = weak.clone();
         });
     }
 
@@ -9293,6 +9326,11 @@ fn build_ui() -> MainWindow {
             #[cfg(target_os = "android")]
             if ui.get_guided_rename_dialog_open() {
                 ui.set_guided_rename_dialog_open(false);
+                return;
+            }
+            #[cfg(target_os = "android")]
+            if ui.get_goal_dialog_open() {
+                ui.set_goal_dialog_open(false);
                 return;
             }
             #[cfg(target_os = "android")]

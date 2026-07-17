@@ -5,8 +5,8 @@ use gtk::{gio, glib};
 use crate::application::MeditateApplication;
 use crate::i18n::gettext;
 use meditate_core::goal::{
-    weekly_goal_mins_from_db, write_weekly_goal_mins,
-    WEEKLY_GOAL_DEFAULT, WEEKLY_GOAL_MAX, WEEKLY_GOAL_MIN, WEEKLY_GOAL_STEP,
+    daily_goal_mins_from_db, write_daily_goal_mins,
+    DAILY_GOAL_DEFAULT, DAILY_GOAL_MAX, DAILY_GOAL_MIN, DAILY_GOAL_STEP,
 };
 
 pub fn show_preferences(app: &MeditateApplication) {
@@ -83,22 +83,23 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
         .title(gettext("Statistics"))
         .build();
 
-    // Weekly meditation goal — drives the ring on the Stats tab.
+    // Daily meditation goal — drives the ring on the Stats tab
+    // and the heatmap thresholds.
     let current_goal_mins = app
-        .with_db(|db| weekly_goal_mins_from_db(db.core()))
-        .unwrap_or(WEEKLY_GOAL_DEFAULT);
+        .with_db(|db| daily_goal_mins_from_db(db.core()))
+        .unwrap_or(DAILY_GOAL_DEFAULT);
     let goal_row = adw::SpinRow::builder()
-        .title(gettext("Weekly goal"))
-        .subtitle(gettext("Minutes per week — drives the ring on the Stats tab"))
+        .title(gettext("Daily goal"))
+        .subtitle(gettext("Minutes per day — drives the ring on the Stats tab"))
         .adjustment(&gtk::Adjustment::new(
             current_goal_mins as f64,
-            WEEKLY_GOAL_MIN as f64,
-            WEEKLY_GOAL_MAX as f64,
-            WEEKLY_GOAL_STEP as f64,
-            (WEEKLY_GOAL_STEP * 4) as f64,
+            DAILY_GOAL_MIN as f64,
+            DAILY_GOAL_MAX as f64,
+            DAILY_GOAL_STEP as f64,
+            (DAILY_GOAL_STEP * 4) as f64,
             0.0,
         ))
-        .climb_rate(WEEKLY_GOAL_STEP as f64)
+        .climb_rate(DAILY_GOAL_STEP as f64)
         .digits(0)
         .build();
     goal_row.connect_notify_local(
@@ -108,7 +109,7 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
             move |row, _| {
                 let val = row.value() as i64;
                 app.with_db_mut(|db| {
-                    let _ = write_weekly_goal_mins(db.core(), val);
+                    let _ = write_daily_goal_mins(db.core(), val);
                 });
                 app.invalidate(crate::application::InvalidateScope::STATS);
             }
@@ -503,7 +504,7 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
                 // combo, and sound row — covers any pref change including
                 // label add/delete/rename and preset edits.
                 win.imp().timer_view.refresh_streak();
-                // Stats view picks up weekly goal changes.
+                // Stats view picks up daily goal changes.
                 win.imp().stats_view.refresh();
             }
         }

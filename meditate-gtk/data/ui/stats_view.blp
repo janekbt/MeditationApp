@@ -19,7 +19,7 @@ template $StatsView : Gtk.Widget {
         margin-start: 14;
         margin-end: 14;
 
-        // ── Weekly goal hero ─────────────────────────────────────────
+        // ── Daily goal hero ─────────────────────────────────────────
         Gtk.Box {
           orientation: horizontal;
           spacing: 16;
@@ -48,7 +48,7 @@ template $StatsView : Gtk.Widget {
             valign: center;
 
             Gtk.Label {
-              label: _("Weekly goal");
+              label: _("Daily goal");
               css-classes: ["stats-eyebrow"];
               halign: start;
             }
