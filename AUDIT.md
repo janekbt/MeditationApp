@@ -218,7 +218,7 @@ fixes.
   rode Google/D2D backup transports, and a restored Keystore-
   encrypted sync secret can't decrypt anyway. Nextcloud sync +
   CSV export are the deliberate backup story.
-- [ ] **P2-4 Important (design decision)** — CSV re-import
+- [x] **P2-4 Important (FIXED: exact (start_iso, duration_secs) dedupe in insert_sessions_with_labels — DB-wide + intra-batch; re-importing an unmodified export is a no-op. Both shells inherit via core.)** — CSV re-import
   duplicates sessions: `insert_sessions_with_labels` mints fresh
   uuids and nothing dedupes on (start, duration), so importing
   your own backup into a non-empty DB doubles the log. Shared

@@ -541,6 +541,23 @@ impl Database {
     /// the caller never sees a partially-imported DB. Each row also
     /// emits its own `session_insert` event — peers replay them
     /// independently, there is no "bulk" event kind.
+    /// Every `(start_iso, duration_secs)` pair currently in the
+    /// log — the CSV-import dedupe key (see
+    /// `data_io::insert_sessions_with_labels`).
+    pub fn session_start_duration_pairs(
+        &self,
+    ) -> Result<std::collections::HashSet<(String, u32)>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT start_iso, duration_secs FROM sessions",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, u32>(1)?))
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
     pub fn bulk_insert_sessions(&self, sessions: &[Session]) -> Result<usize> {
         let tx = self.conn.unchecked_transaction()?;
         let mut session_uuids: Vec<String> = Vec::with_capacity(sessions.len());

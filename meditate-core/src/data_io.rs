@@ -304,6 +304,13 @@ where
 /// `pub` so the gtk shell's Insight Timer importer (which stays
 /// shell-side because it needs a host datetime API for the local-time
 /// conversion) shares the second pass without duplicating the vec walk.
+///
+/// Dedupe (AUDIT.md P2-4): rows whose exact `(start_iso,
+/// duration_secs)` already exists in the DB — or appeared earlier
+/// in the same batch — are skipped, so re-importing a backup into
+/// a non-empty log is a no-op instead of doubling it. Second-level
+/// start precision makes a legitimate collision practically
+/// impossible. Returns the number actually inserted.
 pub fn insert_sessions_with_labels(
     db: &Database,
     label_names: &[String],
@@ -313,6 +320,7 @@ pub fn insert_sessions_with_labels(
     for name in label_names {
         label_ids.push(db.find_or_create_label(name)?);
     }
+    let mut seen = db.session_start_duration_pairs()?;
     let sessions: Vec<Session> = rows
         .iter()
         .map(|(start_unix, duration_secs, mode, note, label_idx)| Session {
@@ -323,6 +331,9 @@ pub fn insert_sessions_with_labels(
             mode: *mode,
             uuid: crate::db::SessionUuid::new(""),
             guided_file_uuid: None,
+        })
+        .filter(|s| {
+            seen.insert((s.start_iso.clone(), s.duration_secs))
         })
         .collect();
     Ok(db.bulk_insert_sessions(&sessions)?)
@@ -495,5 +506,61 @@ mod tests {
         assert_eq!(csv_inject_guard("4 minutes in"), "4 minutes in");
         assert_eq!(csv_inject_guard(" leading space"), " leading space");
         assert_eq!(csv_inject_guard(""), "");
+    }
+
+    // ── Import dedupe (AUDIT.md P2-4) ────────────────────────────────
+
+    #[test]
+    fn reimporting_the_same_rows_inserts_nothing() {
+        // The backup-restore foot-gun: importing rows that already
+        // exist (same start + duration) must not duplicate them.
+        let db = Database::open_in_memory().unwrap();
+        let rows = vec![
+            (1_700_000_000_i64, 600_u32, SessionMode::Timer, None, usize::MAX),
+            (1_700_010_000_i64, 900_u32, SessionMode::Timer, None, usize::MAX),
+        ];
+        assert_eq!(insert_sessions_with_labels(&db, &[], &rows).unwrap(), 2);
+        assert_eq!(insert_sessions_with_labels(&db, &[], &rows).unwrap(), 0,
+            "exact (start, duration) matches must be skipped");
+        assert_eq!(crate::db::count_sessions_from_db(&db).unwrap(), 2);
+    }
+
+    #[test]
+    fn duplicate_rows_within_one_batch_insert_once() {
+        let db = Database::open_in_memory().unwrap();
+        let rows = vec![
+            (1_700_000_000_i64, 600_u32, SessionMode::Timer, None, usize::MAX),
+            (1_700_000_000_i64, 600_u32, SessionMode::Timer, None, usize::MAX),
+        ];
+        assert_eq!(insert_sessions_with_labels(&db, &[], &rows).unwrap(), 1);
+    }
+
+    #[test]
+    fn same_start_different_duration_is_not_a_duplicate() {
+        let db = Database::open_in_memory().unwrap();
+        let rows = vec![
+            (1_700_000_000_i64, 600_u32, SessionMode::Timer, None, usize::MAX),
+            (1_700_000_000_i64, 601_u32, SessionMode::Timer, None, usize::MAX),
+        ];
+        assert_eq!(insert_sessions_with_labels(&db, &[], &rows).unwrap(), 2);
+    }
+
+    #[test]
+    fn export_then_reimport_into_same_db_inserts_nothing() {
+        // End-to-end user story: export your own log, re-import the
+        // file into the same DB — the log must not double.
+        let db = Database::open_in_memory().unwrap();
+        let rows = vec![
+            (1_700_000_000_i64, 600_u32, SessionMode::Timer,
+             Some("note".to_string()), 0_usize),
+            (1_700_010_000_i64, 1200_u32, SessionMode::BoxBreath, None, usize::MAX),
+        ];
+        insert_sessions_with_labels(&db, &["Sitting".to_string()], &rows)
+            .unwrap();
+        let f = tempfile::NamedTempFile::new().unwrap();
+        export_csv(&db, f.path()).unwrap();
+        assert_eq!(import_csv(&db, f.path()).unwrap(), 0,
+            "re-import of an unmodified export must be a no-op");
+        assert_eq!(crate::db::count_sessions_from_db(&db).unwrap(), 2);
     }
 }
