@@ -40,6 +40,25 @@ const MAX_CUSTOM_BELL_BYTES: u64 = 10 * 1024 * 1024;
 /// letting a malicious server OOM the client.
 const MAX_EVENT_BUNDLE_BYTES: u64 = 64 * 1024 * 1024;
 
+/// Compact the remote events dir once it holds more than this many
+/// batch files. Save-triggered sync mints roughly one batch per
+/// session per device, so without compaction the dir grows without
+/// bound; 50 keeps listings snappy while compacting rarely enough
+/// (weeks apart for a daily two-device user) that the extra
+/// consolidated upload is negligible.
+const COMPACT_THRESHOLD: usize = 50;
+
+/// `<base>/compacted.json` — the batch_uuids that compaction has
+/// swallowed into a consolidated file and deleted from `events/`.
+/// A peer whose `known_remote_files` all vanished consults this to
+/// tell "a device compacted" apart from "the remote was wiped".
+/// Lives OUTSIDE `events/` so batch listings stay clean. `BTreeSet`
+/// so the serialised form is sorted and diffs deterministically.
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+struct CompactionManifest {
+    swallowed: std::collections::BTreeSet<String>,
+}
+
 /// Per-GET in-memory cap for custom-sound pulls. 1 MB of headroom
 /// over the user-facing `MAX_CUSTOM_BELL_BYTES` (10 MB) so a
 /// precisely-sized file still passes the network cap and lands in
@@ -164,6 +183,10 @@ impl<'a, W: WebDav> Sync<'a, W> {
         format!("{}/events", self.base_path)
     }
 
+    fn manifest_path(&self) -> String {
+        format!("{}/compacted.json", self.base_path)
+    }
+
     /// Build the path for a bulk file. `min_lamport` is the smallest
     /// lamport_ts among the events bundled inside; sorting filenames
     /// alphabetically thus orders them roughly chronologically — useful
@@ -239,7 +262,23 @@ impl<'a, W: WebDav> Sync<'a, W> {
             let any_match = known_files.iter()
                 .any(|uuid| listing_uuids.contains(uuid));
             if !any_match {
-                return Err(SyncError::RemoteDataLost);
+                // Every batch we know is gone. Two explanations:
+                // a peer compacted them into a consolidated file, or
+                // the remote really was wiped. The compaction
+                // manifest disambiguates — but only when the listing
+                // still holds at least one parseable batch. An empty
+                // listing means even the consolidated file is gone,
+                // and a surviving manifest must NOT paper over that.
+                let compacted = !listing_uuids.is_empty()
+                    && self.manifest_vouches_for_any(&known_files);
+                if !compacted {
+                    return Err(SyncError::RemoteDataLost);
+                }
+                crate::diag::log(
+                    "sync.pull",
+                    "known batches compacted away per manifest; \
+                     continuing",
+                );
             }
         }
 
@@ -439,10 +478,144 @@ impl<'a, W: WebDav> Sync<'a, W> {
     {
         let pull_stats = self.pull()?;
         let push_stats = self.push_with_progress(progress)?;
+        // Housekeeping, never fatal: a failed compaction just leaves
+        // extra batch files for the next sync to retry, while failing
+        // the whole sync here would mislabel a successful pull+push
+        // as broken in the UI.
+        if let Err(e) = self.maybe_compact_events() {
+            crate::diag::log("sync.compact", &format!("skipped: {e}"));
+        }
         Ok(SyncStats {
             pulled: pull_stats.new_events,
             pushed: push_stats.pushed,
         })
+    }
+
+    /// If the remote events dir has grown past `COMPACT_THRESHOLD`
+    /// batch files, replace them all with ONE consolidated batch
+    /// holding this device's full event log. Called after a
+    /// successful pull+push, so the local log is a superset of the
+    /// remote union and the consolidated file can't drop a peer's
+    /// events. Ordering is crash-safe: upload the consolidated batch,
+    /// merge the swallowed uuids into `<base>/compacted.json`, and
+    /// only then delete the old batches (tolerating individual delete
+    /// failures — leftovers dedupe by event_uuid on pull and get
+    /// retried next round). Returns the number of batches deleted.
+    fn maybe_compact_events(&self) -> SyncResult<usize> {
+        let events_dir = self.events_dir();
+        let listing = match self.webdav.list_collection(&events_dir) {
+            Ok(names) => names,
+            Err(WebDavError::NotFound) => return Ok(0),
+            Err(e) => return Err(e.into()),
+        };
+        let batches: Vec<(String, String)> = listing
+            .iter()
+            .filter_map(|n| {
+                parse_batch_uuid_from_filename(n).map(|u| (n.clone(), u))
+            })
+            .collect();
+        if batches.len() <= COMPACT_THRESHOLD {
+            return Ok(0);
+        }
+
+        let events = self.db.all_events()?;
+        if events.is_empty() {
+            return Ok(0);
+        }
+        let min_lamport =
+            events.iter().map(|e| e.lamport_ts).min().unwrap_or(0);
+        let batch_uuid = uuid::Uuid::new_v4().to_string();
+        let body = serde_json::to_vec(&events).map_err(|e| {
+            SyncError::InvalidEvent(format!(
+                "can't serialise consolidated batch with {} events: {e}",
+                events.len(),
+            ))
+        })?;
+        put_atomic_with_rate_limit_retry(
+            self.webdav,
+            &self.batch_path(min_lamport, &batch_uuid),
+            &body,
+        )?;
+        // Known immediately, so our own next pull neither re-GETs the
+        // consolidated file nor trips the zero-match fail-safe.
+        self.db.record_known_remote_file(&batch_uuid)?;
+
+        // Merge (not overwrite) the swallowed uuids into the manifest
+        // BEFORE any delete: a peer must never observe "batches gone,
+        // manifest silent". Read-modify-write union keeps uuids from
+        // earlier compactions (possibly by other devices) intact.
+        let manifest_path = self.manifest_path();
+        let mut manifest = match self
+            .webdav
+            .get(&manifest_path, MAX_EVENT_BUNDLE_BYTES)
+        {
+            Ok(bytes) => serde_json::from_slice::<CompactionManifest>(
+                &bytes,
+            )
+            .unwrap_or_default(),
+            Err(WebDavError::NotFound) => CompactionManifest::default(),
+            Err(e) => return Err(e.into()),
+        };
+        for (_, uuid) in &batches {
+            manifest.swallowed.insert(uuid.clone());
+        }
+        let manifest_body =
+            serde_json::to_vec(&manifest).map_err(|e| {
+                SyncError::InvalidEvent(format!(
+                    "can't serialise compaction manifest: {e}"
+                ))
+            })?;
+        put_atomic_with_rate_limit_retry(
+            self.webdav,
+            &manifest_path,
+            &manifest_body,
+        )?;
+
+        let mut deleted = 0usize;
+        for (name, _) in &batches {
+            match self.webdav.delete(&format!("{events_dir}/{name}")) {
+                Ok(()) => deleted += 1,
+                Err(e) => crate::diag::log(
+                    "sync.compact",
+                    &format!(
+                        "delete {name} failed (retried next round): {e}"
+                    ),
+                ),
+            }
+        }
+        crate::diag::log(
+            "sync.compact",
+            &format!(
+                "ok merged {deleted}/{} batches into 1 file \
+                 ({} events)",
+                batches.len(),
+                events.len(),
+            ),
+        );
+        Ok(deleted)
+    }
+
+    /// Does the remote compaction manifest claim at least one of the
+    /// batch_uuids this device knows? Any manifest problem (missing,
+    /// unreadable, corrupt) answers `false` — the caller then falls
+    /// back to the conservative `RemoteDataLost` path.
+    fn manifest_vouches_for_any(
+        &self,
+        known_files: &std::collections::HashSet<String>,
+    ) -> bool {
+        let bytes = match self
+            .webdav
+            .get(&self.manifest_path(), MAX_EVENT_BUNDLE_BYTES)
+        {
+            Ok(b) => b,
+            Err(_) => return false,
+        };
+        match serde_json::from_slice::<CompactionManifest>(&bytes) {
+            Ok(m) => {
+                m.swallowed.iter().any(|u| known_files.contains(u))
+            }
+            Err(_) => false,
+        }
     }
 
     fn ensure_events_dir_exists(&self) -> SyncResult<()> {
@@ -1945,5 +2118,228 @@ mod tests {
             "events file missing from remote: {paths:?}");
         assert!(paths.iter().any(|p| p.ends_with(&format!("/sounds/{uuid}.wav"))),
             "sound file missing from remote: {paths:?}");
+    }
+
+    // ── Compaction (events-dir file-count bound) ─────────────────────────
+
+    /// Push `n` single-session batches through `sync` so the events
+    /// dir accumulates one file per call, mimicking save-triggered
+    /// sync minting one batch per session.
+    fn push_n_batches(db: &Database, fs: &FakeWebDav, n: usize) {
+        let sync = Sync::new(db, fs, "Meditate",
+            std::path::PathBuf::new(), std::path::PathBuf::new());
+        for i in 0..n {
+            insert_session(db, &format!("2026-01-01T00:{:02}:00", i % 60), 60);
+            sync.push().unwrap();
+        }
+    }
+
+    fn events_listing(fs: &FakeWebDav) -> Vec<String> {
+        fs.list_collection("/Meditate/events/").unwrap()
+    }
+
+    #[test]
+    fn sync_below_threshold_does_not_compact() {
+        let (db, fs) = setup();
+        push_n_batches(&db, &fs, 3);
+        Sync::new(&db, &fs, "Meditate",
+            std::path::PathBuf::new(), std::path::PathBuf::new())
+            .sync().unwrap();
+        assert_eq!(events_listing(&fs).len(), 3,
+            "3 batches ≤ threshold must stay untouched");
+        assert!(
+            !fs.paths().iter().any(|p| p.ends_with("compacted.json")),
+            "no manifest may appear before the first compaction",
+        );
+    }
+
+    #[test]
+    fn sync_over_threshold_compacts_to_one_file_plus_manifest() {
+        let (db, fs) = setup();
+        push_n_batches(&db, &fs, COMPACT_THRESHOLD + 1);
+        assert_eq!(events_listing(&fs).len(), COMPACT_THRESHOLD + 1);
+
+        Sync::new(&db, &fs, "Meditate",
+            std::path::PathBuf::new(), std::path::PathBuf::new())
+            .sync().unwrap();
+
+        let listing = events_listing(&fs);
+        assert_eq!(listing.len(), 1,
+            "all batches must merge into one consolidated file, \
+             got {listing:?}");
+        let manifest: CompactionManifest = serde_json::from_slice(
+            &fs.get("/Meditate/compacted.json", u64::MAX).unwrap(),
+        ).unwrap();
+        assert_eq!(manifest.swallowed.len(), COMPACT_THRESHOLD + 1,
+            "every swallowed batch_uuid must be recorded");
+        // The survivor is the consolidated file, not a swallowed one.
+        let survivor = parse_batch_uuid_from_filename(&listing[0]).unwrap();
+        assert!(!manifest.swallowed.contains(&survivor));
+    }
+
+    #[test]
+    fn fresh_peer_converges_from_consolidated_file() {
+        let (db_a, fs) = setup();
+        push_n_batches(&db_a, &fs, COMPACT_THRESHOLD + 1);
+        Sync::new(&db_a, &fs, "Meditate",
+            std::path::PathBuf::new(), std::path::PathBuf::new())
+            .sync().unwrap();
+
+        let db_b = Database::open_in_memory().unwrap();
+        Sync::new(&db_b, &fs, "Meditate",
+            std::path::PathBuf::new(), std::path::PathBuf::new())
+            .sync().unwrap();
+        assert_eq!(
+            db_b.known_event_uuids().unwrap(),
+            db_a.known_event_uuids().unwrap(),
+            "a fresh device pulling only the consolidated file must \
+             end with device A's full event log",
+        );
+    }
+
+    #[test]
+    fn peer_knowing_only_swallowed_batches_survives_compaction() {
+        // Device B synced before compaction, so its known_remote_files
+        // are exactly the batches compaction later deletes. Its next
+        // pull must consult the manifest and NOT fire RemoteDataLost.
+        let (db_a, fs) = setup();
+        push_n_batches(&db_a, &fs, COMPACT_THRESHOLD + 1);
+
+        let db_b = Database::open_in_memory().unwrap();
+        let sync_b = Sync::new(&db_b, &fs, "Meditate",
+            std::path::PathBuf::new(), std::path::PathBuf::new());
+        // pull, not sync: pull never compacts, so B ends up knowing
+        // exactly the soon-to-be-swallowed batches and nothing else.
+        sync_b.pull().unwrap();
+
+        // A compacts them all away.
+        Sync::new(&db_a, &fs, "Meditate",
+            std::path::PathBuf::new(), std::path::PathBuf::new())
+            .sync().unwrap();
+        assert_eq!(events_listing(&fs).len(), 1, "compaction ran");
+
+        // B's pull: zero of its known batches remain, but the
+        // manifest vouches for them → normal pull, no data-lost.
+        let stats = sync_b.pull().expect(
+            "manifest must suppress the false RemoteDataLost");
+        assert_eq!(stats.new_events, 0,
+            "consolidated file carries nothing B doesn't have");
+        // And B recorded the consolidated file, so the next pull is
+        // an ordinary any_match=true round.
+        sync_b.pull().unwrap();
+    }
+
+    #[test]
+    fn genuine_full_wipe_still_fires_remote_data_lost() {
+        let (db, fs) = setup();
+        push_n_batches(&db, &fs, COMPACT_THRESHOLD + 1);
+        let sync = Sync::new(&db, &fs, "Meditate",
+            std::path::PathBuf::new(), std::path::PathBuf::new());
+        sync.sync().unwrap(); // compacted: 1 batch + manifest
+
+        // User deletes the whole Meditate folder — manifest included.
+        for p in fs.paths() { let _ = fs.delete(&p); }
+
+        let err = sync.pull().unwrap_err();
+        assert_matches!(err, SyncError::RemoteDataLost);
+    }
+
+    #[test]
+    fn surviving_manifest_does_not_mask_a_batch_wipe() {
+        // Partial wipe: every batch file is gone but compacted.json
+        // survived. The manifest alone must NOT vouch — an empty
+        // events listing is still data loss.
+        let (db, fs) = setup();
+        push_n_batches(&db, &fs, COMPACT_THRESHOLD + 1);
+        let sync = Sync::new(&db, &fs, "Meditate",
+            std::path::PathBuf::new(), std::path::PathBuf::new());
+        sync.sync().unwrap();
+
+        for p in fs.paths() {
+            if p.contains("/events/") { fs.delete(&p).unwrap(); }
+        }
+        assert!(fs.get("/Meditate/compacted.json", u64::MAX).is_ok(),
+            "precondition: manifest survives the partial wipe");
+
+        let err = sync.pull().unwrap_err();
+        assert_matches!(err, SyncError::RemoteDataLost);
+    }
+
+    #[test]
+    fn compaction_records_consolidated_batch_as_known() {
+        let (db, fs) = setup();
+        push_n_batches(&db, &fs, COMPACT_THRESHOLD + 1);
+        let sync = Sync::new(&db, &fs, "Meditate",
+            std::path::PathBuf::new(), std::path::PathBuf::new());
+        sync.sync().unwrap();
+
+        let survivor = parse_batch_uuid_from_filename(
+            &events_listing(&fs)[0]).unwrap();
+        assert!(
+            db.known_remote_file_uuids().unwrap().contains(&survivor),
+            "compacting device must know its own consolidated file",
+        );
+        // Follow-up sync: ordinary round, nothing re-ingested, no
+        // second compaction (1 file ≤ threshold).
+        let stats = sync.sync().unwrap();
+        assert_eq!(stats.pulled, 0);
+        assert_eq!(events_listing(&fs).len(), 1);
+    }
+
+    #[test]
+    fn duplicate_consolidated_files_dedupe_on_pull() {
+        // Two devices racing the same compaction can each upload a
+        // consolidated file before seeing the other's deletes. A
+        // fresh peer must still converge without duplicate events.
+        let (db_a, fs) = setup();
+        push_n_batches(&db_a, &fs, COMPACT_THRESHOLD + 1);
+        let sync_a = Sync::new(&db_a, &fs, "Meditate",
+            std::path::PathBuf::new(), std::path::PathBuf::new());
+        sync_a.sync().unwrap();
+        // Simulate the loser's upload: a second consolidated file
+        // with the same event payload under a fresh uuid.
+        let body = fs.get(
+            &format!("/Meditate/events/{}", events_listing(&fs)[0]),
+            u64::MAX,
+        ).unwrap();
+        fs.put(
+            "/Meditate/events/00000000000001__racing-device.json",
+            &body,
+        ).unwrap();
+
+        let db_b = Database::open_in_memory().unwrap();
+        Sync::new(&db_b, &fs, "Meditate",
+            std::path::PathBuf::new(), std::path::PathBuf::new())
+            .pull().unwrap();
+        assert_eq!(
+            db_b.known_event_uuids().unwrap(),
+            db_a.known_event_uuids().unwrap(),
+            "event_uuid dedup must collapse the racing duplicates",
+        );
+    }
+
+    #[test]
+    fn second_compaction_unions_manifest_with_first() {
+        // Round 2 (threshold crossed again later) must keep round 1's
+        // swallowed uuids in the manifest — a peer can lag arbitrarily
+        // many compactions behind.
+        let (db, fs) = setup();
+        push_n_batches(&db, &fs, COMPACT_THRESHOLD + 1);
+        let sync = Sync::new(&db, &fs, "Meditate",
+            std::path::PathBuf::new(), std::path::PathBuf::new());
+        sync.sync().unwrap();
+        let round1: CompactionManifest = serde_json::from_slice(
+            &fs.get("/Meditate/compacted.json", u64::MAX).unwrap(),
+        ).unwrap();
+
+        push_n_batches(&db, &fs, COMPACT_THRESHOLD + 1);
+        sync.sync().unwrap();
+        let round2: CompactionManifest = serde_json::from_slice(
+            &fs.get("/Meditate/compacted.json", u64::MAX).unwrap(),
+        ).unwrap();
+        assert!(round1.swallowed.is_subset(&round2.swallowed),
+            "manifest merge must be a union, not an overwrite");
+        assert!(round2.swallowed.len() > round1.swallowed.len());
+        assert_eq!(events_listing(&fs).len(), 1);
     }
 }

@@ -300,6 +300,31 @@ impl Database {
     /// (then by local `id` as a stable tie-break). Sync's push phase
     /// drains this list in order; mark each entry with `mark_events_synced`
     /// once the WebDAV PUT succeeds.
+    /// Every event in the log, synced or not, in replay order.
+    /// Compaction serialises this as the consolidated remote batch —
+    /// after a successful pull it is a superset of the remote union,
+    /// so the consolidated file can never drop a peer's events.
+    pub fn all_events(&self) -> Result<Vec<Event>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT event_uuid, lamport_ts, device_id, kind, target_id, payload
+             FROM events
+             ORDER BY lamport_ts ASC, id ASC",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(Event {
+                    event_uuid: row.get(0)?,
+                    lamport_ts: row.get(1)?,
+                    device_id: row.get(2)?,
+                    kind: row.get(3)?,
+                    target_id: row.get(4)?,
+                    payload: row.get(5)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
     pub fn pending_events(&self) -> Result<Vec<(i64, Event)>> {
         let mut stmt = self.conn.prepare_cached(
             "SELECT id, event_uuid, lamport_ts, device_id, kind, target_id, payload
@@ -1654,4 +1679,20 @@ mod tests {
         assert_eq!(s.label_id, Some(label.id),
             "session.label_id must resolve to the freshly-inserted label's rowid");
     }
+    #[test]
+    fn all_events_returns_synced_and_pending_in_replay_order() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("some_key", "a").unwrap(); // authors event 1
+        let pending = db.pending_events().unwrap();
+        assert!(!pending.is_empty());
+        db.mark_events_synced(&[pending[0].0]).unwrap();
+        db.set_setting("some_key", "b").unwrap(); // authors event 2
+        let all = db.all_events().unwrap();
+        assert!(all.len() >= 2, "synced AND pending must both appear");
+        let ts: Vec<i64> = all.iter().map(|e| e.lamport_ts).collect();
+        let mut sorted = ts.clone();
+        sorted.sort_unstable();
+        assert_eq!(ts, sorted, "replay order");
+    }
+
 }
