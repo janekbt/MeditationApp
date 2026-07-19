@@ -136,6 +136,25 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# ── Helpers ──────────────────────────────────────────────────────────
+log() { printf '\033[1;36m[setup-android]\033[0m %s\n' "$*"; }
+
+# ── Prerequisites ────────────────────────────────────────────────────
+# apt only ever provides three things (JDK, unzip, wget); the SDK,
+# NDK, Gradle and kotlinc are direct downloads. If those three are
+# already on PATH (any distro — build.sh pre-installs them on
+# Fedora/Arch), skip the apt machinery entirely.
+PREREQS_PRESENT=0
+if command -v javac >/dev/null 2>&1 \
+   && command -v unzip >/dev/null 2>&1 \
+   && command -v wget >/dev/null 2>&1; then
+    PREREQS_PRESENT=1
+    javac_real="$(readlink -f "$(command -v javac)")"
+    JAVA_HOME="${javac_real%/bin/javac}"
+    log "prereqs present (javac/unzip/wget) — skipping apt; JDK home: ${JAVA_HOME}"
+fi
+
+if [[ "${PREREQS_PRESENT}" = 0 ]]; then
 # ── Distro check ─────────────────────────────────────────────────────
 if [[ ! -r /etc/os-release ]]; then
     echo "Cannot read /etc/os-release — refusing to guess distro." >&2
@@ -143,13 +162,12 @@ if [[ ! -r /etc/os-release ]]; then
 fi
 . /etc/os-release
 if [[ "${ID:-}" != "debian" && "${ID:-}" != "ubuntu" && "${ID_LIKE:-}" != *debian* ]]; then
-    echo "This script supports Debian / Ubuntu only. Detected ID=${ID:-unknown}." >&2
-    echo "Adapt the apt step to your package manager and rerun." >&2
+    echo "This script supports Debian / Ubuntu only (or any distro with" >&2
+    echo "javac, unzip and wget preinstalled — e.g. via build.sh)." >&2
+    echo "Detected ID=${ID:-unknown}." >&2
     exit 1
 fi
 
-# ── Helpers ──────────────────────────────────────────────────────────
-log() { printf '\033[1;36m[setup-android]\033[0m %s\n' "$*"; }
 need_apt() {
     local pkg="$1"
     if dpkg -s "${pkg}" >/dev/null 2>&1; then
@@ -200,6 +218,7 @@ if [[ -z "${javac_path}" || ! -x "${javac_path}" ]]; then
 fi
 JAVA_HOME="${javac_path%/bin/javac}"
 log "JDK home: ${JAVA_HOME}"
+fi  # PREREQS_PRESENT
 
 # ── Step 2: Android command-line tools ───────────────────────────────
 SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"

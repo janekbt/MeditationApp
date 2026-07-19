@@ -66,6 +66,17 @@ flatpak run io.github.janekbt.Meditate
 
 ### Building from source
 
+The hands-off path — installs distro dependencies (Debian/Ubuntu,
+Fedora, Arch), checks version floors up front, and builds:
+
+```sh
+./build.sh gtk          # GTK app  → meditate-gtk/builddir/src/meditate
+./build.sh android      # Android  → app-release.apk (needs ~3 GiB SDK/NDK on first run)
+```
+
+Everything below is the manual equivalent, for reference or
+unsupported distros.
+
 The workspace splits into three crates: the portable
 [`meditate-core`](meditate-core/README.md) (persistence, sync, and
 session logic — most non-UI contributions land here), the GTK shell
@@ -76,7 +87,7 @@ in [`meditate-gtk/`](meditate-gtk/), and the Android shell in
 **Dependencies**
 
 - GTK 4.18+, libadwaita 1.7+, GStreamer (with base plugins)
-- [blueprint-compiler](https://gitlab.gnome.org/GNOME/blueprint-compiler) ≥ 0.20
+- [blueprint-compiler](https://gitlab.gnome.org/GNOME/blueprint-compiler) ≥ 0.16
 - Rust (stable toolchain) + Cargo
 - Meson ≥ 0.62, Ninja, pkg-config, a C compiler
 
