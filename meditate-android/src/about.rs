@@ -26,13 +26,13 @@ pub fn version_name(app: &AndroidApp) -> String {
     })
 }
 
-/// System locale language code ("de", "en", …) for bundled-
+/// Full system locale tag ("de-DE", "pt-BR", …) for bundled-
 /// translation selection; "en" on any hiccup.
-pub fn locale_language(app: &AndroidApp) -> String {
-    invoke_locale_language(app).unwrap_or_else(|e| {
+pub fn locale_tag(app: &AndroidApp) -> String {
+    invoke_locale_tag(app).unwrap_or_else(|e| {
         meditate_core::log(
             "about",
-            &format!("locale_language FAILED: {e:?}"),
+            &format!("locale_tag FAILED: {e:?}"),
         );
         "en".into()
     })
@@ -88,7 +88,7 @@ fn resolve_class<'a>(
     Ok(class_obj.into())
 }
 
-fn invoke_locale_language(
+fn invoke_locale_tag(
     app: &AndroidApp,
 ) -> Result<String, jni::errors::Error> {
     let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
@@ -99,7 +99,7 @@ fn invoke_locale_language(
     let result = env
         .call_static_method(
             class,
-            "localeLanguage",
+            "localeTag",
             "()Ljava/lang/String;",
             &[],
         )?

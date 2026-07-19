@@ -3824,11 +3824,22 @@ fn build_ui() -> MainWindow {
     // setting, unlike slint's sys-locale auto-pick.
     #[cfg(target_os = "android")]
     if let Some(app) = android_app() {
-        let lang = about::locale_language(app);
-        if let Err(e) = slint::select_bundled_translation(&lang) {
+        // Try the exact regional bundle first (pt-BR → pt_BR,
+        // zh-CN → zh_CN), then the bare language (de-DE → de).
+        // Without the regional step, pt-BR/zh-CN users fell back
+        // to slint's sys-locale auto-pick — the SYSTEM language,
+        // not the per-app one.
+        let tag = about::locale_tag(app);
+        let mut candidates = vec![tag.replace('-', "_")];
+        if let Some((base, _)) = tag.split_once('-') {
+            candidates.push(base.to_string());
+        }
+        if !candidates.iter().any(|c| {
+            slint::select_bundled_translation(c).is_ok()
+        }) {
             meditate_core::log(
                 "i18n",
-                &format!("no bundled translation for {lang}: {e:?}"),
+                &format!("no bundled translation for {tag}"),
             );
         }
     }

@@ -236,7 +236,7 @@ msgid "Bells"
 msgstr "Колокола"
 
 msgid "Box Breath"
-msgstr "Квадратное дыхание"
+msgstr "Кв. дыхание"
 
 msgid "Box Breath cues"
 msgstr "Сигналы квадратного дыхания"
@@ -359,7 +359,7 @@ msgid "Goal reached · {} today"
 msgstr "Цель достигнута · сегодня {}"
 
 msgid "Guided"
-msgstr "С сопровождением"
+msgstr "С гидом"
 
 msgid "Hold (empty)"
 msgstr "Задержка (на выдохе)"

@@ -29,11 +29,12 @@ object MeditateAbout {
         "?"
     }
 
-    /// BCP-47-ish language code ("de", "en", …) for bundled-
-    /// translation selection (P8 i18n).
+    /// Full BCP-47 tag ("de-DE", "pt-BR", …) for bundled-
+    /// translation selection (P8 i18n) — regional variants like
+    /// pt-BR/zh-CN need the region to pick the right bundle.
     @JvmStatic
-    fun localeLanguage(): String =
-        java.util.Locale.getDefault().language ?: "en"
+    fun localeTag(): String =
+        java.util.Locale.getDefault().toLanguageTag() ?: "en"
 
     @JvmStatic
     fun copyText(context: Context, label: String, text: String) {
