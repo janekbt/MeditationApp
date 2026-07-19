@@ -3815,6 +3815,24 @@ struct GuidedSel {
 fn build_ui() -> MainWindow {
     let ui = MainWindow::new().unwrap();
 
+    // i18n (P8): select the bundled translation FIRST — the
+    // component above registered the bundle (before it,
+    // select_bundled_translation sees an empty context), and
+    // everything below composes Rust-side strings through Tr,
+    // which freeze in whatever language is active right now.
+    // The Java-side locale honours Android's per-app language
+    // setting, unlike slint's sys-locale auto-pick.
+    #[cfg(target_os = "android")]
+    if let Some(app) = android_app() {
+        let lang = about::locale_language(app);
+        if let Err(e) = slint::select_bundled_translation(&lang) {
+            meditate_core::log(
+                "i18n",
+                &format!("no bundled translation for {lang}: {e:?}"),
+            );
+        }
+    }
+
     // Wire Material's DatePickerAdapter globals (L-4c). The
     // calendar widget calls these six pure callbacks to compute
     // month-day-counts, render headers, and parse / format the
@@ -10516,34 +10534,17 @@ fn android_main(android_app: slint::android::AndroidApp) {
     // bridges keep targeting the destroyed activity.
     set_android_app(android_app.clone());
     open_database(&android_app);
-    // Keep a handle past the init below — init consumes the
-    // parameter, and the parameter name shadows the android_app()
-    // accessor in this scope.
-    let app_handle = android_app.clone();
     slint::android::init(android_app).unwrap();
+    // Translation selection happens at the top of build_ui (via
+    // the android_app() accessor set above) — it must precede
+    // every Rust-composed string (preset subtitles, bell
+    // summaries) those setup passes populate.
     let ui = build_ui();
-    // i18n (P8): pick the bundled translation matching the Java-side
-    // locale, which honours Android's per-app language setting. MUST
-    // run after the first component is built — earlier the global
-    // context is empty and select_bundled_translation reports
-    // NoTranslationsBundled while slint's sys-locale auto-pick (which
-    // fires during build_ui) silently wins instead. Unknown languages
-    // fail the select and keep English msgids — exactly the fallback
-    // we want.
-    {
-        let lang = about::locale_language(&app_handle);
-        if let Err(e) = slint::select_bundled_translation(&lang) {
-            meditate_core::log(
-                "i18n",
-                &format!("no bundled translation for {lang}: {e:?}"),
-            );
-        }
-    }
     // Seed the widget projection once at startup so a widget added
     // while the app was dead still renders the current starred set
     // on first pull (it no-ops when no widget is installed). Sits
-    // after build_ui + translation select so the subtitles come out
-    // in the user's language.
+    // after build_ui (= after translation select) so the subtitles
+    // come out in the user's language.
     refresh_widget(&ui);
     MaterialWindowAdapter::get(&ui).set_disable_hover(true);
     // Launch sync (SY-4). The runner no-ops fast on an
