@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# setup-android.sh — bring this Debian / Ubuntu laptop to a state
-# where `x run` (xbuild) can build the meditate-android crate for a
-# real Android device.
+# setup-android.sh — bring a Debian / Ubuntu machine to a state
+# where the meditate-android Gradle pipeline can build for a real
+# Android device (writes ~/.config/meditate-android/env.sh, which
+# meditate-android/android/rust-build.sh and the gradle wrapper
+# invocation both source).
 #
 # Idempotent: every step gates on a presence check, so re-running is
 # a near no-op once the toolchain is in place. No Android Studio,

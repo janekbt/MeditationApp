@@ -98,50 +98,59 @@ timeout 30 scp -o ConnectTimeout=5 <file> purism@<phone-ip>:<path>  # for transf
 If `timeout` exits 124, the phone is unreachable — wake it
 rather than retrying mechanically.
 
-## Cross-compile to Android (xbuild)
+## Android
 
-The Android port lives on the `android` branch and uses `xbuild`
-(the `x` CLI from rust-mobile/xbuild). Two gotchas worth
-documenting since they diverge from the canonical Slint Material
-Rust template (which targets `cargo-apk`):
+The Android app (`meditate-android/`) builds through a hand-
+maintained Gradle project — **not** xbuild/cargo-apk (xbuild was
+removed 2026-06; cargo-ndk 4.x breaks Slint's build.rs SDK lookup,
+so a plain `cargo build --target` drives the NDK toolchain
+directly).
 
-### Lib name must equal the package name (no `_lib` suffix)
+### One-time setup
 
-The Slint Material template has:
-
-```toml
-[package]
-name = "my_app"
-[lib]
-name = "my_app_lib"
+```sh
+build-aux/setup-android.sh
 ```
 
-`cargo-apk` tolerates this via `cargo apk run --lib`. **xbuild
-does NOT** — its APK packaging step looks for
-`lib<package_name_with_underscores>.so` and fails with
-`failed to locate bin libmy_app.so`. Drop the `_lib` suffix:
+Idempotent (Debian/Ubuntu): installs JDK 21, the Android SDK
+(platform 34, build-tools 35), NDK r27, Gradle 8.5 and kotlinc,
+and writes the pinned paths to `~/.config/meditate-android/env.sh`
+— the file every Android build command sources. No Android Studio
+required. Then add the Rust target:
 
-```toml
-[lib]
-name = "my_app"
+```sh
+rustup target add aarch64-linux-android
 ```
 
-`src/main.rs` calls `my_app::main()` rather than
-`my_app_lib::main()`.
+### Build + install (debug)
 
-### xbuild needs `llvm-readobj` on PATH
-
-The APK packaging step shells out to `llvm-readobj --needed-libs
-<lib>` to walk the cdylib's NEEDED entries. `llvm-readobj` ships
-in the NDK's clang toolchain at:
-
-```
-$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/
+```sh
+cd meditate-android/android
+. ~/.config/meditate-android/env.sh
+./gradlew :app:assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-NOT in the SDK side. Add this directory to PATH; without it
-xbuild dies with `Failed to run llvm-readobj ... No such file or
-directory`.
+The `cargoNdkBuild` Gradle task runs `rust-build.sh`, which
+compiles the Rust cdylib and drops it into `jniLibs/` before AGP
+packages the APK. Default ABI is `arm64-v8a`; for an emulator
+build: `rustup target add x86_64-linux-android` once, then
+`ABIS="arm64-v8a x86_64" ./gradlew :app:assembleDebug`.
+
+`assembleRelease` produces an optimized build signed with the
+standard Android debug keystore (fine for sideloading and
+measurement; F-Droid re-signs with its own key).
+
+### Tests
+
+```sh
+cargo test -p meditate-core -p meditate-android --lib
+```
+
+runs the full core + Android-shell suite on the host — no device
+needed (the JNI/Slint layers are cfg-gated out).
+
+### References
 
 The canonical Slint docs are at
 <https://material.slint.dev/getting-started/> (Material) and

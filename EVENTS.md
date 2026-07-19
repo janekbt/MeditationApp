@@ -430,3 +430,14 @@ Reference Rust implementation lives in
 `meditate-core/src/db/events.rs` (`apply_event_inner`,
 `replay_events`) and the per-entity `recompute_*` functions in
 each `meditate-core/src/db/<entity>.rs` file.
+
+## Version skew
+
+Events are applied with last-write-wins semantics and unknown
+*fields* in a payload are ignored, but an event whose enum-like
+value (mode, category, kind) violates an older build's SQLite
+CHECK constraints fails to apply on that device: sync surfaces an
+error and stops ingesting until the app updates. This is the
+intended failure mode — fail loudly rather than materialise rows
+the old build can't interpret. Nothing is lost: the batch stays
+on the remote and applies cleanly after the update.

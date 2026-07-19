@@ -1,8 +1,8 @@
 # Architecture
 
-Three-tier split: portable logic core, GTK shell, and (on the
-`android` branch) a parallel Slint shell. The split is structural,
-not a convention.
+Three-tier split: portable logic core, GTK shell, and a parallel
+Slint Android shell — three crates in one Cargo workspace. The
+split is structural, not a convention.
 
 ## The crates
 
@@ -13,22 +13,26 @@ not a convention.
   `gtk4` or `libadwaita`, so an accidental import won't compile.
   This is what makes the core fully testable without a display
   server and portable to any future shell.
-- **`meditate`** (top-level `src/`) — thin GTK4/libadwaita shell.
+- **`meditate`** (`meditate-gtk/`) — thin GTK4/libadwaita shell.
   Owns the widgets, the gettext-localized strings, the
   `gtk::MediaFile` playback pipeline, the feedbackd DBus haptic
   calls, and the GLib main loop. No business logic; the GTK-side
   `Database` is a translation shim that maps i64-unix timestamps
   to core's ISO 8601 strings.
-- **`meditate-android`** (on `android` branch only, not in main
-  beta yet) — parallel Slint + Material 3 shell consuming the same
-  `meditate-core`. F-Droid only; min/target SDK 26 / 35. The GTK
-  shell stays as the permanent Linux-first target — the Android
-  shell is a second-priority parallel build, not a replacement.
+- **`meditate-android`** (`meditate-android/`) — parallel Slint +
+  Material 3 shell consuming the same `meditate-core`. Rust UI
+  glue in `src/` (lib.rs hosts the handlers + tick loop), the
+  declarative UI in `ui/main.slint` (vendored Material components
+  in `material-1.0/`), platform verbs in Kotlin (`kotlin/`), and a
+  hand-maintained Gradle project in `android/` (minSdk 26, target
+  34, arm64 by default — see BUILDING.md#android). F-Droid-
+  oriented; the GTK shell stays the permanent Linux-first target.
 
-`meditate-gtk/po/*.po` (in beta still under top-level `po/`) holds
-the gettext translations. Translatable copy in core is returned as
-typed key enums; the shell maps each variant to `gettext` at the
-call site (see "Typed-key i18n" below).
+`meditate-gtk/po/*.po` holds the GTK gettext translations;
+`meditate-android/lang/<lang>/LC_MESSAGES/*.po` the Android ones
+(bundled into the binary by slint at build time). Translatable
+copy in core is returned as typed key enums; each shell maps
+variants to its own catalogue (see "Typed-key i18n" below).
 
 ## Persistence model
 
@@ -56,10 +60,16 @@ events tombstoning. A peer can drop the cache and rebuild from the
 log at any time.
 
 Sync: `meditate-core::sync` bulk-PUTs pending events to a WebDAV
-remote in batched JSON files and pulls peer batches back. Dedup is
-keyed by `event_uuid`. PUT is atomic via `.tmp` + MOVE so a partial
-body can't poison the puller. Path-traversal on `target_id` is
-rejected before dispatch.
+remote in batched JSON files (`events/<lamport>__<uuid>.json`) and
+pulls peer batches back. Dedup is keyed by `event_uuid`. PUT is
+atomic via `.tmp` + MOVE so a partial body can't poison the
+puller. Path-traversal on `target_id` is rejected before dispatch.
+Once `events/` exceeds 50 batch files, the device compacts them
+into one consolidated batch (its full post-pull event log) and
+records the swallowed batch uuids in `<base>/compacted.json`; a
+peer whose known batches all vanished consults that manifest to
+tell compaction apart from a genuinely wiped remote (an empty
+events dir still raises the recovery dialog).
 
 ## No migrations
 
@@ -345,7 +355,7 @@ meditate-core/src/
 ├── breath.rs        — box-breath phases + perimeter math
 ├── vibration.rs     — vibration pattern editor + envelope helpers
 ├── format.rs        — translatable typed keys + plain formatters
-├── goal.rs          — weekly-goal snapshot logic
+├── goal.rs          — daily-goal snapshot logic
 ├── insights.rs      — derived stats (week-over-week, milestones)
 ├── contrib.rs       — contribution-heatmap data model
 ├── preset_config.rs — JSON-encoded preset payload (Timer / BB / Guided)
@@ -358,11 +368,33 @@ meditate-core/src/
                      — supporting utilities
 ```
 
-Top-level `src/` (the GTK shell) mirrors a small subset of these
-names (`db/`, `sounds.rs`, `guided.rs`, `application.rs`,
-`window/`, `timer/`, `sync_runner.rs`) but contains only GTK-side
-glue: widget bindings, file-chooser plumbing, gst pipelines,
-gettext lookups.
+`meditate-gtk/src/` mirrors a small subset of these names
+(`db/`, `sounds.rs`, `guided.rs`, `application.rs`, `window/`,
+`timer/`, `sync_runner.rs`) but contains only GTK-side glue:
+widget bindings, file-chooser plumbing, gst pipelines, gettext
+lookups.
+
+`meditate-android/src/` follows the same rule — glue only. Three
+Android-specific patterns worth knowing before reading it:
+
+- **App-classloader JNI bridge.** A native thread attached via
+  `attach_current_thread` only sees the system classloader, so
+  every Kotlin helper (`MeditateAudio`, `MeditateHaptics`,
+  `MeditateKeychain`, …) is resolved through the activity's
+  classloader (`getClassLoader().loadClass(dotted)`) and invoked
+  as a static method. One Rust module per Kotlin object
+  (`audio.rs`, `haptics.rs`, `keychain.rs`, …).
+- **Drop-file + tick-poll.** `NativeActivity` never forwards
+  `onActivityResult`/`onNewIntent` to native code, so anything a
+  Kotlin Activity/receiver produces (SAF picks, transcode
+  results, widget deep-links, audio EOS/focus-loss) is written to
+  a small file under `<filesDir>/meditate/` and picked up
+  single-shot by the 200 ms Slint tick loop.
+- **Foreground service + wake lock.** `MeditateSessionService`
+  (mediaPlayback FGS + MediaSession pin + partial wake lock)
+  keeps the process alive and the CPU awake for the session's
+  duration so bells ring on time under Doze; the Rust tick loop
+  remains the only timer authority.
 
 Reading order for a new contributor: `lib.rs` `//!` → `session/` →
 `db/events.rs` → `sync/orchestrator.rs`.
@@ -384,8 +416,9 @@ verified on device.
 
 - `EVENTS.md` — per-event-kind JSON payload schemas; the wire-
   format spec for any peer shell.
-- `Nextcloud-Sync.md` — sync layer's user-facing concepts +
-  WebDAV-specific quirks.
+- `Nextcloud-Sync.md` — the sync design document (original
+  design; the bulk-batch + compaction current state is summarised
+  in its header and above).
 - `VIBRATION_ARCHITECTURE.md` — vibration pipeline (editor + envelope
   + feedbackd dispatch).
 - `CORE_STRUCTURAL_BACKLOG.md` — outstanding audit-surfaced cleanup

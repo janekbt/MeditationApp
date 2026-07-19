@@ -289,7 +289,7 @@ to silence one channel (sound or vibration) across both the phase cues
 
 ## Vibration pattern editor
 
-Mockup at `/home/janek/Downloads/vibration_pattern_editor_mockup.html`.
+Mockup: `vibration_pattern_editor_mockup.html` (local design artifact, not in-repo).
 Working prototype at `src/vibration_proto.rs` (functional enough to feel
 the page; no DB write, no playback).
 

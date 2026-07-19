@@ -38,7 +38,7 @@ pub struct StatsView {
     /// Gtk.Label: the background colour comes from .contrib-cell.level-*
     /// and the text holds the optional achievement glyph (✔ / ★).
     pub contrib_cells:  RefCell<Vec<gtk::Label>>,
-    /// Current weekly-goal progress ratio (0.0..=1.0) — redrawn each refresh.
+    /// Current daily-goal progress ratio (0.0..=1.0) — redrawn each refresh.
     pub goal_pct:       Cell<f64>,
     /// True once the 91 contribution cells + legend swatches have been built.
     cells_built:        Cell<bool>,

@@ -1,5 +1,19 @@
 # Plan: Nextcloud sync (Option C — append-only event log)
 
+> **Status (2026-07-19):** this is the original design document,
+> kept for the rationale. The shipped implementation
+> (`meditate-core/src/sync/`) differs in two ways:
+> one-file-per-event became **bulk batch files**
+> (`events/<min_lamport>__<batch_uuid>.json`, one per push), and
+> **compaction** landed: past 50 batch files a device merges them
+> into one consolidated batch and records the swallowed uuids in
+> `<base>/compacted.json` so peers don't mistake compaction for a
+> wiped remote. Protocol semantics (append-only events, LWW by
+> `(lamport_ts, device_id)`, `event_uuid` dedup, pull-then-push)
+> are unchanged. Current-state summary: `ARCHITECTURE.md` →
+> "Persistence model".
+
+
 ## Goal
 
 Periodic, automatic sync of session/label data between the user's

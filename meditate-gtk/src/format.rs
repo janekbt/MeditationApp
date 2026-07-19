@@ -52,7 +52,7 @@ pub fn format_hm_secs(secs: i64) -> String {
     render_hm(meditate_core::format::hm_secs_key(secs_to_duration(secs)))
 }
 
-/// "1h 4m" / "0m" for the weekly-goal subtitle + progress ring —
+/// "1h 4m" / "0m" for the daily-goal subtitle + progress ring —
 /// the variant where 0 is meaningful data, not "no data".
 pub fn format_hm_mins(mins: i64) -> String {
     render_hm(meditate_core::format::hm_mins_key(secs_to_duration(

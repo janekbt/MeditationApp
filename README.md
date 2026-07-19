@@ -2,7 +2,7 @@
 
 A meditation timer and session log for GNOME.
 
-Countdown and stopwatch, a browsable log, and weekly-goal stats to help you build a consistent practice. Adaptive for desktop and Linux phones.
+Countdown and stopwatch, a browsable log, and daily-goal stats to help you build a consistent practice. Adaptive for desktop and Linux phones, with a native Android companion app that syncs over your own Nextcloud.
 
 ## Features
 
@@ -23,15 +23,20 @@ Countdown and stopwatch, a browsable log, and weekly-goal stats to help you buil
 - Import from Insight Timer, and CSV import/export for backups
 
 ### Stats
-- 13-week contribution heatmap, with stars for days that cleared your weekly goal
+- 13-week contribution heatmap, with stars for days that cleared your daily goal
 - Weekly-goal ring showing this week's progress
 - Bar or line chart across week / month / 3 months / year
 - Per-label breakdown: totals and session counts for each label
 - Streak, total time, and session count at a glance
 
 ### Preferences
-- Weekly goal and completion sound
+- Daily goal and completion sound
 - Manage your labels and timer presets
+
+### Android app
+- Native Android port (Slint + Material 3) in [`meditate-android/`](meditate-android/): the same modes, log, stats, presets, and Nextcloud sync on your phone, sharing the identical `meditate-core` logic — a session recorded on one device converges to all of them
+- Home-screen widget for one-tap preset starts, foreground-service timer that survives screen-off, guided-audio import with on-device Opus transcode
+- Build instructions: [`BUILDING.md`](BUILDING.md#android)
 
 ### General
 - Translated into 10 languages (English, German, Spanish, French, Italian, Dutch, Polish, Brazilian Portuguese, Russian, Simplified Chinese)
@@ -56,11 +61,12 @@ flatpak run io.github.janekbt.Meditate
 
 ### Building from source
 
-The workspace splits into two crates: the GTK shell at the root (this
-README's subject) and the portable [`meditate-core`](meditate-core/README.md)
-crate that owns persistence, sync, and session logic. Most non-UI
-contributions land in `meditate-core/`; see its README for the
-architecture overview and a module map.
+The workspace splits into three crates: the portable
+[`meditate-core`](meditate-core/README.md) (persistence, sync, and
+session logic — most non-UI contributions land here), the GTK shell
+in [`meditate-gtk/`](meditate-gtk/), and the Android shell in
+[`meditate-android/`](meditate-android/). See
+[`ARCHITECTURE.md`](ARCHITECTURE.md) for the full map.
 
 **Dependencies**
 
@@ -111,6 +117,7 @@ sudo pacman -S --needed base-devel meson ninja pkgconf \
 **Build**
 
 ```sh
+cd meditate-gtk
 meson setup build
 ninja -C build
 ./build/src/meditate          # run from the build directory
@@ -119,6 +126,7 @@ ninja -C build
 **Install system-wide**
 
 ```sh
+cd meditate-gtk
 meson setup build --prefix=/usr
 ninja -C build
 sudo ninja -C build install
@@ -150,7 +158,7 @@ flatpak run io.github.janekbt.Meditate
 
 If you're working on Linux-phone perf, `build-aux/dev-xbuild.sh` cross-compiles a Librem 5–compatible binary in ~15 seconds on an x86_64 host — avoiding the 20–35 minute `flatpak-builder --arch=aarch64` QEMU build. Output goes to `target/aarch64-unknown-linux-gnu/release/meditate`, ready to `scp` straight over a Flatpak-installed binary on the phone for testing. One-time prerequisites are documented at the top of the script.
 
-See [`BUILDING.md`](BUILDING.md) for the full cross-compile + Librem 5 deploy cycle (including the kill-the-app + DB-wipe steps) and the xbuild quirks for the Android port.
+See [`BUILDING.md`](BUILDING.md) for the full cross-compile + Librem 5 deploy cycle (including the kill-the-app + DB-wipe steps) and the Android build pipeline.
 
 ## Data
 
