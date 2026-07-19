@@ -38,7 +38,13 @@
          user's Nextcloud. Install-time, no runtime prompt. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- No cloud/D2D backup: the DB restores wrong (Keystore-
+         encrypted sync secret can't decrypt on another device) and
+         Nextcloud sync + CSV export are the real backup story.
+         Session notes are personal data; keep them off transports
+         the user never chose. -->
     <application
+        android:allowBackup="false"
         android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
         android:hasCode="true"

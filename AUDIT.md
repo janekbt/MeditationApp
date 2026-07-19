@@ -194,3 +194,44 @@ panic-clean pre-tests.
 Clean: no hardcoded paths/IPs; recovery-dialog copy still accurate
 post-compaction (manifest suppresses false positives in core, so
 the dialog only fires on genuine wipes). Only C-5 doc comments.
+
+## Pass 2 — 2026-07-19 (evening)
+
+Re-audit of ground pass 1 didn't reach: full snackbar-discipline
+check, the small shell modules, JNI exception coverage, slint
+z-order, packaging semantics, adversarial review of pass 1's own
+fixes.
+
+- [x] **P2-1 Important (FIXED: onTaskRemoved stops the service)** —
+  Swiping the app away mid-session left the FGS + (since pass 1)
+  the wake lock pinned for up to 4 h with nothing ticking. Now the
+  service stops itself; crash-recovery resurfaces the session on
+  next launch (same contract as an OOM kill).
+- [x] **P2-2 Important (FIXED)** — Six i18n stragglers missed by
+  the Tr migration: "All labels" (filter sheet), "New Pattern" /
+  "Edit Pattern" (vibration editor title), "Add Session" / "Edit
+  Session" (edit dialog title), "Session deleted"/"{n} sessions
+  deleted" (log-feed snackbar, had a stale "i18n isn't wired up"
+  comment). All routed through Tr + de.po entries.
+- [x] **P2-3 Important (FIXED: android:allowBackup="false")** —
+  Backup was default-enabled: the session DB (personal notes)
+  rode Google/D2D backup transports, and a restored Keystore-
+  encrypted sync secret can't decrypt anyway. Nextcloud sync +
+  CSV export are the deliberate backup story.
+- [ ] **P2-4 Important (design decision)** — CSV re-import
+  duplicates sessions: `insert_sessions_with_labels` mints fresh
+  uuids and nothing dedupes on (start, duration), so importing
+  your own backup into a non-empty DB doubles the log. Shared
+  core behaviour (GTK identical). Options: dedupe heuristic on
+  exact (start_iso, duration) match, or an "importing N
+  duplicates" warning. Cross-shell change — owner's call.
+- Verified clean: snackbar raise discipline at all 12 sites (the
+  one site without commit_pending_deletes is the delete flow
+  itself — correct by design); overlay z-order (all dialogs
+  declared after AppBar/NavBar, snackbar relocated with note);
+  JNI exception_check present in every bridge module;
+  diagnostics log trims to 2000 lines on open; 6 DB indexes
+  cover the hot queries; sync_runner clean; widget projection
+  write is tmp+rename atomic; 3 TODOs in the whole workspace
+  (all the known voice-cues item); pass 1's focus-loss drop-file
+  is self-cleaning (consumed every tick regardless of state).

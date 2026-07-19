@@ -124,6 +124,13 @@ export global Tr {
     public pure function bell-every-n-min-jitter(n: int, pct: int) -> string { return @tr("Every {n} min +/-{0}%" | "Every {n} min +/-{0}%" % n, pct); }
     public pure function bell-at-n-min(n: int) -> string { return @tr("At {n} min" | "At {n} min" % n); }
     public pure function bell-n-min-before-end(n: int) -> string { return @tr("{n} min before end" | "{n} min before end" % n); }
+    // Rust-set titles + log-feed strings
+    public pure function all-labels() -> string { return @tr("All labels"); }
+    public pure function ve-new-pattern() -> string { return @tr("New Pattern"); }
+    public pure function ve-edit-pattern() -> string { return @tr("Edit Pattern"); }
+    public pure function add-session-title() -> string { return @tr("Add Session"); }
+    public pure function edit-session-title() -> string { return @tr("Edit Session"); }
+    public pure function n-sessions-deleted(n: int) -> string { return @tr("Session deleted" | "{n} sessions deleted" % n); }
     // Label-delete dialog body (delete_impact_key)
     public pure function label-unused() -> string { return @tr("This label is not used by any sessions."); }
     public pure function n-sessions-unlabelled(n: int) -> string { return @tr("{n} session tagged with this label will be un-labelled." | "{n} sessions tagged with this label will be un-labelled." % n); }

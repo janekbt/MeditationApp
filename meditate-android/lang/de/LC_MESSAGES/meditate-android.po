@@ -780,3 +780,20 @@ msgid "{n} session tagged with this label will be un-labelled."
 msgid_plural "{n} sessions tagged with this label will be un-labelled."
 msgstr[0] "{n} Sitzung mit dieser Kategorie verliert ihre Zuordnung."
 msgstr[1] "{n} Sitzungen mit dieser Kategorie verlieren ihre Zuordnung."
+
+msgid "New Pattern"
+msgstr "Neues Muster"
+
+msgid "Edit Pattern"
+msgstr "Muster bearbeiten"
+
+msgid "Add Session"
+msgstr "Sitzung hinzufügen"
+
+msgid "Edit Session"
+msgstr "Sitzung bearbeiten"
+
+msgid "Session deleted"
+msgid_plural "{n} sessions deleted"
+msgstr[0] "Sitzung gelöscht"
+msgstr[1] "{n} Sitzungen gelöscht"

@@ -179,6 +179,19 @@ class MeditateSessionService : Service() {
         return START_NOT_STICKY
     }
 
+    // Task swiped away mid-session: the activity (and with it the
+    // Slint tick loop driving the timer) is gone, but a started
+    // FGS survives — leaving a wake lock + "session in progress"
+    // notification pinned for a session nothing is advancing.
+    // Stop instead; the core crash-recovery snapshot resurfaces
+    // the in-flight session on next launch (same contract as
+    // START_NOT_STICKY after an OOM kill).
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+        super.onTaskRemoved(rootIntent)
+    }
+
     override fun onDestroy() {
         releaseWakeLock()
         // MediaSession holds a system-side binder; leaking it shows

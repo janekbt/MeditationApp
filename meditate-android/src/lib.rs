@@ -2895,7 +2895,7 @@ fn refresh_filter_label_items(ui: &MainWindow) {
     let active_id = ui.get_filter_label_id() as i64;
     let mut items: Vec<MenuItem> = Vec::with_capacity(labels.len() + 1);
     items.push(MenuItem {
-        text: "All labels".into(),
+        text: ui.global::<Tr>().invoke_all_labels(),
         enabled: true,
         ..Default::default()
     });
@@ -7308,7 +7308,7 @@ fn build_ui() -> MainWindow {
                 let Some(ui) = weak.upgrade() else { return; };
                 ve_edit_uuid.borrow_mut().take();
                 let pts = meditate_core::vibration::EDITOR_DEFAULT_POINTS;
-                ui.set_ve_title("New Pattern".into());
+                ui.set_ve_title(ui.global::<Tr>().invoke_ve_new_pattern());
                 ui.set_ve_name("".into());
                 ve_recompute_save(&ui, ""); // empty → disabled
                 ui.set_ve_points_max(
@@ -7381,12 +7381,12 @@ fn build_ui() -> MainWindow {
                     // (Save inserts a new row). Suffix the name so
                     // it doesn't instantly collide.
                     ve_edit_uuid.borrow_mut().take();
-                    ui.set_ve_title("New Pattern".into());
+                    ui.set_ve_title(ui.global::<Tr>().invoke_ve_new_pattern());
                     ui.set_ve_name(format!("{} copy", p.name).into());
                     String::new()
                 } else {
                     *ve_edit_uuid.borrow_mut() = Some(uuid.to_string());
-                    ui.set_ve_title("Edit Pattern".into());
+                    ui.set_ve_title(ui.global::<Tr>().invoke_ve_edit_pattern());
                     ui.set_ve_name(p.name.clone().into());
                     uuid.to_string()
                 };
@@ -8594,18 +8594,14 @@ fn build_ui() -> MainWindow {
                 let Some(session) = session else { return; };
                 pending_deletes.borrow_mut().push((id, session));
 
-                // Snackbar text — uses the same string keys as
-                // GTK's announcement renderer
-                // (`meditate-gtk/src/announcement.rs:23`). i18n
-                // isn't wired up on Android yet; once it is,
-                // route through gettext like the GTK shell does.
+                // Same string keys as GTK's announcement
+                // renderer (`meditate-gtk/src/announcement.rs`),
+                // rendered through the Tr catalogue.
                 let count = pending_deletes.borrow().len();
-                let text = if count == 1 {
-                    "Session deleted".to_string()
-                } else {
-                    format!("{count} sessions deleted")
-                };
-                ui.set_snackbar_text(text.into());
+                ui.set_snackbar_text(
+                    ui.global::<Tr>()
+                        .invoke_n_sessions_deleted(count as i32),
+                );
                 ui.set_snackbar_show_undo(true);
                 ui.set_snackbar_visible(true);
 
@@ -8812,7 +8808,7 @@ fn build_ui() -> MainWindow {
                 use chrono::{Datelike, Local, Timelike};
                 let Some(ui) = weak.upgrade() else { return; };
                 editing_session_id.set(None);
-                ui.set_edit_session_title("Add Session".into());
+                ui.set_edit_session_title(ui.global::<Tr>().invoke_add_session_title());
                 ui.set_edit_note_text("".into());
                 ui.set_edit_duration_hours(0);
                 ui.set_edit_duration_minutes(0);
@@ -8860,7 +8856,7 @@ fn build_ui() -> MainWindow {
                     .map(|(_, s)| s.clone());
                 let Some(session) = session else { return; };
                 editing_session_id.set(Some(id));
-                ui.set_edit_session_title("Edit Session".into());
+                ui.set_edit_session_title(ui.global::<Tr>().invoke_edit_session_title());
                 ui.set_edit_note_text(
                     session.notes.clone().unwrap_or_default().into(),
                 );
