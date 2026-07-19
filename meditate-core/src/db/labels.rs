@@ -18,6 +18,28 @@ pub struct Label {
     pub uuid: LabelUuid,
 }
 
+/// A same-name label collision materialised by sync (see the
+/// name-collision retry in `apply_event` below): `suffixed` is the
+/// row that got the `(conflict-<uuid8>)` name, `base` the row that
+/// kept the original. Surfaced to the shells so the user can merge
+/// or deliberately keep both.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LabelConflict {
+    pub base_id: i64,
+    pub base_name: String,
+    pub suffixed_id: i64,
+    pub suffixed_name: String,
+    pub suffixed_uuid: String,
+    /// Sessions currently tagged with the suffixed label — shown in
+    /// the shell's merge prompt.
+    pub suffixed_session_count: i64,
+}
+
+/// Sync-state key holding uuids the user chose to keep-both for —
+/// device-local (sync_state is not synced), so each device asks at
+/// most once per conflict.
+const CONFLICT_DISMISSED_KEY: &str = "label_conflict_dismissed";
+
 /// True iff some label OTHER THAN `except_id` already uses `name`
 /// (case-insensitive — the column is COLLATE NOCASE). UI-side
 /// pre-validation for renames: pass the row's own id as
@@ -167,6 +189,84 @@ impl Database {
     /// is case-insensitive (column COLLATE NOCASE), so an import of
     /// "Meditation" finds an existing "meditation" instead of producing
     /// a duplicate row.
+    /// Every unresolved label-name conflict: labels whose name
+    /// carries the `(conflict-<their own uuid prefix>)` suffix,
+    /// paired with the label that kept the base name. Requiring
+    /// the suffix to match the row's own uuid prefix keeps a
+    /// user-typed lookalike name from false-positiving. Dismissed
+    /// conflicts (keep-both) are filtered out.
+    pub fn list_label_conflicts(&self) -> Result<Vec<LabelConflict>> {
+        let labels = list_labels_from_db(self)?;
+        let dismissed = self.get_sync_state(CONFLICT_DISMISSED_KEY, "")?;
+        let dismissed: std::collections::HashSet<&str> =
+            dismissed.split(',').filter(|s| !s.is_empty()).collect();
+        let mut out = Vec::new();
+        for l in &labels {
+            let uuid = l.uuid.as_str();
+            let short: String = uuid.chars().take(8).collect();
+            let suffix = format!(" (conflict-{short})");
+            let Some(base_name) = l.name.strip_suffix(&suffix) else {
+                continue;
+            };
+            if dismissed.contains(uuid) {
+                continue;
+            }
+            let Some(base) = labels.iter().find(|b| {
+                b.id != l.id && b.name.eq_ignore_ascii_case(base_name)
+            }) else {
+                continue;
+            };
+            out.push(LabelConflict {
+                base_id: base.id,
+                base_name: base.name.clone(),
+                suffixed_id: l.id,
+                suffixed_name: l.name.clone(),
+                suffixed_uuid: uuid.to_string(),
+                suffixed_session_count: label_session_count_from_db(
+                    self, l.id,
+                )?,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Merge `from_id` into `into_id`: re-tag every session of
+    /// `from` (each an authored `session_update` event), then
+    /// delete the emptied label (`label_delete` event). Everything
+    /// rides the event log, so peers converge to the same merged
+    /// state on their next sync. Returns the re-tagged count.
+    pub fn merge_labels(&self, from_id: i64, into_id: i64) -> Result<usize> {
+        let sessions = crate::db::sessions::list_sessions_for_label_from_db(
+            self, from_id,
+        )?;
+        let n = sessions.len();
+        for (id, mut session) in sessions {
+            session.label_id = Some(into_id);
+            self.update_session(id, &session)?;
+        }
+        self.delete_label(from_id)?;
+        crate::diag::log(
+            "label.merge",
+            &format!("from={from_id} into={into_id} retagged={n}"),
+        );
+        Ok(n)
+    }
+
+    /// Keep-both: never prompt for this suffixed label's uuid again
+    /// on this device.
+    pub fn dismiss_label_conflict(&self, suffixed_uuid: &str) -> Result<()> {
+        let cur = self.get_sync_state(CONFLICT_DISMISSED_KEY, "")?;
+        if cur.split(',').any(|u| u == suffixed_uuid) {
+            return Ok(());
+        }
+        let next = if cur.is_empty() {
+            suffixed_uuid.to_string()
+        } else {
+            format!("{cur},{suffixed_uuid}")
+        };
+        self.set_sync_state(CONFLICT_DISMISSED_KEY, &next)
+    }
+
     pub fn find_or_create_label(&self, name: &str) -> Result<i64> {
         if let Some(id) = find_label_by_name_from_db(self, name)? {
             return Ok(id);
@@ -1062,5 +1162,124 @@ mod tests {
         let session_label = crate::db::list_sessions_from_db(&db).unwrap()[0].1.label_id;
         assert_eq!(session_label, Some(l2_id),
             "session must remain on L2, not re-linked to L1 by the stale event");
+    }
+
+    // ── Label conflicts + merge (conflict dialog feature) ────────────────
+
+    /// Materialise a real sync-style conflict: local label `name`,
+    /// then a peer event inserting a different-uuid label with the
+    /// same name (replay hits the UNIQUE retry → suffixed row).
+    fn make_conflict(db: &Database, name: &str) -> (i64, i64, String) {
+        let base_id = db.insert_label(name).unwrap();
+        let peer_uuid = "aabbccdd-1111-4222-8333-444455556666";
+        db.apply_event(&Event {
+            event_uuid: "e-conflict-1".into(),
+            lamport_ts: 900,
+            device_id: "peer".into(),
+            kind: "label_insert".into(),
+            target_id: peer_uuid.into(),
+            payload: format!(r#"{{"name":"{name}"}}"#),
+        }).unwrap();
+        let suffixed = crate::db::labels::list_labels_from_db(db)
+            .unwrap()
+            .into_iter()
+            .find(|l| l.uuid.as_str() == peer_uuid)
+            .expect("peer label materialised");
+        (base_id, suffixed.id, peer_uuid.to_string())
+    }
+
+    #[test]
+    fn conflict_listing_pairs_suffixed_with_base() {
+        let db = Database::open_in_memory().unwrap();
+        let (base_id, suffixed_id, uuid) = make_conflict(&db, "Gehmeditation");
+        let conflicts = db.list_label_conflicts().unwrap();
+        assert_eq!(conflicts.len(), 1);
+        let c = &conflicts[0];
+        assert_eq!(c.base_id, base_id);
+        assert_eq!(c.base_name, "Gehmeditation");
+        assert_eq!(c.suffixed_id, suffixed_id);
+        assert_eq!(c.suffixed_name, "Gehmeditation (conflict-aabbccdd)");
+        assert_eq!(c.suffixed_uuid, uuid);
+    }
+
+    #[test]
+    fn user_typed_conflict_lookalike_is_not_a_conflict() {
+        // The suffix must match the row's OWN uuid prefix — a label
+        // literally named like a conflict marker doesn't pair.
+        let db = Database::open_in_memory().unwrap();
+        db.insert_label("Walk").unwrap();
+        db.insert_label("Walk (conflict-deadbeef)").unwrap();
+        assert!(db.list_label_conflicts().unwrap().is_empty());
+    }
+
+    #[test]
+    fn merge_retags_sessions_and_deletes_suffixed_label() {
+        let db = Database::open_in_memory().unwrap();
+        let (base_id, suffixed_id, _) = make_conflict(&db, "Gehmeditation");
+        for i in 0..3 {
+            let sid = db.insert_session(&Session {
+                start_iso: format!("2026-07-0{}T08:00:00", i + 1),
+                duration_secs: 600,
+                label_id: Some(suffixed_id),
+                notes: None,
+                mode: SessionMode::Timer,
+                uuid: crate::db::SessionUuid::new(""),
+                guided_file_uuid: None,
+            }).unwrap();
+            assert!(sid > 0);
+        }
+        let n = db.merge_labels(suffixed_id, base_id).unwrap();
+        assert_eq!(n, 3);
+        assert_eq!(label_session_count_from_db(&db, base_id).unwrap(), 3);
+        assert_eq!(count_labels_from_db(&db).unwrap(), 1,
+            "suffixed label deleted after merge");
+        assert!(db.list_label_conflicts().unwrap().is_empty());
+    }
+
+    #[test]
+    fn merge_is_evented_and_a_peer_converges() {
+        let db = Database::open_in_memory().unwrap();
+        let (base_id, suffixed_id, _) = make_conflict(&db, "Gehmeditation");
+        let sid = db.insert_session(&Session {
+            start_iso: "2026-07-01T08:00:00".into(),
+            duration_secs: 600,
+            label_id: Some(suffixed_id),
+            notes: None,
+            mode: SessionMode::Timer,
+            uuid: crate::db::SessionUuid::new(""),
+            guided_file_uuid: None,
+        }).unwrap();
+        assert!(sid > 0);
+        db.merge_labels(suffixed_id, base_id).unwrap();
+
+        // Fresh peer replays db's full event log → same end state.
+        let peer = Database::open_in_memory().unwrap();
+        let events = db.all_events().unwrap();
+        peer.replay_events(&events).unwrap();
+        assert_eq!(count_labels_from_db(&peer).unwrap(), 1);
+        let peer_base = crate::db::labels::list_labels_from_db(&peer)
+            .unwrap()
+            .into_iter()
+            .find(|l| l.name == "Gehmeditation")
+            .unwrap();
+        assert_eq!(
+            label_session_count_from_db(&peer, peer_base.id).unwrap(),
+            1,
+            "peer's session lands on the surviving label",
+        );
+        assert!(peer.list_label_conflicts().unwrap().is_empty());
+    }
+
+    #[test]
+    fn dismissed_conflict_stops_appearing() {
+        let db = Database::open_in_memory().unwrap();
+        let (_, _, uuid) = make_conflict(&db, "Gehmeditation");
+        assert_eq!(db.list_label_conflicts().unwrap().len(), 1);
+        db.dismiss_label_conflict(&uuid).unwrap();
+        assert!(db.list_label_conflicts().unwrap().is_empty());
+        // Idempotent + doesn't grow the key.
+        db.dismiss_label_conflict(&uuid).unwrap();
+        let stored = db.get_sync_state("label_conflict_dismissed", "").unwrap();
+        assert_eq!(stored, uuid);
     }
 }

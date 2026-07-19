@@ -797,3 +797,20 @@ msgid "Session deleted"
 msgid_plural "{n} sessions deleted"
 msgstr[0] "Sitzung gelöscht"
 msgstr[1] "{n} Sitzungen gelöscht"
+
+msgid "Duplicate label"
+msgstr "Doppelte Kategorie"
+
+msgid "'{}' has the same name as '{}' — it was created independently on another device."
+msgstr "'{}' hat denselben Namen wie '{}' – sie wurde unabhängig auf einem anderen Gerät erstellt."
+
+msgid "Merging moves {n} session and deletes the duplicate."
+msgid_plural "Merging moves {n} sessions and deletes the duplicate."
+msgstr[0] "Zusammenführen verschiebt {n} Sitzung und löscht das Duplikat."
+msgstr[1] "Zusammenführen verschiebt {n} Sitzungen und löscht das Duplikat."
+
+msgid "Merge"
+msgstr "Zusammenführen"
+
+msgid "Keep both"
+msgstr "Beide behalten"

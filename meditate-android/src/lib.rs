@@ -914,6 +914,7 @@ fn close_transient_overlays(ui: &MainWindow) {
     ui.set_create_label_dialog_open(false);
     ui.set_rename_label_dialog_open(false);
     ui.set_delete_label_dialog_open(false);
+    ui.set_label_conflict_dialog_open(false);
     ui.set_create_preset_dialog_open(false);
     ui.set_rename_preset_dialog_open(false);
     ui.set_delete_preset_dialog_open(false);
@@ -2955,6 +2956,41 @@ fn first_label() -> Option<(i64, String)> {
 /// rows, "not used by any sessions" otherwise. Routes through
 /// `meditate_core::labels::delete_impact_key` so the count→variant
 /// boundary stays in core.
+/// Surface the oldest unresolved label-name conflict (LC), one at
+/// a time — fills the dialog props and remembers the pair in
+/// `slot` for the Merge/Keep handlers. No-op when a conflict
+/// dialog is already up or none exist (the "only appears when a
+/// conflict actually appears" contract).
+#[cfg(target_os = "android")]
+fn check_label_conflicts(
+    ui: &MainWindow,
+    slot: &std::rc::Rc<std::cell::RefCell<Option<(i64, i64, String)>>>,
+) {
+    if ui.get_label_conflict_dialog_open() {
+        return;
+    }
+    let Some(db_arc) = DATABASE.get() else { return; };
+    let Ok(guard) = db_arc.lock() else { return; };
+    let Some(db) = guard.as_ref() else { return; };
+    let conflicts = match db.list_label_conflicts() {
+        Ok(c) => c,
+        Err(e) => {
+            meditate_core::log(
+                "label.conflict",
+                &format!("list FAILED: {e:?}"),
+            );
+            return;
+        }
+    };
+    let Some(c) = conflicts.into_iter().next() else { return; };
+    *slot.borrow_mut() =
+        Some((c.base_id, c.suffixed_id, c.suffixed_uuid.clone()));
+    ui.set_conflict_base_name(c.base_name.into());
+    ui.set_conflict_suffixed_name(c.suffixed_name.into());
+    ui.set_conflict_session_count(c.suffixed_session_count as i32);
+    ui.set_label_conflict_dialog_open(true);
+}
+
 #[cfg(target_os = "android")]
 fn delete_label_impact_text(ui: &MainWindow, id: i64) -> String {
     use meditate_core::labels::DeleteImpactKey;
@@ -3894,6 +3930,12 @@ fn build_ui() -> MainWindow {
     // A trash tap clears this back to None so a delete snackbar
     // raised while a recovery one is visible behaves correctly.
     #[cfg(target_os = "android")]
+    // Label-conflict dialog slot (LC): the (base_id, suffixed_id,
+    // suffixed_uuid) the open dialog refers to.
+    #[cfg(target_os = "android")]
+    let label_conflict_slot: Rc<RefCell<Option<(i64, i64, String)>>> =
+        Rc::new(RefCell::new(None));
+    #[cfg(target_os = "android")]
     let recovery_uuid: Rc<RefCell<Option<String>>> =
         Rc::new(RefCell::new(None));
 
@@ -4479,6 +4521,8 @@ fn build_ui() -> MainWindow {
         let loaded_log_sessions_tick = loaded_log_sessions.clone();
         #[cfg(target_os = "android")]
         let pending_deletes_tick = pending_deletes.clone();
+        #[cfg(target_os = "android")]
+        let label_conflict_tick = label_conflict_slot.clone();
         // SY-3 toast raise from the tick poll needs the shared
         // single-slot snackbar context.
         #[cfg(target_os = "android")]
@@ -4548,6 +4592,10 @@ fn build_ui() -> MainWindow {
                     .swap(false, std::sync::atomic::Ordering::SeqCst)
                 {
                     refresh_sync_indicator(&ui);
+                    // A pull may have materialised a same-name
+                    // label conflict — prompt while it's fresh.
+                    #[cfg(target_os = "android")]
+                    check_label_conflicts(&ui, &label_conflict_tick);
                 }
                 // Test-connection outcome (SY-3): the worker
                 // thread parked (toast, detail) — log the detail,
@@ -8425,6 +8473,73 @@ fn build_ui() -> MainWindow {
         });
     }
 
+    // Label-conflict dialog (LC): Merge re-tags every session of
+    // the suffixed duplicate onto the original and deletes the
+    // duplicate — authored events, so peers converge on their
+    // next sync. Keep-both records a device-local dismissal.
+    // Both re-check afterwards: several conflicts can queue.
+    #[cfg(target_os = "android")]
+    {
+        let weak = ui.as_weak();
+        let slot = label_conflict_slot.clone();
+        let current_mode = current_mode.clone();
+        let loaded_log_sessions = loaded_log_sessions.clone();
+        let pending_deletes = pending_deletes.clone();
+        ui.on_conflict_merge_tap(move || {
+            let Some(ui) = weak.upgrade() else { return; };
+            ui.set_label_conflict_dialog_open(false);
+            let Some((base_id, suffixed_id, _)) =
+                slot.borrow_mut().take()
+            else {
+                return;
+            };
+            {
+                let Some(db_arc) = DATABASE.get() else { return; };
+                let Ok(guard) = db_arc.lock() else { return; };
+                let Some(db) = guard.as_ref() else { return; };
+                if let Err(e) = db.merge_labels(suffixed_id, base_id)
+                {
+                    meditate_core::log(
+                        "label.merge",
+                        &format!("FAILED: {e:?}"),
+                    );
+                    return;
+                }
+            }
+            let mode: meditate_core::SessionMode =
+                current_mode.get().into();
+            refresh_label_state(&ui, mode);
+            reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
+            refresh_stats(&ui);
+            trigger_sync("label merge");
+            check_label_conflicts(&ui, &slot);
+        });
+    }
+    #[cfg(target_os = "android")]
+    {
+        let weak = ui.as_weak();
+        let slot = label_conflict_slot.clone();
+        ui.on_conflict_keep_tap(move || {
+            let Some(ui) = weak.upgrade() else { return; };
+            ui.set_label_conflict_dialog_open(false);
+            let Some((_, _, uuid)) = slot.borrow_mut().take() else {
+                return;
+            };
+            {
+                let Some(db_arc) = DATABASE.get() else { return; };
+                let Ok(guard) = db_arc.lock() else { return; };
+                let Some(db) = guard.as_ref() else { return; };
+                if let Err(e) = db.dismiss_label_conflict(&uuid) {
+                    meditate_core::log(
+                        "label.conflict",
+                        &format!("dismiss FAILED: {e:?}"),
+                    );
+                }
+            }
+            check_label_conflicts(&ui, &slot);
+        });
+    }
+
     // User picked a label row — route based on `chooser-target`:
     //   0 = Setup flow → persist UUID to the active mode's setting,
     //       refresh the Setup ExpanderRow's subtitle. Mirrors GTK's
@@ -10125,6 +10240,13 @@ fn build_ui() -> MainWindow {
             // page UNDERNEATH them (and the stranded Duration
             // dialog could then mis-route its Set into the wrong
             // context). Dialogs before pages, topmost first.
+            #[cfg(target_os = "android")]
+            if ui.get_label_conflict_dialog_open() {
+                // Decide-later: no dismissal recorded, the prompt
+                // returns after the next sync.
+                ui.set_label_conflict_dialog_open(false);
+                return;
+            }
             #[cfg(target_os = "android")]
             if ui.get_duration_dialog_open() {
                 ui.set_duration_dialog_open(false);

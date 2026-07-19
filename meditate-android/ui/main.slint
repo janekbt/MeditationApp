@@ -131,6 +131,12 @@ export global Tr {
     public pure function add-session-title() -> string { return @tr("Add Session"); }
     public pure function edit-session-title() -> string { return @tr("Edit Session"); }
     public pure function n-sessions-deleted(n: int) -> string { return @tr("Session deleted" | "{n} sessions deleted" % n); }
+    // Label-conflict dialog (sync name collisions)
+    public pure function conflict-title() -> string { return @tr("Duplicate label"); }
+    public pure function conflict-body(suffixed: string, base: string) -> string { return @tr("'{}' has the same name as '{}' — it was created independently on another device.", suffixed, base); }
+    public pure function conflict-count(n: int) -> string { return @tr("Merging moves {n} session and deletes the duplicate." | "Merging moves {n} sessions and deletes the duplicate." % n); }
+    public pure function conflict-merge() -> string { return @tr("Merge"); }
+    public pure function conflict-keep() -> string { return @tr("Keep both"); }
     // Label-delete dialog body (delete_impact_key)
     public pure function label-unused() -> string { return @tr("This label is not used by any sessions."); }
     public pure function n-sessions-unlabelled(n: int) -> string { return @tr("{n} session tagged with this label will be un-labelled." | "{n} sessions tagged with this label will be un-labelled." % n); }
@@ -1480,6 +1486,14 @@ export component MainWindow inherits Window {
     // Local / Cancel), with Wipe going through a second
     // irreversibility confirmation.
     in-out property <bool> recovery-dialog-open: false;
+    // Label-conflict dialog (LC): filled by Rust from
+    // list_label_conflicts, one conflict at a time.
+    in-out property <bool> label-conflict-dialog-open: false;
+    in property <string> conflict-base-name;
+    in property <string> conflict-suffixed-name;
+    in property <int> conflict-session-count;
+    callback conflict-merge-tap();
+    callback conflict-keep-tap();
     in-out property <bool> recovery-wipe-confirm-open: false;
     callback recovery-push-tap();
     callback recovery-wipe-confirm-tap();
@@ -7849,6 +7863,72 @@ export component MainWindow inherits Window {
                         clicked => {
                             root.recovery-wipe-confirm-tap();
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Label-conflict dialog (LC) ───────────────────────────────
+    // Shown only when sync materialised a same-name label from
+    // another device (the `(conflict-…)` suffix row). Merge re-tags
+    // the duplicate's sessions onto the original and deletes it —
+    // evented, so every device converges. Keep-both dismisses the
+    // prompt on this device; the label stays for manual renaming.
+    if root.label-conflict-dialog-open : Rectangle {
+        background: #00000080;
+        // Scrim tap = decide later (no dismissal recorded); the
+        // prompt returns after the next sync.
+        TouchArea {
+            clicked => { root.label-conflict-dialog-open = false; }
+        }
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: min(340px, root.width - 32px);
+            height: conflict-card.preferred-height;
+            background: MaterialPalette.surface-container-high;
+            border-radius: 28px;
+
+            TouchArea {}
+
+            conflict-card := VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+
+                Text {
+                    text: Tr.conflict-title();
+                    font-size: 22px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface;
+                }
+                Text {
+                    text: Tr.conflict-body(
+                        root.conflict-suffixed-name,
+                        root.conflict-base-name);
+                    font-size: 14px;
+                    color: MaterialPalette.on-surface-variant;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: Tr.conflict-count(root.conflict-session-count);
+                    font-size: 14px;
+                    color: MaterialPalette.on-surface-variant;
+                    wrap: word-wrap;
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+
+                    TextButton {
+                        text: Tr.conflict-keep();
+                        clicked => { root.conflict-keep-tap(); }
+                    }
+                    TextButton {
+                        text: Tr.conflict-merge();
+                        clicked => { root.conflict-merge-tap(); }
                     }
                 }
             }
