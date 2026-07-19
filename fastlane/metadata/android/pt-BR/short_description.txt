@@ -1,0 +1,1 @@
+Temporizador de meditação com histórico, estatísticas e Nextcloud

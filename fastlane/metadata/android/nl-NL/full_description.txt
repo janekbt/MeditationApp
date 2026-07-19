@@ -1,0 +1,39 @@
+Meditate is een vriendelijke meditatietimer die je helpt een
+consistente praktijk op te bouwen — zonder accounts, zonder
+telemetrie, met je gegevens onder eigen beheer.
+
+<b>Timer</b>
+
+* Aftel-, stopwatch- en box-ademhalingsmodus
+* Box-ademhaling: kies een patroon (4-4-4-4, 4-7-8-0, …) of stel
+  elke fase in, met een rustige stip die het vierkant volgt
+  terwijl je ademt
+* Begeleide modus: importeer je eigen audiobestanden; de bel
+  klinkt wanneer de track eindigt
+* Startbel, intervalbellen (vast, periodiek of willekeurig) en
+  eindbel — geluid, trilling of beide, met eigen geluiden en
+  zelfgemaakte trilpatronen
+* Voorinstellingen voor je vaste sessies en een widget op het
+  startscherm om met één tik te beginnen
+
+<b>Logboek en statistieken</b>
+
+* Op datum gegroepeerd sessielogboek met labels en notities,
+  vegen om te verwijderen met ongedaan maken
+* Dagdoel-ring, 13-weekse heatmap, staaf- of lijngrafieken,
+  totalen per label
+* CSV-export en -import, import vanuit Insight Timer
+
+<b>Synchronisatie</b>
+
+* Optionele synchronisatie tussen je apparaten via je eigen
+  Nextcloud — werkt ook samen met de GNOME/Linux-versie van
+  Meditate, die dezelfde kern deelt
+* Offline-first: alles werkt zonder netwerk; wijzigingen worden
+  samengevoegd zodra je weer online bent
+
+<b>Privacy</b>
+
+Sessies staan in een lokale database op je apparaat. De enige
+netwerkverbinding is met de Nextcloud-server die jij instelt —
+er is geen andere server, geen analyse en geen tracking.

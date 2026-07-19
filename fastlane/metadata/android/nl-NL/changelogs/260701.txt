@@ -1,0 +1,9 @@
+Eerste F-Droid-uitgave.
+
+• Timer-, box-ademhalings- en begeleide modus met bellen,
+  trilpatronen en voorinstellingen
+• Sessielogboek met labels, notities en ongedaan maken
+• Dagdoel-statistieken, heatmap, grafieken
+• Nextcloud-synchronisatie (compatibel met de Linux/GNOME-versie),
+  CSV-export/-import, Insight Timer-import
+• Startscherm-widget, 10 talen

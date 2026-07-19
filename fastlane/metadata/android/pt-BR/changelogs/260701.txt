@@ -1,0 +1,9 @@
+Primeiro lançamento no F-Droid.
+
+• Modos temporizador, respiração quadrada e guiado com sinos,
+  padrões de vibração e predefinições
+• Histórico de sessões com rótulos, notas e desfazer
+• Estatísticas de meta diária, mapa de calor, gráficos
+• Sincronização Nextcloud (compatível com a versão Linux/GNOME),
+  exportação/importação CSV, Insight Timer
+• Widget na tela inicial, 10 idiomas

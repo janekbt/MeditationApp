@@ -1,0 +1,40 @@
+Meditate to przyjazny minutnik medytacji, który pomaga budować
+regularną praktykę — bez kont, bez telemetrii, z danymi pod
+Twoją kontrolą.
+
+<b>Minutnik</b>
+
+* Tryby odliczania, stopera i oddechu pudełkowego
+* Oddech pudełkowy: wybierz wzór (4-4-4-4, 4-7-8-0, …) lub ustaw
+  każdą fazę osobno, ze spokojnym punktem wędrującym po
+  kwadracie w rytmie oddechu
+* Tryb z przewodnikiem: importuj własne pliki audio; dzwonek
+  zabrzmi na końcu nagrania
+* Dzwonek początkowy, dzwonki interwałowe (stałe, okresowe lub
+  losowe) i dzwonek końcowy — dźwięk, wibracja lub oba, z
+  własnymi dźwiękami i edytorem wzorów wibracji
+* Szablony dla stałych sesji i widżet ekranu głównego do startu
+  jednym dotknięciem
+
+<b>Dziennik i statystyki</b>
+
+* Dziennik sesji pogrupowany datami z etykietami i notatkami,
+  przesunięcie usuwa z możliwością cofnięcia
+* Pierścień celu dziennego, mapa ciepła z 13 tygodni, wykresy
+  słupkowe lub liniowe, podsumowania według etykiet
+* Eksport i import CSV, import z Insight Timer
+
+<b>Synchronizacja</b>
+
+* Opcjonalna synchronizacja między urządzeniami przez własny
+  serwer Nextcloud — współpracuje też z wersją GNOME/Linux
+  aplikacji Meditate, dzielącą ten sam rdzeń
+* Offline-first: wszystko działa bez sieci; zmiany scalają się,
+  gdy wrócisz online
+
+<b>Prywatność</b>
+
+Sesje przechowywane są w lokalnej bazie danych na Twoim
+urządzeniu. Jedyne połączenie sieciowe prowadzi do serwera
+Nextcloud, który sam skonfigurujesz — nie ma żadnego innego
+serwera, analityki ani śledzenia.

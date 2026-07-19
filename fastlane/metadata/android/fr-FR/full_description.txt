@@ -1,0 +1,41 @@
+Meditate est un minuteur de méditation bienveillant qui vous aide
+à construire une pratique régulière — sans compte, sans
+télémétrie, avec vos données sous votre propre contrôle.
+
+<b>Minuteur</b>
+
+* Modes compte à rebours, chronomètre et respiration carrée
+* Respiration carrée : choisissez un motif (4-4-4-4, 4-7-8-0, …)
+  ou réglez chaque phase, avec un point paisible qui parcourt le
+  carré au rythme de votre souffle
+* Mode guidé : importez vos propres fichiers audio ; la cloche
+  sonne à la fin de la piste
+* Cloche de début, cloches d'intervalle (fixes, périodiques ou
+  aléatoires) et cloche de fin — son, vibration ou les deux, avec
+  vos propres sons et des motifs de vibration personnalisés
+* Préréglages pour vos séances habituelles et un widget d'écran
+  d'accueil pour démarrer d'un geste
+
+<b>Journal et statistiques</b>
+
+* Journal des séances groupé par date avec étiquettes et notes,
+  glisser pour supprimer avec annulation
+* Anneau d'objectif quotidien, carte de chaleur sur 13 semaines,
+  graphiques en barres ou en lignes, totaux par étiquette
+* Export et import CSV, import depuis Insight Timer
+
+<b>Synchronisation</b>
+
+* Synchronisation facultative entre vos appareils via votre
+  propre Nextcloud — fonctionne aussi avec la version GNOME/Linux
+  de Meditate, qui partage le même cœur
+* Hors-ligne d'abord : tout fonctionne sans réseau ; la
+  synchronisation fusionne les changements dès que vous êtes de
+  nouveau en ligne
+
+<b>Confidentialité</b>
+
+Les séances vivent dans une base de données locale sur votre
+appareil. La seule connexion réseau va vers le serveur Nextcloud
+que vous configurez — aucun autre serveur, aucune analyse, aucun
+pistage.
