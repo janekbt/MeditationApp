@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="notification_channel_session">Sessie</string>
+    <string name="notification_channel_session_desc">Permanente melding terwijl een meditatiesessie bezig is</string>
+    <string name="notification_session_running">Sessie bezig</string>
+</resources>

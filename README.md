@@ -44,7 +44,7 @@ Countdown and stopwatch, a browsable log, and daily-goal stats to help you build
 - Build instructions: [`BUILDING.md`](BUILDING.md#android)
 
 ### General
-- Translated into 10 languages (English, German, Spanish, French, Italian, Dutch, Polish, Brazilian Portuguese, Russian, Simplified Chinese); the Android app currently ships English and German
+- Translated into 10 languages (English, German, Spanish, French, Italian, Dutch, Polish, Brazilian Portuguese, Russian, Simplified Chinese) — on Linux and Android alike
 - Keyboard shortcuts for the common actions
 - Dark-mode and high-contrast safe; follows your system accent colour
 - About → Troubleshooting view with a rolling diagnostics log, for attaching to bug reports

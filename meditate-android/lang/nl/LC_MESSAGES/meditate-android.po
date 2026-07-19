@@ -186,3 +186,636 @@ msgstr "Ongedaan maken"
 
 msgid "min"
 msgstr "min"
+
+msgid " min"
+msgstr " min"
+
+msgid "' will be removed from this device and any synced peers."
+msgstr "' wordt verwijderd van dit apparaat en alle gesynchroniseerde apparaten."
+
+msgid "' with the current settings?"
+msgstr "' met de huidige instellingen?"
+
+msgid "'{}' applied"
+msgstr "'{}' toegepast"
+
+msgid "'{}' deleted"
+msgstr "'{}' verwijderd"
+
+msgid "About"
+msgstr "Over"
+
+msgid "About {}"
+msgstr "Ongeveer {}"
+
+msgid "Accent colour — tinting for buttons, rings, and highlights."
+msgstr "Accentkleur — kleurt knoppen, ringen en accenten."
+
+msgid "App password"
+msgstr "App-wachtwoord"
+
+msgid "Appearance"
+msgstr "Uiterlijk"
+
+msgid "Authentication failed"
+msgstr "Aanmelden mislukt"
+
+msgid "BY LABEL"
+msgstr "PER LABEL"
+
+msgid "Bar"
+msgstr "Staven"
+
+msgid "Before end"
+msgstr "Voor het einde"
+
+msgid "Bell Sound"
+msgstr "Belgeluid"
+
+msgid "Bells"
+msgstr "Bellen"
+
+msgid "Box Breath"
+msgstr "Box-ademhaling"
+
+msgid "Box Breath cues"
+msgstr "Signalen vierkante ademhaling"
+
+msgid "Box Breathing"
+msgstr "Vierkante ademhaling"
+
+msgid "Breath Phases"
+msgstr "Ademfasen"
+
+msgid "Chart"
+msgstr "Grafiek"
+
+msgid "Choose Bell Sound"
+msgstr "Kies belgeluid"
+
+msgid "Choose Label"
+msgstr "Kies label"
+
+msgid "Choose Pattern"
+msgstr "Kies patroon"
+
+msgid "Close"
+msgstr "Sluiten"
+
+msgid "Connection OK"
+msgstr "Verbinding in orde"
+
+msgid "Converting… "
+msgstr "Converteren… "
+
+msgid "Copy"
+msgstr "Kopiëren"
+
+msgid "Count up from zero"
+msgstr "Tel op vanaf nul"
+
+msgid "Create Label"
+msgstr "Label aanmaken"
+
+msgid "Create Preset"
+msgstr "Voorinstelling aanmaken"
+
+msgid "Create interval bell…"
+msgstr "Intervalbel aanmaken…"
+
+msgid "Create new guided file…"
+msgstr "Nieuw begeleid bestand aanmaken…"
+
+msgid "Create new label…"
+msgstr "Nieuw label aanmaken…"
+
+msgid "Create new preset…"
+msgstr "Nieuwe voorinstelling aanmaken…"
+
+msgid "Create pattern"
+msgstr "Patroon aanmaken"
+
+msgid "Cues"
+msgstr "Signalen"
+
+msgid "Cues during phases"
+msgstr "Signalen tijdens fasen"
+
+msgid "Current file"
+msgstr "Huidig bestand"
+
+msgid "DAILY GOAL"
+msgstr "DAGDOEL"
+
+msgid "Daily Goal"
+msgstr "Dagdoel"
+
+msgid "Daily goal"
+msgstr "Dagdoel"
+
+msgid "Delete Preset?"
+msgstr "Voorinstelling verwijderen?"
+
+msgid "Delete all sessions?"
+msgstr "Alle sessies verwijderen?"
+
+msgid "Diagnostics"
+msgstr "Diagnostiek"
+
+msgid "Different cue per phase to feel the cycle"
+msgstr "Een ander signaal per fase om de cyclus te voelen"
+
+msgid "Duration (0.1 s)"
+msgstr "Duur (0,1 s)"
+
+msgid "Edit"
+msgstr "Bewerken"
+
+msgid "End Bell"
+msgstr "Eindbel"
+
+msgid "Enter URL and username"
+msgstr "Voer URL en gebruikersnaam in"
+
+msgid "Enter a password"
+msgstr "Voer een wachtwoord in"
+
+msgid "Every N min"
+msgstr "Elke N min"
+
+msgid "Exhale"
+msgstr "Uitademen"
+
+msgid "Export failed"
+msgstr "Exporteren mislukt"
+
+msgid "Finish"
+msgstr "Afronden"
+
+msgid "From start"
+msgstr "Vanaf het begin"
+
+msgid "Goal reached · {} today"
+msgstr "Doel gehaald · {} vandaag"
+
+msgid "Guided"
+msgstr "Begeleid"
+
+msgid "Hold (empty)"
+msgstr "Vasthouden (leeg)"
+
+msgid "Hold (full)"
+msgstr "Vasthouden (vol)"
+
+msgid "INSIGHTS"
+msgstr "INZICHTEN"
+
+msgid "Import Bell Sound"
+msgstr "Belgeluid importeren"
+
+msgid "Import File"
+msgstr "Bestand importeren"
+
+msgid "Import Guided File"
+msgstr "Begeleid bestand importeren"
+
+msgid "Import failed — see Diagnostics"
+msgstr "Importeren mislukt — zie Diagnostiek"
+
+msgid "Import sound…"
+msgstr "Geluid importeren…"
+
+msgid "Importing: {} ({})"
+msgstr "Importeren: {} ({})"
+
+msgid "Inhale"
+msgstr "Inademen"
+
+msgid "Interval Bell"
+msgstr "Intervalbel"
+
+msgid "Interval Bells"
+msgstr "Intervalbellen"
+
+msgid "Jitter %"
+msgstr "Variatie %"
+
+msgid "Keep Screen Awake"
+msgstr "Scherm aan houden"
+
+msgid "Keystore read failed"
+msgstr "Lezen uit Keystore mislukt"
+
+msgid "Keystore write failed"
+msgstr "Schrijven naar Keystore mislukt"
+
+msgid "Kind"
+msgstr "Soort"
+
+msgid "LAST 13 WEEKS"
+msgstr "LAATSTE 13 WEKEN"
+
+msgid "Last sync failed — tap to retry\n{}"
+msgstr "Laatste synchronisatie mislukt — tik om opnieuw te proberen\n{}"
+
+msgid "MINUTES / DAY"
+msgstr "MINUTEN / DAG"
+
+msgid "MINUTES / MONTH"
+msgstr "MINUTEN / MAAND"
+
+msgid "MINUTES / WEEK"
+msgstr "MINUTEN / WEEK"
+
+msgid "Manage Bells"
+msgstr "Bellen beheren"
+
+msgid "Manage Files"
+msgstr "Bestanden beheren"
+
+msgid "Manage Presets"
+msgstr "Beheren"
+
+msgid "Minutes (5–240)"
+msgstr "Minuten (5–240)"
+
+msgid "Minutes per day"
+msgstr "Minuten per dag"
+
+msgid "Minutes per day — drives the ring on the Stats tab."
+msgstr "Minuten per dag — stuurt de ring op het tabblad Statistieken."
+
+msgid "Name"
+msgstr "Naam"
+
+msgid "Network error"
+msgstr "Netwerkfout"
+
+msgid "Nextcloud Sync"
+msgstr "Nextcloud-synchronisatie"
+
+msgid "No starred files"
+msgstr "Geen favoriete bestanden"
+
+msgid "Not a WebDAV folder"
+msgstr "Geen WebDAV-map"
+
+msgid "Note"
+msgstr "Notitie"
+
+msgid "Only sessions with a note"
+msgstr "Alleen sessies met notitie"
+
+msgid "Open File"
+msgstr "Bestand openen"
+
+msgid "Override"
+msgstr "Overschrijven"
+
+msgid "Override Preset?"
+msgstr "Voorinstelling overschrijven?"
+
+msgid "Pattern"
+msgstr "Patroon"
+
+msgid "Play"
+msgstr "Afspelen"
+
+msgid "Play a signal when the session begins"
+msgstr "Geef een signaal bij het begin van de sessie"
+
+msgid "Play a signal when the session ends"
+msgstr "Geef een signaal aan het einde van de sessie"
+
+msgid "Points"
+msgstr "Punten"
+
+msgid "Preparation Time"
+msgstr "Voorbereidingstijd"
+
+msgid "Preset name"
+msgstr "Naam voorinstelling"
+
+msgid "Preset overridden"
+msgstr "Voorinstelling overschreven"
+
+msgid "Presets"
+msgstr "Voorinstellingen"
+
+msgid "Prevent display sleep during a session"
+msgstr "Voorkomt dat het scherm uitgaat tijdens een sessie"
+
+msgid "Preview"
+msgstr "Voorbeeld"
+
+msgid "Push My Data"
+msgstr "Mijn gegevens versturen"
+
+msgid "Recovered {} min session"
+msgstr "Sessie van {} min hersteld"
+
+msgid "Remote data appears wiped"
+msgstr "Externe gegevens lijken gewist"
+
+msgid "Rename"
+msgstr "Hernoemen"
+
+msgid "Rename Guided File"
+msgstr "Begeleid bestand hernoemen"
+
+msgid "Rename Label"
+msgstr "Label hernoemen"
+
+msgid "Rename Preset"
+msgstr "Voorinstelling hernoemen"
+
+msgid "Replace '"
+msgstr "Vervang '"
+
+msgid "Report an issue"
+msgstr "Probleem melden"
+
+msgid "Ring during the session"
+msgstr "Klinken tijdens de sessie"
+
+msgid "Save Preset"
+msgstr "Voorinstelling opslaan"
+
+msgid "Save Settings"
+msgstr "Opslaan"
+
+msgid "Save failed"
+msgstr "Opslaan mislukt"
+
+msgid "Seconds"
+msgstr "Seconden"
+
+msgid "Select session date"
+msgstr "Sessiedatum kiezen"
+
+msgid "Select session time"
+msgstr "Sessietijd kiezen"
+
+msgid "Selected"
+msgstr "Geselecteerd"
+
+msgid "Server URL"
+msgstr "Server-URL"
+
+msgid "Server error"
+msgstr "Serverfout"
+
+msgid "Session log exported"
+msgstr "Sessielogboek geëxporteerd"
+
+msgid "Share"
+msgstr "Delen"
+
+msgid "Silence before the starting bell"
+msgstr "Stilte voor de startbel"
+
+msgid "Starred Files"
+msgstr "Favoriete bestanden"
+
+msgid "Start meditating to see your sessions here."
+msgstr "Begin met mediteren om hier je sessies te zien."
+
+msgid "Starting Bell"
+msgstr "Startbel"
+
+msgid "Stopwatch Mode"
+msgstr "Stopwatchmodus"
+
+msgid "Stores URL and username locally; password goes to the Android Keystore. Leave the password blank to keep the stored one."
+msgstr "Bewaart URL en gebruikersnaam lokaal; het wachtwoord gaat naar de Android Keystore. Laat het wachtwoord leeg om het opgeslagen wachtwoord te behouden."
+
+msgid "Sync configured (waiting for first run)"
+msgstr "Synchronisatie ingesteld (wacht op eerste run)"
+
+msgid "Sync sessions, labels, and preferences between your devices via your own Nextcloud server."
+msgstr "Synchroniseer sessies, labels en voorkeuren tussen je apparaten via je eigen Nextcloud-server."
+
+msgid "Sync settings saved"
+msgstr "Synchronisatie-instellingen opgeslagen"
+
+msgid "Synced just now"
+msgstr "Zojuist gesynchroniseerd"
+
+msgid "Syncing with Nextcloud…"
+msgstr "Synchroniseren met Nextcloud…"
+
+msgid "Tag this session"
+msgstr "Label deze sessie"
+
+msgid "Tap Open File or pick from list below"
+msgstr "Tik op Bestand openen of kies uit de lijst"
+
+msgid "Tap Open File then Import File, or star a file in Manage Files"
+msgstr "Tik op Bestand openen en dan Bestand importeren, of markeer een bestand als favoriet in Bestanden beheren"
+
+msgid "Test connection"
+msgstr "Verbinding testen"
+
+msgid "Testing…"
+msgstr "Testen…"
+
+msgid "The Nextcloud folder no longer contains any of the batches this device previously synced. Has the Meditate folder been deleted on the server?\n\nChoose how to recover:"
+msgstr "De Nextcloud-map bevat geen van de eerder door dit apparaat gesynchroniseerde batches meer. Is de map Meditate op de server verwijderd?\n\nKies hoe je wilt herstellen:"
+
+msgid "This permanently deletes every session, label, and event stored on this device. Your Nextcloud account, sync settings, and app preferences are kept.\n\nThis cannot be undone."
+msgstr "Dit verwijdert permanent alle sessies, labels en gebeurtenissen op dit apparaat. Je Nextcloud-account, synchronisatie-instellingen en voorkeuren blijven behouden.\n\nDit kan niet ongedaan worden gemaakt."
+
+msgid "This permanently removes every logged session from this device — and, via sync, from your other devices.\n\nThis cannot be undone."
+msgstr "Dit verwijdert permanent alle geregistreerde sessies van dit apparaat — en via synchronisatie ook van je andere apparaten.\n\nDit kan niet ongedaan worden gemaakt."
+
+msgid "Time"
+msgstr "Tijd"
+
+msgid "Track name"
+msgstr "Tracknaam"
+
+msgid "Type"
+msgstr "Type"
+
+msgid "URL must start with https://"
+msgstr "De URL moet beginnen met https://"
+
+msgid "Username"
+msgstr "Gebruikersnaam"
+
+msgid "Wipe Local"
+msgstr "Lokaal wissen"
+
+msgid "Wipe Local Data"
+msgstr "Lokale gegevens wissen"
+
+msgid "Wipe local data?"
+msgstr "Lokale gegevens wissen?"
+
+msgid "h "
+msgstr "u "
+
+msgid "{} average over last 7 days"
+msgstr "{} gemiddeld over de laatste 7 dagen"
+
+msgid "{} on {}"
+msgstr "{} op {}"
+
+msgid "{} to go today"
+msgstr "Nog {} vandaag"
+
+msgid "{}% down vs last week ({} vs {})"
+msgstr "{}% minder dan vorige week ({} vs {})"
+
+msgid "{}% of sessions are in the afternoon"
+msgstr "{}% van de sessies is 's middags"
+
+msgid "{}% of sessions are in the evening"
+msgstr "{}% van de sessies is 's avonds"
+
+msgid "{}% of sessions are in the morning"
+msgstr "{}% van de sessies is 's ochtends"
+
+msgid "{}% up vs last week ({} vs {})"
+msgstr "{}% meer dan vorige week ({} vs {})"
+
+msgid "{}% vs last month ({} vs {})"
+msgstr "{}% vs vorige maand ({} vs {})"
+
+msgid "Imported {n} session"
+msgid_plural "Imported {n} sessions"
+msgstr[0] "{n} sessie geïmporteerd"
+msgstr[1] "{n} sessies geïmporteerd"
+
+msgid "Synced {n} day ago"
+msgid_plural "Synced {n} days ago"
+msgstr[0] "{n} dag geleden gesynchroniseerd"
+msgstr[1] "{n} dagen geleden gesynchroniseerd"
+
+msgid "Synced {n} hour ago"
+msgid_plural "Synced {n} hours ago"
+msgstr[0] "{n} uur geleden gesynchroniseerd"
+msgstr[1] "{n} uur geleden gesynchroniseerd"
+
+msgid "Synced {n} minute ago"
+msgid_plural "Synced {n} minutes ago"
+msgstr[0] "{n} minuut geleden gesynchroniseerd"
+msgstr[1] "{n} minuten geleden gesynchroniseerd"
+
+msgid "{n} day · best was {0}"
+msgid_plural "{n} days · best was {0}"
+msgstr[0] "{n} dag · record is {0}"
+msgstr[1] "{n} dagen · record is {0}"
+
+msgid "{n} day — new record"
+msgid_plural "{n} days — new record"
+msgstr[0] "{n} dag — nieuw record"
+msgstr[1] "{n} dagen — nieuw record"
+
+msgid "{n} session to your {0}th"
+msgid_plural "{n} sessions to your {0}th"
+msgstr[0] "Nog {n} sessie tot je {0}e"
+msgstr[1] "Nog {n} sessies tot je {0}e"
+
+msgid "Add {} ?"
+msgstr "{} toevoegen?"
+
+msgid "Vibration"
+msgstr "Trillen"
+
+msgid "Both"
+msgstr "Beide"
+
+msgid "{n} min"
+msgid_plural "{n} min"
+msgstr[0] "{n} min"
+msgstr[1] "{n} min"
+
+msgid "{n} bell"
+msgid_plural "{n} bells"
+msgstr[0] "{n} bel"
+msgstr[1] "{n} bellen"
+
+msgid "None enabled"
+msgstr "Geen actief"
+
+msgid "{n} enabled"
+msgid_plural "{n} enabled"
+msgstr[0] "{n} actief"
+msgstr[1] "{n} actief"
+
+msgid "Every {n} min"
+msgid_plural "Every {n} min"
+msgstr[0] "Elke {n} min"
+msgstr[1] "Elke {n} min"
+
+msgid "Every {n} min +/-{0}%"
+msgid_plural "Every {n} min +/-{0}%"
+msgstr[0] "Elke {n} min +/-{0}%"
+msgstr[1] "Elke {n} min +/-{0}%"
+
+msgid "At {n} min"
+msgid_plural "At {n} min"
+msgstr[0] "Op {n} min"
+msgstr[1] "Op {n} min"
+
+msgid "{n} min before end"
+msgid_plural "{n} min before end"
+msgstr[0] "{n} min voor het einde"
+msgstr[1] "{n} min voor het einde"
+
+msgid "This label is not used by any sessions."
+msgstr "Geen enkele sessie gebruikt dit label."
+
+msgid "{n} session tagged with this label will be un-labelled."
+msgid_plural "{n} sessions tagged with this label will be un-labelled."
+msgstr[0] "{n} sessie met dit label verliest het."
+msgstr[1] "{n} sessies met dit label verliezen het."
+
+msgid "New Pattern"
+msgstr "Nieuw patroon"
+
+msgid "Edit Pattern"
+msgstr "Patroon bewerken"
+
+msgid "Duplicate label"
+msgstr "Dubbel label"
+
+msgid "'{}' has the same name as '{}' — it was created independently on another device."
+msgstr "'{}' heeft dezelfde naam als '{}' — het is onafhankelijk op een ander apparaat aangemaakt."
+
+msgid "Merging moves {n} session and deletes the duplicate."
+msgid_plural "Merging moves {n} sessions and deletes the duplicate."
+msgstr[0] "Samenvoegen verplaatst {n} sessie en verwijdert het duplicaat."
+msgstr[1] "Samenvoegen verplaatst {n} sessies en verwijdert het duplicaat."
+
+msgid "Merge"
+msgstr "Samenvoegen"
+
+msgid "Keep both"
+msgstr "Beide houden"
+
+msgid "{n} session · {0} min"
+msgid_plural "{n} sessions · {0} min"
+msgstr[0] "{n} sessie · {0} min"
+msgstr[1] "{n} sessies · {0} min"
+
+msgid "Pause"
+msgstr "Gepauzeerd"
+
+msgid "Resume"
+msgstr "Hervatten"
+
+msgid "Stopwatch"
+msgstr "Stopwatch"
+
+msgid "Add Session"
+msgstr "Sessie toevoegen"
+
+msgid "Edit Session"
+msgstr "Sessie bewerken"
+
+msgid "Session deleted"
+msgid_plural "{n} sessions deleted"
+msgstr[0] "Sessie verwijderd"
+msgstr[1] "{n} sessies verwijderd"

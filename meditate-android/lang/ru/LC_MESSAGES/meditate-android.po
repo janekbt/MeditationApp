@@ -5,7 +5,7 @@
 msgid ""
 msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
-"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+"Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
 
 msgid "1 day · keep going"
 msgstr "1 день · продолжайте"
@@ -186,3 +186,654 @@ msgstr "Отменить"
 
 msgid "min"
 msgstr "мин"
+
+msgid " min"
+msgstr " мин"
+
+msgid "' will be removed from this device and any synced peers."
+msgstr "' будет удалён с этого устройства и со всех синхронизированных устройств."
+
+msgid "' with the current settings?"
+msgstr "' текущими настройками?"
+
+msgid "'{}' applied"
+msgstr "Применено: '{}'"
+
+msgid "'{}' deleted"
+msgstr "Удалено: '{}'"
+
+msgid "About"
+msgstr "О приложении"
+
+msgid "About {}"
+msgstr "Около {}"
+
+msgid "Accent colour — tinting for buttons, rings, and highlights."
+msgstr "Акцентный цвет — окрашивает кнопки, кольца и выделения."
+
+msgid "App password"
+msgstr "Пароль приложения"
+
+msgid "Appearance"
+msgstr "Внешний вид"
+
+msgid "Authentication failed"
+msgstr "Ошибка аутентификации"
+
+msgid "BY LABEL"
+msgstr "ПО МЕТКАМ"
+
+msgid "Bar"
+msgstr "Столбцы"
+
+msgid "Before end"
+msgstr "До конца"
+
+msgid "Bell Sound"
+msgstr "Звук колокола"
+
+msgid "Bells"
+msgstr "Колокола"
+
+msgid "Box Breath"
+msgstr "Квадратное дыхание"
+
+msgid "Box Breath cues"
+msgstr "Сигналы квадратного дыхания"
+
+msgid "Box Breathing"
+msgstr "Квадратное дыхание"
+
+msgid "Breath Phases"
+msgstr "Фазы дыхания"
+
+msgid "Chart"
+msgstr "График"
+
+msgid "Choose Bell Sound"
+msgstr "Выбор звука колокола"
+
+msgid "Choose Label"
+msgstr "Выбор метки"
+
+msgid "Choose Pattern"
+msgstr "Выбор шаблона"
+
+msgid "Close"
+msgstr "Закрыть"
+
+msgid "Connection OK"
+msgstr "Соединение установлено"
+
+msgid "Converting… "
+msgstr "Преобразование… "
+
+msgid "Copy"
+msgstr "Копировать"
+
+msgid "Count up from zero"
+msgstr "Счёт от нуля"
+
+msgid "Create Label"
+msgstr "Создать метку"
+
+msgid "Create Preset"
+msgstr "Создать пресет"
+
+msgid "Create interval bell…"
+msgstr "Создать интервальный колокол…"
+
+msgid "Create new guided file…"
+msgstr "Создать новый файл медитации…"
+
+msgid "Create new label…"
+msgstr "Создать новую метку…"
+
+msgid "Create new preset…"
+msgstr "Создать новый пресет…"
+
+msgid "Create pattern"
+msgstr "Создать шаблон"
+
+msgid "Cues"
+msgstr "Сигналы"
+
+msgid "Cues during phases"
+msgstr "Сигналы во время фаз"
+
+msgid "Current file"
+msgstr "Текущий файл"
+
+msgid "DAILY GOAL"
+msgstr "ДНЕВНАЯ ЦЕЛЬ"
+
+msgid "Daily Goal"
+msgstr "Дневная цель"
+
+msgid "Daily goal"
+msgstr "Дневная цель"
+
+msgid "Delete Preset?"
+msgstr "Удалить пресет?"
+
+msgid "Delete all sessions?"
+msgstr "Удалить все сессии?"
+
+msgid "Diagnostics"
+msgstr "Диагностика"
+
+msgid "Different cue per phase to feel the cycle"
+msgstr "Разный сигнал для каждой фазы, чтобы чувствовать цикл"
+
+msgid "Duration (0.1 s)"
+msgstr "Длительность (0,1 с)"
+
+msgid "Edit"
+msgstr "Изменить"
+
+msgid "End Bell"
+msgstr "Финальный колокол"
+
+msgid "Enter URL and username"
+msgstr "Введите URL и имя пользователя"
+
+msgid "Enter a password"
+msgstr "Введите пароль"
+
+msgid "Every N min"
+msgstr "Каждые N мин"
+
+msgid "Exhale"
+msgstr "Выдох"
+
+msgid "Export failed"
+msgstr "Ошибка экспорта"
+
+msgid "Finish"
+msgstr "Завершить"
+
+msgid "From start"
+msgstr "От начала"
+
+msgid "Goal reached · {} today"
+msgstr "Цель достигнута · сегодня {}"
+
+msgid "Guided"
+msgstr "С сопровождением"
+
+msgid "Hold (empty)"
+msgstr "Задержка (на выдохе)"
+
+msgid "Hold (full)"
+msgstr "Задержка (на вдохе)"
+
+msgid "INSIGHTS"
+msgstr "НАБЛЮДЕНИЯ"
+
+msgid "Import Bell Sound"
+msgstr "Импортировать звук колокола"
+
+msgid "Import File"
+msgstr "Импортировать файл"
+
+msgid "Import Guided File"
+msgstr "Импортировать файл медитации"
+
+msgid "Import failed — see Diagnostics"
+msgstr "Ошибка импорта — см. Диагностику"
+
+msgid "Import sound…"
+msgstr "Импортировать звук…"
+
+msgid "Importing: {} ({})"
+msgstr "Импорт: {} ({})"
+
+msgid "Inhale"
+msgstr "Вдох"
+
+msgid "Interval Bell"
+msgstr "Интервальный колокол"
+
+msgid "Interval Bells"
+msgstr "Интервальные колокола"
+
+msgid "Jitter %"
+msgstr "Разброс %"
+
+msgid "Keep Screen Awake"
+msgstr "Не гасить экран"
+
+msgid "Keystore read failed"
+msgstr "Ошибка чтения из Keystore"
+
+msgid "Keystore write failed"
+msgstr "Ошибка записи в Keystore"
+
+msgid "Kind"
+msgstr "Вид"
+
+msgid "LAST 13 WEEKS"
+msgstr "ПОСЛЕДНИЕ 13 НЕДЕЛЬ"
+
+msgid "Last sync failed — tap to retry\n{}"
+msgstr "Последняя синхронизация не удалась — нажмите, чтобы повторить\n{}"
+
+msgid "MINUTES / DAY"
+msgstr "МИНУТЫ / ДЕНЬ"
+
+msgid "MINUTES / MONTH"
+msgstr "МИНУТЫ / МЕСЯЦ"
+
+msgid "MINUTES / WEEK"
+msgstr "МИНУТЫ / НЕДЕЛЯ"
+
+msgid "Manage Bells"
+msgstr "Управление колоколами"
+
+msgid "Manage Files"
+msgstr "Управление файлами"
+
+msgid "Manage Presets"
+msgstr "Управлять"
+
+msgid "Minutes (5–240)"
+msgstr "Минуты (5–240)"
+
+msgid "Minutes per day"
+msgstr "Минут в день"
+
+msgid "Minutes per day — drives the ring on the Stats tab."
+msgstr "Минут в день — управляет кольцом на вкладке «Статистика»."
+
+msgid "Name"
+msgstr "Название"
+
+msgid "Network error"
+msgstr "Ошибка сети"
+
+msgid "Nextcloud Sync"
+msgstr "Синхронизация с Nextcloud"
+
+msgid "No starred files"
+msgstr "Нет избранных файлов"
+
+msgid "Not a WebDAV folder"
+msgstr "Это не папка WebDAV"
+
+msgid "Note"
+msgstr "Заметка"
+
+msgid "Only sessions with a note"
+msgstr "Только сессии с заметкой"
+
+msgid "Open File"
+msgstr "Открыть файл"
+
+msgid "Override"
+msgstr "Перезаписать"
+
+msgid "Override Preset?"
+msgstr "Перезаписать пресет?"
+
+msgid "Pattern"
+msgstr "Шаблон"
+
+msgid "Play"
+msgstr "Воспроизвести"
+
+msgid "Play a signal when the session begins"
+msgstr "Подавать сигнал в начале сессии"
+
+msgid "Play a signal when the session ends"
+msgstr "Подавать сигнал в конце сессии"
+
+msgid "Points"
+msgstr "Точки"
+
+msgid "Preparation Time"
+msgstr "Время подготовки"
+
+msgid "Preset name"
+msgstr "Название пресета"
+
+msgid "Preset overridden"
+msgstr "Пресет перезаписан"
+
+msgid "Presets"
+msgstr "Пресеты"
+
+msgid "Prevent display sleep during a session"
+msgstr "Не даёт экрану погаснуть во время сессии"
+
+msgid "Preview"
+msgstr "Предпросмотр"
+
+msgid "Push My Data"
+msgstr "Отправить мои данные"
+
+msgid "Recovered {} min session"
+msgstr "Восстановлена сессия ({} мин)"
+
+msgid "Remote data appears wiped"
+msgstr "Похоже, удалённые данные стёрты"
+
+msgid "Rename"
+msgstr "Переименовать"
+
+msgid "Rename Guided File"
+msgstr "Переименовать файл медитации"
+
+msgid "Rename Label"
+msgstr "Переименовать метку"
+
+msgid "Rename Preset"
+msgstr "Переименовать пресет"
+
+msgid "Replace '"
+msgstr "Заменить '"
+
+msgid "Report an issue"
+msgstr "Сообщить о проблеме"
+
+msgid "Ring during the session"
+msgstr "Звучат во время сессии"
+
+msgid "Save Preset"
+msgstr "Сохранить пресет"
+
+msgid "Save Settings"
+msgstr "Сохранить"
+
+msgid "Save failed"
+msgstr "Ошибка сохранения"
+
+msgid "Seconds"
+msgstr "Секунды"
+
+msgid "Select session date"
+msgstr "Дата сессии"
+
+msgid "Select session time"
+msgstr "Время сессии"
+
+msgid "Selected"
+msgstr "Выбрано"
+
+msgid "Server URL"
+msgstr "URL сервера"
+
+msgid "Server error"
+msgstr "Ошибка сервера"
+
+msgid "Session log exported"
+msgstr "Журнал сессий экспортирован"
+
+msgid "Share"
+msgstr "Поделиться"
+
+msgid "Silence before the starting bell"
+msgstr "Тишина перед начальным колоколом"
+
+msgid "Starred Files"
+msgstr "Избранные файлы"
+
+msgid "Start meditating to see your sessions here."
+msgstr "Начните медитировать, чтобы увидеть здесь свои сессии."
+
+msgid "Starting Bell"
+msgstr "Начальный колокол"
+
+msgid "Stopwatch Mode"
+msgstr "Режим секундомера"
+
+msgid "Stores URL and username locally; password goes to the Android Keystore. Leave the password blank to keep the stored one."
+msgstr "URL и имя пользователя хранятся локально; пароль сохраняется в Android Keystore. Оставьте пароль пустым, чтобы сохранить прежний."
+
+msgid "Sync configured (waiting for first run)"
+msgstr "Синхронизация настроена (ожидание первого запуска)"
+
+msgid "Sync sessions, labels, and preferences between your devices via your own Nextcloud server."
+msgstr "Синхронизируйте сессии, метки и настройки между устройствами через собственный сервер Nextcloud."
+
+msgid "Sync settings saved"
+msgstr "Настройки синхронизации сохранены"
+
+msgid "Synced just now"
+msgstr "Синхронизировано только что"
+
+msgid "Syncing with Nextcloud…"
+msgstr "Синхронизация с Nextcloud…"
+
+msgid "Tag this session"
+msgstr "Отметьте эту сессию"
+
+msgid "Tap Open File or pick from list below"
+msgstr "Нажмите «Открыть файл» или выберите из списка"
+
+msgid "Tap Open File then Import File, or star a file in Manage Files"
+msgstr "Нажмите «Открыть файл», затем «Импортировать файл», или добавьте файл в избранное в «Управлении файлами»"
+
+msgid "Test connection"
+msgstr "Проверить соединение"
+
+msgid "Testing…"
+msgstr "Проверка…"
+
+msgid "The Nextcloud folder no longer contains any of the batches this device previously synced. Has the Meditate folder been deleted on the server?\n\nChoose how to recover:"
+msgstr "Папка Nextcloud больше не содержит ни одного из пакетов, синхронизированных этим устройством. Папка Meditate удалена с сервера?\n\nВыберите способ восстановления:"
+
+msgid "This permanently deletes every session, label, and event stored on this device. Your Nextcloud account, sync settings, and app preferences are kept.\n\nThis cannot be undone."
+msgstr "Навсегда удаляет все сессии, метки и события на этом устройстве. Учётная запись Nextcloud, настройки синхронизации и параметры приложения сохраняются.\n\nЭто нельзя отменить."
+
+msgid "This permanently removes every logged session from this device — and, via sync, from your other devices.\n\nThis cannot be undone."
+msgstr "Навсегда удаляет все записанные сессии с этого устройства — и, через синхронизацию, с остальных ваших устройств.\n\nЭто нельзя отменить."
+
+msgid "Time"
+msgstr "Время"
+
+msgid "Track name"
+msgstr "Название дорожки"
+
+msgid "Type"
+msgstr "Тип"
+
+msgid "URL must start with https://"
+msgstr "URL должен начинаться с https://"
+
+msgid "Username"
+msgstr "Имя пользователя"
+
+msgid "Wipe Local"
+msgstr "Стереть локальные"
+
+msgid "Wipe Local Data"
+msgstr "Стереть локальные данные"
+
+msgid "Wipe local data?"
+msgstr "Стереть локальные данные?"
+
+msgid "h "
+msgstr "ч "
+
+msgid "{} average over last 7 days"
+msgstr "В среднем {} за последние 7 дней"
+
+msgid "{} on {}"
+msgstr "{} — {}"
+
+msgid "{} to go today"
+msgstr "Сегодня осталось {}"
+
+msgid "{}% down vs last week ({} vs {})"
+msgstr "На {}% меньше, чем на прошлой неделе ({} против {})"
+
+msgid "{}% of sessions are in the afternoon"
+msgstr "{}% сессий проходят днём"
+
+msgid "{}% of sessions are in the evening"
+msgstr "{}% сессий проходят вечером"
+
+msgid "{}% of sessions are in the morning"
+msgstr "{}% сессий проходят утром"
+
+msgid "{}% up vs last week ({} vs {})"
+msgstr "На {}% больше, чем на прошлой неделе ({} против {})"
+
+msgid "{}% vs last month ({} vs {})"
+msgstr "{}% против прошлого месяца ({} против {})"
+
+msgid "Imported {n} session"
+msgid_plural "Imported {n} sessions"
+msgstr[0] "Импортирована {n} сессия"
+msgstr[1] "Импортированы {n} сессии"
+msgstr[2] "Импортировано {n} сессий"
+
+msgid "Synced {n} day ago"
+msgid_plural "Synced {n} days ago"
+msgstr[0] "Синхронизировано {n} день назад"
+msgstr[1] "Синхронизировано {n} дня назад"
+msgstr[2] "Синхронизировано {n} дней назад"
+
+msgid "Synced {n} hour ago"
+msgid_plural "Synced {n} hours ago"
+msgstr[0] "Синхронизировано {n} час назад"
+msgstr[1] "Синхронизировано {n} часа назад"
+msgstr[2] "Синхронизировано {n} часов назад"
+
+msgid "Synced {n} minute ago"
+msgid_plural "Synced {n} minutes ago"
+msgstr[0] "Синхронизировано {n} минуту назад"
+msgstr[1] "Синхронизировано {n} минуты назад"
+msgstr[2] "Синхронизировано {n} минут назад"
+
+msgid "{n} day · best was {0}"
+msgid_plural "{n} days · best was {0}"
+msgstr[0] "{n} день · рекорд: {0}"
+msgstr[1] "{n} дня · рекорд: {0}"
+msgstr[2] "{n} дней · рекорд: {0}"
+
+msgid "{n} day — new record"
+msgid_plural "{n} days — new record"
+msgstr[0] "{n} день — новый рекорд"
+msgstr[1] "{n} дня — новый рекорд"
+msgstr[2] "{n} дней — новый рекорд"
+
+msgid "{n} session to your {0}th"
+msgid_plural "{n} sessions to your {0}th"
+msgstr[0] "{n} сессия до {0}-й"
+msgstr[1] "{n} сессии до {0}-й"
+msgstr[2] "{n} сессий до {0}-й"
+
+msgid "Add {} ?"
+msgstr "Добавить {}?"
+
+msgid "Vibration"
+msgstr "Вибрация"
+
+msgid "Both"
+msgstr "Оба"
+
+msgid "{n} min"
+msgid_plural "{n} min"
+msgstr[0] "{n} мин"
+msgstr[1] "{n} мин"
+msgstr[2] "{n} мин"
+
+msgid "{n} bell"
+msgid_plural "{n} bells"
+msgstr[0] "{n} колокол"
+msgstr[1] "{n} колокола"
+msgstr[2] "{n} колоколов"
+
+msgid "None enabled"
+msgstr "Нет активных"
+
+msgid "{n} enabled"
+msgid_plural "{n} enabled"
+msgstr[0] "{n} активен"
+msgstr[1] "{n} активны"
+msgstr[2] "{n} активны"
+
+msgid "Every {n} min"
+msgid_plural "Every {n} min"
+msgstr[0] "Каждую {n} мин"
+msgstr[1] "Каждые {n} мин"
+msgstr[2] "Каждые {n} мин"
+
+msgid "Every {n} min +/-{0}%"
+msgid_plural "Every {n} min +/-{0}%"
+msgstr[0] "Каждую {n} мин +/-{0}%"
+msgstr[1] "Каждые {n} мин +/-{0}%"
+msgstr[2] "Каждые {n} мин +/-{0}%"
+
+msgid "At {n} min"
+msgid_plural "At {n} min"
+msgstr[0] "На {n}-й минуте"
+msgstr[1] "На {n}-й минуте"
+msgstr[2] "На {n}-й минуте"
+
+msgid "{n} min before end"
+msgid_plural "{n} min before end"
+msgstr[0] "За {n} мин до конца"
+msgstr[1] "За {n} мин до конца"
+msgstr[2] "За {n} мин до конца"
+
+msgid "This label is not used by any sessions."
+msgstr "Эту метку не использует ни одна сессия."
+
+msgid "{n} session tagged with this label will be un-labelled."
+msgid_plural "{n} sessions tagged with this label will be un-labelled."
+msgstr[0] "{n} сессия с этой меткой её потеряет."
+msgstr[1] "{n} сессии с этой меткой её потеряют."
+msgstr[2] "{n} сессий с этой меткой её потеряют."
+
+msgid "New Pattern"
+msgstr "Новый шаблон"
+
+msgid "Edit Pattern"
+msgstr "Изменить шаблон"
+
+msgid "Duplicate label"
+msgstr "Дубликат метки"
+
+msgid "'{}' has the same name as '{}' — it was created independently on another device."
+msgstr "'{}' носит то же имя, что и '{}' — метка была создана независимо на другом устройстве."
+
+msgid "Merging moves {n} session and deletes the duplicate."
+msgid_plural "Merging moves {n} sessions and deletes the duplicate."
+msgstr[0] "Объединение перенесёт {n} сессию и удалит дубликат."
+msgstr[1] "Объединение перенесёт {n} сессии и удалит дубликат."
+msgstr[2] "Объединение перенесёт {n} сессий и удалит дубликат."
+
+msgid "Merge"
+msgstr "Объединить"
+
+msgid "Keep both"
+msgstr "Оставить обе"
+
+msgid "{n} session · {0} min"
+msgid_plural "{n} sessions · {0} min"
+msgstr[0] "{n} сессия · {0} мин"
+msgstr[1] "{n} сессии · {0} мин"
+msgstr[2] "{n} сессий · {0} мин"
+
+msgid "Pause"
+msgstr "Пауза"
+
+msgid "Resume"
+msgstr "Продолжить"
+
+msgid "Stopwatch"
+msgstr "Секундомер"
+
+msgid "Add Session"
+msgstr "Добавить сессию"
+
+msgid "Edit Session"
+msgstr "Изменить сессию"
+
+msgid "Session deleted"
+msgid_plural "{n} sessions deleted"
+msgstr[0] "Удалена {n} сессия"
+msgstr[1] "Удалены {n} сессии"
+msgstr[2] "Удалено {n} сессий"

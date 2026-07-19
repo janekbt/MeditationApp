@@ -186,3 +186,636 @@ msgstr "Annulla"
 
 msgid "min"
 msgstr "min"
+
+msgid " min"
+msgstr " min"
+
+msgid "' will be removed from this device and any synced peers."
+msgstr "' sarà rimosso da questo dispositivo e da tutti i dispositivi sincronizzati."
+
+msgid "' with the current settings?"
+msgstr "' con le impostazioni attuali?"
+
+msgid "'{}' applied"
+msgstr "'{}' applicato"
+
+msgid "'{}' deleted"
+msgstr "'{}' eliminato"
+
+msgid "About"
+msgstr "Informazioni"
+
+msgid "About {}"
+msgstr "Circa {}"
+
+msgid "Accent colour — tinting for buttons, rings, and highlights."
+msgstr "Colore d'accento: tinge pulsanti, anelli ed evidenziazioni."
+
+msgid "App password"
+msgstr "Password per app"
+
+msgid "Appearance"
+msgstr "Aspetto"
+
+msgid "Authentication failed"
+msgstr "Autenticazione non riuscita"
+
+msgid "BY LABEL"
+msgstr "PER ETICHETTA"
+
+msgid "Bar"
+msgstr "Barre"
+
+msgid "Before end"
+msgstr "Prima della fine"
+
+msgid "Bell Sound"
+msgstr "Suono della campana"
+
+msgid "Bells"
+msgstr "Campane"
+
+msgid "Box Breath"
+msgstr "Resp. quadrata"
+
+msgid "Box Breath cues"
+msgstr "Segnali di respirazione quadrata"
+
+msgid "Box Breathing"
+msgstr "Respirazione quadrata"
+
+msgid "Breath Phases"
+msgstr "Fasi del respiro"
+
+msgid "Chart"
+msgstr "Grafico"
+
+msgid "Choose Bell Sound"
+msgstr "Scegli suono della campana"
+
+msgid "Choose Label"
+msgstr "Scegli etichetta"
+
+msgid "Choose Pattern"
+msgstr "Scegli schema"
+
+msgid "Close"
+msgstr "Chiudi"
+
+msgid "Connection OK"
+msgstr "Connessione riuscita"
+
+msgid "Converting… "
+msgstr "Conversione… "
+
+msgid "Copy"
+msgstr "Copia"
+
+msgid "Count up from zero"
+msgstr "Conta da zero"
+
+msgid "Create Label"
+msgstr "Crea etichetta"
+
+msgid "Create Preset"
+msgstr "Crea preset"
+
+msgid "Create interval bell…"
+msgstr "Crea campana a intervalli…"
+
+msgid "Create new guided file…"
+msgstr "Crea nuovo file guidato…"
+
+msgid "Create new label…"
+msgstr "Crea nuova etichetta…"
+
+msgid "Create new preset…"
+msgstr "Crea nuovo preset…"
+
+msgid "Create pattern"
+msgstr "Crea schema"
+
+msgid "Cues"
+msgstr "Segnali"
+
+msgid "Cues during phases"
+msgstr "Segnali durante le fasi"
+
+msgid "Current file"
+msgstr "File attuale"
+
+msgid "DAILY GOAL"
+msgstr "OBIETTIVO GIORNALIERO"
+
+msgid "Daily Goal"
+msgstr "Obiettivo giornaliero"
+
+msgid "Daily goal"
+msgstr "Obiettivo giornaliero"
+
+msgid "Delete Preset?"
+msgstr "Eliminare il preset?"
+
+msgid "Delete all sessions?"
+msgstr "Eliminare tutte le sessioni?"
+
+msgid "Diagnostics"
+msgstr "Diagnostica"
+
+msgid "Different cue per phase to feel the cycle"
+msgstr "Un segnale diverso per fase per sentire il ciclo"
+
+msgid "Duration (0.1 s)"
+msgstr "Durata (0,1 s)"
+
+msgid "Edit"
+msgstr "Modifica"
+
+msgid "End Bell"
+msgstr "Campana finale"
+
+msgid "Enter URL and username"
+msgstr "Inserisci URL e nome utente"
+
+msgid "Enter a password"
+msgstr "Inserisci una password"
+
+msgid "Every N min"
+msgstr "Ogni N min"
+
+msgid "Exhale"
+msgstr "Espira"
+
+msgid "Export failed"
+msgstr "Esportazione non riuscita"
+
+msgid "Finish"
+msgstr "Termina"
+
+msgid "From start"
+msgstr "Dall'inizio"
+
+msgid "Goal reached · {} today"
+msgstr "Obiettivo raggiunto · {} oggi"
+
+msgid "Guided"
+msgstr "Guidata"
+
+msgid "Hold (empty)"
+msgstr "Trattieni (vuoto)"
+
+msgid "Hold (full)"
+msgstr "Trattieni (pieno)"
+
+msgid "INSIGHTS"
+msgstr "APPROFONDIMENTI"
+
+msgid "Import Bell Sound"
+msgstr "Importa suono della campana"
+
+msgid "Import File"
+msgstr "Importa file"
+
+msgid "Import Guided File"
+msgstr "Importa file guidato"
+
+msgid "Import failed — see Diagnostics"
+msgstr "Importazione non riuscita — vedi Diagnostica"
+
+msgid "Import sound…"
+msgstr "Importa suono…"
+
+msgid "Importing: {} ({})"
+msgstr "Importazione: {} ({})"
+
+msgid "Inhale"
+msgstr "Inspira"
+
+msgid "Interval Bell"
+msgstr "Campana a intervalli"
+
+msgid "Interval Bells"
+msgstr "Campane a intervalli"
+
+msgid "Jitter %"
+msgstr "Variazione %"
+
+msgid "Keep Screen Awake"
+msgstr "Mantieni lo schermo acceso"
+
+msgid "Keystore read failed"
+msgstr "Lettura del Keystore non riuscita"
+
+msgid "Keystore write failed"
+msgstr "Scrittura del Keystore non riuscita"
+
+msgid "Kind"
+msgstr "Tipo"
+
+msgid "LAST 13 WEEKS"
+msgstr "ULTIME 13 SETTIMANE"
+
+msgid "Last sync failed — tap to retry\n{}"
+msgstr "Ultima sincronizzazione non riuscita — tocca per riprovare\n{}"
+
+msgid "MINUTES / DAY"
+msgstr "MINUTI / GIORNO"
+
+msgid "MINUTES / MONTH"
+msgstr "MINUTI / MESE"
+
+msgid "MINUTES / WEEK"
+msgstr "MINUTI / SETTIMANA"
+
+msgid "Manage Bells"
+msgstr "Gestisci campane"
+
+msgid "Manage Files"
+msgstr "Gestisci file"
+
+msgid "Manage Presets"
+msgstr "Gestisci"
+
+msgid "Minutes (5–240)"
+msgstr "Minuti (5–240)"
+
+msgid "Minutes per day"
+msgstr "Minuti al giorno"
+
+msgid "Minutes per day — drives the ring on the Stats tab."
+msgstr "Minuti al giorno: guida l'anello nelle Statistiche."
+
+msgid "Name"
+msgstr "Nome"
+
+msgid "Network error"
+msgstr "Errore di rete"
+
+msgid "Nextcloud Sync"
+msgstr "Sincronizzazione Nextcloud"
+
+msgid "No starred files"
+msgstr "Nessun file preferito"
+
+msgid "Not a WebDAV folder"
+msgstr "Non è una cartella WebDAV"
+
+msgid "Note"
+msgstr "Nota"
+
+msgid "Only sessions with a note"
+msgstr "Solo sessioni con nota"
+
+msgid "Open File"
+msgstr "Apri file"
+
+msgid "Override"
+msgstr "Sovrascrivi"
+
+msgid "Override Preset?"
+msgstr "Sovrascrivere il preset?"
+
+msgid "Pattern"
+msgstr "Schema"
+
+msgid "Play"
+msgstr "Riproduci"
+
+msgid "Play a signal when the session begins"
+msgstr "Emetti un segnale all'inizio della sessione"
+
+msgid "Play a signal when the session ends"
+msgstr "Emetti un segnale alla fine della sessione"
+
+msgid "Points"
+msgstr "Punti"
+
+msgid "Preparation Time"
+msgstr "Tempo di preparazione"
+
+msgid "Preset name"
+msgstr "Nome del preset"
+
+msgid "Preset overridden"
+msgstr "Preset sovrascritto"
+
+msgid "Presets"
+msgstr "Preset"
+
+msgid "Prevent display sleep during a session"
+msgstr "Impedisce lo spegnimento dello schermo durante una sessione"
+
+msgid "Preview"
+msgstr "Anteprima"
+
+msgid "Push My Data"
+msgstr "Invia i miei dati"
+
+msgid "Recovered {} min session"
+msgstr "Sessione di {} min recuperata"
+
+msgid "Remote data appears wiped"
+msgstr "I dati remoti sembrano cancellati"
+
+msgid "Rename"
+msgstr "Rinomina"
+
+msgid "Rename Guided File"
+msgstr "Rinomina file guidato"
+
+msgid "Rename Label"
+msgstr "Rinomina etichetta"
+
+msgid "Rename Preset"
+msgstr "Rinomina preset"
+
+msgid "Replace '"
+msgstr "Sostituire '"
+
+msgid "Report an issue"
+msgstr "Segnala un problema"
+
+msgid "Ring during the session"
+msgstr "Suonano durante la sessione"
+
+msgid "Save Preset"
+msgstr "Salva preset"
+
+msgid "Save Settings"
+msgstr "Salva"
+
+msgid "Save failed"
+msgstr "Salvataggio non riuscito"
+
+msgid "Seconds"
+msgstr "Secondi"
+
+msgid "Select session date"
+msgstr "Data della sessione"
+
+msgid "Select session time"
+msgstr "Ora della sessione"
+
+msgid "Selected"
+msgstr "Selezionata"
+
+msgid "Server URL"
+msgstr "URL del server"
+
+msgid "Server error"
+msgstr "Errore del server"
+
+msgid "Session log exported"
+msgstr "Registro delle sessioni esportato"
+
+msgid "Share"
+msgstr "Condividi"
+
+msgid "Silence before the starting bell"
+msgstr "Silenzio prima della campana iniziale"
+
+msgid "Starred Files"
+msgstr "File preferiti"
+
+msgid "Start meditating to see your sessions here."
+msgstr "Inizia a meditare per vedere qui le tue sessioni."
+
+msgid "Starting Bell"
+msgstr "Campana iniziale"
+
+msgid "Stopwatch Mode"
+msgstr "Modalità cronometro"
+
+msgid "Stores URL and username locally; password goes to the Android Keystore. Leave the password blank to keep the stored one."
+msgstr "Salva URL e nome utente in locale; la password va nel Keystore di Android. Lascia la password vuota per mantenere quella salvata."
+
+msgid "Sync configured (waiting for first run)"
+msgstr "Sincronizzazione configurata (in attesa della prima esecuzione)"
+
+msgid "Sync sessions, labels, and preferences between your devices via your own Nextcloud server."
+msgstr "Sincronizza sessioni, etichette e preferenze tra i tuoi dispositivi tramite il tuo server Nextcloud."
+
+msgid "Sync settings saved"
+msgstr "Impostazioni di sincronizzazione salvate"
+
+msgid "Synced just now"
+msgstr "Sincronizzato adesso"
+
+msgid "Syncing with Nextcloud…"
+msgstr "Sincronizzazione con Nextcloud…"
+
+msgid "Tag this session"
+msgstr "Etichetta questa sessione"
+
+msgid "Tap Open File or pick from list below"
+msgstr "Tocca Apri file o scegli dalla lista"
+
+msgid "Tap Open File then Import File, or star a file in Manage Files"
+msgstr "Tocca Apri file e poi Importa file, oppure aggiungi un file ai preferiti in Gestisci file"
+
+msgid "Test connection"
+msgstr "Prova connessione"
+
+msgid "Testing…"
+msgstr "Prova in corso…"
+
+msgid "The Nextcloud folder no longer contains any of the batches this device previously synced. Has the Meditate folder been deleted on the server?\n\nChoose how to recover:"
+msgstr "La cartella Nextcloud non contiene più nessuno dei lotti sincronizzati da questo dispositivo. La cartella Meditate è stata eliminata dal server?\n\nScegli come recuperare:"
+
+msgid "This permanently deletes every session, label, and event stored on this device. Your Nextcloud account, sync settings, and app preferences are kept.\n\nThis cannot be undone."
+msgstr "Elimina definitivamente tutte le sessioni, le etichette e gli eventi su questo dispositivo. Account Nextcloud, impostazioni di sincronizzazione e preferenze vengono mantenuti.\n\nNon è reversibile."
+
+msgid "This permanently removes every logged session from this device — and, via sync, from your other devices.\n\nThis cannot be undone."
+msgstr "Rimuove definitivamente tutte le sessioni registrate da questo dispositivo e, tramite la sincronizzazione, dagli altri tuoi dispositivi.\n\nNon è reversibile."
+
+msgid "Time"
+msgstr "Ora"
+
+msgid "Track name"
+msgstr "Nome della traccia"
+
+msgid "Type"
+msgstr "Tipo"
+
+msgid "URL must start with https://"
+msgstr "L'URL deve iniziare con https://"
+
+msgid "Username"
+msgstr "Nome utente"
+
+msgid "Wipe Local"
+msgstr "Cancella locale"
+
+msgid "Wipe Local Data"
+msgstr "Cancella dati locali"
+
+msgid "Wipe local data?"
+msgstr "Cancellare i dati locali?"
+
+msgid "h "
+msgstr "h "
+
+msgid "{} average over last 7 days"
+msgstr "{} in media negli ultimi 7 giorni"
+
+msgid "{} on {}"
+msgstr "{} il {}"
+
+msgid "{} to go today"
+msgstr "Mancano {} oggi"
+
+msgid "{}% down vs last week ({} vs {})"
+msgstr "{}% in meno della settimana scorsa ({} vs {})"
+
+msgid "{}% of sessions are in the afternoon"
+msgstr "Il {}% delle sessioni è al pomeriggio"
+
+msgid "{}% of sessions are in the evening"
+msgstr "Il {}% delle sessioni è alla sera"
+
+msgid "{}% of sessions are in the morning"
+msgstr "Il {}% delle sessioni è al mattino"
+
+msgid "{}% up vs last week ({} vs {})"
+msgstr "{}% in più della settimana scorsa ({} vs {})"
+
+msgid "{}% vs last month ({} vs {})"
+msgstr "{}% vs il mese scorso ({} vs {})"
+
+msgid "Imported {n} session"
+msgid_plural "Imported {n} sessions"
+msgstr[0] "{n} sessione importata"
+msgstr[1] "{n} sessioni importate"
+
+msgid "Synced {n} day ago"
+msgid_plural "Synced {n} days ago"
+msgstr[0] "Sincronizzato {n} giorno fa"
+msgstr[1] "Sincronizzato {n} giorni fa"
+
+msgid "Synced {n} hour ago"
+msgid_plural "Synced {n} hours ago"
+msgstr[0] "Sincronizzato {n} ora fa"
+msgstr[1] "Sincronizzato {n} ore fa"
+
+msgid "Synced {n} minute ago"
+msgid_plural "Synced {n} minutes ago"
+msgstr[0] "Sincronizzato {n} minuto fa"
+msgstr[1] "Sincronizzato {n} minuti fa"
+
+msgid "{n} day · best was {0}"
+msgid_plural "{n} days · best was {0}"
+msgstr[0] "{n} giorno · record: {0}"
+msgstr[1] "{n} giorni · record: {0}"
+
+msgid "{n} day — new record"
+msgid_plural "{n} days — new record"
+msgstr[0] "{n} giorno — nuovo record"
+msgstr[1] "{n} giorni — nuovo record"
+
+msgid "{n} session to your {0}th"
+msgid_plural "{n} sessions to your {0}th"
+msgstr[0] "{n} sessione alla numero {0}"
+msgstr[1] "{n} sessioni alla numero {0}"
+
+msgid "Add {} ?"
+msgstr "Aggiungere {}?"
+
+msgid "Vibration"
+msgstr "Vibrazione"
+
+msgid "Both"
+msgstr "Entrambi"
+
+msgid "{n} min"
+msgid_plural "{n} min"
+msgstr[0] "{n} min"
+msgstr[1] "{n} min"
+
+msgid "{n} bell"
+msgid_plural "{n} bells"
+msgstr[0] "{n} campana"
+msgstr[1] "{n} campane"
+
+msgid "None enabled"
+msgstr "Nessuna attiva"
+
+msgid "{n} enabled"
+msgid_plural "{n} enabled"
+msgstr[0] "{n} attiva"
+msgstr[1] "{n} attive"
+
+msgid "Every {n} min"
+msgid_plural "Every {n} min"
+msgstr[0] "Ogni {n} min"
+msgstr[1] "Ogni {n} min"
+
+msgid "Every {n} min +/-{0}%"
+msgid_plural "Every {n} min +/-{0}%"
+msgstr[0] "Ogni {n} min +/-{0}%"
+msgstr[1] "Ogni {n} min +/-{0}%"
+
+msgid "At {n} min"
+msgid_plural "At {n} min"
+msgstr[0] "Al minuto {n}"
+msgstr[1] "Al minuto {n}"
+
+msgid "{n} min before end"
+msgid_plural "{n} min before end"
+msgstr[0] "{n} min prima della fine"
+msgstr[1] "{n} min prima della fine"
+
+msgid "This label is not used by any sessions."
+msgstr "Nessuna sessione usa questa etichetta."
+
+msgid "{n} session tagged with this label will be un-labelled."
+msgid_plural "{n} sessions tagged with this label will be un-labelled."
+msgstr[0] "{n} sessione con questa etichetta la perderà."
+msgstr[1] "{n} sessioni con questa etichetta la perderanno."
+
+msgid "New Pattern"
+msgstr "Nuovo schema"
+
+msgid "Edit Pattern"
+msgstr "Modifica schema"
+
+msgid "Duplicate label"
+msgstr "Etichetta duplicata"
+
+msgid "'{}' has the same name as '{}' — it was created independently on another device."
+msgstr "'{}' ha lo stesso nome di '{}': è stata creata in modo indipendente su un altro dispositivo."
+
+msgid "Merging moves {n} session and deletes the duplicate."
+msgid_plural "Merging moves {n} sessions and deletes the duplicate."
+msgstr[0] "Unire sposta {n} sessione ed elimina il duplicato."
+msgstr[1] "Unire sposta {n} sessioni ed elimina il duplicato."
+
+msgid "Merge"
+msgstr "Unisci"
+
+msgid "Keep both"
+msgstr "Mantieni entrambe"
+
+msgid "{n} session · {0} min"
+msgid_plural "{n} sessions · {0} min"
+msgstr[0] "{n} sessione · {0} min"
+msgstr[1] "{n} sessioni · {0} min"
+
+msgid "Pause"
+msgstr "In pausa"
+
+msgid "Resume"
+msgstr "Riprendi"
+
+msgid "Stopwatch"
+msgstr "Cronometro"
+
+msgid "Add Session"
+msgstr "Aggiungi sessione"
+
+msgid "Edit Session"
+msgstr "Modifica sessione"
+
+msgid "Session deleted"
+msgid_plural "{n} sessions deleted"
+msgstr[0] "Sessione eliminata"
+msgstr[1] "{n} sessioni eliminate"

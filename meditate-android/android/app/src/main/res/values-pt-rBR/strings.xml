@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="notification_channel_session">Sessão</string>
+    <string name="notification_channel_session_desc">Notificação persistente enquanto uma sessão de meditação está em andamento</string>
+    <string name="notification_session_running">Sessão em andamento</string>
+</resources>

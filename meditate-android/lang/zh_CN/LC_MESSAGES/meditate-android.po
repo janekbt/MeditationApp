@@ -5,7 +5,7 @@
 msgid ""
 msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
-"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
 
 msgid "1 day · keep going"
 msgstr "1 天 · 继续保持"
@@ -186,3 +186,618 @@ msgstr "撤销"
 
 msgid "min"
 msgstr "分钟"
+
+msgid " min"
+msgstr " 分钟"
+
+msgid "' will be removed from this device and any synced peers."
+msgstr "”将从此设备及所有已同步设备中移除。"
+
+msgid "' with the current settings?"
+msgstr "”吗？将使用当前设置。"
+
+msgid "'{}' applied"
+msgstr "已应用“{}”"
+
+msgid "'{}' deleted"
+msgstr "已删除“{}”"
+
+msgid "About"
+msgstr "关于"
+
+msgid "About {}"
+msgstr "约 {}"
+
+msgid "Accent colour — tinting for buttons, rings, and highlights."
+msgstr "强调色——用于按钮、圆环和高亮。"
+
+msgid "App password"
+msgstr "应用密码"
+
+msgid "Appearance"
+msgstr "外观"
+
+msgid "Authentication failed"
+msgstr "认证失败"
+
+msgid "BY LABEL"
+msgstr "按标签"
+
+msgid "Bar"
+msgstr "柱状"
+
+msgid "Before end"
+msgstr "结束前"
+
+msgid "Bell Sound"
+msgstr "铃声"
+
+msgid "Bells"
+msgstr "铃声"
+
+msgid "Box Breath"
+msgstr "箱式呼吸"
+
+msgid "Box Breath cues"
+msgstr "箱式呼吸提示音"
+
+msgid "Box Breathing"
+msgstr "箱式呼吸"
+
+msgid "Breath Phases"
+msgstr "呼吸阶段"
+
+msgid "Chart"
+msgstr "图表"
+
+msgid "Choose Bell Sound"
+msgstr "选择铃声"
+
+msgid "Choose Label"
+msgstr "选择标签"
+
+msgid "Choose Pattern"
+msgstr "选择模式"
+
+msgid "Close"
+msgstr "关闭"
+
+msgid "Connection OK"
+msgstr "连接正常"
+
+msgid "Converting… "
+msgstr "转换中… "
+
+msgid "Copy"
+msgstr "复制"
+
+msgid "Count up from zero"
+msgstr "从零开始计时"
+
+msgid "Create Label"
+msgstr "创建标签"
+
+msgid "Create Preset"
+msgstr "创建预设"
+
+msgid "Create interval bell…"
+msgstr "创建间隔铃…"
+
+msgid "Create new guided file…"
+msgstr "创建新引导文件…"
+
+msgid "Create new label…"
+msgstr "创建新标签…"
+
+msgid "Create new preset…"
+msgstr "创建新预设…"
+
+msgid "Create pattern"
+msgstr "创建模式"
+
+msgid "Cues"
+msgstr "提示音"
+
+msgid "Cues during phases"
+msgstr "各阶段的提示音"
+
+msgid "Current file"
+msgstr "当前文件"
+
+msgid "DAILY GOAL"
+msgstr "每日目标"
+
+msgid "Daily Goal"
+msgstr "每日目标"
+
+msgid "Daily goal"
+msgstr "每日目标"
+
+msgid "Delete Preset?"
+msgstr "删除预设？"
+
+msgid "Delete all sessions?"
+msgstr "删除所有会话？"
+
+msgid "Diagnostics"
+msgstr "诊断"
+
+msgid "Different cue per phase to feel the cycle"
+msgstr "每个阶段使用不同提示音以感受循环"
+
+msgid "Duration (0.1 s)"
+msgstr "时长（0.1 秒）"
+
+msgid "Edit"
+msgstr "编辑"
+
+msgid "End Bell"
+msgstr "结束铃"
+
+msgid "Enter URL and username"
+msgstr "请输入 URL 和用户名"
+
+msgid "Enter a password"
+msgstr "请输入密码"
+
+msgid "Every N min"
+msgstr "每 N 分钟"
+
+msgid "Exhale"
+msgstr "呼气"
+
+msgid "Export failed"
+msgstr "导出失败"
+
+msgid "Finish"
+msgstr "完成"
+
+msgid "From start"
+msgstr "从开始起"
+
+msgid "Goal reached · {} today"
+msgstr "已达成目标 · 今天 {}"
+
+msgid "Guided"
+msgstr "引导"
+
+msgid "Hold (empty)"
+msgstr "屏息（呼气后）"
+
+msgid "Hold (full)"
+msgstr "屏息（吸气后）"
+
+msgid "INSIGHTS"
+msgstr "洞察"
+
+msgid "Import Bell Sound"
+msgstr "导入铃声"
+
+msgid "Import File"
+msgstr "导入文件"
+
+msgid "Import Guided File"
+msgstr "导入引导文件"
+
+msgid "Import failed — see Diagnostics"
+msgstr "导入失败——请查看诊断"
+
+msgid "Import sound…"
+msgstr "导入声音…"
+
+msgid "Importing: {} ({})"
+msgstr "导入中：{}（{}）"
+
+msgid "Inhale"
+msgstr "吸气"
+
+msgid "Interval Bell"
+msgstr "间隔铃"
+
+msgid "Interval Bells"
+msgstr "间隔铃"
+
+msgid "Jitter %"
+msgstr "随机幅度 %"
+
+msgid "Keep Screen Awake"
+msgstr "保持屏幕常亮"
+
+msgid "Keystore read failed"
+msgstr "读取 Keystore 失败"
+
+msgid "Keystore write failed"
+msgstr "写入 Keystore 失败"
+
+msgid "Kind"
+msgstr "类型"
+
+msgid "LAST 13 WEEKS"
+msgstr "最近 13 周"
+
+msgid "Last sync failed — tap to retry\n{}"
+msgstr "上次同步失败——点按重试\n{}"
+
+msgid "MINUTES / DAY"
+msgstr "分钟 / 天"
+
+msgid "MINUTES / MONTH"
+msgstr "分钟 / 月"
+
+msgid "MINUTES / WEEK"
+msgstr "分钟 / 周"
+
+msgid "Manage Bells"
+msgstr "管理铃声"
+
+msgid "Manage Files"
+msgstr "管理文件"
+
+msgid "Manage Presets"
+msgstr "管理预设"
+
+msgid "Minutes (5–240)"
+msgstr "分钟（5–240）"
+
+msgid "Minutes per day"
+msgstr "每天分钟数"
+
+msgid "Minutes per day — drives the ring on the Stats tab."
+msgstr "每天分钟数——驱动统计页的圆环。"
+
+msgid "Name"
+msgstr "名称"
+
+msgid "Network error"
+msgstr "网络错误"
+
+msgid "Nextcloud Sync"
+msgstr "Nextcloud 同步"
+
+msgid "No starred files"
+msgstr "没有已收藏的文件"
+
+msgid "Not a WebDAV folder"
+msgstr "不是 WebDAV 文件夹"
+
+msgid "Note"
+msgstr "备注"
+
+msgid "Only sessions with a note"
+msgstr "仅显示有备注的会话"
+
+msgid "Open File"
+msgstr "打开文件"
+
+msgid "Override"
+msgstr "覆盖"
+
+msgid "Override Preset?"
+msgstr "覆盖预设？"
+
+msgid "Pattern"
+msgstr "模式"
+
+msgid "Play"
+msgstr "播放"
+
+msgid "Play a signal when the session begins"
+msgstr "会话开始时发出信号"
+
+msgid "Play a signal when the session ends"
+msgstr "会话结束时发出信号"
+
+msgid "Points"
+msgstr "点"
+
+msgid "Preparation Time"
+msgstr "准备时间"
+
+msgid "Preset name"
+msgstr "预设名称"
+
+msgid "Preset overridden"
+msgstr "预设已覆盖"
+
+msgid "Presets"
+msgstr "预设"
+
+msgid "Prevent display sleep during a session"
+msgstr "会话期间防止屏幕休眠"
+
+msgid "Preview"
+msgstr "预览"
+
+msgid "Push My Data"
+msgstr "推送我的数据"
+
+msgid "Recovered {} min session"
+msgstr "已恢复 {} 分钟的会话"
+
+msgid "Remote data appears wiped"
+msgstr "远程数据似乎已被清除"
+
+msgid "Rename"
+msgstr "重命名"
+
+msgid "Rename Guided File"
+msgstr "重命名引导文件"
+
+msgid "Rename Label"
+msgstr "重命名标签"
+
+msgid "Rename Preset"
+msgstr "重命名预设"
+
+msgid "Replace '"
+msgstr "要替换“"
+
+msgid "Report an issue"
+msgstr "报告问题"
+
+msgid "Ring during the session"
+msgstr "会话期间响铃"
+
+msgid "Save Preset"
+msgstr "保存预设"
+
+msgid "Save Settings"
+msgstr "保存设置"
+
+msgid "Save failed"
+msgstr "保存失败"
+
+msgid "Seconds"
+msgstr "秒"
+
+msgid "Select session date"
+msgstr "选择会话日期"
+
+msgid "Select session time"
+msgstr "选择会话时间"
+
+msgid "Selected"
+msgstr "已选择"
+
+msgid "Server URL"
+msgstr "服务器 URL"
+
+msgid "Server error"
+msgstr "服务器错误"
+
+msgid "Session log exported"
+msgstr "会话记录已导出"
+
+msgid "Share"
+msgstr "分享"
+
+msgid "Silence before the starting bell"
+msgstr "起始铃前的静默"
+
+msgid "Starred Files"
+msgstr "收藏的文件"
+
+msgid "Start meditating to see your sessions here."
+msgstr "开始冥想后，你的会话将显示在这里。"
+
+msgid "Starting Bell"
+msgstr "起始铃"
+
+msgid "Stopwatch Mode"
+msgstr "秒表模式"
+
+msgid "Stores URL and username locally; password goes to the Android Keystore. Leave the password blank to keep the stored one."
+msgstr "URL 和用户名保存在本地；密码存入 Android Keystore。密码留空则保留已存储的密码。"
+
+msgid "Sync configured (waiting for first run)"
+msgstr "同步已配置（等待首次运行）"
+
+msgid "Sync sessions, labels, and preferences between your devices via your own Nextcloud server."
+msgstr "通过你自己的 Nextcloud 服务器在设备间同步会话、标签和偏好设置。"
+
+msgid "Sync settings saved"
+msgstr "同步设置已保存"
+
+msgid "Synced just now"
+msgstr "刚刚同步"
+
+msgid "Syncing with Nextcloud…"
+msgstr "正在与 Nextcloud 同步…"
+
+msgid "Tag this session"
+msgstr "为此会话加标签"
+
+msgid "Tap Open File or pick from list below"
+msgstr "点按“打开文件”或从下方列表选择"
+
+msgid "Tap Open File then Import File, or star a file in Manage Files"
+msgstr "点按“打开文件”再点“导入文件”，或在“管理文件”中收藏文件"
+
+msgid "Test connection"
+msgstr "测试连接"
+
+msgid "Testing…"
+msgstr "测试中…"
+
+msgid "The Nextcloud folder no longer contains any of the batches this device previously synced. Has the Meditate folder been deleted on the server?\n\nChoose how to recover:"
+msgstr "Nextcloud 文件夹中已不包含此设备之前同步过的任何批次。服务器上的 Meditate 文件夹是否已被删除？\n\n请选择恢复方式："
+
+msgid "This permanently deletes every session, label, and event stored on this device. Your Nextcloud account, sync settings, and app preferences are kept.\n\nThis cannot be undone."
+msgstr "将永久删除此设备上的所有会话、标签和事件。Nextcloud 账户、同步设置和应用偏好将保留。\n\n此操作无法撤销。"
+
+msgid "This permanently removes every logged session from this device — and, via sync, from your other devices.\n\nThis cannot be undone."
+msgstr "将从此设备永久删除所有已记录的会话，并通过同步从你的其他设备中删除。\n\n此操作无法撤销。"
+
+msgid "Time"
+msgstr "时间"
+
+msgid "Track name"
+msgstr "音轨名称"
+
+msgid "Type"
+msgstr "类型"
+
+msgid "URL must start with https://"
+msgstr "URL 必须以 https:// 开头"
+
+msgid "Username"
+msgstr "用户名"
+
+msgid "Wipe Local"
+msgstr "清除本地"
+
+msgid "Wipe Local Data"
+msgstr "清除本地数据"
+
+msgid "Wipe local data?"
+msgstr "清除本地数据？"
+
+msgid "h "
+msgstr "小时 "
+
+msgid "{} average over last 7 days"
+msgstr "最近 7 天平均 {}"
+
+msgid "{} on {}"
+msgstr "{}，{}"
+
+msgid "{} to go today"
+msgstr "今天还差 {}"
+
+msgid "{}% down vs last week ({} vs {})"
+msgstr "比上周减少 {}%（{} 对 {}）"
+
+msgid "{}% of sessions are in the afternoon"
+msgstr "{}% 的会话在下午"
+
+msgid "{}% of sessions are in the evening"
+msgstr "{}% 的会话在晚上"
+
+msgid "{}% of sessions are in the morning"
+msgstr "{}% 的会话在上午"
+
+msgid "{}% up vs last week ({} vs {})"
+msgstr "比上周增加 {}%（{} 对 {}）"
+
+msgid "{}% vs last month ({} vs {})"
+msgstr "与上月相比 {}%（{} 对 {}）"
+
+msgid "Imported {n} session"
+msgid_plural "Imported {n} sessions"
+msgstr[0] "已导入 {n} 个会话"
+
+msgid "Synced {n} day ago"
+msgid_plural "Synced {n} days ago"
+msgstr[0] "{n} 天前已同步"
+
+msgid "Synced {n} hour ago"
+msgid_plural "Synced {n} hours ago"
+msgstr[0] "{n} 小时前已同步"
+
+msgid "Synced {n} minute ago"
+msgid_plural "Synced {n} minutes ago"
+msgstr[0] "{n} 分钟前已同步"
+
+msgid "{n} day · best was {0}"
+msgid_plural "{n} days · best was {0}"
+msgstr[0] "{n} 天 · 最佳纪录 {0} 天"
+
+msgid "{n} day — new record"
+msgid_plural "{n} days — new record"
+msgstr[0] "{n} 天——新纪录"
+
+msgid "{n} session to your {0}th"
+msgid_plural "{n} sessions to your {0}th"
+msgstr[0] "距第 {0} 个会话还差 {n} 个"
+
+msgid "Add {} ?"
+msgstr "加上 {}？"
+
+msgid "Vibration"
+msgstr "振动"
+
+msgid "Both"
+msgstr "两者"
+
+msgid "{n} min"
+msgid_plural "{n} min"
+msgstr[0] "{n} 分钟"
+
+msgid "{n} bell"
+msgid_plural "{n} bells"
+msgstr[0] "{n} 个铃"
+
+msgid "None enabled"
+msgstr "未启用"
+
+msgid "{n} enabled"
+msgid_plural "{n} enabled"
+msgstr[0] "已启用 {n} 个"
+
+msgid "Every {n} min"
+msgid_plural "Every {n} min"
+msgstr[0] "每 {n} 分钟"
+
+msgid "Every {n} min +/-{0}%"
+msgid_plural "Every {n} min +/-{0}%"
+msgstr[0] "每 {n} 分钟 +/-{0}%"
+
+msgid "At {n} min"
+msgid_plural "At {n} min"
+msgstr[0] "第 {n} 分钟"
+
+msgid "{n} min before end"
+msgid_plural "{n} min before end"
+msgstr[0] "结束前 {n} 分钟"
+
+msgid "This label is not used by any sessions."
+msgstr "没有会话使用此标签。"
+
+msgid "{n} session tagged with this label will be un-labelled."
+msgid_plural "{n} sessions tagged with this label will be un-labelled."
+msgstr[0] "{n} 个使用此标签的会话将失去标签。"
+
+msgid "New Pattern"
+msgstr "新建模式"
+
+msgid "Edit Pattern"
+msgstr "编辑模式"
+
+msgid "Duplicate label"
+msgstr "重复的标签"
+
+msgid "'{}' has the same name as '{}' — it was created independently on another device."
+msgstr "“{}”与“{}”同名——它是在另一台设备上独立创建的。"
+
+msgid "Merging moves {n} session and deletes the duplicate."
+msgid_plural "Merging moves {n} sessions and deletes the duplicate."
+msgstr[0] "合并将移动 {n} 个会话并删除重复项。"
+
+msgid "Merge"
+msgstr "合并"
+
+msgid "Keep both"
+msgstr "保留两者"
+
+msgid "{n} session · {0} min"
+msgid_plural "{n} sessions · {0} min"
+msgstr[0] "{n} 个会话 · {0} 分钟"
+
+msgid "Pause"
+msgstr "已暂停"
+
+msgid "Resume"
+msgstr "继续"
+
+msgid "Stopwatch"
+msgstr "秒表"
+
+msgid "Add Session"
+msgstr "添加会话"
+
+msgid "Edit Session"
+msgstr "编辑会话"
+
+msgid "Session deleted"
+msgid_plural "{n} sessions deleted"
+msgstr[0] "已删除 {n} 个会话"

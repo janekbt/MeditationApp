@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="notification_channel_session">Сессия</string>
+    <string name="notification_channel_session_desc">Постоянное уведомление во время сессии медитации</string>
+    <string name="notification_session_running">Идёт сессия</string>
+</resources>

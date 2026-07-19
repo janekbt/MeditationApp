@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="notification_channel_session">会话</string>
+    <string name="notification_channel_session_desc">冥想会话进行时的常驻通知</string>
+    <string name="notification_session_running">会话进行中</string>
+</resources>
