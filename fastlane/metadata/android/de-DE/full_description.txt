@@ -1,0 +1,40 @@
+Meditate ist ein freundlicher Meditations-Timer für eine
+beständige Praxis — ohne Konten, ohne Telemetrie, mit deinen
+Daten unter deiner eigenen Kontrolle.
+
+<b>Timer</b>
+
+* Countdown-, Stoppuhr- und Box-Atmungs-Modus
+* Box-Atmung: Muster wählen (4-4-4-4, 4-7-8-0, …) oder jede
+  Phase einzeln einstellen, mit einem ruhigen Punkt, der beim
+  Atmen das Quadrat entlangwandert
+* Geführter Modus: eigene Audiodateien importieren, die Glocke
+  läutet am Ende der Aufnahme
+* Startglocke, Intervallglocken (fest, periodisch oder
+  zufällig), Endglocke — Klang, Vibration oder beides, mit
+  eigenen Klängen und eigenen Vibrationsmustern
+* Voreinstellungen für regelmäßige Sitzungen und ein
+  Startbildschirm-Widget für den Ein-Tipp-Start
+
+<b>Verlauf & Statistik</b>
+
+* Nach Datum gruppierter Sitzungsverlauf mit Kategorien,
+  Notizen und Rückgängig beim Löschen
+* Tagesziel-Ring, 13-Wochen-Heatmap, Balken-/Liniendiagramme,
+  Auswertung pro Kategorie
+* CSV-Export und -Import, Insight-Timer-Import
+
+<b>Sync</b>
+
+* Optionaler Abgleich zwischen deinen Geräten über deine eigene
+  Nextcloud — kompatibel mit der GNOME/Linux-Version von
+  Meditate, die denselben Kern teilt
+* Offline-first: alles funktioniert ohne Netz; der Abgleich
+  führt Änderungen zusammen, sobald du wieder online bist
+
+<b>Privatsphäre</b>
+
+Sitzungen liegen in einer lokalen Datenbank auf deinem Gerät.
+Die einzige Netzwerkverbindung geht an den von dir
+eingerichteten Nextcloud-Server — es gibt keinen anderen
+Server, keine Analyse, kein Tracking.

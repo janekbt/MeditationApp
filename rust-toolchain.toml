@@ -1,0 +1,6 @@
+# Pin the toolchain so contributor + F-Droid buildserver builds
+# use a known compiler. The flatpak/Flathub path is unaffected
+# (it uses the SDK's rust, not rustup). Bump deliberately.
+[toolchain]
+channel = "1.95.0"
+targets = ["aarch64-linux-android"]

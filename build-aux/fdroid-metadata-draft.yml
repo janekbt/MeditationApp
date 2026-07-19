@@ -1,0 +1,45 @@
+# DRAFT metadata for the fdroiddata merge request —
+# metadata/io.github.janekbt.Meditate.yml in
+# https://gitlab.com/fdroid/fdroiddata. Submit after tagging
+# v26.7.1 on main. Kept in-repo so the submission day is
+# copy-paste; fdroiddata reviewers may adjust field style.
+Categories:
+  - Sports & Health
+License: GPL-3.0-or-later
+AuthorName: Janek
+SourceCode: https://github.com/janekbt/MeditationApp
+IssueTracker: https://github.com/janekbt/MeditationApp/issues
+Changelog: https://github.com/janekbt/MeditationApp/blob/main/fastlane/metadata/android/en-US/changelogs/
+
+AutoName: Meditate
+
+RepoType: git
+Repo: https://github.com/janekbt/MeditationApp.git
+
+Builds:
+  - versionName: 26.7.1
+    versionCode: 260701
+    commit: v26.7.1
+    subdir: meditate-android/android
+    sudo:
+      - apt-get update
+      - apt-get install -y curl
+      - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs
+        | sh -s -- -y --default-toolchain 1.95.0
+      - source /root/.cargo/env && rustup target add aarch64-linux-android
+    init:
+      # rust-build.sh sources ~/.config/meditate-android/env.sh
+      # when present (dev machines) and otherwise relies on
+      # ANDROID_NDK_ROOT / ANDROID_HOME, which fdroidserver
+      # exports from the ndk pin below.
+      - source /root/.cargo/env
+    gradle:
+      - yes
+    ndk: r27c
+    scandelete:
+      - meditate-android/android/app/src/main/jniLibs
+
+AutoUpdateMode: Version
+UpdateCheckMode: Tags ^v[0-9.]+$
+CurrentVersion: 26.7.1
+CurrentVersionCode: 260701

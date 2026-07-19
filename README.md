@@ -165,6 +165,14 @@ See [`BUILDING.md`](BUILDING.md) for the full cross-compile + Librem 5 deploy cy
 Sessions and settings are stored in a SQLite database at
 `~/.local/share/meditate/meditate.db` (or the Flatpak equivalent inside the sandbox).
 
+## Privacy
+
+No telemetry, no analytics, no accounts. Your sessions live in a
+local SQLite database on your device. Network access happens only
+if you configure sync against your own Nextcloud, and only to that
+server. On Android, cloud backup of the database is disabled — the
+supported backup paths are your Nextcloud and the CSV export.
+
 ## License
 
 Meditate is free software released under the [GNU General Public License v3.0 or later](COPYING).

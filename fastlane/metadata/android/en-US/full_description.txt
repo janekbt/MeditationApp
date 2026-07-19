@@ -1,0 +1,38 @@
+Meditate is a friendly meditation timer that helps you build a
+consistent practice — with no accounts, no telemetry, and your
+data under your own control.
+
+<b>Timer</b>
+
+* Countdown, stopwatch, and Box Breath modes
+* Box Breath: pick a pattern (4-4-4-4, 4-7-8-0, …) or dial in
+  each phase, with a calm dot tracing the square as you breathe
+* Guided mode: import your own audio files, bells ring when the
+  track ends
+* Starting bell, interval bells (fixed, periodic, or randomised),
+  end bell — sound, vibration, or both, with your own audio and
+  custom vibration patterns
+* Presets for your regular sits, plus a home-screen widget for
+  one-tap starts
+
+<b>Log & Stats</b>
+
+* Date-grouped session log with labels and notes, swipe to
+  delete with undo
+* Daily-goal ring, 13-week contribution heatmap, bar/line charts,
+  per-label totals and insights
+* CSV export and import, Insight Timer import
+
+<b>Sync</b>
+
+* Optional sync between your devices via your own Nextcloud —
+  also works with the GNOME/Linux version of Meditate, which
+  shares the same core
+* Offline-first: everything works without a network; sync merges
+  changes whenever you're back online
+
+<b>Privacy</b>
+
+Sessions live in a local database on your device. The only
+network connection is to the Nextcloud server you configure —
+there is no other server, no analytics, and no tracking.

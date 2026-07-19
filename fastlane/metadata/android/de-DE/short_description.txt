@@ -1,0 +1,1 @@
+Meditations-Timer mit Sitzungslog, Statistik und Nextcloud-Sync

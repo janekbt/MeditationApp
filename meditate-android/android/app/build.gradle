@@ -23,8 +23,12 @@ android {
         applicationId 'io.github.janekbt.Meditate'
         minSdk 26
         targetSdk 34
-        versionCode 1
-        versionName '0.1.0'
+        // Date-based, matching the GTK shell's yy.month.patch
+        // scheme (26.7.1 = first July-2026 release). versionCode
+        // is the same date flattened to yymmpp — monotonic as
+        // long as patch < 100.
+        versionCode 260701
+        versionName '26.7.1'
     }
     sourceSets {
         main {
