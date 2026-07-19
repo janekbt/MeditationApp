@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Platform-side strings (notification + widget chrome). The
+     Slint UI translates via bundled gettext .po files instead;
+     these resources cover only what Android renders itself. -->
+<resources>
+    <string name="app_name">Meditate</string>
+    <string name="notification_channel_session">Session</string>
+    <string name="notification_channel_session_desc">Persistent notification while a meditation session is in flight</string>
+    <string name="notification_session_running">Session in progress</string>
+</resources>

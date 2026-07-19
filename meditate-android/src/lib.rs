@@ -4858,6 +4858,53 @@ fn build_ui() -> MainWindow {
                                     ui.set_guided_import_busy(
                                         false,
                                     );
+                                    // Surface the failure (the
+                                    // specific cause — e.g. the
+                                    // API-29 transcode floor —
+                                    // stays in Diagnostics).
+                                    // Standard raise discipline:
+                                    // commit + clear every pending
+                                    // undo discriminator first.
+                                    commit_pending_deletes(
+                                        &ui,
+                                        &loaded_log_sessions_tick,
+                                        &pending_deletes_tick,
+                                    );
+                                    recovery_uuid_tick
+                                        .borrow_mut()
+                                        .take();
+                                    pending_preset_undo_tick
+                                        .borrow_mut()
+                                        .take();
+                                    pending_preset_delete_tick
+                                        .borrow_mut()
+                                        .take();
+                                    pending_override_restore_tick
+                                        .borrow_mut()
+                                        .take();
+                                    discard_pending_guided_delete(
+                                        &pending_guided_delete_tick,
+                                    );
+                                    ui.set_snackbar_text(
+                                        ui.global::<Tr>()
+                                            .invoke_import_failed(),
+                                    );
+                                    ui.set_snackbar_show_undo(false);
+                                    ui.set_snackbar_visible(true);
+                                    let weak_inner = ui.as_weak();
+                                    prefs_delete_timer.start(
+                                        slint::TimerMode::SingleShot,
+                                        std::time::Duration::from_secs(4),
+                                        move || {
+                                            if let Some(ui) =
+                                                weak_inner.upgrade()
+                                            {
+                                                ui.set_snackbar_visible(
+                                                    false,
+                                                );
+                                            }
+                                        },
+                                    );
                                 }
                             }
                         }
@@ -4890,6 +4937,32 @@ fn build_ui() -> MainWindow {
                         let t = prev.enter_overtime();
                         dispatch_effects(&t.effects);
                         *state.borrow_mut() = t.state;
+                    }
+                    // Guided track lost audio focus (incoming call
+                    // / another media app): route through the same
+                    // pause transition as the Pause button so the
+                    // timer and the track pause together. Running-
+                    // only — a loss while already Paused must not
+                    // toggle back to Running. No auto-resume on
+                    // regain; the user resumes deliberately.
+                    if guided::take_focus_loss(app)
+                        && state.borrow().is_running()
+                    {
+                        let prev = std::mem::replace(
+                            &mut *state.borrow_mut(),
+                            AppState::idle(),
+                        );
+                        // Shape is unused on the Active branch of
+                        // toggle; Timer default keeps it cheap.
+                        let t = prev.toggle(
+                            meditate_core::session::SessionShape::TimerStopwatch,
+                            now_since_epoch(),
+                        );
+                        dispatch_effects(&t.effects);
+                        *state.borrow_mut() = t.state;
+                        if let Some(ui) = weak.upgrade() {
+                            refresh(&ui, &state.borrow(), now_since_epoch());
+                        }
                     }
                 }
             }

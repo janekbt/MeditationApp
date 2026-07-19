@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Platform Material NoActionBar parent so we pull in NO
-     appcompat/material Gradle dependency (xbuild shipped none;
-     Slint draws its own fullscreen UI). Phase 8's theming pass
-     can refine this now that we control res/. -->
+<!-- Platform Material NoActionBar parents so we pull in NO
+     appcompat/material Gradle dependency (Slint draws its own
+     fullscreen UI). Day/night split exists only for the cold-
+     start window flash: Light here, dark in values-night. -->
 <resources>
-    <style name="Theme.Meditate" parent="@android:style/Theme.Material.NoActionBar" />
+    <style name="Theme.Meditate" parent="@android:style/Theme.Material.Light.NoActionBar" />
 </resources>

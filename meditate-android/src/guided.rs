@@ -49,6 +49,7 @@ const CSV_PICK_FILENAME: &str = "csv_pick";
 /// audio reached its natural end; the tick loop forces the
 /// session into Overtime (robust to a probe-vs-real mismatch).
 const EOS_FILENAME: &str = "guided_eos";
+const FOCUS_LOSS_FILENAME: &str = "guided_focus_loss";
 
 /// Launch the system audio picker (fire-and-forget). The result
 /// arrives asynchronously via the drop-file; poll
@@ -272,6 +273,23 @@ pub fn stop(app: &AndroidApp) {
 /// Take the natural-end flag the player wrote on
 /// onCompletion/onError. Single-consumption (drop-file removed),
 /// so the tick loop forces Overtime exactly once.
+/// Single-shot poll of the audio-focus-loss drop-file
+/// (`MeditateGuided.markFocusLoss` writes it when a call or
+/// another media app takes focus). The tick loop routes a `true`
+/// through the normal pause transition.
+pub fn take_focus_loss(app: &AndroidApp) -> bool {
+    let Some(data_root) = app.internal_data_path() else {
+        return false;
+    };
+    let path = data_root.join("meditate").join(FOCUS_LOSS_FILENAME);
+    if std::fs::metadata(&path).is_ok() {
+        let _ = std::fs::remove_file(&path);
+        true
+    } else {
+        false
+    }
+}
+
 pub fn take_eos(app: &AndroidApp) -> bool {
     let Some(data_root) = app.internal_data_path() else {
         return false;

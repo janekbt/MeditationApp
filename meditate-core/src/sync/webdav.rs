@@ -71,6 +71,18 @@ pub enum WebDavError {
     Redirected { location: Option<String> },
 }
 
+/// Strip URL-shaped tokens from a transport-error message.
+/// ureq's `Transport` Display embeds the full request URL; these
+/// strings land in the user-shareable diagnostics log and the
+/// last-sync-error tooltip, so the server hostname must not ride
+/// along. Keeps the cause ("Connection refused", DNS failure...).
+fn sanitize_transport_msg(raw: &str) -> String {
+    raw.split_whitespace()
+        .filter(|w| !w.contains("://"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 impl fmt::Display for WebDavError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -271,7 +283,7 @@ impl WebDav for HttpWebDav {
                 Err(Self::map_status_error(status, body))
             }
             Err(ureq::Error::Transport(t)) => {
-                Err(WebDavError::Network(t.to_string()))
+                Err(WebDavError::Network(sanitize_transport_msg(&t.to_string())))
             }
         }
     }
@@ -292,7 +304,7 @@ impl WebDav for HttpWebDav {
                 let body = resp.into_string().unwrap_or_default();
                 Err(Self::map_status_error(status, body))
             }
-            Err(ureq::Error::Transport(t)) => Err(WebDavError::Network(t.to_string())),
+            Err(ureq::Error::Transport(t)) => Err(WebDavError::Network(sanitize_transport_msg(&t.to_string()))),
         }
     }
 
@@ -310,7 +322,7 @@ impl WebDav for HttpWebDav {
                 let body = resp.into_string().unwrap_or_default();
                 Err(Self::map_status_error(status, body))
             }
-            Err(ureq::Error::Transport(t)) => Err(WebDavError::Network(t.to_string())),
+            Err(ureq::Error::Transport(t)) => Err(WebDavError::Network(sanitize_transport_msg(&t.to_string()))),
         }
     }
 
@@ -332,7 +344,7 @@ impl WebDav for HttpWebDav {
                 let body = resp.into_string().unwrap_or_default();
                 Err(Self::map_status_error(status, body))
             }
-            Err(ureq::Error::Transport(t)) => Err(WebDavError::Network(t.to_string())),
+            Err(ureq::Error::Transport(t)) => Err(WebDavError::Network(sanitize_transport_msg(&t.to_string()))),
         }
     }
 
@@ -348,7 +360,7 @@ impl WebDav for HttpWebDav {
                 let body = resp.into_string().unwrap_or_default();
                 Err(Self::map_status_error(status, body))
             }
-            Err(ureq::Error::Transport(t)) => Err(WebDavError::Network(t.to_string())),
+            Err(ureq::Error::Transport(t)) => Err(WebDavError::Network(sanitize_transport_msg(&t.to_string()))),
         }
     }
 
@@ -372,7 +384,7 @@ impl WebDav for HttpWebDav {
                 return Err(Self::map_status_error(status, body));
             }
             Err(ureq::Error::Transport(t)) => {
-                return Err(WebDavError::Network(t.to_string()));
+                return Err(WebDavError::Network(sanitize_transport_msg(&t.to_string())));
             }
         };
         let body = response.into_string()

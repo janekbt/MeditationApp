@@ -34,8 +34,20 @@ object MeditateInsets {
                 )
                 bars.top to bars.bottom
             } else {
+                // 26..29: systemWindowInsets alone can miss the
+                // display cutout on notched Android 9/10 devices —
+                // union in the cutout's safe insets (API 28+).
                 @Suppress("DEPRECATION")
-                (wi.systemWindowInsetTop to wi.systemWindowInsetBottom)
+                var top = wi.systemWindowInsetTop
+                @Suppress("DEPRECATION")
+                var bottom = wi.systemWindowInsetBottom
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    wi.displayCutout?.let {
+                        top = maxOf(top, it.safeInsetTop)
+                        bottom = maxOf(bottom, it.safeInsetBottom)
+                    }
+                }
+                top to bottom
             }
             "${topPx / density},${bottomPx / density}"
         }

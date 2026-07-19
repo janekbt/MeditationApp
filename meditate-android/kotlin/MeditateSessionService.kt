@@ -33,6 +33,7 @@ import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 
 class MeditateSessionService : Service() {
     companion object {
@@ -115,6 +116,16 @@ class MeditateSessionService : Service() {
     // — Phase 5 will plug bell-cue audio into the same session.
     private var mediaSession: MediaSession? = null
 
+    // The FGS keeps the *process* alive, but not the CPU: in Doze /
+    // deep suspend the 200 ms Slint tick stops being scheduled and
+    // interval/end bells fire late (CLOCK_BOOTTIME keeps elapsed
+    // correct, so nothing is lost — just delayed). A partial wake
+    // lock for the session's duration is the alarm-clock-grade
+    // guarantee that the bell rings on time; battery cost over a
+    // meditation-length window is negligible. 4 h timeout is a
+    // leak backstop far above any real session.
+    private var wakeLock: PowerManager.WakeLock? = null
+
     override fun onCreate() {
         super.onCreate()
         createChannel()
@@ -142,8 +153,16 @@ class MeditateSessionService : Service() {
         when (intent?.action) {
             ACTION_START_SESSION -> {
                 startForeground(NOTIFICATION_ID, buildNotification())
+                if (wakeLock == null) {
+                    val pm = getSystemService(PowerManager::class.java)
+                    wakeLock = pm.newWakeLock(
+                        PowerManager.PARTIAL_WAKE_LOCK,
+                        "Meditate:session",
+                    ).apply { acquire(4 * 60 * 60 * 1000L) }
+                }
             }
             ACTION_STOP_SESSION -> {
+                releaseWakeLock()
                 // STOP_FOREGROUND_REMOVE = clear the notification
                 // even though the user might still be on the Done
                 // screen — the timer's done, the notification's
@@ -161,6 +180,7 @@ class MeditateSessionService : Service() {
     }
 
     override fun onDestroy() {
+        releaseWakeLock()
         // MediaSession holds a system-side binder; leaking it shows
         // up as a ghost media control until the next reboot. release()
         // also clears isActive/playback state so a stray scan can't
@@ -168,6 +188,11 @@ class MeditateSessionService : Service() {
         mediaSession?.release()
         mediaSession = null
         super.onDestroy()
+    }
+
+    private fun releaseWakeLock() {
+        wakeLock?.let { runCatching { if (it.isHeld) it.release() } }
+        wakeLock = null
     }
 
     // No client binding — this is a started-service, not a bound-
@@ -178,10 +203,11 @@ class MeditateSessionService : Service() {
         val mgr = getSystemService(NotificationManager::class.java)
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "Session",
+            getString(R.string.notification_channel_session),
             NotificationManager.IMPORTANCE_LOW,
         ).apply {
-            description = "Persistent notification while a meditation session is in flight"
+            description =
+                getString(R.string.notification_channel_session_desc)
             // Silent: the notification is informational, not an
             // alert. Bell-fire audio (Phase 5) lives elsewhere.
             setSound(null, null)
@@ -205,8 +231,8 @@ class MeditateSessionService : Service() {
         val style = Notification.MediaStyle()
         mediaSession?.let { style.setMediaSession(it.sessionToken) }
         return Notification.Builder(this, CHANNEL_ID)
-            .setContentTitle("Meditate")
-            .setContentText("Session in progress")
+            .setContentTitle(getString(R.string.app_name))
+            .setContentText(getString(R.string.notification_session_running))
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setOngoing(true)
             .setCategory(Notification.CATEGORY_TRANSPORT)

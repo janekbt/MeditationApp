@@ -130,7 +130,10 @@ export global Tr {
 }
 
 // Single-glyph font (U+25CF, subset from DejaVu Sans, family
-// renamed "Meditate Mask") for the password field's mask dots:
+// renamed "Meditate Mask"; DejaVu is distributed under the
+// Bitstream Vera license + public-domain additions — see
+// https://dejavu-fonts.github.io/License.html) for the password
+// field's mask dots:
 // Slint hardcodes '●' as the obscuring character and does no
 // per-glyph font fallback on Android, so the FP5's Roboto
 // renders it as tofu. Regenerate with:
@@ -3452,7 +3455,12 @@ export component MainWindow inherits Window {
 
         VerticalLayout {
             alignment: center;
-            spacing: 24px;
+            // Short viewports (phone landscape): tighter spacing +
+            // smaller hero so the column fits ~360dp heights. The
+            // 220px Box Breath square itself stays fixed — its
+            // perimeter-dot coordinates are Rust-computed for that
+            // exact geometry (see bb-dot-x/y).
+            spacing: root.height < 560px ? 10px : 24px;
             padding-left: 24px;
             padding-right: 24px;
             padding-top: root.status-bar-inset + 24px;
@@ -3461,7 +3469,7 @@ export component MainWindow inherits Window {
             // Timer mode hero — digit countdown.
             if !root.bb-running-active : Text {
                 text: root.remaining-text;
-                font-size: 80px;
+                font-size: root.height < 560px ? 56px : 80px;
                 horizontal-alignment: center;
                 color: #ffffff;
             }
@@ -3474,7 +3482,7 @@ export component MainWindow inherits Window {
             // buttons live in the parent VerticalLayout, shared
             // with Timer mode).
             if root.bb-running-active : VerticalLayout {
-                spacing: 24px;
+                spacing: root.height < 560px ? 10px : 24px;
                 alignment: center;
 
                 // Top strip: "Box Breathing" eyebrow + counter.
@@ -4869,7 +4877,7 @@ export component MainWindow inherits Window {
         Rectangle {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            width: 320px;
+            width: min(320px, root.width - 32px);
             height: filter-card-content.preferred-height;
             background: MaterialPalette.surface-container-high;
             border-radius: 28px;
@@ -4948,7 +4956,7 @@ export component MainWindow inherits Window {
         Rectangle {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            width: 320px;
+            width: min(320px, root.width - 32px);
             height: card-content.preferred-height;
             background: MaterialPalette.surface-container-high;
             border-radius: 28px;
@@ -6372,7 +6380,7 @@ export component MainWindow inherits Window {
         Rectangle {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            width: 320px;
+            width: min(320px, root.width - 32px);
             height: create-card-content.preferred-height;
             background: MaterialPalette.surface-container-high;
             border-radius: 28px;
@@ -6430,7 +6438,7 @@ export component MainWindow inherits Window {
         Rectangle {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            width: 320px;
+            width: min(320px, root.width - 32px);
             height: rename-card-content.preferred-height;
             background: MaterialPalette.surface-container-high;
             border-radius: 28px;
@@ -6488,7 +6496,7 @@ export component MainWindow inherits Window {
         Rectangle {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            width: 320px;
+            width: min(320px, root.width - 32px);
             height: delete-card-content.preferred-height;
             background: MaterialPalette.surface-container-high;
             border-radius: 28px;
@@ -6552,7 +6560,7 @@ export component MainWindow inherits Window {
         Rectangle {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            width: 320px;
+            width: min(320px, root.width - 32px);
             height: create-preset-card.preferred-height;
             background: MaterialPalette.surface-container-high;
             border-radius: 28px;
@@ -6605,7 +6613,7 @@ export component MainWindow inherits Window {
         Rectangle {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            width: 320px;
+            width: min(320px, root.width - 32px);
             height: override-preset-card.preferred-height;
             background: MaterialPalette.surface-container-high;
             border-radius: 28px;
@@ -6663,7 +6671,7 @@ export component MainWindow inherits Window {
         Rectangle {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            width: 320px;
+            width: min(320px, root.width - 32px);
             height: rename-preset-card.preferred-height;
             background: MaterialPalette.surface-container-high;
             border-radius: 28px;
@@ -6717,7 +6725,7 @@ export component MainWindow inherits Window {
         Rectangle {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            width: 320px;
+            width: min(320px, root.width - 32px);
             height: delete-preset-card.preferred-height;
             background: MaterialPalette.surface-container-high;
             border-radius: 28px;
@@ -6778,7 +6786,7 @@ export component MainWindow inherits Window {
         Rectangle {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            width: 280px;
+            width: min(280px, root.width - 32px);
             height: prep-card.preferred-height;
             background: MaterialPalette.surface-container-high;
             border-radius: 28px;
@@ -7439,7 +7447,7 @@ export component MainWindow inherits Window {
         Rectangle {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            width: 320px;
+            width: min(320px, root.width - 32px);
             height: guided-import-card.preferred-height;
             background: MaterialPalette.surface-container-high;
             border-radius: 28px;
@@ -7556,7 +7564,7 @@ export component MainWindow inherits Window {
         Rectangle {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            width: 320px;
+            width: min(320px, root.width - 32px);
             height: guided-rename-card.preferred-height;
             background: MaterialPalette.surface-container-high;
             border-radius: 28px;
@@ -7612,7 +7620,7 @@ export component MainWindow inherits Window {
         Rectangle {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            width: 280px;
+            width: min(280px, root.width - 32px);
             height: goal-card.preferred-height;
             background: MaterialPalette.surface-container-high;
             border-radius: 28px;
@@ -7679,7 +7687,7 @@ export component MainWindow inherits Window {
         Rectangle {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            width: 340px;
+            width: min(340px, root.width - 32px);
             height: delete-all-card.preferred-height;
             background: MaterialPalette.surface-container-high;
             border-radius: 28px;
@@ -7735,7 +7743,7 @@ export component MainWindow inherits Window {
         Rectangle {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            width: 340px;
+            width: min(340px, root.width - 32px);
             height: recovery-card.preferred-height;
             background: MaterialPalette.surface-container-high;
             border-radius: 28px;
@@ -7795,7 +7803,7 @@ export component MainWindow inherits Window {
         Rectangle {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
-            width: 340px;
+            width: min(340px, root.width - 32px);
             height: recovery-wipe-card.preferred-height;
             background: MaterialPalette.surface-container-high;
             border-radius: 28px;
