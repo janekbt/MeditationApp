@@ -2753,12 +2753,10 @@ fn push_log_sections_to_ui(
                 .collect();
             LogDaySection {
                 date_display: sec.date_display.into(),
-                caption: format!(
-                    "{} sessions · {} min",
-                    sec.count,
-                    sec.total_secs / 60,
-                )
-                .into(),
+                caption: ui.global::<Tr>().invoke_day_caption(
+                    sec.count as i32,
+                    (sec.total_secs / 60).to_string().into(),
+                ),
                 items: std::rc::Rc::new(slint::VecModel::from(cards)).into(),
             }
         })

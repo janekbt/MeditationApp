@@ -125,6 +125,7 @@ export global Tr {
     public pure function bell-at-n-min(n: int) -> string { return @tr("At {n} min" | "At {n} min" % n); }
     public pure function bell-n-min-before-end(n: int) -> string { return @tr("{n} min before end" | "{n} min before end" % n); }
     // Rust-set titles + log-feed strings
+    public pure function day-caption(n: int, mins: string) -> string { return @tr("{n} session · {0} min" | "{n} sessions · {0} min" % n, mins); }
     public pure function all-labels() -> string { return @tr("All labels"); }
     public pure function ve-new-pattern() -> string { return @tr("New Pattern"); }
     public pure function ve-edit-pattern() -> string { return @tr("Edit Pattern"); }
