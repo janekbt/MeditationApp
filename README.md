@@ -66,13 +66,35 @@ flatpak run io.github.janekbt.Meditate
 
 ### Building from source
 
-The hands-off path — installs distro dependencies (Debian/Ubuntu,
-Fedora, Arch), checks version floors up front, and builds:
+The hands-off path is a single script that takes care of
+everything from dependencies to the finished binary:
 
 ```sh
-./build.sh gtk          # GTK app  → meditate-gtk/builddir/src/meditate
-./build.sh android      # Android  → app-release.apk (needs ~3 GiB SDK/NDK on first run)
+./build.sh gtk               # GTK app (release) → meditate-gtk/builddir/src/meditate
+./build.sh android           # Android APK (release) → app/build/outputs/apk/release/app-release.apk
+./build.sh gtk --debug       # faster unoptimized build for hacking
+./build.sh android --debug   # debug APK (what you want while iterating)
 ```
+
+What it does for you:
+
+- **Dependencies** — detects apt / dnf / pacman (Debian/Ubuntu,
+  Fedora, Arch) and installs what's missing; if everything is
+  already present it never touches `sudo`. Other distros get the
+  exact list of what to install by hand.
+- **Fails early instead of mid-build** — GTK 4.18 / libadwaita 1.7
+  floors are checked up front (with the Flatpak fallback spelled
+  out if your distro is too old), same for blueprint-compiler.
+- **Rust** — uses your rustup or distro toolchain when suitable and
+  installs rustup automatically when needed (the Android
+  cross-target requires it).
+- **Android toolchain** — first run bootstraps the pinned SDK, NDK,
+  Gradle and Kotlin compiler (~3 GiB download, one time) into
+  `~/Android`; later runs skip straight to the build. Release APKs
+  are signed with the standard debug keystore — fine for
+  sideloading, and F-Droid re-signs with its own key anyway.
+- **Low-RAM guard** — on machines under ~20 GiB it caps cargo's
+  parallelism so heavy LTO link steps can't freeze the box.
 
 Everything below is the manual equivalent, for reference or
 unsupported distros.
