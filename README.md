@@ -46,7 +46,7 @@ Countdown and stopwatch, a browsable log, and daily-goal stats to help you build
 ### General
 - Translated into 10 languages (English, German, Spanish, French, Italian, Dutch, Polish, Brazilian Portuguese, Russian, Simplified Chinese) — on Linux and Android alike
 - Keyboard shortcuts for the common actions
-- Dark-mode and high-contrast safe; follows your system accent colour
+- Dark-mode and high-contrast safe; follows your system accent colour on Linux — on Android, pick from six accent colours in the app
 - About → Troubleshooting view with a rolling diagnostics log, for attaching to bug reports
   - Log file lives at `~/.var/app/io.github.janekbt.Meditate/data/meditate/diagnostics.log` on Flatpak, `~/.local/share/meditate/diagnostics.log` otherwise — useful when the About dialog itself can't be opened
 
