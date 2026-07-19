@@ -353,7 +353,7 @@ msgid "Manage Files"
 msgstr "Dateien verwalten"
 
 msgid "Manage Presets"
-msgstr "Voreinstellungen verwalten"
+msgstr "Verwalten"
 
 msgid "Meditate"
 msgstr "Meditate"
@@ -506,7 +506,7 @@ msgid "Save Preset"
 msgstr "Voreinstellung speichern"
 
 msgid "Save Settings"
-msgstr "Einstellungen speichern"
+msgstr "Speichern"
 
 msgid "Save failed"
 msgstr "Speichern fehlgeschlagen"
@@ -716,3 +716,67 @@ msgid "{n} session to your {0}th"
 msgid_plural "{n} sessions to your {0}th"
 msgstr[0] "Noch {n} Sitzung bis zur {0}."
 msgstr[1] "Noch {n} Sitzungen bis zur {0}."
+
+msgid "Pause"
+msgstr "Pause"
+
+msgid "Resume"
+msgstr "Fortsetzen"
+
+msgid "Add {} ?"
+msgstr "{} hinzufügen"
+
+msgid "Stopwatch"
+msgstr "Stoppuhr"
+
+msgid "Vibration"
+msgstr "Vibration"
+
+msgid "Both"
+msgstr "Beide"
+
+msgid "{n} min"
+msgid_plural "{n} min"
+msgstr[0] "{n} Min"
+msgstr[1] "{n} Min"
+
+msgid "{n} bell"
+msgid_plural "{n} bells"
+msgstr[0] "{n} Glocke"
+msgstr[1] "{n} Glocken"
+
+msgid "None enabled"
+msgstr "Keine aktiv"
+
+msgid "{n} enabled"
+msgid_plural "{n} enabled"
+msgstr[0] "{n} aktiv"
+msgstr[1] "{n} aktiv"
+
+msgid "Every {n} min"
+msgid_plural "Every {n} min"
+msgstr[0] "Alle {n} Min"
+msgstr[1] "Alle {n} Min"
+
+msgid "Every {n} min +/-{0}%"
+msgid_plural "Every {n} min +/-{0}%"
+msgstr[0] "Alle {n} Min +/-{0}%"
+msgstr[1] "Alle {n} Min +/-{0}%"
+
+msgid "At {n} min"
+msgid_plural "At {n} min"
+msgstr[0] "Bei {n} Min"
+msgstr[1] "Bei {n} Min"
+
+msgid "{n} min before end"
+msgid_plural "{n} min before end"
+msgstr[0] "{n} Min vor Ende"
+msgstr[1] "{n} Min vor Ende"
+
+msgid "This label is not used by any sessions."
+msgstr "Diese Kategorie wird von keiner Sitzung verwendet."
+
+msgid "{n} session tagged with this label will be un-labelled."
+msgid_plural "{n} sessions tagged with this label will be un-labelled."
+msgstr[0] "{n} Sitzung mit dieser Kategorie verliert ihre Zuordnung."
+msgstr[1] "{n} Sitzungen mit dieser Kategorie verlieren ihre Zuordnung."

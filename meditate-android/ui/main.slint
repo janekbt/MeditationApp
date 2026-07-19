@@ -108,6 +108,25 @@ export global Tr {
     public pure function import-guided-title() -> string { return @tr("Import Guided File"); }
     public pure function import-bell-title() -> string { return @tr("Import Bell Sound"); }
     public pure function importing(name: string, dur: string) -> string { return @tr("Importing: {} ({})", name, dur); }
+    // Running-screen primary action (AppState::primary_action)
+    public pure function start-session() -> string { return @tr("Start Session"); }
+    public pure function pause() -> string { return @tr("Pause"); }
+    public pure function resume() -> string { return @tr("Resume"); }
+    public pure function add-overtime(t: string) -> string { return @tr("Add {} ?", t); }
+    // Preset-chip / widget subtitles (preset_subtitle)
+    public pure function stopwatch() -> string { return @tr("Stopwatch"); }
+    public pure function n-min(n: int) -> string { return @tr("{n} min" | "{n} min" % n); }
+    public pure function n-bells(n: int) -> string { return @tr("{n} bell" | "{n} bells" % n); }
+    // Interval-bells summary + row titles (bell_title_key)
+    public pure function none-enabled() -> string { return @tr("None enabled"); }
+    public pure function n-enabled(n: int) -> string { return @tr("{n} enabled" | "{n} enabled" % n); }
+    public pure function bell-every-n-min(n: int) -> string { return @tr("Every {n} min" | "Every {n} min" % n); }
+    public pure function bell-every-n-min-jitter(n: int, pct: int) -> string { return @tr("Every {n} min +/-{0}%" | "Every {n} min +/-{0}%" % n, pct); }
+    public pure function bell-at-n-min(n: int) -> string { return @tr("At {n} min" | "At {n} min" % n); }
+    public pure function bell-n-min-before-end(n: int) -> string { return @tr("{n} min before end" | "{n} min before end" % n); }
+    // Label-delete dialog body (delete_impact_key)
+    public pure function label-unused() -> string { return @tr("This label is not used by any sessions."); }
+    public pure function n-sessions-unlabelled(n: int) -> string { return @tr("{n} session tagged with this label will be un-labelled." | "{n} sessions tagged with this label will be un-labelled." % n); }
 }
 
 // Single-glyph font (U+25CF, subset from DejaVu Sans, family
@@ -385,7 +404,7 @@ component VerticalSpinBox {
 // overlay overrides it to render Date / Time rows with the same
 // shape.
 component DurationRow inherits Rectangle {
-    in property <string> label: "Duration";
+    in property <string> label: @tr("Duration");
     in property <string> value-text;
     in property <bool> enabled: true;
     callback tapped;
@@ -622,7 +641,7 @@ component CuesRow inherits Rectangle {
     // Defaults keep the Bells "Type" callers unchanged; the
     // interval-bell editor's Kind row overrides with its own
     // three labels.
-    in property <[string]> labels: ["Sound", "Vibration", "Both"];
+    in property <[string]> labels: [@tr("Sound"), @tr("Vibration"), @tr("Both")];
     in-out property <int> current-index;
     callback changed(int);
 

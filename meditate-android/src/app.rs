@@ -89,6 +89,16 @@ impl TimerMode {
     }
 }
 
+/// What the running-screen primary button does right now. Kept
+/// as a typed key (not a rendered string) so translation happens
+/// at the shell boundary — see [`AppState::primary_action`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrimaryAction {
+    Start,
+    Resume,
+    Pause,
+}
+
 #[derive(Debug)]
 pub enum AppState {
     Idle,
@@ -406,12 +416,25 @@ impl AppState {
         }
     }
 
-    /// Label on the primary action button.
-    pub fn primary_label(&self) -> &'static str {
+    /// Typed key for the primary action button — the shell maps
+    /// each variant to its translated label (Tr catalogue on
+    /// Android, gettext on a future shell).
+    pub fn primary_action(&self) -> PrimaryAction {
         match self {
-            Self::Idle | Self::Finished => "Start Session",
-            Self::Active(s) if matches!(s.ui_state(), UiState::Paused) => "Resume",
-            Self::Active(_) => "Pause",
+            Self::Idle | Self::Finished => PrimaryAction::Start,
+            Self::Active(s) if matches!(s.ui_state(), UiState::Paused) => {
+                PrimaryAction::Resume
+            }
+            Self::Active(_) => PrimaryAction::Pause,
+        }
+    }
+
+    /// English render of `primary_action` (tests + logging).
+    pub fn primary_label(&self) -> &'static str {
+        match self.primary_action() {
+            PrimaryAction::Start => "Start Session",
+            PrimaryAction::Resume => "Resume",
+            PrimaryAction::Pause => "Pause",
         }
     }
 

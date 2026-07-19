@@ -468,7 +468,13 @@ fn refresh(ui: &MainWindow, state: &AppState, now: Duration) {
     ui.set_duration_text(
         meditate_core::format::format_hhmm(target.as_secs() as u32).into(),
     );
-    ui.set_action_label(state.primary_label().into());
+    ui.set_action_label(match state.primary_action() {
+        app::PrimaryAction::Start => {
+            ui.global::<Tr>().invoke_start_session()
+        }
+        app::PrimaryAction::Resume => ui.global::<Tr>().invoke_resume(),
+        app::PrimaryAction::Pause => ui.global::<Tr>().invoke_pause(),
+    });
     ui.set_stop_visible(state.can_stop());
     ui.set_overtime_active(state.is_overtime());
     ui.set_running_page(state.is_running_page());
@@ -476,18 +482,20 @@ fn refresh(ui: &MainWindow, state: &AppState, now: Duration) {
 }
 
 /// Pull the latest `UpdateOvertimeLabel { overtime }` out of a
-/// tick's effects and render the Add-button text the GTK way:
-/// `"Add MM:SS ?"` via `format::format_time` (ASCII "?" — the
-/// FP5 font lacks fancier glyphs). Returns `None` when this tick
-/// had no overtime update (so the caller leaves the label as-is).
+/// tick's effects as an `MM:SS` string; the caller wraps it in
+/// `Tr::add-overtime` for the button text (ASCII "?" in the
+/// English msgid — the FP5 font lacks fancier glyphs). Returns
+/// `None` when this tick had no overtime update (so the caller
+/// leaves the label as-is).
 #[cfg(target_os = "android")]
-fn overtime_add_label(effects: &[meditate_core::session::Effect]) -> Option<String> {
+fn overtime_add_time(
+    effects: &[meditate_core::session::Effect],
+) -> Option<String> {
     use meditate_core::session::Effect;
     effects.iter().rev().find_map(|e| match e {
-        Effect::UpdateOvertimeLabel { overtime } => Some(format!(
-            "Add {} ?",
-            meditate_core::format::format_time(*overtime),
-        )),
+        Effect::UpdateOvertimeLabel { overtime } => {
+            Some(meditate_core::format::format_time(*overtime))
+        }
         _ => None,
     })
 }
@@ -644,6 +652,7 @@ fn presets_supported(mode: meditate_core::SessionMode) -> bool {
 /// `mode_supports_presets` guard.
 #[cfg(target_os = "android")]
 fn list_starred_presets_for_mode(
+    ui: &MainWindow,
     mode: meditate_core::SessionMode,
 ) -> Vec<PresetItem> {
     if !presets_supported(mode) {
@@ -665,7 +674,7 @@ fn list_starred_presets_for_mode(
         .into_iter()
         .map(|p| PresetItem {
             uuid: p.uuid.to_string().into(),
-            subtitle: preset_subtitle(&p.config_json, &label_names).into(),
+            subtitle: preset_subtitle(ui, &p.config_json, &label_names).into(),
             name: p.name.into(),
             is_starred: p.is_starred,
         })
@@ -675,11 +684,12 @@ fn list_starred_presets_for_mode(
 /// Compose a preset-row subtitle — the Android mirror of GTK's
 /// `crate::preset_subtitle::preset_subtitle`. The structural
 /// decomposition is core's (`format::preset_subtitle_parts`);
-/// this stitches the parts with " · ", inline English (Android
-/// i18n is shell-deferred like the rest of the port). Empty
+/// this stitches the parts with " · " through the Tr catalogue
+/// (typed-keys pattern — core decides, the shell renders). Empty
 /// string on unparseable config_json (matches GTK).
 #[cfg(target_os = "android")]
 fn preset_subtitle(
+    ui: &MainWindow,
     config_json: &str,
     label_names: &std::collections::HashMap<String, String>,
 ) -> String {
@@ -690,16 +700,13 @@ fn preset_subtitle(
     else {
         return String::new();
     };
-    let mins = |m: u32| {
-        if m == 1 {
-            "1 min".to_string()
-        } else {
-            format!("{m} min")
-        }
-    };
+    let tr = ui.global::<Tr>();
+    let mins = |m: u32| tr.invoke_n_min(m as i32).to_string();
     let mut out: Vec<String> = Vec::new();
     match parts.timing {
-        TimingKey::Stopwatch => out.push("Stopwatch".to_string()),
+        TimingKey::Stopwatch => {
+            out.push(tr.invoke_stopwatch().to_string())
+        }
         TimingKey::Duration { mins: m } => out.push(mins(m)),
         TimingKey::BoxBreath {
             inhale_secs,
@@ -713,7 +720,7 @@ fn preset_subtitle(
             ));
             match after {
                 BoxBreathAfter::Stopwatch => {
-                    out.push("Stopwatch".to_string())
+                    out.push(tr.invoke_stopwatch().to_string())
                 }
                 BoxBreathAfter::Duration { mins: m } => out.push(mins(m)),
             }
@@ -725,8 +732,12 @@ fn preset_subtitle(
         }
     }
     match parts.bells {
-        Some(BellsCountKey::One) => out.push("1 bell".to_string()),
-        Some(BellsCountKey::Many(n)) => out.push(format!("{n} bells")),
+        Some(BellsCountKey::One) => {
+            out.push(tr.invoke_n_bells(1).to_string())
+        }
+        Some(BellsCountKey::Many(n)) => {
+            out.push(tr.invoke_n_bells(n as i32).to_string())
+        }
         None => {}
     }
     out.join(" · ")
@@ -742,7 +753,7 @@ fn refresh_preset_chips(ui: &MainWindow, mode: meditate_core::SessionMode) {
     // zero presets (GTK keeps the button box visible while the
     // section is); the row list hides itself when empty.
     ui.set_presets_supported(presets_supported(mode));
-    let items = list_starred_presets_for_mode(mode);
+    let items = list_starred_presets_for_mode(ui, mode);
     ui.set_presets_list(
         std::rc::Rc::new(slint::VecModel::from(items)).into(),
     );
@@ -753,6 +764,7 @@ fn refresh_preset_chips(ui: &MainWindow, mode: meditate_core::SessionMode) {
 /// `rebuild_chooser_rows`.
 #[cfg(target_os = "android")]
 fn list_presets_for_mode(
+    ui: &MainWindow,
     mode: meditate_core::SessionMode,
 ) -> Vec<PresetItem> {
     if !presets_supported(mode) {
@@ -772,7 +784,7 @@ fn list_presets_for_mode(
         .into_iter()
         .map(|p| PresetItem {
             uuid: p.uuid.to_string().into(),
-            subtitle: preset_subtitle(&p.config_json, &label_names).into(),
+            subtitle: preset_subtitle(ui, &p.config_json, &label_names).into(),
             name: p.name.into(),
             is_starred: p.is_starred,
         })
@@ -785,7 +797,7 @@ fn populate_preset_chooser(
     ui: &MainWindow,
     mode: meditate_core::SessionMode,
 ) {
-    let items = list_presets_for_mode(mode);
+    let items = list_presets_for_mode(ui, mode);
     ui.set_preset_chooser_items(
         std::rc::Rc::new(slint::VecModel::from(items)).into(),
     );
@@ -808,7 +820,7 @@ const WIDGET_PRESET_MODES: [meditate_core::SessionMode; 2] = [
 /// in-app chip. Empty when the DB is unopened or nothing is
 /// starred — the widget then shows its empty state.
 #[cfg(target_os = "android")]
-fn widget_presets_snapshot() -> Vec<widget::WidgetPreset> {
+fn widget_presets_snapshot(ui: &MainWindow) -> Vec<widget::WidgetPreset> {
     let Some(db_arc) = DATABASE.get() else { return Vec::new(); };
     let Ok(guard) = db_arc.lock() else { return Vec::new(); };
     let Some(db) = guard.as_ref() else { return Vec::new(); };
@@ -830,7 +842,7 @@ fn widget_presets_snapshot() -> Vec<widget::WidgetPreset> {
         for p in rows {
             out.push(widget::WidgetPreset {
                 uuid: p.uuid.to_string(),
-                subtitle: preset_subtitle(&p.config_json, &label_names),
+                subtitle: preset_subtitle(ui, &p.config_json, &label_names),
                 name: p.name,
                 mode: mode.as_db_str(),
             });
@@ -847,9 +859,9 @@ fn widget_presets_snapshot() -> Vec<widget::WidgetPreset> {
 /// installed (the JNI side short-circuits). Cheap enough to call
 /// unconditionally — two indexed `WHERE is_starred` queries.
 #[cfg(target_os = "android")]
-fn refresh_widget() {
+fn refresh_widget(ui: &MainWindow) {
     if let Some(app) = android_app() {
-        widget::publish(app, widget_presets_snapshot());
+        widget::publish(app, widget_presets_snapshot(ui));
     }
 }
 
@@ -1956,8 +1968,7 @@ fn refresh_chart(ui: &MainWindow) {
         ))
     };
     // Axis caption tracks the aggregation tier (the
-    // decision lives in core; this is just the English
-    // render — i18n shell-deferred, as elsewhere on Android).
+    // decision lives in core; the render goes through Tr).
     use meditate_core::date_math::ChartUnit;
     ui.set_stat_chart_unit(
         match meditate_core::date_math::chart_unit_for_days(days) {
@@ -2000,8 +2011,7 @@ fn insight_icon_id(key: &meditate_core::insights::InsightKey) -> i32 {
 }
 
 /// Map a `meditate_core::insights::InsightKey` to its rendered
-/// (title, body) pair. Inline English — i18n is shell-deferred
-/// on Android (same as the snackbars / sync / goal copy).
+/// (title, body) pair, rendered through the Tr catalogue.
 /// Mirrors GTK's `render_insight` at
 /// `meditate-gtk/src/stats/imp.rs:317`; durations go through
 /// `render_hm(hm_secs_key(..))` (the seconds-precision variant
@@ -2946,21 +2956,19 @@ fn first_label() -> Option<(i64, String)> {
 /// `meditate_core::labels::delete_impact_key` so the count→variant
 /// boundary stays in core.
 #[cfg(target_os = "android")]
-fn delete_label_impact_text(id: i64) -> String {
+fn delete_label_impact_text(ui: &MainWindow, id: i64) -> String {
     use meditate_core::labels::DeleteImpactKey;
     let Some(db_arc) = DATABASE.get() else { return String::new(); };
     let Ok(guard) = db_arc.lock() else { return String::new(); };
     let Some(db) = guard.as_ref() else { return String::new(); };
     let count = meditate_core::db::label_session_count_from_db(db, id).unwrap_or(0);
     match meditate_core::labels::delete_impact_key(count) {
-        DeleteImpactKey::InUse(1) => {
-            "1 session tagged with this label will be un-labelled.".to_string()
-        }
-        DeleteImpactKey::InUse(n) => {
-            format!("{n} sessions tagged with this label will be un-labelled.")
-        }
+        DeleteImpactKey::InUse(n) => ui
+            .global::<Tr>()
+            .invoke_n_sessions_unlabelled(n as i32)
+            .into(),
         DeleteImpactKey::Unused => {
-            "This label is not used by any sessions.".to_string()
+            ui.global::<Tr>().invoke_label_unused().into()
         }
     }
 }
@@ -3457,7 +3465,7 @@ fn refresh_bell_rows(ui: &MainWindow) {
         if let Ok(guard) = db_arc.lock() {
             if let Some(db) = guard.as_ref() {
                 ui.set_interval_bells_summary(
-                    interval_bells_summary(db).into(),
+                    interval_bells_summary(&ui, db).into(),
                 );
             }
         }
@@ -3604,43 +3612,57 @@ fn refresh_boxbreath_cues(ui: &MainWindow) {
 /// isn't wired into this surface yet (FixedFromEnd bells only
 /// drop out of the count in a stopwatch session).
 #[cfg(target_os = "android")]
-fn interval_bells_summary(db: &meditate_core::db::Database) -> String {
+fn interval_bells_summary(
+    ui: &MainWindow,
+    db: &meditate_core::db::Database,
+) -> String {
     use meditate_core::format::IntervalsCountKey;
     let n = meditate_core::bells::interval_bells_count(
         db,
         meditate_core::bells::DisplayMode::Countdown,
     );
     match meditate_core::format::intervals_count_key(n) {
-        IntervalsCountKey::None => "None enabled".to_string(),
-        IntervalsCountKey::One => "1 enabled".to_string(),
-        IntervalsCountKey::Many(n) => format!("{n} enabled"),
+        IntervalsCountKey::None => {
+            ui.global::<Tr>().invoke_none_enabled().into()
+        }
+        IntervalsCountKey::One => {
+            ui.global::<Tr>().invoke_n_enabled(1).into()
+        }
+        IntervalsCountKey::Many(n) => {
+            ui.global::<Tr>().invoke_n_enabled(n as i32).into()
+        }
     }
 }
 
-/// Render an interval bell's summary title. Inline English —
-/// i18n is shell-deferred on Android (same as the snackbar /
-/// stats copy). The bucket decision lives in core
+/// Render an interval bell's summary title through the Tr
+/// catalogue. The bucket decision lives in core
 /// (`meditate_core::bells::bell_title_key`); GTK uses "±" but
 /// the FP5 Android-15 font's symbol coverage is unreliable, so
 /// Android uses ASCII "+/-" (see the no-Unicode-glyphs rule).
 /// Mirrors GTK's `bell_title` at `meditate-gtk/src/bells.rs`.
 #[cfg(target_os = "android")]
-fn render_bell_title(bell: &meditate_core::db::IntervalBell) -> String {
+fn render_bell_title(
+    ui: &MainWindow,
+    bell: &meditate_core::db::IntervalBell,
+) -> String {
     use meditate_core::bells::BellTitleKey;
+    let tr = ui.global::<Tr>();
     match meditate_core::bells::bell_title_key(bell) {
         BellTitleKey::EveryNMin { minutes } => {
-            format!("Every {minutes} min")
+            tr.invoke_bell_every_n_min(minutes as i32).into()
         }
         BellTitleKey::EveryNMinWithJitter { minutes, jitter_pct } => {
-            format!("Every {minutes} min +/-{jitter_pct}%")
+            tr.invoke_bell_every_n_min_jitter(
+                minutes as i32,
+                jitter_pct as i32,
+            )
+            .into()
         }
-        BellTitleKey::AtNMin { minutes } => format!("At {minutes} min"),
+        BellTitleKey::AtNMin { minutes } => {
+            tr.invoke_bell_at_n_min(minutes as i32).into()
+        }
         BellTitleKey::NMinBeforeEnd { minutes } => {
-            if minutes == 1 {
-                "1 min before end".to_string()
-            } else {
-                format!("{minutes} min before end")
-            }
+            tr.invoke_bell_n_min_before_end(minutes as i32).into()
         }
     }
 }
@@ -3666,7 +3688,7 @@ fn populate_interval_bells(ui: &MainWindow) {
                 .unwrap_or_default();
             IntervalBellRow {
                 uuid: b.uuid.to_string().into(),
-                title: render_bell_title(&b).into(),
+                title: render_bell_title(ui, &b).into(),
                 sound: sound.into(),
             }
         })
@@ -3674,7 +3696,7 @@ fn populate_interval_bells(ui: &MainWindow) {
     ui.set_interval_bell_items(
         std::rc::Rc::new(slint::VecModel::from(items)).into(),
     );
-    ui.set_interval_bells_summary(interval_bells_summary(db).into());
+    ui.set_interval_bells_summary(interval_bells_summary(ui, db).into());
 }
 
 /// Fill the bell-chooser overlay with the sounds in `category`,
@@ -4670,7 +4692,7 @@ fn build_ui() -> MainWindow {
                                 &pending_deletes_tick,
                             );
                             refresh_stats(&ui);
-                            refresh_widget();
+                            refresh_widget(&ui);
                             trigger_sync("csv import");
                             ui.global::<Tr>()
                                 .invoke_imported_n(n as i32)
@@ -4891,9 +4913,11 @@ fn build_ui() -> MainWindow {
             // overtime delta (core's UpdateOvertimeLabel each
             // tick), exactly like GTK's per-tick relabel.
             #[cfg(target_os = "android")]
-            if let Some(lbl) = overtime_add_label(&transition.effects) {
+            if let Some(t) = overtime_add_time(&transition.effects) {
                 if let Some(ui) = weak.upgrade() {
-                    ui.set_overtime_add_label(lbl.into());
+                    ui.set_overtime_add_label(
+                        ui.global::<Tr>().invoke_add_overtime(t.into()),
+                    );
                 }
             }
             *s = transition.state;
@@ -6017,7 +6041,7 @@ fn build_ui() -> MainWindow {
                         // enters the widget projection. Lock-free
                         // here: the `db` guard above dropped with
                         // the `let res = { … }` scope.
-                        refresh_widget();
+                        refresh_widget(&ui);
                     }
                     Err(e) => {
                         // GTK surfaces a duplicate toast; the
@@ -6108,7 +6132,7 @@ fn build_ui() -> MainWindow {
                 refresh_preset_chips(&ui, core_mode);
                 // Overriding a starred preset rewrites its
                 // subtitle on the widget too.
-                refresh_widget();
+                refresh_widget(&ui);
 
                 // Shared snackbar with Undo (restore prior cfg).
                 // Single slot → clear the other discriminators.
@@ -6175,7 +6199,7 @@ fn build_ui() -> MainWindow {
                 refresh_preset_chips(&ui, core_mode);
                 // The whole point of the widget: star/unstar is
                 // exactly what adds/removes a widget row.
-                refresh_widget();
+                refresh_widget(&ui);
             }
             let _ = (weak.clone(), uuid, current_mode.get());
         });
@@ -6258,7 +6282,7 @@ fn build_ui() -> MainWindow {
                 refresh_preset_chips(&ui, core_mode);
                 // Renaming a starred preset changes its widget
                 // title.
-                refresh_widget();
+                refresh_widget(&ui);
             }
             let _ = (weak.clone(), current_mode.get());
         });
@@ -6333,7 +6357,7 @@ fn build_ui() -> MainWindow {
                 populate_preset_chooser(&ui, core_mode);
                 refresh_preset_chips(&ui, core_mode);
                 // Deleting a starred preset drops its widget row.
-                refresh_widget();
+                refresh_widget(&ui);
 
                 // Shared snackbar + Undo (re-insert). Single slot
                 // → clear the other discriminators.
@@ -8296,7 +8320,7 @@ fn build_ui() -> MainWindow {
             #[cfg(target_os = "android")]
             {
                 ui.set_delete_label_id(id);
-                ui.set_delete_label_body(delete_label_impact_text(id as i64).into());
+                ui.set_delete_label_body(delete_label_impact_text(&ui, id as i64).into());
                 ui.set_delete_label_dialog_open(true);
             }
             #[cfg(not(target_os = "android"))]
@@ -8613,7 +8637,7 @@ fn build_ui() -> MainWindow {
                     populate_preset_chooser(&ui, core_mode);
                     refresh_preset_chips(&ui, core_mode);
                     // Undone delete resurrects the widget row.
-                    refresh_widget();
+                    refresh_widget(&ui);
                     ui.set_snackbar_visible(false);
                     return;
                 }
@@ -8650,7 +8674,7 @@ fn build_ui() -> MainWindow {
                     }
                     refresh_preset_chips(&ui, mode);
                     // Undone override reverts the widget subtitle.
-                    refresh_widget();
+                    refresh_widget(&ui);
                     ui.set_snackbar_visible(false);
                     return;
                 }
@@ -9421,7 +9445,7 @@ fn build_ui() -> MainWindow {
                             &loaded_log_sessions,
                             &pending_deletes,
                         );
-                        refresh_widget();
+                        refresh_widget(&ui);
                         trigger_sync("recovery wipe-local");
                     }
                     Err(e) => meditate_core::log(
@@ -9568,7 +9592,7 @@ fn build_ui() -> MainWindow {
                     &pending_deletes,
                 );
                 refresh_stats(&ui);
-                refresh_widget();
+                refresh_widget(&ui);
                 trigger_sync("delete-all");
             }
             let _ = (weak.clone(), current_mode.get());
@@ -10303,13 +10327,22 @@ fn android_main(android_app: slint::android::AndroidApp) {
     // bridges keep targeting the destroyed activity.
     set_android_app(android_app.clone());
     open_database(&android_app);
-    // i18n (P8): pick the bundled translation matching the system
-    // locale BEFORE the UI is built (uses the local handle — the
-    // parameter shadows the android_app() accessor here, and init
-    // consumes it next). Unknown languages fail the select and
-    // silently keep English msgids — exactly the fallback we want.
+    // Keep a handle past the init below — init consumes the
+    // parameter, and the parameter name shadows the android_app()
+    // accessor in this scope.
+    let app_handle = android_app.clone();
+    slint::android::init(android_app).unwrap();
+    let ui = build_ui();
+    // i18n (P8): pick the bundled translation matching the Java-side
+    // locale, which honours Android's per-app language setting. MUST
+    // run after the first component is built — earlier the global
+    // context is empty and select_bundled_translation reports
+    // NoTranslationsBundled while slint's sys-locale auto-pick (which
+    // fires during build_ui) silently wins instead. Unknown languages
+    // fail the select and keep English msgids — exactly the fallback
+    // we want.
     {
-        let lang = about::locale_language(&android_app);
+        let lang = about::locale_language(&app_handle);
         if let Err(e) = slint::select_bundled_translation(&lang) {
             meditate_core::log(
                 "i18n",
@@ -10317,8 +10350,12 @@ fn android_main(android_app: slint::android::AndroidApp) {
             );
         }
     }
-    slint::android::init(android_app).unwrap();
-    let ui = build_ui();
+    // Seed the widget projection once at startup so a widget added
+    // while the app was dead still renders the current starred set
+    // on first pull (it no-ops when no widget is installed). Sits
+    // after build_ui + translation select so the subtitles come out
+    // in the user's language.
+    refresh_widget(&ui);
     MaterialWindowAdapter::get(&ui).set_disable_hover(true);
     // Launch sync (SY-4). The runner no-ops fast on an
     // unconfigured account (one KV read on its own connection),
@@ -10450,12 +10487,4 @@ fn open_database(android_app: &slint::android::AndroidApp) {
         }
     };
     let _ = DATABASE.set(std::sync::Arc::new(std::sync::Mutex::new(opened)));
-    // Seed the widget projection once at startup so a widget
-    // added while the app was dead still renders the current
-    // starred set on first pull (the seeded default presets are
-    // starred). ANDROID_APP is set in `android_main` before this
-    // call, so the JNI poke resolves; it no-ops when no widget is
-    // installed. Must run after DATABASE.set — the snapshot locks
-    // it.
-    refresh_widget();
 }
