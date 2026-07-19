@@ -7,13 +7,14 @@ Countdown and stopwatch, a browsable log, and daily-goal stats to help you build
 ## Features
 
 ### Timer
-- Countdown, stopwatch, and Box Breath modes
+- Countdown, stopwatch, Box Breath, and Guided modes
 - Box Breath: pick a pattern (4-4-4-4, 4-7-8-0, 5-5-5-5) or dial in each phase; the running view traces a dot around an accent-tinted square as you breathe in, hold, out, hold
+- Guided: play your own guided-meditation audio; the end bell rings when the track finishes
+- Bells: an optional starting bell, interval bells (at fixed times, every N minutes, or randomised), and a per-mode end bell — each as sound, vibration, or both, with bundled or imported sounds and a visual vibration-pattern editor
 - Quick presets plus custom durations
 - Per-mode labels: each mode remembers the label you last used for it
 - Optional post-session notes
 - Pause, resume, discard
-- Completion sound — built-in bowls/bell/gong, your own audio, or none
 - Daily streak and a system notification when you're away from the app
 
 ### Log
@@ -24,10 +25,14 @@ Countdown and stopwatch, a browsable log, and daily-goal stats to help you build
 
 ### Stats
 - 13-week contribution heatmap, with stars for days that cleared your daily goal
-- Weekly-goal ring showing this week's progress
+- Daily-goal ring showing today's progress
 - Bar or line chart across week / month / 3 months / year
 - Per-label breakdown: totals and session counts for each label
 - Streak, total time, and session count at a glance
+
+### Sync
+- Optional sync between all your devices — Linux and Android — via your own Nextcloud (WebDAV, app password)
+- Offline-first: everything works without a network; changes merge whenever you're back online, with conflict handling that never loses a session
 
 ### Preferences
 - Daily goal and completion sound
@@ -39,7 +44,7 @@ Countdown and stopwatch, a browsable log, and daily-goal stats to help you build
 - Build instructions: [`BUILDING.md`](BUILDING.md#android)
 
 ### General
-- Translated into 10 languages (English, German, Spanish, French, Italian, Dutch, Polish, Brazilian Portuguese, Russian, Simplified Chinese)
+- Translated into 10 languages (English, German, Spanish, French, Italian, Dutch, Polish, Brazilian Portuguese, Russian, Simplified Chinese); the Android app currently ships English and German
 - Keyboard shortcuts for the common actions
 - Dark-mode and high-contrast safe; follows your system accent colour
 - About → Troubleshooting view with a rolling diagnostics log, for attaching to bug reports
@@ -163,7 +168,9 @@ See [`BUILDING.md`](BUILDING.md) for the full cross-compile + Librem 5 deploy cy
 ## Data
 
 Sessions and settings are stored in a SQLite database at
-`~/.local/share/meditate/meditate.db` (or the Flatpak equivalent inside the sandbox).
+`~/.local/share/meditate/meditate.db` (or the Flatpak equivalent
+inside the sandbox). On Android it lives in the app's private
+storage; use the CSV export or Nextcloud sync to get data out.
 
 ## Privacy
 
