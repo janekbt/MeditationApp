@@ -21,13 +21,13 @@ jobs:
       - name: Install validators
         run: sudo apt-get update && sudo apt-get install -y appstream desktop-file-utils
       - name: Validate AppStream metainfo
-        run: appstreamcli validate --no-net data/io.github.janekbt.Meditate.metainfo.xml.in
+        run: appstreamcli validate --no-net meditate-gtk/data/io.github.janekbt.Meditate.metainfo.xml.in
       - name: Validate desktop entry
         # desktop-file-validate insists on a .desktop suffix; copy into a
         # tempdir rather than renaming the source-of-truth file.
         run: |
           tmp=$(mktemp -d)
-          cp data/io.github.janekbt.Meditate.desktop.in "$tmp/io.github.janekbt.Meditate.desktop"
+          cp meditate-gtk/data/io.github.janekbt.Meditate.desktop.in "$tmp/io.github.janekbt.Meditate.desktop"
           desktop-file-validate "$tmp/io.github.janekbt.Meditate.desktop"
 
   # x86_64: job-level container runs as root — the action works out of the box.
