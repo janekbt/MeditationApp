@@ -77,6 +77,17 @@ jobs:
       - name: Install pinned NDK
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.2.12479018" "platforms;android-34" "build-tools;35.0.0"
+      - name: Generate the standard debug keystore
+        # A fresh runner has never run an Android debug build, so
+        # ~/.android/debug.keystore (which the release signing shim
+        # points at) doesn't exist yet. Same public constants AGP
+        # would use.
+        run: |
+          mkdir -p ~/.android
+          keytool -genkeypair -keystore ~/.android/debug.keystore \
+            -storepass android -alias androiddebugkey -keypass android \
+            -dname "CN=Android Debug,O=Android,C=US" \
+            -keyalg RSA -keysize 2048 -validity 10000
       - name: Build APK
         env:
           ANDROID_NDK_ROOT: /usr/local/lib/android/sdk/ndk/27.2.12479018
