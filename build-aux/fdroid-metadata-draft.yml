@@ -22,7 +22,7 @@ Builds:
     # fdroiddata requires the full commit hash here, not the
     # tag (reviewer request on MR !43338).
     commit: c249df5f654ca373b87110e883e39b2add5eb866
-    subdir: meditate-android/android
+    subdir: meditate-android/android/app
     sudo:
       # Install rustup from Debian, not the network installer —
       # F-Droid's buildserver rejects `curl | sh` (reviewer
