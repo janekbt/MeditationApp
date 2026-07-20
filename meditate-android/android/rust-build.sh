@@ -13,6 +13,9 @@
 set -euo pipefail
 
 . "$HOME/.config/meditate-android/env.sh" 2>/dev/null || true
+# F-Droid's buildserver (and some CIs) export ANDROID_NDK_HOME /
+# ANDROID_NDK instead of ANDROID_NDK_ROOT — accept any of them.
+ANDROID_NDK_ROOT="${ANDROID_NDK_ROOT:-${ANDROID_NDK_HOME:-${ANDROID_NDK:-}}}"
 : "${ANDROID_NDK_ROOT:?ANDROID_NDK_ROOT not set (source env.sh)}"
 export ANDROID_HOME="${ANDROID_HOME:-$HOME/Android/Sdk}"
 export ANDROID_SDK_ROOT="$ANDROID_HOME"

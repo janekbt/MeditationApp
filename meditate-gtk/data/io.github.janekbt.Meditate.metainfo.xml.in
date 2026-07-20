@@ -88,6 +88,21 @@
   </content_rating>
 
   <releases>
+    <release version="26.7.1" date="2026-07-20">
+      <description>
+        <p>Nextcloud sync between all your devices, a guided-audio mode, daily goals, custom sounds and vibration patterns — and the first release of the Android companion app.</p>
+        <ul>
+          <li>Sync sessions, labels, presets, bells, and preferences between your devices via your own Nextcloud server — offline-first, with automatic conflict handling and remote-storage compaction</li>
+          <li>New Guided mode: import your own guided-meditation audio; the end bell rings when the track finishes</li>
+          <li>Stats now track a daily goal: the progress ring resets each day and the heatmap stars days that cleared it</li>
+          <li>Interval, starting, and end bells are configurable per mode, with imported custom sounds and a visual vibration-pattern editor</li>
+          <li>Session log gains CSV export/import (duplicate-safe on re-import) and Insight Timer import</li>
+          <li>Duplicate labels created on two devices can be merged from a conflict prompt, moving all sessions onto the surviving label</li>
+          <li>Android companion app (F-Droid): the same modes, log, stats, and sync, sharing the identical core — plus a home-screen widget for one-tap preset starts, in all ten languages</li>
+        </ul>
+      </description>
+    </release>
+
     <release version="26.4.4" date="2026-04-24">
       <description>
         <p>A new Box Breath timer mode, per-label stats, and an in-app diagnostics view for bug reporting — plus a handful of polish fixes.</p>
