@@ -7,8 +7,15 @@ on:
     branches: [main]
   # Manual trigger: run CI on any branch (e.g. beta) without paying for CI
   # on every push. Use the "Run workflow" button under the Actions tab and
-  # pick the branch to test.
+  # pick the branch to test. scope=light skips the two long Flatpak
+  # builds — cheap verification of the test/APK jobs.
   workflow_dispatch:
+    inputs:
+      scope:
+        description: "all = everything; light = skip the Flatpak builds"
+        default: all
+        type: choice
+        options: [all, light]
 
 jobs:
   # Cheap, fast-failing job: catches metainfo schema breakage before either
@@ -43,6 +50,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - name: Install system deps (slint host build needs fontconfig)
+        run: sudo apt-get update -qq && sudo apt-get install -y libfontconfig1-dev
       - name: cargo test
         run: cargo test -p meditate-core -p meditate-android --lib
       - name: cargo clippy
@@ -66,8 +75,8 @@ jobs:
         with:
           targets: aarch64-linux-android
       - name: Install pinned NDK
-        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
-               "ndk;27.2.12479018" "platforms;android-34" "build-tools;35.0.0"
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.2.12479018" "platforms;android-34" "build-tools;35.0.0"
       - name: Build APK
         env:
           ANDROID_NDK_ROOT: /usr/local/lib/android/sdk/ndk/27.2.12479018
@@ -81,6 +90,7 @@ jobs:
   # x86_64: job-level container runs as root — the action works out of the box.
   flatpak-x86_64:
     name: Flatpak (x86_64)
+    if: github.event_name != 'workflow_dispatch' || inputs.scope == 'all'
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
@@ -104,6 +114,7 @@ jobs:
   # gnome-50 container ourselves — it runs as root so runtime installs succeed.
   flatpak-aarch64:
     name: Flatpak (aarch64)
+    if: github.event_name != 'workflow_dispatch' || inputs.scope == 'all'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
