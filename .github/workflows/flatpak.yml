@@ -48,6 +48,36 @@ jobs:
       - name: cargo clippy
         run: cargo clippy -p meditate-core -p meditate-android --lib -- -D warnings
 
+  # Android APK — release-config (debug-keystore-signed; fine for
+  # sideloading, F-Droid re-signs). The runner image ships the
+  # Android SDK; we add the pinned NDK and let the committed
+  # gradle wrapper drive rust-build.sh (which needs only
+  # ANDROID_NDK_ROOT / ANDROID_HOME when env.sh is absent).
+  android-apk:
+    name: Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - name: Install pinned NDK
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+               "ndk;27.2.12479018" "platforms;android-34" "build-tools;35.0.0"
+      - name: Build APK
+        env:
+          ANDROID_NDK_ROOT: /usr/local/lib/android/sdk/ndk/27.2.12479018
+        run: cd meditate-android/android && ./gradlew :app:assembleRelease
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: meditate-android.apk
+          path: meditate-android/android/app/build/outputs/apk/release/app-release.apk
+
   # x86_64: job-level container runs as root — the action works out of the box.
   flatpak-x86_64:
     name: Flatpak (x86_64)
