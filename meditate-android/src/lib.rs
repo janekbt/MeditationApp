@@ -1621,7 +1621,7 @@ fn refresh_stats(ui: &MainWindow) {
         .into(),
     );
     ui.set_stat_sessions(
-        meditate_core::format::mini_stat_or_dash(count).into(),
+        render_mini_stat(count).into(),
     );
 
     // Daily-goal hero (was weekly until 2026-07-17 — the
@@ -2567,6 +2567,29 @@ fn truncate_note_for_card(note: &str) -> String {
 #[cfg(target_os = "android")]
 static CLOCK_FORMAT: std::sync::Mutex<Option<app::ClockFormat>> =
     std::sync::Mutex::new(None);
+
+/// Locale digit-grouping separator, cached like CLOCK_FORMAT.
+#[cfg(target_os = "android")]
+static GROUPING_SEPARATOR: std::sync::Mutex<Option<String>> =
+    std::sync::Mutex::new(None);
+
+/// Mini-stat tile render: locale-grouped number, or the dash
+/// for no-data (the SR-friendly variant is a listed follow-up
+/// with the a11y cluster).
+#[cfg(target_os = "android")]
+fn render_mini_stat(n: i64) -> String {
+    match meditate_core::format::mini_stat_value(n) {
+        meditate_core::format::MiniStatValue::NoData => "–".into(),
+        meditate_core::format::MiniStatValue::Value(v) => {
+            let sep = GROUPING_SEPARATOR
+                .lock()
+                .ok()
+                .and_then(|g| g.clone())
+                .unwrap_or_default();
+            app::group_digits(v, &sep)
+        }
+    }
+}
 
 #[cfg(target_os = "android")]
 fn format_time_of_day(start_iso: &str) -> String {
@@ -3837,13 +3860,16 @@ fn build_ui() -> MainWindow {
     // The Java-side locale honours Android's per-app language
     // setting, unlike slint's sys-locale auto-pick.
     // Cache the system clock convention (12/24-hour + locale
-    // AM/PM markers) BEFORE the setup passes below render the
-    // log feed's time-of-day strings.
+    // AM/PM markers) and the digit-grouping separator BEFORE the
+    // setup passes below render the log feed + stats strings.
     #[cfg(target_os = "android")]
     if let Some(app) = android_app() {
         let raw = about::time_format(app);
         if let Ok(mut g) = CLOCK_FORMAT.lock() {
             *g = Some(app::ClockFormat::parse(&raw));
+        }
+        if let Ok(mut g) = GROUPING_SEPARATOR.lock() {
+            *g = Some(about::grouping_separator(app));
         }
     }
     #[cfg(target_os = "android")]

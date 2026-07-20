@@ -132,6 +132,30 @@ pub fn render_time_of_day(
     }
 }
 
+/// Group an integer's digits with the locale separator
+/// ("2875" → "2.875" for de). Empty separator = no grouping.
+pub fn group_digits(n: i64, sep: &str) -> String {
+    let raw = n.abs().to_string();
+    let grouped = if sep.is_empty() || raw.len() <= 3 {
+        raw
+    } else {
+        let bytes = raw.as_bytes();
+        let mut out = String::with_capacity(raw.len() + 4);
+        for (i, b) in bytes.iter().enumerate() {
+            if i > 0 && (bytes.len() - i) % 3 == 0 {
+                out.push_str(sep);
+            }
+            out.push(*b as char);
+        }
+        out
+    };
+    if n < 0 {
+        format!("-{grouped}")
+    } else {
+        grouped
+    }
+}
+
 /// What the running-screen primary button does right now. Kept
 /// as a typed key (not a rendered string) so translation happens
 /// at the shell boundary — see [`AppState::primary_action`].
@@ -1108,5 +1132,17 @@ mod tests {
         assert_eq!(render_time_of_day(k(12, 0), &fmt), "12:00 PM");
         assert_eq!(render_time_of_day(k(13, 7), &fmt), "1:07 PM");
         assert_eq!(render_time_of_day(k(23, 45), &fmt), "11:45 PM");
+    }
+
+    #[test]
+    fn group_digits_inserts_separators_every_three() {
+        assert_eq!(group_digits(0, "."), "0");
+        assert_eq!(group_digits(999, "."), "999");
+        assert_eq!(group_digits(1000, "."), "1.000");
+        assert_eq!(group_digits(2875, "."), "2.875");
+        assert_eq!(group_digits(1234567, " "), "1 234 567");
+        assert_eq!(group_digits(-1000, "."), "-1.000");
+        // Empty separator = no grouping (JNI fallback).
+        assert_eq!(group_digits(123456, ""), "123456");
     }
 }

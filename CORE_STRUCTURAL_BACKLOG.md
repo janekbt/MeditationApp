@@ -318,13 +318,12 @@ rationale.
 
 ### `Sync::new` test boilerplate — covered above in Tier 2.
 
-### i18n: number formatting in pre-rendered strings
-- `format::format_count` does `n.to_string()` then
-  `.replace("{n}", …)`. Loses locale digit grouping (Polish
-  "1 234", German "1.234"). Invisible until totals cross 4
-  digits.
-- Fix path: wrap as `MiniStat::{Dash, Value(i64)}`; shell
-  applies locale digit grouping.
+### i18n: digit grouping in insight bodies + GTK mini-stats
+- The Android mini-stat tile now groups via `MiniStatValue` +
+  the locale separator. Still ungrouped: numbers inside the
+  Tr insight bodies ("{n} sessions to your {0}th" — needs
+  msgid surgery across 10 locales to decouple plural
+  selection from display), and GTK's mini-stat render.
 
 ### i18n: GTK still renders times 24-hour-only
 - Core now exposes `TimeOfDayKey` and the Android shell honours

@@ -395,6 +395,24 @@ pub fn log_card_minutes(duration_secs: i64) -> u64 {
 /// "no data" marker), otherwise the integer as a string. Used by
 /// the Stats view's mini-stat tiles where an empty week shouldn't
 /// read as a flat "0".
+/// Typed mini-stat tile value so shells can render locale digit
+/// grouping (and, later, an accessible "no data" instead of the
+/// dash glyph). `mini_stat_or_dash` remains the plain fallback
+/// renderer (GTK uses it today).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MiniStatValue {
+    NoData,
+    Value(i64),
+}
+
+pub fn mini_stat_value(n: i64) -> MiniStatValue {
+    if n == 0 {
+        MiniStatValue::NoData
+    } else {
+        MiniStatValue::Value(n)
+    }
+}
+
 pub fn mini_stat_or_dash(value: i64) -> String {
     if value == 0 {
         "–".to_string()

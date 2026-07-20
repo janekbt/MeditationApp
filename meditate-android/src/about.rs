@@ -50,6 +50,13 @@ pub fn time_format(app: &AndroidApp) -> String {
     })
 }
 
+/// Locale digit-grouping separator; empty string (= no
+/// grouping) on any hiccup.
+pub fn grouping_separator(app: &AndroidApp) -> String {
+    invoke_no_arg_string(app, "groupingSeparator")
+        .unwrap_or_default()
+}
+
 /// Copy `text` to the system clipboard under `label`.
 pub fn copy_text(app: &AndroidApp, label: &str, text: &str) {
     if let Err(e) = invoke_two_strings(app, "copyText", label, text) {
@@ -144,6 +151,27 @@ fn invoke_version_name(
     if env.exception_check()? {
         env.exception_clear()?;
         return Ok("?".into());
+    }
+    let jstr = JString::from(result);
+    let s: String = env.get_string(&jstr)?.into();
+    Ok(s)
+}
+
+fn invoke_no_arg_string(
+    app: &AndroidApp,
+    method: &str,
+) -> Result<String, jni::errors::Error> {
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
+    let mut env = vm.attach_current_thread()?;
+    let activity =
+        unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
+    let class = resolve_class(&mut env, &activity, ABOUT_CLASS_DOTTED)?;
+    let result = env
+        .call_static_method(class, method, "()Ljava/lang/String;", &[])?
+        .l()?;
+    if env.exception_check()? {
+        env.exception_clear()?;
+        return Ok(String::new());
     }
     let jstr = JString::from(result);
     let s: String = env.get_string(&jstr)?.into();

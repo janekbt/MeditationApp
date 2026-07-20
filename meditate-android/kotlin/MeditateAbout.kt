@@ -52,6 +52,18 @@ object MeditateAbout {
         "24"
     }
 
+    /// The locale's digit-grouping separator ("." for de,
+    /// "\u202F" for fr, "," for en …) — Rust groups large
+    /// stat numbers with it.
+    @JvmStatic
+    fun groupingSeparator(): String = try {
+        java.text.DecimalFormatSymbols.getInstance()
+            .groupingSeparator.toString()
+    } catch (e: Exception) {
+        Log.w(TAG, "groupingSeparator failed: $e")
+        ""
+    }
+
     @JvmStatic
     fun copyText(context: Context, label: String, text: String) {
         try {
