@@ -28,6 +28,8 @@ Builds:
       # F-Droid's buildserver rejects `curl | sh` (reviewer
       # request, matches com.ivanovsky.passnotes). gcc/libc-dev
       # are needed for host-side build scripts (rusqlite's cc).
+      # trixie dropped JDK 17 — pull it from bookworm.
+      - echo "deb https://deb.debian.org/debian bookworm main" > /etc/apt/sources.list.d/bookworm.list
       - apt-get update
       - apt-get install -y rustup gcc libc-dev openjdk-17-jdk-headless
       # JDK 17: slint's android-activity dexes a Java helper in
