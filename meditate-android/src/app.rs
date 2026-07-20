@@ -230,8 +230,8 @@ impl AppState {
     /// fresh session; pause/resume ignore it (Session already
     /// remembers its shape). The shell picks the variant based on
     /// the active mode chip plus the Stopwatch-Mode switch — Timer
-    /// + stopwatch-off → `TimerCountdown`; Timer + stopwatch-on →
-    /// `TimerStopwatch`; etc. Keeping shape construction shell-side
+    /// with stopwatch off → `TimerCountdown`, with stopwatch on →
+    /// `TimerStopwatch`, etc. Keeping shape construction shell-side
     /// matches the GTK shell's `on_start` (it builds the right
     /// `CoreSessionShape` from `current_mode()` + `stopwatch_toggle_on`).
     /// Start a fresh session from fully-built `SessionSettings`.

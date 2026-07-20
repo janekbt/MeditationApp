@@ -3,7 +3,7 @@
 //! `in` property — the intended theming hook — so no vendored
 //! patch: Rust reads the baseline (blue) schemes at startup and
 //! swaps the accent-family fields (primary / secondary / tertiary
-//! + their fixed variants, surfaceTint, inversePrimary) for the
+//! plus their fixed variants, surfaceTint, inversePrimary) for the
 //! selected seed, leaving every neutral (surfaces, outlines,
 //! error) untouched so contrast stays canonical.
 //!

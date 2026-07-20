@@ -11,20 +11,6 @@ rationale.
 
 ## Tier 1 — High-impact, mostly mechanical
 
-### No conditional PUT — concurrent push from two peers silently clobbers
-- `orchestrator.rs:91-94` trait `put()` is unconditional;
-  `HttpWebDav::put` (`webdav.rs:197-214`) emits no
-  `If-None-Match` / `If-Match`.
-- Bulk batch files use freshly-minted v4 uuids in the
-  filename, so two concurrent pushes land on different
-  files (safe). **But** the sounds path (`<base>/sounds/
-  <uuid>.<ext>`) IS deterministic on the bell uuid; two
-  peers re-uploading the same custom bell concurrently —
-  the second wins blindly. Low probability; consequence is
-  a corrupted audio file if the two PUTs race at TCP-byte
-  level on a non-atomic server.
-- Fix: add `If-None-Match: *` on sound PUTs.
-
 ## Tier 2 — Medium impact, light design
 
 ### Consolidate `Phase` and `BoxBreathPhaseId` into one enum
@@ -406,14 +392,6 @@ rationale.
   manual suspend-resume cycle, drop the log line if
   confirmed.
 
-### Operational: no `cargo test` / `clippy` in CI
-- `.github/workflows/flatpak.yml` runs `appstreamcli
-  validate`, `desktop-file-validate`, `flatpak-builder` —
-  but never `cargo test --workspace` or `cargo clippy --
-  -D warnings`. The "cargo test must pass before deploy"
-  memory rule is enforced only by Janek's terminal.
-- Add a `cargo-test` and `cargo-clippy` job to flatpak.yml.
-
 ### `device_id` collision undetected
 - `db.rs:774` `Uuid::new_v4()`; no schema constraint on
   `events(lamport_ts, device_id)`. Astronomically unlikely.
@@ -539,19 +517,6 @@ rationale.
 - No security advisory; no urgency. Worth bumping next time
   the dep tree is touched.
 
-### Storage waste on push retry
-- `meditate-core/src/sync/orchestrator.rs:258-277` — single bulk
-  PUT per push; `batch_uuid` minted before PUT, recorded only
-  after success. If PUT succeeds server-side but network drops
-  before client ack, next push uploads the SAME events under a
-  NEW `batch_uuid`. Peers' `known_event_uuids` dedup catches
-  them, but the remote dir accumulates N copies on N retries.
-- Not a correctness bug (convergence holds), but quota waste on
-  flaky networks.
-- Fix: hash the event-id-set into the batch_uuid so a retry with
-  the same events reuses the filename and a second PUT either
-  overwrites idempotently or 412s.
-
 ### Pull `record_known_remote_file` loop in N separate transactions
 - `meditate-core/src/sync/orchestrator.rs:204-211`. `replay_events`
   runs in one tx; the subsequent record loop runs in N separate
@@ -626,6 +591,16 @@ avoid silently losing items in a rewrite.
   PR.
 
 ## Skipped (intentionally not migrating)
+
+### No conditional PUT on sound uploads (obsoleted by atomic PUT)
+- Every upload path now goes through tmp+MOVE
+  (`put_atomic_with_rate_limit_retry`), so a concurrent
+  double-upload is last-writer-wins of complete files — and both
+  writers carry identical bytes for the same bell uuid anyway.
+
+### Storage waste on push retry (obsoleted by compaction)
+- The events dir is bounded at 50 batch files; retry duplicates
+  get merged into the consolidated batch and deleted.
 
 ### Free-fn vs method inconsistency on the same enum (residual)
 - `Phase::perimeter_point` shipped as the one clear-win move

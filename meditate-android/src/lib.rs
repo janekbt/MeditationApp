@@ -10453,7 +10453,6 @@ fn build_ui() -> MainWindow {
                 // navigates to Timer, the start destination —
                 // canonical bottom-nav back behaviour on Android.
                 ui.set_nav_page(0);
-                return;
             }
             // Running page back is swallowed by the FocusScope
             // accepting the event but doing nothing here — keeps
