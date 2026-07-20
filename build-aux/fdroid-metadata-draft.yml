@@ -21,20 +21,21 @@ Builds:
     commit: v26.7.1
     subdir: meditate-android/android
     sudo:
+      # Install rustup from Debian, not the network installer —
+      # F-Droid's buildserver rejects `curl | sh` (reviewer
+      # request, matches com.ivanovsky.passnotes). gcc/libc-dev
+      # are needed for host-side build scripts (rusqlite's cc).
       - apt-get update
-      - apt-get install -y --no-install-recommends curl ca-certificates
-      - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs > /tmp/rustup.sh
-      - chmod +x /tmp/rustup.sh
-      - su vagrant -c '/tmp/rustup.sh -y --default-toolchain 1.95.0 --target aarch64-linux-android --component clippy --no-modify-path'
-    init:
-      # rust-build.sh sources ~/.config/meditate-android/env.sh when
-      # present (dev machines); on the buildserver it falls back to
-      # ANDROID_NDK_ROOT / ANDROID_NDK_HOME / ANDROID_NDK, which
-      # fdroidserver exports from the ndk pin below. cargo/rustc come
-      # from rustup's default location.
-      - export PATH="$HOME/.cargo/bin:$PATH"
+      - apt-get install -y rustup gcc libc-dev
     gradle:
       - yes
+    prebuild:
+      # Runs as the build user, so the toolchain lands in its
+      # ~/.rustup. rust-build.sh then drives plain cargo (no
+      # cargo-ndk — its 4.x runner breaks slint's build.rs). NDK
+      # comes from the pin below via ANDROID_NDK_ROOT/_HOME.
+      - rustup default 1.95.0
+      - rustup target add aarch64-linux-android
     ndk: r27c
 
 AutoUpdateMode: Version
