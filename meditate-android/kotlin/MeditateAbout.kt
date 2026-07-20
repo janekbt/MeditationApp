@@ -36,6 +36,22 @@ object MeditateAbout {
     fun localeTag(): String =
         java.util.Locale.getDefault().toLanguageTag() ?: "en"
 
+    /// "24" when the system uses 24-hour time, else
+    /// "12|<AM>|<PM>" with the locale's day-period markers —
+    /// the Rust side renders log-card times accordingly.
+    @JvmStatic
+    fun timeFormat(context: Context): String = try {
+        if (android.text.format.DateFormat.is24HourFormat(context)) {
+            "24"
+        } else {
+            val sym = java.text.DateFormatSymbols.getInstance()
+            "12|" + sym.amPmStrings[0] + "|" + sym.amPmStrings[1]
+        }
+    } catch (e: Exception) {
+        Log.w(TAG, "timeFormat failed: $e")
+        "24"
+    }
+
     @JvmStatic
     fun copyText(context: Context, label: String, text: String) {
         try {

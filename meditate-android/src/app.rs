@@ -89,6 +89,49 @@ impl TimerMode {
     }
 }
 
+/// System clock convention for rendering times of day — parsed
+/// from `MeditateAbout.timeFormat` ("24" or "12|AM|PM").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClockFormat {
+    H24,
+    H12 { am: String, pm: String },
+}
+
+impl ClockFormat {
+    pub fn parse(raw: &str) -> Self {
+        let mut it = raw.split('|');
+        match (it.next(), it.next(), it.next()) {
+            (Some("12"), Some(am), Some(pm)) => Self::H12 {
+                am: am.to_string(),
+                pm: pm.to_string(),
+            },
+            _ => Self::H24,
+        }
+    }
+}
+
+/// Render a local time of day per the system clock convention.
+/// 12-hour follows the platform's own wrapping: 0 → 12 AM,
+/// 12 → 12 PM, 13 → 1 PM.
+pub fn render_time_of_day(
+    key: meditate_core::format::TimeOfDayKey,
+    fmt: &ClockFormat,
+) -> String {
+    match fmt {
+        ClockFormat::H24 => {
+            format!("{:02}:{:02}", key.hour, key.minute)
+        }
+        ClockFormat::H12 { am, pm } => {
+            let marker = if key.hour < 12 { am } else { pm };
+            let h12 = match key.hour % 12 {
+                0 => 12,
+                h => h,
+            };
+            format!("{}:{:02} {}", h12, key.minute, marker)
+        }
+    }
+}
+
 /// What the running-screen primary button does right now. Kept
 /// as a typed key (not a rendered string) so translation happens
 /// at the shell boundary — see [`AppState::primary_action`].
@@ -1029,5 +1072,41 @@ mod tests {
     fn is_done_page_active_false() {
         let s = AppState::idle().toggle(timer_countdown(ten_minutes()), Duration::from_secs(0));
         assert!(!s.is_done_page());
+    }
+
+    #[test]
+    fn clock_format_parses_both_conventions() {
+        assert_eq!(ClockFormat::parse("24"), ClockFormat::H24);
+        assert_eq!(
+            ClockFormat::parse("12|AM|PM"),
+            ClockFormat::H12 { am: "AM".into(), pm: "PM".into() },
+        );
+        // Garbage falls back to 24-hour.
+        assert_eq!(ClockFormat::parse(""), ClockFormat::H24);
+        assert_eq!(ClockFormat::parse("12|onlyone"), ClockFormat::H24);
+    }
+
+    #[test]
+    fn render_time_of_day_24h() {
+        let k = |h, m| meditate_core::format::TimeOfDayKey {
+            hour: h,
+            minute: m,
+        };
+        assert_eq!(render_time_of_day(k(0, 5), &ClockFormat::H24), "00:05");
+        assert_eq!(render_time_of_day(k(13, 7), &ClockFormat::H24), "13:07");
+    }
+
+    #[test]
+    fn render_time_of_day_12h_wraps_like_the_platform() {
+        let fmt = ClockFormat::H12 { am: "AM".into(), pm: "PM".into() };
+        let k = |h, m| meditate_core::format::TimeOfDayKey {
+            hour: h,
+            minute: m,
+        };
+        assert_eq!(render_time_of_day(k(0, 5), &fmt), "12:05 AM");
+        assert_eq!(render_time_of_day(k(11, 59), &fmt), "11:59 AM");
+        assert_eq!(render_time_of_day(k(12, 0), &fmt), "12:00 PM");
+        assert_eq!(render_time_of_day(k(13, 7), &fmt), "1:07 PM");
+        assert_eq!(render_time_of_day(k(23, 45), &fmt), "11:45 PM");
     }
 }

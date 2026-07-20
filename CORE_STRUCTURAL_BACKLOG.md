@@ -326,13 +326,12 @@ rationale.
 - Fix path: wrap as `MiniStat::{Dash, Value(i64)}`; shell
   applies locale digit grouping.
 
-### i18n: `format_time_of_day` is 24-hour-only
-- Doc says shells that want 12-hour bypass core, but every
-  consumer (log card, goal row) uses the function with no
-  signal that the string was already finalised.
-- Fix: change return to typed `TimeOfDay { unix_secs: i64 }`
-  so shell can always run through `glib::DateTime::format` for
-  the active locale.
+### i18n: GTK still renders times 24-hour-only
+- Core now exposes `TimeOfDayKey` and the Android shell honours
+  the system 12/24-hour setting; the GTK shell still calls the
+  fixed-24h `format_time_of_day`. Adopt the key + a
+  `glib::DateTime`-based locale render next time the GTK shell
+  is touched on-device.
 
 ### i18n: Polish / German label sort uses ASCII fold
 - Labels do `ORDER BY name COLLATE NOCASE`. "ż" sorts past "z";

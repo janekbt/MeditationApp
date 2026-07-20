@@ -38,6 +38,18 @@ pub fn locale_tag(app: &AndroidApp) -> String {
     })
 }
 
+/// System clock convention: "24", or "12|<AM>|<PM>" with the
+/// locale's day-period markers; "24" on any hiccup.
+pub fn time_format(app: &AndroidApp) -> String {
+    invoke_time_format(app).unwrap_or_else(|e| {
+        meditate_core::log(
+            "about",
+            &format!("time_format FAILED: {e:?}"),
+        );
+        "24".into()
+    })
+}
+
 /// Copy `text` to the system clipboard under `label`.
 pub fn copy_text(app: &AndroidApp, label: &str, text: &str) {
     if let Err(e) = invoke_two_strings(app, "copyText", label, text) {
@@ -132,6 +144,31 @@ fn invoke_version_name(
     if env.exception_check()? {
         env.exception_clear()?;
         return Ok("?".into());
+    }
+    let jstr = JString::from(result);
+    let s: String = env.get_string(&jstr)?.into();
+    Ok(s)
+}
+
+fn invoke_time_format(
+    app: &AndroidApp,
+) -> Result<String, jni::errors::Error> {
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
+    let mut env = vm.attach_current_thread()?;
+    let activity =
+        unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
+    let class = resolve_class(&mut env, &activity, ABOUT_CLASS_DOTTED)?;
+    let result = env
+        .call_static_method(
+            class,
+            "timeFormat",
+            "(Landroid/content/Context;)Ljava/lang/String;",
+            &[(&activity).into()],
+        )?
+        .l()?;
+    if env.exception_check()? {
+        env.exception_clear()?;
+        return Ok("24".into());
     }
     let jstr = JString::from(result);
     let s: String = env.get_string(&jstr)?.into();

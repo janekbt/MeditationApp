@@ -2561,12 +2561,26 @@ fn truncate_note_for_card(note: &str) -> String {
 /// Extract the time-of-day portion ("14:32") from a local-ISO
 /// string ("2026-05-15T14:32:18+02:00"). Skips the date prefix
 /// + TZ offset suffix; safe for malformed inputs (returns "").
+/// System clock convention, cached per `android_main` run (a
+/// changed system setting is picked up on the next app start —
+/// Mutex not OnceLock so an activity recreate refreshes it).
+#[cfg(target_os = "android")]
+static CLOCK_FORMAT: std::sync::Mutex<Option<app::ClockFormat>> =
+    std::sync::Mutex::new(None);
+
 #[cfg(target_os = "android")]
 fn format_time_of_day(start_iso: &str) -> String {
-    start_iso
-        .get(11..16)
-        .unwrap_or("")
-        .to_string()
+    let Some(key) =
+        meditate_core::format::time_of_day_key_from_iso(start_iso)
+    else {
+        return start_iso.get(11..16).unwrap_or("").to_string();
+    };
+    let fmt = CLOCK_FORMAT
+        .lock()
+        .ok()
+        .and_then(|g| g.clone())
+        .unwrap_or(app::ClockFormat::H24);
+    app::render_time_of_day(key, &fmt)
 }
 
 /// Date-section header label for the Log feed. Today /
@@ -3822,6 +3836,16 @@ fn build_ui() -> MainWindow {
     // which freeze in whatever language is active right now.
     // The Java-side locale honours Android's per-app language
     // setting, unlike slint's sys-locale auto-pick.
+    // Cache the system clock convention (12/24-hour + locale
+    // AM/PM markers) BEFORE the setup passes below render the
+    // log feed's time-of-day strings.
+    #[cfg(target_os = "android")]
+    if let Some(app) = android_app() {
+        let raw = about::time_format(app);
+        if let Ok(mut g) = CLOCK_FORMAT.lock() {
+            *g = Some(app::ClockFormat::parse(&raw));
+        }
+    }
     #[cfg(target_os = "android")]
     if let Some(app) = android_app() {
         // Try the exact regional bundle first (pt-BR → pt_BR,

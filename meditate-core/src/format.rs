@@ -606,6 +606,37 @@ pub fn date_group_key(unix_secs: i64) -> String {
 /// Local `HH:MM` of a unix timestamp. 24-hour, locale-independent
 /// (no AM/PM); shells that want 12-hour rendering should derive it
 /// from their native datetime formatter.
+/// Local wall-clock time of day as a typed key, so each shell can
+/// render the user's clock convention (Android honours the system
+/// 12/24-hour setting; GTK currently renders 24-hour via
+/// `format_time_of_day`). `None` on out-of-range timestamps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TimeOfDayKey {
+    pub hour: u8,
+    pub minute: u8,
+}
+
+pub fn time_of_day_key(unix_secs: i64) -> Option<TimeOfDayKey> {
+    use chrono::{TimeZone, Timelike};
+    chrono::Local
+        .timestamp_opt(unix_secs, 0)
+        .single()
+        .map(|dt| TimeOfDayKey {
+            hour: dt.hour() as u8,
+            minute: dt.minute() as u8,
+        })
+}
+
+/// `time_of_day_key` for a stored `start_iso` string
+/// ("YYYY-MM-DDTHH:MM:SS", already local time). `None` when the
+/// string is too short or carries non-numeric time fields.
+pub fn time_of_day_key_from_iso(start_iso: &str) -> Option<TimeOfDayKey> {
+    let hour: u8 = start_iso.get(11..13)?.parse().ok()?;
+    let minute: u8 = start_iso.get(14..16)?.parse().ok()?;
+    (hour < 24 && minute < 60)
+        .then_some(TimeOfDayKey { hour, minute })
+}
+
 pub fn format_time_of_day(unix_secs: i64) -> String {
     use chrono::TimeZone;
     chrono::Local
@@ -1338,6 +1369,32 @@ mod tests {
         assert_eq!(key.len(), 10);
         assert_eq!(&key[4..5], "-");
         assert_eq!(&key[7..8], "-");
+    }
+
+    #[test]
+    fn time_of_day_key_from_iso_parses_hours_and_minutes() {
+        let k = time_of_day_key_from_iso("2026-07-20T08:35:00").unwrap();
+        assert_eq!((k.hour, k.minute), (8, 35));
+        let k = time_of_day_key_from_iso("2026-07-20T00:05:59").unwrap();
+        assert_eq!((k.hour, k.minute), (0, 5));
+    }
+
+    #[test]
+    fn time_of_day_key_from_iso_rejects_garbage() {
+        assert_eq!(time_of_day_key_from_iso(""), None);
+        assert_eq!(time_of_day_key_from_iso("2026-07-20"), None);
+        assert_eq!(time_of_day_key_from_iso("2026-07-20Txx:35:00"), None);
+        assert_eq!(time_of_day_key_from_iso("2026-07-20T25:00:00"), None);
+        assert_eq!(time_of_day_key_from_iso("2026-07-20T10:75:00"), None);
+    }
+
+    #[test]
+    fn time_of_day_key_matches_the_string_formatter() {
+        let k = time_of_day_key(1_744_891_200).unwrap();
+        assert_eq!(
+            format!("{:02}:{:02}", k.hour, k.minute),
+            format_time_of_day(1_744_891_200),
+        );
     }
 
     #[test]
