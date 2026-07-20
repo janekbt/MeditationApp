@@ -484,7 +484,7 @@ impl Database {
 
     pub fn insert_session(&self, session: &Session) -> Result<i64> {
         let tx = self.conn.unchecked_transaction()?;
-        let (rowid, _uuid) = self.insert_session_tx_less(session)?;
+        let (rowid, _uuid) = self.insert_session_tx_less(&tx, session)?;
         tx.commit()?;
         Ok(rowid)
     }
@@ -498,7 +498,11 @@ impl Database {
     /// transaction — without this, the gap between insert.commit
     /// and the subsequent clear would let a crash double-finalize
     /// the same in-flight session on the next launch.
-    pub(super) fn insert_session_tx_less(&self, session: &Session) -> Result<(i64, String)> {
+    pub(super) fn insert_session_tx_less(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        session: &Session,
+    ) -> Result<(i64, String)> {
         let session_uuid = uuid::Uuid::new_v4().to_string();
         self.conn.execute(
             "INSERT INTO sessions (start_iso, duration_secs, label_id, notes, mode, uuid, guided_file_uuid)
@@ -530,7 +534,7 @@ impl Database {
             "mode": session.mode.as_db_str(),
             "guided_file_uuid": session.guided_file_uuid,
         }).to_string();
-        self.emit_event(EventKind::SessionInsert, &session_uuid, payload)?;
+        self.emit_event(tx, EventKind::SessionInsert, &session_uuid, payload)?;
 
         Ok((rowid, session_uuid))
     }
@@ -594,7 +598,7 @@ impl Database {
                 "mode": s.mode.as_db_str(),
                 "guided_file_uuid": s.guided_file_uuid,
             }).to_string();
-            self.emit_event(EventKind::SessionInsert, &session_uuid, payload)?;
+            self.emit_event(&tx, EventKind::SessionInsert, &session_uuid, payload)?;
         }
         tx.commit()?;
         Ok(sessions.len())
@@ -615,7 +619,7 @@ impl Database {
         };
         self.conn.execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
         let payload = serde_json::json!({ "uuid": uuid }).to_string();
-        self.emit_event(EventKind::SessionDelete, &uuid, payload)?;
+        self.emit_event(&tx, EventKind::SessionDelete, &uuid, payload)?;
         tx.commit()?;
         Ok(())
     }
@@ -638,7 +642,7 @@ impl Database {
         }
         self.conn.execute("DELETE FROM sessions WHERE uuid = ?1", params![uuid])?;
         let payload = serde_json::json!({ "uuid": uuid }).to_string();
-        self.emit_event(EventKind::SessionDelete, uuid, payload)?;
+        self.emit_event(&tx, EventKind::SessionDelete, uuid, payload)?;
         tx.commit()?;
         Ok(())
     }
@@ -659,7 +663,7 @@ impl Database {
         let n = self.conn.execute("DELETE FROM sessions", [])?;
         for uuid in &row_uuids {
             let payload = serde_json::json!({ "uuid": uuid }).to_string();
-            self.emit_event(EventKind::SessionDelete, uuid, payload)?;
+            self.emit_event(&tx, EventKind::SessionDelete, uuid, payload)?;
         }
         tx.commit()?;
         Ok(n)
@@ -706,7 +710,7 @@ impl Database {
             "mode": session.mode.as_db_str(),
             "guided_file_uuid": session.guided_file_uuid,
         }).to_string();
-        self.emit_event(EventKind::SessionUpdate, &session_uuid, payload)?;
+        self.emit_event(&tx, EventKind::SessionUpdate, &session_uuid, payload)?;
         tx.commit()?;
         Ok(())
     }

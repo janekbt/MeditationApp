@@ -105,7 +105,7 @@ impl Database {
             "sound_uuid": sound_uuid,
             "pattern_uuid": pattern_uuid,
         }).to_string();
-        self.emit_event(EventKind::BoxBreathPhaseUpdate, phase.as_db_str(), payload)?;
+        self.emit_event(&tx, EventKind::BoxBreathPhaseUpdate, phase.as_db_str(), payload)?;
         tx.commit()?;
         Ok(())
     }

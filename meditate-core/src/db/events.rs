@@ -469,15 +469,20 @@ impl Database {
     ///   new event — the row in the cache table no longer matches the
     ///   event log.
     ///
-    /// The precondition is honored at every call site today, but the
-    /// signature doesn't enforce it. See backlog entry "Make
-    /// `emit_event` take `&Transaction`" for the structural fix.
+    /// The `tx` parameter is the type-level witness for that
+    /// precondition: you cannot call this without having opened a
+    /// transaction. The handle wraps the same connection
+    /// (`unchecked_transaction` on `self.conn`), so the three writes
+    /// commit or roll back together with the caller's data write.
     pub(super) fn emit_event(
         &self,
+        tx: &rusqlite::Transaction<'_>,
         kind: EventKind,
         target_id: &str,
         payload: String,
     ) -> Result<()> {
+        // Witness only — same underlying connection as self.conn.
+        let _ = tx;
         let device_id = self.device_id()?;
         let lamport_ts = self.bump_lamport_clock()?;
         let event = Event {

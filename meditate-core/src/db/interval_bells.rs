@@ -106,7 +106,7 @@ impl Database {
             "enabled": true,
             "created_iso": created_iso,
         }).to_string();
-        self.emit_event(EventKind::IntervalBellInsert, &bell_uuid, payload)?;
+        self.emit_event(&tx, EventKind::IntervalBellInsert, &bell_uuid, payload)?;
         tx.commit()?;
         Ok(rowid)
     }
@@ -154,7 +154,7 @@ impl Database {
             "enabled": bell.enabled,
             "created_iso": created_iso,
         }).to_string();
-        self.emit_event(EventKind::IntervalBellUpdate, bell.uuid.as_str(), payload)?;
+        self.emit_event(&tx, EventKind::IntervalBellUpdate, bell.uuid.as_str(), payload)?;
         tx.commit()?;
         Ok(())
     }
@@ -186,7 +186,7 @@ impl Database {
             params![uuid],
         )?;
         let payload = serde_json::json!({ "uuid": uuid }).to_string();
-        self.emit_event(EventKind::IntervalBellDelete, uuid, payload)?;
+        self.emit_event(&tx, EventKind::IntervalBellDelete, uuid, payload)?;
         tx.commit()?;
         Ok(())
     }

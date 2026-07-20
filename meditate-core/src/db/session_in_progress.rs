@@ -159,7 +159,7 @@ impl Database {
             uuid: super::SessionUuid::new(""),
             guided_file_uuid: snapshot.guided_file_uuid,
         };
-        let (_rowid, session_uuid) = self.insert_session_tx_less(&session)?;
+        let (_rowid, session_uuid) = self.insert_session_tx_less(&tx, &session)?;
         self.conn.execute(
             "DELETE FROM session_in_progress WHERE id = 1",
             [],

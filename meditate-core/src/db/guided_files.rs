@@ -137,7 +137,7 @@ impl Database {
             "created_iso": now_iso,
             "updated_iso": now_iso,
         }).to_string();
-        self.emit_event(EventKind::GuidedFileInsert, uuid_str, payload)?;
+        self.emit_event(&tx, EventKind::GuidedFileInsert, uuid_str, payload)?;
         tx.commit()?;
         Ok(rowid)
     }
@@ -184,7 +184,7 @@ impl Database {
             "created_iso": created_iso,
             "updated_iso": now_iso,
         }).to_string();
-        self.emit_event(EventKind::GuidedFileUpdate, uuid_str, payload)?;
+        self.emit_event(&tx, EventKind::GuidedFileUpdate, uuid_str, payload)?;
         tx.commit()?;
         Ok(())
     }
@@ -217,7 +217,7 @@ impl Database {
             "created_iso": created_iso,
             "updated_iso": now_iso,
         }).to_string();
-        self.emit_event(EventKind::GuidedFileUpdate, uuid_str, payload)?;
+        self.emit_event(&tx, EventKind::GuidedFileUpdate, uuid_str, payload)?;
         tx.commit()?;
         Ok(())
     }
@@ -240,7 +240,7 @@ impl Database {
             params![uuid_str],
         )?;
         let payload = serde_json::json!({ "uuid": uuid_str }).to_string();
-        self.emit_event(EventKind::GuidedFileDelete, uuid_str, payload)?;
+        self.emit_event(&tx, EventKind::GuidedFileDelete, uuid_str, payload)?;
         tx.commit()?;
         Ok(())
     }

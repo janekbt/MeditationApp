@@ -168,7 +168,7 @@ impl Database {
             "created_iso": now_iso,
             "updated_iso": now_iso,
         }).to_string();
-        self.emit_event(EventKind::VibrationPatternInsert, uuid_str, payload)?;
+        self.emit_event(&tx, EventKind::VibrationPatternInsert, uuid_str, payload)?;
         tx.commit()?;
         Ok(rowid)
     }
@@ -280,7 +280,7 @@ impl Database {
             "created_iso": created_iso,
             "updated_iso": now_iso,
         }).to_string();
-        self.emit_event(EventKind::VibrationPatternUpdate, uuid_str, payload)?;
+        self.emit_event(&tx, EventKind::VibrationPatternUpdate, uuid_str, payload)?;
         tx.commit()?;
         Ok(())
     }
@@ -302,7 +302,7 @@ impl Database {
             params![uuid_str],
         )?;
         let payload = serde_json::json!({ "uuid": uuid_str }).to_string();
-        self.emit_event(EventKind::VibrationPatternDelete, uuid_str, payload)?;
+        self.emit_event(&tx, EventKind::VibrationPatternDelete, uuid_str, payload)?;
         tx.commit()?;
         Ok(())
     }

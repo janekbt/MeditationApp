@@ -224,7 +224,7 @@ impl Database {
             "created_iso": now_iso,
             "updated_iso": now_iso,
         }).to_string();
-        self.emit_event(EventKind::PresetInsert, uuid_str, payload)?;
+        self.emit_event(&tx, EventKind::PresetInsert, uuid_str, payload)?;
         tx.commit()?;
         Ok(rowid)
     }
@@ -267,7 +267,7 @@ impl Database {
             "created_iso": row.created_iso,
             "updated_iso": now_iso,
         }).to_string();
-        self.emit_event(EventKind::PresetUpdate, uuid_str, payload)?;
+        self.emit_event(&tx, EventKind::PresetUpdate, uuid_str, payload)?;
         tx.commit()?;
         Ok(())
     }
@@ -293,7 +293,7 @@ impl Database {
             "created_iso": row.created_iso,
             "updated_iso": now_iso,
         }).to_string();
-        self.emit_event(EventKind::PresetUpdate, uuid_str, payload)?;
+        self.emit_event(&tx, EventKind::PresetUpdate, uuid_str, payload)?;
         tx.commit()?;
         Ok(())
     }
@@ -320,7 +320,7 @@ impl Database {
             "created_iso": row.created_iso,
             "updated_iso": now_iso,
         }).to_string();
-        self.emit_event(EventKind::PresetUpdate, uuid_str, payload)?;
+        self.emit_event(&tx, EventKind::PresetUpdate, uuid_str, payload)?;
         tx.commit()?;
         Ok(())
     }
@@ -341,7 +341,7 @@ impl Database {
             params![uuid_str],
         )?;
         let payload = serde_json::json!({ "uuid": uuid_str }).to_string();
-        self.emit_event(EventKind::PresetDelete, uuid_str, payload)?;
+        self.emit_event(&tx, EventKind::PresetDelete, uuid_str, payload)?;
         tx.commit()?;
         Ok(())
     }

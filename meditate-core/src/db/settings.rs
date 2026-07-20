@@ -25,7 +25,7 @@ impl Database {
             "key": key,
             "value": value,
         }).to_string();
-        self.emit_event(EventKind::SettingChanged, key, payload)?;
+        self.emit_event(&tx, EventKind::SettingChanged, key, payload)?;
         tx.commit()?;
         Ok(())
     }

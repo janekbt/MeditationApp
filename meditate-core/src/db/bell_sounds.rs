@@ -131,7 +131,7 @@ impl Database {
             "category": category.as_db_str(),
             "created_iso": created_iso,
         }).to_string();
-        self.emit_event(EventKind::BellSoundInsert, uuid_str, payload)?;
+        self.emit_event(&tx, EventKind::BellSoundInsert, uuid_str, payload)?;
         tx.commit()?;
         Ok(rowid)
     }
@@ -172,7 +172,7 @@ impl Database {
             "category": category,
             "created_iso": created_iso,
         }).to_string();
-        self.emit_event(EventKind::BellSoundUpdate, uuid_str, payload)?;
+        self.emit_event(&tx, EventKind::BellSoundUpdate, uuid_str, payload)?;
         tx.commit()?;
         Ok(())
     }
@@ -191,7 +191,7 @@ impl Database {
             params![uuid_str],
         )?;
         let payload = serde_json::json!({ "uuid": uuid_str }).to_string();
-        self.emit_event(EventKind::BellSoundDelete, uuid_str, payload)?;
+        self.emit_event(&tx, EventKind::BellSoundDelete, uuid_str, payload)?;
         tx.commit()?;
         Ok(())
     }
