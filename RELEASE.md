@@ -108,6 +108,8 @@ All must pass before anything is tagged:
 - F-Droid picks the new tag up automatically once the app is in
   fdroiddata (`UpdateCheckMode: Tags`). Until first inclusion,
   submission is manual — see `build-aux/fdroid-metadata-draft.yml`.
+  fdroiddata build entries must pin the FULL commit hash, never
+  the tag name (maintainer rule).
 - Flathub: release notes travel in the metainfo; the Flathub repo
   update is its own flow (out of scope here).
 

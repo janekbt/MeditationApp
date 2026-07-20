@@ -18,7 +18,9 @@ Repo: https://github.com/janekbt/MeditationApp.git
 Builds:
   - versionName: 26.7.1
     versionCode: 260701
-    commit: v26.7.1
+    # fdroiddata requires the full commit hash here, not the
+    # tag (reviewer request on MR !43338).
+    commit: c249df5f654ca373b87110e883e39b2add5eb866
     subdir: meditate-android/android
     sudo:
       # Install rustup from Debian, not the network installer —
