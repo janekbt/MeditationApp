@@ -64,6 +64,15 @@ flatpak install --user meditate-<arch>.flatpak
 flatpak run io.github.janekbt.Meditate
 ```
 
+### Android (sideload)
+
+Every CI run also attaches `meditate-android.apk` on the
+[Actions](../../actions) page — download it and install with
+`adb install -r meditate-android.apk`, or copy it to the phone and
+open it (allow "install unknown apps" once). It is signed with the
+standard debug keystore; the F-Droid listing (in preparation) will
+be the properly published channel.
+
 ### Building from source
 
 The hands-off path is a single script that takes care of
