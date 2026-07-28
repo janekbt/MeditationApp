@@ -436,8 +436,8 @@ msgstr "Gérer les fichiers"
 msgid "Manage Presets"
 msgstr "Gérer"
 
-msgid "Minutes (5–240)"
-msgstr "Minutes (5–240)"
+msgid "Minutes ({}–{})"
+msgstr "Minutes ({}–{})"
 
 msgid "Minutes per day"
 msgstr "Minutes par jour"

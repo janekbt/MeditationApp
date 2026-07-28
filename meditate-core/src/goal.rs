@@ -18,9 +18,10 @@ use crate::db::Database;
 /// land every practised day in heatmap level 4 from minute one.
 pub const DAILY_GOAL_MIN: i64 = 5;
 
-/// Upper bound. Above 4 hours/day the input stops being a
-/// realistic target and starts being a typo magnet.
-pub const DAILY_GOAL_MAX: i64 = 240;
+/// Upper bound. A minutes-per-day target can't mean more than a
+/// full day, so the only cap is the physical one (was 240 until
+/// 2026-07-28 — Janek wants retreat-length goals to fit).
+pub const DAILY_GOAL_MAX: i64 = 1440;
 
 /// Spin step for shells that use a stepper (the gtk `SpinRow`).
 pub const DAILY_GOAL_STEP: i64 = 5;

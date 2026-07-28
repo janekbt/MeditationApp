@@ -387,6 +387,25 @@ component VerticalSpinBox {
     in property <int> max-value;
     width: 80px;
 
+    // The centre readout is a live TextInput: tapping it summons
+    // the numeric IME so a value can be typed instead of clicked
+    // together with +/−. Typed text commits (parse → clamp into
+    // min/max) on Enter or focus loss; the +/− handlers commit
+    // any pending typed text first so "type 45, tap +" lands on
+    // 46, then re-sync the display — the initial `text:` binding
+    // severs on the first user edit, so every value change must
+    // write the text back explicitly.
+    function sync-text() {
+        input.text = root.value < 10 ? "0" + root.value : "" + root.value;
+    }
+    function commit-text() {
+        if (input.text.is-float()) {
+            root.value = Math.max(root.min-value,
+                Math.min(root.max-value, Math.round(input.text.to-float())));
+        }
+        root.sync-text();
+    }
+
     VerticalLayout {
         spacing: 6px;
         alignment: center;
@@ -395,20 +414,30 @@ component VerticalSpinBox {
             text: "+";
             enabled: root.value < root.max-value;
             clicked => {
+                root.commit-text();
                 if (root.value < root.max-value) { root.value += 1; }
+                root.sync-text();
             }
         }
-        Text {
+        input := TextInput {
             text: root.value < 10 ? "0" + root.value : "" + root.value;
+            input-type: InputType.number;
             font-size: 32px;
+            color: MaterialPalette.on-surface;
             horizontal-alignment: center;
             vertical-alignment: center;
+            accepted => { self.clear-focus(); }
+            changed has-focus => {
+                if (!self.has-focus) { root.commit-text(); }
+            }
         }
         TonalButton {
             text: "−";
             enabled: root.value > root.min-value;
             clicked => {
+                root.commit-text();
                 if (root.value > root.min-value) { root.value -= 1; }
+                root.sync-text();
             }
         }
     }
@@ -1449,8 +1478,12 @@ export component MainWindow inherits Window {
     // heatmap threshold (core goal::compute).
     in-out property <int> prefs-goal-mins: 20;
     in-out property <bool> goal-dialog-open: false;
-    // Free-typed minutes; Set gates on parseable + 5..240
-    // (core DAILY_GOAL_MIN/MAX), all Slint-side via to-float.
+    // Free-typed minutes; Set gates on parseable + the goal
+    // bounds. Bounds are seeded from Rust (core
+    // DAILY_GOAL_MIN/MAX) so the limits live in meditate-core
+    // only — the defaults here just keep the host preview sane.
+    in property <int> goal-min-mins: 5;
+    in property <int> goal-max-mins: 1440;
     in-out property <string> goal-dialog-text: "20";
     callback goal-committed();
     // About + diagnostics (AB) — parity with GTK's AboutDialog +
@@ -7630,9 +7663,9 @@ export component MainWindow inherits Window {
         }
     }
     // ── Daily-goal entry dialog (ST) ─────────────────────────────
-    // Free-typed minutes, validated 5–240 (core
-    // DAILY_GOAL_MIN/MAX). Declared with the other dialogs so it
-    // tops the Preferences page.
+    // Free-typed minutes, validated against goal-min/max-mins
+    // (seeded from core DAILY_GOAL_MIN/MAX). Declared with the
+    // other dialogs so it tops the Preferences page.
     if root.goal-dialog-open : Rectangle {
         background: #00000080;
         TouchArea {
@@ -7667,7 +7700,7 @@ export component MainWindow inherits Window {
                 }
 
                 TextField {
-                    label: @tr("Minutes (5–240)");
+                    label: @tr("Minutes ({}–{})", root.goal-min-mins, root.goal-max-mins);
                     input-type: InputType.number;
                     text <=> root.goal-dialog-text;
                 }
@@ -7683,8 +7716,8 @@ export component MainWindow inherits Window {
                     TextButton {
                         text: @tr("Set");
                         enabled: root.goal-dialog-text.is-float()
-                            && root.goal-dialog-text.to-float() >= 5
-                            && root.goal-dialog-text.to-float() <= 240;
+                            && root.goal-dialog-text.to-float() >= root.goal-min-mins
+                            && root.goal-dialog-text.to-float() <= root.goal-max-mins;
                         clicked => {
                             root.prefs-goal-mins = Math.round(
                                 root.goal-dialog-text.to-float());

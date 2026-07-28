@@ -3903,6 +3903,12 @@ fn build_ui() -> MainWindow {
     #[cfg(target_os = "android")]
     wire_date_picker_adapter(&ui);
 
+    // Daily-goal input bounds — the dialog's Set gate and its
+    // "Minutes (min–max)" label both read these, so the limits
+    // stay defined in meditate-core alone.
+    ui.set_goal_min_mins(meditate_core::goal::DAILY_GOAL_MIN as i32);
+    ui.set_goal_max_mins(meditate_core::goal::DAILY_GOAL_MAX as i32);
+
     let state = Rc::new(RefCell::new(AppState::idle()));
     // Active mode chip — drives both the Setup body content and
     // the `SessionMode` recorded on Save. Defaults to Timer at

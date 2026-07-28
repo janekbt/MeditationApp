@@ -436,8 +436,8 @@ msgstr "管理文件"
 msgid "Manage Presets"
 msgstr "管理预设"
 
-msgid "Minutes (5–240)"
-msgstr "分钟（5–240）"
+msgid "Minutes ({}–{})"
+msgstr "分钟（{}–{}）"
 
 msgid "Minutes per day"
 msgstr "每天分钟数"

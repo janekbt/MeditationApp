@@ -361,8 +361,8 @@ msgstr "Meditate"
 msgid "Minutes"
 msgstr "Minuten"
 
-msgid "Minutes (5–240)"
-msgstr "Minuten (5–240)"
+msgid "Minutes ({}–{})"
+msgstr "Minuten ({}–{})"
 
 msgid "Minutes per day"
 msgstr "Minuten pro Tag"
