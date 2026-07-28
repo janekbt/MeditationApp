@@ -4532,20 +4532,25 @@ export component MainWindow inherits Window {
             spacing: 16px;
             alignment: start;
 
-            // Header — Cancel (left) + title (centre) + Save
-            // (right). Mirrors GTK's `header.pack_start(&cancel_btn)
-            // / header.pack_end(&save_btn)` at
-            // `log/imp.rs:998-1000`. Save uses FilledButton to
-            // match the `suggested-action` CSS class on the GTK
-            // Save button.
+            // Header — dismiss (left) + title (centre) + Save
+            // (right), the Material 3 full-screen-dialog shape.
+            // GTK's HeaderBar uses a "Cancel" text button here
+            // (`header.pack_start(&cancel_btn)` at
+            // `log/imp.rs:998-1000`), but the translated word is
+            // too wide for a phone header — German "Abbrechen" +
+            // "Sitzung bearbeiten" + "Speichern" overflowed the
+            // window — so Android uses Material's canonical X
+            // IconButton for dismiss instead. Save stays a
+            // FilledButton to match the `suggested-action` CSS
+            // class on the GTK Save button.
             HorizontalLayout {
                 spacing: 12px;
                 alignment: stretch;
 
                 VerticalLayout {
                     alignment: center;
-                    TextButton {
-                        text: @tr("Cancel");
+                    IconButton {
+                        icon: Icons.close;
                         clicked => { root.edit-cancel-tap(); }
                     }
                 }
@@ -4556,6 +4561,16 @@ export component MainWindow inherits Window {
                     vertical-alignment: center;
                     horizontal-stretch: 1;
                     horizontal-alignment: center;
+                    // Long locale titles must squeeze, not shove
+                    // Save off-screen: a Text's implicit
+                    // min-width is its content width, so without
+                    // this the stretch-1 title wins the layout
+                    // fight against the buttons. With the X
+                    // dismiss there's ~200dp of title room — no
+                    // current locale elides, this is a safety
+                    // net.
+                    min-width: 0;
+                    overflow: elide;
                 }
                 VerticalLayout {
                     alignment: center;
