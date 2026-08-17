@@ -1,0 +1,7 @@
+• Typ de duur rechtstreeks: tik op de uren of minuten in de tijdkiezer
+  in plaats van de plus- en minknoppen te gebruiken
+• Het dagdoel kan nu tot 24 uur worden ingesteld (was 4 uur)
+• Sessiebewerker: de knop Opslaan valt niet meer buiten beeld in talen
+  met langere woorden
+• Builds zijn nu reproduceerbaar, de gepubliceerde APK kan tegen de
+  broncode worden gecontroleerd

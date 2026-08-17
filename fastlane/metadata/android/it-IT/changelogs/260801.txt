@@ -1,0 +1,7 @@
+• Digita la durata direttamente: tocca le ore o i minuti nel
+  selettore invece di usare i pulsanti più e meno
+• L'obiettivo giornaliero ora arriva fino a 24 ore (prima 4 ore)
+• Editor della sessione: il pulsante Salva non esce più dallo schermo
+  nelle lingue con parole lunghe
+• Le build ora sono riproducibili, quindi l'APK pubblicato può essere
+  verificato con il codice sorgente

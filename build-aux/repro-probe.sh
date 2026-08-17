@@ -39,6 +39,12 @@ for d in "$A" "$B"; do
 done
 
 for d in "$A" "$B"; do
+    # Build B the way F-Droid does: with the signing config regex-stripped
+    # out. This is what caught the 26.8.0 breakage only after their CI ran.
+    if [ "$d" = "$B" ]; then
+        say "strip signing config in $d (as fdroidserver does)"
+        python3 "$SRC/build-aux/fdroid-strip-signing.py" "$d"
+    fi
     say "build release in $d"
     # REMAP=1 applies the candidate fix: rustc bakes the absolute path of
     # build-script-generated sources (slint's main.rs, glutin's

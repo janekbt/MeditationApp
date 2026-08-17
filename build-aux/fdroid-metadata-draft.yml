@@ -16,7 +16,9 @@
 #
 # Field order below is rewritemeta's canonical one (Binaries between
 # Repo and Builds, AllowedAPKSigningKeys after Builds), verified
-# against metadata/com.reteclock.yml in fdroiddata.
+# against metadata/com.reteclock.yml in fdroiddata. Binaries stays on
+# ONE line: rewritemeta only wraps values that exceed its width, and
+# ours does not (that wrap failed CI once).
 Categories:
   - Sports & Health
 License: GPL-3.0-or-later
@@ -30,12 +32,11 @@ AutoName: Meditate
 
 RepoType: git
 Repo: https://github.com/janekbt/MeditationApp.git
-Binaries: 
-  https://github.com/janekbt/MeditationApp/releases/download/v%v/Meditate-%v.apk
+Binaries: https://github.com/janekbt/MeditationApp/releases/download/v%v/Meditate-%v.apk
 
 Builds:
-  - versionName: 26.8.0
-    versionCode: 260800
+  - versionName: 26.8.1
+    versionCode: 260801
     commit: f90ae4760f26e9b652e419abca6feaa575cef6d9
     subdir: meditate-android/android/app
     sudo:
@@ -54,5 +55,5 @@ AllowedAPKSigningKeys: 4b2e69c3c52a2b9d5e63b2f301df9773cd95f740860ef7dd680b986cb
 
 AutoUpdateMode: Version
 UpdateCheckMode: Tags ^v[0-9.]+$
-CurrentVersion: 26.8.0
-CurrentVersionCode: 260800
+CurrentVersion: 26.8.1
+CurrentVersionCode: 260801

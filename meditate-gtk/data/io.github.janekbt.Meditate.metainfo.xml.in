@@ -88,6 +88,11 @@
   </content_rating>
 
   <releases>
+    <release version="26.8.1" date="2026-08-17">
+      <description translate="yes">
+        <p>Same as 26.8.0, with a packaging fix so F-Droid can rebuild and verify the Android app.</p>
+      </description>
+    </release>
     <release version="26.8.0" date="2026-08-17">
       <description translate="yes">
         <p>A longer reach for daily goals, and a friendlier way to set a session length on Android.</p>

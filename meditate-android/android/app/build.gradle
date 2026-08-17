@@ -20,11 +20,11 @@ plugins {
 // keystore path and passwords are never committed. Absent on every
 // machine but the maintainer's — see the signingConfigs block below
 // for the fallback. Override the location with MEDITATE_SIGNING.
+def debugKeystore = "${System.getProperty('user.home')}/.android/debug.keystore"
 def upstreamSigning = new Properties()
-def upstreamSigningFile = file(System.getenv('MEDITATE_SIGNING')
-    ?: "${System.getProperty('user.home')}/.config/meditate-android/signing.properties")
-if (upstreamSigningFile.exists()) {
-    upstreamSigningFile.withInputStream { upstreamSigning.load(it) }
+def upstreamSigningPath = System.getenv('MEDITATE_SIGNING') ?: "${System.getProperty('user.home')}/.config/meditate-android/signing.properties"
+if (file(upstreamSigningPath).exists()) {
+    file(upstreamSigningPath).withInputStream { upstreamSigning.load(it) }
 }
 
 android {
@@ -39,8 +39,8 @@ android {
         // patch means a patch actually shipped that month).
         // versionCode is the same date flattened to yymmpp —
         // monotonic as long as patch < 100.
-        versionCode 260800
-        versionName '26.8.0'
+        versionCode 260801
+        versionName '26.8.1'
     }
     sourceSets {
         main {
@@ -48,38 +48,32 @@ android {
             jniLibs.srcDirs = ['src/main/jniLibs']
         }
     }
-    // Release signing (reproducible builds). The upstream signing key
-    // lives outside the repo; `signing.properties` points at it. When
-    // that file is absent — F-Droid's buildserver, CI, any contributor
-    // building from source — the release variant falls back to the
-    // throwaway debug keystore so `assembleRelease` still produces an
-    // installable APK. That fallback is deliberate and harmless:
-    // F-Droid's verification compares APK *payloads* and ignores the
-    // signature block, so their unsigned-by-us rebuild still has to
-    // match our published binary byte for byte.
+    // Release signing (reproducible builds). Each value comes from the
+    // signing.properties above and falls back to the throwaway debug
+    // keystore when that file is absent, so assembleRelease still
+    // produces an installable APK for CI and for anyone building from
+    // source. The fallback is harmless: F-Droid's verification compares
+    // APK *payloads* and ignores the signature block, so their rebuild
+    // still has to match our published binary byte for byte.
     //
-    // Debug builds keep AGP's automatic ~/.android/debug.keystore.
+    // EVERY LINE HERE MUST STAND ALONE. Before building, fdroidserver
+    // (common.py remove_signing_keys) deletes the whole signingConfigs
+    // block and every `signingConfig <value>` line by regex, without
+    // parsing Groovy. A multi-line expression loses only its first line
+    // and leaves a syntax error behind — that is exactly what broke the
+    // 26.8.0 build on MR !43338. build-aux/fdroid-strip-signing.py
+    // replays that stripping so repro-probe.sh catches it locally.
     signingConfigs {
-        debugShim {
-            storeFile file("${System.getProperty('user.home')}/.android/debug.keystore")
-            storePassword 'android'
-            keyAlias 'androiddebugkey'
-            keyPassword 'android'
-        }
         release {
-            if (upstreamSigning['storeFile']) {
-                storeFile file(upstreamSigning['storeFile'])
-                storePassword upstreamSigning['storePassword']
-                keyAlias upstreamSigning['keyAlias']
-                keyPassword upstreamSigning['keyPassword']
-            }
+            storeFile file(upstreamSigning.getProperty('storeFile', debugKeystore))
+            storePassword upstreamSigning.getProperty('storePassword', 'android')
+            keyAlias upstreamSigning.getProperty('keyAlias', 'androiddebugkey')
+            keyPassword upstreamSigning.getProperty('keyPassword', 'android')
         }
     }
     buildTypes {
         release {
-            signingConfig upstreamSigning['storeFile']
-                ? signingConfigs.release
-                : signingConfigs.debugShim
+            signingConfig signingConfigs.release
         }
     }
 }

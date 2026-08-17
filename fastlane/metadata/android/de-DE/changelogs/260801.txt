@@ -1,0 +1,8 @@
+• Dauer direkt eingeben: Tippe im Zeitwähler auf die Stunden oder
+  Minuten, statt sie mit Plus und Minus zu ändern
+• Das Tagesziel lässt sich jetzt bis 24 Stunden einstellen (vorher
+  4 Stunden)
+• Sitzungseditor: Die Schaltfläche „Speichern“ läuft in Sprachen mit
+  längeren Wörtern nicht mehr aus dem Bild
+• Builds sind jetzt reproduzierbar, die veröffentlichte APK lässt
+  sich gegen den Quelltext prüfen
