@@ -437,7 +437,14 @@ component VerticalSpinBox {
             vertical-alignment: center;
             accepted => { self.clear-focus(); }
             changed has-focus => {
-                if (!self.has-focus) { root.commit-text(); }
+                if (self.has-focus) {
+                    // Select the whole number on tap so typing replaces
+                    // it — the readout is zero-padded, so otherwise two
+                    // digits have to be deleted before entering a value.
+                    self.select-all();
+                } else {
+                    root.commit-text();
+                }
             }
         }
         TonalButton {
