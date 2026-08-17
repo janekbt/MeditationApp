@@ -24,6 +24,20 @@ TB="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin"
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"   # repo root
 PROFILE="${1:-debug}"
+
+# Reproducible builds: rustc bakes the absolute path of build-script
+# output (slint's generated main.rs, glutin's egl_bindings.rs) and of
+# every crates.io source file into the binary, so the same source built
+# in two directories produces two different .so files — and because a
+# longer path shifts .rodata, thousands of relocations shift with it.
+# Rewriting both prefixes to fixed placeholders makes the output
+# path-independent, which is what F-Droid's build verification needs;
+# it also keeps the developer's home directory out of shipped APKs.
+# Cargo deliberately excludes --remap-path-prefix from its metadata
+# hash, so this does not perturb OUT_DIR names.
+# Verified byte-identical across two differing paths — see
+# build-aux/repro-probe.sh.
+export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$ROOT=/build --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo"
 # ABIS: space-separated list, default arm64 only (device builds).
 # `ABIS="arm64-v8a x86_64" ./rust-build.sh` adds the emulator ABI —
 # run `rustup target add x86_64-linux-android` once first.

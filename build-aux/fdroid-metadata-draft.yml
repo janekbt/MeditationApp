@@ -1,13 +1,29 @@
 # Metadata for the fdroiddata merge request — copy to
 # metadata/io.github.janekbt.Meditate.yml in a fork of
 # https://gitlab.com/fdroid/fdroiddata and open the MR.
-# v26.7.1 is tagged on main; reviewers may adjust field style.
+# Reviewers may adjust field style.
+#
+# REPRODUCIBLE BUILDS (MR !43338, reviewer request): F-Droid rebuilds
+# the tagged commit and compares the payload against the APK we publish
+# at `Binaries`; on a match it distributes OUR signed binary instead of
+# re-signing. Two consequences:
+#   * the built commit MUST contain the --remap-path-prefix flags in
+#     meditate-android/android/rust-build.sh — without them rustc bakes
+#     the build directory into libmeditate_android.so and F-Droid's
+#     path can never match ours (measured: build-aux/repro-probe.sh);
+#   * every release needs its signed APK uploaded to the `Binaries`
+#     URL before F-Droid picks the tag up (see RELEASE.md).
 Categories:
   - Sports & Health
 License: GPL-3.0-or-later
 AuthorName: Janek
 SourceCode: https://github.com/janekbt/MeditationApp
 IssueTracker: https://github.com/janekbt/MeditationApp/issues
+# Upstream signing certificate (SHA-256 of the DER cert, as printed by
+# `apksigner verify --print-certs`). F-Droid refuses any binary at
+# `Binaries` that is not signed by this key.
+AllowedAPKSigningKeys: 4b2e69c3c52a2b9d5e63b2f301df9773cd95f740860ef7dd680b986cbca59970
+Binaries: https://github.com/janekbt/MeditationApp/releases/download/v%v/Meditate-%v.apk
 Changelog: 
   https://github.com/janekbt/MeditationApp/blob/main/fastlane/metadata/android/en-US/changelogs/
 
@@ -17,11 +33,15 @@ RepoType: git
 Repo: https://github.com/janekbt/MeditationApp.git
 
 Builds:
-  - versionName: 26.7.1
-    versionCode: 260701
+  # NOTE: v26.7.1 (c249df5) predates the reproducibility flags and can
+  # NOT be verified — it has to be superseded by a new tag rather than
+  # amended. Fill in versionName/versionCode/commit once that tag is
+  # cut and its signed APK is published to the Binaries URL.
+  - versionName: 26.8.1
+    versionCode: 260801
     # fdroiddata requires the full commit hash here, not the
     # tag (reviewer request on MR !43338).
-    commit: c249df5f654ca373b87110e883e39b2add5eb866
+    commit: PENDING_NEW_TAG
     subdir: meditate-android/android/app
     sudo:
       # Install rustup from Debian, not the network installer —
@@ -49,5 +69,5 @@ Builds:
 
 AutoUpdateMode: Version
 UpdateCheckMode: Tags ^v[0-9.]+$
-CurrentVersion: 26.7.1
-CurrentVersionCode: 260701
+CurrentVersion: 26.8.1
+CurrentVersionCode: 260801

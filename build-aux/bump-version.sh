@@ -3,10 +3,11 @@
 # for the full runbook this belongs to).
 #
 # Stamps ONE date-based version everywhere. Scheme: yy.m.p
-# (26.7.1 = first July-2026 release; p increments within a month)
-# with the Android versionCode as yymmpp (260701) — monotonic as
-# long as p < 100. Both shells always move together: same commit,
-# same version, even when only one shell has user-visible changes.
+# (26.8.0 = first August-2026 release; p increments within a month,
+# so a non-zero p means "this month's p-th patch") with the Android
+# versionCode as yymmpp (260800) — monotonic as long as p < 100.
+# Both shells always move together: same commit, same version, even
+# when only one shell has user-visible changes.
 #
 # Usage:
 #   build-aux/bump-version.sh          # auto: next patch for today
@@ -37,7 +38,9 @@ else
     if [ "$cyy" = "$YY" ] && [ "$cm" = "$M" ]; then
         NEW="$YY.$M.$((cp + 1))"
     else
-        NEW="$YY.$M.1"
+        # First release of a new month starts at .0 — a non-zero
+        # patch number should mean a patch actually happened.
+        NEW="$YY.$M.0"
     fi
 fi
 IFS=. read -r yy m p <<< "$NEW"

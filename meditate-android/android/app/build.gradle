@@ -16,6 +16,17 @@ plugins {
     id 'org.jetbrains.kotlin.android'
 }
 
+// Upstream release-signing credentials, kept outside the repo so the
+// keystore path and passwords are never committed. Absent on every
+// machine but the maintainer's — see the signingConfigs block below
+// for the fallback. Override the location with MEDITATE_SIGNING.
+def upstreamSigning = new Properties()
+def upstreamSigningFile = file(System.getenv('MEDITATE_SIGNING')
+    ?: "${System.getProperty('user.home')}/.config/meditate-android/signing.properties")
+if (upstreamSigningFile.exists()) {
+    upstreamSigningFile.withInputStream { upstreamSigning.load(it) }
+}
+
 android {
     namespace 'io.github.janekbt.Meditate'
     compileSdk 34
@@ -24,11 +35,12 @@ android {
         minSdk 26
         targetSdk 34
         // Date-based, matching the GTK shell's yy.month.patch
-        // scheme (26.7.1 = first July-2026 release). versionCode
-        // is the same date flattened to yymmpp — monotonic as
-        // long as patch < 100.
-        versionCode 260701
-        versionName '26.7.1'
+        // scheme (26.8.0 = first August-2026 release; a non-zero
+        // patch means a patch actually shipped that month).
+        // versionCode is the same date flattened to yymmpp —
+        // monotonic as long as patch < 100.
+        versionCode 260800
+        versionName '26.8.0'
     }
     sourceSets {
         main {
@@ -36,16 +48,17 @@ android {
             jniLibs.srcDirs = ['src/main/jniLibs']
         }
     }
-    // Debug builds are auto-signed with AGP's ~/.android/debug.keystore
-    // (G-4). Release signing / F-Droid reproducible build is later.
+    // Release signing (reproducible builds). The upstream signing key
+    // lives outside the repo; `signing.properties` points at it. When
+    // that file is absent — F-Droid's buildserver, CI, any contributor
+    // building from source — the release variant falls back to the
+    // throwaway debug keystore so `assembleRelease` still produces an
+    // installable APK. That fallback is deliberate and harmless:
+    // F-Droid's verification compares APK *payloads* and ignores the
+    // signature block, so their unsigned-by-us rebuild still has to
+    // match our published binary byte for byte.
     //
-    // TEST-ONLY debug-signing shim: real release signing is
-    // deferred (F-Droid signs with its own key), so assembleRelease
-    // is normally unsigned and won't sideload. Point the release
-    // variant at the same throwaway debug keystore purely so an
-    // OPTIMIZED build can be installed on-device to measure real
-    // (shipped-quality) animation smoothness. NOT production
-    // signing; F-Droid ignores this and rebuilds + signs itself.
+    // Debug builds keep AGP's automatic ~/.android/debug.keystore.
     signingConfigs {
         debugShim {
             storeFile file("${System.getProperty('user.home')}/.android/debug.keystore")
@@ -53,10 +66,20 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
+        release {
+            if (upstreamSigning['storeFile']) {
+                storeFile file(upstreamSigning['storeFile'])
+                storePassword upstreamSigning['storePassword']
+                keyAlias upstreamSigning['keyAlias']
+                keyPassword upstreamSigning['keyPassword']
+            }
+        }
     }
     buildTypes {
         release {
-            signingConfig signingConfigs.debugShim
+            signingConfig upstreamSigning['storeFile']
+                ? signingConfigs.release
+                : signingConfigs.debugShim
         }
     }
 }

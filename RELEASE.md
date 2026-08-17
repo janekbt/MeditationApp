@@ -105,6 +105,29 @@ All must pass before anything is tagged:
     git push origin main --tags
     git checkout beta
 
+### 5a. Publish the signed APK (REQUIRED — reproducible builds)
+
+F-Droid distributes *our* signed binary, so a tag without a published
+APK stalls the update instead of shipping it. Right after the tag:
+
+    cd meditate-android/android && ./gradlew --no-daemon assembleRelease
+    gh release create v<version> \
+        app/build/outputs/apk/release/app-release.apk#Meditate-<version>.apk \
+        --title "Meditate <version>" --notes-file <release notes>
+
+- The asset name must match `Binaries:` in the fdroiddata recipe
+  (`Meditate-%v.apk`), or F-Droid can't find it.
+- Signing uses `~/.config/meditate-android/signing.properties`. If that
+  file is missing the build silently falls back to the debug keystore
+  and F-Droid will REJECT the upload — confirm before uploading:
+
+      apksigner verify --print-certs app-release.apk
+
+  must print SHA-256 `4b2e69c3c52a2b9d5e63b2f301df9773cd95f740860ef7dd680b986cbca59970`.
+- Never let a release build run without the remap flags in
+  `rust-build.sh`; they are what makes F-Droid's rebuild match ours.
+  `build-aux/repro-probe.sh` re-checks this if a verification fails.
+
 - F-Droid picks the new tag up automatically once the app is in
   fdroiddata (`UpdateCheckMode: Tags`). Until first inclusion,
   submission is manual — see `build-aux/fdroid-metadata-draft.yml`.
@@ -133,3 +156,7 @@ All must pass before anything is tagged:
 - A stale `cargo-sources.json` or a moved meson path fails CI ~10
   minutes in; the pre-release sweep exists because of both.
 - gradle builds: gate on exit code, never on grepping the log.
+- The release keystore is the app's identity and has no backup but
+  Janek's: losing `~/.config/meditate-android/` means no further
+  updates can EVER be shipped to installed users (a different key
+  forces uninstall + reinstall). Treat it like the only copy.
