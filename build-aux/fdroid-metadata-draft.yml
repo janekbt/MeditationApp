@@ -13,17 +13,16 @@
 #     path can never match ours (measured: build-aux/repro-probe.sh);
 #   * every release needs its signed APK uploaded to the `Binaries`
 #     URL before F-Droid picks the tag up (see RELEASE.md).
+#
+# Field order below is rewritemeta's canonical one (Binaries between
+# Repo and Builds, AllowedAPKSigningKeys after Builds), verified
+# against metadata/com.reteclock.yml in fdroiddata.
 Categories:
   - Sports & Health
 License: GPL-3.0-or-later
 AuthorName: Janek
 SourceCode: https://github.com/janekbt/MeditationApp
 IssueTracker: https://github.com/janekbt/MeditationApp/issues
-# Upstream signing certificate (SHA-256 of the DER cert, as printed by
-# `apksigner verify --print-certs`). F-Droid refuses any binary at
-# `Binaries` that is not signed by this key.
-AllowedAPKSigningKeys: 4b2e69c3c52a2b9d5e63b2f301df9773cd95f740860ef7dd680b986cbca59970
-Binaries: https://github.com/janekbt/MeditationApp/releases/download/v%v/Meditate-%v.apk
 Changelog: 
   https://github.com/janekbt/MeditationApp/blob/main/fastlane/metadata/android/en-US/changelogs/
 
@@ -31,43 +30,29 @@ AutoName: Meditate
 
 RepoType: git
 Repo: https://github.com/janekbt/MeditationApp.git
+Binaries: 
+  https://github.com/janekbt/MeditationApp/releases/download/v%v/Meditate-%v.apk
 
 Builds:
-  # NOTE: v26.7.1 (c249df5) predates the reproducibility flags and can
-  # NOT be verified — it has to be superseded by a new tag rather than
-  # amended. Fill in versionName/versionCode/commit once that tag is
-  # cut and its signed APK is published to the Binaries URL.
-  - versionName: 26.8.1
-    versionCode: 260801
-    # fdroiddata requires the full commit hash here, not the
-    # tag (reviewer request on MR !43338).
-    commit: PENDING_NEW_TAG
+  - versionName: 26.8.0
+    versionCode: 260800
+    commit: f90ae4760f26e9b652e419abca6feaa575cef6d9
     subdir: meditate-android/android/app
     sudo:
-      # Install rustup from Debian, not the network installer —
-      # F-Droid's buildserver rejects `curl | sh` (reviewer
-      # request, matches com.ivanovsky.passnotes). gcc/libc-dev
-      # are needed for host-side build scripts (rusqlite's cc).
-      # trixie dropped JDK 17 — pull it from bookworm.
       - echo "deb https://deb.debian.org/debian bookworm main" > /etc/apt/sources.list.d/bookworm.list
       - apt-get update
       - apt-get install -y rustup gcc libc-dev openjdk-17-jdk-headless
-      # JDK 17: slint's android-activity dexes a Java helper in
-      # build.rs; JDK-21 classfiles crash the buildserver's older
-      # d8 (build-tools 30/31). 17 is also AGP 7.3's supported JDK.
       - update-java-alternatives --set java-1.17.0-openjdk-amd64
     gradle:
       - yes
     prebuild:
-      # Runs as the build user, so the toolchain lands in its
-      # ~/.rustup. rust-build.sh then drives plain cargo (no
-      # cargo-ndk — its 4.x runner breaks slint's build.rs). NDK
-      # comes from the pin below via ANDROID_NDK_ROOT/_HOME.
       - rustup default 1.95.0
       - rustup target add aarch64-linux-android
     ndk: r27c
 
+AllowedAPKSigningKeys: 4b2e69c3c52a2b9d5e63b2f301df9773cd95f740860ef7dd680b986cbca59970
+
 AutoUpdateMode: Version
 UpdateCheckMode: Tags ^v[0-9.]+$
-CurrentVersion: 26.8.1
-CurrentVersionCode: 260801
+CurrentVersion: 26.8.0
+CurrentVersionCode: 260800
