@@ -57,8 +57,20 @@ for d in "$A" "$B"; do
     ( cd "$d/meditate-android/android" && ./gradlew --no-daemon -q assembleRelease )
 done
 
-APK_A="$A/meditate-android/android/app/build/outputs/apk/release/app-release.apk"
-APK_B="$B/meditate-android/android/app/build/outputs/apk/release/app-release.apk"
+# Stripping the signing config leaves AGP with nothing to sign with, so
+# that build emits app-release-unsigned.apk instead — same as on F-Droid's
+# buildserver. Take whichever name exists.
+find_apk() {
+    local d="$1/meditate-android/android/app/build/outputs/apk/release"
+    local f
+    for f in "$d/app-release.apk" "$d/app-release-unsigned.apk"; do
+        [ -f "$f" ] && { echo "$f"; return 0; }
+    done
+    echo "no APK in $d (build failed?)" >&2
+    return 1
+}
+APK_A="$(find_apk "$A")"
+APK_B="$(find_apk "$B")"
 
-say "compare"
+say "compare $(basename "$APK_A") vs $(basename "$APK_B")"
 python3 "$SRC/build-aux/repro-compare.py" "$APK_A" "$APK_B"
