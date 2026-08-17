@@ -1,0 +1,7 @@
+• Type a duration directly: tap the hours or minutes in the time
+  picker instead of stepping with the plus and minus buttons
+• The daily goal can now be set up to 24 hours (was 4 hours)
+• Session editor: the Save button no longer runs off the screen in
+  languages with longer words
+• Builds are now reproducible, so the published APK can be verified
+  against the source

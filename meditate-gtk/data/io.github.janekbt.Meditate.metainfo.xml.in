@@ -88,6 +88,17 @@
   </content_rating>
 
   <releases>
+    <release version="26.8.0" date="2026-08-17">
+      <description translate="yes">
+        <p>A longer reach for daily goals, and a friendlier way to set a session length on Android.</p>
+        <ul>
+          <li>The daily goal can now be set to anything up to 24 hours, instead of stopping at 4</li>
+          <li>Android: tap the hours or minutes in the time picker to type a duration, rather than only stepping it with the plus and minus buttons</li>
+          <li>Android: the Save button in the session editor no longer runs off the edge of the screen in languages with longer words</li>
+          <li>Android builds are now reproducible, so the published APK can be verified against this source</li>
+        </ul>
+      </description>
+    </release>
     <release version="26.7.1" date="2026-07-20">
       <description>
         <p>Nextcloud sync between all your devices, a guided-audio mode, daily goals, custom sounds and vibration patterns — and the first release of the Android companion app.</p>

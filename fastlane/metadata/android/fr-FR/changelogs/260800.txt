@@ -1,0 +1,8 @@
+• Saisissez la durée directement : touchez les heures ou les minutes
+  dans le sélecteur au lieu des boutons plus et moins
+• L'objectif quotidien peut désormais aller jusqu'à 24 heures
+  (auparavant 4 heures)
+• Éditeur de séance : le bouton Enregistrer ne dépasse plus de
+  l'écran dans les langues aux mots longs
+• Les compilations sont maintenant reproductibles, l'APK publié peut
+  être vérifié par rapport aux sources

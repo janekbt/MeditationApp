@@ -1,0 +1,7 @@
+• Wpisz czas trwania bezpośrednio: dotknij godzin lub minut w
+  selektorze zamiast używać przycisków plus i minus
+• Cel dzienny można teraz ustawić nawet na 24 godziny (wcześniej 4)
+• Edytor sesji: przycisk Zapisz nie wychodzi już poza ekran w językach
+  z dłuższymi słowami
+• Kompilacje są teraz odtwarzalne, więc opublikowany plik APK można
+  zweryfikować ze źródłami

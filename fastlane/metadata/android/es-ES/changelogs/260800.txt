@@ -1,0 +1,7 @@
+• Escribe la duración directamente: toca las horas o los minutos en
+  el selector en vez de usar los botones más y menos
+• El objetivo diario ahora llega hasta 24 horas (antes 4 horas)
+• Editor de sesión: el botón Guardar ya no se sale de la pantalla en
+  idiomas con palabras largas
+• Las compilaciones ahora son reproducibles, así que el APK publicado
+  se puede verificar con el código fuente

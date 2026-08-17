@@ -1,0 +1,7 @@
+• Digite a duração diretamente: toque nas horas ou nos minutos no
+  seletor em vez de usar os botões mais e menos
+• A meta diária agora vai até 24 horas (antes 4 horas)
+• Editor de sessão: o botão Salvar não sai mais da tela em idiomas com
+  palavras mais longas
+• As compilações agora são reproduzíveis, então o APK publicado pode
+  ser verificado com o código-fonte
