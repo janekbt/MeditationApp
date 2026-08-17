@@ -46,14 +46,11 @@ for d in "$A" "$B"; do
         python3 "$SRC/build-aux/fdroid-strip-signing.py" "$d"
     fi
     say "build release in $d"
-    # REMAP=1 applies the candidate fix: rustc bakes the absolute path of
-    # build-script-generated sources (slint's main.rs, glutin's
-    # egl_bindings.rs) and of the cargo registry into the binary.
-    # --remap-path-prefix rewrites both to fixed placeholders, so two
-    # builds at different paths should emit identical bytes.
-    if [ "${REMAP:-0}" = 1 ]; then
-        export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$d=/build --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo"
-    fi
+    # rust-build.sh applies the --remap-path-prefix flags itself now, so
+    # nothing extra is exported here. Keep it that way: an exported
+    # RUSTFLAGS accumulated across this loop would hand the second build
+    # the first build's remap, which is the opposite of what a
+    # determinism probe wants.
     ( cd "$d/meditate-android/android" && ./gradlew --no-daemon -q assembleRelease )
 done
 

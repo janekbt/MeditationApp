@@ -111,12 +111,18 @@ F-Droid distributes *our* signed binary, so a tag without a published
 APK stalls the update instead of shipping it. Right after the tag:
 
     cd meditate-android/android && ./gradlew --no-daemon assembleRelease
-    gh release create v<version> \
-        app/build/outputs/apk/release/app-release.apk#Meditate-<version>.apk \
+    cp app/build/outputs/apk/release/app-release.apk /tmp/Meditate-<version>.apk
+    gh release create v<version> /tmp/Meditate-<version>.apk \
         --title "Meditate <version>" --notes-file <release notes>
 
+- Copy to the final NAME first. `gh` takes the asset name from the file's
+  basename; `path#Label` sets only a display label, so uploading
+  `app-release.apk#Meditate-x.y.z.apk` publishes it as `app-release.apk`
+  and the `Binaries:` URL 404s — F-Droid then silently stops updating.
 - The asset name must match `Binaries:` in the fdroiddata recipe
-  (`Meditate-%v.apk`), or F-Droid can't find it.
+  (`Meditate-%v.apk`). Confirm after upload:
+
+      curl -sIL <Binaries URL> | grep '^HTTP/'
 - Signing uses `~/.config/meditate-android/signing.properties`. If that
   file is missing the build silently falls back to the debug keystore
   and F-Droid will REJECT the upload — confirm before uploading:

@@ -37,7 +37,7 @@ Binaries: https://github.com/janekbt/MeditationApp/releases/download/v%v/Meditat
 Builds:
   - versionName: 26.8.1
     versionCode: 260801
-    commit: f90ae4760f26e9b652e419abca6feaa575cef6d9
+    commit: 031e556e3b8722ad6c373f0eae9d0214eeb1813c
     subdir: meditate-android/android/app
     sudo:
       - echo "deb https://deb.debian.org/debian bookworm main" > /etc/apt/sources.list.d/bookworm.list

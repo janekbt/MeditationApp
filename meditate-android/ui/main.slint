@@ -395,6 +395,15 @@ component VerticalSpinBox {
     // 46, then re-sync the display — the initial `text:` binding
     // severs on the first user edit, so every value change must
     // write the text back explicitly.
+    // Public so a dialog's Set button can flush pending typed text
+    // before reading `value`. Tapping a Material button does NOT move
+    // focus — its FocusScope is declared `width: 0px` purely for
+    // keyboard navigation, so it is never hit-tested and
+    // `changed has-focus` never fires. Without this, "type 45, tap Set"
+    // commits the pre-edit value while the field still reads 45.
+    public function commit() {
+        root.commit-text();
+    }
     function sync-text() {
         input.text = root.value < 10 ? "0" + root.value : "" + root.value;
     }
@@ -4551,6 +4560,10 @@ export component MainWindow inherits Window {
                     alignment: center;
                     IconButton {
                         icon: Icons.close;
+                        // IconButton's accessible-label IS its tooltip;
+                        // without one TalkBack announces an unlabelled
+                        // button, where the old text button said "Cancel".
+                        tooltip: @tr("Cancel");
                         clicked => { root.edit-cancel-tap(); }
                     }
                 }
@@ -5056,7 +5069,7 @@ export component MainWindow inherits Window {
                     spacing: 8px;
                     alignment: center;
 
-                    VerticalSpinBox {
+                    hours-spin := VerticalSpinBox {
                         value <=> root.dialog-hours;
                         min-value: 0;
                         max-value: 23;
@@ -5067,7 +5080,7 @@ export component MainWindow inherits Window {
                         vertical-alignment: center;
                         color: MaterialPalette.on-surface;
                     }
-                    VerticalSpinBox {
+                    minutes-spin := VerticalSpinBox {
                         value <=> root.dialog-minutes;
                         min-value: 0;
                         max-value: 59;
@@ -5085,6 +5098,10 @@ export component MainWindow inherits Window {
                     TextButton {
                         text: @tr("Set");
                         clicked => {
+                            // Flush typed text first — tapping this
+                            // button does not blur the spinbox inputs.
+                            hours-spin.commit();
+                            minutes-spin.commit();
                             // Refuse to commit a zero-duration set,
                             // mirroring the GTK shell's guard.
                             if (root.dialog-hours > 0 || root.dialog-minutes > 0) {
@@ -6882,7 +6899,7 @@ export component MainWindow inherits Window {
 
                 HorizontalLayout {
                     alignment: center;
-                    VerticalSpinBox {
+                    prep-spin := VerticalSpinBox {
                         value <=> root.prep-dialog-secs;
                         min-value: 5;
                         max-value: 300;
@@ -6900,6 +6917,9 @@ export component MainWindow inherits Window {
                     TextButton {
                         text: @tr("Set");
                         clicked => {
+                            // Flush typed text first — see the
+                            // duration dialog's Set handler.
+                            prep-spin.commit();
                             root.prep-time-secs = root.prep-dialog-secs;
                             root.prep-secs-committed();
                             root.prep-dialog-open = false;

@@ -79,9 +79,18 @@ def main(root):
     for p in touched:
         print(f"stripped signing config from {p}")
     if not touched:
-        print("no signing config found to strip", file=sys.stderr)
+        # Must be fatal. repro-probe.sh runs under `set -e`, and a
+        # silent no-op (wrong path, moved build.gradle) would let the
+        # second build keep its signing config — then both APKs are
+        # signed, the comparison ignores META-INF, and the probe reports
+        # green while testing nothing. That is exactly the failure this
+        # script exists to catch.
+        print(f"no signing config found under {root}", file=sys.stderr)
+        return 1
     return 0
 
 
 if __name__ == '__main__':
+    if len(sys.argv) != 2:
+        sys.exit(f"usage: {os.path.basename(sys.argv[0])} <build-dir>")
     sys.exit(main(sys.argv[1]))
