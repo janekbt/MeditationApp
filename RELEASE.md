@@ -107,6 +107,14 @@ All must pass before anything is tagged:
 
 ### 5a. Publish the signed APK (REQUIRED — reproducible builds)
 
+Build releases with **JDK 17** and **build-tools 31.0.0** installed. F-Droid's
+buildserver uses both, and `rust-build.sh` pins the dexer to them so the Java
+helper slint embeds in the .so comes out identical on both sides. d8 3.0.41
+rejects JDK-21 classfiles, so a release built on JDK 21 fails outright:
+
+    JAVA_HOME=/path/to/jdk-17 ./gradlew --no-daemon assembleRelease
+
+
 F-Droid distributes *our* signed binary, so a tag without a published
 APK stalls the update instead of shipping it. Right after the tag:
 
