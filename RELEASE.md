@@ -100,10 +100,34 @@ All must pass before anything is tagged:
 
 ## 5. Tag and publish (needs Janek's explicit go)
 
+ORDER MATTERS. Once the app is in F-Droid, `UpdateCheckMode: Tags` means a
+new tag is picked up automatically, and their build fetches `Binaries` for
+that version straight away. A tag visible before its APK is published makes
+that build fail and stalls the update. So the APK goes up first, and the tag
+becomes visible only once the asset is confirmed reachable.
+
+`gh release create` creates the tag remotely if it is missing, and a DRAFT
+release does not create it at all — so draft, upload, verify, publish:
+
     git checkout main && git merge --ff-only beta
-    git tag v<version>
-    git push origin main --tags
+    git tag v<version>                 # local only, do NOT push yet
+
+    cd meditate-android/android
+    JAVA_HOME=/path/to/jdk-17 ./gradlew --no-daemon assembleRelease
+    cp app/build/outputs/apk/release/app-release.apk /tmp/Meditate-<version>.apk
+    gh release create v<version> /tmp/Meditate-<version>.apk --draft \
+        --title "Meditate <version>" --notes-file <release notes>
+
+    # confirm the asset is live, then publish the release (which pushes the tag)
+    gh release edit v<version> --draft=false
+    curl -sIL -o /dev/null -w '%{http_code}\n' <Binaries URL>   # must be 200
+
+    git push origin main --tags        # tag may already exist from the release
     git checkout beta
+
+- Never update the fdroiddata recipe to a version whose APK is not live yet;
+  a maintainer can trigger CI at any moment and the build will fail on the
+  missing binary.
 
 ### 5a. Publish the signed APK (REQUIRED — reproducible builds)
 
