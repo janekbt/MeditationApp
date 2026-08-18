@@ -1,0 +1,9 @@
+Première publication sur F-Droid.
+
+• Modes minuteur, respiration carrée et guidé avec cloches,
+  motifs de vibration et préréglages
+• Journal des séances avec étiquettes, notes et annulation
+• Statistiques d'objectif quotidien, carte de chaleur, graphiques
+• Synchronisation Nextcloud (compatible avec la version
+  Linux/GNOME), export/import CSV, Insight Timer
+• Widget d'écran d'accueil, 10 langues

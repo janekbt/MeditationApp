@@ -1,0 +1,9 @@
+First F-Droid release.
+
+• Timer, Box Breath, and Guided modes with bells, vibration
+  patterns, and presets
+• Session log with labels, notes, and undo
+• Daily-goal stats, heatmap, charts, and insights
+• Nextcloud sync (works with the Linux/GNOME version), CSV
+  export/import, Insight Timer import
+• Home-screen widget, 10 languages

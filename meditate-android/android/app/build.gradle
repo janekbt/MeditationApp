@@ -30,6 +30,13 @@ if (file(upstreamSigningPath).exists()) {
 android {
     namespace 'io.github.janekbt.Meditate'
     compileSdk 34
+    // Pin the NDK AGP uses to strip the native library during packaging.
+    // Unpinned, AGP resolves whatever it can find and silently skips the
+    // strip when it finds nothing: our .so went into the APK unstripped
+    // while F-Droid's was stripped, leaving an 8-byte difference in
+    // .shstrtab that failed their verification. Same version rust-build.sh
+    // compiles against.
+    ndkVersion '27.2.12479018'
     defaultConfig {
         applicationId 'io.github.janekbt.Meditate'
         minSdk 26
@@ -39,8 +46,8 @@ android {
         // patch means a patch actually shipped that month).
         // versionCode is the same date flattened to yymmpp —
         // monotonic as long as patch < 100.
-        versionCode 260803
-        versionName '26.8.3'
+        versionCode 260804
+        versionName '26.8.4'
     }
     sourceSets {
         main {

@@ -1,0 +1,9 @@
+Pierwsze wydanie na F-Droid.
+
+• Tryby minutnika, oddechu pudełkowego i z przewodnikiem, z
+  dzwonkami, wzorami wibracji i szablonami
+• Dziennik sesji z etykietami, notatkami i cofaniem
+• Statystyki celu dziennego, mapa ciepła, wykresy
+• Synchronizacja Nextcloud (zgodna z wersją Linux/GNOME),
+  eksport/import CSV, import z Insight Timer
+• Widżet ekranu głównego, 10 języków

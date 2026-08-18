@@ -3486,7 +3486,7 @@ dependencies = [
 
 [[package]]
 name = "meditate"
-version = "26.8.3"
+version = "26.8.4"
 dependencies = [
  "chrono",
  "csv",
@@ -3508,7 +3508,7 @@ dependencies = [
 
 [[package]]
 name = "meditate-android"
-version = "26.8.3"
+version = "26.8.4"
 dependencies = [
  "android-activity 0.6.1",
  "chrono",
