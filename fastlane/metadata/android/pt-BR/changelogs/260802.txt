@@ -1,0 +1,6 @@
+• Uma duração digitada é mantida ao tocar em Definir, em vez de voltar ao
+  valor anterior
+• Tocar nas horas ou nos minutos seleciona o número inteiro, então a
+  primeira tecla o substitui
+• Os leitores de tela anunciam novamente o botão de fechar do editor de
+  sessão como "Cancelar"

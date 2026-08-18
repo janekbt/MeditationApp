@@ -1,0 +1,6 @@
+• Wpisany czas trwania zostaje zachowany po dotknięciu Ustaw, zamiast
+  wracać do poprzedniej wartości
+• Dotknięcie godzin lub minut zaznacza całą liczbę, więc pierwszy znak ją
+  zastępuje
+• Czytniki ekranu ponownie odczytują przycisk zamykania w edytorze sesji
+  jako „Anuluj”

@@ -24,6 +24,10 @@ TB="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin"
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"   # repo root
 PROFILE="${1:-debug}"
+# Honour CARGO_TARGET_DIR; cargo writes there instead of $ROOT/target, and
+# hardcoding the latter both fails the copy below and escapes the path
+# remapping set up next.
+TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/target}"
 
 # Reproducible builds: rustc bakes the absolute path of build-script
 # output (slint's generated main.rs, glutin's egl_bindings.rs) and of
@@ -37,7 +41,11 @@ PROFILE="${1:-debug}"
 # hash, so this does not perturb OUT_DIR names.
 # Verified byte-identical across two differing paths — see
 # build-aux/repro-probe.sh.
-export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$ROOT=/build --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo"
+#
+# The target dir is remapped to the same placeholder it gets as $ROOT/target,
+# so a build with CARGO_TARGET_DIR pointing elsewhere still emits identical
+# bytes rather than leaking that path into the generated sources.
+export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$TARGET_DIR=/build/target --remap-path-prefix=$ROOT=/build --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo"
 # ABIS: space-separated list, default arm64 only (device builds).
 # `ABIS="arm64-v8a x86_64" ./rust-build.sh` adds the emulator ABI —
 # run `rustup target add x86_64-linux-android` once first.
@@ -59,10 +67,10 @@ for ABI in $ABIS; do
 
     if [ "$PROFILE" = "release" ]; then
         cargo build -p meditate-android --target "$TARGET" --release
-        SO="target/$TARGET/release/libmeditate_android.so"
+        SO="$TARGET_DIR/$TARGET/release/libmeditate_android.so"
     else
         cargo build -p meditate-android --target "$TARGET"
-        SO="target/$TARGET/debug/libmeditate_android.so"
+        SO="$TARGET_DIR/$TARGET/debug/libmeditate_android.so"
     fi
 
     DEST="$ROOT/meditate-android/android/app/src/main/jniLibs/$ABI"

@@ -1,0 +1,6 @@
+• Eine getippte Dauer bleibt beim Tippen auf „Setzen“ erhalten, statt auf
+  den vorherigen Wert zurückzufallen
+• Beim Tippen auf Stunden oder Minuten wird die ganze Zahl markiert, der
+  erste Tastendruck ersetzt sie
+• Bildschirmleser sagen die Schaltfläche zum Schließen im Sitzungseditor
+  wieder als „Abbrechen“ an

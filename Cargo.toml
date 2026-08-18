@@ -27,3 +27,17 @@ strip = "symbols"
 # panics still carry the message, which is enough for on-device work.
 [profile.dev]
 strip = "debuginfo"
+
+# Slint bundles translations in whatever order the filesystem returns the
+# `lang/` entries in, so the generated string table differs between machines
+# and F-Droid's build can never match our published APK. This is stock
+# Slint 1.16.1 plus one commit that sorts those entries; the same fix is
+# proposed upstream in slint-ui/slint#12932, and this patch goes away once a
+# release carries it.
+#
+# Pinned to an immutable rev (tag v1.16.1-sort-translations) rather than a
+# branch: a moving ref would defeat the reproducibility this exists for.
+# Only the build-time code generator is patched — the fork's copy reaches us
+# through build-dependencies and proc-macros, never the shipped library.
+[patch.crates-io]
+i-slint-compiler = { git = "https://github.com/janekbt/slint", rev = "a82420a30f09877bd291c23cc7eddc75ba30737a" }

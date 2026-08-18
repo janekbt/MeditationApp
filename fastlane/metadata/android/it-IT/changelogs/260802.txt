@@ -1,0 +1,6 @@
+• Una durata digitata viene mantenuta toccando Imposta, invece di tornare
+  al valore precedente
+• Toccando le ore o i minuti si seleziona l'intero numero, così il primo
+  tasto lo sostituisce
+• Le utilità per la lettura dello schermo annunciano di nuovo il pulsante
+  di chiusura dell'editor della sessione come «Annulla»

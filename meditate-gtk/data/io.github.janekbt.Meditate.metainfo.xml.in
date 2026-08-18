@@ -88,6 +88,16 @@
   </content_rating>
 
   <releases>
+    <release version="26.8.2" date="2026-08-18">
+      <description translate="yes">
+        <p>Fixes for entering a session length by keyboard on Android, and a packaging change so F-Droid can verify the app against its source.</p>
+        <ul>
+          <li>Android: typing a duration and tapping Set now keeps what you typed, instead of falling back to the previous value</li>
+          <li>Android: tapping the hours or minutes selects the whole number, so the first keystroke replaces it</li>
+          <li>Android: the dismiss button in the session editor is announced as "Cancel" by screen readers again</li>
+        </ul>
+      </description>
+    </release>
     <release version="26.8.1" date="2026-08-17">
       <description translate="yes">
         <p>Same as 26.8.0, with a packaging fix so F-Droid can rebuild and verify the Android app.</p>

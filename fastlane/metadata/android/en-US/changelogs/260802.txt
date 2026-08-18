@@ -1,0 +1,6 @@
+• Typing a duration and tapping Set now keeps what you typed, instead of
+  falling back to the previous value
+• Tapping the hours or minutes selects the whole number, so the first
+  keystroke replaces it
+• Screen readers announce the session editor's dismiss button as "Cancel"
+  again

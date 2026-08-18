@@ -1,0 +1,6 @@
+• Al escribir una duración y tocar Establecer se conserva lo escrito, en
+  vez de volver al valor anterior
+• Al tocar las horas o los minutos se selecciona el número entero, así la
+  primera tecla lo reemplaza
+• Los lectores de pantalla vuelven a anunciar el botón de cerrar del editor
+  de sesión como «Cancelar»

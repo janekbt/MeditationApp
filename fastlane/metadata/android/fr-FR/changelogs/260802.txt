@@ -1,0 +1,6 @@
+• Une durée saisie est conservée lorsque vous touchez Définir, au lieu de
+  revenir à la valeur précédente
+• Toucher les heures ou les minutes sélectionne le nombre entier : la
+  première touche le remplace
+• Les lecteurs d'écran annoncent de nouveau le bouton de fermeture de
+  l'éditeur de séance comme « Annuler »

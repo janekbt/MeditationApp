@@ -1,0 +1,6 @@
+• Een getypte duur blijft behouden bij het tikken op Instellen, in plaats
+  van terug te vallen op de vorige waarde
+• Tikken op de uren of minuten selecteert het hele getal, zodat de eerste
+  toetsaanslag het vervangt
+• Schermlezers kondigen de sluitknop in de sessiebewerker weer aan als
+  "Annuleren"
