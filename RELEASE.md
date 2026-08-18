@@ -110,19 +110,27 @@ becomes visible only once the asset is confirmed reachable.
 release does not create it at all — so draft, upload, verify, publish:
 
     git checkout main && git merge --ff-only beta
-    git tag v<version>                 # local only, do NOT push yet
+    git tag v<version>                 # local only, do NOT push the tag yet
+    git push origin beta && git push origin main   # branches only, no --tags
+
+Push the branches first: GitHub can only target a commit it already has, so a
+draft release against an unpushed commit fails with "target_commitish is
+invalid". Pushing a branch creates no tag, so nothing triggers F-Droid.
 
     cd meditate-android/android
     JAVA_HOME=/path/to/jdk-17 ./gradlew --no-daemon assembleRelease
     cp app/build/outputs/apk/release/app-release.apk /tmp/Meditate-<version>.apk
     gh release create v<version> /tmp/Meditate-<version>.apk --draft \
+        --target $(git rev-parse v<version>) \
         --title "Meditate <version>" --notes-file <release notes>
 
-    # confirm the asset is live, then publish the release (which pushes the tag)
+`--target` is required while the tag is local-only. A draft does not create
+the tag; publishing does, so the asset is live before anything can see it:
+
     gh release edit v<version> --draft=false
     curl -sIL -o /dev/null -w '%{http_code}\n' <Binaries URL>   # must be 200
 
-    git push origin main --tags        # tag may already exist from the release
+    git push origin --tags             # usually a no-op; the release made it
     git checkout beta
 
 - Never update the fdroiddata recipe to a version whose APK is not live yet;
