@@ -1,0 +1,9 @@
+Erste F-Droid-Veröffentlichung.
+
+• Timer-, Box-Atmungs- und geführter Modus mit Glocken,
+  Vibrationsmustern und Voreinstellungen
+• Sitzungsverlauf mit Kategorien, Notizen und Rückgängig
+• Tagesziel-Statistik, Heatmap, Diagramme und Einblicke
+• Nextcloud-Sync (kompatibel mit der Linux/GNOME-Version),
+  CSV-Export/-Import, Insight-Timer-Import
+• Startbildschirm-Widget, 10 Sprachen
