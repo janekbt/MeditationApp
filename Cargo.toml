@@ -30,14 +30,15 @@ strip = "debuginfo"
 
 # Slint bundles translations in whatever order the filesystem returns the
 # `lang/` entries in, so the generated string table differs between machines
-# and F-Droid's build can never match our published APK. This is stock
-# Slint 1.16.1 plus one commit that sorts those entries; the same fix is
-# proposed upstream in slint-ui/slint#12932, and this patch goes away once a
-# release carries it.
+# and F-Droid's build can never match our published APK. third_party holds
+# the stock 1.16.1 crate with one added sort; see third_party/README.md.
+# The same fix is proposed upstream in slint-ui/slint#12932, and this patch
+# goes away once a release carries it.
 #
-# Pinned to an immutable rev (tag v1.16.1-sort-translations) rather than a
-# branch: a moving ref would defeat the reproducibility this exists for.
-# Only the build-time code generator is patched — the fork's copy reaches us
-# through build-dependencies and proc-macros, never the shipped library.
+# Vendored by path rather than pulled from a git fork: the published crate
+# depends on i-slint-common from crates.io, so there is a single source for
+# it. A git patch resolves the fork's workspace path deps instead, giving two
+# copies of that crate, which offline vendoring (the Flatpak build) refuses.
+# It also keeps the build free of any external repository.
 [patch.crates-io]
-i-slint-compiler = { git = "https://github.com/janekbt/slint", rev = "a82420a30f09877bd291c23cc7eddc75ba30737a" }
+i-slint-compiler = { path = "third_party/i-slint-compiler" }

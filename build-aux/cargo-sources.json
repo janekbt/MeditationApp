@@ -1,11 +1,5 @@
 [
     {
-        "type": "git",
-        "url": "https://github.com/janekbt/slint",
-        "commit": "a82420a30f09877bd291c23cc7eddc75ba30737a",
-        "dest": "flatpak-cargo/git/slint-a82420a"
-    },
-    {
         "type": "archive",
         "archive-type": "tar-gzip",
         "url": "https://static.crates.io/crates/ab_glyph/ab_glyph-0.2.32.crate",
@@ -3201,42 +3195,6 @@
         "type": "inline",
         "contents": "{\"package\": \"40cae5cd0a81ce044029ac303256e025f98a4c59495b5189fc22b588da094e01\", \"files\": {}}",
         "dest": "cargo/vendor/i-slint-common-1.16.1",
-        "dest-filename": ".cargo-checksum.json"
-    },
-    {
-        "type": "shell",
-        "commands": [
-            "cp -r --reflink=auto \"flatpak-cargo/git/slint-a82420a/internal/common\" \"cargo/vendor/i-slint-common\""
-        ]
-    },
-    {
-        "type": "inline",
-        "contents": "[package]\nname = \"i-slint-common\"\ndescription = \"Helper crate for sharing code & data structures between i-slint-core and slint-compiler\"\nauthors = [\"Slint Developers <info@slint.dev>\"]\ndocumentation = \"https://slint.dev/docs\"\nedition = \"2024\"\nhomepage = \"https://slint.dev\"\nlicense = \"GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0\"\nrepository = \"https://github.com/slint-ui/slint\"\nrust-version = \"1.88\"\nversion = \"1.16.1\"\n\n[package.metadata.docs.rs]\nrustdoc-args = [\"--generate-link-to-definition\"]\n\n[lib]\npath = \"lib.rs\"\n\n[features]\ndefault = []\nshared-fontique = [\"dep:fontique\", \"dep:skrifa\"]\ncolor-parsing = []\nfontconfig-dlopen = [\"fontique?/fontconfig-dlopen\"]\nmarkdown = [\"dep:pulldown-cmark\", \"dep:htmlparser\", \"dep:derive_more\", \"color-parsing\"]\n\n[dependencies.fontique]\noptional = true\nversion = \"0.8.0\"\n\n[dependencies.skrifa]\noptional = true\nversion = \"0.40\"\n\n[dependencies.pulldown-cmark]\nversion = \"0.13.0\"\noptional = true\n\n[dependencies.htmlparser]\nversion = \"0.2.1\"\noptional = true\n\n[dependencies.derive_more]\noptional = true\nfeatures = [\"error\", \"display\", \"deref\", \"deref_mut\", \"into\", \"from\", \"add\", \"add_assign\", \"mul\", \"not\", \"display\"]\nversion = \"2.0.0\"\ndefault-features = false\n",
-        "dest": "cargo/vendor/i-slint-common",
-        "dest-filename": "Cargo.toml"
-    },
-    {
-        "type": "inline",
-        "contents": "{\"package\": null, \"files\": {}}",
-        "dest": "cargo/vendor/i-slint-common",
-        "dest-filename": ".cargo-checksum.json"
-    },
-    {
-        "type": "shell",
-        "commands": [
-            "cp -r --reflink=auto \"flatpak-cargo/git/slint-a82420a/internal/compiler\" \"cargo/vendor/i-slint-compiler\""
-        ]
-    },
-    {
-        "type": "inline",
-        "contents": "[package]\nname = \"i-slint-compiler\"\ndescription = \"Internal Slint Compiler Library\"\nauthors = [\"Slint Developers <info@slint.dev>\"]\nedition = \"2024\"\nhomepage = \"https://slint.dev\"\nlicense = \"GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0\"\nrepository = \"https://github.com/slint-ui/slint\"\nrust-version = \"1.88\"\nversion = \"1.16.1\"\nbuild = \"build.rs\"\n\n[package.metadata.docs.rs]\nfeatures = [\"software-renderer\", \"display-diagnostics\", \"bundle-translations\", \"cpp\", \"rust\", \"python\", \"experimental-library-module\"]\nrustdoc-args = [\"--generate-link-to-definition\"]\n\n[lib]\npath = \"lib.rs\"\n\n[features]\ncpp = []\nrust = [\"quote\", \"proc-macro2\"]\npython = [\"dep:pathdiff\", \"dep:serde\", \"smol_str/serde\", \"dep:serde_json\", \"dep:flate2\", \"dep:base64\"]\nproc_macro_span = [\"quote\", \"proc-macro2\"]\ndisplay-diagnostics = [\"dep:annotate-snippets\"]\nsoftware-renderer = [\"image\", \"dep:resvg\", \"dep:swash\", \"dep:skrifa\", \"i-slint-common/shared-fontique\", \"dep:rayon\"]\nsdf-fonts = [\"dep:fdsm\", \"dep:fdsm-ttf-parser\", \"dep:nalgebra\", \"dep:rayon\"]\nbundle-translations = [\"dep:rspolib\"]\nexperimental-library-module = []\ndefault = []\n\n[dependencies]\nnum_enum = \"0.7\"\nlyon_extra = \"1.0.1\"\nurl = \"2.2.1\"\nlinked_hash_set = \"0.1.4\"\ntyped-index-collections = \"3.2\"\ndata-url = \"0.3.2\"\n[dependencies.i-slint-common]\nfeatures = [\"default\", \"color-parsing\", \"markdown\"]\nversion = \"=1.16.1\"\npath = \"internal/common\"\ndefault-features = false\n\n[dependencies.icu_normalizer]\nversion = \"2\"\ndefault-features = false\nfeatures = [\"compiled_data\"]\n\n[dependencies.unicode-segmentation]\nversion = \"1.12.0\"\n\n[dependencies.strum]\nversion = \"0.28\"\ndefault-features = false\nfeatures = [\"derive\"]\n\n[dependencies.rowan]\nversion = \"0.16.1\"\n\n[dependencies.smol_str]\nversion = \"0.3.1\"\n\n[dependencies.derive_more]\nversion = \"2.0.0\"\ndefault-features = false\nfeatures = [\"deref\", \"deref_mut\", \"into\", \"from\", \"add\", \"add_assign\", \"mul\", \"not\", \"display\"]\n\n[dependencies.annotate-snippets]\nversion = \"0.12.9\"\noptional = true\n\n[dependencies.quote]\nversion = \"1.0\"\noptional = true\n\n[dependencies.proc-macro2]\nversion = \"1.0.17\"\noptional = true\n\n[dependencies.lyon_path]\nfeatures = [\"std\"]\nversion = \"1.0\"\ndefault-features = false\n\n[dependencies.by_address]\nversion = \"1.0.4\"\n\n[dependencies.itertools]\nversion = \"0.14\"\n\n[dependencies.image]\noptional = true\nfeatures = [\"default\", \"png\", \"jpeg\"]\nversion = \"0.25\"\ndefault-features = false\n\n[dependencies.resvg]\noptional = true\nversion = \"0.47.0\"\ndefault-features = false\nfeatures = [\"text\", \"raster-images\"]\n\n[dependencies.swash]\noptional = true\nfeatures = [\"scale\", \"render\", \"std\"]\nversion = \"0.2.7\"\ndefault-features = false\n\n[dependencies.skrifa]\noptional = true\nversion = \"0.40\"\n\n[dependencies.fdsm]\nversion = \"0.8.0\"\noptional = true\n\n[dependencies.fdsm-ttf-parser]\nversion = \"0.2\"\noptional = true\n\n[dependencies.nalgebra]\nversion = \"0.34.0\"\noptional = true\n\n[dependencies.rayon]\noptional = true\nversion = \"1.10.0\"\ndefault-features = false\n\n[dependencies.rspolib]\nversion = \"0.1.2\"\noptional = true\n\n[dependencies.pathdiff]\nversion = \"0.2.3\"\noptional = true\n\n[dependencies.serde]\noptional = true\nversion = \"1.0.163\"\ndefault-features = false\nfeatures = [\"derive\"]\n\n[dependencies.serde_json]\noptional = true\nversion = \"1.0.96\"\n\n[dependencies.flate2]\nversion = \"1.1.5\"\noptional = true\n\n[dependencies.base64]\nversion = \"0.22.1\"\noptional = true\n\n[dev-dependencies]\nregex = \"1.3.7\"\ndivan = \"0.1.14\"\n[dev-dependencies.i-slint-parser-test-macro]\npath = \"./parser-test-macro\"\n\n[dev-dependencies.spin_on]\nversion = \"0.1\"\n\n[dev-dependencies.rayon]\nversion = \"1.10.0\"\ndefault-features = false\n\n[[bench]]\nname = \"semantic_analysis\"\nharness = false\nrequired-features = [\"rust\"]\n",
-        "dest": "cargo/vendor/i-slint-compiler",
-        "dest-filename": "Cargo.toml"
-    },
-    {
-        "type": "inline",
-        "contents": "{\"package\": null, \"files\": {}}",
-        "dest": "cargo/vendor/i-slint-compiler",
         "dest-filename": ".cargo-checksum.json"
     },
     {
@@ -9598,7 +9556,7 @@
     },
     {
         "type": "inline",
-        "contents": "[source.vendored-sources]\ndirectory = \"cargo/vendor\"\n\n[source.crates-io]\nreplace-with = \"vendored-sources\"\n\n[source.\"https://github.com/janekbt/slint\"]\ngit = \"https://github.com/janekbt/slint\"\nreplace-with = \"vendored-sources\"\nrev = \"a82420a30f09877bd291c23cc7eddc75ba30737a\"\n",
+        "contents": "[source.vendored-sources]\ndirectory = \"cargo/vendor\"\n\n[source.crates-io]\nreplace-with = \"vendored-sources\"\n",
         "dest": "cargo",
         "dest-filename": "config"
     }

@@ -12,7 +12,15 @@
 # compatible up to API 35 devices).
 set -euo pipefail
 
+# env.sh exports JAVA_HOME unconditionally, so preserve a caller-set one:
+# release builds need JDK 17 for the pinned dexer below, and without this
+# they would silently fall back to whatever env.sh pins.
+_caller_java_home="${JAVA_HOME:-}"
 . "$HOME/.config/meditate-android/env.sh" 2>/dev/null || true
+if [ -n "$_caller_java_home" ]; then
+    export JAVA_HOME="$_caller_java_home"
+    export PATH="$JAVA_HOME/bin:$PATH"
+fi
 # F-Droid's buildserver (and some CIs) export ANDROID_NDK_HOME /
 # ANDROID_NDK instead of ANDROID_NDK_ROOT — accept any of them.
 ANDROID_NDK_ROOT="${ANDROID_NDK_ROOT:-${ANDROID_NDK_HOME:-${ANDROID_NDK:-}}}"
@@ -21,6 +29,26 @@ export ANDROID_HOME="${ANDROID_HOME:-$HOME/Android/Sdk}"
 export ANDROID_SDK_ROOT="$ANDROID_HOME"
 
 TB="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin"
+
+# slint's android-activity backend compiles a small Java helper and dexes it
+# into the .so at build time, picking the newest build-tools it finds. That
+# made our dex differ from F-Droid's (d8 8.6.2 here against 3.0.41 there) and
+# was the last thing keeping their rebuild from matching our published APK.
+# Pin the dexer to the version their buildserver uses. Note d8 3.0.41 rejects
+# JDK-21 classfiles, so release builds need JAVA_HOME on JDK 17 (RELEASE.md).
+# The helper is compiled against android.jar too, and d8 3.0.41 cannot read a
+# platform-35 jar at all. Pin it to 34, which is both what their buildserver
+# uses and this app's compileSdk.
+JAR_PIN="$ANDROID_HOME/platforms/android-34/android.jar"
+[ -f "$JAR_PIN" ] && export ANDROID_JAR="${ANDROID_JAR:-$JAR_PIN}"
+D8_PIN="$ANDROID_HOME/build-tools/31.0.0/lib/d8.jar"
+if [ -f "$D8_PIN" ]; then
+    export ANDROID_D8_JAR="${ANDROID_D8_JAR:-$D8_PIN}"
+else
+    # Don't fail a contributor's build over this; only reproducibility suffers.
+    echo "rust-build: warning: $D8_PIN missing, dex output will not be" >&2
+    echo "rust-build:          reproducible (sdkmanager 'build-tools;31.0.0')" >&2
+fi
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"   # repo root
 PROFILE="${1:-debug}"
