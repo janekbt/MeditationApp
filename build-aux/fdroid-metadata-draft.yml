@@ -35,9 +35,9 @@ Repo: https://github.com/janekbt/MeditationApp.git
 Binaries: https://github.com/janekbt/MeditationApp/releases/download/v%v/Meditate-%v.apk
 
 Builds:
-  - versionName: 26.8.1
-    versionCode: 260801
-    commit: 031e556e3b8722ad6c373f0eae9d0214eeb1813c
+  - versionName: 26.8.2
+    versionCode: 260802
+    commit: 298988bd88fd7ea9433884fb81420a12fd288990
     subdir: meditate-android/android/app
     sudo:
       - echo "deb https://deb.debian.org/debian bookworm main" > /etc/apt/sources.list.d/bookworm.list
@@ -55,5 +55,5 @@ AllowedAPKSigningKeys: 4b2e69c3c52a2b9d5e63b2f301df9773cd95f740860ef7dd680b986cb
 
 AutoUpdateMode: Version
 UpdateCheckMode: Tags ^v[0-9.]+$
-CurrentVersion: 26.8.1
-CurrentVersionCode: 260801
+CurrentVersion: 26.8.2
+CurrentVersionCode: 260802
