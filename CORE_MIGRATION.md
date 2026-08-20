@@ -31,9 +31,11 @@ that intent and reality, surfaced during the Android port.
   Librem 5 cross-build via `build-aux/dev-xbuild.sh` all keep
   passing. On-device verification follows the existing
   `feedback_meditate_test_before_commit` rule.
-- **No backwards compat.** Per the standing project rule
-  (`feedback_meditate_no_compat`), don't add fallback shims. The new
-  module address is *the* address; update every caller in one go.
+- **No compat shims for module addresses.** The new module address is
+  *the* address; update every caller in one go rather than re-exporting
+  the old path. This is about internal code layout only — it does NOT
+  extend to stored data. Schema and wire-format changes need a
+  migration now that the app is published (`DECISIONS.md` rule 3).
 
 ## Quick wins (do first — pure moves, near-zero risk)
 

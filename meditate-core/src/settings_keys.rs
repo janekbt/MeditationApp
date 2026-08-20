@@ -39,7 +39,7 @@ pub fn keep_screen_awake_key_for_mode(mode: SessionMode) -> &'static str {
 /// shared across modes in both shells — a design bug: a guided
 /// track and a Timer session should be able to want different end
 /// chimes). Four keys per mode; no fallback to the dead flat
-/// `end_bell_*` keys (solo-user no-compat policy — reconfigure
+/// `end_bell_*` keys (pre-publication no-compat policy — reconfigure
 /// once per mode).
 pub fn end_bell_active_key_for_mode(mode: SessionMode) -> &'static str {
     match mode {

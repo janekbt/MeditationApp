@@ -71,22 +71,30 @@ peer whose known batches all vanished consults that manifest to
 tell compaction apart from a genuinely wiped remote (an empty
 events dir still raises the recovery dialog).
 
-## No migrations
+## Migrations
 
-The schema is **additive-only**. There is no migration code path.
-If a refactor breaks readability of existing remote files or the
-local DB shape, the recovery path is **wipe-and-reimport**, not
-migration: clear the WebDAV folder, drop the local
-`~/.local/share/meditate/meditate.db{,-shm,-wal}` (or the
-flatpak-prefixed equivalent on the Librem 5), relaunch.
+The schema is **additive-only wherever possible** — a new column or
+event kind needs no migration, and that remains the preferred shape.
+
+When a change genuinely breaks readability of the local DB or of
+existing remote files, it **must ship a migration** in the same
+commit. The app is published (F-Droid, plus Flatpak bundles on
+GitHub releases), so users have data we cannot ask them to discard
+and no export to restore from. Wipe-and-reimport was the accepted
+recovery path while Janek was the only user; it is not one now.
+
+Test an upgrade against a DB written by the previous release. A
+fresh DB exercises `Database::init`, not the upgrade path, so it
+proves nothing about what a user's install will do.
 
 `PRAGMA user_version` is stamped at `Database::init` and refused on
 open if it exceeds the build's known version (downgrades risk
 silent forward-only-column corruption).
 
-Janek is the single user. Back-compat shims are dead weight that
-obscure the new design; they do not exist anywhere in this
-codebase.
+No back-compat shims exist in this codebase yet — none were needed
+while Janek was the only user. That is history, not licence: since
+publication a breaking change ships its migration (see above and
+`DECISIONS.md` rule 3).
 
 ## Decisions in core, mechanisms in shell
 

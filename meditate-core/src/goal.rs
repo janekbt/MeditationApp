@@ -9,8 +9,10 @@
 //! is the same on every shell; the cairo / Skia drawing is
 //! shell-specific. This module owns the math.
 //!
-//! No legacy fallback to the old `weekly_goal_mins` key — solo
-//! user, re-entering the goal once is the accepted migration.
+//! No legacy fallback to the old `weekly_goal_mins` key. That
+//! predates publication, when re-entering the goal once was an
+//! acceptable migration; a change like it today would need a real
+//! upgrade path (`DECISIONS.md` rule 3).
 
 use crate::db::Database;
 

@@ -67,32 +67,40 @@ moves freely.
 **One-liner heuristic:** if the function previously called
 `gettext(...)`, its core counterpart returns a typed key/struct.
 
-## 3. No backwards-compat for schema / wire-format changes
+## 3. Migrate schema / wire-format changes (REVERSED 2026-08-21)
 
-> When refactoring schema, wire format, or sync layout, **don't
-> write backwards-compat code**. No fallback parsers, no legacy
-> filename branches, no migration code for "what about old files
-> on the remote."
+> When changing schema, wire format, or sync layout, **write the
+> migration**. A user's sessions, labels, presets and settings must
+> survive every update. Losing them is data loss, not an
+> inconvenience.
 
-**Why:** Janek is currently the sole user (laptop + Librem 5).
-Stated literally: "I am the single user at the moment". If a
-refactor breaks readability of existing remote files, the
-recovery path is "wipe remote + wipe local DB + re-import." Back-
-compat code is dead weight that complicates testing and obscures
-the new design.
+**Why:** this rule used to say the opposite, and that was correct
+while Janek was the only user (laptop + Librem 5): the recovery
+path was "wipe remote + wipe local DB + re-import", and compat code
+was dead weight. The app is now published — F-Droid inclusion plus
+Flatpak bundles on GitHub releases — so there are users we cannot
+ask to wipe anything, who have no export, and who will not read a
+release note before updating.
 
-**How to apply:** Default to one clean format/path. If you find
-yourself writing a `try-old-format-then-new` fallback or a
-"legacy filename" branch, stop — confirm wipe-and-restart is
-fine, then drop the compat code. Recent example: the
-`interval_bells.sound` legacy free-text column rip-out shipped
-without a "string-or-uuid" parse branch; Janek wipes the Librem
-DB after deploy.
+**How to apply:** a change that cannot read the previous version's
+data needs a migration path shipped in the same commit as the
+change. Bump `PRAGMA user_version` and add the upgrade step; for
+sync, either read both layouts during a transition or migrate the
+remote on first write. Test the upgrade against a DB written by the
+previous release, not only against a fresh one — a fresh DB proves
+nothing about upgrades.
 
-## 4. Keep i18n infrastructure even though we're solo
+**Still true:** the schema stays additive where it can. Adding a
+column or a new event kind needs no migration and remains the
+preferred shape. This rule is about the cases that genuinely break
+readability, which now need work rather than a wipe.
+
+## 4. Keep i18n infrastructure
 
 > Don't drop gettext / .po files / localized error messages
-> during refactors. Solo-user-now ≠ solo-user-forever.
+> during refactors. Written when Janek was the only user, on the
+> bet that it wouldn't stay that way — the app now ships in ten
+> languages, so this is no longer a bet.
 
 **Why:** The translation infrastructure is already wired up
 (.po files for de/es/fr/it/nl/pl/pt-BR/ru/zh-CN, `gettext-rs`,
@@ -110,10 +118,11 @@ future publish.
 - `.po` files and `po/` are sacred. Don't touch them in refactor
   commits unless the migration genuinely changes user-visible
   strings.
-- Dividing line vs rule 3: ephemeral display-string drift
-  (option 1 vs option 2 of "leading-zero hours") = solo-user
-  tradeoff fine to make. Permanent infrastructure (gettext,
-  a11y) = preserve.
+- Dividing line vs rule 3: rule 3 is about stored data, which must
+  migrate. Display-string wording is not stored data, but changing
+  it now invalidates that string in ten `.po` files — cheap before
+  publication, a translation chore since. Permanent infrastructure
+  (gettext, a11y) = preserve.
 
 ## 5. Guided presets exist in core, hidden from UI
 

@@ -555,7 +555,7 @@ Also landed 2026-07-17:
 - ✅ **Goal model switched weekly → fully daily** in core + both
   shells (`ca19a13`): ring = today vs `daily_goal_mins` (5–240,
   default 20), heatmap threshold = the daily goal, Android prefs
-  entry is free-typed. No weekly-key migration (no-compat
+  entry is free-typed. No weekly-key migration (pre-publication no-compat
   policy). GTK converted + unit-tested; **Librem on-device pass
   still pending**.
 

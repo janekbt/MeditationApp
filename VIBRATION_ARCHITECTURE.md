@@ -616,7 +616,7 @@ k/v store. `signal_mode` validation lives in Rust at parse time.)
 #### Interval Bells — `interval_bells` table columns
 
 ```sql
--- Final shape after the bump (no ALTER — wipe-and-reimport is the
+-- Final shape after the bump (no ALTER — wipe-and-reimport was the
 -- migration path):
 CREATE TABLE IF NOT EXISTS interval_bells (
     id                     INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -873,8 +873,9 @@ All vibration / cue data rides event-log channels:
 
 ### Drop on schema land — confirmed
 
-Per the no-compat rule (Janek is the single user; wipe-and-reimport is
-the accepted migration path):
+Per the no-compat rule as it stood before publication (Janek was the
+single user; wipe-and-reimport was the accepted migration path — see
+`DECISIONS.md` rule 3, reversed 2026-08-21):
 - `vibrate_on_end` setting — replaced by per-bell vibration on End Bell.
 - `src/vibration.rs::trigger_if_enabled` body — replaced by the
   pattern-driven feedbackd playback driver during the playback phase.

@@ -107,8 +107,10 @@ rationale.
   `Result<Option<String>>`; password lives in a plain `String`.
   `auth_header` (`webdav.rs:128`) retains base64-encoded creds
   for the agent's lifetime.
-- Solo-user model so impact is low. Standard fix (`zeroize` /
-  `secrecy` crate on the `String` / `Vec<u8>`) is cheap.
+- Impact was rated low under the solo-user model; the app is
+  published now, so this holds other people's Nextcloud passwords.
+  Standard fix (`zeroize` / `secrecy` crate on the `String` /
+  `Vec<u8>`) is cheap and worth doing.
 
 ### Accessibility: `DurationSpeechKey` companion to the `format_*` family
 - `format::format_time`/`format_hhmm`/`format_duration_brief`
@@ -232,9 +234,11 @@ rationale.
   but `InvalidateScope` is per-process. Window B's writes
   don't dirty Window A's caches → A shows stale stats
   until manual nav.
-- Per `feedback_meditate_solo_user_framing` this is
-  doc-only. Add to `ARCHITECTURE.md`: "two simultaneous
-  windows is not supported."
+- Was doc-only while Janek was the only user. Published now, so
+  a second window is something users will actually hit; the stale
+  view is confusing rather than merely known. Still lowest-cost as
+  documentation ("two simultaneous windows is not supported" in
+  `ARCHITECTURE.md`), but worth revisiting rather than closing."
 
 ### `parse_batch_uuid_from_filename` accepts anything past `__`
 - `orchestrator.rs:493-498` accepts ANY non-empty string

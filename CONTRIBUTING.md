@@ -59,9 +59,11 @@ not sure, push to `beta`.
 
 ## What gets refused
 
-- **Backwards-compat shims** for the schema, wire format, or sync
-  layout. See [`DECISIONS.md`](DECISIONS.md) rule 3. Solo-user-now;
-  wipe-and-reimport is the accepted recovery path.
+- **Schema or wire-format changes without a migration.** The app is
+  published, so users have data that must survive the update. See
+  [`DECISIONS.md`](DECISIONS.md) rule 3. Additive changes still need
+  no migration; breaking ones ship the upgrade path in the same
+  commit, tested against a DB from the previous release.
 - **Logic decisions added to the gtk shell** when they could live
   in `meditate-core`. See [`DECISIONS.md`](DECISIONS.md) rule 1.
   The Android shell will need the same decision; doing it twice
