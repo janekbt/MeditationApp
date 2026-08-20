@@ -1,6 +1,6 @@
 # Meditate
 
-A meditation timer and session log for GNOME.
+A meditation timer and session log for Android and Linux.
 
 Countdown and stopwatch, a browsable log, and daily-goal stats to help you build a consistent practice. Adaptive for desktop and Linux phones, with a native Android companion app that syncs over your own Nextcloud.
 
