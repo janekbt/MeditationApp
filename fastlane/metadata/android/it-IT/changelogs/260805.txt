@@ -1,0 +1,9 @@
+Prima pubblicazione su F-Droid.
+
+• Modalità timer, respirazione quadrata e guidata con campane,
+  schemi di vibrazione e preset
+• Registro delle sessioni con etichette, note e annullamento
+• Statistiche con obiettivo giornaliero, mappa di calore, grafici
+• Sincronizzazione Nextcloud (compatibile con la versione
+  Linux/GNOME), esportazione/importazione CSV, Insight Timer
+• Widget nella schermata iniziale, 10 lingue

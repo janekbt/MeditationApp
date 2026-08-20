@@ -46,14 +46,22 @@ android {
         // patch means a patch actually shipped that month).
         // versionCode is the same date flattened to yymmpp —
         // monotonic as long as patch < 100.
-        versionCode 260804
-        versionName '26.8.4'
+        versionCode 260805
+        versionName '26.8.5'
     }
     sourceSets {
         main {
             kotlin.srcDirs += '../../kotlin'
             jniLibs.srcDirs = ['src/main/jniLibs']
         }
+    }
+    // AGP appends a "Dependency metadata" signing block to release APKs: an
+    // opaque, Google-signed blob meant for Play. F-Droid's scanner rejects
+    // any extra signing block outright, and it serves no purpose for an app
+    // that never ships through Play.
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
     }
     // Release signing (reproducible builds). Each value comes from the
     // signing.properties above and falls back to the throwaway debug
