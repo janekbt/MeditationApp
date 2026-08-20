@@ -174,13 +174,35 @@ APK stalls the update instead of shipping it. Right after the tag:
   `rust-build.sh`; they are what makes F-Droid's rebuild match ours.
   `build-aux/repro-probe.sh` re-checks this if a verification fails.
 
+### 5b. Attach the Flatpak bundles (REQUIRED for Linux users)
+
+Flathub is not available to this app, so the GitHub release is the ONLY way
+Linux users get a build. A release without the bundles ships nothing for the
+primary target.
+
+Wait for the Flatpak CI run on the tagged commit to go green, then:
+
+    build-aux/attach-flatpaks.sh <version>
+
+It pulls `meditate-{x86_64,aarch64}.flatpak` from that exact run and uploads
+them as `meditate-<version>-<arch>.flatpak`. It refuses to run if no
+successful run exists for the tag's commit, so the bundles always match the
+tag rather than whatever was built last.
+
+- Do NOT cancel the CI run on the tagged commit, even when later pushes make
+  it look redundant. Its artifacts are the release. If it was cancelled,
+  re-run it: `gh run rerun <id>`, or `gh workflow run flatpak.yml --ref <tag>`.
+- Batch documentation and recipe commits into one push BEFORE tagging, so
+  there are no redundant runs tempting you to cancel in the first place.
+
 - F-Droid picks the new tag up automatically once the app is in
   fdroiddata (`UpdateCheckMode: Tags`). Until first inclusion,
   submission is manual — see `build-aux/fdroid-metadata-draft.yml`.
   fdroiddata build entries must pin the FULL commit hash, never
   the tag name (maintainer rule).
-- Flathub: release notes travel in the metainfo; the Flathub repo
-  update is its own flow (out of scope here).
+- Flathub is NOT a distribution path for this app (they do not accept
+  AI-assisted apps), so step 5b is the whole Linux release. The metainfo
+  release notes still matter: they are what the About dialog shows.
 
 ## 6. Afterwards
 

@@ -54,13 +54,16 @@ Countdown and stopwatch, a browsable log, and daily-goal stats to help you build
 
 ### Flatpak (recommended)
 
-Pre-built Flatpak bundles for **x86_64** and **aarch64** are attached to every CI run on the [Actions](../../actions) page (and as release assets once the app is on Flathub, install from there instead).
+Pre-built Flatpak bundles for **x86_64** and **aarch64** are attached to every
+[release](../../releases) as `meditate-<version>-<arch>.flatpak`. The same bundles are
+attached to every CI run on the [Actions](../../actions) page if you want an
+unreleased build, though those expire after 90 days and need a GitHub login.
 
-1. Download `meditate-<arch>.flatpak` from the latest passing run.
+1. Download `meditate-<version>-<arch>.flatpak` from the latest release.
 2. Install and run:
 
 ```sh
-flatpak install --user meditate-<arch>.flatpak
+flatpak install --user meditate-<version>-<arch>.flatpak
 flatpak run io.github.janekbt.Meditate
 ```
 
