@@ -102,15 +102,21 @@ rationale.
   duration_secs ORDER BY duration_secs LIMIT 1 OFFSET (n-1)/2`.
   Add an index on `duration_secs` (none today).
 
-### Security: secrets never zeroed
-- `src/keychain.rs:124-176` `read_password` returns
-  `Result<Option<String>>`; password lives in a plain `String`.
-  `auth_header` (`webdav.rs:128`) retains base64-encoded creds
-  for the agent's lifetime.
-- Impact was rated low under the solo-user model; the app is
-  published now, so this holds other people's Nextcloud passwords.
-  Standard fix (`zeroize` / `secrecy` crate on the `String` /
-  `Vec<u8>`) is cheap and worth doing.
+### Security: secrets never zeroed IN MEMORY
+- At rest the password is fine: freedesktop Secret Service via `oo7`
+  on Linux (self-keyed encrypted file on Phosh, threat model
+  documented in `keychain.rs`), AES-256-GCM with an Android Keystore
+  key on Android. This entry is NOT about on-disk storage.
+- Once decrypted it lives in a plain `String`: `keychain.rs:124-176`
+  `read_password` returns `Result<Option<String>>`, and `auth_header`
+  (`webdav.rs:128`) keeps base64 creds for the agent's lifetime.
+  Neither is wiped, so a copy can survive in freed heap, swap, or a
+  core dump.
+- Severity stays low — reading it needs root, a debugger, or a
+  crash dump, and the Android sandbox blocks cross-app access.
+  Publication doesn't change the exposure, only who bears the
+  residual risk. Standard fix (`zeroize` / `secrecy` on the
+  `String` / `Vec<u8>`) is cheap and worth doing.
 
 ### Accessibility: `DurationSpeechKey` companion to the `format_*` family
 - `format::format_time`/`format_hhmm`/`format_duration_brief`
