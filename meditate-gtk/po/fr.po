@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-27 23:20+0200\n"
+"POT-Creation-Date: 2026-09-27 23:27+0200\n"
 "PO-Revision-Date: 2026-04-20 18:20+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: French\n"
@@ -27,7 +27,7 @@ msgstr[1] "Séance de {n} min récupérée"
 #, rust-format
 msgid "Session deleted"
 msgid_plural "{n} sessions deleted"
-msgstr[0] "Séance supprimée"
+msgstr[0] "{n} séance supprimée"
 msgstr[1] "{n} séances supprimées"
 
 #: src/announcement.rs:30

@@ -305,4 +305,70 @@ mod tests {
             missing.len(),
         );
     }
+
+    /// Which plural form each language uses for `n` — the `Plural-Forms`
+    /// rule of its po file, written out.
+    fn plural_form(lang: &str, n: u32) -> usize {
+        let (m10, m100) = (n % 10, n % 100);
+        match lang {
+            "de" | "es" | "it" | "nl" => usize::from(n != 1),
+            "fr" | "pt_BR" => usize::from(n > 1),
+            "zh_CN" => 0,
+            "pl" if n == 1 => 0,
+            "ru" if m10 == 1 && m100 != 11 => 0,
+            "pl" | "ru" if (2..=4).contains(&m10) && !(12..=14).contains(&m100) => 1,
+            "pl" | "ru" => 2,
+            other => panic!("add the plural rule for {other} to plural_form()"),
+        }
+    }
+
+    /// Every plural translation of a po file: (msgid, msgid_plural, msgstr[i]).
+    fn plural_translations(po: &str) -> Vec<(String, String, Vec<String>)> {
+        let mut out = Vec::new();
+        for entry in po.split("\n\n").filter(|e| !e.contains("\n#~ ") && !e.starts_with("#~ ")) {
+            let mut fields: Vec<(String, String)> = Vec::new();
+            for line in entry.lines() {
+                if let Some((key, rest)) = line.split_once(' ') {
+                    if key.starts_with("msg") && rest.starts_with('"') {
+                        fields.push((key.to_string(), string_literal(rest).0));
+                        continue;
+                    }
+                }
+                if line.starts_with('"') {
+                    if let Some(last) = fields.last_mut() {
+                        last.1.push_str(&string_literal(line).0);
+                    }
+                }
+            }
+            let get = |k: &str| fields.iter().find(|(key, _)| key == k).map(|(_, v)| v.clone());
+            if let (Some(id), Some(plural)) = (get("msgid"), get("msgid_plural")) {
+                let forms = (0..).map_while(|i| get(&format!("msgstr[{i}]"))).collect();
+                out.push((id, plural, forms));
+            }
+        }
+        out
+    }
+
+    /// A form used for any count other than 1 (Russian 21, French 0, …)
+    /// must show the count, or those counts render a wrong "1".
+    #[test]
+    fn plural_forms_for_several_counts_show_the_count() {
+        let linguas = std::fs::read_to_string(crate_dir().join("po/LINGUAS")).unwrap();
+        let mut offenders = Vec::new();
+        for lang in linguas.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {
+            let po = std::fs::read_to_string(crate_dir().join(format!("po/{lang}.po"))).unwrap();
+            for (id, plural, forms) in plural_translations(&po) {
+                if !plural.contains("{n}") {
+                    continue;
+                }
+                for (i, form) in forms.iter().enumerate() {
+                    let several = (0..1000).any(|n| n != 1 && plural_form(lang, n) == i);
+                    if several && !form.is_empty() && !form.contains("{n}") {
+                        offenders.push(format!("{lang}: {id:?} msgstr[{i}] = {form:?}"));
+                    }
+                }
+            }
+        }
+        assert!(offenders.is_empty(), "put {{n}} in these forms: {offenders:#?}");
+    }
 }

@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-27 23:20+0200\n"
+"POT-Creation-Date: 2026-09-27 23:27+0200\n"
 "PO-Revision-Date: 2026-04-20 18:24+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Brazilian Portuguese\n"
@@ -20,14 +20,14 @@ msgstr ""
 #, rust-format
 msgid "Recovered 1 min session"
 msgid_plural "Recovered {n} min session"
-msgstr[0] "Sessão de 1 min recuperada"
+msgstr[0] "Sessão de {n} min recuperada"
 msgstr[1] "Sessão de {n} min recuperada"
 
 #: src/announcement.rs:24
 #, rust-format
 msgid "Session deleted"
 msgid_plural "{n} sessions deleted"
-msgstr[0] "Sessão excluída"
+msgstr[0] "{n} sessão excluída"
 msgstr[1] "{n} sessões excluídas"
 
 #: src/announcement.rs:30
@@ -215,28 +215,28 @@ msgstr "Toque na linha acima para adicionar"
 #, rust-format
 msgid "Every 1 min"
 msgid_plural "Every {n} min"
-msgstr[0] "A cada 1 min"
+msgstr[0] "A cada {n} min"
 msgstr[1] "A cada {n} min"
 
 #: src/bells.rs:363
 #, rust-format
 msgid "Every 1 min ±{j}%"
 msgid_plural "Every {n} min ±{j}%"
-msgstr[0] "A cada 1 min ±{j}%"
+msgstr[0] "A cada {n} min ±{j}%"
 msgstr[1] "A cada {n} min ±{j}%"
 
 #: src/bells.rs:367
 #, rust-format
 msgid "At 1 min"
 msgid_plural "At {n} min"
-msgstr[0] "No minuto 1"
+msgstr[0] "No minuto {n}"
 msgstr[1] "No minuto {n}"
 
 #: src/bells.rs:370
 #, rust-format
 msgid "1 min before end"
 msgid_plural "{n} min before end"
-msgstr[0] "1 min antes do fim"
+msgstr[0] "{n} min antes do fim"
 msgstr[1] "{n} min antes do fim"
 
 #: src/bells.rs:384
@@ -794,7 +794,7 @@ msgstr "Arquivos CSV"
 #, rust-format
 msgid "Exported 1 session"
 msgid_plural "Exported {n} sessions"
-msgstr[0] "1 sessão exportada"
+msgstr[0] "{n} sessão exportada"
 msgstr[1] "{n} sessões exportadas"
 
 #: src/preferences.rs:541
@@ -826,7 +826,7 @@ msgstr "Excluir tudo"
 #, rust-format
 msgid "Deleted 1 session"
 msgid_plural "Deleted {n} sessions"
-msgstr[0] "1 sessão excluída"
+msgstr[0] "{n} sessão excluída"
 msgstr[1] "{n} sessões excluídas"
 
 #: src/preferences.rs:602
@@ -838,7 +838,7 @@ msgstr "Falha na exclusão: {error}"
 #, rust-format
 msgid "Imported 1 session"
 msgid_plural "Imported {n} sessions"
-msgstr[0] "1 sessão importada"
+msgstr[0] "{n} sessão importada"
 msgstr[1] "{n} sessões importadas"
 
 #: src/preferences.rs:649
@@ -850,7 +850,7 @@ msgstr "Falha na importação: {error}"
 #, rust-format
 msgid "1 min"
 msgid_plural "{n} min"
-msgstr[0] "1 min"
+msgstr[0] "{n} min"
 msgstr[1] "{n} min"
 
 #: src/preset_subtitle.rs:33 src/preset_subtitle.rs:46
@@ -1083,14 +1083,14 @@ msgstr "{date} — sem sessões"
 #, rust-format
 msgid "1 day — new record"
 msgid_plural "{n} days — new record"
-msgstr[0] "1 dia — novo recorde"
+msgstr[0] "{n} dia — novo recorde"
 msgstr[1] "{n} dias — novo recorde"
 
 #: src/stats/imp.rs:331
 #, rust-format
 msgid "1 day · best was {best}"
 msgid_plural "{n} days · best was {best}"
-msgstr[0] "1 dia · recorde: {best}"
+msgstr[0] "{n} dia · recorde: {best}"
 msgstr[1] "{n} dias · recorde: {best}"
 
 #: src/stats/imp.rs:338
@@ -1169,7 +1169,7 @@ msgstr "Sessão mais longa"
 #, rust-format
 msgid "1 session to your {target}th"
 msgid_plural "{n} sessions to your {target}th"
-msgstr[0] "1 sessão até a {target}ª"
+msgstr[0] "{n} sessão até a {target}ª"
 msgstr[1] "{n} sessões até a {target}ª"
 
 #: src/stats/imp.rs:399
@@ -1515,21 +1515,21 @@ msgstr "Sincronizado agora mesmo"
 #, rust-format
 msgid "Synced 1 minute ago"
 msgid_plural "Synced {n} minutes ago"
-msgstr[0] "Sincronizado há 1 minuto"
+msgstr[0] "Sincronizado há {n} minuto"
 msgstr[1] "Sincronizado há {n} minutos"
 
 #: src/window/imp.rs:728
 #, rust-format
 msgid "Synced 1 hour ago"
 msgid_plural "Synced {n} hours ago"
-msgstr[0] "Sincronizado há 1 hora"
+msgstr[0] "Sincronizado há {n} hora"
 msgstr[1] "Sincronizado há {n} horas"
 
 #: src/window/imp.rs:731
 #, rust-format
 msgid "Synced 1 day ago"
 msgid_plural "Synced {n} days ago"
-msgstr[0] "Sincronizado há 1 dia"
+msgstr[0] "Sincronizado há {n} dia"
 msgstr[1] "Sincronizado há {n} dias"
 
 #: data/ui/log_view.blp:14
