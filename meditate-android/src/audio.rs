@@ -32,11 +32,11 @@ const AUDIO_CLASS_DOTTED: &str = "io.github.janekbt.Meditate.MeditateAudio";
 /// duration in ms (0 if unknown / on failure) so the chooser
 /// preview can schedule its pill auto-revert; session-cue
 /// callers just ignore the value.
-pub fn play(app: &AndroidApp, path: &str) -> i64 {
+pub fn play(app: &AndroidApp, path: &str, gain: f32) -> i64 {
     if path.is_empty() {
         return 0;
     }
-    match invoke_play(app, path) {
+    match invoke_play(app, path, gain) {
         Ok(ms) => ms,
         Err(e) => {
             meditate_core::log(
@@ -50,6 +50,21 @@ pub fn play(app: &AndroidApp, path: &str) -> i64 {
 
 /// Stop + release any in-flight playback (preview Stop /
 /// supersede).
+/// Apply a new bell gain to the bell ringing right now, if any.
+pub fn set_volume(app: &AndroidApp, gain: f32) {
+    if let Err(e) = invoke_set_volume(app, gain) {
+        meditate_core::log("audio.play", &format!("set_volume FAILED: {e:?}"));
+    }
+}
+
+/// Open the system volume panel so the user can reach the alarm
+/// volume bells ring at.
+pub fn open_alarm_volume(app: &AndroidApp) {
+    if let Err(e) = invoke_no_arg(app, "openAlarmVolume") {
+        meditate_core::log("audio.play", &format!("openAlarmVolume FAILED: {e:?}"));
+    }
+}
+
 pub fn stop(app: &AndroidApp) {
     if let Err(e) = invoke_no_arg(app, "stop") {
         meditate_core::log("audio.play", &format!("stop FAILED: {e:?}"));
@@ -78,6 +93,7 @@ fn resolve_class<'a>(
 fn invoke_play(
     app: &AndroidApp,
     path: &str,
+    gain: f32,
 ) -> Result<i64, jni::errors::Error> {
     let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
     let mut env = vm.attach_current_thread()?;
@@ -88,8 +104,8 @@ fn invoke_play(
     let ret = env.call_static_method(
         class,
         "play",
-        "(Landroid/content/Context;Ljava/lang/String;)J",
-        &[(&activity).into(), (&jpath).into()],
+        "(Landroid/content/Context;Ljava/lang/String;F)J",
+        &[(&activity).into(), (&jpath).into(), gain.into()],
     )?;
 
     if env.exception_check()? {
@@ -97,6 +113,23 @@ fn invoke_play(
         return Ok(0);
     }
     Ok(ret.j()?)
+}
+
+fn invoke_set_volume(app: &AndroidApp, gain: f32) -> Result<(), jni::errors::Error> {
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
+    let mut env = vm.attach_current_thread()?;
+    let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
+    let class = resolve_class(&mut env, &activity)?;
+    env.call_static_method(
+        class,
+        "setVolume",
+        "(Landroid/content/Context;F)V",
+        &[(&activity).into(), gain.into()],
+    )?;
+    if env.exception_check()? {
+        env.exception_clear()?;
+    }
+    Ok(())
 }
 
 fn invoke_no_arg(

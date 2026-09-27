@@ -10,6 +10,9 @@ msgstr ""
 msgid "1 day · keep going"
 msgstr "1 dag · ga zo door"
 
+msgid "Bell volume"
+msgstr "Belvolume"
+
 msgid "Cancel"
 msgstr "Annuleren"
 
@@ -148,6 +151,9 @@ msgstr "Voorkeuren"
 msgid "Preferred time"
 msgstr "Voorkeurstijd"
 
+msgid "Relative to the system alarm volume"
+msgstr "Ten opzichte van het wekkervolume van het systeem"
+
 msgid "Save"
 msgstr "Opslaan"
 
@@ -168,6 +174,9 @@ msgstr "Statistieken"
 
 msgid "Stop"
 msgstr "Stoppen"
+
+msgid "System alarm volume"
+msgstr "Wekkervolume van het systeem"
 
 msgid "This file has no audio track"
 msgstr "Dit bestand heeft geen audiospoor"

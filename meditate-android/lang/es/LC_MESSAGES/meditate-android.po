@@ -10,6 +10,9 @@ msgstr ""
 msgid "1 day · keep going"
 msgstr "1 día · sigue así"
 
+msgid "Bell volume"
+msgstr "Volumen de las campanas"
+
 msgid "Cancel"
 msgstr "Cancelar"
 
@@ -148,6 +151,9 @@ msgstr "Preferencias"
 msgid "Preferred time"
 msgstr "Momento preferido"
 
+msgid "Relative to the system alarm volume"
+msgstr "Relativo al volumen de alarma del sistema"
+
 msgid "Save"
 msgstr "Guardar"
 
@@ -168,6 +174,9 @@ msgstr "Estadísticas"
 
 msgid "Stop"
 msgstr "Detener"
+
+msgid "System alarm volume"
+msgstr "Volumen de alarma del sistema"
 
 msgid "This file has no audio track"
 msgstr "Este archivo no tiene pista de audio"

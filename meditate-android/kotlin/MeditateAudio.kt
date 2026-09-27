@@ -17,8 +17,11 @@
 package io.github.janekbt.Meditate
 
 import android.content.Context
+import android.content.Intent
 import android.media.AudioAttributes
 import android.media.MediaPlayer
+import android.os.Build
+import android.provider.Settings
 import android.util.Log
 
 object MeditateAudio {
@@ -39,12 +42,15 @@ object MeditateAudio {
     // failure). Rust uses it to schedule the preview pill's
     // auto-revert — the Android equivalent of GTK reverting the
     // Play icon on the MediaFile's notify::ended.
-    fun play(context: Context, path: String): Long {
+    fun play(context: Context, path: String, gain: Float): Long {
         synchronized(lock) {
             releaseLocked()
             val mp = MediaPlayer()
             try {
                 mp.setAudioAttributes(attrs)
+                // Bell volume from Preferences, relative to the
+                // system alarm volume (1.0 = unchanged).
+                mp.setVolume(gain, gain)
                 mp.setDataSource(path)
                 mp.setOnCompletionListener {
                     synchronized(lock) { releaseLocked() }
@@ -64,6 +70,34 @@ object MeditateAudio {
                 Log.w(TAG, "play failed path=$path: $e")
                 runCatching { mp.release() }
                 return 0L
+            }
+        }
+    }
+
+    // Live change from the Preferences bell-volume slider: applies to
+    // the bell ringing right now, if any; later bells get it via play().
+    @JvmStatic
+    fun setVolume(context: Context, gain: Float) {
+        synchronized(lock) {
+            runCatching { player?.setVolume(gain, gain) }
+        }
+    }
+
+    // Preferences → "System alarm volume". Bells ring on the alarm
+    // stream, which the volume keys usually don't reach, so open the
+    // system volume panel (API 29+), else the Sound settings page.
+    @JvmStatic
+    fun openAlarmVolume(context: Context) {
+        val intents = listOfNotNull(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) Intent(Settings.Panel.ACTION_VOLUME) else null,
+            Intent(Settings.ACTION_SOUND_SETTINGS),
+        )
+        for (intent in intents) {
+            try {
+                context.startActivity(intent)
+                return
+            } catch (e: Exception) {
+                Log.w(TAG, "open ${intent.action} failed: $e")
             }
         }
     }

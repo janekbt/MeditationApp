@@ -55,6 +55,9 @@ msgstr "Vor dem Ende"
 msgid "Bell Sound"
 msgstr "Klang"
 
+msgid "Bell volume"
+msgstr "Glockenlautstärke"
+
 msgid "Bells"
 msgstr "Glocken"
 
@@ -475,6 +478,9 @@ msgstr "Meine Daten hochladen"
 msgid "Recovered {} min session"
 msgstr "{}-Min.-Sitzung wiederhergestellt"
 
+msgid "Relative to the system alarm volume"
+msgstr "Relativ zur Weckerlautstärke des Systems"
+
 msgid "Remote data appears wiped"
 msgstr "Serverdaten scheinen gelöscht"
 
@@ -585,6 +591,9 @@ msgstr "Gerade synchronisiert"
 
 msgid "Syncing with Nextcloud…"
 msgstr "Synchronisiere mit Nextcloud…"
+
+msgid "System alarm volume"
+msgstr "Weckerlautstärke"
 
 msgid "Tag this session"
 msgstr "Sitzung taggen"

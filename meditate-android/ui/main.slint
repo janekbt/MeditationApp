@@ -1358,6 +1358,80 @@ component BoxedList inherits Rectangle {
     }
 }
 
+// Material-style slider for Preferences → Bell volume. Not the
+// bundled Material `Slider`: that one only drags from its thumb and
+// maps touch positions without the minimum (at 5..100 the far end
+// yields 95). Here the whole bar is the touch target — tap to jump,
+// drag anywhere to slide — and values snap to `step`.
+component VolumeSlider inherits Rectangle {
+    in property <float> minimum: 0;
+    in property <float> maximum: 100;
+    in property <float> step: 1;
+    in-out property <float> value: 100;
+    callback value-changed(float);
+    callback released(float);
+
+    height: 48px;
+    accessible-role: slider;
+    accessible-value: root.value;
+    accessible-value-minimum: root.minimum;
+    accessible-value-maximum: root.maximum;
+    accessible-value-step: root.step;
+
+    // Thumb travel stays inside the bar so 0 and 100 % are reachable.
+    property <length> travel: root.width - thumb.width;
+    property <float> fraction: (root.value - root.minimum) / (root.maximum - root.minimum);
+
+    function set-from-x(x: length) {
+        let raw = root.minimum + clamp((x - thumb.width / 2) / root.travel, 0, 1) * (root.maximum - root.minimum);
+        let snapped = clamp(round((raw - root.minimum) / root.step) * root.step + root.minimum, root.minimum, root.maximum);
+        if snapped != root.value {
+            root.value = snapped;
+            root.value-changed(snapped);
+        }
+    }
+
+    Rectangle {
+        x: 0;
+        y: (parent.height - self.height) / 2;
+        width: parent.width;
+        height: 16px;
+        border-radius: 8px;
+        background: MaterialPalette.surface-container-highest;
+    }
+    Rectangle {
+        x: 0;
+        y: (parent.height - self.height) / 2;
+        width: thumb.x + thumb.width / 2;
+        height: 16px;
+        border-radius: 8px;
+        background: MaterialPalette.primary;
+    }
+    thumb := Rectangle {
+        x: root.travel * root.fraction;
+        y: (parent.height - self.height) / 2;
+        width: 4px;
+        height: 44px;
+        border-radius: 2px;
+        background: MaterialPalette.primary;
+    }
+    TouchArea {
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.down {
+                root.set-from-x(self.mouse-x);
+            }
+            if event.kind == PointerEventKind.up {
+                root.released(root.value);
+            }
+        }
+        moved => {
+            if self.pressed {
+                root.set-from-x(self.mouse-x);
+            }
+        }
+    }
+}
+
 export component MainWindow inherits Window {
     title: @tr("Meditate");
 
@@ -1494,6 +1568,23 @@ export component MainWindow inherits Window {
     // the value drives the Stats ring (today's progress) + the
     // heatmap threshold (core goal::compute).
     in-out property <int> prefs-goal-mins: 20;
+    // Bell volume (issue #1): mirrors GTK's Preferences → Sound row.
+    // Range, steps and the stored level come from core
+    // (meditate_core::bell_volume) via Rust on page open. Moving the
+    // slider changes the ringing bell at once; releasing it saves the
+    // level and plays the end bell. Relative to the system alarm
+    // volume, which the row below opens.
+    in-out property <float> prefs-bell-volume: 100;
+    in property <float> bell-volume-min: 5;
+    in property <float> bell-volume-max: 100;
+    in property <float> bell-volume-step: 5;
+    callback bell-volume-changed(float);
+    callback bell-volume-released(float);
+    // True while the preview bell rings; shows a Stop pill (a long
+    // bell shouldn't have to play out). Leaving Preferences stops it.
+    in-out property <bool> bell-volume-previewing: false;
+    callback bell-volume-stop-tap();
+    callback alarm-volume-tap();
     in-out property <bool> goal-dialog-open: false;
     // Free-typed minutes; Set gates on parseable + the goal
     // bounds. Bounds are seeded from Rust (core
@@ -7223,6 +7314,82 @@ export component MainWindow inherits Window {
                         : @tr("Test connection");
                     enabled: !root.prefs-test-busy;
                     clicked => { root.prefs-test-tap(); }
+                }
+            }
+
+            Text {
+                text: @tr("Sound");
+                font-size: 14px;
+                font-weight: 700;
+                color: MaterialPalette.primary;
+                horizontal-alignment: left;
+            }
+            BoxedList {
+                // Full-width slider under the title (GTK parity): an
+                // end-of-row slider is too short to set precisely.
+                VerticalLayout {
+                    padding-left: 16px;
+                    padding-right: 16px;
+                    padding-top: 12px;
+                    padding-bottom: 12px;
+                    spacing: 4px;
+                    HorizontalLayout {
+                        spacing: 12px;
+                        Text {
+                            text: @tr("Bell volume");
+                            font-size: 16px;
+                            color: MaterialPalette.on-surface;
+                            horizontal-alignment: left;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+                        // Same pill as the bell chooser's Play/Stop.
+                        if root.bell-volume-previewing: Rectangle {
+                            width: 60px;
+                            height: 32px;
+                            border-radius: 16px;
+                            border-width: 1px;
+                            border-color: MaterialPalette.outline;
+                            background: volume-stop-touch.has-hover
+                                ? MaterialPalette.secondary-container
+                                : transparent;
+                            volume-stop-touch := TouchArea {
+                                clicked => { root.bell-volume-stop-tap(); }
+                            }
+                            Text {
+                                text: @tr("Stop");
+                                font-size: 13px;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                color: MaterialPalette.on-surface;
+                            }
+                        }
+                    }
+                    Text {
+                        text: @tr("Relative to the system alarm volume");
+                        font-size: 13px;
+                        color: MaterialPalette.on-surface-variant;
+                        horizontal-alignment: left;
+                        wrap: word-wrap;
+                    }
+                    VolumeSlider {
+                        minimum: root.bell-volume-min;
+                        maximum: root.bell-volume-max;
+                        step: root.bell-volume-step;
+                        value <=> root.prefs-bell-volume;
+                        accessible-label: @tr("Bell volume");
+                        value-changed(v) => { root.bell-volume-changed(v); }
+                        released(v) => { root.bell-volume-released(v); }
+                    }
+                }
+                Rectangle {
+                    height: 1px;
+                    background: MaterialPalette.outline-variant;
+                }
+                DurationRow {
+                    label: @tr("System alarm volume");
+                    value-text: "";
+                    tapped => { root.alarm-volume-tap(); }
                 }
             }
 

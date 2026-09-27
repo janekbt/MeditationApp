@@ -10,6 +10,9 @@ msgstr ""
 msgid "1 day · keep going"
 msgstr "1 天 · 继续保持"
 
+msgid "Bell volume"
+msgstr "铃声音量"
+
 msgid "Cancel"
 msgstr "取消"
 
@@ -148,6 +151,9 @@ msgstr "首选项"
 msgid "Preferred time"
 msgstr "偏好时段"
 
+msgid "Relative to the system alarm volume"
+msgstr "相对于系统闹钟音量"
+
 msgid "Save"
 msgstr "保存"
 
@@ -168,6 +174,9 @@ msgstr "统计"
 
 msgid "Stop"
 msgstr "停止"
+
+msgid "System alarm volume"
+msgstr "系统闹钟音量"
 
 msgid "This file has no audio track"
 msgstr "此文件没有音轨"

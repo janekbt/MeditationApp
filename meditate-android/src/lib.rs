@@ -23,6 +23,7 @@ mod about;
 #[cfg(target_os = "android")]
 mod insets;
 mod theme;
+mod bell_gain;
 #[cfg(target_os = "android")]
 mod screen;
 #[cfg(target_os = "android")]
@@ -312,7 +313,7 @@ fn dispatch_effects(effects: &[meditate_core::session::Effect]) {
         if route.signal_mode.includes_sound() {
             let path = bell_sound_path(route.sound_uuid);
             audio::stop(app);
-            audio::play(app, &path);
+            audio::play(app, &path, bell_gain::get());
         }
         if route.signal_mode.includes_vibration() {
             if let Some(db_arc) = DATABASE.get() {
@@ -8039,7 +8040,7 @@ fn build_ui() -> MainWindow {
                             // the swap clean.
                             audio::stop(app);
                             let path = bell_sound_path(&id);
-                            dur_ms = audio::play(app, &path);
+                            dur_ms = audio::play(app, &path, bell_gain::get());
                         }
                         ui.set_bell_preview_uuid(id.into());
 
@@ -9520,6 +9521,17 @@ fn build_ui() -> MainWindow {
                     meditate_core::goal::daily_goal_mins_from_db(db)
                 };
                 ui.set_prefs_goal_mins(goal_mins as i32);
+                // Bell volume — seed the Sound group's slider.
+                let bell_volume = {
+                    let Some(db_arc) = DATABASE.get() else { return; };
+                    let Ok(guard) = db_arc.lock() else { return; };
+                    let Some(db) = guard.as_ref() else { return; };
+                    meditate_core::bell_volume::read(db)
+                };
+                ui.set_bell_volume_min(meditate_core::bell_volume::MIN.into());
+                ui.set_bell_volume_max(meditate_core::bell_volume::MAX.into());
+                ui.set_bell_volume_step(meditate_core::bell_volume::STEP.into());
+                ui.set_prefs_bell_volume(bell_volume.percent().into());
                 if let Some(app) = android_app() {
                     ui.set_about_version(
                         about::version_name(app).into(),
@@ -9537,6 +9549,8 @@ fn build_ui() -> MainWindow {
             if let Some(ui) = weak.upgrade() {
                 // Drop any typed-but-unsaved password on leave.
                 ui.set_prefs_password(slint::SharedString::new());
+                // The bell-volume preview never outlives Preferences.
+                stop_volume_preview(&ui);
                 ui.set_preferences_page(false);
             }
             let _ = weak.clone();
@@ -9813,6 +9827,78 @@ fn build_ui() -> MainWindow {
     // Daily-goal commit (ST): persist via core, re-derive the
     // Stats surfaces (ring + insights + heatmap threshold) right
     // away — mirrors GTK's write + InvalidateScope::STATS.
+    // Bell volume slider: dragging applies the level to the ringing
+    // bell at once; releasing saves it (device-local, core) and plays
+    // the end bell so the user hears the new level — GTK parity.
+    ui.on_bell_volume_changed(move |percent| {
+        let volume = meditate_core::bell_volume::BellVolume::from_percent(percent.into());
+        bell_gain::set(volume);
+        #[cfg(target_os = "android")]
+        if let Some(app) = android_app() {
+            audio::set_volume(app, bell_gain::get());
+        }
+    });
+    {
+    let weak = ui.as_weak();
+    ui.on_bell_volume_released(move |percent| {
+        let volume = meditate_core::bell_volume::BellVolume::from_percent(percent.into());
+        bell_gain::set(volume);
+        let _ = &weak;
+        #[cfg(target_os = "android")]
+        {
+            let preview_uuid = {
+                let Some(db_arc) = DATABASE.get() else { return; };
+                let Ok(guard) = db_arc.lock() else { return; };
+                let Some(db) = guard.as_ref() else { return; };
+                if let Err(e) = meditate_core::bell_volume::write(db, volume) {
+                    meditate_core::log("bell_volume.write", &format!("failed: {e:?}"));
+                }
+                meditate_core::bell_volume::preview_sound_uuid(db)
+            };
+            if let Some(app) = android_app() {
+                audio::stop(app);
+                let dur_ms =
+                    audio::play(app, &bell_sound_path(&preview_uuid), bell_gain::get());
+                let generation = VOLUME_PREVIEW_GEN.with(|g| {
+                    g.set(g.get() + 1);
+                    g.get()
+                });
+                if let Some(ui) = weak.upgrade() {
+                    ui.set_bell_volume_previewing(dur_ms > 0);
+                }
+                if dur_ms > 0 {
+                    let weak = weak.clone();
+                    slint::Timer::single_shot(
+                        std::time::Duration::from_millis(dur_ms as u64),
+                        move || {
+                            if VOLUME_PREVIEW_GEN.with(std::cell::Cell::get) == generation {
+                                if let Some(ui) = weak.upgrade() {
+                                    ui.set_bell_volume_previewing(false);
+                                }
+                            }
+                        },
+                    );
+                }
+            }
+        }
+    });
+    }
+    {
+    let weak = ui.as_weak();
+    ui.on_bell_volume_stop_tap(move || {
+        #[cfg(target_os = "android")]
+        if let Some(ui) = weak.upgrade() {
+            stop_volume_preview(&ui);
+        }
+        let _ = &weak;
+    });
+    }
+    ui.on_alarm_volume_tap(move || {
+        #[cfg(target_os = "android")]
+        if let Some(app) = android_app() {
+            audio::open_alarm_volume(app);
+        }
+    });
     {
         let weak = ui.as_weak();
         ui.on_goal_committed(move || {
@@ -10728,6 +10814,26 @@ static DATABASE: std::sync::OnceLock<
     std::sync::Arc<std::sync::Mutex<Option<meditate_core::Database>>>,
 > = std::sync::OnceLock::new();
 
+thread_local! {
+    /// Bell-volume preview generation: a finished preview only hides
+    /// the Stop pill if no newer preview or Stop happened since.
+    #[cfg(target_os = "android")]
+    static VOLUME_PREVIEW_GEN: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Stop the Preferences bell-volume preview if it's ringing.
+#[cfg(target_os = "android")]
+fn stop_volume_preview(ui: &MainWindow) {
+    if !ui.get_bell_volume_previewing() {
+        return;
+    }
+    VOLUME_PREVIEW_GEN.with(|g| g.set(g.get() + 1));
+    ui.set_bell_volume_previewing(false);
+    if let Some(app) = android_app() {
+        audio::stop(app);
+    }
+}
+
 #[cfg(target_os = "android")]
 fn open_database(android_app: &slint::android::AndroidApp) {
     // The GTK shell's `Application::startup` mirrors this exactly,
@@ -10825,5 +10931,8 @@ fn open_database(android_app: &slint::android::AndroidApp) {
             None
         }
     };
+    if let Some(db) = opened.as_ref() {
+        bell_gain::set(meditate_core::bell_volume::read(db));
+    }
     let _ = DATABASE.set(std::sync::Arc::new(std::sync::Mutex::new(opened)));
 }
