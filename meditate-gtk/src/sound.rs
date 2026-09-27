@@ -34,6 +34,38 @@ thread_local! {
     /// shouldn't spam toasts; one notification per process tells the
     /// user "something's wrong with audio" without repeated yells.
     static AUDIO_ERROR_TOASTED: Cell<bool> = const { Cell::new(false) };
+    /// Player volume for every bell, from Preferences → Bell volume.
+    /// Full until `set_bell_volume` runs at startup.
+    static BELL_GAIN: Cell<f64> = const { Cell::new(1.0) };
+}
+
+fn bell_gain() -> f64 {
+    BELL_GAIN.with(Cell::get)
+}
+
+/// Apply a new bell volume: to every bell created from now on and to
+/// the ones already loaded or ringing (the pre-warmed end bell, a
+/// starting bell, interval bells). The preview slot is left alone —
+/// it can hold a guided-file preview, which is voice, not a bell.
+pub fn set_bell_volume(volume: meditate_core::bell_volume::BellVolume) {
+    let gain = volume.gain();
+    BELL_GAIN.with(|g| g.set(gain));
+    for slot in [&CURRENT_MEDIA, &STARTING_MEDIA] {
+        slot.with(|cell| {
+            if let Some(m) = cell.borrow().as_ref() {
+                m.set_volume(gain);
+            }
+        });
+    }
+    INTERVAL_MEDIA.with(|cell| cell.borrow().iter().for_each(|m| m.set_volume(gain)));
+}
+
+/// Play the Preferences bell-volume preview: the Timer end bell (or
+/// the bundled bowl) once, at the current level. Returns the player so
+/// the caller can show a Stop button while it rings.
+pub fn play_volume_preview(app: &MeditateApplication) -> Option<gtk::MediaFile> {
+    let uuid = app.with_db(|db| meditate_core::bell_volume::preview_sound_uuid(db.core()))?;
+    lookup_bell_sound_by_uuid(app, &uuid).map(|sound| play_preview(&sound))
 }
 
 /// Stop whatever is currently playing in CURRENT_MEDIA (no-op if
@@ -174,6 +206,7 @@ fn media_for_bell_sound(sound: &BellSound) -> gtk::MediaFile {
             .join(format!("{}.{}", sound.uuid, sound.extension()));
         gtk::MediaFile::for_file(&gtk::gio::File::for_path(&local_path))
     };
+    media.set_volume(bell_gain());
     wire_audio_error_handler(&media, &sound.name);
     media
 }
@@ -331,4 +364,67 @@ fn swap_and_play(media: gtk::MediaFile) {
         }
     });
     media.set_playing(true);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    fn source(rel: &str) -> String {
+        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(rel)).unwrap()
+    }
+
+    /// The body of `fn name` in `src`, up to the next top-level item.
+    fn fn_body<'a>(src: &'a str, name: &str) -> &'a str {
+        let start = src.find(&format!("fn {name}(")).unwrap_or_else(|| panic!("no fn {name}"));
+        let end = src[start..].find("\n}\n").map_or(src.len(), |e| start + e);
+        &src[start..end]
+    }
+
+    /// Every bell player comes from `media_for_bell_sound`, which applies
+    /// the bell volume, so no bell path can skip it. The only other
+    /// player is the guided-file preview: voice audio, not a bell.
+    #[test]
+    fn every_bell_player_gets_the_bell_volume() {
+        let src = source("src/sound.rs");
+        let code = &src[..src.find("#[cfg(test)]\nmod tests").unwrap()];
+        let creators: Vec<&str> = code
+            .match_indices("MediaFile::for_")
+            .map(|(at, _)| {
+                let head = &code[..at];
+                let fn_at = head.rfind("\nfn ").max(head.rfind("\npub fn ")).unwrap();
+                let name = &code[fn_at..].split_once("fn ").unwrap().1;
+                &name[..name.find('(').unwrap()]
+            })
+            .collect();
+        assert!(
+            creators.iter().all(|f| ["media_for_bell_sound", "play_preview_for_guided_file"].contains(f)),
+            "MediaFile created outside media_for_bell_sound: {creators:?}",
+        );
+        assert!(
+            fn_body(code, "media_for_bell_sound").contains("set_volume(bell_gain())"),
+            "media_for_bell_sound must apply the bell volume",
+        );
+    }
+
+    #[test]
+    fn no_other_module_creates_a_media_player() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut offenders = Vec::new();
+        let mut stack = vec![dir];
+        while let Some(d) = stack.pop() {
+            for entry in std::fs::read_dir(d).unwrap() {
+                let p = entry.unwrap().path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else if p.extension().is_some_and(|e| e == "rs")
+                    && !p.ends_with("sound.rs")
+                    && std::fs::read_to_string(&p).unwrap().contains("MediaFile::for_")
+                {
+                    offenders.push(p.display().to_string());
+                }
+            }
+        }
+        assert!(offenders.is_empty(), "play bells through crate::sound: {offenders:?}");
+    }
 }

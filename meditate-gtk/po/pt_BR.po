@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-27 23:27+0200\n"
+"POT-Creation-Date: 2026-09-27 23:46+0200\n"
 "PO-Revision-Date: 2026-04-20 18:24+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Brazilian Portuguese\n"
@@ -48,11 +48,11 @@ msgstr "Atualizado"
 msgid "Deleted"
 msgstr "Excluído"
 
-#: src/application.rs:234
+#: src/application.rs:237
 msgid "Database is newer than this app"
 msgstr "O banco de dados é mais recente que este aplicativo"
 
-#: src/application.rs:236
+#: src/application.rs:239
 #, rust-format
 msgid ""
 "The local database (version {db}) was written by a newer build than this one "
@@ -63,11 +63,11 @@ msgstr ""
 "que esta (versão {build}). Instale uma versão correspondente ou mova o "
 "arquivo para outro lugar para começar do zero."
 
-#: src/application.rs:245
+#: src/application.rs:248
 msgid "Couldn't open database"
 msgstr "Não foi possível abrir o banco de dados"
 
-#: src/application.rs:247
+#: src/application.rs:250
 msgid ""
 "An unexpected error prevented opening the local database. Check the "
 "diagnostics log in About → Troubleshooting for details."
@@ -75,21 +75,21 @@ msgstr ""
 "Um erro inesperado impediu a abertura do banco de dados local. Consulte o "
 "registro de diagnóstico em Sobre → Solução de problemas para mais detalhes."
 
-#: src/application.rs:267
+#: src/application.rs:270
 msgid "Open Data Folder"
 msgstr "Abrir pasta de dados"
 
-#: src/application.rs:275 data/ui/shortcuts.ui:42
+#: src/application.rs:278 data/ui/shortcuts.ui:42
 msgid "Quit"
 msgstr "Sair"
 
-#: src/application.rs:287 data/ui/window.blp:20 data/ui/window.blp:32
+#: src/application.rs:290 data/ui/window.blp:20 data/ui/window.blp:32
 #: data/io.github.janekbt.Meditate.desktop.in:2
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:7
 msgid "Meditate"
 msgstr "Meditate"
 
-#: src/application.rs:324 data/io.github.janekbt.Meditate.metainfo.xml.in:149
+#: src/application.rs:327 data/io.github.janekbt.Meditate.metainfo.xml.in:149
 msgid ""
 "A new Box Breath timer mode, per-label stats, and an in-app diagnostics view "
 "for bug reporting — plus a handful of polish fixes."
@@ -98,7 +98,7 @@ msgstr ""
 "diagnóstico no aplicativo para relatar erros — além de alguns pequenos "
 "refinamentos."
 
-#: src/application.rs:325 data/io.github.janekbt.Meditate.metainfo.xml.in:151
+#: src/application.rs:328 data/io.github.janekbt.Meditate.metainfo.xml.in:151
 msgid ""
 "New Box Breath mode alongside Countdown and Stopwatch: pick a pattern "
 "(4-4-4-4, 4-7-8-0, 5-5-5-5) or dial in each phase, set a session length, and "
@@ -111,7 +111,7 @@ msgstr ""
 "redor de um quadrado na cor de destaque enquanto você inspira, segura, "
 "expira e segura"
 
-#: src/application.rs:326 data/io.github.janekbt.Meditate.metainfo.xml.in:152
+#: src/application.rs:329 data/io.github.janekbt.Meditate.metainfo.xml.in:152
 msgid ""
 "Stats tab shows a \"By label\" breakdown below the streak / total / sessions "
 "row, so you can see how much meditation time you've spent under each label"
@@ -120,7 +120,7 @@ msgstr ""
 "sequência / total / sessões, para você ver quanto tempo meditou em cada "
 "rótulo"
 
-#: src/application.rs:327 data/io.github.janekbt.Meditate.metainfo.xml.in:153
+#: src/application.rs:330 data/io.github.janekbt.Meditate.metainfo.xml.in:153
 msgid ""
 "About dialog has a new Troubleshooting view with a rolling diagnostics log "
 "(startup, database open, import/export results, panics) — copy or save to "
@@ -131,7 +131,7 @@ msgstr ""
 "de importação/exportação, falhas) — copie ou salve para anexar a um "
 "relatório de erro"
 
-#: src/application.rs:328 data/io.github.janekbt.Meditate.metainfo.xml.in:154
+#: src/application.rs:331 data/io.github.janekbt.Meditate.metainfo.xml.in:154
 msgid ""
 "Each timer mode remembers its own last-chosen label, so a Box Breath session "
 "no longer changes the default label for Countdown or Stopwatch"
@@ -140,7 +140,7 @@ msgstr ""
 "de respiração quadrada não altera mais o rótulo padrão de Contagem "
 "regressiva ou Cronômetro"
 
-#: src/application.rs:329 data/io.github.janekbt.Meditate.metainfo.xml.in:155
+#: src/application.rs:332 data/io.github.janekbt.Meditate.metainfo.xml.in:155
 msgid ""
 "Release notes shown in the About dialog now reflect the current version "
 "instead of staying pinned to the initial release"
@@ -148,7 +148,7 @@ msgstr ""
 "As notas de versão exibidas na janela Sobre agora correspondem à versão "
 "atual, em vez de ficarem presas à versão inicial"
 
-#: src/application.rs:330 data/io.github.janekbt.Meditate.metainfo.xml.in:156
+#: src/application.rs:333 data/io.github.janekbt.Meditate.metainfo.xml.in:156
 msgid ""
 "Log-edit calendar picker shows the proper icon again; post-session note "
 "field no longer steals focus on phones and hides the Save / Discard buttons "
@@ -158,7 +158,7 @@ msgstr ""
 "correto; o campo de anotação após a sessão não rouba mais o foco em "
 "celulares nem esconde os botões Salvar / Descartar atrás do teclado virtual"
 
-#: src/application.rs:404 src/guided.rs:1166 src/log/imp.rs:642
+#: src/application.rs:407 src/guided.rs:1166 src/log/imp.rs:642
 #: src/presets.rs:704 src/timer/imp.rs:3526 src/vibrations.rs:476
 #: src/vibrations.rs:515
 msgid "Undo"
@@ -190,7 +190,7 @@ msgstr "Este sino não tocará mais durante as sessões."
 #. still cover the common activations.
 #: src/bells.rs:317 src/bells.rs:738 src/guided.rs:215 src/guided.rs:933
 #: src/guided.rs:1045 src/labels.rs:245 src/labels.rs:314 src/labels.rs:395
-#: src/preferences.rs:583 src/presets.rs:445 src/presets.rs:507
+#: src/preferences.rs:645 src/presets.rs:445 src/presets.rs:507
 #: src/presets.rs:574 src/presets.rs:641 src/recovery_dialog.rs:42
 #: src/recovery_dialog.rs:103 src/sounds.rs:523 src/sounds.rs:906
 #: src/sounds.rs:972 src/timer/imp.rs:2498 src/timer/imp.rs:3658
@@ -277,10 +277,10 @@ msgstr "Porcentagem — torna o próximo toque aleatório"
 msgid "Type"
 msgstr "Tipo"
 
-#: src/bells.rs:513 src/bells.rs:540 src/timer/imp.rs:1452
-#: src/timer/imp.rs:1542 src/timer/imp.rs:1612 data/ui/timer_view.blp:605
-#: data/ui/timer_view.blp:644 data/ui/timer_view.blp:683
-#: data/ui/timer_view.blp:722
+#: src/bells.rs:513 src/bells.rs:540 src/preferences.rs:64
+#: src/timer/imp.rs:1452 src/timer/imp.rs:1542 src/timer/imp.rs:1612
+#: data/ui/timer_view.blp:605 data/ui/timer_view.blp:644
+#: data/ui/timer_view.blp:683 data/ui/timer_view.blp:722
 msgid "Sound"
 msgstr "Som"
 
@@ -325,7 +325,7 @@ msgstr "Erro de leitura"
 msgid "Database error"
 msgstr "Erro de banco de dados"
 
-#: src/data_io.rs:36 src/preferences.rs:423
+#: src/data_io.rs:36 src/preferences.rs:485
 msgid "Database unavailable"
 msgstr "Banco de dados indisponível"
 
@@ -384,7 +384,7 @@ msgstr "Nome da faixa"
 msgid "A guided file with this name already exists."
 msgstr "Já existe um arquivo guiado com este nome."
 
-#: src/guided.rs:184 src/preferences.rs:134 src/sounds.rs:491
+#: src/guided.rs:184 src/preferences.rs:196 src/sounds.rs:491
 msgid "Import"
 msgstr "Importar"
 
@@ -595,7 +595,7 @@ msgstr "Horário de início"
 msgid "_Cancel"
 msgstr "_Cancelar"
 
-#: src/log/imp.rs:995 src/preferences.rs:333
+#: src/log/imp.rs:995 src/preferences.rs:395
 msgid "_Save"
 msgstr "_Salvar"
 
@@ -612,84 +612,92 @@ msgstr "Editar sessão"
 msgid "Add Session"
 msgstr "Adicionar sessão"
 
-#: src/preferences.rs:25 data/ui/shortcuts.ui:24
+#: src/preferences.rs:26 data/ui/shortcuts.ui:24
 msgid "Preferences"
 msgstr "Preferências"
 
-#: src/preferences.rs:36
+#: src/preferences.rs:37
 msgid "General"
 msgstr "Geral"
 
-#: src/preferences.rs:58
+#: src/preferences.rs:79 src/preferences.rs:81
+msgid "Bell volume"
+msgstr "Volume dos sinos"
+
+#: src/preferences.rs:82
+msgid "Relative to the system volume"
+msgstr "Relativo ao volume do sistema"
+
+#: src/preferences.rs:120
 msgid "Statistics"
 msgstr "Estatísticas"
 
-#: src/preferences.rs:67 data/ui/stats_view.blp:51
+#: src/preferences.rs:129 data/ui/stats_view.blp:51
 msgid "Daily goal"
 msgstr "Meta diária"
 
-#: src/preferences.rs:68
+#: src/preferences.rs:130
 msgid "Minutes per day — drives the ring on the Stats tab"
 msgstr "Minutos por dia — controla o anel na aba Estatísticas"
 
-#: src/preferences.rs:101
+#: src/preferences.rs:163
 msgid "Data"
 msgstr "Dados"
 
-#: src/preferences.rs:107
+#: src/preferences.rs:169
 msgid "Backup"
 msgstr "Backup"
 
-#: src/preferences.rs:108
+#: src/preferences.rs:170
 msgid "Export your session log to a CSV file, or restore from one."
 msgstr ""
 "Exporte seu histórico de sessões para um arquivo CSV, ou restaure de um."
 
-#: src/preferences.rs:112
+#: src/preferences.rs:174
 msgid "Export session log"
 msgstr "Exportar histórico"
 
-#: src/preferences.rs:113
+#: src/preferences.rs:175
 msgid "Save every session to a CSV file"
 msgstr "Salvar todas as sessões em um arquivo CSV"
 
-#: src/preferences.rs:119
+#: src/preferences.rs:181
 msgid "Export"
 msgstr "Exportar"
 
-#: src/preferences.rs:127
+#: src/preferences.rs:189
 msgid "Import from Meditate CSV"
 msgstr "Importar do CSV do Meditate"
 
-#: src/preferences.rs:128
+#: src/preferences.rs:190
 msgid "Restore sessions from a file exported above"
 msgstr "Restaurar sessões de um arquivo exportado acima"
 
-#: src/preferences.rs:144
+#: src/preferences.rs:206
 msgid "Migrate"
 msgstr "Migrar"
 
-#: src/preferences.rs:145
+#: src/preferences.rs:207
 msgid "Import sessions from another meditation app."
 msgstr "Importar sessões de outro aplicativo de meditação."
 
-#: src/preferences.rs:149 src/preferences.rs:566
+#: src/preferences.rs:211 src/preferences.rs:628
 msgid "Import from Insight Timer"
 msgstr "Importar do Insight Timer"
 
-#: src/preferences.rs:150
+#: src/preferences.rs:212
 msgid "Upload an Insight Timer CSV export"
 msgstr "Envie uma exportação CSV do Insight Timer"
 
-#: src/preferences.rs:156
+#: src/preferences.rs:218
 msgid "Import Insight Timer CSV"
 msgstr "Importar CSV do Insight Timer"
 
-#: src/preferences.rs:174
+#: src/preferences.rs:236
 msgid "Nextcloud Sync"
 msgstr "Sincronização Nextcloud"
 
-#: src/preferences.rs:176
+#: src/preferences.rs:238
 msgid ""
 "Sync sessions, labels, and preferences between your devices via your own "
 "Nextcloud server."
@@ -697,120 +705,120 @@ msgstr ""
 "Sincronize sessões, rótulos e preferências entre seus dispositivos pelo seu "
 "próprio servidor Nextcloud."
 
-#: src/preferences.rs:181
+#: src/preferences.rs:243
 msgid "Server URL"
 msgstr "URL do servidor"
 
-#: src/preferences.rs:185
+#: src/preferences.rs:247
 msgid "Username"
 msgstr "Nome de usuário"
 
-#: src/preferences.rs:188
+#: src/preferences.rs:250
 msgid "App password"
 msgstr "Senha de aplicativo"
 
-#: src/preferences.rs:217
+#: src/preferences.rs:279
 msgid "Test connection"
 msgstr "Testar conexão"
 
-#: src/preferences.rs:218
+#: src/preferences.rs:280
 msgid "Verify the URL and credentials reach your Nextcloud."
 msgstr "Verifique se a URL e as credenciais alcançam o seu Nextcloud."
 
-#: src/preferences.rs:222
+#: src/preferences.rs:284
 msgid "_Test"
 msgstr "_Testar"
 
-#: src/preferences.rs:267 src/preferences.rs:362
+#: src/preferences.rs:329 src/preferences.rs:424
 msgid "Enter URL and username"
 msgstr "Informe a URL e o nome de usuário"
 
-#: src/preferences.rs:271
+#: src/preferences.rs:333
 msgid "Enter a password"
 msgstr "Informe uma senha"
 
-#: src/preferences.rs:275
+#: src/preferences.rs:337
 msgid "Keyring read failed"
 msgstr "Falha ao ler o chaveiro"
 
-#: src/preferences.rs:314
+#: src/preferences.rs:376
 msgid "Test failed"
 msgstr "Falha no teste"
 
-#: src/preferences.rs:328
+#: src/preferences.rs:390
 msgid "Save sync settings"
 msgstr "Salvar configurações de sincronização"
 
-#: src/preferences.rs:329
+#: src/preferences.rs:391
 msgid "Stores URL and username locally; password goes to your keyring."
 msgstr ""
 "Guarda a URL e o nome de usuário localmente; a senha vai para o seu chaveiro."
 
-#: src/preferences.rs:366
+#: src/preferences.rs:428
 msgid "URL must start with https://"
 msgstr "A URL deve começar com https://"
 
-#: src/preferences.rs:400
+#: src/preferences.rs:462
 msgid "Keyring write failed"
 msgstr "Falha ao gravar no chaveiro"
 
-#: src/preferences.rs:419
+#: src/preferences.rs:481
 msgid "Save failed"
 msgstr "Falha ao salvar"
 
-#: src/preferences.rs:428
+#: src/preferences.rs:490
 msgid "Sync settings saved"
 msgstr "Configurações de sincronização salvas"
 
-#: src/preferences.rs:437
+#: src/preferences.rs:499
 msgid "Danger Zone"
 msgstr "Zona de perigo"
 
-#: src/preferences.rs:438
+#: src/preferences.rs:500
 msgid "These actions cannot be undone."
 msgstr "Estas ações não podem ser desfeitas."
 
-#: src/preferences.rs:442
+#: src/preferences.rs:504
 msgid "Delete all sessions"
 msgstr "Excluir todas as sessões"
 
-#: src/preferences.rs:443
+#: src/preferences.rs:505
 msgid "Permanently remove every logged session"
 msgstr "Remove permanentemente cada sessão registrada"
 
-#: src/preferences.rs:447
+#: src/preferences.rs:509
 msgid "_Delete All"
 msgstr "_Excluir tudo"
 
-#: src/preferences.rs:517
+#: src/preferences.rs:579
 msgid "Export Session Log"
 msgstr "Exportar histórico de sessões"
 
-#: src/preferences.rs:521
+#: src/preferences.rs:583
 msgid "CSV files"
 msgstr "Arquivos CSV"
 
-#: src/preferences.rs:537
+#: src/preferences.rs:599
 #, rust-format
 msgid "Exported 1 session"
 msgid_plural "Exported {n} sessions"
 msgstr[0] "{n} sessão exportada"
 msgstr[1] "{n} sessões exportadas"
 
-#: src/preferences.rs:541
+#: src/preferences.rs:603
 #, rust-format
 msgid "Export failed: {error}"
 msgstr "Falha na exportação: {error}"
 
-#: src/preferences.rs:555
+#: src/preferences.rs:617
 msgid "Import Session Log"
 msgstr "Importar histórico de sessões"
 
-#: src/preferences.rs:578
+#: src/preferences.rs:640
 msgid "Delete Every Session?"
 msgstr "Excluir todas as sessões?"
 
-#: src/preferences.rs:579
+#: src/preferences.rs:641
 msgid ""
 "This permanently removes every session in your log. Export a backup first if "
 "you want to keep any history."
@@ -818,30 +826,30 @@ msgstr ""
 "Isso remove permanentemente todas as sessões do seu histórico. Exporte um "
 "backup antes se quiser guardar alguma coisa."
 
-#: src/preferences.rs:584
+#: src/preferences.rs:646
 msgid "Delete All"
 msgstr "Excluir tudo"
 
-#: src/preferences.rs:595
+#: src/preferences.rs:657
 #, rust-format
 msgid "Deleted 1 session"
 msgid_plural "Deleted {n} sessions"
 msgstr[0] "{n} sessão excluída"
 msgstr[1] "{n} sessões excluídas"
 
-#: src/preferences.rs:602
+#: src/preferences.rs:664
 #, rust-format
 msgid "Delete failed: {error}"
 msgstr "Falha na exclusão: {error}"
 
-#: src/preferences.rs:642
+#: src/preferences.rs:704
 #, rust-format
 msgid "Imported 1 session"
 msgid_plural "Imported {n} sessions"
 msgstr[0] "{n} sessão importada"
 msgstr[1] "{n} sessões importadas"
 
-#: src/preferences.rs:649
+#: src/preferences.rs:711
 #, rust-format
 msgid "Import failed: {error}"
 msgstr "Falha na importação: {error}"
@@ -971,7 +979,7 @@ msgstr ""
 msgid "Wipe Local Data"
 msgstr "Apagar dados locais"
 
-#: src/sound.rs:216
+#: src/sound.rs:252
 msgid "Couldn't play bell sound"
 msgstr "Não foi possível tocar o som do sino"
 

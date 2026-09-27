@@ -5,6 +5,7 @@ use gtk::{gio, glib};
 use crate::application::MeditateApplication;
 use crate::i18n::{gettext, ngettext};
 use glib::clone;
+use meditate_core::bell_volume;
 use meditate_core::goal::{
     daily_goal_mins_from_db, write_daily_goal_mins,
     DAILY_GOAL_DEFAULT, DAILY_GOAL_MAX, DAILY_GOAL_MIN, DAILY_GOAL_STEP,
@@ -52,6 +53,118 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
     // motor), so the user can still author and sync patterns. Tapping
     // closes the Preferences dialog and pushes the chooser onto the
     // main window's nav view.
+    // ── Sound group ───────────────────────────────────────────────────────────
+    // Bell volume. libadwaita has no slider row, so it's a plain
+    // PreferencesRow: title and subtitle on top, the GtkScale below at
+    // the row's full width — a suffix slider would be a few centimetres
+    // on a phone, too short to set precisely (GNOME Settings' volume
+    // rows use the same layout). Relative to the system volume: an app
+    // can't play louder than the OS allows. Moving the slider changes
+    // ringing bells at once; once it rests, the level is saved (per
+    // device) and the end bell plays so the user hears the new level.
+
+    let sound_group = adw::PreferencesGroup::builder()
+        .title(gettext("Sound"))
+        .build();
+    let volume = app
+        .with_db(|db| bell_volume::read(db.core()))
+        .unwrap_or_default();
+    let volume_scale = gtk::Scale::with_range(
+        gtk::Orientation::Horizontal,
+        bell_volume::MIN.into(),
+        bell_volume::MAX.into(),
+        bell_volume::STEP.into(),
+    );
+    volume_scale.set_value(volume.percent().into());
+    volume_scale.set_draw_value(false);
+    volume_scale.set_hexpand(true);
+    volume_scale.update_property(&[gtk::accessible::Property::Label(&gettext("Bell volume"))]);
+    let volume_title = gtk::Label::builder()
+        .label(gettext("Bell volume"))
+        .xalign(0.0)
+        .wrap(true)
+        .build();
+    let volume_subtitle = gtk::Label::builder()
+        .label(gettext("Relative to the system volume"))
+        .xalign(0.0)
+        .wrap(true)
+        .css_classes(["caption", "dimmed"])
+        .build();
+    let volume_box = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(6)
+        .margin_top(12)
+        .margin_bottom(6)
+        .margin_start(12)
+        .margin_end(12)
+        .build();
+    // Stop button for the preview bell — a long bell (a bonshō rings
+    // ~30 s) shouldn't have to play out. Visible only while it rings.
+    let volume_stop = gtk::Button::builder()
+        .icon_name("media-playback-stop-symbolic")
+        .tooltip_text(gettext("Stop preview"))
+        .css_classes(["flat", "circular"])
+        .valign(gtk::Align::Center)
+        .visible(false)
+        .build();
+    volume_stop.connect_clicked(|btn| {
+        crate::sound::stop_preview();
+        btn.set_visible(false);
+    });
+    volume_title.set_hexpand(true);
+    let volume_header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    volume_header.append(&volume_title);
+    volume_header.append(&volume_stop);
+    volume_box.append(&volume_header);
+    volume_box.append(&volume_subtitle);
+    volume_box.append(&volume_scale);
+    let volume_row = adw::PreferencesRow::builder()
+        .title(gettext("Bell volume"))
+        .activatable(false)
+        .child(&volume_box)
+        .build();
+    sound_group.add(&volume_row);
+    general_page.add(&sound_group);
+
+    let settle: std::rc::Rc<std::cell::RefCell<Option<glib::SourceId>>> = Default::default();
+    volume_scale.connect_value_changed(clone!(
+        #[weak] app,
+        #[weak] volume_stop,
+        #[strong] settle,
+        move |scale| {
+            let volume = bell_volume::BellVolume::from_percent(scale.value());
+            if scale.value() != f64::from(volume.percent()) {
+                scale.set_value(volume.percent().into());
+                return;
+            }
+            crate::sound::set_bell_volume(volume);
+            if let Some(pending) = settle.take() {
+                pending.remove();
+            }
+            let settle_done = settle.clone();
+            let id = glib::timeout_add_local_once(
+                std::time::Duration::from_millis(400),
+                clone!(
+                    #[weak] app,
+                    #[weak] volume_stop,
+                    move || {
+                        settle_done.replace(None);
+                        let _ = app.with_db(|db| bell_volume::write(db.core(), volume));
+                        if let Some(media) = crate::sound::play_volume_preview(&app) {
+                            volume_stop.set_visible(true);
+                            media.connect_notify_local(Some("playing"), move |m, _| {
+                                if !m.is_playing() {
+                                    volume_stop.set_visible(false);
+                                }
+                            });
+                        }
+                    }
+                ),
+            );
+            settle.replace(Some(id));
+        }
+    ));
+
     // ── Statistics group ──────────────────────────────────────────────────────
 
     let stats_group = adw::PreferencesGroup::builder()
@@ -469,8 +582,18 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
 
     dialog.connect_closed(clone!(
         #[weak] app,
+        #[strong] settle,
+        #[strong] volume_scale,
         move |_| {
             crate::sound::stop_current();
+            // The bell-volume preview never outlives Preferences. A
+            // level still waiting to settle is saved without playing.
+            crate::sound::stop_preview();
+            if let Some(pending) = settle.take() {
+                pending.remove();
+                let volume = bell_volume::BellVolume::from_percent(volume_scale.value());
+                let _ = app.with_db(|db| bell_volume::write(db.core(), volume));
+            }
             if let Some(win) = app
                 .active_window()
                 .and_then(|w| w.downcast::<crate::window::MeditateWindow>().ok())

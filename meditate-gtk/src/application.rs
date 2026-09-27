@@ -113,6 +113,9 @@ mod imp {
                 return;
             }
 
+            if let Some(volume) = app.with_db(|db| meditate_core::bell_volume::read(db.core())) {
+                crate::sound::set_bell_volume(volume);
+            }
             MeditateWindow::new(&*app).present();
             // First activation after startup: pull whatever a peer
             // device authored while we were closed.
