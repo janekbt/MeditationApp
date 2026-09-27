@@ -8,7 +8,9 @@
 // lands the pick in guided/transient.<ext> + the guided_pick
 // drop-file; "bell" lands in sounds/transient.<ext> +
 // sound_pick, so the bell-import route never races a guided
-// pick.
+// pick. `mimeTypes` (from meditate_core::sound::
+// ANDROID_PICKER_MIME_TYPES for the audio routes, empty for CSV)
+// becomes the picker's EXTRA_MIME_TYPES.
 
 package io.github.janekbt.Meditate
 
@@ -17,16 +19,13 @@ import android.content.Intent
 
 object MeditateGuidedPicker {
     const val EXTRA_TARGET = "target"
+    const val EXTRA_PICKER_MIME_TYPES = "picker_mime_types"
 
     @JvmStatic
-    fun open(context: Context) {
-        openFor(context, "guided")
-    }
-
-    @JvmStatic
-    fun openFor(context: Context, target: String) {
+    fun openFor(context: Context, target: String, mimeTypes: Array<String>) {
         val i = Intent(context, MeditateFilePickerActivity::class.java)
             .putExtra(EXTRA_TARGET, target)
+            .putExtra(EXTRA_PICKER_MIME_TYPES, mimeTypes)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(i)
     }

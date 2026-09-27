@@ -1016,7 +1016,9 @@ fn try_widget_deep_link(
 /// Adopt a pending Guided SAF pick (GM-2), if the picker
 /// Activity dropped one. Sets the transient selection + the
 /// Setup row name (which also un-gates Start). Single-shot —
-/// `take_pending_pick` removes the drop-file.
+/// `take_pending_pick` removes the drop-file. A file with no
+/// audio track is refused (selection left as it was) and the
+/// snackbar text to raise is returned.
 #[cfg(target_os = "android")]
 fn try_guided_pick(
     ui: &MainWindow,
@@ -1026,11 +1028,18 @@ fn try_guided_pick(
         std::cell::RefCell<Option<(String, u32)>>,
     >,
     import_kind: &std::rc::Rc<std::cell::Cell<u8>>,
-) {
-    let Some(app) = android_app() else { return; };
-    let Some((path, name, dur)) = guided::take_pending_pick(app) else {
-        return;
+) -> Option<slint::SharedString> {
+    let app = android_app()?;
+    let pick = match guided::take_pending_pick(app)? {
+        Ok(pick) => pick,
+        Err(e) => {
+            meditate_core::log("guided", &format!("pick refused: {e:?}"));
+            create_import.set(false);
+            return Some(audio_file_error_text(ui, &e));
+        }
     };
+    let (path, name, dur) =
+        (pick.path, pick.display_name, pick.duration_secs);
     meditate_core::log(
         "guided",
         &format!("pick: {name} ({dur}s)"),
@@ -1057,6 +1066,24 @@ fn try_guided_pick(
             dur,
             0,
         );
+    }
+    None
+}
+
+/// User-facing text for a picked / imported file that can't be
+/// used. The specific cause of `Other` stays in Diagnostics.
+#[cfg(target_os = "android")]
+fn audio_file_error_text(
+    ui: &MainWindow,
+    e: &meditate_core::sound::AudioFileError,
+) -> slint::SharedString {
+    match e {
+        meditate_core::sound::AudioFileError::NoAudioTrack => {
+            ui.global::<Tr>().invoke_no_audio_track()
+        }
+        meditate_core::sound::AudioFileError::Other(_) => {
+            ui.global::<Tr>().invoke_import_failed()
+        }
     }
 }
 
@@ -4640,7 +4667,7 @@ fn build_ui() -> MainWindow {
                 // Activity dropped a file → adopt it as the
                 // current selection. Single-consumption file, so
                 // this is a no-op syscall on every normal frame.
-                try_guided_pick(
+                let mut pick_error = try_guided_pick(
                     &ui,
                     &guided_sel,
                     &guided_create_import,
@@ -4650,23 +4677,69 @@ fn build_ui() -> MainWindow {
                 // Bell-sound pick (BI): a target="bell" pick
                 // routes straight into the shared import dialog.
                 if let Some(app) = android_app() {
-                    if let Some((path, name, dur)) =
-                        guided::take_pending_sound_pick(app)
-                    {
-                        meditate_core::log(
-                            "sound.import",
-                            &format!("pick: {name} ({dur}s)"),
-                        );
-                        guided_import_kind_tick.set(1);
-                        present_guided_import_dialog(
-                            &ui,
-                            &guided_import_src_tick,
-                            &path,
-                            &name,
-                            dur,
-                            1,
-                        );
+                    match guided::take_pending_sound_pick(app) {
+                        Some(Ok(pick)) => {
+                            meditate_core::log(
+                                "sound.import",
+                                &format!(
+                                    "pick: {} ({}s)",
+                                    pick.display_name,
+                                    pick.duration_secs,
+                                ),
+                            );
+                            guided_import_kind_tick.set(1);
+                            present_guided_import_dialog(
+                                &ui,
+                                &guided_import_src_tick,
+                                &pick.path,
+                                &pick.display_name,
+                                pick.duration_secs,
+                                1,
+                            );
+                        }
+                        Some(Err(e)) => {
+                            meditate_core::log(
+                                "sound.import",
+                                &format!("pick refused: {e:?}"),
+                            );
+                            pick_error =
+                                Some(audio_file_error_text(&ui, &e));
+                        }
+                        None => {}
                     }
+                }
+                if let Some(text) = pick_error {
+                    // Bug-audit #2: see the handler raise sites.
+                    commit_pending_deletes(
+                        &ui,
+                        &loaded_log_sessions_tick,
+                        &pending_deletes_tick,
+                    );
+                    recovery_uuid_tick.borrow_mut().take();
+                    pending_preset_undo_tick.borrow_mut().take();
+                    pending_preset_delete_tick
+                        .borrow_mut()
+                        .take();
+                    pending_override_restore_tick
+                        .borrow_mut()
+                        .take();
+                    discard_pending_guided_delete(
+                        &pending_guided_delete_tick,
+                    );
+                    ui.set_snackbar_text(text);
+                    ui.set_snackbar_show_undo(false);
+                    ui.set_snackbar_visible(true);
+                    let weak_inner = ui.as_weak();
+                    prefs_delete_timer.start(
+                        slint::TimerMode::SingleShot,
+                        std::time::Duration::from_secs(4),
+                        move || {
+                            if let Some(ui) = weak_inner.upgrade()
+                            {
+                                ui.set_snackbar_visible(false);
+                            }
+                        },
+                    );
                 }
                 // Sync started/finished (SY-4): refresh the
                 // indicator exactly on the edges the trigger +
@@ -4897,6 +4970,12 @@ fn build_ui() -> MainWindow {
                             }
                         }
                         if let Some(res) = result {
+                            let failure_text = res
+                                .as_ref()
+                                .err()
+                                .map(|e| audio_file_error_text(&ui, e));
+                            let res =
+                                res.map_err(|e| format!("{e:?}"));
                             *guided_import_finalize.borrow_mut() =
                                 None;
                             guided::clear_import_progress(app);
@@ -5017,8 +5096,12 @@ fn build_ui() -> MainWindow {
                                         &pending_guided_delete_tick,
                                     );
                                     ui.set_snackbar_text(
-                                        ui.global::<Tr>()
-                                            .invoke_import_failed(),
+                                        failure_text.unwrap_or_else(
+                                            || {
+                                                ui.global::<Tr>()
+                                                    .invoke_import_failed()
+                                            },
+                                        ),
                                     );
                                     ui.set_snackbar_show_undo(false);
                                     ui.set_snackbar_visible(true);

@@ -169,6 +169,9 @@ msgstr "Statistiques"
 msgid "Stop"
 msgstr "Arrêter"
 
+msgid "This file has no audio track"
+msgstr "Ce fichier ne contient aucune piste audio"
+
 msgid "This week's practice"
 msgstr "Pratique de la semaine"
 

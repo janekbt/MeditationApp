@@ -26,8 +26,100 @@ pub const MAX_CUSTOM_BELL_BYTES: u64 = 10 * 1024 * 1024;
 /// transcode-to-ogg) can be derived from the same source via
 /// `is_passthrough_ext`. Lowercase, no leading dot.
 pub const IMPORTABLE_EXTENSIONS: &[&str] = &[
-    "wav", "ogg", "mp3", "opus", "flac", "m4a", "aac",
+    "wav", "ogg", "mp3", "opus", "flac", "m4a", "aac", "mp4",
 ];
+
+/// MIME filter for the Android SAF picker (`EXTRA_MIME_TYPES`, with
+/// the intent's own type set to `*/*`). `audio/*` alone greys out
+/// files Android labels otherwise: an mp4 with a video track is
+/// `video/mp4` (MediaStore sniffs the content), and API 26–28 label
+/// `.ogg` as `application/ogg`. Every extension in
+/// `IMPORTABLE_EXTENSIONS` must be admitted under every label
+/// Android gives it — pinned by the tests.
+pub const ANDROID_PICKER_MIME_TYPES: &[&str] = &[
+    "audio/*", "video/mp4", "application/ogg",
+];
+
+/// True when `mime` matches `pattern`, where `pattern` is a concrete
+/// type (`video/mp4`) or a wildcard-subtype one (`audio/*`, `*/*`).
+/// Case-insensitive, surrounding whitespace ignored; anything that
+/// isn't a non-empty `type/subtype` never matches.
+pub fn mime_matches(pattern: &str, mime: &str) -> bool {
+    fn split(s: &str) -> Option<(String, String)> {
+        let (ty, sub) = s.trim().split_once('/')?;
+        if ty.is_empty() || sub.is_empty() {
+            return None;
+        }
+        Some((ty.to_ascii_lowercase(), sub.to_ascii_lowercase()))
+    }
+    let (Some((pty, psub)), Some((mty, msub))) = (split(pattern), split(mime)) else {
+        return false;
+    };
+    (pty == "*" || pty == mty) && (psub == "*" || psub == msub)
+}
+
+/// Why a picked or imported audio file can't be used.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AudioFileError {
+    /// The file opened fine but carries no audio stream (e.g. a
+    /// video-only mp4). Each shell maps this to its own translated
+    /// message.
+    NoAudioTrack,
+    /// Anything else; the message is for Diagnostics, not the user.
+    Other(String),
+}
+
+/// Any plain error message is an `Other` — lets shell code that
+/// builds a pipeline with `String` errors use `?` directly.
+impl From<String> for AudioFileError {
+    fn from(msg: String) -> Self {
+        Self::Other(msg)
+    }
+}
+
+/// Stable wire code for `AudioFileError::NoAudioTrack` in the
+/// Android drop-files (`guided_import_result` as `err:<code>`, and
+/// the 4th line of `guided_pick` / `sound_pick`).
+pub const NO_AUDIO_TRACK_CODE: &str = "no-audio-track";
+
+/// Parse the Android import-worker drop-file: `ok` or `err:<msg>`.
+pub fn parse_import_result(raw: &str) -> Result<(), AudioFileError> {
+    let trimmed = raw.trim();
+    if trimmed == "ok" {
+        return Ok(());
+    }
+    let msg = trimmed.strip_prefix("err:").unwrap_or(trimmed);
+    if msg == NO_AUDIO_TRACK_CODE {
+        Err(AudioFileError::NoAudioTrack)
+    } else {
+        Err(AudioFileError::Other(msg.to_string()))
+    }
+}
+
+/// A file the Android picker copied into app storage.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PickedFile {
+    pub path: String,
+    pub display_name: String,
+    pub duration_secs: u32,
+}
+
+/// Parse the Android picker drop-file: path / display name /
+/// duration secs, plus an optional 4th line that is
+/// `NO_AUDIO_TRACK_CODE` when the probe opened the file and found no
+/// audio stream. `None` when the path line is missing or blank. Only
+/// the exact marker rejects — a failed probe writes nothing there and
+/// must not block a possibly playable file.
+pub fn parse_pick(raw: &str) -> Option<Result<PickedFile, AudioFileError>> {
+    let mut lines = raw.lines().map(str::trim);
+    let path = lines.next().filter(|p| !p.is_empty())?.to_string();
+    let display_name = lines.next().unwrap_or("").to_string();
+    let duration_secs = lines.next().and_then(|d| d.parse().ok()).unwrap_or(0);
+    if lines.next() == Some(NO_AUDIO_TRACK_CODE) {
+        return Some(Err(AudioFileError::NoAudioTrack));
+    }
+    Some(Ok(PickedFile { path, display_name, duration_secs }))
+}
 
 /// True when the importer should copy the source file as-is rather
 /// than transcoding to ogg/vorbis. `gtk::MediaFile` plays both
@@ -316,5 +408,244 @@ mod tests {
 
         assert!(result.is_err(), "existing destination must not be clobbered");
         assert_eq!(std::fs::read(&dest).unwrap(), b"existing");
+    }
+
+    // ── mp4 import (issue #2) ────────────────────────────────────────
+
+    #[test]
+    fn importable_extensions_include_mp4() {
+        assert!(IMPORTABLE_EXTENSIONS.contains(&"mp4"));
+    }
+
+    #[test]
+    fn mp4_is_transcoded_to_ogg_never_copied() {
+        assert!(!is_passthrough_ext("mp4"));
+        assert!(!is_passthrough_ext("MP4"));
+        assert_eq!(target_extension_and_mime("mp4"), ("ogg", "audio/ogg"));
+        assert_eq!(target_extension_and_mime("Mp4"), ("ogg", "audio/ogg"));
+    }
+
+    #[test]
+    fn importable_extensions_are_lowercase_without_dot_or_duplicates() {
+        for (i, ext) in IMPORTABLE_EXTENSIONS.iter().enumerate() {
+            assert_eq!(*ext, ext.to_ascii_lowercase(), "{ext} not lowercase");
+            assert!(!ext.starts_with('.'), "{ext} has a leading dot");
+            assert!(!ext.is_empty());
+            assert!(
+                !IMPORTABLE_EXTENSIONS[..i].contains(ext),
+                "{ext} listed twice",
+            );
+        }
+    }
+
+    #[test]
+    fn mime_matches_wildcard_subtype() {
+        assert!(mime_matches("audio/*", "audio/mp4"));
+        assert!(mime_matches("audio/*", "audio/mpeg"));
+        assert!(!mime_matches("audio/*", "video/mp4"));
+        assert!(!mime_matches("audio/*", "audiox/mp4"));
+    }
+
+    #[test]
+    fn mime_matches_exact_type() {
+        assert!(mime_matches("video/mp4", "video/mp4"));
+        assert!(!mime_matches("video/mp4", "video/ogg"));
+        assert!(!mime_matches("video/mp4", "video/mp4x"));
+    }
+
+    #[test]
+    fn mime_matches_is_case_insensitive_and_trims() {
+        assert!(mime_matches("audio/*", "AUDIO/MP4"));
+        assert!(mime_matches("Video/MP4", "video/mp4"));
+        assert!(mime_matches("audio/*", " audio/ogg "));
+    }
+
+    #[test]
+    fn mime_matches_rejects_malformed_input() {
+        assert!(!mime_matches("audio/*", ""));
+        assert!(!mime_matches("audio/*", "audio"));
+        assert!(!mime_matches("audio/*", "audio/"));
+        assert!(!mime_matches("", "audio/mp4"));
+        assert!(!mime_matches("*/*", "garbage"));
+    }
+
+    #[test]
+    fn mime_matches_full_wildcard() {
+        assert!(mime_matches("*/*", "video/mp4"));
+        assert!(mime_matches("*/*", "application/ogg"));
+    }
+
+    #[test]
+    fn android_picker_mime_types_are_well_formed() {
+        assert!(!ANDROID_PICKER_MIME_TYPES.is_empty());
+        for (i, m) in ANDROID_PICKER_MIME_TYPES.iter().enumerate() {
+            let (ty, sub) = m.split_once('/').expect("type/subtype");
+            assert!(!ty.is_empty() && !sub.is_empty(), "{m}");
+            assert_ne!(ty, "*", "{m}: a */* entry would admit every file");
+            assert!(
+                !ANDROID_PICKER_MIME_TYPES[..i].contains(m),
+                "{m} listed twice",
+            );
+        }
+    }
+
+    /// How Android labels each importable extension, across the
+    /// API levels we support (26–35). Sources: AOSP libcore
+    /// `MimeUtils.java` (oreo-release), `android.mime.types`
+    /// (android10-release) and `external/mime-support/mime.types`,
+    /// plus on-device MediaStore readings on the FP5 (Android 15,
+    /// 2026-09-27), which sniffs content: an mp4 WITH a video track
+    /// is `video/mp4` even though it carries importable audio.
+    const ANDROID_LABELS: &[(&str, &[&str])] = &[
+        ("wav", &["audio/x-wav", "audio/wav"]),
+        ("ogg", &["audio/ogg", "application/ogg"]),
+        ("mp3", &["audio/mpeg"]),
+        ("opus", &["audio/ogg", "audio/opus"]),
+        ("flac", &["audio/flac"]),
+        ("m4a", &["audio/mp4", "audio/mpeg"]),
+        ("aac", &["audio/aac", "audio/aac-adts"]),
+        ("mp4", &["video/mp4", "audio/mp4"]),
+    ];
+
+    #[test]
+    fn android_labels_table_covers_every_importable_extension() {
+        for ext in IMPORTABLE_EXTENSIONS {
+            assert!(
+                ANDROID_LABELS.iter().any(|(e, _)| e == ext),
+                "no Android label table entry for {ext}",
+            );
+        }
+    }
+
+    #[test]
+    fn android_picker_admits_every_label_of_every_importable_extension() {
+        for (ext, labels) in ANDROID_LABELS {
+            for label in *labels {
+                assert!(
+                    ANDROID_PICKER_MIME_TYPES
+                        .iter()
+                        .any(|p| mime_matches(p, label)),
+                    "{ext} labelled {label} would be greyed out in the picker",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn android_picker_does_not_admit_unrelated_types() {
+        for other in ["video/x-matroska", "image/png", "text/csv", "application/pdf"] {
+            assert!(
+                !ANDROID_PICKER_MIME_TYPES.iter().any(|p| mime_matches(p, other)),
+                "{other} must stay greyed out",
+            );
+        }
+    }
+
+    #[test]
+    fn plain_error_message_converts_to_other() {
+        let e: AudioFileError = String::from("create vorbisenc: missing").into();
+        assert_eq!(e, AudioFileError::Other("create vorbisenc: missing".into()));
+    }
+
+    // ── import result drop-file ──────────────────────────────────────
+
+    #[test]
+    fn import_result_ok() {
+        assert_eq!(parse_import_result("ok"), Ok(()));
+        assert_eq!(parse_import_result("ok\n"), Ok(()));
+        assert_eq!(parse_import_result("  ok  "), Ok(()));
+    }
+
+    #[test]
+    fn import_result_no_audio_track_is_typed() {
+        assert_eq!(
+            parse_import_result(&format!("err:{NO_AUDIO_TRACK_CODE}")),
+            Err(AudioFileError::NoAudioTrack),
+        );
+        assert_eq!(
+            parse_import_result(&format!("err:{NO_AUDIO_TRACK_CODE}\n")),
+            Err(AudioFileError::NoAudioTrack),
+        );
+    }
+
+    #[test]
+    fn import_result_other_error_keeps_message() {
+        assert_eq!(
+            parse_import_result("err:Import needs Android 10+"),
+            Err(AudioFileError::Other("Import needs Android 10+".into())),
+        );
+    }
+
+    #[test]
+    fn import_result_without_prefix_is_other_error() {
+        assert_eq!(
+            parse_import_result("something odd"),
+            Err(AudioFileError::Other("something odd".into())),
+        );
+    }
+
+    #[test]
+    fn import_result_empty_is_other_error() {
+        assert_eq!(
+            parse_import_result(""),
+            Err(AudioFileError::Other(String::new())),
+        );
+    }
+
+    // ── picker drop-file ─────────────────────────────────────────────
+
+    #[test]
+    fn pick_three_lines_parses_as_audio() {
+        assert_eq!(
+            parse_pick("/data/guided/transient.mp4\nTalk.mp4\n185"),
+            Some(Ok(PickedFile {
+                path: "/data/guided/transient.mp4".into(),
+                display_name: "Talk.mp4".into(),
+                duration_secs: 185,
+            })),
+        );
+    }
+
+    #[test]
+    fn pick_with_audio_marker_parses() {
+        let got = parse_pick("/p/t.mp4\nTalk.mp4\n185\naudio\n");
+        assert_eq!(got.unwrap().unwrap().duration_secs, 185);
+    }
+
+    #[test]
+    fn pick_with_no_audio_marker_is_no_audio_track() {
+        assert_eq!(
+            parse_pick(&format!("/p/t.mp4\nClip.mp4\n0\n{NO_AUDIO_TRACK_CODE}")),
+            Some(Err(AudioFileError::NoAudioTrack)),
+        );
+    }
+
+    #[test]
+    fn pick_unknown_fourth_line_is_treated_as_audio() {
+        // Only the exact marker rejects: a failed or unfamiliar probe
+        // must never block a file that may well be playable.
+        assert!(matches!(parse_pick("/p/t.mp3\nA\n3\nwhatever"), Some(Ok(_))));
+    }
+
+    #[test]
+    fn pick_trims_whitespace() {
+        let got = parse_pick("  /p/t.mp3 \n  Name \n 7 \n").unwrap().unwrap();
+        assert_eq!(got.path, "/p/t.mp3");
+        assert_eq!(got.display_name, "Name");
+        assert_eq!(got.duration_secs, 7);
+    }
+
+    #[test]
+    fn pick_bad_or_missing_duration_is_zero() {
+        assert_eq!(parse_pick("/p/t.mp3\nA\nabc").unwrap().unwrap().duration_secs, 0);
+        assert_eq!(parse_pick("/p/t.mp3\nA").unwrap().unwrap().duration_secs, 0);
+        assert_eq!(parse_pick("/p/t.mp3").unwrap().unwrap().display_name, "");
+    }
+
+    #[test]
+    fn pick_empty_or_blank_path_is_none() {
+        assert_eq!(parse_pick(""), None);
+        assert_eq!(parse_pick("\nName\n3"), None);
+        assert_eq!(parse_pick("   \nName\n3"), None);
     }
 }

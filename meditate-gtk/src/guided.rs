@@ -37,6 +37,7 @@ use adw::prelude::*;
 use crate::application::MeditateApplication;
 use crate::db::GuidedFile;
 use crate::i18n::gettext;
+use meditate_core::sound::AudioFileError;
 
 /// Single slot for the chooser's most-recently-shown undo toast.
 /// Tapping a second mutating action (rename + rename, delete + delete,
@@ -94,12 +95,7 @@ pub fn pick_file_for_open(
     // Filter to common audio formats. gstreamer can decode all of
     // these via decodebin; the import pipeline transcodes anything
     // not already OGG into OGG/Vorbis on the way in.
-    let filter = gtk::FileFilter::new();
-    filter.set_name(Some(&gettext("Audio files")));
-    for ext in meditate_core::sound::IMPORTABLE_EXTENSIONS {
-        filter.add_pattern(&format!("*.{ext}"));
-        filter.add_pattern(&format!("*.{}", ext.to_uppercase()));
-    }
+    let filter = crate::sounds::audio_file_filter();
     let filters = gtk::gio::ListStore::new::<gtk::FileFilter>();
     filters.append(&filter);
     dialog.set_filters(Some(&filters));
@@ -143,7 +139,11 @@ pub fn pick_file_for_open(
                     duration_secs,
                 });
             }
-            Err(e) => add_toast_to_window(
+            Err(AudioFileError::NoAudioTrack) => add_toast_to_window(
+                &parent_for_toast,
+                &gettext("This file has no audio track"),
+            ),
+            Err(AudioFileError::Other(e)) => add_toast_to_window(
                 &parent_for_toast,
                 &format!("{}: {e}", gettext("Couldn't read audio file")),
             ),
@@ -345,7 +345,11 @@ pub fn import_picked_file(
                         on_done(row);
                     }
                 }
-                Ok(Err(e)) => add_toast_to_window(
+                Ok(Err(AudioFileError::NoAudioTrack)) => add_toast_to_window(
+                    &parent,
+                    &gettext("This file has no audio track"),
+                ),
+                Ok(Err(AudioFileError::Other(e))) => add_toast_to_window(
                     &parent,
                     &format!("{}: {e}", gettext("Import failed")),
                 ),
@@ -375,7 +379,7 @@ pub fn import_picked_file(
 fn do_import_io(
     source: &Path,
     cancel: &AtomicBool,
-) -> std::result::Result<(String, PathBuf), String> {
+) -> std::result::Result<(String, PathBuf), AudioFileError> {
     let source_ext = source
         .extension()
         .and_then(|s| s.to_str())
@@ -396,7 +400,7 @@ fn do_import_io(
         // destination. Cancel-flag is still checked before and
         // after; the copy itself is a single fast syscall sequence.
         if cancel.load(Ordering::Relaxed) {
-            return Err(CANCELLED.into());
+            return Err(AudioFileError::Other(CANCELLED.into()));
         }
         meditate_core::sound::safe_copy_no_follow(source, &dest_path)
             .map_err(|e| e.to_string())?;
@@ -406,7 +410,7 @@ fn do_import_io(
     }
     if cancel.load(Ordering::Relaxed) {
         let _ = std::fs::remove_file(&dest_path);
-        return Err(CANCELLED.into());
+        return Err(AudioFileError::Other(CANCELLED.into()));
     }
     Ok((new_uuid, dest_path))
 }
@@ -430,7 +434,7 @@ fn transcode_to_ogg_preserve_channels(
     source: &Path,
     dest: &Path,
     cancel: &AtomicBool,
-) -> std::result::Result<(), String> {
+) -> std::result::Result<(), AudioFileError> {
     use gst::prelude::*;
     use gst::MessageView::{Eos, Error};
     use gstreamer as gst;
@@ -475,16 +479,9 @@ fn transcode_to_ogg_preserve_channels(
     ])
     .map_err(|e| e.to_string())?;
 
-    // decodebin produces its source pad lazily once typefind resolves
-    // the input — link in pad-added.
-    let audioconvert_sink = audioconvert
-        .static_pad("sink")
-        .ok_or_else(|| "audioconvert missing sink pad".to_string())?;
-    decodebin.connect_pad_added(move |_, src_pad| {
-        if !audioconvert_sink.is_linked() {
-            let _ = src_pad.link(&audioconvert_sink);
-        }
-    });
+    // decodebin produces its source pads lazily once typefind
+    // resolves the input — the audio one is linked in pad-added.
+    crate::sounds::connect_audio_pads(&decodebin, &audioconvert)?;
 
     pipeline
         .set_state(gst::State::Playing)
@@ -493,7 +490,7 @@ fn transcode_to_ogg_preserve_channels(
     let bus = pipeline
         .bus()
         .ok_or_else(|| "pipeline missing bus".to_string())?;
-    let mut transcode_err: Option<String> = None;
+    let mut transcode_err: Option<AudioFileError> = None;
     // Bus poll loop with 250 ms timeout so the cancel flag is
     // observed on a sub-second cadence. `iter_timed(NONE)` would
     // block until the next message — fine for hands-off transcodes
@@ -503,20 +500,24 @@ fn transcode_to_ogg_preserve_channels(
     loop {
         if cancel.load(Ordering::Relaxed) {
             let _ = pipeline.set_state(gst::State::Null);
-            return Err(CANCELLED.into());
+            return Err(AudioFileError::Other(CANCELLED.into()));
         }
         let Some(msg) = bus.timed_pop(timeout) else {
             // Timeout — re-check cancel flag and keep polling.
             continue;
         };
+        if crate::sounds::is_no_audio_message(&msg) {
+            transcode_err = Some(AudioFileError::NoAudioTrack);
+            break;
+        }
         match msg.view() {
             Eos(..) => break,
             Error(err) => {
-                transcode_err = Some(format!(
+                transcode_err = Some(AudioFileError::Other(format!(
                     "{} ({})",
                     err.error(),
                     err.debug().unwrap_or_default()
-                ));
+                )));
                 break;
             }
             _ => {}
@@ -1341,65 +1342,75 @@ impl Drop for GuidedPlayback {
 /// Probe the duration of an audio file in seconds, using a paused
 /// gstreamer `playbin` pipeline. Synchronous — for typical guided-
 /// meditation files this returns within a few hundred milliseconds.
+/// A file that opens but carries no audio stream (a video-only
+/// mp4) is `AudioFileError::NoAudioTrack` — playbin would otherwise
+/// report the video's length and the session would play silence.
+/// Where the runtime can't decode that video at all (flatpak without
+/// codecs-extra) playbin fails first and it surfaces as `Other`.
 ///
 /// Why playbin instead of pbutils' Discoverer: pbutils requires the
 /// `gstreamer-plugins-base-dev` system package to build against,
 /// which isn't part of Debian's `libgstreamer-plugins-base1.0-0`
 /// runtime metadata package. Using only the core `gstreamer` crate
 /// avoids the extra dev-package dependency.
-pub fn probe_duration_secs(path: &Path) -> Result<u32, String> {
+pub fn probe_duration_secs(path: &Path) -> Result<u32, AudioFileError> {
     use gst::prelude::*;
     use gstreamer as gst;
 
-    gst::init().map_err(|e| format!("gst init failed: {e}"))?;
+    let other = AudioFileError::Other;
+    gst::init().map_err(|e| other(format!("gst init failed: {e}")))?;
 
     let abs = path
         .canonicalize()
-        .map_err(|e| format!("canonicalize {}: {e}", path.display()))?;
+        .map_err(|e| other(format!("canonicalize {}: {e}", path.display())))?;
     let uri = format!("file://{}", abs.to_string_lossy());
 
     let pipeline = gst::ElementFactory::make("playbin")
         .property("uri", &uri)
         .build()
-        .map_err(|e| format!("create playbin: {e}"))?;
+        .map_err(|e| other(format!("create playbin: {e}")))?;
     let audio_sink = gst::ElementFactory::make("fakesink")
         .property("sync", false)
         .build()
-        .map_err(|e| format!("create audio fakesink: {e}"))?;
+        .map_err(|e| other(format!("create audio fakesink: {e}")))?;
     let video_sink = gst::ElementFactory::make("fakesink")
         .property("sync", false)
         .build()
-        .map_err(|e| format!("create video fakesink: {e}"))?;
+        .map_err(|e| other(format!("create video fakesink: {e}")))?;
     pipeline.set_property("audio-sink", &audio_sink);
     pipeline.set_property("video-sink", &video_sink);
 
     pipeline
         .set_state(gst::State::Paused)
-        .map_err(|e| format!("set state Paused: {e}"))?;
+        .map_err(|e| other(format!("set state Paused: {e}")))?;
 
     let timeout = gst::ClockTime::from_seconds(5);
     let (state_change, _, _) = pipeline.state(timeout);
-    state_change.map_err(|e| format!("waiting for Paused: {e}"))?;
+    state_change.map_err(|e| other(format!("waiting for Paused: {e}")))?;
 
     if let Some(bus) = pipeline.bus() {
         while let Some(msg) = bus.pop_filtered(&[gst::MessageType::Error]) {
             use gst::MessageView::Error;
             if let Error(err) = msg.view() {
                 let _ = pipeline.set_state(gst::State::Null);
-                return Err(format!(
+                return Err(other(format!(
                     "{} ({})",
                     err.error(),
                     err.debug().unwrap_or_default()
-                ));
+                )));
             }
         }
     }
 
+    let n_audio = pipeline.property::<i32>("n-audio");
     let duration: Option<gst::ClockTime> = pipeline.query_duration();
     let _ = pipeline.set_state(gst::State::Null);
+    if n_audio == 0 {
+        return Err(AudioFileError::NoAudioTrack);
+    }
 
     let nanos = duration
-        .ok_or_else(|| format!("duration unknown for {}", path.display()))?
+        .ok_or_else(|| other(format!("duration unknown for {}", path.display())))?
         .nseconds();
     Ok((nanos.div_ceil(1_000_000_000)) as u32)
 }
@@ -1422,4 +1433,81 @@ mod tests {
         );
     }
 
+    // ── mp4 import (issue #2) ────────────────────────────────────────
+    // Fixtures: 1 s mono AAC, the audio-only ones in .m4a and .mp4
+    // containers, an mp4 with an H.264 video track next to the audio,
+    // and a video-only mp4 (no audio stream at all).
+
+    fn fixture(name: &str) -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(name)
+    }
+
+    #[test]
+    fn probe_reads_aac_in_m4a() {
+        assert_eq!(probe_duration_secs(&fixture("audio_only.m4a")), Ok(1));
+    }
+
+    #[test]
+    fn probe_reads_audio_only_mp4() {
+        assert_eq!(probe_duration_secs(&fixture("audio_only.mp4")), Ok(1));
+    }
+
+    #[test]
+    fn probe_reads_mp4_with_video_track() {
+        assert_eq!(probe_duration_secs(&fixture("video_and_audio.mp4")), Ok(1));
+    }
+
+    #[test]
+    fn probe_rejects_video_only_mp4_as_no_audio_track() {
+        assert_eq!(
+            probe_duration_secs(&fixture("video_only.mp4")),
+            Err(AudioFileError::NoAudioTrack),
+        );
+    }
+
+    #[test]
+    fn probe_of_non_media_is_other_error_not_no_audio() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("notes.mp3");
+        std::fs::write(&p, b"not audio at all").unwrap();
+        assert!(matches!(probe_duration_secs(&p), Err(AudioFileError::Other(_))));
+    }
+
+    fn guided_transcode(name: &str) -> Result<u32, AudioFileError> {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("out.ogg");
+        transcode_to_ogg_preserve_channels(
+            &fixture(name),
+            &dest,
+            &AtomicBool::new(false),
+        )?;
+        probe_duration_secs(&dest)
+    }
+
+    #[test]
+    fn guided_transcode_accepts_m4a() {
+        assert_eq!(guided_transcode("audio_only.m4a"), Ok(1));
+    }
+
+    #[test]
+    fn guided_transcode_accepts_audio_only_mp4() {
+        assert_eq!(guided_transcode("audio_only.mp4"), Ok(1));
+    }
+
+    #[test]
+    fn guided_transcode_accepts_mp4_with_video_track() {
+        assert_eq!(guided_transcode("video_and_audio.mp4"), Ok(1));
+    }
+
+    #[test]
+    fn guided_transcode_of_video_only_mp4_is_no_audio_track() {
+        // Used to hang forever (gst 1.26.2): decodebin exposed only
+        // the video pad, nothing ever linked, no EOS, no error.
+        assert_eq!(
+            guided_transcode("video_only.mp4"),
+            Err(AudioFileError::NoAudioTrack),
+        );
+    }
 }

@@ -169,6 +169,9 @@ msgstr "统计"
 msgid "Stop"
 msgstr "停止"
 
+msgid "This file has no audio track"
+msgstr "此文件没有音轨"
+
 msgid "This week's practice"
 msgstr "本周练习"
 

@@ -57,6 +57,7 @@ export global Tr {
     public pure function export-failed() -> string { return @tr("Export failed"); }
     public pure function imported-n(n: int) -> string { return @tr("Imported {n} session" | "Imported {n} sessions" % n); }
     public pure function import-failed() -> string { return @tr("Import failed — see Diagnostics"); }
+    public pure function no-audio-track() -> string { return @tr("This file has no audio track"); }
     public pure function recovered-min(n: int) -> string { return @tr("Recovered {} min session", n); }
     // Test connection (core TestConnectionResult variants)
     public pure function conn-ok() -> string { return @tr("Connection OK"); }

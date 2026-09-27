@@ -1100,6 +1100,10 @@ msgstr ""
 msgid "Initial release."
 msgstr "Primera versión."
 
+#: src/guided.rs:144 src/guided.rs:350 src/sounds.rs:413 src/sounds.rs:637
+msgid "This file has no audio track"
+msgstr "Este archivo no tiene pista de audio"
+
 #~ msgid "Countdown and stopwatch timer"
 #~ msgstr "Temporizador con cuenta atrás y cronómetro"
 

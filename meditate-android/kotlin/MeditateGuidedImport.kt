@@ -36,6 +36,12 @@ object MeditateGuidedImport {
     // that rejects 44.1 kHz (mirrors GTK's audioresample stage).
     private const val OPUS_RATE = 48_000
 
+    // Wire code for "file has no audio track" — must equal
+    // meditate_core::sound::NO_AUDIO_TRACK_CODE. Sent as
+    // `err:<code>` in guided_import_result and as the 4th line of
+    // the picker drop-files.
+    const val NO_AUDIO_TRACK = "no-audio-track"
+
     @JvmStatic
     fun startImport(
         context: Context,
@@ -137,7 +143,7 @@ object MeditateGuidedImport {
         }
         if (track < 0 || inFormat == null) {
             extractor.release()
-            throw IllegalStateException("no audio track")
+            throw IllegalStateException(NO_AUDIO_TRACK)
         }
         extractor.selectTrack(track)
 

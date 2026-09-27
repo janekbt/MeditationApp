@@ -17,6 +17,7 @@ use adw::prelude::*;
 use crate::application::MeditateApplication;
 use crate::db::{BellSound, BellSoundCategory};
 use crate::i18n::gettext;
+use meditate_core::sound::AudioFileError;
 
 /// Which sound is currently previewing + the play-button widget
 /// showing the Stop icon. Mirrors the `PreviewState` in `vibrations.rs`
@@ -382,12 +383,7 @@ fn present_file_picker(
         .title(gettext("Choose Sound File"))
         .build();
 
-    let filter = gtk::FileFilter::new();
-    filter.set_name(Some(&gettext("Audio files")));
-    for ext in meditate_core::sound::IMPORTABLE_EXTENSIONS {
-        filter.add_suffix(ext);
-    }
-    file_dialog.set_default_filter(Some(&filter));
+    file_dialog.set_default_filter(Some(&audio_file_filter()));
 
     let parent = anchor
         .root()
@@ -405,7 +401,16 @@ fn present_file_picker(
             // Size cap.
             let size = std::fs::metadata(&path).map_or(0, |m| m.len());
             if !meditate_core::sound::is_within_size_limit(size) {
-                present_size_toast(&anchor);
+                present_toast(&anchor, &gettext("File is larger than 10 MB"));
+                return;
+            }
+            // Refuse a file without an audio stream (e.g. a video-only
+            // mp4) before the name dialog. Any other probe failure is
+            // left for the import itself to report, as before.
+            if crate::guided::probe_duration_secs(&path)
+                == Err(AudioFileError::NoAudioTrack)
+            {
+                present_toast(&anchor, &gettext("This file has no audio track"));
                 return;
             }
 
@@ -420,13 +425,26 @@ fn present_file_picker(
     );
 }
 
-fn present_size_toast(anchor: &adw::ActionRow) {
+/// File-dialog filter for every importable audio format. Suffix
+/// rules are always case-insensitive (`.MP4`, `.Mp4` …), including
+/// through the file-chooser portal. Shared by the bell and guided
+/// pickers.
+pub(crate) fn audio_file_filter() -> gtk::FileFilter {
+    let filter = gtk::FileFilter::new();
+    filter.set_name(Some(&gettext("Audio files")));
+    for ext in meditate_core::sound::IMPORTABLE_EXTENSIONS {
+        filter.add_suffix(ext);
+    }
+    filter
+}
+
+fn present_toast(anchor: &adw::ActionRow, title: &str) {
     // Surface via the main window's toast overlay.
     if let Some(root) = anchor.root() {
         if let Ok(window) = root.downcast::<crate::window::MeditateWindow>() {
             window.add_toast(
                 adw::Toast::builder()
-                    .title(gettext("File is larger than 10 MB"))
+                    .title(title)
                     .timeout(4)
                     .build(),
             );
@@ -615,7 +633,10 @@ fn present_import_confirm_dialog(
                         on_imported();
                     }
                 }
-                Ok(Err(e)) => present_import_error_toast(&anchor, &e),
+                Ok(Err(AudioFileError::NoAudioTrack)) => {
+                    present_toast(&anchor, &gettext("This file has no audio track"));
+                }
+                Ok(Err(AudioFileError::Other(e))) => present_import_error_toast(&anchor, &e),
                 Err(_) => present_import_error_toast(
                     &anchor,
                     &gettext("import worker died"),
@@ -655,7 +676,7 @@ fn present_import_error_toast(anchor: &adw::ActionRow, msg: &str) {
 /// decodebin3 assertion-fail (see `transcode_to_ogg`).
 fn do_import_io(
     source: &std::path::Path,
-) -> std::result::Result<(String, std::path::PathBuf, &'static str), String> {
+) -> std::result::Result<(String, std::path::PathBuf, &'static str), AudioFileError> {
     let source_ext = source
         .extension()
         .and_then(|s| s.to_str()).map_or_else(|| "wav".to_string(), str::to_ascii_lowercase);
@@ -707,7 +728,7 @@ fn do_import_io(
 fn transcode_to_ogg(
     source: &std::path::Path,
     dest: &std::path::Path,
-) -> std::result::Result<(), String> {
+) -> std::result::Result<(), AudioFileError> {
     use gstreamer as gst;
     use gst::prelude::*;
 
@@ -777,14 +798,7 @@ fn transcode_to_ogg(
 
     // decodebin produces its source pad lazily once the input is
     // typefind-ed, so we link it to audioconvert's sink in pad-added.
-    let audioconvert_sink = audioconvert
-        .static_pad("sink")
-        .ok_or("audioconvert missing sink pad".to_string())?;
-    decodebin.connect_pad_added(move |_, src_pad| {
-        if !audioconvert_sink.is_linked() {
-            let _ = src_pad.link(&audioconvert_sink);
-        }
-    });
+    connect_audio_pads(&decodebin, &audioconvert)?;
 
     pipeline
         .set_state(gst::State::Playing)
@@ -793,17 +807,21 @@ fn transcode_to_ogg(
     let bus = pipeline
         .bus()
         .ok_or("pipeline missing bus".to_string())?;
-    let mut transcode_err: Option<String> = None;
+    let mut transcode_err: Option<AudioFileError> = None;
     for msg in bus.iter_timed(gst::ClockTime::NONE) {
         use gst::MessageView::*;
+        if is_no_audio_message(&msg) {
+            transcode_err = Some(AudioFileError::NoAudioTrack);
+            break;
+        }
         match msg.view() {
             Eos(..) => break,
             Error(err) => {
-                transcode_err = Some(format!(
+                transcode_err = Some(AudioFileError::Other(format!(
                     "{} ({})",
                     err.error(),
                     err.debug().unwrap_or_default()
-                ));
+                )));
                 break;
             }
             _ => {}
@@ -811,6 +829,60 @@ fn transcode_to_ogg(
     }
     let _ = pipeline.set_state(gst::State::Null);
     transcode_err.map_or(Ok(()), Err)
+}
+
+/// Structure name of the application message `connect_audio_pads`
+/// posts when decodebin has exposed every stream and none is audio.
+const NO_AUDIO_MESSAGE: &str = "meditate-no-audio-track";
+
+/// Link decodebin's first **audio** pad to `audioconvert` (video or
+/// subtitle pads are left unlinked), and post `NO_AUDIO_MESSAGE` on
+/// the bus if decodebin finishes exposing pads without an audio one.
+/// Without that, a video-only file hung the transcode forever
+/// (gst 1.26.2: no EOS, no error once nothing links).
+pub(crate) fn connect_audio_pads(
+    decodebin: &gstreamer::Element,
+    audioconvert: &gstreamer::Element,
+) -> Result<(), AudioFileError> {
+    use gstreamer as gst;
+    use gst::prelude::*;
+
+    let sink = audioconvert
+        .static_pad("sink")
+        .ok_or("audioconvert missing sink pad".to_string())?;
+    let sink_for_pads = sink.clone();
+    decodebin.connect_pad_added(move |_, src_pad| {
+        let is_audio = src_pad
+            .current_caps()
+            .unwrap_or_else(|| src_pad.query_caps(None))
+            .structure(0)
+            .is_some_and(|s| s.name().starts_with("audio/"));
+        if is_audio && !sink_for_pads.is_linked() {
+            let _ = src_pad.link(&sink_for_pads);
+        }
+    });
+    decodebin.connect_no_more_pads(move |db| {
+        if !sink.is_linked() {
+            let msg = gst::message::Application::builder(
+                gst::Structure::new_empty(NO_AUDIO_MESSAGE),
+            )
+            .src(db)
+            .build();
+            let _ = db.post_message(msg);
+        }
+    });
+    Ok(())
+}
+
+/// True for the message `connect_audio_pads` posts on a file
+/// without an audio stream.
+pub(crate) fn is_no_audio_message(msg: &gstreamer::Message) -> bool {
+    match msg.view() {
+        gstreamer::MessageView::Application(app) => app
+            .structure()
+            .is_some_and(|s| s.name() == NO_AUDIO_MESSAGE),
+        _ => false,
+    }
 }
 
 fn present_rename_dialog(
@@ -918,3 +990,43 @@ fn present_delete_dialog(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // mp4 import (issue #2): the bell transcode path (mono +
+    // loudness-normalised) on the same fixtures as guided.rs.
+    fn bell_transcode(name: &str) -> Result<u32, AudioFileError> {
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(name);
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("out.ogg");
+        transcode_to_ogg(&src, &dest)?;
+        crate::guided::probe_duration_secs(&dest)
+    }
+
+    #[test]
+    fn bell_transcode_accepts_m4a() {
+        assert_eq!(bell_transcode("audio_only.m4a"), Ok(1));
+    }
+
+    #[test]
+    fn bell_transcode_accepts_audio_only_mp4() {
+        assert_eq!(bell_transcode("audio_only.mp4"), Ok(1));
+    }
+
+    #[test]
+    fn bell_transcode_accepts_mp4_with_video_track() {
+        assert_eq!(bell_transcode("video_and_audio.mp4"), Ok(1));
+    }
+
+    #[test]
+    fn bell_transcode_of_video_only_mp4_is_no_audio_track() {
+        // Used to hang forever — see the guided.rs twin.
+        assert_eq!(
+            bell_transcode("video_only.mp4"),
+            Err(AudioFileError::NoAudioTrack),
+        );
+    }
+}

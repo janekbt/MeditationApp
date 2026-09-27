@@ -33,10 +33,11 @@ const IMPORT_PROGRESS_FILENAME: &str = "guided_import_progress";
 /// Kotlin worker polls it each loop and aborts (deleting the
 /// partial dest), mirroring GTK's `cancel: &AtomicBool`.
 const IMPORT_CANCEL_FILENAME: &str = "guided_import_cancel";
-/// Drop-file the picker Activity writes: 3 lines —
-/// absolute path / display name / duration in whole seconds.
+/// Drop-file the picker Activity writes: absolute path / display
+/// name / duration in whole seconds / optional no-audio marker —
+/// parsed by `meditate_core::sound::parse_pick`.
 const PICK_FILENAME: &str = "guided_pick";
-/// Same 3-line format, written when the picker was opened with
+/// Same format, written when the picker was opened with
 /// target="bell" (BI custom-sound import) — separate file so the
 /// two import flows can't consume each other's picks.
 const SOUND_PICK_FILENAME: &str = "sound_pick";
@@ -56,7 +57,11 @@ const FOCUS_LOSS_FILENAME: &str = "guided_focus_loss";
 /// `take_pending_pick`. Best-effort: a JNI hiccup is logged, the
 /// Guided row just stays unset.
 pub fn open_picker(app: &AndroidApp) {
-    if let Err(e) = invoke_open(app, "guided") {
+    if let Err(e) = invoke_open(
+        app,
+        "guided",
+        meditate_core::sound::ANDROID_PICKER_MIME_TYPES,
+    ) {
         meditate_core::log(
             "guided",
             &format!("open_picker FAILED: {e:?}"),
@@ -67,7 +72,11 @@ pub fn open_picker(app: &AndroidApp) {
 /// Same picker, bell-import route: the transient copy lands in
 /// `sounds/` and the result in the `sound_pick` drop-file (BI).
 pub fn open_sound_picker(app: &AndroidApp) {
-    if let Err(e) = invoke_open(app, "bell") {
+    if let Err(e) = invoke_open(
+        app,
+        "bell",
+        meditate_core::sound::ANDROID_PICKER_MIME_TYPES,
+    ) {
         meditate_core::log(
             "guided",
             &format!("open_sound_picker FAILED: {e:?}"),
@@ -77,51 +86,36 @@ pub fn open_sound_picker(app: &AndroidApp) {
 
 /// Bell-import twin of `take_pending_pick` — reads + removes the
 /// `sound_pick` drop-file.
-pub fn take_pending_sound_pick(
-    app: &AndroidApp,
-) -> Option<(String, String, u32)> {
-    let data_root = app.internal_data_path()?;
-    let path = data_root.join("meditate").join(SOUND_PICK_FILENAME);
-    let raw = std::fs::read_to_string(&path).ok()?;
-    let _ = std::fs::remove_file(&path);
-    let mut lines = raw.lines();
-    let file = lines.next()?.trim().to_string();
-    if file.is_empty() {
-        return None;
-    }
-    let name = lines.next().unwrap_or("").trim().to_string();
-    let dur: u32 =
-        lines.next().unwrap_or("0").trim().parse().unwrap_or(0);
-    Some((file, name, dur))
+pub fn take_pending_sound_pick(app: &AndroidApp) -> Option<PickResult> {
+    take_pick_file(app, SOUND_PICK_FILENAME)
 }
 
-/// Take the pending pick — `(abs file path, display name,
-/// duration secs)` — and delete the drop-file (single
+/// Take the pending pick and delete the drop-file (single
 /// consumption, so the tick poll doesn't re-apply it). `None`
-/// when nothing is pending / the file is malformed / blank path.
-pub fn take_pending_pick(
-    app: &AndroidApp,
-) -> Option<(String, String, u32)> {
+/// when nothing is pending / the file is malformed / blank path;
+/// `Some(Err(NoAudioTrack))` when the picked file has no audio.
+pub fn take_pending_pick(app: &AndroidApp) -> Option<PickResult> {
+    take_pick_file(app, PICK_FILENAME)
+}
+
+pub type PickResult = Result<
+    meditate_core::sound::PickedFile,
+    meditate_core::sound::AudioFileError,
+>;
+
+fn take_pick_file(app: &AndroidApp, filename: &str) -> Option<PickResult> {
     let data_root = app.internal_data_path()?;
-    let path = data_root.join("meditate").join(PICK_FILENAME);
+    let path = data_root.join("meditate").join(filename);
     let raw = std::fs::read_to_string(&path).ok()?;
     // Remove first so a parse failure can't loop every tick.
     let _ = std::fs::remove_file(&path);
-    let mut lines = raw.lines();
-    let file = lines.next()?.trim().to_string();
-    if file.is_empty() {
-        return None;
-    }
-    let name = lines.next().unwrap_or("").trim().to_string();
-    let dur: u32 =
-        lines.next().unwrap_or("0").trim().parse().unwrap_or(0);
-    Some((file, name, dur))
+    meditate_core::sound::parse_pick(&raw)
 }
 
 /// CSV-import picker route (DP): target "import-meditate" or
 /// "import-insight"; the landed copy arrives via `take_csv_pick`.
 pub fn open_picker_for_csv(app: &AndroidApp, target: &str) {
-    if let Err(e) = invoke_open(app, target) {
+    if let Err(e) = invoke_open(app, target, &[]) {
         meditate_core::log(
             "data.import",
             &format!("open_picker_for_csv FAILED: {e:?}"),
@@ -228,18 +222,32 @@ fn invoke_open_export(
 fn invoke_open(
     app: &AndroidApp,
     target: &str,
+    mime_types: &[&str],
 ) -> Result<(), jni::errors::Error> {
     let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
     let mut env = vm.attach_current_thread()?;
     let activity =
         unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
     let jtarget = env.new_string(target)?;
+    let jmimes = env.new_object_array(
+        i32::try_from(mime_types.len()).unwrap_or(0),
+        "java/lang/String",
+        JObject::null(),
+    )?;
+    for (i, m) in mime_types.iter().enumerate() {
+        let jm = env.new_string(m)?;
+        env.set_object_array_element(
+            &jmimes,
+            i32::try_from(i).unwrap_or(0),
+            jm,
+        )?;
+    }
     let class = resolve_class(&mut env, &activity, PICKER_CLASS_DOTTED)?;
     env.call_static_method(
         class,
         "openFor",
-        "(Landroid/content/Context;Ljava/lang/String;)V",
-        &[(&activity).into(), (&jtarget).into()],
+        "(Landroid/content/Context;Ljava/lang/String;[Ljava/lang/String;)V",
+        &[(&activity).into(), (&jtarget).into(), (&jmimes).into()],
     )?;
     if env.exception_check()? {
         env.exception_clear()?;
@@ -384,26 +392,18 @@ pub fn clear_import_result(app: &AndroidApp) {
     }
 }
 
-/// Take the transcode outcome — `Ok(())` on success, `Err(msg)` on
-/// failure — and delete the drop-file (single consumption). `None`
-/// while the worker is still running / nothing pending.
+/// Take the transcode outcome and delete the drop-file (single
+/// consumption). `None` while the worker is still running /
+/// nothing pending.
 pub fn take_import_result(
     app: &AndroidApp,
-) -> Option<Result<(), String>> {
+) -> Option<Result<(), meditate_core::sound::AudioFileError>> {
     let data_root = app.internal_data_path()?;
     let path =
         data_root.join("meditate").join(IMPORT_RESULT_FILENAME);
     let raw = std::fs::read_to_string(&path).ok()?;
     let _ = std::fs::remove_file(&path);
-    let trimmed = raw.trim();
-    if trimmed == "ok" {
-        Some(Ok(()))
-    } else {
-        Some(Err(trimmed
-            .strip_prefix("err:")
-            .unwrap_or(trimmed)
-            .to_string()))
-    }
+    Some(meditate_core::sound::parse_import_result(&raw))
 }
 
 fn invoke_import(

@@ -58,9 +58,23 @@ class MeditateFilePickerActivity : Activity() {
                     addCategory(Intent.CATEGORY_OPENABLE)
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
-            // Audio picks (guided / bell import).
+            // Audio picks (guided / bell import). `audio/*` alone
+            // greys out an mp4 with a video track (labelled
+            // video/mp4) and, on API 26–28, .ogg (application/ogg);
+            // the list from meditate_core::sound::
+            // ANDROID_PICKER_MIME_TYPES admits those. Per the
+            // ACTION_OPEN_DOCUMENT docs, disjoint types go in
+            // EXTRA_MIME_TYPES with the type set to */*.
             else -> Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                type = "audio/*"
+                val mimes = intent.getStringArrayExtra(
+                    MeditateGuidedPicker.EXTRA_PICKER_MIME_TYPES,
+                )
+                if (mimes.isNullOrEmpty()) {
+                    type = "audio/*"
+                } else {
+                    type = "*/*"
+                    putExtra(Intent.EXTRA_MIME_TYPES, mimes)
+                }
                 addCategory(Intent.CATEGORY_OPENABLE)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
@@ -117,9 +131,13 @@ class MeditateFilePickerActivity : Activity() {
             Log.w(TAG, "openInputStream returned null")
             return
         }
-        val durSecs = probeSecs(dest)
+        val (durSecs, noAudio) = probe(dest)
+        // 4th line: the no-audio marker only when the probe opened
+        // the file and found no audio stream (parsed by
+        // meditate_core::sound::parse_pick).
+        val marker = if (noAudio) MeditateGuidedImport.NO_AUDIO_TRACK else ""
         File(File(filesDir, "meditate"), dropFile)
-            .writeText("${dest.absolutePath}\n$name\n$durSecs")
+            .writeText("${dest.absolutePath}\n$name\n$durSecs\n$marker")
     }
 
     // Export: copy the Rust-pre-written CSV (src_path extra) to
@@ -186,15 +204,20 @@ class MeditateFilePickerActivity : Activity() {
     // reported ~0:29). Walking the real frame timestamps is
     // accurate and cheap — it parses frame headers only, no
     // decode. Take max(header duration, last frame PTS).
-    private fun probeSecs(f: File): Long {
+    // Second value: true iff the file opened but has no audio
+    // track (a failed probe reports false — never block a file
+    // the probe merely couldn't read).
+    private fun probe(f: File): Pair<Long, Boolean> {
         return try {
             val ex = MediaExtractor()
             ex.setDataSource(f.absolutePath)
             var bestUs = 0L
+            var sawAudio = false
             for (i in 0 until ex.trackCount) {
                 val fmt = ex.getTrackFormat(i)
                 val mime = fmt.getString(MediaFormat.KEY_MIME)
                 if (mime?.startsWith("audio/") != true) continue
+                sawAudio = true
                 if (fmt.containsKey(MediaFormat.KEY_DURATION)) {
                     bestUs = maxOf(
                         bestUs,
@@ -213,10 +236,11 @@ class MeditateFilePickerActivity : Activity() {
                 break
             }
             ex.release()
-            if (bestUs > 0) (bestUs + 999_999) / 1_000_000 else 0L
+            val secs = if (bestUs > 0) (bestUs + 999_999) / 1_000_000 else 0L
+            Pair(secs, !sawAudio)
         } catch (e: Exception) {
             Log.w(TAG, "duration probe failed: $e")
-            0L
+            Pair(0L, false)
         }
     }
 

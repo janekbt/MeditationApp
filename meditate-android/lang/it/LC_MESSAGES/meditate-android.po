@@ -169,6 +169,9 @@ msgstr "Statistiche"
 msgid "Stop"
 msgstr "Interrompi"
 
+msgid "This file has no audio track"
+msgstr "Questo file non ha una traccia audio"
+
 msgid "This week's practice"
 msgstr "Pratica di questa settimana"
 

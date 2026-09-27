@@ -1087,3 +1087,7 @@ msgstr ""
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:136
 msgid "Initial release."
 msgstr ""
+
+#: src/guided.rs:144 src/guided.rs:350 src/sounds.rs:413 src/sounds.rs:637
+msgid "This file has no audio track"
+msgstr ""

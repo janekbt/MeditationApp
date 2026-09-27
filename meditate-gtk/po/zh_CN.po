@@ -1096,6 +1096,10 @@ msgstr ""
 msgid "Initial release."
 msgstr "首个版本。"
 
+#: src/guided.rs:144 src/guided.rs:350 src/sounds.rs:413 src/sounds.rs:637
+msgid "This file has no audio track"
+msgstr "此文件没有音轨"
+
 #~ msgid "Countdown and stopwatch timer"
 #~ msgstr "倒计时与秒表"
 

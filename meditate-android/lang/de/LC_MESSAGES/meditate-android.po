@@ -604,6 +604,9 @@ msgstr "Teste…"
 msgid "The Nextcloud folder no longer contains any of the batches this device previously synced. Has the Meditate folder been deleted on the server?\n\nChoose how to recover:"
 msgstr "Der Nextcloud-Ordner enthält keine der zuvor von diesem Gerät synchronisierten Daten mehr. Wurde der Meditate-Ordner auf dem Server gelöscht?\n\nWie soll wiederhergestellt werden?"
 
+msgid "This file has no audio track"
+msgstr "Diese Datei enthält keine Tonspur"
+
 msgid "This permanently deletes every session, label, and event stored on this device. Your Nextcloud account, sync settings, and app preferences are kept.\n\nThis cannot be undone."
 msgstr "Löscht dauerhaft alle Sitzungen, Labels und Ereignisse auf diesem Gerät. Nextcloud-Konto, Sync-Einstellungen und App-Einstellungen bleiben erhalten.\n\nDies kann nicht rückgängig gemacht werden."
 
