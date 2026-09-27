@@ -49,10 +49,16 @@ fn main() {
     if std::env::var("PKGDATADIR").is_err() {
         println!("cargo:rustc-env=PKGDATADIR=./data");
     }
-    // APP_VERSION is the user-visible version string (e.g. "26.4.4").
-    // Meson and Flatpak builds override this via the APP_VERSION env var.
+    // APP_VERSION is the user-visible version string (e.g. "26.8.5").
+    // Meson and Flatpak builds override this via the APP_VERSION env var;
+    // plain cargo builds (and dev-xbuild.sh) fall back to the crate
+    // version, which bump-version.sh stamps together with meson's.
+    println!("cargo:rerun-if-env-changed=APP_VERSION");
     if std::env::var("APP_VERSION").is_err() {
-        println!("cargo:rustc-env=APP_VERSION=26.4.4");
+        println!(
+            "cargo:rustc-env=APP_VERSION={}",
+            std::env::var("CARGO_PKG_VERSION").unwrap_or_default()
+        );
     }
     // Directory where gettext looks up compiled .mo translations at runtime.
     // Dev fallback points at build/po; Meson/Flatpak set the real install

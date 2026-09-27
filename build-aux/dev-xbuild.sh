@@ -30,8 +30,9 @@ export PKG_CONFIG_ALLOW_CROSS_aarch64_unknown_linux_gnu=1
 
 # Match the flatpak manifest's build-time constants so runtime paths
 # resolve inside the flatpak sandbox we deploy into.
+# APP_VERSION is deliberately not set: build.rs falls back to the crate
+# version, which bump-version.sh keeps current.
 export APP_ID="io.github.janekbt.Meditate"
-export APP_VERSION="26.4.4"
 export PKGDATADIR="/app/share/meditate"
 export LOCALEDIR="/app/share/locale"
 
