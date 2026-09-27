@@ -11,7 +11,7 @@ x86_64) and run from the repository root unless a `cd` says otherwise.
 | build the Linux Flatpak | `flatpak-builder --user --install --force-clean --install-deps-from=flathub flatpak_app build-aux/io.github.janekbt.Meditate.json` | [Linux app](#linux-app) |
 | run all tests | `cargo test --workspace` | [Tests and lints](#tests-and-lints) |
 | build + install the Android debug APK | `./build.sh android --debug` then `adb install -r meditate-android/android/app/build/outputs/apk/debug/app-debug.apk` | [Android](#android) |
-| regenerate the GTK translation template | `meson compile -C meditate-gtk/builddir meditate-pot` | [Translations](#translations) |
+| regenerate the GTK translation template | `build-aux/update-translations.sh` | [Translations](#translations) |
 | cross-build for the Librem 5 | `build-aux/dev-xbuild.sh` | [Librem 5](#librem-5) |
 | cut a release | follow [`RELEASE.md`](RELEASE.md) | — |
 
@@ -206,26 +206,32 @@ Troubleshooting:
 ## Translations
 
 - **GTK:** `meditate-gtk/po/` — template `meditate.pot`, one `<lang>.po` per
-  language in `LINGUAS`. Every source file with a `gettext(` / `ngettext(` /
-  `_("` call must be listed in `po/POTFILES.in`. With a configured `builddir`
-  (see [Native build](#native-build)):
+  language in `LINGUAS`. Every source file with a `gettext(` / `ngettext(`
+  call or a `_("` / `translatable="yes"` marker must be listed in
+  `po/POTFILES.in`. Regenerate the template and merge it into every
+  `<lang>.po` with:
 
   ```sh
-  meson compile -C meditate-gtk/builddir meditate-pot         # regenerate meditate.pot
-  meson compile -C meditate-gtk/builddir meditate-update-po   # merge it into every <lang>.po
+  build-aux/update-translations.sh
   ```
 
+  It runs the `meditate-pot` and `meditate-update-po` meson targets inside
+  the GNOME SDK the Flatpak manifest pins (installed by the
+  [Flatpak build](#flatpak-build)), so the result doesn't depend on the
+  distro's gettext. Don't run those targets from a host build directory:
+  xgettext before 0.24 reads `.rs` files as C and gets some strings wrong.
   Then translate the new and fuzzy entries.
+
+  The SDK's xgettext skips calls it can't see as plain `gettext(…)`: write
+  `gettext("…")` / `ngettext(…)` after `use crate::i18n::{gettext, ngettext};`,
+  never `crate::i18n::gettext(…)`, and use `clone!` (after `use glib::clone;`)
+  rather than `glib::clone!` around code that has translatable strings.
+  `cargo test -p meditate i18n::` fails on either mistake, on a file missing
+  from `POTFILES.in`, and on a stale template.
 - **Android:** `meditate-android/lang/<lang>/LC_MESSAGES/meditate-android.po`,
   bundled into the binary at build time; strings come from `@tr()` in the
   `.slint` files and the `Tr` catalogue in `ui/main.slint`.
 - Validate every file you touched: `msgfmt --check -o /dev/null <file>`.
-
-Known issue: `po/POTFILES.in` is missing several source files and the
-template has not been regenerated since May 2026, and xgettext versions
-before 0.24 (Debian 13 ships 0.23) read `.rs` files as C, which marks some
-strings as C format strings and makes `msgfmt --check` fail on correct
-translations. Fixing the catalogue is a separate task.
 
 ## Librem 5
 

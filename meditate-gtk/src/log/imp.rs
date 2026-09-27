@@ -5,6 +5,8 @@ use adw::subclass::prelude::*;
 use gtk::{glib, CompositeTemplate};
 
 use crate::db::{Label, Session, SessionData, SessionFilter, SessionMode};
+use crate::i18n::{gettext, ngettext};
+use glib::clone;
 
 // ── GObject impl ──────────────────────────────────────────────────────────────
 
@@ -95,13 +97,13 @@ impl ObjectImpl for LogView {
         let obj = self.obj();
 
         // "Add Session" button in the empty state
-        self.add_first_btn.connect_clicked(glib::clone!(
+        self.add_first_btn.connect_clicked(clone!(
             #[weak(rename_to = this)] obj,
             move |_| this.imp().show_add_dialog()
         ));
 
         // "Load more" appends the next page of rows.
-        self.load_more_btn.connect_clicked(glib::clone!(
+        self.load_more_btn.connect_clicked(clone!(
             #[weak(rename_to = this)] obj,
             move |_| this.imp().load_more()
         ));
@@ -304,7 +306,7 @@ impl LogView {
     /// Populate the label combo in the filter popover.
     pub fn refresh_filter_labels(&self, combo: &adw::ComboRow) {
         let labels = self.labels.borrow();
-        let all_label = crate::i18n::gettext("All labels");
+        let all_label = gettext("All labels");
         let names: Vec<&str> = std::iter::once(all_label.as_str())
             .chain(labels.iter().map(|l| l.name.as_str()))
             .collect();
@@ -389,7 +391,7 @@ fn build_card(session: &Session, label_map: &std::collections::HashMap<i64, &str
     let unit_label = gtk::Label::builder()
         // Lowercase in source; the .log-unit CSS class renders it uppercase
         // (HIG forbids all-caps in source text).
-        .label(crate::i18n::gettext("min"))
+        .label(gettext("min"))
         .css_classes(["log-unit"])
         .halign(gtk::Align::Start)
         .build();
@@ -420,7 +422,7 @@ fn build_card(session: &Session, label_map: &std::collections::HashMap<i64, &str
     let note_text = session.note.as_deref().unwrap_or("").trim();
     if note_text.is_empty() {
         let placeholder = gtk::Label::builder()
-            .label(crate::i18n::gettext("No note added"))
+            .label(gettext("No note added"))
             .css_classes(["log-note-placeholder"])
             .halign(gtk::Align::Start)
             .xalign(0.0)
@@ -462,7 +464,7 @@ fn build_card(session: &Session, label_map: &std::collections::HashMap<i64, &str
         .css_classes(["flat", "circular", "destructive-action"])
         .valign(gtk::Align::Center)
         .margin_end(16)
-        .tooltip_text(crate::i18n::gettext("Delete Session"))
+        .tooltip_text(gettext("Delete Session"))
         // Not Tab-focusable: AdwDialog's auto-focus-restore on close
         // would otherwise land on whichever trash button was last
         // hovered and the ScrolledWindow would scroll to it.
@@ -491,7 +493,7 @@ fn build_card(session: &Session, label_map: &std::collections::HashMap<i64, &str
     // Tap / click anywhere on the card → edit.
     let click = gtk::GestureClick::new();
     let session_id = session.id;
-    click.connect_released(glib::clone!(
+    click.connect_released(clone!(
         #[weak] card,
         move |_, _, _, _| {
             if let Some(win) = card.root().and_then(|r| r.downcast::<crate::window::MeditateWindow>().ok()) {
@@ -503,7 +505,7 @@ fn build_card(session: &Session, label_map: &std::collections::HashMap<i64, &str
 
     // Keyboard: Enter / Space opens edit, Delete starts the undo-toast flow.
     let key = gtk::EventControllerKey::new();
-    key.connect_key_pressed(glib::clone!(
+    key.connect_key_pressed(clone!(
         #[weak] card,
         #[upgrade_or] glib::Propagation::Proceed,
         move |_, keyval, _, _| {
@@ -581,8 +583,8 @@ fn date_group_display(unix_secs: i64) -> String {
         meditate_core::time::unix_now(),
     );
     match kind {
-        DateGroupKey::Today => crate::i18n::gettext("Today"),
-        DateGroupKey::Yesterday => crate::i18n::gettext("Yesterday"),
+        DateGroupKey::Today => gettext("Today"),
+        DateGroupKey::Yesterday => gettext("Yesterday"),
         DateGroupKey::SameYearOther | DateGroupKey::EarlierYearOther => {
             let Some(dt) = glib::DateTime::from_unix_local(unix_secs).ok() else {
                 return String::new();
@@ -604,9 +606,9 @@ fn format_time_of_day(unix_secs: i64) -> String {
 fn section_caption_text(count: u32, total_secs: i64) -> String {
     use meditate_core::format::SessionCountKey;
     let base = match meditate_core::format::session_count_key(count as usize) {
-        SessionCountKey::One => crate::i18n::ngettext("1 session", "{n} sessions", 1),
+        SessionCountKey::One => ngettext("1 session", "{n} sessions", 1).replace("{n}", "1"),
         SessionCountKey::Many(n) =>
-            crate::i18n::ngettext("1 session", "{n} sessions", n as u32)
+            ngettext("1 session", "{n} sessions", n as u32)
                 .replace("{n}", &n.to_string()),
     };
     format!("{base} · {}", crate::format::format_hm_compact(total_secs))
@@ -637,7 +639,7 @@ impl LogView {
 
         let new_toast = adw::Toast::builder()
             .title(&title)
-            .button_label(crate::i18n::gettext("Undo"))
+            .button_label(gettext("Undo"))
             .timeout(5)
             .build();
 
@@ -774,12 +776,12 @@ impl LogView {
 
         // ── Duration (hours + minutes as AdwSpinRows) ─────────────────
         let hours_spin = adw::SpinRow::builder()
-            .title(crate::i18n::gettext("Hours"))
+            .title(gettext("Hours"))
             .adjustment(&gtk::Adjustment::new(0.0, 0.0, 23.0, 1.0, 5.0, 0.0))
             .digits(0)
             .build();
         let minutes_spin = adw::SpinRow::builder()
-            .title(crate::i18n::gettext("Minutes"))
+            .title(gettext("Minutes"))
             .adjustment(&gtk::Adjustment::new(0.0, 0.0, 59.0, 1.0, 5.0, 0.0))
             .digits(0)
             .build();
@@ -796,7 +798,7 @@ impl LogView {
         let init_minute = init_dt.as_ref().map_or(0, glib::DateTime::minute);
 
         let date_row = adw::ActionRow::builder()
-            .title(crate::i18n::gettext("Date"))
+            .title(gettext("Date"))
             .subtitle(format_date(init_time))
             .build();
 
@@ -813,14 +815,14 @@ impl LogView {
         let cal_btn = gtk::MenuButton::builder()
             .icon_name("x-office-calendar-symbolic")
             .valign(gtk::Align::Center)
-            .tooltip_text(crate::i18n::gettext("Pick a Date"))
+            .tooltip_text(gettext("Pick a Date"))
             .css_classes(["flat"])
             .popover(&cal_popover)
             .always_show_arrow(false)
             .build();
         date_row.add_suffix(&cal_btn);
 
-        calendar.connect_day_selected(glib::clone!(
+        calendar.connect_day_selected(clone!(
             #[weak] date_row,
             #[weak] cal_popover,
             move |cal| {
@@ -838,12 +840,12 @@ impl LogView {
 
         // ── Start time (hour + minute as AdwSpinRows) ─────────────────
         let time_hours_spin = adw::SpinRow::builder()
-            .title(crate::i18n::gettext("Hour"))
+            .title(gettext("Hour"))
             .adjustment(&gtk::Adjustment::new(f64::from(init_hour), 0.0, 23.0, 1.0, 5.0, 0.0))
             .digits(0)
             .build();
         let time_minutes_spin = adw::SpinRow::builder()
-            .title(crate::i18n::gettext("Minute"))
+            .title(gettext("Minute"))
             .adjustment(&gtk::Adjustment::new(f64::from(init_minute), 0.0, 59.0, 1.0, 5.0, 0.0))
             .digits(0)
             .build();
@@ -857,7 +859,7 @@ impl LogView {
         let selected_label_id: Rc<Cell<Option<i64>>> = Rc::new(Cell::new(initial_label_id));
 
         let label_chooser_row = adw::ActionRow::builder()
-            .title(crate::i18n::gettext("Selected"))
+            .title(gettext("Selected"))
             .activatable(true)
             .build();
         {
@@ -872,8 +874,8 @@ impl LogView {
         label_chooser_row.set_subtitle(&initial_subtitle);
 
         let label_expander = adw::ExpanderRow::builder()
-            .title(crate::i18n::gettext("Label"))
-            .subtitle(crate::i18n::gettext("Tag this session"))
+            .title(gettext("Label"))
+            .subtitle(gettext("Tag this session"))
             .show_enable_switch(true)
             .enable_expansion(initial_label_id.is_some())
             .expanded(initial_label_id.is_some())
@@ -931,7 +933,7 @@ impl LogView {
             .css_classes(["log-note-editor"])
             .build();
         let note_caption = gtk::Label::builder()
-            .label(crate::i18n::gettext("Note (optional)"))
+            .label(gettext("Note (optional)"))
             .halign(gtk::Align::Start)
             .margin_start(12)
             .css_classes(["caption", "dimmed"])
@@ -951,13 +953,13 @@ impl LogView {
 
         // ── Assemble dialog ────────────────────────────────────────────
         let duration_group = adw::PreferencesGroup::builder()
-            .title(crate::i18n::gettext("Duration"))
+            .title(gettext("Duration"))
             .build();
         duration_group.add(&hours_spin);
         duration_group.add(&minutes_spin);
 
         let time_group = adw::PreferencesGroup::builder()
-            .title(crate::i18n::gettext("Start time"))
+            .title(gettext("Start time"))
             .build();
         time_group.add(&date_row);
         time_group.add(&time_hours_spin);
@@ -986,11 +988,11 @@ impl LogView {
             .build();
 
         let cancel_btn = gtk::Button::builder()
-            .label(crate::i18n::gettext("_Cancel"))
+            .label(gettext("_Cancel"))
             .use_underline(true)
             .build();
         let save_btn = gtk::Button::builder()
-            .label(if is_edit { crate::i18n::gettext("_Save") } else { crate::i18n::gettext("_Add") })
+            .label(if is_edit { gettext("_Save") } else { gettext("_Add") })
             .use_underline(true)
             .css_classes(["suggested-action"])
             .build();
@@ -1009,14 +1011,14 @@ impl LogView {
         // which is layered on top of the window.
         let dialog_root_page = adw::NavigationPage::builder()
             .tag("session-dialog-root")
-            .title(if is_edit { crate::i18n::gettext("Edit Session") } else { crate::i18n::gettext("Add Session") })
+            .title(if is_edit { gettext("Edit Session") } else { gettext("Add Session") })
             .child(&toolbar_view)
             .build();
         let dialog_nav_view = adw::NavigationView::new();
         dialog_nav_view.add(&dialog_root_page);
 
         let dialog = adw::Dialog::builder()
-            .title(if is_edit { crate::i18n::gettext("Edit Session") } else { crate::i18n::gettext("Add Session") })
+            .title(if is_edit { gettext("Edit Session") } else { gettext("Add Session") })
             .content_width(360)
             .child(&dialog_nav_view)
             .build();
@@ -1047,7 +1049,7 @@ impl LogView {
         }
 
         // Cancel
-        cancel_btn.connect_clicked(glib::clone!(
+        cancel_btn.connect_clicked(clone!(
             #[weak] dialog,
             move |_| { dialog.close(); }
         ));
@@ -1055,7 +1057,7 @@ impl LogView {
         // Save
         let obj = self.obj().clone();
         let selected_label_id_for_save = selected_label_id.clone();
-        save_btn.connect_clicked(glib::clone!(
+        save_btn.connect_clicked(clone!(
             #[weak] dialog,
             #[weak] hours_spin,
             #[weak] minutes_spin,

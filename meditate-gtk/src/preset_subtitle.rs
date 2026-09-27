@@ -54,7 +54,9 @@ pub fn preset_subtitle(p: &Preset, label_names: &HashMap<String, String>) -> Str
         }
     }
     match parts.bells {
-        Some(BellsCountKey::One) => out.push(ngettext("1 bell", "{n} bells", 1)),
+        Some(BellsCountKey::One) => {
+            out.push(ngettext("1 bell", "{n} bells", 1).replace("{n}", "1"))
+        }
         Some(BellsCountKey::Many(n)) => {
             out.push(
                 ngettext("1 bell", "{n} bells", n as u32)

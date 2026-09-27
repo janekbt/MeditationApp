@@ -13,6 +13,7 @@
 
 use adw::prelude::*;
 use gtk::glib;
+use glib::clone;
 
 use crate::application::MeditateApplication;
 use crate::i18n::gettext;
@@ -48,11 +49,11 @@ pub fn show(app: &MeditateApplication) {
     dialog.set_response_appearance("push", adw::ResponseAppearance::Suggested);
     dialog.set_response_appearance("wipe", adw::ResponseAppearance::Destructive);
 
-    dialog.connect_response(Some("push"), glib::clone!(
+    dialog.connect_response(Some("push"), clone!(
         #[weak] app,
         move |_, _| run_push_local_recovery(&app),
     ));
-    dialog.connect_response(Some("wipe"), glib::clone!(
+    dialog.connect_response(Some("wipe"), clone!(
         #[weak] app,
         move |_, _| confirm_wipe_local(&app),
     ));
@@ -103,7 +104,7 @@ fn confirm_wipe_local(app: &MeditateApplication) {
     dialog.add_response("wipe", &gettext("Wipe Local Data"));
     dialog.set_response_appearance("wipe", adw::ResponseAppearance::Destructive);
 
-    dialog.connect_response(Some("wipe"), glib::clone!(
+    dialog.connect_response(Some("wipe"), clone!(
         #[weak] app,
         move |_, _| run_wipe_local_recovery(&app),
     ));

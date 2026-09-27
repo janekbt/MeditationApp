@@ -7,7 +7,9 @@ mod imp {
 
     use crate::config;
     use crate::db::Database;
+    use crate::i18n::gettext;
     use crate::window::MeditateWindow;
+    use glib::clone;
 
     // The Database lives behind an Arc<Mutex<_>> so it can be accessed
     // either from the GTK main thread (cheap sync `with_db`) or from the
@@ -229,8 +231,8 @@ mod imp {
         use meditate_core::format::DbOpenFailureKey;
         let (title_txt, body_txt) = match key {
             DbOpenFailureKey::SchemaTooNew { db, build } => (
-                crate::i18n::gettext("Database is newer than this app"),
-                crate::i18n::gettext(
+                gettext("Database is newer than this app"),
+                gettext(
                     "The local database (version {db}) was written by a \
                      newer build than this one (version {build}). Install \
                      a matching version, or move the file aside to start \
@@ -240,8 +242,8 @@ mod imp {
                 .replace("{build}", &build.to_string()),
             ),
             DbOpenFailureKey::Other => (
-                crate::i18n::gettext("Couldn't open database"),
-                crate::i18n::gettext(
+                gettext("Couldn't open database"),
+                gettext(
                     "An unexpected error prevented opening the local \
                      database. Check the diagnostics log in About → \
                      Troubleshooting for details."
@@ -262,7 +264,7 @@ mod imp {
             .build();
 
         let open_folder = gtk::Button::builder()
-            .label(crate::i18n::gettext("Open Data Folder"))
+            .label(gettext("Open Data Folder"))
             .build();
         open_folder.connect_clicked(|_| {
             let dir = glib::user_data_dir().join("meditate");
@@ -270,7 +272,7 @@ mod imp {
         });
 
         let quit_btn = gtk::Button::builder()
-            .label(crate::i18n::gettext("Quit"))
+            .label(gettext("Quit"))
             .css_classes(["suggested-action"])
             .build();
         let app_for_quit = app.clone();
@@ -282,7 +284,7 @@ mod imp {
 
         let window = adw::ApplicationWindow::builder()
             .application(app)
-            .title(crate::i18n::gettext("Meditate"))
+            .title(gettext("Meditate"))
             .default_width(480)
             .default_height(380)
             .content(&status)
@@ -296,7 +298,7 @@ mod imp {
 
             // app.preferences — opens AdwPreferencesWindow (Phase 6)
             let preferences_action = gio::SimpleAction::new("preferences", None);
-            preferences_action.connect_activate(glib::clone!(
+            preferences_action.connect_activate(clone!(
                 #[weak]
                 app,
                 move |_, _| {
@@ -307,7 +309,7 @@ mod imp {
 
             // app.about
             let about_action = gio::SimpleAction::new("about", None);
-            about_action.connect_activate(glib::clone!(
+            about_action.connect_activate(clone!(
                 #[weak]
                 app,
                 move |_, _| {
@@ -352,7 +354,7 @@ mod imp {
             // app.quit — HIG-standard Ctrl+Q action. Without this the
             // accel below mapped to a non-existent action (silent no-op).
             let quit_action = gio::SimpleAction::new("quit", None);
-            quit_action.connect_activate(glib::clone!(
+            quit_action.connect_activate(clone!(
                 #[weak] app,
                 move |_, _| app.quit()
             ));
@@ -399,7 +401,7 @@ mod imp {
 
             let toast = adw::Toast::builder()
                 .title(&title)
-                .button_label(crate::i18n::gettext("Undo"))
+                .button_label(gettext("Undo"))
                 .timeout(8)
                 .build();
 

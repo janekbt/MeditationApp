@@ -15,7 +15,7 @@ use adw::prelude::*;
 
 use crate::application::MeditateApplication;
 use crate::db::Label;
-use crate::i18n::gettext;
+use crate::i18n::{gettext, ngettext};
 use meditate_core::labels::DeleteImpactKey;
 
 /// Selection-mode parameters: the row tapped becomes the active
@@ -376,7 +376,7 @@ fn present_delete_label_dialog(
     let body = match meditate_core::labels::delete_impact_key(session_count) {
         DeleteImpactKey::InUse(n) => format!(
             "{} {}.",
-            crate::i18n::ngettext(
+            ngettext(
                 "Session tagged with this label will be un-labelled:",
                 "Sessions tagged with this label will be un-labelled:",
                 n as u32,

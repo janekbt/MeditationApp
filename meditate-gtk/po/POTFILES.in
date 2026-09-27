@@ -2,6 +2,7 @@
 # source files are added / moved. The leading-comment lines are ignored.
 
 # Rust sources (every gettext(...) call site)
+src/announcement.rs
 src/application.rs
 src/bells.rs
 src/data_io.rs
@@ -14,13 +15,17 @@ src/log/imp.rs
 src/log/mod.rs
 src/main.rs
 src/preferences.rs
+src/preset_subtitle.rs
 src/presets.rs
+src/recovery_dialog.rs
 src/sound.rs
+src/sounds.rs
 src/stats/imp.rs
 src/stats/mod.rs
 src/timer/imp.rs
 src/timer/mod.rs
 src/vibration_editor.rs
+src/vibrations.rs
 src/window/imp.rs
 src/window/mod.rs
 

@@ -2,6 +2,9 @@ use std::cell::{Cell, RefCell};
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{glib, cairo, CompositeTemplate};
+use glib::clone;
+
+use crate::i18n::gettext;
 
 
 // ── GObject impl ──────────────────────────────────────────────────────────────
@@ -79,7 +82,7 @@ impl WidgetImpl for StatsView {}
 impl StatsView {
     fn wire_signals(&self) {
         let obj = self.obj();
-        let reload = glib::clone!(
+        let reload = clone!(
             #[weak(rename_to = this)] obj,
             move |_: &adw::ToggleGroup| this.imp().reload_chart()
         );
@@ -91,7 +94,7 @@ impl StatsView {
         // Draw function reads the current pct from the Cell each redraw so
         // reloading progress just needs queue_draw(), not a new closure.
         let obj = self.obj();
-        self.goal_ring.set_draw_func(glib::clone!(
+        self.goal_ring.set_draw_func(clone!(
             #[weak(rename_to = this)] obj,
             move |area, cr, w, h| {
                 let pct = this.imp().goal_pct.get().clamp(0.0, 1.0);
@@ -171,16 +174,16 @@ impl StatsView {
             format_hm_mins(g.goal_mins),
         ));
         let sub = match g.status {
-            GoalStatus::Reached => crate::i18n::gettext("Goal reached ✓ · {duration} today")
+            GoalStatus::Reached => gettext("Goal reached ✓ · {duration} today")
                 .replace("{duration}", &format_hm_mins(g.today_mins)),
-            GoalStatus::InProgress => crate::i18n::gettext("{duration} to go today")
+            GoalStatus::InProgress => gettext("{duration} to go today")
                 .replace("{duration}", &format_hm_mins(g.remaining_mins)),
         };
         self.goal_sub_label.set_label(&sub);
 
         // Accessible name for the Cairo-drawn ring — no intrinsic text for
         // screen readers to fall back on.
-        let ring_name = crate::i18n::gettext("Daily goal: {pct}% — {done} of {goal}")
+        let ring_name = gettext("Daily goal: {pct}% — {done} of {goal}")
             .replace("{pct}", &g.display_pct.to_string())
             .replace("{done}", &format_hm_mins(g.today_mins))
             .replace("{goal}", &format_hm_mins(g.goal_mins));
@@ -242,15 +245,15 @@ impl StatsView {
                 .as_ref()
                 .and_then(|d| d.format("%A, %B %e").ok()).map_or_else(|| c.date_iso.clone(), |s| s.to_string());
             let name = if c.is_goal_exceeded() {
-                crate::i18n::gettext("{date} — goal exceeded, {mins} minutes")
+                gettext("{date} — goal exceeded, {mins} minutes")
                     .replace("{date}", &readable)
                     .replace("{mins}", &c.mins.to_string())
             } else if c.mins > 0 {
-                crate::i18n::gettext("{date} — {mins} minutes")
+                gettext("{date} — {mins} minutes")
                     .replace("{date}", &readable)
                     .replace("{mins}", &c.mins.to_string())
             } else {
-                crate::i18n::gettext("{date} — no sessions")
+                gettext("{date} — no sessions")
                     .replace("{date}", &readable)
             };
             cell.update_property(&[gtk::accessible::Property::Label(&name)]);
@@ -470,9 +473,9 @@ impl StatsView {
         {
             use meditate_core::date_math::ChartUnit;
             let label = match meditate_core::date_math::chart_unit_for_days(days) {
-                ChartUnit::Day => crate::i18n::gettext("Minutes / Day"),
-                ChartUnit::Week => crate::i18n::gettext("Minutes / Week"),
-                ChartUnit::Month => crate::i18n::gettext("Minutes / Month"),
+                ChartUnit::Day => gettext("Minutes / Day"),
+                ChartUnit::Week => gettext("Minutes / Week"),
+                ChartUnit::Month => gettext("Minutes / Month"),
             };
             self.chart_unit_label.set_label(&label);
         }
@@ -586,10 +589,10 @@ impl StatsView {
             // Two-form plural split, matching preferences.rs's
             // pluralize_sessions — catalogs carry both msgids.
             let subtitle = if n == 1 {
-                crate::i18n::gettext("{duration} · 1 session")
+                gettext("{duration} · 1 session")
                     .replace("{duration}", &format_hm_secs(total_secs))
             } else {
-                crate::i18n::gettext("{duration} · {count} sessions")
+                gettext("{duration} · {count} sessions")
                     .replace("{duration}", &format_hm_secs(total_secs))
                     .replace("{count}", &n.to_string())
             };

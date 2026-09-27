@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-24 00:44+0200\n"
+"POT-Creation-Date: 2026-09-27 23:20+0200\n"
 "PO-Revision-Date: 2026-04-20 18:32+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Simplified Chinese\n"
@@ -16,752 +16,1469 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=1; plural=0;\n"
 
-#: src/application.rs:129 data/io.github.janekbt.Meditate.metainfo.xml.in:93
+#: src/announcement.rs:18
+#, rust-format
+msgid "Recovered 1 min session"
+msgid_plural "Recovered {n} min session"
+msgstr[0] "已恢复 {n} 分钟的会话"
+
+#: src/announcement.rs:24
+#, rust-format
+msgid "Session deleted"
+msgid_plural "{n} sessions deleted"
+msgstr[0] "已删除 {n} 个会话"
+
+#: src/announcement.rs:30
+#, rust-format
+msgid "'{name}' deleted"
+msgstr "已删除“{name}”"
+
+#: src/announcement.rs:33
+#, rust-format
+msgid "'{name}' overridden"
+msgstr "已覆盖“{name}”"
+
+#: src/announcement.rs:36
+msgid "Updated"
+msgstr "已更新"
+
+#: src/announcement.rs:39 src/guided.rs:1100
+msgid "Deleted"
+msgstr "已删除"
+
+#: src/application.rs:234
+msgid "Database is newer than this app"
+msgstr "数据库版本比本应用更新"
+
+#: src/application.rs:236
+#, rust-format
+msgid ""
+"The local database (version {db}) was written by a newer build than this one "
+"(version {build}). Install a matching version, or move the file aside to "
+"start fresh."
+msgstr ""
+"本地数据库（版本 {db}）由比当前版本（版本 {build}）更新的构建写入。请安装匹配"
+"的版本，或将该文件移至别处以重新开始。"
+
+#: src/application.rs:245
+msgid "Couldn't open database"
+msgstr "无法打开数据库"
+
+#: src/application.rs:247
+msgid ""
+"An unexpected error prevented opening the local database. Check the "
+"diagnostics log in About → Troubleshooting for details."
+msgstr ""
+"意外错误导致无法打开本地数据库。详情请查看“关于 → 故障排除”中的诊断日志。"
+
+#: src/application.rs:267
+msgid "Open Data Folder"
+msgstr "打开数据文件夹"
+
+#: src/application.rs:275 data/ui/shortcuts.ui:42
+msgid "Quit"
+msgstr "退出"
+
+#: src/application.rs:287 data/ui/window.blp:20 data/ui/window.blp:32
+#: data/io.github.janekbt.Meditate.desktop.in:2
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:7
+msgid "Meditate"
+msgstr "Meditate"
+
+#: src/application.rs:324 data/io.github.janekbt.Meditate.metainfo.xml.in:149
 msgid ""
 "A new Box Breath timer mode, per-label stats, and an in-app diagnostics view "
 "for bug reporting — plus a handful of polish fixes."
 msgstr ""
+"新增箱式呼吸计时模式、按标签统计，以及用于报告错误的应用内诊断视图，另有若干"
+"细节改进。"
 
-#: src/application.rs:130 data/io.github.janekbt.Meditate.metainfo.xml.in:95
+#: src/application.rs:325 data/io.github.janekbt.Meditate.metainfo.xml.in:151
 msgid ""
 "New Box Breath mode alongside Countdown and Stopwatch: pick a pattern "
 "(4-4-4-4, 4-7-8-0, 5-5-5-5) or dial in each phase, set a session length, and "
 "the running view traces a dot around an accent-tinted square as you breathe "
 "in, hold, out, hold"
 msgstr ""
+"在倒计时和秒表之外新增箱式呼吸模式：选择一种节奏（4-4-4-4、4-7-8-0、5-5-5-5）"
+"或逐一设定各阶段，设置会话时长，运行时界面会随着你吸气、屏息、呼气、屏息，让"
+"一个圆点沿着强调色方框移动"
 
-#: src/application.rs:131 data/io.github.janekbt.Meditate.metainfo.xml.in:96
+#: src/application.rs:326 data/io.github.janekbt.Meditate.metainfo.xml.in:152
 msgid ""
 "Stats tab shows a \"By label\" breakdown below the streak / total / sessions "
 "row, so you can see how much meditation time you've spent under each label"
 msgstr ""
+"统计页在连续天数 / 总计 / 会话一行下方显示“按标签”细分，让你了解在每个标签下"
+"冥想了多长时间"
 
-#: src/application.rs:132 data/io.github.janekbt.Meditate.metainfo.xml.in:97
+#: src/application.rs:327 data/io.github.janekbt.Meditate.metainfo.xml.in:153
 msgid ""
 "About dialog has a new Troubleshooting view with a rolling diagnostics log "
 "(startup, database open, import/export results, panics) — copy or save to "
 "attach to a bug report"
 msgstr ""
+"“关于”对话框新增故障排除视图，包含滚动诊断日志（启动、数据库打开、导入/导出结"
+"果、崩溃），可复制或保存后附加到错误报告中"
 
-#: src/application.rs:133 data/io.github.janekbt.Meditate.metainfo.xml.in:98
+#: src/application.rs:328 data/io.github.janekbt.Meditate.metainfo.xml.in:154
 msgid ""
 "Each timer mode remembers its own last-chosen label, so a Box Breath session "
 "no longer changes the default label for Countdown or Stopwatch"
 msgstr ""
+"每种计时模式都会记住各自上次选择的标签，因此箱式呼吸会话不再改变倒计时或秒表"
+"的默认标签"
 
-#: src/application.rs:134 data/io.github.janekbt.Meditate.metainfo.xml.in:99
+#: src/application.rs:329 data/io.github.janekbt.Meditate.metainfo.xml.in:155
 msgid ""
 "Release notes shown in the About dialog now reflect the current version "
 "instead of staying pinned to the initial release"
-msgstr ""
+msgstr "“关于”对话框中的发布说明现在对应当前版本，不再固定显示首个版本的内容"
 
-#: src/application.rs:135 data/io.github.janekbt.Meditate.metainfo.xml.in:100
+#: src/application.rs:330 data/io.github.janekbt.Meditate.metainfo.xml.in:156
 msgid ""
 "Log-edit calendar picker shows the proper icon again; post-session note "
 "field no longer steals focus on phones and hides the Save / Discard buttons "
 "behind the on-screen keyboard"
 msgstr ""
+"记录编辑中的日历选择器重新显示正确图标；在手机上，会话后备注框不再抢占焦点，"
+"也不会让屏幕键盘遮住“保存 / 放弃”按钮"
 
-#: src/data_io.rs:46
-msgid "File error"
-msgstr "文件错误"
-
-#: src/data_io.rs:47
-msgid "CSV error"
-msgstr "CSV 错误"
-
-#: src/data_io.rs:48
-msgid "Parse error"
-msgstr "解析错误"
-
-#: src/data_io.rs:49
-msgid "Database error"
-msgstr "数据库错误"
-
-#: src/data_io.rs:50
-msgid "Database unavailable"
-msgstr "数据库不可用"
-
-#: src/log/imp.rs:294
-msgid "All labels"
-msgstr "所有标签"
-
-#. Lowercase in source; the .log-unit CSS class renders it uppercase
-#. (HIG forbids all-caps in source text).
-#: src/log/imp.rs:379
-msgid "min"
-msgstr "分钟"
-
-#: src/log/imp.rs:410
-msgid "No note added"
-msgstr "无笔记"
-
-#: src/log/imp.rs:452
-msgid "Delete Session"
-msgstr "删除会话"
-
-#: src/log/imp.rs:573
-msgid "Today"
-msgstr "今天"
-
-#: src/log/imp.rs:576
-msgid "Yesterday"
-msgstr "昨天"
-
-#: src/log/imp.rs:594
-msgid "1 session"
-msgstr "1 条会话"
-
-#: src/log/imp.rs:596
-msgid "{n} sessions"
-msgstr "{n} 条会话"
-
-#: src/log/imp.rs:624
-msgid "Session deleted"
-msgstr "会话已删除"
-
-#: src/log/imp.rs:625 src/preferences.rs:627
+#: src/application.rs:404 src/guided.rs:1166 src/log/imp.rs:642
+#: src/presets.rs:704 src/timer/imp.rs:3526 src/vibrations.rs:476
+#: src/vibrations.rs:515
 msgid "Undo"
 msgstr "撤销"
 
-#: src/log/imp.rs:719 src/timer/imp.rs:972
-msgid "Hours"
-msgstr "小时"
-
-#: src/log/imp.rs:724 src/preferences.rs:338 src/timer/imp.rs:979
-#: data/ui/timer_view.blp:236
-msgid "Minutes"
-msgstr "分钟"
-
-#: src/log/imp.rs:741
-msgid "Date"
-msgstr "日期"
-
-#: src/log/imp.rs:758
-msgid "Pick a Date"
-msgstr "选择日期"
-
-#: src/log/imp.rs:783
-msgid "Hour"
-msgstr "时"
-
-#: src/log/imp.rs:788
-msgid "Minute"
-msgstr "分"
-
-#. ── Label row ──────────────────────────────────────────────────
-#: src/log/imp.rs:794 src/preferences.rs:37 src/timer/imp.rs:823
-#: src/timer/imp.rs:1040 src/timer/imp.rs:1067
-msgid "None"
-msgstr "无"
-
-#: src/log/imp.rs:799 data/ui/timer_view.blp:251 data/ui/timer_view.blp:318
-#: data/ui/window.blp:69
-msgid "Label"
-msgstr "标签"
-
-#: src/log/imp.rs:835 data/ui/timer_view.blp:294
-msgid "Note (optional)"
-msgstr "笔记（可选）"
-
-#: src/log/imp.rs:855
-msgid "Duration"
-msgstr "时长"
-
-#: src/log/imp.rs:861
-msgid "Start time"
-msgstr "开始时间"
-
-#: src/log/imp.rs:890
-msgid "_Cancel"
-msgstr "取消(_C)"
-
-#: src/log/imp.rs:894
-msgid "_Save"
-msgstr "保存(_S)"
-
-#: src/log/imp.rs:894
-msgid "_Add"
-msgstr "添加(_A)"
-
-#: src/log/imp.rs:908
-msgid "Edit Session"
-msgstr "编辑会话"
-
-#: src/log/imp.rs:908 data/ui/log_view.blp:18 data/ui/window.blp:79
-msgid "Add Session"
-msgstr "添加会话"
-
-#: src/preferences.rs:15 data/ui/shortcuts.ui:24
-msgid "Preferences"
-msgstr "首选项"
-
-#: src/preferences.rs:26
-msgid "General"
-msgstr "常规"
-
-#: src/preferences.rs:33
-msgid "Sound"
-msgstr "声音"
-
-#: src/preferences.rs:38 src/timer/imp.rs:824
-msgid "Singing bowl"
-msgstr "颂钵"
-
-#: src/preferences.rs:39 src/timer/imp.rs:825
-msgid "Bell"
-msgstr "铃声"
-
-#: src/preferences.rs:40 src/timer/imp.rs:826
-msgid "Gong"
-msgstr "锣"
-
-#: src/preferences.rs:41 src/timer/imp.rs:827
-msgid "Custom file…"
-msgstr "自定义文件…"
-
-#: src/preferences.rs:45
-msgid "End sound"
-msgstr "完成提示音"
-
-#: src/preferences.rs:52
-msgid "Preview sound"
-msgstr "试听"
-
-#: src/preferences.rs:81
-msgid "Sound file"
-msgstr "声音文件"
-
-#: src/preferences.rs:87
-msgid "Choose…"
-msgstr "选择…"
-
-#: src/preferences.rs:178
-msgid "Choose Sound File"
-msgstr "选择声音文件"
-
-#: src/preferences.rs:182
-msgid "Audio files"
-msgstr "音频文件"
-
-#: src/preferences.rs:229
-msgid "Vibrate on session end"
-msgstr "会话结束时振动"
-
-#: src/preferences.rs:230
-msgid "Haptic feedback when the timer finishes (mobile only)"
-msgstr "计时结束时的震动反馈（仅限移动设备）"
-
-#: src/preferences.rs:247
-msgid "Statistics"
-msgstr "统计"
-
-#: src/preferences.rs:257 data/ui/stats_view.blp:51
-msgid "Weekly goal"
-msgstr "每周目标"
-
-#: src/preferences.rs:258
-msgid "Minutes per week — drives the ring on the Stats tab"
-msgstr "每周分钟数 — 驱动“统计”标签上的圆环"
-
-#: src/preferences.rs:281
-msgid "Timer Presets"
-msgstr "计时器预设"
-
-#: src/preferences.rs:282
-msgid ""
-"Quick-select buttons shown in the countdown timer (1–5 presets, in minutes)"
-msgstr "倒计时中的快速选择按钮（1–5 个预设，单位为分钟）"
-
-#: src/preferences.rs:287
-msgid "Add Preset"
-msgstr "添加预设"
-
-#: src/preferences.rs:345
-msgid "Remove Preset"
-msgstr "移除预设"
-
-#: src/preferences.rs:405
-msgid "Data"
-msgstr "数据"
-
-#: src/preferences.rs:410
-msgid "Backup"
-msgstr "备份"
-
-#: src/preferences.rs:411
-msgid "Export your session log to a CSV file, or restore from one."
-msgstr "将会话记录导出为 CSV 文件，或从中恢复。"
-
-#: src/preferences.rs:415
-msgid "Export session log"
-msgstr "导出会话记录"
-
-#: src/preferences.rs:416
-msgid "Save every session to a CSV file"
-msgstr "将所有会话保存到 CSV 文件"
-
-#: src/preferences.rs:422
-msgid "Export"
-msgstr "导出"
-
-#: src/preferences.rs:430
-msgid "Import from Meditate CSV"
-msgstr "从 Meditate CSV 导入"
-
-#: src/preferences.rs:431
-msgid "Restore sessions from a file exported above"
-msgstr "从上方导出的文件恢复会话"
-
-#: src/preferences.rs:437
-msgid "Import"
-msgstr "导入"
-
-#: src/preferences.rs:447
-msgid "Migrate"
-msgstr "迁移"
-
-#: src/preferences.rs:448
-msgid "Import sessions from another meditation app."
-msgstr "从其他冥想应用导入会话。"
-
-#: src/preferences.rs:452 src/preferences.rs:907
-msgid "Import from Insight Timer"
-msgstr "从 Insight Timer 导入"
-
-#: src/preferences.rs:453
-msgid "Upload an Insight Timer CSV export"
-msgstr "上传 Insight Timer 的 CSV 导出"
-
-#: src/preferences.rs:459
-msgid "Import Insight Timer CSV"
-msgstr "导入 Insight Timer CSV"
-
-#: src/preferences.rs:469
-msgid "Danger Zone"
-msgstr "危险区域"
-
-#: src/preferences.rs:470
-msgid "These actions cannot be undone."
-msgstr "这些操作无法撤销。"
-
-#: src/preferences.rs:474
-msgid "Delete all sessions"
-msgstr "删除所有会话"
-
-#: src/preferences.rs:475
-msgid "Permanently remove every logged session"
-msgstr "永久删除每一条已记录的会话"
-
-#: src/preferences.rs:479
-msgid "_Delete All"
-msgstr "全部删除(_D)"
-
-#: src/preferences.rs:501 src/preferences.rs:506
-msgid "Labels"
-msgstr "标签"
-
-#: src/preferences.rs:507
-msgid "Organize sessions with custom labels"
-msgstr "用自定义标签整理会话"
-
-#: src/preferences.rs:512
-msgid "Add Label"
-msgstr "添加标签"
-
-#: src/preferences.rs:539
-msgid "New label"
-msgstr "新建标签"
-
-#. When sessions were affected the user already confirmed via AlertDialog,
-#. so undo would be misleading: the label would be recreated but the
-#. sessions would stay unlabeled.  Only offer undo for unused labels.
-#: src/preferences.rs:625
-msgid "Label deleted"
-msgstr "已删除标签"
-
-#: src/preferences.rs:685
-msgid "Discard Changes"
-msgstr "放弃更改"
-
-#: src/preferences.rs:692 data/ui/timer_view.blp:334
-msgid "Save"
-msgstr "保存"
-
-#: src/preferences.rs:699
-msgid "Delete Label"
-msgstr "删除标签"
-
-#: src/preferences.rs:743
-msgid "A label with that name already exists"
-msgstr "已存在同名的标签"
-
-#: src/preferences.rs:804
-msgid "1 session uses this label and will become unlabeled."
-msgstr "有 1 条会话使用此标签，删除后该会话将失去标签。"
-
-#: src/preferences.rs:806
-msgid "{n} sessions use this label and will become unlabeled."
-msgstr "有 {n} 条会话使用此标签，删除后这些会话将失去标签。"
-
-#: src/preferences.rs:810
-msgid "Delete Label?"
-msgstr "删除标签？"
+#: src/bells.rs:47 data/ui/timer_view.blp:483
+msgid "Interval Bells"
+msgstr "间隔铃"
+
+#: src/bells.rs:156
+msgid "Create new interval bell…"
+msgstr "创建新间隔铃…"
+
+#: src/bells.rs:261
+msgid "Delete bell"
+msgstr "删除铃声"
+
+#: src/bells.rs:312 src/bells.rs:733
+msgid "Delete Bell?"
+msgstr "删除铃声？"
+
+#: src/bells.rs:313 src/bells.rs:734
+msgid "This bell will no longer ring during sessions."
+msgstr "此铃声将不再在会话期间响起。"
 
 #. libadwaita-rs 0.9 doesn't expose set_response_use_underline,
 #. so we can't mark a mnemonic letter on AdwAlertDialog buttons
 #. without the underscore rendering literally. Return and Esc
 #. still cover the common activations.
-#: src/preferences.rs:815 src/preferences.rs:924 src/timer/imp.rs:671
-#: src/timer/imp.rs:1005 src/timer/imp.rs:1546
+#: src/bells.rs:317 src/bells.rs:738 src/guided.rs:215 src/guided.rs:933
+#: src/guided.rs:1045 src/labels.rs:245 src/labels.rs:314 src/labels.rs:395
+#: src/preferences.rs:583 src/presets.rs:445 src/presets.rs:507
+#: src/presets.rs:574 src/presets.rs:641 src/recovery_dialog.rs:42
+#: src/recovery_dialog.rs:103 src/sounds.rs:523 src/sounds.rs:906
+#: src/sounds.rs:972 src/timer/imp.rs:2498 src/timer/imp.rs:3658
+#: src/vibration_editor.rs:129 src/vibrations.rs:557 src/vibrations.rs:647
 msgid "Cancel"
 msgstr "取消"
 
-#: src/preferences.rs:816
+#: src/bells.rs:318 src/bells.rs:739 src/guided.rs:1046 src/labels.rs:396
+#: src/presets.rs:575 src/sounds.rs:973 src/vibrations.rs:648
 msgid "Delete"
 msgstr "删除"
 
-#: src/preferences.rs:858
+#: src/bells.rs:343
+msgid "No interval bells configured"
+msgstr "未配置间隔铃"
+
+#: src/bells.rs:344 src/guided.rs:892
+msgid "Tap the row above to add one"
+msgstr "点按上方一行即可添加"
+
+#: src/bells.rs:360
+#, rust-format
+msgid "Every 1 min"
+msgid_plural "Every {n} min"
+msgstr[0] "每 {n} 分钟"
+
+#: src/bells.rs:363
+#, rust-format
+msgid "Every 1 min ±{j}%"
+msgid_plural "Every {n} min ±{j}%"
+msgstr[0] "每 {n} 分钟 ±{j}%"
+
+#: src/bells.rs:367
+#, rust-format
+msgid "At 1 min"
+msgid_plural "At {n} min"
+msgstr[0] "第 {n} 分钟"
+
+#: src/bells.rs:370
+#, rust-format
+msgid "1 min before end"
+msgid_plural "{n} min before end"
+msgstr[0] "结束前 {n} 分钟"
+
+#: src/bells.rs:384
+msgid "Missing"
+msgstr "缺失"
+
+#: src/bells.rs:452
+msgid "Every N minutes"
+msgstr "每 N 分钟"
+
+#: src/bells.rs:453
+msgid "At time from start"
+msgstr "从开始起的时间点"
+
+#: src/bells.rs:454
+msgid "Before end"
+msgstr "结束前"
+
+#: src/bells.rs:458
+msgid "Kind"
+msgstr "类型"
+
+#: src/bells.rs:470 src/log/imp.rs:784 src/timer/imp.rs:3632
+msgid "Minutes"
+msgstr "分钟"
+
+#: src/bells.rs:483
+msgid "Jitter"
+msgstr "随机幅度"
+
+#: src/bells.rs:484
+msgid "Percent — randomises the next ring"
+msgstr "百分比——随机调整下一次响铃"
+
+#: src/bells.rs:498 data/ui/timer_view.blp:420 data/ui/timer_view.blp:513
+#: data/ui/timer_view.blp:592 data/ui/timer_view.blp:631
+#: data/ui/timer_view.blp:670 data/ui/timer_view.blp:709
+msgid "Type"
+msgstr "类型"
+
+#: src/bells.rs:513 src/bells.rs:540 src/timer/imp.rs:1452
+#: src/timer/imp.rs:1542 src/timer/imp.rs:1612 data/ui/timer_view.blp:605
+#: data/ui/timer_view.blp:644 data/ui/timer_view.blp:683
+#: data/ui/timer_view.blp:722
+msgid "Sound"
+msgstr "声音"
+
+#: src/bells.rs:517 src/timer/imp.rs:1456 src/timer/imp.rs:1544
+#: src/timer/imp.rs:1614
+msgid "Vibration"
+msgstr "振动"
+
+#: src/bells.rs:521 src/timer/imp.rs:1460 src/timer/imp.rs:1546
+#: src/timer/imp.rs:1616
+msgid "Both"
+msgstr "两者"
+
+#: src/bells.rs:553 src/vibration_editor.rs:235 data/ui/timer_view.blp:452
+#: data/ui/timer_view.blp:545 data/ui/timer_view.blp:617
+#: data/ui/timer_view.blp:656 data/ui/timer_view.blp:695
+#: data/ui/timer_view.blp:734
+msgid "Pattern"
+msgstr "模式"
+
+#: src/bells.rs:573
+msgid "Delete Bell"
+msgstr "删除铃声"
+
+#: src/bells.rs:588
+msgid "Edit Bell"
+msgstr "编辑铃声"
+
+#: src/data_io.rs:32
+msgid "File error"
+msgstr "文件错误"
+
+#: src/data_io.rs:33
+msgid "CSV error"
+msgstr "CSV 错误"
+
+#: src/data_io.rs:34
+msgid "Parse error"
+msgstr "解析错误"
+
+#: src/data_io.rs:35
+msgid "Database error"
+msgstr "数据库错误"
+
+#: src/data_io.rs:36 src/preferences.rs:423
+msgid "Database unavailable"
+msgstr "数据库不可用"
+
+#: src/db/mod.rs:81
+#, rust-format
+msgid "«{name}» is already taken"
+msgstr "“{name}”已被占用"
+
+#: src/format.rs:21 src/format.rs:28
+#, rust-format
+msgid "{n}m"
+msgid_plural "{n}m"
+msgstr[0] "{n} 分钟"
+
+#: src/format.rs:23 src/format.rs:26
+#, rust-format
+msgid "{n}h"
+msgid_plural "{n}h"
+msgstr[0] "{n} 小时"
+
+#. Separate composition template so a locale can change
+#. the order or separator (e.g. "{m} {h}" or "{h}-{m}")
+#. without touching the per-unit strings.
+#: src/format.rs:33
+#, rust-format
+msgid "{h} {m}"
+msgstr "{h} {m}"
+
+#: src/guided.rs:91
+msgid "Choose Guided Meditation"
+msgstr "选择引导冥想"
+
+#: src/guided.rs:116
+msgid "File picker error"
+msgstr "文件选择器出错"
+
+#: src/guided.rs:125
+msgid "Picked file has no local path"
+msgstr "所选文件没有本地路径"
+
+#: src/guided.rs:144 src/guided.rs:350 src/sounds.rs:413 src/sounds.rs:637
+msgid "This file has no audio track"
+msgstr "此文件没有音轨"
+
+#: src/guided.rs:148
+msgid "Couldn't read audio file"
+msgstr "无法读取音频文件"
+
+#: src/guided.rs:173
+msgid "Track name"
+msgstr "音轨名称"
+
+#: src/guided.rs:177 src/guided.rs:915
+msgid "A guided file with this name already exists."
+msgstr "已存在同名的引导文件。"
+
+#: src/guided.rs:184 src/preferences.rs:134 src/sounds.rs:491
+msgid "Import"
+msgstr "导入"
+
+#: src/guided.rs:204
+msgid "Import Guided File"
+msgstr "导入引导文件"
+
+#: src/guided.rs:207 src/sounds.rs:518
+msgid "Importing:"
+msgstr "导入中："
+
+#: src/guided.rs:286 src/sounds.rs:588
+msgid "Converting…"
+msgstr "转换中…"
+
+#: src/guided.rs:338 src/guided.rs:354
+msgid "Import failed"
+msgstr "导入失败"
+
+#: src/guided.rs:358
+msgid "Import worker died"
+msgstr "导入进程意外终止"
+
+#: src/guided.rs:558 data/ui/timer_view.blp:289
+msgid "Manage Files"
+msgstr "管理文件"
+
+#: src/guided.rs:666
+msgid "Create new guided file…"
+msgstr "创建新引导文件…"
+
+#: src/guided.rs:733
+msgid "Unstar — remove from home list"
+msgstr "取消收藏——从主页列表移除"
+
+#: src/guided.rs:735
+msgid "Star — show in home list"
+msgstr "收藏——在主页列表显示"
+
+#: src/guided.rs:760 src/guided.rs:934 src/labels.rs:195 src/labels.rs:315
+#: src/presets.rs:385 src/presets.rs:508 src/sounds.rs:334 src/sounds.rs:907
+#: src/vibrations.rs:417 src/vibrations.rs:558
+msgid "Rename"
+msgstr "重命名"
+
+#: src/guided.rs:790
+msgid "Delete file"
+msgstr "删除文件"
+
+#: src/guided.rs:836 src/guided.rs:853 src/guided.rs:878
+#: src/vibration_editor.rs:245 src/vibration_editor.rs:561
+#: src/vibration_editor.rs:599
+msgid "Preview"
+msgstr "预览"
+
+#: src/guided.rs:862 src/sounds.rs:298 src/vibration_editor.rs:587
+#: src/vibrations.rs:324
+msgid "Stop preview"
+msgstr "停止预览"
+
+#: src/guided.rs:891
+msgid "No guided files imported"
+msgstr "尚未导入引导文件"
+
+#: src/guided.rs:928
+msgid "Rename Guided File"
+msgstr "重命名引导文件"
+
+#: src/guided.rs:999
+msgid "File renamed"
+msgstr "文件已重命名"
+
+#: src/guided.rs:1035
+msgid "Delete Guided File?"
+msgstr "删除引导文件？"
+
+#: src/guided.rs:1038
+msgid "This will permanently remove"
+msgstr "此操作将永久移除"
+
+#: src/guided.rs:1040
+msgid "Past sessions logged with this file stay in the log."
+msgstr "使用此文件记录的历史会话会保留在记录中。"
+
+#: src/labels.rs:52
+msgid "Choose Label"
+msgstr "选择标签"
+
+#: src/labels.rs:108
+msgid "Create new label…"
+msgstr "创建新标签…"
+
+#: src/labels.rs:217
+msgid "Delete label"
+msgstr "删除标签"
+
+#: src/labels.rs:235
+msgid "Label name"
+msgstr "标签名称"
+
+#: src/labels.rs:240
+msgid "Create Label"
+msgstr "创建标签"
+
+#: src/labels.rs:246 src/presets.rs:446
+msgid "Create"
+msgstr "创建"
+
+#: src/labels.rs:309
+msgid "Rename Label"
+msgstr "重命名标签"
+
+#: src/labels.rs:380
+msgid "Session tagged with this label will be un-labelled:"
+msgid_plural "Sessions tagged with this label will be un-labelled:"
+msgstr[0] "使用此标签的会话将失去标签："
+
+#: src/labels.rs:386
+msgid "This label is not used by any sessions."
+msgstr "没有会话使用此标签。"
+
+#: src/labels.rs:390
+msgid "Delete Label?"
+msgstr "删除标签？"
+
+#: src/log/imp.rs:309
+msgid "All labels"
+msgstr "所有标签"
+
+#. Lowercase in source; the .log-unit CSS class renders it uppercase
+#. (HIG forbids all-caps in source text).
+#: src/log/imp.rs:394
+msgid "min"
+msgstr "分钟"
+
+#: src/log/imp.rs:425
+msgid "No note added"
+msgstr "无笔记"
+
+#: src/log/imp.rs:467
+msgid "Delete Session"
+msgstr "删除会话"
+
+#: src/log/imp.rs:586
+msgid "Today"
+msgstr "今天"
+
+#: src/log/imp.rs:587
+msgid "Yesterday"
+msgstr "昨天"
+
+#: src/log/imp.rs:609 src/log/imp.rs:611
+#, rust-format
+msgid "1 session"
+msgid_plural "{n} sessions"
+msgstr[0] "{n} 个会话"
+
+#: src/log/imp.rs:779 src/timer/imp.rs:3625
+msgid "Hours"
+msgstr "小时"
+
+#: src/log/imp.rs:801
+msgid "Date"
+msgstr "日期"
+
+#: src/log/imp.rs:818
+msgid "Pick a Date"
+msgstr "选择日期"
+
+#: src/log/imp.rs:843
+msgid "Hour"
+msgstr "时"
+
+#: src/log/imp.rs:848
+msgid "Minute"
+msgstr "分"
+
+#: src/log/imp.rs:862 data/ui/timer_view.blp:363 data/ui/timer_view.blp:806
+msgid "Selected"
+msgstr "已选择"
+
+#: src/log/imp.rs:877 data/ui/timer_view.blp:357 data/ui/timer_view.blp:800
+#: data/ui/window.blp:107
+msgid "Label"
+msgstr "标签"
+
+#: src/log/imp.rs:878 data/ui/timer_view.blp:358 data/ui/timer_view.blp:801
+msgid "Tag this session"
+msgstr "为此会话加标签"
+
+#: src/log/imp.rs:936 data/ui/timer_view.blp:776
+msgid "Note (optional)"
+msgstr "笔记（可选）"
+
+#: src/log/imp.rs:956 src/vibration_editor.rs:171 data/ui/timer_view.blp:339
+#: data/ui/timer_view.blp:470
+msgid "Duration"
+msgstr "时长"
+
+#: src/log/imp.rs:962
+msgid "Start time"
+msgstr "开始时间"
+
+#: src/log/imp.rs:991
+msgid "_Cancel"
+msgstr "取消(_C)"
+
+#: src/log/imp.rs:995 src/preferences.rs:333
+msgid "_Save"
+msgstr "保存(_S)"
+
+#: src/log/imp.rs:995
+msgid "_Add"
+msgstr "添加(_A)"
+
+#: src/log/imp.rs:1014 src/log/imp.rs:1021
+msgid "Edit Session"
+msgstr "编辑会话"
+
+#: src/log/imp.rs:1014 src/log/imp.rs:1021 data/ui/log_view.blp:18
+#: data/ui/window.blp:117
+msgid "Add Session"
+msgstr "添加会话"
+
+#: src/preferences.rs:25 data/ui/shortcuts.ui:24
+msgid "Preferences"
+msgstr "首选项"
+
+#: src/preferences.rs:36
+msgid "General"
+msgstr "常规"
+
+#: src/preferences.rs:58
+msgid "Statistics"
+msgstr "统计"
+
+#: src/preferences.rs:67 data/ui/stats_view.blp:51
+msgid "Daily goal"
+msgstr "每日目标"
+
+#: src/preferences.rs:68
+msgid "Minutes per day — drives the ring on the Stats tab"
+msgstr "每天分钟数——驱动统计页的圆环"
+
+#: src/preferences.rs:101
+msgid "Data"
+msgstr "数据"
+
+#: src/preferences.rs:107
+msgid "Backup"
+msgstr "备份"
+
+#: src/preferences.rs:108
+msgid "Export your session log to a CSV file, or restore from one."
+msgstr "将会话记录导出为 CSV 文件，或从中恢复。"
+
+#: src/preferences.rs:112
+msgid "Export session log"
+msgstr "导出会话记录"
+
+#: src/preferences.rs:113
+msgid "Save every session to a CSV file"
+msgstr "将所有会话保存到 CSV 文件"
+
+#: src/preferences.rs:119
+msgid "Export"
+msgstr "导出"
+
+#: src/preferences.rs:127
+msgid "Import from Meditate CSV"
+msgstr "从 Meditate CSV 导入"
+
+#: src/preferences.rs:128
+msgid "Restore sessions from a file exported above"
+msgstr "从上方导出的文件恢复会话"
+
+#: src/preferences.rs:144
+msgid "Migrate"
+msgstr "迁移"
+
+#: src/preferences.rs:145
+msgid "Import sessions from another meditation app."
+msgstr "从其他冥想应用导入会话。"
+
+#: src/preferences.rs:149 src/preferences.rs:566
+msgid "Import from Insight Timer"
+msgstr "从 Insight Timer 导入"
+
+#: src/preferences.rs:150
+msgid "Upload an Insight Timer CSV export"
+msgstr "上传 Insight Timer 的 CSV 导出"
+
+#: src/preferences.rs:156
+msgid "Import Insight Timer CSV"
+msgstr "导入 Insight Timer CSV"
+
+#: src/preferences.rs:174
+msgid "Nextcloud Sync"
+msgstr "Nextcloud 同步"
+
+#: src/preferences.rs:176
+msgid ""
+"Sync sessions, labels, and preferences between your devices via your own "
+"Nextcloud server."
+msgstr "通过你自己的 Nextcloud 服务器在设备间同步会话、标签和偏好设置。"
+
+#: src/preferences.rs:181
+msgid "Server URL"
+msgstr "服务器 URL"
+
+#: src/preferences.rs:185
+msgid "Username"
+msgstr "用户名"
+
+#: src/preferences.rs:188
+msgid "App password"
+msgstr "应用密码"
+
+#: src/preferences.rs:217
+msgid "Test connection"
+msgstr "测试连接"
+
+#: src/preferences.rs:218
+msgid "Verify the URL and credentials reach your Nextcloud."
+msgstr "验证 URL 和凭据能否连接到你的 Nextcloud。"
+
+#: src/preferences.rs:222
+msgid "_Test"
+msgstr "测试(_T)"
+
+#: src/preferences.rs:267 src/preferences.rs:362
+msgid "Enter URL and username"
+msgstr "请输入 URL 和用户名"
+
+#: src/preferences.rs:271
+msgid "Enter a password"
+msgstr "请输入密码"
+
+#: src/preferences.rs:275
+msgid "Keyring read failed"
+msgstr "读取密钥环失败"
+
+#: src/preferences.rs:314
+msgid "Test failed"
+msgstr "测试失败"
+
+#: src/preferences.rs:328
+msgid "Save sync settings"
+msgstr "保存同步设置"
+
+#: src/preferences.rs:329
+msgid "Stores URL and username locally; password goes to your keyring."
+msgstr "URL 和用户名保存在本地；密码保存到你的密钥环。"
+
+#: src/preferences.rs:366
+msgid "URL must start with https://"
+msgstr "URL 必须以 https:// 开头"
+
+#: src/preferences.rs:400
+msgid "Keyring write failed"
+msgstr "写入密钥环失败"
+
+#: src/preferences.rs:419
+msgid "Save failed"
+msgstr "保存失败"
+
+#: src/preferences.rs:428
+msgid "Sync settings saved"
+msgstr "同步设置已保存"
+
+#: src/preferences.rs:437
+msgid "Danger Zone"
+msgstr "危险区域"
+
+#: src/preferences.rs:438
+msgid "These actions cannot be undone."
+msgstr "这些操作无法撤销。"
+
+#: src/preferences.rs:442
+msgid "Delete all sessions"
+msgstr "删除所有会话"
+
+#: src/preferences.rs:443
+msgid "Permanently remove every logged session"
+msgstr "永久删除每一条已记录的会话"
+
+#: src/preferences.rs:447
+msgid "_Delete All"
+msgstr "全部删除(_D)"
+
+#: src/preferences.rs:517
 msgid "Export Session Log"
 msgstr "导出会话记录"
 
-#: src/preferences.rs:862
+#: src/preferences.rs:521
 msgid "CSV files"
 msgstr "CSV 文件"
 
-#: src/preferences.rs:878
+#: src/preferences.rs:537
+#, rust-format
 msgid "Exported 1 session"
-msgstr "已导出 1 条会话"
+msgid_plural "Exported {n} sessions"
+msgstr[0] "已导出 {n} 个会话"
 
-#: src/preferences.rs:879
-msgid "Exported {n} sessions"
-msgstr "已导出 {n} 条会话"
-
-#: src/preferences.rs:882
+#: src/preferences.rs:541
+#, rust-format
 msgid "Export failed: {error}"
 msgstr "导出失败：{error}"
 
-#: src/preferences.rs:896
+#: src/preferences.rs:555
 msgid "Import Session Log"
 msgstr "导入会话记录"
 
-#: src/preferences.rs:919
+#: src/preferences.rs:578
 msgid "Delete Every Session?"
 msgstr "删除所有会话？"
 
-#: src/preferences.rs:920
+#: src/preferences.rs:579
 msgid ""
 "This permanently removes every session in your log. Export a backup first if "
 "you want to keep any history."
 msgstr "这将永久删除日志中的所有会话。如需保留历史，请先导出备份。"
 
-#: src/preferences.rs:925
+#: src/preferences.rs:584
 msgid "Delete All"
 msgstr "全部删除"
 
-#: src/preferences.rs:936
+#: src/preferences.rs:595
+#, rust-format
 msgid "Deleted 1 session"
-msgstr "已删除 1 条会话"
+msgid_plural "Deleted {n} sessions"
+msgstr[0] "已删除 {n} 个会话"
 
-#: src/preferences.rs:937
-msgid "Deleted {n} sessions"
-msgstr "已删除 {n} 条会话"
-
-#: src/preferences.rs:943
+#: src/preferences.rs:602
+#, rust-format
 msgid "Delete failed: {error}"
 msgstr "删除失败：{error}"
 
-#: src/preferences.rs:983
+#: src/preferences.rs:642
+#, rust-format
 msgid "Imported 1 session"
-msgstr "已导入 1 条会话"
+msgid_plural "Imported {n} sessions"
+msgstr[0] "已导入 {n} 个会话"
 
-#: src/preferences.rs:984
-msgid "Imported {n} sessions"
-msgstr "已导入 {n} 条会话"
-
-#: src/preferences.rs:990
+#: src/preferences.rs:649
+#, rust-format
 msgid "Import failed: {error}"
 msgstr "导入失败：{error}"
 
-#: src/preferences.rs:1018
-msgid "No file selected"
-msgstr "未选择文件"
+#: src/preset_subtitle.rs:28
+#, rust-format
+msgid "1 min"
+msgid_plural "{n} min"
+msgstr[0] "{n} 分钟"
 
-#: src/stats/imp.rs:194
-msgid "Goal reached ✓ · {duration} this week"
-msgstr "已达成目标 ✓ · 本周 {duration}"
+#: src/preset_subtitle.rs:33 src/preset_subtitle.rs:46
+msgid "Stopwatch"
+msgstr "秒表"
 
-#: src/stats/imp.rs:197
-msgid "{duration} to go this week"
-msgstr "本周还需 {duration}"
+#: src/preset_subtitle.rs:58 src/preset_subtitle.rs:62
+#, rust-format
+msgid "1 bell"
+msgid_plural "{n} bells"
+msgstr[0] "{n} 个铃"
+
+#: src/presets.rs:65
+msgid "Save Preset"
+msgstr "保存预设"
+
+#: src/presets.rs:66 data/ui/timer_view.blp:165
+msgid "Manage Presets"
+msgstr "管理预设"
+
+#: src/presets.rs:161
+msgid "Create new preset…"
+msgstr "创建新预设…"
+
+#: src/presets.rs:351
+msgid "Remove from home list"
+msgstr "从主页列表移除"
+
+#: src/presets.rs:352
+msgid "Pin to home list"
+msgstr "固定到主页列表"
+
+#: src/presets.rs:412
+msgid "Delete preset"
+msgstr "删除预设"
+
+#: src/presets.rs:435
+msgid "Preset name"
+msgstr "预设名称"
+
+#: src/presets.rs:440
+msgid "Create Preset"
+msgstr "创建预设"
+
+#: src/presets.rs:502
+msgid "Rename Preset"
+msgstr "重命名预设"
+
+#: src/presets.rs:566
+#, rust-format
+msgid "'{name}' will be removed from this device and any synced peers."
+msgstr "“{name}”将从此设备及所有同步的设备中移除。"
+
+#: src/presets.rs:569
+msgid "Delete Preset?"
+msgstr "删除预设？"
+
+#: src/presets.rs:633
+#, rust-format
+msgid "Replace '{name}'s saved configuration with the current settings?"
+msgstr "用当前设置替换“{name}”已保存的配置？"
+
+#: src/presets.rs:636
+msgid "Override Preset?"
+msgstr "覆盖预设？"
+
+#: src/presets.rs:642
+msgid "Override"
+msgstr "覆盖"
+
+#: src/recovery_dialog.rs:32
+msgid "Remote data appears wiped"
+msgstr "远程数据似乎已被清除"
+
+#: src/recovery_dialog.rs:34
+msgid ""
+"The Nextcloud folder no longer contains any of the batches this device "
+"previously synced. Has the Meditate folder been deleted on the server?\n"
+"\n"
+"Choose how to recover:"
+msgstr ""
+"Nextcloud 文件夹中已不包含此设备之前同步过的任何批次。服务器上的 Meditate 文"
+"件夹是否已被删除？\n"
+"\n"
+"请选择恢复方式："
+
+#: src/recovery_dialog.rs:43
+msgid "Wipe Local"
+msgstr "清除本地"
+
+#: src/recovery_dialog.rs:44
+msgid "Push My Data"
+msgstr "推送我的数据"
+
+#: src/recovery_dialog.rs:93
+msgid "Wipe local data?"
+msgstr "清除本地数据？"
+
+#: src/recovery_dialog.rs:95
+msgid ""
+"This permanently deletes every session, label, and event stored on this "
+"device. Your Nextcloud account, sync settings, and app preferences are "
+"kept.\n"
+"\n"
+"This cannot be undone."
+msgstr ""
+"将永久删除此设备上的所有会话、标签和事件。Nextcloud 账户、同步设置和应用偏好"
+"将保留。\n"
+"\n"
+"此操作无法撤销。"
+
+#: src/recovery_dialog.rs:104
+msgid "Wipe Local Data"
+msgstr "清除本地数据"
+
+#: src/sound.rs:216
+msgid "Couldn't play bell sound"
+msgstr "无法播放铃声"
+
+#: src/sounds.rs:60
+msgid "Choose Bell Sound"
+msgstr "选择铃声"
+
+#: src/sounds.rs:133
+msgid "Choose your own…"
+msgstr "自行选择…"
+
+#: src/sounds.rs:174
+msgid "No sounds for this category yet"
+msgstr "此类别下暂无声音"
+
+#: src/sounds.rs:175
+msgid "Tap \"Choose your own…\" above to import one"
+msgstr "点按上方的“自行选择…”导入声音"
+
+#: src/sounds.rs:216 src/vibrations.rs:223
+msgid "Bundled"
+msgstr "内置"
+
+#: src/sounds.rs:218 src/vibrations.rs:225
+msgid "Custom"
+msgstr "自定义"
+
+#: src/sounds.rs:271 src/sounds.rs:289 src/sounds.rs:315
+msgid "Preview sound"
+msgstr "试听"
+
+#: src/sounds.rs:355
+msgid "Delete sound"
+msgstr "删除声音"
+
+#: src/sounds.rs:383
+msgid "Choose Sound File"
+msgstr "选择声音文件"
+
+#: src/sounds.rs:404
+msgid "File is larger than 10 MB"
+msgstr "文件大于 10 MB"
+
+#: src/sounds.rs:434
+msgid "Audio files"
+msgstr "音频文件"
+
+#: src/sounds.rs:478
+msgid "This name is already in use"
+msgstr "此名称已被使用"
+
+#: src/sounds.rs:517
+msgid "Import Sound"
+msgstr "导入声音"
+
+#: src/sounds.rs:642
+msgid "import worker died"
+msgstr "导入进程意外终止"
+
+#: src/sounds.rs:662
+msgid "Import failed:"
+msgstr "导入失败："
+
+#: src/sounds.rs:901
+msgid "Rename Sound"
+msgstr "重命名声音"
+
+#: src/sounds.rs:967
+msgid "Delete Sound?"
+msgstr "删除声音？"
+
+#: src/sounds.rs:968
+msgid "Bells that reference this sound will lose their audio."
+msgstr "引用此声音的铃声将失去音频。"
+
+#: src/stats/imp.rs:177
+#, rust-format
+msgid "Goal reached ✓ · {duration} today"
+msgstr "已达成目标 ✓ · 今天 {duration}"
+
+#: src/stats/imp.rs:179
+#, rust-format
+msgid "{duration} to go today"
+msgstr "今天还差 {duration}"
 
 #. Accessible name for the Cairo-drawn ring — no intrinsic text for
 #. screen readers to fall back on.
-#: src/stats/imp.rs:204
-msgid "Weekly goal: {pct}% — {done} of {goal}"
-msgstr "每周目标：{pct}% — {done} / {goal}"
+#: src/stats/imp.rs:186
+#, rust-format
+msgid "Daily goal: {pct}% — {done} of {goal}"
+msgstr "每日目标：{pct}%——已完成 {done}，目标 {goal}"
 
-#: src/stats/imp.rs:282
+#: src/stats/imp.rs:248
+#, rust-format
 msgid "{date} — goal exceeded, {mins} minutes"
 msgstr "{date} — 超额达成目标，{mins} 分钟"
 
-#: src/stats/imp.rs:286
+#: src/stats/imp.rs:252
+#, rust-format
 msgid "{date} — {mins} minutes"
 msgstr "{date} — {mins} 分钟"
 
-#: src/stats/imp.rs:290
+#: src/stats/imp.rs:256
+#, rust-format
 msgid "{date} — no sessions"
 msgstr "{date} — 无会话"
 
-#: src/stats/imp.rs:339
-msgid "{n} days — new record"
-msgstr "{n} 天 — 新纪录"
+#: src/stats/imp.rs:327
+#, rust-format
+msgid "1 day — new record"
+msgid_plural "{n} days — new record"
+msgstr[0] "{n} 天——新纪录"
 
-#: src/stats/imp.rs:342
-msgid "{n} days · best was {best}"
-msgstr "{n} 天 · 最高纪录为 {best}"
+#: src/stats/imp.rs:331
+#, rust-format
+msgid "1 day · best was {best}"
+msgid_plural "{n} days · best was {best}"
+msgstr[0] "{n} 天 · 最佳纪录 {best}"
 
-#: src/stats/imp.rs:346
+#: src/stats/imp.rs:338
 msgid "1 day · keep going"
 msgstr "1 天 · 继续保持"
 
-#: src/stats/imp.rs:349
+#: src/stats/imp.rs:340
 msgid "Current streak"
 msgstr "当前连续天数"
 
-#: src/stats/imp.rs:358
-#, c-format
+#: src/stats/imp.rs:344
+#, rust-format
 msgid "{pct}% up vs last week ({this} vs {last})"
 msgstr "较上周增加 {pct}%（{this} vs {last}）"
 
-#: src/stats/imp.rs:360
-#, c-format
+#: src/stats/imp.rs:346
+#, rust-format
 msgid "{pct}% down vs last week ({this} vs {last})"
 msgstr "较上周减少 {pct}%（{this} vs {last}）"
 
-#: src/stats/imp.rs:366
+#: src/stats/imp.rs:352
 msgid "This week's practice"
 msgstr "本周练习"
 
-#: src/stats/imp.rs:374
+#: src/stats/imp.rs:356
 msgid "Practising more"
 msgstr "练习增多"
 
-#: src/stats/imp.rs:376
+#: src/stats/imp.rs:358
 msgid "Practising less"
 msgstr "练习减少"
 
-#: src/stats/imp.rs:378
+#: src/stats/imp.rs:360
+#, rust-format
 msgid "{pct}% vs last month ({this} vs {last})"
 msgstr "较上月变化 {pct}%（{this} vs {last}）"
 
-#: src/stats/imp.rs:391
-#, c-format
+#: src/stats/imp.rs:368
+#, rust-format
 msgid "{pct}% of sessions are in the morning"
 msgstr "{pct}% 的会话在上午进行"
 
-#: src/stats/imp.rs:393
-#, c-format
-msgid "{pct}% of sessions are in the evening"
-msgstr "{pct}% 的会话在晚上进行"
-
-#: src/stats/imp.rs:395
-#, c-format
+#: src/stats/imp.rs:369
+#, rust-format
 msgid "{pct}% of sessions are in the afternoon"
 msgstr "{pct}% 的会话在下午进行"
 
-#: src/stats/imp.rs:399
+#: src/stats/imp.rs:370
+#, rust-format
+msgid "{pct}% of sessions are in the evening"
+msgstr "{pct}% 的会话在晚上进行"
+
+#: src/stats/imp.rs:372
 msgid "Preferred time"
 msgstr "偏好时段"
 
-#: src/stats/imp.rs:405
+#: src/stats/imp.rs:375
+#, rust-format
 msgid "About {duration}"
 msgstr "约 {duration}"
 
-#: src/stats/imp.rs:407
+#: src/stats/imp.rs:377
 msgid "Typical session"
 msgstr "典型时长"
 
-#: src/stats/imp.rs:416
+#: src/stats/imp.rs:384
+#, rust-format
 msgid "{duration} on {date}"
 msgstr "{duration}（{date}）"
 
-#: src/stats/imp.rs:421
+#: src/stats/imp.rs:389
 msgid "Longest session"
 msgstr "最长会话"
 
-#: src/stats/imp.rs:429
+#: src/stats/imp.rs:393
+#, rust-format
 msgid "1 session to your {target}th"
-msgstr "距第 {target} 次还剩 1 条会话"
+msgid_plural "{n} sessions to your {target}th"
+msgstr[0] "距第 {target} 个会话还差 {n} 个"
 
-#: src/stats/imp.rs:432
-msgid "{n} sessions to your {target}th"
-msgstr "距第 {target} 次还剩 {n} 条会话"
-
-#: src/stats/imp.rs:436
+#: src/stats/imp.rs:399
 msgid "Next milestone"
 msgstr "下一里程碑"
 
-#: src/stats/imp.rs:443
+#: src/stats/imp.rs:402
+#, rust-format
 msgid "{duration} average over last 7 days"
 msgstr "过去 7 天平均 {duration}"
 
-#: src/stats/imp.rs:445
+#: src/stats/imp.rs:404
 msgid "Daily rhythm"
 msgstr "每日节奏"
 
-#: src/stats/imp.rs:452
+#: src/stats/imp.rs:407
 msgid "No sessions yet"
 msgstr "暂无会话"
 
-#: src/stats/imp.rs:453
+#: src/stats/imp.rs:408
 msgid "Complete a meditation to start seeing insights here"
 msgstr "完成一次冥想后，这里将显示分析"
 
-#: src/stats/imp.rs:638
-#, fuzzy
+#: src/stats/imp.rs:476 data/ui/stats_view.blp:182
+msgid "Minutes / Day"
+msgstr "分钟 / 天"
+
+#: src/stats/imp.rs:477
+msgid "Minutes / Week"
+msgstr "分钟 / 周"
+
+#: src/stats/imp.rs:478
+msgid "Minutes / Month"
+msgstr "分钟 / 月"
+
+#: src/stats/imp.rs:592
+#, rust-format
 msgid "{duration} · 1 session"
-msgstr "{date} — 无会话"
+msgstr "{duration} · 1 个会话"
 
-#: src/stats/imp.rs:641
-#, fuzzy
+#: src/stats/imp.rs:595
+#, rust-format
 msgid "{duration} · {count} sessions"
-msgstr "{date} — 无会话"
+msgstr "{duration} · {count} 个会话"
 
-#: src/timer/imp.rs:404
+#: src/timer/imp.rs:1098
+msgid "Meditation session running"
+msgstr "冥想会话进行中"
+
+#: src/timer/imp.rs:1834
 msgid "Paused"
 msgstr "已暂停"
 
-#: src/timer/imp.rs:428 data/ui/timer_view.blp:47
+#: src/timer/imp.rs:1861 data/ui/timer_view.blp:47
 msgid "Hours · Minutes"
 msgstr "小时 · 分钟"
 
-#: src/timer/imp.rs:662
-msgid "Discard Session?"
-msgstr "放弃会话？"
+#: src/timer/imp.rs:2055
+msgid "Couldn't start playback"
+msgstr "无法开始播放"
 
-#: src/timer/imp.rs:663
-msgid "Your note will be lost."
-msgstr "您的笔记将会丢失。"
-
-#: src/timer/imp.rs:672 data/ui/timer_view.blp:329
-msgid "Discard"
-msgstr "放弃"
-
-#: src/timer/imp.rs:811
-msgid "Start your streak today"
-msgstr "今天开始连续打卡"
-
-#: src/timer/imp.rs:812
-msgid "1 day streak"
-msgstr "连续 1 天"
-
-#: src/timer/imp.rs:813
-msgid "{n} days streak"
-msgstr "连续 {n} 天"
-
-#: src/timer/imp.rs:910
-msgid "Custom…"
-msgstr "自定义…"
-
-#: src/timer/imp.rs:911
-msgid "Set a Custom Time"
-msgstr "设置自定义时间"
-
-#: src/timer/imp.rs:999
-msgid "Custom Time"
-msgstr "自定义时间"
-
-#: src/timer/imp.rs:1000
-msgid "Hours : Minutes"
-msgstr "小时 : 分钟"
-
-#: src/timer/imp.rs:1006
-msgid "Set"
-msgstr "设置"
-
-#. +2 for "+ New label" and "None"
-#. default = "None"
-#. default: "None"
-#: src/timer/imp.rs:1039 src/timer/imp.rs:1066
-msgid "+ New Label…"
-msgstr "+ 新建标签…"
-
-#: src/timer/imp.rs:1222
-msgid "Inhale"
-msgstr ""
-
-#: src/timer/imp.rs:1223
-msgid "Hold (full)"
-msgstr ""
-
-#: src/timer/imp.rs:1224
-msgid "Exhale"
-msgstr ""
-
-#: src/timer/imp.rs:1225
-msgid "Hold (empty)"
-msgstr ""
-
-#: src/timer/imp.rs:1287
-msgid "Decrease"
-msgstr ""
-
-#: src/timer/imp.rs:1298
-msgid "Increase"
-msgstr ""
-
-#: src/timer/imp.rs:1478
-msgid "Box-breathing"
-msgstr ""
-
-#: src/timer/imp.rs:1538
-msgid "Label name"
-msgstr "标签名称"
-
-#: src/timer/imp.rs:1542
-msgid "New Label"
-msgstr "新建标签"
-
-#: src/timer/imp.rs:1547
-msgid "Create"
-msgstr "创建"
-
-#: src/window/imp.rs:221
-msgid "Box Breathing"
-msgstr ""
-
-#: src/window/imp.rs:343
-#, fuzzy
+#: src/timer/imp.rs:2211 src/window/imp.rs:391
 msgid "Pause"
 msgstr "已暂停"
 
-#: src/window/imp.rs:345
-#, fuzzy
+#: src/timer/imp.rs:2212 src/window/imp.rs:393
 msgid "Pause Timer"
+msgstr "暂停计时"
+
+#: src/timer/imp.rs:2254 data/ui/timer_view.blp:110
+msgid "Resume"
+msgstr "继续"
+
+#: src/timer/imp.rs:2255
+msgid "Resume Timer"
+msgstr "继续计时"
+
+#: src/timer/imp.rs:2443
+msgid "Couldn't save session — storage error"
+msgstr "无法保存会话——存储错误"
+
+#: src/timer/imp.rs:2461
+msgid "Couldn't save session — storage unavailable"
+msgstr "无法保存会话——存储不可用"
+
+#: src/timer/imp.rs:2489
+msgid "Discard Session?"
+msgstr "放弃会话？"
+
+#: src/timer/imp.rs:2490
+msgid "Your note will be lost."
+msgstr "您的笔记将会丢失。"
+
+#: src/timer/imp.rs:2499 data/ui/timer_view.blp:825
+msgid "Discard"
+msgstr "放弃"
+
+#: src/timer/imp.rs:2794
+msgid "Finish"
+msgstr "完成"
+
+#: src/timer/imp.rs:2796
+msgid "End at the planned duration"
+msgstr "在计划时长结束"
+
+#: src/timer/imp.rs:3145
+msgid "Start your streak today"
+msgstr "今天开始连续打卡"
+
+#: src/timer/imp.rs:3146 src/timer/imp.rs:3148
+#, rust-format
+msgid "1 day streak"
+msgid_plural "{n} day streak"
+msgstr[0] "连续 {n} 天"
+
+#: src/timer/imp.rs:3203
+msgid "Tap Save Settings to create your first preset"
+msgstr "点按“保存设置”创建你的第一个预设"
+
+#: src/timer/imp.rs:3267
+msgid "No starred files"
+msgstr "没有已收藏的文件"
+
+#: src/timer/imp.rs:3269
+msgid "Tap Open File then Import File, or star a file in Manage Files"
+msgstr "点按“打开文件”再点“导入文件”，或在“管理文件”中收藏文件"
+
+#: src/timer/imp.rs:3333 data/ui/timer_view.blp:252
+msgid "No file selected"
+msgstr "未选择文件"
+
+#: src/timer/imp.rs:3335 data/ui/timer_view.blp:253
+msgid "Tap Open File or pick from list below"
+msgstr "点按“打开文件”或从下方列表选择"
+
+#: src/timer/imp.rs:3343
+msgid "Open New File"
+msgstr "打开新文件"
+
+#: src/timer/imp.rs:3345 data/ui/timer_view.blp:269
+msgid "Open File"
+msgstr "打开文件"
+
+#: src/timer/imp.rs:3500
+msgid "Please wait until fully synced — not all bell sounds have arrived"
+msgstr "请等待同步完成——部分铃声尚未同步到位"
+
+#: src/timer/imp.rs:3524
+#, rust-format
+msgid "'{name}' applied"
+msgstr "已应用“{name}”"
+
+#: src/timer/imp.rs:3652
+msgid "Custom Time"
 msgstr "自定义时间"
 
-#: src/window/imp.rs:348 data/ui/timer_view.blp:117
+#: src/timer/imp.rs:3653
+msgid "Hours : Minutes"
+msgstr "小时 : 分钟"
+
+#: src/timer/imp.rs:3659
+msgid "Set"
+msgstr "设置"
+
+#: src/timer/imp.rs:3714 src/timer/imp.rs:3741
+msgid "(none — pick one)"
+msgstr "（无——请选择）"
+
+#: src/timer/imp.rs:3716 src/timer/imp.rs:3743
+msgid "Off"
+msgstr "关闭"
+
+#. ── Helpers ───────────────────────────────────────────────────────────────────
+#. / Subtitle text for the "Manage Bells" row reflecting how many of the
+#. / "Add MM:SS ?" running-page button label. `{time}` is the
+#. / placeholder for the formatted overtime duration; translators
+#. / can position it anywhere in the localised string (German
+#. / "Hinzufügen {time} ?", Japanese "{time} を追加 ?", etc.). Core
+#. / returns the formatted MM:SS via `format_time`; the shell owns
+#. / word order via this gettext template.
+#: src/timer/imp.rs:4066
+#, rust-format
+msgid "Add {time} ?"
+msgstr "加上 {time}？"
+
+#: src/timer/imp.rs:4076
+msgid "None enabled"
+msgstr "未启用"
+
+#: src/timer/imp.rs:4077 src/timer/imp.rs:4078
+#, rust-format
+msgid "1 enabled"
+msgid_plural "{n} enabled"
+msgstr[0] "已启用 {n} 个"
+
+#: src/timer/imp.rs:4102 data/ui/timer_view.blp:587
+msgid "Inhale"
+msgstr "吸气"
+
+#: src/timer/imp.rs:4103
+msgid "Hold (full)"
+msgstr "屏息（吸气后）"
+
+#: src/timer/imp.rs:4104 data/ui/timer_view.blp:665
+msgid "Exhale"
+msgstr "呼气"
+
+#: src/timer/imp.rs:4105
+msgid "Hold (empty)"
+msgstr "屏息（呼气后）"
+
+#: src/timer/imp.rs:4167
+msgid "Decrease"
+msgstr "减少"
+
+#: src/timer/imp.rs:4178
+msgid "Increase"
+msgstr "增加"
+
+#: src/vibration_editor.rs:130 data/ui/timer_view.blp:830
+msgid "Save"
+msgstr "保存"
+
+#: src/vibration_editor.rs:154
+msgid "Name"
+msgstr "名称"
+
+#: src/vibration_editor.rs:167
+msgid "Shape"
+msgstr "形状"
+
+#: src/vibration_editor.rs:172 data/ui/timer_view.blp:471
+msgid "Seconds"
+msgstr "秒"
+
+#: src/vibration_editor.rs:185
+msgid "Points"
+msgstr "点"
+
+#: src/vibration_editor.rs:200 src/vibration_editor.rs:424
+msgid "Min 100 ms between points"
+msgstr "点之间至少间隔 100 毫秒"
+
+#: src/vibration_editor.rs:258
+msgid "Bar"
+msgstr "柱状"
+
+#: src/vibration_editor.rs:264 data/ui/stats_view.blp:198
+msgid "Line"
+msgstr "折线图"
+
+#: src/vibration_editor.rs:296
+msgid "This device doesn't support vibration. Patterns sync to phones."
+msgstr "此设备不支持振动。模式会同步到手机。"
+
+#: src/vibration_editor.rs:320 src/vibrations.rs:360
+msgid "Edit pattern"
+msgstr "编辑模式"
+
+#: src/vibration_editor.rs:322
+msgid "New pattern"
+msgstr "新建模式"
+
+#: src/vibrations.rs:51
+msgid "Choose Vibration Pattern"
+msgstr "选择振动模式"
+
+#: src/vibrations.rs:189
+msgid "Create custom pattern…"
+msgstr "创建自定义模式…"
+
+#: src/vibrations.rs:287 src/vibrations.rs:303 src/vibrations.rs:338
+msgid "Preview pattern"
+msgstr "预览模式"
+
+#: src/vibrations.rs:447
+msgid "Delete pattern"
+msgstr "删除模式"
+
+#: src/vibrations.rs:552
+msgid "Rename Pattern"
+msgstr "重命名模式"
+
+#: src/vibrations.rs:640
+msgid "Delete Pattern?"
+msgstr "删除模式？"
+
+#: src/vibrations.rs:642
+msgid ""
+"Bells and Box Breath phases that reference this pattern will lose their "
+"vibration."
+msgstr "引用此模式的铃声和箱式呼吸阶段将失去振动。"
+
+#: src/window/imp.rs:272
+msgid "Box Breathing"
+msgstr "箱式呼吸"
+
+#: src/window/imp.rs:396 data/ui/timer_view.blp:116
 msgid "Stop"
 msgstr "停止"
 
-#: src/window/imp.rs:350
-#, fuzzy
+#: src/window/imp.rs:398
 msgid "Stop and Save Session"
-msgstr "开始会话"
+msgstr "停止并保存会话"
 
-#: src/window/imp.rs:418
-#, fuzzy
+#: src/window/imp.rs:470
 msgid "Breathe in"
-msgstr "创建"
+msgstr "吸气"
 
-#: src/window/imp.rs:419 src/window/imp.rs:421
+#: src/window/imp.rs:471
 msgid "Hold"
-msgstr ""
+msgstr "屏息"
 
-#: src/window/imp.rs:420
+#: src/window/imp.rs:472
 msgid "Breathe out"
-msgstr ""
+msgstr "呼气"
+
+#: src/window/imp.rs:667
+msgid "Syncing with Nextcloud…"
+msgstr "正在与 Nextcloud 同步…"
+
+#: src/window/imp.rs:677
+msgid "Last sync failed — click to retry"
+msgstr "上次同步失败——点击重试"
+
+#: src/window/imp.rs:693
+msgid "Sync configured (waiting for first run)"
+msgstr "同步已配置（等待首次运行）"
+
+#: src/window/imp.rs:723
+msgid "Synced just now"
+msgstr "刚刚同步"
+
+#: src/window/imp.rs:725
+#, rust-format
+msgid "Synced 1 minute ago"
+msgid_plural "Synced {n} minutes ago"
+msgstr[0] "{n} 分钟前已同步"
+
+#: src/window/imp.rs:728
+#, rust-format
+msgid "Synced 1 hour ago"
+msgid_plural "Synced {n} hours ago"
+msgstr[0] "{n} 小时前已同步"
+
+#: src/window/imp.rs:731
+#, rust-format
+msgid "Synced 1 day ago"
+msgid_plural "Synced {n} days ago"
+msgstr[0] "{n} 天前已同步"
 
 #: data/ui/log_view.blp:14
 msgid "No Sessions Yet"
@@ -799,11 +1516,11 @@ msgstr "更多"
 msgid "Insights"
 msgstr "分析"
 
-#: data/ui/stats_view.blp:150
+#: data/ui/stats_view.blp:152
 msgid "Week"
 msgstr "周"
 
-#: data/ui/stats_view.blp:155
+#: data/ui/stats_view.blp:156
 msgid "Month"
 msgstr "月"
 
@@ -811,123 +1528,187 @@ msgstr "月"
 msgid "3 Months"
 msgstr "3 个月"
 
-#: data/ui/stats_view.blp:165
+#: data/ui/stats_view.blp:164
 msgid "Year"
 msgstr "年"
 
-#: data/ui/stats_view.blp:185
-msgid "Minutes / Day"
-msgstr "分钟 / 天"
-
-#: data/ui/stats_view.blp:196
+#: data/ui/stats_view.blp:194
 msgid "Bars"
 msgstr "柱状图"
 
-#: data/ui/stats_view.blp:201
-msgid "Line"
-msgstr "折线图"
-
-#: data/ui/stats_view.blp:238
+#: data/ui/stats_view.blp:233
 msgid "Streak"
 msgstr "连续天数"
 
-#: data/ui/stats_view.blp:259
+#: data/ui/stats_view.blp:254
 msgid "Total"
 msgstr "总计"
 
-#: data/ui/stats_view.blp:280
+#: data/ui/stats_view.blp:275
 msgid "Sessions"
 msgstr "会话"
 
-#: data/ui/stats_view.blp:296
-#, fuzzy
+#: data/ui/stats_view.blp:291
 msgid "By label"
-msgstr "新建标签"
+msgstr "按标签"
 
-#: data/ui/timer_view.blp:66
-msgid "Countdown"
-msgstr "倒计时"
-
-#: data/ui/timer_view.blp:73
-msgid "Stopwatch"
-msgstr "秒表"
-
-#: data/ui/timer_view.blp:80
-msgid "Box Breath"
-msgstr ""
-
-#: data/ui/timer_view.blp:101
-msgid "Start Session"
-msgstr "开始会话"
-
-#: data/ui/timer_view.blp:111
-msgid "Resume"
-msgstr "继续"
-
-#: data/ui/timer_view.blp:137
-msgid "Quick Presets"
-msgstr "快速预设"
-
-#: data/ui/timer_view.blp:178
-msgid "Pattern"
-msgstr ""
-
-#: data/ui/timer_view.blp:207
-msgid "Breath Phases"
-msgstr ""
-
-#: data/ui/timer_view.blp:235
-#, fuzzy
-msgid "Session duration"
-msgstr "会话已删除"
-
-#: data/ui/timer_view.blp:248
-msgid "Session"
-msgstr "会话"
-
-#: data/ui/timer_view.blp:255
-msgid "Completion sound"
-msgstr "完成提示音"
-
-#: data/ui/window.blp:20 data/ui/window.blp:33
-#: data/io.github.janekbt.Meditate.desktop.in:2
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:7
-msgid "Meditate"
-msgstr "Meditate"
-
-#: data/ui/window.blp:42
-msgid "Main Menu"
-msgstr "主菜单"
-
-#: data/ui/window.blp:51
-msgid "Filter Sessions"
-msgstr "筛选会话"
-
-#: data/ui/window.blp:65
-msgid "Has Notes"
-msgstr "包含笔记"
-
-#: data/ui/window.blp:87 data/ui/shortcuts.ui:10
+#: data/ui/timer_view.blp:68 data/ui/window.blp:135 data/ui/shortcuts.ui:10
 msgid "Timer"
 msgstr "计时器"
 
-#: data/ui/window.blp:95
+#: data/ui/timer_view.blp:73
+msgid "Guided"
+msgstr "引导"
+
+#: data/ui/timer_view.blp:78
+msgid "Box Breath"
+msgstr "箱式呼吸"
+
+#: data/ui/timer_view.blp:100
+msgid "Start Session"
+msgstr "开始会话"
+
+#: data/ui/timer_view.blp:148
+msgid "Presets"
+msgstr "预设"
+
+#: data/ui/timer_view.blp:160
+msgid "Save Settings"
+msgstr "保存设置"
+
+#: data/ui/timer_view.blp:202
+msgid "Breath Phases"
+msgstr "呼吸阶段"
+
+#: data/ui/timer_view.blp:249
+msgid "Current file"
+msgstr "当前文件"
+
+#: data/ui/timer_view.blp:274
+msgid "Import File"
+msgstr "导入文件"
+
+#: data/ui/timer_view.blp:283
+msgid "Starred Files"
+msgstr "收藏的文件"
+
+#: data/ui/timer_view.blp:300
+msgid "Session"
+msgstr "会话"
+
+#: data/ui/timer_view.blp:312
+msgid "Cues"
+msgstr "提示音"
+
+#: data/ui/timer_view.blp:330
+msgid "Stopwatch Mode"
+msgstr "秒表模式"
+
+#: data/ui/timer_view.blp:331
+msgid "Count up from zero"
+msgstr "从零开始计时"
+
+#: data/ui/timer_view.blp:383
+msgid "Keep Screen Awake"
+msgstr "保持屏幕常亮"
+
+#: data/ui/timer_view.blp:384
+msgid "Prevent display sleep during a session"
+msgstr "会话期间防止屏幕休眠"
+
+#: data/ui/timer_view.blp:402
+msgid "Bells"
+msgstr "铃声"
+
+#: data/ui/timer_view.blp:414
+msgid "Starting Bell"
+msgstr "起始铃"
+
+#: data/ui/timer_view.blp:415
+msgid "Play a signal when the session begins"
+msgstr "会话开始时发出信号"
+
+#: data/ui/timer_view.blp:435 data/ui/timer_view.blp:528
+msgid "Bell Sound"
+msgstr "铃声"
+
+#: data/ui/timer_view.blp:464
+msgid "Preparation Time"
+msgstr "准备时间"
+
+#: data/ui/timer_view.blp:465
+msgid "Silence before the starting bell"
+msgstr "起始铃前的静默"
+
+#: data/ui/timer_view.blp:484
+msgid "Ring during the session"
+msgstr "会话期间响铃"
+
+#: data/ui/timer_view.blp:489
+msgid "Manage Bells"
+msgstr "管理铃声"
+
+#: data/ui/timer_view.blp:507
+msgid "End Bell"
+msgstr "结束铃"
+
+#: data/ui/timer_view.blp:508
+msgid "Play a signal when the session ends"
+msgstr "会话结束时发出信号"
+
+#: data/ui/timer_view.blp:578
+msgid "Box Breath cues"
+msgstr "箱式呼吸提示音"
+
+#: data/ui/timer_view.blp:581
+msgid "Cues during phases"
+msgstr "各阶段的提示音"
+
+#: data/ui/timer_view.blp:582
+msgid "Different cue per phase to feel the cycle"
+msgstr "每个阶段使用不同提示音以感受循环"
+
+#: data/ui/timer_view.blp:626
+msgid "Hold (in)"
+msgstr "屏息（吸气后）"
+
+#: data/ui/timer_view.blp:704
+msgid "Hold (out)"
+msgstr "屏息（呼气后）"
+
+#: data/ui/window.blp:41
+msgid "Main Menu"
+msgstr "主菜单"
+
+#: data/ui/window.blp:59
+msgid "Nextcloud sync status"
+msgstr "Nextcloud 同步状态"
+
+#: data/ui/window.blp:89
+msgid "Filter Sessions"
+msgstr "筛选会话"
+
+#: data/ui/window.blp:103
+msgid "Has Notes"
+msgstr "包含笔记"
+
+#: data/ui/window.blp:143
 msgid "Stats"
 msgstr "统计"
 
-#: data/ui/window.blp:103
+#: data/ui/window.blp:151
 msgid "Log"
 msgstr "记录"
 
-#: data/ui/window.blp:124
+#: data/ui/window.blp:172
 msgid "_Preferences"
 msgstr "首选项(_P)"
 
-#: data/ui/window.blp:129
+#: data/ui/window.blp:177
 msgid "_Keyboard Shortcuts"
 msgstr "键盘快捷键(_K)"
 
-#: data/ui/window.blp:134
+#: data/ui/window.blp:182
 msgid "_About Meditate"
 msgstr "关于 Meditate(_A)"
 
@@ -947,10 +1728,6 @@ msgstr "键盘快捷键"
 msgid "Close Window"
 msgstr "关闭窗口"
 
-#: data/ui/shortcuts.ui:42
-msgid "Quit"
-msgstr "退出"
-
 #: data/io.github.janekbt.Meditate.desktop.in:3
 msgid "A simple meditation timer and log"
 msgstr "简单的冥想计时器与记录"
@@ -969,6 +1746,8 @@ msgid ""
 "and stopwatch timer, a session log, and statistics to help you build a "
 "consistent practice."
 msgstr ""
+"Meditate 是一款适用于 GNOME 的简洁冥想助手。它提供倒计时和秒表计时器、会话记"
+"录以及统计功能，帮助你养成持续的练习习惯。"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:17
 msgid "Countdown and stopwatch timer modes"
@@ -1006,99 +1785,325 @@ msgstr "按日期分组的会话记录，带标签与笔记"
 msgid "janekbt"
 msgstr "janekbt"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:107
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:93
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:98
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:103
+msgid ""
+"Packaging only: the Android build now produces identical output on any "
+"machine, so F-Droid can verify it against this source. Nothing changes in "
+"the app itself."
+msgstr ""
+"仅涉及打包：Android 构建现在在任何机器上都会产生相同的输出，F-Droid 因而可以"
+"依据此源代码进行验证。应用本身没有任何变化。"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:108
+msgid ""
+"Fixes for entering a session length by keyboard on Android, and a packaging "
+"change so F-Droid can verify the app against its source."
+msgstr ""
+"修复了在 Android 上用键盘输入会话时长的问题，并调整了打包方式，使 F-Droid 可"
+"以依据源代码验证应用。"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:110
+msgid ""
+"Android: typing a duration and tapping Set now keeps what you typed, instead "
+"of falling back to the previous value"
+msgstr ""
+"Android：输入时长并点按“设置”后，现在会保留你输入的值，而不会退回到之前的值"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:111
+msgid ""
+"Android: tapping the hours or minutes selects the whole number, so the first "
+"keystroke replaces it"
+msgstr "Android：点按小时或分钟会选中整个数字，第一次按键即可将其替换"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:112
+msgid ""
+"Android: the dismiss button in the session editor is announced as \"Cancel\" "
+"by screen readers again"
+msgstr "Android：屏幕阅读器再次将会话编辑器中的关闭按钮朗读为“取消”"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:118
+msgid ""
+"Same as 26.8.0, with a packaging fix so F-Droid can rebuild and verify the "
+"Android app."
+msgstr ""
+"与 26.8.0 相同，另修复了打包问题，使 F-Droid 可以重新构建并验证 Android 应"
+"用。"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:123
+msgid ""
+"A longer reach for daily goals, and a friendlier way to set a session length "
+"on Android."
+msgstr "每日目标的上限更高，并且在 Android 上设置会话时长的方式更友好。"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:125
+msgid ""
+"The daily goal can now be set to anything up to 24 hours, instead of "
+"stopping at 4"
+msgstr "每日目标现在最高可设为 24 小时，不再以 4 小时为上限"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:126
+msgid ""
+"Android: tap the hours or minutes in the time picker to type a duration, "
+"rather than only stepping it with the plus and minus buttons"
+msgstr ""
+"Android：可点按时间选择器中的小时或分钟直接输入时长，而不必只用加减按钮逐步调"
+"整"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:127
+msgid ""
+"Android: the Save button in the session editor no longer runs off the edge "
+"of the screen in languages with longer words"
+msgstr "Android：在单词较长的语言中，会话编辑器中的“保存”按钮不再超出屏幕边缘"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:128
+msgid ""
+"Android builds are now reproducible, so the published APK can be verified "
+"against this source"
+msgstr "Android 构建现已可复现，因此发布的 APK 可以依据此源代码进行验证"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:134
+msgid ""
+"Nextcloud sync between all your devices, a guided-audio mode, daily goals, "
+"custom sounds and vibration patterns — and the first release of the Android "
+"companion app."
+msgstr ""
+"在你的所有设备间通过 Nextcloud 同步，新增引导音频模式、每日目标、自定义声音和"
+"振动模式，并首次发布 Android 配套应用。"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:136
+msgid ""
+"Sync sessions, labels, presets, bells, and preferences between your devices "
+"via your own Nextcloud server — offline-first, with automatic conflict "
+"handling and remote-storage compaction"
+msgstr ""
+"通过你自己的 Nextcloud 服务器在设备间同步会话、标签、预设、铃声和偏好设置——离"
+"线优先，并自动处理冲突和压缩远程存储"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:137
+msgid ""
+"New Guided mode: import your own guided-meditation audio; the end bell rings "
+"when the track finishes"
+msgstr "新增引导模式：导入你自己的引导冥想音频；音轨播放完毕时结束铃会响起"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:138
+msgid ""
+"Stats now track a daily goal: the progress ring resets each day and the "
+"heatmap stars days that cleared it"
+msgstr ""
+"统计现在跟踪每日目标：进度圆环每天重置，热力图会为达成目标的日子标上星号"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:139
+msgid ""
+"Interval, starting, and end bells are configurable per mode, with imported "
+"custom sounds and a visual vibration-pattern editor"
+msgstr ""
+"间隔铃、起始铃和结束铃可按模式分别配置，支持导入自定义声音，并提供可视化振动"
+"模式编辑器"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:140
+msgid ""
+"Session log gains CSV export/import (duplicate-safe on re-import) and "
+"Insight Timer import"
+msgstr ""
+"会话记录支持 CSV 导出/导入（重复导入不会产生重复项），并可从 Insight Timer 导"
+"入"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:141
+msgid ""
+"Duplicate labels created on two devices can be merged from a conflict "
+"prompt, moving all sessions onto the surviving label"
+msgstr ""
+"在两台设备上创建的重复标签可通过冲突提示合并，所有会话都会移到保留的标签下"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:142
+msgid ""
+"Android companion app (F-Droid): the same modes, log, stats, and sync, "
+"sharing the identical core — plus a home-screen widget for one-tap preset "
+"starts, in all ten languages"
+msgstr ""
+"Android 配套应用（F-Droid）：相同的模式、记录、统计和同步，共享同一核心——另有"
+"主屏幕小部件，可一键启动预设，支持全部十种语言"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:163
 msgid ""
 "Performance and polish pass, focused on Linux phones like the Librem 5. The "
 "app starts and switches views noticeably faster on lower-end ARM hardware, "
 "and the consequential-action buttons now carry the standard red tint."
 msgstr ""
+"一次性能与细节优化，重点面向 Librem 5 等 Linux 手机。在低端 ARM 硬件上，应用"
+"启动和切换视图明显更快，具有重要后果的操作按钮现在使用标准的红色样式。"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:109
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:165
 msgid ""
 "Cold start is roughly twice as fast on slow ARM phones; view switches, "
 "session start, and session end no longer stall the UI"
 msgstr ""
+"在较慢的 ARM 手机上冷启动速度提升约一倍；切换视图、开始会话和结束会话时界面不"
+"再卡顿"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:110
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:166
 msgid ""
 "Haptic feedback on session end now fires correctly on devices with "
 "feedbackd, without the end-sound doubling up"
 msgstr ""
+"在使用 feedbackd 的设备上，会话结束时的触感反馈现在能正确触发，结束音也不会重"
+"复播放"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:111
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:167
 msgid ""
 "Stop, Discard, and per-session delete buttons are styled as destructive "
 "(red) per the GNOME HIG"
 msgstr ""
+"“停止”“放弃”以及单个会话的删除按钮按照 GNOME HIG 采用破坏性操作（红色）样式"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:112
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:168
 msgid ""
 "Log view loads 15 sessions per page by default instead of 200, with Load "
 "more for older entries"
 msgstr ""
+"记录视图默认每页加载 15 个会话而非 200 个，可通过“加载更多”查看较早的条目"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:119
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:175
 msgid ""
 "Major polish release ahead of Flathub submission — every tab redesigned, new "
 "data features, and translations in nine languages."
 msgstr ""
+"提交 Flathub 前的重大优化版本——所有标签页均已重新设计，新增数据功能，并提供九"
+"种语言的翻译。"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:121
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:177
 msgid "Timer, Stats, and Log tabs fully redesigned around the GNOME HIG"
-msgstr ""
+msgstr "计时、统计和记录标签页均按照 GNOME HIG 全面重新设计"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:122
-#, fuzzy
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:178
 msgid ""
 "Stats now shows a weekly-goal ring, a 13-week contribution heatmap, and an "
 "insights panel"
-msgstr "每周目标、13 周热力图与分析"
+msgstr "统计页现在显示每周目标圆环、13 周贡献热力图和洞察面板"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:123
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:179
 msgid "Log is a date-grouped card feed with swipe-to-delete and undo"
-msgstr ""
+msgstr "记录改为按日期分组的卡片流，支持滑动删除和撤销"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:124
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:180
 msgid "CSV import and export, plus one-click migration from Insight Timer"
-msgstr ""
+msgstr "支持 CSV 导入和导出，并可一键从 Insight Timer 迁移"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:125
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:181
 msgid ""
 "Real CC0 recordings replace the three built-in end sounds, with Singing bowl "
 "as the new default"
-msgstr ""
+msgstr "三种内置结束音换成真实的 CC0 录音，并以颂钵作为新的默认声音"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:126
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:182
 msgid "Post-session note field is now multi-line"
-msgstr ""
+msgstr "会话后备注框现支持多行"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:127
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:183
 msgid "Weekly goal resets on the locale's first day of the week"
-msgstr ""
+msgstr "每周目标在所在地区的每周第一天重置"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:128
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:184
 msgid "New \"Vibrate on session end\" toggle for Linux phones"
-msgstr ""
+msgstr "为 Linux 手机新增“会话结束时振动”开关"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:129
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:185
 msgid ""
 "Full translation coverage across English, German, Spanish, French, Italian, "
 "Dutch, Polish, Brazilian Portuguese, Russian, and Simplified Chinese"
 msgstr ""
+"完整支持英语、德语、西班牙语、法语、意大利语、荷兰语、波兰语、巴西葡萄牙语、"
+"俄语和简体中文"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:130
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:186
 msgid ""
 "Adaptive layout down to 360 px; HIG-compliant accent colours and "
 "accessibility"
-msgstr ""
+msgstr "自适应布局最窄支持 360 像素；强调色和无障碍功能符合 HIG"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:136
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:192
 msgid "Initial release."
 msgstr "首个版本。"
 
-#: src/guided.rs:144 src/guided.rs:350 src/sounds.rs:413 src/sounds.rs:637
-msgid "This file has no audio track"
-msgstr "此文件没有音轨"
+#~ msgid "{n} sessions"
+#~ msgstr "{n} 条会话"
+
+#~ msgid "None"
+#~ msgstr "无"
+
+#~ msgid "Singing bowl"
+#~ msgstr "颂钵"
+
+#~ msgid "Gong"
+#~ msgstr "锣"
+
+#~ msgid "Custom file…"
+#~ msgstr "自定义文件…"
+
+#~ msgid "End sound"
+#~ msgstr "完成提示音"
+
+#~ msgid "Sound file"
+#~ msgstr "声音文件"
+
+#~ msgid "Vibrate on session end"
+#~ msgstr "会话结束时振动"
+
+#~ msgid "Haptic feedback when the timer finishes (mobile only)"
+#~ msgstr "计时结束时的震动反馈（仅限移动设备）"
+
+#~ msgid ""
+#~ "Quick-select buttons shown in the countdown timer (1–5 presets, in "
+#~ "minutes)"
+#~ msgstr "倒计时中的快速选择按钮（1–5 个预设，单位为分钟）"
+
+#~ msgid "Labels"
+#~ msgstr "标签"
+
+#~ msgid "Organize sessions with custom labels"
+#~ msgstr "用自定义标签整理会话"
+
+#~ msgid "Add Label"
+#~ msgstr "添加标签"
+
+#~ msgid "Discard Changes"
+#~ msgstr "放弃更改"
+
+#~ msgid "{n} sessions use this label and will become unlabeled."
+#~ msgstr "有 {n} 条会话使用此标签，删除后这些会话将失去标签。"
+
+#~ msgid "Exported {n} sessions"
+#~ msgstr "已导出 {n} 条会话"
+
+#~ msgid "Deleted {n} sessions"
+#~ msgstr "已删除 {n} 条会话"
+
+#~ msgid "Imported {n} sessions"
+#~ msgstr "已导入 {n} 条会话"
+
+#~ msgid "{n} sessions to your {target}th"
+#~ msgstr "距第 {target} 次还剩 {n} 条会话"
+
+#~ msgid "{n} days streak"
+#~ msgstr "连续 {n} 天"
+
+#~ msgid "Set a Custom Time"
+#~ msgstr "设置自定义时间"
+
+#~ msgid "Countdown"
+#~ msgstr "倒计时"
+
+#~ msgid "Quick Presets"
+#~ msgstr "快速预设"
+
+#, fuzzy
+#~ msgid "Session duration"
+#~ msgstr "会话已删除"
+
+#~ msgid "Completion sound"
+#~ msgstr "完成提示音"
 
 #~ msgid "Countdown and stopwatch timer"
 #~ msgstr "倒计时与秒表"

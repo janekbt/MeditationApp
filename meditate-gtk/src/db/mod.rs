@@ -18,6 +18,8 @@
 use gtk::prelude::*;
 use std::path::Path;
 
+use crate::i18n::gettext;
+
 /// Shell-side error type returned by every wrapper method on the
 /// `Database` struct. Mirrors core's `meditate_core::db::DbError`
 /// shape, preserving the typed `Duplicate*` variants so the four
@@ -76,7 +78,7 @@ impl DbError {
             | DbError::DuplicateVibrationPattern(n) => n,
             _ => return None,
         };
-        Some(crate::i18n::gettext("«{name}» is already taken").replace("{name}", name))
+        Some(gettext("«{name}» is already taken").replace("{name}", name))
     }
 }
 

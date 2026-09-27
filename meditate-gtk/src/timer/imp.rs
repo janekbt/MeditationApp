@@ -6,6 +6,8 @@ use glib::subclass::Signal;
 use std::sync::OnceLock;
 
 use crate::db::{BoxBreathPhaseId, Label, SessionData, SessionMode};
+use crate::i18n::{gettext, ngettext};
+use glib::clone;
 
 use std::time::Duration;
 use meditate_core::breath::BreathPattern;
@@ -357,7 +359,7 @@ impl TimerView {
 
         // Mode toggle — Adw.ToggleGroup is one-of-N, so one
         // active-name change per switch. Single notify handler.
-        self.mode_toggle_group.connect_active_name_notify(glib::clone!(
+        self.mode_toggle_group.connect_active_name_notify(clone!(
             #[weak(rename_to = this)] obj,
             move |_| {
                 this.imp().on_mode_switched();
@@ -368,7 +370,7 @@ impl TimerView {
         // refresh the hero label + preset sensitivity. The
         // stopwatch_loading guard suppresses persistence while
         // refresh_streak is restoring the value on visit.
-        self.stopwatch_mode_row.connect_active_notify(glib::clone!(
+        self.stopwatch_mode_row.connect_active_notify(clone!(
             #[weak(rename_to = this)] obj,
             move |row| {
                 let imp = this.imp();
@@ -393,7 +395,7 @@ impl TimerView {
         // its own preference. The bells_loading guard reuses the
         // existing on-visit suppression flag, since the row is loaded
         // alongside the bell rows on every page-visit + mode switch.
-        self.keep_screen_awake_row.connect_active_notify(glib::clone!(
+        self.keep_screen_awake_row.connect_active_notify(clone!(
             #[weak(rename_to = this)] obj,
             move |row| {
                 let imp = this.imp();
@@ -411,23 +413,23 @@ impl TimerView {
             }
         ));
 
-        self.start_btn.connect_clicked(glib::clone!(
+        self.start_btn.connect_clicked(clone!(
             #[weak(rename_to = this)] obj,
             move |_| this.imp().on_start()
         ));
-        self.resume_btn.connect_clicked(glib::clone!(
+        self.resume_btn.connect_clicked(clone!(
             #[weak(rename_to = this)] obj,
             move |_| this.imp().on_resume()
         ));
-        self.stop_from_pause_btn.connect_clicked(glib::clone!(
+        self.stop_from_pause_btn.connect_clicked(clone!(
             #[weak(rename_to = this)] obj,
             move |_| this.imp().on_stop()
         ));
-        self.save_btn.connect_clicked(glib::clone!(
+        self.save_btn.connect_clicked(clone!(
             #[weak(rename_to = this)] obj,
             move |_| this.imp().on_save()
         ));
-        self.discard_btn.connect_clicked(glib::clone!(
+        self.discard_btn.connect_clicked(clone!(
             #[weak(rename_to = this)] obj,
             move |_| this.imp().on_discard()
         ));
@@ -436,7 +438,7 @@ impl TimerView {
         // The only entry point for setting an ad-hoc Timer duration
         // (one not in any saved preset). Greyed out when stopwatch
         // mode is on — the planned-duration concept doesn't apply.
-        self.duration_row.connect_activated(glib::clone!(
+        self.duration_row.connect_activated(clone!(
             #[weak(rename_to = this)] obj,
             move |_| this.imp().show_custom_time_dialog(),
         ));
@@ -447,7 +449,7 @@ impl TimerView {
         // new preset…" row appears, whether row taps trigger an
         // override-confirmation dialog, and whether rename/delete
         // suffix buttons render.
-        self.save_settings_btn.connect_clicked(glib::clone!(
+        self.save_settings_btn.connect_clicked(clone!(
             #[weak(rename_to = this)] obj,
             move |_| {
                 let imp = this.imp();
@@ -469,7 +471,7 @@ impl TimerView {
                 );
             },
         ));
-        self.manage_presets_btn.connect_clicked(glib::clone!(
+        self.manage_presets_btn.connect_clicked(clone!(
             #[weak(rename_to = this)] obj,
             move |_| {
                 let imp = this.imp();
@@ -494,7 +496,7 @@ impl TimerView {
         // ── Guided-mode buttons ─────────────────────────────────────
         // Open File: pop the gtk::FileDialog, on success populate the
         // Selected row + hero countdown, ungrey Import.
-        self.open_file_btn.connect_clicked(glib::clone!(
+        self.open_file_btn.connect_clicked(clone!(
             #[weak(rename_to = this)] obj,
             move |_| {
                 let Some(window) = this.root()
@@ -518,7 +520,7 @@ impl TimerView {
         // promote the row into the starred list. The button is greyed
         // when there's no transient pick to import (toggled in
         // refresh_guided_selected_row).
-        self.import_file_btn.connect_clicked(glib::clone!(
+        self.import_file_btn.connect_clicked(clone!(
             #[weak(rename_to = this)] obj,
             move |_| {
                 let imp = this.imp();
@@ -555,7 +557,7 @@ impl TimerView {
         // Manage Files: push the chooser NavigationPage. On every
         // change inside (rename / star toggle / delete / import),
         // refresh the home-list so the Setup view reflects state.
-        self.manage_guided_files_btn.connect_clicked(glib::clone!(
+        self.manage_guided_files_btn.connect_clicked(clone!(
             #[weak(rename_to = this)] obj,
             move |_| {
                 let imp = this.imp();
@@ -575,7 +577,7 @@ impl TimerView {
         // Per-session pick. Initialized in show_done from the Setup
         // view's currently-active label. Toggling here doesn't write
         // any persistent setting — the choice rides with the session.
-        self.done_label_enabled_row.connect_enable_expansion_notify(glib::clone!(
+        self.done_label_enabled_row.connect_enable_expansion_notify(clone!(
             #[weak(rename_to = this)] obj,
             move |row| {
                 let imp = this.imp();
@@ -595,7 +597,7 @@ impl TimerView {
                 imp.refresh_done_label_chooser_subtitle();
             }
         ));
-        self.done_label_chooser_row.connect_activated(glib::clone!(
+        self.done_label_chooser_row.connect_activated(clone!(
             #[weak(rename_to = this)] obj,
             move |_| {
                 let imp = this.imp();
@@ -615,7 +617,7 @@ impl TimerView {
 
         // End Bell master toggle — gates whether the bell plays at the
         // end of a session. Persists end_bell_active.
-        self.end_bell_row.connect_enable_expansion_notify(glib::clone!(
+        self.end_bell_row.connect_enable_expansion_notify(clone!(
             #[weak(rename_to = this)] obj,
             move |row| {
                 let imp = this.imp();
@@ -650,7 +652,7 @@ impl TimerView {
         attach_revealer_row_click(&self.starting_bell_pattern_row);
 
         // End Bell sound row — tap pushes the bell-sound chooser.
-        self.end_bell_sound_row.connect_activated(glib::clone!(
+        self.end_bell_sound_row.connect_activated(clone!(
             #[weak(rename_to = this)] obj,
             move |_| {
                 let imp = this.imp();
@@ -685,7 +687,7 @@ impl TimerView {
 
         // End Bell pattern row — tap pushes the vibration-pattern
         // chooser. Persists end_bell_pattern setting on pick.
-        self.end_bell_pattern_row.connect_activated(glib::clone!(
+        self.end_bell_pattern_row.connect_activated(clone!(
             #[weak(rename_to = this)] obj,
             move |_| {
                 let imp = this.imp();
@@ -723,7 +725,7 @@ impl TimerView {
         // Master toggle persists `label_active_<mode>`; the inner
         // chooser-row pushes the label chooser and persists the
         // selected uuid per-mode.
-        self.setup_label_enabled_row.connect_enable_expansion_notify(glib::clone!(
+        self.setup_label_enabled_row.connect_enable_expansion_notify(clone!(
             #[weak(rename_to = this)] obj,
             move |row| {
                 let imp = this.imp();
@@ -743,7 +745,7 @@ impl TimerView {
                 imp.refresh_setup_label_chooser_subtitle();
             }
         ));
-        self.setup_label_chooser_row.connect_activated(glib::clone!(
+        self.setup_label_chooser_row.connect_activated(clone!(
             #[weak(rename_to = this)] obj,
             move |_| {
                 let imp = this.imp();
@@ -769,7 +771,7 @@ impl TimerView {
         // persistence while `refresh_streak` is restoring the saved
         // state on visit, so the read-back can't masquerade as a user
         // toggle and re-write the same value.
-        self.starting_bell_row.connect_enable_expansion_notify(glib::clone!(
+        self.starting_bell_row.connect_enable_expansion_notify(clone!(
             #[weak(rename_to = this)] obj,
             move |row| {
                 let imp = this.imp();
@@ -789,7 +791,7 @@ impl TimerView {
         // Starting-Bell sound row — tap pushes the bell-sound chooser.
         // "No bell" is still handled by the parent ExpanderRow's
         // master toggle; the chooser only lists real sounds.
-        self.starting_bell_sound_row.connect_activated(glib::clone!(
+        self.starting_bell_sound_row.connect_activated(clone!(
             #[weak(rename_to = this)] obj,
             move |_| {
                 let imp = this.imp();
@@ -815,7 +817,7 @@ impl TimerView {
         ));
 
         // Starting Bell pattern row — drills into the vibrations chooser.
-        self.starting_bell_pattern_row.connect_activated(glib::clone!(
+        self.starting_bell_pattern_row.connect_activated(clone!(
             #[weak(rename_to = this)] obj,
             move |_| {
                 let imp = this.imp();
@@ -843,7 +845,7 @@ impl TimerView {
 
         // Preparation Time expander — nested inside the Starting Bell
         // expander, animates the seconds spin in and out the same way.
-        self.preparation_time_row.connect_enable_expansion_notify(glib::clone!(
+        self.preparation_time_row.connect_enable_expansion_notify(clone!(
             #[weak(rename_to = this)] obj,
             move |row| {
                 let imp = this.imp();
@@ -864,7 +866,7 @@ impl TimerView {
         // guard pattern as Starting Bell. The ExpanderRow's switch gates
         // whether the running tick fires interval bells at all (B.3.4
         // checks `interval_bells_active` before iterating the library).
-        self.interval_bells_enabled_row.connect_enable_expansion_notify(glib::clone!(
+        self.interval_bells_enabled_row.connect_enable_expansion_notify(clone!(
             #[weak(rename_to = this)] obj,
             move |row| {
                 let imp = this.imp();
@@ -882,7 +884,7 @@ impl TimerView {
         ));
 
         // "Manage Bells" row — tap pushes the bell-library NavigationPage.
-        self.interval_bells_row.connect_activated(glib::clone!(
+        self.interval_bells_row.connect_activated(clone!(
             #[weak(rename_to = this)] obj,
             move |_| {
                 let imp = this.imp();
@@ -899,7 +901,7 @@ impl TimerView {
         // so out-of-range or garbage values can never crash the shell.
         self.preparation_time_secs_row.connect_notify_local(
             Some("value"),
-            glib::clone!(
+            clone!(
                 #[weak(rename_to = this)] obj,
                 move |row, _| {
                     let imp = this.imp();
@@ -943,7 +945,7 @@ impl TimerView {
             &self.starting_bell_sound_revealer,
             &self.starting_bell_pattern_revealer,
             || "starting_bell_signal_mode",
-            glib::clone!(
+            clone!(
                 #[weak] obj,
                 #[upgrade_or] None,
                 move || obj.imp().get_app()
@@ -974,14 +976,14 @@ impl TimerView {
             &self.end_bell_signal_toggle_host,
             &self.end_bell_sound_revealer,
             &self.end_bell_pattern_revealer,
-            glib::clone!(
+            clone!(
                 #[weak] obj,
                 #[upgrade_or] "timer_end_bell_signal_mode",
                 move || meditate_core::settings_keys::end_bell_signal_mode_key_for_mode(
                     obj.imp().current_mode().into(),
                 )
             ),
-            glib::clone!(
+            clone!(
                 #[weak] obj,
                 #[upgrade_or] None,
                 move || obj.imp().get_app()
@@ -1012,12 +1014,12 @@ impl TimerView {
         let obj = self.obj();
         build_per_mode_signal_toggle_widget(
             &self.cues_signal_toggle_host,
-            glib::clone!(
+            clone!(
                 #[weak] obj,
                 #[upgrade_or] None,
                 move || obj.imp().get_app()
             ),
-            glib::clone!(
+            clone!(
                 #[weak] obj,
                 #[upgrade_or] TimerMode::Timer,
                 move || obj.imp().current_mode()
@@ -1093,7 +1095,7 @@ impl TimerView {
         let cookie = app.inhibit(
             window.as_ref(),
             gtk::ApplicationInhibitFlags::IDLE,
-            Some(&crate::i18n::gettext("Meditation session running")),
+            Some(&gettext("Meditation session running")),
         );
         self.screen_awake_cookie.set(cookie);
     }
@@ -1129,7 +1131,7 @@ impl TimerView {
         // boxbreath_cues_active. We use enable_expansion notify
         // (not the row's expansion state itself) so the user's
         // toggling reads as on/off, not collapse/expand.
-        self.boxbreath_master_row.connect_enable_expansion_notify(glib::clone!(
+        self.boxbreath_master_row.connect_enable_expansion_notify(clone!(
             #[weak(rename_to = this)] obj,
             move |row| {
                 let imp = this.imp();
@@ -1209,7 +1211,7 @@ impl TimerView {
         let obj = self.obj();
 
         // Phase enable-switch persists to the row's enabled column.
-        phase_row.connect_enable_expansion_notify(glib::clone!(
+        phase_row.connect_enable_expansion_notify(clone!(
             #[weak(rename_to = this)] obj,
             move |row| {
                 let imp = this.imp();
@@ -1235,7 +1237,7 @@ impl TimerView {
 
         // Bell Sound row -> push sound chooser (BoxBreath category).
         let phase_for_sound = phase;
-        sound_row.connect_activated(glib::clone!(
+        sound_row.connect_activated(clone!(
             #[weak(rename_to = this)] obj,
             move |_| {
                 let imp = this.imp();
@@ -1274,7 +1276,7 @@ impl TimerView {
 
         // Pattern row -> push vibration-pattern chooser.
         let phase_for_pattern = phase;
-        pattern_row.connect_activated(glib::clone!(
+        pattern_row.connect_activated(clone!(
             #[weak(rename_to = this)] obj,
             move |_| {
                 let imp = this.imp();
@@ -1318,7 +1320,7 @@ impl TimerView {
             sound_revealer,
             pattern_revealer,
             phase,
-            glib::clone!(
+            clone!(
                 #[weak] obj,
                 #[upgrade_or] None,
                 move || obj.imp().get_app()
@@ -1447,15 +1449,15 @@ pub(crate) fn build_signal_mode_toggle_widget(
 
     let sound_toggle = adw::Toggle::builder()
         .name("sound")
-        .label(crate::i18n::gettext("Sound"))
+        .label(gettext("Sound"))
         .build();
     let vibration_toggle = adw::Toggle::builder()
         .name("vibration")
-        .label(crate::i18n::gettext("Vibration"))
+        .label(gettext("Vibration"))
         .build();
     let both_toggle = adw::Toggle::builder()
         .name("both")
-        .label(crate::i18n::gettext("Both"))
+        .label(gettext("Both"))
         .build();
 
     toggle_group.add(sound_toggle);
@@ -1537,11 +1539,11 @@ pub(crate) fn build_phase_signal_mode_toggle_widget(
         .valign(gtk::Align::Center)
         .build();
     toggle_group.add(adw::Toggle::builder()
-        .name("sound").label(crate::i18n::gettext("Sound")).build());
+        .name("sound").label(gettext("Sound")).build());
     toggle_group.add(adw::Toggle::builder()
-        .name("vibration").label(crate::i18n::gettext("Vibration")).build());
+        .name("vibration").label(gettext("Vibration")).build());
     toggle_group.add(adw::Toggle::builder()
-        .name("both").label(crate::i18n::gettext("Both")).build());
+        .name("both").label(gettext("Both")).build());
     toggle_group.set_active_name(Some("sound"));
     sound_revealer.set_reveal_child(true);
     pattern_revealer.set_reveal_child(false);
@@ -1607,11 +1609,11 @@ pub(crate) fn build_per_mode_signal_toggle_widget(
         .valign(gtk::Align::Center)
         .build();
     toggle_group.add(adw::Toggle::builder()
-        .name("sound").label(crate::i18n::gettext("Sound")).build());
+        .name("sound").label(gettext("Sound")).build());
     toggle_group.add(adw::Toggle::builder()
-        .name("vibration").label(crate::i18n::gettext("Vibration")).build());
+        .name("vibration").label(gettext("Vibration")).build());
     toggle_group.add(adw::Toggle::builder()
-        .name("both").label(crate::i18n::gettext("Both")).build());
+        .name("both").label(gettext("Both")).build());
     toggle_group.set_active_name(Some("both"));
 
     host.append(&toggle_group);
@@ -1829,7 +1831,7 @@ impl TimerView {
         self.mode_toggle_group.set_sensitive(false);
         self.session_group.set_sensitive(false);
         self.big_time_label.set_label(&format_time(Duration::from_secs(display_secs)));
-        self.time_unit_label.set_label(&crate::i18n::gettext("Paused"));
+        self.time_unit_label.set_label(&gettext("Paused"));
         self.time_unit_label.set_visible(true);
     }
 
@@ -1856,7 +1858,7 @@ impl TimerView {
             guided_duration_secs,
         );
         self.big_time_label.set_label(&label);
-        self.time_unit_label.set_label(&crate::i18n::gettext("Hours · Minutes"));
+        self.time_unit_label.set_label(&gettext("Hours · Minutes"));
         self.time_unit_label.set_visible(true);
     }
 
@@ -2050,7 +2052,7 @@ impl TimerView {
                     Err(e) => {
                         self.toast(&format!(
                             "{}: {e}",
-                            crate::i18n::gettext("Couldn't start playback"),
+                            gettext("Couldn't start playback"),
                         ));
                         return;
                     }
@@ -2206,8 +2208,8 @@ impl TimerView {
         // — the running page stays up across pause/resume now, so
         // we own this morph end-to-end.
         if let Some(btn) = self.running_pause_btn.borrow().as_ref() {
-            btn.set_label(&crate::i18n::gettext("Pause"));
-            btn.set_tooltip_text(Some(&crate::i18n::gettext("Pause Timer")));
+            btn.set_label(&gettext("Pause"));
+            btn.set_tooltip_text(Some(&gettext("Pause Timer")));
         }
         // Refresh the hero label NOW instead of waiting up to ~1s for
         // the first post-resume tick. The cores' elapsed reading is
@@ -2249,8 +2251,8 @@ impl TimerView {
         // back to the dimmed setup view. The same physical button
         // is reused; toggle_playback dispatches Paused → on_resume.
         if let Some(btn) = self.running_pause_btn.borrow().as_ref() {
-            btn.set_label(&crate::i18n::gettext("Resume"));
-            btn.set_tooltip_text(Some(&crate::i18n::gettext("Resume Timer")));
+            btn.set_label(&gettext("Resume"));
+            btn.set_tooltip_text(Some(&gettext("Resume Timer")));
         }
 
         self.show_paused_ui(self.current_display_secs());
@@ -2437,7 +2439,7 @@ impl TimerView {
                             .active_window()
                             .and_then(|w| w.downcast::<crate::window::MeditateWindow>().ok())
                         {
-                            win.add_toast(adw::Toast::new(&crate::i18n::gettext(
+                            win.add_toast(adw::Toast::new(&gettext(
                                 "Couldn't save session — storage error",
                             )));
                         }
@@ -2455,7 +2457,7 @@ impl TimerView {
                             .active_window()
                             .and_then(|w| w.downcast::<crate::window::MeditateWindow>().ok())
                         {
-                            win.add_toast(adw::Toast::new(&crate::i18n::gettext(
+                            win.add_toast(adw::Toast::new(&gettext(
                                 "Couldn't save session — storage unavailable",
                             )));
                         }
@@ -2484,8 +2486,8 @@ impl TimerView {
         let note = buffer.text(&start, &end, false);
         if !note.is_empty() {
             let dialog = adw::AlertDialog::builder()
-                .heading(crate::i18n::gettext("Discard Session?"))
-                .body(crate::i18n::gettext("Your note will be lost."))
+                .heading(gettext("Discard Session?"))
+                .body(gettext("Your note will be lost."))
                 .close_response("cancel")
                 .default_response("discard")
                 .build();
@@ -2493,8 +2495,8 @@ impl TimerView {
             // so we can't mark a mnemonic letter on AdwAlertDialog buttons
             // without the underscore rendering literally. Return and Esc
             // still cover the common activations.
-            dialog.add_response("cancel", &crate::i18n::gettext("Cancel"));
-            dialog.add_response("discard", &crate::i18n::gettext("Discard"));
+            dialog.add_response("cancel", &gettext("Cancel"));
+            dialog.add_response("discard", &gettext("Discard"));
             dialog.set_response_appearance("discard", adw::ResponseAppearance::Destructive);
 
             let obj = self.obj().clone();
@@ -2789,8 +2791,8 @@ impl TimerView {
             stop_btn.set_visible(false);
         }
         if let Some(pause_btn) = self.running_pause_btn.borrow().as_ref() {
-            pause_btn.set_label(&crate::i18n::gettext("Finish"));
-            pause_btn.set_tooltip_text(Some(&crate::i18n::gettext(
+            pause_btn.set_label(&gettext("Finish"));
+            pause_btn.set_tooltip_text(Some(&gettext(
                 "End at the planned duration",
             )));
         }
@@ -3140,10 +3142,10 @@ impl TimerView {
         // Core picks the variant; the gtk shell maps each to a
         // gettext-translated phrase at the i18n boundary.
         let text = match meditate_core::format::streak_key(streak) {
-            StreakKey::Zero => crate::i18n::gettext("Start your streak today"),
-            StreakKey::One => crate::i18n::ngettext("1 day streak", "{n} day streak", 1),
+            StreakKey::Zero => gettext("Start your streak today"),
+            StreakKey::One => ngettext("1 day streak", "{n} day streak", 1).replace("{n}", "1"),
             StreakKey::Many(n) =>
-                crate::i18n::ngettext("1 day streak", "{n} day streak", n)
+                ngettext("1 day streak", "{n} day streak", n)
                     .replace("{n}", &n.to_string()),
         };
         self.streak_label.set_label(&text);
@@ -3198,7 +3200,7 @@ impl TimerView {
 
         if presets.is_empty() {
             self.presets_group.set_description(Some(
-                &crate::i18n::gettext("Tap Save Settings to create your first preset"),
+                &gettext("Tap Save Settings to create your first preset"),
             ));
             return;
         }
@@ -3224,7 +3226,7 @@ impl TimerView {
                 .activatable(true)
                 .build();
             let uuid = p.uuid.0.clone();
-            row.connect_activated(glib::clone!(
+            row.connect_activated(clone!(
                 #[weak(rename_to = this)] obj,
                 #[strong] uuid,
                 move |_| this.imp().on_preset_row_activated(&uuid),
@@ -3262,8 +3264,8 @@ impl TimerView {
             // above don't feel cramped against the group title.
             // Mirrors the bells.rs empty-state pattern.
             let row = adw::ActionRow::builder()
-                .title(crate::i18n::gettext("No starred files"))
-                .subtitle(crate::i18n::gettext(
+                .title(gettext("No starred files"))
+                .subtitle(gettext(
                     "Tap Open File then Import File, or star a file in Manage Files",
                 ))
                 .activatable(false)
@@ -3328,9 +3330,9 @@ impl TimerView {
                 self.guided_selected_row.remove_css_class("dim-label");
             }
             None => {
-                self.guided_selected_row.set_title(&crate::i18n::gettext("No file selected"));
+                self.guided_selected_row.set_title(&gettext("No file selected"));
                 self.guided_selected_row.set_subtitle(
-                    &crate::i18n::gettext("Tap Open File or pick from list below"),
+                    &gettext("Tap Open File or pick from list below"),
                 );
                 self.guided_selected_row.add_css_class("dim-label");
             }
@@ -3338,9 +3340,9 @@ impl TimerView {
         // Reflect the "you already have a pick — tapping replaces it"
         // semantic in the button label so the affordance is honest.
         self.open_file_btn.set_label(&if has_pick {
-            crate::i18n::gettext("Open New File")
+            gettext("Open New File")
         } else {
-            crate::i18n::gettext("Open File")
+            gettext("Open File")
         });
         // Import button is greyed when there's no transient pick OR
         // when the current pick is already a starred library row
@@ -3494,7 +3496,7 @@ impl TimerView {
 
         let snapshot = self.snapshot_current_setup();
         if !self.apply_config(&cfg) {
-            self.toast(&crate::i18n::gettext(
+            self.toast(&gettext(
                 "Please wait until fully synced — not all bell sounds have arrived",
             ));
             return;
@@ -3519,9 +3521,9 @@ impl TimerView {
             prev.dismiss();
         }
         let toast = adw::Toast::builder()
-            .title(crate::i18n::gettext("'{name}' applied")
+            .title(gettext("'{name}' applied")
                 .replace("{name}", &preset.name))
-            .button_label(crate::i18n::gettext("Undo"))
+            .button_label(gettext("Undo"))
             .build();
         let obj = self.obj().clone();
         toast.connect_button_clicked(move |_| {
@@ -3620,14 +3622,14 @@ impl TimerView {
             .numeric(true)
             .width_chars(2)
             .adjustment(&gtk::Adjustment::new(cur_h, 0.0, 23.0, 1.0, 1.0, 0.0))
-            .tooltip_text(crate::i18n::gettext("Hours"))
+            .tooltip_text(gettext("Hours"))
             .build();
         let minutes_spin = gtk::SpinButton::builder()
             .orientation(gtk::Orientation::Vertical)
             .numeric(true)
             .width_chars(2)
             .adjustment(&gtk::Adjustment::new(cur_m, 0.0, 59.0, 1.0, 5.0, 0.0))
-            .tooltip_text(crate::i18n::gettext("Minutes"))
+            .tooltip_text(gettext("Minutes"))
             .build();
 
         let colon = gtk::Label::builder()
@@ -3647,14 +3649,14 @@ impl TimerView {
         row.append(&minutes_spin);
 
         let dialog = adw::AlertDialog::builder()
-            .heading(crate::i18n::gettext("Custom Time"))
-            .body(crate::i18n::gettext("Hours : Minutes"))
+            .heading(gettext("Custom Time"))
+            .body(gettext("Hours : Minutes"))
             .close_response("cancel")
             .default_response("set")
             .extra_child(&row)
             .build();
-        dialog.add_response("cancel", &crate::i18n::gettext("Cancel"));
-        dialog.add_response("set", &crate::i18n::gettext("Set"));
+        dialog.add_response("cancel", &gettext("Cancel"));
+        dialog.add_response("set", &gettext("Set"));
         dialog.set_response_appearance("set", adw::ResponseAppearance::Suggested);
 
         let obj = self.obj().clone();
@@ -3709,9 +3711,9 @@ impl TimerView {
         // We still update its subtitle so it's correct the moment
         // the user expands the row.
         let subtitle = if active {
-            self.resolve_label_for_mode(mode).map_or_else(|| crate::i18n::gettext("(none — pick one)"), |l| l.name)
+            self.resolve_label_for_mode(mode).map_or_else(|| gettext("(none — pick one)"), |l| l.name)
         } else {
-            crate::i18n::gettext("Off")
+            gettext("Off")
         };
         self.setup_label_chooser_row.set_subtitle(&subtitle);
 
@@ -3736,9 +3738,9 @@ impl TimerView {
             .and_then(|id| labels.iter().find(|l| l.id == id).map(|l| l.name.clone()))
             .unwrap_or_else(|| {
                 if id.is_some() {
-                    crate::i18n::gettext("(none — pick one)")
+                    gettext("(none — pick one)")
                 } else {
-                    crate::i18n::gettext("Off")
+                    gettext("Off")
                 }
             });
         self.done_label_chooser_row.set_subtitle(&subtitle);
@@ -4061,7 +4063,7 @@ impl TimerView {
 /// returns the formatted MM:SS via `format_time`; the shell owns
 /// word order via this gettext template.
 fn overtime_add_button_label(overtime: std::time::Duration) -> String {
-    crate::i18n::gettext("Add {time} ?")
+    gettext("Add {time} ?")
         .replace("{time}", &meditate_core::format::format_time(overtime))
 }
 
@@ -4071,9 +4073,9 @@ fn overtime_add_button_label(overtime: std::time::Duration) -> String {
 fn intervals_count_subtitle(enabled_count: usize) -> String {
     use meditate_core::format::IntervalsCountKey;
     match meditate_core::format::intervals_count_key(enabled_count) {
-        IntervalsCountKey::None => crate::i18n::gettext("None enabled"),
-        IntervalsCountKey::One => crate::i18n::ngettext("1 enabled", "{n} enabled", 1),
-        IntervalsCountKey::Many(n) => crate::i18n::ngettext("1 enabled", "{n} enabled", n as u32)
+        IntervalsCountKey::None => gettext("None enabled"),
+        IntervalsCountKey::One => ngettext("1 enabled", "{n} enabled", 1).replace("{n}", "1"),
+        IntervalsCountKey::Many(n) => ngettext("1 enabled", "{n} enabled", n as u32)
             .replace("{n}", &n.to_string()),
     }
 }
@@ -4162,7 +4164,7 @@ impl TimerView {
         let minus = gtk::Button::builder()
             .icon_name("list-remove-symbolic")
             .css_classes(["flat", "circular"])
-            .tooltip_text(crate::i18n::gettext("Decrease"))
+            .tooltip_text(gettext("Decrease"))
             .build();
         let value_label = gtk::Label::builder()
             .label("4s")
@@ -4173,7 +4175,7 @@ impl TimerView {
         let plus = gtk::Button::builder()
             .icon_name("list-add-symbolic")
             .css_classes(["flat", "circular"])
-            .tooltip_text(crate::i18n::gettext("Increase"))
+            .tooltip_text(gettext("Increase"))
             .build();
         stepper.append(&minus);
         stepper.append(&value_label);

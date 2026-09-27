@@ -3,7 +3,8 @@ use adw::subclass::prelude::ObjectSubclassIsExt;
 use gtk::{gio, glib};
 
 use crate::application::MeditateApplication;
-use crate::i18n::gettext;
+use crate::i18n::{gettext, ngettext};
+use glib::clone;
 use meditate_core::goal::{
     daily_goal_mins_from_db, write_daily_goal_mins,
     DAILY_GOAL_DEFAULT, DAILY_GOAL_MAX, DAILY_GOAL_MIN, DAILY_GOAL_STEP,
@@ -78,7 +79,7 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
         .build();
     goal_row.connect_notify_local(
         Some("value"),
-        glib::clone!(
+        clone!(
             #[weak] app,
             move |row, _| {
                 let val = row.value() as i64;
@@ -229,7 +230,7 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
     // the save action sits closer to the input fields and Test reads
     // as a secondary verification step.
 
-    test_btn.connect_clicked(glib::clone!(
+    test_btn.connect_clicked(clone!(
         #[weak] dialog,
         #[weak] url_row,
         #[weak] username_row,
@@ -294,7 +295,7 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
             // `spawn_local` keeps !Send GTK widgets in scope; only
             // `String`s and `TestConnectionResult` (also pure data)
             // cross into the worker, both Send.
-            glib::MainContext::default().spawn_local(glib::clone!(
+            glib::MainContext::default().spawn_local(clone!(
                 #[weak] dialog,
                 #[weak] test_btn,
                 async move {
@@ -339,7 +340,7 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
     sync_group.add(&save_row);
     sync_group.add(&test_row);
 
-    save_btn.connect_clicked(glib::clone!(
+    save_btn.connect_clicked(clone!(
         #[strong] app,
         #[weak] dialog,
         #[weak] url_row,
@@ -466,7 +467,7 @@ pub fn show_preferences_on_page(app: &MeditateApplication, initial_page: Option<
     // Library management (create / rename / delete) lives inside the
     // label chooser pushed from the Setup + Done view label rows now.
 
-    dialog.connect_closed(glib::clone!(
+    dialog.connect_closed(clone!(
         #[weak] app,
         move |_| {
             crate::sound::stop_current();
@@ -508,7 +509,7 @@ fn wire_data_actions(
     use crate::data_io;
 
     // ── Export to CSV ────────────────────────────────────────────────────
-    export_btn.connect_clicked(glib::clone!(
+    export_btn.connect_clicked(clone!(
         #[weak] app,
         #[weak] dialog,
         move |_| {
@@ -525,14 +526,14 @@ fn wire_data_actions(
             file_dialog.save(
                 parent.as_ref(),
                 None::<&gio::Cancellable>,
-                glib::clone!(
+                clone!(
                     #[weak] app,
                     #[weak] dialog,
                     move |result| {
                         let Ok(file) = result else { return; };
                         let Some(path) = file.path() else { return; };
                         match data_io::export_csv(&app, &path) {
-                            Ok(n) => data_toast(&dialog, &crate::i18n::ngettext(
+                            Ok(n) => data_toast(&dialog, &ngettext(
                                 "Exported 1 session",
                                 "Exported {n} sessions",
                                 n as u32,
@@ -547,7 +548,7 @@ fn wire_data_actions(
     ));
 
     // ── Import from Meditate CSV ─────────────────────────────────────────
-    import_btn.connect_clicked(glib::clone!(
+    import_btn.connect_clicked(clone!(
         #[weak] app,
         #[weak] dialog,
         move |_| {
@@ -558,7 +559,7 @@ fn wire_data_actions(
     ));
 
     // ── Import from Insight Timer ────────────────────────────────────────
-    it_btn.connect_clicked(glib::clone!(
+    it_btn.connect_clicked(clone!(
         #[weak] app,
         #[weak] dialog,
         move |_| {
@@ -569,7 +570,7 @@ fn wire_data_actions(
     ));
 
     // ── Delete all (with confirmation) ───────────────────────────────────
-    delete_btn.connect_clicked(glib::clone!(
+    delete_btn.connect_clicked(clone!(
         #[weak] app,
         #[weak] dialog,
         move |_| {
@@ -584,13 +585,13 @@ fn wire_data_actions(
             alert.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
             alert.connect_response(
                 Some("delete"),
-                glib::clone!(
+                clone!(
                     #[weak] app,
                     #[weak] dialog,
                     move |_, _| {
                         match data_io::delete_all(&app) {
                             Ok(n) => {
-                                data_toast(&dialog, &crate::i18n::ngettext(
+                                data_toast(&dialog, &ngettext(
                                     "Deleted 1 session",
                                     "Deleted {n} sessions",
                                     n as u32,
@@ -637,7 +638,7 @@ where F: FnOnce(&MeditateApplication, &std::path::Path) -> Result<usize, crate::
             let Some(path) = file.path() else { return; };
             match importer(&app, &path) {
                 Ok(n) => {
-                    data_toast(&dialog, &crate::i18n::ngettext(
+                    data_toast(&dialog, &ngettext(
                         "Imported 1 session",
                         "Imported {n} sessions",
                         n as u32,

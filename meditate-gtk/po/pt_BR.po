@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-04-24 00:44+0200\n"
+"POT-Creation-Date: 2026-09-27 23:20+0200\n"
 "PO-Revision-Date: 2026-04-20 18:24+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Brazilian Portuguese\n"
@@ -16,441 +16,801 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n > 1);\n"
 
-#: src/application.rs:129 data/io.github.janekbt.Meditate.metainfo.xml.in:93
+#: src/announcement.rs:18
+#, rust-format
+msgid "Recovered 1 min session"
+msgid_plural "Recovered {n} min session"
+msgstr[0] "Sessão de 1 min recuperada"
+msgstr[1] "Sessão de {n} min recuperada"
+
+#: src/announcement.rs:24
+#, rust-format
+msgid "Session deleted"
+msgid_plural "{n} sessions deleted"
+msgstr[0] "Sessão excluída"
+msgstr[1] "{n} sessões excluídas"
+
+#: src/announcement.rs:30
+#, rust-format
+msgid "'{name}' deleted"
+msgstr "'{name}' excluída"
+
+#: src/announcement.rs:33
+#, rust-format
+msgid "'{name}' overridden"
+msgstr "'{name}' sobrescrita"
+
+#: src/announcement.rs:36
+msgid "Updated"
+msgstr "Atualizado"
+
+#: src/announcement.rs:39 src/guided.rs:1100
+msgid "Deleted"
+msgstr "Excluído"
+
+#: src/application.rs:234
+msgid "Database is newer than this app"
+msgstr "O banco de dados é mais recente que este aplicativo"
+
+#: src/application.rs:236
+#, rust-format
+msgid ""
+"The local database (version {db}) was written by a newer build than this one "
+"(version {build}). Install a matching version, or move the file aside to "
+"start fresh."
+msgstr ""
+"O banco de dados local (versão {db}) foi gravado por uma versão mais recente "
+"que esta (versão {build}). Instale uma versão correspondente ou mova o "
+"arquivo para outro lugar para começar do zero."
+
+#: src/application.rs:245
+msgid "Couldn't open database"
+msgstr "Não foi possível abrir o banco de dados"
+
+#: src/application.rs:247
+msgid ""
+"An unexpected error prevented opening the local database. Check the "
+"diagnostics log in About → Troubleshooting for details."
+msgstr ""
+"Um erro inesperado impediu a abertura do banco de dados local. Consulte o "
+"registro de diagnóstico em Sobre → Solução de problemas para mais detalhes."
+
+#: src/application.rs:267
+msgid "Open Data Folder"
+msgstr "Abrir pasta de dados"
+
+#: src/application.rs:275 data/ui/shortcuts.ui:42
+msgid "Quit"
+msgstr "Sair"
+
+#: src/application.rs:287 data/ui/window.blp:20 data/ui/window.blp:32
+#: data/io.github.janekbt.Meditate.desktop.in:2
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:7
+msgid "Meditate"
+msgstr "Meditate"
+
+#: src/application.rs:324 data/io.github.janekbt.Meditate.metainfo.xml.in:149
 msgid ""
 "A new Box Breath timer mode, per-label stats, and an in-app diagnostics view "
 "for bug reporting — plus a handful of polish fixes."
 msgstr ""
+"Um novo modo de respiração quadrada, estatísticas por rótulo e uma tela de "
+"diagnóstico no aplicativo para relatar erros — além de alguns pequenos "
+"refinamentos."
 
-#: src/application.rs:130 data/io.github.janekbt.Meditate.metainfo.xml.in:95
+#: src/application.rs:325 data/io.github.janekbt.Meditate.metainfo.xml.in:151
 msgid ""
 "New Box Breath mode alongside Countdown and Stopwatch: pick a pattern "
 "(4-4-4-4, 4-7-8-0, 5-5-5-5) or dial in each phase, set a session length, and "
 "the running view traces a dot around an accent-tinted square as you breathe "
 "in, hold, out, hold"
 msgstr ""
+"Novo modo de respiração quadrada ao lado de Contagem regressiva e "
+"Cronômetro: escolha um padrão (4-4-4-4, 4-7-8-0, 5-5-5-5) ou ajuste cada "
+"fase, defina a duração da sessão, e a tela em execução desenha um ponto ao "
+"redor de um quadrado na cor de destaque enquanto você inspira, segura, "
+"expira e segura"
 
-#: src/application.rs:131 data/io.github.janekbt.Meditate.metainfo.xml.in:96
+#: src/application.rs:326 data/io.github.janekbt.Meditate.metainfo.xml.in:152
 msgid ""
 "Stats tab shows a \"By label\" breakdown below the streak / total / sessions "
 "row, so you can see how much meditation time you've spent under each label"
 msgstr ""
+"A aba Estatísticas mostra uma divisão \"Por rótulo\" abaixo da linha de "
+"sequência / total / sessões, para você ver quanto tempo meditou em cada "
+"rótulo"
 
-#: src/application.rs:132 data/io.github.janekbt.Meditate.metainfo.xml.in:97
+#: src/application.rs:327 data/io.github.janekbt.Meditate.metainfo.xml.in:153
 msgid ""
 "About dialog has a new Troubleshooting view with a rolling diagnostics log "
 "(startup, database open, import/export results, panics) — copy or save to "
 "attach to a bug report"
 msgstr ""
+"A janela Sobre tem uma nova tela de Solução de problemas com um registro de "
+"diagnóstico contínuo (inicialização, abertura do banco de dados, resultados "
+"de importação/exportação, falhas) — copie ou salve para anexar a um "
+"relatório de erro"
 
-#: src/application.rs:133 data/io.github.janekbt.Meditate.metainfo.xml.in:98
+#: src/application.rs:328 data/io.github.janekbt.Meditate.metainfo.xml.in:154
 msgid ""
 "Each timer mode remembers its own last-chosen label, so a Box Breath session "
 "no longer changes the default label for Countdown or Stopwatch"
 msgstr ""
+"Cada modo do temporizador lembra o último rótulo escolhido, então uma sessão "
+"de respiração quadrada não altera mais o rótulo padrão de Contagem "
+"regressiva ou Cronômetro"
 
-#: src/application.rs:134 data/io.github.janekbt.Meditate.metainfo.xml.in:99
+#: src/application.rs:329 data/io.github.janekbt.Meditate.metainfo.xml.in:155
 msgid ""
 "Release notes shown in the About dialog now reflect the current version "
 "instead of staying pinned to the initial release"
 msgstr ""
+"As notas de versão exibidas na janela Sobre agora correspondem à versão "
+"atual, em vez de ficarem presas à versão inicial"
 
-#: src/application.rs:135 data/io.github.janekbt.Meditate.metainfo.xml.in:100
+#: src/application.rs:330 data/io.github.janekbt.Meditate.metainfo.xml.in:156
 msgid ""
 "Log-edit calendar picker shows the proper icon again; post-session note "
 "field no longer steals focus on phones and hides the Save / Discard buttons "
 "behind the on-screen keyboard"
 msgstr ""
+"O seletor de calendário na edição do histórico volta a mostrar o ícone "
+"correto; o campo de anotação após a sessão não rouba mais o foco em "
+"celulares nem esconde os botões Salvar / Descartar atrás do teclado virtual"
 
-#: src/data_io.rs:46
-msgid "File error"
-msgstr "Erro de arquivo"
-
-#: src/data_io.rs:47
-msgid "CSV error"
-msgstr "Erro de CSV"
-
-#: src/data_io.rs:48
-msgid "Parse error"
-msgstr "Erro de leitura"
-
-#: src/data_io.rs:49
-msgid "Database error"
-msgstr "Erro de banco de dados"
-
-#: src/data_io.rs:50
-msgid "Database unavailable"
-msgstr "Banco de dados indisponível"
-
-#: src/log/imp.rs:294
-msgid "All labels"
-msgstr "Todos os rótulos"
-
-#. Lowercase in source; the .log-unit CSS class renders it uppercase
-#. (HIG forbids all-caps in source text).
-#: src/log/imp.rs:379
-msgid "min"
-msgstr "min"
-
-#: src/log/imp.rs:410
-msgid "No note added"
-msgstr "Sem anotações"
-
-#: src/log/imp.rs:452
-msgid "Delete Session"
-msgstr "Excluir sessão"
-
-#: src/log/imp.rs:573
-msgid "Today"
-msgstr "Hoje"
-
-#: src/log/imp.rs:576
-msgid "Yesterday"
-msgstr "Ontem"
-
-#: src/log/imp.rs:594
-msgid "1 session"
-msgstr "1 sessão"
-
-#: src/log/imp.rs:596
-msgid "{n} sessions"
-msgstr "{n} sessões"
-
-#: src/log/imp.rs:624
-msgid "Session deleted"
-msgstr "Sessão excluída"
-
-#: src/log/imp.rs:625 src/preferences.rs:627
+#: src/application.rs:404 src/guided.rs:1166 src/log/imp.rs:642
+#: src/presets.rs:704 src/timer/imp.rs:3526 src/vibrations.rs:476
+#: src/vibrations.rs:515
 msgid "Undo"
 msgstr "Desfazer"
 
-#: src/log/imp.rs:719 src/timer/imp.rs:972
-msgid "Hours"
-msgstr "Horas"
-
-#: src/log/imp.rs:724 src/preferences.rs:338 src/timer/imp.rs:979
-#: data/ui/timer_view.blp:236
-msgid "Minutes"
-msgstr "Minutos"
-
-#: src/log/imp.rs:741
-msgid "Date"
-msgstr "Data"
-
-#: src/log/imp.rs:758
-msgid "Pick a Date"
-msgstr "Escolher data"
-
-#: src/log/imp.rs:783
-msgid "Hour"
-msgstr "Hora"
-
-#: src/log/imp.rs:788
-msgid "Minute"
-msgstr "Minuto"
-
-#. ── Label row ──────────────────────────────────────────────────
-#: src/log/imp.rs:794 src/preferences.rs:37 src/timer/imp.rs:823
-#: src/timer/imp.rs:1040 src/timer/imp.rs:1067
-msgid "None"
-msgstr "Nenhum"
-
-#: src/log/imp.rs:799 data/ui/timer_view.blp:251 data/ui/timer_view.blp:318
-#: data/ui/window.blp:69
-msgid "Label"
-msgstr "Rótulo"
-
-#: src/log/imp.rs:835 data/ui/timer_view.blp:294
-msgid "Note (optional)"
-msgstr "Anotação (opcional)"
-
-#: src/log/imp.rs:855
-msgid "Duration"
-msgstr "Duração"
-
-#: src/log/imp.rs:861
-msgid "Start time"
-msgstr "Horário de início"
-
-#: src/log/imp.rs:890
-msgid "_Cancel"
-msgstr "_Cancelar"
-
-#: src/log/imp.rs:894
-msgid "_Save"
-msgstr "_Salvar"
-
-#: src/log/imp.rs:894
-msgid "_Add"
-msgstr "_Adicionar"
-
-#: src/log/imp.rs:908
-msgid "Edit Session"
-msgstr "Editar sessão"
-
-#: src/log/imp.rs:908 data/ui/log_view.blp:18 data/ui/window.blp:79
-msgid "Add Session"
-msgstr "Adicionar sessão"
-
-#: src/preferences.rs:15 data/ui/shortcuts.ui:24
-msgid "Preferences"
-msgstr "Preferências"
-
-#: src/preferences.rs:26
-msgid "General"
-msgstr "Geral"
-
-#: src/preferences.rs:33
-msgid "Sound"
-msgstr "Som"
-
-#: src/preferences.rs:38 src/timer/imp.rs:824
-msgid "Singing bowl"
-msgstr "Tigela tibetana"
-
-#: src/preferences.rs:39 src/timer/imp.rs:825
-msgid "Bell"
-msgstr "Sino"
-
-#: src/preferences.rs:40 src/timer/imp.rs:826
-msgid "Gong"
-msgstr "Gongo"
-
-#: src/preferences.rs:41 src/timer/imp.rs:827
-msgid "Custom file…"
-msgstr "Arquivo personalizado…"
-
-#: src/preferences.rs:45
-msgid "End sound"
-msgstr "Som final"
-
-#: src/preferences.rs:52
-msgid "Preview sound"
-msgstr "Ouvir som"
-
-#: src/preferences.rs:81
-msgid "Sound file"
-msgstr "Arquivo de som"
-
-#: src/preferences.rs:87
-msgid "Choose…"
-msgstr "Escolher…"
-
-#: src/preferences.rs:178
-msgid "Choose Sound File"
-msgstr "Escolher arquivo de som"
-
-#: src/preferences.rs:182
-msgid "Audio files"
-msgstr "Arquivos de áudio"
-
-#: src/preferences.rs:229
-msgid "Vibrate on session end"
-msgstr "Vibrar ao terminar a sessão"
-
-#: src/preferences.rs:230
-msgid "Haptic feedback when the timer finishes (mobile only)"
-msgstr "Retorno tátil quando o temporizador termina (apenas celular)"
-
-#: src/preferences.rs:247
-msgid "Statistics"
-msgstr "Estatísticas"
-
-#: src/preferences.rs:257 data/ui/stats_view.blp:51
-msgid "Weekly goal"
-msgstr "Meta semanal"
-
-#: src/preferences.rs:258
-msgid "Minutes per week — drives the ring on the Stats tab"
-msgstr "Minutos por semana — alimenta o anel na aba Estatísticas"
-
-#: src/preferences.rs:281
-msgid "Timer Presets"
-msgstr "Predefinições do temporizador"
-
-#: src/preferences.rs:282
-msgid ""
-"Quick-select buttons shown in the countdown timer (1–5 presets, in minutes)"
-msgstr "Botões rápidos da contagem regressiva (1–5 predefinições, em minutos)"
-
-#: src/preferences.rs:287
-msgid "Add Preset"
-msgstr "Adicionar predefinição"
-
-#: src/preferences.rs:345
-msgid "Remove Preset"
-msgstr "Remover predefinição"
-
-#: src/preferences.rs:405
-msgid "Data"
-msgstr "Dados"
-
-#: src/preferences.rs:410
-msgid "Backup"
-msgstr "Backup"
-
-#: src/preferences.rs:411
-msgid "Export your session log to a CSV file, or restore from one."
-msgstr ""
-"Exporte seu histórico de sessões para um arquivo CSV, ou restaure de um."
-
-#: src/preferences.rs:415
-msgid "Export session log"
-msgstr "Exportar histórico"
-
-#: src/preferences.rs:416
-msgid "Save every session to a CSV file"
-msgstr "Salvar todas as sessões em um arquivo CSV"
-
-#: src/preferences.rs:422
-msgid "Export"
-msgstr "Exportar"
-
-#: src/preferences.rs:430
-msgid "Import from Meditate CSV"
-msgstr "Importar do CSV do Meditate"
-
-#: src/preferences.rs:431
-msgid "Restore sessions from a file exported above"
-msgstr "Restaurar sessões de um arquivo exportado acima"
-
-#: src/preferences.rs:437
-msgid "Import"
-msgstr "Importar"
-
-#: src/preferences.rs:447
-msgid "Migrate"
-msgstr "Migrar"
-
-#: src/preferences.rs:448
-msgid "Import sessions from another meditation app."
-msgstr "Importar sessões de outro aplicativo de meditação."
-
-#: src/preferences.rs:452 src/preferences.rs:907
-msgid "Import from Insight Timer"
-msgstr "Importar do Insight Timer"
-
-#: src/preferences.rs:453
-msgid "Upload an Insight Timer CSV export"
-msgstr "Envie uma exportação CSV do Insight Timer"
-
-#: src/preferences.rs:459
-msgid "Import Insight Timer CSV"
-msgstr "Importar CSV do Insight Timer"
-
-#: src/preferences.rs:469
-msgid "Danger Zone"
-msgstr "Zona de perigo"
-
-#: src/preferences.rs:470
-msgid "These actions cannot be undone."
-msgstr "Estas ações não podem ser desfeitas."
-
-#: src/preferences.rs:474
-msgid "Delete all sessions"
-msgstr "Excluir todas as sessões"
-
-#: src/preferences.rs:475
-msgid "Permanently remove every logged session"
-msgstr "Remove permanentemente cada sessão registrada"
-
-#: src/preferences.rs:479
-msgid "_Delete All"
-msgstr "_Excluir tudo"
-
-#: src/preferences.rs:501 src/preferences.rs:506
-msgid "Labels"
-msgstr "Rótulos"
-
-#: src/preferences.rs:507
-msgid "Organize sessions with custom labels"
-msgstr "Organize as sessões com rótulos personalizados"
-
-#: src/preferences.rs:512
-msgid "Add Label"
-msgstr "Adicionar rótulo"
-
-#: src/preferences.rs:539
-msgid "New label"
-msgstr "Novo rótulo"
-
-#. When sessions were affected the user already confirmed via AlertDialog,
-#. so undo would be misleading: the label would be recreated but the
-#. sessions would stay unlabeled.  Only offer undo for unused labels.
-#: src/preferences.rs:625
-msgid "Label deleted"
-msgstr "Rótulo excluído"
-
-#: src/preferences.rs:685
-msgid "Discard Changes"
-msgstr "Descartar alterações"
-
-#: src/preferences.rs:692 data/ui/timer_view.blp:334
-msgid "Save"
-msgstr "Salvar"
-
-#: src/preferences.rs:699
-msgid "Delete Label"
-msgstr "Excluir rótulo"
-
-#: src/preferences.rs:743
-msgid "A label with that name already exists"
-msgstr "Já existe um rótulo com esse nome"
-
-#: src/preferences.rs:804
-msgid "1 session uses this label and will become unlabeled."
-msgstr "1 sessão usa este rótulo e ficará sem rótulo."
-
-#: src/preferences.rs:806
-msgid "{n} sessions use this label and will become unlabeled."
-msgstr "{n} sessões usam este rótulo e ficarão sem rótulo."
-
-#: src/preferences.rs:810
-msgid "Delete Label?"
-msgstr "Excluir rótulo?"
+#: src/bells.rs:47 data/ui/timer_view.blp:483
+msgid "Interval Bells"
+msgstr "Sinos de intervalo"
+
+#: src/bells.rs:156
+msgid "Create new interval bell…"
+msgstr "Criar novo sino de intervalo…"
+
+#: src/bells.rs:261
+msgid "Delete bell"
+msgstr "Excluir sino"
+
+#: src/bells.rs:312 src/bells.rs:733
+msgid "Delete Bell?"
+msgstr "Excluir sino?"
+
+#: src/bells.rs:313 src/bells.rs:734
+msgid "This bell will no longer ring during sessions."
+msgstr "Este sino não tocará mais durante as sessões."
 
 #. libadwaita-rs 0.9 doesn't expose set_response_use_underline,
 #. so we can't mark a mnemonic letter on AdwAlertDialog buttons
 #. without the underscore rendering literally. Return and Esc
 #. still cover the common activations.
-#: src/preferences.rs:815 src/preferences.rs:924 src/timer/imp.rs:671
-#: src/timer/imp.rs:1005 src/timer/imp.rs:1546
+#: src/bells.rs:317 src/bells.rs:738 src/guided.rs:215 src/guided.rs:933
+#: src/guided.rs:1045 src/labels.rs:245 src/labels.rs:314 src/labels.rs:395
+#: src/preferences.rs:583 src/presets.rs:445 src/presets.rs:507
+#: src/presets.rs:574 src/presets.rs:641 src/recovery_dialog.rs:42
+#: src/recovery_dialog.rs:103 src/sounds.rs:523 src/sounds.rs:906
+#: src/sounds.rs:972 src/timer/imp.rs:2498 src/timer/imp.rs:3658
+#: src/vibration_editor.rs:129 src/vibrations.rs:557 src/vibrations.rs:647
 msgid "Cancel"
 msgstr "Cancelar"
 
-#: src/preferences.rs:816
+#: src/bells.rs:318 src/bells.rs:739 src/guided.rs:1046 src/labels.rs:396
+#: src/presets.rs:575 src/sounds.rs:973 src/vibrations.rs:648
 msgid "Delete"
 msgstr "Excluir"
 
-#: src/preferences.rs:858
+#: src/bells.rs:343
+msgid "No interval bells configured"
+msgstr "Nenhum sino de intervalo configurado"
+
+#: src/bells.rs:344 src/guided.rs:892
+msgid "Tap the row above to add one"
+msgstr "Toque na linha acima para adicionar"
+
+#: src/bells.rs:360
+#, rust-format
+msgid "Every 1 min"
+msgid_plural "Every {n} min"
+msgstr[0] "A cada 1 min"
+msgstr[1] "A cada {n} min"
+
+#: src/bells.rs:363
+#, rust-format
+msgid "Every 1 min ±{j}%"
+msgid_plural "Every {n} min ±{j}%"
+msgstr[0] "A cada 1 min ±{j}%"
+msgstr[1] "A cada {n} min ±{j}%"
+
+#: src/bells.rs:367
+#, rust-format
+msgid "At 1 min"
+msgid_plural "At {n} min"
+msgstr[0] "No minuto 1"
+msgstr[1] "No minuto {n}"
+
+#: src/bells.rs:370
+#, rust-format
+msgid "1 min before end"
+msgid_plural "{n} min before end"
+msgstr[0] "1 min antes do fim"
+msgstr[1] "{n} min antes do fim"
+
+#: src/bells.rs:384
+msgid "Missing"
+msgstr "Ausente"
+
+#: src/bells.rs:452
+msgid "Every N minutes"
+msgstr "A cada N minutos"
+
+#: src/bells.rs:453
+msgid "At time from start"
+msgstr "Tempo desde o início"
+
+#: src/bells.rs:454
+msgid "Before end"
+msgstr "Antes do fim"
+
+#: src/bells.rs:458
+msgid "Kind"
+msgstr "Tipo"
+
+#: src/bells.rs:470 src/log/imp.rs:784 src/timer/imp.rs:3632
+msgid "Minutes"
+msgstr "Minutos"
+
+#: src/bells.rs:483
+msgid "Jitter"
+msgstr "Variação"
+
+#: src/bells.rs:484
+msgid "Percent — randomises the next ring"
+msgstr "Porcentagem — torna o próximo toque aleatório"
+
+#: src/bells.rs:498 data/ui/timer_view.blp:420 data/ui/timer_view.blp:513
+#: data/ui/timer_view.blp:592 data/ui/timer_view.blp:631
+#: data/ui/timer_view.blp:670 data/ui/timer_view.blp:709
+msgid "Type"
+msgstr "Tipo"
+
+#: src/bells.rs:513 src/bells.rs:540 src/timer/imp.rs:1452
+#: src/timer/imp.rs:1542 src/timer/imp.rs:1612 data/ui/timer_view.blp:605
+#: data/ui/timer_view.blp:644 data/ui/timer_view.blp:683
+#: data/ui/timer_view.blp:722
+msgid "Sound"
+msgstr "Som"
+
+#: src/bells.rs:517 src/timer/imp.rs:1456 src/timer/imp.rs:1544
+#: src/timer/imp.rs:1614
+msgid "Vibration"
+msgstr "Vibração"
+
+#: src/bells.rs:521 src/timer/imp.rs:1460 src/timer/imp.rs:1546
+#: src/timer/imp.rs:1616
+msgid "Both"
+msgstr "Ambos"
+
+#: src/bells.rs:553 src/vibration_editor.rs:235 data/ui/timer_view.blp:452
+#: data/ui/timer_view.blp:545 data/ui/timer_view.blp:617
+#: data/ui/timer_view.blp:656 data/ui/timer_view.blp:695
+#: data/ui/timer_view.blp:734
+msgid "Pattern"
+msgstr "Padrão"
+
+#: src/bells.rs:573
+msgid "Delete Bell"
+msgstr "Excluir sino"
+
+#: src/bells.rs:588
+msgid "Edit Bell"
+msgstr "Editar sino"
+
+#: src/data_io.rs:32
+msgid "File error"
+msgstr "Erro de arquivo"
+
+#: src/data_io.rs:33
+msgid "CSV error"
+msgstr "Erro de CSV"
+
+#: src/data_io.rs:34
+msgid "Parse error"
+msgstr "Erro de leitura"
+
+#: src/data_io.rs:35
+msgid "Database error"
+msgstr "Erro de banco de dados"
+
+#: src/data_io.rs:36 src/preferences.rs:423
+msgid "Database unavailable"
+msgstr "Banco de dados indisponível"
+
+#: src/db/mod.rs:81
+#, rust-format
+msgid "«{name}» is already taken"
+msgstr "«{name}» já está em uso"
+
+#: src/format.rs:21 src/format.rs:28
+#, rust-format
+msgid "{n}m"
+msgid_plural "{n}m"
+msgstr[0] "{n} min"
+msgstr[1] "{n} min"
+
+#: src/format.rs:23 src/format.rs:26
+#, rust-format
+msgid "{n}h"
+msgid_plural "{n}h"
+msgstr[0] "{n} h"
+msgstr[1] "{n} h"
+
+#. Separate composition template so a locale can change
+#. the order or separator (e.g. "{m} {h}" or "{h}-{m}")
+#. without touching the per-unit strings.
+#: src/format.rs:33
+#, rust-format
+msgid "{h} {m}"
+msgstr "{h} {m}"
+
+#: src/guided.rs:91
+msgid "Choose Guided Meditation"
+msgstr "Escolher meditação guiada"
+
+#: src/guided.rs:116
+msgid "File picker error"
+msgstr "Erro no seletor de arquivos"
+
+#: src/guided.rs:125
+msgid "Picked file has no local path"
+msgstr "O arquivo escolhido não tem caminho local"
+
+#: src/guided.rs:144 src/guided.rs:350 src/sounds.rs:413 src/sounds.rs:637
+msgid "This file has no audio track"
+msgstr "Este arquivo não tem faixa de áudio"
+
+#: src/guided.rs:148
+msgid "Couldn't read audio file"
+msgstr "Não foi possível ler o arquivo de áudio"
+
+#: src/guided.rs:173
+msgid "Track name"
+msgstr "Nome da faixa"
+
+#: src/guided.rs:177 src/guided.rs:915
+msgid "A guided file with this name already exists."
+msgstr "Já existe um arquivo guiado com este nome."
+
+#: src/guided.rs:184 src/preferences.rs:134 src/sounds.rs:491
+msgid "Import"
+msgstr "Importar"
+
+#: src/guided.rs:204
+msgid "Import Guided File"
+msgstr "Importar arquivo guiado"
+
+#: src/guided.rs:207 src/sounds.rs:518
+msgid "Importing:"
+msgstr "Importando:"
+
+#: src/guided.rs:286 src/sounds.rs:588
+msgid "Converting…"
+msgstr "Convertendo…"
+
+#: src/guided.rs:338 src/guided.rs:354
+msgid "Import failed"
+msgstr "Falha na importação"
+
+#: src/guided.rs:358
+msgid "Import worker died"
+msgstr "O processo de importação parou"
+
+#: src/guided.rs:558 data/ui/timer_view.blp:289
+msgid "Manage Files"
+msgstr "Gerenciar arquivos"
+
+#: src/guided.rs:666
+msgid "Create new guided file…"
+msgstr "Criar novo arquivo guiado…"
+
+#: src/guided.rs:733
+msgid "Unstar — remove from home list"
+msgstr "Desfavoritar — remover da lista inicial"
+
+#: src/guided.rs:735
+msgid "Star — show in home list"
+msgstr "Favoritar — mostrar na lista inicial"
+
+#: src/guided.rs:760 src/guided.rs:934 src/labels.rs:195 src/labels.rs:315
+#: src/presets.rs:385 src/presets.rs:508 src/sounds.rs:334 src/sounds.rs:907
+#: src/vibrations.rs:417 src/vibrations.rs:558
+msgid "Rename"
+msgstr "Renomear"
+
+#: src/guided.rs:790
+msgid "Delete file"
+msgstr "Excluir arquivo"
+
+#: src/guided.rs:836 src/guided.rs:853 src/guided.rs:878
+#: src/vibration_editor.rs:245 src/vibration_editor.rs:561
+#: src/vibration_editor.rs:599
+msgid "Preview"
+msgstr "Prévia"
+
+#: src/guided.rs:862 src/sounds.rs:298 src/vibration_editor.rs:587
+#: src/vibrations.rs:324
+msgid "Stop preview"
+msgstr "Parar prévia"
+
+#: src/guided.rs:891
+msgid "No guided files imported"
+msgstr "Nenhum arquivo guiado importado"
+
+#: src/guided.rs:928
+msgid "Rename Guided File"
+msgstr "Renomear arquivo guiado"
+
+#: src/guided.rs:999
+msgid "File renamed"
+msgstr "Arquivo renomeado"
+
+#: src/guided.rs:1035
+msgid "Delete Guided File?"
+msgstr "Excluir arquivo guiado?"
+
+#: src/guided.rs:1038
+msgid "This will permanently remove"
+msgstr "Isso removerá permanentemente"
+
+#: src/guided.rs:1040
+msgid "Past sessions logged with this file stay in the log."
+msgstr ""
+"As sessões anteriores registradas com este arquivo permanecem no histórico."
+
+#: src/labels.rs:52
+msgid "Choose Label"
+msgstr "Escolher rótulo"
+
+#: src/labels.rs:108
+msgid "Create new label…"
+msgstr "Criar novo rótulo…"
+
+#: src/labels.rs:217
+msgid "Delete label"
+msgstr "Excluir rótulo"
+
+#: src/labels.rs:235
+msgid "Label name"
+msgstr "Nome do rótulo"
+
+#: src/labels.rs:240
+msgid "Create Label"
+msgstr "Criar rótulo"
+
+#: src/labels.rs:246 src/presets.rs:446
+msgid "Create"
+msgstr "Criar"
+
+#: src/labels.rs:309
+msgid "Rename Label"
+msgstr "Renomear rótulo"
+
+#: src/labels.rs:380
+msgid "Session tagged with this label will be un-labelled:"
+msgid_plural "Sessions tagged with this label will be un-labelled:"
+msgstr[0] "Sessão com este rótulo ficará sem rótulo:"
+msgstr[1] "Sessões com este rótulo ficarão sem rótulo:"
+
+#: src/labels.rs:386
+msgid "This label is not used by any sessions."
+msgstr "Nenhuma sessão usa este rótulo."
+
+#: src/labels.rs:390
+msgid "Delete Label?"
+msgstr "Excluir rótulo?"
+
+#: src/log/imp.rs:309
+msgid "All labels"
+msgstr "Todos os rótulos"
+
+#. Lowercase in source; the .log-unit CSS class renders it uppercase
+#. (HIG forbids all-caps in source text).
+#: src/log/imp.rs:394
+msgid "min"
+msgstr "min"
+
+#: src/log/imp.rs:425
+msgid "No note added"
+msgstr "Sem anotações"
+
+#: src/log/imp.rs:467
+msgid "Delete Session"
+msgstr "Excluir sessão"
+
+#: src/log/imp.rs:586
+msgid "Today"
+msgstr "Hoje"
+
+#: src/log/imp.rs:587
+msgid "Yesterday"
+msgstr "Ontem"
+
+#: src/log/imp.rs:609 src/log/imp.rs:611
+#, rust-format
+msgid "1 session"
+msgid_plural "{n} sessions"
+msgstr[0] "{n} sessão"
+msgstr[1] "{n} sessões"
+
+#: src/log/imp.rs:779 src/timer/imp.rs:3625
+msgid "Hours"
+msgstr "Horas"
+
+#: src/log/imp.rs:801
+msgid "Date"
+msgstr "Data"
+
+#: src/log/imp.rs:818
+msgid "Pick a Date"
+msgstr "Escolher data"
+
+#: src/log/imp.rs:843
+msgid "Hour"
+msgstr "Hora"
+
+#: src/log/imp.rs:848
+msgid "Minute"
+msgstr "Minuto"
+
+#: src/log/imp.rs:862 data/ui/timer_view.blp:363 data/ui/timer_view.blp:806
+msgid "Selected"
+msgstr "Selecionado"
+
+#: src/log/imp.rs:877 data/ui/timer_view.blp:357 data/ui/timer_view.blp:800
+#: data/ui/window.blp:107
+msgid "Label"
+msgstr "Rótulo"
+
+#: src/log/imp.rs:878 data/ui/timer_view.blp:358 data/ui/timer_view.blp:801
+msgid "Tag this session"
+msgstr "Rotule esta sessão"
+
+#: src/log/imp.rs:936 data/ui/timer_view.blp:776
+msgid "Note (optional)"
+msgstr "Anotação (opcional)"
+
+#: src/log/imp.rs:956 src/vibration_editor.rs:171 data/ui/timer_view.blp:339
+#: data/ui/timer_view.blp:470
+msgid "Duration"
+msgstr "Duração"
+
+#: src/log/imp.rs:962
+msgid "Start time"
+msgstr "Horário de início"
+
+#: src/log/imp.rs:991
+msgid "_Cancel"
+msgstr "_Cancelar"
+
+#: src/log/imp.rs:995 src/preferences.rs:333
+msgid "_Save"
+msgstr "_Salvar"
+
+#: src/log/imp.rs:995
+msgid "_Add"
+msgstr "_Adicionar"
+
+#: src/log/imp.rs:1014 src/log/imp.rs:1021
+msgid "Edit Session"
+msgstr "Editar sessão"
+
+#: src/log/imp.rs:1014 src/log/imp.rs:1021 data/ui/log_view.blp:18
+#: data/ui/window.blp:117
+msgid "Add Session"
+msgstr "Adicionar sessão"
+
+#: src/preferences.rs:25 data/ui/shortcuts.ui:24
+msgid "Preferences"
+msgstr "Preferências"
+
+#: src/preferences.rs:36
+msgid "General"
+msgstr "Geral"
+
+#: src/preferences.rs:58
+msgid "Statistics"
+msgstr "Estatísticas"
+
+#: src/preferences.rs:67 data/ui/stats_view.blp:51
+msgid "Daily goal"
+msgstr "Meta diária"
+
+#: src/preferences.rs:68
+msgid "Minutes per day — drives the ring on the Stats tab"
+msgstr "Minutos por dia — controla o anel na aba Estatísticas"
+
+#: src/preferences.rs:101
+msgid "Data"
+msgstr "Dados"
+
+#: src/preferences.rs:107
+msgid "Backup"
+msgstr "Backup"
+
+#: src/preferences.rs:108
+msgid "Export your session log to a CSV file, or restore from one."
+msgstr ""
+"Exporte seu histórico de sessões para um arquivo CSV, ou restaure de um."
+
+#: src/preferences.rs:112
+msgid "Export session log"
+msgstr "Exportar histórico"
+
+#: src/preferences.rs:113
+msgid "Save every session to a CSV file"
+msgstr "Salvar todas as sessões em um arquivo CSV"
+
+#: src/preferences.rs:119
+msgid "Export"
+msgstr "Exportar"
+
+#: src/preferences.rs:127
+msgid "Import from Meditate CSV"
+msgstr "Importar do CSV do Meditate"
+
+#: src/preferences.rs:128
+msgid "Restore sessions from a file exported above"
+msgstr "Restaurar sessões de um arquivo exportado acima"
+
+#: src/preferences.rs:144
+msgid "Migrate"
+msgstr "Migrar"
+
+#: src/preferences.rs:145
+msgid "Import sessions from another meditation app."
+msgstr "Importar sessões de outro aplicativo de meditação."
+
+#: src/preferences.rs:149 src/preferences.rs:566
+msgid "Import from Insight Timer"
+msgstr "Importar do Insight Timer"
+
+#: src/preferences.rs:150
+msgid "Upload an Insight Timer CSV export"
+msgstr "Envie uma exportação CSV do Insight Timer"
+
+#: src/preferences.rs:156
+msgid "Import Insight Timer CSV"
+msgstr "Importar CSV do Insight Timer"
+
+#: src/preferences.rs:174
+msgid "Nextcloud Sync"
+msgstr "Sincronização Nextcloud"
+
+#: src/preferences.rs:176
+msgid ""
+"Sync sessions, labels, and preferences between your devices via your own "
+"Nextcloud server."
+msgstr ""
+"Sincronize sessões, rótulos e preferências entre seus dispositivos pelo seu "
+"próprio servidor Nextcloud."
+
+#: src/preferences.rs:181
+msgid "Server URL"
+msgstr "URL do servidor"
+
+#: src/preferences.rs:185
+msgid "Username"
+msgstr "Nome de usuário"
+
+#: src/preferences.rs:188
+msgid "App password"
+msgstr "Senha de aplicativo"
+
+#: src/preferences.rs:217
+msgid "Test connection"
+msgstr "Testar conexão"
+
+#: src/preferences.rs:218
+msgid "Verify the URL and credentials reach your Nextcloud."
+msgstr "Verifique se a URL e as credenciais alcançam o seu Nextcloud."
+
+#: src/preferences.rs:222
+msgid "_Test"
+msgstr "_Testar"
+
+#: src/preferences.rs:267 src/preferences.rs:362
+msgid "Enter URL and username"
+msgstr "Informe a URL e o nome de usuário"
+
+#: src/preferences.rs:271
+msgid "Enter a password"
+msgstr "Informe uma senha"
+
+#: src/preferences.rs:275
+msgid "Keyring read failed"
+msgstr "Falha ao ler o chaveiro"
+
+#: src/preferences.rs:314
+msgid "Test failed"
+msgstr "Falha no teste"
+
+#: src/preferences.rs:328
+msgid "Save sync settings"
+msgstr "Salvar configurações de sincronização"
+
+#: src/preferences.rs:329
+msgid "Stores URL and username locally; password goes to your keyring."
+msgstr ""
+"Guarda a URL e o nome de usuário localmente; a senha vai para o seu chaveiro."
+
+#: src/preferences.rs:366
+msgid "URL must start with https://"
+msgstr "A URL deve começar com https://"
+
+#: src/preferences.rs:400
+msgid "Keyring write failed"
+msgstr "Falha ao gravar no chaveiro"
+
+#: src/preferences.rs:419
+msgid "Save failed"
+msgstr "Falha ao salvar"
+
+#: src/preferences.rs:428
+msgid "Sync settings saved"
+msgstr "Configurações de sincronização salvas"
+
+#: src/preferences.rs:437
+msgid "Danger Zone"
+msgstr "Zona de perigo"
+
+#: src/preferences.rs:438
+msgid "These actions cannot be undone."
+msgstr "Estas ações não podem ser desfeitas."
+
+#: src/preferences.rs:442
+msgid "Delete all sessions"
+msgstr "Excluir todas as sessões"
+
+#: src/preferences.rs:443
+msgid "Permanently remove every logged session"
+msgstr "Remove permanentemente cada sessão registrada"
+
+#: src/preferences.rs:447
+msgid "_Delete All"
+msgstr "_Excluir tudo"
+
+#: src/preferences.rs:517
 msgid "Export Session Log"
 msgstr "Exportar histórico de sessões"
 
-#: src/preferences.rs:862
+#: src/preferences.rs:521
 msgid "CSV files"
 msgstr "Arquivos CSV"
 
-#: src/preferences.rs:878
+#: src/preferences.rs:537
+#, rust-format
 msgid "Exported 1 session"
-msgstr "1 sessão exportada"
+msgid_plural "Exported {n} sessions"
+msgstr[0] "1 sessão exportada"
+msgstr[1] "{n} sessões exportadas"
 
-#: src/preferences.rs:879
-msgid "Exported {n} sessions"
-msgstr "{n} sessões exportadas"
-
-#: src/preferences.rs:882
+#: src/preferences.rs:541
+#, rust-format
 msgid "Export failed: {error}"
 msgstr "Falha na exportação: {error}"
 
-#: src/preferences.rs:896
+#: src/preferences.rs:555
 msgid "Import Session Log"
 msgstr "Importar histórico de sessões"
 
-#: src/preferences.rs:919
+#: src/preferences.rs:578
 msgid "Delete Every Session?"
 msgstr "Excluir todas as sessões?"
 
-#: src/preferences.rs:920
+#: src/preferences.rs:579
 msgid ""
 "This permanently removes every session in your log. Export a backup first if "
 "you want to keep any history."
@@ -458,313 +818,719 @@ msgstr ""
 "Isso remove permanentemente todas as sessões do seu histórico. Exporte um "
 "backup antes se quiser guardar alguma coisa."
 
-#: src/preferences.rs:925
+#: src/preferences.rs:584
 msgid "Delete All"
 msgstr "Excluir tudo"
 
-#: src/preferences.rs:936
+#: src/preferences.rs:595
+#, rust-format
 msgid "Deleted 1 session"
-msgstr "1 sessão excluída"
+msgid_plural "Deleted {n} sessions"
+msgstr[0] "1 sessão excluída"
+msgstr[1] "{n} sessões excluídas"
 
-#: src/preferences.rs:937
-msgid "Deleted {n} sessions"
-msgstr "{n} sessões excluídas"
-
-#: src/preferences.rs:943
+#: src/preferences.rs:602
+#, rust-format
 msgid "Delete failed: {error}"
 msgstr "Falha na exclusão: {error}"
 
-#: src/preferences.rs:983
+#: src/preferences.rs:642
+#, rust-format
 msgid "Imported 1 session"
-msgstr "1 sessão importada"
+msgid_plural "Imported {n} sessions"
+msgstr[0] "1 sessão importada"
+msgstr[1] "{n} sessões importadas"
 
-#: src/preferences.rs:984
-msgid "Imported {n} sessions"
-msgstr "{n} sessões importadas"
-
-#: src/preferences.rs:990
+#: src/preferences.rs:649
+#, rust-format
 msgid "Import failed: {error}"
 msgstr "Falha na importação: {error}"
 
-#: src/preferences.rs:1018
-msgid "No file selected"
-msgstr "Nenhum arquivo selecionado"
+#: src/preset_subtitle.rs:28
+#, rust-format
+msgid "1 min"
+msgid_plural "{n} min"
+msgstr[0] "1 min"
+msgstr[1] "{n} min"
 
-#: src/stats/imp.rs:194
-msgid "Goal reached ✓ · {duration} this week"
-msgstr "Meta atingida ✓ · {duration} nesta semana"
+#: src/preset_subtitle.rs:33 src/preset_subtitle.rs:46
+msgid "Stopwatch"
+msgstr "Cronômetro"
 
-#: src/stats/imp.rs:197
-msgid "{duration} to go this week"
-msgstr "Faltam {duration} nesta semana"
+#: src/preset_subtitle.rs:58 src/preset_subtitle.rs:62
+#, rust-format
+msgid "1 bell"
+msgid_plural "{n} bells"
+msgstr[0] "{n} sino"
+msgstr[1] "{n} sinos"
+
+#: src/presets.rs:65
+msgid "Save Preset"
+msgstr "Salvar predefinição"
+
+#: src/presets.rs:66 data/ui/timer_view.blp:165
+msgid "Manage Presets"
+msgstr "Gerenciar"
+
+#: src/presets.rs:161
+msgid "Create new preset…"
+msgstr "Criar nova predefinição…"
+
+#: src/presets.rs:351
+msgid "Remove from home list"
+msgstr "Remover da lista inicial"
+
+#: src/presets.rs:352
+msgid "Pin to home list"
+msgstr "Fixar na lista inicial"
+
+#: src/presets.rs:412
+msgid "Delete preset"
+msgstr "Excluir predefinição"
+
+#: src/presets.rs:435
+msgid "Preset name"
+msgstr "Nome da predefinição"
+
+#: src/presets.rs:440
+msgid "Create Preset"
+msgstr "Criar predefinição"
+
+#: src/presets.rs:502
+msgid "Rename Preset"
+msgstr "Renomear predefinição"
+
+#: src/presets.rs:566
+#, rust-format
+msgid "'{name}' will be removed from this device and any synced peers."
+msgstr ""
+"'{name}' será removida deste dispositivo e de todos os dispositivos "
+"sincronizados."
+
+#: src/presets.rs:569
+msgid "Delete Preset?"
+msgstr "Excluir predefinição?"
+
+#: src/presets.rs:633
+#, rust-format
+msgid "Replace '{name}'s saved configuration with the current settings?"
+msgstr ""
+"Substituir a configuração salva de '{name}' pelas configurações atuais?"
+
+#: src/presets.rs:636
+msgid "Override Preset?"
+msgstr "Sobrescrever predefinição?"
+
+#: src/presets.rs:642
+msgid "Override"
+msgstr "Sobrescrever"
+
+#: src/recovery_dialog.rs:32
+msgid "Remote data appears wiped"
+msgstr "Os dados remotos parecem apagados"
+
+#: src/recovery_dialog.rs:34
+msgid ""
+"The Nextcloud folder no longer contains any of the batches this device "
+"previously synced. Has the Meditate folder been deleted on the server?\n"
+"\n"
+"Choose how to recover:"
+msgstr ""
+"A pasta do Nextcloud não contém mais nenhum dos lotes que este dispositivo "
+"sincronizou. A pasta Meditate foi excluída do servidor?\n"
+"\n"
+"Escolha como recuperar:"
+
+#: src/recovery_dialog.rs:43
+msgid "Wipe Local"
+msgstr "Apagar local"
+
+#: src/recovery_dialog.rs:44
+msgid "Push My Data"
+msgstr "Enviar meus dados"
+
+#: src/recovery_dialog.rs:93
+msgid "Wipe local data?"
+msgstr "Apagar dados locais?"
+
+#: src/recovery_dialog.rs:95
+msgid ""
+"This permanently deletes every session, label, and event stored on this "
+"device. Your Nextcloud account, sync settings, and app preferences are "
+"kept.\n"
+"\n"
+"This cannot be undone."
+msgstr ""
+"Exclui permanentemente todas as sessões, rótulos e eventos deste "
+"dispositivo. Sua conta Nextcloud, as configurações de sincronização e as "
+"preferências são mantidas.\n"
+"\n"
+"Isso não pode ser desfeito."
+
+#: src/recovery_dialog.rs:104
+msgid "Wipe Local Data"
+msgstr "Apagar dados locais"
+
+#: src/sound.rs:216
+msgid "Couldn't play bell sound"
+msgstr "Não foi possível tocar o som do sino"
+
+#: src/sounds.rs:60
+msgid "Choose Bell Sound"
+msgstr "Escolher som do sino"
+
+#: src/sounds.rs:133
+msgid "Choose your own…"
+msgstr "Escolher o seu…"
+
+#: src/sounds.rs:174
+msgid "No sounds for this category yet"
+msgstr "Ainda não há sons nesta categoria"
+
+#: src/sounds.rs:175
+msgid "Tap \"Choose your own…\" above to import one"
+msgstr "Toque em \"Escolher o seu…\" acima para importar um"
+
+#: src/sounds.rs:216 src/vibrations.rs:223
+msgid "Bundled"
+msgstr "Incluído"
+
+#: src/sounds.rs:218 src/vibrations.rs:225
+msgid "Custom"
+msgstr "Personalizado"
+
+#: src/sounds.rs:271 src/sounds.rs:289 src/sounds.rs:315
+msgid "Preview sound"
+msgstr "Ouvir som"
+
+#: src/sounds.rs:355
+msgid "Delete sound"
+msgstr "Excluir som"
+
+#: src/sounds.rs:383
+msgid "Choose Sound File"
+msgstr "Escolher arquivo de som"
+
+#: src/sounds.rs:404
+msgid "File is larger than 10 MB"
+msgstr "O arquivo tem mais de 10 MB"
+
+#: src/sounds.rs:434
+msgid "Audio files"
+msgstr "Arquivos de áudio"
+
+#: src/sounds.rs:478
+msgid "This name is already in use"
+msgstr "Este nome já está em uso"
+
+#: src/sounds.rs:517
+msgid "Import Sound"
+msgstr "Importar som"
+
+#: src/sounds.rs:642
+msgid "import worker died"
+msgstr "o processo de importação parou"
+
+#: src/sounds.rs:662
+msgid "Import failed:"
+msgstr "Falha na importação:"
+
+#: src/sounds.rs:901
+msgid "Rename Sound"
+msgstr "Renomear som"
+
+#: src/sounds.rs:967
+msgid "Delete Sound?"
+msgstr "Excluir som?"
+
+#: src/sounds.rs:968
+msgid "Bells that reference this sound will lose their audio."
+msgstr "Os sinos que usam este som perderão o áudio."
+
+#: src/stats/imp.rs:177
+#, rust-format
+msgid "Goal reached ✓ · {duration} today"
+msgstr "Meta alcançada ✓ · {duration} hoje"
+
+#: src/stats/imp.rs:179
+#, rust-format
+msgid "{duration} to go today"
+msgstr "Faltam {duration} hoje"
 
 #. Accessible name for the Cairo-drawn ring — no intrinsic text for
 #. screen readers to fall back on.
-#: src/stats/imp.rs:204
-msgid "Weekly goal: {pct}% — {done} of {goal}"
-msgstr "Meta semanal: {pct} % — {done} de {goal}"
+#: src/stats/imp.rs:186
+#, rust-format
+msgid "Daily goal: {pct}% — {done} of {goal}"
+msgstr "Meta diária: {pct}% — {done} de {goal}"
 
-#: src/stats/imp.rs:282
+#: src/stats/imp.rs:248
+#, rust-format
 msgid "{date} — goal exceeded, {mins} minutes"
 msgstr "{date} — meta superada, {mins} minutos"
 
-#: src/stats/imp.rs:286
+#: src/stats/imp.rs:252
+#, rust-format
 msgid "{date} — {mins} minutes"
 msgstr "{date} — {mins} minutos"
 
-#: src/stats/imp.rs:290
+#: src/stats/imp.rs:256
+#, rust-format
 msgid "{date} — no sessions"
 msgstr "{date} — sem sessões"
 
-#: src/stats/imp.rs:339
-msgid "{n} days — new record"
-msgstr "{n} dias — novo recorde"
+#: src/stats/imp.rs:327
+#, rust-format
+msgid "1 day — new record"
+msgid_plural "{n} days — new record"
+msgstr[0] "1 dia — novo recorde"
+msgstr[1] "{n} dias — novo recorde"
 
-#: src/stats/imp.rs:342
-msgid "{n} days · best was {best}"
-msgstr "{n} dias · recorde anterior {best}"
+#: src/stats/imp.rs:331
+#, rust-format
+msgid "1 day · best was {best}"
+msgid_plural "{n} days · best was {best}"
+msgstr[0] "1 dia · recorde: {best}"
+msgstr[1] "{n} dias · recorde: {best}"
 
-#: src/stats/imp.rs:346
+#: src/stats/imp.rs:338
 msgid "1 day · keep going"
 msgstr "1 dia · continue assim"
 
-#: src/stats/imp.rs:349
+#: src/stats/imp.rs:340
 msgid "Current streak"
 msgstr "Sequência atual"
 
-#: src/stats/imp.rs:358
-#, c-format
+#: src/stats/imp.rs:344
+#, rust-format
 msgid "{pct}% up vs last week ({this} vs {last})"
 msgstr "{pct} % acima da semana passada ({this} vs {last})"
 
-#: src/stats/imp.rs:360
-#, c-format
+#: src/stats/imp.rs:346
+#, rust-format
 msgid "{pct}% down vs last week ({this} vs {last})"
 msgstr "{pct} % abaixo da semana passada ({this} vs {last})"
 
-#: src/stats/imp.rs:366
+#: src/stats/imp.rs:352
 msgid "This week's practice"
 msgstr "Prática desta semana"
 
-#: src/stats/imp.rs:374
+#: src/stats/imp.rs:356
 msgid "Practising more"
 msgstr "Mais prática"
 
-#: src/stats/imp.rs:376
+#: src/stats/imp.rs:358
 msgid "Practising less"
 msgstr "Menos prática"
 
-#: src/stats/imp.rs:378
+#: src/stats/imp.rs:360
+#, rust-format
 msgid "{pct}% vs last month ({this} vs {last})"
 msgstr "{pct} % em relação ao mês passado ({this} vs {last})"
 
-#: src/stats/imp.rs:391
-#, c-format
+#: src/stats/imp.rs:368
+#, rust-format
 msgid "{pct}% of sessions are in the morning"
 msgstr "{pct} % das sessões são pela manhã"
 
-#: src/stats/imp.rs:393
-#, c-format
-msgid "{pct}% of sessions are in the evening"
-msgstr "{pct} % das sessões são à noite"
-
-#: src/stats/imp.rs:395
-#, c-format
+#: src/stats/imp.rs:369
+#, rust-format
 msgid "{pct}% of sessions are in the afternoon"
 msgstr "{pct} % das sessões são à tarde"
 
-#: src/stats/imp.rs:399
+#: src/stats/imp.rs:370
+#, rust-format
+msgid "{pct}% of sessions are in the evening"
+msgstr "{pct} % das sessões são à noite"
+
+#: src/stats/imp.rs:372
 msgid "Preferred time"
 msgstr "Horário preferido"
 
-#: src/stats/imp.rs:405
+#: src/stats/imp.rs:375
+#, rust-format
 msgid "About {duration}"
 msgstr "Cerca de {duration}"
 
-#: src/stats/imp.rs:407
+#: src/stats/imp.rs:377
 msgid "Typical session"
 msgstr "Sessão típica"
 
-#: src/stats/imp.rs:416
+#: src/stats/imp.rs:384
+#, rust-format
 msgid "{duration} on {date}"
 msgstr "{duration} em {date}"
 
-#: src/stats/imp.rs:421
+#: src/stats/imp.rs:389
 msgid "Longest session"
 msgstr "Sessão mais longa"
 
-#: src/stats/imp.rs:429
+#: src/stats/imp.rs:393
+#, rust-format
 msgid "1 session to your {target}th"
-msgstr "Falta 1 sessão para a {target}ª"
+msgid_plural "{n} sessions to your {target}th"
+msgstr[0] "1 sessão até a {target}ª"
+msgstr[1] "{n} sessões até a {target}ª"
 
-#: src/stats/imp.rs:432
-msgid "{n} sessions to your {target}th"
-msgstr "{n} sessões para a {target}ª"
-
-#: src/stats/imp.rs:436
+#: src/stats/imp.rs:399
 msgid "Next milestone"
 msgstr "Próximo marco"
 
-#: src/stats/imp.rs:443
+#: src/stats/imp.rs:402
+#, rust-format
 msgid "{duration} average over last 7 days"
 msgstr "{duration} em média nos últimos 7 dias"
 
-#: src/stats/imp.rs:445
+#: src/stats/imp.rs:404
 msgid "Daily rhythm"
 msgstr "Ritmo diário"
 
-#: src/stats/imp.rs:452
+#: src/stats/imp.rs:407
 msgid "No sessions yet"
 msgstr "Nenhuma sessão ainda"
 
-#: src/stats/imp.rs:453
+#: src/stats/imp.rs:408
 msgid "Complete a meditation to start seeing insights here"
 msgstr "Conclua uma meditação para ver análises aqui"
 
-#: src/stats/imp.rs:638
-#, fuzzy
+#: src/stats/imp.rs:476 data/ui/stats_view.blp:182
+msgid "Minutes / Day"
+msgstr "Minutos / dia"
+
+#: src/stats/imp.rs:477
+msgid "Minutes / Week"
+msgstr "Minutos / semana"
+
+#: src/stats/imp.rs:478
+msgid "Minutes / Month"
+msgstr "Minutos / mês"
+
+#: src/stats/imp.rs:592
+#, rust-format
 msgid "{duration} · 1 session"
-msgstr "{date} — sem sessões"
+msgstr "{duration} · 1 sessão"
 
-#: src/stats/imp.rs:641
-#, fuzzy
+#: src/stats/imp.rs:595
+#, rust-format
 msgid "{duration} · {count} sessions"
-msgstr "{date} — sem sessões"
+msgstr "{duration} · {count} sessões"
 
-#: src/timer/imp.rs:404
+#: src/timer/imp.rs:1098
+msgid "Meditation session running"
+msgstr "Sessão de meditação em andamento"
+
+#: src/timer/imp.rs:1834
 msgid "Paused"
 msgstr "Pausado"
 
-#: src/timer/imp.rs:428 data/ui/timer_view.blp:47
+#: src/timer/imp.rs:1861 data/ui/timer_view.blp:47
 msgid "Hours · Minutes"
 msgstr "Horas · Minutos"
 
-#: src/timer/imp.rs:662
-msgid "Discard Session?"
-msgstr "Descartar sessão?"
+#: src/timer/imp.rs:2055
+msgid "Couldn't start playback"
+msgstr "Não foi possível iniciar a reprodução"
 
-#: src/timer/imp.rs:663
-msgid "Your note will be lost."
-msgstr "Sua anotação será perdida."
-
-#: src/timer/imp.rs:672 data/ui/timer_view.blp:329
-msgid "Discard"
-msgstr "Descartar"
-
-#: src/timer/imp.rs:811
-msgid "Start your streak today"
-msgstr "Comece sua sequência hoje"
-
-#: src/timer/imp.rs:812
-msgid "1 day streak"
-msgstr "Sequência de 1 dia"
-
-#: src/timer/imp.rs:813
-msgid "{n} days streak"
-msgstr "Sequência de {n} dias"
-
-#: src/timer/imp.rs:910
-msgid "Custom…"
-msgstr "Personalizado…"
-
-#: src/timer/imp.rs:911
-msgid "Set a Custom Time"
-msgstr "Definir tempo personalizado"
-
-#: src/timer/imp.rs:999
-msgid "Custom Time"
-msgstr "Tempo personalizado"
-
-#: src/timer/imp.rs:1000
-msgid "Hours : Minutes"
-msgstr "Horas : Minutos"
-
-#: src/timer/imp.rs:1006
-msgid "Set"
-msgstr "Definir"
-
-#. +2 for "+ New label" and "None"
-#. default = "None"
-#. default: "None"
-#: src/timer/imp.rs:1039 src/timer/imp.rs:1066
-msgid "+ New Label…"
-msgstr "+ Novo rótulo…"
-
-#: src/timer/imp.rs:1222
-msgid "Inhale"
-msgstr ""
-
-#: src/timer/imp.rs:1223
-msgid "Hold (full)"
-msgstr ""
-
-#: src/timer/imp.rs:1224
-msgid "Exhale"
-msgstr ""
-
-#: src/timer/imp.rs:1225
-msgid "Hold (empty)"
-msgstr ""
-
-#: src/timer/imp.rs:1287
-msgid "Decrease"
-msgstr ""
-
-#: src/timer/imp.rs:1298
-msgid "Increase"
-msgstr ""
-
-#: src/timer/imp.rs:1478
-msgid "Box-breathing"
-msgstr ""
-
-#: src/timer/imp.rs:1538
-msgid "Label name"
-msgstr "Nome do rótulo"
-
-#: src/timer/imp.rs:1542
-msgid "New Label"
-msgstr "Novo rótulo"
-
-#: src/timer/imp.rs:1547
-msgid "Create"
-msgstr "Criar"
-
-#: src/window/imp.rs:221
-msgid "Box Breathing"
-msgstr ""
-
-#: src/window/imp.rs:343
-#, fuzzy
+#: src/timer/imp.rs:2211 src/window/imp.rs:391
 msgid "Pause"
 msgstr "Pausado"
 
-#: src/window/imp.rs:345
-#, fuzzy
+#: src/timer/imp.rs:2212 src/window/imp.rs:393
 msgid "Pause Timer"
+msgstr "Pausar temporizador"
+
+#: src/timer/imp.rs:2254 data/ui/timer_view.blp:110
+msgid "Resume"
+msgstr "Retomar"
+
+#: src/timer/imp.rs:2255
+msgid "Resume Timer"
+msgstr "Retomar temporizador"
+
+#: src/timer/imp.rs:2443
+msgid "Couldn't save session — storage error"
+msgstr "Não foi possível salvar a sessão — erro de armazenamento"
+
+#: src/timer/imp.rs:2461
+msgid "Couldn't save session — storage unavailable"
+msgstr "Não foi possível salvar a sessão — armazenamento indisponível"
+
+#: src/timer/imp.rs:2489
+msgid "Discard Session?"
+msgstr "Descartar sessão?"
+
+#: src/timer/imp.rs:2490
+msgid "Your note will be lost."
+msgstr "Sua anotação será perdida."
+
+#: src/timer/imp.rs:2499 data/ui/timer_view.blp:825
+msgid "Discard"
+msgstr "Descartar"
+
+#: src/timer/imp.rs:2794
+msgid "Finish"
+msgstr "Concluir"
+
+#: src/timer/imp.rs:2796
+msgid "End at the planned duration"
+msgstr "Terminar na duração planejada"
+
+#: src/timer/imp.rs:3145
+msgid "Start your streak today"
+msgstr "Comece sua sequência hoje"
+
+#: src/timer/imp.rs:3146 src/timer/imp.rs:3148
+#, rust-format
+msgid "1 day streak"
+msgid_plural "{n} day streak"
+msgstr[0] "Sequência de {n} dia"
+msgstr[1] "Sequência de {n} dias"
+
+#: src/timer/imp.rs:3203
+msgid "Tap Save Settings to create your first preset"
+msgstr "Toque em Salvar para criar sua primeira predefinição"
+
+#: src/timer/imp.rs:3267
+msgid "No starred files"
+msgstr "Nenhum arquivo favorito"
+
+#: src/timer/imp.rs:3269
+msgid "Tap Open File then Import File, or star a file in Manage Files"
+msgstr ""
+"Toque em Abrir arquivo e depois em Importar arquivo, ou favorite um arquivo "
+"em Gerenciar arquivos"
+
+#: src/timer/imp.rs:3333 data/ui/timer_view.blp:252
+msgid "No file selected"
+msgstr "Nenhum arquivo selecionado"
+
+#: src/timer/imp.rs:3335 data/ui/timer_view.blp:253
+msgid "Tap Open File or pick from list below"
+msgstr "Toque em Abrir arquivo ou escolha na lista"
+
+#: src/timer/imp.rs:3343
+msgid "Open New File"
+msgstr "Abrir novo arquivo"
+
+#: src/timer/imp.rs:3345 data/ui/timer_view.blp:269
+msgid "Open File"
+msgstr "Abrir arquivo"
+
+#: src/timer/imp.rs:3500
+msgid "Please wait until fully synced — not all bell sounds have arrived"
+msgstr "Aguarde a sincronização completa — nem todos os sons de sino chegaram"
+
+#: src/timer/imp.rs:3524
+#, rust-format
+msgid "'{name}' applied"
+msgstr "'{name}' aplicada"
+
+#: src/timer/imp.rs:3652
+msgid "Custom Time"
 msgstr "Tempo personalizado"
 
-#: src/window/imp.rs:348 data/ui/timer_view.blp:117
+#: src/timer/imp.rs:3653
+msgid "Hours : Minutes"
+msgstr "Horas : Minutos"
+
+#: src/timer/imp.rs:3659
+msgid "Set"
+msgstr "Definir"
+
+#: src/timer/imp.rs:3714 src/timer/imp.rs:3741
+msgid "(none — pick one)"
+msgstr "(nenhum — escolha um)"
+
+#: src/timer/imp.rs:3716 src/timer/imp.rs:3743
+msgid "Off"
+msgstr "Desativado"
+
+#. ── Helpers ───────────────────────────────────────────────────────────────────
+#. / Subtitle text for the "Manage Bells" row reflecting how many of the
+#. / "Add MM:SS ?" running-page button label. `{time}` is the
+#. / placeholder for the formatted overtime duration; translators
+#. / can position it anywhere in the localised string (German
+#. / "Hinzufügen {time} ?", Japanese "{time} を追加 ?", etc.). Core
+#. / returns the formatted MM:SS via `format_time`; the shell owns
+#. / word order via this gettext template.
+#: src/timer/imp.rs:4066
+#, rust-format
+msgid "Add {time} ?"
+msgstr "Adicionar {time}?"
+
+#: src/timer/imp.rs:4076
+msgid "None enabled"
+msgstr "Nenhum ativo"
+
+#: src/timer/imp.rs:4077 src/timer/imp.rs:4078
+#, rust-format
+msgid "1 enabled"
+msgid_plural "{n} enabled"
+msgstr[0] "{n} ativo"
+msgstr[1] "{n} ativos"
+
+#: src/timer/imp.rs:4102 data/ui/timer_view.blp:587
+msgid "Inhale"
+msgstr "Inspirar"
+
+#: src/timer/imp.rs:4103
+msgid "Hold (full)"
+msgstr "Segurar (cheio)"
+
+#: src/timer/imp.rs:4104 data/ui/timer_view.blp:665
+msgid "Exhale"
+msgstr "Expirar"
+
+#: src/timer/imp.rs:4105
+msgid "Hold (empty)"
+msgstr "Segurar (vazio)"
+
+#: src/timer/imp.rs:4167
+msgid "Decrease"
+msgstr "Diminuir"
+
+#: src/timer/imp.rs:4178
+msgid "Increase"
+msgstr "Aumentar"
+
+#: src/vibration_editor.rs:130 data/ui/timer_view.blp:830
+msgid "Save"
+msgstr "Salvar"
+
+#: src/vibration_editor.rs:154
+msgid "Name"
+msgstr "Nome"
+
+#: src/vibration_editor.rs:167
+msgid "Shape"
+msgstr "Forma"
+
+#: src/vibration_editor.rs:172 data/ui/timer_view.blp:471
+msgid "Seconds"
+msgstr "Segundos"
+
+#: src/vibration_editor.rs:185
+msgid "Points"
+msgstr "Pontos"
+
+#: src/vibration_editor.rs:200 src/vibration_editor.rs:424
+msgid "Min 100 ms between points"
+msgstr "Mín. 100 ms entre pontos"
+
+#: src/vibration_editor.rs:258
+msgid "Bar"
+msgstr "Barras"
+
+#: src/vibration_editor.rs:264 data/ui/stats_view.blp:198
+msgid "Line"
+msgstr "Linha"
+
+#: src/vibration_editor.rs:296
+msgid "This device doesn't support vibration. Patterns sync to phones."
+msgstr ""
+"Este dispositivo não suporta vibração. Os padrões são sincronizados com os "
+"celulares."
+
+#: src/vibration_editor.rs:320 src/vibrations.rs:360
+msgid "Edit pattern"
+msgstr "Editar padrão"
+
+#: src/vibration_editor.rs:322
+msgid "New pattern"
+msgstr "Novo padrão"
+
+#: src/vibrations.rs:51
+msgid "Choose Vibration Pattern"
+msgstr "Escolher padrão de vibração"
+
+#: src/vibrations.rs:189
+msgid "Create custom pattern…"
+msgstr "Criar padrão personalizado…"
+
+#: src/vibrations.rs:287 src/vibrations.rs:303 src/vibrations.rs:338
+msgid "Preview pattern"
+msgstr "Prévia do padrão"
+
+#: src/vibrations.rs:447
+msgid "Delete pattern"
+msgstr "Excluir padrão"
+
+#: src/vibrations.rs:552
+msgid "Rename Pattern"
+msgstr "Renomear padrão"
+
+#: src/vibrations.rs:640
+msgid "Delete Pattern?"
+msgstr "Excluir padrão?"
+
+#: src/vibrations.rs:642
+msgid ""
+"Bells and Box Breath phases that reference this pattern will lose their "
+"vibration."
+msgstr ""
+"Os sinos e as fases da respiração quadrada que usam este padrão perderão a "
+"vibração."
+
+#: src/window/imp.rs:272
+msgid "Box Breathing"
+msgstr "Respiração quadrada"
+
+#: src/window/imp.rs:396 data/ui/timer_view.blp:116
 msgid "Stop"
 msgstr "Parar"
 
-#: src/window/imp.rs:350
-#, fuzzy
+#: src/window/imp.rs:398
 msgid "Stop and Save Session"
-msgstr "Iniciar sessão"
+msgstr "Parar e salvar sessão"
 
-#: src/window/imp.rs:418
-#, fuzzy
+#: src/window/imp.rs:470
 msgid "Breathe in"
-msgstr "Criar"
+msgstr "Inspire"
 
-#: src/window/imp.rs:419 src/window/imp.rs:421
+#: src/window/imp.rs:471
 msgid "Hold"
-msgstr ""
+msgstr "Segure"
 
-#: src/window/imp.rs:420
+#: src/window/imp.rs:472
 msgid "Breathe out"
-msgstr ""
+msgstr "Expire"
+
+#: src/window/imp.rs:667
+msgid "Syncing with Nextcloud…"
+msgstr "Sincronizando com o Nextcloud…"
+
+#: src/window/imp.rs:677
+msgid "Last sync failed — click to retry"
+msgstr "A última sincronização falhou — clique para tentar de novo"
+
+#: src/window/imp.rs:693
+msgid "Sync configured (waiting for first run)"
+msgstr "Sincronização configurada (aguardando a primeira execução)"
+
+#: src/window/imp.rs:723
+msgid "Synced just now"
+msgstr "Sincronizado agora mesmo"
+
+#: src/window/imp.rs:725
+#, rust-format
+msgid "Synced 1 minute ago"
+msgid_plural "Synced {n} minutes ago"
+msgstr[0] "Sincronizado há 1 minuto"
+msgstr[1] "Sincronizado há {n} minutos"
+
+#: src/window/imp.rs:728
+#, rust-format
+msgid "Synced 1 hour ago"
+msgid_plural "Synced {n} hours ago"
+msgstr[0] "Sincronizado há 1 hora"
+msgstr[1] "Sincronizado há {n} horas"
+
+#: src/window/imp.rs:731
+#, rust-format
+msgid "Synced 1 day ago"
+msgid_plural "Synced {n} days ago"
+msgstr[0] "Sincronizado há 1 dia"
+msgstr[1] "Sincronizado há {n} dias"
 
 #: data/ui/log_view.blp:14
 msgid "No Sessions Yet"
@@ -803,11 +1569,11 @@ msgstr "Mais"
 msgid "Insights"
 msgstr "Análises"
 
-#: data/ui/stats_view.blp:150
+#: data/ui/stats_view.blp:152
 msgid "Week"
 msgstr "Semana"
 
-#: data/ui/stats_view.blp:155
+#: data/ui/stats_view.blp:156
 msgid "Month"
 msgstr "Mês"
 
@@ -815,123 +1581,187 @@ msgstr "Mês"
 msgid "3 Months"
 msgstr "3 meses"
 
-#: data/ui/stats_view.blp:165
+#: data/ui/stats_view.blp:164
 msgid "Year"
 msgstr "Ano"
 
-#: data/ui/stats_view.blp:185
-msgid "Minutes / Day"
-msgstr "Minutos / dia"
-
-#: data/ui/stats_view.blp:196
+#: data/ui/stats_view.blp:194
 msgid "Bars"
 msgstr "Barras"
 
-#: data/ui/stats_view.blp:201
-msgid "Line"
-msgstr "Linha"
-
-#: data/ui/stats_view.blp:238
+#: data/ui/stats_view.blp:233
 msgid "Streak"
 msgstr "Sequência"
 
-#: data/ui/stats_view.blp:259
+#: data/ui/stats_view.blp:254
 msgid "Total"
 msgstr "Total"
 
-#: data/ui/stats_view.blp:280
+#: data/ui/stats_view.blp:275
 msgid "Sessions"
 msgstr "Sessões"
 
-#: data/ui/stats_view.blp:296
-#, fuzzy
+#: data/ui/stats_view.blp:291
 msgid "By label"
-msgstr "Novo rótulo"
+msgstr "Por rótulo"
 
-#: data/ui/timer_view.blp:66
-msgid "Countdown"
-msgstr "Contagem regressiva"
-
-#: data/ui/timer_view.blp:73
-msgid "Stopwatch"
-msgstr "Cronômetro"
-
-#: data/ui/timer_view.blp:80
-msgid "Box Breath"
-msgstr ""
-
-#: data/ui/timer_view.blp:101
-msgid "Start Session"
-msgstr "Iniciar sessão"
-
-#: data/ui/timer_view.blp:111
-msgid "Resume"
-msgstr "Retomar"
-
-#: data/ui/timer_view.blp:137
-msgid "Quick Presets"
-msgstr "Predefinições"
-
-#: data/ui/timer_view.blp:178
-msgid "Pattern"
-msgstr ""
-
-#: data/ui/timer_view.blp:207
-msgid "Breath Phases"
-msgstr ""
-
-#: data/ui/timer_view.blp:235
-#, fuzzy
-msgid "Session duration"
-msgstr "Sessão excluída"
-
-#: data/ui/timer_view.blp:248
-msgid "Session"
-msgstr "Sessão"
-
-#: data/ui/timer_view.blp:255
-msgid "Completion sound"
-msgstr "Som final"
-
-#: data/ui/window.blp:20 data/ui/window.blp:33
-#: data/io.github.janekbt.Meditate.desktop.in:2
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:7
-msgid "Meditate"
-msgstr "Meditate"
-
-#: data/ui/window.blp:42
-msgid "Main Menu"
-msgstr "Menu principal"
-
-#: data/ui/window.blp:51
-msgid "Filter Sessions"
-msgstr "Filtrar sessões"
-
-#: data/ui/window.blp:65
-msgid "Has Notes"
-msgstr "Com anotações"
-
-#: data/ui/window.blp:87 data/ui/shortcuts.ui:10
+#: data/ui/timer_view.blp:68 data/ui/window.blp:135 data/ui/shortcuts.ui:10
 msgid "Timer"
 msgstr "Temporizador"
 
-#: data/ui/window.blp:95
+#: data/ui/timer_view.blp:73
+msgid "Guided"
+msgstr "Guiada"
+
+#: data/ui/timer_view.blp:78
+msgid "Box Breath"
+msgstr "Resp. quadrada"
+
+#: data/ui/timer_view.blp:100
+msgid "Start Session"
+msgstr "Iniciar sessão"
+
+#: data/ui/timer_view.blp:148
+msgid "Presets"
+msgstr "Predefinições"
+
+#: data/ui/timer_view.blp:160
+msgid "Save Settings"
+msgstr "Salvar"
+
+#: data/ui/timer_view.blp:202
+msgid "Breath Phases"
+msgstr "Fases da respiração"
+
+#: data/ui/timer_view.blp:249
+msgid "Current file"
+msgstr "Arquivo atual"
+
+#: data/ui/timer_view.blp:274
+msgid "Import File"
+msgstr "Importar arquivo"
+
+#: data/ui/timer_view.blp:283
+msgid "Starred Files"
+msgstr "Arquivos favoritos"
+
+#: data/ui/timer_view.blp:300
+msgid "Session"
+msgstr "Sessão"
+
+#: data/ui/timer_view.blp:312
+msgid "Cues"
+msgstr "Sinais"
+
+#: data/ui/timer_view.blp:330
+msgid "Stopwatch Mode"
+msgstr "Modo cronômetro"
+
+#: data/ui/timer_view.blp:331
+msgid "Count up from zero"
+msgstr "Contar a partir do zero"
+
+#: data/ui/timer_view.blp:383
+msgid "Keep Screen Awake"
+msgstr "Manter a tela ligada"
+
+#: data/ui/timer_view.blp:384
+msgid "Prevent display sleep during a session"
+msgstr "Impede que a tela desligue durante uma sessão"
+
+#: data/ui/timer_view.blp:402
+msgid "Bells"
+msgstr "Sinos"
+
+#: data/ui/timer_view.blp:414
+msgid "Starting Bell"
+msgstr "Sino inicial"
+
+#: data/ui/timer_view.blp:415
+msgid "Play a signal when the session begins"
+msgstr "Emitir um sinal quando a sessão começar"
+
+#: data/ui/timer_view.blp:435 data/ui/timer_view.blp:528
+msgid "Bell Sound"
+msgstr "Som do sino"
+
+#: data/ui/timer_view.blp:464
+msgid "Preparation Time"
+msgstr "Tempo de preparação"
+
+#: data/ui/timer_view.blp:465
+msgid "Silence before the starting bell"
+msgstr "Silêncio antes do sino inicial"
+
+#: data/ui/timer_view.blp:484
+msgid "Ring during the session"
+msgstr "Tocam durante a sessão"
+
+#: data/ui/timer_view.blp:489
+msgid "Manage Bells"
+msgstr "Gerenciar sinos"
+
+#: data/ui/timer_view.blp:507
+msgid "End Bell"
+msgstr "Sino final"
+
+#: data/ui/timer_view.blp:508
+msgid "Play a signal when the session ends"
+msgstr "Emitir um sinal quando a sessão terminar"
+
+#: data/ui/timer_view.blp:578
+msgid "Box Breath cues"
+msgstr "Sinais da respiração quadrada"
+
+#: data/ui/timer_view.blp:581
+msgid "Cues during phases"
+msgstr "Sinais durante as fases"
+
+#: data/ui/timer_view.blp:582
+msgid "Different cue per phase to feel the cycle"
+msgstr "Um sinal diferente por fase para sentir o ciclo"
+
+#: data/ui/timer_view.blp:626
+msgid "Hold (in)"
+msgstr "Segurar (cheio)"
+
+#: data/ui/timer_view.blp:704
+msgid "Hold (out)"
+msgstr "Segurar (vazio)"
+
+#: data/ui/window.blp:41
+msgid "Main Menu"
+msgstr "Menu principal"
+
+#: data/ui/window.blp:59
+msgid "Nextcloud sync status"
+msgstr "Status da sincronização Nextcloud"
+
+#: data/ui/window.blp:89
+msgid "Filter Sessions"
+msgstr "Filtrar sessões"
+
+#: data/ui/window.blp:103
+msgid "Has Notes"
+msgstr "Com anotações"
+
+#: data/ui/window.blp:143
 msgid "Stats"
 msgstr "Estatísticas"
 
-#: data/ui/window.blp:103
+#: data/ui/window.blp:151
 msgid "Log"
 msgstr "Histórico"
 
-#: data/ui/window.blp:124
+#: data/ui/window.blp:172
 msgid "_Preferences"
 msgstr "_Preferências"
 
-#: data/ui/window.blp:129
+#: data/ui/window.blp:177
 msgid "_Keyboard Shortcuts"
 msgstr "Atalhos de _teclado"
 
-#: data/ui/window.blp:134
+#: data/ui/window.blp:182
 msgid "_About Meditate"
 msgstr "_Sobre o Meditate"
 
@@ -951,10 +1781,6 @@ msgstr "Atalhos de teclado"
 msgid "Close Window"
 msgstr "Fechar janela"
 
-#: data/ui/shortcuts.ui:42
-msgid "Quit"
-msgstr "Sair"
-
 #: data/io.github.janekbt.Meditate.desktop.in:3
 msgid "A simple meditation timer and log"
 msgstr "Um temporizador e histórico de meditação simples"
@@ -973,6 +1799,9 @@ msgid ""
 "and stopwatch timer, a session log, and statistics to help you build a "
 "consistent practice."
 msgstr ""
+"O Meditate é um companheiro de meditação simples para o GNOME. Ele oferece "
+"um temporizador com contagem regressiva e cronômetro, um histórico de "
+"sessões e estatísticas para ajudar você a manter uma prática constante."
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:17
 msgid "Countdown and stopwatch timer modes"
@@ -1010,99 +1839,366 @@ msgstr "Histórico de sessões agrupado por data, com rótulos e notas"
 msgid "janekbt"
 msgstr "janekbt"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:107
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:93
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:98
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:103
+msgid ""
+"Packaging only: the Android build now produces identical output on any "
+"machine, so F-Droid can verify it against this source. Nothing changes in "
+"the app itself."
+msgstr ""
+"Apenas empacotamento: a compilação para Android agora gera o mesmo resultado "
+"em qualquer máquina, para que o F-Droid possa verificá-la com este código-"
+"fonte. Nada muda no aplicativo em si."
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:108
+msgid ""
+"Fixes for entering a session length by keyboard on Android, and a packaging "
+"change so F-Droid can verify the app against its source."
+msgstr ""
+"Correções para digitar a duração da sessão pelo teclado no Android e uma "
+"mudança de empacotamento para que o F-Droid possa verificar o aplicativo com "
+"seu código-fonte."
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:110
+msgid ""
+"Android: typing a duration and tapping Set now keeps what you typed, instead "
+"of falling back to the previous value"
+msgstr ""
+"Android: ao digitar uma duração e tocar em Definir, o valor digitado agora é "
+"mantido, em vez de voltar ao valor anterior"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:111
+msgid ""
+"Android: tapping the hours or minutes selects the whole number, so the first "
+"keystroke replaces it"
+msgstr ""
+"Android: tocar nas horas ou nos minutos seleciona o número inteiro, para que "
+"a primeira tecla o substitua"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:112
+msgid ""
+"Android: the dismiss button in the session editor is announced as \"Cancel\" "
+"by screen readers again"
+msgstr ""
+"Android: o botão de fechar no editor de sessão volta a ser anunciado como "
+"\"Cancelar\" pelos leitores de tela"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:118
+msgid ""
+"Same as 26.8.0, with a packaging fix so F-Droid can rebuild and verify the "
+"Android app."
+msgstr ""
+"Igual à 26.8.0, com uma correção de empacotamento para que o F-Droid possa "
+"recompilar e verificar o aplicativo para Android."
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:123
+msgid ""
+"A longer reach for daily goals, and a friendlier way to set a session length "
+"on Android."
+msgstr ""
+"Metas diárias mais longas e uma forma mais prática de definir a duração da "
+"sessão no Android."
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:125
+msgid ""
+"The daily goal can now be set to anything up to 24 hours, instead of "
+"stopping at 4"
+msgstr ""
+"A meta diária agora pode ser definida em até 24 horas, em vez de parar em 4"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:126
+msgid ""
+"Android: tap the hours or minutes in the time picker to type a duration, "
+"rather than only stepping it with the plus and minus buttons"
+msgstr ""
+"Android: toque nas horas ou nos minutos do seletor de tempo para digitar uma "
+"duração, em vez de apenas ajustá-la com os botões de mais e menos"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:127
+msgid ""
+"Android: the Save button in the session editor no longer runs off the edge "
+"of the screen in languages with longer words"
+msgstr ""
+"Android: o botão Salvar no editor de sessão não sai mais da borda da tela em "
+"idiomas com palavras mais longas"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:128
+msgid ""
+"Android builds are now reproducible, so the published APK can be verified "
+"against this source"
+msgstr ""
+"As compilações para Android agora são reprodutíveis, então o APK publicado "
+"pode ser verificado com este código-fonte"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:134
+msgid ""
+"Nextcloud sync between all your devices, a guided-audio mode, daily goals, "
+"custom sounds and vibration patterns — and the first release of the Android "
+"companion app."
+msgstr ""
+"Sincronização via Nextcloud entre todos os seus dispositivos, um modo de "
+"áudio guiado, metas diárias, sons e padrões de vibração personalizados — e a "
+"primeira versão do aplicativo complementar para Android."
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:136
+msgid ""
+"Sync sessions, labels, presets, bells, and preferences between your devices "
+"via your own Nextcloud server — offline-first, with automatic conflict "
+"handling and remote-storage compaction"
+msgstr ""
+"Sincronize sessões, rótulos, predefinições, sinos e preferências entre seus "
+"dispositivos pelo seu próprio servidor Nextcloud — funciona primeiro "
+"offline, com tratamento automático de conflitos e compactação do "
+"armazenamento remoto"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:137
+msgid ""
+"New Guided mode: import your own guided-meditation audio; the end bell rings "
+"when the track finishes"
+msgstr ""
+"Novo modo Guiada: importe seu próprio áudio de meditação guiada; o sino "
+"final toca quando a faixa termina"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:138
+msgid ""
+"Stats now track a daily goal: the progress ring resets each day and the "
+"heatmap stars days that cleared it"
+msgstr ""
+"As estatísticas agora acompanham uma meta diária: o anel de progresso é "
+"zerado a cada dia e o mapa de calor marca com estrela os dias em que ela foi "
+"cumprida"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:139
+msgid ""
+"Interval, starting, and end bells are configurable per mode, with imported "
+"custom sounds and a visual vibration-pattern editor"
+msgstr ""
+"Os sinos de intervalo, inicial e final podem ser configurados por modo, com "
+"sons personalizados importados e um editor visual de padrões de vibração"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:140
+msgid ""
+"Session log gains CSV export/import (duplicate-safe on re-import) and "
+"Insight Timer import"
+msgstr ""
+"O histórico de sessões ganha exportação/importação em CSV (sem duplicatas ao "
+"reimportar) e importação do Insight Timer"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:141
+msgid ""
+"Duplicate labels created on two devices can be merged from a conflict "
+"prompt, moving all sessions onto the surviving label"
+msgstr ""
+"Rótulos duplicados criados em dois dispositivos podem ser mesclados a partir "
+"de um aviso de conflito, movendo todas as sessões para o rótulo que permanece"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:142
+msgid ""
+"Android companion app (F-Droid): the same modes, log, stats, and sync, "
+"sharing the identical core — plus a home-screen widget for one-tap preset "
+"starts, in all ten languages"
+msgstr ""
+"Aplicativo complementar para Android (F-Droid): os mesmos modos, histórico, "
+"estatísticas e sincronização, com o mesmo núcleo — além de um widget na tela "
+"inicial para iniciar predefinições com um toque, nos dez idiomas"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:163
 msgid ""
 "Performance and polish pass, focused on Linux phones like the Librem 5. The "
 "app starts and switches views noticeably faster on lower-end ARM hardware, "
 "and the consequential-action buttons now carry the standard red tint."
 msgstr ""
+"Uma rodada de desempenho e refinamento, com foco em celulares Linux como o "
+"Librem 5. O aplicativo inicia e troca de tela de forma visivelmente mais "
+"rápida em hardware ARM mais modesto, e os botões de ações com consequências "
+"agora têm o tom vermelho padrão."
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:109
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:165
 msgid ""
 "Cold start is roughly twice as fast on slow ARM phones; view switches, "
 "session start, and session end no longer stall the UI"
 msgstr ""
+"A inicialização a frio é cerca de duas vezes mais rápida em celulares ARM "
+"lentos; trocar de tela, iniciar e encerrar sessões não travam mais a "
+"interface"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:110
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:166
 msgid ""
 "Haptic feedback on session end now fires correctly on devices with "
 "feedbackd, without the end-sound doubling up"
 msgstr ""
+"A resposta tátil ao fim da sessão agora funciona corretamente em "
+"dispositivos com feedbackd, sem duplicar o som final"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:111
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:167
 msgid ""
 "Stop, Discard, and per-session delete buttons are styled as destructive "
 "(red) per the GNOME HIG"
 msgstr ""
+"Os botões Parar, Descartar e excluir sessão têm o estilo destrutivo "
+"(vermelho), conforme as diretrizes do GNOME"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:112
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:168
 msgid ""
 "Log view loads 15 sessions per page by default instead of 200, with Load "
 "more for older entries"
 msgstr ""
+"O histórico carrega 15 sessões por página por padrão, em vez de 200, com "
+"Carregar mais para entradas mais antigas"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:119
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:175
 msgid ""
 "Major polish release ahead of Flathub submission — every tab redesigned, new "
 "data features, and translations in nine languages."
 msgstr ""
+"Grande versão de refinamento antes do envio ao Flathub — todas as abas "
+"redesenhadas, novos recursos de dados e traduções em nove idiomas."
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:121
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:177
 msgid "Timer, Stats, and Log tabs fully redesigned around the GNOME HIG"
 msgstr ""
+"Abas Temporizador, Estatísticas e Histórico totalmente redesenhadas segundo "
+"as diretrizes do GNOME"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:122
-#, fuzzy
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:178
 msgid ""
 "Stats now shows a weekly-goal ring, a 13-week contribution heatmap, and an "
 "insights panel"
-msgstr "Meta semanal, mapa de calor de 13 semanas e análises"
+msgstr ""
+"As estatísticas agora mostram um anel de meta semanal, um mapa de calor de "
+"13 semanas e um painel de insights"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:123
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:179
 msgid "Log is a date-grouped card feed with swipe-to-delete and undo"
 msgstr ""
+"O histórico é uma lista de cartões agrupados por data, com deslizar para "
+"excluir e desfazer"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:124
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:180
 msgid "CSV import and export, plus one-click migration from Insight Timer"
 msgstr ""
+"Importação e exportação em CSV, além de migração com um clique do Insight "
+"Timer"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:125
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:181
 msgid ""
 "Real CC0 recordings replace the three built-in end sounds, with Singing bowl "
 "as the new default"
 msgstr ""
+"Gravações reais CC0 substituem os três sons finais incluídos, com a Taça "
+"tibetana como novo padrão"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:126
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:182
 msgid "Post-session note field is now multi-line"
-msgstr ""
+msgstr "O campo de anotação após a sessão agora tem várias linhas"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:127
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:183
 msgid "Weekly goal resets on the locale's first day of the week"
-msgstr ""
+msgstr "A meta semanal é zerada no primeiro dia da semana da sua região"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:128
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:184
 msgid "New \"Vibrate on session end\" toggle for Linux phones"
-msgstr ""
+msgstr "Nova opção \"Vibrar ao fim da sessão\" para celulares Linux"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:129
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:185
 msgid ""
 "Full translation coverage across English, German, Spanish, French, Italian, "
 "Dutch, Polish, Brazilian Portuguese, Russian, and Simplified Chinese"
 msgstr ""
+"Tradução completa em inglês, alemão, espanhol, francês, italiano, holandês, "
+"polonês, português do Brasil, russo e chinês simplificado"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:130
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:186
 msgid ""
 "Adaptive layout down to 360 px; HIG-compliant accent colours and "
 "accessibility"
 msgstr ""
+"Layout adaptável até 360 px; cores de destaque e acessibilidade conforme as "
+"diretrizes do GNOME"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:136
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:192
 msgid "Initial release."
 msgstr "Primeira versão."
 
-#: src/guided.rs:144 src/guided.rs:350 src/sounds.rs:413 src/sounds.rs:637
-msgid "This file has no audio track"
-msgstr "Este arquivo não tem faixa de áudio"
+#~ msgid "{n} sessions"
+#~ msgstr "{n} sessões"
+
+#~ msgid "None"
+#~ msgstr "Nenhum"
+
+#~ msgid "Singing bowl"
+#~ msgstr "Tigela tibetana"
+
+#~ msgid "Gong"
+#~ msgstr "Gongo"
+
+#~ msgid "Custom file…"
+#~ msgstr "Arquivo personalizado…"
+
+#~ msgid "End sound"
+#~ msgstr "Som final"
+
+#~ msgid "Sound file"
+#~ msgstr "Arquivo de som"
+
+#~ msgid "Vibrate on session end"
+#~ msgstr "Vibrar ao terminar a sessão"
+
+#~ msgid "Haptic feedback when the timer finishes (mobile only)"
+#~ msgstr "Retorno tátil quando o temporizador termina (apenas celular)"
+
+#~ msgid ""
+#~ "Quick-select buttons shown in the countdown timer (1–5 presets, in "
+#~ "minutes)"
+#~ msgstr ""
+#~ "Botões rápidos da contagem regressiva (1–5 predefinições, em minutos)"
+
+#~ msgid "Labels"
+#~ msgstr "Rótulos"
+
+#~ msgid "Organize sessions with custom labels"
+#~ msgstr "Organize as sessões com rótulos personalizados"
+
+#~ msgid "Add Label"
+#~ msgstr "Adicionar rótulo"
+
+#~ msgid "Discard Changes"
+#~ msgstr "Descartar alterações"
+
+#~ msgid "{n} sessions use this label and will become unlabeled."
+#~ msgstr "{n} sessões usam este rótulo e ficarão sem rótulo."
+
+#~ msgid "Exported {n} sessions"
+#~ msgstr "{n} sessões exportadas"
+
+#~ msgid "Deleted {n} sessions"
+#~ msgstr "{n} sessões excluídas"
+
+#~ msgid "Imported {n} sessions"
+#~ msgstr "{n} sessões importadas"
+
+#~ msgid "{n} sessions to your {target}th"
+#~ msgstr "{n} sessões para a {target}ª"
+
+#~ msgid "{n} days streak"
+#~ msgstr "Sequência de {n} dias"
+
+#~ msgid "Set a Custom Time"
+#~ msgstr "Definir tempo personalizado"
+
+#~ msgid "Countdown"
+#~ msgstr "Contagem regressiva"
+
+#~ msgid "Quick Presets"
+#~ msgstr "Predefinições"
+
+#, fuzzy
+#~ msgid "Session duration"
+#~ msgstr "Sessão excluída"
+
+#~ msgid "Completion sound"
+#~ msgstr "Som final"
 
 #~ msgid "Countdown and stopwatch timer"
 #~ msgstr "Temporizador de contagem regressiva e cronômetro"

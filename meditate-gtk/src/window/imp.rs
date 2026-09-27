@@ -1,12 +1,14 @@
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{glib, CompositeTemplate};
+use glib::clone;
 use std::time::Duration;
 
 use gtk::gio;
 
 use meditate_core::format::format_time;
 
+use crate::i18n::gettext;
 use crate::log::LogView;
 use crate::stats::StatsView;
 use crate::timer::TimerView;
@@ -134,7 +136,7 @@ impl MeditateWindow {
 
         self.view_stack.connect_notify_local(
             Some("visible-child"),
-            glib::clone!(
+            clone!(
                 #[weak] obj,
                 move |stack, _| {
                     if stack.visible_child_name().as_deref() == Some("timer") {
@@ -144,7 +146,7 @@ impl MeditateWindow {
             ),
         );
 
-        self.timer_view.connect_timer_started(glib::clone!(
+        self.timer_view.connect_timer_started(clone!(
             #[weak] obj,
             move |_| obj.imp().push_running_page()
         ));
@@ -152,7 +154,7 @@ impl MeditateWindow {
         // pause now. The Pause button morphs to "Resume" in place
         // (see TimerView::on_pause) instead of popping the user
         // back to the dimmed setup view.
-        self.timer_view.connect_timer_stopped(glib::clone!(
+        self.timer_view.connect_timer_stopped(clone!(
             #[weak] obj,
             move |_| {
                 if obj.imp().nav_view.find_page("running").is_some() {
@@ -267,7 +269,7 @@ impl MeditateWindow {
         // Counter shows "elapsed / target" when stopwatch is off
         // and just "elapsed" when on (no fixed end).
         let eyebrow = gtk::Label::builder()
-            .label(crate::i18n::gettext("Box Breathing"))
+            .label(gettext("Box Breathing"))
             .css_classes(["caption", "dimmed"])
             .halign(gtk::Align::Center)
             .build();
@@ -386,14 +388,14 @@ impl MeditateWindow {
 
         // ── Pause / Stop buttons ──────────────────────────────────────
         let pause_btn = gtk::Button::builder()
-            .label(crate::i18n::gettext("Pause"))
+            .label(gettext("Pause"))
             .css_classes(["pill"])
-            .tooltip_text(crate::i18n::gettext("Pause Timer"))
+            .tooltip_text(gettext("Pause Timer"))
             .build();
         let stop_btn = gtk::Button::builder()
-            .label(crate::i18n::gettext("Stop"))
+            .label(gettext("Stop"))
             .css_classes(["pill", "destructive-action"])
-            .tooltip_text(crate::i18n::gettext("Stop and Save Session"))
+            .tooltip_text(gettext("Stop and Save Session"))
             .build();
 
         let btn_box = gtk::Box::builder()
@@ -465,9 +467,9 @@ impl MeditateWindow {
             let phase = info.phase;
 
             let phase_name = match phase.running_label_key() {
-                PhaseRunningLabelKey::BreatheIn => crate::i18n::gettext("Breathe in"),
-                PhaseRunningLabelKey::Hold => crate::i18n::gettext("Hold"),
-                PhaseRunningLabelKey::BreatheOut => crate::i18n::gettext("Breathe out"),
+                PhaseRunningLabelKey::BreatheIn => gettext("Breathe in"),
+                PhaseRunningLabelKey::Hold => gettext("Hold"),
+                PhaseRunningLabelKey::BreatheOut => gettext("Breathe out"),
             };
             if let Some(l) = phase_lbl_weak.upgrade() {
                 l.set_label(&phase_name);
@@ -575,7 +577,7 @@ impl MeditateWindow {
         //   author something.
         // - Anything else: open Preferences → Data so the user can
         //   adjust settings or check status.
-        self.sync_status_btn.connect_clicked(glib::clone!(
+        self.sync_status_btn.connect_clicked(clone!(
             #[weak] obj,
             move |_| {
                 let Some(app) = obj.application()
@@ -759,7 +761,7 @@ impl MeditateWindow {
         // Show/hide log header buttons based on active view
         self.view_stack.connect_notify_local(
             Some("visible-child"),
-            glib::clone!(
+            clone!(
                 #[weak] obj,
                 move |stack, _| {
                     let is_log = stack.visible_child_name().as_deref() == Some("log");
@@ -775,7 +777,7 @@ impl MeditateWindow {
         );
 
         // + Add button
-        self.log_add_btn.connect_clicked(glib::clone!(
+        self.log_add_btn.connect_clicked(clone!(
             #[weak] obj,
             move |_| obj.imp().log_view.show_add_dialog()
         ));
@@ -785,7 +787,7 @@ impl MeditateWindow {
         // programmatic initialization, which would cause a BorrowMutError.
         self.filter_notes_row.connect_notify_local(
             Some("active"),
-            glib::clone!(
+            clone!(
                 #[weak] obj,
                 move |row, _| {
                     let imp = obj.imp();
@@ -801,7 +803,7 @@ impl MeditateWindow {
 
         self.filter_label_row.connect_notify_local(
             Some("selected"),
-            glib::clone!(
+            clone!(
                 #[weak] obj,
                 move |row, _| {
                     let imp = obj.imp();
@@ -850,7 +852,7 @@ impl MeditateWindow {
     fn setup_window_actions(&self) {
         let obj = self.obj();
         let action = gtk::gio::SimpleAction::new("timer-toggle", None);
-        action.connect_activate(glib::clone!(
+        action.connect_activate(clone!(
             #[weak] obj,
             move |_, _| {
                 obj.imp().timer_view.toggle_playback();
@@ -862,7 +864,7 @@ impl MeditateWindow {
         // `app.quit` (Ctrl+Q) which exits the whole process — a
         // distinction AccelMap previously collapsed to a single no-op.
         let close_action = gtk::gio::SimpleAction::new("close", None);
-        close_action.connect_activate(glib::clone!(
+        close_action.connect_activate(clone!(
             #[weak] obj,
             move |_, _| obj.close()
         ));
@@ -900,7 +902,7 @@ impl MeditateWindow {
         let obj = self.obj();
         self.view_stack.connect_notify_local(
             Some("visible-child"),
-            glib::clone!(
+            clone!(
                 #[weak] obj,
                 move |stack, _| {
                     if stack.visible_child_name().as_deref() == Some("stats") {
