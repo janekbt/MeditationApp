@@ -38,49 +38,33 @@ trap '{
 }' ERR
 
 # ── Pinned versions ──────────────────────────────────────────────────
-# JDK: pick the first package available on the host's apt index, in
-# preference order. xbuild and the Android Gradle plugin work with
-# any JDK >= 17, so we don't need to pin a single version. Debian 13
-# trixie, for example, dropped 17 from its archive — it ships 21 and
-# 25. The selection happens at install time, see Step 1.
-JDK_CANDIDATES=(
-    "openjdk-21-jdk-headless"   # current LTS; default for Debian 13, Ubuntu 24.04+
-    "openjdk-17-jdk-headless"   # previous LTS; still on Debian 12, Ubuntu 22.04
-    "openjdk-25-jdk-headless"   # latest non-LTS, fallback for very fresh distros
-)
-PINNED_OPENJDK_PKG=""           # filled in at runtime by Step 1
+# JDK 17, exactly: rust-build.sh pins the d8 dexer from build-tools
+# 31.0.0 (to match F-Droid's buildserver for reproducible builds), and
+# that d8 crashes on classes compiled by a newer javac ("Dex conversion
+# failed"). F-Droid's recipe installs Debian 12's openjdk-17; Debian 13
+# no longer ships 17 — Step 1 prints the three commands to add it.
+PINNED_JDK_MAJOR="17"
+PINNED_OPENJDK_PKG="openjdk-17-jdk-headless"
 PINNED_CMDLINE_TOOLS_BUILD="14742923"   # build number, see https://developer.android.com/studio#command-line-tools-only
-PINNED_API_LEVEL="35"                    # Android 15
+PINNED_API_LEVEL="35"                    # Android 15 — emulator image; build-tools 35 puts apksigner on PATH
 PINNED_BUILD_TOOLS="35.0.0"
+# Reproducible-release pins: MUST match rust-build.sh (ANDROID_JAR →
+# platform 34, ANDROID_D8_JAR → build-tools 31.0.0) and app/build.gradle
+# (compileSdk 34). Without them rust-build.sh still builds, but the dex
+# no longer matches F-Droid's rebuild.
+PINNED_REPRO_PLATFORM="34"
+PINNED_REPRO_BUILD_TOOLS="31.0.0"
 PINNED_NDK="27.2.12479018"               # NDK r27c (LTS track)
 RUST_ANDROID_TARGETS=(
     "aarch64-linux-android"     # most real devices
     "armv7-linux-androideabi"   # older 32-bit ARM, still common in F-Droid bug reports
     "x86_64-linux-android"      # emulator
 )
-# xbuild has no crates.io release. Pinning by git URL + revision is
-# best-effort — bump XBUILD_GIT_REV to update.
-#
-# We currently track LAGonauta's fork on the `add-services-field`
-# branch (open PR #224 against upstream). Upstream xbuild's
-# AndroidManifest struct has no `<service>` element support; that
-# blocks declaring a foreground service in the manifest, which
-# meditate-android needs for the session-survives-screen-off path.
-# Revert XBUILD_GIT_URL to https://github.com/rust-mobile/xbuild.git
-# the day that PR merges. If the PR is closed without merging, we
-# either keep tracking the fork or roll our own with the same patch
-# (~20 lines on the manifest struct).
-XBUILD_GIT_URL="https://github.com/LAGonauta/xbuild.git"
-XBUILD_GIT_REV="d0a4afff21b7e0992f36a2cbaa01aebc0e5a7f7f"
 
-# Gradle + Kotlin: needed by xbuild's gradle pipeline (the only path
-# that supports custom AndroidManifest + Kotlin/Java sources, which
-# meditate-android needs for the foreground service in Phase 1). The
-# direct apk pipeline can't declare a <service>. Versions chosen to
-# match xbuild's templates (AGP 7.3, Kotlin Gradle plugin 1.7.20):
-# Gradle 8.5 is the latest line still compatible with that AGP; the
-# Kotlin compiler version itself is forward-compatible past 1.7 so we
-# pin a recent LTS-ish for a more cohesive CLI.
+# Standalone Gradle + Kotlin compiler for manual use. `./gradlew` does
+# not need them (the committed wrapper fetches Gradle 8.5 and the
+# Kotlin Gradle plugin brings its own compiler); Gradle 8.5 matches the
+# wrapper, the ceiling for the AGP 7.3 the project pins.
 PINNED_GRADLE="8.5"
 PINNED_KOTLIN="1.9.25"
 
@@ -89,8 +73,9 @@ ANDROID_HOME="${HOME}/Android/Sdk"
 ANDROID_NDK_ROOT="${ANDROID_HOME}/ndk/${PINNED_NDK}"
 GRADLE_HOME="${HOME}/Android/gradle-${PINNED_GRADLE}"
 KOTLIN_HOME="${HOME}/Android/kotlinc-${PINNED_KOTLIN}"
-# JAVA_HOME is detected from the installed JDK package — see Step 1.
+# JAVA_HOME is set to the JDK 17 home — see Prerequisites / Step 1.
 JAVA_HOME=""
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${HOME}/.config/meditate-android/env.sh"
 BASHRC="${HOME}/.bashrc"
 BASHRC_MARKER_BEGIN="# >>> meditate-android setup >>>"
@@ -104,11 +89,11 @@ usage() {
 Usage: $(basename "$0") [--with-emulator] [--help]
 
 Installs the Android toolchain needed by the meditate-android crate:
-- OpenJDK headless (whichever of ${JDK_CANDIDATES[*]} apt offers)
+- OpenJDK ${PINNED_JDK_MAJOR} (${PINNED_OPENJDK_PKG}; on Debian 13 add the bookworm source first — the script says how)
 - Android command-line tools build ${PINNED_CMDLINE_TOOLS_BUILD}
-- Android SDK platform-${PINNED_API_LEVEL}, build-tools ${PINNED_BUILD_TOOLS}, NDK ${PINNED_NDK}
-- Rust targets: ${RUST_ANDROID_TARGETS[*]}
-- xbuild (cargo install from git: ${XBUILD_GIT_URL})
+- Android SDK platform-${PINNED_REPRO_PLATFORM} + build-tools ${PINNED_REPRO_BUILD_TOOLS} (reproducible release pins),
+  platform-${PINNED_API_LEVEL}, build-tools ${PINNED_BUILD_TOOLS}, NDK ${PINNED_NDK}
+- Rust targets for the repo's pinned toolchain: ${RUST_ANDROID_TARGETS[*]}
 - Gradle ${PINNED_GRADLE} (binary distribution from gradle.org)
 - Kotlin ${PINNED_KOTLIN} compiler (binary distribution from JetBrains)
 
@@ -140,18 +125,33 @@ done
 log() { printf '\033[1;36m[setup-android]\033[0m %s\n' "$*"; }
 
 # ── Prerequisites ────────────────────────────────────────────────────
-# apt only ever provides three things (JDK, unzip, wget); the SDK,
-# NDK, Gradle and kotlinc are direct downloads. If those three are
-# already on PATH (any distro — build.sh pre-installs them on
+# apt only ever provides three things (JDK 17, unzip, wget); the SDK,
+# NDK, Gradle and kotlinc are direct downloads. If all three are
+# already present (any distro — build.sh pre-installs them on
 # Fedora/Arch), skip the apt machinery entirely.
+
+# Print the JDK 17 home, or nothing. A JDK other than 17 on PATH does
+# not count (see PINNED_JDK_MAJOR).
+find_jdk17() {
+    local c
+    for c in /usr/lib/jvm/java-17-openjdk-amd64 /usr/lib/jvm/java-17-openjdk \
+             /usr/lib/jvm/java-17-openjdk-* /usr/lib/jvm/java-17-*; do
+        if [[ -x "${c}/bin/javac" ]]; then echo "${c}"; return; fi
+    done
+    if command -v javac >/dev/null 2>&1 \
+       && javac -version 2>&1 | grep -q "^javac ${PINNED_JDK_MAJOR}\."; then
+        local javac_real; javac_real="$(readlink -f "$(command -v javac)")"
+        echo "${javac_real%/bin/javac}"
+    fi
+}
+
 PREREQS_PRESENT=0
-if command -v javac >/dev/null 2>&1 \
+JAVA_HOME="$(find_jdk17)"
+if [[ -n "${JAVA_HOME}" ]] \
    && command -v unzip >/dev/null 2>&1 \
    && command -v wget >/dev/null 2>&1; then
     PREREQS_PRESENT=1
-    javac_real="$(readlink -f "$(command -v javac)")"
-    JAVA_HOME="${javac_real%/bin/javac}"
-    log "prereqs present (javac/unzip/wget) — skipping apt; JDK home: ${JAVA_HOME}"
+    log "prereqs present (JDK ${PINNED_JDK_MAJOR}/unzip/wget) — skipping apt; JDK home: ${JAVA_HOME}"
 fi
 
 if [[ "${PREREQS_PRESENT}" = 0 ]]; then
@@ -163,7 +163,7 @@ fi
 . /etc/os-release
 if [[ "${ID:-}" != "debian" && "${ID:-}" != "ubuntu" && "${ID_LIKE:-}" != *debian* ]]; then
     echo "This script supports Debian / Ubuntu only (or any distro with" >&2
-    echo "javac, unzip and wget preinstalled — e.g. via build.sh)." >&2
+    echo "JDK ${PINNED_JDK_MAJOR}, unzip and wget preinstalled — e.g. via build.sh)." >&2
     echo "Detected ID=${ID:-unknown}." >&2
     exit 1
 fi
@@ -179,26 +179,27 @@ need_apt() {
     fi
 }
 
-# ── Step 1: OpenJDK ──────────────────────────────────────────────────
+# ── Step 1: OpenJDK 17 ───────────────────────────────────────────────
 # Refresh the apt index once so apt-cache show reflects current
-# availability before we pick a JDK candidate.
+# availability.
 log "apt: refreshing package index"
 sudo apt-get update -y >/dev/null
 
-for cand in "${JDK_CANDIDATES[@]}"; do
-    if apt-cache show "${cand}" >/dev/null 2>&1; then
-        PINNED_OPENJDK_PKG="${cand}"
-        break
-    fi
-done
-if [[ -z "${PINNED_OPENJDK_PKG}" ]]; then
-    echo "None of the JDK candidates are available on this host." >&2
-    echo "Tried: ${JDK_CANDIDATES[*]}" >&2
-    echo "Run 'apt-cache search openjdk-.*-jdk-headless' to see what your distro ships," >&2
-    echo "then add the right package to JDK_CANDIDATES at the top of this script." >&2
+if ! apt-cache show "${PINNED_OPENJDK_PKG}" >/dev/null 2>&1; then
+    cat >&2 <<MSG
+${PINNED_OPENJDK_PKG} is not available from your apt sources (Debian 13
+dropped it). Add Debian 12's archive for it — the same thing F-Droid's
+build recipe does — pinned low so nothing else is ever taken from it:
+
+  echo "deb https://deb.debian.org/debian bookworm main" | sudo tee /etc/apt/sources.list.d/bookworm.list
+  printf 'Package: *\nPin: release n=bookworm\nPin-Priority: 100\n' | sudo tee /etc/apt/preferences.d/bookworm-low
+  sudo apt update && sudo apt install ${PINNED_OPENJDK_PKG}
+
+then re-run this script.
+MSG
     exit 1
 fi
-log "JDK selected: ${PINNED_OPENJDK_PKG}"
+log "JDK: ${PINNED_OPENJDK_PKG}"
 
 need_apt "${PINNED_OPENJDK_PKG}"
 need_apt "unzip"
@@ -271,6 +272,8 @@ sdk_install_if_missing() {
 }
 
 sdk_install_if_missing "platform-tools"
+sdk_install_if_missing "platforms;android-${PINNED_REPRO_PLATFORM}"
+sdk_install_if_missing "build-tools;${PINNED_REPRO_BUILD_TOOLS}"
 sdk_install_if_missing "platforms;android-${PINNED_API_LEVEL}"
 sdk_install_if_missing "build-tools;${PINNED_BUILD_TOOLS}"
 sdk_install_if_missing "ndk;${PINNED_NDK}"
@@ -300,27 +303,23 @@ if ! command -v rustup >/dev/null 2>&1; then
     exit 1
 fi
 
-installed_targets="$(rustup target list --installed)"
+# Run inside the repo so the targets land on the toolchain pinned by
+# rust-toolchain.toml (the one every build uses), not rustup's default.
+installed_targets="$(cd "${REPO_ROOT}" && rustup target list --installed)"
 for tgt in "${RUST_ANDROID_TARGETS[@]}"; do
     if grep -Fxq "${tgt}" <<<"${installed_targets}"; then
         log "rustup: target ${tgt} already installed"
     else
         log "rustup: adding target ${tgt}"
-        rustup target add "${tgt}"
+        (cd "${REPO_ROOT}" && rustup target add "${tgt}")
     fi
 done
 
-# ── Step 5: (xbuild removed) ──────────────────────────────────────────
-# Migrated off xbuild to a hand-maintained Gradle project at
-# meditate-android/android/ — xbuild's manifest struct can't emit
-# <receiver>/custom res (blocked Phase 8 theming, F-Droid, the
-# preset widget) and the LAGonauta fork pin was unmaintainable.
-# The Gradle wrapper (8.5) is committed in-repo; the Rust cdylib
-# is built by meditate-android/android/rust-build.sh (plain
-# `cargo build --target aarch64-linux-android` with the NDK
-# linker/CC/AR exported — NOT cargo-ndk, whose 4.x runner breaks
-# slint's build.rs SDK lookup). No `x`/xbuild install needed.
-log "xbuild step skipped — Gradle project at meditate-android/android (see ANDROID_PORT.md)"
+# ── Step 5: (none) ───────────────────────────────────────────────────
+# The APK is built by the committed Gradle project at
+# meditate-android/android/; its cargoNdkBuild task runs rust-build.sh
+# (plain `cargo build --target …` with the NDK linker/CC/AR exported —
+# NOT cargo-ndk, whose 4.x runner breaks slint's build.rs SDK lookup).
 
 # ── Step 6: Gradle ───────────────────────────────────────────────────
 # Debian's apt `gradle` package lags upstream by years (Debian 13
@@ -349,9 +348,8 @@ else
 fi
 
 # ── Step 7: Kotlin compiler ──────────────────────────────────────────
-# `x doctor` checks for a `kotlin` binary on PATH (not just the Gradle
-# Kotlin plugin), so we install JetBrains' standalone kotlin-compiler
-# release. Same idempotent pattern as cmdline-tools above.
+# JetBrains' standalone kotlin-compiler release, for manual use (see
+# PINNED_KOTLIN). Same idempotent pattern as cmdline-tools above.
 if [[ -x "${KOTLIN_HOME}/bin/kotlinc" ]]; then
     log "kotlin already at ${KOTLIN_HOME}"
 else
@@ -427,11 +425,8 @@ case ":\${PATH}:" in
     *":\${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt/linux-x86_64/bin:"*) ;;
     *) export PATH="\${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt/linux-x86_64/bin:\${PATH}" ;;
 esac
-# Gradle + Kotlin compiler. \`x doctor\` checks for both on PATH; the
-# gradle pipeline (the one that supports custom AndroidManifest +
-# Kotlin sources, which the foreground service needs) requires the
-# \`gradle\` binary, and the Kotlin Gradle plugin shells out to
-# \`kotlinc\` for IDE-style standalone invocations.
+# Standalone Gradle + Kotlin compiler for manual use (./gradlew brings
+# its own).
 case ":\${PATH}:" in
     *":\${GRADLE_HOME}/bin:"*) ;;
     *) export PATH="\${GRADLE_HOME}/bin:\${PATH}" ;;
@@ -465,8 +460,7 @@ printf '  java     : '; java -version 2>&1 | head -1
 printf '  sdkmanager: '; "${SDKMANAGER}" --version
 printf '  adb      : '; adb --version | head -1
 printf '  ndk      : '; head -1 "${ANDROID_NDK_ROOT}/source.properties"
-printf '  rustup targets:\n'; rustup target list --installed | grep linux-android | sed 's/^/    - /'
-printf '  xbuild   : '; x --version 2>&1 || echo "not on PATH yet — open a new shell"
+printf '  rustup targets (pinned toolchain):\n'; (cd "${REPO_ROOT}" && rustup target list --installed) | grep linux-android | sed 's/^/    - /'
 printf '  gradle   : '; gradle --version 2>/dev/null | grep '^Gradle' || echo "not on PATH yet — open a new shell"
 printf '  kotlinc  : '; kotlinc -version 2>&1 | head -1 || echo "not on PATH yet — open a new shell"
 

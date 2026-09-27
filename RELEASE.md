@@ -34,13 +34,20 @@ Do these BEFORE bumping, so fixes land in the release:
 - **README.md:** read it end to end; new features present, stale
   claims gone, links resolve.
 - **AUDIT.md open items:** anything that should block a release?
-- **cargo-sources.json:** if `Cargo.lock` changed since the last
-  regeneration (`git log -1 -- build-aux/cargo-sources.json` vs
-  `git log -1 -- Cargo.lock`), regenerate — offline Flatpak CI
-  fails on missing crates otherwise:
-  `flatpak-cargo-generator.py Cargo.lock -o build-aux/cargo-sources.json`
-  (script: flatpak/flatpak-builder-tools; on machines without the
-  `toml` module, shim it over stdlib `tomllib` — read-only use).
+- **cargo-sources.json:** the Flatpak build runs cargo offline, so
+  every crates.io package in `Cargo.lock` must be listed — CI fails
+  ~10 minutes in otherwise. Check what changed since the last
+  regeneration:
+
+      git diff $(git log -1 --format=%H -- build-aux/cargo-sources.json) -- Cargo.lock
+
+  If the only changes are the version lines of the workspace's own
+  crates (`meditate`, `meditate-android`, `meditate-core` — every
+  release bump does that), nothing to do. Otherwise regenerate
+  (needs Debian's `python3-aiohttp` and `python3-tomlkit`):
+
+      curl -fsSL -o /tmp/flatpak-cargo-generator.py https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/cargo/flatpak-cargo-generator.py
+      python3 /tmp/flatpak-cargo-generator.py Cargo.lock -o build-aux/cargo-sources.json
 - **Screenshots:** if the UI changed visibly, recapture the
   fastlane screenshots for all 10 locales. Set the app language
   per locale with
@@ -72,18 +79,20 @@ Cargo.lock picks up the crate version bumps.
   dirs (`de-DE`, `es-ES`, `fr-FR`, `it-IT`, `nl-NL`, `pl-PL`,
   `pt-BR`, `ru-RU`, `zh-CN` — same `<versionCode>.txt` name).
 - GTK metainfo release notes are translated through the gettext
-  pipeline: regenerate the pot/po (`ninja meditate-pot` +
-  `msgmerge` or meson's update-po target) and translate the new
-  entries in each `meditate-gtk/po/*.po`.
+  pipeline: regenerate the template and merge it into the languages
+  ([BUILDING.md → Translations](BUILDING.md#translations)), then
+  translate the new entries in each `meditate-gtk/po/*.po`.
 
 ## 4. Verify
 
-All must pass before anything is tagged:
+All must pass before anything is tagged. Releases build on **JDK 17**
+(see [BUILDING.md → Android](BUILDING.md#android)); `env.sh` from a
+current `setup-android.sh` already points there — confirm:
 
+    . ~/.config/meditate-android/env.sh && "$JAVA_HOME/bin/java" -version   # must say 17
     cargo test -p meditate-core -p meditate-android --lib
     cargo test --workspace          # GTK shell included
-    cd meditate-android/android && . ~/.config/meditate-android/env.sh \
-        && ./gradlew :app:assembleRelease   # exit-code gate, never grep
+    cd meditate-android/android && ./gradlew :app:assembleRelease   # exit-code gate, never grep
 
 - appstream sanity: `appstreamcli validate --no-net
   meditate-gtk/data/io.github.janekbt.Meditate.metainfo.xml.in`
@@ -118,8 +127,9 @@ draft release against an unpushed commit fails with "target_commitish is
 invalid". Pushing a branch creates no tag, so nothing triggers F-Droid.
 
     cd meditate-android/android
-    JAVA_HOME=/path/to/jdk-17 ./gradlew --no-daemon assembleRelease
+    JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew --no-daemon assembleRelease
     cp app/build/outputs/apk/release/app-release.apk /tmp/Meditate-<version>.apk
+    apksigner verify --print-certs /tmp/Meditate-<version>.apk   # see 5a — must be the release key
     gh release create v<version> /tmp/Meditate-<version>.apk --draft \
         --target $(git rev-parse v<version>) \
         --title "Meditate <version>" --notes-file <release notes>
@@ -137,23 +147,14 @@ the tag; publishing does, so the asset is live before anything can see it:
   a maintainer can trigger CI at any moment and the build will fail on the
   missing binary.
 
-### 5a. Publish the signed APK (REQUIRED — reproducible builds)
+### 5a. Why the APK steps above are strict (reproducible builds)
 
-Build releases with **JDK 17** and **build-tools 31.0.0** installed. F-Droid's
-buildserver uses both, and `rust-build.sh` pins the dexer to them so the Java
-helper slint embeds in the .so comes out identical on both sides. d8 3.0.41
-rejects JDK-21 classfiles, so a release built on JDK 21 fails outright:
-
-    JAVA_HOME=/path/to/jdk-17 ./gradlew --no-daemon assembleRelease
-
-
-F-Droid distributes *our* signed binary, so a tag without a published
-APK stalls the update instead of shipping it. Right after the tag:
-
-    cd meditate-android/android && ./gradlew --no-daemon assembleRelease
-    cp app/build/outputs/apk/release/app-release.apk /tmp/Meditate-<version>.apk
-    gh release create v<version> /tmp/Meditate-<version>.apk \
-        --title "Meditate <version>" --notes-file <release notes>
+F-Droid rebuilds the tag and distributes *our* signed binary only if its
+rebuild matches, so a tag without a published APK stalls the update
+instead of shipping it. The build must use **JDK 17** and the dexer from
+**build-tools 31.0.0** — F-Droid's buildserver uses both, and
+`rust-build.sh` pins the dexer so the Java helper slint embeds in the .so
+comes out identical on both sides (that d8 crashes on newer JDKs).
 
 - Copy to the final NAME first. `gh` takes the asset name from the file's
   basename; `path#Label` sets only a display label, so uploading
@@ -195,11 +196,11 @@ tag rather than whatever was built last.
 - Batch documentation and recipe commits into one push BEFORE tagging, so
   there are no redundant runs tempting you to cancel in the first place.
 
-- F-Droid picks the new tag up automatically once the app is in
-  fdroiddata (`UpdateCheckMode: Tags`). Until first inclusion,
-  submission is manual — see `build-aux/fdroid-metadata-draft.yml`.
-  fdroiddata build entries must pin the FULL commit hash, never
-  the tag name (maintainer rule).
+- F-Droid picks the new tag up automatically (`UpdateCheckMode: Tags`
+  in the fdroiddata recipe; our copy is
+  `build-aux/fdroid-metadata-draft.yml`). If a recipe change is ever
+  needed, fdroiddata build entries must pin the FULL commit hash,
+  never the tag name (maintainer rule).
 - Flathub is NOT a distribution path for this app (they do not accept
   AI-assisted apps), so step 5b is the whole Linux release. The metainfo
   release notes still matter: they are what the About dialog shows.

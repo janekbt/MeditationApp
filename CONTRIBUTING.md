@@ -5,11 +5,11 @@ expect feedback rounds before merge. Read these short docs before
 opening a substantial PR; they save back-and-forth:
 
 - [`README.md`](README.md) — what the app is, how to install/build.
-- [`BUILDING.md`](BUILDING.md) — cross-compile + Librem 5 deploy +
-  Android xbuild quirks.
+- [`BUILDING.md`](BUILDING.md) — how to build, test and deploy
+  both apps (Linux, Android, Librem 5), translations, CI.
 - [`DECISIONS.md`](DECISIONS.md) — six standing design rules
-  (decisions-in-core, typed i18n keys, no schema back-compat,
-  CLOCK_BOOTTIME, etc.).
+  (decisions-in-core, typed i18n keys, migrations for schema
+  changes, CLOCK_BOOTTIME, etc.).
 - [`ENTITIES.md`](ENTITIES.md) — adding a sync-able entity (9
   surfaces, easy to miss `wipe_local_event_log`).
 - [`meditate-core/README.md`](meditate-core/README.md) — entry

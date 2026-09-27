@@ -272,7 +272,7 @@ Run with `cargo test --workspace` from the repo root. Core has no
 GTK deps, so its tests run anywhere — including in CI without a
 display.
 
-Coverage today: ~970 tests across the workspace. New logic in
+Coverage today: ~1,240 tests across the workspace. New logic in
 `meditate-core` is expected to land with tests covering happy
 path, every state-machine back-edge, and the relevant boundary
 conditions (zero, empty, max, mid-cycle).

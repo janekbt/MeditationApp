@@ -1,158 +1,303 @@
-# Building, cross-compiling, deploying
+# Building, testing, deploying
 
-The root [`README.md`](README.md#building-from-source) covers the
-two canonical paths (Flatpak local build, native Meson build). This
-file is the working notes for two paths that aren't covered there:
+The one reference for building Meditate from source. [`README.md`](README.md)
+only points here; the release runbook is [`RELEASE.md`](RELEASE.md).
+Commands are written for the maintainer's machine (Debian 13 trixie,
+x86_64) and run from the repository root unless a `cd` says otherwise.
 
-1. **Cross-compiling for the Librem 5 (aarch64)** for fast iteration
-   without a 20-minute QEMU round-trip.
-2. **Deploying to the phone over SSH** — the kill/rm + DB-wipe +
-   timeout-wrap dance that took several iterations to settle.
+| I want to … | Command | Section |
+|---|---|---|
+| build + run the Linux app | `./build.sh gtk --debug` → `./meditate-gtk/builddir/src/meditate` | [Linux app](#linux-app) |
+| build the Linux Flatpak | `flatpak-builder --user --install --force-clean --install-deps-from=flathub flatpak_app build-aux/io.github.janekbt.Meditate.json` | [Linux app](#linux-app) |
+| run all tests | `cargo test --workspace` | [Tests and lints](#tests-and-lints) |
+| build + install the Android debug APK | `./build.sh android --debug` then `adb install -r meditate-android/android/app/build/outputs/apk/debug/app-debug.apk` | [Android](#android) |
+| regenerate the GTK translation template | `meson compile -C meditate-gtk/builddir meditate-pot` | [Translations](#translations) |
+| cross-build for the Librem 5 | `build-aux/dev-xbuild.sh` | [Librem 5](#librem-5) |
+| cut a release | follow [`RELEASE.md`](RELEASE.md) | — |
 
-If you're only building on the host where the app will run, you
-don't need this file.
+> **F-Droid reproducibility.** F-Droid rebuilds every release and ships the
+> maintainer's signed APK only if its rebuild matches byte for byte. Never
+> change these without a reproducibility check (`build-aux/repro-probe.sh`):
+> `meditate-android/android/rust-build.sh`, the Gradle files under
+> `meditate-android/android/`, `meditate-android/build.rs`, `third_party/`,
+> `rust-toolchain.toml`, `Cargo.lock`, and the pins they reference (JDK 17,
+> build-tools 31.0.0, platform 34, NDK r27c). Workarounds for local builds
+> belong on the command line, never in those files.
 
-## Cross-compile to aarch64 for the Librem 5
+## Prerequisites
 
-`build-aux/dev-xbuild.sh` cross-compiles a Librem 5–compatible
-binary in ~15 seconds on an x86_64 host. Output:
-`target/aarch64-unknown-linux-gnu/release/meditate`, ready to scp
-straight over a Flatpak-installed binary on the phone.
+### Rust
 
-The script self-documents the one-time prerequisites in its
-header. The short version: `aarch64-unknown-linux-gnu` Rust target
-+ a cross-compiling linker + the GNOME runtime's aarch64 libs.
+[rustup](https://rustup.rs). `rust-toolchain.toml` pins the toolchain
+(1.95.0); rustup installs it on the first `cargo` run inside the repo.
+Targets must be added **from inside the repo** so they land on that pinned
+toolchain rather than rustup's default.
 
-Use this instead of `flatpak-builder --arch=aarch64` (which uses
-QEMU and takes 20–35 min) whenever you're iterating on perf-
-sensitive code that needs real-device runs (haptic timing,
-suspend behaviour, anything where the laptop can't faithfully
-verify the change).
+### Linux app
 
-## Deploy to the Librem 5 over SSH
+GTK ≥ 4.18 and libadwaita ≥ 1.7 (Debian 13, Fedora 42, Arch are fine;
+Ubuntu 24.04 LTS, Fedora 40 and Debian 12 are too old — use the
+[Flatpak build](#flatpak-build) there), blueprint-compiler ≥ 0.16, meson,
+ninja, gettext, GStreamer.
 
-Three habits worth getting in muscle memory. The first two are
-load-bearing; the third is just a quality-of-life rule that
-prevents 2-minute hangs.
-
-### 1. Kill the running app + rm the old binary before scp
-
-scp overwrite-in-place onto a running executable fails with the
-cryptic `scp: dest open ...: Failure` — that's `ETXTBSY` (text
-file busy). Removing the file works while the app is running
-because the running process keeps the inode; the next launch
-picks up the new file.
-
-```bash
-timeout 8 ssh -o ConnectTimeout=5 purism@<phone-ip> \
-  'pkill -x meditate; sleep 0.5; \
-   rm -f /home/purism/.local/share/flatpak/app/io.github.janekbt.Meditate/current/active/files/bin/meditate'
+```sh
+# Debian / Ubuntu
+sudo apt install build-essential meson ninja-build pkg-config \
+    libgtk-4-dev libadwaita-1-dev libgstreamer1.0-dev \
+    libgstreamer-plugins-base1.0-dev blueprint-compiler \
+    desktop-file-utils gettext
+# Fedora
+sudo dnf install gcc meson ninja-build pkgconf-pkg-config gtk4-devel \
+    libadwaita-devel gstreamer1-devel gstreamer1-plugins-base-devel \
+    blueprint-compiler desktop-file-utils gettext
+# Arch
+sudo pacman -S --needed base-devel meson ninja pkgconf gtk4 libadwaita \
+    gstreamer gst-plugins-base blueprint-compiler desktop-file-utils gettext
 ```
 
-**Use `pkill -x meditate`, NOT `pkill -f bin/meditate`.** The `-f`
-form matches the SSH'd shell's own argv (it contains the literal
-pattern) and kills the session before the rm runs, exit 255.
+`./build.sh gtk` installs exactly these when something is missing (it asks
+for your password once) and skips the step when everything is present.
 
-Then the scp:
+### Android
 
-```bash
-timeout 30 scp -o ConnectTimeout=5 \
-  target/aarch64-unknown-linux-gnu/release/meditate \
-  purism@<phone-ip>:/home/purism/.local/share/flatpak/app/io.github.janekbt.Meditate/current/active/files/bin/meditate
+**JDK 17 — exactly 17.** `rust-build.sh` pins the d8 dexer from build-tools
+31.0.0 so the APK matches F-Droid's rebuild, and that d8 crashes on classes
+compiled by a newer javac (`Dex conversion failed`). Debian 13 no longer
+ships 17; add Debian 12's archive for it, pinned low so nothing else is ever
+taken from it — the same thing F-Droid's build recipe does:
+
+```sh
+echo "deb https://deb.debian.org/debian bookworm main" | sudo tee /etc/apt/sources.list.d/bookworm.list
+printf 'Package: *\nPin: release n=bookworm\nPin-Priority: 100\n' | sudo tee /etc/apt/preferences.d/bookworm-low
+sudo apt update && sudo apt install openjdk-17-jdk-headless
 ```
 
-### 2. Wipe the local DB after any schema or wire-format change
+(Fedora: `java-17-openjdk-devel`; Arch: `jdk17-openjdk`.) Your system
+default Java can stay whatever it is.
 
-This codebase follows the "no backwards-compat" rule (see
-[`DECISIONS.md`](DECISIONS.md) rule 3). Several recent passes have
-shipped schema changes (column rename `interval_bells.sound` →
-`sound_uuid`, typed-UUID newtypes) where a reused DB would carry
-stale rows that no longer round-trip through the new lookup
-paths.
-
-```bash
-timeout 8 ssh -o ConnectTimeout=5 purism@<phone-ip> \
-  'rm -f ~/.var/app/io.github.janekbt.Meditate/data/meditate/meditate.db{,-shm,-wal}'
-```
-
-On the laptop the path is `~/.local/share/meditate/meditate.db{,-shm,-wal}`
-— same pattern, no flatpak prefix.
-
-**Heads-up:** wiping the DB also takes the Nextcloud sync URL,
-username, sync path, and interval with it (those live in the
-`settings` table). Only the keyring password survives — from the
-user's perspective, the sync config is gone and they have to
-re-enter it. Warn before wiping if you're not the user.
-
-### 3. Always wrap SSH / scp with a wall-clock timeout
-
-Phones suspend, drop off WiFi, or are otherwise unreachable.
-Without a timeout the bash command waits ~2 minutes per call,
-which is a terrible experience when iterating.
-
-```bash
-timeout 8  ssh -o ConnectTimeout=5 purism@<phone-ip> '...'   # for one-line commands
-timeout 30 scp -o ConnectTimeout=5 <file> purism@<phone-ip>:<path>  # for transfers
-```
-
-If `timeout` exits 124, the phone is unreachable — wake it
-rather than retrying mechanically.
-
-## Android
-
-The Android app (`meditate-android/`) builds through a hand-
-maintained Gradle project — **not** xbuild/cargo-apk (xbuild was
-removed 2026-06; cargo-ndk 4.x breaks Slint's build.rs SDK lookup,
-so a plain `cargo build --target` drives the NDK toolchain
-directly).
-
-### One-time setup
+Then the toolchain, one time:
 
 ```sh
 build-aux/setup-android.sh
 ```
 
-Idempotent (Debian/Ubuntu): installs JDK 21, the Android SDK
-(platform 34, build-tools 35), NDK r27, Gradle 8.5 and kotlinc,
-and writes the pinned paths to `~/.config/meditate-android/env.sh`
-— the file every Android build command sources. No Android Studio
-required. Then add the Rust target:
+Idempotent. It downloads the pinned Android command-line tools, SDK
+platforms 34 and 35, build-tools 31.0.0 and 35.0.0, NDK r27c
+(27.2.12479018), Gradle 8.5 and kotlinc into `~/Android`, adds the Rust
+Android targets to the pinned toolchain, and writes
+`~/.config/meditate-android/env.sh` (with `JAVA_HOME` = JDK 17) plus a line
+in `~/.bashrc` that sources it. Re-run it after changing any pin; an
+`env.sh` written by an older version of the script points at the wrong JDK.
+
+Release signing (maintainer only): `~/.config/meditate-android/signing.properties`
+plus the keystore it names. Without it, `assembleRelease` signs with the
+standard debug keystore. The keystore is the app's identity on F-Droid —
+losing it means no update can ever reach installed users.
+
+## Linux app
+
+### Native build
 
 ```sh
-rustup target add aarch64-linux-android
+./build.sh gtk             # optimized
+./build.sh gtk --debug     # faster to build
+./meditate-gtk/builddir/src/meditate
 ```
 
-### Build + install (debug)
+Manual equivalent:
 
 ```sh
-cd meditate-android/android
+cd meditate-gtk
+meson setup builddir --buildtype=debug   # once
+ninja -C builddir
+./builddir/src/meditate
+sudo ninja -C builddir install           # optional, system-wide (use --prefix=/usr at setup)
+```
+
+If meson refuses an existing `builddir` ("generated with Meson version …,
+which is incompatible"), recreate it: `meson setup --wipe builddir`.
+
+### Flatpak build
+
+Needs `flatpak`, `flatpak-builder` and the Flathub remote
+(`flatpak remote-add --if-not-exists --user flathub https://flathub.org/repo/flathub.flatpakrepo`).
+
+```sh
+flatpak-builder --user --install --force-clean --install-deps-from=flathub \
+    flatpak_app build-aux/io.github.janekbt.Meditate.json
+flatpak run io.github.janekbt.Meditate
+```
+
+`--install-deps-from=flathub` pulls the GNOME 50 runtime/SDK and the
+`rust-stable` extension on first run. `--install` replaces any installed
+Meditate Flatpak. The build runs cargo offline against
+`build-aux/cargo-sources.json`, which must list every crate in `Cargo.lock`
+— see [RELEASE.md](RELEASE.md) step 1 for regenerating it.
+
+## Tests and lints
+
+```sh
+cargo test --workspace                                   # everything (~1,240 tests)
+cargo test -p meditate-core -p meditate-android --lib    # what CI runs (no GTK libs needed)
+cargo clippy -p meditate-core -p meditate-android --lib -- -D warnings   # what CI runs
+cargo clippy -p meditate -p meditate-core --all-targets  # GTK shell too
+```
+
+- `cargo test --workspace` needs the GTK/libadwaita development packages and
+  blueprint-compiler, but not meson.
+- The GTK shell's cargo package is named **`meditate`**, not `meditate-gtk`.
+- Most of `meditate-android` is compiled only for Android, so host clippy
+  doesn't see it. To lint it, run clippy for the Android target with the NDK
+  toolchain from `env.sh`:
+
+  ```sh
+  . ~/.config/meditate-android/env.sh
+  TB="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin"
+  CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$TB/aarch64-linux-android26-clang" \
+  CC_aarch64_linux_android="$TB/aarch64-linux-android26-clang" \
+  CXX_aarch64_linux_android="$TB/aarch64-linux-android26-clang++" \
+  AR_aarch64_linux_android="$TB/llvm-ar" \
+      cargo clippy -p meditate-android --target aarch64-linux-android
+  ```
+
+  CI does not run this; the warnings it reports predate this document.
+
+## Android
+
+The APK is built by the hand-maintained Gradle project in
+`meditate-android/android/` (AGP 7.3, Gradle 8.5 via the committed wrapper,
+compileSdk/targetSdk 34, minSdk 26, arm64-v8a). Its `cargoNdkBuild` task runs
+`rust-build.sh`, which compiles the Rust library with plain
+`cargo build --target aarch64-linux-android` (not cargo-ndk, whose 4.x
+runner breaks slint's build script) and drops it into `jniLibs/`.
+
+```sh
+./build.sh android --debug    # debug APK → meditate-android/android/app/build/outputs/apk/debug/app-debug.apk
+./build.sh android            # release APK → …/apk/release/app-release.apk
+```
+
+Manual equivalent:
+
+```sh
 . ~/.config/meditate-android/env.sh
-./gradlew :app:assembleDebug
+cd meditate-android/android
+./gradlew :app:assembleDebug          # or :app:assembleRelease
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-The `cargoNdkBuild` Gradle task runs `rust-build.sh`, which
-compiles the Rust cdylib and drops it into `jniLibs/` before AGP
-packages the APK. Default ABI is `arm64-v8a`; for an emulator
-build: `rustup target add x86_64-linux-android` once, then
-`ABIS="arm64-v8a x86_64" ./gradlew :app:assembleDebug`.
+`adb install -r` keeps the app's data. A debug or CI build cannot update an
+F-Droid install (different signing key); uninstalling first deletes the
+data. For an emulator APK: `ABIS="arm64-v8a x86_64" ./gradlew :app:assembleDebug`.
 
-`assembleRelease` produces an optimized build signed with the
-standard Android debug keystore (fine for sideloading and
-measurement; F-Droid re-signs with its own key).
+Troubleshooting:
 
-### Tests
+- **`Dex conversion failed` … `JDK version 21 is known to cause an error`** —
+  the build ran on a JDK other than 17. Check `echo $JAVA_HOME`; re-run
+  `build-aux/setup-android.sh` to rewrite `env.sh`, or prefix the command
+  with `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64`.
+- **APK timestamp didn't change after a rebuild** — Gradle compares content:
+  if the stripped native library is byte-identical, packaging is skipped.
+  That's expected, not a stale build.
+- **Reproducibility** — `build-aux/repro-probe.sh` builds the release APK
+  twice from two differently long paths (the second with the signing config
+  stripped, as F-Droid does) and compares them. Run it after touching
+  anything in the protected list above.
+
+## Translations
+
+- **GTK:** `meditate-gtk/po/` — template `meditate.pot`, one `<lang>.po` per
+  language in `LINGUAS`. Every source file with a `gettext(` / `ngettext(` /
+  `_("` call must be listed in `po/POTFILES.in`. With a configured `builddir`
+  (see [Native build](#native-build)):
+
+  ```sh
+  meson compile -C meditate-gtk/builddir meditate-pot         # regenerate meditate.pot
+  meson compile -C meditate-gtk/builddir meditate-update-po   # merge it into every <lang>.po
+  ```
+
+  Then translate the new and fuzzy entries.
+- **Android:** `meditate-android/lang/<lang>/LC_MESSAGES/meditate-android.po`,
+  bundled into the binary at build time; strings come from `@tr()` in the
+  `.slint` files and the `Tr` catalogue in `ui/main.slint`.
+- Validate every file you touched: `msgfmt --check -o /dev/null <file>`.
+
+Known issue: `po/POTFILES.in` is missing several source files and the
+template has not been regenerated since May 2026, and xgettext versions
+before 0.24 (Debian 13 ships 0.23) read `.rs` files as C, which marks some
+strings as C format strings and makes `msgfmt --check` fail on correct
+translations. Fixing the catalogue is a separate task.
+
+## Librem 5
+
+### Cross-compile
+
+`build-aux/dev-xbuild.sh` cross-compiles a Librem 5 binary in seconds instead
+of the 20–35 minute `flatpak-builder --arch=aarch64` QEMU build. Output:
+`target/aarch64-unknown-linux-gnu/release/meditate`.
+
+One-time prerequisites (also in the script header):
 
 ```sh
-cargo test -p meditate-core -p meditate-android --lib
+rustup target add aarch64-unknown-linux-gnu      # from inside the repo
+sudo apt install gcc-aarch64-linux-gnu
+flatpak install --user --arch=aarch64 flathub org.gnome.Sdk//50
+mkdir -p ~/sysroots/gnome50-aarch64
+ln -sfn ~/.local/share/flatpak/runtime/org.gnome.Sdk/aarch64/50/active/files \
+        ~/sysroots/gnome50-aarch64/usr
 ```
 
-runs the full core + Android-shell suite on the host — no device
-needed (the JNI/Slint layers are cfg-gated out).
+The maintainer's existing `~/sysroots/gnome50-aarch64/usr` is a hand-built
+directory (per-file links plus patched linker scripts), not this symlink. If
+linking fails after an SDK update, recreate it with the commands above.
 
-### References
+### Deploy over SSH
 
-The canonical Slint docs are at
-<https://material.slint.dev/getting-started/> (Material) and
-docs.slint.dev (Android backend — search "Android" in the side
-nav).
+Always wrap SSH/scp in a timeout — a suspended phone otherwise hangs each
+call for about two minutes (exit code 124 means unreachable: wake the phone).
+
+1. Stop the app and remove the old binary. scp can't overwrite a running
+   executable (`dest open …: Failure` is `ETXTBSY`); a removed file stays
+   valid for the running process.
+
+   ```sh
+   timeout 8 ssh -o ConnectTimeout=5 purism@<phone-ip> \
+     'pkill -x meditate; sleep 0.5; rm -f /home/purism/.local/share/flatpak/app/io.github.janekbt.Meditate/current/active/files/bin/meditate'
+   ```
+
+   Use `pkill -x meditate`, not `pkill -f bin/meditate` — `-f` matches the
+   SSH shell's own command line and kills the session (exit 255).
+
+2. Copy the new binary:
+
+   ```sh
+   timeout 30 scp -o ConnectTimeout=5 target/aarch64-unknown-linux-gnu/release/meditate \
+     purism@<phone-ip>:/home/purism/.local/share/flatpak/app/io.github.janekbt.Meditate/current/active/files/bin/meditate
+   ```
+
+3. Only if a development build left the test phone's database in a state
+   it can't read, reset it (this also deletes the sync settings; only the
+   keyring password survives):
+
+   ```sh
+   timeout 8 ssh -o ConnectTimeout=5 purism@<phone-ip> \
+     'rm -f ~/.var/app/io.github.janekbt.Meditate/data/meditate/meditate.db{,-shm,-wal}'
+   ```
+
+   Schema changes ship with a migration ([`DECISIONS.md`](DECISIONS.md)
+   rule 3), so this is not part of the normal cycle.
+
+## CI
+
+`.github/workflows/flatpak.yml` runs on pushes and pull requests to `main`,
+and manually on any branch:
+
+```sh
+gh workflow run flatpak.yml --ref beta               # everything (~35 min)
+gh workflow run flatpak.yml --ref beta -f scope=light  # skip the two Flatpak builds
+```
+
+Jobs: metainfo + desktop-file validation, `cargo test` + `clippy -D warnings`
+for core and android, an Android release APK (JDK 21 and only build-tools 35
+on the runner, so its APK is not the reproducible one — and signed with the
+debug keystore), and the x86_64 and aarch64 Flatpak bundles. The bundles of
+a tagged commit's run are what a release ships to Linux users.

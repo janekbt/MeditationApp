@@ -6,6 +6,11 @@ hello-screen, Countdown→Session migration, and the consolidation back onto
 "UI Translation Phases" below; platform-edge milestones in their own section
 further down. Both lists progress in parallel.
 
+> Historical plan. Toolchain, build and distribution details below
+> describe the state at the time; the current reference is
+> [`BUILDING.md`](BUILDING.md) (F-Droid now ships our own signed,
+> reproducibly built APK).
+
 Owner: Janek (solo). No PRs; same `beta`-first discipline as the GTK shell.
 
 ## Goal
@@ -79,6 +84,8 @@ update to point at `meditate-gtk/` (one-time path edit). Flathub
 build keeps working unchanged otherwise.
 
 ## Dev tooling on this Debian laptop
+
+*Superseded — see [`BUILDING.md` → Prerequisites](BUILDING.md#prerequisites).*
 
 Installed by `build-aux/setup-android.sh` (idempotent, Debian/Ubuntu only):
 

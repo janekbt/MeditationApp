@@ -2,9 +2,9 @@
 # build.sh — hands-off build-from-source for both shells.
 #
 #   ./build.sh gtk                # GTK app, release build
-#   ./build.sh android            # optimized APK (debug-keystore-
-#                                 # signed; F-Droid re-signs, fine
-#                                 # for sideloading)
+#   ./build.sh android            # optimized APK (signed with your
+#                                 # own release key if configured,
+#                                 # else the debug keystore)
 #   ./build.sh {gtk|android} --debug   # faster build for hacking
 #
 # What "hands-off" means here: dependency installation for
@@ -13,7 +13,7 @@
 #   * GTK/libadwaita floor (4.18 / 1.7) — checked up front with a
 #     clear message + the Flatpak fallback, instead of a mid-build
 #     pkg-config error.
-#   * blueprint-compiler >= 0.20 required (Debian bookworm's is
+#   * blueprint-compiler >= 0.16 required (Debian bookworm's is
 #     too old — the message says what to do).
 #   * Rust via rustup preferred; the Android target install needs
 #     rustup, and distro rustc that is too old fails cargo's
@@ -23,7 +23,8 @@
 #   * Android toolchain (SDK/NDK/Gradle) is bootstrapped by
 #     build-aux/setup-android.sh (idempotent, pinned versions); on
 #     non-Debian distros this script pre-installs the three
-#     packages that bootstrap needs (JDK/unzip/wget).
+#     packages that bootstrap needs (JDK 17/unzip/wget). JDK 17
+#     exactly — the reproducible-build dexer pin rejects newer.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -111,7 +112,7 @@ build_gtk() {
                     libadwaita gstreamer gst-plugins-base \
                     blueprint-compiler desktop-file-utils gettext ;;
         *)  log "unknown package manager — make sure these exist:"
-            log "  meson ninja pkg-config gtk4>=4.18 libadwaita>=1.7 gstreamer blueprint-compiler>=0.20 gettext rust" ;;
+            log "  meson ninja pkg-config gtk4>=4.18 libadwaita>=1.7 gstreamer blueprint-compiler>=0.16 gettext rust" ;;
     esac
     fi
 
@@ -146,15 +147,15 @@ Your distro is too old for a native build — use the Flatpak path instead:
 # ═══════════════════════════════════ Android ═════════════════════════
 build_android() {
     log "target: Android APK ($MODE)"
-    # setup-android.sh needs exactly javac/unzip/wget from the
+    # setup-android.sh needs exactly JDK 17/unzip/wget from the
     # distro; it direct-downloads everything else (SDK, NDK r27,
     # Gradle, kotlinc) with pinned versions, idempotently.
-    if ! { command -v javac && command -v unzip && command -v wget; } >/dev/null 2>&1; then
+    if ! { ls -d /usr/lib/jvm/java-17-* && command -v unzip && command -v wget; } >/dev/null 2>&1; then
         case "$PM" in
             apt)    : ;;  # setup-android.sh handles apt itself
-            dnf)    install_pkgs java-21-openjdk-devel unzip wget ;;
-            pacman) install_pkgs jdk21-openjdk unzip wget ;;
-            *)      die "install a JDK (17+), unzip and wget, then rerun." ;;
+            dnf)    install_pkgs java-17-openjdk-devel unzip wget ;;
+            pacman) install_pkgs jdk17-openjdk unzip wget ;;
+            *)      die "install JDK 17 (exactly — newer breaks the pinned dexer), unzip and wget, then rerun." ;;
         esac
     fi
     ENV_SH="$HOME/.config/meditate-android/env.sh"
@@ -181,7 +182,11 @@ build_android() {
     log "done → ${out}"
     log "install: adb install -r ${out}"
     if [[ "$MODE" == release ]]; then
-        log "note: release APKs are debug-keystore-signed (F-Droid re-signs; fine for sideloading)"
+        if [[ -f "${MEDITATE_SIGNING:-$HOME/.config/meditate-android/signing.properties}" ]]; then
+            log "note: signed with the release key from signing.properties"
+        else
+            log "note: no signing.properties — signed with the debug keystore (fine for sideloading)"
+        fi
     fi
 }
 

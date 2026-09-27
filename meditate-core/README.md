@@ -25,7 +25,7 @@ From the workspace root:
 cargo build -p meditate-core           # build just the core crate
 cargo test -p meditate-core            # 1000+ unit tests, all in-process
 cargo test --workspace                 # full workspace
-cargo run -p meditate-core --example smoke           # one-shot harnesses
+cargo run -p meditate-core --example sync_smoke      # one-shot harnesses
 cargo run -p meditate-core --example sync_pipeline_smoke
 ```
 
