@@ -88,6 +88,16 @@
   </content_rating>
 
   <releases>
+    <release version="26.9.0" date="2026-09-28" type="development">
+      <description translate="yes">
+        <p>Beta for testing.</p>
+        <ul>
+          <li>Bell volume: a new slider in Preferences sets how loud bells ring, relative to the system volume.</li>
+          <li>Guided meditations and sounds can be imported from MP4 files. Files without an audio track now show a clear message instead of failing silently.</li>
+          <li>The app is now fully translated in all nine languages, and counts like “21 days” are shown correctly in every language.</li>
+        </ul>
+      </description>
+    </release>
     <release version="26.8.5" date="2026-08-20">
       <description translate="yes">
         <p>Packaging only: the Android build now produces identical output on any machine, so F-Droid can verify it against this source. Nothing changes in the app itself.</p>
