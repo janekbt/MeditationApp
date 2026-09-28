@@ -212,6 +212,32 @@ tag rather than whatever was built last.
   shipped version".
 - Back on `beta` for further work.
 
+## Beta releases
+
+A beta is a GitHub **pre-release** for testers, outside F-Droid. It
+follows steps 1–4 above, with these differences:
+
+- **Version:** an ordinary number from `bump-version.sh` (e.g. 26.9.0,
+  versionCode 260900). Android only installs higher versionCodes, so
+  every later beta and the final release take the next numbers — the
+  final release after a 26.9.0 beta is 26.9.1 or later.
+- **Tag:** `v<version>-beta` (e.g. `v26.9.0-beta`). The fdroiddata
+  recipe only checks tags matching `^v[0-9.]+$`, so F-Droid never sees
+  a beta; the next plain tag becomes the F-Droid update as usual. Never
+  give a beta a plain `v<version>` tag.
+- **Notes:** mark the metainfo entry `type="development"`; delete the
+  fastlane changelog skeleton (F-Droid never builds the beta).
+- **APK:** release build on JDK 17, signed with the release key (check
+  it as in 5a), so it installs over the F-Droid version and back without
+  losing data. Asset name `Meditate-<version>-beta.apk`.
+- **Publish** (needs Janek's explicit go): push the branch, then only
+  the beta tag; dispatch Flatpak CI on the tag
+  (`gh workflow run flatpak.yml --ref v<version>-beta`) and wait for
+  green; `gh release create v<version>-beta <apk> --prerelease --title
+  "Meditate <version> beta" --notes-file <notes>`; then
+  `build-aux/attach-flatpaks.sh <version>-beta`. Check every asset URL
+  returns 200 and the previous release is still marked "Latest".
+
 ## Known traps (learned the hard way)
 
 - `versionCode` must strictly increase; the script enforces it.
