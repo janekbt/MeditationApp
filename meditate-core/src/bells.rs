@@ -1498,8 +1498,7 @@ mod tests {
             box_breath_cues: None,
         };
         let start = Duration::from_secs(100);
-        let mut session = Session::start_running(settings, start);
-        let mut effects = session.start_signals();
+        let (mut session, mut effects) = Session::start(settings, start);
         for secs in 1..=660 {
             effects.extend(session.tick(start + Duration::from_secs(secs)));
         }

@@ -292,6 +292,20 @@ impl AppState {
         matches!(self, Self::Active(_))
     }
 
+    /// Start a fresh session from fully-built `SessionSettings`.
+    /// The shell assembles these from the DB (interval bells,
+    /// starting/end cue, per-mode signal-mode override, prep)
+    /// exactly like GTK's `build_timer_settings`, so core gets
+    /// the real cue config and emits the right `Fire*` / end
+    /// effects. Core picks Prep or Running from `prep_secs`; the
+    /// returned effects are what plays at the start (the starting
+    /// bell when there is no prep, else it comes with the tick that
+    /// ends prep) and must be dispatched like any other transition.
+    pub fn start_session(settings: SessionSettings, now: Duration) -> Transition {
+        let (session, start_effects) = Session::start(settings, now);
+        Transition::new(Self::Active(Box::new(session)), start_effects)
+    }
+
     /// Primary action: Start / Pause / Resume / Restart depending
     /// on current state. `shape` is consulted only when starting a
     /// fresh session; pause/resume ignore it (Session already
@@ -301,26 +315,6 @@ impl AppState {
     /// `TimerStopwatch`, etc. Keeping shape construction shell-side
     /// matches the GTK shell's `on_start` (it builds the right
     /// `CoreSessionShape` from `current_mode()` + `stopwatch_toggle_on`).
-    /// Start a fresh session from fully-built `SessionSettings`.
-    /// The shell assembles these from the DB (interval bells,
-    /// starting/end cue, per-mode signal-mode override, prep)
-    /// exactly like GTK's `build_timer_settings`, so core gets
-    /// the real cue config and emits the right `Fire*` / end
-    /// effects (instead of the old `..Default::default()` that
-    /// left every bell `None` and made core emit nothing).
-    /// Honours prep: `Some` prep secs → `start_prep` (silent
-    /// pre-roll, starting bell fires at the prep→Running edge),
-    /// else `start_running`. No effects on the start edge itself
-    /// (the starting bell, if any, arrives on a later tick).
-    pub fn start_session(settings: SessionSettings, now: Duration) -> Transition {
-        let session = if settings.prep_secs.is_some() {
-            Session::start_prep(settings, now)
-        } else {
-            Session::start_running(settings, now)
-        };
-        Transition::new(Self::Active(Box::new(session)), Vec::new())
-    }
-
     pub fn toggle(self, shape: SessionShape, now: Duration) -> Transition {
         match self {
             Self::Idle | Self::Finished => {
@@ -580,6 +574,79 @@ mod tests {
     }
 
     use super::*;
+
+    // ── start_session: what plays at the start ─────────────────
+
+    fn timer_settings_with_starting_bell(prep_secs: Option<u32>) -> SessionSettings {
+        SessionSettings {
+            shape: SessionShape::TimerCountdown { target_secs: 600 },
+            prep_secs,
+            starting_bell: Some(meditate_core::bells::BellCue {
+                sound_uuid: "start-sound".into(),
+                vibration_pattern_uuid: "start-pattern".into(),
+                signal_mode: meditate_core::db::SignalMode::Sound,
+            }),
+            ..Default::default()
+        }
+    }
+
+    fn starting_bells(effects: &[Effect]) -> usize {
+        effects.iter().filter(|e| matches!(e, Effect::FireStartingBell { .. })).count()
+    }
+
+    #[test]
+    fn starting_without_prep_rings_the_starting_bell_at_once() {
+        let t = AppState::start_session(timer_settings_with_starting_bell(None), Duration::from_secs(100));
+        assert!(t.is_running());
+        assert_eq!(starting_bells(&t.effects), 1, "{:?}", t.effects);
+    }
+
+    #[test]
+    fn starting_with_prep_rings_the_starting_bell_when_prep_ends() {
+        let t0 = Duration::from_secs(100);
+        let t = AppState::start_session(timer_settings_with_starting_bell(Some(10)), t0);
+        assert_eq!(starting_bells(&t.effects), 0, "{:?}", t.effects);
+        let AppState::Active(mut session) = t.state else { panic!("not started") };
+        let mut later = Vec::new();
+        for secs in 1..=10 {
+            later.extend(session.tick(t0 + Duration::from_secs(secs)));
+        }
+        assert_eq!(starting_bells(&later), 1, "{later:?}");
+    }
+
+    #[test]
+    fn starting_with_no_starting_bell_plays_nothing() {
+        for prep in [None, Some(10)] {
+            let settings = SessionSettings {
+                starting_bell: None,
+                ..timer_settings_with_starting_bell(prep)
+            };
+            let t = AppState::start_session(settings, Duration::from_secs(100));
+            assert!(t.effects.is_empty(), "prep {prep:?}: {:?}", t.effects);
+        }
+    }
+
+    /// The start effects must reach the phone: the shell dispatches
+    /// the effects of the transition `start_session` returns.
+    #[test]
+    fn the_shell_dispatches_the_start_effects() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
+        let lib = std::fs::read_to_string(path).unwrap();
+        assert_eq!(lib.matches("AppState::start_session(").count(), 1);
+        let call = lib.find("AppState::start_session(").unwrap();
+        let bound = lib[..call].rfind("let transition = ").expect("start feeds `transition`");
+        let dispatch = call
+            + lib[call..].find("dispatch_effects(&transition.effects)").expect("dispatched");
+        let between = &lib[bound..dispatch];
+        assert_eq!(between.matches("let transition = ").count(), 1, "same `transition`");
+        let app = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/app.rs"),
+        )
+        .unwrap();
+        let code = app.split("#[cfg(test)]\nmod tests").next().unwrap();
+        assert!(!code.contains("start_signals"), "use Session::start");
+        assert_eq!(code.matches("Session::start(").count(), 1);
+    }
 
     // ── TimerMode chip mapping ──────────────────────────────────
 

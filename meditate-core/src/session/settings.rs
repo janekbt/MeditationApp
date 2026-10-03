@@ -1,6 +1,6 @@
 //! `SessionSettings` — every input needed to construct an in-flight
 //! `Session`. Built by the shell from its setup-view state and
-//! consumed by `Session::start_prep` / `Session::start_running`.
+//! consumed by `Session::start`.
 
 use crate::bells::{ActiveBell, BellCue, BoxBreathCueConfig};
 use crate::breath::BreathPattern;
@@ -62,8 +62,7 @@ impl SessionShape {
 }
 
 /// All the configuration a fresh session needs. Built by the shell
-/// from its setup-view state and handed to `Session::start_prep` or
-/// `Session::start_running`.
+/// from its setup-view state and handed to `Session::start`.
 #[derive(Debug, Clone)]
 pub struct SessionSettings {
     /// Per-mode shape — replaces the prior loose tuple of
@@ -71,8 +70,7 @@ pub struct SessionSettings {
     /// See [`SessionShape`] for the per-variant payload contract.
     pub shape: SessionShape,
     /// Some(secs) when prep silence is enabled; None otherwise.
-    /// Only consulted by `start_prep` — `start_running` skips prep
-    /// entirely.
+    /// `Session::start` opens in Prep when set, in Running when not.
     pub prep_secs: Option<u32>,
     /// Per-session bell schedule. Pre-built by the shell (typically
     /// from the `interval_bells` table filtered by enabled-flag and

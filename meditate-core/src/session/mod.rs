@@ -133,8 +133,8 @@ pub enum SessionPhase {
 }
 
 
-/// In-flight session. Created by `start_prep` (when prep silence is
-/// enabled) or `start_running` (skip-prep path); driven by `tick(now)`
+/// In-flight session. Created by `start` (in Prep when prep silence
+/// is enabled, else in Running); driven by `tick(now)`
 /// thereafter; transitioned to `SessionPhase::Stopped` by `stop` /
 /// `finish_overtime` / `add_overtime_and_finish`, after which the
 /// shell drops it.
@@ -185,38 +185,19 @@ pub struct Session {
 }
 
 impl Session {
-    /// Start a session in Prep phase. `prep_secs` must be set in
-    /// `settings` — caller ensures (an `assert!` would be friendlier
-    /// than a silent skip; debug-asserted here).
-    pub fn start_prep(mut settings: SessionSettings, now: Duration) -> Self {
-        debug_assert!(
-            settings.prep_secs.is_some(),
-            "start_prep called without prep_secs in settings",
-        );
-        let bells = std::mem::take(&mut settings.bells);
-        let bell_rng_state = settings.bell_rng_seed.max(1);
-        Self {
-            settings,
-            phase: SessionPhase::Prep,
-            phase_clock: Stopwatch::started_at(now),
-            is_paused: false,
-            last_breath_phase: None,
-            bells,
-            bell_rng_state,
-            final_duration_secs: None,
-        }
-    }
-
-    /// Start a session directly in Running phase, skipping prep
-    /// silence. Used when `prep_secs` is `None` or the user has
-    /// `preparation_time_active = false`. The Running stopwatch
-    /// anchors at `now`.
+    /// Start a session: in Prep when `settings.prep_secs` is set,
+    /// otherwise straight in Running. Returns the session together
+    /// with the effects to dispatch right away, so a shell can't
+    /// start a session and lose its starting bell.
     ///
     /// # Lifecycle the caller is signing up for
     ///
-    /// 1. **Construct** via this fn (or `start_prep` if prep is on).
-    ///    The returned `Session` is in `Running` (or `Prep`) phase,
-    ///    paused = false, clock anchored at `now`.
+    /// 1. **Construct** via this fn and dispatch the effects it
+    ///    returns. The `Session` is in `Prep` when
+    ///    `settings.prep_secs` is set, otherwise in `Running`;
+    ///    paused = false, clock anchored at `now`. The effects are
+    ///    what plays at the start: the starting bell when there is
+    ///    no prep (with prep it comes from the tick that ends prep).
     /// 2. **Tick** once per second from the caller's clock, passing
     ///    a monotonic `now: Duration` (typically `boot_time_now()` so
     ///    suspend doesn't freeze the clock). Each tick returns
@@ -244,10 +225,12 @@ impl Session {
     /// use meditate_core::session::{Session, SessionSettings};
     /// use std::time::Duration;
     ///
-    /// let mut s = Session::start_running(
+    /// let (mut s, start_effects) = Session::start(
     ///     SessionSettings::default(),
     ///     Duration::from_secs(100),
     /// );
+    /// // Dispatch `start_effects` (the starting bell, if any).
+    /// assert!(start_effects.is_empty()); // no starting bell configured
     /// // Shell drives by calling `tick(now)` once per second.
     /// let _effects = s.tick(Duration::from_secs(101));
     /// // Terminate via `stop`, `finish_overtime`, or
@@ -256,12 +239,22 @@ impl Session {
     /// let end_effects = s.stop(Duration::from_secs(110));
     /// assert!(!end_effects.is_empty());
     /// ```
-    pub fn start_running(mut settings: SessionSettings, now: Duration) -> Self {
+    pub fn start(settings: SessionSettings, now: Duration) -> (Self, Vec<Effect>) {
+        if settings.prep_secs.is_some() {
+            (Self::new(settings, SessionPhase::Prep, now), Vec::new())
+        } else {
+            let session = Self::new(settings, SessionPhase::Running, now);
+            let effects = starting_bell_effect(&session.settings).into_iter().collect();
+            (session, effects)
+        }
+    }
+
+    fn new(mut settings: SessionSettings, phase: SessionPhase, now: Duration) -> Self {
         let bells = std::mem::take(&mut settings.bells);
         let bell_rng_state = settings.bell_rng_seed.max(1);
         Self {
             settings,
-            phase: SessionPhase::Running,
+            phase,
             phase_clock: Stopwatch::started_at(now),
             is_paused: false,
             last_breath_phase: None,
@@ -269,6 +262,24 @@ impl Session {
             bell_rng_state,
             final_duration_secs: None,
         }
+    }
+
+    /// Test shortcut: a session in Prep, start effects dropped.
+    /// `prep_secs` must be set in `settings`.
+    #[cfg(test)]
+    pub(crate) fn start_prep(settings: SessionSettings, now: Duration) -> Self {
+        debug_assert!(
+            settings.prep_secs.is_some(),
+            "start_prep called without prep_secs in settings",
+        );
+        Self::new(settings, SessionPhase::Prep, now)
+    }
+
+    /// Test shortcut: a session straight in Running, start effects
+    /// (the starting bell) dropped.
+    #[cfg(test)]
+    pub(crate) fn start_running(settings: SessionSettings, now: Duration) -> Self {
+        Self::new(settings, SessionPhase::Running, now)
     }
 
     /// Freeze the session's elapsed clock at `now`. Returns a
@@ -853,22 +864,6 @@ fn box_breath_cue_effect(
         vibration_pattern_uuid: cue.vibration_pattern_uuid.0.clone(),
         signal_mode,
     })
-}
-
-/// Effects the shell should dispatch IMMEDIATELY after constructing
-/// a Session via `start_running` (no-prep path). For the prep path,
-/// the FireStartingBell is emitted as part of the tick that crosses
-/// the prep boundary; the shell calls this helper only for sessions
-/// that skip prep.
-impl Session {
-    pub fn start_signals(&self) -> Vec<Effect> {
-        match self.phase {
-            SessionPhase::Running => starting_bell_effect(&self.settings)
-                .into_iter()
-                .collect(),
-            _ => Vec::new(),
-        }
-    }
 }
 
 /// Iterate over the session's bells, tick each against `elapsed`,
@@ -2048,5 +2043,149 @@ mod tests {
         let effects = s.enter_overtime();
         assert!(effects.is_empty());
         assert_eq!(s.phase(), SessionPhase::Stopped);
+    }
+
+    // ── Session::start — what plays at the start ──────────────────
+    //
+    // The starting bell must ring whether or not prep is on. Shells
+    // dispatch exactly what `start` returns; there is no second call
+    // to remember (Android once forgot it: no starting bell without
+    // prep).
+
+    fn starting_cue() -> crate::bells::BellCue {
+        crate::bells::BellCue {
+            sound_uuid: "start-sound".into(),
+            vibration_pattern_uuid: "start-pattern".into(),
+            signal_mode: SignalMode::Sound,
+        }
+    }
+
+    fn the_starting_bell() -> Effect {
+        Effect::FireStartingBell {
+            sound_uuid: "start-sound".into(),
+            vibration_pattern_uuid: "start-pattern".into(),
+            signal_mode: SignalMode::Sound,
+        }
+    }
+
+    fn with_starting_bell(mut settings: SessionSettings) -> SessionSettings {
+        settings.starting_bell = Some(starting_cue());
+        settings
+    }
+
+    fn starting_bells(effects: &[Effect]) -> usize {
+        effects.iter().filter(|e| matches!(e, Effect::FireStartingBell { .. })).count()
+    }
+
+    /// Start at 100 s, tick every second through prep, the 600 s
+    /// target and a minute of overtime. Returns what `start` returned
+    /// and everything after it.
+    fn run_whole_session(settings: SessionSettings) -> (Vec<Effect>, Vec<Effect>) {
+        let prep = u64::from(settings.prep_secs.unwrap_or(0));
+        let t0 = Duration::from_secs(100);
+        let (mut s, at_start) = Session::start(settings, t0);
+        let mut later = Vec::new();
+        for secs in 1..=prep + 660 {
+            later.extend(s.tick(t0 + Duration::from_secs(secs)));
+        }
+        (at_start, later)
+    }
+
+    #[test]
+    fn start_without_prep_runs_and_rings_the_starting_bell_at_once() {
+        let settings = with_starting_bell(timer_countdown_settings(600));
+        let (s, effects) = Session::start(settings, Duration::from_secs(100));
+        assert_eq!(s.phase(), SessionPhase::Running);
+        assert_eq!(effects, vec![the_starting_bell()]);
+    }
+
+    #[test]
+    fn start_with_prep_waits_and_rings_the_starting_bell_when_prep_ends() {
+        let settings = with_starting_bell(timer_prep_settings(10, 600));
+        let t0 = Duration::from_secs(100);
+        let (mut s, effects) = Session::start(settings, t0);
+        assert_eq!(s.phase(), SessionPhase::Prep);
+        assert!(effects.is_empty(), "{effects:?}");
+        for secs in 1..10 {
+            let effects = s.tick(t0 + Duration::from_secs(secs));
+            assert_eq!(starting_bells(&effects), 0, "{secs} s into prep");
+        }
+        let effects = s.tick(t0 + Duration::from_secs(10));
+        assert_eq!(s.phase(), SessionPhase::Running);
+        assert!(effects.contains(&Effect::EndPrep), "{effects:?}");
+        assert_eq!(starting_bells(&effects), 1, "{effects:?}");
+    }
+
+    #[test]
+    fn the_starting_bell_rings_exactly_once_per_session() {
+        for prep in [None, Some(10)] {
+            let mut settings = with_starting_bell(timer_countdown_settings(600));
+            settings.prep_secs = prep;
+            let (at_start, later) = run_whole_session(settings);
+            assert_eq!(
+                starting_bells(&at_start) + starting_bells(&later), 1,
+                "prep {prep:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn stopwatch_sessions_ring_the_starting_bell_too() {
+        let settings = with_starting_bell(timer_stopwatch_settings());
+        let (_, effects) = Session::start(settings, Duration::from_secs(100));
+        assert_eq!(effects, vec![the_starting_bell()]);
+    }
+
+    #[test]
+    fn no_starting_bell_configured_rings_none() {
+        for prep in [None, Some(10)] {
+            let mut settings = timer_countdown_settings(600);
+            settings.prep_secs = prep;
+            let (at_start, later) = run_whole_session(settings);
+            assert!(at_start.is_empty(), "prep {prep:?}: {at_start:?}");
+            assert_eq!(starting_bells(&later), 0, "prep {prep:?}");
+        }
+    }
+
+    #[test]
+    fn a_starting_bell_muted_by_the_cues_toggle_rings_none() {
+        // A sound-only bell under a vibration-only Cues setting has
+        // no channel left.
+        for prep in [None, Some(10)] {
+            let mut settings = with_starting_bell(timer_countdown_settings(600));
+            settings.prep_secs = prep;
+            settings.signal_mode_override = SignalMode::Vibration;
+            let (at_start, later) = run_whole_session(settings);
+            assert_eq!(starting_bells(&at_start) + starting_bells(&later), 0, "prep {prep:?}");
+        }
+    }
+
+    #[test]
+    fn the_cues_toggle_shapes_the_starting_bell_at_start() {
+        let mut settings = with_starting_bell(timer_countdown_settings(600));
+        settings.starting_bell = Some(crate::bells::BellCue {
+            signal_mode: SignalMode::Both,
+            ..starting_cue()
+        });
+        settings.signal_mode_override = SignalMode::Vibration;
+        let (_, effects) = Session::start(settings, Duration::from_secs(100));
+        assert_eq!(
+            effects,
+            vec![Effect::FireStartingBell {
+                sound_uuid: "start-sound".into(),
+                vibration_pattern_uuid: "start-pattern".into(),
+                signal_mode: SignalMode::Vibration,
+            }],
+        );
+    }
+
+    #[test]
+    fn start_returns_nothing_but_the_starting_bell() {
+        // A due-at-once interval bell still waits for the first tick,
+        // as before; the start edge only carries the starting bell.
+        let mut settings = with_starting_bell(timer_countdown_settings(600));
+        settings.bells = vec![fixed_bell(0, "at-zero")];
+        let (_, effects) = Session::start(settings, Duration::from_secs(100));
+        assert_eq!(effects, vec![the_starting_bell()]);
     }
 }

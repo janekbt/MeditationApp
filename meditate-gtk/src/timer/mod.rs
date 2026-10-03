@@ -164,4 +164,25 @@ mod tests {
         assert_eq!(code.matches("self.build_session_bells(").count(), sessions);
         assert_eq!(code.matches("self.build_starting_bell_cue(").count(), sessions);
     }
+
+    /// Everything `CoreSession::start` returns (the starting bell
+    /// without prep) is dispatched at once; there is no second call
+    /// to forget.
+    #[test]
+    fn every_start_dispatches_what_core_returns() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/timer/imp.rs");
+        let source = std::fs::read_to_string(path).unwrap();
+        let code = source.split("#[cfg(test)]\nmod tests").next().unwrap();
+        assert!(!code.contains("start_signals"));
+        let starts: Vec<usize> = code.match_indices("CoreSession::start(").map(|(i, _)| i).collect();
+        assert_eq!(starts.len(), 4, "Timer with and without prep, Box Breath, Guided");
+        for at in starts {
+            let rest = &code[at..];
+            let dispatch = rest
+                .find("self.dispatch_session_effects(&start_effects);")
+                .expect("start effects dispatched");
+            assert!(!rest[1..dispatch].contains("CoreSession::start("), "dispatched right after its own start");
+        }
+        assert_eq!(code.matches("let (session, start_effects) = CoreSession::start(").count(), 4);
+    }
 }

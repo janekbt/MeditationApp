@@ -585,8 +585,8 @@ pub fn prep_target_duration(prep_active: bool, prep_secs: u32) -> Option<Duratio
 /// (anything `u32::from_str` rejects), and clamps in-range integers to
 /// `[PREP_SECS_MIN, PREP_SECS_MAX]`. The shell never has to think about
 /// sanitising a raw string read from the DB.
-/// Resolve the prep silence the shell should hand to
-/// `Session::start_prep` from persisted state. Reads three settings
+/// Resolve the prep silence the shell should put in
+/// `SessionSettings::prep_secs` from persisted state. Reads three settings
 /// — `preparation_time_active`, `starting_bell_active`,
 /// `preparation_time_secs` — and AND-gates them through
 /// `prep_target_duration`. Returns `None` when prep is off, when the

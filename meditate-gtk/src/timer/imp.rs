@@ -2003,11 +2003,11 @@ impl TimerView {
                     end_bell: self.build_end_bell_cue(&app),
                     box_breath_cues: Some(self.build_box_breath_cues(&app)),
                 };
-                let session = CoreSession::start_running(
+                let (session, start_effects) = CoreSession::start(
                     core_settings,
                     std::time::Duration::ZERO,
                 );
-                self.dispatch_session_effects(&session.start_signals());
+                self.dispatch_session_effects(&start_effects);
                 *self.core_session.borrow_mut() = Some(session);
             }
             TimerMode::Guided => {
@@ -2092,18 +2092,18 @@ impl TimerView {
                     end_bell: self.build_end_bell_cue(&app),
                     box_breath_cues: None,
                 };
-                let session = CoreSession::start_running(
+                let (session, start_effects) = CoreSession::start(
                     core_settings,
                     std::time::Duration::ZERO,
                 );
-                self.dispatch_session_effects(&session.start_signals());
+                self.dispatch_session_effects(&start_effects);
                 *self.core_session.borrow_mut() = Some(session);
             }
         }
 
         // Prep / no-prep Timer share the same SessionSettings build;
-        // only `prep_secs` and the construction call (start_prep vs.
-        // start_running) differ.
+        // only `prep_secs` differs, and `CoreSession::start` picks the
+        // opening phase from it.
         let build_timer_settings = |prep_dur: Option<Duration>| {
             let app = self.get_app()?;
             let stopwatch_on = self.stopwatch_toggle_on.get();
@@ -2139,20 +2139,22 @@ impl TimerView {
             // schedule survives the transition unchanged.
             self.start_boot_time.set(Some(boot_time_now()));
             let Some(core_settings) = build_timer_settings(Some(prep_dur)) else { return; };
-            *self.core_session.borrow_mut() = Some(CoreSession::start_prep(
+            let (session, start_effects) = CoreSession::start(
                 core_settings,
                 std::time::Duration::ZERO,
-            ));
+            );
+            self.dispatch_session_effects(&start_effects);
+            *self.core_session.borrow_mut() = Some(session);
         } else {
             // No-prep Timer: build bells + start Session directly in
             // Running. Same SessionSettings shape as the prep path.
             if mode == TimerMode::Timer {
                 let Some(core_settings) = build_timer_settings(None) else { return; };
-                let session = CoreSession::start_running(
+                let (session, start_effects) = CoreSession::start(
                     core_settings,
                     std::time::Duration::ZERO,
                 );
-                self.dispatch_session_effects(&session.start_signals());
+                self.dispatch_session_effects(&start_effects);
                 *self.core_session.borrow_mut() = Some(session);
             }
         }
@@ -2176,8 +2178,8 @@ impl TimerView {
         }
 
         // Starting bell fires via Session's FireStartingBell effect:
-        // - No-prep Timer: dispatched immediately after start_running
-        //   via session.start_signals() above.
+        // - No-prep Timer: returned by CoreSession::start and
+        //   dispatched above.
         // - With-prep Timer: dispatched alongside EndPrep at the prep
         //   boundary tick (see Session::tick_prep).
         // - Box Breath / Guided: starting_bell is None in their
