@@ -715,6 +715,76 @@ mod tests {
         assert_eq!(code.matches("Session::start(").count(), 1);
     }
 
+    /// An ended session stays recoverable until Save or Discard: every
+    /// end path holds the snapshot with the final duration, and only
+    /// the three ways off the Done screen (Save, Discard, Back) clear
+    /// it. Clearing at the end lost the session when Android killed
+    /// the app on the Done screen.
+    #[test]
+    fn the_shell_holds_an_ended_session_until_save_or_discard() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
+        let lib = std::fs::read_to_string(path).unwrap();
+        let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
+        // The hold helper itself clears when there is nothing to keep;
+        // leave its body out so only call sites are counted.
+        let helper = code.find("fn hold_ended_session_snapshot(").expect("hold helper");
+        let helper_end = helper + code[helper..].find("\n}\n").unwrap();
+        let code = format!("{}{}", &code[..helper], &code[helper_end..]);
+        let code = code.as_str();
+
+        // Each end path stops the heartbeat and holds the snapshot.
+        let ends: Vec<usize> = code.match_indices("snapshot_timer_ref.stop();").map(|(i, _)| i).collect();
+        assert_eq!(ends.len(), 4, "Stop, Finish, Add and the natural end");
+        for end in ends {
+            let next = code[end..].lines().nth(1).unwrap().trim();
+            assert!(
+                next.starts_with("hold_ended_session_snapshot("),
+                "an end path must hold the snapshot, found {next:?}",
+            );
+        }
+
+        // Only the Done-screen exits clear it.
+        let exits = ["ui.on_save_tap(", "ui.on_discard_tap(", "if ui.get_done_page() {"];
+        let clears: Vec<usize> = code
+            .match_indices("clear_session_in_progress_snapshot();")
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(clears.len(), exits.len(), "one clear per Done-screen exit");
+        for exit in exits {
+            let start = code.find(exit).unwrap_or_else(|| panic!("{exit} not found"));
+            assert_eq!(code.matches(exit).count(), 1, "{exit} is unique");
+            let nearest = clears
+                .iter()
+                .filter(|&&c| c > start)
+                .min()
+                .unwrap_or_else(|| panic!("{exit} must clear the snapshot"));
+            let between = &code[start..*nearest];
+            assert!(
+                exits.iter().all(|e| !between[1..].contains(e)),
+                "{exit} must clear the snapshot before the next exit handler",
+            );
+        }
+    }
+
+    /// Building a snapshot looks up the label, which takes the DB lock;
+    /// the writers must build it before taking the lock themselves, or
+    /// the re-lock freezes the app (it did, at Stop and at the first
+    /// heartbeat).
+    #[test]
+    fn snapshot_writers_build_the_snapshot_before_locking_the_db() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
+        let lib = std::fs::read_to_string(path).unwrap();
+        for writer in ["fn write_session_in_progress_snapshot(", "fn hold_ended_session_snapshot("] {
+            let start = lib.find(writer).unwrap_or_else(|| panic!("{writer} not found"));
+            let body = &lib[start..start + lib[start..].find("\n}\n").unwrap()];
+            let build = body
+                .find("session_in_progress_snapshot(unix_start")
+                .unwrap_or_else(|| panic!("{writer} builds a snapshot"));
+            let lock = body.find("db_arc.lock()").unwrap_or_else(|| panic!("{writer} locks"));
+            assert!(build < lock, "{writer} must build the snapshot before locking the DB");
+        }
+    }
+
     // ── TimerMode chip mapping ──────────────────────────────────
 
     #[test]

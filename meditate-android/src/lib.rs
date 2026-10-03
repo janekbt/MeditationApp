@@ -2844,7 +2844,7 @@ fn push_log_sections_to_ui(
     ui.set_log_sections(std::rc::Rc::new(slint::VecModel::from(items)).into());
 }
 
-/// Write the crash-recovery snapshot row. Mirrors GTK's
+/// Build the crash-recovery snapshot row. Mirrors GTK's
 /// `write_in_progress_snapshot` at `imp.rs:2536`: captures
 /// (unix_start, accumulated_secs, mode, label_id) so a process
 /// kill mid-session can be resurrected on the next launch via
@@ -2852,23 +2852,38 @@ fn push_log_sections_to_ui(
 /// Box-Breath phase-progress capture lands (a v2 Resume feature,
 /// not Phase 2 work).
 #[cfg(target_os = "android")]
-fn write_session_in_progress_snapshot(
+fn session_in_progress_snapshot(
     unix_start: i64,
     elapsed_secs: u32,
     mode: meditate_core::SessionMode,
-    label_id: Option<i64>,
-) {
-    let Some(db_arc) = DATABASE.get() else { return; };
-    let Ok(guard) = db_arc.lock() else { return; };
-    let Some(db) = guard.as_ref() else { return; };
-    let snapshot = meditate_core::db::SessionInProgress {
+) -> meditate_core::db::SessionInProgress {
+    let label_id = if read_label_active_for_mode(mode) {
+        resolved_label_for_mode(mode).map(|(_, id)| id)
+    } else {
+        None
+    };
+    meditate_core::db::SessionInProgress {
         start_iso: meditate_core::time::unix_to_local_iso(unix_start),
         accumulated_secs: elapsed_secs,
         mode,
         mode_payload: "{}".into(),
         label_id,
         guided_file_uuid: None,
-    };
+    }
+}
+
+/// Write the snapshot for a running session (the heartbeat).
+#[cfg(target_os = "android")]
+fn write_session_in_progress_snapshot(
+    unix_start: i64,
+    elapsed_secs: u32,
+    mode: meditate_core::SessionMode,
+) {
+    // Build before locking: the label lookup takes the DB lock itself.
+    let snapshot = session_in_progress_snapshot(unix_start, elapsed_secs, mode);
+    let Some(db_arc) = DATABASE.get() else { return; };
+    let Ok(guard) = db_arc.lock() else { return; };
+    let Some(db) = guard.as_ref() else { return; };
     if let Err(e) = db.set_session_in_progress(&snapshot) {
         meditate_core::log(
             "session.recovery",
@@ -2877,12 +2892,31 @@ fn write_session_in_progress_snapshot(
     }
 }
 
-/// Start (or restart) the 60 s snapshot heartbeat. Mirrors GTK's
-/// `start_snapshot_tick`: cancels any prior heartbeat then arms a
-/// fresh `Repeated` Timer aligned to session start. Each tick
-/// reads the live session's elapsed seconds and writes a
-/// `SessionInProgress` row capturing (start, accumulated_secs,
-/// mode, label_id).
+/// A session just ended and the Done screen is up: keep it
+/// recoverable with its final duration until Save or Discard clears
+/// it (core `hold_ended_session`). `done` is the `pending_done`
+/// pair (unix_start, final_secs); None means there is nothing to
+/// keep, so any stale snapshot goes.
+#[cfg(target_os = "android")]
+fn hold_ended_session_snapshot(done: Option<(i64, i64)>, mode: meditate_core::SessionMode) {
+    let Some((unix_start, final_secs)) = done else {
+        clear_session_in_progress_snapshot();
+        return;
+    };
+    let secs = u32::try_from(final_secs.max(0)).unwrap_or(u32::MAX);
+    // Build before locking: the label lookup takes the DB lock itself.
+    let snapshot = session_in_progress_snapshot(unix_start, secs, mode);
+    let Some(db_arc) = DATABASE.get() else { return; };
+    let Ok(guard) = db_arc.lock() else { return; };
+    let Some(db) = guard.as_ref() else { return; };
+    if let Err(e) = db.hold_ended_session(&snapshot) {
+        meditate_core::log(
+            "session.recovery",
+            &format!("hold snapshot FAILED err={e:?}"),
+        );
+    }
+}
+
 #[cfg(target_os = "android")]
 fn start_snapshot_heartbeat(
     timer: &'static slint::Timer,
@@ -2901,12 +2935,7 @@ fn start_snapshot_heartbeat(
             let Some(unix_start) = session_start_unix.get() else { return; };
             let elapsed = session.elapsed(now).as_secs() as u32;
             let mode: meditate_core::SessionMode = current_mode.get().into();
-            let label_id = if read_label_active_for_mode(mode) {
-                resolved_label_for_mode(mode).map(|(_, id)| id)
-            } else {
-                None
-            };
-            write_session_in_progress_snapshot(unix_start, elapsed, mode, label_id);
+            write_session_in_progress_snapshot(unix_start, elapsed, mode);
         },
     );
 }
@@ -4438,16 +4467,16 @@ fn build_ui() -> MainWindow {
                 if let Some(unix_start) = session_start_unix.take() {
                     pending_done.set(Some((unix_start, elapsed_secs)));
                 }
-                // Drop the recovery snapshot — the session ended
-                // cleanly via user Stop. Done-screen Save / Discard
-                // will decide whether it becomes a persisted row;
-                // either way the next launch shouldn't recover.
-                // Cancel the heartbeat so it doesn't re-write a
-                // ghost row after we just cleared.
+                // Keep the session recoverable with its final
+                // duration until Done-screen Save / Discard clears
+                // it, so a kill on the Done screen doesn't lose it
+                // (GTK keeps it until `reset_mode` too). Cancel the
+                // heartbeat so it doesn't overwrite the final
+                // duration.
                 #[cfg(target_os = "android")]
                 {
                     snapshot_timer_ref.stop();
-                    clear_session_in_progress_snapshot();
+                    hold_ended_session_snapshot(pending_done.get(), current_mode.get().into());
                 }
                 if let Some(ui) = weak.upgrade() {
                     ui.set_elapsed_text(
@@ -4516,7 +4545,7 @@ fn build_ui() -> MainWindow {
                 #[cfg(target_os = "android")]
                 {
                     snapshot_timer_ref.stop();
-                    clear_session_in_progress_snapshot();
+                    hold_ended_session_snapshot(pending_done.get(), current_mode.get().into());
                 }
                 if let Some(ui) = weak.upgrade() {
                     ui.set_elapsed_text(
@@ -4578,7 +4607,7 @@ fn build_ui() -> MainWindow {
                 #[cfg(target_os = "android")]
                 {
                     snapshot_timer_ref.stop();
-                    clear_session_in_progress_snapshot();
+                    hold_ended_session_snapshot(pending_done.get(), current_mode.get().into());
                 }
                 if let Some(ui) = weak.upgrade() {
                     ui.set_elapsed_text(
@@ -5238,9 +5267,9 @@ fn build_ui() -> MainWindow {
                     pending_done.set(Some((unix_start, elapsed_secs)));
                 }
                 bb_target_secs.set(None);
-                // Cancel heartbeat + drop snapshot — see stop_tap.
+                // Cancel heartbeat + hold the snapshot — see stop_tap.
                 snapshot_timer_ref.stop();
-                clear_session_in_progress_snapshot();
+                hold_ended_session_snapshot(pending_done.get(), current_mode.get().into());
                 if let Some(ui) = weak.upgrade() {
                     ui.set_elapsed_text(
                         meditate_core::format::format_time(
@@ -5409,6 +5438,9 @@ fn build_ui() -> MainWindow {
                     unix_start, elapsed_secs, note, mode, picked,
                     guided_uuid,
                 );
+                // Saved: the held snapshot has done its job (after the
+                // insert, so a kill in between can't lose the session).
+                clear_session_in_progress_snapshot();
                 // Bug-audit #13: mutations sync promptly (GTK's
                 // with_db_mut auto-trigger analogue) instead of
                 // waiting for the next app launch.
@@ -8810,6 +8842,7 @@ fn build_ui() -> MainWindow {
             #[cfg(target_os = "android")]
             {
                 pending_done.set(None);
+                clear_session_in_progress_snapshot();
             }
             let mut s = state.borrow_mut();
             *s = std::mem::replace(&mut *s, AppState::idle()).dismiss();
@@ -10682,8 +10715,12 @@ fn build_ui() -> MainWindow {
                 return;
             }
             if ui.get_done_page() {
+                // Back on Done discards, like the Discard button.
                 #[cfg(target_os = "android")]
-                pending_done.set(None);
+                {
+                    pending_done.set(None);
+                    clear_session_in_progress_snapshot();
+                }
                 let mut s = state.borrow_mut();
                 *s = std::mem::replace(&mut *s, AppState::idle()).dismiss();
                 refresh(&ui, &s, now_since_epoch());

@@ -33,7 +33,7 @@ not conclusive and a device check is needed.
   (to confirm: `SELECT uuid,file_path FROM bell_sounds WHERE is_bundled=1`
   on both devices). Seeds emit events with each device's path and
   `recompute_bell_sound` keeps the newest (`db/bell_sounds.rs:285-300`).
-- [ ] **A finished session is lost if Android kills the app on the Done
+- [x] **A finished session is lost if Android kills the app on the Done
   screen.** Android clears the recovery snapshot when the session ends,
   not on Save/Discard, and drops the core `Session`. Android
   `lib.rs:4447-4450, 4516-4519, 4578-4581, 5240-5242`; GTK

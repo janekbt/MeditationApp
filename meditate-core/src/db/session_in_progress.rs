@@ -133,6 +133,22 @@ impl Database {
         Ok(())
     }
 
+    /// Keep an ended session recoverable until the user saves or
+    /// discards it. Call when a session ends (Stop, Finish, the
+    /// natural end) with the FINAL duration; Save and Discard then
+    /// call `clear_session_in_progress`. A process killed in between
+    /// — the Done screen with the phone in a pocket — leaves this
+    /// snapshot for the next launch to finalise.
+    ///
+    /// A zero-second session is never saved, so it clears the
+    /// snapshot instead of holding it. Emits no event, like `set`.
+    pub fn hold_ended_session(&self, snapshot: &SessionInProgress) -> Result<()> {
+        if snapshot.accumulated_secs == 0 {
+            return self.clear_session_in_progress();
+        }
+        self.set_session_in_progress(snapshot)
+    }
+
     /// Atomic crash-recovery primitive. Reads the in-flight snapshot;
     /// if present, inserts a `sessions` row from it (emitting one
     /// `session_insert` event with the captured `accumulated_secs`)
@@ -446,6 +462,95 @@ mod tests {
             "second finalize must be a no-op, not duplicate the session");
         assert_eq!(crate::db::list_sessions_from_db(&db).unwrap().len(), 1,
             "exactly one session row was inserted");
+    }
+
+    // ── hold_ended_session ──────────────────────────────────────────────────
+
+    #[test]
+    fn hold_ended_session_keeps_the_final_duration_for_recovery() {
+        // The Done screen: the session has ended, the user hasn't
+        // saved or discarded yet. The snapshot must hold the final
+        // duration, not the last heartbeat's.
+        let db = Database::open_in_memory().unwrap();
+        db.set_session_in_progress(&sample(60)).unwrap();
+        db.hold_ended_session(&sample(95)).unwrap();
+        assert_eq!(db.get_session_in_progress().unwrap(), Some(sample(95)));
+    }
+
+    #[test]
+    fn hold_ended_session_works_without_an_earlier_heartbeat() {
+        // A session shorter than the heartbeat interval has no
+        // snapshot yet when it ends; holding it must create one.
+        let db = Database::open_in_memory().unwrap();
+        db.hold_ended_session(&sample(42)).unwrap();
+        assert_eq!(db.get_session_in_progress().unwrap(), Some(sample(42)));
+    }
+
+    #[test]
+    fn hold_ended_session_of_zero_seconds_clears_the_snapshot() {
+        // A zero-length session is never saved, so there is nothing
+        // to recover — a stale heartbeat row must not survive either.
+        let db = Database::open_in_memory().unwrap();
+        db.set_session_in_progress(&sample(60)).unwrap();
+        db.hold_ended_session(&sample(0)).unwrap();
+        assert_eq!(db.get_session_in_progress().unwrap(), None);
+    }
+
+    #[test]
+    fn a_held_session_is_recovered_with_every_field_after_a_kill() {
+        // Process killed on the Done screen: the next launch
+        // finalises the held snapshot into a session row.
+        let db = Database::open_in_memory().unwrap();
+        db.conn.execute(
+            "INSERT INTO labels (name, uuid) VALUES (?1, ?2)",
+            params!["Evening", "33333333-3333-4333-8333-333333333333"],
+        ).unwrap();
+        let label_id: i64 = db.conn
+            .query_row("SELECT id FROM labels WHERE name = 'Evening'", [], |r| r.get(0))
+            .unwrap();
+        db.hold_ended_session(&SessionInProgress {
+            start_iso: "2026-10-03T21:00:00".into(),
+            accumulated_secs: 1234,
+            mode: SessionMode::Guided,
+            mode_payload: "{}".into(),
+            label_id: Some(label_id),
+            guided_file_uuid: Some("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee".into()),
+        }).unwrap();
+
+        let finalized = db.finalize_session_in_progress().unwrap().unwrap();
+        assert_eq!(finalized.duration_secs, 1234);
+        let sessions = crate::db::list_sessions_from_db(&db).unwrap();
+        assert_eq!(sessions.len(), 1);
+        let saved = &sessions[0].1;
+        assert_eq!(saved.start_iso, "2026-10-03T21:00:00");
+        assert_eq!(saved.duration_secs, 1234);
+        assert_eq!(saved.mode, SessionMode::Guided);
+        assert_eq!(saved.label_id, Some(label_id));
+        assert_eq!(
+            saved.guided_file_uuid.as_ref().map(super::super::uuids::GuidedFileUuid::as_str),
+            Some("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
+        );
+    }
+
+    #[test]
+    fn save_or_discard_after_hold_leaves_nothing_to_recover() {
+        // Save and Discard both end the Done screen by clearing; the
+        // next launch must not resurrect the session.
+        let db = Database::open_in_memory().unwrap();
+        db.hold_ended_session(&sample(300)).unwrap();
+        db.clear_session_in_progress().unwrap();
+        assert_eq!(db.finalize_session_in_progress().unwrap(), None);
+        assert!(crate::db::list_sessions_from_db(&db).unwrap().is_empty());
+    }
+
+    #[test]
+    fn hold_ended_session_does_not_emit_a_sync_event() {
+        let db = Database::open_in_memory().unwrap();
+        db.hold_ended_session(&sample(300)).unwrap();
+        db.set_session_in_progress(&sample(60)).unwrap();
+        db.hold_ended_session(&sample(0)).unwrap();
+        assert!(db.pending_events().unwrap().is_empty(),
+            "holding or dropping the snapshot must not append to events");
     }
 
     #[test]
