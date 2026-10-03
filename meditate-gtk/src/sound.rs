@@ -135,10 +135,10 @@ pub fn play_preview(sound: &BellSound, volume: BellVolume) -> gtk::MediaFile {
 /// transitions through the shared `PreviewToggle` and revert the
 /// row's icon.
 pub fn play_preview_for_guided_file(file: &crate::db::GuidedFile) -> gtk::MediaFile {
-    let local_path = gtk::glib::user_data_dir()
-        .join("meditate")
-        .join("guided")
-        .join(format!("{}.ogg", file.uuid));
+    let local_path = meditate_core::audio_files::guided_file_path(
+        &crate::sync_runner::local_guided_dir(),
+        file.uuid.as_str(),
+    );
     let media = gtk::MediaFile::for_file(&gtk::gio::File::for_path(&local_path));
     wire_audio_error_handler(&media, &file.name);
     PREVIEW_MEDIA.with(|cell| {
@@ -177,27 +177,28 @@ fn lookup_bell_sound_by_uuid(app: &MeditateApplication, uuid: &str) -> Option<Be
 
 /// Build a MediaFile from a BellSound row.
 ///
-/// Bundled rows: `file_path` is a GResource path baked into every
-/// device's binary, so we use it directly.
-///
-/// Custom rows: the stored `file_path` is the *importing* device's
-/// absolute path, which doesn't resolve on a peer that synced the
-/// row. We ignore it and derive the canonical local path from
-/// `uuid + mime_type`. Every device that has the actual file (B.6
-/// makes sure peers do, by pulling from WebDAV) finds it at the
-/// same relative location.
+/// The file comes from `meditate_core::audio_files::bell_sound_file`,
+/// never the row's stored `file_path`: that is the creating device's
+/// path, and sync can leave another platform's path even on a bundled
+/// row. Bundled bells play from this build's GResource; custom bells
+/// from the local sounds folder by uuid, where import and the sync
+/// pull (B.6) both write them.
 ///
 /// `volume` is the bell's own level, relative to the system volume
 /// (`BellVolume::relative_gain`).
 fn media_for_bell_sound(sound: &BellSound, volume: BellVolume) -> gtk::MediaFile {
-    let media = if sound.is_bundled {
-        gtk::MediaFile::for_resource(&sound.file_path)
-    } else {
-        let local_path = gtk::glib::user_data_dir()
-            .join("meditate")
-            .join("sounds")
-            .join(format!("{}.{}", sound.uuid, sound.extension()));
-        gtk::MediaFile::for_file(&gtk::gio::File::for_path(&local_path))
+    use meditate_core::audio_files::{bell_sound_file, BellSoundFile};
+    let media = match bell_sound_file(
+        sound,
+        &crate::sync_runner::local_sounds_dir(),
+        crate::db::bundled_bell_resource,
+    ) {
+        Some(BellSoundFile::Bundled(resource)) => gtk::MediaFile::for_resource(resource),
+        Some(BellSoundFile::Local(path)) => {
+            gtk::MediaFile::for_file(&gtk::gio::File::for_path(&path))
+        }
+        // A bundled bell this build doesn't ship: nothing to play.
+        None => gtk::MediaFile::new(),
     };
     media.set_volume(volume.relative_gain());
     wire_audio_error_handler(&media, &sound.name);
@@ -378,6 +379,62 @@ mod tests {
         let start = src.find(&format!("fn {name}(")).unwrap_or_else(|| panic!("no fn {name}"));
         let end = src[start..].find("\n}\n").map_or(src.len(), |e| start + e);
         &src[start..end]
+    }
+
+    /// Every bundled bell this build seeds has a built-in file, found by
+    /// uuid; anything else has none.
+    #[test]
+    fn every_bundled_bell_has_a_built_in_resource() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = crate::db::Database::open(&dir.path().join("t.db")).unwrap();
+        let bundled: Vec<_> = db
+            .list_bell_sounds()
+            .unwrap()
+            .into_iter()
+            .filter(|b| b.is_bundled)
+            .collect();
+        assert_eq!(bundled.len(), 11);
+        for bell in bundled {
+            let resource = crate::db::bundled_bell_resource(bell.uuid.as_str())
+                .unwrap_or_else(|| panic!("{} has no resource", bell.name));
+            assert!(resource.starts_with("/io/github/janekbt/Meditate/sounds/"), "{resource}");
+        }
+        assert_eq!(crate::db::bundled_bell_resource("not-a-bundled-uuid"), None);
+    }
+
+    /// A row's stored `file_path` is the path on the device that created
+    /// it; sync copies it everywhere, so outside the database layer no
+    /// code may read it. Files are found through
+    /// `meditate_core::audio_files` instead.
+    #[test]
+    fn no_shell_code_reads_the_stored_file_path() {
+        fn walk(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    if !path.ends_with("db") {
+                        walk(&path, out);
+                    }
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    out.push(path);
+                }
+            }
+        }
+        let mut files = Vec::new();
+        walk(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src"), &mut files);
+        assert!(files.len() > 10, "walked the shell sources");
+        for file in files {
+            let src = std::fs::read_to_string(&file).unwrap();
+            let code = src.split("#[cfg(test)]\nmod tests").next().unwrap();
+            for line in code.lines().filter(|l| !l.trim_start().starts_with("//")) {
+                assert!(
+                    !line.contains(".file_path"),
+                    "{} reads the stored file_path: {}",
+                    file.display(),
+                    line.trim(),
+                );
+            }
+        }
     }
 
     /// Every bell player comes from `media_for_bell_sound`, which applies

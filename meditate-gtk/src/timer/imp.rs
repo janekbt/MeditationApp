@@ -573,7 +573,10 @@ impl TimerView {
                         *imp.guided_selected_uuid.borrow_mut() = Some(row.uuid.0.clone());
                         *imp.guided_pick.borrow_mut() = Some(crate::guided::GuidedFilePick {
                             display_name: row.name.clone(),
-                            source_path: std::path::PathBuf::from(&row.file_path),
+                            source_path: meditate_core::audio_files::guided_file_path(
+                                &crate::sync_runner::local_guided_dir(),
+                                row.uuid.as_str(),
+                            ),
                             duration_secs: row.duration_secs,
                         });
                         imp.rebuild_starred_guided_list();
@@ -3406,7 +3409,10 @@ impl TimerView {
 
             let uuid = f.uuid.0.clone();
             let name = f.name.clone();
-            let path = f.file_path.clone();
+            let path = meditate_core::audio_files::guided_file_path(
+                &crate::sync_runner::local_guided_dir(),
+                f.uuid.as_str(),
+            );
             let duration_secs = f.duration_secs;
             let obj = self.obj().clone();
             row.connect_activated(move |_| {
@@ -3416,7 +3422,7 @@ impl TimerView {
                 *imp.guided_selected_uuid.borrow_mut() = Some(uuid.clone());
                 *imp.guided_pick.borrow_mut() = Some(crate::guided::GuidedFilePick {
                     display_name: name.clone(),
-                    source_path: std::path::PathBuf::from(&path),
+                    source_path: path.clone(),
                     duration_secs,
                 });
                 imp.refresh_guided_selected_row();

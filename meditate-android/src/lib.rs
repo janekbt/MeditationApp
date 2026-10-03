@@ -1376,7 +1376,7 @@ fn guided_file_by_uuid(uuid: &str) -> Option<GuidedSel> {
     .flatten()?;
     Some(GuidedSel {
         name: row.name,
-        path: row.file_path,
+        path: local_guided_path(row.uuid.as_str()),
         duration_secs: row.duration_secs,
         uuid: Some(row.uuid.0),
     })
@@ -3386,22 +3386,49 @@ fn bell_sound_name(uuid: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Resolve a bell-sound uuid to its on-disk file path (the
-/// absolute `<data_dir>/sounds/*.ogg` `sounds::extract_and_seed`
-/// wrote). Empty when the row is gone — `audio::play` no-ops on
-/// an empty path. Sibling of `bell_sound_name`.
+/// Resolve a bell-sound uuid to its file on this device through
+/// `meditate_core::audio_files` (bundled: the file
+/// `sounds::extract_and_seed` wrote; custom: `<uuid>.<ext>` in the
+/// sounds folder). Empty when the row or file is unknown —
+/// `audio::play` no-ops on an empty path. Sibling of
+/// `bell_sound_name`.
 #[cfg(target_os = "android")]
 fn bell_sound_path(uuid: &str) -> String {
-    let Some(db_arc) = DATABASE.get() else { return String::new(); };
-    let Ok(guard) = db_arc.lock() else { return String::new(); };
-    let Some(db) = guard.as_ref() else { return String::new(); };
-    db.list_bell_sounds()
-        .ok()
-        .and_then(|v| {
-            v.into_iter()
-                .find(|b| b.uuid == uuid)
-                .map(|b| b.file_path)
-        })
+    use meditate_core::audio_files::{bell_sound_file, BellSoundFile};
+    let sound = {
+        let Some(db_arc) = DATABASE.get() else { return String::new(); };
+        let Ok(guard) = db_arc.lock() else { return String::new(); };
+        let Some(db) = guard.as_ref() else { return String::new(); };
+        db.list_bell_sounds()
+            .ok()
+            .and_then(|v| v.into_iter().find(|b| b.uuid == uuid))
+    };
+    let (Some(sound), Some(dir)) = (sound, meditate_dir()) else {
+        return String::new();
+    };
+    let sounds_dir = dir.join("sounds");
+    match bell_sound_file(&sound, &sounds_dir, |u| sounds::bundled_file(&sounds_dir, u)) {
+        Some(BellSoundFile::Bundled(path) | BellSoundFile::Local(path)) => {
+            path.to_string_lossy().into_owned()
+        }
+        None => String::new(),
+    }
+}
+
+/// `<internal data>/meditate` — where the database, the sounds and
+/// the guided files live (`open_database`, imports, sync).
+#[cfg(target_os = "android")]
+fn meditate_dir() -> Option<std::path::PathBuf> {
+    Some(android_app()?.internal_data_path()?.join("meditate"))
+}
+
+/// A guided file's audio on this device, by uuid — never the row's
+/// stored `file_path`, which is the importing device's.
+#[cfg(target_os = "android")]
+fn local_guided_path(uuid: &str) -> String {
+    meditate_dir()
+        .map(|d| meditate_core::audio_files::guided_file_path(&d.join("guided"), uuid))
+        .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default()
 }
 
@@ -5976,7 +6003,7 @@ fn build_ui() -> MainWindow {
                 *pending_guided_delete.borrow_mut() = Some((
                     row.uuid.0.clone(),
                     row.name.clone(),
-                    row.file_path.clone(),
+                    local_guided_path(row.uuid.as_str()),
                     row.duration_secs,
                     row.is_starred,
                 ));
@@ -6029,7 +6056,7 @@ fn build_ui() -> MainWindow {
                     )
                     .ok()
                     .flatten()
-                    .map(|f| f.file_path)
+                    .map(|f| local_guided_path(f.uuid.as_str()))
                 };
                 let Some(path) = path else {
                     // Row raced a delete — drop it.

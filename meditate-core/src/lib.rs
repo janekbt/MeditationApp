@@ -68,6 +68,7 @@
 mod test_macros;
 
 pub mod announcement;
+pub mod audio_files;
 pub mod bell_volume;
 pub mod bells;
 pub mod breath;

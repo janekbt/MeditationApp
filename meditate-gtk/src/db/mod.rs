@@ -115,6 +115,16 @@ pub use meditate_core::db::{
 /// here. New bundles get appended (never replace) so a peer that
 /// already seeded the old set picks up the new ones via insert-or-
 /// ignore. Adding a sound is a 1-tuple addition; no migration code.
+/// The GResource path of a bundled bell this build ships, by uuid.
+/// Bundled audio is always found here, never through the row's
+/// stored `file_path` (sync can leave another platform's path there).
+pub fn bundled_bell_resource(uuid: &str) -> Option<&'static str> {
+    BUNDLED_BELL_SOUNDS
+        .iter()
+        .find(|(u, ..)| *u == uuid)
+        .map(|(_, _, path, _)| *path)
+}
+
 const BUNDLED_BELL_SOUNDS: &[(&str, &str, &str, &str)] = &[
     (
         "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0001",

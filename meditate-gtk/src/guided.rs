@@ -1091,7 +1091,13 @@ fn present_delete_dialog(
         // (file already gone, permissions) get swallowed; a stale
         // row in past sessions resolves to a missing file, which
         // playback will toast about if the user tries to play it.
-        let file_path_for_dismiss = file.file_path.clone();
+        // The local copy, not the row's stored path (another device's
+        // after a sync).
+        let file_path_for_dismiss = meditate_core::audio_files::guided_file_path(
+            &crate::sync_runner::local_guided_dir(),
+            file.uuid.as_str(),
+        );
+        let file_path_for_undo = file_path_for_dismiss.to_string_lossy().into_owned();
         push_undo_toast(
             &toast_overlay_for_response,
             &toast_slot_for_response,
@@ -1105,7 +1111,7 @@ fn present_delete_dialog(
                     db.insert_guided_file_with_uuid(
                         file_for_undo.uuid.as_str(),
                         &file_for_undo.name,
-                        &file_for_undo.file_path,
+                        &file_path_for_undo,
                         file_for_undo.duration_secs,
                         file_for_undo.is_starred,
                     )

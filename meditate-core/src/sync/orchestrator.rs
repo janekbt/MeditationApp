@@ -639,7 +639,7 @@ impl<'a, W: WebDav> Sync<'a, W> {
     }
 
     fn sound_local_path(&self, uuid: &str, ext: &str) -> std::path::PathBuf {
-        self.sounds_dir.join(format!("{uuid}.{ext}"))
+        crate::audio_files::custom_sound_path(&self.sounds_dir, uuid, ext)
     }
 
     fn ensure_sounds_dir_exists(&self) -> SyncResult<()> {
@@ -807,7 +807,7 @@ impl<'a, W: WebDav> Sync<'a, W> {
     }
 
     fn guided_local_path(&self, uuid: &str) -> std::path::PathBuf {
-        self.guided_dir.join(format!("{uuid}.ogg"))
+        crate::audio_files::guided_file_path(&self.guided_dir, uuid)
     }
 
     fn ensure_guided_dir_exists(&self) -> SyncResult<()> {
@@ -1986,6 +1986,32 @@ mod tests {
 
         // Recorded as known.
         assert!(db_peer.known_remote_sound_uuids().unwrap().contains(&uuid));
+    }
+
+    #[test]
+    fn a_pulled_custom_sound_lands_where_the_shells_look_for_it() {
+        // The pull writes the file; the shells play it through
+        // `audio_files::bell_sound_file`. Both must agree on the place,
+        // and neither may follow the source device's stored path.
+        let (db_src, fs) = setup();
+        let tmp_src = tempfile::tempdir().unwrap();
+        let uuid = seed_custom_bell_sound(&db_src, tmp_src.path(), "Custom A", b"AUDIO", "wav");
+        Sync::new(&db_src, &fs, "Meditate", tmp_src.path().to_path_buf(), tmp_src.path().to_path_buf())
+            .push().unwrap();
+        let db_peer = Database::open_in_memory().unwrap();
+        let tmp_peer = tempfile::tempdir().unwrap();
+        Sync::new(&db_peer, &fs, "Meditate", tmp_peer.path().to_path_buf(), tmp_peer.path().to_path_buf())
+            .pull().unwrap();
+
+        let sound = db_peer.list_bell_sounds().unwrap().pop().unwrap();
+        assert!(!sound.file_path.starts_with(tmp_peer.path().to_str().unwrap()),
+            "the stored path is the source device's");
+        let Some(crate::audio_files::BellSoundFile::Local(local)) =
+            crate::audio_files::bell_sound_file(&sound, tmp_peer.path(), |_| None::<()>)
+        else {
+            panic!("a custom sound resolves to a local file");
+        };
+        assert_eq!(std::fs::read(&local).unwrap(), b"AUDIO", "uuid {uuid}");
     }
 
     #[test]

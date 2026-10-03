@@ -785,6 +785,34 @@ mod tests {
         }
     }
 
+    /// A row's stored `file_path` is the path on the device that created
+    /// it; sync copies it everywhere (even onto the bundled bells), so
+    /// the shell never reads it. Files are found through
+    /// `meditate_core::audio_files` instead.
+    #[test]
+    fn no_shell_code_reads_the_stored_file_path() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut checked = 0;
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_none_or(|e| e != "rs") {
+                continue;
+            }
+            let src = std::fs::read_to_string(&path).unwrap();
+            let code = src.split("#[cfg(test)]\nmod tests").next().unwrap();
+            for line in code.lines().filter(|l| !l.trim_start().starts_with("//")) {
+                assert!(
+                    !line.contains(".file_path"),
+                    "{} reads the stored file_path: {}",
+                    path.display(),
+                    line.trim(),
+                );
+            }
+            checked += 1;
+        }
+        assert!(checked > 10, "walked the shell sources");
+    }
+
     // ── TimerMode chip mapping ──────────────────────────────────
 
     #[test]

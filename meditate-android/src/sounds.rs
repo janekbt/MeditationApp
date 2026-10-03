@@ -18,7 +18,16 @@
 
 #![cfg(target_os = "android")]
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// Where this build keeps a bundled bell, by uuid: the file
+/// `extract_and_seed` writes into `sounds_dir`. `None` for a uuid
+/// this build doesn't ship. Playback finds bundled bells here,
+/// never through the row's stored `file_path` (sync can leave the
+/// desktop's GResource path there).
+pub fn bundled_file(sounds_dir: &Path, uuid: &str) -> Option<PathBuf> {
+    BUNDLED.iter().find(|b| b.uuid == uuid).map(|b| sounds_dir.join(b.file))
+}
 
 struct Bundled {
     uuid: &'static str,
@@ -134,7 +143,7 @@ pub fn extract_and_seed(db: &meditate_core::Database, data_dir: &Path) {
     let mut paths: Vec<(&str, &str, String, &str)> =
         Vec::with_capacity(BUNDLED.len());
     for b in BUNDLED {
-        let p = dir.join(b.file);
+        let Some(p) = bundled_file(&dir, b.uuid) else { continue };
         let up_to_date = std::fs::metadata(&p)
             .map(|m| m.len() == b.bytes.len() as u64)
             .unwrap_or(false);

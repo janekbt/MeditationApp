@@ -21,7 +21,7 @@ not conclusive and a device check is needed.
 - [ ] **Insight Timer import aborts on a row in the spring-forward gap**
   (to confirm). Android `lib.rs:3437-3444`, GTK `data_io.rs:161-170`.
   Fix: same core helper, used by `parse_insighttimer_csv`.
-- [ ] **Synced custom bells and guided files play from the other device's
+- [x] **Synced custom bells and guided files play from the other device's
   path.** Android plays `bell_sounds.file_path` / `guided_files.file_path`,
   which is the importing device's absolute path. GTK builds
   `<sounds>/<uuid>.<ext>` itself. Android `lib.rs:3365-3376` (used at 315,
@@ -29,7 +29,7 @@ not conclusive and a device check is needed.
   `sound.rs:180-205`. GTK has the same bug for guided session start
   (`timer/imp.rs:576, 3409`). Fix: core path resolver from local dir + uuid
   + extension; never trust a synced `file_path`.
-- [ ] **Bundled bell rows may carry the other platform's path after sync**
+- [x] **Bundled bell rows may carry the other platform's path after sync**
   (to confirm: `SELECT uuid,file_path FROM bell_sounds WHERE is_bundled=1`
   on both devices). Seeds emit events with each device's path and
   `recompute_bell_sound` keeps the newest (`db/bell_sounds.rs:285-300`).
