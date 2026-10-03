@@ -130,6 +130,12 @@ static TEST_CONNECTION_RESULT: OnceLock<
 #[cfg(target_os = "android")]
 static SYNC_COORDINATOR: meditate_core::sync::coordinator::SyncCoordinator =
     meditate_core::sync::coordinator::SyncCoordinator::new();
+/// Set by the sync worker when a pass brought in changes from
+/// another device; the tick loop consumes it and re-reads every
+/// screen (`refresh_after_pull`).
+#[cfg(target_os = "android")]
+static SYNC_PULLED_CHANGES: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 /// Set by `trigger_sync` (start) and the worker (end) so the tick
 /// loop refreshes the indicator exactly on the edges instead of
 /// re-reading sync_state every frame.
@@ -216,6 +222,9 @@ fn trigger_sync(reason: &str) {
                     "sync.attempt",
                     &format!("failed: {e}"),
                 );
+            }
+            if outcome.as_ref().is_ok_and(|stats| stats.brought_changes()) {
+                SYNC_PULLED_CHANGES.store(true, Ordering::SeqCst);
             }
         });
         // After drain has freed the slot, so the indicator leaves
@@ -2683,6 +2692,31 @@ fn reset_log_feed(
     render_log_feed(ui, loaded, pending);
 }
 
+/// Re-read every screen that shows synced data. Runs after a sync
+/// brought in changes from another device (and after Wipe Local
+/// empties the store), whichever page is open. The Android
+/// counterpart of GTK's post-sync `invalidate(ALL)` + view refresh
+/// (`application.rs` trigger_sync).
+#[cfg(target_os = "android")]
+fn refresh_after_pull(
+    ui: &MainWindow,
+    mode: meditate_core::SessionMode,
+    loaded: &std::rc::Rc<std::cell::RefCell<Vec<(i64, meditate_core::db::Session)>>>,
+    pending: &std::rc::Rc<std::cell::RefCell<Vec<(i64, meditate_core::db::Session)>>>,
+) {
+    refresh_preset_chips(ui, mode);
+    refresh_bell_rows(ui);
+    populate_interval_bells(ui);
+    refresh_guided_files(ui);
+    refresh_guided_manage(ui);
+    ui.set_label_active(read_label_active_for_mode(mode));
+    refresh_label_state(ui, mode);
+    refresh_filter_label_items(ui);
+    reset_log_feed(ui, loaded, pending);
+    refresh_stats(ui);
+    refresh_widget(ui);
+}
+
 /// Resolve the Slint `filter-label-id` property (0 = "All
 /// labels") into the `Option<i64>` the `SessionFilter` expects.
 #[cfg(target_os = "android")]
@@ -4820,6 +4854,20 @@ fn build_ui() -> MainWindow {
                     // label conflict — prompt while it's fresh.
                     #[cfg(target_os = "android")]
                     check_label_conflicts(&ui, &label_conflict_tick);
+                }
+                // A sync pass brought changes from another
+                // device: re-read every screen, whichever page
+                // is open.
+                #[cfg(target_os = "android")]
+                if SYNC_PULLED_CHANGES
+                    .swap(false, std::sync::atomic::Ordering::SeqCst)
+                {
+                    refresh_after_pull(
+                        &ui,
+                        current_mode.get().into(),
+                        &loaded_log_sessions_tick,
+                        &pending_deletes_tick,
+                    );
                 }
                 // Test-connection outcome (SY-3): the worker
                 // thread parked (toast, detail) — log the detail,
@@ -9875,21 +9923,15 @@ fn build_ui() -> MainWindow {
                             "recovery.wipe_local",
                             "purged, triggering sync",
                         );
-                        // Re-read everything the wipe touched.
-                        refresh_preset_chips(&ui, core_mode);
-                        refresh_bell_rows(&ui);
-                        refresh_guided_files(&ui);
-                        refresh_guided_manage(&ui);
-                        refresh_setup_label_name(&ui, core_mode);
-                        ui.set_label_active(
-                            read_label_active_for_mode(core_mode),
-                        );
-                        reset_log_feed(
+                        // Re-read everything the wipe touched; the
+                        // sync below re-reads again once it brings
+                        // the data back.
+                        refresh_after_pull(
                             &ui,
+                            core_mode,
                             &loaded_log_sessions,
                             &pending_deletes,
                         );
-                        refresh_widget(&ui);
                         trigger_sync("recovery wipe-local");
                     }
                     Err(e) => meditate_core::log(

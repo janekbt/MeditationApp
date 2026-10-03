@@ -754,6 +754,60 @@ mod tests {
         assert!(after[drain_end..].contains("SYNC_UI_DIRTY.store(true"), "flag the indicator after drain");
     }
 
+    /// When a sync brings in changes from another device, every
+    /// screen that shows synced data re-reads it, whichever page is
+    /// open. Core decides whether anything came in
+    /// (`SyncStats::brought_changes`); the shell re-reads.
+    #[test]
+    fn screens_re_read_after_a_sync_brings_changes() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
+        let lib = std::fs::read_to_string(path).unwrap();
+        let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
+        let body_of = |sig: &str| {
+            let at = code.find(sig).unwrap_or_else(|| panic!("missing {sig}"));
+            &code[at..at + code[at..].find("\n}\n").unwrap()]
+        };
+
+        // The worker flags a pass that brought changes.
+        let trigger = body_of("fn trigger_sync(");
+        let drain = &trigger[trigger.find("SYNC_COORDINATOR.drain(").unwrap()..];
+        let drain = &drain[..drain.find("\n        });").unwrap()];
+        assert!(drain.contains(".brought_changes()"), "core decides what counts as a change");
+        assert!(drain.contains("SYNC_PULLED_CHANGES.store(true"), "flag it per pass, so the screens update as soon as it lands");
+
+        // One re-read list covering every synced surface.
+        let refresh = body_of("fn refresh_after_pull(");
+        for call in [
+            "refresh_preset_chips(",
+            "refresh_bell_rows(",
+            "populate_interval_bells(",
+            "refresh_guided_files(",
+            "refresh_guided_manage(",
+            "refresh_label_state(",
+            "set_label_active(",
+            "refresh_filter_label_items(",
+            "reset_log_feed(",
+            "refresh_stats(",
+            "refresh_widget(",
+        ] {
+            assert!(refresh.contains(call), "refresh_after_pull misses {call}");
+        }
+        assert!(!refresh.contains("trigger_sync("), "re-reading must not start another sync");
+
+        // The tick loop consumes the flag and re-reads.
+        let flag = code.find("SYNC_PULLED_CHANGES\n").or_else(|| code.find("SYNC_PULLED_CHANGES.swap(false"))
+            .expect("the tick loop reads the flag");
+        let next = &code[flag..flag + 400];
+        assert!(next.contains("swap(false"), "the flag is consumed once");
+        assert!(next.contains("refresh_after_pull("), "and the screens re-read");
+
+        // Wipe-local uses the same list: it re-reads now (empty) and
+        // again when its sync brings the data back.
+        let wipe = &code[code.find("ui.on_recovery_wipe_confirm_tap(").unwrap()..];
+        let wipe = &wipe[..wipe.find("\n        });").unwrap()];
+        assert!(wipe.contains("refresh_after_pull("), "wipe-local re-reads through the shared list");
+    }
+
     #[test]
     fn the_shell_holds_an_ended_session_until_save_or_discard() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");

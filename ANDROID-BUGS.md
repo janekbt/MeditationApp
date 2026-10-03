@@ -51,7 +51,7 @@ not conclusive and a device check is needed.
   Fix: one write-then-sync path on Android.
 - [ ] **No sync when returning to the running app** (to confirm via
   `sync.trigger` in the diag log). GTK `application.rs:112`.
-- [ ] **Views aren't refreshed after a sync pulls changes.** Log, Stats,
+- [x] **Views aren't refreshed after a sync pulls changes.** Log, Stats,
   presets, bell rows, guided list, widget. After "wipe local" the screens
   stay empty. Editing a stale log card may write the old copy back (to
   confirm). Android `lib.rs:4767-4778, 9829-9844`; GTK

@@ -127,6 +127,8 @@ pub struct PullStats {
     /// Number of NEW events fetched and applied this pull. Excludes
     /// remote files we already had locally.
     pub new_events: usize,
+    /// Custom sound and guided audio files downloaded this pull.
+    pub files_pulled: usize,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -139,6 +141,17 @@ pub struct PushStats {
 pub struct SyncStats {
     pub pulled: usize,
     pub pushed: usize,
+    /// Custom sound and guided audio files downloaded this sync.
+    pub files_pulled: usize,
+}
+
+impl SyncStats {
+    /// Whether this sync changed anything the screens show, so the
+    /// shell must re-read them. Pushing alone doesn't: those edits
+    /// were made here and are already on screen.
+    pub fn brought_changes(&self) -> bool {
+        self.pulled > 0 || self.files_pulled > 0
+    }
 }
 
 pub struct Sync<'a, W: WebDav> {
@@ -345,7 +358,10 @@ impl<'a, W: WebDav> Sync<'a, W> {
                 ),
             );
         }
-        Ok(PullStats { new_events: count })
+        Ok(PullStats {
+            new_events: count,
+            files_pulled: sounds_pulled + guided_pulled,
+        })
     }
 
     /// Push the local pending event log to the remote as a single
@@ -488,6 +504,7 @@ impl<'a, W: WebDav> Sync<'a, W> {
         Ok(SyncStats {
             pulled: pull_stats.new_events,
             pushed: push_stats.pushed,
+            files_pulled: pull_stats.files_pulled,
         })
     }
 
@@ -2012,6 +2029,84 @@ mod tests {
             panic!("a custom sound resolves to a local file");
         };
         assert_eq!(std::fs::read(&local).unwrap(), b"AUDIO", "uuid {uuid}");
+    }
+
+    // ── "Did this sync change what the screens show?" ───────────────
+
+    #[test]
+    fn a_sync_with_nothing_new_brought_no_changes() {
+        let stats = SyncStats { pulled: 0, pushed: 0, files_pulled: 0 };
+        assert!(!stats.brought_changes());
+    }
+
+    #[test]
+    fn pushing_alone_brings_no_changes() {
+        let stats = SyncStats { pulled: 0, pushed: 7, files_pulled: 0 };
+        assert!(!stats.brought_changes(), "our own edits are already on screen");
+    }
+
+    #[test]
+    fn pulled_events_bring_changes() {
+        let stats = SyncStats { pulled: 1, pushed: 0, files_pulled: 0 };
+        assert!(stats.brought_changes());
+    }
+
+    #[test]
+    fn a_pulled_file_alone_brings_changes() {
+        let stats = SyncStats { pulled: 0, pushed: 0, files_pulled: 1 };
+        assert!(stats.brought_changes());
+    }
+
+    #[test]
+    fn sync_reports_a_peer_session_as_a_change() {
+        let (db_src, fs) = setup();
+        let tmp = tempfile::tempdir().unwrap();
+        insert_session(&db_src, "2026-10-01T07:00:00", 600);
+        Sync::new(&db_src, &fs, "Meditate", tmp.path().to_path_buf(), tmp.path().to_path_buf())
+            .sync().unwrap();
+
+        let db_peer = Database::open_in_memory().unwrap();
+        let tmp_peer = tempfile::tempdir().unwrap();
+        let sync = Sync::new(&db_peer, &fs, "Meditate", tmp_peer.path().to_path_buf(), tmp_peer.path().to_path_buf());
+        assert!(sync.sync().unwrap().brought_changes(), "first pull brings the session");
+        assert!(!sync.sync().unwrap().brought_changes(), "a second sync has nothing new");
+    }
+
+    #[test]
+    fn sync_of_our_own_edit_reports_no_change() {
+        let (db, fs) = setup();
+        let tmp = tempfile::tempdir().unwrap();
+        insert_session(&db, "2026-10-01T07:00:00", 600);
+        let stats = Sync::new(&db, &fs, "Meditate", tmp.path().to_path_buf(), tmp.path().to_path_buf())
+            .sync().unwrap();
+        assert_eq!(stats.pushed, 1);
+        assert!(!stats.brought_changes());
+    }
+
+    #[test]
+    fn a_sound_file_arriving_after_its_row_counts_as_a_change() {
+        // The row came in an earlier sync while its file wasn't on the
+        // server yet; the file landing later must still refresh the
+        // screens, though no new event comes with it.
+        let (db_src, fs) = setup();
+        let tmp_src = tempfile::tempdir().unwrap();
+        let uuid = uuid::Uuid::new_v4().to_string();
+        db_src.insert_bell_sound_with_uuid(
+            &uuid, "Late", "/src/late.wav", false, "audio/wav", BellSoundCategory::General,
+        ).unwrap();
+        Sync::new(&db_src, &fs, "Meditate", tmp_src.path().to_path_buf(), tmp_src.path().to_path_buf())
+            .push().unwrap();
+
+        let db_peer = Database::open_in_memory().unwrap();
+        let tmp_peer = tempfile::tempdir().unwrap();
+        let sync = Sync::new(&db_peer, &fs, "Meditate", tmp_peer.path().to_path_buf(), tmp_peer.path().to_path_buf());
+        let first = sync.sync().unwrap();
+        assert_eq!((first.pulled, first.files_pulled), (1, 0), "row now, no file yet");
+
+        fs.put(&format!("Meditate/sounds/{uuid}.wav"), b"AUDIO").unwrap();
+        let second = sync.sync().unwrap();
+        assert_eq!((second.pulled, second.files_pulled), (0, 1));
+        assert!(second.brought_changes());
     }
 
     #[test]
