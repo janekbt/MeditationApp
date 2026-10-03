@@ -391,7 +391,7 @@ fn build_session_settings(
     };
 
     let (session_bells, bell_rng_seed) =
-        bells::session_bells_from_db(db, target, display);
+        bells::session_bells_from_db(db, target, display, mode);
     let box_breath_cues =
         if matches!(mode, meditate_core::SessionMode::BoxBreath) {
             Some(bells::box_breath_cues_from_db(db))
@@ -405,7 +405,7 @@ fn build_session_settings(
         bells: session_bells,
         bell_rng_seed,
         signal_mode_override: bells::signal_mode_override_from_db(db, mode),
-        starting_bell: bells::starting_bell_cue_from_db(db),
+        starting_bell: bells::starting_bell_cue_from_db(db, mode),
         end_bell: bells::end_bell_cue_from_db(db, display, mode),
         box_breath_cues,
     }

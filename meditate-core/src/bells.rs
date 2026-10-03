@@ -470,10 +470,13 @@ pub fn signal_mode_override_from_db(db: &Database, mode: SessionMode) -> SignalM
 }
 
 /// Starting-bell cue config from the persisted settings rows.
-/// `None` when the user disabled the master starting-bell toggle
-/// (Session simply skips emitting `FireStartingBell` in that case).
-pub fn starting_bell_cue_from_db(db: &Database) -> Option<BellCue> {
-    if !read_bool(db, "starting_bell_active", false) {
+/// `None` when the user disabled the master starting-bell toggle, or
+/// when `mode`'s Setup view doesn't show the starting bell (it's a
+/// Timer setting; Session simply skips emitting `FireStartingBell`).
+pub fn starting_bell_cue_from_db(db: &Database, mode: SessionMode) -> Option<BellCue> {
+    if !crate::preset_config::setup_visibility(mode).starting_bell
+        || !read_bool(db, "starting_bell_active", false)
+    {
         return None;
     }
     Some(BellCue {
@@ -527,20 +530,24 @@ pub fn interval_bells_count(db: &Database, display: DisplayMode) -> usize {
         .count()
 }
 
-/// Per-session bell schedule from the persisted state: respects the
-/// master `interval_bells_active` toggle (empty schedule when off),
-/// reads the interval-bell library, and delegates the per-row
-/// schedule construction to `build_active_bells`. Returns `(bells,
-/// seed)` where `seed` is the xorshift64 seed Session uses for
+/// Per-session bell schedule from the persisted state: empty when
+/// `mode`'s Setup view doesn't show the interval bells (they're a
+/// Timer setting) or the master `interval_bells_active` toggle is
+/// off; otherwise reads the interval-bell library and delegates the
+/// per-row schedule construction to `build_active_bells`. Returns
+/// `(bells, seed)` where `seed` is the xorshift64 seed Session uses for
 /// jitter draws — derived from `time::seed_now()` so multiple
 /// sessions in the same process don't draw identical jitter.
 pub fn session_bells_from_db(
     db: &Database,
     total_target_secs: Option<u64>,
     display: DisplayMode,
+    mode: SessionMode,
 ) -> (Vec<ActiveBell>, u64) {
     let seed = crate::time::seed_now();
-    if !read_bool(db, "interval_bells_active", false) {
+    if !crate::preset_config::setup_visibility(mode).interval_bells
+        || !read_bool(db, "interval_bells_active", false)
+    {
         return (Vec::new(), seed);
     }
     let rows = db.list_interval_bells().unwrap_or_default();
@@ -1230,7 +1237,7 @@ mod tests {
     #[test]
     fn starting_bell_cue_from_db_is_none_when_master_off() {
         let db = Database::open_in_memory().unwrap();
-        assert!(starting_bell_cue_from_db(&db).is_none());
+        assert!(starting_bell_cue_from_db(&db, SessionMode::Timer).is_none());
     }
 
     #[test]
@@ -1240,7 +1247,7 @@ mod tests {
         db.set_setting("starting_bell_sound", "custom-sound-uuid").unwrap();
         db.set_setting("starting_bell_pattern", "custom-pattern-uuid").unwrap();
         db.set_setting("starting_bell_signal_mode", "vibration").unwrap();
-        let cue = starting_bell_cue_from_db(&db).expect("master is on");
+        let cue = starting_bell_cue_from_db(&db, SessionMode::Timer).expect("master is on");
         assert_eq!(cue.sound_uuid, "custom-sound-uuid");
         assert_eq!(cue.vibration_pattern_uuid, "custom-pattern-uuid");
         assert_eq!(cue.signal_mode, SignalMode::Vibration);
@@ -1250,7 +1257,7 @@ mod tests {
     fn starting_bell_cue_from_db_falls_back_to_bundled_defaults() {
         let db = Database::open_in_memory().unwrap();
         db.set_setting("starting_bell_active", "true").unwrap();
-        let cue = starting_bell_cue_from_db(&db).expect("master is on");
+        let cue = starting_bell_cue_from_db(&db, SessionMode::Timer).expect("master is on");
         assert_eq!(cue.sound_uuid, BUNDLED_BOWL_UUID);
         assert_eq!(cue.vibration_pattern_uuid, BUNDLED_PATTERN_PULSE_UUID);
         assert_eq!(cue.signal_mode, SignalMode::Sound);
@@ -1349,8 +1356,185 @@ mod tests {
     #[test]
     fn session_bells_from_db_is_empty_when_master_off() {
         let db = Database::open_in_memory().unwrap();
-        let (bells, _seed) = session_bells_from_db(&db, Some(600), DisplayMode::Countdown);
+        let (bells, _seed) = session_bells_from_db(&db, Some(600), DisplayMode::Countdown, SessionMode::Timer);
         assert!(bells.is_empty(), "master off must yield empty schedule");
+    }
+
+    // ── Timer-only bells ───────────────────────────────────────────
+    //
+    // The starting bell and the interval bells are Timer settings:
+    // Guided and Box Breath hide their rows, so they must never ring
+    // there either, whatever the shared settings say (issue #3).
+
+    /// Every mode. The match fails to compile when a variant is added,
+    /// so the list can't silently miss one.
+    fn every_mode() -> [SessionMode; 3] {
+        let all = [SessionMode::Timer, SessionMode::BoxBreath, SessionMode::Guided];
+        for mode in all {
+            match mode {
+                SessionMode::Timer | SessionMode::BoxBreath | SessionMode::Guided => {}
+            }
+        }
+        all
+    }
+
+    const EVERY_KIND: [IntervalBellKind; 3] = [
+        IntervalBellKind::Interval,
+        IntervalBellKind::FixedFromStart,
+        IntervalBellKind::FixedFromEnd,
+    ];
+
+    /// Starting bell and interval bells switched on, with one enabled
+    /// bell of every kind, each due one minute in.
+    fn db_with_every_bell_on() -> Database {
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("interval_bells_active", "true").unwrap();
+        db.set_setting("starting_bell_active", "true").unwrap();
+        for kind in EVERY_KIND {
+            db.insert_interval_bell(
+                kind, 1, 0, BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound,
+            )
+            .unwrap();
+        }
+        db
+    }
+
+    fn bells_for(db: &Database, display: DisplayMode, mode: SessionMode) -> Vec<ActiveBell> {
+        let target = (display == DisplayMode::Countdown).then_some(600);
+        session_bells_from_db(db, target, display, mode).0
+    }
+
+    #[test]
+    fn timer_gets_interval_bells_of_every_kind() {
+        let db = db_with_every_bell_on();
+        assert_eq!(bells_for(&db, DisplayMode::Countdown, SessionMode::Timer).len(), 3);
+        // Stopwatch has no end to count back from.
+        assert_eq!(bells_for(&db, DisplayMode::Stopwatch, SessionMode::Timer).len(), 2);
+    }
+
+    #[test]
+    fn guided_and_box_breath_get_no_interval_bells() {
+        let db = db_with_every_bell_on();
+        for mode in [SessionMode::Guided, SessionMode::BoxBreath] {
+            for display in [DisplayMode::Countdown, DisplayMode::Stopwatch] {
+                let bells = bells_for(&db, display, mode);
+                assert!(bells.is_empty(), "{mode:?} {display:?}: {}", bells.len());
+            }
+        }
+    }
+
+    #[test]
+    fn only_timer_gets_the_starting_bell() {
+        let db = db_with_every_bell_on();
+        assert!(starting_bell_cue_from_db(&db, SessionMode::Timer).is_some());
+        assert!(starting_bell_cue_from_db(&db, SessionMode::Guided).is_none());
+        assert!(starting_bell_cue_from_db(&db, SessionMode::BoxBreath).is_none());
+    }
+
+    /// What the Setup view shows and what rings are one decision: a
+    /// bell rings in a mode exactly when that mode shows its row.
+    #[test]
+    fn a_bell_rings_in_a_mode_exactly_when_its_row_is_shown() {
+        let db = db_with_every_bell_on();
+        for mode in every_mode() {
+            let shown = crate::preset_config::setup_visibility(mode);
+            for display in [DisplayMode::Countdown, DisplayMode::Stopwatch] {
+                assert_eq!(
+                    !bells_for(&db, display, mode).is_empty(),
+                    shown.interval_bells,
+                    "interval bells, {mode:?} {display:?}",
+                );
+            }
+            assert_eq!(
+                starting_bell_cue_from_db(&db, mode).is_some(),
+                shown.starting_bell,
+                "starting bell, {mode:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn other_modes_leave_the_timer_bells_untouched() {
+        let db = db_with_every_bell_on();
+        let library_before = db.list_interval_bells().unwrap();
+        for mode in [SessionMode::Guided, SessionMode::BoxBreath] {
+            let _ = bells_for(&db, DisplayMode::Countdown, mode);
+            let _ = starting_bell_cue_from_db(&db, mode);
+        }
+        assert_eq!(db.get_setting("interval_bells_active", "").unwrap(), "true");
+        assert_eq!(db.get_setting("starting_bell_active", "").unwrap(), "true");
+        let library_after = db.list_interval_bells().unwrap();
+        assert_eq!(
+            library_after.iter().map(|b| (&b.uuid, b.enabled)).collect::<Vec<_>>(),
+            library_before.iter().map(|b| (&b.uuid, b.enabled)).collect::<Vec<_>>(),
+        );
+        assert_eq!(bells_for(&db, DisplayMode::Countdown, SessionMode::Timer).len(), 3);
+        assert!(starting_bell_cue_from_db(&db, SessionMode::Timer).is_some());
+    }
+
+    /// A whole session, built the way both shells build it, from a
+    /// database with every bell switched on. Returns how often each
+    /// Timer-only bell fired over the session plus a minute of
+    /// overtime.
+    fn timer_only_bells_fired(db: &Database, shape: crate::session::SessionShape) -> (usize, usize) {
+        use crate::session::{Effect, Session, SessionSettings};
+        use std::time::Duration;
+        let mode = shape.mode();
+        let display = if shape.target_secs().is_some() {
+            DisplayMode::Countdown
+        } else {
+            DisplayMode::Stopwatch
+        };
+        let target = shape.target_secs().map(u64::from);
+        let (bells, bell_rng_seed) = session_bells_from_db(db, target, display, mode);
+        let settings = SessionSettings {
+            shape,
+            prep_secs: None,
+            bells,
+            bell_rng_seed,
+            signal_mode_override: SignalMode::Both,
+            starting_bell: starting_bell_cue_from_db(db, mode),
+            end_bell: None,
+            box_breath_cues: None,
+        };
+        let start = Duration::from_secs(100);
+        let mut session = Session::start_running(settings, start);
+        let mut effects = session.start_signals();
+        for secs in 1..=660 {
+            effects.extend(session.tick(start + Duration::from_secs(secs)));
+        }
+        let count = |pred: fn(&Effect) -> bool| effects.iter().filter(|e| pred(e)).count();
+        (
+            count(|e| matches!(e, Effect::FireStartingBell { .. })),
+            count(|e| matches!(e, Effect::FireBell { .. })),
+        )
+    }
+
+    #[test]
+    fn a_timer_session_rings_its_bells() {
+        // Control for the test below: the same setup does ring in Timer.
+        use crate::session::SessionShape;
+        let db = db_with_every_bell_on();
+        let (starting, interval) =
+            timer_only_bells_fired(&db, SessionShape::TimerCountdown { target_secs: 600 });
+        assert_eq!(starting, 1);
+        assert!(interval >= 3, "{interval}");
+    }
+
+    #[test]
+    fn guided_and_box_breath_sessions_never_ring_timer_bells() {
+        use crate::breath::BreathPattern;
+        use crate::session::SessionShape;
+        let db = db_with_every_bell_on();
+        for shape in [
+            SessionShape::Guided { duration_secs: 600, count_up_display: false },
+            SessionShape::Guided { duration_secs: 600, count_up_display: true },
+            SessionShape::BoxBreathCountdown { pattern: BreathPattern::box_breath(), target_secs: 600 },
+            SessionShape::BoxBreathStopwatch { pattern: BreathPattern::box_breath() },
+        ] {
+            let label = format!("{shape:?}");
+            assert_eq!(timer_only_bells_fired(&db, shape), (0, 0), "{label}");
+        }
     }
 
     // ── next_interval_ring_secs ────────────────────────────────────

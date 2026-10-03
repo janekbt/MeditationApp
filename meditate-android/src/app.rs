@@ -561,6 +561,24 @@ impl AppState {
 
 #[cfg(test)]
 mod tests {
+    /// Which bells may ring in which mode is decided in
+    /// `meditate_core::bells`: the session builder takes the starting
+    /// and interval bells from the core helpers, passing the mode,
+    /// never from a literal "none" (issue #3: Timer bells rang in
+    /// Guided and Box Breath because the mode never reached core).
+    #[test]
+    fn every_session_takes_its_bells_from_core_with_its_mode() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
+        let source = std::fs::read_to_string(path).unwrap();
+        for literal in ["bells: Vec::new()", "bells: vec![]", "starting_bell: None"] {
+            assert!(!source.contains(literal), "found `{literal}`");
+        }
+        assert_eq!(source.matches("bells::session_bells_from_db(db, target, display, mode)").count(), 1);
+        assert_eq!(source.matches("bells::starting_bell_cue_from_db(db, mode)").count(), 1);
+        assert_eq!(source.matches("session_bells_from_db(").count(), 1);
+        assert_eq!(source.matches("starting_bell_cue_from_db(").count(), 1);
+    }
+
     use super::*;
 
     // ── TimerMode chip mapping ──────────────────────────────────

@@ -1986,15 +1986,20 @@ impl TimerView {
                     }
                 };
                 let Some(app) = self.get_app() else { return; };
+                let (bells, bell_rng_seed) = self.build_session_bells(
+                    shape.target_secs().map(u64::from),
+                    self.stopwatch_toggle_on.get(),
+                    SessionMode::BoxBreath,
+                );
                 let core_settings = CoreSessionSettings {
                     shape,
                     prep_secs: None,
-                    bells: Vec::new(),
-                    bell_rng_seed: 1,
+                    bells,
+                    bell_rng_seed,
                     signal_mode_override: self.read_signal_mode_override(
                         &app, SessionMode::BoxBreath,
                     ),
-                    starting_bell: None,
+                    starting_bell: self.build_starting_bell_cue(&app, SessionMode::BoxBreath),
                     end_bell: self.build_end_bell_cue(&app),
                     box_breath_cues: Some(self.build_box_breath_cues(&app)),
                 };
@@ -2063,21 +2068,27 @@ impl TimerView {
                 // duration); the stopwatch toggle only flips the
                 // running display between count-up and count-down.
                 let Some(app) = self.get_app() else { return; };
+                let shape = CoreSessionShape::Guided {
+                    duration_secs: target as u32,
+                    count_up_display: self.stopwatch_toggle_on.get(),
+                };
+                // Core leaves out the starting and interval bells here
+                // (the file is the "start"); the end bell fires when
+                // the file ends or the user clicks Finish.
+                let (bells, bell_rng_seed) = self.build_session_bells(
+                    shape.target_secs().map(u64::from),
+                    self.stopwatch_toggle_on.get(),
+                    SessionMode::Guided,
+                );
                 let core_settings = CoreSessionSettings {
-                    shape: CoreSessionShape::Guided {
-                        duration_secs: target as u32,
-                        count_up_display: self.stopwatch_toggle_on.get(),
-                    },
+                    shape,
                     prep_secs: None,
-                    bells: Vec::new(),
-                    bell_rng_seed: 1,
+                    bells,
+                    bell_rng_seed,
                     signal_mode_override: self.read_signal_mode_override(
                         &app, SessionMode::Guided,
                     ),
-                    // Guided sessions have no starting bell (the file
-                    // is the "start"); end bell fires when the file
-                    // ends or the user clicks Finish.
-                    starting_bell: None,
+                    starting_bell: self.build_starting_bell_cue(&app, SessionMode::Guided),
                     end_bell: self.build_end_bell_cue(&app),
                     box_breath_cues: None,
                 };
@@ -2106,6 +2117,7 @@ impl TimerView {
             let (bells, bell_rng_seed) = self.build_session_bells(
                 shape.target_secs().map(u64::from),
                 stopwatch_on,
+                SessionMode::Timer,
             );
             Some(CoreSessionSettings {
                 shape,
@@ -2115,7 +2127,7 @@ impl TimerView {
                 signal_mode_override: self.read_signal_mode_override(
                     &app, SessionMode::Timer,
                 ),
-                starting_bell: self.build_starting_bell_cue(&app),
+                starting_bell: self.build_starting_bell_cue(&app, SessionMode::Timer),
                 end_bell: self.build_end_bell_cue(&app),
                 box_breath_cues: None,
             })
@@ -3831,6 +3843,7 @@ impl TimerView {
         &self,
         total_target_secs: Option<u64>,
         stopwatch_on: bool,
+        mode: SessionMode,
     ) -> (Vec<ActiveBell>, u64) {
         self.get_app()
             .and_then(|app| {
@@ -3839,6 +3852,7 @@ impl TimerView {
                         db.core(),
                         total_target_secs,
                         meditate_core::bells::DisplayMode::from_stopwatch_flag(stopwatch_on),
+                        mode,
                     )
                 })
             })
@@ -3857,8 +3871,9 @@ impl TimerView {
     fn build_starting_bell_cue(
         &self,
         app: &crate::application::MeditateApplication,
+        mode: SessionMode,
     ) -> Option<meditate_core::bells::BellCue> {
-        app.with_db(|db| meditate_core::bells::starting_bell_cue_from_db(db.core()))
+        app.with_db(|db| meditate_core::bells::starting_bell_cue_from_db(db.core(), mode))
             .flatten()
     }
 

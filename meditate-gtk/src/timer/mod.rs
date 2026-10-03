@@ -143,3 +143,25 @@ impl TimerView {
     }
 
 }
+
+#[cfg(test)]
+mod tests {
+    /// Which bells may ring in which mode is decided in
+    /// `meditate_core::bells`: every session takes its starting and
+    /// interval bells from the core helpers, never from a literal
+    /// "none" (that hand-written copy of the rule is how Android came
+    /// to ring Timer bells in Guided, issue #3).
+    #[test]
+    fn every_session_takes_its_bells_from_core() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/timer/imp.rs");
+        let source = std::fs::read_to_string(path).unwrap();
+        let code = source.split("#[cfg(test)]\nmod tests").next().unwrap();
+        for literal in ["bells: Vec::new()", "bells: vec![]", "starting_bell: None"] {
+            assert!(!code.contains(literal), "found `{literal}`");
+        }
+        let sessions = code.matches("CoreSessionSettings {").count();
+        assert!(sessions >= 3, "Timer, Box Breath and Guided: {sessions}");
+        assert_eq!(code.matches("self.build_session_bells(").count(), sessions);
+        assert_eq!(code.matches("self.build_starting_bell_cue(").count(), sessions);
+    }
+}
