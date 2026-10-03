@@ -494,7 +494,16 @@ impl Database {
             payload,
         };
         self.append_event(&event)?;
+        // Counted before the caller commits; a write that then rolls
+        // back costs at most one empty sync.
+        self.local_changes.bump();
         Ok(())
+    }
+
+    /// Handle to this database's local-change count (see
+    /// `local_changes.rs`). Cheap to clone; readable without the DB.
+    pub fn local_changes(&self) -> super::LocalChanges {
+        self.local_changes.clone()
     }
 
     /// Apply a single event to the materialized cache. Idempotent on

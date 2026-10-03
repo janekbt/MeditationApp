@@ -234,6 +234,18 @@ fn trigger_sync(reason: &str) {
 }
 
 
+/// Watch over core's count of local changes that need syncing. The
+/// tick loop asks it each tick and starts a sync when it moved — the
+/// Android counterpart of GTK's `with_db_mut` (write, then sync),
+/// without each write path having to remember it.
+#[cfg(target_os = "android")]
+fn local_change_watch() -> Option<meditate_core::db::LocalChangeWatch> {
+    let db_arc = DATABASE.get()?;
+    let guard = db_arc.lock().ok()?;
+    let db = guard.as_ref()?;
+    Some(meditate_core::db::LocalChangeWatch::new(db.local_changes()))
+}
+
 /// Hide the soft keyboard. Slint's `clear-focus()` on a
 /// TextInput is supposed to dismiss the IME via the
 /// `InputMethodRequest::Disable` path, but on this slint+android-
@@ -2815,9 +2827,9 @@ fn commit_pending_deletes(
     render_log_feed(ui, loaded, pending);
     // Bug-audit #14: stats can be on screen when the timer-driven
     // commit lands — re-derive so deleted sessions vanish from the
-    // ring/heatmap immediately. #13: deletions ride sync promptly.
+    // ring/heatmap immediately. #13: the deletions sync through the
+    // local-change watch in the tick loop.
     refresh_stats(ui);
-    trigger_sync("session delete");
 }
 
 /// Re-render the Log feed from the current shadow state.
@@ -4752,6 +4764,8 @@ fn build_ui() -> MainWindow {
             pending_guided_delete.clone();
         #[cfg(target_os = "android")]
         let prefs_delete_timer: &'static slint::Timer = delete_timer;
+        #[cfg(target_os = "android")]
+        let mut local_watch = local_change_watch();
         timer.start(slint::TimerMode::Repeated, TICK, move || {
             // Warm-process widget deep-link (W-4). Polled here
             // because NativeActivity never hands native code an
@@ -4842,6 +4856,12 @@ fn build_ui() -> MainWindow {
                             }
                         },
                     );
+                }
+                // A synced write landed since the last tick:
+                // push it (bursts collapse into one sync).
+                #[cfg(target_os = "android")]
+                if local_watch.as_mut().is_some_and(|w| w.take_new()) {
+                    trigger_sync("local change");
                 }
                 // Sync started/finished (SY-4): refresh the
                 // indicator exactly on the edges the trigger +
@@ -5013,7 +5033,6 @@ fn build_ui() -> MainWindow {
                             );
                             refresh_stats(&ui);
                             refresh_widget(&ui);
-                            trigger_sync("csv import");
                             ui.global::<Tr>()
                                 .invoke_imported_n(n as i32)
                                 .to_string()
@@ -5505,10 +5524,6 @@ fn build_ui() -> MainWindow {
                 // Saved: the held snapshot has done its job (after the
                 // insert, so a kill in between can't lose the session).
                 clear_session_in_progress_snapshot();
-                // Bug-audit #13: mutations sync promptly (GTK's
-                // with_db_mut auto-trigger analogue) instead of
-                // waiting for the next app launch.
-                trigger_sync("session save");
                 // Refresh the Setup row so when Done slides off and
                 // reveals Setup, the ExpanderRow's master toggle +
                 // subtitle reflect the post-Save mode state.
@@ -8818,7 +8833,6 @@ fn build_ui() -> MainWindow {
             refresh_label_state(&ui, mode);
             reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
             refresh_stats(&ui);
-            trigger_sync("label merge");
             check_label_conflicts(&ui, &slot);
         });
     }
@@ -9485,8 +9499,6 @@ fn build_ui() -> MainWindow {
                 }
                 editing_session_id.set(None);
                 ui.set_edit_session_page(false);
-                // Bug-audit #13: prompt sync after an edit/insert.
-                trigger_sync("session edit");
                 reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
             }
             let _ = weak.clone();
@@ -10136,7 +10148,6 @@ fn build_ui() -> MainWindow {
                 );
                 refresh_stats(&ui);
                 refresh_widget(&ui);
-                trigger_sync("delete-all");
             }
             let _ = (weak.clone(), current_mode.get());
         });

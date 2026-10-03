@@ -15,10 +15,21 @@ impl Database {
     }
 
     /// Write a settings value. Upserts: subsequent calls overwrite.
-    /// Each call emits its own `setting_changed` event — peers
+    /// Each change emits its own `setting_changed` event — peers
     /// last-write-wins by Lamport ts, so collapsing two overwrites to
-    /// one event would lose the intermediate ordering.
+    /// one event would lose the intermediate ordering. Saving the
+    /// value the key already holds is a no-op: it changes nothing
+    /// here, and a fresh event would only push noise and could beat a
+    /// newer value a peer set in the meantime.
     pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
+        let stored: Option<String> = self.conn.query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            params![key],
+            |row| row.get(0),
+        ).optional()?;
+        if stored.as_deref() == Some(value) {
+            return Ok(());
+        }
         let tx = self.conn.unchecked_transaction()?;
         self.write_kv("settings", key, value)?;
         let payload = serde_json::json!({
@@ -193,5 +204,78 @@ mod tests {
         db.apply_event(&event).unwrap();
         db.apply_event(&event).unwrap();
         assert_eq!(db.get_setting("daily_goal", "x").unwrap(), "20");
+    }
+
+    // ── Re-saving an unchanged value ────────────────────────────────
+
+    fn setting_events(db: &Database, key: &str) -> usize {
+        db.pending_events().unwrap().iter()
+            .filter(|(_, e)| e.kind == "setting_changed" && e.target_id == key)
+            .count()
+    }
+
+    #[test]
+    fn saving_the_value_a_setting_already_has_records_nothing() {
+        // GTK re-saved the signal mode on every launch, pushing a junk
+        // event each time and able to override a newer peer value.
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("timer_signal_mode", "sound").unwrap();
+        db.set_setting("timer_signal_mode", "sound").unwrap();
+        db.set_setting("timer_signal_mode", "sound").unwrap();
+        assert_eq!(setting_events(&db, "timer_signal_mode"), 1);
+    }
+
+    #[test]
+    fn the_first_save_of_a_key_is_recorded_even_if_it_matches_the_default() {
+        // The default lives in the shell; core only knows stored rows.
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(db.get_setting("timer_signal_mode", "both").unwrap(), "both");
+        db.set_setting("timer_signal_mode", "both").unwrap();
+        assert_eq!(setting_events(&db, "timer_signal_mode"), 1);
+    }
+
+    #[test]
+    fn changing_and_changing_back_records_every_change() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("k", "a").unwrap();
+        db.set_setting("k", "b").unwrap();
+        db.set_setting("k", "a").unwrap();
+        assert_eq!(setting_events(&db, "k"), 3);
+        assert_eq!(db.get_setting("k", "").unwrap(), "a");
+    }
+
+    #[test]
+    fn re_saving_a_value_pulled_from_a_peer_records_nothing() {
+        let peer = Database::open_in_memory().unwrap();
+        peer.set_setting("daily_goal", "20").unwrap();
+        let events: Vec<_> = peer.pending_events().unwrap().into_iter().map(|(_, e)| e).collect();
+
+        let db = Database::open_in_memory().unwrap();
+        db.replay_events(&events).unwrap();
+        let before = setting_events(&db, "daily_goal");
+        db.set_setting("daily_goal", "20").unwrap();
+        assert_eq!(setting_events(&db, "daily_goal"), before, "the peer's value is already ours");
+    }
+
+    #[test]
+    fn re_saving_an_unchanged_value_does_not_override_a_newer_peer_value() {
+        // We hold "a"; a peer set "b" later. Re-saving our "a" must not
+        // mint a newer event that beats the peer's "b" once we pull it.
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("k", "a").unwrap();
+        let peer = Database::open_in_memory().unwrap();
+        let ours: Vec<_> = db.pending_events().unwrap().into_iter().map(|(_, e)| e).collect();
+        peer.replay_events(&ours).unwrap();
+        peer.set_setting("k", "b").unwrap();
+
+        // Our clock runs ahead of the peer's, so any new event of ours
+        // would win the ordering.
+        for v in ["1", "2", "3", "4"] {
+            db.set_setting("other", v).unwrap();
+        }
+        db.set_setting("k", "a").unwrap();
+        let theirs: Vec<_> = peer.pending_events().unwrap().into_iter().map(|(_, e)| e).collect();
+        db.replay_events(&theirs).unwrap();
+        assert_eq!(db.get_setting("k", "").unwrap(), "b");
     }
 }

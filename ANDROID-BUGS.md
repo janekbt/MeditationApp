@@ -45,10 +45,17 @@ not conclusive and a device check is needed.
 - [x] **Sync requests during a running sync are dropped.** Android's
   `SYNC_IN_FLIGHT` skips them; GTK uses core `SyncCoordinator` and runs one
   more pass. Android `lib.rs:147-157`, GTK `application.rs:592-647`.
-- [ ] **Most edits don't trigger a sync.** Labels, presets, settings, sound
+- [x] **Most edits don't trigger a sync.** Labels, presets, settings, sound
   and guided import/rename/delete, vibration patterns. GTK syncs after
   every write via `with_db_mut`. Android labels `lib.rs:3091-3175`.
   Fix: one write-then-sync path on Android.
+- [x] **Saving an unchanged setting still emits a sync event.** Found on
+  GTK: the Sound/Vibration/Both toggle starts at "Both", and setting it
+  to the saved value on startup re-saves `timer_signal_mode`, so every
+  launch pushes one junk event and can override a newer value from a
+  peer. Core `set_setting` always emits. Fix in core (no-op when the
+  value is unchanged) as part of the B2 fix, since write-triggered sync
+  would turn such re-saves into extra syncs. GTK `timer/imp.rs:1720`.
 - [ ] **No sync when returning to the running app** (to confirm via
   `sync.trigger` in the diag log). GTK `application.rs:112`.
 - [x] **Views aren't refreshed after a sync pulls changes.** Log, Stats,

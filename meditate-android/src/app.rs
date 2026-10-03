@@ -808,6 +808,44 @@ mod tests {
         assert!(wipe.contains("refresh_after_pull("), "wipe-local re-reads through the shared list");
     }
 
+    /// Every local change that needs syncing starts a sync: core
+    /// counts them where they are recorded, and the tick loop starts
+    /// a sync when the count moves. Write paths don't call
+    /// trigger_sync themselves, so none can forget it; only triggers
+    /// that aren't a synced write stay explicit.
+    #[test]
+    fn local_changes_start_a_sync_from_one_place() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
+        let lib = std::fs::read_to_string(path).unwrap();
+        let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
+
+        assert!(code.contains("fn local_change_watch("), "one watch over core's count");
+        let take = code.find(".take_new()").expect("the tick loop asks the watch");
+        let after = &code[take..take + 300];
+        assert!(after.contains("trigger_sync(\"local change\")"), "and starts a sync");
+
+        let mut reasons: Vec<&str> = code
+            .match_indices("trigger_sync(\"")
+            .map(|(i, m)| {
+                let rest = &code[i + m.len()..];
+                &rest[..rest.find('"').unwrap()]
+            })
+            .collect();
+        reasons.sort_unstable();
+        assert_eq!(
+            reasons,
+            [
+                "app launch",            // pull what peers wrote while closed
+                "indicator tap (retry)", // retry after a failed sync
+                "local change",          // every synced write
+                "prefs save",            // new account; not a synced write
+                "recovery push-local",   // re-queues events, records none
+                "recovery wipe-local",   // pull everything back
+            ],
+            "write paths must not trigger sync themselves",
+        );
+    }
+
     #[test]
     fn the_shell_holds_an_ended_session_until_save_or_discard() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");

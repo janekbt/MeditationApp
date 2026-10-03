@@ -37,6 +37,7 @@ mod guided_files;
 mod interval_bells;
 mod known_remote;
 mod labels;
+mod local_changes;
 mod presets;
 mod schema;
 mod seeds;
@@ -62,6 +63,7 @@ pub use interval_bells::{IntervalBell, IntervalBellKind};
 // definition in the domain module. Re-exported here so the `db`
 // API surface stays stable across the promotion pass.
 pub use crate::bells::SignalMode;
+pub use local_changes::{LocalChangeWatch, LocalChanges};
 pub use labels::{
     count_labels_from_db, find_label_by_name_from_db, is_label_name_taken_from_db,
     label_session_count_from_db, list_labels_from_db, Label,
@@ -130,6 +132,7 @@ impl StarredState {
 /// - `device_id` records authorship.
 pub struct Database {
     conn: Connection,
+    local_changes: LocalChanges,
 }
 
 /// Mint a fresh v4 UUID. Exposed so the shell (which doesn't have
@@ -295,7 +298,7 @@ impl Database {
         // comfortably with headroom; cost is per-statement memory,
         // negligible at this count.
         conn.set_prepared_statement_cache_capacity(32);
-        let db = Self { conn };
+        let db = Self { conn, local_changes: LocalChanges::default() };
         db.maybe_walk_events_for_cache_upgrade()?;
         Ok(db)
     }
@@ -541,7 +544,7 @@ mod tests {
     #[test]
     fn opening_twice_is_harmless() {
         let db = Database::init(release_v26_8_5_database()).unwrap();
-        let Database { conn } = db;
+        let Database { conn, .. } = db;
         let db = Database::init(conn).unwrap();
         assert_eq!(db.list_interval_bells().unwrap().len(), 1);
     }
