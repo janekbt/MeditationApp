@@ -81,6 +81,10 @@ pub struct PresetStartingBell {
     pub signal_mode: String,
     /// Per-bell vibration pattern uuid.
     pub vibration_pattern_uuid: crate::db::VibrationPatternUuid,
+    /// Bell volume (`crate::bell_volume`). Presets saved before
+    /// per-bell volumes carry none and load at the middle.
+    #[serde(default)]
+    pub volume: crate::bell_volume::BellVolume,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -103,6 +107,10 @@ pub struct PresetIntervalBell {
     pub signal_mode: String,
     /// Per-bell vibration pattern uuid.
     pub vibration_pattern_uuid: crate::db::VibrationPatternUuid,
+    /// Bell volume (`crate::bell_volume`). Presets saved before
+    /// per-bell volumes carry none and load at the middle.
+    #[serde(default)]
+    pub volume: crate::bell_volume::BellVolume,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -113,6 +121,10 @@ pub struct PresetEndBell {
     pub signal_mode: String,
     /// Per-bell vibration pattern uuid.
     pub vibration_pattern_uuid: crate::db::VibrationPatternUuid,
+    /// Bell volume (`crate::bell_volume`). Presets saved before
+    /// per-bell volumes carry none and load at the middle.
+    #[serde(default)]
+    pub volume: crate::bell_volume::BellVolume,
 }
 
 /// Box-Breath per-phase cue config — master enable + four phase
@@ -132,6 +144,10 @@ pub struct PresetBoxBreathPhase {
     pub signal_mode: String,
     pub sound_uuid: crate::db::BellSoundUuid,
     pub pattern_uuid: crate::db::VibrationPatternUuid,
+    /// Bell volume (`crate::bell_volume`). Presets saved before
+    /// per-bell volumes carry none and load at the middle.
+    #[serde(default)]
+    pub volume: crate::bell_volume::BellVolume,
 }
 
 impl PresetConfig {
@@ -182,15 +198,15 @@ impl PresetConfig {
 // behaviour matches the GTK shell's prior non-transactional walker.
 
 use crate::db::{
-    BoxBreathPhaseId, Database, IntervalBellKind, SessionMode, SignalMode,
+    BoxBreathPhaseId, Database, IntervalBell, IntervalBellKind, SessionMode, SignalMode,
 };
 use crate::format::PREP_SECS_DEFAULT;
 use crate::seeds::{BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID};
 use crate::settings_keys::{
     end_bell_active_key_for_mode, end_bell_pattern_key_for_mode,
     end_bell_signal_mode_key_for_mode, end_bell_sound_key_for_mode,
-    keep_screen_awake_key_for_mode, label_active_key_for_mode, label_uuid_key_for_mode,
-    signal_mode_key_for_mode, stopwatch_key_for_mode,
+    end_bell_volume_key_for_mode, keep_screen_awake_key_for_mode, label_active_key_for_mode, label_uuid_key_for_mode,
+    signal_mode_key_for_mode, stopwatch_key_for_mode, STARTING_BELL_VOLUME_KEY,
 };
 
 /// Whether a preset created from the "Save current setup" flow
@@ -305,6 +321,7 @@ pub fn snapshot(db: &Database, mode: SessionMode, timing: PresetTiming) -> Prese
     let read_bool = |k: &str, default: bool| crate::settings_keys::read_bool(db, k, default);
     let read_str = |k: &str, default: &str| crate::settings_keys::read_str(db, k, default);
     let read_u32 = |k: &str, default: u32| crate::settings_keys::read_u32(db, k, default);
+    let read_volume = |k: &str| crate::bell_volume::BellVolume::parse(&read_str(k, ""));
 
     let label = PresetLabel {
         enabled: read_bool(label_active_key_for_mode(mode), false),
@@ -322,6 +339,7 @@ pub fn snapshot(db: &Database, mode: SessionMode, timing: PresetTiming) -> Prese
         prep_time_secs: read_u32("preparation_time_secs", PREP_SECS_DEFAULT),
         signal_mode: read_str("starting_bell_signal_mode", "sound"),
         vibration_pattern_uuid: read_str("starting_bell_pattern", BUNDLED_PATTERN_PULSE_UUID).into(),
+        volume: read_volume(STARTING_BELL_VOLUME_KEY),
     };
 
     let end_bell = PresetEndBell {
@@ -329,6 +347,7 @@ pub fn snapshot(db: &Database, mode: SessionMode, timing: PresetTiming) -> Prese
         sound_uuid: read_str(end_bell_sound_key_for_mode(mode), BUNDLED_BOWL_UUID).into(),
         signal_mode: read_str(end_bell_signal_mode_key_for_mode(mode), "sound"),
         vibration_pattern_uuid: read_str(end_bell_pattern_key_for_mode(mode), BUNDLED_PATTERN_PULSE_UUID).into(),
+        volume: read_volume(end_bell_volume_key_for_mode(mode)),
     };
 
     let intervals_enabled = read_bool("interval_bells_active", false);
@@ -344,6 +363,7 @@ pub fn snapshot(db: &Database, mode: SessionMode, timing: PresetTiming) -> Prese
             enabled: b.enabled,
             signal_mode: b.signal_mode.as_db_str().to_string(),
             vibration_pattern_uuid: b.vibration_pattern_uuid,
+            volume: b.volume,
         })
         .collect();
     let interval_bells = PresetIntervalBells {
@@ -365,6 +385,7 @@ pub fn snapshot(db: &Database, mode: SessionMode, timing: PresetTiming) -> Prese
         signal_mode: p.signal_mode.as_db_str().to_string(),
         sound_uuid: p.sound_uuid,
         pattern_uuid: p.pattern_uuid,
+        volume: p.volume,
     })
     .collect();
     let box_breath_cues = PresetBoxBreathCues {
@@ -510,6 +531,8 @@ pub fn apply(
         cfg.starting_bell.vibration_pattern_uuid.as_str(),
     )?;
     set(end_bell_signal_mode_key_for_mode(mode), &cfg.end_bell.signal_mode)?;
+    set(STARTING_BELL_VOLUME_KEY, &cfg.starting_bell.volume.percent().to_string())?;
+    set(end_bell_volume_key_for_mode(mode), &cfg.end_bell.volume.percent().to_string())?;
     set(end_bell_pattern_key_for_mode(mode), cfg.end_bell.vibration_pattern_uuid.as_str())?;
     set(signal_mode_key_for_mode(mode), &cfg.cues_signal_mode)?;
     set(
@@ -539,6 +562,7 @@ pub fn apply(
                 signal_mode,
                 p.sound_uuid.as_str(),
                 p.pattern_uuid.as_str(),
+                p.volume,
             )
             .map_err(|e| ApplyError::DbError(format!("{e:?}")))?;
         }
@@ -572,13 +596,14 @@ pub fn apply(
                 signal_mode,
             )
             .map_err(|e| ApplyError::DbError(format!("{e:?}")))?;
-        if !s.enabled {
+        // A fresh row is enabled and at the default volume; restore
+        // the preset's values when they differ.
+        if !s.enabled || s.volume != crate::bell_volume::BellVolume::default() {
             if let Some(b) = db
-                .list_interval_bells()
-                .ok()
-                .and_then(|bs| bs.into_iter().find(|b| b.id == rowid))
+                .find_interval_bell_by_id(rowid)
+                .map_err(|e| ApplyError::DbError(format!("{e:?}")))?
             {
-                db.set_interval_bell_enabled(b.uuid.as_str(), false)
+                db.update_interval_bell(&IntervalBell { enabled: s.enabled, volume: s.volume, ..b })
                     .map_err(|e| ApplyError::DbError(format!("{e:?}")))?;
             }
         }
@@ -605,6 +630,7 @@ mod tests {
                 prep_time_secs: 5,
                 signal_mode: "both".to_string(),
                 vibration_pattern_uuid: "pulse-uuid".into(),
+                volume: Default::default(),
             },
             interval_bells: PresetIntervalBells {
                 enabled: false,
@@ -615,6 +641,7 @@ mod tests {
                 sound_uuid: "end-uuid".into(),
                 signal_mode: "vibration".to_string(),
                 vibration_pattern_uuid: "heartbeat-uuid".into(),
+                volume: Default::default(),
             },
             timing: PresetTiming::Timer {
                 stopwatch: false,
@@ -645,6 +672,7 @@ mod tests {
                 sound_uuid: "end-uuid".into(),
                 signal_mode: "sound".to_string(),
                 vibration_pattern_uuid: crate::db::VibrationPatternUuid::default(),
+                volume: Default::default(),
             },
             timing: PresetTiming::BoxBreath {
                 stopwatch: false,
@@ -665,6 +693,7 @@ mod tests {
                         signal_mode: "vibration".to_string(),
                         sound_uuid: crate::db::BellSoundUuid::default(),
                         pattern_uuid: "pulse-uuid".into(),
+                        volume: Default::default(),
                     },
                     PresetBoxBreathPhase {
                         phase: "holdin".to_string(),
@@ -672,6 +701,7 @@ mod tests {
                         signal_mode: "sound".to_string(),
                         sound_uuid: "voice-uuid".into(),
                         pattern_uuid: "pulse-uuid".into(),
+                        volume: Default::default(),
                     },
                     PresetBoxBreathPhase {
                         phase: "out".to_string(),
@@ -679,6 +709,7 @@ mod tests {
                         signal_mode: "both".to_string(),
                         sound_uuid: "voice-uuid".into(),
                         pattern_uuid: "wave-uuid".into(),
+                        volume: Default::default(),
                     },
                     PresetBoxBreathPhase {
                         phase: "holdout".to_string(),
@@ -686,6 +717,7 @@ mod tests {
                         signal_mode: "sound".to_string(),
                         sound_uuid: crate::db::BellSoundUuid::default(),
                         pattern_uuid: crate::db::VibrationPatternUuid::default(),
+                        volume: Default::default(),
                     },
                 ],
             },
@@ -712,6 +744,7 @@ mod tests {
                         enabled: true,
                         signal_mode: "vibration".to_string(),
                         vibration_pattern_uuid: "wave-uuid".into(),
+                        volume: Default::default(),
                     },
                     PresetIntervalBell {
                         kind: "fixed_from_start".to_string(),
@@ -721,6 +754,7 @@ mod tests {
                         enabled: false,
                         signal_mode: "sound".to_string(),
                         vibration_pattern_uuid: crate::db::VibrationPatternUuid::default(),
+                        volume: Default::default(),
                     },
                 ],
             },
@@ -782,6 +816,7 @@ mod tests {
                 prep_time_secs: 30,
                 signal_mode: "both".to_string(),
                 vibration_pattern_uuid: pattern_uuid.into(),
+                volume: Default::default(),
             },
             interval_bells: PresetIntervalBells {
                 enabled: true,
@@ -793,6 +828,7 @@ mod tests {
                     enabled: true,
                     signal_mode: "sound".to_string(),
                     vibration_pattern_uuid: crate::db::VibrationPatternUuid::default(),
+                    volume: Default::default(),
                 }],
             },
             end_bell: PresetEndBell {
@@ -800,6 +836,7 @@ mod tests {
                 sound_uuid: sound_uuid.into(),
                 signal_mode: "vibration".to_string(),
                 vibration_pattern_uuid: pattern_uuid.into(),
+                volume: Default::default(),
             },
             timing,
             cues_signal_mode: "both".to_string(),
@@ -902,6 +939,7 @@ mod tests {
             SignalMode::Sound,
             &sound,
             &pattern,
+            crate::bell_volume::BellVolume::default(),
         ).unwrap();
 
         let cfg = cfg_with_known_uuids(
@@ -946,6 +984,7 @@ mod tests {
                     signal_mode: "sound".to_string(),
                     sound_uuid: sound.clone().into(),
                     pattern_uuid: pattern.clone().into(),
+                    volume: Default::default(),
                 }],
             },
         };
@@ -1039,4 +1078,157 @@ mod tests {
             assert_eq!(got.signal_mode, exp.signal_mode);
         }
     }
+
+    // ── Bell volumes ───────────────────────────────────────────────
+
+    use crate::bell_volume::BellVolume;
+
+    fn pct(p: f64) -> BellVolume {
+        BellVolume::from_percent(p)
+    }
+
+    /// A Timer preset with distinct volumes on every bell, plus a
+    /// Box Breath preset with distinct volumes on each phase cue.
+    fn presets_with_volumes(sound: &str, pattern: &str) -> (PresetConfig, PresetConfig) {
+        let mut timer = cfg_with_known_uuids(
+            PresetTiming::Timer { stopwatch: false, duration_secs: 1200 },
+            sound,
+            pattern,
+        );
+        timer.starting_bell.volume = pct(15.0);
+        timer.end_bell.volume = pct(85.0);
+        let bell = |minutes, volume| PresetIntervalBell {
+            kind: "interval".to_string(),
+            minutes,
+            jitter_pct: 0,
+            sound_uuid: sound.into(),
+            enabled: true,
+            signal_mode: "sound".to_string(),
+            vibration_pattern_uuid: pattern.into(),
+            volume: pct(volume),
+        };
+        timer.interval_bells = PresetIntervalBells {
+            enabled: true,
+            bells: vec![bell(5, 25.0), bell(10, 70.0)],
+        };
+        let phase = |name: &str, volume| PresetBoxBreathPhase {
+            phase: name.to_string(),
+            enabled: true,
+            signal_mode: "sound".to_string(),
+            sound_uuid: sound.into(),
+            pattern_uuid: pattern.into(),
+            volume: pct(volume),
+        };
+        let box_breath = PresetConfig {
+            timing: PresetTiming::BoxBreath {
+                stopwatch: false,
+                inhale_secs: 4,
+                hold_full_secs: 4,
+                exhale_secs: 4,
+                hold_empty_secs: 4,
+                duration_secs: 600,
+            },
+            end_bell: PresetEndBell { volume: pct(35.0), ..timer.end_bell.clone() },
+            box_breath_cues: PresetBoxBreathCues {
+                master_enabled: true,
+                phases: vec![
+                    phase("in", 10.0),
+                    phase("holdin", 30.0),
+                    phase("out", 60.0),
+                    phase("holdout", 90.0),
+                ],
+            },
+            ..timer.clone()
+        };
+        (timer, box_breath)
+    }
+
+    #[test]
+    fn applying_a_preset_sets_every_bells_volume() {
+        let (db, sound, pattern) = fresh_db();
+        let (timer, box_breath) = presets_with_volumes(&sound, &pattern);
+        apply(&db, &timer, SessionMode::Timer).unwrap();
+        apply(&db, &box_breath, SessionMode::BoxBreath).unwrap();
+
+        let starting = crate::bells::starting_bell_cue_from_db(&db, SessionMode::Timer).unwrap();
+        assert_eq!(starting.volume, pct(15.0));
+        let end = |mode| {
+            crate::bells::end_bell_cue_from_db(&db, crate::bells::DisplayMode::Countdown, mode)
+                .unwrap()
+                .volume
+        };
+        assert_eq!(end(SessionMode::Timer), pct(85.0));
+        assert_eq!(end(SessionMode::BoxBreath), pct(35.0));
+        let bells: Vec<BellVolume> =
+            db.list_interval_bells().unwrap().iter().map(|b| b.volume).collect();
+        assert_eq!(bells, vec![pct(25.0), pct(70.0)]);
+        let phases: Vec<BellVolume> =
+            db.list_box_breath_phases().unwrap().iter().map(|p| p.volume).collect();
+        assert_eq!(phases, vec![pct(10.0), pct(30.0), pct(60.0), pct(90.0)]);
+    }
+
+    #[test]
+    fn a_disabled_interval_bell_keeps_its_volume_through_a_preset() {
+        let (db, sound, pattern) = fresh_db();
+        let (mut timer, _) = presets_with_volumes(&sound, &pattern);
+        timer.interval_bells.bells[1].enabled = false;
+        apply(&db, &timer, SessionMode::Timer).unwrap();
+        let rows = db.list_interval_bells().unwrap();
+        assert!(!rows[1].enabled);
+        assert_eq!(rows[1].volume, pct(70.0));
+    }
+
+    #[test]
+    fn a_preset_snapshot_saves_every_bells_volume() {
+        let (db, sound, pattern) = fresh_db();
+        let (timer, box_breath) = presets_with_volumes(&sound, &pattern);
+        apply(&db, &timer, SessionMode::Timer).unwrap();
+        let saved = snapshot(&db, SessionMode::Timer, timer.timing.clone());
+        assert_eq!(saved.starting_bell.volume, pct(15.0));
+        assert_eq!(saved.end_bell.volume, pct(85.0));
+        let bells: Vec<BellVolume> = saved.interval_bells.bells.iter().map(|b| b.volume).collect();
+        assert_eq!(bells, vec![pct(25.0), pct(70.0)]);
+
+        apply(&db, &box_breath, SessionMode::BoxBreath).unwrap();
+        let saved = snapshot(&db, SessionMode::BoxBreath, box_breath.timing.clone());
+        assert_eq!(saved.end_bell.volume, pct(35.0));
+        let phases: Vec<BellVolume> =
+            saved.box_breath_cues.phases.iter().map(|p| p.volume).collect();
+        assert_eq!(phases, vec![pct(10.0), pct(30.0), pct(60.0), pct(90.0)]);
+    }
+
+    #[test]
+    fn a_preset_saved_before_bell_volumes_loads_at_the_middle() {
+        // config_json as v26.8.5 wrote it: no "volume" anywhere.
+        let json = r#"{
+            "label": {"enabled": false, "uuid": null},
+            "starting_bell": {"enabled": true, "sound_uuid": "s", "prep_time_enabled": false,
+                "prep_time_secs": 5, "signal_mode": "sound", "vibration_pattern_uuid": "p"},
+            "interval_bells": {"enabled": true, "bells": [{"kind": "interval", "minutes": 5,
+                "jitter_pct": 0, "sound_uuid": "s", "enabled": true, "signal_mode": "sound",
+                "vibration_pattern_uuid": "p"}]},
+            "end_bell": {"enabled": true, "sound_uuid": "s", "signal_mode": "sound",
+                "vibration_pattern_uuid": "p"},
+            "timing": {"mode": "timer", "stopwatch": false, "duration_secs": 600},
+            "cues_signal_mode": "both",
+            "keep_screen_awake": false,
+            "box_breath_cues": {"master_enabled": true, "phases": [{"phase": "in", "enabled": true,
+                "signal_mode": "sound", "sound_uuid": "s", "pattern_uuid": "p"}]}
+        }"#;
+        let cfg = PresetConfig::from_json(json).expect("old presets still load");
+        let middle = BellVolume::default();
+        assert_eq!(cfg.starting_bell.volume, middle);
+        assert_eq!(cfg.end_bell.volume, middle);
+        assert_eq!(cfg.interval_bells.bells[0].volume, middle);
+        assert_eq!(cfg.box_breath_cues.phases[0].volume, middle);
+    }
+
+    #[test]
+    fn preset_volumes_round_trip_through_json() {
+        let (timer, box_breath) = presets_with_volumes("s", "p");
+        for cfg in [timer, box_breath] {
+            assert_eq!(PresetConfig::from_json(&cfg.to_json()).unwrap(), cfg);
+        }
+    }
 }
+

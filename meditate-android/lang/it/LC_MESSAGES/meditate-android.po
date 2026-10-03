@@ -10,9 +10,6 @@ msgstr ""
 msgid "1 day · keep going"
 msgstr "1 giorno · continua così"
 
-msgid "Bell volume"
-msgstr "Volume delle campane"
-
 msgid "Cancel"
 msgstr "Annulla"
 
@@ -151,9 +148,6 @@ msgstr "Preferenze"
 msgid "Preferred time"
 msgstr "Momento preferito"
 
-msgid "Relative to the system alarm volume"
-msgstr "Relativo al volume della sveglia di sistema"
-
 msgid "Save"
 msgstr "Salva"
 
@@ -175,9 +169,6 @@ msgstr "Statistiche"
 msgid "Stop"
 msgstr "Interrompi"
 
-msgid "System alarm volume"
-msgstr "Volume sveglia di sistema"
-
 msgid "This file has no audio track"
 msgstr "Questo file non ha una traccia audio"
 
@@ -195,6 +186,9 @@ msgstr "Sessione tipica"
 
 msgid "Undo"
 msgstr "Annulla"
+
+msgid "Volume"
+msgstr "Volume"
 
 msgid "min"
 msgstr "min"

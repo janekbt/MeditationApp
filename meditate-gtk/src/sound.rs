@@ -3,6 +3,7 @@ use gtk::prelude::*;
 
 use crate::application::MeditateApplication;
 use crate::db::BellSound;
+use meditate_core::bell_volume::{BellSlot, BellVolume};
 use crate::i18n::gettext;
 
 thread_local! {
@@ -34,38 +35,27 @@ thread_local! {
     /// shouldn't spam toasts; one notification per process tells the
     /// user "something's wrong with audio" without repeated yells.
     static AUDIO_ERROR_TOASTED: Cell<bool> = const { Cell::new(false) };
-    /// Player volume for every bell, from Preferences → Bell volume.
-    /// Full until `set_bell_volume` runs at startup.
-    static BELL_GAIN: Cell<f64> = const { Cell::new(1.0) };
 }
 
-fn bell_gain() -> f64 {
-    BELL_GAIN.with(Cell::get)
+/// Play the bell `uuid` once at `volume` in the preview slot — what a
+/// bell's Volume row plays when its slider comes to rest. Returns the
+/// player so the caller can show a Stop button while it rings.
+pub fn play_bell_preview(
+    app: &MeditateApplication,
+    uuid: &str,
+    volume: BellVolume,
+) -> Option<gtk::MediaFile> {
+    lookup_bell_sound_by_uuid(app, uuid).map(|sound| play_preview(&sound, volume))
 }
 
-/// Apply a new bell volume: to every bell created from now on and to
-/// the ones already loaded or ringing (the pre-warmed end bell, a
-/// starting bell, interval bells). The preview slot is left alone —
-/// it can hold a guided-file preview, which is voice, not a bell.
-pub fn set_bell_volume(volume: meditate_core::bell_volume::BellVolume) {
-    let gain = volume.gain();
-    BELL_GAIN.with(|g| g.set(gain));
-    for slot in [&CURRENT_MEDIA, &STARTING_MEDIA] {
-        slot.with(|cell| {
-            if let Some(m) = cell.borrow().as_ref() {
-                m.set_volume(gain);
-            }
-        });
-    }
-    INTERVAL_MEDIA.with(|cell| cell.borrow().iter().for_each(|m| m.set_volume(gain)));
-}
-
-/// Play the Preferences bell-volume preview: the Timer end bell (or
-/// the bundled bowl) once, at the current level. Returns the player so
-/// the caller can show a Stop button while it rings.
-pub fn play_volume_preview(app: &MeditateApplication) -> Option<gtk::MediaFile> {
-    let uuid = app.with_db(|db| meditate_core::bell_volume::preview_sound_uuid(db.core()))?;
-    lookup_bell_sound_by_uuid(app, &uuid).map(|sound| play_preview(&sound))
+/// Change the volume of the bell previewing right now, if any — a
+/// Volume row's slider being dragged.
+pub fn set_preview_volume(volume: BellVolume) {
+    PREVIEW_MEDIA.with(|cell| {
+        if let Some(m) = cell.borrow().as_ref() {
+            m.set_volume(volume.relative_gain());
+        }
+    });
 }
 
 /// Stop whatever is currently playing in CURRENT_MEDIA (no-op if
@@ -116,8 +106,8 @@ pub fn stop_all() {
 /// listener and revert its button icon when playback ends (whether
 /// via user stop, end of file, or a different row's Play taking
 /// over the slot).
-pub fn play_preview(sound: &BellSound) -> gtk::MediaFile {
-    let media = media_for_bell_sound(sound);
+pub fn play_preview(sound: &BellSound, volume: BellVolume) -> gtk::MediaFile {
+    let media = media_for_bell_sound(sound, volume);
     PREVIEW_MEDIA.with(|cell| {
         if let Some(old) = cell.replace(Some(media.clone())) {
             old.set_playing(false);
@@ -196,7 +186,10 @@ fn lookup_bell_sound_by_uuid(app: &MeditateApplication, uuid: &str) -> Option<Be
 /// `uuid + mime_type`. Every device that has the actual file (B.6
 /// makes sure peers do, by pulling from WebDAV) finds it at the
 /// same relative location.
-fn media_for_bell_sound(sound: &BellSound) -> gtk::MediaFile {
+///
+/// `volume` is the bell's own level, relative to the system volume
+/// (`BellVolume::relative_gain`).
+fn media_for_bell_sound(sound: &BellSound, volume: BellVolume) -> gtk::MediaFile {
     let media = if sound.is_bundled {
         gtk::MediaFile::for_resource(&sound.file_path)
     } else {
@@ -206,7 +199,7 @@ fn media_for_bell_sound(sound: &BellSound) -> gtk::MediaFile {
             .join(format!("{}.{}", sound.uuid, sound.extension()));
         gtk::MediaFile::for_file(&gtk::gio::File::for_path(&local_path))
     };
-    media.set_volume(bell_gain());
+    media.set_volume(volume.relative_gain());
     wire_audio_error_handler(&media, &sound.name);
     media
 }
@@ -266,7 +259,10 @@ pub fn preload_end_bell(app: &MeditateApplication, mode: meditate_core::SessionM
         .with_db(|db| db.get_setting(key, crate::db::BUNDLED_BOWL_UUID))
         .and_then(std::result::Result::ok)
         .unwrap_or_else(|| crate::db::BUNDLED_BOWL_UUID.to_string());
-    let media_opt = lookup_bell_sound_by_uuid(app, &uuid).map(|s| media_for_bell_sound(&s));
+    let volume = app
+        .with_db(|db| meditate_core::bell_volume::read(db.core(), BellSlot::End(mode)))
+        .unwrap_or_default();
+    let media_opt = lookup_bell_sound_by_uuid(app, &uuid).map(|s| media_for_bell_sound(&s, volume));
     CURRENT_MEDIA.with(|cell| {
         if let Some(old) = cell.replace(media_opt) {
             old.set_playing(false);
@@ -292,7 +288,10 @@ pub fn play_starting_sound(app: &MeditateApplication) {
     let Some(sound) = lookup_bell_sound_by_uuid(app, &uuid) else {
         return;
     };
-    let media = media_for_bell_sound(&sound);
+    let volume = app
+        .with_db(|db| meditate_core::bell_volume::read(db.core(), BellSlot::Starting))
+        .unwrap_or_default();
+    let media = media_for_bell_sound(&sound, volume);
     STARTING_MEDIA.with(|cell| {
         if let Some(old) = cell.replace(Some(media.clone())) {
             old.set_playing(false);
@@ -306,22 +305,22 @@ pub fn play_starting_sound(app: &MeditateApplication) {
 /// resolved sound uuid. Loads on the spot (no pre-warm reuse;
 /// that's reserved for the `play_end_bell` entry the gtk app
 /// preloads against the user's currently-configured uuid).
-pub fn play_end_bell_uuid(uuid: &str, app: &MeditateApplication) {
+pub fn play_end_bell_uuid(uuid: &str, volume: BellVolume, app: &MeditateApplication) {
     let Some(sound) = lookup_bell_sound_by_uuid(app, uuid) else {
         return;
     };
-    let media = media_for_bell_sound(&sound);
+    let media = media_for_bell_sound(&sound, volume);
     swap_and_play(media);
 }
 
 /// Play the starting bell by an explicit `uuid`. Mirror of
 /// `play_end_bell_uuid` but routed through `STARTING_MEDIA` so the
 /// pre-warmed end-bell pipeline in `CURRENT_MEDIA` isn't disturbed.
-pub fn play_starting_uuid(uuid: &str, app: &MeditateApplication) {
+pub fn play_starting_uuid(uuid: &str, volume: BellVolume, app: &MeditateApplication) {
     let Some(sound) = lookup_bell_sound_by_uuid(app, uuid) else {
         return;
     };
-    let media = media_for_bell_sound(&sound);
+    let media = media_for_bell_sound(&sound, volume);
     STARTING_MEDIA.with(|cell| {
         if let Some(old) = cell.replace(Some(media.clone())) {
             old.set_playing(false);
@@ -337,11 +336,11 @@ pub fn play_starting_uuid(uuid: &str, app: &MeditateApplication) {
 /// via notify::ended once playback finishes. No-op if the uuid
 /// doesn't resolve (e.g., a deleted custom that's still referenced
 /// by a stale active_bells snapshot).
-pub fn play_interval_sound(uuid: &str, app: &MeditateApplication) {
+pub fn play_interval_sound(uuid: &str, volume: BellVolume, app: &MeditateApplication) {
     let Some(sound) = lookup_bell_sound_by_uuid(app, uuid) else {
         return;
     };
-    let media = media_for_bell_sound(&sound);
+    let media = media_for_bell_sound(&sound, volume);
 
     media.connect_ended_notify(|m| {
         if m.is_ended() {
@@ -402,9 +401,24 @@ mod tests {
             "MediaFile created outside media_for_bell_sound: {creators:?}",
         );
         assert!(
-            fn_body(code, "media_for_bell_sound").contains("set_volume(bell_gain())"),
-            "media_for_bell_sound must apply the bell volume",
+            fn_body(code, "media_for_bell_sound").contains("set_volume(volume.relative_gain())"),
+            "media_for_bell_sound must apply the bell's own volume",
         );
+    }
+
+    /// Each session bell plays at the volume its effect carries.
+    #[test]
+    fn every_session_bell_plays_at_its_own_volume() {
+        let imp = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("src/timer/imp.rs"),
+        )
+        .unwrap();
+        let route = fn_body(&imp, "dispatch_fire_route");
+        for play in ["play_interval_sound(", "play_starting_uuid(", "play_end_bell_uuid("] {
+            let at = route.find(play).unwrap_or_else(|| panic!("{play} missing"));
+            let call = route[at..].split_once(';').unwrap().0;
+            assert!(call.contains("route.volume"), "{call}");
+        }
     }
 
     #[test]

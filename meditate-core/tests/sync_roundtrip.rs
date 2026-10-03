@@ -918,3 +918,47 @@ fn label_from_a_reaches_c_via_b_through_the_shared_remote() {
         "preset config_json must still resolve to A's label UUID on C",
     );
 }
+
+// ── Bell volumes travel with their bells ──────────────────────────────────
+
+#[test]
+fn every_bells_volume_reaches_the_other_device() {
+    use meditate_core::bell_volume::BellVolume;
+    use meditate_core::db::BoxBreathPhaseId;
+    use meditate_core::seeds::{BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID};
+    use meditate_core::settings_keys::{end_bell_volume_key_for_mode, STARTING_BELL_VOLUME_KEY};
+
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let remote = FakeWebDav::new();
+    let a = open_test_db(&tempdir, "device_a");
+    a.set_setting(STARTING_BELL_VOLUME_KEY, "15").unwrap();
+    a.set_setting(end_bell_volume_key_for_mode(SessionMode::Guided), "80").unwrap();
+    let rowid = a
+        .insert_interval_bell(
+            IntervalBellKind::Interval, 5, 0, BUNDLED_BOWL_UUID,
+            BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound,
+        )
+        .unwrap();
+    let bell = a.find_interval_bell_by_id(rowid).unwrap().unwrap();
+    a.update_interval_bell(&meditate_core::IntervalBell {
+        volume: BellVolume::from_percent(35.0),
+        ..bell
+    })
+    .unwrap();
+    a.set_box_breath_phase(
+        BoxBreathPhaseId::Out, true, SignalMode::Sound, BUNDLED_BOWL_UUID,
+        BUNDLED_PATTERN_PULSE_UUID, BellVolume::from_percent(95.0),
+    )
+    .unwrap();
+    sync_for(&a, &remote, &tempdir, "device_a").sync().expect("A push");
+
+    let b = open_test_db(&tempdir, "device_b");
+    sync_for(&b, &remote, &tempdir, "device_b").sync().expect("B pull");
+    assert_eq!(b.get_setting(STARTING_BELL_VOLUME_KEY, "").unwrap(), "15");
+    assert_eq!(b.get_setting(end_bell_volume_key_for_mode(SessionMode::Guided), "").unwrap(), "80");
+    let bells = b.list_interval_bells().unwrap();
+    assert_eq!(bells.len(), 1);
+    assert_eq!(bells[0].volume.percent(), 35);
+    let out = b.get_box_breath_phase(BoxBreathPhaseId::Out).unwrap().unwrap();
+    assert_eq!(out.volume.percent(), 95);
+}

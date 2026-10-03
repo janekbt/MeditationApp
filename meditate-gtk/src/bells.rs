@@ -548,6 +548,11 @@ fn push_edit_page(
     }
     form.add(&sound_row);
 
+    // Volume row (issue #1) — shown with the Sound row; wired below
+    // once the snapshot exists.
+    let volume_row = adw::PreferencesRow::new();
+    form.add(&volume_row);
+
     // Pattern row — taps push the vibration-pattern chooser.
     let pattern_row = adw::ActionRow::builder()
         .title(gettext("Pattern"))
@@ -563,6 +568,7 @@ fn push_edit_page(
 
     // Initial visibility based on the saved signal mode.
     sound_row.set_visible(initial_mode.includes_sound());
+    volume_row.set_visible(initial_mode.includes_sound());
     pattern_row.set_visible(initial_mode.includes_vibration());
 
     prefs_page.add(&form);
@@ -593,8 +599,25 @@ fn push_edit_page(
     // Snapshot of the current bell's state lives behind a RefCell so
     // each per-field handler reads the OTHER fields without re-querying
     // the DB. Updated whenever a handler writes back.
+    let initial_volume = bell.volume;
     let snapshot = Rc::new(RefCell::new(bell));
     let populating = Rc::new(std::cell::Cell::new(false));
+
+    // Volume: save-as-you-go like the other fields, then play the
+    // bell at the new level. Leaving the page stops that preview.
+    let volume = crate::volume_row::VolumeRow::install(&volume_row, {
+        let snap = snapshot.clone();
+        let app = app.clone();
+        let rebuilder = rebuilder.clone();
+        let on_changed = on_changed.clone();
+        move |volume| {
+            snap.borrow_mut().volume = volume;
+            write_back_bell(&app, &snap, &rebuilder, &on_changed);
+            Some(snap.borrow().sound_uuid.to_string())
+        }
+    });
+    volume.set_volume(initial_volume);
+    page.connect_hidden(|_| crate::sound::stop_preview());
 
     // Kind changes also flip jitter row visibility.
     let snap_for_kind = snapshot.clone();
@@ -662,10 +685,12 @@ fn push_edit_page(
         let rebuilder = rebuilder_for_sound.clone();
         let on_changed = on_changed_for_sound.clone();
         let sound_row = sound_row_for_sub.clone();
+        let volume = snap.borrow().volume;
         window.push_sound_chooser(
             &app_outer,
             crate::db::BellSoundCategory::General,
             current,
+            volume,
             move |uuid| {
                 snap.borrow_mut().sound_uuid = uuid.clone().into();
                 sound_row.set_subtitle(&sound_name(&app_inner, &uuid));
@@ -708,6 +733,7 @@ fn push_edit_page(
     let rebuilder_for_sig = rebuilder.clone();
     let on_changed_for_sig = on_changed.clone();
     let sound_row_for_sig = sound_row.clone();
+    let volume_row_for_sig = volume_row.clone();
     let pattern_row_for_sig = pattern_row.clone();
     let populating_for_sig = populating.clone();
     signal_toggle.connect_active_name_notify(move |tg| {
@@ -717,6 +743,7 @@ fn push_edit_page(
             .unwrap_or(crate::db::SignalMode::Sound);
         snap_for_sig.borrow_mut().signal_mode = mode;
         sound_row_for_sig.set_visible(mode.includes_sound());
+        volume_row_for_sig.set_visible(mode.includes_sound());
         pattern_row_for_sig.set_visible(mode.includes_vibration());
         write_back_bell(&app_for_sig, &snap_for_sig, &rebuilder_for_sig, &on_changed_for_sig);
     });
@@ -794,6 +821,7 @@ mod tests {
             signal_mode: crate::db::SignalMode::Sound,
             enabled: true,
             created_iso: "2026-05-03T00:00:00Z".into(),
+            volume: Default::default(),
         }
     }
 

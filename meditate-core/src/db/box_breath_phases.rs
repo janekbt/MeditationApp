@@ -8,6 +8,7 @@ use rusqlite::{params, OptionalExtension};
 
 use super::events::EventKind;
 use super::{Database, DbError, Result};
+use crate::bell_volume::BellVolume;
 use crate::bells::SignalMode;
 use crate::breath::{BoxBreathPhase, BoxBreathPhaseId};
 
@@ -16,7 +17,7 @@ impl Database {
     /// hold-out). Always returns exactly four rows after the seed.
     pub fn list_box_breath_phases(&self) -> Result<Vec<BoxBreathPhase>> {
         let mut stmt = self.conn.prepare(
-            "SELECT phase, enabled, signal_mode, sound_uuid, pattern_uuid
+            "SELECT phase, enabled, signal_mode, sound_uuid, pattern_uuid, volume_pct
              FROM box_breath_phases",
         )?;
         let mut by_id: std::collections::HashMap<BoxBreathPhaseId, BoxBreathPhase> =
@@ -32,6 +33,7 @@ impl Database {
                     .expect("box_breath_phases.signal_mode violates CHECK constraint"),
                 sound_uuid: row.get(3)?,
                 pattern_uuid: row.get(4)?,
+                volume: BellVolume::from_percent(row.get::<_, i64>(5)? as f64),
             })
         })?;
         for r in rows {
@@ -52,7 +54,7 @@ impl Database {
         phase: BoxBreathPhaseId,
     ) -> Result<Option<BoxBreathPhase>> {
         let row = self.conn.query_row(
-            "SELECT phase, enabled, signal_mode, sound_uuid, pattern_uuid
+            "SELECT phase, enabled, signal_mode, sound_uuid, pattern_uuid, volume_pct
              FROM box_breath_phases WHERE phase = ?1",
             params![phase.as_db_str()],
             |row| {
@@ -66,6 +68,7 @@ impl Database {
                         .expect("box_breath_phases.signal_mode violates CHECK constraint"),
                     sound_uuid: row.get(3)?,
                     pattern_uuid: row.get(4)?,
+                    volume: BellVolume::from_percent(row.get::<_, i64>(5)? as f64),
                 })
             },
         ).optional()?;
@@ -83,18 +86,20 @@ impl Database {
         signal_mode: SignalMode,
         sound_uuid: &str,
         pattern_uuid: &str,
+        volume: BellVolume,
     ) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
         self.conn.execute(
             "UPDATE box_breath_phases
                 SET enabled = ?1, signal_mode = ?2,
-                    sound_uuid = ?3, pattern_uuid = ?4
-              WHERE phase = ?5",
+                    sound_uuid = ?3, pattern_uuid = ?4, volume_pct = ?5
+              WHERE phase = ?6",
             params![
                 i64::from(enabled),
                 signal_mode.as_db_str(),
                 sound_uuid,
                 pattern_uuid,
+                volume.percent(),
                 phase.as_db_str(),
             ],
         )?;
@@ -104,6 +109,7 @@ impl Database {
             "signal_mode": signal_mode.as_db_str(),
             "sound_uuid": sound_uuid,
             "pattern_uuid": pattern_uuid,
+            "volume": volume.percent(),
         }).to_string();
         self.emit_event(&tx, EventKind::BoxBreathPhaseUpdate, phase.as_db_str(), payload)?;
         tx.commit()?;
@@ -136,24 +142,28 @@ impl Database {
             .unwrap_or("f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0001");
         let pattern_uuid = v["pattern_uuid"].as_str()
             .unwrap_or("7e9c4d2f-5a8b-4f1d-9e3c-2d6f7a8b0001");
+        // Events from builds before per-bell volumes carry none.
+        let volume = v["volume"].as_f64().map_or_else(BellVolume::default, BellVolume::from_percent);
 
         // INSERT OR REPLACE so peers replaying an event for a row
         // they haven't seeded yet still materialise it.
         self.conn.execute(
             "INSERT INTO box_breath_phases
-                (phase, enabled, signal_mode, sound_uuid, pattern_uuid)
-             VALUES (?1, ?2, ?3, ?4, ?5)
+                (phase, enabled, signal_mode, sound_uuid, pattern_uuid, volume_pct)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
              ON CONFLICT(phase) DO UPDATE SET
                 enabled      = excluded.enabled,
                 signal_mode  = excluded.signal_mode,
                 sound_uuid   = excluded.sound_uuid,
-                pattern_uuid = excluded.pattern_uuid",
+                pattern_uuid = excluded.pattern_uuid,
+                volume_pct   = excluded.volume_pct",
             params![
                 phase_id_str,
                 i64::from(enabled),
                 signal_mode,
                 sound_uuid,
                 pattern_uuid,
+                volume.percent(),
             ],
         )?;
         Ok(())
@@ -229,6 +239,7 @@ mod tests {
             SignalMode::Both,
             "sound-uuid-x",
             "pattern-uuid-y",
+            crate::bell_volume::BellVolume::default(),
         ).unwrap();
         let row = db.get_box_breath_phase(BoxBreathPhaseId::In).unwrap().unwrap();
         assert!(row.enabled);
@@ -246,6 +257,7 @@ mod tests {
         dev_a.set_box_breath_phase(
             BoxBreathPhaseId::Out,
             true, SignalMode::Both, "s-uuid", "p-uuid",
+            crate::bell_volume::BellVolume::default(),
         ).unwrap();
         let events: Vec<Event> = dev_a.pending_events().unwrap()
             .into_iter().map(|(_, e)| e).collect();
@@ -290,6 +302,7 @@ mod tests {
         db.set_box_breath_phase(
             BoxBreathPhaseId::Out,
             true, SignalMode::Vibration, "s-uuid", "p-uuid",
+            crate::bell_volume::BellVolume::default(),
         ).unwrap();
         let updates: Vec<_> = db.pending_events().unwrap()
             .into_iter()
@@ -303,5 +316,79 @@ mod tests {
         assert_eq!(payload["signal_mode"], "vibration");
         assert_eq!(payload["sound_uuid"], "s-uuid");
         assert_eq!(payload["pattern_uuid"], "p-uuid");
+    }
+
+    // ── Volume ─────────────────────────────────────────────────────
+
+    use crate::bell_volume::BellVolume;
+
+    fn phase_in(db: &Database) -> BoxBreathPhase {
+        db.get_box_breath_phase(BoxBreathPhaseId::In).unwrap().unwrap()
+    }
+
+    #[test]
+    fn every_phase_starts_at_the_middle_volume() {
+        let db = Database::open_in_memory().unwrap();
+        db.seed_box_breath_phases().unwrap();
+        for p in db.list_box_breath_phases().unwrap() {
+            assert_eq!(p.volume, BellVolume::default(), "{:?}", p.phase);
+        }
+    }
+
+    #[test]
+    fn set_stores_the_volume_and_syncs_it() {
+        let db = Database::open_in_memory().unwrap();
+        db.seed_box_breath_phases().unwrap();
+        let volume = BellVolume::from_percent(25.0);
+        db.set_box_breath_phase(
+            BoxBreathPhaseId::In, true, SignalMode::Sound,
+            "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0001", "7e9c4d2f-5a8b-4f1d-9e3c-2d6f7a8b0001",
+            volume,
+        )
+        .unwrap();
+        assert_eq!(phase_in(&db).volume, volume);
+        let listed = db.list_box_breath_phases().unwrap();
+        assert_eq!(listed.iter().find(|p| p.phase == BoxBreathPhaseId::In).unwrap().volume, volume);
+        let update = db.pending_events().unwrap().into_iter().map(|(_, e)| e)
+            .find(|e| e.kind == "box_breath_phase_update").unwrap();
+        let payload: serde_json::Value = serde_json::from_str(&update.payload).unwrap();
+        assert_eq!(payload["volume"], 25);
+    }
+
+    fn synced_phase_in(volume: Option<serde_json::Value>) -> Event {
+        let mut payload = serde_json::json!({
+            "phase": "in",
+            "enabled": true,
+            "signal_mode": "sound",
+            "sound_uuid": "f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0001",
+            "pattern_uuid": "7e9c4d2f-5a8b-4f1d-9e3c-2d6f7a8b0001",
+        });
+        if let Some(v) = volume {
+            payload["volume"] = v;
+        }
+        Event {
+            event_uuid: "ev-phase-in".into(),
+            lamport_ts: 5,
+            device_id: "peer".into(),
+            kind: "box_breath_phase_update".into(),
+            target_id: "in".into(),
+            payload: payload.to_string(),
+        }
+    }
+
+    #[test]
+    fn a_synced_volume_lands_in_the_row() {
+        let db = Database::open_in_memory().unwrap();
+        db.seed_box_breath_phases().unwrap();
+        db.apply_event(&synced_phase_in(Some(65.into()))).unwrap();
+        assert_eq!(phase_in(&db).volume, BellVolume::from_percent(65.0));
+    }
+
+    #[test]
+    fn a_synced_phase_from_an_older_version_gets_the_middle_volume() {
+        let db = Database::open_in_memory().unwrap();
+        db.seed_box_breath_phases().unwrap();
+        db.apply_event(&synced_phase_in(None)).unwrap();
+        assert_eq!(phase_in(&db).volume, BellVolume::default());
     }
 }

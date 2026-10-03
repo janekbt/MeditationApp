@@ -5,6 +5,7 @@
 //! bell, end the session). Both shells (gtk, future Android) consume
 //! the same enum.
 
+use crate::bell_volume::BellVolume;
 use crate::db::{BoxBreathPhaseId, SignalMode};
 use std::time::Duration;
 
@@ -33,6 +34,7 @@ pub enum Effect {
         sound_uuid: String,
         vibration_pattern_uuid: String,
         signal_mode: SignalMode,
+        volume: BellVolume,
     },
     /// Starting bell — fired at the prep→Running boundary, or
     /// immediately at session start when there's no prep. Carries
@@ -41,6 +43,7 @@ pub enum Effect {
         sound_uuid: String,
         vibration_pattern_uuid: String,
         signal_mode: SignalMode,
+        volume: BellVolume,
     },
     /// End bell — fired at Running→Overtime (Timer/Guided countdown
     /// crosses zero) or at the cycle-aligned end of a Box-Breath
@@ -50,6 +53,7 @@ pub enum Effect {
         sound_uuid: String,
         vibration_pattern_uuid: String,
         signal_mode: SignalMode,
+        volume: BellVolume,
     },
     /// Box Breath: the cycle-aligned target was reached, ending the
     /// session naturally. Shell drops the session and shows the
@@ -65,6 +69,7 @@ pub enum Effect {
         sound_uuid: String,
         vibration_pattern_uuid: String,
         signal_mode: SignalMode,
+        volume: BellVolume,
     },
     /// Timer/Guided countdown crossed zero. Shell: morphs Pause →
     /// Finish, hides Stop, reveals the Add button, freezes the
@@ -125,6 +130,7 @@ pub struct FireRoute<'a> {
     pub sound_uuid: &'a str,
     pub vibration_pattern_uuid: &'a str,
     pub signal_mode: SignalMode,
+    pub volume: BellVolume,
 }
 
 impl Effect {
@@ -137,31 +143,34 @@ impl Effect {
     /// play(r.channel, r.sound_uuid); ... }`.
     pub fn fire_route(&self) -> Option<FireRoute<'_>> {
         match self {
-            Effect::FireBell { sound_uuid, vibration_pattern_uuid, signal_mode } => {
+            Effect::FireBell { sound_uuid, vibration_pattern_uuid, signal_mode, volume } => {
                 Some(FireRoute {
                     channel: FireChannel::Interval,
                     log_tag: "fire_interval_bell",
                     sound_uuid,
                     vibration_pattern_uuid,
                     signal_mode: *signal_mode,
+                    volume: *volume,
                 })
             }
-            Effect::FireStartingBell { sound_uuid, vibration_pattern_uuid, signal_mode } => {
+            Effect::FireStartingBell { sound_uuid, vibration_pattern_uuid, signal_mode, volume } => {
                 Some(FireRoute {
                     channel: FireChannel::Starting,
                     log_tag: "fire_starting_bell",
                     sound_uuid,
                     vibration_pattern_uuid,
                     signal_mode: *signal_mode,
+                    volume: *volume,
                 })
             }
-            Effect::FireEndBell { sound_uuid, vibration_pattern_uuid, signal_mode } => {
+            Effect::FireEndBell { sound_uuid, vibration_pattern_uuid, signal_mode, volume } => {
                 Some(FireRoute {
                     channel: FireChannel::End,
                     log_tag: "fire_end_bell",
                     sound_uuid,
                     vibration_pattern_uuid,
                     signal_mode: *signal_mode,
+                    volume: *volume,
                 })
             }
             Effect::FireBoxBreathCue {
@@ -169,12 +178,14 @@ impl Effect {
                 sound_uuid,
                 vibration_pattern_uuid,
                 signal_mode,
+                volume,
             } => Some(FireRoute {
                 channel: FireChannel::Interval,
                 log_tag: "fire_box_breath_phase_cue",
                 sound_uuid,
                 vibration_pattern_uuid,
                 signal_mode: *signal_mode,
+                volume: *volume,
             }),
             _ => None,
         }

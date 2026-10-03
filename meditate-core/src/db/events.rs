@@ -1054,7 +1054,7 @@ mod tests {
         db.insert_preset("Sitting", SessionMode::Timer, true, r#"{}"#).unwrap();
         db.insert_guided_file_with_uuid("gf-1", "Track", "/p/t.ogg", 300, false).unwrap();
         db.insert_vibration_pattern("Custom Pulse", 200, &[1.0, 0.0], ChartKind::Bar, false).unwrap();
-        db.set_box_breath_phase(BoxBreathPhaseId::In, false, SignalMode::Sound, "x", "y").unwrap();
+        db.set_box_breath_phase(BoxBreathPhaseId::In, false, SignalMode::Sound, "x", "y", crate::bell_volume::BellVolume::default()).unwrap();
         db.record_known_remote_file("a").unwrap();
         db.record_known_remote_sound("bs-1").unwrap();
         // Sanity: rows present before wipe.
@@ -1102,6 +1102,7 @@ mod tests {
         db.seed_box_breath_phases().unwrap();
         db.set_box_breath_phase(
             BoxBreathPhaseId::In, true, SignalMode::Vibration, "u-x", "u-y",
+            crate::bell_volume::BellVolume::default(),
         ).unwrap();
 
         db.wipe_local_event_log().unwrap();

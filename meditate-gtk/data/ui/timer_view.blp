@@ -443,6 +443,15 @@ template $TimerView : Gtk.Widget {
                   }
                 }
 
+                // Volume (issue #1): shown with the Bell Sound row.
+                Gtk.Revealer starting_bell_volume_revealer {
+                  transition-type: slide_down;
+                  transition-duration: 220;
+                  reveal-child: bind starting_bell_sound_revealer.reveal-child;
+
+                  Adw.PreferencesRow starting_bell_volume_row {}
+                }
+
                 Gtk.Revealer starting_bell_pattern_revealer {
                   transition-type: slide_down;
                   transition-duration: 220;
@@ -536,6 +545,15 @@ template $TimerView : Gtk.Widget {
                   }
                 }
 
+                // Volume (issue #1): shown with the Bell Sound row.
+                Gtk.Revealer end_bell_volume_revealer {
+                  transition-type: slide_down;
+                  transition-duration: 220;
+                  reveal-child: bind end_bell_sound_revealer.reveal-child;
+
+                  Adw.PreferencesRow end_bell_volume_row {}
+                }
+
                 Gtk.Revealer end_bell_pattern_revealer {
                   transition-type: slide_down;
                   transition-duration: 220;
@@ -609,6 +627,15 @@ template $TimerView : Gtk.Widget {
                     }
                   }
 
+                  // Volume (issue #1): shown with the Bell Sound row.
+                  Gtk.Revealer boxbreath_phase_in_volume_revealer {
+                    transition-type: slide_down;
+                    transition-duration: 220;
+                    reveal-child: bind boxbreath_phase_in_sound_revealer.reveal-child;
+
+                    Adw.PreferencesRow boxbreath_phase_in_volume_row {}
+                  }
+
                   Gtk.Revealer boxbreath_phase_in_pattern_revealer {
                     transition-type: slide_down;
                     transition-duration: 220;
@@ -646,6 +673,15 @@ template $TimerView : Gtk.Widget {
                       [suffix]
                       Gtk.Image { icon-name: "go-next-symbolic"; styles ["dim-label"] }
                     }
+                  }
+
+                  // Volume (issue #1): shown with the Bell Sound row.
+                  Gtk.Revealer boxbreath_phase_holdin_volume_revealer {
+                    transition-type: slide_down;
+                    transition-duration: 220;
+                    reveal-child: bind boxbreath_phase_holdin_sound_revealer.reveal-child;
+
+                    Adw.PreferencesRow boxbreath_phase_holdin_volume_row {}
                   }
 
                   Gtk.Revealer boxbreath_phase_holdin_pattern_revealer {
@@ -687,6 +723,15 @@ template $TimerView : Gtk.Widget {
                     }
                   }
 
+                  // Volume (issue #1): shown with the Bell Sound row.
+                  Gtk.Revealer boxbreath_phase_out_volume_revealer {
+                    transition-type: slide_down;
+                    transition-duration: 220;
+                    reveal-child: bind boxbreath_phase_out_sound_revealer.reveal-child;
+
+                    Adw.PreferencesRow boxbreath_phase_out_volume_row {}
+                  }
+
                   Gtk.Revealer boxbreath_phase_out_pattern_revealer {
                     transition-type: slide_down;
                     transition-duration: 220;
@@ -724,6 +769,15 @@ template $TimerView : Gtk.Widget {
                       [suffix]
                       Gtk.Image { icon-name: "go-next-symbolic"; styles ["dim-label"] }
                     }
+                  }
+
+                  // Volume (issue #1): shown with the Bell Sound row.
+                  Gtk.Revealer boxbreath_phase_holdout_volume_revealer {
+                    transition-type: slide_down;
+                    transition-duration: 220;
+                    reveal-child: bind boxbreath_phase_holdout_sound_revealer.reveal-child;
+
+                    Adw.PreferencesRow boxbreath_phase_holdout_volume_row {}
                   }
 
                   Gtk.Revealer boxbreath_phase_holdout_pattern_revealer {

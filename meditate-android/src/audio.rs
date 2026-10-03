@@ -59,9 +59,29 @@ pub fn set_volume(app: &AndroidApp, gain: f32) {
 
 /// Open the system volume panel so the user can reach the alarm
 /// volume bells ring at.
-pub fn open_alarm_volume(app: &AndroidApp) {
-    if let Err(e) = invoke_no_arg(app, "openAlarmVolume") {
-        meditate_core::log("audio.play", &format!("openAlarmVolume FAILED: {e:?}"));
+/// Loudness of the quietest and loudest alarm steps on the speaker,
+/// in dB; `None` before Android 9 or on failure.
+pub fn alarm_range_db(app: &AndroidApp) -> Option<(f64, f64)> {
+    match invoke_alarm_range_db(app) {
+        Ok(steps) => {
+            meditate_core::log("audio.alarm_range", &format!("steps_db={steps:?}"));
+            match steps[..] {
+                [quietest, loudest] => Some((f64::from(quietest), f64::from(loudest))),
+                _ => None,
+            }
+        }
+        Err(e) => {
+            meditate_core::log("audio.alarm_range", &format!("FAILED: {e:?}"));
+            None
+        }
+    }
+}
+
+/// Put the user's alarm volume back if the app died while a bell had
+/// it raised.
+pub fn recover_alarm_volume(app: &AndroidApp) {
+    if let Err(e) = invoke_no_arg(app, "recoverAlarmVolume") {
+        meditate_core::log("audio.play", &format!("recoverAlarmVolume FAILED: {e:?}"));
     }
 }
 
@@ -130,6 +150,30 @@ fn invoke_set_volume(app: &AndroidApp, gain: f32) -> Result<(), jni::errors::Err
         env.exception_clear()?;
     }
     Ok(())
+}
+
+fn invoke_alarm_range_db(app: &AndroidApp) -> Result<Vec<f32>, jni::errors::Error> {
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
+    let mut env = vm.attach_current_thread()?;
+    let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
+    let class = resolve_class(&mut env, &activity)?;
+    let ret = env
+        .call_static_method(
+            class,
+            "alarmRangeDb",
+            "(Landroid/content/Context;)[F",
+            &[(&activity).into()],
+        )?
+        .l()?;
+    if env.exception_check()? {
+        env.exception_clear()?;
+        return Ok(Vec::new());
+    }
+    let array = jni::objects::JFloatArray::from(ret);
+    let len = usize::try_from(env.get_array_length(&array)?).unwrap_or(0);
+    let mut steps = vec![0.0_f32; len];
+    env.get_float_array_region(&array, 0, &mut steps)?;
+    Ok(steps)
 }
 
 fn invoke_no_arg(

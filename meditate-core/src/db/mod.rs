@@ -273,6 +273,7 @@ impl Database {
         // SQLite's "size in KiB" convention.
         conn.execute_batch("PRAGMA cache_size=-16000;")?;
         conn.execute_batch(&schema())?;
+        schema::add_missing_columns(&conn)?;
         // Stamp the current version. `execute_batch` is required because
         // PRAGMA values aren't bindable via params.
         conn.execute_batch(&format!("PRAGMA user_version = {SCHEMA_VERSION};"))?;
@@ -439,6 +440,110 @@ mod tests {
             crate::db::list_labels_from_db(&db).unwrap().is_empty(),
             "fast path must NOT have re-walked (labels stay empty)",
         );
+    }
+
+    // ── Upgrade from the last release (per-bell volumes) ─────────────
+
+    /// A database exactly as v26.8.5 left it: its schema, a bell, the
+    /// four Box Breath rows, and the cache marked current.
+    fn release_v26_8_5_database() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(include_str!("fixtures/schema_v26_8_5.sql")).unwrap();
+        conn.execute_batch(
+            "PRAGMA user_version = 1;
+             INSERT INTO sync_state (key, value) VALUES ('cache_schema_version', '1');
+             INSERT INTO interval_bells (uuid, kind, minutes, created_iso)
+                 VALUES ('b1', 'interval', 5, '2026-09-01T00:00:00Z');
+             INSERT INTO box_breath_phases (phase) VALUES ('in'), ('holdin'), ('out'), ('holdout');",
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn a_release_database_opens_with_every_bell_at_the_middle_volume() {
+        let db = Database::init(release_v26_8_5_database()).unwrap();
+        let bells = db.list_interval_bells().unwrap();
+        assert_eq!(bells.len(), 1);
+        assert_eq!(bells[0].volume, crate::bell_volume::BellVolume::default());
+        let phases = db.list_box_breath_phases().unwrap();
+        assert_eq!(phases.len(), 4);
+        assert!(phases.iter().all(|p| p.volume == crate::bell_volume::BellVolume::default()));
+    }
+
+    #[test]
+    fn the_upgrade_keeps_volumes_that_arrived_before_it() {
+        // A newer peer synced a bell with a volume to a device still on
+        // the release: the event was recorded, the release's cache had
+        // nowhere to put the volume. Opening with this build replays it.
+        let conn = release_v26_8_5_database();
+        conn.execute(
+            "INSERT INTO events (event_uuid, lamport_ts, device_id, kind, target_id, payload)
+             VALUES ('e1', 7, 'peer', 'interval_bell_update', 'b1', ?1)",
+            [serde_json::json!({
+                "uuid": "b1", "kind": "interval", "minutes": 5, "jitter_pct": 0,
+                "sound_uuid": crate::seeds::BUNDLED_BOWL_UUID, "enabled": true,
+                "created_iso": "2026-09-01T00:00:00Z", "volume": 30,
+            }).to_string()],
+        )
+        .unwrap();
+        let db = Database::init(conn).unwrap();
+        assert_eq!(db.list_interval_bells().unwrap()[0].volume.percent(), 30);
+    }
+
+    #[test]
+    fn the_release_can_still_open_an_upgraded_database() {
+        // Going back to the F-Droid release must keep working: the
+        // version stamp stays, and the release's writes (which don't
+        // name the new column) still succeed.
+        let db = Database::init(release_v26_8_5_database()).unwrap();
+        let v: u32 = db.conn.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
+        assert_eq!(v, 1);
+        db.conn
+            .execute(
+                "INSERT INTO interval_bells (uuid, kind, minutes, created_iso)
+                 VALUES ('b2', 'interval', 9, '2026-09-02T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+        db.conn
+            .execute("UPDATE box_breath_phases SET enabled = 1 WHERE phase = 'in'", [])
+            .unwrap();
+    }
+
+    #[test]
+    fn an_upgraded_database_has_the_same_columns_as_a_fresh_one() {
+        fn columns(conn: &Connection, table: &str) -> Vec<(String, String, Option<String>)> {
+            let mut stmt = conn
+                .prepare(&format!("SELECT name, type, dflt_value FROM pragma_table_info('{table}')"))
+                .unwrap();
+            let mut cols: Vec<(String, String, Option<String>)> = stmt
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .unwrap()
+                .map(|c| c.unwrap())
+                .collect();
+            cols.sort();
+            cols
+        }
+        let fresh = Database::open_in_memory().unwrap();
+        let upgraded = Database::init(release_v26_8_5_database()).unwrap();
+        let mut stmt = fresh.conn
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+            .unwrap();
+        let tables: Vec<String> =
+            stmt.query_map([], |r| r.get(0)).unwrap().map(|t| t.unwrap()).collect();
+        assert!(tables.len() > 10);
+        for table in tables {
+            assert_eq!(columns(&upgraded.conn, &table), columns(&fresh.conn, &table), "{table}");
+        }
+    }
+
+    #[test]
+    fn opening_twice_is_harmless() {
+        let db = Database::init(release_v26_8_5_database()).unwrap();
+        let Database { conn } = db;
+        let db = Database::init(conn).unwrap();
+        assert_eq!(db.list_interval_bells().unwrap().len(), 1);
     }
 
     // ── Schema version sentinel ───────────────────────────────────────

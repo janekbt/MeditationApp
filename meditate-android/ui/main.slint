@@ -1205,6 +1205,179 @@ component RevealStepper inherits Rectangle {
     }
 }
 
+// Material-style slider for each bell's Volume row. Not the
+// bundled Material `Slider`: that one only drags from its thumb and
+// maps touch positions without the minimum (at 5..100 the far end
+// yields 95). Here the whole bar is the touch target — tap to jump,
+// drag anywhere to slide — and values snap to `step`.
+component VolumeSlider inherits Rectangle {
+    in property <float> minimum: 0;
+    in property <float> maximum: 100;
+    in property <float> step: 1;
+    in-out property <float> value: 100;
+    callback value-changed(float);
+    callback released(float);
+
+    height: 48px;
+    accessible-role: slider;
+    accessible-value: root.value;
+    accessible-value-minimum: root.minimum;
+    accessible-value-maximum: root.maximum;
+    accessible-value-step: root.step;
+
+    // Thumb travel stays inside the bar so 0 and 100 % are reachable.
+    property <length> travel: root.width - thumb.width;
+    property <float> fraction: (root.value - root.minimum) / (root.maximum - root.minimum);
+
+    function set-from-x(x: length) {
+        let raw = root.minimum + clamp((x - thumb.width / 2) / root.travel, 0, 1) * (root.maximum - root.minimum);
+        let snapped = clamp(round((raw - root.minimum) / root.step) * root.step + root.minimum, root.minimum, root.maximum);
+        if snapped != root.value {
+            root.value = snapped;
+            root.value-changed(snapped);
+        }
+    }
+
+    Rectangle {
+        x: 0;
+        y: (parent.height - self.height) / 2;
+        width: parent.width;
+        height: 16px;
+        border-radius: 8px;
+        background: MaterialPalette.surface-container-highest;
+    }
+    Rectangle {
+        x: 0;
+        y: (parent.height - self.height) / 2;
+        width: thumb.x + thumb.width / 2;
+        height: 16px;
+        border-radius: 8px;
+        background: MaterialPalette.primary;
+    }
+    thumb := Rectangle {
+        x: root.travel * root.fraction;
+        y: (parent.height - self.height) / 2;
+        width: 4px;
+        height: 44px;
+        border-radius: 2px;
+        background: MaterialPalette.primary;
+    }
+    TouchArea {
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.down {
+                root.set-from-x(self.mouse-x);
+            }
+            if event.kind == PointerEventKind.up {
+                root.released(root.value);
+            }
+        }
+        moved => {
+            if self.pressed {
+                root.set-from-x(self.mouse-x);
+            }
+        }
+    }
+}
+
+// A bell's Volume row (issue #1): full-width slider under a "Volume"
+// title, revealed with the bell's Sound row (the mode includes
+// sound). Dragging changes the ringing preview at once; releasing
+// saves the level and plays the bell at it. The Stop pill shows
+// while that preview rings.
+component RevealVolume inherits Rectangle {
+    in property <bool> shown;
+    in property <bool> child-shade: true;
+    in property <float> minimum;
+    in property <float> maximum;
+    in property <float> step;
+    in-out property <float> value;
+    in property <bool> previewing;
+    callback value-changed(float);
+    callback released(float);
+    callback stop-tap();
+
+    property <float> reveal: root.shown ? 1.0 : 0.0;
+    animate reveal {
+        duration: 250ms;
+        easing: ease-in-out;
+    }
+    property <length> full-height: 105px;
+
+    background: transparent;
+
+    Rectangle {
+        clip: true;
+        y: 0;
+        height: root.reveal * root.full-height;
+
+        VerticalLayout {
+            y: 0;
+            height: root.full-height;
+            spacing: 0;
+
+            Rectangle {
+                height: 1px;
+                background: MaterialPalette.outline-variant;
+            }
+            Rectangle {
+                background: root.child-shade
+                    ? MaterialPalette.surface-container.darker(0.35)
+                    : transparent;
+                VerticalLayout {
+                    padding-left: 16px;
+                    padding-right: 16px;
+                    padding-top: 12px;
+                    padding-bottom: 8px;
+                    spacing: 4px;
+                    HorizontalLayout {
+                        spacing: 12px;
+                        height: 32px;
+                        Text {
+                            text: @tr("Volume");
+                            font-size: 16px;
+                            color: MaterialPalette.on-surface;
+                            horizontal-alignment: left;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+                        // Same pill as the bell chooser's Play/Stop.
+                        if root.previewing: Rectangle {
+                            width: 60px;
+                            height: 32px;
+                            border-radius: 16px;
+                            border-width: 1px;
+                            border-color: MaterialPalette.outline;
+                            background: stop-touch.has-hover
+                                ? MaterialPalette.secondary-container
+                                : transparent;
+                            stop-touch := TouchArea {
+                                clicked => { root.stop-tap(); }
+                            }
+                            Text {
+                                text: @tr("Stop");
+                                font-size: 13px;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                color: MaterialPalette.on-surface;
+                            }
+                        }
+                    }
+                    VolumeSlider {
+                        minimum: root.minimum;
+                        maximum: root.maximum;
+                        step: root.step;
+                        value <=> root.value;
+                        accessible-label: @tr("Volume");
+                        value-changed(v) => { root.value-changed(v); }
+                        released(v) => { root.released(v); }
+                    }
+                }
+            }
+        }
+    }
+    height: self.reveal * self.full-height;
+}
+
 // One Box-Breath phase's cue config (B-7) — the Android
 // analogue of GTK's nested `boxbreath_phase_*_row` AdwExpanderRow
 // (`timer_view.blp:585`): an ExpanderGroup whose enable switch is
@@ -1218,10 +1391,18 @@ component PhaseCue inherits Rectangle {
     in-out property <int> signal-mode;
     in property <string> sound-name;
     in property <string> pattern-name;
+    in-out property <float> volume;
+    in property <float> volume-min;
+    in property <float> volume-max;
+    in property <float> volume-step;
+    in property <bool> previewing;
     callback toggled(bool);
     callback signal-mode-changed(int);
     callback sound-tap();
     callback pattern-tap();
+    callback volume-changed(float);
+    callback volume-released(float);
+    callback volume-stop-tap();
 
     ExpanderGroup {
         title: root.title;
@@ -1238,6 +1419,17 @@ component PhaseCue inherits Rectangle {
             title: @tr("Sound");
             subtitle: root.sound-name;
             tapped => { root.sound-tap(); }
+        }
+        RevealVolume {
+            shown: root.signal-mode != 1;
+            minimum: root.volume-min;
+            maximum: root.volume-max;
+            step: root.volume-step;
+            value <=> root.volume;
+            previewing: root.previewing;
+            value-changed(v) => { root.volume-changed(v); }
+            released(v) => { root.volume-released(v); }
+            stop-tap => { root.volume-stop-tap(); }
         }
         RevealChooser {
             shown: root.signal-mode != 0;
@@ -1355,80 +1547,6 @@ component BoxedList inherits Rectangle {
     VerticalLayout {
         spacing: 0;
         @children
-    }
-}
-
-// Material-style slider for Preferences → Bell volume. Not the
-// bundled Material `Slider`: that one only drags from its thumb and
-// maps touch positions without the minimum (at 5..100 the far end
-// yields 95). Here the whole bar is the touch target — tap to jump,
-// drag anywhere to slide — and values snap to `step`.
-component VolumeSlider inherits Rectangle {
-    in property <float> minimum: 0;
-    in property <float> maximum: 100;
-    in property <float> step: 1;
-    in-out property <float> value: 100;
-    callback value-changed(float);
-    callback released(float);
-
-    height: 48px;
-    accessible-role: slider;
-    accessible-value: root.value;
-    accessible-value-minimum: root.minimum;
-    accessible-value-maximum: root.maximum;
-    accessible-value-step: root.step;
-
-    // Thumb travel stays inside the bar so 0 and 100 % are reachable.
-    property <length> travel: root.width - thumb.width;
-    property <float> fraction: (root.value - root.minimum) / (root.maximum - root.minimum);
-
-    function set-from-x(x: length) {
-        let raw = root.minimum + clamp((x - thumb.width / 2) / root.travel, 0, 1) * (root.maximum - root.minimum);
-        let snapped = clamp(round((raw - root.minimum) / root.step) * root.step + root.minimum, root.minimum, root.maximum);
-        if snapped != root.value {
-            root.value = snapped;
-            root.value-changed(snapped);
-        }
-    }
-
-    Rectangle {
-        x: 0;
-        y: (parent.height - self.height) / 2;
-        width: parent.width;
-        height: 16px;
-        border-radius: 8px;
-        background: MaterialPalette.surface-container-highest;
-    }
-    Rectangle {
-        x: 0;
-        y: (parent.height - self.height) / 2;
-        width: thumb.x + thumb.width / 2;
-        height: 16px;
-        border-radius: 8px;
-        background: MaterialPalette.primary;
-    }
-    thumb := Rectangle {
-        x: root.travel * root.fraction;
-        y: (parent.height - self.height) / 2;
-        width: 4px;
-        height: 44px;
-        border-radius: 2px;
-        background: MaterialPalette.primary;
-    }
-    TouchArea {
-        pointer-event(event) => {
-            if event.kind == PointerEventKind.down {
-                root.set-from-x(self.mouse-x);
-            }
-            if event.kind == PointerEventKind.up {
-                root.released(root.value);
-            }
-        }
-        moved => {
-            if self.pressed {
-                root.set-from-x(self.mouse-x);
-            }
-        }
     }
 }
 
@@ -1568,23 +1686,29 @@ export component MainWindow inherits Window {
     // the value drives the Stats ring (today's progress) + the
     // heatmap threshold (core goal::compute).
     in-out property <int> prefs-goal-mins: 20;
-    // Bell volume (issue #1): mirrors GTK's Preferences → Sound row.
-    // Range, steps and the stored level come from core
-    // (meditate_core::bell_volume) via Rust on page open. Moving the
-    // slider changes the ringing bell at once; releasing it saves the
-    // level and plays the end bell. Relative to the system alarm
-    // volume, which the row below opens.
-    in-out property <float> prefs-bell-volume: 100;
-    in property <float> bell-volume-min: 5;
+    // Bell volumes (issue #1): every bell has its own Volume row
+    // under its Sound row. Range and steps come from core
+    // (meditate_core::bell_volume) via Rust; the values are seeded
+    // with the bell rows. Slot names: "start", "end" (current mode),
+    // "interval" (the bell editor), "in" / "holdin" / "out" /
+    // "holdout" (Box Breath cues). Dragging changes the ringing
+    // preview at once; releasing saves the level and plays the bell.
+    in property <float> bell-volume-min: 0;
     in property <float> bell-volume-max: 100;
     in property <float> bell-volume-step: 5;
-    callback bell-volume-changed(float);
-    callback bell-volume-released(float);
-    // True while the preview bell rings; shows a Stop pill (a long
-    // bell shouldn't have to play out). Leaving Preferences stops it.
-    in-out property <bool> bell-volume-previewing: false;
+    in-out property <float> starting-bell-volume: 50;
+    in-out property <float> end-bell-volume: 50;
+    in-out property <float> ie-volume: 50;
+    in-out property <float> bbc-in-volume: 50;
+    in-out property <float> bbc-holdin-volume: 50;
+    in-out property <float> bbc-out-volume: 50;
+    in-out property <float> bbc-holdout-volume: 50;
+    callback bell-volume-changed(string, float);
+    callback bell-volume-released(string, float);
+    // The slot whose preview is ringing ("" = none): its row shows a
+    // Stop pill, so a long bell doesn't have to play out.
+    in-out property <string> volume-previewing: "";
     callback bell-volume-stop-tap();
-    callback alarm-volume-tap();
     in-out property <bool> goal-dialog-open: false;
     // Free-typed minutes; Set gates on parseable + the goal
     // bounds. Bounds are seeded from Rust (core
@@ -2873,6 +2997,17 @@ export component MainWindow inherits Window {
                             subtitle: root.starting-bell-sound-name;
                             tapped => { root.starting-bell-sound-tap(); }
                         }
+                        RevealVolume {
+                            shown: root.starting-bell-signal-mode != 1;
+                            minimum: root.bell-volume-min;
+                            maximum: root.bell-volume-max;
+                            step: root.bell-volume-step;
+                            value <=> root.starting-bell-volume;
+                            previewing: root.volume-previewing == "start";
+                            value-changed(v) => { root.bell-volume-changed("start", v); }
+                            released(v) => { root.bell-volume-released("start", v); }
+                            stop-tap => { root.bell-volume-stop-tap(); }
+                        }
                         RevealChooser {
                             shown: root.starting-bell-signal-mode != 0;
                             title: @tr("Pattern");
@@ -2943,6 +3078,17 @@ export component MainWindow inherits Window {
                             title: @tr("Bell Sound");
                             subtitle: root.end-bell-sound-name;
                             tapped => { root.end-bell-sound-tap(); }
+                        }
+                        RevealVolume {
+                            shown: root.end-bell-signal-mode != 1;
+                            minimum: root.bell-volume-min;
+                            maximum: root.bell-volume-max;
+                            step: root.bell-volume-step;
+                            value <=> root.end-bell-volume;
+                            previewing: root.volume-previewing == "end";
+                            value-changed(v) => { root.bell-volume-changed("end", v); }
+                            released(v) => { root.bell-volume-released("end", v); }
+                            stop-tap => { root.bell-volume-stop-tap(); }
                         }
                         RevealChooser {
                             shown: root.end-bell-signal-mode != 0;
@@ -3203,6 +3349,17 @@ export component MainWindow inherits Window {
                             subtitle: root.end-bell-sound-name;
                             tapped => { root.end-bell-sound-tap(); }
                         }
+                        RevealVolume {
+                            shown: root.end-bell-signal-mode != 1;
+                            minimum: root.bell-volume-min;
+                            maximum: root.bell-volume-max;
+                            step: root.bell-volume-step;
+                            value <=> root.end-bell-volume;
+                            previewing: root.volume-previewing == "end";
+                            value-changed(v) => { root.bell-volume-changed("end", v); }
+                            released(v) => { root.bell-volume-released("end", v); }
+                            stop-tap => { root.bell-volume-stop-tap(); }
+                        }
                         RevealChooser {
                             shown: root.end-bell-signal-mode != 0;
                             title: @tr("Pattern");
@@ -3392,6 +3549,17 @@ export component MainWindow inherits Window {
                             subtitle: root.end-bell-sound-name;
                             tapped => { root.end-bell-sound-tap(); }
                         }
+                        RevealVolume {
+                            shown: root.end-bell-signal-mode != 1;
+                            minimum: root.bell-volume-min;
+                            maximum: root.bell-volume-max;
+                            step: root.bell-volume-step;
+                            value <=> root.end-bell-volume;
+                            previewing: root.volume-previewing == "end";
+                            value-changed(v) => { root.bell-volume-changed("end", v); }
+                            released(v) => { root.bell-volume-released("end", v); }
+                            stop-tap => { root.bell-volume-stop-tap(); }
+                        }
                         RevealChooser {
                             shown: root.end-bell-signal-mode != 0;
                             title: @tr("Pattern");
@@ -3434,6 +3602,14 @@ export component MainWindow inherits Window {
                             signal-mode-changed(i) => { root.bbc-in-signal-mode-changed(i); }
                             sound-tap => { root.bbc-in-sound-tap(); }
                             pattern-tap => { root.bbc-in-pattern-tap(); }
+                            volume <=> root.bbc-in-volume;
+                            volume-min: root.bell-volume-min;
+                            volume-max: root.bell-volume-max;
+                            volume-step: root.bell-volume-step;
+                            previewing: root.volume-previewing == "in";
+                            volume-changed(v) => { root.bell-volume-changed("in", v); }
+                            volume-released(v) => { root.bell-volume-released("in", v); }
+                            volume-stop-tap => { root.bell-volume-stop-tap(); }
                         }
                         Rectangle {
                             height: 1px;
@@ -3449,6 +3625,14 @@ export component MainWindow inherits Window {
                             signal-mode-changed(i) => { root.bbc-holdin-signal-mode-changed(i); }
                             sound-tap => { root.bbc-holdin-sound-tap(); }
                             pattern-tap => { root.bbc-holdin-pattern-tap(); }
+                            volume <=> root.bbc-holdin-volume;
+                            volume-min: root.bell-volume-min;
+                            volume-max: root.bell-volume-max;
+                            volume-step: root.bell-volume-step;
+                            previewing: root.volume-previewing == "holdin";
+                            volume-changed(v) => { root.bell-volume-changed("holdin", v); }
+                            volume-released(v) => { root.bell-volume-released("holdin", v); }
+                            volume-stop-tap => { root.bell-volume-stop-tap(); }
                         }
                         Rectangle {
                             height: 1px;
@@ -3464,6 +3648,14 @@ export component MainWindow inherits Window {
                             signal-mode-changed(i) => { root.bbc-out-signal-mode-changed(i); }
                             sound-tap => { root.bbc-out-sound-tap(); }
                             pattern-tap => { root.bbc-out-pattern-tap(); }
+                            volume <=> root.bbc-out-volume;
+                            volume-min: root.bell-volume-min;
+                            volume-max: root.bell-volume-max;
+                            volume-step: root.bell-volume-step;
+                            previewing: root.volume-previewing == "out";
+                            volume-changed(v) => { root.bell-volume-changed("out", v); }
+                            volume-released(v) => { root.bell-volume-released("out", v); }
+                            volume-stop-tap => { root.bell-volume-stop-tap(); }
                         }
                         Rectangle {
                             height: 1px;
@@ -3479,6 +3671,14 @@ export component MainWindow inherits Window {
                             signal-mode-changed(i) => { root.bbc-holdout-signal-mode-changed(i); }
                             sound-tap => { root.bbc-holdout-sound-tap(); }
                             pattern-tap => { root.bbc-holdout-pattern-tap(); }
+                            volume <=> root.bbc-holdout-volume;
+                            volume-min: root.bell-volume-min;
+                            volume-max: root.bell-volume-max;
+                            volume-step: root.bell-volume-step;
+                            previewing: root.volume-previewing == "holdout";
+                            volume-changed(v) => { root.bell-volume-changed("holdout", v); }
+                            volume-released(v) => { root.bell-volume-released("holdout", v); }
+                            volume-stop-tap => { root.bell-volume-stop-tap(); }
                         }
                     }
                 }
@@ -5674,6 +5874,18 @@ export component MainWindow inherits Window {
                     child-shade: false;
                     tapped => { root.interval-editor-sound-tap(); }
                 }
+                RevealVolume {
+                    shown: root.ie-signal-mode != 1;
+                    child-shade: false;
+                    minimum: root.bell-volume-min;
+                    maximum: root.bell-volume-max;
+                    step: root.bell-volume-step;
+                    value <=> root.ie-volume;
+                    previewing: root.volume-previewing == "interval";
+                    value-changed(v) => { root.bell-volume-changed("interval", v); }
+                    released(v) => { root.bell-volume-released("interval", v); }
+                    stop-tap => { root.bell-volume-stop-tap(); }
+                }
                 RevealChooser {
                     shown: root.ie-signal-mode != 0;
                     title: @tr("Pattern");
@@ -7314,82 +7526,6 @@ export component MainWindow inherits Window {
                         : @tr("Test connection");
                     enabled: !root.prefs-test-busy;
                     clicked => { root.prefs-test-tap(); }
-                }
-            }
-
-            Text {
-                text: @tr("Sound");
-                font-size: 14px;
-                font-weight: 700;
-                color: MaterialPalette.primary;
-                horizontal-alignment: left;
-            }
-            BoxedList {
-                // Full-width slider under the title (GTK parity): an
-                // end-of-row slider is too short to set precisely.
-                VerticalLayout {
-                    padding-left: 16px;
-                    padding-right: 16px;
-                    padding-top: 12px;
-                    padding-bottom: 12px;
-                    spacing: 4px;
-                    HorizontalLayout {
-                        spacing: 12px;
-                        Text {
-                            text: @tr("Bell volume");
-                            font-size: 16px;
-                            color: MaterialPalette.on-surface;
-                            horizontal-alignment: left;
-                            vertical-alignment: center;
-                            horizontal-stretch: 1;
-                        }
-                        // Same pill as the bell chooser's Play/Stop.
-                        if root.bell-volume-previewing: Rectangle {
-                            width: 60px;
-                            height: 32px;
-                            border-radius: 16px;
-                            border-width: 1px;
-                            border-color: MaterialPalette.outline;
-                            background: volume-stop-touch.has-hover
-                                ? MaterialPalette.secondary-container
-                                : transparent;
-                            volume-stop-touch := TouchArea {
-                                clicked => { root.bell-volume-stop-tap(); }
-                            }
-                            Text {
-                                text: @tr("Stop");
-                                font-size: 13px;
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
-                                color: MaterialPalette.on-surface;
-                            }
-                        }
-                    }
-                    Text {
-                        text: @tr("Relative to the system alarm volume");
-                        font-size: 13px;
-                        color: MaterialPalette.on-surface-variant;
-                        horizontal-alignment: left;
-                        wrap: word-wrap;
-                    }
-                    VolumeSlider {
-                        minimum: root.bell-volume-min;
-                        maximum: root.bell-volume-max;
-                        step: root.bell-volume-step;
-                        value <=> root.prefs-bell-volume;
-                        accessible-label: @tr("Bell volume");
-                        value-changed(v) => { root.bell-volume-changed(v); }
-                        released(v) => { root.bell-volume-released(v); }
-                    }
-                }
-                Rectangle {
-                    height: 1px;
-                    background: MaterialPalette.outline-variant;
-                }
-                DurationRow {
-                    label: @tr("System alarm volume");
-                    value-text: "";
-                    tapped => { root.alarm-volume-tap(); }
                 }
             }
 

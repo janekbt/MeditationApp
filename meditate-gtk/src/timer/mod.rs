@@ -185,4 +185,35 @@ mod tests {
         }
         assert_eq!(code.matches("let (session, start_effects) = CoreSession::start(").count(), 4);
     }
+
+    /// Every bell with a Bell Sound row in the Setup view has a Volume
+    /// row right after it, shown and hidden with it, and the view
+    /// installs a slider in each (issue #1).
+    #[test]
+    fn every_setup_bell_has_a_volume_row() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let blp = std::fs::read_to_string(dir.join("data/ui/timer_view.blp")).unwrap();
+        let imp = std::fs::read_to_string(dir.join("src/timer/imp.rs")).unwrap();
+        let bells: Vec<&str> = blp
+            .match_indices("_sound_revealer {")
+            .map(|(at, _)| {
+                let head = &blp[..at];
+                &head[head.rfind(' ').unwrap() + 1..]
+            })
+            .collect();
+        assert_eq!(bells.len(), 6, "{bells:?}");
+        for bell in bells {
+            let sound = blp.find(&format!("Gtk.Revealer {bell}_sound_revealer {{")).unwrap();
+            let volume = blp
+                .find(&format!("Gtk.Revealer {bell}_volume_revealer {{"))
+                .unwrap_or_else(|| panic!("{bell}: no volume row"));
+            let pattern = blp.find(&format!("Gtk.Revealer {bell}_pattern_revealer {{")).unwrap();
+            assert!(sound < volume && volume < pattern, "{bell}: volume row after the sound row");
+            assert!(
+                blp[volume..].contains(&format!("reveal-child: bind {bell}_sound_revealer.reveal-child;")),
+                "{bell}: shown with the sound row",
+            );
+            assert!(imp.contains(&format!("&*self.{bell}_volume_row)")), "{bell}: slider installed");
+        }
+    }
 }

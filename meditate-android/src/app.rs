@@ -553,8 +553,74 @@ impl AppState {
     }
 }
 
+/// The bell a Setup-view Volume row edits, by the row's slot name in
+/// `main.slint` ("start", "end", "in", "holdin", "out", "holdout").
+/// `mode` is the Setup view's mode, whose end bell "end" means.
+/// `None` for "interval": the bell editor stages that volume and saves
+/// it with the bell.
+pub fn volume_slot(
+    name: &str,
+    mode: meditate_core::SessionMode,
+) -> Option<meditate_core::bell_volume::BellSlot> {
+    use meditate_core::bell_volume::BellSlot;
+    use meditate_core::db::BoxBreathPhaseId as P;
+    Some(match name {
+        "start" => BellSlot::Starting,
+        "end" => BellSlot::End(mode),
+        "in" => BellSlot::BoxBreathCue(P::In),
+        "holdin" => BellSlot::BoxBreathCue(P::HoldIn),
+        "out" => BellSlot::BoxBreathCue(P::Out),
+        "holdout" => BellSlot::BoxBreathCue(P::HoldOut),
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
+    // ── Volume rows ─────────────────────────────────────────────
+
+    #[test]
+    fn every_volume_row_edits_its_own_bell() {
+        use meditate_core::bell_volume::BellSlot;
+        use meditate_core::db::BoxBreathPhaseId as P;
+        use meditate_core::SessionMode;
+        assert_eq!(volume_slot("start", SessionMode::Timer), Some(BellSlot::Starting));
+        for mode in [SessionMode::Timer, SessionMode::Guided, SessionMode::BoxBreath] {
+            assert_eq!(volume_slot("end", mode), Some(BellSlot::End(mode)));
+        }
+        assert_eq!(volume_slot("in", SessionMode::BoxBreath), Some(BellSlot::BoxBreathCue(P::In)));
+        assert_eq!(volume_slot("holdin", SessionMode::BoxBreath), Some(BellSlot::BoxBreathCue(P::HoldIn)));
+        assert_eq!(volume_slot("out", SessionMode::BoxBreath), Some(BellSlot::BoxBreathCue(P::Out)));
+        assert_eq!(volume_slot("holdout", SessionMode::BoxBreath), Some(BellSlot::BoxBreathCue(P::HoldOut)));
+        assert_eq!(volume_slot("interval", SessionMode::Timer), None);
+        assert_eq!(volume_slot("", SessionMode::Timer), None);
+    }
+
+    /// Every Volume row in the UI uses a slot name the mapping knows.
+    #[test]
+    fn the_ui_uses_only_known_volume_slots() {
+        let slint = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ui/main.slint"),
+        )
+        .unwrap();
+        let mut names: Vec<&str> = slint
+            .match_indices("root.bell-volume-released(\"")
+            .map(|(at, m)| {
+                let rest = &slint[at + m.len()..];
+                &rest[..rest.find('"').unwrap()]
+            })
+            .collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names, ["end", "holdin", "holdout", "in", "interval", "out", "start"]);
+        for name in names {
+            assert!(
+                name == "interval" || volume_slot(name, meditate_core::SessionMode::Timer).is_some(),
+                "{name}",
+            );
+        }
+    }
+
     /// Which bells may ring in which mode is decided in
     /// `meditate_core::bells`: the session builder takes the starting
     /// and interval bells from the core helpers, passing the mode,
@@ -585,6 +651,7 @@ mod tests {
                 sound_uuid: "start-sound".into(),
                 vibration_pattern_uuid: "start-pattern".into(),
                 signal_mode: meditate_core::db::SignalMode::Sound,
+                volume: Default::default(),
             }),
             ..Default::default()
         }

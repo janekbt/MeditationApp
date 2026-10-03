@@ -26,6 +26,7 @@ src/timer/imp.rs
 src/timer/mod.rs
 src/vibration_editor.rs
 src/vibrations.rs
+src/volume_row.rs
 src/window/imp.rs
 src/window/mod.rs
 

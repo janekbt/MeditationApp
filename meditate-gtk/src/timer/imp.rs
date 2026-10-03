@@ -10,6 +10,7 @@ use crate::i18n::{gettext, ngettext};
 use glib::clone;
 
 use std::time::Duration;
+use meditate_core::bell_volume::BellSlot;
 use meditate_core::breath::BreathPattern;
 use meditate_core::format::format_time;
 use meditate_core::time::boot_time_now;
@@ -65,6 +66,25 @@ impl From<TimerMode> for meditate_core::SessionMode {
 
 // ── GObject impl ──────────────────────────────────────────────────────────────
 
+/// A Setup-view bell Volume row. The end bell's row edits the current
+/// mode's end bell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SetupVolume {
+    Starting,
+    End,
+    Cue(BoxBreathPhaseId),
+}
+
+impl SetupVolume {
+    fn slot(self, mode: meditate_core::SessionMode) -> BellSlot {
+        match self {
+            Self::Starting => BellSlot::Starting,
+            Self::End => BellSlot::End(mode),
+            Self::Cue(phase) => BellSlot::BoxBreathCue(phase),
+        }
+    }
+}
+
 #[derive(Debug, Default, CompositeTemplate)]
 #[template(resource = "/io/github/janekbt/Meditate/ui/timer_view.ui")]
 pub struct TimerView {
@@ -105,6 +125,7 @@ pub struct TimerView {
     #[template_child] pub starting_bell_signal_toggle_host: TemplateChild<gtk::Box>,
     #[template_child] pub starting_bell_sound_revealer:     TemplateChild<gtk::Revealer>,
     #[template_child] pub starting_bell_sound_row:  TemplateChild<adw::ActionRow>,
+    #[template_child] pub starting_bell_volume_row:         TemplateChild<adw::PreferencesRow>,
     #[template_child] pub starting_bell_pattern_revealer:   TemplateChild<gtk::Revealer>,
     #[template_child] pub starting_bell_pattern_row:        TemplateChild<adw::ActionRow>,
     #[template_child] pub preparation_time_row:     TemplateChild<adw::ExpanderRow>,
@@ -116,6 +137,7 @@ pub struct TimerView {
     #[template_child] pub end_bell_signal_toggle_host: TemplateChild<gtk::Box>,
     #[template_child] pub end_bell_sound_revealer:   TemplateChild<gtk::Revealer>,
     #[template_child] pub end_bell_sound_row:      TemplateChild<adw::ActionRow>,
+    #[template_child] pub end_bell_volume_row:       TemplateChild<adw::PreferencesRow>,
     #[template_child] pub end_bell_pattern_revealer: TemplateChild<gtk::Revealer>,
     #[template_child] pub end_bell_pattern_row:      TemplateChild<adw::ActionRow>,
     // Vibration UI prototype — see setup_vibration_proto. Throwaway.
@@ -125,24 +147,28 @@ pub struct TimerView {
     #[template_child] pub boxbreath_phase_in_signal_toggle_host:   TemplateChild<gtk::Box>,
     #[template_child] pub boxbreath_phase_in_sound_revealer:       TemplateChild<gtk::Revealer>,
     #[template_child] pub boxbreath_phase_in_sound_row:            TemplateChild<adw::ActionRow>,
+    #[template_child] pub boxbreath_phase_in_volume_row:            TemplateChild<adw::PreferencesRow>,
     #[template_child] pub boxbreath_phase_in_pattern_revealer:     TemplateChild<gtk::Revealer>,
     #[template_child] pub boxbreath_phase_in_pattern_row:          TemplateChild<adw::ActionRow>,
     #[template_child] pub boxbreath_phase_holdin_row:                  TemplateChild<adw::ExpanderRow>,
     #[template_child] pub boxbreath_phase_holdin_signal_toggle_host:   TemplateChild<gtk::Box>,
     #[template_child] pub boxbreath_phase_holdin_sound_revealer:       TemplateChild<gtk::Revealer>,
     #[template_child] pub boxbreath_phase_holdin_sound_row:            TemplateChild<adw::ActionRow>,
+    #[template_child] pub boxbreath_phase_holdin_volume_row:            TemplateChild<adw::PreferencesRow>,
     #[template_child] pub boxbreath_phase_holdin_pattern_revealer:     TemplateChild<gtk::Revealer>,
     #[template_child] pub boxbreath_phase_holdin_pattern_row:          TemplateChild<adw::ActionRow>,
     #[template_child] pub boxbreath_phase_out_row:                  TemplateChild<adw::ExpanderRow>,
     #[template_child] pub boxbreath_phase_out_signal_toggle_host:   TemplateChild<gtk::Box>,
     #[template_child] pub boxbreath_phase_out_sound_revealer:       TemplateChild<gtk::Revealer>,
     #[template_child] pub boxbreath_phase_out_sound_row:            TemplateChild<adw::ActionRow>,
+    #[template_child] pub boxbreath_phase_out_volume_row:            TemplateChild<adw::PreferencesRow>,
     #[template_child] pub boxbreath_phase_out_pattern_revealer:     TemplateChild<gtk::Revealer>,
     #[template_child] pub boxbreath_phase_out_pattern_row:          TemplateChild<adw::ActionRow>,
     #[template_child] pub boxbreath_phase_holdout_row:                  TemplateChild<adw::ExpanderRow>,
     #[template_child] pub boxbreath_phase_holdout_signal_toggle_host:   TemplateChild<gtk::Box>,
     #[template_child] pub boxbreath_phase_holdout_sound_revealer:       TemplateChild<gtk::Revealer>,
     #[template_child] pub boxbreath_phase_holdout_sound_row:            TemplateChild<adw::ActionRow>,
+    #[template_child] pub boxbreath_phase_holdout_volume_row:            TemplateChild<adw::PreferencesRow>,
     #[template_child] pub boxbreath_phase_holdout_pattern_revealer:     TemplateChild<gtk::Revealer>,
     #[template_child] pub boxbreath_phase_holdout_pattern_row:          TemplateChild<adw::ActionRow>,
     #[template_child] pub time_unit_label:        TemplateChild<gtk::Label>,
@@ -229,6 +255,9 @@ pub struct TimerView {
     /// persisted values on visit. One flag covers all four because they
     /// load atomically in the same DB roundtrip.
     bells_loading: Cell<bool>,
+    /// The Setup view's bell Volume rows, set from stored state by
+    /// `refresh_volume_rows`.
+    volume_rows: RefCell<Vec<(SetupVolume, crate::volume_row::VolumeRow)>>,
     /// Starred-preset rows currently attached to `presets_group`,
     /// paired with their preset uuid. Tracked so the list can be
     /// rebuilt cleanly on mode switch / sync update without leaking
@@ -335,6 +364,7 @@ impl ObjectImpl for TimerView {
         self.build_breathing_setup();
         self.configure_preparation_time_secs_row();
         self.setup_boxbreath_phase_cues();
+        self.setup_volume_rows();
 
         // Tell screen readers that the free-text editor is labelled by
         // its caption, matching the Log add/edit dialog.
@@ -669,10 +699,14 @@ impl TimerView {
                     .and_then(std::result::Result::ok);
                 let app_for_pick = app.clone();
                 let this_for_pick = this.clone();
+                let volume = app
+                    .with_db(|db| meditate_core::bell_volume::read(db.core(), BellSlot::End(mode)))
+                    .unwrap_or_default();
                 window.push_sound_chooser(
                     &app,
                     crate::db::BellSoundCategory::General,
                     current,
+                    volume,
                     move |uuid| {
                         app_for_pick.with_db_mut(|db| db.set_setting(
                             meditate_core::settings_keys::end_bell_sound_key_for_mode(mode),
@@ -804,10 +838,14 @@ impl TimerView {
                     .and_then(std::result::Result::ok);
                 let app_for_pick = app.clone();
                 let this_for_pick = this.clone();
+                let volume = app
+                    .with_db(|db| meditate_core::bell_volume::read(db.core(), BellSlot::Starting))
+                    .unwrap_or_default();
                 window.push_sound_chooser(
                     &app,
                     crate::db::BellSoundCategory::General,
                     current,
+                    volume,
                     move |uuid| {
                         app_for_pick.with_db_mut(|db| db.set_setting("starting_bell_sound", &uuid));
                         this_for_pick.imp().refresh_starting_bell_sound_subtitle();
@@ -1124,6 +1162,58 @@ impl TimerView {
     /// click-gesture workarounds for the Revealer-wrapped rows. State
     /// load + capability gating run later from
     /// `refresh_boxbreath_phase_state`.
+    /// Build every Setup-view bell's Volume row: save the level when
+    /// its slider rests, then play the bell at it.
+    fn setup_volume_rows(&self) {
+        let rows = [
+            (SetupVolume::Starting, &*self.starting_bell_volume_row),
+            (SetupVolume::End, &*self.end_bell_volume_row),
+            (SetupVolume::Cue(BoxBreathPhaseId::In), &*self.boxbreath_phase_in_volume_row),
+            (SetupVolume::Cue(BoxBreathPhaseId::HoldIn), &*self.boxbreath_phase_holdin_volume_row),
+            (SetupVolume::Cue(BoxBreathPhaseId::Out), &*self.boxbreath_phase_out_volume_row),
+            (SetupVolume::Cue(BoxBreathPhaseId::HoldOut), &*self.boxbreath_phase_holdout_volume_row),
+        ];
+        let obj = self.obj();
+        let mut installed = Vec::new();
+        for (key, row) in rows {
+            let view = obj.downgrade();
+            let save = move |volume| {
+                let view = view.upgrade()?;
+                let imp = view.imp();
+                let app = imp.get_app()?;
+                let mode: meditate_core::SessionMode = imp.current_mode().into();
+                let slot = key.slot(mode);
+                let sound = app.with_db(|db| {
+                    if let Err(e) = meditate_core::bell_volume::write(db.core(), slot, volume) {
+                        meditate_core::log("bell_volume.write", &format!("failed: {e:?}"));
+                    }
+                    meditate_core::bell_volume::sound_uuid(db.core(), slot)
+                });
+                if key == SetupVolume::End {
+                    // The end bell is preloaded; reload it at the new level.
+                    crate::sound::preload_end_bell(&app, mode);
+                }
+                sound
+            };
+            installed.push((key, crate::volume_row::VolumeRow::install(row, save)));
+        }
+        *self.volume_rows.borrow_mut() = installed;
+        self.refresh_volume_rows();
+    }
+
+    /// Show every Setup-view bell's stored volume (the end bell's for
+    /// the current mode).
+    pub(crate) fn refresh_volume_rows(&self) {
+        let Some(app) = self.get_app() else { return; };
+        let mode: meditate_core::SessionMode = self.current_mode().into();
+        for (key, row) in self.volume_rows.borrow().iter() {
+            let slot = key.slot(mode);
+            if let Some(volume) = app.with_db(|db| meditate_core::bell_volume::read(db.core(), slot)) {
+                row.set_volume(volume);
+            }
+        }
+    }
+
     fn setup_boxbreath_phase_cues(&self) {
         let obj = self.obj();
 
@@ -1225,6 +1315,7 @@ impl TimerView {
                     {
                         app.with_db_mut(|db| db.set_box_breath_phase(
                             phase, on, p.signal_mode, p.sound_uuid.as_str(), p.pattern_uuid.as_str(),
+                            p.volume,
                         ));
                     }
                 }
@@ -1260,6 +1351,7 @@ impl TimerView {
                     &app,
                     crate::db::BellSoundCategory::BoxBreath,
                     Some(p.sound_uuid.0.clone()),
+                    p.volume,
                     move |uuid| {
                         app_for_pick.with_db_mut(|db| db.set_box_breath_phase(
                             phase_for_sound,
@@ -1267,6 +1359,7 @@ impl TimerView {
                             p_for_pick.signal_mode,
                             &uuid,
                             p_for_pick.pattern_uuid.as_str(),
+                            p_for_pick.volume,
                         ));
                         this_for_pick.imp().refresh_boxbreath_phase_subtitles(phase_for_sound);
                     },
@@ -1305,6 +1398,7 @@ impl TimerView {
                             p_for_pick.signal_mode,
                             p_for_pick.sound_uuid.as_str(),
                             &uuid,
+                            p_for_pick.volume,
                         ));
                         this_for_pick.imp().refresh_boxbreath_phase_subtitles(phase_for_pattern);
                     },
@@ -1332,6 +1426,7 @@ impl TimerView {
     /// rows + the master toggle. Called from refresh-on-visit once
     /// the widget is attached.
     pub(crate) fn refresh_boxbreath_phase_state(&self) {
+        self.refresh_volume_rows();
         let Some(app) = self.get_app() else { return; };
 
         self.bells_loading.set(true);
@@ -1564,6 +1659,7 @@ pub(crate) fn build_phase_signal_mode_toggle_widget(
             {
                 app.with_db_mut(|db| db.set_box_breath_phase(
                     phase, p.enabled, mode, p.sound_uuid.as_str(), p.pattern_uuid.as_str(),
+                    p.volume,
                 ));
             }
         }
@@ -1752,6 +1848,7 @@ impl TimerView {
         self.refresh_end_bell_sound_subtitle();
         self.refresh_end_bell_pattern_subtitle();
         self.refresh_end_bell_signal_mode_state();
+        self.refresh_volume_rows();
 
         match self.ui_state() {
             UiState::Idle      => self.show_idle_ui(),
@@ -1934,6 +2031,8 @@ impl TimerView {
 impl TimerView {
     fn on_start(&self) {
         let mode = self.current_mode();
+        // A Volume-row preview doesn't ring into the session.
+        crate::sound::stop_preview();
 
         // Timer mode + Preparation Time on: enter Preparing, defer the
         // real cores + starting bell until the prep tick transitions.
@@ -3180,6 +3279,7 @@ impl TimerView {
         self.refresh_end_bell_sound_subtitle();
         self.refresh_end_bell_pattern_subtitle();
         self.refresh_end_bell_signal_mode_state();
+        self.refresh_volume_rows();
 
         // Rebuild the Setup view's label chooser-row + master toggle
         // from the per-mode persisted state.
@@ -4009,9 +4109,15 @@ impl TimerView {
         let Some(app) = app.as_ref() else { return; };
         if route.signal_mode.includes_sound() {
             match route.channel {
-                FireChannel::Interval => crate::sound::play_interval_sound(route.sound_uuid, app),
-                FireChannel::Starting => crate::sound::play_starting_uuid(route.sound_uuid, app),
-                FireChannel::End => crate::sound::play_end_bell_uuid(route.sound_uuid, app),
+                FireChannel::Interval => {
+                    crate::sound::play_interval_sound(route.sound_uuid, route.volume, app);
+                }
+                FireChannel::Starting => {
+                    crate::sound::play_starting_uuid(route.sound_uuid, route.volume, app);
+                }
+                FireChannel::End => {
+                    crate::sound::play_end_bell_uuid(route.sound_uuid, route.volume, app);
+                }
             }
         }
         let handle = if route.signal_mode.includes_vibration() && app.has_haptic() {

@@ -719,9 +719,10 @@ impl Database {
         signal_mode: SignalMode,
         sound_uuid: &str,
         pattern_uuid: &str,
+        volume: meditate_core::bell_volume::BellVolume,
     ) -> Result<()> {
         self.inner
-            .set_box_breath_phase(phase, enabled, signal_mode, sound_uuid, pattern_uuid)
+            .set_box_breath_phase(phase, enabled, signal_mode, sound_uuid, pattern_uuid, volume)
             .map_err(map_core_err)
     }
 

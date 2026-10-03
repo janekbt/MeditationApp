@@ -48,6 +48,7 @@ impl MeditateWindow {
         app: &crate::application::MeditateApplication,
         category: crate::db::BellSoundCategory,
         current_uuid: Option<String>,
+        volume: meditate_core::bell_volume::BellVolume,
         on_selected: impl Fn(String) + 'static,
     ) {
         use glib::subclass::prelude::ObjectSubclassIsExt;
@@ -57,6 +58,7 @@ impl MeditateWindow {
             app,
             category,
             current_uuid,
+            volume,
             on_selected,
         );
     }

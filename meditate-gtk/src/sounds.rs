@@ -31,6 +31,9 @@ use meditate_core::sound::AudioFileError;
 struct PreviewState {
     toggle: meditate_core::sound::PreviewToggle,
     active_btn: Option<gtk::Button>,
+    /// The volume of the bell the chooser is open for: previews play
+    /// at it.
+    volume: meditate_core::bell_volume::BellVolume,
 }
 
 /// Push the bell-sound chooser onto the navigation view in selection
@@ -44,6 +47,7 @@ pub fn push_sounds_chooser(
     app: &MeditateApplication,
     category: BellSoundCategory,
     current_uuid: Option<String>,
+    volume: meditate_core::bell_volume::BellVolume,
     on_selected: impl Fn(String) + 'static,
 ) {
     let group = adw::PreferencesGroup::new();
@@ -90,6 +94,7 @@ pub fn push_sounds_chooser(
             &app_for_rb,
             category,
             current_uuid_for_rb.as_deref(),
+            volume,
             &nav_view_for_rb,
             on_selected_for_rb.clone(),
             rebuilder_for_self.clone(),
@@ -116,6 +121,7 @@ fn rebuild_chooser_rows(
     app: &MeditateApplication,
     category: BellSoundCategory,
     current_uuid: Option<&str>,
+    volume: meditate_core::bell_volume::BellVolume,
     nav_view: &adw::NavigationView,
     on_selected: Rc<dyn Fn(String)>,
     rebuilder: crate::Rebuilder,
@@ -158,7 +164,7 @@ fn rebuild_chooser_rows(
         current_uuid: current_uuid.map(std::string::ToString::to_string),
         on_selected,
         nav_view: nav_view.clone(),
-        preview: Rc::new(RefCell::new(PreviewState::default())),
+        preview: Rc::new(RefCell::new(PreviewState { volume, ..PreviewState::default() })),
     };
 
     let sounds = app
@@ -293,7 +299,8 @@ fn add_play_button(
                 crate::sound::stop_preview();
             }
             PreviewAction::StopAndStart { generation, .. } => {
-                let media = crate::sound::play_preview(&sound_clone);
+                let volume = preview_for_click.borrow().volume;
+                let media = crate::sound::play_preview(&sound_clone, volume);
                 btn_for_click.set_icon_name("media-playback-stop-symbolic");
                 btn_for_click.set_tooltip_text(Some(&gettext("Stop preview")));
                 preview_for_click.borrow_mut().active_btn = Some(btn_for_click.clone());

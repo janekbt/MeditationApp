@@ -67,6 +67,19 @@ pub fn end_bell_pattern_key_for_mode(mode: SessionMode) -> &'static str {
     }
 }
 
+/// Per-mode End Bell volume, in percent (`crate::bell_volume`).
+pub fn end_bell_volume_key_for_mode(mode: SessionMode) -> &'static str {
+    match mode {
+        SessionMode::Timer => "timer_end_bell_volume",
+        SessionMode::Guided => "guided_end_bell_volume",
+        SessionMode::BoxBreath => "boxbreath_end_bell_volume",
+    }
+}
+
+/// Starting Bell volume, in percent (`crate::bell_volume`). The
+/// starting bell is Timer-only, so one key.
+pub const STARTING_BELL_VOLUME_KEY: &str = "starting_bell_volume";
+
 /// Per-mode End Bell type (sound / vibration / both).
 pub fn end_bell_signal_mode_key_for_mode(mode: SessionMode) -> &'static str {
     match mode {
@@ -208,7 +221,7 @@ mod tests {
 
     #[test]
     fn end_bell_keys_are_distinct_per_mode_and_per_field() {
-        // 12 keys total (4 fields × 3 modes) — all must be unique,
+        // 15 keys total (5 fields × 3 modes) — all must be unique,
         // and none may collide with the dead flat `end_bell_*`
         // keys (which would silently resurrect the shared-config
         // bug for one mode).
@@ -220,11 +233,13 @@ mod tests {
                     end_bell_sound_key_for_mode(m),
                     end_bell_pattern_key_for_mode(m),
                     end_bell_signal_mode_key_for_mode(m),
+                    end_bell_volume_key_for_mode(m),
                 ]
             })
             .collect();
         let unique: std::collections::HashSet<&&str> = keys.iter().collect();
-        assert_eq!(unique.len(), 12, "every mode+field key must be unique");
+        assert_eq!(unique.len(), 15, "every mode+field key must be unique");
+        assert!(!keys.contains(&STARTING_BELL_VOLUME_KEY));
         for dead in ["end_bell_active", "end_bell_sound", "end_bell_pattern", "end_bell_signal_mode"] {
             assert!(!keys.contains(&dead), "must not reuse dead flat key {dead}");
         }

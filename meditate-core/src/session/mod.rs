@@ -827,6 +827,7 @@ fn starting_bell_effect(settings: &SessionSettings) -> Option<Effect> {
         sound_uuid: cue.sound_uuid.0.clone(),
         vibration_pattern_uuid: cue.vibration_pattern_uuid.0.clone(),
         signal_mode,
+        volume: cue.volume,
     })
 }
 
@@ -841,6 +842,7 @@ fn end_bell_effect(settings: &SessionSettings) -> Option<Effect> {
         sound_uuid: cue.sound_uuid.0.clone(),
         vibration_pattern_uuid: cue.vibration_pattern_uuid.0.clone(),
         signal_mode,
+        volume: cue.volume,
     })
 }
 
@@ -863,6 +865,7 @@ fn box_breath_cue_effect(
         sound_uuid: cue.sound_uuid.0.clone(),
         vibration_pattern_uuid: cue.vibration_pattern_uuid.0.clone(),
         signal_mode,
+        volume: cue.volume,
     })
 }
 
@@ -898,6 +901,7 @@ fn fire_due_bells(
                     sound_uuid: bell.sound_uuid.0.clone(),
                     vibration_pattern_uuid: bell.vibration_pattern_uuid.0.clone(),
                     signal_mode: eff,
+                    volume: bell.volume,
                 });
             }
         }
@@ -960,6 +964,7 @@ mod tests {
             sound_uuid: "cue-sound".into(),
             vibration_pattern_uuid: "cue-pattern".into(),
             signal_mode: SignalMode::Both,
+            volume: Default::default(),
         };
         let pattern = BreathPattern::box_breath();
         let shape = match target_secs {
@@ -994,6 +999,7 @@ mod tests {
             vibration_pattern_uuid: "pattern".into(),
             signal_mode: SignalMode::Sound,
             schedule: BellSchedule::Fixed { target_secs, fired: false },
+            volume: Default::default(),
         }
     }
 
@@ -1008,6 +1014,7 @@ mod tests {
                 jitter_pct: 0,
                 next_ring_secs: u64::from(base_min) * 60,
             },
+            volume: Default::default(),
         }
     }
 
@@ -1868,6 +1875,7 @@ mod tests {
             sound_uuid: "s".into(),
             vibration_pattern_uuid: "v".into(),
             signal_mode: SignalMode::Both,
+            volume: Default::default(),
         };
         let r = starting.fire_route().expect("FireStartingBell routes");
         assert_eq!(r.channel, FireChannel::Starting);
@@ -1877,6 +1885,7 @@ mod tests {
             sound_uuid: "s".into(),
             vibration_pattern_uuid: "v".into(),
             signal_mode: SignalMode::Sound,
+            volume: Default::default(),
         };
         assert_eq!(interval.fire_route().unwrap().channel, FireChannel::Interval);
 
@@ -1884,6 +1893,7 @@ mod tests {
             sound_uuid: "s".into(),
             vibration_pattern_uuid: "v".into(),
             signal_mode: SignalMode::Sound,
+            volume: Default::default(),
         };
         assert_eq!(end.fire_route().unwrap().channel, FireChannel::End);
 
@@ -1892,6 +1902,7 @@ mod tests {
             sound_uuid: "s".into(),
             vibration_pattern_uuid: "v".into(),
             signal_mode: SignalMode::Both,
+            volume: Default::default(),
         };
         assert_eq!(phase.fire_route().unwrap().channel, FireChannel::Interval);
     }
@@ -2057,6 +2068,7 @@ mod tests {
             sound_uuid: "start-sound".into(),
             vibration_pattern_uuid: "start-pattern".into(),
             signal_mode: SignalMode::Sound,
+            volume: Default::default(),
         }
     }
 
@@ -2065,6 +2077,7 @@ mod tests {
             sound_uuid: "start-sound".into(),
             vibration_pattern_uuid: "start-pattern".into(),
             signal_mode: SignalMode::Sound,
+            volume: Default::default(),
         }
     }
 
@@ -2175,6 +2188,7 @@ mod tests {
                 sound_uuid: "start-sound".into(),
                 vibration_pattern_uuid: "start-pattern".into(),
                 signal_mode: SignalMode::Vibration,
+                volume: Default::default(),
             }],
         );
     }
@@ -2187,5 +2201,84 @@ mod tests {
         settings.bells = vec![fixed_bell(0, "at-zero")];
         let (_, effects) = Session::start(settings, Duration::from_secs(100));
         assert_eq!(effects, vec![the_starting_bell()]);
+    }
+
+    // ── Each effect carries its bell's volume ─────────────────────
+
+    fn cue_at(percent: f64) -> crate::bells::BellCue {
+        crate::bells::BellCue {
+            volume: crate::bell_volume::BellVolume::from_percent(percent),
+            ..starting_cue()
+        }
+    }
+
+    fn volume_of(effect: &Effect) -> u8 {
+        effect.fire_route().expect("a fire effect").volume.percent()
+    }
+
+    #[test]
+    fn the_starting_bell_rings_at_its_volume() {
+        let mut settings = timer_countdown_settings(600);
+        settings.starting_bell = Some(cue_at(30.0));
+        let (_, effects) = Session::start(settings, Duration::from_secs(100));
+        assert_eq!(effects.len(), 1);
+        assert_eq!(volume_of(&effects[0]), 30);
+    }
+
+    #[test]
+    fn the_end_bell_rings_at_its_volume() {
+        let mut settings = timer_countdown_settings(60);
+        settings.end_bell = Some(cue_at(85.0));
+        let t0 = Duration::from_secs(100);
+        let (mut s, _) = Session::start(settings, t0);
+        let effects = s.tick(t0 + Duration::from_secs(60));
+        let end = effects.iter().find(|e| matches!(e, Effect::FireEndBell { .. })).expect("end bell");
+        assert_eq!(volume_of(end), 85);
+    }
+
+    #[test]
+    fn each_interval_bell_rings_at_its_own_volume() {
+        let mut settings = timer_countdown_settings(600);
+        let mut quiet = fixed_bell(60, "quiet");
+        quiet.volume = crate::bell_volume::BellVolume::from_percent(10.0);
+        let mut loud = fixed_bell(120, "loud");
+        loud.volume = crate::bell_volume::BellVolume::from_percent(95.0);
+        settings.bells = vec![quiet, loud];
+        let t0 = Duration::from_secs(100);
+        let (mut s, _) = Session::start(settings, t0);
+        let mut fired = Vec::new();
+        for secs in 1..=130 {
+            for e in s.tick(t0 + Duration::from_secs(secs)) {
+                if let Effect::FireBell { ref sound_uuid, .. } = e {
+                    fired.push((sound_uuid.clone(), volume_of(&e)));
+                }
+            }
+        }
+        assert_eq!(fired, vec![("quiet".to_string(), 10), ("loud".to_string(), 95)]);
+    }
+
+    #[test]
+    fn each_box_breath_cue_rings_at_its_phases_volume() {
+        let mut settings = box_breath_settings(None);
+        let cues = settings.box_breath_cues.as_mut().unwrap();
+        cues.in_phase = Some(cue_at(20.0));
+        cues.hold_in = Some(cue_at(40.0));
+        cues.out_phase = Some(cue_at(60.0));
+        cues.hold_out = Some(cue_at(80.0));
+        let t0 = Duration::from_secs(100);
+        let (mut s, _) = Session::start(settings, t0);
+        let mut by_phase = std::collections::BTreeMap::new();
+        for ms in (0..=20_000).step_by(250) {
+            for e in s.tick(t0 + Duration::from_millis(ms)) {
+                if let Effect::FireBoxBreathCue { phase, .. } = e {
+                    by_phase.entry(format!("{phase:?}")).or_insert(volume_of(&e));
+                }
+            }
+        }
+        assert_eq!(by_phase.len(), 4, "{by_phase:?}");
+        assert_eq!(by_phase["In"], 20);
+        assert_eq!(by_phase["HoldIn"], 40);
+        assert_eq!(by_phase["Out"], 60);
+        assert_eq!(by_phase["HoldOut"], 80);
     }
 }

@@ -191,6 +191,7 @@ pub struct ActiveBell {
     pub sound_uuid: crate::db::BellSoundUuid,
     pub vibration_pattern_uuid: crate::db::VibrationPatternUuid,
     pub signal_mode: SignalMode,
+    pub volume: crate::bell_volume::BellVolume,
     pub schedule: BellSchedule,
 }
 
@@ -416,6 +417,7 @@ pub struct BellCue {
     pub sound_uuid: crate::db::BellSoundUuid,
     pub vibration_pattern_uuid: crate::db::VibrationPatternUuid,
     pub signal_mode: SignalMode,
+    pub volume: crate::bell_volume::BellVolume,
 }
 
 /// Box-Breath per-phase cue config. Each phase carries its own
@@ -469,6 +471,11 @@ pub fn signal_mode_override_from_db(db: &Database, mode: SessionMode) -> SignalM
     read_signal_mode(db, key, SignalMode::Both)
 }
 
+/// A bell volume setting; the middle when unset or unreadable.
+fn read_volume(db: &Database, key: &str) -> crate::bell_volume::BellVolume {
+    crate::bell_volume::BellVolume::parse(&read_str(db, key, ""))
+}
+
 /// Starting-bell cue config from the persisted settings rows.
 /// `None` when the user disabled the master starting-bell toggle, or
 /// when `mode`'s Setup view doesn't show the starting bell (it's a
@@ -485,6 +492,7 @@ pub fn starting_bell_cue_from_db(db: &Database, mode: SessionMode) -> Option<Bel
             db, "starting_bell_pattern", BUNDLED_PATTERN_PULSE_UUID,
         ).into(),
         signal_mode: read_signal_mode(db, "starting_bell_signal_mode", SignalMode::Sound),
+        volume: read_volume(db, crate::settings_keys::STARTING_BELL_VOLUME_KEY),
     })
 }
 
@@ -512,6 +520,7 @@ pub fn end_bell_cue_from_db(
             db, end_bell_pattern_key_for_mode(mode), BUNDLED_PATTERN_PULSE_UUID,
         ).into(),
         signal_mode: read_signal_mode(db, end_bell_signal_mode_key_for_mode(mode), SignalMode::Sound),
+        volume: read_volume(db, crate::settings_keys::end_bell_volume_key_for_mode(mode)),
     })
 }
 
@@ -641,6 +650,7 @@ pub fn box_breath_cues_from_db(db: &Database) -> BoxBreathCueConfig {
             sound_uuid: row.sound_uuid,
             vibration_pattern_uuid: row.pattern_uuid,
             signal_mode: row.signal_mode,
+            volume: row.volume,
         })
     };
     BoxBreathCueConfig {
@@ -746,6 +756,7 @@ pub(crate) fn build_active_bells(
             sound_uuid: row.sound_uuid.clone(),
             vibration_pattern_uuid: row.vibration_pattern_uuid.clone(),
             signal_mode: row.signal_mode,
+            volume: row.volume,
             schedule,
         });
     }
@@ -787,6 +798,7 @@ mod tests {
             vibration_pattern_uuid: "pattern-uuid".into(),
             signal_mode: SignalMode::Sound,
             schedule: BellSchedule::Fixed { target_secs, fired: false },
+            volume: Default::default(),
         }
     }
 
@@ -796,6 +808,7 @@ mod tests {
             vibration_pattern_uuid: "pattern-uuid".into(),
             signal_mode: SignalMode::Sound,
             schedule: BellSchedule::Interval { base_min, jitter_pct, next_ring_secs },
+            volume: Default::default(),
         }
     }
 
@@ -953,6 +966,7 @@ mod tests {
             signal_mode: SignalMode::Sound,
             enabled: true,
             created_iso: "1970-01-01T00:00:00".into(),
+            volume: Default::default(),
         }
     }
 
@@ -1084,6 +1098,7 @@ mod tests {
             sound_uuid: uuid.into(),
             vibration_pattern_uuid: "pattern".into(),
             signal_mode: SignalMode::Both,
+            volume: Default::default(),
         }
     }
 
@@ -1141,6 +1156,7 @@ mod tests {
             signal_mode: SignalMode::Sound,
             enabled,
             created_iso: "1970-01-01T00:00:00".into(),
+            volume: Default::default(),
         }
     }
 
@@ -1358,6 +1374,84 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         let (bells, _seed) = session_bells_from_db(&db, Some(600), DisplayMode::Countdown, SessionMode::Timer);
         assert!(bells.is_empty(), "master off must yield empty schedule");
+    }
+
+    // ── Each bell's own volume ─────────────────────────────────────
+
+    use crate::bell_volume::BellVolume;
+    use crate::settings_keys::{end_bell_volume_key_for_mode, STARTING_BELL_VOLUME_KEY};
+
+    fn pct(p: f64) -> BellVolume {
+        BellVolume::from_percent(p)
+    }
+
+    #[test]
+    fn the_starting_bell_cue_carries_its_volume() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("starting_bell_active", "true").unwrap();
+        let cue = starting_bell_cue_from_db(&db, SessionMode::Timer).unwrap();
+        assert_eq!(cue.volume, BellVolume::default(), "unset is the middle");
+        db.set_setting(STARTING_BELL_VOLUME_KEY, "30").unwrap();
+        let cue = starting_bell_cue_from_db(&db, SessionMode::Timer).unwrap();
+        assert_eq!(cue.volume, pct(30.0));
+    }
+
+    #[test]
+    fn each_modes_end_bell_cue_carries_its_own_volume() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting(end_bell_volume_key_for_mode(SessionMode::Timer), "20").unwrap();
+        db.set_setting(end_bell_volume_key_for_mode(SessionMode::Guided), "80").unwrap();
+        let volume = |mode| end_bell_cue_from_db(&db, DisplayMode::Countdown, mode).unwrap().volume;
+        assert_eq!(volume(SessionMode::Timer), pct(20.0));
+        assert_eq!(volume(SessionMode::Guided), pct(80.0));
+        assert_eq!(volume(SessionMode::BoxBreath), BellVolume::default());
+    }
+
+    #[test]
+    fn a_bad_stored_volume_is_repaired() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("starting_bell_active", "true").unwrap();
+        db.set_setting(STARTING_BELL_VOLUME_KEY, "loud").unwrap();
+        assert_eq!(
+            starting_bell_cue_from_db(&db, SessionMode::Timer).unwrap().volume,
+            BellVolume::default(),
+        );
+    }
+
+    #[test]
+    fn each_box_breath_cue_carries_its_phases_volume() {
+        let db = Database::open_in_memory().unwrap();
+        db.seed_box_breath_phases().unwrap();
+        db.set_setting("boxbreath_cues_active", "true").unwrap();
+        for (phase, volume) in [(BoxBreathPhaseId::In, 40.0), (BoxBreathPhaseId::Out, 90.0)] {
+            db.set_box_breath_phase(
+                phase, true, SignalMode::Sound, BUNDLED_BOWL_UUID,
+                BUNDLED_PATTERN_PULSE_UUID, pct(volume),
+            )
+            .unwrap();
+        }
+        let cues = box_breath_cues_from_db(&db);
+        assert_eq!(cues.in_phase.unwrap().volume, pct(40.0));
+        assert_eq!(cues.out_phase.unwrap().volume, pct(90.0));
+    }
+
+    #[test]
+    fn each_interval_bell_carries_its_rows_volume() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("interval_bells_active", "true").unwrap();
+        for _ in 0..2 {
+            db.insert_interval_bell(
+                IntervalBellKind::Interval, 5, 0, BUNDLED_BOWL_UUID,
+                BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound,
+            )
+            .unwrap();
+        }
+        let rows = db.list_interval_bells().unwrap();
+        db.update_interval_bell(&IntervalBell { volume: pct(15.0), ..rows[1].clone() }).unwrap();
+        let (bells, _) =
+            session_bells_from_db(&db, Some(600), DisplayMode::Countdown, SessionMode::Timer);
+        let volumes: Vec<BellVolume> = bells.iter().map(|b| b.volume).collect();
+        assert_eq!(volumes, vec![BellVolume::default(), pct(15.0)]);
     }
 
     // ── Timer-only bells ───────────────────────────────────────────

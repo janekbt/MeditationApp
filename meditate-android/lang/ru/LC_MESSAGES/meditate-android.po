@@ -10,9 +10,6 @@ msgstr ""
 msgid "1 day · keep going"
 msgstr "1 день · продолжайте"
 
-msgid "Bell volume"
-msgstr "Громкость колоколов"
-
 msgid "Cancel"
 msgstr "Отмена"
 
@@ -151,9 +148,6 @@ msgstr "Параметры"
 msgid "Preferred time"
 msgstr "Любимое время"
 
-msgid "Relative to the system alarm volume"
-msgstr "Относительно системной громкости будильника"
-
 msgid "Save"
 msgstr "Сохранить"
 
@@ -175,9 +169,6 @@ msgstr "Статистика"
 msgid "Stop"
 msgstr "Остановить"
 
-msgid "System alarm volume"
-msgstr "Громкость будильника"
-
 msgid "This file has no audio track"
 msgstr "В этом файле нет звуковой дорожки"
 
@@ -195,6 +186,9 @@ msgstr "Типичная сессия"
 
 msgid "Undo"
 msgstr "Отменить"
+
+msgid "Volume"
+msgstr "Громкость"
 
 msgid "min"
 msgstr "мин"

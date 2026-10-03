@@ -261,7 +261,8 @@ Recompute: `recompute_interval_bell`. `target_id` is the bell uuid.
   "vibration_pattern_uuid":  "550e8400-e29b-41d4-a716-446655440006",
   "signal_mode":             "sound",
   "enabled":                 true,
-  "created_iso":             "2026-05-13T07:30:00Z"
+  "created_iso":             "2026-05-13T07:30:00Z",
+  "volume":                  50
 }
 ```
 
@@ -279,6 +280,11 @@ Recompute: `recompute_interval_bell`. `target_id` is the bell uuid.
   `"sound_and_vibration"`.
 - `enabled` — bool. Disabled bells stay in the row set but are
   filtered out of scheduling.
+- `volume` — the bell's volume in percent, 0–100 in steps of 5
+  (`meditate_core::bell_volume`). Added after v26.8.5: events
+  without it apply as 50. An older build ignores the field, so
+  editing the bell there writes an event without it and the volume
+  falls back to 50.
 
 ### `interval_bell_delete`
 
@@ -369,7 +375,8 @@ whether the phase emits a signal at all) ride this event.
   "enabled":      true,
   "signal_mode":  "sound_and_vibration",
   "sound_uuid":   "550e8400-e29b-41d4-a716-446655440004",
-  "pattern_uuid": "550e8400-e29b-41d4-a716-446655440006"
+  "pattern_uuid": "550e8400-e29b-41d4-a716-446655440006",
+  "volume":       50
 }
 ```
 
@@ -379,6 +386,8 @@ whether the phase emits a signal at all) ride this event.
 - `sound_uuid` / `pattern_uuid` — uuids of bell_sound /
   vibration_pattern rows, or `null` if `signal_mode` makes that
   channel inapplicable.
+- `volume` — the cue's volume in percent; same rules as
+  `interval_bell_*`'s `volume`.
 
 ## Settings
 

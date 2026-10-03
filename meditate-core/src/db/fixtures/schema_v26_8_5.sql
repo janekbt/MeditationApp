@@ -1,61 +1,5 @@
-//! Version sentinels + the SQL schema string applied at DB init.
-
-use crate::bell_volume::DEFAULT as BELL_VOLUME_DEFAULT;
-use crate::seeds::{BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID};
-
-/// On-disk schema version. Bumped when the SQL in `SCHEMA` changes in
-/// a way that an older build cannot read safely. A DB whose
-/// `PRAGMA user_version` exceeds this constant is rejected at open
-/// time to prevent a downgrade from silently corrupting forward-only
-/// data.
-pub(crate) const SCHEMA_VERSION: u32 = 1;
-
-/// Cache materialization version. Bumped when `apply_event_inner`
-/// learns a new event kind it previously recorded-but-skipped, or
-/// changes the cache columns a kind materialises. On open, if the
-/// stored value is less than this constant, every event in the log
-/// is re-applied so historical events for newly-understood kinds
-/// land in the cache. Stored in `sync_state` (local-only) rather
-/// than `settings` (event-sourced) so peers don't see each other's
-/// cache progress as something to sync.
-pub(crate) const CACHE_SCHEMA_VERSION: u32 = 2;
-
-/// Columns added after a release, as (table, column, definition).
-/// `CREATE TABLE IF NOT EXISTS` leaves an existing table alone, so
-/// `add_missing_columns` adds these to databases created by an older
-/// build. Only additive, defaulted columns belong here: the release
-/// that created the database can still open and write it, so
-/// `SCHEMA_VERSION` stays put and going back stays possible.
-const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
-    ("interval_bells", "volume_pct", "INTEGER NOT NULL DEFAULT 50"),
-    ("box_breath_phases", "volume_pct", "INTEGER NOT NULL DEFAULT 50"),
-];
-
-/// Add any `ADDED_COLUMNS` the database lacks. Idempotent.
-pub(super) fn add_missing_columns(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
-    for (table, column, definition) in ADDED_COLUMNS {
-        let present: bool = conn.query_row(
-            &format!("SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = ?1"),
-            [column],
-            |row| row.get::<_, i64>(0).map(|n| n > 0),
-        )?;
-        if !present {
-            conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {definition};"))?;
-        }
-    }
-    Ok(())
-}
-
-/// `sync_state` key holding the device-local cache schema version.
-pub(crate) const CACHE_SCHEMA_VERSION_KEY: &str = "cache_schema_version";
-
-/// Build the SQL schema string with the seed UUID constants
-/// substituted in. Called once per `Database::open`. The cost is one
-/// allocation; the gain is a single source of truth for bundled
-/// row UUIDs — schema defaults and `crate::seeds::*` agree by
-/// construction.
-pub(super) fn schema() -> String {
-    format!("
+-- Database schema as shipped in v26.8.5 (the last release before
+-- per-bell volumes). Used to test the migration; never edit.
     CREATE TABLE IF NOT EXISTS labels (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL COLLATE NOCASE UNIQUE,
@@ -95,20 +39,16 @@ pub(super) fn schema() -> String {
         kind                   TEXT NOT NULL CHECK (kind IN ('interval', 'fixed_from_start', 'fixed_from_end')),
         minutes                INTEGER NOT NULL,
         jitter_pct             INTEGER NOT NULL DEFAULT 0,
-        sound_uuid             TEXT NOT NULL DEFAULT '{BUNDLED_BOWL_UUID}',
+        sound_uuid             TEXT NOT NULL DEFAULT 'f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0001',
         -- Default uses the bundled Pulse pattern's stable UUID
         -- (BUNDLED_PATTERN_PULSE_UUID in src/db/mod.rs). Kept literal
         -- here to avoid plumbing a shell-side const into the core
         -- schema string.
-        vibration_pattern_uuid TEXT NOT NULL DEFAULT '{BUNDLED_PATTERN_PULSE_UUID}',
+        vibration_pattern_uuid TEXT NOT NULL DEFAULT '7e9c4d2f-5a8b-4f1d-9e3c-2d6f7a8b0001',
         signal_mode            TEXT NOT NULL DEFAULT 'sound'
                                CHECK (signal_mode IN ('sound', 'vibration', 'both')),
         enabled                INTEGER NOT NULL DEFAULT 1,
-        created_iso            TEXT NOT NULL,
-        -- Bell volume in percent (meditate_core::bell_volume).
-        -- Added after v26.8.5; `add_missing_columns` adds it to older
-        -- databases.
-        volume_pct             INTEGER NOT NULL DEFAULT {BELL_VOLUME_DEFAULT}
+        created_iso            TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS sessions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -208,10 +148,8 @@ pub(super) fn schema() -> String {
         enabled      INTEGER NOT NULL DEFAULT 0,
         signal_mode  TEXT NOT NULL DEFAULT 'sound'
                      CHECK (signal_mode IN ('sound', 'vibration', 'both')),
-        sound_uuid   TEXT NOT NULL DEFAULT '{BUNDLED_BOWL_UUID}',
-        pattern_uuid TEXT NOT NULL DEFAULT '{BUNDLED_PATTERN_PULSE_UUID}',
-        -- See interval_bells.volume_pct.
-        volume_pct   INTEGER NOT NULL DEFAULT {BELL_VOLUME_DEFAULT}
+        sound_uuid   TEXT NOT NULL DEFAULT 'f0c2e8a1-3a72-4d4f-9c8b-1b0e5d8c0001',
+        pattern_uuid TEXT NOT NULL DEFAULT '7e9c4d2f-5a8b-4f1d-9e3c-2d6f7a8b0001'
     );
     CREATE TABLE IF NOT EXISTS settings (
         key   TEXT PRIMARY KEY,
@@ -325,5 +263,4 @@ pub(super) fn schema() -> String {
         label_id         INTEGER REFERENCES labels(id) ON DELETE SET NULL,
         guided_file_uuid TEXT
     );
-")
-}
+

@@ -139,6 +139,7 @@ pub fn default_presets() -> [(&'static str, &'static str, SessionMode, PresetCon
         prep_time_secs: 5,
         signal_mode: "sound".to_string(),
         vibration_pattern_uuid: BUNDLED_PATTERN_PULSE_UUID.into(),
+        volume: Default::default(),
     };
     let sitting = PresetConfig {
         label: PresetLabel {
@@ -152,6 +153,7 @@ pub fn default_presets() -> [(&'static str, &'static str, SessionMode, PresetCon
             sound_uuid: BUNDLED_BELL_UUID.into(),
             signal_mode: "sound".to_string(),
             vibration_pattern_uuid: BUNDLED_PATTERN_PULSE_UUID.into(),
+            volume: Default::default(),
         },
         timing: PresetTiming::Timer { stopwatch: false, duration_secs: 15 * 60 },
         cues_signal_mode: "both".to_string(),
@@ -170,6 +172,7 @@ pub fn default_presets() -> [(&'static str, &'static str, SessionMode, PresetCon
             sound_uuid: BUNDLED_BELL_UUID.into(),
             signal_mode: "sound".to_string(),
             vibration_pattern_uuid: BUNDLED_PATTERN_PULSE_UUID.into(),
+            volume: Default::default(),
         },
         timing: PresetTiming::BoxBreath {
             stopwatch: false,

@@ -23,6 +23,7 @@ pub mod timer;
 pub mod vibration;
 pub mod vibration_editor;
 pub mod vibrations;
+mod volume_row;
 mod window;
 
 use gtk::gio;

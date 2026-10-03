@@ -3,6 +3,7 @@
 //! fixed-from-start, fixed-from-end. All CRUD ops emit sync events
 //! so the library round-trips across devices.
 
+use crate::bell_volume::BellVolume;
 use rusqlite::{params, OptionalExtension};
 
 use super::events::EventKind;
@@ -34,6 +35,7 @@ pub struct IntervalBell {
     pub signal_mode: SignalMode,
     pub enabled: bool,
     pub created_iso: String,
+    pub volume: crate::bell_volume::BellVolume,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,6 +107,7 @@ impl Database {
             "signal_mode": signal_mode.as_db_str(),
             "enabled": true,
             "created_iso": created_iso,
+            "volume": BellVolume::default().percent(),
         }).to_string();
         self.emit_event(&tx, EventKind::IntervalBellInsert, &bell_uuid, payload)?;
         tx.commit()?;
@@ -130,8 +133,9 @@ impl Database {
         self.conn.execute(
             "UPDATE interval_bells
                 SET kind = ?1, minutes = ?2, jitter_pct = ?3, sound_uuid = ?4,
-                    vibration_pattern_uuid = ?5, signal_mode = ?6, enabled = ?7
-              WHERE uuid = ?8",
+                    vibration_pattern_uuid = ?5, signal_mode = ?6, enabled = ?7,
+                    volume_pct = ?8
+              WHERE uuid = ?9",
             params![
                 bell.kind.as_db_str(),
                 bell.minutes,
@@ -140,6 +144,7 @@ impl Database {
                 bell.vibration_pattern_uuid,
                 bell.signal_mode.as_db_str(),
                 i64::from(bell.enabled),
+                bell.volume.percent(),
                 bell.uuid,
             ],
         )?;
@@ -153,6 +158,7 @@ impl Database {
             "signal_mode": bell.signal_mode.as_db_str(),
             "enabled": bell.enabled,
             "created_iso": created_iso,
+            "volume": bell.volume.percent(),
         }).to_string();
         self.emit_event(&tx, EventKind::IntervalBellUpdate, bell.uuid.as_str(), payload)?;
         tx.commit()?;
@@ -210,7 +216,8 @@ impl Database {
     pub fn list_interval_bells(&self) -> Result<Vec<IntervalBell>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, uuid, kind, minutes, jitter_pct, sound_uuid,
-                    vibration_pattern_uuid, signal_mode, enabled, created_iso
+                    vibration_pattern_uuid, signal_mode, enabled, created_iso,
+                    volume_pct
              FROM interval_bells
              ORDER BY id ASC",
         )?;
@@ -231,6 +238,7 @@ impl Database {
                         .expect("interval_bells.signal_mode violates CHECK constraint"),
                     enabled: row.get::<_, i64>(8)? != 0,
                     created_iso: row.get(9)?,
+                    volume: BellVolume::from_percent(row.get::<_, i64>(10)? as f64),
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -266,11 +274,14 @@ impl Database {
             let signal_mode = v["signal_mode"].as_str().unwrap_or("sound");
             let enabled = v["enabled"].as_bool().unwrap_or(true);
             let created_iso = v["created_iso"].as_str().unwrap_or_default();
+            // Events from builds before per-bell volumes carry none.
+            let volume = v["volume"].as_f64().map_or_else(BellVolume::default, BellVolume::from_percent);
             self.conn.execute(
                 "INSERT INTO interval_bells
                     (uuid, kind, minutes, jitter_pct, sound_uuid,
-                     vibration_pattern_uuid, signal_mode, enabled, created_iso)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                     vibration_pattern_uuid, signal_mode, enabled, created_iso,
+                     volume_pct)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
                  ON CONFLICT(uuid) DO UPDATE SET
                     kind                   = excluded.kind,
                     minutes                = excluded.minutes,
@@ -279,7 +290,8 @@ impl Database {
                     vibration_pattern_uuid = excluded.vibration_pattern_uuid,
                     signal_mode            = excluded.signal_mode,
                     enabled                = excluded.enabled,
-                    created_iso            = excluded.created_iso",
+                    created_iso            = excluded.created_iso,
+                    volume_pct             = excluded.volume_pct",
                 params![
                     bell_uuid,
                     kind,
@@ -290,6 +302,7 @@ impl Database {
                     signal_mode,
                     i64::from(enabled),
                     created_iso,
+                    volume.percent(),
                 ],
             )?;
         }
@@ -519,6 +532,7 @@ mod tests {
             signal_mode: SignalMode::Sound,
             enabled: true,
             created_iso: String::new(),
+            volume: Default::default(),
         }).unwrap();
         let updates: Vec<_> = db.pending_events().unwrap()
             .into_iter()
@@ -693,5 +707,87 @@ mod tests {
         assert_eq!(b.kind, IntervalBellKind::FixedFromStart);
         assert_eq!(b.minutes, 10);
         assert_eq!(b.sound_uuid, BUNDLED_GONG_UUID);
+    }
+
+    // ── Volume ─────────────────────────────────────────────────────
+
+    use crate::bell_volume::BellVolume;
+
+    fn only_bell(db: &Database) -> IntervalBell {
+        let bells = db.list_interval_bells().unwrap();
+        assert_eq!(bells.len(), 1);
+        bells.into_iter().next().unwrap()
+    }
+
+    fn insert_one(db: &Database) -> IntervalBell {
+        db.insert_interval_bell(
+            IntervalBellKind::Interval, 5, 0, BUNDLED_BOWL_UUID,
+            BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound,
+        )
+        .unwrap();
+        only_bell(db)
+    }
+
+    #[test]
+    fn a_new_bell_starts_at_the_middle_volume() {
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(insert_one(&db).volume, BellVolume::default());
+        let insert = db.pending_events().unwrap().into_iter().map(|(_, e)| e)
+            .find(|e| e.kind == "interval_bell_insert").unwrap();
+        let payload: serde_json::Value = serde_json::from_str(&insert.payload).unwrap();
+        assert_eq!(payload["volume"], 50);
+    }
+
+    #[test]
+    fn update_stores_the_volume_and_syncs_it() {
+        let db = Database::open_in_memory().unwrap();
+        let bell = insert_one(&db);
+        let volume = BellVolume::from_percent(30.0);
+        db.update_interval_bell(&IntervalBell { volume, ..bell }).unwrap();
+        assert_eq!(only_bell(&db).volume, volume);
+        let update = db.pending_events().unwrap().into_iter().map(|(_, e)| e)
+            .find(|e| e.kind == "interval_bell_update").unwrap();
+        let payload: serde_json::Value = serde_json::from_str(&update.payload).unwrap();
+        assert_eq!(payload["volume"], 30);
+    }
+
+    #[test]
+    fn toggling_enabled_keeps_the_volume() {
+        let db = Database::open_in_memory().unwrap();
+        let bell = insert_one(&db);
+        let volume = BellVolume::from_percent(80.0);
+        db.update_interval_bell(&IntervalBell { volume, ..bell.clone() }).unwrap();
+        db.set_interval_bell_enabled(bell.uuid.as_str(), false).unwrap();
+        assert_eq!(only_bell(&db).volume, volume);
+    }
+
+    #[test]
+    fn a_synced_volume_lands_in_the_row() {
+        let db = Database::open_in_memory().unwrap();
+        let mut event = synth_interval_bell_update("b1", 5, "peer", 5, true);
+        let mut payload: serde_json::Value = serde_json::from_str(&event.payload).unwrap();
+        payload["volume"] = 70.into();
+        event.payload = payload.to_string();
+        db.apply_event(&event).unwrap();
+        assert_eq!(only_bell(&db).volume, BellVolume::from_percent(70.0));
+    }
+
+    #[test]
+    fn a_synced_bell_from_an_older_version_gets_the_middle_volume() {
+        // Events written before per-bell volumes carry no "volume".
+        let db = Database::open_in_memory().unwrap();
+        db.apply_event(&synth_interval_bell_update("b1", 5, "peer", 5, true)).unwrap();
+        assert_eq!(only_bell(&db).volume, BellVolume::default());
+    }
+
+    #[test]
+    fn a_bad_synced_volume_is_repaired() {
+        let db = Database::open_in_memory().unwrap();
+        let mut event = synth_interval_bell_update("b1", 5, "peer", 5, true);
+        let mut payload: serde_json::Value = serde_json::from_str(&event.payload).unwrap();
+        payload["volume"] = 333.into();
+        event.payload = payload.to_string();
+        db.apply_event(&event).unwrap();
+        assert_eq!(only_bell(&db).volume.percent(), 100);
     }
 }

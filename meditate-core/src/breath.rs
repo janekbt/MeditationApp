@@ -78,6 +78,7 @@ pub struct BoxBreathPhase {
     pub signal_mode: crate::bells::SignalMode,
     pub sound_uuid: crate::db::BellSoundUuid,
     pub pattern_uuid: crate::db::VibrationPatternUuid,
+    pub volume: crate::bell_volume::BellVolume,
 }
 
 /// Translatable key for the running-page phase label ("Breathe in",

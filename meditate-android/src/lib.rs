@@ -23,7 +23,8 @@ mod about;
 #[cfg(target_os = "android")]
 mod insets;
 mod theme;
-mod bell_gain;
+#[cfg(any(target_os = "android", test))]
+mod alarm_volume;
 #[cfg(target_os = "android")]
 mod screen;
 #[cfg(target_os = "android")]
@@ -313,7 +314,7 @@ fn dispatch_effects(effects: &[meditate_core::session::Effect]) {
         if route.signal_mode.includes_sound() {
             let path = bell_sound_path(route.sound_uuid);
             audio::stop(app);
-            audio::play(app, &path, bell_gain::get());
+            audio::play(app, &path, alarm_volume::gain(route.volume));
         }
         if route.signal_mode.includes_vibration() {
             if let Some(db_arc) = DATABASE.get() {
@@ -3546,6 +3547,15 @@ fn refresh_bell_rows(ui: &MainWindow) {
     ui.set_starting_bell_pattern_name(pattern_name(&sp).into());
     ui.set_end_bell_pattern_name(pattern_name(&ep).into());
 
+    // Volumes (issue #1); unset or unreadable is the middle.
+    let volume = |key: &str| {
+        meditate_core::bell_volume::BellVolume::parse(&read_global_setting(key, "")).percent()
+    };
+    ui.set_starting_bell_volume(volume(meditate_core::settings_keys::STARTING_BELL_VOLUME_KEY).into());
+    ui.set_end_bell_volume(
+        volume(meditate_core::settings_keys::end_bell_volume_key_for_mode(eb_mode)).into(),
+    );
+
     // Preparation Time (B-5b).
     ui.set_prep_time_active(
         read_global_setting("preparation_time_active", "false") == "true",
@@ -3623,25 +3633,28 @@ fn write_bb_phase(
     let Some(db_arc) = DATABASE.get() else { return; };
     let Ok(guard) = db_arc.lock() else { return; };
     let Some(db) = guard.as_ref() else { return; };
-    let (ce, csm, csu, cpu) = match db.get_box_breath_phase(phase) {
+    let (ce, csm, csu, cpu, volume) = match db.get_box_breath_phase(phase) {
         Ok(Some(r)) => (
             r.enabled,
             r.signal_mode,
             r.sound_uuid.to_string(),
             r.pattern_uuid.to_string(),
+            r.volume,
         ),
         _ => (
             false,
             meditate_core::bells::SignalMode::Sound,
             meditate_core::seeds::BUNDLED_BOWL_UUID.to_string(),
             meditate_core::seeds::BUNDLED_PATTERN_PULSE_UUID.to_string(),
+            meditate_core::bell_volume::BellVolume::default(),
         ),
     };
     let e = enabled.unwrap_or(ce);
     let sm = signal_mode.unwrap_or(csm);
     let su = sound_uuid.map_or(csu, str::to_string);
     let pu = pattern_uuid.map_or(cpu, str::to_string);
-    let _ = db.set_box_breath_phase(phase, e, sm, &su, &pu);
+    // The volume has its own row (`meditate_core::bell_volume::write`).
+    let _ = db.set_box_breath_phase(phase, e, sm, &su, &pu, volume);
 }
 
 /// Push every Box-Breath phase's persisted cue state into the
@@ -3680,24 +3693,28 @@ fn refresh_boxbreath_cues(ui: &MainWindow) {
                 ui.set_bbc_in_signal_mode(si);
                 ui.set_bbc_in_sound_name(sn.into());
                 ui.set_bbc_in_pattern_name(pn.into());
+                ui.set_bbc_in_volume(r.volume.percent().into());
             }
             P::HoldIn => {
                 ui.set_bbc_holdin_active(r.enabled);
                 ui.set_bbc_holdin_signal_mode(si);
                 ui.set_bbc_holdin_sound_name(sn.into());
                 ui.set_bbc_holdin_pattern_name(pn.into());
+                ui.set_bbc_holdin_volume(r.volume.percent().into());
             }
             P::Out => {
                 ui.set_bbc_out_active(r.enabled);
                 ui.set_bbc_out_signal_mode(si);
                 ui.set_bbc_out_sound_name(sn.into());
                 ui.set_bbc_out_pattern_name(pn.into());
+                ui.set_bbc_out_volume(r.volume.percent().into());
             }
             P::HoldOut => {
                 ui.set_bbc_holdout_active(r.enabled);
                 ui.set_bbc_holdout_signal_mode(si);
                 ui.set_bbc_holdout_sound_name(sn.into());
                 ui.set_bbc_holdout_pattern_name(pn.into());
+                ui.set_bbc_holdout_volume(r.volume.percent().into());
             }
         }
     }
@@ -4316,6 +4333,8 @@ fn build_ui() -> MainWindow {
                 #[cfg(target_os = "android")]
                 {
                     let _ = prev;
+                    // A Volume-row preview doesn't ring into the session.
+                    stop_volume_preview(&ui);
                     let settings = build_session_settings(
                         shape,
                         ui.get_stopwatch_on(),
@@ -8023,6 +8042,8 @@ fn build_ui() -> MainWindow {
         let weak = ui.as_weak();
         #[cfg(target_os = "android")]
         let bell_preview = bell_preview.clone();
+        #[cfg(target_os = "android")]
+        let bell_chooser_target = bell_chooser_target.clone();
         ui.on_bell_preview_toggle(move |uuid| {
             #[cfg(target_os = "android")]
             {
@@ -8040,7 +8061,9 @@ fn build_ui() -> MainWindow {
                             // the swap clean.
                             audio::stop(app);
                             let path = bell_sound_path(&id);
-                            dur_ms = audio::play(app, &path, bell_gain::get());
+                            // At the volume of the bell being chosen for.
+                            let volume = chooser_bell_volume(&ui, bell_chooser_target.get());
+                            dur_ms = audio::play(app, &path, alarm_volume::gain(volume));
                         }
                         ui.set_bell_preview_uuid(id.into());
 
@@ -8197,6 +8220,9 @@ fn build_ui() -> MainWindow {
                     pattern_name(meditate_core::seeds::BUNDLED_PATTERN_PULSE_UUID)
                         .into(),
                 );
+                ui.set_ie_volume(
+                    meditate_core::bell_volume::BellVolume::default().percent().into(),
+                );
                 ui.set_interval_editor_page(true);
             }
             let _ = weak.clone();
@@ -8238,6 +8264,7 @@ fn build_ui() -> MainWindow {
                 let pu = bell.vibration_pattern_uuid.to_string();
                 ui.set_ie_pattern_name(pattern_name(&pu).into());
                 ui.set_ie_pattern_uuid(pu.into());
+                ui.set_ie_volume(bell.volume.percent().into());
                 *editing_ib.borrow_mut() = Some(bell);
                 ui.set_interval_editor_page(true);
             }
@@ -8324,6 +8351,7 @@ fn build_ui() -> MainWindow {
                 // Drop edit context so the next "Create" starts
                 // clean.
                 editing_ib.borrow_mut().take();
+                stop_volume_preview(&ui);
                 ui.set_interval_editor_page(false);
             }
             let _ = weak.clone();
@@ -8355,6 +8383,9 @@ fn build_ui() -> MainWindow {
                 let signal_mode =
                     signal_mode_from_index(ui.get_ie_signal_mode());
                 let pattern = ui.get_ie_pattern_uuid().to_string();
+                let volume = meditate_core::bell_volume::BellVolume::from_percent(
+                    ui.get_ie_volume().into(),
+                );
                 let original = editing_ib.borrow_mut().take();
                 if let Some(db_arc) = DATABASE.get() {
                     if let Ok(guard) = db_arc.lock() {
@@ -8372,12 +8403,13 @@ fn build_ui() -> MainWindow {
                                     bell.signal_mode = signal_mode;
                                     bell.vibration_pattern_uuid =
                                         pattern.clone().into();
+                                    bell.volume = volume;
                                     db.update_interval_bell(&bell)
-                                        .map(|()| 0)
                                 }
                                 None => {
                                     // Create with the chosen Type
-                                    // + pattern (B-2c).
+                                    // + pattern (B-2c); a new row
+                                    // starts at the default volume.
                                     db.insert_interval_bell(
                                         kind,
                                         minutes,
@@ -8386,6 +8418,14 @@ fn build_ui() -> MainWindow {
                                         &pattern,
                                         signal_mode,
                                     )
+                                    .and_then(|rowid| db.find_interval_bell_by_id(rowid))
+                                    .and_then(|bell| match bell {
+                                        Some(bell) if bell.volume != volume => db
+                                            .update_interval_bell(
+                                                &meditate_core::IntervalBell { volume, ..bell },
+                                            ),
+                                        _ => Ok(()),
+                                    })
                                 }
                             };
                             if let Err(e) = res {
@@ -8397,6 +8437,7 @@ fn build_ui() -> MainWindow {
                         }
                     }
                 }
+                stop_volume_preview(&ui);
                 ui.set_interval_editor_page(false);
                 populate_interval_bells(&ui);
             }
@@ -9521,17 +9562,6 @@ fn build_ui() -> MainWindow {
                     meditate_core::goal::daily_goal_mins_from_db(db)
                 };
                 ui.set_prefs_goal_mins(goal_mins as i32);
-                // Bell volume — seed the Sound group's slider.
-                let bell_volume = {
-                    let Some(db_arc) = DATABASE.get() else { return; };
-                    let Ok(guard) = db_arc.lock() else { return; };
-                    let Some(db) = guard.as_ref() else { return; };
-                    meditate_core::bell_volume::read(db)
-                };
-                ui.set_bell_volume_min(meditate_core::bell_volume::MIN.into());
-                ui.set_bell_volume_max(meditate_core::bell_volume::MAX.into());
-                ui.set_bell_volume_step(meditate_core::bell_volume::STEP.into());
-                ui.set_prefs_bell_volume(bell_volume.percent().into());
                 if let Some(app) = android_app() {
                     ui.set_about_version(
                         about::version_name(app).into(),
@@ -9549,8 +9579,6 @@ fn build_ui() -> MainWindow {
             if let Some(ui) = weak.upgrade() {
                 // Drop any typed-but-unsaved password on leave.
                 ui.set_prefs_password(slint::SharedString::new());
-                // The bell-volume preview never outlives Preferences.
-                stop_volume_preview(&ui);
                 ui.set_preferences_page(false);
             }
             let _ = weak.clone();
@@ -9827,59 +9855,50 @@ fn build_ui() -> MainWindow {
     // Daily-goal commit (ST): persist via core, re-derive the
     // Stats surfaces (ring + insights + heatmap threshold) right
     // away — mirrors GTK's write + InvalidateScope::STATS.
-    // Bell volume slider: dragging applies the level to the ringing
-    // bell at once; releasing saves it (device-local, core) and plays
-    // the end bell so the user hears the new level — GTK parity.
-    ui.on_bell_volume_changed(move |percent| {
-        let volume = meditate_core::bell_volume::BellVolume::from_percent(percent.into());
-        bell_gain::set(volume);
-        #[cfg(target_os = "android")]
-        if let Some(app) = android_app() {
-            audio::set_volume(app, bell_gain::get());
-        }
-    });
+    // Bell volume rows (issue #1): one per bell, under its Sound row.
+    // Dragging changes the ringing preview at once; releasing saves
+    // the level (core, synced) and plays the bell at it. The interval
+    // bell editor stages its volume and saves it with the bell.
+    ui.set_bell_volume_min(meditate_core::bell_volume::MIN.into());
+    ui.set_bell_volume_max(meditate_core::bell_volume::MAX.into());
+    ui.set_bell_volume_step(meditate_core::bell_volume::STEP.into());
     {
     let weak = ui.as_weak();
-    ui.on_bell_volume_released(move |percent| {
-        let volume = meditate_core::bell_volume::BellVolume::from_percent(percent.into());
-        bell_gain::set(volume);
-        let _ = &weak;
+    ui.on_bell_volume_changed(move |slot, percent| {
+        let _ = (&weak, &slot, percent);
         #[cfg(target_os = "android")]
-        {
-            let preview_uuid = {
-                let Some(db_arc) = DATABASE.get() else { return; };
-                let Ok(guard) = db_arc.lock() else { return; };
-                let Some(db) = guard.as_ref() else { return; };
-                if let Err(e) = meditate_core::bell_volume::write(db, volume) {
-                    meditate_core::log("bell_volume.write", &format!("failed: {e:?}"));
-                }
-                meditate_core::bell_volume::preview_sound_uuid(db)
-            };
-            if let Some(app) = android_app() {
-                audio::stop(app);
-                let dur_ms =
-                    audio::play(app, &bell_sound_path(&preview_uuid), bell_gain::get());
-                let generation = VOLUME_PREVIEW_GEN.with(|g| {
-                    g.set(g.get() + 1);
-                    g.get()
-                });
-                if let Some(ui) = weak.upgrade() {
-                    ui.set_bell_volume_previewing(dur_ms > 0);
-                }
-                if dur_ms > 0 {
-                    let weak = weak.clone();
-                    slint::Timer::single_shot(
-                        std::time::Duration::from_millis(dur_ms as u64),
-                        move || {
-                            if VOLUME_PREVIEW_GEN.with(std::cell::Cell::get) == generation {
-                                if let Some(ui) = weak.upgrade() {
-                                    ui.set_bell_volume_previewing(false);
-                                }
-                            }
-                        },
-                    );
+        if let Some(ui) = weak.upgrade() {
+            if ui.get_volume_previewing() == slot {
+                if let Some(app) = android_app() {
+                    let volume = meditate_core::bell_volume::BellVolume::from_percent(percent.into());
+                    audio::set_volume(app, alarm_volume::gain(volume));
                 }
             }
+        }
+    });
+    }
+    {
+    let weak = ui.as_weak();
+    ui.on_bell_volume_released(move |slot, percent| {
+        let _ = (&weak, &slot, percent);
+        #[cfg(target_os = "android")]
+        {
+            let Some(ui) = weak.upgrade() else { return; };
+            let volume = meditate_core::bell_volume::BellVolume::from_percent(percent.into());
+            let sound = match app::volume_slot(slot.as_str(), setup_session_mode(&ui)) {
+                Some(bell) => {
+                    let Some(db_arc) = DATABASE.get() else { return; };
+                    let Ok(guard) = db_arc.lock() else { return; };
+                    let Some(db) = guard.as_ref() else { return; };
+                    if let Err(e) = meditate_core::bell_volume::write(db, bell, volume) {
+                        meditate_core::log("bell_volume.write", &format!("failed: {e:?}"));
+                    }
+                    meditate_core::bell_volume::sound_uuid(db, bell)
+                }
+                // The bell editor: saved with the bell on Save.
+                None => ui.get_ie_sound_uuid().to_string(),
+            };
+            play_volume_preview(&ui, slot.as_str(), &sound, volume);
         }
     });
     }
@@ -9893,12 +9912,6 @@ fn build_ui() -> MainWindow {
         let _ = &weak;
     });
     }
-    ui.on_alarm_volume_tap(move || {
-        #[cfg(target_os = "android")]
-        if let Some(app) = android_app() {
-            audio::open_alarm_volume(app);
-        }
-    });
     {
         let weak = ui.as_weak();
         ui.on_goal_committed(move || {
@@ -10769,6 +10782,14 @@ fn android_main(android_app: slint::android::AndroidApp) {
     // bridges keep targeting the destroyed activity.
     set_android_app(android_app.clone());
     open_database(&android_app);
+    // Bell volumes are absolute: measure this device's alarm range,
+    // and undo a raised alarm volume left behind if the app died
+    // mid-bell.
+    {
+        let app = &android_app;
+        alarm_volume::set_range(audio::alarm_range_db(app));
+        audio::recover_alarm_volume(app);
+    }
     slint::android::init(android_app).unwrap();
     // Translation selection happens at the top of build_ui (via
     // the android_app() accessor set above) — it must precede
@@ -10821,14 +10842,60 @@ thread_local! {
     static VOLUME_PREVIEW_GEN: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
-/// Stop the Preferences bell-volume preview if it's ringing.
+/// Play `sound` at `volume` for the Volume row `slot`, showing its
+/// Stop pill until the bell ends.
+#[cfg(target_os = "android")]
+fn play_volume_preview(
+    ui: &MainWindow,
+    slot: &str,
+    sound: &str,
+    volume: meditate_core::bell_volume::BellVolume,
+) {
+    let Some(app) = android_app() else { return; };
+    audio::stop(app);
+    let dur_ms = audio::play(app, &bell_sound_path(sound), alarm_volume::gain(volume));
+    let generation = VOLUME_PREVIEW_GEN.with(|g| {
+        g.set(g.get() + 1);
+        g.get()
+    });
+    ui.set_volume_previewing(if dur_ms > 0 { slot.into() } else { slint::SharedString::new() });
+    if dur_ms > 0 {
+        let weak = ui.as_weak();
+        slint::Timer::single_shot(std::time::Duration::from_millis(dur_ms as u64), move || {
+            if VOLUME_PREVIEW_GEN.with(std::cell::Cell::get) == generation {
+                if let Some(ui) = weak.upgrade() {
+                    ui.set_volume_previewing(slint::SharedString::new());
+                }
+            }
+        });
+    }
+}
+
+/// The volume of the bell the sound chooser is open for (targets as
+/// in `bell_chooser_target`: 0 starting, 1 end, 2 the bell editor,
+/// 3-6 the Box Breath cues).
+#[cfg(target_os = "android")]
+fn chooser_bell_volume(ui: &MainWindow, target: u8) -> meditate_core::bell_volume::BellVolume {
+    let percent = match target {
+        0 => ui.get_starting_bell_volume(),
+        1 => ui.get_end_bell_volume(),
+        2 => ui.get_ie_volume(),
+        3 => ui.get_bbc_in_volume(),
+        4 => ui.get_bbc_holdin_volume(),
+        5 => ui.get_bbc_out_volume(),
+        _ => ui.get_bbc_holdout_volume(),
+    };
+    meditate_core::bell_volume::BellVolume::from_percent(percent.into())
+}
+
+/// Stop a Volume-row preview if one is ringing.
 #[cfg(target_os = "android")]
 fn stop_volume_preview(ui: &MainWindow) {
-    if !ui.get_bell_volume_previewing() {
+    if ui.get_volume_previewing().is_empty() {
         return;
     }
     VOLUME_PREVIEW_GEN.with(|g| g.set(g.get() + 1));
-    ui.set_bell_volume_previewing(false);
+    ui.set_volume_previewing(slint::SharedString::new());
     if let Some(app) = android_app() {
         audio::stop(app);
     }
@@ -10931,8 +10998,5 @@ fn open_database(android_app: &slint::android::AndroidApp) {
             None
         }
     };
-    if let Some(db) = opened.as_ref() {
-        bell_gain::set(meditate_core::bell_volume::read(db));
-    }
     let _ = DATABASE.set(std::sync::Arc::new(std::sync::Mutex::new(opened)));
 }
