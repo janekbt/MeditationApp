@@ -286,7 +286,7 @@ pub struct TimerView {
     /// `meditate_core::session::Session` — the portable state machine
     /// that owns prep / running / overtime / box-breath / bells /
     /// pause logic. Sole source of truth for elapsed time across
-    /// every mode and phase post Stage 6 of CORE_MIGRATION item 13.
+    /// every mode and phase.
     /// `Some` between start_session and on_stop / finish_overtime /
     /// add_overtime_and_finish; `None` while idle.
     core_session: RefCell<Option<CoreSession>>,

@@ -429,5 +429,3 @@ verified on device.
   in its header and above).
 - `VIBRATION_ARCHITECTURE.md` — vibration pipeline (editor + envelope
   + feedbackd dispatch).
-- `CORE_STRUCTURAL_BACKLOG.md` — outstanding audit-surfaced cleanup
-  items (skipped + deferred).

@@ -33,7 +33,6 @@ Do these BEFORE bumping, so fixes land in the release:
   `msgfmt --check -o /dev/null <file>`.
 - **README.md:** read it end to end; new features present, stale
   claims gone, links resolve.
-- **AUDIT.md open items:** anything that should block a release?
 - **cargo-sources.json:** the Flatpak build runs cargo offline, so
   every crates.io package in `Cargo.lock` must be listed — CI fails
   ~10 minutes in otherwise. Check what changed since the last

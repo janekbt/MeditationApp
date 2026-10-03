@@ -305,7 +305,7 @@ where
 /// shell-side because it needs a host datetime API for the local-time
 /// conversion) shares the second pass without duplicating the vec walk.
 ///
-/// Dedupe (AUDIT.md P2-4): rows whose exact `(start_iso,
+/// Dedupe: rows whose exact `(start_iso,
 /// duration_secs)` already exists in the DB — or appeared earlier
 /// in the same batch — are skipped, so re-importing a backup into
 /// a non-empty log is a no-op instead of doubling it. Second-level
@@ -508,7 +508,7 @@ mod tests {
         assert_eq!(csv_inject_guard(""), "");
     }
 
-    // ── Import dedupe (AUDIT.md P2-4) ────────────────────────────────
+    // ── Import dedupe ────────────────────────────────────────────
 
     #[test]
     fn reimporting_the_same_rows_inserts_nothing() {
