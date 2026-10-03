@@ -257,7 +257,7 @@ Recompute: `recompute_interval_bell`. `target_id` is the bell uuid.
   "kind":                    "interval",
   "minutes":                 5,
   "jitter_pct":              0,
-  "sound":                   "550e8400-e29b-41d4-a716-446655440004",
+  "sound_uuid":              "550e8400-e29b-41d4-a716-446655440004",
   "vibration_pattern_uuid":  "550e8400-e29b-41d4-a716-446655440006",
   "signal_mode":             "sound",
   "enabled":                 true,
@@ -271,18 +271,20 @@ Recompute: `recompute_interval_bell`. `target_id` is the bell uuid.
 - `minutes` — fire cadence (interval) or offset (fixed-from-*).
 - `jitter_pct` — 0-100, jitter applied to interval cadence to
   reduce predictability of cadence-anchored attention.
-- `sound` — bell_sound uuid (or a legacy free-text key for
-  pre-event-sourced rows; the legacy path is still tolerated for
-  forwards compat but no new emit writes it).
-- `vibration_pattern_uuid` — `vibration_patterns.uuid`, or `null`
-  for sound-only bells.
-- `signal_mode` — one of `"sound"`, `"vibration"`,
-  `"sound_and_vibration"`.
+- `sound_uuid` — `bell_sounds.uuid`. Missing or `null` applies as
+  the bundled singing bowl.
+- `vibration_pattern_uuid` — `vibration_patterns.uuid`. Missing or
+  `null` applies as the bundled Pulse pattern.
+- `signal_mode` — one of `"sound"`, `"vibration"`, `"both"`. Any
+  other value fails the table's CHECK constraint (see
+  [Version skew](#version-skew)).
 - `enabled` — bool. Disabled bells stay in the row set but are
   filtered out of scheduling.
 - `volume` — the bell's volume in percent, 0–100 in steps of 5
-  (`meditate_core::bell_volume`). Added after v26.8.5: events
-  without it apply as 50. An older build ignores the field, so
+  (`meditate_core::bell_volume`). Other numbers are clamped to
+  0–100 and rounded to the nearest step; a missing or non-numeric
+  value applies as 50. Added after v26.8.5: events without it
+  apply as 50. An older build ignores the field, so
   editing the bell there writes an event without it and the volume
   falls back to 50.
 
@@ -365,7 +367,9 @@ name (one of `in`, `holdin`, `out`, `holdout`).
 ### `box_breath_phase_update`
 
 There is no `_insert` or `_delete` — the four rows are seeded at
-`Database::init` and persist for the life of the DB. Per-phase
+app start (`Database::seed_all_non_audio`) and persist for the life
+of the DB; applying an event for a phase that has no row yet
+creates it. Per-phase
 configuration changes (which sound plays, which vibration fires,
 whether the phase emits a signal at all) ride this event.
 
@@ -373,7 +377,7 @@ whether the phase emits a signal at all) ride this event.
 {
   "phase":        "in",
   "enabled":      true,
-  "signal_mode":  "sound_and_vibration",
+  "signal_mode":  "both",
   "sound_uuid":   "550e8400-e29b-41d4-a716-446655440004",
   "pattern_uuid": "550e8400-e29b-41d4-a716-446655440006",
   "volume":       50
@@ -381,11 +385,11 @@ whether the phase emits a signal at all) ride this event.
 ```
 
 - `phase` — one of `in`, `holdin`, `out`, `holdout`.
-- `signal_mode` — one of `"sound"`, `"vibration"`,
-  `"sound_and_vibration"`.
+- `signal_mode` — one of `"sound"`, `"vibration"`, `"both"`, as
+  for interval bells.
 - `sound_uuid` / `pattern_uuid` — uuids of bell_sound /
-  vibration_pattern rows, or `null` if `signal_mode` makes that
-  channel inapplicable.
+  vibration_pattern rows. Missing or `null` applies as the bundled
+  singing bowl / Pulse pattern.
 - `volume` — the cue's volume in percent; same rules as
   `interval_bell_*`'s `volume`.
 
