@@ -92,7 +92,7 @@ fn query_amp_control(
         env.exception_clear()?;
         return Ok(true);
     }
-    Ok(ret.z()?)
+    ret.z()
 }
 
 /// Stop any in-flight vibration (preview Stop / supersede).

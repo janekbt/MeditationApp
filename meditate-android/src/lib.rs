@@ -1211,6 +1211,25 @@ fn refresh_guided_manage(ui: &MainWindow) {
     );
 }
 
+/// A single-value slot shared between UI callbacks.
+#[cfg(target_os = "android")]
+type Slot<T> = std::rc::Rc<std::cell::RefCell<Option<T>>>;
+
+/// A deleted guided file kept for Undo: (uuid, name, file_path,
+/// duration_secs, is_starred).
+#[cfg(target_os = "android")]
+type DeletedGuidedFile = (String, String, String, u32, bool);
+
+/// A guided import between the name-dialog confirm and the
+/// worker's result: (uuid, name, dest, secs).
+#[cfg(target_os = "android")]
+type GuidedImportFinalize = (String, String, String, u32);
+
+/// A deleted preset kept for Undo: (uuid, name, mode, is_starred,
+/// config_json).
+#[cfg(target_os = "android")]
+type DeletedPreset = (String, String, meditate_core::SessionMode, bool, String);
+
 /// Discard a pending guided-delete Undo (single-slot snackbar
 /// was preempted by another action, or its window elapsed):
 /// take the slot and run the deferred on-disk `.ogg` cleanup
@@ -1218,11 +1237,7 @@ fn refresh_guided_manage(ui: &MainWindow) {
 /// toast-dismissed deferred `remove_file`.
 #[cfg(target_os = "android")]
 fn discard_pending_guided_delete(
-    slot: &std::rc::Rc<
-        std::cell::RefCell<
-            Option<(String, String, String, u32, bool)>,
-        >,
-    >,
+    slot: &Slot<DeletedGuidedFile>,
 ) {
     if let Some((_, _, path, _, _)) = slot.borrow_mut().take() {
         let _ = std::fs::remove_file(&path);
@@ -1545,7 +1560,7 @@ fn refresh_setup_label_name(ui: &MainWindow, mode: meditate_core::SessionMode) {
 /// to Hidden / Error / Ok from the DB-persisted last-sync
 /// fields once an account exists. Mirrors GTK's
 /// `refresh_sync_status` at `meditate-gtk/src/window/imp.rs:630`
-/// + `sync_indicator_state_now`. Maps the core
+/// and `sync_indicator_state_now`. Maps the core
 /// `SyncIndicatorState` enum to the int the Slint surface
 /// switches on (0 Hidden / 1 Syncing / 2 Error / 3 Ok).
 #[cfg(target_os = "android")]
@@ -2465,7 +2480,6 @@ fn load_log_page(
         offset: Some(offset),
         only_with_notes: notes_only,
         label_id,
-        ..meditate_core::db::SessionFilter::default()
     };
     let rows = meditate_core::db::query_sessions_from_db(db, &filter)
         .unwrap_or_default();
@@ -2589,7 +2603,7 @@ fn truncate_note_for_card(note: &str) -> String {
 
 /// Extract the time-of-day portion ("14:32") from a local-ISO
 /// string ("2026-05-15T14:32:18+02:00"). Skips the date prefix
-/// + TZ offset suffix; safe for malformed inputs (returns "").
+/// and TZ offset suffix; safe for malformed inputs (returns "").
 /// System clock convention, cached per `android_main` run (a
 /// changed system setting is picked up on the next app start —
 /// Mutex not OnceLock so an activity recreate refreshes it).
@@ -3028,7 +3042,7 @@ fn first_label() -> Option<(i64, String)> {
 #[cfg(target_os = "android")]
 fn check_label_conflicts(
     ui: &MainWindow,
-    slot: &std::rc::Rc<std::cell::RefCell<Option<(i64, i64, String)>>>,
+    slot: &Slot<(i64, i64, String)>,
 ) {
     if ui.get_label_conflict_dialog_open() {
         return;
@@ -3131,9 +3145,9 @@ fn create_label_in_db(name: &str) -> Option<(i64, String)> {
     if trimmed.is_empty() {
         return None;
     }
-    let Some(db_arc) = DATABASE.get() else { return None; };
+    let db_arc = DATABASE.get()?;
     let Ok(guard) = db_arc.lock() else { return None; };
-    let Some(db) = guard.as_ref() else { return None; };
+    let db = guard.as_ref()?;
     let id = match db.insert_label(trimmed) {
         Ok(id) => id,
         Err(e) => {
@@ -3337,7 +3351,7 @@ fn bell_sound_name(uuid: &str) -> String {
         .ok()
         .and_then(|v| {
             v.into_iter()
-                .find(|b| b.uuid.to_string() == uuid)
+                .find(|b| b.uuid == uuid)
                 .map(|b| b.name)
         })
         .unwrap_or_default()
@@ -3356,7 +3370,7 @@ fn bell_sound_path(uuid: &str) -> String {
         .ok()
         .and_then(|v| {
             v.into_iter()
-                .find(|b| b.uuid.to_string() == uuid)
+                .find(|b| b.uuid == uuid)
                 .map(|b| b.file_path)
         })
         .unwrap_or_default()
@@ -3574,7 +3588,7 @@ fn refresh_bell_rows(ui: &MainWindow) {
         if let Ok(guard) = db_arc.lock() {
             if let Some(db) = guard.as_ref() {
                 ui.set_interval_bells_summary(
-                    interval_bells_summary(&ui, db).into(),
+                    interval_bells_summary(ui, db).into(),
                 );
             }
         }
@@ -3658,8 +3672,8 @@ fn write_bb_phase(
 }
 
 /// Push every Box-Breath phase's persisted cue state into the
-/// Setup props (master toggle + per-phase enable / Type / sound
-/// + pattern names). Names are resolved through the *locked* db
+/// Setup props (master toggle, per-phase enable / Type / sound
+/// and pattern names). Names are resolved through the *locked* db
 /// (`resolve_*_name`) — calling `bell_sound_name` / `pattern_name`
 /// here would re-lock the same Mutex and deadlock.
 #[cfg(target_os = "android")]
@@ -3681,11 +3695,11 @@ fn refresh_boxbreath_cues(ui: &MainWindow) {
         let si = signal_mode_index(r.signal_mode.as_db_str());
         let sn = name(meditate_core::bells::resolve_sound_name(
             db,
-            &r.sound_uuid.to_string(),
+            r.sound_uuid.as_ref(),
         ));
         let pn = name(meditate_core::bells::resolve_pattern_name(
             db,
-            &r.pattern_uuid.to_string(),
+            r.pattern_uuid.as_ref(),
         ));
         match p {
             P::In => {
@@ -3799,7 +3813,7 @@ fn populate_interval_bells(ui: &MainWindow) {
                 .list_bell_sounds()
                 .unwrap_or_default()
                 .into_iter()
-                .find(|s| s.uuid.to_string() == b.sound_uuid.to_string())
+                .find(|s| s.uuid == b.sound_uuid)
                 .map(|s| s.name)
                 .unwrap_or_default();
             IntervalBellRow {
@@ -4013,9 +4027,8 @@ fn build_ui() -> MainWindow {
     let guided_import_src: Rc<RefCell<Option<(String, u32)>>> =
         Rc::new(RefCell::new(None));
     #[cfg(target_os = "android")]
-    let guided_import_finalize: Rc<
-        RefCell<Option<(String, String, String, u32)>>,
-    > = Rc::new(RefCell::new(None));
+    let guided_import_finalize: Slot<GuidedImportFinalize> =
+        Rc::new(RefCell::new(None));
 
     // Cumulative flat list of sessions loaded into the Log feed.
     // The "Load more" button extends this; each page-load
@@ -4109,17 +4122,8 @@ fn build_ui() -> MainWindow {
     let delete_preset_uuid: Rc<RefCell<Option<String>>> =
         Rc::new(RefCell::new(None));
     #[cfg(target_os = "android")]
-    let pending_preset_delete: Rc<
-        RefCell<
-            Option<(
-                String,
-                String,
-                meditate_core::SessionMode,
-                bool,
-                String,
-            )>,
-        >,
-    > = Rc::new(RefCell::new(None));
+    let pending_preset_delete: Slot<DeletedPreset> =
+        Rc::new(RefCell::new(None));
     #[cfg(target_os = "android")]
     let pending_override_restore: Rc<
         RefCell<Option<(String, String, meditate_core::SessionMode)>>,
@@ -4132,9 +4136,8 @@ fn build_ui() -> MainWindow {
     // toast-dismissed deferred `remove_file`. Undo re-inserts
     // the row (the file was never removed).
     #[cfg(target_os = "android")]
-    let pending_guided_delete: Rc<
-        RefCell<Option<(String, String, String, u32, bool)>>,
-    > = Rc::new(RefCell::new(None));
+    let pending_guided_delete: Slot<DeletedGuidedFile> =
+        Rc::new(RefCell::new(None));
     // Create-from-Manage intent: set when the chooser's "Create
     // new guided file…" row opens the picker, so the landed pick
     // routes straight into the import dialog instead of just
@@ -4829,7 +4832,7 @@ fn build_ui() -> MainWindow {
                     );
                 }
                 // Export outcome (DP): toast success/failure.
-                if let Some(res) = android_app().and_then(|app| guided::take_export_result(app)) {
+                if let Some(res) = android_app().and_then(guided::take_export_result) {
                     let text = match res {
                         Ok(()) => ui
                             .global::<Tr>()
@@ -4878,7 +4881,7 @@ fn build_ui() -> MainWindow {
                 // import — thousands of rows bulk-insert in well
                 // under a second.
                 if let Some((path, kind)) =
-                    android_app().and_then(|app| guided::take_csv_pick(app))
+                    android_app().and_then(guided::take_csv_pick)
                 {
                     let p = std::path::PathBuf::from(&path);
                     let outcome: Result<usize, String> = {
@@ -8244,7 +8247,7 @@ fn build_ui() -> MainWindow {
                     db.list_interval_bells()
                         .unwrap_or_default()
                         .into_iter()
-                        .find(|b| b.uuid.to_string() == uuid.as_str())
+                        .find(|b| b.uuid == uuid.as_str())
                 };
                 let Some(bell) = found else { return; };
                 ui.set_ie_kind(match bell.kind {
@@ -9192,7 +9195,7 @@ fn build_ui() -> MainWindow {
                 let dt = Local
                     .timestamp_opt(session.start_unix(), 0)
                     .single()
-                    .unwrap_or_else(|| Local::now());
+                    .unwrap_or_else(Local::now);
                 ui.set_edit_start_date(Date {
                     year: dt.year(),
                     month: dt.month() as i32,
@@ -10299,7 +10302,7 @@ fn build_ui() -> MainWindow {
                         discard_pending_guided_delete(
                             &pending_guided_delete,
                         );
-                        ui.set_snackbar_text(copy.into());
+                        ui.set_snackbar_text(copy);
                         ui.set_snackbar_show_undo(false);
                         ui.set_snackbar_visible(true);
                         let weak_inner = ui.as_weak();

@@ -132,7 +132,7 @@ fn invoke_play(
         env.exception_clear()?;
         return Ok(0);
     }
-    Ok(ret.j()?)
+    ret.j()
 }
 
 fn invoke_set_volume(app: &AndroidApp, gain: f32) -> Result<(), jni::errors::Error> {
