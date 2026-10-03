@@ -813,6 +813,23 @@ mod tests {
         assert!(checked > 10, "walked the shell sources");
     }
 
+    /// Picked dates and Insight Timer rows go through core's
+    /// `local_naive_to_unix` (via `insighttimer_started_at` for the
+    /// import): chrono's `.single()` / `.earliest()` return None in a
+    /// DST gap, which turned an edited start into "now" and aborted
+    /// imports.
+    #[test]
+    fn local_times_are_converted_by_core() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
+        let lib = std::fs::read_to_string(path).unwrap();
+        let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
+        for own in ["with_ymd_and_hms(", "from_local_datetime("] {
+            assert!(!code.contains(own), "shell converts local time itself: {own}");
+        }
+        assert!(code.contains("meditate_core::data_io::insighttimer_started_at"));
+        assert_eq!(code.matches("meditate_core::time::local_naive_to_unix").count(), 1, "edit/add save");
+    }
+
     // ── TimerMode chip mapping ──────────────────────────────────
 
     #[test]

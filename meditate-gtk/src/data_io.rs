@@ -134,12 +134,11 @@ pub fn import_insighttimer(app: &MeditateApplication, path: &Path) -> Result<usi
 }
 
 pub(crate) fn import_insighttimer_to_db(db: &Database, path: &Path) -> Result<usize, DataIoError> {
-    // CSV parsing + label dedup + duration validation live in core;
-    // gtk supplies its glib-based datetime parser via the closure
-    // (Android passes its own chrono-based one).
+    // CSV parsing, label dedup, duration validation and the
+    // DST-safe local-time conversion all live in core.
     let (label_names, rows) = meditate_core::data_io::parse_insighttimer_csv(
         path,
-        parse_insighttimer_datetime,
+        meditate_core::data_io::insighttimer_started_at,
     )?;
     meditate_core::data_io::insert_sessions_with_labels(db.core(), &label_names, &rows)
         .map_err(DataIoError::from)
@@ -153,49 +152,20 @@ pub fn delete_all(app: &MeditateApplication) -> Result<usize, DataIoError> {
         .map_err(Into::into)
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-/// Parse an InsightTimer "Started At" cell as local time and return the
-/// unix timestamp. Format detection (12-hour AM/PM vs 24-hour) lives in
-/// `meditate_core::format::parse_insighttimer_datetime`; this shim only
-/// owns the local-tz → unix conversion that needs glib.
-fn parse_insighttimer_datetime(s: &str) -> Option<i64> {
-    use chrono::{Datelike, Timelike};
-    let dt = meditate_core::format::parse_insighttimer_datetime(s)?;
-    let glib_dt = gtk::glib::DateTime::new(
-        &gtk::glib::TimeZone::local(),
-        dt.year(), dt.month() as i32, dt.day() as i32,
-        dt.hour() as i32, dt.minute() as i32, f64::from(dt.second()),
-    ).ok()?;
-    Some(glib_dt.to_unix())
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
-
+    /// Local-time conversion lives in core (`insighttimer_started_at`,
+    /// built on `time::local_naive_to_unix`), which imports a row in a
+    /// DST gap instead of rounding or failing; the shell must not keep
+    /// its own conversion.
     #[test]
-    fn parse_insighttimer_datetime_valid() {
-        // MM/DD/YYYY HH:MM:SS, interpreted as local time — assert the parse
-        // succeeds; the exact unix value depends on the host TZ, so we only
-        // check round-trip consistency (same input → same output) rather than
-        // a fixed number.
-        let a = parse_insighttimer_datetime("04/21/2026 08:30:00");
-        let b = parse_insighttimer_datetime("04/21/2026 08:30:00");
-        assert!(a.is_some());
-        assert_eq!(a, b);
-        // One hour later → exactly 3600s later.
-        let c = parse_insighttimer_datetime("04/21/2026 09:30:00").unwrap();
-        assert_eq!(c - a.unwrap(), 3600);
-    }
-
-    #[test]
-    fn parse_insighttimer_datetime_garbage() {
-        assert_eq!(parse_insighttimer_datetime(""), None);
-        assert_eq!(parse_insighttimer_datetime("04/21/2026"), None); // missing time
-        assert_eq!(parse_insighttimer_datetime("2026-04-21 08:30:00"), None); // ISO, wrong fmt
-        assert_eq!(parse_insighttimer_datetime("xx/yy/zzzz 08:30:00"), None);
-        assert_eq!(parse_insighttimer_datetime("04/21/2026 08:30"), None); // missing seconds
-        assert_eq!(parse_insighttimer_datetime("13/21/2026 08:30:00"), None); // month 13
+    fn insight_timer_import_uses_the_core_time_conversion() {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/data_io.rs"),
+        )
+        .unwrap();
+        let code = src.split("#[cfg(test)]\nmod tests").next().unwrap();
+        assert!(code.contains("meditate_core::data_io::insighttimer_started_at"));
+        assert!(!code.contains("DateTime::new"), "no shell-side local-time conversion");
     }
 }

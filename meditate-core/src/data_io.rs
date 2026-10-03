@@ -221,6 +221,25 @@ pub fn import_csv(db: &Database, path: &Path) -> Result<usize, DataIoError> {
 
 // ── Insight Timer import ────────────────────────────────────────────────
 
+/// An Insight Timer "Started At" cell → unix seconds, read as local
+/// time on this device. Format detection is
+/// `format::parse_insighttimer_datetime`; the local-time conversion is
+/// `time::local_naive_to_unix`, so a row in a DST gap or overlap
+/// still imports. Both shells pass this to `parse_insighttimer_csv`.
+pub fn insighttimer_started_at(s: &str) -> Option<i64> {
+    crate::format::parse_insighttimer_datetime(s).map(crate::time::local_naive_to_unix)
+}
+
+/// `insighttimer_started_at` with the time-zone lookup passed in.
+#[cfg(test)]
+fn insighttimer_started_at_with(
+    s: &str,
+    lookup: impl Fn(chrono::NaiveDateTime) -> chrono::LocalResult<chrono::DateTime<chrono::FixedOffset>>,
+) -> Option<i64> {
+    crate::format::parse_insighttimer_datetime(s)
+        .map(|n| crate::time::naive_to_unix_with(n, lookup))
+}
+
 /// Parse an Insight Timer CSV export into the `(label_names, rows)`
 /// pair that `insert_sessions_with_labels` consumes. The CSV format
 /// is:
@@ -237,9 +256,8 @@ pub fn import_csv(db: &Database, path: &Path) -> Result<usize, DataIoError> {
 /// Duration must be positive; zero rows are rejected with
 /// `DataIoError::Parse` carrying the line number.
 ///
-/// Pure once `parse_dt` is supplied. The gtk shell passes its
-/// glib-based parser as the closure so this fn stays free of
-/// datetime backend choice.
+/// Pure once `parse_dt` is supplied; both shells pass
+/// `insighttimer_started_at`, tests a fixed-zone stand-in.
 pub fn parse_insighttimer_csv<F>(
     path: &Path,
     parse_dt: F,
@@ -349,6 +367,72 @@ mod tests {
         f.write_all(contents.as_bytes()).unwrap();
         f.flush().unwrap();
         f
+    }
+
+    #[test]
+    fn an_insighttimer_row_in_the_skipped_dst_hour_still_imports() {
+        // 02:30 on the spring-forward night never happened on the
+        // clock; the row must import (shifted to 03:30), not abort
+        // the whole file.
+        let csv = "Started At,Duration,Type,Activity\n\
+                   03/28/2026 22:00:00,00:10:00,T,Meditation\n\
+                   03/29/2026 02:30:00,00:20:00,T,Meditation\n\
+                   03/29/2026 08:00:00,00:15:00,T,Meditation\n";
+        let f = write_csv(csv);
+        let (_, rows) = parse_insighttimer_csv(f.path(), |s| {
+            insighttimer_started_at_with(s, crate::time::test_zone::berlin)
+        })
+        .unwrap();
+        assert_eq!(rows.len(), 3);
+        let shifted = chrono::NaiveDate::from_ymd_opt(2026, 3, 29)
+            .unwrap()
+            .and_hms_opt(3, 30, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp()
+            - 7200;
+        assert_eq!(rows[1].0, shifted);
+    }
+
+    #[test]
+    fn an_insighttimer_row_in_the_doubled_dst_hour_takes_the_first_one() {
+        let csv = "Started At,Duration,Type,Activity\n\
+                   10/25/2026 02:30:00,00:10:00,T,Meditation\n";
+        let f = write_csv(csv);
+        let (_, rows) = parse_insighttimer_csv(f.path(), |s| {
+            insighttimer_started_at_with(s, crate::time::test_zone::berlin)
+        })
+        .unwrap();
+        let first = chrono::NaiveDate::from_ymd_opt(2026, 10, 25)
+            .unwrap()
+            .and_hms_opt(2, 30, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp()
+            - 7200;
+        assert_eq!(rows[0].0, first);
+    }
+
+    #[test]
+    fn insighttimer_started_at_reads_local_time_consistently() {
+        // Exact value depends on the host zone; an ordinary time must
+        // parse, repeat identically, and an hour later be 3600 s later.
+        let a = insighttimer_started_at("04/21/2026 08:30:00").unwrap();
+        assert_eq!(insighttimer_started_at("04/21/2026 08:30:00"), Some(a));
+        assert_eq!(insighttimer_started_at("04/21/2026 09:30:00"), Some(a + 3600));
+    }
+
+    #[test]
+    fn insighttimer_started_at_rejects_garbage() {
+        for bad in ["", "04/21/2026", "2026-04-21 08:30:00", "xx/yy/zzzz 08:30:00", "04/21/2026 08:30", "13/21/2026 08:30:00"] {
+            assert_eq!(insighttimer_started_at(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn an_unparseable_insighttimer_time_is_still_rejected() {
+        assert_eq!(insighttimer_started_at("not a date"), None);
+        assert_eq!(insighttimer_started_at_with("not a date", crate::time::test_zone::berlin), None);
     }
 
     #[test]

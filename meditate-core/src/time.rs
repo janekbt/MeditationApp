@@ -111,11 +111,85 @@ pub fn local_iso_to_unix(iso: &str) -> i64 {
 
 /// Internal helper for `local_iso_to_unix`: collapses a chrono
 /// `LocalResult` into an optional unix timestamp, picking the earlier
-/// candidate on fall-back ambiguity.
+/// instant on fall-back ambiguity. Compares the instants rather than
+/// trusting `earliest()`: chrono orders the two candidates by UTC
+/// offset, which for a fall-back puts the LATER instant first.
 fn disambiguate_local_result<Tz: chrono::TimeZone>(
     lr: chrono::LocalResult<chrono::DateTime<Tz>>,
 ) -> Option<i64> {
-    lr.earliest().map(|dt| dt.timestamp())
+    match lr {
+        chrono::LocalResult::Single(dt) => Some(dt.timestamp()),
+        chrono::LocalResult::Ambiguous(a, b) => Some(a.timestamp().min(b.timestamp())),
+        chrono::LocalResult::None => None,
+    }
+}
+
+/// A wall-clock time the user picked (or an import row) → unix
+/// seconds in the device's time zone. Never fails, unlike chrono's
+/// `.single()` / `.earliest()`:
+/// - a time that happens twice (DST fall-back) gives the first one;
+/// - a time that never happens (DST spring-forward gap) moves forward
+///   by the length of the gap, so 02:30 becomes 03:30.
+///
+/// Both shells convert picked dates and Insight Timer rows through
+/// this instead of their own conversions.
+pub fn local_naive_to_unix(naive: chrono::NaiveDateTime) -> i64 {
+    use chrono::TimeZone;
+    naive_to_unix_with(naive, |n| {
+        chrono::Local.from_local_datetime(&n).map(|dt| dt.fixed_offset())
+    })
+}
+
+/// `local_naive_to_unix` with the time-zone lookup passed in, so tests
+/// can supply a DST day without touching the host's time zone.
+pub(crate) fn naive_to_unix_with(
+    naive: chrono::NaiveDateTime,
+    lookup: impl Fn(chrono::NaiveDateTime) -> chrono::LocalResult<chrono::DateTime<chrono::FixedOffset>>,
+) -> i64 {
+    if let Some(unix) = disambiguate_local_result(lookup(naive)) {
+        return unix;
+    }
+    // In a gap: read the time with the offset in force just before
+    // it, which lands the same distance past the gap's end. Gaps are
+    // at most a few hours; a day back is always before the gap.
+    (1..=24)
+        .find_map(|h| match lookup(naive - chrono::Duration::hours(h)) {
+            chrono::LocalResult::Single(dt) | chrono::LocalResult::Ambiguous(dt, _) => {
+                Some(dt.offset().local_minus_utc())
+            }
+            chrono::LocalResult::None => None,
+        })
+        .map_or_else(
+            || naive.and_utc().timestamp(),
+            |offset| naive.and_utc().timestamp() - i64::from(offset),
+        )
+}
+
+/// A fake time zone for DST tests anywhere in the crate.
+#[cfg(test)]
+pub(crate) mod test_zone {
+    /// Europe/Berlin around the 2026 transitions, built from fixed
+    /// offsets so the tests don't depend on the host's time zone.
+    /// Spring forward 2026-03-29 02:00 → 03:00 (02:xx never happens);
+    /// fall back 2026-10-25 03:00 → 02:00 (02:xx happens twice).
+    /// Ambiguous results come later-instant first, like chrono's.
+    pub(crate) fn berlin(n: chrono::NaiveDateTime) -> chrono::LocalResult<chrono::DateTime<chrono::FixedOffset>> {
+        use chrono::{NaiveDate, TimeZone};
+        let at = |off: i32| chrono::FixedOffset::east_opt(off).unwrap().from_local_datetime(&n).unwrap();
+        let (cet, cest) = (3600, 7200);
+        let spring = NaiveDate::from_ymd_opt(2026, 3, 29).unwrap().and_hms_opt(2, 0, 0).unwrap();
+        let fall = NaiveDate::from_ymd_opt(2026, 10, 25).unwrap().and_hms_opt(2, 0, 0).unwrap();
+        let hour = chrono::Duration::hours(1);
+        if n >= spring && n < spring + hour {
+            chrono::LocalResult::None
+        } else if n >= fall && n < fall + hour {
+            chrono::LocalResult::Ambiguous(at(cet), at(cest))
+        } else if n >= spring + hour && n < fall {
+            chrono::LocalResult::Single(at(cest))
+        } else {
+            chrono::LocalResult::Single(at(cet))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -280,6 +354,87 @@ mod tests {
             Some(1_700_000_000),
             "must pick the earlier of two ambiguous unix candidates",
         );
+    }
+
+    #[test]
+    fn disambiguate_picks_the_earlier_instant_whatever_the_order() {
+        use chrono::TimeZone;
+        // chrono orders the two candidates by UTC offset, not by
+        // instant: for Europe/Berlin's fall-back it hands the LATER
+        // instant (+01:00) first, so `earliest()` alone is wrong.
+        let earlier = chrono::Utc.timestamp_opt(1_700_000_000, 0).unwrap();
+        let later = chrono::Utc.timestamp_opt(1_700_003_600, 0).unwrap();
+        let lr = chrono::LocalResult::Ambiguous(later, earlier);
+        assert_eq!(disambiguate_local_result(lr), Some(1_700_000_000));
+    }
+
+    // ── local_naive_to_unix ────────────────────────────────────────────
+
+    fn naive(y: i32, mo: u32, d: u32, h: u32, mi: u32) -> chrono::NaiveDateTime {
+        chrono::NaiveDate::from_ymd_opt(y, mo, d).unwrap().and_hms_opt(h, mi, 0).unwrap()
+    }
+
+    /// The unix seconds of a wall-clock time at a fixed UTC offset.
+    fn at_offset(n: chrono::NaiveDateTime, offset_hours: i64) -> i64 {
+        n.and_utc().timestamp() - offset_hours * 3600
+    }
+
+    #[test]
+    fn an_ordinary_time_converts_with_its_offset() {
+        let winter = naive(2026, 1, 10, 8, 0);
+        let summer = naive(2026, 7, 10, 8, 0);
+        assert_eq!(naive_to_unix_with(winter, test_zone::berlin), at_offset(winter, 1));
+        assert_eq!(naive_to_unix_with(summer, test_zone::berlin), at_offset(summer, 2));
+    }
+
+    #[test]
+    fn a_time_that_happens_twice_gives_the_first_one() {
+        // 02:00, 02:30 and 02:59 on the fall-back night all exist in
+        // summer time (+02, earlier) and again in winter time (+01).
+        for m in [0, 30, 59] {
+            let n = naive(2026, 10, 25, 2, m);
+            assert_eq!(naive_to_unix_with(n, test_zone::berlin), at_offset(n, 2), "02:{m:02}");
+        }
+    }
+
+    #[test]
+    fn the_minutes_around_the_fall_back_hour_are_unambiguous() {
+        let before = naive(2026, 10, 25, 1, 59);
+        let after = naive(2026, 10, 25, 3, 0);
+        assert_eq!(naive_to_unix_with(before, test_zone::berlin), at_offset(before, 2));
+        assert_eq!(naive_to_unix_with(after, test_zone::berlin), at_offset(after, 1));
+    }
+
+    #[test]
+    fn a_time_in_the_skipped_hour_moves_forward_by_the_gap() {
+        // 02:xx doesn't exist on the spring-forward night; the result is
+        // the same moment as 03:xx summer time, one hour later on the
+        // clock, never "now".
+        for m in [0, 30, 59] {
+            let n = naive(2026, 3, 29, 2, m);
+            let shifted = naive(2026, 3, 29, 3, m);
+            assert_eq!(naive_to_unix_with(n, test_zone::berlin), at_offset(shifted, 2), "02:{m:02}");
+        }
+    }
+
+    #[test]
+    fn the_minutes_around_the_skipped_hour_are_unchanged() {
+        let before = naive(2026, 3, 29, 1, 59);
+        let after = naive(2026, 3, 29, 3, 0);
+        assert_eq!(naive_to_unix_with(before, test_zone::berlin), at_offset(before, 1));
+        assert_eq!(naive_to_unix_with(after, test_zone::berlin), at_offset(after, 2));
+    }
+
+    #[test]
+    fn a_doubled_time_survives_a_round_trip_through_unix() {
+        // The edit dialog seeds its pickers from the stored start and
+        // converts them back on save: 02:30 on the fall-back night must
+        // come back as 02:30, not as the moment of saving.
+        let n = naive(2026, 10, 25, 2, 30);
+        let unix = naive_to_unix_with(n, test_zone::berlin);
+        let back = chrono::DateTime::from_timestamp(unix, 0).unwrap().naive_utc()
+            + chrono::Duration::hours(2);
+        assert_eq!(back, n);
     }
 
     #[test]

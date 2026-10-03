@@ -3484,21 +3484,6 @@ fn signal_mode_from_index(index: i32) -> meditate_core::bells::SignalMode {
     }
 }
 
-/// InsightTimer "Started At" → local unix seconds. Format
-/// detection lives in core (`parse_insighttimer_datetime`);
-/// this shim owns only the local-tz conversion — the chrono
-/// analogue of GTK's glib shim. `earliest()` resolves DST-gap
-/// ambiguity deterministically.
-#[cfg(target_os = "android")]
-fn insight_dt_to_unix(s: &str) -> Option<i64> {
-    use chrono::TimeZone;
-    let ndt = meditate_core::format::parse_insighttimer_datetime(s)?;
-    chrono::Local
-        .from_local_datetime(&ndt)
-        .earliest()
-        .map(|dt| dt.timestamp())
-}
-
 /// Feed the real system insets into the UI (P8). No-op while the
 /// window isn't attached (first frames) — the Slint defaults hold
 /// until the first resize/attach callback lands.
@@ -4949,7 +4934,7 @@ fn build_ui() -> MainWindow {
                         if kind == "insight" {
                             meditate_core::data_io::parse_insighttimer_csv(
                                 &p,
-                                insight_dt_to_unix,
+                                meditate_core::data_io::insighttimer_started_at,
                             )
                             .and_then(|(labels, rows)| {
                                 meditate_core::data_io::insert_sessions_with_labels(
@@ -9347,27 +9332,27 @@ fn build_ui() -> MainWindow {
                 let hours = ui.get_edit_duration_hours().max(0) as i64;
                 let mins = ui.get_edit_duration_minutes().max(0) as i64;
                 let duration_secs = (hours * 3600 + mins * 60).max(0);
-                // Recompose start_time from the picker outputs.
-                // Falls back to "now" if the user-edited Date /
-                // Time can't be turned into a valid Local moment
-                // (e.g., a date inside a DST gap). Mirrors GTK's
-                // `glib::DateTime::new(...).map_or_else(unix_now,
-                // |d| d.to_unix())` at `log/imp.rs:1072`.
-                use chrono::{Local, TimeZone};
+                // Recompose start_time from the picker outputs through
+                // core, which never fails for a real date: a time that
+                // happens twice (DST fall-back) keeps the first one, a
+                // time in the skipped hour moves forward. So an edit
+                // that only changes the note keeps the start as is.
+                // Only an impossible date (the pickers don't produce
+                // one) falls back to "now".
                 let d = ui.get_edit_start_date();
                 let t = ui.get_edit_start_time();
-                let new_start_unix = Local
-                    .with_ymd_and_hms(
-                        d.year,
-                        d.month as u32,
-                        d.day as u32,
-                        t.hour as u32,
-                        t.minute as u32,
-                        t.second as u32,
-                    )
-                    .single()
-                    .map(|dt| dt.timestamp())
-                    .unwrap_or_else(meditate_core::time::unix_now);
+                let new_start_unix = chrono::NaiveDate::from_ymd_opt(
+                    d.year,
+                    d.month as u32,
+                    d.day as u32,
+                )
+                .and_then(|date| {
+                    date.and_hms_opt(t.hour as u32, t.minute as u32, t.second as u32)
+                })
+                .map_or_else(
+                    meditate_core::time::unix_now,
+                    meditate_core::time::local_naive_to_unix,
+                );
                 // Label (L-4d). Mirrors GTK's
                 // `label_expander.enables_expansion() ?
                 // selected_label_id : None` branch at

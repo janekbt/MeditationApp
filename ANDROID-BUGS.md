@@ -11,14 +11,14 @@ not conclusive and a device check is needed.
 
 ## Batch A — before the fall-back night, 2026-10-25
 
-- [ ] **Session start time becomes "now" when edited around a DST change.**
+- [x] **Session start time becomes "now" when edited around a DST change.**
   Saving the edit dialog for a session that started in the fall-back hour,
   or picking a start time in the spring-forward gap, stores the save time.
   Android builds the time with chrono `.single()` and falls back to
   `unix_now()`. Android `lib.rs:9298-9310`, GTK `log/imp.rs:1074-1080`.
   Fix: a core local-date-time → unix helper (earliest for ambiguous, shift
   gap forward); keep the original start when the pickers are untouched.
-- [ ] **Insight Timer import aborts on a row in the spring-forward gap**
+- [x] **Insight Timer import aborts on a row in the spring-forward gap**
   (to confirm). Android `lib.rs:3437-3444`, GTK `data_io.rs:161-170`.
   Fix: same core helper, used by `parse_insighttimer_csv`.
 - [x] **Synced custom bells and guided files play from the other device's
