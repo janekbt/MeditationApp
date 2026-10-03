@@ -1,0 +1,6 @@
+• Every bell has its own volume slider. The level is absolute: it spans the phone's full alarm range and no longer depends on the system alarm volume
+• Starting and interval bells no longer ring during guided meditations
+• The starting bell rings when preparation time is off
+• Guided meditations and sounds can be imported from MP4 files
+
+Thanks to @voidplayer for reporting these!

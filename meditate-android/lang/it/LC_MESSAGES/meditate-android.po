@@ -825,3 +825,6 @@ msgid "Session deleted"
 msgid_plural "{n} sessions deleted"
 msgstr[0] "Sessione eliminata"
 msgstr[1] "{n} sessioni eliminate"
+
+msgid "All labels"
+msgstr "Tutte le etichette"

@@ -1,0 +1,6 @@
+• Cada campana tiene su propio control de volumen. El nivel es absoluto: abarca todo el rango de alarma del teléfono y ya no depende del volumen de alarma del sistema
+• Las campanas inicial y de intervalo ya no suenan durante las meditaciones guiadas
+• La campana inicial suena sin tiempo de preparación
+• Se pueden importar meditaciones guiadas y sonidos desde archivos MP4
+
+¡Gracias a @voidplayer por informar!

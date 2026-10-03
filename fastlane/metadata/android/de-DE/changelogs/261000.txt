@@ -1,0 +1,6 @@
+• Jede Glocke hat einen eigenen Lautstärkeregler. Die Lautstärke ist absolut: Sie nutzt den vollen Weckerbereich des Telefons und hängt nicht mehr von der System-Weckerlautstärke ab
+• Start- und Intervallglocken läuten nicht mehr während geführter Meditationen
+• Die Startglocke läutet auch ohne Vorbereitungszeit
+• Geführte Meditationen und Klänge lassen sich aus MP4-Dateien importieren
+
+Danke an @voidplayer für die Meldungen!

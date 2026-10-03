@@ -1,0 +1,6 @@
+• Chaque cloche a son propre curseur de volume. Le niveau est absolu : il couvre toute la plage d'alarme du téléphone et ne dépend plus du volume d'alarme du système
+• Les cloches de début et d'intervalle ne sonnent plus pendant les méditations guidées
+• La cloche de début sonne sans temps de préparation
+• Méditations guidées et sons importables depuis des fichiers MP4
+
+Merci à @voidplayer pour les signalements !

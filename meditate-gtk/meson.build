@@ -1,5 +1,5 @@
 project('meditate',
-  version: '26.9.0',
+  version: '26.10.0',
   meson_version: '>= 0.62.0',
   default_options: ['warning_level=2', 'werror=false'],
 )

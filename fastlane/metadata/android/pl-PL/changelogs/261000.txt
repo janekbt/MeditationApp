@@ -1,0 +1,6 @@
+• Każdy dzwonek ma własny suwak głośności. Poziom jest bezwzględny: obejmuje pełny zakres alarmu telefonu i nie zależy już od systemowej głośności alarmu
+• Dzwonki początkowe i interwałowe nie dzwonią już podczas medytacji z przewodnikiem
+• Dzwonek początkowy dzwoni bez czasu przygotowania
+• Import medytacji z przewodnikiem i dźwięków z plików MP4
+
+Dziękujemy @voidplayer za zgłoszenia!

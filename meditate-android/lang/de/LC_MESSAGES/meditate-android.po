@@ -825,3 +825,6 @@ msgid "{n} session · {0} min"
 msgid_plural "{n} sessions · {0} min"
 msgstr[0] "{n} Sitzung · {0} Min"
 msgstr[1] "{n} Sitzungen · {0} Min"
+
+msgid "All labels"
+msgstr "Alle Labels"

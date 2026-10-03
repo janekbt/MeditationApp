@@ -843,3 +843,6 @@ msgid_plural "{n} sessions deleted"
 msgstr[0] "Usunięto sesję"
 msgstr[1] "Usunięto {n} sesje"
 msgstr[2] "Usunięto {n} sesji"
+
+msgid "All labels"
+msgstr "Wszystkie etykiety"

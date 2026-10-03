@@ -1,0 +1,6 @@
+• Elke bel heeft een eigen volumeschuif. Het niveau is absoluut: het beslaat het volledige wekkerbereik van de telefoon en hangt niet meer af van het systeemwekkervolume
+• Start- en intervalbellen klinken niet meer tijdens begeleide meditaties
+• De startbel klinkt ook zonder voorbereidingstijd
+• Begeleide meditaties en geluiden kunnen uit MP4-bestanden worden geïmporteerd
+
+Dank aan @voidplayer voor de meldingen!

@@ -1,0 +1,6 @@
+• Ogni campana ha il suo cursore del volume. Il livello è assoluto: copre l'intera gamma della sveglia del telefono e non dipende più dal volume sveglia di sistema
+• Le campane iniziali e a intervalli non suonano più durante le meditazioni guidate
+• La campana iniziale suona senza tempo di preparazione
+• Meditazioni guidate e suoni importabili da file MP4
+
+Grazie a @voidplayer per le segnalazioni!

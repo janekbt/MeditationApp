@@ -1,0 +1,6 @@
+• Cada sino tem seu próprio controle de volume. O nível é absoluto: abrange toda a faixa de alarme do celular e não depende mais do volume de alarme do sistema
+• Os sinos inicial e de intervalo não tocam mais durante meditações guiadas
+• O sino inicial toca sem tempo de preparação
+• Meditações guiadas e sons podem ser importados de arquivos MP4
+
+Obrigado a @voidplayer pelos relatos!

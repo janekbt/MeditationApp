@@ -843,3 +843,6 @@ msgid_plural "{n} sessions deleted"
 msgstr[0] "Удалена {n} сессия"
 msgstr[1] "Удалены {n} сессии"
 msgstr[2] "Удалено {n} сессий"
+
+msgid "All labels"
+msgstr "Все метки"

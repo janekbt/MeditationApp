@@ -10,7 +10,7 @@ Countdown and stopwatch, a browsable log, and daily-goal stats to help you build
 - Countdown, stopwatch, Box Breath, and Guided modes
 - Box Breath: pick a pattern (4-4-4-4, 4-7-8-0, 5-5-5-5) or dial in each phase; the running view traces a dot around an accent-tinted square as you breathe in, hold, out, hold
 - Guided: play your own guided-meditation audio; the end bell rings when the track finishes
-- Bells: an optional starting bell, interval bells (at fixed times, every N minutes, or randomised), and a per-mode end bell — each as sound, vibration, or both, with bundled or imported sounds and a visual vibration-pattern editor
+- Bells: an optional starting bell, interval bells (at fixed times, every N minutes, or randomised), and a per-mode end bell — each as sound, vibration, or both, with bundled or imported sounds, a volume slider for every bell, and a visual vibration-pattern editor
 - Quick presets plus custom durations
 - Per-mode labels: each mode remembers the label you last used for it
 - Optional post-session notes

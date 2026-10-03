@@ -88,6 +88,18 @@
   </content_rating>
 
   <releases>
+    <release version="26.10.0" date="2026-10-03">
+      <description translate="yes">
+        <p>Every bell now has its own volume, plus fixes for issues reported by @voidplayer — thank you!</p>
+        <ul>
+          <li>Each bell has its own volume slider under its sound: starting, interval and end bells, and the Box Breath cues. On Android the level is absolute: it spans the phone's full alarm range and no longer depends on the system alarm volume</li>
+          <li>Starting and interval bells no longer ring during guided meditations</li>
+          <li>Guided meditations and sounds can be imported from MP4 files. Files without an audio track show a clear message instead of failing silently</li>
+          <li>Android: the starting bell now rings when preparation time is off</li>
+          <li>The desktop app is fully translated in all nine languages, and counts use the correct plural form in every language</li>
+        </ul>
+      </description>
+    </release>
     <release version="26.9.0" date="2026-09-28" type="development">
       <description translate="yes">
         <p>Beta for testing.</p>

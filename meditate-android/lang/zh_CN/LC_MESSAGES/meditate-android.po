@@ -807,3 +807,6 @@ msgstr "编辑会话"
 msgid "Session deleted"
 msgid_plural "{n} sessions deleted"
 msgstr[0] "已删除 {n} 个会话"
+
+msgid "All labels"
+msgstr "所有标签"
