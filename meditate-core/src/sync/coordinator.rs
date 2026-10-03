@@ -1,12 +1,10 @@
 //! Sync-attempt coordinator.
 //!
 //! Encodes the "at most one sync in flight; bursts collapse to
-//! exactly one follow-up" rule the gtk shell currently runs inline
-//! in `MeditateApplication::trigger_sync`. Pure `AtomicBool`
-//! choreography over a sync-callable closure — the shell owns the
-//! threading model (it uses `std::thread::spawn`; Android will use
-//! coroutines or a WorkManager job), this module owns the ordering
-//! invariants:
+//! exactly one follow-up" rule both shells' `trigger_sync` use.
+//! Pure `AtomicBool` choreography over a sync-callable closure —
+//! the shell owns the threading model (both spawn a worker thread
+//! that calls `drain`), this module owns the ordering invariants:
 //!
 //! 1. `re_trigger.store(true)` BEFORE `in_flight.swap(true)` so a
 //!    sync finishing mid-call still picks the new request up via
@@ -33,7 +31,7 @@ pub struct SyncCoordinator {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CoordinatorAction {
     /// Caller now owns the in-flight slot — spawn a worker that
-    /// runs `pass()` in a loop driven by `release_and_check_retrigger`.
+    /// calls `drain` with the sync pass.
     Spawn,
     /// Another pass is already running. The re-trigger flag is set
     /// so that pass will run another iteration when it finishes;
@@ -42,8 +40,11 @@ pub enum CoordinatorAction {
 }
 
 impl SyncCoordinator {
-    pub fn new() -> Self {
-        Self::default()
+    pub const fn new() -> Self {
+        Self {
+            in_flight: AtomicBool::new(false),
+            re_trigger: AtomicBool::new(false),
+        }
     }
 
     /// Whether a sync is currently in flight. Used by the shell's
@@ -116,6 +117,20 @@ impl SyncCoordinator {
         } else {
             // We re-took the slot; loop must run another pass.
             false
+        }
+    }
+
+    /// The worker loop: run `pass` until no request is waiting,
+    /// then free the slot. Call it only after `request()` returned
+    /// `Spawn`. A request made during a pass (from any thread) gets
+    /// exactly one more pass; a burst of them still gets one.
+    pub fn drain(&self, mut pass: impl FnMut()) {
+        loop {
+            self.start_pass();
+            pass();
+            if !self.should_run_again_after_pass() && self.release() {
+                break;
+            }
         }
     }
 
@@ -440,5 +455,120 @@ mod tests {
             assert!(!orphan_trigger,
                 "lost trigger: re_trigger=true with in_flight=false");
         }
+    }
+
+    // ── drain: the worker loop both shells run ──────────────────────
+
+    #[test]
+    fn drain_runs_one_pass_when_nothing_else_arrives() {
+        let c = SyncCoordinator::new();
+        assert_eq!(c.request(), CoordinatorAction::Spawn);
+        let mut passes = 0;
+        c.drain(|| passes += 1);
+        assert_eq!(passes, 1);
+        assert!(!c.is_in_flight(), "drain must free the slot");
+    }
+
+    #[test]
+    fn drain_runs_another_pass_for_a_request_made_during_a_pass() {
+        let c = SyncCoordinator::new();
+        assert_eq!(c.request(), CoordinatorAction::Spawn);
+        let mut passes = 0;
+        c.drain(|| {
+            passes += 1;
+            if passes == 1 {
+                assert_eq!(c.request(), CoordinatorAction::AlreadyRunning);
+            }
+        });
+        assert_eq!(passes, 2);
+        assert!(!c.is_in_flight());
+    }
+
+    #[test]
+    fn drain_collapses_a_burst_during_one_pass_into_one_follow_up() {
+        let c = SyncCoordinator::new();
+        assert_eq!(c.request(), CoordinatorAction::Spawn);
+        let mut passes = 0;
+        c.drain(|| {
+            passes += 1;
+            if passes == 1 {
+                for _ in 0..5 {
+                    let _ = c.request();
+                }
+            }
+        });
+        assert_eq!(passes, 2, "five requests in one pass need one more pass, not five");
+    }
+
+    #[test]
+    fn drain_keeps_going_while_every_pass_gets_a_new_request() {
+        let c = SyncCoordinator::new();
+        assert_eq!(c.request(), CoordinatorAction::Spawn);
+        let mut passes = 0;
+        c.drain(|| {
+            passes += 1;
+            if passes < 4 {
+                let _ = c.request();
+            }
+        });
+        assert_eq!(passes, 4);
+        assert!(!c.is_in_flight());
+    }
+
+    #[test]
+    fn after_drain_the_next_request_spawns_again() {
+        let c = SyncCoordinator::new();
+        assert_eq!(c.request(), CoordinatorAction::Spawn);
+        c.drain(|| {});
+        assert_eq!(c.request(), CoordinatorAction::Spawn);
+    }
+
+    #[test]
+    fn drain_reports_in_flight_during_the_pass() {
+        let c = SyncCoordinator::new();
+        assert_eq!(c.request(), CoordinatorAction::Spawn);
+        let mut seen = false;
+        c.drain(|| seen = c.is_in_flight());
+        assert!(seen, "the spinner must show while a pass runs");
+    }
+
+    #[test]
+    fn drain_never_loses_a_request_from_another_thread() {
+        use std::sync::Arc;
+        use std::sync::atomic::AtomicUsize;
+        for _ in 0..200 {
+            let c = Arc::new(SyncCoordinator::new());
+            let passes = Arc::new(AtomicUsize::new(0));
+            let requests = 8;
+            let handles: Vec<_> = (0..requests)
+                .map(|_| {
+                    let c = Arc::clone(&c);
+                    let passes = Arc::clone(&passes);
+                    std::thread::spawn(move || {
+                        if c.request() == CoordinatorAction::Spawn {
+                            c.drain(|| {
+                                passes.fetch_add(1, Ordering::SeqCst);
+                            });
+                        }
+                    })
+                })
+                .collect();
+            for h in handles {
+                h.join().unwrap();
+            }
+            // Every request either ran a pass itself or was served
+            // by a pass that started after it; nothing is left
+            // waiting with no worker.
+            assert!(!c.is_in_flight());
+            assert!(!c.should_run_again_after_pass(),
+                "a request was left behind with no worker to run it");
+            assert!(passes.load(Ordering::SeqCst) >= 1);
+        }
+    }
+
+    #[test]
+    fn a_coordinator_can_live_in_a_static() {
+        static C: SyncCoordinator = SyncCoordinator::new();
+        assert!(!C.is_in_flight());
     }
 }

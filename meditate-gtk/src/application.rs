@@ -623,26 +623,14 @@ impl MeditateApplication {
         let coord = Arc::clone(&imp.sync_coordinator);
 
         std::thread::spawn(move || {
-            // Run sync attempts in a loop while the re-trigger flag
-            // is set. The coordinator's `start_pass` clears the flag
-            // BEFORE each pass so a trigger arriving during the pass
-            // survives to schedule another.
-            loop {
-                coord.start_pass();
+            // Core drives the loop: one more pass for every request
+            // that lands while a pass runs, then the slot is freed.
+            coord.drain(|| {
                 let result = crate::sync_runner::run_sync_attempt(&db_path);
                 if let Err(e) = &result {
                     meditate_core::log("sync.attempt", &format!("err={e}"));
                 }
-                // Exit only when there's no fresh trigger AND release
-                // successfully clears the in-flight slot. release()
-                // returns false when a trigger landed in the narrow
-                // window between should_run_again_after_pass() and the
-                // slot-clear — in that case it re-took the slot and
-                // we owe another pass.
-                if !coord.should_run_again_after_pass() && coord.release() {
-                    break;
-                }
-            }
+            });
 
             // Hop back to the GTK main loop to refresh UI. The closure
             // is Send (captures nothing); we look the application up
@@ -683,4 +671,22 @@ impl InvalidateScope {
     pub const ALL:   Self = Self { stats: true, log: true };
     pub const STATS: Self = Self { stats: true, log: false };
     pub const LOG:   Self = Self { stats: false, log: true };
+}
+
+#[cfg(test)]
+mod tests {
+    /// The sync worker loop lives in core (`SyncCoordinator::drain`)
+    /// so GTK and Android run the same choreography.
+    #[test]
+    fn sync_worker_loop_comes_from_core() {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/application.rs"),
+        )
+        .unwrap();
+        let code = src.split("#[cfg(test)]\nmod tests").next().unwrap();
+        assert!(code.contains("coord.drain("), "trigger_sync must use SyncCoordinator::drain");
+        for step in ["start_pass()", "should_run_again_after_pass()", ".release()"] {
+            assert!(!code.contains(step), "shell still runs the loop step {step} itself");
+        }
+    }
 }

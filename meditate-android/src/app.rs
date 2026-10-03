@@ -720,6 +720,40 @@ mod tests {
     /// the three ways off the Done screen (Save, Discard, Back) clear
     /// it. Clearing at the end lost the session when Android killed
     /// the app on the Done screen.
+    /// A sync request that arrives while a sync runs must get one
+    /// more pass, not be dropped. Core's `SyncCoordinator` owns that
+    /// rule (GTK uses it too); the shell only spawns the worker.
+    #[test]
+    fn sync_requests_go_through_the_core_coordinator() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
+        let lib = std::fs::read_to_string(path).unwrap();
+        let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
+        assert!(!code.contains("SYNC_IN_FLIGHT"), "the old drop-if-busy flag is gone");
+        assert!(
+            code.contains("static SYNC_COORDINATOR: meditate_core::sync::coordinator::SyncCoordinator"),
+            "one coordinator for the whole app",
+        );
+        let trigger = code.find("fn trigger_sync(").expect("trigger_sync");
+        let body = &code[trigger..trigger + code[trigger..].find("\n}\n").unwrap()];
+        assert!(body.contains("SYNC_COORDINATOR.request()"), "requests go to the coordinator");
+        assert!(body.contains("SYNC_COORDINATOR.drain("), "the worker runs core's loop");
+        for step in ["start_pass()", "should_run_again_after_pass()", ".release()"] {
+            assert!(!body.contains(step), "the shell runs the loop step {step} itself");
+        }
+        // The spinner reads the same coordinator, so the "done" edge
+        // must come after drain has freed the slot, not inside a pass
+        // (that left the indicator spinning forever).
+        assert!(code.contains("SYNC_COORDINATOR.is_in_flight()"));
+        let drain = body.find("SYNC_COORDINATOR.drain(").unwrap();
+        let after = &body[drain..];
+        let drain_end = after.find("\n        });").expect("drain call closes inside the worker");
+        assert!(
+            !after[..drain_end].contains("SYNC_UI_DIRTY"),
+            "the indicator is flagged inside a pass, while the slot is still taken",
+        );
+        assert!(after[drain_end..].contains("SYNC_UI_DIRTY.store(true"), "flag the indicator after drain");
+    }
+
     #[test]
     fn the_shell_holds_an_ended_session_until_save_or_discard() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");

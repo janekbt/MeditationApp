@@ -123,13 +123,13 @@ static TEST_CONNECTION_RESULT: OnceLock<
     std::sync::Mutex<Option<(u8, String)>>,
 > = OnceLock::new();
 
-/// True while a sync worker is running (SY-4). Guards against
-/// overlapping runs AND feeds `state_from_db(db, syncing)` so the
-/// indicator shows the spinner. Relaxed ordering is fine — the
-/// tick loop repolls every frame.
+/// At most one sync runs at a time; a request made while one runs
+/// gets one more pass (SY-4, same core coordinator GTK uses). Also
+/// feeds `state_from_db(db, syncing)` so the indicator shows the
+/// spinner.
 #[cfg(target_os = "android")]
-static SYNC_IN_FLIGHT: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+static SYNC_COORDINATOR: meditate_core::sync::coordinator::SyncCoordinator =
+    meditate_core::sync::coordinator::SyncCoordinator::new();
 /// Set by `trigger_sync` (start) and the worker (end) so the tick
 /// loop refreshes the indicator exactly on the edges instead of
 /// re-reading sync_state every frame.
@@ -138,83 +138,88 @@ static SYNC_UI_DIRTY: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
 /// Kick off one background sync (SY-4) — the Android analogue of
-/// GTK's `app.trigger_sync()`. No-op if one is already running.
+/// GTK's `app.trigger_sync()`. If one is already running, it runs
+/// another pass when it finishes.
 /// The worker opens its own DB connection (see sync_runner docs),
 /// so the UI thread's DATABASE mutex is never held across the
 /// network round-trip. Outcome lands in sync_state; the tick loop
 /// picks up the dirty flag and refreshes the indicator.
 #[cfg(target_os = "android")]
 fn trigger_sync(reason: &str) {
+    use meditate_core::sync::coordinator::CoordinatorAction;
     use std::sync::atomic::Ordering;
-    if SYNC_IN_FLIGHT.swap(true, Ordering::SeqCst) {
+    if SYNC_COORDINATOR.request() == CoordinatorAction::AlreadyRunning {
         meditate_core::log(
             "sync.trigger",
-            &format!("{reason}: already in flight, skipped"),
+            &format!("{reason}: already in flight, queued another pass"),
         );
         return;
     }
     meditate_core::log("sync.trigger", reason);
     SYNC_UI_DIRTY.store(true, Ordering::SeqCst);
     std::thread::spawn(|| {
-        let attempt = || -> Result<
-            meditate_core::sync::SyncStats,
-            sync_runner::SyncRunnerError,
-        > {
-            let app = android_app().ok_or(
-                sync_runner::SyncRunnerError::Unconfigured,
-            )?;
-            let root = app.internal_data_path().ok_or(
-                sync_runner::SyncRunnerError::Unconfigured,
-            )?;
-            let dir = root.join("meditate");
-            sync_runner::run_sync_attempt(
-                app,
-                &dir.join("meditate.db"),
-                dir.join("sounds"),
-                dir.join("guided"),
-            )
-        };
-        // Network-error retry with backoff: on a phone the Wi-Fi
-        // + DNS stack often isn't awake in the first seconds
-        // after app start (radio power-save), so the launch sync
-        // reliably DNS-failed and painted the error triangle.
-        // Retry network-class failures a couple of times before
-        // accepting the outcome — the spinner keeps spinning
-        // (in-flight stays true) and only the final attempt's
-        // recorded state reaches the indicator. Auth / quota /
-        // data-lost errors are NOT retried; repeating those
-        // can't help and data-lost needs the user.
-        let mut outcome = attempt();
-        for backoff_secs in [5u64, 10] {
-            let retryable = matches!(
-                &outcome,
-                Err(sync_runner::SyncRunnerError::Sync(
-                    meditate_core::SyncError::WebDav(
-                        meditate_core::WebDavError::Network(_),
+        SYNC_COORDINATOR.drain(|| {
+            let attempt = || -> Result<
+                meditate_core::sync::SyncStats,
+                sync_runner::SyncRunnerError,
+            > {
+                let app = android_app().ok_or(
+                    sync_runner::SyncRunnerError::Unconfigured,
+                )?;
+                let root = app.internal_data_path().ok_or(
+                    sync_runner::SyncRunnerError::Unconfigured,
+                )?;
+                let dir = root.join("meditate");
+                sync_runner::run_sync_attempt(
+                    app,
+                    &dir.join("meditate.db"),
+                    dir.join("sounds"),
+                    dir.join("guided"),
+                )
+            };
+            // Network-error retry with backoff: on a phone the Wi-Fi
+            // + DNS stack often isn't awake in the first seconds
+            // after app start (radio power-save), so the launch sync
+            // reliably DNS-failed and painted the error triangle.
+            // Retry network-class failures a couple of times before
+            // accepting the outcome — the spinner keeps spinning
+            // (in-flight stays true) and only the final attempt's
+            // recorded state reaches the indicator. Auth / quota /
+            // data-lost errors are NOT retried; repeating those
+            // can't help and data-lost needs the user.
+            let mut outcome = attempt();
+            for backoff_secs in [5u64, 10] {
+                let retryable = matches!(
+                    &outcome,
+                    Err(sync_runner::SyncRunnerError::Sync(
+                        meditate_core::SyncError::WebDav(
+                            meditate_core::WebDavError::Network(_),
+                        ),
+                    )),
+                );
+                if !retryable {
+                    break;
+                }
+                meditate_core::log(
+                    "sync.attempt",
+                    &format!(
+                        "network error, retrying in {backoff_secs}s"
                     ),
-                )),
-            );
-            if !retryable {
-                break;
+                );
+                std::thread::sleep(
+                    std::time::Duration::from_secs(backoff_secs),
+                );
+                outcome = attempt();
             }
-            meditate_core::log(
-                "sync.attempt",
-                &format!(
-                    "network error, retrying in {backoff_secs}s"
-                ),
-            );
-            std::thread::sleep(
-                std::time::Duration::from_secs(backoff_secs),
-            );
-            outcome = attempt();
-        }
-        if let Err(e) = &outcome {
-            meditate_core::log(
-                "sync.attempt",
-                &format!("failed: {e}"),
-            );
-        }
-        SYNC_IN_FLIGHT.store(false, Ordering::SeqCst);
+            if let Err(e) = &outcome {
+                meditate_core::log(
+                    "sync.attempt",
+                    &format!("failed: {e}"),
+                );
+            }
+        });
+        // After drain has freed the slot, so the indicator leaves
+        // the spinner.
         SYNC_UI_DIRTY.store(true, Ordering::SeqCst);
     });
 }
@@ -1578,8 +1583,7 @@ fn refresh_sync_indicator(ui: &MainWindow) {
         ui.set_sync_indicator_state(0);
         return;
     };
-    let syncing = SYNC_IN_FLIGHT
-        .load(std::sync::atomic::Ordering::SeqCst);
+    let syncing = SYNC_COORDINATOR.is_in_flight();
     let tr = ui.global::<Tr>();
     let (state, tooltip) = match state_from_db(db, syncing) {
         SyncIndicatorState::Hidden => (0, String::new()),
@@ -10412,8 +10416,7 @@ fn build_ui() -> MainWindow {
                     let Some(db) = guard.as_ref() else { return; };
                     state_from_db(
                         db,
-                        SYNC_IN_FLIGHT
-                            .load(std::sync::atomic::Ordering::SeqCst),
+                        SYNC_COORDINATOR.is_in_flight(),
                     )
                 };
                 match action_for(&state) {

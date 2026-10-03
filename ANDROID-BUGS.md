@@ -42,7 +42,7 @@ not conclusive and a device check is needed.
 
 ## Batch B — sync
 
-- [ ] **Sync requests during a running sync are dropped.** Android's
+- [x] **Sync requests during a running sync are dropped.** Android's
   `SYNC_IN_FLIGHT` skips them; GTK uses core `SyncCoordinator` and runs one
   more pass. Android `lib.rs:147-157`, GTK `application.rs:592-647`.
 - [ ] **Most edits don't trigger a sync.** Labels, presets, settings, sound
