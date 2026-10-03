@@ -1249,9 +1249,12 @@ component VolumeSlider inherits Rectangle {
     Rectangle {
         x: 0;
         y: (parent.height - self.height) / 2;
+        // Square right end, flush against the thumb line: a rounded
+        // end would leave a gap above and below where they meet.
         width: thumb.x + thumb.width / 2;
         height: 16px;
-        border-radius: 8px;
+        border-top-left-radius: 8px;
+        border-bottom-left-radius: 8px;
         background: MaterialPalette.primary;
     }
     thumb := Rectangle {
