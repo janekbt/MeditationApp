@@ -58,7 +58,7 @@ meditate-core with both shells calling them.
   0 s, and manual Add with 0h0m inserts a 0-second session. GTK shares it
   (`log/imp.rs:823-826`, `1101-1102`). Fix: keep the original seconds unless
   the duration was changed; refuse 0.
-- [ ] **A start time inside today's DST gap opens the editor at 1 Jan 1970**
+- [x] **A start time inside today's DST gap opens the editor at 1 Jan 1970**
   (to confirm, shared with GTK). `meditate-core/src/time.rs:94-111` returns 0
   for a gap time; `lib.rs:9725-9728` and the day header (`lib.rs:2659`) use
   it, and saving a note moves the session to 1970. Fix: core shifts gap

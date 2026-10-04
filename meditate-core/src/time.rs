@@ -87,12 +87,29 @@ pub fn unix_to_local_iso(unix_secs: i64) -> String {
 /// up to one hour, but collapsing to the unix epoch (which `.single()`
 /// would do) is wrong by decades and breaks every downstream stat.
 ///
-/// Returns 0 (the unix epoch) on parse failure, on a DST spring-forward
-/// gap (a local time that doesn't exist), or on a year outside
-/// 0000-9999 — all three indicate corrupt or fabricated input, since
-/// `unix_to_local_iso` never produces any of them.
+/// A time in a DST spring-forward gap moves forward by the gap, like
+/// `local_naive_to_unix`. Such a time is real data: a session recorded
+/// in another time zone, or before the device's zone changed, can name
+/// a wall-clock time that doesn't exist here. Turning it into the
+/// epoch put the session on 1 Jan 1970, and a later edit saved it
+/// there.
+///
+/// Returns 0 (the unix epoch) on parse failure or on a year outside
+/// 0000-9999. Both indicate corrupt or fabricated input, since
+/// `unix_to_local_iso` never produces either.
 pub fn local_iso_to_unix(iso: &str) -> i64 {
-    use chrono::{Datelike, TimeZone};
+    use chrono::TimeZone;
+    iso_to_unix_with(iso, |n| {
+        chrono::Local.from_local_datetime(&n).map(|dt| dt.fixed_offset())
+    })
+}
+
+/// `local_iso_to_unix` with the time-zone lookup passed in, for tests.
+pub(crate) fn iso_to_unix_with(
+    iso: &str,
+    lookup: impl Fn(chrono::NaiveDateTime) -> chrono::LocalResult<chrono::DateTime<chrono::FixedOffset>>,
+) -> i64 {
+    use chrono::Datelike;
     let Ok(naive) = chrono::NaiveDateTime::parse_from_str(iso, "%Y-%m-%dT%H:%M:%S")
         .or_else(|_| chrono::NaiveDateTime::parse_from_str(iso, "%Y-%m-%d %H:%M:%S"))
     else {
@@ -106,10 +123,10 @@ pub fn local_iso_to_unix(iso: &str) -> i64 {
     if !(0..=9999).contains(&naive.year()) {
         return 0;
     }
-    disambiguate_local_result(chrono::Local.from_local_datetime(&naive)).unwrap_or(0)
+    naive_to_unix_with(naive, lookup)
 }
 
-/// Internal helper for `local_iso_to_unix`: collapses a chrono
+/// Internal helper for `naive_to_unix_with`: collapses a chrono
 /// `LocalResult` into an optional unix timestamp, picking the earlier
 /// instant on fall-back ambiguity. Compares the instants rather than
 /// trusting `earliest()`: chrono orders the two candidates by UTC
@@ -415,6 +432,16 @@ mod tests {
             let shifted = naive(2026, 3, 29, 3, m);
             assert_eq!(naive_to_unix_with(n, test_zone::berlin), at_offset(shifted, 2), "02:{m:02}");
         }
+    }
+
+    #[test]
+    fn a_stored_start_in_the_skipped_hour_is_not_the_epoch() {
+        // A session synced from another time zone can name 02:30 on
+        // the spring-forward night. It reads as 03:30 summer time,
+        // not as 1 Jan 1970.
+        let unix = iso_to_unix_with("2026-03-29T02:30:00", test_zone::berlin);
+        assert_eq!(unix, at_offset(naive(2026, 3, 29, 3, 30), 2));
+        assert_eq!(iso_to_unix_with("garbage", test_zone::berlin), 0);
     }
 
     #[test]
