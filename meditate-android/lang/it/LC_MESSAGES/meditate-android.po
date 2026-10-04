@@ -882,3 +882,11 @@ msgstr "Eliminare la campana?"
 
 msgid "This bell will no longer ring during sessions."
 msgstr "Questa campana non suonerà più durante le sessioni."
+
+msgid "Deleted {n} session"
+msgid_plural "Deleted {n} sessions"
+msgstr[0] "{n} sessione eliminata"
+msgstr[1] "{n} sessioni eliminate"
+
+msgid "Delete failed"
+msgstr "Eliminazione non riuscita"

@@ -882,3 +882,11 @@ msgstr "Glocke löschen?"
 
 msgid "This bell will no longer ring during sessions."
 msgstr "Diese Glocke läutet dann nicht mehr während der Sitzungen."
+
+msgid "Deleted {n} session"
+msgid_plural "Deleted {n} sessions"
+msgstr[0] "{n} Sitzung gelöscht"
+msgstr[1] "{n} Sitzungen gelöscht"
+
+msgid "Delete failed"
+msgstr "Löschen fehlgeschlagen"

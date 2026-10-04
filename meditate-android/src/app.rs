@@ -685,8 +685,47 @@ pub fn volume_slot(
     })
 }
 
+/// A landed CSV import pick, as the picker activity drops it: the
+/// copied file's path and its kind ("meditate" | "insight") on two
+/// lines, or "err:<message>" on the first line when the copy failed.
+/// `None` for an empty or unreadable drop.
+pub fn parse_csv_pick(raw: &str) -> Option<Result<(String, String), String>> {
+    let mut lines = raw.lines();
+    let first = lines.next()?.trim();
+    if let Some(msg) = first.strip_prefix("err:") {
+        return Some(Err(msg.trim().to_string()));
+    }
+    if first.is_empty() {
+        return None;
+    }
+    let kind = lines.next().unwrap_or("meditate").trim().to_string();
+    Some(Ok((first.to_string(), kind)))
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_csv_pick_carries_its_path_and_kind() {
+        assert_eq!(
+            super::parse_csv_pick("/data/x.csv\ninsight"),
+            Some(Ok(("/data/x.csv".into(), "insight".into()))),
+        );
+        assert_eq!(
+            super::parse_csv_pick("/data/x.csv"),
+            Some(Ok(("/data/x.csv".into(), "meditate".into()))),
+        );
+    }
+
+    #[test]
+    fn a_failed_csv_copy_reports_its_error() {
+        // The copy failed: the user must hear about it, not see nothing.
+        assert_eq!(
+            super::parse_csv_pick("err:openInputStream null\nmeditate"),
+            Some(Err("openInputStream null".into())),
+        );
+        assert_eq!(super::parse_csv_pick(""), None);
+    }
+
     // ── Volume rows ─────────────────────────────────────────────
 
     #[test]
@@ -1737,6 +1776,30 @@ mod tests {
         let at = lib.find("if guided::take_focus_loss(app)").unwrap();
         let branch = &lib[at..at + 1500];
         assert!(branch.contains("guided_follows_pause(app, &"), "focus-loss branch pauses the player");
+    }
+
+    #[test]
+    fn delete_all_says_how_it_went() {
+        // A failed Delete All closed its dialog with the Log looking
+        // unchanged and no word why; GTK toasts both outcomes.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let at = lib.find("ui.on_delete_all_confirm(").unwrap();
+        let body = &lib[at..at + lib[at..].find("\n        });").unwrap()];
+        assert!(body.contains("invoke_deleted_all_n(n as i32)"));
+        assert!(body.contains("invoke_delete_failed()"));
+        assert!(body.contains("ui.set_snackbar_visible(true);"));
+    }
+
+    #[test]
+    fn a_failed_csv_copy_reaches_the_user() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let kt = std::fs::read_to_string(root.join("kotlin/MeditateFilePickerActivity.kt")).unwrap();
+        let at = kt.find("private fun copyInCsv(").unwrap();
+        let body = &kt[at..at + kt[at..].find("\n    }\n").unwrap()];
+        assert!(body.contains("\"err:\" + (e.message ?: e.javaClass.simpleName)"));
+        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        assert!(lib.contains("Err(e) => (Err(format!(\"copy FAILED: {e}\")), \"?\".into()),"));
     }
 
     #[test]

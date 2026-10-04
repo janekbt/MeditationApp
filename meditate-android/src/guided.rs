@@ -155,20 +155,15 @@ pub fn take_export_result(
     }
 }
 
-/// Take a landed CSV import pick — `(abs path, kind)` with kind
-/// "meditate" | "insight". Single consumption.
-pub fn take_csv_pick(app: &AndroidApp) -> Option<(String, String)> {
+/// Take a landed CSV import pick: `Ok((abs path, kind))` with kind
+/// "meditate" | "insight", or `Err(message)` when the copy into app
+/// storage failed (see `app::parse_csv_pick`). Single consumption.
+pub fn take_csv_pick(app: &AndroidApp) -> Option<Result<(String, String), String>> {
     let data_root = app.internal_data_path()?;
     let path = data_root.join("meditate").join(CSV_PICK_FILENAME);
     let raw = std::fs::read_to_string(&path).ok()?;
     let _ = std::fs::remove_file(&path);
-    let mut lines = raw.lines();
-    let file = lines.next()?.trim().to_string();
-    if file.is_empty() {
-        return None;
-    }
-    let kind = lines.next().unwrap_or("meditate").trim().to_string();
-    Some((file, kind))
+    crate::app::parse_csv_pick(&raw)
 }
 
 fn resolve_class<'a>(

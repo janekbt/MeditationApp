@@ -162,19 +162,23 @@ class MeditateFilePickerActivity : Activity() {
     }
 
     // Import: copy the chosen document into app storage and drop
-    // `csv_pick` = "<path>\n<kind>" for the Rust tick poll.
+    // `csv_pick` = "<path>\n<kind>" for the Rust tick poll, or
+    // "err:<msg>\n<kind>" when the copy failed, so the user hears
+    // about it instead of nothing happening (app::parse_csv_pick).
     private fun copyInCsv(uri: Uri, kind: String) {
         val dir = File(filesDir, "meditate")
         dir.mkdirs()
         val dest = File(dir, "import-transient.csv")
-        contentResolver.openInputStream(uri)?.use { input ->
-            dest.outputStream().use { out -> input.copyTo(out) }
-        } ?: run {
-            Log.w(TAG, "openInputStream returned null")
-            return
+        val first = try {
+            contentResolver.openInputStream(uri)?.use { input ->
+                dest.outputStream().use { out -> input.copyTo(out) }
+            } ?: throw IllegalStateException("openInputStream null")
+            dest.absolutePath
+        } catch (e: Exception) {
+            Log.w(TAG, "import copy failed: $e")
+            "err:" + (e.message ?: e.javaClass.simpleName)
         }
-        File(dir, "csv_pick")
-            .writeText("${dest.absolutePath}\n$kind")
+        File(dir, "csv_pick").writeText("$first\n$kind")
     }
 
     private fun queryDisplayName(uri: Uri): String? {

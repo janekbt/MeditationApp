@@ -5335,33 +5335,41 @@ fn build_ui() -> MainWindow {
                 // Synchronous on the tick like GTK's main-loop
                 // import — thousands of rows bulk-insert in well
                 // under a second.
-                if let Some((path, kind)) =
+                if let Some(pick) =
                     android_app().and_then(guided::take_csv_pick)
                 {
-                    let p = std::path::PathBuf::from(&path);
-                    let outcome: Result<usize, String> = {
-                        let Some(db_arc) = DATABASE.get() else {
-                            return;
-                        };
-                        let Ok(guard) = db_arc.lock() else { return; };
-                        let Some(db) = guard.as_ref() else { return; };
-                        if kind == "insight" {
-                            meditate_core::data_io::parse_insighttimer_csv(
-                                &p,
-                                meditate_core::data_io::insighttimer_started_at,
-                            )
-                            .and_then(|(labels, rows)| {
-                                meditate_core::data_io::insert_sessions_with_labels(
-                                    db, &labels, &rows,
-                                )
-                            })
-                            .map_err(|e| format!("{e:?}"))
-                        } else {
-                            meditate_core::data_io::import_csv(db, &p)
-                                .map_err(|e| format!("{e:?}"))
+                    let (outcome, kind): (Result<usize, String>, String) = match pick {
+                        // The copy into app storage failed: there is
+                        // no file, but the user still hears about it.
+                        Err(e) => (Err(format!("copy FAILED: {e}")), "?".into()),
+                        Ok((path, kind)) => {
+                            let p = std::path::PathBuf::from(&path);
+                            let outcome = {
+                                let Some(db_arc) = DATABASE.get() else {
+                                    return;
+                                };
+                                let Ok(guard) = db_arc.lock() else { return; };
+                                let Some(db) = guard.as_ref() else { return; };
+                                if kind == "insight" {
+                                    meditate_core::data_io::parse_insighttimer_csv(
+                                        &p,
+                                        meditate_core::data_io::insighttimer_started_at,
+                                    )
+                                    .and_then(|(labels, rows)| {
+                                        meditate_core::data_io::insert_sessions_with_labels(
+                                            db, &labels, &rows,
+                                        )
+                                    })
+                                    .map_err(|e| format!("{e:?}"))
+                                } else {
+                                    meditate_core::data_io::import_csv(db, &p)
+                                        .map_err(|e| format!("{e:?}"))
+                                }
+                            };
+                            let _ = std::fs::remove_file(&p);
+                            (outcome, kind)
                         }
                     };
-                    let _ = std::fs::remove_file(&p);
                     let text = match outcome {
                         Ok(n) => {
                             meditate_core::log(
@@ -10594,26 +10602,54 @@ fn build_ui() -> MainWindow {
         let loaded_log_sessions = loaded_log_sessions.clone();
         #[cfg(target_os = "android")]
         let pending_deletes = pending_deletes.clone();
+        #[cfg(target_os = "android")]
+        let recovery_uuid = recovery_uuid.clone();
+        #[cfg(target_os = "android")]
+        let pending_preset_undo = pending_preset_undo.clone();
+        #[cfg(target_os = "android")]
+        let pending_preset_delete = pending_preset_delete.clone();
+        #[cfg(target_os = "android")]
+        let pending_override_restore = pending_override_restore.clone();
+        #[cfg(target_os = "android")]
+        let pending_guided_delete = pending_guided_delete.clone();
+        #[cfg(target_os = "android")]
+        let delete_timer: &'static slint::Timer = delete_timer;
         ui.on_delete_all_confirm(move || {
             #[cfg(target_os = "android")]
             {
                 let Some(ui) = weak.upgrade() else { return; };
+                // The result snackbar takes the shared slot: finish
+                // any pending undo first (the standard raise).
+                commit_pending_deletes(&ui, &loaded_log_sessions, &pending_deletes);
+                recovery_uuid.borrow_mut().take();
+                pending_preset_undo.borrow_mut().take();
+                pending_preset_delete.borrow_mut().take();
+                pending_override_restore.borrow_mut().take();
+                discard_pending_guided_delete(&pending_guided_delete);
                 let n = {
                     let Some(db_arc) = DATABASE.get() else { return; };
                     let Ok(guard) = db_arc.lock() else { return; };
                     let Some(db) = guard.as_ref() else { return; };
                     db.delete_all_sessions()
                 };
-                match n {
-                    Ok(n) => meditate_core::log(
-                        "data.delete_all",
-                        &format!("deleted {n} sessions"),
-                    ),
-                    Err(e) => meditate_core::log(
-                        "data.delete_all",
-                        &format!("FAILED: {e:?}"),
-                    ),
-                }
+                // Say how it went, as GTK does: a failed delete
+                // otherwise looked like nothing happened.
+                let text = match n {
+                    Ok(n) => {
+                        meditate_core::log(
+                            "data.delete_all",
+                            &format!("deleted {n} sessions"),
+                        );
+                        ui.global::<Tr>().invoke_deleted_all_n(n as i32)
+                    }
+                    Err(e) => {
+                        meditate_core::log(
+                            "data.delete_all",
+                            &format!("FAILED: {e:?}"),
+                        );
+                        ui.global::<Tr>().invoke_delete_failed()
+                    }
+                };
                 ui.set_delete_all_dialog_open(false);
                 reset_log_feed(
                     &ui,
@@ -10622,6 +10658,19 @@ fn build_ui() -> MainWindow {
                 );
                 refresh_stats(&ui);
                 refresh_widget(&ui);
+                ui.set_snackbar_text(text);
+                ui.set_snackbar_show_undo(false);
+                ui.set_snackbar_visible(true);
+                let weak_inner = ui.as_weak();
+                delete_timer.start(
+                    slint::TimerMode::SingleShot,
+                    std::time::Duration::from_secs(4),
+                    move || {
+                        if let Some(ui) = weak_inner.upgrade() {
+                            ui.set_snackbar_visible(false);
+                        }
+                    },
+                );
             }
             let _ = (weak.clone(), current_mode.get());
         });

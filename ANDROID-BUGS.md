@@ -112,11 +112,11 @@ meditate-core with both shells calling them.
 - [x] **Sync runs with no account set up and floods the diagnostics log.**
   `lib.rs:209-217` has no `meditate_core::sync::should_attempt` check (GTK
   `application.rs:599-604`); the comment at `lib.rs:11321` is wrong.
-- [ ] **Failed CSV / Insight Timer copy gives no feedback.**
+- [x] **Failed CSV / Insight Timer copy gives no feedback.**
   `kotlin/MeditateFilePickerActivity.kt:104-118`, `166-178` return before
   writing `csv_pick`. GTK shows "Import failed: …"
   (`preferences.rs:649-650`).
-- [ ] **Delete All shows no result, even on failure.** `lib.rs:10508-10530`.
+- [x] **Delete All shows no result, even on failure.** `lib.rs:10508-10530`.
   GTK `preferences.rs:590-603`.
 - [ ] **Preset save/override/rename errors are hidden.** Override shows
   "Preset overridden" even on failure (`lib.rs:6816-6846`); Create takes the

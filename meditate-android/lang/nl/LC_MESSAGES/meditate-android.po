@@ -882,3 +882,11 @@ msgstr "Bel verwijderen?"
 
 msgid "This bell will no longer ring during sessions."
 msgstr "Deze bel klinkt niet meer tijdens sessies."
+
+msgid "Deleted {n} session"
+msgid_plural "Deleted {n} sessions"
+msgstr[0] "{n} sessie verwijderd"
+msgstr[1] "{n} sessies verwijderd"
+
+msgid "Delete failed"
+msgstr "Verwijderen mislukt"

@@ -900,3 +900,12 @@ msgstr "Удалить колокол?"
 
 msgid "This bell will no longer ring during sessions."
 msgstr "Этот колокол больше не будет звучать во время сессий."
+
+msgid "Deleted {n} session"
+msgid_plural "Deleted {n} sessions"
+msgstr[0] "Удалена {n} сессия"
+msgstr[1] "Удалены {n} сессии"
+msgstr[2] "Удалено {n} сессий"
+
+msgid "Delete failed"
+msgstr "Не удалось удалить"

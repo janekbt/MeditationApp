@@ -144,6 +144,8 @@ export global Tr {
     public pure function add-session-title() -> string { return @tr("Add Session"); }
     public pure function edit-session-title() -> string { return @tr("Edit Session"); }
     public pure function n-sessions-deleted(n: int) -> string { return @tr("Session deleted" | "{n} sessions deleted" % n); }
+    public pure function deleted-all-n(n: int) -> string { return @tr("Deleted {n} session" | "Deleted {n} sessions" % n); }
+    public pure function delete-failed() -> string { return @tr("Delete failed"); }
     // Label-conflict dialog (sync name collisions)
     public pure function conflict-title() -> string { return @tr("Duplicate label"); }
     public pure function conflict-body(suffixed: string, base: string) -> string { return @tr("'{}' has the same name as '{}' — it was created independently on another device.", suffixed, base); }

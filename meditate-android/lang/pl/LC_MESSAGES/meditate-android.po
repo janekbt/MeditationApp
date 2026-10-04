@@ -900,3 +900,12 @@ msgstr "Usunąć dzwonek?"
 
 msgid "This bell will no longer ring during sessions."
 msgstr "Ten dzwonek nie będzie już dzwonił podczas sesji."
+
+msgid "Deleted {n} session"
+msgid_plural "Deleted {n} sessions"
+msgstr[0] "Usunięto {n} sesję"
+msgstr[1] "Usunięto {n} sesje"
+msgstr[2] "Usunięto {n} sesji"
+
+msgid "Delete failed"
+msgstr "Usuwanie nie powiodło się"

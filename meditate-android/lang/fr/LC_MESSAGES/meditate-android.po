@@ -882,3 +882,11 @@ msgstr "Supprimer la cloche ?"
 
 msgid "This bell will no longer ring during sessions."
 msgstr "Cette cloche ne sonnera plus pendant les séances."
+
+msgid "Deleted {n} session"
+msgid_plural "Deleted {n} sessions"
+msgstr[0] "{n} séance supprimée"
+msgstr[1] "{n} séances supprimées"
+
+msgid "Delete failed"
+msgstr "Échec de la suppression"

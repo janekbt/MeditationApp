@@ -882,3 +882,11 @@ msgstr "Excluir sino?"
 
 msgid "This bell will no longer ring during sessions."
 msgstr "Este sino não tocará mais durante as sessões."
+
+msgid "Deleted {n} session"
+msgid_plural "Deleted {n} sessions"
+msgstr[0] "{n} sessão excluída"
+msgstr[1] "{n} sessões excluídas"
+
+msgid "Delete failed"
+msgstr "Falha na exclusão"
