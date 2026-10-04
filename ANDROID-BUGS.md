@@ -90,7 +90,7 @@ meditate-core with both shells calling them.
   edit/Done row keeps the old name, and deleting the label the Log filter
   uses leaves "No Matching Sessions" (`lib.rs:2849-2858`, `3193-3222`; to
   confirm the filter part).
-- [ ] **Undo of a preset override after a mode switch shows the wrong
+- [x] **Undo of a preset override after a mode switch shows the wrong
   mode's presets.** `lib.rs:9589` refreshes with the captured mode; delete
   Undo uses `core_mode` (`lib.rs:9546`).
 - [ ] **Import button stops working after a failed import; bell import

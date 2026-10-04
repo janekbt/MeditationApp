@@ -9675,7 +9675,7 @@ fn build_ui() -> MainWindow {
                 }
                 // Preset-override Undo (P-5 / P-4 deferral):
                 // restore the preset's prior config_json.
-                if let Some((u, prior, mode)) =
+                if let Some((u, prior, _)) =
                     pending_override_restore.borrow_mut().take()
                 {
                     {
@@ -9684,7 +9684,9 @@ fn build_ui() -> MainWindow {
                         let Some(db) = g.as_ref() else { return; };
                         let _ = db.update_preset_config(&u, &prior);
                     }
-                    refresh_preset_chips(&ui, mode);
+                    // The chips on screen are the current mode's; the
+                    // override may belong to the mode switched away from.
+                    refresh_preset_chips(&ui, core_mode);
                     // Undone override reverts the widget subtitle.
                     refresh_widget(&ui);
                     ui.set_snackbar_visible(false);

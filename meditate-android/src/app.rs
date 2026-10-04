@@ -1732,6 +1732,17 @@ mod tests {
     }
 
     #[test]
+    fn undoing_an_override_refreshes_the_visible_mode() {
+        // After a mode switch, Undo refreshed the chips with the
+        // override's mode, so Setup listed the other mode's presets.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let at = lib.find("pending_override_restore.borrow_mut().take()\n                {").unwrap();
+        let branch = &lib[at..at + lib[at..].find("return;\n                }").unwrap()];
+        assert!(branch.contains("refresh_preset_chips(&ui, core_mode);"));
+    }
+
+    #[test]
     fn discarding_a_note_and_deleting_a_bell_ask_first() {
         // A stray Back on Done, or Discard, threw away the session and
         // its note without a word; the trash icon deleted a bell on one
