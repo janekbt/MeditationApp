@@ -2902,6 +2902,28 @@ fn push_log_sections_to_ui(
     ui.set_log_sections(std::rc::Rc::new(slint::VecModel::from(items)).into());
 }
 
+/// The running session's guided library file, fixed at session
+/// start so every recovery snapshot (start, heartbeat, Done hold)
+/// records it without each caller reaching for the selection.
+#[cfg(target_os = "android")]
+static SESSION_GUIDED_FILE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+#[cfg(target_os = "android")]
+fn set_session_guided_file(uuid: Option<String>) {
+    if let Ok(mut slot) = SESSION_GUIDED_FILE.lock() {
+        *slot = uuid;
+    }
+}
+
+#[cfg(target_os = "android")]
+fn session_guided_file() -> Option<meditate_core::db::GuidedFileUuid> {
+    SESSION_GUIDED_FILE
+        .lock()
+        .ok()
+        .and_then(|slot| slot.clone())
+        .map(meditate_core::db::GuidedFileUuid::new)
+}
+
 /// Build the crash-recovery snapshot row. Mirrors GTK's
 /// `write_in_progress_snapshot` at `imp.rs:2536`: captures
 /// (unix_start, accumulated_secs, mode, label_id) so a process
@@ -2926,7 +2948,7 @@ fn session_in_progress_snapshot(
         mode,
         mode_payload: "{}".into(),
         label_id,
-        guided_file_uuid: None,
+        guided_file_uuid: session_guided_file(),
     }
 }
 
@@ -4474,6 +4496,20 @@ fn build_ui() -> MainWindow {
             #[cfg(target_os = "android")]
             if !was_active && is_active {
                 session_start_unix.set(Some(meditate_core::time::unix_now()));
+                set_session_guided_file(app::snapshot_guided_file(
+                    current_mode.get(),
+                    guided_sel.borrow().as_ref().and_then(|g| g.uuid.as_deref()),
+                ));
+                // First snapshot right away, so a session killed in
+                // its first minute is still recovered (GTK writes
+                // one at start too).
+                if let Some(unix_start) = session_start_unix.get() {
+                    write_session_in_progress_snapshot(
+                        unix_start,
+                        0,
+                        current_mode.get().into(),
+                    );
+                }
                 // Kick the snapshot heartbeat — fires every 60 s
                 // of session-elapsed (since GTK's
                 // `start_snapshot_tick` is also called from

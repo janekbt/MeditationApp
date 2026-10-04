@@ -81,7 +81,7 @@ not conclusive and a device check is needed.
   `Session::stop` / `EndBoxBreath.duration_secs`. Matches today, will
   drift. Android `app.rs:358-373`, `lib.rs:4417-4425, 5213-5239`; GTK
   `timer/imp.rs:2385-2387, 3040-3042`.
-- [ ] **Recovery snapshot is incomplete:** none written at start, and
+- [x] **Recovery snapshot is incomplete:** none written at start, and
   `guided_file_uuid` is always None. Android `lib.rs:2855-2870,
   2889-2911`; GTK `timer/imp.rs:2269, 2695-2699`.
 

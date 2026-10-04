@@ -42,6 +42,18 @@ impl From<TimerMode> for meditate_core::SessionMode {
     }
 }
 
+/// The guided library file a session's recovery snapshot records:
+/// the selected row's uuid for a Guided session, nothing for an
+/// Open-File pick (no library row) or any other mode (a leftover
+/// guided selection doesn't belong to it). Mirrors GTK's
+/// `guided_selected_uuid` gate in `write_in_progress_snapshot`.
+pub fn snapshot_guided_file(mode: TimerMode, selected_uuid: Option<&str>) -> Option<String> {
+    match mode {
+        TimerMode::Guided => selected_uuid.map(str::to_string),
+        TimerMode::Timer | TimerMode::Breathing => None,
+    }
+}
+
 /// Helpers for the per-mode Cues SegmentedButton — bridge the
 /// Slint `current-index: int` to core's `SignalMode`. Index order
 /// matches GTK's `cues_signal_toggle_host` toggle list (Sound /
@@ -896,6 +908,48 @@ mod tests {
         assert!(code[flag..flag + 300].contains("invoke_playback_failed()"));
         let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
         assert!(slint.contains("public pure function playback-failed() -> string { return @tr(\"Couldn't start playback\"); }"));
+    }
+
+    #[test]
+    fn a_guided_session_records_its_library_file() {
+        assert_eq!(snapshot_guided_file(TimerMode::Guided, Some("gf-1")), Some("gf-1".to_string()));
+    }
+
+    #[test]
+    fn an_open_file_pick_records_no_library_file() {
+        assert_eq!(snapshot_guided_file(TimerMode::Guided, None), None);
+    }
+
+    #[test]
+    fn other_modes_ignore_a_leftover_guided_selection() {
+        assert_eq!(snapshot_guided_file(TimerMode::Timer, Some("gf-1")), None);
+        assert_eq!(snapshot_guided_file(TimerMode::Breathing, Some("gf-1")), None);
+    }
+
+    /// A session killed in its first minute must still be recovered,
+    /// and a recovered guided session keeps its file (GTK writes the
+    /// snapshot at start and records the file).
+    #[test]
+    fn the_recovery_snapshot_is_written_at_start_and_names_the_guided_file() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
+        let lib = std::fs::read_to_string(path).unwrap();
+        let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
+
+        let builder = code.find("fn session_in_progress_snapshot(").unwrap();
+        let builder = &code[builder..builder + code[builder..].find("\n}\n").unwrap()];
+        assert!(!builder.contains("guided_file_uuid: None"), "the guided file was always dropped");
+        assert!(builder.contains("session_guided_file()"), "every snapshot reads the session's file");
+
+        let start = code.find("session_start_unix.set(Some(meditate_core::time::unix_now()));").expect("start edge");
+        let after = &code[start..];
+        let heartbeat = after.find("start_snapshot_heartbeat(").expect("heartbeat");
+        let edge = &after[..heartbeat];
+        assert!(edge.contains("set_session_guided_file(app::snapshot_guided_file("), "the file is fixed at start");
+        assert!(edge.contains("write_session_in_progress_snapshot("), "first snapshot at start, not after 60 s");
+        assert!(
+            edge.find("set_session_guided_file(").unwrap() < edge.find("write_session_in_progress_snapshot(").unwrap(),
+            "the first snapshot already names the file",
+        );
     }
 
     #[test]
