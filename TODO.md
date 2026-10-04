@@ -14,6 +14,10 @@ Polish and UX items to tackle when convenient. Graduate each one out of this fil
 
 - **Mindfulness-bell-during-the-day tab.** *Tentative.* New tab next to Timer / Box Breath / Guided. User configures an interval ("every 30 min from 09:00 to 18:00, weekdays only") and a bell sound; the app rings at those times as a presence cue while the user goes about their day. The hard part is background scheduling that survives the app being backgrounded — on the Librem (notifications via `org.freedesktop.Notifications`? a `feedbackd`-driven timer? a small daemon?) and on Android (exact alarms) — prototype that piece before promoting out of "maybe".
 
+- **Android: "Meditation complete" notification when the app is in the background.** GTK posts one when a session ends while the window isn't focused (`meditate-gtk/src/timer/imp.rs`, the session-end notification paths). Android has no equivalent yet; the foreground service's notification could switch to a "complete" state or post a separate one. Android only.
+
+- **Android: rename and delete for custom bell sounds.** GTK's sound chooser lets the user rename and delete imported bell sounds; the Android bell chooser is select + import only. Core already has the rename / delete paths (with sync events), so this is shell UI. Android only.
+
 ## Closed as "not us to fix" — Phosh launcher splash for flatpak apps
 
 On Librem 5 (Phosh 0.34 / Phoc 0.33, PureOS Crimson), the launcher
