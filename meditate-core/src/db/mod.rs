@@ -55,8 +55,8 @@ pub use bell_sounds::{BellSound, BellSoundCategory};
 pub use crate::breath::{BoxBreathPhase, BoxBreathPhaseId};
 pub use events::Event;
 pub use guided_files::{
-    find_guided_file_by_uuid_from_db, is_guided_file_name_taken_from_db,
-    list_guided_files_from_db, GuidedFile,
+    find_guided_file_by_uuid_from_db, guided_file_name_for, guided_file_names_from_db,
+    is_guided_file_name_taken_from_db, list_guided_files_from_db, GuidedFile,
 };
 pub use interval_bells::{IntervalBell, IntervalBellKind};
 // Domain enums whose persisted-string mapping lives with the type

@@ -175,6 +175,9 @@ export struct LogCardItem {
     minutes: int,
     time-of-day: string,
     label-name: string,
+    // Name of the library file a guided session played (core keeps
+    // a deleted file's last name); empty for every other session.
+    guided-name: string,
     note: string,
     // Stable 0..7 colour-class index for the label name from
     // `meditate_core::format::label_color_class_index`; -1 when
@@ -4314,7 +4317,7 @@ export component MainWindow inherits Window {
                                 }
                             }
 
-                            // Right column: label chip + note.
+                            // Right column: label chip + guided file + note.
                             VerticalLayout {
                                 horizontal-stretch: 1;
                                 alignment: center;
@@ -4328,6 +4331,15 @@ export component MainWindow inherits Window {
                                     // `.log-label-chip.log-cN
                                     // { color: @log_cN }` rule.
                                     color: card.label-color;
+                                    horizontal-alignment: left;
+                                }
+                                // Guided library file, mirroring
+                                // GTK's dimmed caption line.
+                                if item.guided-name != "" : Text {
+                                    text: item.guided-name;
+                                    wrap: word-wrap;
+                                    font-size: 12px;
+                                    color: MaterialPalette.on-surface-variant;
                                     horizontal-alignment: left;
                                 }
                                 // Note text. Truncation to ~120

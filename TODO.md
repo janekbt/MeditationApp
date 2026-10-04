@@ -14,8 +14,6 @@ Polish and UX items to tackle when convenient. Graduate each one out of this fil
 
 - **Mindfulness-bell-during-the-day tab.** *Tentative.* New tab next to Timer / Box Breath / Guided. User configures an interval ("every 30 min from 09:00 to 18:00, weekdays only") and a bell sound; the app rings at those times as a presence cue while the user goes about their day. The hard part is background scheduling that survives the app being backgrounded — on the Librem (notifications via `org.freedesktop.Notifications`? a `feedbackd`-driven timer? a small daemon?) and on Android (exact alarms) — prototype that piece before promoting out of "maybe".
 
-- **Show the guided file's name on guided sessions in the Log.** Both shells store `sessions.guided_file_uuid` (since the Android recovery-snapshot fix, recovered sessions keep it too) but neither shows it — a guided Log card reads like any other session. Show the library file's name on the card, e.g. as a subtitle line under the mode. Resolve the name in core from `guided_files` by uuid (a lookup helper next to the session-list query) so both shells render the same thing; decide what a deleted or never-synced file shows (no line, or a muted "File removed"). Touch points: the Log row rendering in `meditate-gtk/src/log/` and Android's `render_log_feed` in `meditate-android/src/lib.rs`. Both shells.
-
 ## Closed as "not us to fix" — Phosh launcher splash for flatpak apps
 
 On Librem 5 (Phosh 0.34 / Phoc 0.33, PureOS Crimson), the launcher

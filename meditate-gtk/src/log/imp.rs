@@ -21,6 +21,9 @@ pub struct LogView {
     // Cached DB data
     sessions:        RefCell<Vec<Session>>,
     pub labels:      RefCell<Vec<Label>>,
+    /// Guided-file uuid → name for the cards' file line; core keeps a
+    /// deleted library file's last name.
+    guided_names:    RefCell<std::collections::HashMap<String, String>>,
 
     // Filter state
     pub filter_notes_only: Cell<bool>,
@@ -130,6 +133,7 @@ impl LogView {
             .and_then(std::result::Result::ok)
             .unwrap_or_default();
         *self.labels.borrow_mut() = labels;
+        self.reload_guided_names(&app);
 
         // Reset pagination + DOM + section tracking.
         self.loaded_count.set(0);
@@ -160,6 +164,14 @@ impl LogView {
         self.load_page(&app);
     }
 
+    fn reload_guided_names(&self, app: &crate::application::MeditateApplication) {
+        let names = app
+            .with_db(|db| meditate_core::db::guided_file_names_from_db(db.core()))
+            .and_then(std::result::Result::ok)
+            .unwrap_or_default();
+        *self.guided_names.borrow_mut() = names;
+    }
+
     /// Query the next page of sessions and append them, grouping by date.
     /// Returns how many rows were appended; also toggles `load_more_btn`
     /// visibility based on whether the query returned a full page.
@@ -187,7 +199,7 @@ impl LogView {
         let label_map: std::collections::HashMap<i64, &str> =
             labels_ref.iter().map(|l| (l.id, l.name.as_str())).collect();
         for session in &page {
-            self.append_session_to_feed(session, &label_map);
+            self.append_session_to_feed(session, &label_map, &self.guided_names.borrow());
         }
         drop(labels_ref);
 
@@ -205,6 +217,7 @@ impl LogView {
         &self,
         session: &Session,
         label_map: &std::collections::HashMap<i64, &str>,
+        guided_names: &std::collections::HashMap<String, String>,
     ) {
         let key = date_group_key(session.start_time);
 
@@ -228,7 +241,7 @@ impl LogView {
         // bump its counters.
         let sections = self.sections_by_key.borrow();
         let sec = sections.get(&key).expect("section populated above");
-        let card = build_card(session, label_map);
+        let card = build_card(session, label_map, guided_names);
         sec.cards_box.append(&card);
         self.cards_by_id.borrow_mut().insert(session.id, card);
         sec.count.set(sec.count.get() + 1);
@@ -256,12 +269,14 @@ impl LogView {
             {
                 *self.labels.borrow_mut() = fresh;
             }
+            // Same for a guided file imported moments before the session.
+            self.reload_guided_names(&app);
         }
 
         let labels_ref = self.labels.borrow();
         let label_map: std::collections::HashMap<i64, &str> =
             labels_ref.iter().map(|l| (l.id, l.name.as_str())).collect();
-        let card = build_card(&session, &label_map);
+        let card = build_card(&session, &label_map, &self.guided_names.borrow());
         drop(labels_ref);
 
         let mut sections = self.sections_by_key.borrow_mut();
@@ -361,7 +376,11 @@ fn build_section_frame(unix_secs: i64) -> (gtk::Box, gtk::Label, gtk::Box) {
 /// One session card. Uses bare Gtk widgets (not AdwActionRow) so we can
 /// render a colored left stripe + hero duration + label chip + quoted
 /// note in a single, cheap widget tree — critical for 2000+ session logs.
-fn build_card(session: &Session, label_map: &std::collections::HashMap<i64, &str>) -> gtk::Box {
+fn build_card(
+    session: &Session,
+    label_map: &std::collections::HashMap<i64, &str>,
+    guided_names: &std::collections::HashMap<String, String>,
+) -> gtk::Box {
     let label_name = session.label_id
         .and_then(|id| label_map.get(&id).copied())
         .unwrap_or("");
@@ -408,7 +427,7 @@ fn build_card(session: &Session, label_map: &std::collections::HashMap<i64, &str
     left_col.append(&unit_label);
     left_col.append(&time_label);
 
-    // Right column: label chip + note/placeholder.
+    // Right column: label chip + guided file + note/placeholder.
     let right_col = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(7)
@@ -417,6 +436,22 @@ fn build_card(session: &Session, label_map: &std::collections::HashMap<i64, &str
 
     if !label_name.is_empty() {
         right_col.append(&build_label_chip(label_name, color_cls));
+    }
+
+    // Guided library file the session played, as a dimmed caption.
+    if let Some(name) = meditate_core::db::guided_file_name_for(
+        session.guided_file_uuid.as_deref(),
+        guided_names,
+    ) {
+        let file_label = gtk::Label::builder()
+            .label(name)
+            .css_classes(["caption", "dimmed"])
+            .halign(gtk::Align::Start)
+            .xalign(0.0)
+            .wrap(true)
+            .wrap_mode(gtk::pango::WrapMode::WordChar)
+            .build();
+        right_col.append(&file_label);
     }
 
     let note_text = session.note.as_deref().unwrap_or("").trim();

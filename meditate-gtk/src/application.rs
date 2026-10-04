@@ -675,6 +675,23 @@ impl InvalidateScope {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn log_cards_name_the_guided_file() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let log = std::fs::read_to_string(root.join("src/log/imp.rs")).unwrap();
+        let card = log.find("fn build_card(").unwrap();
+        let end = card + log[card..].find("\n}\n").unwrap();
+        let card = &log[card..end];
+        // Between the label chip and the note, dimmed; core resolves
+        // the name (deleted library files keep their last name).
+        let chip = card.find("build_label_chip(").unwrap();
+        let guided = card.find("meditate_core::db::guided_file_name_for(").expect("guided line");
+        let note = card.find("let note_text").unwrap();
+        assert!(chip < guided && guided < note);
+        assert!(card[guided..note].contains("\"dimmed\""));
+        assert!(log.contains("meditate_core::db::guided_file_names_from_db("));
+    }
+
     /// The sync worker loop lives in core (`SyncCoordinator::drain`)
     /// so GTK and Android run the same choreography.
     #[test]

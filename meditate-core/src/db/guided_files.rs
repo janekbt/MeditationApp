@@ -54,6 +54,52 @@ pub fn list_guided_files_from_db(db: &Database) -> Result<Vec<GuidedFile>> {
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(rows)
 }
+/// Display name of every guided file this device has ever known,
+/// keyed by uuid, for the Log's per-session file line. Current
+/// library rows give today's name; a file deleted since keeps the
+/// last name its insert / rename events carried, so deleting a
+/// track from the library does not blank the history of sessions
+/// that played it. The event log is never pruned (compaction keeps
+/// every event), which is what makes the fallback complete.
+pub fn guided_file_names_from_db(db: &Database) -> Result<std::collections::HashMap<String, String>> {
+    let mut names = std::collections::HashMap::new();
+    let mut stmt = db.conn.prepare(
+        "SELECT target_id, payload FROM events
+         WHERE kind IN (?1, ?2)
+         ORDER BY lamport_ts ASC, device_id ASC",
+    )?;
+    let rows = stmt.query_map(
+        params![
+            EventKind::GuidedFileInsert.as_db_str(),
+            EventKind::GuidedFileUpdate.as_db_str(),
+        ],
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+    )?;
+    for row in rows {
+        let (uuid, payload) = row?;
+        let name = serde_json::from_str::<serde_json::Value>(&payload)
+            .ok()
+            .and_then(|v| v.get("name")?.as_str().map(str::to_string));
+        if let Some(name) = name {
+            names.insert(uuid, name);
+        }
+    }
+    for file in list_guided_files_from_db(db)? {
+        names.insert(file.uuid.as_str().to_string(), file.name);
+    }
+    Ok(names)
+}
+
+/// The guided-file line for one Log card: the played file's name, or
+/// None when the session played no library file or the file is
+/// unknown on this device.
+pub fn guided_file_name_for<'a>(
+    uuid: Option<&str>,
+    names: &'a std::collections::HashMap<String, String>,
+) -> Option<&'a str> {
+    names.get(uuid?).map(String::as_str)
+}
+
 /// Look up a guided-file row by its cross-device uuid. Returns
 /// None if no row matches. Used by the chooser sub-row, the
 /// session-save path (resolving the home-list selection's
@@ -312,6 +358,59 @@ mod tests {
     use super::*;
     use crate::db::{test_helpers::*, Event};
     use crate::test_macros::assert_matches;
+
+    #[test]
+    fn guided_file_names_resolve_library_files() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_guided_file_with_uuid("gf-1", "Body Scan", "guided/gf-1.ogg", 1200, true).unwrap();
+        db.insert_guided_file_with_uuid("gf-2", "Metta", "guided/gf-2.ogg", 900, false).unwrap();
+        let names = guided_file_names_from_db(&db).unwrap();
+        assert_eq!(names.get("gf-1").map(String::as_str), Some("Body Scan"));
+        assert_eq!(names.get("gf-2").map(String::as_str), Some("Metta"));
+        assert_eq!(names.len(), 2);
+    }
+
+    #[test]
+    fn guided_file_names_follow_renames() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_guided_file_with_uuid("gf-1", "Body Scan", "guided/gf-1.ogg", 1200, true).unwrap();
+        db.rename_guided_file("gf-1", "Body Scan Long").unwrap();
+        let names = guided_file_names_from_db(&db).unwrap();
+        assert_eq!(names.get("gf-1").map(String::as_str), Some("Body Scan Long"));
+    }
+
+    #[test]
+    fn guided_file_names_keep_a_deleted_files_last_name() {
+        // The Log shows which file a guided session played; deleting
+        // the file from the library must not blank that history. The
+        // event log keeps every insert / rename, so the last name
+        // before the delete is still known.
+        let db = Database::open_in_memory().unwrap();
+        db.insert_guided_file_with_uuid("gf-1", "Body Scan", "guided/gf-1.ogg", 1200, true).unwrap();
+        db.rename_guided_file("gf-1", "Body Scan Long").unwrap();
+        db.delete_guided_file("gf-1").unwrap();
+        assert!(find_guided_file_by_uuid_from_db(&db, "gf-1").unwrap().is_none());
+        let names = guided_file_names_from_db(&db).unwrap();
+        assert_eq!(names.get("gf-1").map(String::as_str), Some("Body Scan Long"));
+    }
+
+    #[test]
+    fn guided_file_names_skip_unknown_files() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_guided_file_with_uuid("gf-1", "Body Scan", "guided/gf-1.ogg", 1200, true).unwrap();
+        let names = guided_file_names_from_db(&db).unwrap();
+        assert!(!names.contains_key("never-imported"));
+    }
+
+    #[test]
+    fn guided_file_name_for_a_session() {
+        let mut names = std::collections::HashMap::new();
+        names.insert("gf-1".to_string(), "Body Scan".to_string());
+        let with = |uuid: Option<&str>| guided_file_name_for(uuid, &names);
+        assert_eq!(with(Some("gf-1")), Some("Body Scan"));
+        assert_eq!(with(Some("gone")), None, "unknown file: no line");
+        assert_eq!(with(None), None, "not a library file: no line");
+    }
 
     #[test]
     fn list_guided_files_is_empty_on_a_fresh_database() {

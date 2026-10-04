@@ -2597,6 +2597,7 @@ fn load_log_page(
 fn group_log_sessions(
     rows: &[(i64, meditate_core::db::Session)],
     label_name_by_id: &std::collections::HashMap<i64, String>,
+    guided_names: &std::collections::HashMap<String, String>,
     hidden_ids: &std::collections::HashSet<i64>,
 ) -> Vec<LogDaySectionData> {
     let mut sections: Vec<LogDaySectionData> = Vec::new();
@@ -2619,6 +2620,12 @@ fn group_log_sessions(
             ) as i32,
             time_of_day: format_time_of_day(&s.start_iso),
             label_name,
+            guided_name: meditate_core::db::guided_file_name_for(
+                s.guided_file_uuid.as_ref().map(|u| u.as_str()),
+                guided_names,
+            )
+            .unwrap_or_default()
+            .to_string(),
             note: truncate_note_for_card(
                 s.notes.as_deref().unwrap_or_default(),
             ),
@@ -2658,12 +2665,23 @@ fn load_label_name_map() -> std::collections::HashMap<i64, String> {
         .collect()
 }
 
+/// Guided-file names for the Log's file line, once per refresh like
+/// the label map. Core includes files deleted since (their last name).
+#[cfg(target_os = "android")]
+fn load_guided_file_names() -> std::collections::HashMap<String, String> {
+    let Some(db_arc) = DATABASE.get() else { return Default::default(); };
+    let Ok(guard) = db_arc.lock() else { return Default::default(); };
+    let Some(db) = guard.as_ref() else { return Default::default(); };
+    meditate_core::db::guided_file_names_from_db(db).unwrap_or_default()
+}
+
 #[cfg(target_os = "android")]
 struct LogCardItemData {
     id: i32,
     minutes: i32,
     time_of_day: String,
     label_name: String,
+    guided_name: String,
     note: String,
     color_index: i32,
 }
@@ -2933,7 +2951,8 @@ fn render_log_feed(
         .map(|(id, _)| *id)
         .collect();
     let label_map = load_label_name_map();
-    let sections = group_log_sessions(&loaded.borrow(), &label_map, &hidden);
+    let guided_names = load_guided_file_names();
+    let sections = group_log_sessions(&loaded.borrow(), &label_map, &guided_names, &hidden);
     push_log_sections_to_ui(ui, sections);
 }
 
@@ -2959,6 +2978,7 @@ fn push_log_sections_to_ui(
                     minutes: it.minutes,
                     time_of_day: it.time_of_day.into(),
                     label_name: it.label_name.into(),
+                    guided_name: it.guided_name.into(),
                     note: it.note.into(),
                     color_index: it.color_index,
                 })

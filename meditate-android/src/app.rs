@@ -1610,6 +1610,35 @@ mod tests {
     }
 
     #[test]
+    fn log_cards_name_the_guided_file() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+
+        let item = slint.find("export struct LogCardItem {").unwrap();
+        assert!(slint[item..item + 800].contains("guided-name: string,"));
+
+        // Between the label line and the note, small and muted; no line
+        // for sessions without a library file.
+        let label = slint.find("text: item.label-name;").unwrap();
+        let note = label + slint[label..].find(": @tr(\"No note added\");").unwrap();
+        let guided = label + slint[label..note].find("if item.guided-name != \"\" : Text {").expect("guided line after the label");
+        let line = &slint[guided..note];
+        assert!(line.contains("text: item.guided-name;"));
+        assert!(line.contains("color: MaterialPalette.on-surface-variant;"));
+        assert!(line.contains("wrap: word-wrap;"));
+
+        // Names come from core, deleted files included.
+        let render = lib.find("fn render_log_feed(").unwrap();
+        assert!(lib[render..render + 1200].contains("load_guided_file_names()"));
+        assert!(lib.contains("meditate_core::db::guided_file_names_from_db(db)"));
+        let group = lib.find("fn group_log_sessions(").unwrap();
+        let group = &lib[group..group + 2500];
+        assert!(group.contains("meditate_core::db::guided_file_name_for("));
+        assert!(lib.contains("guided_name: it.guided_name.into(),"));
+    }
+
+    #[test]
     fn the_shell_holds_an_ended_session_until_save_or_discard() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
         let lib = std::fs::read_to_string(path).unwrap();
