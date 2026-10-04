@@ -84,6 +84,7 @@ pub mod labels;
 pub mod naming;
 pub mod preset_config;
 pub mod preview;
+pub mod release_notes;
 pub mod seeds;
 pub mod session;
 pub mod sound;

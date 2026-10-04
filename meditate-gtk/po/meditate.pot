@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-04 19:41+0200\n"
+"POT-Creation-Date: 2026-10-04 21:55+0200\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -86,53 +86,7 @@ msgstr ""
 msgid "Meditate"
 msgstr ""
 
-#: src/application.rs:324 data/io.github.janekbt.Meditate.metainfo.xml.in:185
-msgid ""
-"A new Box Breath timer mode, per-label stats, and an in-app diagnostics view "
-"for bug reporting — plus a handful of polish fixes."
-msgstr ""
-
-#: src/application.rs:325 data/io.github.janekbt.Meditate.metainfo.xml.in:187
-msgid ""
-"New Box Breath mode alongside Countdown and Stopwatch: pick a pattern "
-"(4-4-4-4, 4-7-8-0, 5-5-5-5) or dial in each phase, set a session length, and "
-"the running view traces a dot around an accent-tinted square as you breathe "
-"in, hold, out, hold"
-msgstr ""
-
-#: src/application.rs:326 data/io.github.janekbt.Meditate.metainfo.xml.in:188
-msgid ""
-"Stats tab shows a \"By label\" breakdown below the streak / total / sessions "
-"row, so you can see how much meditation time you've spent under each label"
-msgstr ""
-
-#: src/application.rs:327 data/io.github.janekbt.Meditate.metainfo.xml.in:189
-msgid ""
-"About dialog has a new Troubleshooting view with a rolling diagnostics log "
-"(startup, database open, import/export results, panics) — copy or save to "
-"attach to a bug report"
-msgstr ""
-
-#: src/application.rs:328 data/io.github.janekbt.Meditate.metainfo.xml.in:190
-msgid ""
-"Each timer mode remembers its own last-chosen label, so a Box Breath session "
-"no longer changes the default label for Countdown or Stopwatch"
-msgstr ""
-
-#: src/application.rs:329 data/io.github.janekbt.Meditate.metainfo.xml.in:191
-msgid ""
-"Release notes shown in the About dialog now reflect the current version "
-"instead of staying pinned to the initial release"
-msgstr ""
-
-#: src/application.rs:330 data/io.github.janekbt.Meditate.metainfo.xml.in:192
-msgid ""
-"Log-edit calendar picker shows the proper icon again; post-session note "
-"field no longer steals focus on phones and hides the Save / Discard buttons "
-"behind the on-screen keyboard"
-msgstr ""
-
-#: src/application.rs:404 src/guided.rs:1172 src/log/imp.rs:677
+#: src/application.rs:396 src/guided.rs:1172 src/log/imp.rs:677
 #: src/presets.rs:704 src/timer/imp.rs:3643 src/vibrations.rs:476
 #: src/vibrations.rs:515
 msgid "Undo"
@@ -2013,6 +1967,52 @@ msgid ""
 "Android companion app (F-Droid): the same modes, log, stats, and sync, "
 "sharing the identical core — plus a home-screen widget for one-tap preset "
 "starts, in all ten languages"
+msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:185
+msgid ""
+"A new Box Breath timer mode, per-label stats, and an in-app diagnostics view "
+"for bug reporting — plus a handful of polish fixes."
+msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:187
+msgid ""
+"New Box Breath mode alongside Countdown and Stopwatch: pick a pattern "
+"(4-4-4-4, 4-7-8-0, 5-5-5-5) or dial in each phase, set a session length, and "
+"the running view traces a dot around an accent-tinted square as you breathe "
+"in, hold, out, hold"
+msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:188
+msgid ""
+"Stats tab shows a \"By label\" breakdown below the streak / total / sessions "
+"row, so you can see how much meditation time you've spent under each label"
+msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:189
+msgid ""
+"About dialog has a new Troubleshooting view with a rolling diagnostics log "
+"(startup, database open, import/export results, panics) — copy or save to "
+"attach to a bug report"
+msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:190
+msgid ""
+"Each timer mode remembers its own last-chosen label, so a Box Breath session "
+"no longer changes the default label for Countdown or Stopwatch"
+msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:191
+msgid ""
+"Release notes shown in the About dialog now reflect the current version "
+"instead of staying pinned to the initial release"
+msgstr ""
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:192
+msgid ""
+"Log-edit calendar picker shows the proper icon again; post-session note "
+"field no longer steals focus on phones and hides the Save / Discard buttons "
+"behind the on-screen keyboard"
 msgstr ""
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:199

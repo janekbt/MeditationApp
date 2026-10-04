@@ -314,20 +314,12 @@ mod imp {
                 app,
                 move |_, _| {
                     use crate::i18n::gettext;
-                    // Keep this mirror in sync with the first <release> in
-                    // data/io.github.janekbt.Meditate.metainfo.xml.in on
-                    // every version bump — the metainfo is the source of
-                    // truth for release-notes copy (Flathub uses it), this
-                    // is the in-app echo for the About dialog.
-                    let notes = format!(
-                        "<p>{}</p><ul><li>{}</li><li>{}</li><li>{}</li><li>{}</li><li>{}</li><li>{}</li></ul>",
-                        gettext("A new Box Breath timer mode, per-label stats, and an in-app diagnostics view for bug reporting — plus a handful of polish fixes."),
-                        gettext("New Box Breath mode alongside Countdown and Stopwatch: pick a pattern (4-4-4-4, 4-7-8-0, 5-5-5-5) or dial in each phase, set a session length, and the running view traces a dot around an accent-tinted square as you breathe in, hold, out, hold"),
-                        gettext("Stats tab shows a \"By label\" breakdown below the streak / total / sessions row, so you can see how much meditation time you've spent under each label"),
-                        gettext("About dialog has a new Troubleshooting view with a rolling diagnostics log (startup, database open, import/export results, panics) — copy or save to attach to a bug report"),
-                        gettext("Each timer mode remembers its own last-chosen label, so a Box Breath session no longer changes the default label for Countdown or Stopwatch"),
-                        gettext("Release notes shown in the About dialog now reflect the current version instead of staying pinned to the initial release"),
-                        gettext("Log-edit calendar picker shows the proper icon again; post-session note field no longer steals focus on phones and hides the Save / Discard buttons behind the on-screen keyboard"),
+                    // Every stable release's notes, newest first, read
+                    // from the metainfo and translated with its gettext
+                    // entries, so the dialog can't fall behind a bump.
+                    let notes = meditate_core::release_notes::about_markup(
+                        include_str!("../data/io.github.janekbt.Meditate.metainfo.xml.in"),
+                        gettext::<String>,
                     );
                     let dialog = adw::AboutDialog::builder()
                         .application_name("Meditate")
@@ -763,5 +755,21 @@ mod tests {
         let toggle = &src[toggle..toggle + 900];
         assert!(toggle.contains("meditate_core::labels::set_active_for_mode("));
         assert!(!toggle.contains("default_label_uuid_for_mode"), "the rule lives in core");
+    }
+
+    /// The About dialog shows the metainfo's release history through
+    /// core, not a hand-kept copy (that copy had stayed on the Box
+    /// Breath release for many versions).
+    #[test]
+    fn about_release_notes_come_from_the_metainfo() {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/application.rs"),
+        )
+        .unwrap();
+        let about = src.find("let about_action").unwrap();
+        let about = &src[about..about + src[about..].find(".release_notes(&notes)").unwrap()];
+        assert!(about.contains("meditate_core::release_notes::about_markup("));
+        assert!(about.contains("include_str!(\"../data/io.github.janekbt.Meditate.metainfo.xml.in\")"));
+        assert!(!about.contains("gettext(\""), "no hand-kept copy of the notes");
     }
 }

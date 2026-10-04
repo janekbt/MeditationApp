@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-04 19:41+0200\n"
+"POT-Creation-Date: 2026-10-04 21:55+0200\n"
 "PO-Revision-Date: 2026-04-20 18:10+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: German\n"
@@ -89,76 +89,7 @@ msgstr "Beenden"
 msgid "Meditate"
 msgstr "Meditate"
 
-#: src/application.rs:324 data/io.github.janekbt.Meditate.metainfo.xml.in:185
-msgid ""
-"A new Box Breath timer mode, per-label stats, and an in-app diagnostics view "
-"for bug reporting — plus a handful of polish fixes."
-msgstr ""
-"Ein neuer Timer-Modus für Box-Atmung, Statistik je Kategorie und eine "
-"Diagnoseansicht für Fehlerberichte – dazu eine Handvoll kleiner "
-"Verbesserungen."
-
-#: src/application.rs:325 data/io.github.janekbt.Meditate.metainfo.xml.in:187
-msgid ""
-"New Box Breath mode alongside Countdown and Stopwatch: pick a pattern "
-"(4-4-4-4, 4-7-8-0, 5-5-5-5) or dial in each phase, set a session length, and "
-"the running view traces a dot around an accent-tinted square as you breathe "
-"in, hold, out, hold"
-msgstr ""
-"Neuer Modus Box-Atmung neben Countdown und Stoppuhr: Wähle ein Muster "
-"(4-4-4-4, 4-7-8-0, 5-5-5-5) oder stelle jede Phase einzeln ein, lege die "
-"Sitzungsdauer fest, und während der Sitzung wandert ein Punkt um ein Quadrat "
-"in Akzentfarbe, während du einatmest, hältst, ausatmest und hältst"
-
-#: src/application.rs:326 data/io.github.janekbt.Meditate.metainfo.xml.in:188
-msgid ""
-"Stats tab shows a \"By label\" breakdown below the streak / total / sessions "
-"row, so you can see how much meditation time you've spent under each label"
-msgstr ""
-"Der Statistik-Tab zeigt unter der Zeile mit Serie, Gesamtzeit und Sitzungen "
-"eine Aufschlüsselung „Nach Kategorie“, damit du siehst, wie viel "
-"Meditationszeit auf jede Kategorie entfällt"
-
-#: src/application.rs:327 data/io.github.janekbt.Meditate.metainfo.xml.in:189
-msgid ""
-"About dialog has a new Troubleshooting view with a rolling diagnostics log "
-"(startup, database open, import/export results, panics) — copy or save to "
-"attach to a bug report"
-msgstr ""
-"Der Über-Dialog hat eine neue Ansicht „Fehlerbehebung“ mit einem "
-"fortlaufenden Diagnoseprotokoll (Start, Öffnen der Datenbank, Import-/"
-"Exportergebnisse, Abstürze) – zum Kopieren oder Speichern für einen "
-"Fehlerbericht"
-
-#: src/application.rs:328 data/io.github.janekbt.Meditate.metainfo.xml.in:190
-msgid ""
-"Each timer mode remembers its own last-chosen label, so a Box Breath session "
-"no longer changes the default label for Countdown or Stopwatch"
-msgstr ""
-"Jeder Timer-Modus merkt sich seine zuletzt gewählte Kategorie, sodass eine "
-"Box-Atmung-Sitzung die Standardkategorie für Countdown oder Stoppuhr nicht "
-"mehr ändert"
-
-#: src/application.rs:329 data/io.github.janekbt.Meditate.metainfo.xml.in:191
-msgid ""
-"Release notes shown in the About dialog now reflect the current version "
-"instead of staying pinned to the initial release"
-msgstr ""
-"Die Versionshinweise im Über-Dialog beziehen sich jetzt auf die aktuelle "
-"Version statt immer auf die erste Veröffentlichung"
-
-#: src/application.rs:330 data/io.github.janekbt.Meditate.metainfo.xml.in:192
-msgid ""
-"Log-edit calendar picker shows the proper icon again; post-session note "
-"field no longer steals focus on phones and hides the Save / Discard buttons "
-"behind the on-screen keyboard"
-msgstr ""
-"Die Kalenderauswahl beim Bearbeiten im Verlauf zeigt wieder das richtige "
-"Symbol; das Notizfeld nach der Sitzung reißt auf Telefonen nicht mehr den "
-"Fokus an sich und verdeckt die Knöpfe Speichern / Verwerfen nicht mehr mit "
-"der Bildschirmtastatur"
-
-#: src/application.rs:404 src/guided.rs:1172 src/log/imp.rs:677
+#: src/application.rs:396 src/guided.rs:1172 src/log/imp.rs:677
 #: src/presets.rs:704 src/timer/imp.rs:3643 src/vibrations.rs:476
 #: src/vibrations.rs:515
 msgid "Undo"
@@ -1845,38 +1776,51 @@ msgstr "janekbt"
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:93
 msgid ""
 "A large round of fixes, mostly for the Android app, and a few new touches."
-msgstr "Viele Fehlerbehebungen, vor allem für die Android-App, und ein paar Neuerungen."
+msgstr ""
+"Viele Fehlerbehebungen, vor allem für die Android-App, und ein paar "
+"Neuerungen."
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:95
 msgid "Log cards show the name of the guided meditation you listened to"
-msgstr "Verlaufskarten zeigen den Namen der geführten Meditation, die du gehört hast"
+msgstr ""
+"Verlaufskarten zeigen den Namen der geführten Meditation, die du gehört hast"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:96
 msgid "Editing a session in the log keeps its exact length, down to the second"
-msgstr "Beim Bearbeiten einer Sitzung im Verlauf bleibt ihre Dauer sekundengenau erhalten"
+msgstr ""
+"Beim Bearbeiten einer Sitzung im Verlauf bleibt ihre Dauer sekundengenau "
+"erhalten"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:97
 msgid ""
 "A session that started in the hour skipped by a daylight saving change keeps "
 "its real date"
-msgstr "Eine Sitzung, die in der bei der Zeitumstellung übersprungenen Stunde begann, behält ihr richtiges Datum"
+msgstr ""
+"Eine Sitzung, die in der bei der Zeitumstellung übersprungenen Stunde "
+"begann, behält ihr richtiges Datum"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:98
 msgid ""
 "In Overtime the timer holds at the planned length, and a guided track stops "
 "before the end bell"
-msgstr "Nach Ablauf der geplanten Zeit bleibt die Anzeige bei der geplanten Dauer stehen, und eine geführte Aufnahme endet vor der Abschlussglocke"
+msgstr ""
+"Nach Ablauf der geplanten Zeit bleibt die Anzeige bei der geplanten Dauer "
+"stehen, und eine geführte Aufnahme endet vor der Abschlussglocke"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:99
 msgid "Imported bell sounds are found on every synced device"
-msgstr "Importierte Glockenklänge werden auf jedem synchronisierten Gerät gefunden"
+msgstr ""
+"Importierte Glockenklänge werden auf jedem synchronisierten Gerät gefunden"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:100
 msgid ""
 "Android: rename and delete your own bell sounds, a \"Meditation complete\" "
 "notification, and interval bells with an on/off switch and typeable minutes "
 "and jitter"
-msgstr "Android: eigene Glockenklänge umbenennen und löschen, eine Benachrichtigung „Meditation beendet“ und Intervallglocken mit Ein/Aus-Schalter sowie eintippbaren Minuten und Streuung"
+msgstr ""
+"Android: eigene Glockenklänge umbenennen und löschen, eine Benachrichtigung "
+"„Meditation beendet“ und Intervallglocken mit Ein/Aus-Schalter sowie "
+"eintippbaren Minuten und Streuung"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:101
 msgid ""
@@ -1884,7 +1828,12 @@ msgid ""
 "finished session is kept until you save or discard it, the screen-off timer "
 "stays awake for the whole session, and the remaining English texts are "
 "translated"
-msgstr "Android: viele Fehlerbehebungen aus zwei gründlichen Fehlersuchen. Jede Änderung wird jetzt synchronisiert, eine beendete Sitzung bleibt bis zum Speichern oder Verwerfen erhalten, der Timer bleibt bei ausgeschaltetem Bildschirm die ganze Sitzung wach, und die letzten englischen Texte sind übersetzt"
+msgstr ""
+"Android: viele Fehlerbehebungen aus zwei gründlichen Fehlersuchen. Jede "
+"Änderung wird jetzt synchronisiert, eine beendete Sitzung bleibt bis zum "
+"Speichern oder Verwerfen erhalten, der Timer bleibt bei ausgeschaltetem "
+"Bildschirm die ganze Sitzung wach, und die letzten englischen Texte sind "
+"übersetzt"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:107
 msgid ""
@@ -2129,6 +2078,75 @@ msgstr ""
 "Statistik und Synchronisation auf demselben Kern – dazu ein Startbildschirm-"
 "Widget, um Voreinstellungen mit einem Tippen zu starten, in allen zehn "
 "Sprachen"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:185
+msgid ""
+"A new Box Breath timer mode, per-label stats, and an in-app diagnostics view "
+"for bug reporting — plus a handful of polish fixes."
+msgstr ""
+"Ein neuer Timer-Modus für Box-Atmung, Statistik je Kategorie und eine "
+"Diagnoseansicht für Fehlerberichte – dazu eine Handvoll kleiner "
+"Verbesserungen."
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:187
+msgid ""
+"New Box Breath mode alongside Countdown and Stopwatch: pick a pattern "
+"(4-4-4-4, 4-7-8-0, 5-5-5-5) or dial in each phase, set a session length, and "
+"the running view traces a dot around an accent-tinted square as you breathe "
+"in, hold, out, hold"
+msgstr ""
+"Neuer Modus Box-Atmung neben Countdown und Stoppuhr: Wähle ein Muster "
+"(4-4-4-4, 4-7-8-0, 5-5-5-5) oder stelle jede Phase einzeln ein, lege die "
+"Sitzungsdauer fest, und während der Sitzung wandert ein Punkt um ein Quadrat "
+"in Akzentfarbe, während du einatmest, hältst, ausatmest und hältst"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:188
+msgid ""
+"Stats tab shows a \"By label\" breakdown below the streak / total / sessions "
+"row, so you can see how much meditation time you've spent under each label"
+msgstr ""
+"Der Statistik-Tab zeigt unter der Zeile mit Serie, Gesamtzeit und Sitzungen "
+"eine Aufschlüsselung „Nach Kategorie“, damit du siehst, wie viel "
+"Meditationszeit auf jede Kategorie entfällt"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:189
+msgid ""
+"About dialog has a new Troubleshooting view with a rolling diagnostics log "
+"(startup, database open, import/export results, panics) — copy or save to "
+"attach to a bug report"
+msgstr ""
+"Der Über-Dialog hat eine neue Ansicht „Fehlerbehebung“ mit einem "
+"fortlaufenden Diagnoseprotokoll (Start, Öffnen der Datenbank, Import-/"
+"Exportergebnisse, Abstürze) – zum Kopieren oder Speichern für einen "
+"Fehlerbericht"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:190
+msgid ""
+"Each timer mode remembers its own last-chosen label, so a Box Breath session "
+"no longer changes the default label for Countdown or Stopwatch"
+msgstr ""
+"Jeder Timer-Modus merkt sich seine zuletzt gewählte Kategorie, sodass eine "
+"Box-Atmung-Sitzung die Standardkategorie für Countdown oder Stoppuhr nicht "
+"mehr ändert"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:191
+msgid ""
+"Release notes shown in the About dialog now reflect the current version "
+"instead of staying pinned to the initial release"
+msgstr ""
+"Die Versionshinweise im Über-Dialog beziehen sich jetzt auf die aktuelle "
+"Version statt immer auf die erste Veröffentlichung"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:192
+msgid ""
+"Log-edit calendar picker shows the proper icon again; post-session note "
+"field no longer steals focus on phones and hides the Save / Discard buttons "
+"behind the on-screen keyboard"
+msgstr ""
+"Die Kalenderauswahl beim Bearbeiten im Verlauf zeigt wieder das richtige "
+"Symbol; das Notizfeld nach der Sitzung reißt auf Telefonen nicht mehr den "
+"Fokus an sich und verdeckt die Knöpfe Speichern / Verwerfen nicht mehr mit "
+"der Bildschirmtastatur"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:199
 msgid ""

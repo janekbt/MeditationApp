@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-04 19:41+0200\n"
+"POT-Creation-Date: 2026-10-04 21:55+0200\n"
 "PO-Revision-Date: 2026-04-20 18:32+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Simplified Chinese\n"
@@ -85,66 +85,7 @@ msgstr "退出"
 msgid "Meditate"
 msgstr "Meditate"
 
-#: src/application.rs:324 data/io.github.janekbt.Meditate.metainfo.xml.in:185
-msgid ""
-"A new Box Breath timer mode, per-label stats, and an in-app diagnostics view "
-"for bug reporting — plus a handful of polish fixes."
-msgstr ""
-"新增箱式呼吸计时模式、按标签统计，以及用于报告错误的应用内诊断视图，另有若干"
-"细节改进。"
-
-#: src/application.rs:325 data/io.github.janekbt.Meditate.metainfo.xml.in:187
-msgid ""
-"New Box Breath mode alongside Countdown and Stopwatch: pick a pattern "
-"(4-4-4-4, 4-7-8-0, 5-5-5-5) or dial in each phase, set a session length, and "
-"the running view traces a dot around an accent-tinted square as you breathe "
-"in, hold, out, hold"
-msgstr ""
-"在倒计时和秒表之外新增箱式呼吸模式：选择一种节奏（4-4-4-4、4-7-8-0、5-5-5-5）"
-"或逐一设定各阶段，设置会话时长，运行时界面会随着你吸气、屏息、呼气、屏息，让"
-"一个圆点沿着强调色方框移动"
-
-#: src/application.rs:326 data/io.github.janekbt.Meditate.metainfo.xml.in:188
-msgid ""
-"Stats tab shows a \"By label\" breakdown below the streak / total / sessions "
-"row, so you can see how much meditation time you've spent under each label"
-msgstr ""
-"统计页在连续天数 / 总计 / 会话一行下方显示“按标签”细分，让你了解在每个标签下"
-"冥想了多长时间"
-
-#: src/application.rs:327 data/io.github.janekbt.Meditate.metainfo.xml.in:189
-msgid ""
-"About dialog has a new Troubleshooting view with a rolling diagnostics log "
-"(startup, database open, import/export results, panics) — copy or save to "
-"attach to a bug report"
-msgstr ""
-"“关于”对话框新增故障排除视图，包含滚动诊断日志（启动、数据库打开、导入/导出结"
-"果、崩溃），可复制或保存后附加到错误报告中"
-
-#: src/application.rs:328 data/io.github.janekbt.Meditate.metainfo.xml.in:190
-msgid ""
-"Each timer mode remembers its own last-chosen label, so a Box Breath session "
-"no longer changes the default label for Countdown or Stopwatch"
-msgstr ""
-"每种计时模式都会记住各自上次选择的标签，因此箱式呼吸会话不再改变倒计时或秒表"
-"的默认标签"
-
-#: src/application.rs:329 data/io.github.janekbt.Meditate.metainfo.xml.in:191
-msgid ""
-"Release notes shown in the About dialog now reflect the current version "
-"instead of staying pinned to the initial release"
-msgstr "“关于”对话框中的发布说明现在对应当前版本，不再固定显示首个版本的内容"
-
-#: src/application.rs:330 data/io.github.janekbt.Meditate.metainfo.xml.in:192
-msgid ""
-"Log-edit calendar picker shows the proper icon again; post-session note "
-"field no longer steals focus on phones and hides the Save / Discard buttons "
-"behind the on-screen keyboard"
-msgstr ""
-"记录编辑中的日历选择器重新显示正确图标；在手机上，会话后备注框不再抢占焦点，"
-"也不会让屏幕键盘遮住“保存 / 放弃”按钮"
-
-#: src/application.rs:404 src/guided.rs:1172 src/log/imp.rs:677
+#: src/application.rs:396 src/guided.rs:1172 src/log/imp.rs:677
 #: src/presets.rs:704 src/timer/imp.rs:3643 src/vibrations.rs:476
 #: src/vibrations.rs:515
 msgid "Undo"
@@ -1823,7 +1764,9 @@ msgid ""
 "Android: rename and delete your own bell sounds, a \"Meditation complete\" "
 "notification, and interval bells with an on/off switch and typeable minutes "
 "and jitter"
-msgstr "Android：可重命名和删除自己的铃声，新增“冥想完成”通知，间隔铃新增开关，分钟数和随机幅度可直接输入"
+msgstr ""
+"Android：可重命名和删除自己的铃声，新增“冥想完成”通知，间隔铃新增开关，分钟数"
+"和随机幅度可直接输入"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:101
 msgid ""
@@ -1831,7 +1774,9 @@ msgid ""
 "finished session is kept until you save or discard it, the screen-off timer "
 "stays awake for the whole session, and the remaining English texts are "
 "translated"
-msgstr "Android：两轮全面排查带来的大量修复。每项更改现在都会同步，结束的会话会保留直到你保存或放弃，屏幕关闭时计时器在整个会话中保持运行，剩余的英文文本也已翻译"
+msgstr ""
+"Android：两轮全面排查带来的大量修复。每项更改现在都会同步，结束的会话会保留直"
+"到你保存或放弃，屏幕关闭时计时器在整个会话中保持运行，剩余的英文文本也已翻译"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:107
 msgid ""
@@ -2042,6 +1987,65 @@ msgid ""
 msgstr ""
 "Android 配套应用（F-Droid）：相同的模式、记录、统计和同步，共享同一核心——另有"
 "主屏幕小部件，可一键启动预设，支持全部十种语言"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:185
+msgid ""
+"A new Box Breath timer mode, per-label stats, and an in-app diagnostics view "
+"for bug reporting — plus a handful of polish fixes."
+msgstr ""
+"新增箱式呼吸计时模式、按标签统计，以及用于报告错误的应用内诊断视图，另有若干"
+"细节改进。"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:187
+msgid ""
+"New Box Breath mode alongside Countdown and Stopwatch: pick a pattern "
+"(4-4-4-4, 4-7-8-0, 5-5-5-5) or dial in each phase, set a session length, and "
+"the running view traces a dot around an accent-tinted square as you breathe "
+"in, hold, out, hold"
+msgstr ""
+"在倒计时和秒表之外新增箱式呼吸模式：选择一种节奏（4-4-4-4、4-7-8-0、5-5-5-5）"
+"或逐一设定各阶段，设置会话时长，运行时界面会随着你吸气、屏息、呼气、屏息，让"
+"一个圆点沿着强调色方框移动"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:188
+msgid ""
+"Stats tab shows a \"By label\" breakdown below the streak / total / sessions "
+"row, so you can see how much meditation time you've spent under each label"
+msgstr ""
+"统计页在连续天数 / 总计 / 会话一行下方显示“按标签”细分，让你了解在每个标签下"
+"冥想了多长时间"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:189
+msgid ""
+"About dialog has a new Troubleshooting view with a rolling diagnostics log "
+"(startup, database open, import/export results, panics) — copy or save to "
+"attach to a bug report"
+msgstr ""
+"“关于”对话框新增故障排除视图，包含滚动诊断日志（启动、数据库打开、导入/导出结"
+"果、崩溃），可复制或保存后附加到错误报告中"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:190
+msgid ""
+"Each timer mode remembers its own last-chosen label, so a Box Breath session "
+"no longer changes the default label for Countdown or Stopwatch"
+msgstr ""
+"每种计时模式都会记住各自上次选择的标签，因此箱式呼吸会话不再改变倒计时或秒表"
+"的默认标签"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:191
+msgid ""
+"Release notes shown in the About dialog now reflect the current version "
+"instead of staying pinned to the initial release"
+msgstr "“关于”对话框中的发布说明现在对应当前版本，不再固定显示首个版本的内容"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:192
+msgid ""
+"Log-edit calendar picker shows the proper icon again; post-session note "
+"field no longer steals focus on phones and hides the Save / Discard buttons "
+"behind the on-screen keyboard"
+msgstr ""
+"记录编辑中的日历选择器重新显示正确图标；在手机上，会话后备注框不再抢占焦点，"
+"也不会让屏幕键盘遮住“保存 / 放弃”按钮"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:199
 msgid ""
