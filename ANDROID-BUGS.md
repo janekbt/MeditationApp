@@ -99,7 +99,7 @@ meditate-core with both shells calling them.
   logs (`lib.rs:5401-5412`); the guided error snackbar sits under the dialog
   backdrop (snackbar `main.slint:8023` declared before the dialog `8071`).
   GTK shows a toast and closes (`meditate-gtk/src/sounds.rs:636-651`).
-- [ ] **"Import File" is enabled for a guided file already in the library**,
+- [x] **"Import File" is enabled for a guided file already in the library**,
   making a duplicate. `main.slint:3324`, `lib.rs:5958-5987`; GTK enables it
   only for a new pick (`timer/imp.rs:3464-3468`).
 - [x] **Two guided deletes within 5 s leak the first file on disk.**

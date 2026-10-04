@@ -1781,6 +1781,9 @@ export component MainWindow inherits Window {
     // the SAF picker; `guided-open-tap` opens it. Mirrors GTK's
     // guided_section Current-Selection row.
     in property <string> guided-name: "";
+    // The pick is already a library row (starred or just imported),
+    // so Import File has nothing to import; GTK greys it the same way.
+    in property <bool> guided-pick-in-library: false;
     // Probed length of the picked file (s); 0 = none. Drives the
     // idle hero + the Guided countdown target (Guided has no
     // duration stepper — the file's length is the duration).
@@ -3406,7 +3409,7 @@ export component MainWindow inherits Window {
                     }
                     OutlineButton {
                         text: @tr("Import File");
-                        enabled: root.guided-name != "";
+                        enabled: root.guided-name != "" && !root.guided-pick-in-library;
                         clicked => { root.guided-import-tap(); }
                     }
                 }

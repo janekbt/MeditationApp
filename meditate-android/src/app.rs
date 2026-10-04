@@ -1732,6 +1732,22 @@ mod tests {
     }
 
     #[test]
+    fn import_file_is_only_for_a_new_pick() {
+        // Import File stayed enabled for a starred file, so tapping it
+        // transcoded a library file again into a duplicate.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        assert!(slint.contains("enabled: root.guided-name != \"\" && !root.guided-pick-in-library;"));
+        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        // Every place that changes the pick says whether it's a library row.
+        assert_eq!(
+            lib.matches("ui.set_guided_name(").count(),
+            lib.matches("ui.set_guided_pick_in_library(").count() + 1,
+            "all but the rename (which keeps the pick) update the flag",
+        );
+    }
+
+    #[test]
     fn a_failed_import_closes_its_dialog_and_says_so() {
         // A failed bell import only logged; a failed guided import's
         // message sat under the dialog backdrop. Either way the dialog

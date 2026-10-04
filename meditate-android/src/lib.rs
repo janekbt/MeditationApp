@@ -1163,6 +1163,7 @@ fn try_guided_pick(
         uuid: None, // transient Open-File pick
     });
     ui.set_guided_name(name.clone().into());
+    ui.set_guided_pick_in_library(false);
     // Feed the idle hero + countdown target (next refresh tick
     // picks it up via configured_duration).
     ui.set_guided_duration_secs(dur as i32);
@@ -5470,6 +5471,7 @@ fn build_ui() -> MainWindow {
                                     refresh_guided_files(&ui);
                                     refresh_guided_manage(&ui);
                                     ui.set_guided_name(name.into());
+                                    ui.set_guided_pick_in_library(true);
                                     ui.set_guided_duration_secs(secs as i32);
                                 })
                             };
@@ -5895,6 +5897,9 @@ fn build_ui() -> MainWindow {
                             .map(|s| s.duration_secs as i32)
                             .unwrap_or(0),
                     );
+                    ui.set_guided_pick_in_library(
+                        g.as_ref().is_some_and(|s| s.uuid.is_some()),
+                    );
                 }
                 ui.set_keep_awake_on(read_keep_awake_for_mode(core_mode));
                 ui.set_cues_mode(signal_mode_to_chip_index(
@@ -6020,6 +6025,7 @@ fn build_ui() -> MainWindow {
                     ),
                 );
                 ui.set_guided_name(sel.name.clone().into());
+                ui.set_guided_pick_in_library(sel.uuid.is_some());
                 ui.set_guided_duration_secs(
                     sel.duration_secs as i32,
                 );
@@ -6319,6 +6325,7 @@ fn build_ui() -> MainWindow {
                 {
                     *guided_sel.borrow_mut() = None;
                     ui.set_guided_name("".into());
+                    ui.set_guided_pick_in_library(false);
                     ui.set_guided_duration_secs(0);
                 }
                 refresh_guided_manage(&ui);
