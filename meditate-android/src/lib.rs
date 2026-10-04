@@ -4174,6 +4174,7 @@ fn populate_interval_bells(ui: &MainWindow) {
     let Some(db_arc) = DATABASE.get() else { return; };
     let Ok(guard) = db_arc.lock() else { return; };
     let Some(db) = guard.as_ref() else { return; };
+    let display = meditate_core::bells::display_mode_from_db(db, setup_session_mode(ui));
     let items: Vec<IntervalBellRow> = db
         .list_interval_bells()
         .unwrap_or_default()
@@ -4186,10 +4187,17 @@ fn populate_interval_bells(ui: &MainWindow) {
                 .find(|s| s.uuid == b.sound_uuid)
                 .map(|s| s.name)
                 .unwrap_or_default();
+            let switch = meditate_core::bells::bell_row_switch_state(
+                b.enabled,
+                b.kind,
+                display,
+            );
             IntervalBellRow {
                 uuid: b.uuid.to_string().into(),
                 title: render_bell_title(ui, &b).into(),
                 sound: sound.into(),
+                enabled: switch.active,
+                sensitive: switch.sensitive,
             }
         })
         .collect();
@@ -8753,6 +8761,30 @@ fn build_ui() -> MainWindow {
                 if value { "true" } else { "false" },
             );
             let _ = value;
+        });
+    }
+    // Per-bell switch: persist at once, like GTK's row switch, then
+    // rebuild so the row and the "N enabled" summary agree.
+    {
+        let weak = ui.as_weak();
+        ui.on_interval_bell_toggled(move |uuid, on| {
+            #[cfg(target_os = "android")]
+            {
+                let Some(ui) = weak.upgrade() else { return; };
+                {
+                    let Some(db_arc) = DATABASE.get() else { return; };
+                    let Ok(guard) = db_arc.lock() else { return; };
+                    let Some(db) = guard.as_ref() else { return; };
+                    if let Err(e) = db.set_interval_bell_enabled(uuid.as_str(), on) {
+                        meditate_core::log(
+                            "interval_bell.toggle",
+                            &format!("FAILED: {e:?}"),
+                        );
+                    }
+                }
+                populate_interval_bells(&ui);
+            }
+            let _ = (weak.clone(), uuid, on);
         });
     }
     {

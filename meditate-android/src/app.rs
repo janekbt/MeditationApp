@@ -1779,6 +1779,25 @@ mod tests {
     }
 
     #[test]
+    fn interval_bells_have_an_on_off_switch() {
+        // A bell switched off on GTK (via sync) looked like a normal
+        // row on Android, never rang, and could not be turned back on.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        assert!(slint.contains("root.interval-bell-toggled(item.uuid, value);"));
+        assert!(slint.contains("checked: item.enabled;"));
+        assert!(slint.contains("enabled: item.sensitive;"));
+        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let at = lib.find("fn populate_interval_bells(").unwrap();
+        let body = &lib[at..at + lib[at..].find("\n}\n").unwrap()];
+        assert!(body.contains("meditate_core::bells::bell_row_switch_state("));
+        let at = lib.find("ui.on_interval_bell_toggled(").unwrap();
+        let handler = &lib[at..at + lib[at..].find("\n        });").unwrap()];
+        assert!(handler.contains("db.set_interval_bell_enabled(uuid.as_str(), on)"));
+        assert!(handler.contains("populate_interval_bells(&ui);"));
+    }
+
+    #[test]
     fn visible_text_goes_through_translation() {
         // These showed English in every language.
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));

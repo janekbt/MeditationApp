@@ -284,6 +284,11 @@ export struct IntervalBellRow {
     uuid: string,
     title: string,
     sound: string,
+    // From core's bell_row_switch_state: a from-end bell is inert
+    // (off and greyed) while the stopwatch is on, without touching
+    // its stored on/off.
+    enabled: bool,
+    sensitive: bool,
 }
 
 // One Stats "Insights" row. Rust runs
@@ -2361,6 +2366,7 @@ export component MainWindow inherits Window {
     // (`db.insert_interval_bell`). Mirrors GTK's bell editor
     // (`meditate-gtk/src/bells.rs:440`).
     callback interval-bell-delete(string);
+    callback interval-bell-toggled(string, bool);
     // "Delete Bell?" before interval-bell-delete, like GTK's
     // confirm_and_delete. The row's trash button opens it.
     in-out property <bool> interval-bell-delete-dialog-open: false;
@@ -6045,12 +6051,27 @@ export component MainWindow inherits Window {
                                 Text {
                                     text: item.title;
                                     font-size: 16px;
-                                    color: MaterialPalette.on-surface;
+                                    color: item.sensitive
+                                        ? MaterialPalette.on-surface
+                                        : MaterialPalette.on-surface-variant;
                                 }
                                 if item.sound != "" : Text {
                                     text: item.sound;
                                     font-size: 12px;
                                     color: MaterialPalette.on-surface-variant;
+                                }
+                            }
+                            // Per-row on/off, like GTK's row switch.
+                            VerticalLayout {
+                                alignment: center;
+                                Switch {
+                                    min-width: 52px;
+                                    min-height: 32px;
+                                    checked: item.enabled;
+                                    enabled: item.sensitive;
+                                    checked-state-changed(value) => {
+                                        root.interval-bell-toggled(item.uuid, value);
+                                    }
                                 }
                             }
                             // Per-row delete — trash, error-tinted

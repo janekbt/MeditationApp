@@ -78,7 +78,7 @@ meditate-core with both shells calling them.
 
 ## Batch B: wrong behaviour
 
-- [ ] **No per-bell on/off switch.** A bell disabled on GTK (via sync) shows
+- [x] **No per-bell on/off switch.** A bell disabled on GTK (via sync) shows
   as a normal row, never rings, and can't be re-enabled.
   `IntervalBellRow` (`main.slint:272-276`) has no `enabled`; `lib.rs:4082-4108`
   ignores it. GTK `bells.rs:220-252` + core `bell_row_switch_state`.
@@ -134,7 +134,9 @@ meditate-core with both shells calling them.
   "Audio file" (`MeditateFilePickerActivity.kt:122`).
 - [ ] **A failed import can keep its new labels** (to confirm, core).
   `meditate-core/src/data_io.rs:337-357` creates labels before
-  `bulk_insert_sessions` outside one transaction.
+  `bulk_insert_sessions` outside one transaction. Left open on 2026-10-04: only a
+  database error mid-import triggers it, and the fix needs
+  `bulk_insert_sessions` to join a caller's transaction.
 
 ## Batch C: polish
 
