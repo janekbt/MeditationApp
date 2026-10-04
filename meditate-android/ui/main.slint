@@ -6062,15 +6062,21 @@ export component MainWindow inherits Window {
                                 }
                             }
                             // Per-row on/off, like GTK's row switch.
+                            // Fixed box like the other switches: in the
+                            // row's layout a bare Switch stretched wide.
                             VerticalLayout {
                                 alignment: center;
-                                Switch {
-                                    min-width: 52px;
-                                    min-height: 32px;
-                                    checked: item.enabled;
-                                    enabled: item.sensitive;
-                                    checked-state-changed(value) => {
-                                        root.interval-bell-toggled(item.uuid, value);
+                                Rectangle {
+                                    width: 52px;
+                                    height: 32px;
+                                    Switch {
+                                        min-width: 52px;
+                                        min-height: 32px;
+                                        checked: item.enabled;
+                                        enabled: item.sensitive;
+                                        checked-state-changed(value) => {
+                                            root.interval-bell-toggled(item.uuid, value);
+                                        }
                                     }
                                 }
                             }

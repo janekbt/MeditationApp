@@ -1897,6 +1897,8 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
         assert!(slint.contains("root.interval-bell-toggled(item.uuid, value);"));
+        let at = slint.find("root.interval-bell-toggled(item.uuid, value);").unwrap();
+        assert!(slint[at - 500..at].contains("width: 52px;\n                                    height: 32px;"), "fixed-size like the other switches");
         assert!(slint.contains("checked: item.enabled;"));
         assert!(slint.contains("enabled: item.sensitive;"));
         let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
