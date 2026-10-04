@@ -59,7 +59,21 @@
       "sources": [
         {
           "type": "dir",
-          "path": ".."
+          "path": "..",
+          "skip": [
+            ".cargo",
+            ".flatpak-builder",
+            "build",
+            "build-aarch64",
+            "builddir",
+            "flatpak_app",
+            "target",
+            "meditate-core/target",
+            "meditate-gtk/builddir",
+            "meditate-android/android/.gradle",
+            "meditate-android/android/app/build",
+            "meditate-android/android/app/src/main/jniLibs"
+          ]
         },
         "cargo-sources.json"
       ]
