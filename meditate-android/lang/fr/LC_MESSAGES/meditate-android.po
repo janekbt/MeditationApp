@@ -870,3 +870,15 @@ msgstr "Supprimer le son ?"
 
 msgid "Bells that reference this sound will lose their audio."
 msgstr "Les cloches qui utilisent ce son n'auront plus de son."
+
+msgid "Discard Session?"
+msgstr "Abandonner la séance ?"
+
+msgid "Your note will be lost."
+msgstr "Votre note sera perdue."
+
+msgid "Delete Bell?"
+msgstr "Supprimer la cloche ?"
+
+msgid "This bell will no longer ring during sessions."
+msgstr "Cette cloche ne sonnera plus pendant les séances."

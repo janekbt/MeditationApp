@@ -870,3 +870,15 @@ msgstr "Klang löschen?"
 
 msgid "Bells that reference this sound will lose their audio."
 msgstr "Glocken, die diesen Klang verwenden, verlieren ihren Ton."
+
+msgid "Discard Session?"
+msgstr "Sitzung verwerfen?"
+
+msgid "Your note will be lost."
+msgstr "Die Notiz geht verloren."
+
+msgid "Delete Bell?"
+msgstr "Glocke löschen?"
+
+msgid "This bell will no longer ring during sessions."
+msgstr "Diese Glocke läutet dann nicht mehr während der Sitzungen."

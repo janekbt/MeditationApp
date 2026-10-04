@@ -888,3 +888,15 @@ msgstr "Usunąć dźwięk?"
 
 msgid "Bells that reference this sound will lose their audio."
 msgstr "Dzwonki korzystające z tego dźwięku stracą swój dźwięk."
+
+msgid "Discard Session?"
+msgstr "Odrzucić sesję?"
+
+msgid "Your note will be lost."
+msgstr "Notatka zostanie utracona."
+
+msgid "Delete Bell?"
+msgstr "Usunąć dzwonek?"
+
+msgid "This bell will no longer ring during sessions."
+msgstr "Ten dzwonek nie będzie już dzwonił podczas sesji."

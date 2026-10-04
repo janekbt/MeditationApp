@@ -870,3 +870,15 @@ msgstr "Geluid verwijderen?"
 
 msgid "Bells that reference this sound will lose their audio."
 msgstr "Bellen die dit geluid gebruiken, verliezen hun audio."
+
+msgid "Discard Session?"
+msgstr "Sessie verwijderen?"
+
+msgid "Your note will be lost."
+msgstr "Je notitie gaat verloren."
+
+msgid "Delete Bell?"
+msgstr "Bel verwijderen?"
+
+msgid "This bell will no longer ring during sessions."
+msgstr "Deze bel klinkt niet meer tijdens sessies."

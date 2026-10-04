@@ -852,3 +852,15 @@ msgstr "删除声音？"
 
 msgid "Bells that reference this sound will lose their audio."
 msgstr "引用此声音的铃声将失去音频。"
+
+msgid "Discard Session?"
+msgstr "放弃会话？"
+
+msgid "Your note will be lost."
+msgstr "您的笔记将会丢失。"
+
+msgid "Delete Bell?"
+msgstr "删除铃声？"
+
+msgid "This bell will no longer ring during sessions."
+msgstr "此铃声将不再在会话期间响起。"

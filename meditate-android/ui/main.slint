@@ -1115,6 +1115,65 @@ component RevealChooser inherits Rectangle {
 // row's Stop). Sized to the longer of the two labels plus side
 // padding, so translations like "Abspielen" fit and the pill keeps
 // its width when the label flips.
+// A centred modal question with Cancel and one confirming action,
+// over a dimmed backdrop. Tapping the backdrop cancels.
+component ConfirmDialog inherits Rectangle {
+    in property <string> title;
+    in property <string> body;
+    in property <string> confirm-text;
+    callback cancel();
+    callback confirm();
+
+    background: #00000080;
+    TouchArea {
+        clicked => { root.cancel(); }
+    }
+
+    Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: min(340px, root.width - 32px);
+        height: card.preferred-height;
+        background: MaterialPalette.surface-container-high;
+        border-radius: 28px;
+
+        TouchArea {}
+
+        card := VerticalLayout {
+            padding: 24px;
+            spacing: 16px;
+
+            Text {
+                text: root.title;
+                font-size: 22px;
+                horizontal-alignment: center;
+                color: MaterialPalette.on-surface;
+                wrap: word-wrap;
+            }
+            Text {
+                text: root.body;
+                font-size: 14px;
+                color: MaterialPalette.on-surface-variant;
+                wrap: word-wrap;
+            }
+
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: end;
+
+                TextButton {
+                    text: @tr("Cancel");
+                    clicked => { root.cancel(); }
+                }
+                TextButton {
+                    text: root.confirm-text;
+                    clicked => { root.confirm(); }
+                }
+            }
+        }
+    }
+}
+
 component PreviewPill inherits Rectangle {
     in property <bool> playing;
     callback clicked;
@@ -2117,6 +2176,10 @@ export component MainWindow inherits Window {
     callback duration-committed();
     callback save-tap();
     callback discard-tap();
+    // "Discard Session?" when the Done note isn't empty (GTK's
+    // on_discard); Rust opens it from discard-tap.
+    in-out property <bool> discard-dialog-open: false;
+    callback discard-confirm();
     callback mode-changed(int);
     callback keep-awake-toggled(bool);
     callback cues-changed(int);
@@ -2284,6 +2347,10 @@ export component MainWindow inherits Window {
     // (`db.insert_interval_bell`). Mirrors GTK's bell editor
     // (`meditate-gtk/src/bells.rs:440`).
     callback interval-bell-delete(string);
+    // "Delete Bell?" before interval-bell-delete, like GTK's
+    // confirm_and_delete. The row's trash button opens it.
+    in-out property <bool> interval-bell-delete-dialog-open: false;
+    in-out property <string> interval-bell-delete-uuid: "";
     callback interval-bell-edit(string);
     callback create-interval-bell-tap();
     in property <bool> interval-editor-page: false;
@@ -5980,7 +6047,10 @@ export component MainWindow inherits Window {
                                 IconButton {
                                     icon: @image-url("assets/delete.svg");
                                     has-error: true;
-                                    clicked => { root.interval-bell-delete(item.uuid); }
+                                    clicked => {
+                                        root.interval-bell-delete-uuid = item.uuid;
+                                        root.interval-bell-delete-dialog-open = true;
+                                    }
                                 }
                             }
                         }
@@ -8318,6 +8388,25 @@ export component MainWindow inherits Window {
                     }
                 }
             }
+        }
+    }
+
+    if root.discard-dialog-open : ConfirmDialog {
+        title: @tr("Discard Session?");
+        body: @tr("Your note will be lost.");
+        confirm-text: @tr("Discard");
+        cancel => { root.discard-dialog-open = false; }
+        confirm => { root.discard-confirm(); }
+    }
+
+    if root.interval-bell-delete-dialog-open : ConfirmDialog {
+        title: @tr("Delete Bell?");
+        body: @tr("This bell will no longer ring during sessions.");
+        confirm-text: @tr("Delete");
+        cancel => { root.interval-bell-delete-dialog-open = false; }
+        confirm => {
+            root.interval-bell-delete-dialog-open = false;
+            root.interval-bell-delete(root.interval-bell-delete-uuid);
         }
     }
 

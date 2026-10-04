@@ -870,3 +870,15 @@ msgstr "Eliminare il suono?"
 
 msgid "Bells that reference this sound will lose their audio."
 msgstr "Le campane che usano questo suono resteranno senza audio."
+
+msgid "Discard Session?"
+msgstr "Scartare la sessione?"
+
+msgid "Your note will be lost."
+msgstr "La nota verrà persa."
+
+msgid "Delete Bell?"
+msgstr "Eliminare la campana?"
+
+msgid "This bell will no longer ring during sessions."
+msgstr "Questa campana non suonerà più durante le sessioni."

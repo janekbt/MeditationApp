@@ -1063,11 +1063,14 @@ mod tests {
         let helper = &code[helper..helper + code[helper..].find("\n}\n").unwrap()];
         assert!(helper.contains("Effect::StopActiveSignals"), "the same stop Stop/Finish use");
 
-        for exit in ["ui.on_save_tap(", "ui.on_discard_tap(", "if ui.get_done_page() {"] {
+        // Discard and Back on Done share one discard path.
+        for exit in ["ui.on_save_tap(", "let discard = Rc::new(move || {"] {
             let at = code.find(exit).unwrap_or_else(|| panic!("missing {exit}"));
             let body = &code[at..at + 1500];
             assert!(body.contains("stop_active_signals();"), "{exit} must silence ringing signals");
         }
+        let back = code.find("if ui.get_done_page() {").unwrap();
+        assert!(code[back..back + 200].contains("ui.invoke_discard_tap();"));
     }
 
     /// The guided track stops on core's `StopGuidedAudio`, which
@@ -1729,6 +1732,34 @@ mod tests {
     }
 
     #[test]
+    fn discarding_a_note_and_deleting_a_bell_ask_first() {
+        // A stray Back on Done, or Discard, threw away the session and
+        // its note without a word; the trash icon deleted a bell on one
+        // tap. Both ask first, like GTK.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        let at = lib.find("ui.on_discard_tap(").unwrap();
+        let tap = &lib[at..at + lib[at..].find("\n        });").unwrap()];
+        assert!(tap.contains("if !ui.get_note_text().is_empty() {"));
+        assert!(tap.contains("ui.set_discard_dialog_open(true);"));
+        let at = lib.find("ui.on_back_pressed(").unwrap();
+        let back = &lib[at..];
+        let done = back.find("if ui.get_done_page() {").unwrap();
+        assert!(back[done..done + 200].contains("ui.invoke_discard_tap();"));
+        for dialog in ["discard", "interval_bell_delete", "bell_rename", "bell_delete"] {
+            assert!(back.contains(&format!("if ui.get_{dialog}_dialog_open() {{")), "{dialog}");
+        }
+        assert!(slint.contains("if root.discard-dialog-open : ConfirmDialog {"));
+        assert!(slint.contains("if root.interval-bell-delete-dialog-open : ConfirmDialog {"));
+        assert!(!slint.contains("clicked => { root.interval-bell-delete(item.uuid); }"));
+        // Declared after the Done screen and the bell list they cover.
+        let dialogs = slint.find("if root.discard-dialog-open : ConfirmDialog {").unwrap();
+        assert!(slint.find("root.discard-tap();").unwrap() < dialogs);
+        assert!(slint.find("root.interval-bell-delete-dialog-open = true;").unwrap() < dialogs);
+    }
+
+    #[test]
     fn label_changes_reach_the_done_and_edit_rows() {
         // Deleting the label the Edit-Session (or Done) row showed left
         // its id behind and Save failed on the missing row; Create from
@@ -1891,8 +1922,9 @@ mod tests {
             );
         }
 
-        // Only the Done-screen exits clear it.
-        let exits = ["ui.on_save_tap(", "ui.on_discard_tap(", "if ui.get_done_page() {"];
+        // Only the Done-screen exits clear it (Back on Done goes
+        // through the Discard path).
+        let exits = ["ui.on_save_tap(", "let discard = Rc::new(move || {"];
         let clears: Vec<usize> = code
             .match_indices("clear_session_in_progress_snapshot();")
             .map(|(i, _)| i)

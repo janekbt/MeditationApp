@@ -9393,14 +9393,15 @@ fn build_ui() -> MainWindow {
         });
     }
 
-    // Discard tap: drop the pending session without writing a row,
-    // then dismiss to Idle. Mirrors the GTK shell's `on_discard`.
+    // Discard: drop the pending session without writing a row, then
+    // dismiss to Idle. A typed note asks first ("Your note will be
+    // lost."), like GTK's `on_discard`. Back on Done comes here too.
     {
         let weak = ui.as_weak();
         let state = state.clone();
         #[cfg(target_os = "android")]
         let pending_done = pending_done.clone();
-        ui.on_discard_tap(move || {
+        let discard = Rc::new(move || {
             #[cfg(target_os = "android")]
             {
                 stop_active_signals();
@@ -9412,6 +9413,26 @@ fn build_ui() -> MainWindow {
             if let Some(ui) = weak.upgrade() {
                 refresh(&ui, &s, now_since_epoch());
             }
+        });
+        let weak = ui.as_weak();
+        let discard_now = discard.clone();
+        ui.on_discard_tap(move || {
+            let Some(ui) = weak.upgrade() else { return; };
+            if !ui.get_note_text().is_empty() {
+                // Silence the end bell while the question is up, as GTK does.
+                #[cfg(target_os = "android")]
+                stop_active_signals();
+                ui.set_discard_dialog_open(true);
+                return;
+            }
+            discard_now();
+        });
+        let weak = ui.as_weak();
+        ui.on_discard_confirm(move || {
+            if let Some(ui) = weak.upgrade() {
+                ui.set_discard_dialog_open(false);
+            }
+            discard();
         });
     }
 
@@ -11037,9 +11058,6 @@ fn build_ui() -> MainWindow {
     //     can swipe-up to Home).
     {
         let weak = ui.as_weak();
-        let state = state.clone();
-        #[cfg(target_os = "android")]
-        let pending_done = pending_done.clone();
         #[cfg(target_os = "android")]
         let editing_session = editing_session.clone();
         // The system back gesture closes the chooser overlays
@@ -11059,6 +11077,22 @@ fn build_ui() -> MainWindow {
             // page UNDERNEATH them (and the stranded Duration
             // dialog could then mis-route its Set into the wrong
             // context). Dialogs before pages, topmost first.
+            if ui.get_discard_dialog_open() {
+                ui.set_discard_dialog_open(false);
+                return;
+            }
+            if ui.get_interval_bell_delete_dialog_open() {
+                ui.set_interval_bell_delete_dialog_open(false);
+                return;
+            }
+            if ui.get_bell_rename_dialog_open() {
+                ui.set_bell_rename_dialog_open(false);
+                return;
+            }
+            if ui.get_bell_delete_dialog_open() {
+                ui.set_bell_delete_dialog_open(false);
+                return;
+            }
             #[cfg(target_os = "android")]
             if ui.get_label_conflict_dialog_open() {
                 // Decide-later: no dismissal recorded, the prompt
@@ -11233,16 +11267,9 @@ fn build_ui() -> MainWindow {
                 return;
             }
             if ui.get_done_page() {
-                // Back on Done discards, like the Discard button.
-                #[cfg(target_os = "android")]
-                {
-                    stop_active_signals();
-                    pending_done.set(None);
-                    clear_session_in_progress_snapshot();
-                }
-                let mut s = state.borrow_mut();
-                *s = std::mem::replace(&mut *s, AppState::idle()).dismiss();
-                refresh(&ui, &s, now_since_epoch());
+                // Back on Done is the Discard button: it asks first
+                // when a note would be lost.
+                ui.invoke_discard_tap();
                 return;
             }
             if ui.get_nav_page() != 0 {

@@ -870,3 +870,15 @@ msgstr "Excluir som?"
 
 msgid "Bells that reference this sound will lose their audio."
 msgstr "Os sinos que usam este som perderão o áudio."
+
+msgid "Discard Session?"
+msgstr "Descartar sessão?"
+
+msgid "Your note will be lost."
+msgstr "Sua anotação será perdida."
+
+msgid "Delete Bell?"
+msgstr "Excluir sino?"
+
+msgid "This bell will no longer ring during sessions."
+msgstr "Este sino não tocará mais durante as sessões."

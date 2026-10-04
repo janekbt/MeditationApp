@@ -34,7 +34,7 @@ meditate-core with both shells calling them.
   and dispatches but never calls `guided::pause`. GTK
   `meditate-gtk/src/timer/imp.rs:2340-2361` pauses the player. Fix: pause the
   guided player in the focus-loss branch.
-- [ ] **Back gesture and Discard on Done throw the session and note away
+- [x] **Back gesture and Discard on Done throw the session and note away
   without asking.** `lib.rs:11167-11178` (Back discards), `lib.rs:9326-9341`
   (Discard). GTK asks "Discard Session?" when the note is not empty
   (`timer/imp.rs:2595-2629`). Fix: confirm dialog when there is a note; Back
@@ -63,7 +63,7 @@ meditate-core with both shells calling them.
   for a gap time; `lib.rs:9725-9728` and the day header (`lib.rs:2659`) use
   it, and saving a note moves the session to 1970. Fix: core shifts gap
   times forward like `local_naive_to_unix`.
-- [ ] **Interval bells are deleted on one tap.** `ui/main.slint:5962` →
+- [x] **Interval bells are deleted on one tap.** `ui/main.slint:5962` →
   `lib.rs:8801-8826`. GTK asks "Delete Bell?" (`meditate-gtk/src/bells.rs:304`).
   Fix: confirm dialog or Undo snackbar.
 - [x] **Java exceptions from failed JNI calls are never cleared.** In every
