@@ -25,10 +25,10 @@ meditate-core with both shells calling them.
   an Active→inactive edge). Check: start a guided session, change font size,
   return. Fix: add the flags; at startup stop leftover service and players
   when no session is active.
-- [ ] **Swiping the app away keeps the guided track playing** (to confirm).
+- [x] **Swiping the app away keeps the guided track playing** (to confirm).
   `kotlin/MeditateSessionService.kt:249-253` `onTaskRemoved` only stops the
   service. Fix: also `MeditateGuided.stopAudio` and `MeditateAudio.stop`.
-- [ ] **Losing audio focus pauses the timer but not the guided track.** A
+- [x] **Losing audio focus pauses the timer but not the guided track.** A
   call or another media app freezes the timer while the voice track plays
   on, reaches its end early and forces overtime. `lib.rs:5553-5571` toggles
   and dispatches but never calls `guided::pause`. GTK

@@ -245,8 +245,12 @@ class MeditateSessionService : Service() {
     // notification pinned for a session nothing is advancing.
     // Stop instead; the core crash-recovery snapshot resurfaces
     // the in-flight session on next launch (same contract as
-    // START_NOT_STICKY after an OOM kill).
+    // START_NOT_STICKY after an OOM kill). The guided track and
+    // bells live in process-wide players that outlast the task, so
+    // silence them too.
     override fun onTaskRemoved(rootIntent: Intent?) {
+        MeditateGuided.stopAudio(this)
+        MeditateAudio.stop(this)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
         super.onTaskRemoved(rootIntent)

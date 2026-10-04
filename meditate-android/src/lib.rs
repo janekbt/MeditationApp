@@ -366,22 +366,17 @@ fn on_state_changed(
     let _ = (was_active, is_active, mode);
 }
 
-/// Run portable core `Session` effects through the Android native
-/// layer — the direct analogue of GTK's
-/// `dispatch_session_effects` / `dispatch_fire_route`.
-///
-/// `StopActiveSignals` cuts any in-flight sound + vibration. Each
-/// `Fire*` effect resolves via `Effect::fire_route()` to an
-/// already-effective `signal_mode` (Session has AND'd per-cue
-/// with the per-mode override), so the shell just plays the sound
-/// when it `includes_sound()` and the vibration pattern when it
-/// `includes_vibration()` — no extra gating. Every other effect
-/// (UpdateDisplay / EndSession / EnterOvertime / …) is consumed
-/// at its tick callsite, not here.
-///
-/// This is why Stop is silent but a natural countdown finish
-/// rings: `stop` emits only `StopActiveSignals`, while `tick`
-/// emits `FireEndBell` at the zero-crossing.
+/// Guided audio follows the session across a pause or resume: the
+/// track pauses with the timer and picks up where it left off.
+#[cfg(target_os = "android")]
+fn guided_follows_pause(app: &slint::android::AndroidApp, state: &AppState) {
+    if state.is_paused() {
+        guided::pause(app);
+    } else {
+        guided::resume(app);
+    }
+}
+
 /// Silence a bell or vibration still going when the user leaves the
 /// Done screen (Save / Discard / back) — the same stop Stop and
 /// Finish trigger. Mirrors GTK's `stop_active_signals` in on_save /
@@ -406,6 +401,22 @@ fn notify_if_complete(state: &app::AppState, effects: &[meditate_core::session::
     service::notify_complete(app, &meditate_core::format::format_time(Duration::from_secs(secs)));
 }
 
+/// Run portable core `Session` effects through the Android native
+/// layer — the direct analogue of GTK's
+/// `dispatch_session_effects` / `dispatch_fire_route`.
+///
+/// `StopActiveSignals` cuts any in-flight sound + vibration. Each
+/// `Fire*` effect resolves via `Effect::fire_route()` to an
+/// already-effective `signal_mode` (Session has AND'd per-cue
+/// with the per-mode override), so the shell just plays the sound
+/// when it `includes_sound()` and the vibration pattern when it
+/// `includes_vibration()` — no extra gating. Every other effect
+/// (UpdateDisplay / EndSession / EnterOvertime / …) is consumed
+/// at its tick callsite, not here.
+///
+/// This is why Stop is silent but a natural countdown finish
+/// rings: `stop` emits only `StopActiveSignals`, while `tick`
+/// emits `FireEndBell` at the zero-crossing.
 #[cfg(target_os = "android")]
 fn dispatch_effects(effects: &[meditate_core::session::Effect]) {
     use meditate_core::session::Effect;
@@ -4718,11 +4729,7 @@ fn build_ui() -> MainWindow {
             if current_mode.get() == TimerMode::Guided {
                 if let Some(app) = android_app() {
                     if was_active && is_active {
-                        if s.is_paused() {
-                            guided::pause(app);
-                        } else {
-                            guided::resume(app);
-                        }
+                        guided_follows_pause(app, &s);
                     }
                 }
             }
@@ -5565,6 +5572,7 @@ fn build_ui() -> MainWindow {
                         );
                         dispatch_effects(&t.effects);
                         *state.borrow_mut() = t.state;
+                        guided_follows_pause(app, &state.borrow());
                         if let Some(ui) = weak.upgrade() {
                             refresh(&ui, &state.borrow(), now_since_epoch());
                         }

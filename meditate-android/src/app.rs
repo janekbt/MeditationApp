@@ -1715,6 +1715,32 @@ mod tests {
     }
 
     #[test]
+    fn guided_audio_pauses_with_the_timer_on_focus_loss() {
+        // A call paused the timer but the guided track played on,
+        // reached its end early and forced overtime. Both pause
+        // paths (the Pause button and focus loss) share one helper.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        assert!(lib.contains("fn guided_follows_pause(app: &slint::android::AndroidApp, state: &AppState)"));
+        assert_eq!(lib.matches("guided_follows_pause(app, &").count(), 2);
+        let at = lib.find("if guided::take_focus_loss(app)").unwrap();
+        let branch = &lib[at..at + 1500];
+        assert!(branch.contains("guided_follows_pause(app, &"), "focus-loss branch pauses the player");
+    }
+
+    #[test]
+    fn swiping_the_app_away_silences_it() {
+        // The service stopped, but the guided track (a process-wide
+        // player) played on with nothing left to stop it.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let kt = std::fs::read_to_string(root.join("kotlin/MeditateSessionService.kt")).unwrap();
+        let at = kt.find("override fun onTaskRemoved(").unwrap();
+        let body = &kt[at..at + kt[at..].find("\n    }\n").unwrap()];
+        assert!(body.contains("MeditateGuided.stopAudio(this)"));
+        assert!(body.contains("MeditateAudio.stop(this)"));
+    }
+
+    #[test]
     fn diagnostics_open_at_the_newest_entry() {
         // The log is oldest-first; opening the page at the top showed
         // weeks-old lines. Opening (or new text) scrolls to the end.
