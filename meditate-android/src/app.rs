@@ -1054,6 +1054,44 @@ mod tests {
         }
     }
 
+    /// A failed save keeps the session (Done screen, pending pair and
+    /// recovery snapshot) and says so, like GTK's "Couldn't save
+    /// session" toasts. Before, the snapshot was cleared anyway and
+    /// the session was gone without a word.
+    #[test]
+    fn a_failed_save_keeps_the_session_and_says_so() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
+
+        let finalize = code.find("fn finalize_session(").unwrap();
+        let sig = &code[finalize..finalize + code[finalize..].find('{').unwrap()];
+        assert!(sig.contains("-> Result<(), meditate_core::format::SessionSaveFailureKind>"), "{sig}");
+        let body = &code[finalize..finalize + code[finalize..].find("\n}\n").unwrap()];
+        assert!(body.contains("session_save_failure_log_message("), "log through core's message");
+
+        let save = code.find("ui.on_save_tap(").unwrap();
+        let save = &code[save..save + code[save..].find("\n        });").unwrap()];
+        let call = save.find("match finalize_session(").expect("the result is checked");
+        let after = &save[call..];
+        let ok = after.find("Ok(()) =>").expect("success branch");
+        let err = after.find("Err(kind) =>").expect("failure branch");
+        assert!(ok < err);
+        let err_arm = &after[err..];
+        let err_arm = &err_arm[..err_arm.find("return;").expect("a failed save leaves the Done screen up") + 7];
+        assert!(err_arm.contains("pending_done.set(Some((unix_start, elapsed_secs)))"), "the session is kept");
+        assert!(err_arm.contains("SESSION_SAVE_FAILED"), "and the failure is shown");
+        assert!(!err_arm.contains("clear_session_in_progress_snapshot"), "the snapshot survives");
+        assert!(after[ok..err].contains("clear_session_in_progress_snapshot();"), "cleared only once saved");
+
+        let shown = code.find("SESSION_SAVE_FAILED.lock()").expect("the tick loop shows it");
+        let shown = &code[shown..shown + 700];
+        assert!(shown.contains("invoke_save_failed_storage()") && shown.contains("invoke_save_failed_unavailable()"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        assert!(slint.contains("@tr(\"Couldn't save session — storage error\")"));
+        assert!(slint.contains("@tr(\"Couldn't save session — storage unavailable\")"));
+    }
+
     #[test]
     fn the_shell_holds_an_ended_session_until_save_or_discard() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");

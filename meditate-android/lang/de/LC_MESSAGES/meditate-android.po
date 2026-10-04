@@ -831,3 +831,9 @@ msgstr "Alle Labels"
 
 msgid "Couldn't start playback"
 msgstr "Wiedergabe konnte nicht gestartet werden"
+
+msgid "Couldn't save session — storage error"
+msgstr "Sitzung konnte nicht gespeichert werden – Speicherfehler"
+
+msgid "Couldn't save session — storage unavailable"
+msgstr "Sitzung konnte nicht gespeichert werden – Speicher nicht verfügbar"

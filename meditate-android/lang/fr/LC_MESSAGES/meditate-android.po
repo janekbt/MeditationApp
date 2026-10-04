@@ -831,3 +831,9 @@ msgstr "Toutes les étiquettes"
 
 msgid "Couldn't start playback"
 msgstr "Impossible de démarrer la lecture"
+
+msgid "Couldn't save session — storage error"
+msgstr "Impossible d'enregistrer la séance — erreur de stockage"
+
+msgid "Couldn't save session — storage unavailable"
+msgstr "Impossible d'enregistrer la séance — stockage indisponible"

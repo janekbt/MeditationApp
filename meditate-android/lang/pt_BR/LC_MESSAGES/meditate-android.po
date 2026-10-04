@@ -831,3 +831,9 @@ msgstr "Todos os rótulos"
 
 msgid "Couldn't start playback"
 msgstr "Não foi possível iniciar a reprodução"
+
+msgid "Couldn't save session — storage error"
+msgstr "Não foi possível salvar a sessão — erro de armazenamento"
+
+msgid "Couldn't save session — storage unavailable"
+msgstr "Não foi possível salvar a sessão — armazenamento indisponível"

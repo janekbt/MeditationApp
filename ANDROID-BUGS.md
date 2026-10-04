@@ -93,7 +93,7 @@ not conclusive and a device check is needed.
 - [ ] **Preset with a missing sound or pattern silently does nothing**
   (also from the widget). GTK shows "Please wait until fully synced…".
   Android `lib.rs:1427-1437, 6171-6178`; GTK `timer/imp.rs:3609-3614`.
-- [ ] **Failed session save shows no message.** Android `lib.rs:3195-3245`;
+- [x] **Failed session save shows no message.** Android `lib.rs:3195-3245`;
   GTK `timer/imp.rs:2527-2565`.
 - [ ] **Turning the label on doesn't store the mode's default label**, so
   presets saved that way have none. Android `lib.rs:6795-6799`; GTK

@@ -849,3 +849,9 @@ msgstr "Все метки"
 
 msgid "Couldn't start playback"
 msgstr "Не удалось начать воспроизведение"
+
+msgid "Couldn't save session — storage error"
+msgstr "Не удалось сохранить сессию — ошибка хранилища"
+
+msgid "Couldn't save session — storage unavailable"
+msgstr "Не удалось сохранить сессию — хранилище недоступно"

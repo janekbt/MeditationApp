@@ -138,6 +138,13 @@ static SYNC_COORDINATOR: meditate_core::sync::coordinator::SyncCoordinator =
 static GUIDED_START_FAILED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+/// Set by the Save handler when the session couldn't be written (the
+/// Done screen and recovery snapshot stay); the tick loop shows
+/// GTK's "Couldn't save session" message for the kind.
+#[cfg(target_os = "android")]
+static SESSION_SAVE_FAILED: std::sync::Mutex<Option<meditate_core::format::SessionSaveFailureKind>> =
+    std::sync::Mutex::new(None);
+
 /// Set by the sync worker when a pass brought in changes from
 /// another device; the tick loop consumes it and re-reads every
 /// screen (`refresh_after_pull`).
@@ -3307,22 +3314,26 @@ fn finalize_session(
     mode: meditate_core::SessionMode,
     label_id: Option<i64>,
     guided_uuid: Option<String>,
-) {
+) -> Result<(), meditate_core::format::SessionSaveFailureKind> {
+    use meditate_core::format::{session_save_failure_log_message, SessionSaveFailureKind};
     if elapsed_secs <= 0 {
         // Drop sessions that ended before any seconds elapsed —
         // matches the GTK shell, which also filters zero-duration
         // rows out of insert. Avoids noise in stats from accidental
-        // Start→Stop double-taps.
-        return;
+        // Start→Stop double-taps. Nothing to keep, so not a failure.
+        return Ok(());
     }
-    let Some(db_arc) = DATABASE.get() else { return; };
-    let Ok(guard) = db_arc.lock() else { return; };
-    let Some(db) = guard.as_ref() else {
+    let unopened = |detail: &str| {
         meditate_core::log(
             "session.insert",
-            "skipped: db not open (open failed at startup)",
+            &session_save_failure_log_message(SessionSaveFailureKind::DbUnopened, detail),
         );
-        return;
+        Err(SessionSaveFailureKind::DbUnopened)
+    };
+    let Some(db_arc) = DATABASE.get() else { return unopened("no database"); };
+    let Ok(guard) = db_arc.lock() else { return unopened("database lock poisoned"); };
+    let Some(db) = guard.as_ref() else {
+        return unopened("db not open (open failed at startup)");
     };
     let session = meditate_core::db::Session::from_unix(
         unix_start,
@@ -3340,16 +3351,23 @@ fn finalize_session(
         guided_uuid.map(meditate_core::db::GuidedFileUuid::new),
     );
     match db.insert_session(&session) {
-        Ok(rowid) => meditate_core::log(
-            "session.insert",
-            &format!("ok rowid={rowid} duration_secs={elapsed_secs} start_unix={unix_start}"),
-        ),
-        Err(e) => meditate_core::log(
-            "session.insert",
-            &format!(
-                "FAILED err={e:?} duration_secs={elapsed_secs} start_unix={unix_start}"
-            ),
-        ),
+        Ok(rowid) => {
+            meditate_core::log(
+                "session.insert",
+                &format!("ok rowid={rowid} duration_secs={elapsed_secs} start_unix={unix_start}"),
+            );
+            Ok(())
+        }
+        Err(e) => {
+            meditate_core::log(
+                "session.insert",
+                &session_save_failure_log_message(
+                    SessionSaveFailureKind::StorageError,
+                    &format!("{e:?} duration_secs={elapsed_secs} start_unix={unix_start}"),
+                ),
+            );
+            Err(SessionSaveFailureKind::StorageError)
+        }
     }
 }
 
@@ -4866,6 +4884,16 @@ fn build_ui() -> MainWindow {
                 if GUIDED_START_FAILED.swap(false, std::sync::atomic::Ordering::SeqCst) {
                     pick_error = Some(ui.global::<Tr>().invoke_playback_failed());
                 }
+                // A session couldn't be saved; it's kept on the Done
+                // screen.
+                if let Some(kind) = SESSION_SAVE_FAILED.lock().ok().and_then(|mut slot| slot.take()) {
+                    use meditate_core::format::SessionSaveFailureKind;
+                    let tr = ui.global::<Tr>();
+                    pick_error = Some(match kind {
+                        SessionSaveFailureKind::StorageError => tr.invoke_save_failed_storage(),
+                        SessionSaveFailureKind::DbUnopened => tr.invoke_save_failed_unavailable(),
+                    });
+                }
                 if let Some(text) = pick_error {
                     // Bug-audit #2: see the handler raise sites.
                     commit_pending_deletes(
@@ -5559,13 +5587,28 @@ fn build_ui() -> MainWindow {
                 } else {
                     None
                 };
-                finalize_session(
+                match finalize_session(
                     unix_start, elapsed_secs, note, mode, picked,
                     guided_uuid,
-                );
-                // Saved: the held snapshot has done its job (after the
-                // insert, so a kill in between can't lose the session).
-                clear_session_in_progress_snapshot();
+                ) {
+                    Ok(()) => {
+                        // Saved: the held snapshot has done its job
+                        // (after the insert, so a kill in between
+                        // can't lose the session).
+                        clear_session_in_progress_snapshot();
+                    }
+                    Err(kind) => {
+                        // Keep everything: the Done screen stays up
+                        // (Save again or Discard), and the held
+                        // snapshot still recovers the session on the
+                        // next start. The tick loop says what failed.
+                        pending_done.set(Some((unix_start, elapsed_secs)));
+                        if let Ok(mut slot) = SESSION_SAVE_FAILED.lock() {
+                            *slot = Some(kind);
+                        }
+                        return;
+                    }
+                }
                 // Refresh the Setup row so when Done slides off and
                 // reveals Setup, the ExpanderRow's master toggle +
                 // subtitle reflect the post-Save mode state.

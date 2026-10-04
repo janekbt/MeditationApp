@@ -849,3 +849,9 @@ msgstr "Wszystkie etykiety"
 
 msgid "Couldn't start playback"
 msgstr "Nie można rozpocząć odtwarzania"
+
+msgid "Couldn't save session — storage error"
+msgstr "Nie można zapisać sesji — błąd pamięci"
+
+msgid "Couldn't save session — storage unavailable"
+msgstr "Nie można zapisać sesji — pamięć niedostępna"

@@ -813,3 +813,9 @@ msgstr "所有标签"
 
 msgid "Couldn't start playback"
 msgstr "无法开始播放"
+
+msgid "Couldn't save session — storage error"
+msgstr "无法保存会话——存储错误"
+
+msgid "Couldn't save session — storage unavailable"
+msgstr "无法保存会话——存储不可用"

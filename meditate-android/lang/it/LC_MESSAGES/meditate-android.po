@@ -831,3 +831,9 @@ msgstr "Tutte le etichette"
 
 msgid "Couldn't start playback"
 msgstr "Impossibile avviare la riproduzione"
+
+msgid "Couldn't save session — storage error"
+msgstr "Impossibile salvare la sessione — errore di archiviazione"
+
+msgid "Couldn't save session — storage unavailable"
+msgstr "Impossibile salvare la sessione — archiviazione non disponibile"
