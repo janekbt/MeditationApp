@@ -6363,6 +6363,14 @@ fn build_ui() -> MainWindow {
                     .flatten()
                 };
                 let Some(row) = row else { return; };
+                // A preview of this file stops with it, as a deleted
+                // bell sound's does.
+                if ui.get_guided_manage_preview_uuid() == uuid {
+                    if let Some(app) = android_app() {
+                        guided::stop(app);
+                    }
+                    ui.set_guided_manage_preview_uuid("".into());
+                }
                 {
                     let Some(db_arc) = DATABASE.get() else { return; };
                     let Ok(g) = db_arc.lock() else { return; };

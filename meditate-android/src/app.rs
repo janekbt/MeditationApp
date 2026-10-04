@@ -1707,6 +1707,16 @@ mod tests {
     }
 
     #[test]
+    fn deleting_a_guided_file_stops_its_preview() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let at = lib.find("ui.on_guided_manage_delete_tap(").unwrap();
+        let body = &lib[at..at + lib[at..].find("\n        });").unwrap()];
+        assert!(body.contains("if ui.get_guided_manage_preview_uuid() == uuid {"));
+        assert!(body.contains("guided::stop(app);"));
+    }
+
+    #[test]
     fn deleting_a_preset_keeps_manage_presets_open() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();

@@ -147,7 +147,7 @@ meditate-core with both shells calling them.
   `lib.rs:8427`; GTK `vibrations.rs:79-91`.
 - [x] **Deleting a preset closes Manage Presets.** `lib.rs:7052`; GTK keeps it
   open (`presets.rs:578-581`).
-- [ ] **Deleting a guided file doesn't stop its preview** (to confirm).
+- [x] **Deleting a guided file doesn't stop its preview** (to confirm).
   `lib.rs:6273-6311`; bell-sound delete does (`lib.rs:7636-7643`).
 - [ ] **Cancelled export leaves `export-transient.csv` with all notes.**
   `lib.rs:168`, `MeditateFilePickerActivity.kt:99-102`.
