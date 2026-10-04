@@ -1457,6 +1457,30 @@ mod tests {
         assert!(bar.contains("wrap: word-wrap;"));
     }
 
+    /// A long user-typed name wraps like GTK's rows instead of pushing
+    /// the row's buttons off screen; the row grows to fit.
+    #[test]
+    fn long_names_wrap_and_rows_grow() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        for list in [
+            "root.presets-list", "root.preset-chooser-items", "root.label-items",
+            "root.bell-chooser-items", "root.pattern-chooser-items",
+        ] {
+            let at = slint.find(&format!("in {list} : VerticalLayout {{")).unwrap_or_else(|| panic!("{list}"));
+            let row = &slint[at..at + 4500];
+            let name = row.find("text: item.name;").unwrap_or_else(|| panic!("{list}: name"));
+            let text = &row[name..name + row[name..].find('}').unwrap()];
+            assert!(text.contains("wrap: word-wrap;"), "{list}: the name wraps");
+            let height = row.find("height: max(").unwrap_or_else(|| panic!("{list}: row grows"));
+            assert!(height < name, "{list}: on the row itself");
+            assert!(row[height..name].contains("preferred-height)"), "{list}");
+        }
+        // The Log card's label name: the card already grows with it.
+        let label = slint.find("text: item.label-name;").unwrap();
+        assert!(slint[label..label + 120].contains("wrap: word-wrap;"), "Log card label wraps");
+    }
+
     #[test]
     fn the_shell_holds_an_ended_session_until_save_or_discard() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");

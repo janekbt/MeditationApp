@@ -2819,7 +2819,8 @@ export component MainWindow inherits Window {
                         }
 
                         Rectangle {
-                            height: 64px;
+                            // Grows when a long name wraps (like GTK's rows).
+                            height: max(64px, preset-row-layout.preferred-height);
                             background: preset-row-touch.has-hover
                                 ? MaterialPalette.surface-container-high
                                 : transparent;
@@ -2830,7 +2831,9 @@ export component MainWindow inherits Window {
                                 }
                             }
 
-                            HorizontalLayout {
+                            preset-row-layout := HorizontalLayout {
+                                padding-top: 8px;
+                                padding-bottom: 8px;
                                 padding-left: 16px;
                                 padding-right: 16px;
                                 spacing: 12px;
@@ -2842,6 +2845,7 @@ export component MainWindow inherits Window {
 
                                     Text {
                                         text: item.name;
+                                        wrap: word-wrap;
                                         font-size: 16px;
                                         color: MaterialPalette.on-surface;
                                     }
@@ -4226,6 +4230,7 @@ export component MainWindow inherits Window {
                                 spacing: 4px;
                                 if item.label-name != "" : Text {
                                     text: item.label-name;
+                                    wrap: word-wrap;
                                     font-size: 12px;
                                     // Label name colour matches
                                     // the stripe — mirrors GTK's
@@ -5579,7 +5584,8 @@ export component MainWindow inherits Window {
                     }
 
                     Rectangle {
-                        height: 56px;
+                        // Grows when a long name wraps (like GTK's rows).
+                        height: max(56px, label-row-layout.preferred-height);
                         background: row-touch.has-hover
                             ? MaterialPalette.surface-container-high
                             : transparent;
@@ -5588,7 +5594,9 @@ export component MainWindow inherits Window {
                             clicked => { root.label-picked(item.id); }
                         }
 
-                        HorizontalLayout {
+                        label-row-layout := HorizontalLayout {
+                            padding-top: 8px;
+                            padding-bottom: 8px;
                             padding-left: 16px;
                             padding-right: 16px;
                             spacing: 12px;
@@ -5596,6 +5604,7 @@ export component MainWindow inherits Window {
 
                             Text {
                                 text: item.name;
+                                wrap: word-wrap;
                                 font-size: 16px;
                                 color: MaterialPalette.on-surface;
                                 vertical-alignment: center;
@@ -6016,7 +6025,8 @@ export component MainWindow inherits Window {
                     }
 
                     Rectangle {
-                        height: 56px;
+                        // Grows when a long name wraps (like GTK's rows).
+                        height: max(56px, bell-row-layout.preferred-height);
                         background: bell-row-touch.has-hover
                             ? MaterialPalette.surface-container-high
                             : transparent;
@@ -6025,7 +6035,9 @@ export component MainWindow inherits Window {
                             clicked => { root.bell-chooser-pick(item.uuid); }
                         }
 
-                        HorizontalLayout {
+                        bell-row-layout := HorizontalLayout {
+                            padding-top: 8px;
+                            padding-bottom: 8px;
                             padding-left: 16px;
                             padding-right: 16px;
                             spacing: 12px;
@@ -6033,6 +6045,7 @@ export component MainWindow inherits Window {
 
                             Text {
                                 text: item.name;
+                                wrap: word-wrap;
                                 font-size: 16px;
                                 color: MaterialPalette.on-surface;
                                 vertical-alignment: center;
@@ -6186,7 +6199,8 @@ export component MainWindow inherits Window {
                     }
 
                     Rectangle {
-                        height: 56px;
+                        // Grows when a long name wraps (like GTK's rows).
+                        height: max(56px, pat-row-layout.preferred-height);
                         background: pat-row-touch.has-hover
                             ? MaterialPalette.surface-container-high
                             : transparent;
@@ -6195,7 +6209,9 @@ export component MainWindow inherits Window {
                             clicked => { root.pattern-chooser-pick(item.uuid); }
                         }
 
-                        HorizontalLayout {
+                        pat-row-layout := HorizontalLayout {
+                            padding-top: 8px;
+                            padding-bottom: 8px;
                             padding-left: 16px;
                             padding-right: 16px;
                             spacing: 12px;
@@ -6203,6 +6219,7 @@ export component MainWindow inherits Window {
 
                             Text {
                                 text: item.name;
+                                wrap: word-wrap;
                                 font-size: 16px;
                                 color: MaterialPalette.on-surface;
                                 vertical-alignment: center;
@@ -6693,7 +6710,8 @@ export component MainWindow inherits Window {
                     }
 
                     Rectangle {
-                        height: 64px;
+                        // Grows when a long name wraps (like GTK's rows).
+                        height: max(64px, pc-row-layout.preferred-height);
                         background: pc-row-touch.has-hover
                             && root.preset-chooser-save-mode
                             ? MaterialPalette.surface-container-high
@@ -6710,7 +6728,9 @@ export component MainWindow inherits Window {
                             }
                         }
 
-                        HorizontalLayout {
+                        pc-row-layout := HorizontalLayout {
+                            padding-top: 8px;
+                            padding-bottom: 8px;
                             padding-left: 16px;
                             padding-right: 16px;
                             spacing: 12px;
@@ -6751,6 +6771,7 @@ export component MainWindow inherits Window {
                                 horizontal-stretch: 1;
                                 Text {
                                     text: item.name;
+                                    wrap: word-wrap;
                                     font-size: 16px;
                                     color: MaterialPalette.on-surface;
                                 }
