@@ -98,7 +98,7 @@ not conclusive and a device check is needed.
 - [x] **Turning the label on doesn't store the mode's default label**, so
   presets saved that way have none. Android `lib.rs:6795-6799`; GTK
   `timer/imp.rs:758-773`.
-- [ ] **No 10 MB limit on bell import**; an oversized file is never
+- [x] **No 10 MB limit on bell import**; an oversized file is never
   uploaded by sync. Android `lib.rs:4703-4721`; GTK `sounds.rs:408-413`.
 - [ ] **Import/export errors lose their details; failed export shows
   nothing.** Android `lib.rs:4928-4935, 9980-9984`; GTK

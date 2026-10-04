@@ -840,3 +840,6 @@ msgstr "Kan sessie niet opslaan — opslag niet beschikbaar"
 
 msgid "Please wait until fully synced — not all bell sounds have arrived"
 msgstr ""
+
+msgid "File is larger than 10 MB"
+msgstr "Bestand is groter dan 10 MB"

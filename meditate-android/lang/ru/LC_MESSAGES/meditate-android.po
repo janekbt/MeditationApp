@@ -858,3 +858,6 @@ msgstr "Не удалось сохранить сессию — хранилищ
 
 msgid "Please wait until fully synced — not all bell sounds have arrived"
 msgstr "Дождитесь полной синхронизации — ещё не все звуки колоколов получены"
+
+msgid "File is larger than 10 MB"
+msgstr "Файл больше 10 МБ"

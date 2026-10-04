@@ -1128,6 +1128,26 @@ mod tests {
         assert!(!write.contains("persist_active_for_mode("), "not the bare toggle write");
     }
 
+    /// A picked bell file over core's 10 MB cap is refused before the
+    /// import dialog, like GTK — sync would never upload it. The
+    /// transient copy goes too.
+    #[test]
+    fn an_oversized_bell_file_is_refused() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
+        let pick = code.find("guided::take_pending_sound_pick(app)").unwrap();
+        let arm = &code[pick..pick + code[pick..].find("Some(Err(e)) =>").unwrap()];
+        let check = arm.find("meditate_core::sound::is_within_size_limit(").expect("size checked");
+        let dialog = arm.find("present_guided_import_dialog(").unwrap();
+        assert!(check < dialog, "before the import dialog");
+        let refused = &arm[arm[check..].find("} else {").unwrap() + check..];
+        assert!(refused.contains("std::fs::remove_file(&pick.path)"), "the copy is removed");
+        assert!(refused.contains("invoke_file_too_large()"), "and the user is told");
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        assert!(slint.contains("@tr(\"File is larger than 10 MB\")"));
+    }
+
     #[test]
     fn the_shell_holds_an_ended_session_until_save_or_discard() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");

@@ -840,3 +840,6 @@ msgstr "Impossible d'enregistrer la séance — stockage indisponible"
 
 msgid "Please wait until fully synced — not all bell sounds have arrived"
 msgstr ""
+
+msgid "File is larger than 10 MB"
+msgstr "Le fichier dépasse 10 Mo"

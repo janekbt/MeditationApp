@@ -840,3 +840,6 @@ msgstr "Impossibile salvare la sessione — archiviazione non disponibile"
 
 msgid "Please wait until fully synced — not all bell sounds have arrived"
 msgstr ""
+
+msgid "File is larger than 10 MB"
+msgstr "Il file supera i 10 MB"

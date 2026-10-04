@@ -858,3 +858,6 @@ msgstr "Nie można zapisać sesji — pamięć niedostępna"
 
 msgid "Please wait until fully synced — not all bell sounds have arrived"
 msgstr ""
+
+msgid "File is larger than 10 MB"
+msgstr "Plik jest większy niż 10 MB"

@@ -4881,15 +4881,28 @@ fn build_ui() -> MainWindow {
                                     pick.duration_secs,
                                 ),
                             );
-                            guided_import_kind_tick.set(1);
-                            present_guided_import_dialog(
-                                &ui,
-                                &guided_import_src_tick,
-                                &pick.path,
-                                &pick.display_name,
-                                pick.duration_secs,
-                                1,
-                            );
+                            // Core's 10 MB cap, checked before the
+                            // name dialog like GTK: sync never
+                            // uploads a bigger bell sound.
+                            let size = std::fs::metadata(&pick.path).map_or(0, |m| m.len());
+                            if meditate_core::sound::is_within_size_limit(size) {
+                                guided_import_kind_tick.set(1);
+                                present_guided_import_dialog(
+                                    &ui,
+                                    &guided_import_src_tick,
+                                    &pick.path,
+                                    &pick.display_name,
+                                    pick.duration_secs,
+                                    1,
+                                );
+                            } else {
+                                meditate_core::log(
+                                    "sound.import",
+                                    &format!("pick refused: {size} bytes over the cap"),
+                                );
+                                let _ = std::fs::remove_file(&pick.path);
+                                pick_error = Some(ui.global::<Tr>().invoke_file_too_large());
+                            }
                         }
                         Some(Err(e)) => {
                             meditate_core::log(
