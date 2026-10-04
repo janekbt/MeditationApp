@@ -95,7 +95,7 @@ not conclusive and a device check is needed.
   Android `lib.rs:1427-1437, 6171-6178`; GTK `timer/imp.rs:3609-3614`.
 - [x] **Failed session save shows no message.** Android `lib.rs:3195-3245`;
   GTK `timer/imp.rs:2527-2565`.
-- [ ] **Turning the label on doesn't store the mode's default label**, so
+- [x] **Turning the label on doesn't store the mode's default label**, so
   presets saved that way have none. Android `lib.rs:6795-6799`; GTK
   `timer/imp.rs:758-773`.
 - [ ] **No 10 MB limit on bell import**; an oversized file is never

@@ -769,15 +769,12 @@ impl TimerView {
                 if imp.labels_loading.get() { return; }
                 let on = row.enables_expansion();
                 let mode = imp.current_mode();
-                imp.persist_label_active_for_mode(mode, on);
-                if on && imp.persisted_label_uuid_for_mode(mode).is_none() {
-                    // First time the toggle flips on for this mode:
-                    // adopt the mode-default uuid so subsequent reads
-                    // resolve cleanly.
-                    let default = meditate_core::settings_keys::default_label_uuid_for_mode(
-                        mode.into(),
-                    );
-                    imp.persist_label_uuid_for_mode(mode, default);
+                // Core adopts the mode's default label the first time
+                // the toggle flips on.
+                if let Some(app) = imp.get_app() {
+                    app.with_db_mut(|db| {
+                        let _ = meditate_core::labels::set_active_for_mode(db.core(), mode.into(), on);
+                    });
                 }
                 imp.refresh_setup_label_chooser_subtitle();
             }
@@ -4461,12 +4458,6 @@ impl TimerView {
         app.with_db_mut(|db| {
             let _ = meditate_core::labels::persist_active_for_mode(db.core(), mode.into(), on);
         });
-    }
-
-    fn persisted_label_uuid_for_mode(&self, mode: TimerMode) -> Option<String> {
-        self.get_app()?.with_db(|db| {
-            meditate_core::labels::label_uuid_from_db(db.core(), mode.into())
-        }).flatten()
     }
 
     fn persist_label_uuid_for_mode(&self, mode: TimerMode, uuid: &str) {

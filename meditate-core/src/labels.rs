@@ -51,6 +51,23 @@ pub fn persist_active_for_mode(
     db.set_setting(label_active_key_for_mode(mode), format_bool(on))
 }
 
+/// The user flipped the label master toggle for `mode`. Turning it
+/// on with no label picked yet also stores the mode's default label,
+/// so reads resolve cleanly and a preset saved now pins that label
+/// (its snapshot reads the stored uuid). Turning it off leaves the
+/// stored label alone, ready for the next time it's turned on.
+pub fn set_active_for_mode(
+    db: &Database,
+    mode: SessionMode,
+    on: bool,
+) -> crate::db::Result<()> {
+    persist_active_for_mode(db, mode, on)?;
+    if on && label_uuid_from_db(db, mode).is_none() {
+        persist_uuid_for_mode(db, mode, default_label_uuid_for_mode(mode))?;
+    }
+    Ok(())
+}
+
 /// Persist the per-mode label UUID. `set_setting` upserts.
 pub fn persist_uuid_for_mode(
     db: &Database,
@@ -223,4 +240,54 @@ mod tests {
         assert_eq!(resolve_persist_action(Some(999), &labels), PersistAction::NoOp);
     }
 
+    // ── Turning the label on adopts the mode's default ──────────────
+
+    #[test]
+    fn turning_the_label_on_stores_the_modes_default_label() {
+        let db = Database::open_in_memory().unwrap();
+        set_active_for_mode(&db, SessionMode::Timer, true).unwrap();
+        assert!(label_active_from_db(&db, SessionMode::Timer));
+        assert_eq!(
+            label_uuid_from_db(&db, SessionMode::Timer).as_deref(),
+            Some(default_label_uuid_for_mode(SessionMode::Timer)),
+        );
+    }
+
+    #[test]
+    fn turning_the_label_on_keeps_a_label_already_picked() {
+        let db = Database::open_in_memory().unwrap();
+        persist_uuid_for_mode(&db, SessionMode::BoxBreath, "picked").unwrap();
+        set_active_for_mode(&db, SessionMode::BoxBreath, true).unwrap();
+        assert_eq!(label_uuid_from_db(&db, SessionMode::BoxBreath).as_deref(), Some("picked"));
+    }
+
+    #[test]
+    fn turning_the_label_off_leaves_the_label_alone() {
+        let db = Database::open_in_memory().unwrap();
+        set_active_for_mode(&db, SessionMode::Guided, false).unwrap();
+        assert!(!label_active_from_db(&db, SessionMode::Guided));
+        assert_eq!(label_uuid_from_db(&db, SessionMode::Guided), None, "off adopts nothing");
+    }
+
+    #[test]
+    fn each_mode_adopts_its_own_default() {
+        let db = Database::open_in_memory().unwrap();
+        for mode in [SessionMode::Timer, SessionMode::BoxBreath, SessionMode::Guided] {
+            set_active_for_mode(&db, mode, true).unwrap();
+            assert_eq!(label_uuid_from_db(&db, mode).as_deref(), Some(default_label_uuid_for_mode(mode)));
+        }
+    }
+
+    #[test]
+    fn a_preset_saved_after_turning_the_label_on_pins_the_label() {
+        use crate::preset_config::{snapshot, PresetTiming};
+        let db = Database::open_in_memory().unwrap();
+        set_active_for_mode(&db, SessionMode::Timer, true).unwrap();
+        let cfg = snapshot(&db, SessionMode::Timer, PresetTiming::Timer { stopwatch: false, duration_secs: 600 });
+        assert!(cfg.label.enabled);
+        assert_eq!(
+            cfg.label.uuid.as_ref().map(|u| u.as_str()),
+            Some(default_label_uuid_for_mode(SessionMode::Timer)),
+        );
+    }
 }

@@ -1114,6 +1114,20 @@ mod tests {
         assert!(slint.contains("@tr(\"Please wait until fully synced — not all bell sounds have arrived\")"));
     }
 
+    /// The label toggle goes through core's set_active_for_mode, which
+    /// adopts the mode's default label the first time it's turned on
+    /// (as on GTK), so a preset saved then pins the label.
+    #[test]
+    fn label_toggle_uses_cores_rule() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
+        let lib = std::fs::read_to_string(path).unwrap();
+        let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
+        let write = code.find("fn write_label_active_for_mode(").unwrap();
+        let write = &code[write..write + code[write..].find("\n}\n").unwrap()];
+        assert!(write.contains("meditate_core::labels::set_active_for_mode("));
+        assert!(!write.contains("persist_active_for_mode("), "not the bare toggle write");
+    }
+
     #[test]
     fn the_shell_holds_an_ended_session_until_save_or_discard() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");

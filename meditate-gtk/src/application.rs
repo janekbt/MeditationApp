@@ -722,4 +722,18 @@ mod tests {
         assert!(!ceremony.contains("countdown_target_secs"), "the Timer target is wrong for guided");
         assert!(ceremony.contains("completion_duration_secs"));
     }
+
+    /// The label toggle goes through core's set_active_for_mode, which
+    /// adopts the mode's default label the first time it's turned on.
+    #[test]
+    fn label_toggle_uses_cores_rule() {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/timer/imp.rs"),
+        )
+        .unwrap();
+        let toggle = src.find("setup_label_enabled_row.connect_enable_expansion_notify(").unwrap();
+        let toggle = &src[toggle..toggle + 900];
+        assert!(toggle.contains("meditate_core::labels::set_active_for_mode("));
+        assert!(!toggle.contains("default_label_uuid_for_mode"), "the rule lives in core");
+    }
 }

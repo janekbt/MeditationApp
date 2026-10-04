@@ -652,7 +652,9 @@ fn write_label_active_for_mode(mode: meditate_core::SessionMode, value: bool) {
     let Some(db_arc) = DATABASE.get() else { return; };
     let Ok(guard) = db_arc.lock() else { return; };
     let Some(db) = guard.as_ref() else { return; };
-    if let Err(e) = meditate_core::labels::persist_active_for_mode(db, mode, value) {
+    // Core adopts the mode's default label the first time it's turned
+    // on, like GTK.
+    if let Err(e) = meditate_core::labels::set_active_for_mode(db, mode, value) {
         meditate_core::log(
             "settings.label_active",
             &format!("write FAILED mode={mode:?} value={value} err={e:?}"),
