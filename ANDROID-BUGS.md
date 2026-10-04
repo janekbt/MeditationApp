@@ -87,7 +87,7 @@ not conclusive and a device check is needed.
 
 ## Batch D — the rest
 
-- [ ] **End Bell row stays on and editable in Stopwatch mode.** Android
+- [x] **End Bell row stays on and editable in Stopwatch mode.** Android
   never calls core `end_bell_row_state`. Android `main.slint:3067-3070,
   3337-3340, 3537-3540`, `lib.rs:3527`; GTK `timer/imp.rs:1999-2025`.
 - [x] **Preset with a missing sound or pattern silently does nothing**
@@ -112,7 +112,7 @@ not conclusive and a device check is needed.
 - [ ] **Log day headers and totals are hand-formatted** ("2026-10-03",
   "125 min" vs "Today", "2h 5m"). Android `lib.rs:2656-2661, 2836-2839`;
   GTK `log/imp.rs:579-617`.
-- [ ] **Manage Bells count ignores Stopwatch mode.** Android
+- [x] **Manage Bells count ignores Stopwatch mode.** Android
   `lib.rs:3745-3753`; GTK `timer/imp.rs:3181, 4019-4022`.
 - [ ] **Interval-bell editor copies the core defaults and limits.** Matches
   today, will drift. Android `lib.rs:8205-8219, 8378-8382`.

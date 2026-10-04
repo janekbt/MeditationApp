@@ -524,6 +524,17 @@ pub fn end_bell_cue_from_db(
     })
 }
 
+/// The display mode `mode`'s persisted Stopwatch switch selects —
+/// what the End Bell row and the Manage Bells count follow on the
+/// Setup view. Reads inside the caller's DB borrow.
+pub fn display_mode_from_db(db: &Database, mode: crate::db::SessionMode) -> DisplayMode {
+    DisplayMode::from_stopwatch_flag(read_bool(
+        db,
+        crate::settings_keys::stopwatch_key_for_mode(mode),
+        false,
+    ))
+}
+
 /// Count of enabled, currently-firing interval bells. Used by the
 /// Setup view's "Manage Bells" subtitle ("3 enabled" / "None enabled")
 /// and by any shell surface that needs the same number. The
@@ -1338,6 +1349,63 @@ mod tests {
         db.set_setting("boxbreath_end_bell_active", "false").unwrap();
         assert!(!end_bell_row_state(&db, DisplayMode::Countdown, SessionMode::BoxBreath).active);
         assert!(end_bell_row_state(&db, DisplayMode::Countdown, SessionMode::Timer).active);
+    }
+
+    // ── The Stopwatch switch drives the End Bell row and the count ──
+
+    #[test]
+    fn display_mode_follows_each_modes_stopwatch_switch() {
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(display_mode_from_db(&db, SessionMode::Timer), DisplayMode::Countdown);
+        db.set_setting(crate::settings_keys::stopwatch_key_for_mode(SessionMode::Timer), "true").unwrap();
+        assert_eq!(display_mode_from_db(&db, SessionMode::Timer), DisplayMode::Stopwatch);
+        assert_eq!(
+            display_mode_from_db(&db, SessionMode::BoxBreath),
+            DisplayMode::Countdown,
+            "each mode has its own switch",
+        );
+    }
+
+    #[test]
+    fn the_end_bell_row_is_off_and_greyed_in_stopwatch() {
+        let db = Database::open_in_memory().unwrap();
+        let row = end_bell_row_state(&db, DisplayMode::Stopwatch, SessionMode::Timer);
+        assert!(!row.active && !row.sensitive);
+        let row = end_bell_row_state(&db, DisplayMode::Countdown, SessionMode::Timer);
+        assert!(row.active && row.sensitive, "the stored choice is back after Stopwatch");
+    }
+
+    #[test]
+    fn stopwatch_leaves_the_stored_end_bell_choice_alone() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("timer_end_bell_active", "false").unwrap();
+        let _ = end_bell_row_state(&db, DisplayMode::Stopwatch, SessionMode::Timer);
+        assert!(!end_bell_row_state(&db, DisplayMode::Countdown, SessionMode::Timer).active);
+    }
+
+    #[test]
+    fn the_bell_count_drops_before_end_bells_in_stopwatch() {
+        let db = Database::open_in_memory().unwrap();
+        for kind in [IntervalBellKind::Interval, IntervalBellKind::FixedFromEnd] {
+            db.insert_interval_bell(
+                kind, 2, 0, BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound,
+            )
+            .unwrap();
+        }
+        assert_eq!(interval_bells_count(&db, DisplayMode::Countdown), 2);
+        assert_eq!(interval_bells_count(&db, DisplayMode::Stopwatch), 1, "a before-end bell can't ring");
+    }
+
+    #[test]
+    fn the_bell_count_skips_disabled_bells() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_interval_bell(
+            IntervalBellKind::Interval, 5, 0, BUNDLED_BOWL_UUID, BUNDLED_PATTERN_PULSE_UUID, SignalMode::Sound,
+        )
+        .unwrap();
+        let row = db.list_interval_bells().unwrap().remove(0);
+        db.update_interval_bell(&IntervalBell { enabled: false, ..row }).unwrap();
+        assert_eq!(interval_bells_count(&db, DisplayMode::Countdown), 0);
     }
 
     #[test]

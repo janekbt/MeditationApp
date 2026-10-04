@@ -1170,6 +1170,46 @@ mod tests {
         assert!(slint.contains("public pure function missing() -> string { return @tr(\"Missing\"); }"));
     }
 
+    /// The Stopwatch switch drives the End Bell row (off and greyed)
+    /// and the Manage Bells count (before-end bells drop out) through
+    /// core, like GTK; flipping it refreshes both, and greying the row
+    /// never overwrites the stored End Bell choice.
+    #[test]
+    fn stopwatch_drives_the_end_bell_row_and_the_bell_count() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
+        let body = |f: &str| {
+            let at = code.find(f).unwrap_or_else(|| panic!("{f}"));
+            &code[at..at + code[at..].find("\n}\n").unwrap()]
+        };
+
+        assert!(body("fn end_bell_row(").contains("meditate_core::bells::end_bell_row_state("), "row state from core");
+        let rows = body("fn refresh_bell_rows(");
+        assert!(rows.contains("end_bell_row(eb_mode)"));
+        assert!(rows.contains("set_end_bell_sensitive(row.sensitive)"));
+        assert!(rows.contains("set_end_bell_active(row.active)"));
+
+        let count = body("fn interval_bells_summary(");
+        assert!(count.contains("meditate_core::bells::display_mode_from_db(db,"), "count follows Stopwatch");
+        assert!(!count.contains("DisplayMode::Countdown"));
+
+        let sw = code.find("ui.on_stopwatch_toggled(").unwrap();
+        assert!(code[sw..sw + 600].contains("refresh_bell_rows(&ui)"), "flipping Stopwatch refreshes both");
+
+        let eb = code.find("ui.on_end_bell_toggled(").unwrap();
+        let eb = &code[eb..eb + 900];
+        let guard = eb.find("end_bell_row_sensitive(").expect("ignores the greyed row");
+        assert!(guard < eb.find("write_global_setting(").unwrap(), "before the write");
+
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        assert_eq!(slint.matches("enabled: root.end-bell-sensitive;").count(), 3, "all three End Bell rows");
+        let group = slint.find("component ExpanderGroup").unwrap();
+        let group = &slint[group..group + 3500];
+        assert!(group.contains("in property <bool> enabled: true;"));
+        assert!(group.contains("enabled: root.enabled;"), "the switch greys out");
+    }
+
     #[test]
     fn the_shell_holds_an_ended_session_until_save_or_discard() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");

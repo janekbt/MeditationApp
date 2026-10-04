@@ -3681,6 +3681,24 @@ fn setup_session_mode(ui: &MainWindow) -> meditate_core::SessionMode {
     TimerMode::from_chip_index(ui.get_setup_mode()).into()
 }
 
+/// Core's End Bell row state for `mode` under its Stopwatch switch.
+#[cfg(target_os = "android")]
+fn end_bell_row(mode: meditate_core::SessionMode) -> Option<meditate_core::bells::EndBellRowState> {
+    let db_arc = DATABASE.get()?;
+    let guard = db_arc.lock().ok()?;
+    let db = guard.as_ref()?;
+    let display = meditate_core::bells::display_mode_from_db(db, mode);
+    Some(meditate_core::bells::end_bell_row_state(db, display, mode))
+}
+
+/// Whether the End Bell row takes taps. While it's greyed (Stopwatch)
+/// the switch changes only because Rust set it, and the stored
+/// choice must stay.
+#[cfg(target_os = "android")]
+fn end_bell_row_sensitive(mode: meditate_core::SessionMode) -> bool {
+    end_bell_row(mode).map_or(true, |row| row.sensitive)
+}
+
 /// Push the current bell settings into the Setup Bells-group
 /// props: enable switches from `*_bell_active`, body subtitles
 /// from the resolved `*_bell_sound` name (defaulting to the
@@ -3691,11 +3709,14 @@ fn refresh_bell_rows(ui: &MainWindow) {
     ui.set_starting_bell_active(
         read_global_setting("starting_bell_active", "false") == "true",
     );
+    // End Bell row from core: off and greyed while the mode's
+    // Stopwatch is on (no end to ring at), else the stored choice.
+    // Mirrors GTK's refresh_end_bell_dependent_ui.
     let eb_mode = setup_session_mode(ui);
-    ui.set_end_bell_active(
-        read_global_setting(meditate_core::settings_keys::end_bell_active_key_for_mode(eb_mode), "true")
-            == "true",
-    );
+    if let Some(row) = end_bell_row(eb_mode) {
+        ui.set_end_bell_sensitive(row.sensitive);
+        ui.set_end_bell_active(row.active);
+    }
     let ss = read_global_setting(
         "starting_bell_sound",
         meditate_core::seeds::BUNDLED_BOWL_UUID,
@@ -3902,10 +3923,8 @@ fn refresh_boxbreath_cues(ui: &MainWindow) {
 /// "N enabled" / "1 enabled" / "None enabled" for the Manage
 /// Bells row subtitle. Mirrors GTK's `intervals_count_subtitle`
 /// (`meditate-gtk/src/timer/imp.rs:4031`); the count +
-/// bucketing live in core. `DisplayMode::Countdown` — the
-/// subtitle is informational and the per-mode stopwatch state
-/// isn't wired into this surface yet (FixedFromEnd bells only
-/// drop out of the count in a stopwatch session).
+/// bucketing live in core. Follows the mode's Stopwatch switch:
+/// before-end bells can't ring without an end, so they drop out.
 #[cfg(target_os = "android")]
 fn interval_bells_summary(
     ui: &MainWindow,
@@ -3914,7 +3933,7 @@ fn interval_bells_summary(
     use meditate_core::format::IntervalsCountKey;
     let n = meditate_core::bells::interval_bells_count(
         db,
-        meditate_core::bells::DisplayMode::Countdown,
+        meditate_core::bells::display_mode_from_db(db, setup_session_mode(ui)),
     );
     match meditate_core::format::intervals_count_key(n) {
         IntervalsCountKey::None => {
@@ -7005,10 +7024,17 @@ fn build_ui() -> MainWindow {
     // modes (mirrors GTK's unconditional `set_visible(true)`).
     {
         let current_mode = current_mode.clone();
+        let weak = ui.as_weak();
         ui.on_stopwatch_toggled(move |value| {
             #[cfg(target_os = "android")]
-            write_stopwatch_for_mode(current_mode.get().into(), value);
-            let _ = (current_mode.get(), value);
+            {
+                write_stopwatch_for_mode(current_mode.get().into(), value);
+                // The End Bell row and the bell count follow it.
+                if let Some(ui) = weak.upgrade() {
+                    refresh_bell_rows(&ui);
+                }
+            }
+            let _ = (current_mode.get(), value, weak.clone());
         });
     }
 
@@ -7148,6 +7174,12 @@ fn build_ui() -> MainWindow {
         ui.on_end_bell_toggled(move |value| {
             #[cfg(target_os = "android")]
             if let Some(ui) = weak.upgrade() {
+                // The Material Switch reports Rust-made changes too:
+                // greying the row in Stopwatch flips it off, which is
+                // not the user's choice.
+                if !end_bell_row_sensitive(setup_session_mode(&ui)) {
+                    return;
+                }
                 write_global_setting(
                     meditate_core::settings_keys::end_bell_active_key_for_mode(setup_session_mode(&ui)),
                     if value { "true" } else { "false" },

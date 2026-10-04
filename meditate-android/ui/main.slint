@@ -932,6 +932,9 @@ component ExpanderGroup inherits Rectangle {
     in property <string> title;
     in property <string> subtitle;
     in-out property <bool> active;
+    // false → greyed header, switch takes no taps (End Bell in
+    // Stopwatch mode).
+    in property <bool> enabled: true;
     callback toggled(bool);
 
     // Same single-scalar reveal model as ExpanderRow. The body
@@ -973,6 +976,7 @@ component ExpanderGroup inherits Rectangle {
                         text: root.title;
                         font-size: 16px;
                         color: MaterialPalette.on-surface;
+                        opacity: root.enabled ? 1.0 : 0.38;
                     }
                     if root.subtitle != "" : Text {
                         text: root.subtitle;
@@ -988,6 +992,7 @@ component ExpanderGroup inherits Rectangle {
                         Switch {
                             min-width: 52px;
                             min-height: 32px;
+                            enabled: root.enabled;
                             checked <=> root.active;
                             checked-state-changed(value) => { root.toggled(value); }
                         }
@@ -2079,6 +2084,7 @@ export component MainWindow inherits Window {
     in-out property <bool> starting-bell-active: false;
     in property <string> starting-bell-sound-name: "";
     in-out property <bool> end-bell-active: false;
+    in property <bool> end-bell-sensitive: true;
     in property <string> end-bell-sound-name: "";
     callback starting-bell-toggled(bool);
     callback end-bell-toggled(bool);
@@ -3074,6 +3080,7 @@ export component MainWindow inherits Window {
                         title: @tr("End Bell");
                         subtitle: @tr("Play a signal when the session ends");
                         active <=> root.end-bell-active;
+                        enabled: root.end-bell-sensitive;
                         toggled(value) => { root.end-bell-toggled(value); }
 
                         CuesRow {
@@ -3344,6 +3351,7 @@ export component MainWindow inherits Window {
                         title: @tr("End Bell");
                         subtitle: @tr("Play a signal when the session ends");
                         active <=> root.end-bell-active;
+                        enabled: root.end-bell-sensitive;
                         toggled(value) => { root.end-bell-toggled(value); }
 
                         CuesRow {
@@ -3544,6 +3552,7 @@ export component MainWindow inherits Window {
                         title: @tr("End Bell");
                         subtitle: @tr("Play a signal when the session ends");
                         active <=> root.end-bell-active;
+                        enabled: root.end-bell-sensitive;
                         toggled(value) => { root.end-bell-toggled(value); }
 
                         CuesRow {
