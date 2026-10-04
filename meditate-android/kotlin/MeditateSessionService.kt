@@ -32,7 +32,9 @@ import android.content.pm.PackageManager
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
 
 class MeditateSessionService : Service() {
@@ -48,6 +50,10 @@ class MeditateSessionService : Service() {
         // shade.
         const val NOTIFICATION_ID = 1
         const val CHANNEL_ID = "meditate_session"
+
+        // Wake-lock window and its renewal period (see wakeLock).
+        const val WAKE_LOCK_WINDOW_MS = 60 * 60 * 1000L
+        const val WAKE_LOCK_RENEW_MS = 30 * 60 * 1000L
 
         // "Meditation complete": its own slot and channel. The session
         // notification is silent/low and is removed with the service,
@@ -182,9 +188,22 @@ class MeditateSessionService : Service() {
     // correct, so nothing is lost — just delayed). A partial wake
     // lock for the session's duration is the alarm-clock-grade
     // guarantee that the bell rings on time; battery cost over a
-    // meditation-length window is negligible. 4 h timeout is a
-    // leak backstop far above any real session.
+    // meditation-length window is negligible. The lock is taken
+    // for an hour at a time and renewed every half hour while the
+    // session runs, so a session of any length (up to 23 h, or an
+    // open stopwatch / overtime) keeps it, and a leaked lock still
+    // lapses within the hour.
     private var wakeLock: PowerManager.WakeLock? = null
+    private val wakeLockHandler = Handler(Looper.getMainLooper())
+    private val renewWakeLock = object : Runnable {
+        override fun run() {
+            val lock = wakeLock ?: return
+            // Not reference-counted: acquiring again just restarts
+            // the timeout window.
+            runCatching { lock.acquire(WAKE_LOCK_WINDOW_MS) }
+            wakeLockHandler.postDelayed(this, WAKE_LOCK_RENEW_MS)
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -218,7 +237,11 @@ class MeditateSessionService : Service() {
                     wakeLock = pm.newWakeLock(
                         PowerManager.PARTIAL_WAKE_LOCK,
                         "Meditate:session",
-                    ).apply { acquire(4 * 60 * 60 * 1000L) }
+                    ).apply {
+                        setReferenceCounted(false)
+                        acquire(WAKE_LOCK_WINDOW_MS)
+                    }
+                    wakeLockHandler.postDelayed(renewWakeLock, WAKE_LOCK_RENEW_MS)
                 }
             }
             ACTION_STOP_SESSION -> {
@@ -268,6 +291,7 @@ class MeditateSessionService : Service() {
     }
 
     private fun releaseWakeLock() {
+        wakeLockHandler.removeCallbacks(renewWakeLock)
         wakeLock?.let { runCatching { if (it.isHeld) it.release() } }
         wakeLock = null
     }

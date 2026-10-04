@@ -123,7 +123,7 @@ meditate-core with both shells calling them.
   "Preset overridden" even on failure (`lib.rs:6816-6846`); Create takes the
   snapshot before the insert so a retry does nothing (`lib.rs:6716-6719`);
   Rename closes silently (`lib.rs:6965-6975`). GTK `presets.rs:536-539`.
-- [ ] **Wake lock is capped at 4 h; sessions can run 23 h.**
+- [x] **Wake lock is capped at 4 h; sessions can run 23 h.**
   `MeditateSessionService.kt:221`; past 4 h with screen off, bells can ring
   late. Fix: size from the target or re-acquire.
 - [ ] **Untranslated visible strings.** Stats period and chart buttons and

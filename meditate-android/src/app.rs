@@ -1985,6 +1985,19 @@ mod tests {
     }
 
     #[test]
+    fn the_wake_lock_lasts_as_long_as_the_session() {
+        // A fixed 4 h lock lapsed in longer sessions (up to 23 h, or
+        // an open stopwatch), and bells rang late with the screen off.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let kt = std::fs::read_to_string(root.join("kotlin/MeditateSessionService.kt")).unwrap();
+        assert!(!kt.contains("acquire(4 * 60 * 60 * 1000L)"));
+        assert!(kt.contains("setReferenceCounted(false)"));
+        assert!(kt.contains("wakeLockHandler.postDelayed(this, WAKE_LOCK_RENEW_MS)"));
+        let at = kt.find("private fun releaseWakeLock()").unwrap();
+        assert!(kt[at..at + 200].contains("wakeLockHandler.removeCallbacks(renewWakeLock)"));
+    }
+
+    #[test]
     fn swiping_the_app_away_silences_it() {
         // The service stopped, but the guided track (a process-wide
         // player) played on with nothing left to stop it.
