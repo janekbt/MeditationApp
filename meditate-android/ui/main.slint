@@ -450,10 +450,11 @@ component VerticalSpinBox {
             accepted => { self.clear-focus(); }
             changed has-focus => {
                 if (self.has-focus) {
-                    // Select the whole number on tap so typing replaces
-                    // it — the readout is zero-padded, so otherwise two
-                    // digits have to be deleted before entering a value.
-                    self.select-all();
+                    // Empty the field on tap so typing replaces the
+                    // number (blur restores it if nothing was typed).
+                    // Not select-all: on Android a selection summons
+                    // the cut/copy/paste popup right over the number.
+                    self.text = "";
                 } else {
                     root.commit-text();
                 }
@@ -1105,7 +1106,7 @@ component RevealChooser inherits Rectangle {
 //
 // The value between − and + is a live TextInput, like the Duration
 // dialog's VerticalSpinBox: tapping it summons the numeric IME and
-// selects the number so typing replaces it. Typed text commits
+// empties the field so typing replaces the number. Typed text commits
 // (parse → clamp into min/max) on Enter or focus loss; − / + commit
 // pending text first. `commit()` is public so the editor's Save can
 // flush it — tapping a Material button does not blur the input.
@@ -1118,6 +1119,13 @@ component StepperRow inherits Rectangle {
 
     public function commit() {
         root.commit-text();
+    }
+    // Slint's Android cut/copy/paste popup and cursor handle only go
+    // away when the input loses focus; a tap on plain background or
+    // the system closing the keyboard does not take it, so callers
+    // release it explicitly.
+    public function release() {
+        input.clear-focus();
     }
     function sync-text() {
         input.text = "" + root.value;
@@ -1177,6 +1185,7 @@ component StepperRow inherits Rectangle {
                     text: "−";
                     enabled: root.value > root.min-value;
                     clicked => {
+                        input.clear-focus();
                         root.commit-text();
                         if (root.value > root.min-value) {
                             root.value -= 1;
@@ -1200,7 +1209,10 @@ component StepperRow inherits Rectangle {
                         accepted => { self.clear-focus(); }
                         changed has-focus => {
                             if (self.has-focus) {
-                                self.select-all();
+                                // Empty on tap so typing replaces the
+                                // number; not select-all, which pops
+                                // cut/copy/paste over the number.
+                                self.text = "";
                             } else {
                                 root.commit-text();
                             }
@@ -1211,6 +1223,7 @@ component StepperRow inherits Rectangle {
                     text: "+";
                     enabled: root.value < root.max-value;
                     clicked => {
+                        input.clear-focus();
                         root.commit-text();
                         if (root.value < root.max-value) {
                             root.value += 1;
@@ -1238,6 +1251,9 @@ component RevealStepper inherits Rectangle {
 
     public function commit() {
         stepper.commit();
+    }
+    public function release() {
+        stepper.release();
     }
 
     property <float> reveal: root.shown ? 1.0 : 0.0;
@@ -2703,6 +2719,17 @@ export component MainWindow inherits Window {
 
     property <length> interval-editor-offset: root.interval-editor-page ? root.width : 0px;
     animate interval-editor-offset { duration: 300ms; easing: ease-out; }
+    function release-interval-editor-inputs() {
+        minutes-stepper.release();
+        jitter-stepper.release();
+    }
+    // Every close path (Save, Cancel, back) lets go of a focused
+    // number, or its cut/copy/paste popup floats over the next page.
+    changed interval-editor-page => {
+        if (!root.interval-editor-page) {
+            root.release-interval-editor-inputs();
+        }
+    }
     property <length> vibration-editor-offset: root.vibration-editor-page ? root.width : 0px;
     animate vibration-editor-offset { duration: 300ms; easing: ease-out; }
 
@@ -5879,6 +5906,12 @@ export component MainWindow inherits Window {
         width: parent.width;
         height: parent.height;
         background: MaterialPalette.surface;
+
+        // A tap anywhere outside the inputs lets go of a typed
+        // number. Declared behind the form so rows keep their taps.
+        TouchArea {
+            clicked => { root.release-interval-editor-inputs(); }
+        }
 
         VerticalLayout {
             padding-top: root.status-bar-inset + 16px;

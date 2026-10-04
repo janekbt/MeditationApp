@@ -1499,7 +1499,7 @@ mod tests {
         assert!(stepper.contains("TextInput {"), "typeable readout");
         assert!(stepper.contains("input-type: InputType.number;"), "numeric IME");
         assert!(stepper.contains("public function commit()"), "flushable");
-        assert!(stepper.contains("self.select-all();"), "tap replaces the number");
+        assert!(stepper.contains("self.text = \"\";"), "tap empties the field so typing replaces the number");
         assert!(stepper.contains("Math.max(root.min-value,"), "clamped to min");
         assert!(stepper.contains("Math.min(root.max-value,"), "clamped to max");
         assert!(stepper.contains("changed value =>"), "re-syncs on outside change");
@@ -1540,6 +1540,48 @@ mod tests {
                 assert!(line != "msgstr \"\"", "{lang}: {id} translated");
             }
         }
+    }
+
+    #[test]
+    fn interval_editor_numbers_let_go_of_focus() {
+        // Slint's Android cut/copy/paste popup only hides when the
+        // TextInput loses focus, and a tap on plain background or the
+        // system closing the keyboard does not take it away. So the
+        // steppers let go explicitly: on − / +, on a tap anywhere else
+        // in the editor, and whenever the editor closes.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        let component = |name: &str| {
+            let at = slint.find(&format!("component {name} ")).unwrap_or_else(|| panic!("{name}"));
+            let end = at + slint[at..].find("\n}\n").unwrap();
+            &slint[at..end]
+        };
+        let stepper = component("StepperRow");
+        assert!(stepper.contains("public function release()"));
+        assert_eq!(stepper.matches("input.clear-focus();").count(), 3, "release(), − and +");
+        assert!(component("RevealStepper").contains("public function release()"));
+
+        // Selecting the number on tap summons that same popup over the
+        // number being edited; empty the field instead (blur restores it).
+        for name in ["StepperRow", "VerticalSpinBox"] {
+            let c = component(name);
+            assert!(!c.contains("select-all()"), "{name}: no selection on tap");
+            assert!(c.contains("self.text = \"\";"), "{name}: tap empties the field");
+        }
+
+        let editor = slint.find("// ── Interval-bell editor (overlay").unwrap();
+        let editor = &slint[editor..editor + 1500];
+        let tap = editor.find("TouchArea {").expect("background tap target");
+        let layout = editor.find("VerticalLayout {").unwrap();
+        assert!(tap < layout, "declared behind the form so rows keep their taps");
+        assert!(editor[tap..layout].contains("root.release-interval-editor-inputs();"));
+
+        let closed = slint.find("changed interval-editor-page =>").expect("close hook");
+        assert!(slint[closed..closed + 200].contains("root.release-interval-editor-inputs();"));
+        let helper = slint.find("function release-interval-editor-inputs()").unwrap();
+        let body = &slint[helper..helper + 200];
+        assert!(body.contains("minutes-stepper.release();"));
+        assert!(body.contains("jitter-stepper.release();"));
     }
 
     #[test]
