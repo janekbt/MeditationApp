@@ -861,3 +861,12 @@ msgstr "{0}/{1}"
 
 msgid "{1}/{0}/{2}"
 msgstr "{0}/{1}/{2}"
+
+msgid "Rename Sound"
+msgstr "Renommer le son"
+
+msgid "Delete Sound?"
+msgstr "Supprimer le son ?"
+
+msgid "Bells that reference this sound will lose their audio."
+msgstr "Les cloches qui utilisent ce son n'auront plus de son."

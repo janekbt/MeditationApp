@@ -843,3 +843,12 @@ msgstr "{1}月{0}日"
 
 msgid "{1}/{0}/{2}"
 msgstr "{2}年{1}月{0}日"
+
+msgid "Rename Sound"
+msgstr "重命名声音"
+
+msgid "Delete Sound?"
+msgstr "删除声音？"
+
+msgid "Bells that reference this sound will lose their audio."
+msgstr "引用此声音的铃声将失去音频。"

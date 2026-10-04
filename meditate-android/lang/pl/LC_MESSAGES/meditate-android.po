@@ -879,3 +879,12 @@ msgstr "{0}.{1}"
 
 msgid "{1}/{0}/{2}"
 msgstr "{0}.{1}.{2}"
+
+msgid "Rename Sound"
+msgstr "Zmień nazwę dźwięku"
+
+msgid "Delete Sound?"
+msgstr "Usunąć dźwięk?"
+
+msgid "Bells that reference this sound will lose their audio."
+msgstr "Dzwonki korzystające z tego dźwięku stracą swój dźwięk."

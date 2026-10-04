@@ -4124,22 +4124,47 @@ fn populate_bell_chooser(
     let Some(db_arc) = DATABASE.get() else { return; };
     let Ok(guard) = db_arc.lock() else { return; };
     let Some(db) = guard.as_ref() else { return; };
-    let items: Vec<NameChoice> = db
+    let items: Vec<SoundChoice> = db
         .list_bell_sounds_for_category(category)
         .unwrap_or_default()
         .into_iter()
         .map(|b| {
             let u = b.uuid.to_string();
-            NameChoice {
+            SoundChoice {
                 selected: u == current_uuid,
                 uuid: u.into(),
                 name: b.name.into(),
+                deletable: !b.is_bundled,
             }
         })
         .collect();
     ui.set_bell_chooser_items(
         std::rc::Rc::new(slint::VecModel::from(items)).into(),
     );
+}
+
+/// Re-fill the open bell chooser after a rename / delete, keeping
+/// its category (`bell_chooser_category`: 1 = Box Breath) and the
+/// check-marked pick.
+#[cfg(target_os = "android")]
+fn repopulate_bell_chooser(ui: &MainWindow, category: u8, current_uuid: &str) {
+    let category = if category == 1 {
+        meditate_core::db::BellSoundCategory::BoxBreath
+    } else {
+        meditate_core::db::BellSoundCategory::General
+    };
+    populate_bell_chooser(ui, current_uuid, category);
+}
+
+/// Whether another bell sound (any category) already holds `name`,
+/// case-insensitively; the row being renamed doesn't count.
+#[cfg(target_os = "android")]
+fn bell_sound_name_taken(name: &str, except_uuid: &str) -> bool {
+    let Some(db_arc) = DATABASE.get() else { return false; };
+    let Ok(guard) = db_arc.lock() else { return false; };
+    let Some(db) = guard.as_ref() else { return false; };
+    let library = db.list_bell_sounds().unwrap_or_default();
+    meditate_core::sound::name_collides_excluding(name, &library, except_uuid)
 }
 
 /// Fill the pattern-chooser overlay from
@@ -7502,6 +7527,129 @@ fn build_ui() -> MainWindow {
                 ui.set_bell_chooser_page(false);
             }
             let _ = (weak.clone(), uuid);
+        });
+    }
+    // Bell-sound Rename / Delete (GTK sounds.rs rename_btn /
+    // delete_btn). Both write through core (sync events), then
+    // re-fill the chooser and the Setup / editor rows naming the sound.
+    #[cfg(target_os = "android")]
+    let bell_edit_uuid: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let bell_edit_uuid = bell_edit_uuid.clone();
+        ui.on_bell_rename_tap(move |uuid, name| {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                *bell_edit_uuid.borrow_mut() = Some(uuid.to_string());
+                ui.set_bell_rename_text(name.clone());
+                let v = meditate_core::naming::validate(name.trim(), |n| bell_sound_name_taken(n, &uuid));
+                ui.set_bell_rename_valid(v.is_savable());
+                ui.set_bell_rename_dialog_open(true);
+            }
+            let _ = (weak.clone(), uuid, name);
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let bell_edit_uuid = bell_edit_uuid.clone();
+        ui.on_bell_rename_changed(move |name| {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                let except = bell_edit_uuid.borrow().clone().unwrap_or_default();
+                let v = meditate_core::naming::validate(name.trim(), |n| bell_sound_name_taken(n, &except));
+                ui.set_bell_rename_valid(v.is_savable());
+            }
+            let _ = (weak.clone(), name);
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let bell_edit_uuid = bell_edit_uuid.clone();
+        #[cfg(target_os = "android")]
+        let bell_chooser_category = bell_chooser_category.clone();
+        #[cfg(target_os = "android")]
+        let bell_chooser_current = bell_chooser_current.clone();
+        ui.on_bell_rename_confirm(move || {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                let Some(uuid) = bell_edit_uuid.borrow_mut().take() else { return; };
+                let new_name = ui.get_bell_rename_text().trim().to_string();
+                // Re-validate (defends a stale tap / race).
+                let v = meditate_core::naming::validate(&new_name, |n| bell_sound_name_taken(n, &uuid));
+                if !v.is_savable() {
+                    return;
+                }
+                {
+                    let Some(db_arc) = DATABASE.get() else { return; };
+                    let Ok(g) = db_arc.lock() else { return; };
+                    let Some(db) = g.as_ref() else { return; };
+                    if let Err(e) = db.rename_bell_sound(&uuid, &new_name) {
+                        meditate_core::log("bell_sound", &format!("rename FAILED: {e:?}"));
+                        return;
+                    }
+                }
+                ui.set_bell_rename_dialog_open(false);
+                repopulate_bell_chooser(&ui, bell_chooser_category.get(), &bell_chooser_current.borrow());
+                refresh_bell_rows(&ui);
+                ui.set_ie_sound_name(bell_sound_name(&ui, ui.get_ie_sound_uuid().as_str()).into());
+            }
+            let _ = weak.clone();
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let bell_edit_uuid = bell_edit_uuid.clone();
+        ui.on_bell_delete_tap(move |uuid, name| {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                *bell_edit_uuid.borrow_mut() = Some(uuid.to_string());
+                ui.set_bell_delete_name(name.clone());
+                ui.set_bell_delete_dialog_open(true);
+            }
+            let _ = (weak.clone(), uuid, name);
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        #[cfg(target_os = "android")]
+        let bell_edit_uuid = bell_edit_uuid.clone();
+        #[cfg(target_os = "android")]
+        let bell_chooser_category = bell_chooser_category.clone();
+        #[cfg(target_os = "android")]
+        let bell_chooser_current = bell_chooser_current.clone();
+        #[cfg(target_os = "android")]
+        let bell_preview = bell_preview.clone();
+        ui.on_bell_delete_confirm(move || {
+            #[cfg(target_os = "android")]
+            if let Some(ui) = weak.upgrade() {
+                let Some(uuid) = bell_edit_uuid.borrow_mut().take() else { return; };
+                // A preview of the sound being deleted stops with it.
+                if ui.get_bell_preview_uuid().as_str() == uuid {
+                    let _ = bell_preview.borrow_mut().stop();
+                    if let Some(app) = android_app() {
+                        audio::stop(app);
+                    }
+                    ui.set_bell_preview_uuid(slint::SharedString::new());
+                }
+                {
+                    let Some(db_arc) = DATABASE.get() else { return; };
+                    let Ok(g) = db_arc.lock() else { return; };
+                    let Some(db) = g.as_ref() else { return; };
+                    if let Err(e) = db.delete_bell_sound(&uuid) {
+                        meditate_core::log("bell_sound", &format!("delete FAILED: {e:?}"));
+                        return;
+                    }
+                }
+                ui.set_bell_delete_dialog_open(false);
+                repopulate_bell_chooser(&ui, bell_chooser_category.get(), &bell_chooser_current.borrow());
+                refresh_bell_rows(&ui);
+                ui.set_ie_sound_name(bell_sound_name(&ui, ui.get_ie_sound_uuid().as_str()).into());
+            }
+            let _ = weak.clone();
         });
     }
     {

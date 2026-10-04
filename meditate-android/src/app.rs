@@ -1657,6 +1657,64 @@ mod tests {
     }
 
     #[test]
+    fn bell_sounds_can_be_renamed_and_custom_ones_deleted() {
+        // Mirrors GTK's sound chooser: Rename on every row, Delete
+        // only on custom (non-bundled) rows, behind a confirmation.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+
+        let choice = slint.find("export struct SoundChoice {").expect("row struct");
+        assert!(slint[choice..choice + 300].contains("deletable: bool,"));
+        assert!(slint.contains("in property <[SoundChoice]> bell-chooser-items"));
+
+        let rows = slint.find("for item[idx] in root.bell-chooser-items").unwrap();
+        let row = &slint[rows..rows + 6000];
+        let rename = row.find("root.bell-rename-tap(item.uuid, item.name);").expect("rename button");
+        let delete = row.find("root.bell-delete-tap(item.uuid, item.name);").expect("delete button");
+        let gate = row[..delete].rfind("if item.deletable : IconButton {").expect("delete only on custom rows");
+        assert!(rename < gate);
+
+        // Dialogs, modal over the chooser (declared after it).
+        let chooser = slint.find("// ── Bell-sound chooser (overlay").unwrap();
+        for d in ["if root.bell-rename-dialog-open : Rectangle {", "if root.bell-delete-dialog-open : Rectangle {"] {
+            assert!(slint.find(d).expect(d) > chooser, "{d}");
+        }
+        let del = slint.find("if root.bell-delete-dialog-open : Rectangle {").unwrap();
+        let del = &slint[del..del + 2500];
+        assert!(del.contains("@tr(\"Delete Sound?\")"));
+        assert!(del.contains("@tr(\"Bells that reference this sound will lose their audio.\")"));
+        assert!(del.contains("root.bell-delete-confirm();"));
+        let ren = slint.find("if root.bell-rename-dialog-open : Rectangle {").unwrap();
+        let ren = &slint[ren..ren + 2500];
+        assert!(ren.contains("@tr(\"Rename Sound\")"));
+        assert!(ren.contains("enabled: root.bell-rename-valid;"));
+
+        // Rust: bundled rows are not deletable; rename validates with
+        // core's collision check (excluding the row itself); both
+        // writes go through core and refresh the chooser + Setup rows.
+        let populate = lib.find("fn populate_bell_chooser(").unwrap();
+        assert!(lib[populate..populate + 1500].contains("deletable: !b.is_bundled,"));
+        assert!(lib.contains("meditate_core::sound::name_collides_excluding("));
+        for (handler, call) in [("ui.on_bell_rename_confirm(", "db.rename_bell_sound("),
+                                ("ui.on_bell_delete_confirm(", "db.delete_bell_sound(")] {
+            let at = lib.find(handler).unwrap_or_else(|| panic!("{handler}"));
+            let body = &lib[at..at + 3000];
+            assert!(body.contains(call), "{handler}");
+            assert!(body.contains("repopulate_bell_chooser(&ui"), "{handler}");
+            assert!(body.contains("refresh_bell_rows(&ui);"), "{handler}");
+        }
+
+        for lang in ["de", "es", "fr", "it", "nl", "pl", "pt_BR", "ru", "zh_CN"] {
+            let po = std::fs::read_to_string(root.join(format!("lang/{lang}/LC_MESSAGES/meditate-android.po"))).unwrap();
+            for id in ["Rename Sound", "Delete Sound?", "Bells that reference this sound will lose their audio."] {
+                let at = po.find(&format!("msgid \"{id}\"\nmsgstr \"")).unwrap_or_else(|| panic!("{lang}: {id}"));
+                assert!(po[at..].lines().nth(1).unwrap() != "msgstr \"\"", "{lang}: {id}");
+            }
+        }
+    }
+
+    #[test]
     fn the_shell_holds_an_ended_session_until_save_or_discard() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
         let lib = std::fs::read_to_string(path).unwrap();

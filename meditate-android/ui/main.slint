@@ -215,6 +215,15 @@ export struct LabelItem {
 // Mirrors GTK's `build_sound_row` selection list in
 // `meditate-gtk/src/sounds.rs` (preview Play/Stop is B-4 —
 // this slice is select-only).
+// One bell-sound chooser row: NameChoice plus whether it can be
+// deleted (custom imports only; bundled sounds stay, like GTK).
+export struct SoundChoice {
+    uuid: string,
+    name: string,
+    selected: bool,
+    deletable: bool,
+}
+
 export struct NameChoice {
     uuid: string,
     name: string,
@@ -2212,11 +2221,24 @@ export component MainWindow inherits Window {
     // pattern chooser: `bell-preview-uuid` holds the uuid
     // currently sounding (PreviewToggle keeps it exclusive).
     in property <bool> bell-chooser-page: false;
-    in property <[NameChoice]> bell-chooser-items: [];
+    in property <[SoundChoice]> bell-chooser-items: [];
     in property <string> bell-preview-uuid: "";
     callback bell-chooser-pick(string);
     callback bell-chooser-back();
     callback bell-preview-toggle(string);
+    // Rename (every row) + Delete (custom rows), mirroring GTK's
+    // sound chooser. Rename is live-validated like the guided one;
+    // Delete asks first, since bells using the sound lose their audio.
+    callback bell-rename-tap(string, string);
+    in-out property <bool> bell-rename-dialog-open: false;
+    in-out property <string> bell-rename-text: "";
+    in property <bool> bell-rename-valid: false;
+    callback bell-rename-changed(string);
+    callback bell-rename-confirm();
+    callback bell-delete-tap(string, string);
+    in-out property <bool> bell-delete-dialog-open: false;
+    in property <string> bell-delete-name: "";
+    callback bell-delete-confirm();
 
     // Interval Bells (B-5c-1). Enable ↔ global
     // `interval_bells_active`; "Manage Bells" opens a slide-in
@@ -6234,6 +6256,26 @@ export component MainWindow inherits Window {
                                     }
                                 }
                             }
+
+                            // Rename / Delete suffix (GTK's rename_btn
+                            // + delete_btn; Delete on custom rows only).
+                            HorizontalLayout {
+                                spacing: 0px;
+                                alignment: center;
+                                IconButton {
+                                    icon: Icons.edit;
+                                    clicked => {
+                                        root.bell-rename-tap(item.uuid, item.name);
+                                    }
+                                }
+                                if item.deletable : IconButton {
+                                    icon: @image-url("assets/delete.svg");
+                                    has_error: true;
+                                    clicked => {
+                                        root.bell-delete-tap(item.uuid, item.name);
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -8155,6 +8197,121 @@ export component MainWindow inherits Window {
                                 color: MaterialPalette.on-primary;
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Bell-sound rename + delete dialogs (modal) ─────────────
+    // Over the bell-sound chooser (declared after it). Mirror GTK's
+    // sounds.rs present_rename_dialog / present_delete_dialog.
+    if root.bell-rename-dialog-open : Rectangle {
+        background: #00000080;
+        TouchArea {
+            clicked => { root.bell-rename-dialog-open = false; }
+        }
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: min(320px, root.width - 32px);
+            height: bell-rename-card.preferred-height;
+            background: MaterialPalette.surface-container-high;
+            border-radius: 28px;
+
+            TouchArea {}
+
+            bell-rename-card := VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+
+                Text {
+                    text: @tr("Rename Sound");
+                    font-size: 22px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface;
+                }
+
+                TextField {
+                    label: @tr("Name");
+                    text <=> root.bell-rename-text;
+                    edited(text) => { root.bell-rename-changed(text); }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+
+                    TextButton {
+                        text: @tr("Cancel");
+                        clicked => {
+                            root.bell-rename-dialog-open = false;
+                        }
+                    }
+                    TextButton {
+                        text: @tr("Rename");
+                        enabled: root.bell-rename-valid;
+                        clicked => { root.bell-rename-confirm(); }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.bell-delete-dialog-open : Rectangle {
+        background: #00000080;
+        TouchArea {
+            clicked => { root.bell-delete-dialog-open = false; }
+        }
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: min(340px, root.width - 32px);
+            height: bell-delete-card.preferred-height;
+            background: MaterialPalette.surface-container-high;
+            border-radius: 28px;
+
+            TouchArea {}
+
+            bell-delete-card := VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+
+                Text {
+                    text: @tr("Delete Sound?");
+                    font-size: 22px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface;
+                }
+                Text {
+                    text: root.bell-delete-name;
+                    font-size: 16px;
+                    horizontal-alignment: center;
+                    color: MaterialPalette.on-surface;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: @tr("Bells that reference this sound will lose their audio.");
+                    font-size: 14px;
+                    color: MaterialPalette.on-surface-variant;
+                    wrap: word-wrap;
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: end;
+
+                    TextButton {
+                        text: @tr("Cancel");
+                        clicked => {
+                            root.bell-delete-dialog-open = false;
+                        }
+                    }
+                    TextButton {
+                        text: @tr("Delete");
+                        clicked => { root.bell-delete-confirm(); }
                     }
                 }
             }
