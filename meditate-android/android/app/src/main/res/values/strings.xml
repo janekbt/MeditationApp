@@ -7,4 +7,7 @@
     <string name="notification_channel_session">Session</string>
     <string name="notification_channel_session_desc">Persistent notification while a meditation session is in flight</string>
     <string name="notification_session_running">Session in progress</string>
+    <string name="notification_channel_complete">Session complete</string>
+    <string name="notification_complete_title">Meditation complete</string>
+    <string name="notification_complete_body">Session: %1$s</string>
 </resources>

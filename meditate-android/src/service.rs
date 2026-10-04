@@ -43,6 +43,8 @@ const SERVICE_CLASS_DOTTED: &str = "io.github.janekbt.Meditate.MeditateSessionSe
 /// without screen-off survival; we don't want a JNI hiccup to brick
 /// the Start button.
 pub fn start(app: &AndroidApp) {
+    // A "Meditation complete" left from the last session is stale now.
+    clear_complete(app);
     if let Err(e) = invoke(app, "start") {
         // eprintln! forwards to logcat via stderr — no log facade
         // wired up in this crate yet (Phase 8's polish pass will
@@ -60,11 +62,35 @@ pub fn stop(app: &AndroidApp) {
     }
 }
 
+/// Post the "Meditation complete" notification; `duration` is the
+/// formatted session length for its body. Same swallow-error policy.
+pub fn notify_complete(app: &AndroidApp, duration: &str) {
+    if let Err(e) = invoke_with_text(app, "notifyComplete", duration) {
+        eprintln!("MeditateSessionService.notifyComplete failed: {e}");
+    }
+}
+
+/// Withdraw a "Meditation complete" notification, if one is showing.
+pub fn clear_complete(app: &AndroidApp) {
+    if let Err(e) = invoke(app, "clearComplete") {
+        eprintln!("MeditateSessionService.clearComplete failed: {e}");
+    }
+}
+
 /// Resolve `MeditateSessionService` through the app classloader,
 /// then call its `<method>(Context)` static helper with the
 /// activity as the Context argument. Both `start`/`stop` share the
 /// signature, so this single helper covers both transitions.
 fn invoke(app: &AndroidApp, method: &str) -> Result<(), jni::errors::Error> {
+    call(app, method, None)
+}
+
+/// `invoke` for the `(Context, String)` helpers.
+fn invoke_with_text(app: &AndroidApp, method: &str, text: &str) -> Result<(), jni::errors::Error> {
+    call(app, method, Some(text))
+}
+
+fn call(app: &AndroidApp, method: &str, text: Option<&str>) -> Result<(), jni::errors::Error> {
     // SAFETY: `app.vm_as_ptr()` is the JavaVM pointer android-activity
     // received at process start; it stays valid for the process
     // lifetime. JavaVM::from_raw expects a raw `*mut sys::JavaVM`,
@@ -93,12 +119,25 @@ fn invoke(app: &AndroidApp, method: &str) -> Result<(), jni::errors::Error> {
         .l()?;
     let class: JClass = class_obj.into();
 
-    env.call_static_method(
-        class,
-        method,
-        "(Landroid/content/Context;)V",
-        &[(&activity).into()],
-    )?;
+    match text {
+        None => {
+            env.call_static_method(
+                class,
+                method,
+                "(Landroid/content/Context;)V",
+                &[(&activity).into()],
+            )?;
+        }
+        Some(text) => {
+            let text = env.new_string(text)?;
+            env.call_static_method(
+                class,
+                method,
+                "(Landroid/content/Context;Ljava/lang/String;)V",
+                &[(&activity).into(), (&text).into()],
+            )?;
+        }
+    }
 
     // Defensive: if any earlier call somehow left a pending
     // exception, clear it before this thread's next JNI cycle —

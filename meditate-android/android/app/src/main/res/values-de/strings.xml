@@ -3,4 +3,7 @@
     <string name="notification_channel_session">Sitzung</string>
     <string name="notification_channel_session_desc">Dauerhafte Benachrichtigung, während eine Meditationssitzung läuft</string>
     <string name="notification_session_running">Sitzung läuft</string>
+    <string name="notification_channel_complete">Sitzung beendet</string>
+    <string name="notification_complete_title">Meditation beendet</string>
+    <string name="notification_complete_body">Sitzung: %1$s</string>
 </resources>

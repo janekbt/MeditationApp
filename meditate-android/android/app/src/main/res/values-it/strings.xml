@@ -3,4 +3,7 @@
     <string name="notification_channel_session">Sessione</string>
     <string name="notification_channel_session_desc">Notifica persistente mentre è in corso una sessione di meditazione</string>
     <string name="notification_session_running">Sessione in corso</string>
+    <string name="notification_channel_complete">Sessione completata</string>
+    <string name="notification_complete_title">Meditazione completata</string>
+    <string name="notification_complete_body">Sessione: %1$s</string>
 </resources>

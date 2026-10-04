@@ -391,6 +391,21 @@ fn stop_active_signals() {
     dispatch_effects(&[meditate_core::session::Effect::StopActiveSignals]);
 }
 
+/// Whether the activity is resumed (in front). Starts true: the
+/// first resume arrives right after launch.
+#[cfg(target_os = "android")]
+static APP_IN_FOREGROUND: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Post "Meditation complete" when a session reached its planned end
+/// while the app is in the background (`app::completion_notice_secs`).
+#[cfg(target_os = "android")]
+fn notify_if_complete(state: &app::AppState, effects: &[meditate_core::session::Effect]) {
+    let in_foreground = APP_IN_FOREGROUND.load(std::sync::atomic::Ordering::Relaxed);
+    let Some(secs) = app::completion_notice_secs(state, effects, in_foreground) else { return; };
+    let Some(app) = android_app() else { return; };
+    service::notify_complete(app, &meditate_core::format::format_time(Duration::from_secs(secs)));
+}
+
 #[cfg(target_os = "android")]
 fn dispatch_effects(effects: &[meditate_core::session::Effect]) {
     use meditate_core::session::Effect;
@@ -5500,6 +5515,7 @@ fn build_ui() -> MainWindow {
                         );
                         let t = prev.enter_overtime();
                         dispatch_effects(&t.effects);
+                        notify_if_complete(&t.state, &t.effects);
                         *state.borrow_mut() = t.state;
                     }
                     // Guided track lost audio focus (incoming call
@@ -5544,6 +5560,8 @@ fn build_ui() -> MainWindow {
             let elapsed_secs = app::ended_duration_secs(&transition.effects).unwrap_or(0) as i64;
             #[cfg(target_os = "android")]
             dispatch_effects(&transition.effects);
+            #[cfg(target_os = "android")]
+            notify_if_complete(&transition.state, &transition.effects);
             // Overtime Add-button label tracks the running
             // overtime delta (core's UpdateOvertimeLabel each
             // tick), exactly like GTK's per-tick relabel.
@@ -11118,10 +11136,24 @@ fn android_main(android_app: slint::android::AndroidApp) {
     // Sync whenever the app comes to the foreground — Android reports
     // a resume at launch too, so this is also the launch sync. Mirrors
     // GTK syncing on every activation (`application.rs` activate).
+    // It also tracks foreground / background for the "Meditation
+    // complete" notification (posted only in the background), and
+    // coming back withdraws a stale one.
     slint::android::init_with_event_listener(android_app, |event| {
         use slint::android::android_activity::{MainEvent, PollEvent};
-        if let PollEvent::Main(MainEvent::Resume { .. }) = event {
-            trigger_sync("app resume");
+        match event {
+            PollEvent::Main(MainEvent::Resume { .. }) => {
+                APP_IN_FOREGROUND.store(true, std::sync::atomic::Ordering::Relaxed);
+                // `crate::`: the `android_app` parameter shadows it here.
+                if let Some(app) = crate::android_app() {
+                    service::clear_complete(app);
+                }
+                trigger_sync("app resume");
+            }
+            PollEvent::Main(MainEvent::Pause) => {
+                APP_IN_FOREGROUND.store(false, std::sync::atomic::Ordering::Relaxed);
+            }
+            _ => {}
         }
     })
     .unwrap();

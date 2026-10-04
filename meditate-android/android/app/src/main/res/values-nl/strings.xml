@@ -3,4 +3,7 @@
     <string name="notification_channel_session">Sessie</string>
     <string name="notification_channel_session_desc">Permanente melding terwijl een meditatiesessie bezig is</string>
     <string name="notification_session_running">Sessie bezig</string>
+    <string name="notification_channel_complete">Sessie voltooid</string>
+    <string name="notification_complete_title">Meditatie voltooid</string>
+    <string name="notification_complete_body">Sessie: %1$s</string>
 </resources>

@@ -55,6 +55,24 @@ pub fn ended_duration_secs(effects: &[Effect]) -> Option<u64> {
     })
 }
 
+/// Length for the "Meditation complete" notification, or None when
+/// none is due. A session reaching its planned end on its own (core's
+/// `EnterOvertime` at the countdown / guided-track end, `EndBoxBreath`
+/// at a Box Breath cycle-aligned end) while the app is in the
+/// background posts one, mirroring GTK's unfocused-window notification.
+/// Hand-ended sessions (Stop / Finish / Add) never do: the user is
+/// in the app.
+pub fn completion_notice_secs(state: &AppState, effects: &[Effect], in_foreground: bool) -> Option<u64> {
+    if in_foreground {
+        return None;
+    }
+    effects.iter().find_map(|e| match (e, state) {
+        (Effect::EndBoxBreath { duration_secs }, _) => Some(*duration_secs),
+        (Effect::EnterOvertime, AppState::Active(s)) => Some(s.completion_duration_secs()),
+        _ => None,
+    })
+}
+
 /// A Log day section's header: core's Today / Yesterday, else the
 /// day as numbers (the shell renders them through a translatable
 /// pattern, e.g. "3.10." in German), with the year for an earlier
@@ -2065,6 +2083,127 @@ mod tests {
         }
         assert!(t.is_finished());
         assert_eq!(ended_duration_secs(&t.effects), Some(16));
+    }
+
+    // ── "Meditation complete" notification ─────────────────────
+
+    #[test]
+    fn countdown_end_in_the_background_notifies_with_the_planned_length() {
+        let t = AppState::idle()
+            .toggle(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100))
+            .tick(Duration::from_secs(160));
+        assert!(t.is_overtime());
+        assert_eq!(completion_notice_secs(&t.state, &t.effects, false), Some(60));
+    }
+
+    #[test]
+    fn countdown_end_in_the_foreground_does_not_notify() {
+        // The in-app overtime screen already says so (GTK: only when
+        // the window isn't focused).
+        let t = AppState::idle()
+            .toggle(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100))
+            .tick(Duration::from_secs(160));
+        assert_eq!(completion_notice_secs(&t.state, &t.effects, true), None);
+    }
+
+    #[test]
+    fn running_and_overtime_ticks_do_not_notify() {
+        let running = AppState::idle()
+            .toggle(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100));
+        let mid = running.state.tick(Duration::from_secs(130));
+        assert_eq!(completion_notice_secs(&mid.state, &mid.effects, false), None);
+        let over = mid.state.tick(Duration::from_secs(160));
+        let later = over.state.tick(Duration::from_secs(175));
+        assert_eq!(completion_notice_secs(&later.state, &later.effects, false), None, "once, at the crossing");
+    }
+
+    #[test]
+    fn guided_end_of_track_notifies() {
+        let t = AppState::idle()
+            .toggle(guided(Duration::from_secs(300), false), Duration::from_secs(0))
+            .state
+            .enter_overtime();
+        assert_eq!(completion_notice_secs(&t.state, &t.effects, false), Some(300));
+    }
+
+    #[test]
+    fn box_breath_end_notifies_with_its_cycle_aligned_length() {
+        let shape = SessionShape::BoxBreathCountdown {
+            pattern: meditate_core::breath::BreathPattern::box_breath(),
+            target_secs: 16,
+        };
+        let mut t = AppState::idle().toggle(shape, Duration::from_secs(100));
+        for secs in 101..=116 {
+            t = t.state.tick(Duration::from_secs(secs));
+            if t.is_finished() {
+                break;
+            }
+        }
+        assert!(t.is_finished());
+        assert_eq!(completion_notice_secs(&t.state, &t.effects, false), Some(16));
+    }
+
+    #[test]
+    fn ending_a_session_by_hand_does_not_notify() {
+        let over = || {
+            AppState::idle()
+                .toggle(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100))
+                .state
+                .tick(Duration::from_secs(160))
+                .state
+        };
+        let stop = AppState::idle()
+            .toggle(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100))
+            .state
+            .stop(Duration::from_secs(120));
+        assert_eq!(completion_notice_secs(&stop.state, &stop.effects, false), None);
+        let finish = over().finish_overtime();
+        assert_eq!(completion_notice_secs(&finish.state, &finish.effects, false), None);
+        let add = over().add_overtime(Duration::from_secs(170));
+        assert_eq!(completion_notice_secs(&add.state, &add.effects, false), None);
+    }
+
+    #[test]
+    fn the_shell_posts_and_clears_the_completion_notice() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
+        // Both natural ends: the tick crossing and the guided track's EOS.
+        assert_eq!(code.matches("notify_if_complete(&t.state, &t.effects);").count()
+            + code.matches("notify_if_complete(&transition.state, &transition.effects);").count(), 2);
+        // Foreground tracking from the activity lifecycle; coming back
+        // (or starting the next session) clears a stale notice.
+        let listener = code.find("init_with_event_listener").unwrap();
+        let listener = &code[listener..listener + 1200];
+        assert!(listener.contains("MainEvent::Resume"));
+        assert!(listener.contains("MainEvent::Pause"));
+        assert!(listener.contains("APP_IN_FOREGROUND.store(true"));
+        assert!(listener.contains("APP_IN_FOREGROUND.store(false"));
+        assert!(listener.contains("service::clear_complete("));
+        let svc = std::fs::read_to_string(root.join("src/service.rs")).unwrap();
+        let start = svc.find("pub fn start(").unwrap();
+        assert!(svc[start..start + 600].contains("clear_complete"));
+
+        // Kotlin: its own channel (the session one is silent/low and
+        // goes away with the service), dismisses on tap, opens the app.
+        let kt = std::fs::read_to_string(root.join("kotlin/MeditateSessionService.kt")).unwrap();
+        let notify = kt.find("fun notifyComplete(").expect("notifyComplete");
+        let body = &kt[notify..notify + 2500];
+        assert!(body.contains("COMPLETE_CHANNEL_ID"));
+        assert!(body.contains(".setAutoCancel(true)"));
+        assert!(body.contains("setContentIntent("));
+        assert!(kt.contains("fun clearComplete("));
+
+        // Title + body pattern translated next to the other notification strings.
+        let res = root.join("android/app/src/main/res");
+        for dir in ["values", "values-de", "values-es", "values-fr", "values-it", "values-nl",
+                    "values-pl", "values-pt-rBR", "values-ru", "values-zh-rCN"] {
+            let xml = std::fs::read_to_string(res.join(dir).join("strings.xml")).unwrap();
+            for key in ["notification_channel_complete", "notification_complete_title", "notification_complete_body"] {
+                assert!(xml.contains(&format!("<string name=\"{key}\">")), "{dir}: {key}");
+            }
+            assert!(!xml.contains("—"), "{dir}: no long dash");
+        }
     }
 
     #[test]

@@ -49,6 +49,13 @@ class MeditateSessionService : Service() {
         const val NOTIFICATION_ID = 1
         const val CHANNEL_ID = "meditate_session"
 
+        // "Meditation complete": its own slot and channel. The session
+        // notification is silent/low and is removed with the service,
+        // while this one has to outlive the session and show in the
+        // status bar. Silent too, because the end bell already rang.
+        const val COMPLETE_NOTIFICATION_ID = 2
+        const val COMPLETE_CHANNEL_ID = "meditate_complete"
+
         // requestPermissions request code. Value is arbitrary — we
         // never read the callback (no override of
         // onRequestPermissionsResult on the NativeActivity), the
@@ -95,6 +102,59 @@ class MeditateSessionService : Service() {
             activity.requestPermissions(
                 arrayOf(Manifest.permission.POST_NOTIFICATIONS),
                 PERMISSION_REQUEST_CODE,
+            )
+        }
+
+        /// Posted from Rust when a session reaches its planned end
+        /// while the app is in the background (GTK sends the same
+        /// notification when its window isn't focused). `duration`
+        /// is the formatted session length. Tapping opens the app and
+        /// dismisses the notification.
+        @JvmStatic
+        fun notifyComplete(context: Context, duration: String) {
+            val mgr = context.getSystemService(NotificationManager::class.java)
+            val channel = NotificationChannel(
+                COMPLETE_CHANNEL_ID,
+                context.getString(R.string.notification_channel_complete),
+                NotificationManager.IMPORTANCE_DEFAULT,
+            ).apply {
+                setSound(null, null)
+                enableVibration(false)
+            }
+            mgr.createNotificationChannel(channel)
+            val notification = Notification.Builder(context, COMPLETE_CHANNEL_ID)
+                .setContentTitle(context.getString(R.string.notification_complete_title))
+                .setContentText(context.getString(R.string.notification_complete_body, duration))
+                .setSmallIcon(android.R.drawable.ic_media_play)
+                .setAutoCancel(true)
+                .setContentIntent(launchIntent(context))
+                .build()
+            mgr.notify(COMPLETE_NOTIFICATION_ID, notification)
+        }
+
+        /// Withdraws a stale "Meditation complete" once the app is back
+        /// in front or the next session starts.
+        @JvmStatic
+        fun clearComplete(context: Context) {
+            context.getSystemService(NotificationManager::class.java)
+                .cancel(COMPLETE_NOTIFICATION_ID)
+        }
+
+        /// Launcher activity brought to front (SINGLE_TOP + CLEAR_TOP
+        /// so the in-flight Slint UI isn't replaced by a duplicate).
+        fun launchIntent(context: Context): PendingIntent {
+            val launch = context.packageManager
+                .getLaunchIntentForPackage(context.packageName)?.apply {
+                    addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                } ?: Intent()
+            // FLAG_IMMUTABLE is mandatory on Android 12+ (API 31) for any
+            // PendingIntent we don't need to mutate post-construction. We
+            // never read extras out of this intent, so immutable is fine.
+            return PendingIntent.getActivity(
+                context,
+                0,
+                launch,
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
         }
 
@@ -254,25 +314,10 @@ class MeditateSessionService : Service() {
             .build()
     }
 
-    /// Builds the PendingIntent that fires when the user taps the
-    /// notification. Resolves the app's launcher activity via
+    /// The PendingIntent that fires when the user taps the
+    /// notification: the launcher activity, resolved via
     /// PackageManager so we don't need a hard-coded class name (the
     /// Slint NativeActivity's real Java class is generated at build
-    /// time). SINGLE_TOP + CLEAR_TOP brings the existing instance
-    /// forward rather than spawning a duplicate that would lose the
-    /// in-flight Slint UI state.
-    private fun buildContentIntent(): PendingIntent {
-        val launch = packageManager.getLaunchIntentForPackage(packageName)?.apply {
-            addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        } ?: Intent()
-        // FLAG_IMMUTABLE is mandatory on Android 12+ (API 31) for any
-        // PendingIntent we don't need to mutate post-construction. We
-        // never read extras out of this intent, so immutable is fine.
-        return PendingIntent.getActivity(
-            this,
-            0,
-            launch,
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
-    }
+    /// time).
+    private fun buildContentIntent(): PendingIntent = launchIntent(this)
 }
