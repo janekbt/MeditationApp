@@ -34,7 +34,7 @@ object MeditateGuided {
         .build()
 
     @JvmStatic
-    fun startAudio(context: Context, path: String) {
+    fun startAudio(context: Context, path: String): Boolean {
         synchronized(lock) {
             releaseLocked()
             clearEos(context)
@@ -56,13 +56,14 @@ object MeditateGuided {
                 mp.prepare()
                 mp.start()
                 player = mp
+                return true
             } catch (e: Exception) {
                 Log.w(TAG, "startAudio failed path=$path: $e")
                 runCatching { mp.release() }
-                // Treat an unplayable file as immediate EOS so the
-                // session doesn't hang waiting for a track that
-                // never plays.
-                markEos(context)
+                abandonFocus(context)
+                // Report it: the caller then starts no session, like
+                // GTK's "Couldn't start playback".
+                return false
             }
         }
     }

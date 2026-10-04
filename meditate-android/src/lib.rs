@@ -130,6 +130,14 @@ static TEST_CONNECTION_RESULT: OnceLock<
 #[cfg(target_os = "android")]
 static SYNC_COORDINATOR: meditate_core::sync::coordinator::SyncCoordinator =
     meditate_core::sync::coordinator::SyncCoordinator::new();
+/// Set by the session-start handler when a guided track could not be
+/// played (no session starts); the tick loop shows "Couldn't start
+/// playback". The handler lacks the snackbar's undo slots, hence the
+/// hand-off.
+#[cfg(target_os = "android")]
+static GUIDED_START_FAILED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 /// Set by the sync worker when a pass brought in changes from
 /// another device; the tick loop consumes it and re-reads every
 /// screen (`refresh_after_pull`).
@@ -4412,6 +4420,23 @@ fn build_ui() -> MainWindow {
                 });
             }
             let was_active = s.is_active();
+            // Guided: start the track first. An unplayable file starts
+            // no session — mirrors GTK's audio-first start and its
+            // "Couldn't start playback" toast.
+            #[cfg(target_os = "android")]
+            if !was_active && current_mode.get() == TimerMode::Guided {
+                let started = android_app().is_some_and(|app| {
+                    guided_sel
+                        .borrow()
+                        .as_ref()
+                        .is_some_and(|sel| guided::play(app, &sel.path))
+                });
+                if !started {
+                    use std::sync::atomic::Ordering;
+                    GUIDED_START_FAILED.store(true, Ordering::SeqCst);
+                    return;
+                }
+            }
             let prev = std::mem::replace(&mut *s, AppState::idle());
             let transition = if was_active {
                 // Active → pause / resume (shape unused — Session
@@ -4466,20 +4491,14 @@ fn build_ui() -> MainWindow {
                 is_active,
                 current_mode.get().into(),
             );
-            // Guided audio follows the session: start it on the
-            // Idle→Active edge, mirror pause/resume on the
+            // Guided audio follows the session: started above,
+            // before the session; mirror pause/resume on the
             // Active→Active toggle (Stop/Finish release it via
             // on_state_changed). Mode-gated; harmless otherwise.
             #[cfg(target_os = "android")]
             if current_mode.get() == TimerMode::Guided {
                 if let Some(app) = android_app() {
-                    if !was_active && is_active {
-                        if let Some(sel) =
-                            guided_sel.borrow().as_ref()
-                        {
-                            guided::play(app, &sel.path);
-                        }
-                    } else if was_active && is_active {
+                    if was_active && is_active {
                         if s.is_paused() {
                             guided::pause(app);
                         } else {
@@ -4823,6 +4842,11 @@ fn build_ui() -> MainWindow {
                         }
                         None => {}
                     }
+                }
+                // A guided track couldn't be played, so no session
+                // started.
+                if GUIDED_START_FAILED.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                    pick_error = Some(ui.global::<Tr>().invoke_playback_failed());
                 }
                 if let Some(text) = pick_error {
                     // Bug-audit #2: see the handler raise sites.
@@ -6115,7 +6139,9 @@ fn build_ui() -> MainWindow {
                     refresh_guided_manage(&ui);
                     return;
                 };
-                guided::play(app, &path);
+                if !guided::play(app, &path) {
+                    return;
+                }
                 ui.set_guided_manage_preview_uuid(uuid.clone());
             }
             let _ = (weak.clone(), uuid);

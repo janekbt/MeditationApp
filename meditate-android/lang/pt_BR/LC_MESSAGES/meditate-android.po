@@ -828,3 +828,6 @@ msgstr[1] "{n} sessões excluídas"
 
 msgid "All labels"
 msgstr "Todos os rótulos"
+
+msgid "Couldn't start playback"
+msgstr "Não foi possível iniciar a reprodução"

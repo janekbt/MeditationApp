@@ -863,6 +863,41 @@ mod tests {
         assert!(!code.contains("trigger_sync(\"app launch\")"), "launch is a resume; no second trigger");
     }
 
+    /// A guided session starts only if its track starts: the player
+    /// reports failure instead of faking the track's end, the shell
+    /// starts the track before the session (like GTK), and a failure
+    /// shows "Couldn't start playback" with no session at all.
+    #[test]
+    fn a_guided_file_that_will_not_play_starts_no_session() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let kotlin = std::fs::read_to_string(root.join("kotlin/MeditateGuided.kt")).unwrap();
+        let start = kotlin.find("fun startAudio(").expect("startAudio");
+        let start_fn = &kotlin[start..start + kotlin[start..].find("\n    }\n").unwrap()];
+        assert!(start_fn.starts_with("fun startAudio(context: Context, path: String): Boolean"),
+            "the player reports whether the track started");
+        let catch = &start_fn[start_fn.find("catch (e: Exception)").expect("failure branch")..];
+        assert!(!catch.contains("markEos"), "a failed start must not pretend the track ended");
+
+        let guided = std::fs::read_to_string(root.join("src/guided.rs")).unwrap();
+        assert!(guided.contains("\"(Landroid/content/Context;Ljava/lang/String;)Z\""), "JNI reads the result");
+        assert!(guided.contains("pub fn play(app: &AndroidApp, path: &str) -> bool"));
+
+        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
+        let first_play = code.find("guided::play(app, &sel.path)").expect("session start plays the track");
+        let session_start = code.find("AppState::start_session(").expect("session start");
+        assert!(first_play < session_start, "the track starts before the session");
+        let gate = &code[first_play..session_start];
+        assert!(gate.contains("GUIDED_START_FAILED.store(true"), "a failure is flagged");
+        assert!(gate.contains("return;"), "and nothing starts");
+        assert_eq!(code.matches("guided::play(app, &sel.path)").count(), 1, "no second start after the session began");
+
+        let flag = code.find("GUIDED_START_FAILED.swap(false").expect("the tick loop shows it");
+        assert!(code[flag..flag + 300].contains("invoke_playback_failed()"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        assert!(slint.contains("public pure function playback-failed() -> string { return @tr(\"Couldn't start playback\"); }"));
+    }
+
     #[test]
     fn the_shell_holds_an_ended_session_until_save_or_discard() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");

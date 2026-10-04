@@ -258,11 +258,19 @@ fn invoke_open(
 // ── Guided audio playback (MeditateGuided) ──────────────────────────
 
 /// Start playing the selected file. Supersedes any prior guided
-/// playback. Best-effort: a failure is logged (the session still
-/// runs as a silent countdown of the probed length).
-pub fn play(app: &AndroidApp, path: &str) {
-    if let Err(e) = invoke_play(app, path) {
-        meditate_core::log("guided", &format!("play FAILED: {e:?}"));
+/// playback. Returns whether the track started; the caller starts
+/// no session when it didn't (GTK: "Couldn't start playback").
+pub fn play(app: &AndroidApp, path: &str) -> bool {
+    match invoke_play(app, path) {
+        Ok(true) => true,
+        Ok(false) => {
+            meditate_core::log("guided", &format!("play FAILED: unplayable {path}"));
+            false
+        }
+        Err(e) => {
+            meditate_core::log("guided", &format!("play FAILED: {e:?}"));
+            false
+        }
     }
 }
 
@@ -439,23 +447,24 @@ fn invoke_import(
 fn invoke_play(
     app: &AndroidApp,
     path: &str,
-) -> Result<(), jni::errors::Error> {
+) -> Result<bool, jni::errors::Error> {
     let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
     let mut env = vm.attach_current_thread()?;
     let activity =
         unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
     let jpath = env.new_string(path)?;
     let class = resolve_class(&mut env, &activity, PLAYER_CLASS_DOTTED)?;
-    env.call_static_method(
+    let started = env.call_static_method(
         class,
         "startAudio",
-        "(Landroid/content/Context;Ljava/lang/String;)V",
+        "(Landroid/content/Context;Ljava/lang/String;)Z",
         &[(&activity).into(), (&jpath).into()],
     )?;
     if env.exception_check()? {
         env.exception_clear()?;
+        return Ok(false);
     }
-    Ok(())
+    started.z()
 }
 
 fn invoke_player_noarg(

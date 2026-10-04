@@ -828,3 +828,6 @@ msgstr[1] "{n} sessies verwijderd"
 
 msgid "All labels"
 msgstr "Alle labels"
+
+msgid "Couldn't start playback"
+msgstr "Kan afspelen niet starten"

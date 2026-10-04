@@ -810,3 +810,6 @@ msgstr[0] "已删除 {n} 个会话"
 
 msgid "All labels"
 msgstr "所有标签"
+
+msgid "Couldn't start playback"
+msgstr "无法开始播放"

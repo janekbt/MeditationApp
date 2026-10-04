@@ -846,3 +846,6 @@ msgstr[2] "Usunięto {n} sesji"
 
 msgid "All labels"
 msgstr "Wszystkie etykiety"
+
+msgid "Couldn't start playback"
+msgstr "Nie można rozpocząć odtwarzania"

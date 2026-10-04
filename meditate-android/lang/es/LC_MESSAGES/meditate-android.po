@@ -828,3 +828,6 @@ msgstr[1] "{n} sesiones eliminadas"
 
 msgid "All labels"
 msgstr "Todas las etiquetas"
+
+msgid "Couldn't start playback"
+msgstr "No se pudo iniciar la reproducción"

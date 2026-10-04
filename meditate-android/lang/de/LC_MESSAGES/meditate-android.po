@@ -828,3 +828,6 @@ msgstr[1] "{n} Sitzungen · {0} Min"
 
 msgid "All labels"
 msgstr "Alle Labels"
+
+msgid "Couldn't start playback"
+msgstr "Wiedergabe konnte nicht gestartet werden"

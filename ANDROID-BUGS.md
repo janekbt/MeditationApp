@@ -66,7 +66,7 @@ not conclusive and a device check is needed.
 
 ## Batch C — running session
 
-- [ ] **Unplayable guided file starts a fake session** that jumps to
+- [x] **Unplayable guided file starts a fake session** that jumps to
   Overtime and saves the full planned length on Finish. GTK shows
   "Couldn't start playback". Android `kotlin/MeditateGuided.kt:59-65`,
   `lib.rs:5154-5176`, `guided.rs:263`; GTK `timer/imp.rs:2140-2160`.
