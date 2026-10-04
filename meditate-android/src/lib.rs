@@ -2702,7 +2702,11 @@ fn group_log_sessions(
     let mut sections: Vec<LogDaySectionData> = Vec::new();
     for (rowid, s) in rows {
         if hidden_ids.contains(rowid) { continue; }
-        let date_key = s.start_iso.get(..10).unwrap_or("").to_string();
+        // Day, header and card time all come from the start instant in
+        // the device's current zone, as in GTK. The stored wall-clock
+        // text disagrees with them after a time-zone change.
+        let start_unix = s.start_unix();
+        let date_key = meditate_core::format::date_group_key(start_unix);
         let label_name = s
             .label_id
             .and_then(|id| label_name_by_id.get(&id).cloned())
@@ -2717,7 +2721,7 @@ fn group_log_sessions(
             minutes: meditate_core::format::log_card_minutes(
                 s.duration_secs as i64,
             ) as i32,
-            time_of_day: format_time_of_day(&s.start_iso),
+            time_of_day: format_time_of_day(start_unix),
             label_name,
             guided_name: meditate_core::db::guided_file_name_for(
                 s.guided_file_uuid.as_ref().map(|u| u.as_str()),
@@ -2741,7 +2745,7 @@ fn group_log_sessions(
         }
         sections.push(LogDaySectionData {
             date_key,
-            start_unix: meditate_core::time::local_iso_to_unix(&s.start_iso),
+            start_unix,
             count: 1,
             total_secs: duration_secs_i64,
             items: vec![item],
@@ -2849,11 +2853,9 @@ fn render_mini_stat(n: i64) -> String {
 }
 
 #[cfg(target_os = "android")]
-fn format_time_of_day(start_iso: &str) -> String {
-    let Some(key) =
-        meditate_core::format::time_of_day_key_from_iso(start_iso)
-    else {
-        return start_iso.get(11..16).unwrap_or("").to_string();
+fn format_time_of_day(start_unix: i64) -> String {
+    let Some(key) = meditate_core::format::time_of_day_key(start_unix) else {
+        return String::new();
     };
     let fmt = CLOCK_FORMAT
         .lock()

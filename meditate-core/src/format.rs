@@ -661,16 +661,6 @@ pub fn time_of_day_key(unix_secs: i64) -> Option<TimeOfDayKey> {
         })
 }
 
-/// `time_of_day_key` for a stored `start_iso` string
-/// ("YYYY-MM-DDTHH:MM:SS", already local time). `None` when the
-/// string is too short or carries non-numeric time fields.
-pub fn time_of_day_key_from_iso(start_iso: &str) -> Option<TimeOfDayKey> {
-    let hour: u8 = start_iso.get(11..13)?.parse().ok()?;
-    let minute: u8 = start_iso.get(14..16)?.parse().ok()?;
-    (hour < 24 && minute < 60)
-        .then_some(TimeOfDayKey { hour, minute })
-}
-
 pub fn format_time_of_day(unix_secs: i64) -> String {
     use chrono::TimeZone;
     chrono::Local
@@ -1428,23 +1418,6 @@ mod tests {
         assert_eq!(key.len(), 10);
         assert_eq!(&key[4..5], "-");
         assert_eq!(&key[7..8], "-");
-    }
-
-    #[test]
-    fn time_of_day_key_from_iso_parses_hours_and_minutes() {
-        let k = time_of_day_key_from_iso("2026-07-20T08:35:00").unwrap();
-        assert_eq!((k.hour, k.minute), (8, 35));
-        let k = time_of_day_key_from_iso("2026-07-20T00:05:59").unwrap();
-        assert_eq!((k.hour, k.minute), (0, 5));
-    }
-
-    #[test]
-    fn time_of_day_key_from_iso_rejects_garbage() {
-        assert_eq!(time_of_day_key_from_iso(""), None);
-        assert_eq!(time_of_day_key_from_iso("2026-07-20"), None);
-        assert_eq!(time_of_day_key_from_iso("2026-07-20Txx:35:00"), None);
-        assert_eq!(time_of_day_key_from_iso("2026-07-20T25:00:00"), None);
-        assert_eq!(time_of_day_key_from_iso("2026-07-20T10:75:00"), None);
     }
 
     #[test]

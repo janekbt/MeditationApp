@@ -1707,6 +1707,20 @@ mod tests {
     }
 
     #[test]
+    fn log_days_cards_and_headers_agree() {
+        // Grouping used the stored date and cards the stored time,
+        // but headers the start instant in today's zone: after a
+        // time-zone change a 23:30 card sat under the next day.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let at = lib.find("fn group_log_sessions(").unwrap();
+        let group = &lib[at..at + lib[at..].find("\n}\n").unwrap()];
+        assert!(group.contains("meditate_core::format::date_group_key(start_unix)"));
+        assert!(group.contains("format_time_of_day(start_unix)"));
+        assert!(!group.contains("start_iso.get(..10)"));
+    }
+
+    #[test]
     fn bell_sounds_can_be_renamed_and_custom_ones_deleted() {
         // Mirrors GTK's sound chooser: Rename on every row, Delete
         // only on custom (non-bundled) rows, behind a confirmation.

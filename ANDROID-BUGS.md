@@ -140,7 +140,7 @@ meditate-core with both shells calling them.
 
 ## Batch C: polish
 
-- [ ] **Log groups by stored date but heads groups by current-zone date**,
+- [x] **Log groups by stored date but heads groups by current-zone date**,
   so after a time-zone change headers and card times disagree.
   `lib.rs:2620`, `2659`, `2768-2780`; GTK uses `format::date_group_key`.
 - [ ] **Pattern list ticks the newly saved pattern, not the bell's.**
