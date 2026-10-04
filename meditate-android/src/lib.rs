@@ -10622,18 +10622,11 @@ fn build_ui() -> MainWindow {
                 // a bug report needs. 64 KB ≈ the last few weeks.
                 const TAIL: usize = 64 * 1024;
                 let full = meditate_core::diag::read_all();
-                let text = if full.len() > TAIL {
-                    let cut = full.len() - TAIL;
-                    let start = full[cut..]
-                        .find('\n')
-                        .map(|i| cut + i + 1)
-                        .unwrap_or(cut);
-                    format!(
-                        "[… older entries truncated — Share sends this same tail]\n{}",
-                        &full[start..],
-                    )
-                } else {
-                    full
+                let text = match meditate_core::diag::display_tail(&full, TAIL) {
+                    Some(tail) => format!(
+                        "[… older entries truncated — Share sends this same tail]\n{tail}",
+                    ),
+                    None => full,
                 };
                 ui.set_diag_text(text.into());
                 ui.set_diag_page(true);

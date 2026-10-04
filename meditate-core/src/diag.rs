@@ -134,6 +134,21 @@ pub fn read_all() -> String {
     std::fs::read_to_string(path).unwrap_or_default()
 }
 
+/// The part of `full` the diagnostics page shows when the log is
+/// longer than `max_bytes`: roughly the last `max_bytes`, starting at
+/// the next whole line. `None` when the whole log fits.
+pub fn display_tail(full: &str, max_bytes: usize) -> Option<&str> {
+    if full.len() <= max_bytes {
+        return None;
+    }
+    let mut cut = full.len() - max_bytes;
+    while !full.is_char_boundary(cut) {
+        cut += 1;
+    }
+    let start = full[cut..].find('\n').map_or(cut, |i| cut + i + 1);
+    Some(&full[start..])
+}
+
 fn timestamp() -> String {
     // RFC 3339 with local offset: machine-parseable (one regex covers
     // every line a downstream tool sees) and still human-readable on
@@ -190,6 +205,29 @@ fn install_panic_hook() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn display_tail_is_none_when_the_log_fits() {
+        assert_eq!(display_tail("a\nb\n", 64), None);
+    }
+
+    #[test]
+    fn display_tail_starts_at_a_whole_line() {
+        let log = "first line\nsecond\nthird\n";
+        assert_eq!(display_tail(log, 12), Some("third\n"));
+    }
+
+    #[test]
+    fn display_tail_never_splits_a_multibyte_character() {
+        // Every byte offset inside the dashes must be survivable:
+        // slicing a str mid-character panics, and the Android app
+        // aborts on panic.
+        let log = "x — y — z\n".repeat(50);
+        for max in 1..log.len() {
+            let tail = display_tail(&log, max).unwrap();
+            assert!(log.ends_with(tail));
+        }
+    }
 
     #[test]
     fn trim_tail_no_op_when_short() {

@@ -8,7 +8,7 @@ meditate-core with both shells calling them.
 
 ## Batch A: crashes and lost data
 
-- [ ] **Diagnostics page crashes once the log passes 64 KB.** The tail cut
+- [x] **Diagnostics page crashes once the log passes 64 KB.** The tail cut
   slices the log at a byte offset that can land inside a multi-byte
   character (long dashes in sync errors, label names); `panic = "abort"`
   kills the app. Android `src/lib.rs:10623-10630`. GTK passes the whole log

@@ -1715,6 +1715,17 @@ mod tests {
     }
 
     #[test]
+    fn diagnostics_tail_comes_from_core() {
+        // Slicing the log at a raw byte offset panicked when the cut
+        // landed inside a multi-byte character, and the app aborts on
+        // panic. The tail now comes from core's char-safe helper.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        assert!(lib.contains("meditate_core::diag::display_tail(&full, TAIL)"));
+        assert!(!lib.contains("let cut = full.len() - TAIL;"));
+    }
+
+    #[test]
     fn preview_pills_fit_their_label() {
         // A fixed 60 px pill squeezed longer translations ("Abspielen").
         // One shared pill sizes to the longer of Play / Stop (+ side
