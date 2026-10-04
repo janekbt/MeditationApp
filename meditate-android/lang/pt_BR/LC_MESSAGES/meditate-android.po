@@ -890,3 +890,45 @@ msgstr[1] "{n} sessões excluídas"
 
 msgid "Delete failed"
 msgstr "Falha na exclusão"
+
+msgid "Week"
+msgstr "Semana"
+
+msgid "Month"
+msgstr "Mês"
+
+msgid "3 Months"
+msgstr "3 meses"
+
+msgid "Year"
+msgstr "Ano"
+
+msgid "Bars"
+msgstr "Barras"
+
+msgid "Streak"
+msgstr "Sequência"
+
+msgid "Total"
+msgstr "Total"
+
+msgid "Sessions"
+msgstr "Sessões"
+
+msgid "Breathe in"
+msgstr "Inspire"
+
+msgid "Hold"
+msgstr "Segure"
+
+msgid "Breathe out"
+msgstr "Expire"
+
+msgid "{} copy"
+msgstr "Cópia de {}"
+
+msgid "Older entries are not shown. Share sends the same entries."
+msgstr "Entradas mais antigas não são exibidas. Compartilhar envia as mesmas entradas."
+
+msgid "Meditate diagnostics log"
+msgstr "Registro de diagnóstico do Meditate"

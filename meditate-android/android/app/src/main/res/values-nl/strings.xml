@@ -6,4 +6,6 @@
     <string name="notification_channel_complete">Sessie voltooid</string>
     <string name="notification_complete_title">Meditatie voltooid</string>
     <string name="notification_complete_body">Sessie: %1$s</string>
+    <string name="widget_empty">Geen favoriete voorinstellingen</string>
+    <string name="audio_file_fallback">Audiobestand</string>
 </resources>

@@ -10,4 +10,6 @@
     <string name="notification_channel_complete">Session complete</string>
     <string name="notification_complete_title">Meditation complete</string>
     <string name="notification_complete_body">Session: %1$s</string>
+    <string name="widget_empty">No starred presets</string>
+    <string name="audio_file_fallback">Audio file</string>
 </resources>

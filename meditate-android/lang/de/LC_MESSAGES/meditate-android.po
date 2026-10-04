@@ -890,3 +890,45 @@ msgstr[1] "{n} Sitzungen gelöscht"
 
 msgid "Delete failed"
 msgstr "Löschen fehlgeschlagen"
+
+msgid "Week"
+msgstr "Woche"
+
+msgid "Month"
+msgstr "Monat"
+
+msgid "3 Months"
+msgstr "3 Monate"
+
+msgid "Year"
+msgstr "Jahr"
+
+msgid "Bars"
+msgstr "Balken"
+
+msgid "Streak"
+msgstr "Serie"
+
+msgid "Total"
+msgstr "Gesamt"
+
+msgid "Sessions"
+msgstr "Sitzungen"
+
+msgid "Breathe in"
+msgstr "Einatmen"
+
+msgid "Hold"
+msgstr "Halten"
+
+msgid "Breathe out"
+msgstr "Ausatmen"
+
+msgid "{} copy"
+msgstr "{} (Kopie)"
+
+msgid "Older entries are not shown. Share sends the same entries."
+msgstr "Ältere Einträge werden nicht angezeigt. Teilen sendet dieselben Einträge."
+
+msgid "Meditate diagnostics log"
+msgstr "Meditate-Diagnoseprotokoll"

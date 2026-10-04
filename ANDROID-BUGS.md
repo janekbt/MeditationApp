@@ -126,7 +126,7 @@ meditate-core with both shells calling them.
 - [x] **Wake lock is capped at 4 h; sessions can run 23 h.**
   `MeditateSessionService.kt:221`; past 4 h with screen off, bells can ring
   late. Fix: size from the target or re-acquire.
-- [ ] **Untranslated visible strings.** Stats period and chart buttons and
+- [x] **Untranslated visible strings.** Stats period and chart buttons and
   mini-stat captions (`main.slint:4716-4719`, `4755-4756`, `4898-4900`);
   box-breath phase labels (`lib.rs:5644-5648`); widget empty text
   (`res/layout/widget_root.xml:49`); "{} copy" (`lib.rs:8144`); diagnostics

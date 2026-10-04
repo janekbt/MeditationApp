@@ -6,4 +6,6 @@
     <string name="notification_channel_complete">Сессия завершена</string>
     <string name="notification_complete_title">Медитация завершена</string>
     <string name="notification_complete_body">Сессия: %1$s</string>
+    <string name="widget_empty">Нет избранных пресетов</string>
+    <string name="audio_file_fallback">Аудиофайл</string>
 </resources>

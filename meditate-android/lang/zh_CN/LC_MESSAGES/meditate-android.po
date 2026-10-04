@@ -871,3 +871,45 @@ msgstr[0] "已删除 {n} 个会话"
 
 msgid "Delete failed"
 msgstr "删除失败"
+
+msgid "Week"
+msgstr "周"
+
+msgid "Month"
+msgstr "月"
+
+msgid "3 Months"
+msgstr "3 个月"
+
+msgid "Year"
+msgstr "年"
+
+msgid "Bars"
+msgstr "柱状图"
+
+msgid "Streak"
+msgstr "连续天数"
+
+msgid "Total"
+msgstr "总计"
+
+msgid "Sessions"
+msgstr "会话"
+
+msgid "Breathe in"
+msgstr "吸气"
+
+msgid "Hold"
+msgstr "屏息"
+
+msgid "Breathe out"
+msgstr "呼气"
+
+msgid "{} copy"
+msgstr "{} 副本"
+
+msgid "Older entries are not shown. Share sends the same entries."
+msgstr "较早的条目未显示。分享会发送相同的条目。"
+
+msgid "Meditate diagnostics log"
+msgstr "Meditate 诊断日志"

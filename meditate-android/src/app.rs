@@ -1779,6 +1779,36 @@ mod tests {
     }
 
     #[test]
+    fn visible_text_goes_through_translation() {
+        // These showed English in every language.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        for w in ["Week", "Month", "3 Months", "Year", "Bars", "Line"] {
+            assert!(!slint.contains(&format!("{{ text: \"{w}\" }}")), "{w}");
+        }
+        for w in ["Streak", "Total", "Sessions"] {
+            assert!(!slint.contains(&format!("caption: \"{w}\"")), "{w}");
+        }
+        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        for literal in ["\"Breathe in\"", "\"Breathe out\"", "\"{} copy\"", "\"Meditate diagnostics log\"", "older entries truncated"] {
+            assert!(!lib.contains(literal), "{literal}");
+        }
+        let widget = std::fs::read_to_string(root.join("android/app/src/main/res/layout/widget_root.xml")).unwrap();
+        assert!(widget.contains("android:text=\"@string/widget_empty\""));
+        let picker = std::fs::read_to_string(root.join("kotlin/MeditateFilePickerActivity.kt")).unwrap();
+        assert!(picker.contains("getString(R.string.audio_file_fallback)"));
+        for dir in std::fs::read_dir(root.join("android/app/src/main/res")).unwrap() {
+            let dir = dir.unwrap().path();
+            let strings = dir.join("strings.xml");
+            if dir.file_name().unwrap().to_str().unwrap().starts_with("values") && strings.exists() {
+                let xml = std::fs::read_to_string(&strings).unwrap();
+                assert!(xml.contains("name=\"widget_empty\""), "{}", strings.display());
+                assert!(xml.contains("name=\"audio_file_fallback\""), "{}", strings.display());
+            }
+        }
+    }
+
+    #[test]
     fn preset_save_failures_are_not_reported_as_success() {
         // A failed override still said "Preset overridden" with Undo;
         // a failed create used up the settings snapshot, so Create

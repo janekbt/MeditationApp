@@ -6,4 +6,6 @@
     <string name="notification_channel_complete">会话完成</string>
     <string name="notification_complete_title">冥想完成</string>
     <string name="notification_complete_body">会话：%1$s</string>
+    <string name="widget_empty">没有收藏的预设</string>
+    <string name="audio_file_fallback">音频文件</string>
 </resources>

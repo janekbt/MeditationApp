@@ -45,6 +45,15 @@ export global Tr {
     public pure function applied(name: string) -> string { return @tr("'{}' applied", name); }
     public pure function deleted(name: string) -> string { return @tr("'{}' deleted", name); }
     public pure function preset-overridden() -> string { return @tr("Preset overridden"); }
+    // Box Breath running phase label
+    public pure function breathe-in() -> string { return @tr("Breathe in"); }
+    public pure function hold() -> string { return @tr("Hold"); }
+    public pure function breathe-out() -> string { return @tr("Breathe out"); }
+    // Name suggested for an editable copy of a bundled vibration pattern
+    public pure function name-copy(name: string) -> string { return @tr("{} copy", name); }
+    // Diagnostics page
+    public pure function diag-older-left-out() -> string { return @tr("Older entries are not shown. Share sends the same entries."); }
+    public pure function diag-share-subject() -> string { return @tr("Meditate diagnostics log"); }
     public pure function sync-settings-saved() -> string { return @tr("Sync settings saved"); }
     public pure function enter-url-and-username() -> string { return @tr("Enter URL and username"); }
     public pure function url-must-be-https() -> string { return @tr("URL must start with https://"); }
@@ -4803,10 +4812,10 @@ export component MainWindow inherits Window {
                         SegmentedButton {
                             current-index <=> root.stat-chart-period;
                             items: [
-                                { text: "Week" },
-                                { text: "Month" },
-                                { text: "3 Months" },
-                                { text: "Year" },
+                                { text: @tr("Week") },
+                                { text: @tr("Month") },
+                                { text: @tr("3 Months") },
+                                { text: @tr("Year") },
                             ];
                             index-changed(idx) => {
                                 root.chart-period-changed(idx);
@@ -4842,8 +4851,8 @@ export component MainWindow inherits Window {
                                 SegmentedButton {
                                     current-index <=> root.stat-chart-kind;
                                     items: [
-                                        { text: "Bars" },
-                                        { text: "Line" },
+                                        { text: @tr("Bars") },
+                                        { text: @tr("Line") },
                                     ];
                                     index-changed(idx) => {
                                         root.chart-kind-changed(idx);
@@ -4985,9 +4994,9 @@ export component MainWindow inherits Window {
                     spacing: 10px;
 
                     for cell in [
-                        { value: root.stat-streak, caption: "Streak", accent: true },
-                        { value: root.stat-total, caption: "Total", accent: false },
-                        { value: root.stat-sessions, caption: "Sessions", accent: false },
+                        { value: root.stat-streak, caption: @tr("Streak"), accent: true },
+                        { value: root.stat-total, caption: @tr("Total"), accent: false },
+                        { value: root.stat-sessions, caption: @tr("Sessions"), accent: false },
                     ] : Rectangle {
                         horizontal-stretch: 1;
                         min-height: 76px;

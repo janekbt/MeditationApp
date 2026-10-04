@@ -6,4 +6,6 @@
     <string name="notification_channel_complete">Sitzung beendet</string>
     <string name="notification_complete_title">Meditation beendet</string>
     <string name="notification_complete_body">Sitzung: %1$s</string>
+    <string name="widget_empty">Keine markierten Voreinstellungen</string>
+    <string name="audio_file_fallback">Audiodatei</string>
 </resources>

@@ -909,3 +909,45 @@ msgstr[2] "Usunięto {n} sesji"
 
 msgid "Delete failed"
 msgstr "Usuwanie nie powiodło się"
+
+msgid "Week"
+msgstr "Tydzień"
+
+msgid "Month"
+msgstr "Miesiąc"
+
+msgid "3 Months"
+msgstr "3 miesiące"
+
+msgid "Year"
+msgstr "Rok"
+
+msgid "Bars"
+msgstr "Słupki"
+
+msgid "Streak"
+msgstr "Passa"
+
+msgid "Total"
+msgstr "Łącznie"
+
+msgid "Sessions"
+msgstr "Sesje"
+
+msgid "Breathe in"
+msgstr "Wdech"
+
+msgid "Hold"
+msgstr "Zatrzymanie"
+
+msgid "Breathe out"
+msgstr "Wydech"
+
+msgid "{} copy"
+msgstr "{} (kopia)"
+
+msgid "Older entries are not shown. Share sends the same entries."
+msgstr "Starsze wpisy nie są pokazywane. Udostępnij wysyła te same wpisy."
+
+msgid "Meditate diagnostics log"
+msgstr "Dziennik diagnostyczny Meditate"

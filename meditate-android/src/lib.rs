@@ -5690,13 +5690,14 @@ fn build_ui() -> MainWindow {
                         let counter = meditate_core::format::box_breath_counter_label(
                             elapsed, target,
                         );
+                        let tr = ui.global::<Tr>();
                         let label = match info.phase.running_label_key() {
                             meditate_core::breath::PhaseRunningLabelKey::BreatheIn => {
-                                "Breathe in"
+                                tr.invoke_breathe_in()
                             }
-                            meditate_core::breath::PhaseRunningLabelKey::Hold => "Hold",
+                            meditate_core::breath::PhaseRunningLabelKey::Hold => tr.invoke_hold(),
                             meditate_core::breath::PhaseRunningLabelKey::BreatheOut => {
-                                "Breathe out"
+                                tr.invoke_breathe_out()
                             }
                         };
                         let phase_secs = info
@@ -5722,7 +5723,7 @@ fn build_ui() -> MainWindow {
                         );
                         ui.set_bb_running_active(true);
                         ui.set_bb_counter_text(counter.into());
-                        ui.set_bb_phase_label(label.into());
+                        ui.set_bb_phase_label(label);
                         ui.set_bb_phase_seconds(phase_secs);
                         ui.set_bb_dot_x(x as f32);
                         ui.set_bb_dot_y(y as f32);
@@ -8205,7 +8206,7 @@ fn build_ui() -> MainWindow {
                     // it doesn't instantly collide.
                     ve_edit_uuid.borrow_mut().take();
                     ui.set_ve_title(ui.global::<Tr>().invoke_ve_new_pattern());
-                    ui.set_ve_name(format!("{} copy", p.name).into());
+                    ui.set_ve_name(ui.global::<Tr>().invoke_name_copy(p.name.clone().into()));
                     String::new()
                 } else {
                     *ve_edit_uuid.borrow_mut() = Some(uuid.to_string());
@@ -10770,7 +10771,8 @@ fn build_ui() -> MainWindow {
                 let full = meditate_core::diag::read_all();
                 let text = match meditate_core::diag::display_tail(&full, TAIL) {
                     Some(tail) => format!(
-                        "[… older entries truncated — Share sends this same tail]\n{tail}",
+                        "[{}]\n{tail}",
+                        ui.global::<Tr>().invoke_diag_older_left_out(),
                     ),
                     None => full,
                 };
@@ -10817,7 +10819,7 @@ fn build_ui() -> MainWindow {
                 if let Some(app) = android_app() {
                     about::share_text(
                         app,
-                        "Meditate diagnostics log",
+                        ui.global::<Tr>().invoke_diag_share_subject().as_str(),
                         ui.get_diag_text().as_str(),
                     );
                 }

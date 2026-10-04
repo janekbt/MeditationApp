@@ -46,7 +46,7 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:gravity="center"
-        android:text="No starred presets"
+        android:text="@string/widget_empty"
         android:textColor="@color/widget_fg_muted"
         android:textSize="13sp" />
 

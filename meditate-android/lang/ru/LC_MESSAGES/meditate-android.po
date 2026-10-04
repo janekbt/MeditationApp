@@ -909,3 +909,45 @@ msgstr[2] "Удалено {n} сессий"
 
 msgid "Delete failed"
 msgstr "Не удалось удалить"
+
+msgid "Week"
+msgstr "Неделя"
+
+msgid "Month"
+msgstr "Месяц"
+
+msgid "3 Months"
+msgstr "3 месяца"
+
+msgid "Year"
+msgstr "Год"
+
+msgid "Bars"
+msgstr "Столбцы"
+
+msgid "Streak"
+msgstr "Серия"
+
+msgid "Total"
+msgstr "Всего"
+
+msgid "Sessions"
+msgstr "Сессии"
+
+msgid "Breathe in"
+msgstr "Вдох"
+
+msgid "Hold"
+msgstr "Задержка"
+
+msgid "Breathe out"
+msgstr "Выдох"
+
+msgid "{} copy"
+msgstr "{} (копия)"
+
+msgid "Older entries are not shown. Share sends the same entries."
+msgstr "Старые записи не показаны. «Поделиться» отправляет те же записи."
+
+msgid "Meditate diagnostics log"
+msgstr "Журнал диагностики Meditate"

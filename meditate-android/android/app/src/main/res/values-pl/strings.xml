@@ -6,4 +6,6 @@
     <string name="notification_channel_complete">Sesja zakończona</string>
     <string name="notification_complete_title">Medytacja zakończona</string>
     <string name="notification_complete_body">Sesja: %1$s</string>
+    <string name="widget_empty">Brak ulubionych szablonów</string>
+    <string name="audio_file_fallback">Plik audio</string>
 </resources>

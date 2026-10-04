@@ -890,3 +890,45 @@ msgstr[1] "{n} sessies verwijderd"
 
 msgid "Delete failed"
 msgstr "Verwijderen mislukt"
+
+msgid "Week"
+msgstr "Week"
+
+msgid "Month"
+msgstr "Maand"
+
+msgid "3 Months"
+msgstr "3 maanden"
+
+msgid "Year"
+msgstr "Jaar"
+
+msgid "Bars"
+msgstr "Balken"
+
+msgid "Streak"
+msgstr "Reeks"
+
+msgid "Total"
+msgstr "Totaal"
+
+msgid "Sessions"
+msgstr "Sessies"
+
+msgid "Breathe in"
+msgstr "Adem in"
+
+msgid "Hold"
+msgstr "Vasthouden"
+
+msgid "Breathe out"
+msgstr "Adem uit"
+
+msgid "{} copy"
+msgstr "{} (kopie)"
+
+msgid "Older entries are not shown. Share sends the same entries."
+msgstr "Oudere items worden niet getoond. Delen verstuurt dezelfde items."
+
+msgid "Meditate diagnostics log"
+msgstr "Meditate-diagnoselogboek"

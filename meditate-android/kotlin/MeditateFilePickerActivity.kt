@@ -119,7 +119,7 @@ class MeditateFilePickerActivity : Activity() {
     }
 
     private fun copyAndProbe(uri: Uri) {
-        val name = queryDisplayName(uri) ?: "Audio file"
+        val name = queryDisplayName(uri) ?: getString(R.string.audio_file_fallback)
         val subdir = if (target == "bell") "sounds" else "guided"
         val dropFile = if (target == "bell") "sound_pick" else "guided_pick"
         val dir = File(File(filesDir, "meditate"), subdir)
