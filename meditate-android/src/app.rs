@@ -1707,6 +1707,18 @@ mod tests {
     }
 
     #[test]
+    fn deleting_a_preset_keeps_manage_presets_open() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let at = lib.find("ui.on_delete_preset_confirm(").unwrap();
+        let body = &lib[at..at + lib[at..].find("\n        });").unwrap()];
+        assert!(!body.contains("ui.set_preset_chooser_page(false);"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        let page = slint.find("x: parent.width - root.preset-chooser-offset;").unwrap();
+        assert!(page < slint.find("if root.snackbar-visible : Rectangle {").unwrap(), "snackbar above the page");
+    }
+
+    #[test]
     fn saving_a_pattern_keeps_the_choosers_tick() {
         // After saving a pattern, the chooser ticked it although the
         // bell still used its old pattern.

@@ -145,7 +145,7 @@ meditate-core with both shells calling them.
   `lib.rs:2620`, `2659`, `2768-2780`; GTK uses `format::date_group_key`.
 - [x] **Pattern list ticks the newly saved pattern, not the bell's.**
   `lib.rs:8427`; GTK `vibrations.rs:79-91`.
-- [ ] **Deleting a preset closes Manage Presets.** `lib.rs:7052`; GTK keeps it
+- [x] **Deleting a preset closes Manage Presets.** `lib.rs:7052`; GTK keeps it
   open (`presets.rs:578-581`).
 - [ ] **Deleting a guided file doesn't stop its preview** (to confirm).
   `lib.rs:6273-6311`; bell-sound delete does (`lib.rs:7636-7643`).

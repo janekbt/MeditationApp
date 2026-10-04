@@ -7135,7 +7135,8 @@ fn build_ui() -> MainWindow {
                     }
                 }
                 ui.set_delete_preset_dialog_open(false);
-                ui.set_preset_chooser_page(false);
+                // Manage Presets stays open (like GTK), so several
+                // presets can go in a row; the snackbar shows above it.
                 populate_preset_chooser(&ui, core_mode);
                 refresh_preset_chips(&ui, core_mode);
                 // Deleting a starred preset drops its widget row.
