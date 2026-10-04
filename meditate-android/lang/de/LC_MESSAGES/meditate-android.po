@@ -838,8 +838,8 @@ msgstr "Sitzung konnte nicht gespeichert werden – Speicherfehler"
 msgid "Couldn't save session — storage unavailable"
 msgstr "Sitzung konnte nicht gespeichert werden – Speicher nicht verfügbar"
 
-msgid "Please wait until fully synced — not all bell sounds have arrived"
-msgstr ""
+msgid "Wait for sync — some bell sounds are missing"
+msgstr "Sync abwarten – einige Glockenklänge fehlen"
 
 msgid "File is larger than 10 MB"
 msgstr "Datei ist größer als 10 MB"

@@ -1319,8 +1319,8 @@ msgid "Open File"
 msgstr "Abrir archivo"
 
 #: src/timer/imp.rs:3614
-msgid "Please wait until fully synced — not all bell sounds have arrived"
-msgstr ""
+msgid "Wait for sync — some bell sounds are missing"
+msgstr "Espera la sincronización — faltan sonidos"
 "Espera a que termine la sincronización — aún no han llegado todos los "
 "sonidos de campana"
 

@@ -147,7 +147,7 @@ static SESSION_SAVE_FAILED: std::sync::Mutex<Option<meditate_core::format::Sessi
 
 /// Set when a preset (chip, widget or Undo) couldn't be applied —
 /// typically a bell sound or pattern it uses hasn't synced yet; the
-/// tick loop shows GTK's "Please wait until fully synced" message.
+/// tick loop shows the "Wait for sync" message (as GTK).
 #[cfg(target_os = "android")]
 static PRESET_APPLY_FAILED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);

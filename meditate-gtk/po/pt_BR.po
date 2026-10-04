@@ -1317,8 +1317,8 @@ msgid "Open File"
 msgstr "Abrir arquivo"
 
 #: src/timer/imp.rs:3614
-msgid "Please wait until fully synced — not all bell sounds have arrived"
-msgstr "Aguarde a sincronização completa — nem todos os sons de sino chegaram"
+msgid "Wait for sync — some bell sounds are missing"
+msgstr "Aguarde a sincronização — faltam sons"
 
 #: src/timer/imp.rs:3638
 #, rust-format

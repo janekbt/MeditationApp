@@ -60,7 +60,7 @@ export global Tr {
     public pure function playback-failed() -> string { return @tr("Couldn't start playback"); }
     public pure function save-failed-storage() -> string { return @tr("Couldn't save session — storage error"); }
     public pure function save-failed-unavailable() -> string { return @tr("Couldn't save session — storage unavailable"); }
-    public pure function preset-sync-pending() -> string { return @tr("Please wait until fully synced — not all bell sounds have arrived"); }
+    public pure function preset-sync-pending() -> string { return @tr("Wait for sync — some bell sounds are missing"); }
     public pure function file-too-large() -> string { return @tr("File is larger than 10 MB"); }
     public pure function missing() -> string { return @tr("Missing"); }
     public pure function no-audio-track() -> string { return @tr("This file has no audio track"); }
@@ -7823,16 +7823,20 @@ export component MainWindow inherits Window {
         x: (parent.width - self.width) / 2;
         y: parent.height - root.nav-bar-height - root.bottom-bar-inset - self.height - 12px;
         width: min(parent.width - 24px, 344px);
-        height: 60px;
+        // Grows with the wrapped text (a long translation runs to
+        // three lines); 60 px stays the one/two-line height.
+        height: max(60px, snackbar-row.preferred-height);
         border-radius: 4px;
         background: MaterialPalette.inverse-surface;
         drop-shadow-blur: 8px;
         drop-shadow-color: #00000040;
         drop-shadow-offset-y: 2px;
 
-        HorizontalLayout {
+        snackbar-row := HorizontalLayout {
             padding-left: 16px;
             padding-right: 8px;
+            padding-top: 10px;
+            padding-bottom: 10px;
             spacing: 4px;
             alignment: stretch;
 

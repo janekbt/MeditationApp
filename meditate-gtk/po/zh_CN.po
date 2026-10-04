@@ -1273,8 +1273,8 @@ msgid "Open File"
 msgstr "打开文件"
 
 #: src/timer/imp.rs:3614
-msgid "Please wait until fully synced — not all bell sounds have arrived"
-msgstr "请等待同步完成——部分铃声尚未同步到位"
+msgid "Wait for sync — some bell sounds are missing"
+msgstr "请等待同步——部分铃声缺失"
 
 #: src/timer/imp.rs:3638
 #, rust-format

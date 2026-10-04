@@ -1317,8 +1317,8 @@ msgid "Open File"
 msgstr "Bestand openen"
 
 #: src/timer/imp.rs:3614
-msgid "Please wait until fully synced — not all bell sounds have arrived"
-msgstr ""
+msgid "Wait for sync — some bell sounds are missing"
+msgstr "Wacht op synchronisatie — belgeluiden ontbreken"
 "Wacht tot alles gesynchroniseerd is — nog niet alle belgeluiden zijn binnen"
 
 #: src/timer/imp.rs:3638

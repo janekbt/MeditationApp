@@ -3614,7 +3614,7 @@ impl TimerView {
         let snapshot = self.snapshot_current_setup();
         if !self.apply_config(&cfg) {
             self.toast(&gettext(
-                "Please wait until fully synced — not all bell sounds have arrived",
+                "Wait for sync — some bell sounds are missing",
             ));
             return;
         }

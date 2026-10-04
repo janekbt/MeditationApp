@@ -838,8 +838,8 @@ msgstr "Impossible d'enregistrer la séance — erreur de stockage"
 msgid "Couldn't save session — storage unavailable"
 msgstr "Impossible d'enregistrer la séance — stockage indisponible"
 
-msgid "Please wait until fully synced — not all bell sounds have arrived"
-msgstr ""
+msgid "Wait for sync — some bell sounds are missing"
+msgstr "Attendez la synchro — sons de cloche manquants"
 
 msgid "File is larger than 10 MB"
 msgstr "Le fichier dépasse 10 Mo"

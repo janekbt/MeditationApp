@@ -1170,7 +1170,28 @@ mod tests {
         let shown = code.find("PRESET_APPLY_FAILED.swap(false").expect("the tick loop shows it");
         assert!(code[shown..shown + 300].contains("invoke_preset_sync_pending()"));
         let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
-        assert!(slint.contains("@tr(\"Please wait until fully synced — not all bell sounds have arrived\")"));
+        assert!(slint.contains("@tr(\"Wait for sync — some bell sounds are missing\")"));
+    }
+
+    /// The sync-pending message is short in every language: GTK shows
+    /// it in a one-line toast. Checked in both apps' translations.
+    #[test]
+    fn the_sync_pending_message_is_short_everywhere() {
+        let msgid = "Wait for sync — some bell sounds are missing";
+        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf();
+        for lang in ["de", "es", "fr", "it", "nl", "pl", "pt_BR", "ru", "zh_CN"] {
+            for po in [
+                repo.join(format!("meditate-gtk/po/{lang}.po")),
+                repo.join(format!("meditate-android/lang/{lang}/LC_MESSAGES/meditate-android.po")),
+            ] {
+                let text = std::fs::read_to_string(&po).unwrap();
+                let entry = format!("msgid \"{msgid}\"\nmsgstr \"");
+                let at = text.find(&entry).unwrap_or_else(|| panic!("{} lacks it", po.display())) + entry.len();
+                let translated = &text[at..at + text[at..].find("\"\n").unwrap()];
+                assert!(!translated.is_empty(), "{lang}: untranslated in {}", po.display());
+                assert!(translated.chars().count() <= 50, "{lang}: too long for a toast: {translated}");
+            }
+        }
     }
 
     /// The label toggle goes through core's set_active_for_mode, which
@@ -1419,6 +1440,21 @@ mod tests {
         let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
         assert!(slint.contains("@tr(\"{n} session · {0}\" | \"{n} sessions · {0}\" % n, total)"));
         assert!(slint.contains("@tr(\"Today\")") && slint.contains("@tr(\"Yesterday\")"));
+    }
+
+    /// The snackbar grows with its text (wrapped lines) instead of a
+    /// fixed 60 px that cut off a third line.
+    #[test]
+    fn the_snackbar_grows_with_its_text() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        let bar = slint.find("if root.snackbar-visible : Rectangle {").unwrap();
+        let bar = &slint[bar..bar + slint[bar..].find("\n    }\n").unwrap()];
+        assert!(!bar.contains("height: 60px;"), "no fixed height");
+        assert!(bar.contains("height: max(60px, snackbar-row.preferred-height);"));
+        assert!(bar.contains("snackbar-row := HorizontalLayout {"));
+        assert!(bar.contains("padding-top: 10px;") && bar.contains("padding-bottom: 10px;"));
+        assert!(bar.contains("wrap: word-wrap;"));
     }
 
     #[test]

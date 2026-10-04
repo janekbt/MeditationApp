@@ -838,8 +838,8 @@ msgstr "Kan sessie niet opslaan — opslagfout"
 msgid "Couldn't save session — storage unavailable"
 msgstr "Kan sessie niet opslaan — opslag niet beschikbaar"
 
-msgid "Please wait until fully synced — not all bell sounds have arrived"
-msgstr ""
+msgid "Wait for sync — some bell sounds are missing"
+msgstr "Wacht op synchronisatie — belgeluiden ontbreken"
 
 msgid "File is larger than 10 MB"
 msgstr "Bestand is groter dan 10 MB"

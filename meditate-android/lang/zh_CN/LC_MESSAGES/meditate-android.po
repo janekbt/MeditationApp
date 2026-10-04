@@ -820,8 +820,8 @@ msgstr "无法保存会话——存储错误"
 msgid "Couldn't save session — storage unavailable"
 msgstr "无法保存会话——存储不可用"
 
-msgid "Please wait until fully synced — not all bell sounds have arrived"
-msgstr "请等待同步完成——部分铃声尚未同步到位"
+msgid "Wait for sync — some bell sounds are missing"
+msgstr "请等待同步——部分铃声缺失"
 
 msgid "File is larger than 10 MB"
 msgstr "文件大于 10 MB"
