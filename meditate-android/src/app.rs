@@ -1215,8 +1215,8 @@ mod tests {
         let shown = &code[shown..shown + 700];
         assert!(shown.contains("invoke_save_failed_storage()") && shown.contains("invoke_save_failed_unavailable()"));
         let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
-        assert!(slint.contains("@tr(\"Couldn't save session — storage error\")"));
-        assert!(slint.contains("@tr(\"Couldn't save session — storage unavailable\")"));
+        assert!(slint.contains("@tr(\"Couldn't save session: storage error\")"));
+        assert!(slint.contains("@tr(\"Couldn't save session: storage unavailable\")"));
     }
 
     /// A preset that can't be applied (its bell sound or pattern hasn't
@@ -1238,19 +1238,22 @@ mod tests {
         let shown = code.find("PRESET_APPLY_FAILED.swap(false").expect("the tick loop shows it");
         assert!(code[shown..shown + 300].contains("invoke_preset_sync_pending()"));
         let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
-        assert!(slint.contains("@tr(\"Wait for sync — some bell sounds are missing\")"));
+        assert!(slint.contains("@tr(\"Wait for sync: some bell sounds are missing\")"));
     }
 
     /// The sync-pending message is short in every language: GTK shows
     /// it in a one-line toast. Checked in both apps' translations.
     #[test]
     fn the_sync_pending_message_is_short_everywhere() {
-        let msgid = "Wait for sync — some bell sounds are missing";
         let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf();
         for lang in ["de", "es", "fr", "it", "nl", "pl", "pt_BR", "ru", "zh_CN"] {
-            for po in [
-                repo.join(format!("meditate-gtk/po/{lang}.po")),
-                repo.join(format!("meditate-android/lang/{lang}/LC_MESSAGES/meditate-android.po")),
+            // Android's wording lost its long dash; GTK's hasn't yet.
+            for (po, msgid) in [
+                (repo.join(format!("meditate-gtk/po/{lang}.po")), "Wait for sync \u{2014} some bell sounds are missing"),
+                (
+                    repo.join(format!("meditate-android/lang/{lang}/LC_MESSAGES/meditate-android.po")),
+                    "Wait for sync: some bell sounds are missing",
+                ),
             ] {
                 let text = std::fs::read_to_string(&po).unwrap();
                 let entry = format!("msgid \"{msgid}\"\nmsgstr \"");
@@ -1704,6 +1707,25 @@ mod tests {
         let group = &lib[group..group + 2500];
         assert!(group.contains("meditate_core::db::guided_file_name_for("));
         assert!(lib.contains("guided_name: it.guided_name.into(),"));
+    }
+
+    #[test]
+    fn user_visible_text_has_no_long_dash() {
+        // House style: no long dash in anything the user reads.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        for (i, line) in slint.lines().enumerate() {
+            if let Some(at) = line.find("@tr(") {
+                assert!(!line[at..].contains('\u{2014}'), "main.slint:{}: {line}", i + 1);
+            }
+        }
+        for entry in std::fs::read_dir(root.join("lang")).unwrap() {
+            let po = entry.unwrap().path().join("LC_MESSAGES/meditate-android.po");
+            let text = std::fs::read_to_string(&po).unwrap();
+            for line in text.lines().filter(|l| l.starts_with("msg")) {
+                assert!(!line.contains('\u{2014}'), "{}: {line}", po.display());
+            }
+        }
     }
 
     #[test]

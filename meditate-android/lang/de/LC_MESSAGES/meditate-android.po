@@ -31,7 +31,7 @@ msgstr "Über"
 msgid "About {}"
 msgstr "Etwa {}"
 
-msgid "Accent colour — tinting for buttons, rings, and highlights."
+msgid "Accent colour: tinting for buttons, rings, and highlights."
 msgstr "Akzentfarbe – Färbung für Knöpfe, Ringe und Hervorhebungen."
 
 msgid "App password"
@@ -271,7 +271,7 @@ msgstr "Datei importieren"
 msgid "Import Guided File"
 msgstr "Geführte Meditation importieren"
 
-msgid "Import failed — see Diagnostics"
+msgid "Import failed, see Diagnostics"
 msgstr "Import fehlgeschlagen – siehe Diagnose"
 
 msgid "Import from Insight Timer"
@@ -322,7 +322,7 @@ msgstr "Kategorie"
 msgid "Label name"
 msgstr "Kategoriename"
 
-msgid "Last sync failed — tap to retry\n{}"
+msgid "Last sync failed, tap to retry\n{}"
 msgstr "Letzte Synchronisation fehlgeschlagen – zum Wiederholen tippen\n{}"
 
 msgid "Less"
@@ -370,7 +370,7 @@ msgstr "Minuten ({}–{})"
 msgid "Minutes per day"
 msgstr "Minuten pro Tag"
 
-msgid "Minutes per day — drives the ring on the Stats tab."
+msgid "Minutes per day: drives the ring on the Stats tab."
 msgstr "Minuten pro Tag – bestimmt den Ring im Statistik-Tab."
 
 msgid "More"
@@ -613,7 +613,7 @@ msgstr "Diese Datei enthält keine Tonspur"
 msgid "This permanently deletes every session, label, and event stored on this device. Your Nextcloud account, sync settings, and app preferences are kept.\n\nThis cannot be undone."
 msgstr "Löscht dauerhaft alle Sitzungen, Labels und Ereignisse auf diesem Gerät. Nextcloud-Konto, Sync-Einstellungen und App-Einstellungen bleiben erhalten.\n\nDies kann nicht rückgängig gemacht werden."
 
-msgid "This permanently removes every logged session from this device — and, via sync, from your other devices.\n\nThis cannot be undone."
+msgid "This permanently removes every logged session from this device and, via sync, from your other devices.\n\nThis cannot be undone."
 msgstr "Entfernt dauerhaft alle aufgezeichneten Sitzungen von diesem Gerät – und per Sync auch von deinen anderen Geräten.\n\nDies kann nicht rückgängig gemacht werden."
 
 msgid "This week's practice"
@@ -716,8 +716,8 @@ msgid_plural "{n} days · best was {0}"
 msgstr[0] "{n} Tag · Bestwert war {0}"
 msgstr[1] "{n} Tage · Bestwert war {0}"
 
-msgid "{n} day — new record"
-msgid_plural "{n} days — new record"
+msgid "{n} day: new record"
+msgid_plural "{n} days: new record"
 msgstr[0] "{n} Tag – neuer Rekord"
 msgstr[1] "{n} Tage – neuer Rekord"
 
@@ -810,7 +810,7 @@ msgstr[1] "{n} Sitzungen gelöscht"
 msgid "Duplicate label"
 msgstr "Doppelte Kategorie"
 
-msgid "'{}' has the same name as '{}' — it was created independently on another device."
+msgid "'{}' has the same name as '{}'. It was created independently on another device."
 msgstr "'{}' hat denselben Namen wie '{}' – sie wurde unabhängig auf einem anderen Gerät erstellt."
 
 msgid "Merging moves {n} session and deletes the duplicate."
@@ -835,13 +835,13 @@ msgstr "Alle Labels"
 msgid "Couldn't start playback"
 msgstr "Wiedergabe konnte nicht gestartet werden"
 
-msgid "Couldn't save session — storage error"
+msgid "Couldn't save session: storage error"
 msgstr "Sitzung konnte nicht gespeichert werden – Speicherfehler"
 
-msgid "Couldn't save session — storage unavailable"
+msgid "Couldn't save session: storage unavailable"
 msgstr "Sitzung konnte nicht gespeichert werden – Speicher nicht verfügbar"
 
-msgid "Wait for sync — some bell sounds are missing"
+msgid "Wait for sync: some bell sounds are missing"
 msgstr "Sync abwarten – einige Glockenklänge fehlen"
 
 msgid "File is larger than 10 MB"

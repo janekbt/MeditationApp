@@ -65,11 +65,11 @@ export global Tr {
     public pure function exported() -> string { return @tr("Session log exported"); }
     public pure function export-failed() -> string { return @tr("Export failed"); }
     public pure function imported-n(n: int) -> string { return @tr("Imported {n} session" | "Imported {n} sessions" % n); }
-    public pure function import-failed() -> string { return @tr("Import failed — see Diagnostics"); }
+    public pure function import-failed() -> string { return @tr("Import failed, see Diagnostics"); }
     public pure function playback-failed() -> string { return @tr("Couldn't start playback"); }
-    public pure function save-failed-storage() -> string { return @tr("Couldn't save session — storage error"); }
-    public pure function save-failed-unavailable() -> string { return @tr("Couldn't save session — storage unavailable"); }
-    public pure function preset-sync-pending() -> string { return @tr("Wait for sync — some bell sounds are missing"); }
+    public pure function save-failed-storage() -> string { return @tr("Couldn't save session: storage error"); }
+    public pure function save-failed-unavailable() -> string { return @tr("Couldn't save session: storage unavailable"); }
+    public pure function preset-sync-pending() -> string { return @tr("Wait for sync: some bell sounds are missing"); }
     public pure function file-too-large() -> string { return @tr("File is larger than 10 MB"); }
     public pure function missing() -> string { return @tr("Missing"); }
     public pure function no-audio-track() -> string { return @tr("This file has no audio track"); }
@@ -82,7 +82,7 @@ export global Tr {
     public pure function conn-server() -> string { return @tr("Server error"); }
     // Sync indicator tooltips
     public pure function syncing() -> string { return @tr("Syncing with Nextcloud…"); }
-    public pure function sync-failed-tap(detail: string) -> string { return @tr("Last sync failed — tap to retry\n{}", detail); }
+    public pure function sync-failed-tap(detail: string) -> string { return @tr("Last sync failed, tap to retry\n{}", detail); }
     public pure function sync-waiting-first() -> string { return @tr("Sync configured (waiting for first run)"); }
     public pure function synced-just-now() -> string { return @tr("Synced just now"); }
     public pure function synced-min(n: int) -> string { return @tr("Synced {n} minute ago" | "Synced {n} minutes ago" % n); }
@@ -97,7 +97,7 @@ export global Tr {
     public pure function minutes-per-month() -> string { return @tr("MINUTES / MONTH"); }
     // Insights
     public pure function ins-streak-title() -> string { return @tr("Current streak"); }
-    public pure function ins-streak-record(days: int) -> string { return @tr("{n} day — new record" | "{n} days — new record" % days); }
+    public pure function ins-streak-record(days: int) -> string { return @tr("{n} day: new record" | "{n} days: new record" % days); }
     public pure function ins-streak-best(days: int, best: int) -> string { return @tr("{n} day · best was {0}" | "{n} days · best was {0}" % days, best); }
     public pure function ins-streak-keep-going() -> string { return @tr("1 day · keep going"); }
     public pure function ins-week-title() -> string { return @tr("This week's practice"); }
@@ -157,7 +157,7 @@ export global Tr {
     public pure function delete-failed() -> string { return @tr("Delete failed"); }
     // Label-conflict dialog (sync name collisions)
     public pure function conflict-title() -> string { return @tr("Duplicate label"); }
-    public pure function conflict-body(suffixed: string, base: string) -> string { return @tr("'{}' has the same name as '{}' — it was created independently on another device.", suffixed, base); }
+    public pure function conflict-body(suffixed: string, base: string) -> string { return @tr("'{}' has the same name as '{}'. It was created independently on another device.", suffixed, base); }
     public pure function conflict-count(n: int) -> string { return @tr("Merging moves {n} session and deletes the duplicate." | "Merging moves {n} sessions and deletes the duplicate." % n); }
     public pure function conflict-merge() -> string { return @tr("Merge"); }
     public pure function conflict-keep() -> string { return @tr("Keep both"); }
@@ -7889,7 +7889,7 @@ export component MainWindow inherits Window {
                 horizontal-alignment: left;
             }
             Text {
-                text: @tr("Minutes per day — drives the ring on the Stats tab.");
+                text: @tr("Minutes per day: drives the ring on the Stats tab.");
                 font-size: 13px;
                 color: MaterialPalette.on-surface-variant;
                 horizontal-alignment: left;
@@ -7969,7 +7969,7 @@ export component MainWindow inherits Window {
                 horizontal-alignment: left;
             }
             Text {
-                text: @tr("Accent colour — tinting for buttons, rings, and highlights.");
+                text: @tr("Accent colour: tinting for buttons, rings, and highlights.");
                 font-size: 13px;
                 color: MaterialPalette.on-surface-variant;
                 horizontal-alignment: left;
@@ -8600,7 +8600,7 @@ export component MainWindow inherits Window {
                     color: MaterialPalette.on-surface;
                 }
                 Text {
-                    text: @tr("This permanently removes every logged session from this device — and, via sync, from your other devices.\n\nThis cannot be undone.");
+                    text: @tr("This permanently removes every logged session from this device and, via sync, from your other devices.\n\nThis cannot be undone.");
                     font-size: 14px;
                     color: MaterialPalette.on-surface-variant;
                     wrap: word-wrap;

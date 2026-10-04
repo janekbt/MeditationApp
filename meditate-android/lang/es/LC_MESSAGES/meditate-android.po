@@ -214,7 +214,7 @@ msgstr "Acerca de"
 msgid "About {}"
 msgstr "Unos {}"
 
-msgid "Accent colour — tinting for buttons, rings, and highlights."
+msgid "Accent colour: tinting for buttons, rings, and highlights."
 msgstr "Color de acento: tiñe botones, anillos y resaltados."
 
 msgid "App password"
@@ -385,7 +385,7 @@ msgstr "Importar archivo"
 msgid "Import Guided File"
 msgstr "Importar archivo guiado"
 
-msgid "Import failed — see Diagnostics"
+msgid "Import failed, see Diagnostics"
 msgstr "Error al importar: consulta Diagnóstico"
 
 msgid "Import sound…"
@@ -424,7 +424,7 @@ msgstr "Tipo"
 msgid "LAST 13 WEEKS"
 msgstr "ÚLTIMAS 13 SEMANAS"
 
-msgid "Last sync failed — tap to retry\n{}"
+msgid "Last sync failed, tap to retry\n{}"
 msgstr "La última sincronización falló; toca para reintentar\n{}"
 
 msgid "MINUTES / DAY"
@@ -451,7 +451,7 @@ msgstr "Minutos ({}–{})"
 msgid "Minutes per day"
 msgstr "Minutos al día"
 
-msgid "Minutes per day — drives the ring on the Stats tab."
+msgid "Minutes per day: drives the ring on the Stats tab."
 msgstr "Minutos al día: controla el anillo de Estadísticas."
 
 msgid "Name"
@@ -634,7 +634,7 @@ msgstr "La carpeta de Nextcloud ya no contiene ninguno de los lotes que este dis
 msgid "This permanently deletes every session, label, and event stored on this device. Your Nextcloud account, sync settings, and app preferences are kept.\n\nThis cannot be undone."
 msgstr "Esto elimina permanentemente todas las sesiones, etiquetas y eventos de este dispositivo. Se conservan tu cuenta de Nextcloud, los ajustes de sincronización y las preferencias.\n\nNo se puede deshacer."
 
-msgid "This permanently removes every logged session from this device — and, via sync, from your other devices.\n\nThis cannot be undone."
+msgid "This permanently removes every logged session from this device and, via sync, from your other devices.\n\nThis cannot be undone."
 msgstr "Esto elimina permanentemente todas las sesiones registradas de este dispositivo y, mediante la sincronización, de tus otros dispositivos.\n\nNo se puede deshacer."
 
 msgid "Time"
@@ -716,8 +716,8 @@ msgid_plural "{n} days · best was {0}"
 msgstr[0] "{n} día · el récord es {0}"
 msgstr[1] "{n} días · el récord es {0}"
 
-msgid "{n} day — new record"
-msgid_plural "{n} days — new record"
+msgid "{n} day: new record"
+msgid_plural "{n} days: new record"
 msgstr[0] "{n} día: ¡nuevo récord!"
 msgstr[1] "{n} días: ¡nuevo récord!"
 
@@ -790,7 +790,7 @@ msgstr "Editar patrón"
 msgid "Duplicate label"
 msgstr "Etiqueta duplicada"
 
-msgid "'{}' has the same name as '{}' — it was created independently on another device."
+msgid "'{}' has the same name as '{}'. It was created independently on another device."
 msgstr "'{}' tiene el mismo nombre que '{}': se creó de forma independiente en otro dispositivo."
 
 msgid "Merging moves {n} session and deletes the duplicate."
@@ -835,14 +835,14 @@ msgstr "Todas las etiquetas"
 msgid "Couldn't start playback"
 msgstr "No se pudo iniciar la reproducción"
 
-msgid "Couldn't save session — storage error"
-msgstr "No se pudo guardar la sesión — error de almacenamiento"
+msgid "Couldn't save session: storage error"
+msgstr "No se pudo guardar la sesión: error de almacenamiento"
 
-msgid "Couldn't save session — storage unavailable"
-msgstr "No se pudo guardar la sesión — almacenamiento no disponible"
+msgid "Couldn't save session: storage unavailable"
+msgstr "No se pudo guardar la sesión: almacenamiento no disponible"
 
-msgid "Wait for sync — some bell sounds are missing"
-msgstr "Espera la sincronización — faltan sonidos"
+msgid "Wait for sync: some bell sounds are missing"
+msgstr "Espera la sincronización: faltan sonidos"
 
 msgid "File is larger than 10 MB"
 msgstr "El archivo supera los 10 MB"

@@ -214,7 +214,7 @@ msgstr "Informazioni"
 msgid "About {}"
 msgstr "Circa {}"
 
-msgid "Accent colour — tinting for buttons, rings, and highlights."
+msgid "Accent colour: tinting for buttons, rings, and highlights."
 msgstr "Colore d'accento: tinge pulsanti, anelli ed evidenziazioni."
 
 msgid "App password"
@@ -385,8 +385,8 @@ msgstr "Importa file"
 msgid "Import Guided File"
 msgstr "Importa file guidato"
 
-msgid "Import failed — see Diagnostics"
-msgstr "Importazione non riuscita — vedi Diagnostica"
+msgid "Import failed, see Diagnostics"
+msgstr "Importazione non riuscita, vedi Diagnostica"
 
 msgid "Import sound…"
 msgstr "Importa suono…"
@@ -424,8 +424,8 @@ msgstr "Tipo"
 msgid "LAST 13 WEEKS"
 msgstr "ULTIME 13 SETTIMANE"
 
-msgid "Last sync failed — tap to retry\n{}"
-msgstr "Ultima sincronizzazione non riuscita — tocca per riprovare\n{}"
+msgid "Last sync failed, tap to retry\n{}"
+msgstr "Ultima sincronizzazione non riuscita, tocca per riprovare\n{}"
 
 msgid "MINUTES / DAY"
 msgstr "MINUTI / GIORNO"
@@ -451,7 +451,7 @@ msgstr "Minuti ({}–{})"
 msgid "Minutes per day"
 msgstr "Minuti al giorno"
 
-msgid "Minutes per day — drives the ring on the Stats tab."
+msgid "Minutes per day: drives the ring on the Stats tab."
 msgstr "Minuti al giorno: guida l'anello nelle Statistiche."
 
 msgid "Name"
@@ -634,7 +634,7 @@ msgstr "La cartella Nextcloud non contiene più nessuno dei lotti sincronizzati 
 msgid "This permanently deletes every session, label, and event stored on this device. Your Nextcloud account, sync settings, and app preferences are kept.\n\nThis cannot be undone."
 msgstr "Elimina definitivamente tutte le sessioni, le etichette e gli eventi su questo dispositivo. Account Nextcloud, impostazioni di sincronizzazione e preferenze vengono mantenuti.\n\nNon è reversibile."
 
-msgid "This permanently removes every logged session from this device — and, via sync, from your other devices.\n\nThis cannot be undone."
+msgid "This permanently removes every logged session from this device and, via sync, from your other devices.\n\nThis cannot be undone."
 msgstr "Rimuove definitivamente tutte le sessioni registrate da questo dispositivo e, tramite la sincronizzazione, dagli altri tuoi dispositivi.\n\nNon è reversibile."
 
 msgid "Time"
@@ -716,10 +716,10 @@ msgid_plural "{n} days · best was {0}"
 msgstr[0] "{n} giorno · record: {0}"
 msgstr[1] "{n} giorni · record: {0}"
 
-msgid "{n} day — new record"
-msgid_plural "{n} days — new record"
-msgstr[0] "{n} giorno — nuovo record"
-msgstr[1] "{n} giorni — nuovo record"
+msgid "{n} day: new record"
+msgid_plural "{n} days: new record"
+msgstr[0] "{n} giorno: nuovo record"
+msgstr[1] "{n} giorni: nuovo record"
 
 msgid "{n} session to your {0}th"
 msgid_plural "{n} sessions to your {0}th"
@@ -790,7 +790,7 @@ msgstr "Modifica schema"
 msgid "Duplicate label"
 msgstr "Etichetta duplicata"
 
-msgid "'{}' has the same name as '{}' — it was created independently on another device."
+msgid "'{}' has the same name as '{}'. It was created independently on another device."
 msgstr "'{}' ha lo stesso nome di '{}': è stata creata in modo indipendente su un altro dispositivo."
 
 msgid "Merging moves {n} session and deletes the duplicate."
@@ -835,14 +835,14 @@ msgstr "Tutte le etichette"
 msgid "Couldn't start playback"
 msgstr "Impossibile avviare la riproduzione"
 
-msgid "Couldn't save session — storage error"
-msgstr "Impossibile salvare la sessione — errore di archiviazione"
+msgid "Couldn't save session: storage error"
+msgstr "Impossibile salvare la sessione: errore di archiviazione"
 
-msgid "Couldn't save session — storage unavailable"
-msgstr "Impossibile salvare la sessione — archiviazione non disponibile"
+msgid "Couldn't save session: storage unavailable"
+msgstr "Impossibile salvare la sessione: archiviazione non disponibile"
 
-msgid "Wait for sync — some bell sounds are missing"
-msgstr "Attendi la sincronizzazione — mancano suoni"
+msgid "Wait for sync: some bell sounds are missing"
+msgstr "Attendi la sincronizzazione: mancano suoni"
 
 msgid "File is larger than 10 MB"
 msgstr "Il file supera i 10 MB"

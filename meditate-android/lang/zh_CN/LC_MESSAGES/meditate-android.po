@@ -214,8 +214,8 @@ msgstr "关于"
 msgid "About {}"
 msgstr "约 {}"
 
-msgid "Accent colour — tinting for buttons, rings, and highlights."
-msgstr "强调色——用于按钮、圆环和高亮。"
+msgid "Accent colour: tinting for buttons, rings, and highlights."
+msgstr "强调色：用于按钮、圆环和高亮。"
 
 msgid "App password"
 msgstr "应用密码"
@@ -385,8 +385,8 @@ msgstr "导入文件"
 msgid "Import Guided File"
 msgstr "导入引导文件"
 
-msgid "Import failed — see Diagnostics"
-msgstr "导入失败——请查看诊断"
+msgid "Import failed, see Diagnostics"
+msgstr "导入失败，请查看诊断"
 
 msgid "Import sound…"
 msgstr "导入声音…"
@@ -424,8 +424,8 @@ msgstr "类型"
 msgid "LAST 13 WEEKS"
 msgstr "最近 13 周"
 
-msgid "Last sync failed — tap to retry\n{}"
-msgstr "上次同步失败——点按重试\n{}"
+msgid "Last sync failed, tap to retry\n{}"
+msgstr "上次同步失败，点按重试\n{}"
 
 msgid "MINUTES / DAY"
 msgstr "分钟 / 天"
@@ -451,8 +451,8 @@ msgstr "分钟（{}–{}）"
 msgid "Minutes per day"
 msgstr "每天分钟数"
 
-msgid "Minutes per day — drives the ring on the Stats tab."
-msgstr "每天分钟数——驱动统计页的圆环。"
+msgid "Minutes per day: drives the ring on the Stats tab."
+msgstr "每天分钟数：驱动统计页的圆环。"
 
 msgid "Name"
 msgstr "名称"
@@ -634,7 +634,7 @@ msgstr "Nextcloud 文件夹中已不包含此设备之前同步过的任何批�
 msgid "This permanently deletes every session, label, and event stored on this device. Your Nextcloud account, sync settings, and app preferences are kept.\n\nThis cannot be undone."
 msgstr "将永久删除此设备上的所有会话、标签和事件。Nextcloud 账户、同步设置和应用偏好将保留。\n\n此操作无法撤销。"
 
-msgid "This permanently removes every logged session from this device — and, via sync, from your other devices.\n\nThis cannot be undone."
+msgid "This permanently removes every logged session from this device and, via sync, from your other devices.\n\nThis cannot be undone."
 msgstr "将从此设备永久删除所有已记录的会话，并通过同步从你的其他设备中删除。\n\n此操作无法撤销。"
 
 msgid "Time"
@@ -711,9 +711,9 @@ msgid "{n} day · best was {0}"
 msgid_plural "{n} days · best was {0}"
 msgstr[0] "{n} 天 · 最佳纪录 {0} 天"
 
-msgid "{n} day — new record"
-msgid_plural "{n} days — new record"
-msgstr[0] "{n} 天——新纪录"
+msgid "{n} day: new record"
+msgid_plural "{n} days: new record"
+msgstr[0] "{n} 天：新纪录"
 
 msgid "{n} session to your {0}th"
 msgid_plural "{n} sessions to your {0}th"
@@ -775,8 +775,8 @@ msgstr "编辑模式"
 msgid "Duplicate label"
 msgstr "重复的标签"
 
-msgid "'{}' has the same name as '{}' — it was created independently on another device."
-msgstr "“{}”与“{}”同名——它是在另一台设备上独立创建的。"
+msgid "'{}' has the same name as '{}'. It was created independently on another device."
+msgstr "“{}”与“{}”同名。它是在另一台设备上独立创建的。"
 
 msgid "Merging moves {n} session and deletes the duplicate."
 msgid_plural "Merging moves {n} sessions and deletes the duplicate."
@@ -817,14 +817,14 @@ msgstr "所有标签"
 msgid "Couldn't start playback"
 msgstr "无法开始播放"
 
-msgid "Couldn't save session — storage error"
-msgstr "无法保存会话——存储错误"
+msgid "Couldn't save session: storage error"
+msgstr "无法保存会话：存储错误"
 
-msgid "Couldn't save session — storage unavailable"
-msgstr "无法保存会话——存储不可用"
+msgid "Couldn't save session: storage unavailable"
+msgstr "无法保存会话：存储不可用"
 
-msgid "Wait for sync — some bell sounds are missing"
-msgstr "请等待同步——部分铃声缺失"
+msgid "Wait for sync: some bell sounds are missing"
+msgstr "请等待同步：部分铃声缺失"
 
 msgid "File is larger than 10 MB"
 msgstr "文件大于 10 MB"

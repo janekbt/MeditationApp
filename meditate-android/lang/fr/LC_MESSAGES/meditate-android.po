@@ -214,7 +214,7 @@ msgstr "À propos"
 msgid "About {}"
 msgstr "Environ {}"
 
-msgid "Accent colour — tinting for buttons, rings, and highlights."
+msgid "Accent colour: tinting for buttons, rings, and highlights."
 msgstr "Couleur d'accent : teinte les boutons, anneaux et surbrillances."
 
 msgid "App password"
@@ -385,8 +385,8 @@ msgstr "Importer le fichier"
 msgid "Import Guided File"
 msgstr "Importer un fichier guidé"
 
-msgid "Import failed — see Diagnostics"
-msgstr "Échec de l'import — voir Diagnostic"
+msgid "Import failed, see Diagnostics"
+msgstr "Échec de l'import, voir Diagnostic"
 
 msgid "Import sound…"
 msgstr "Importer un son…"
@@ -424,8 +424,8 @@ msgstr "Type"
 msgid "LAST 13 WEEKS"
 msgstr "13 DERNIÈRES SEMAINES"
 
-msgid "Last sync failed — tap to retry\n{}"
-msgstr "Échec de la dernière synchronisation — touchez pour réessayer\n{}"
+msgid "Last sync failed, tap to retry\n{}"
+msgstr "Échec de la dernière synchronisation, touchez pour réessayer\n{}"
 
 msgid "MINUTES / DAY"
 msgstr "MINUTES / JOUR"
@@ -451,7 +451,7 @@ msgstr "Minutes ({}–{})"
 msgid "Minutes per day"
 msgstr "Minutes par jour"
 
-msgid "Minutes per day — drives the ring on the Stats tab."
+msgid "Minutes per day: drives the ring on the Stats tab."
 msgstr "Minutes par jour : pilote l'anneau de l'onglet Statistiques."
 
 msgid "Name"
@@ -634,8 +634,8 @@ msgstr "Le dossier Nextcloud ne contient plus aucun des lots que cet appareil av
 msgid "This permanently deletes every session, label, and event stored on this device. Your Nextcloud account, sync settings, and app preferences are kept.\n\nThis cannot be undone."
 msgstr "Supprime définitivement toutes les séances, étiquettes et événements de cet appareil. Votre compte Nextcloud, les réglages de synchronisation et les préférences sont conservés.\n\nIrréversible."
 
-msgid "This permanently removes every logged session from this device — and, via sync, from your other devices.\n\nThis cannot be undone."
-msgstr "Supprime définitivement toutes les séances enregistrées de cet appareil — et, via la synchronisation, de vos autres appareils.\n\nIrréversible."
+msgid "This permanently removes every logged session from this device and, via sync, from your other devices.\n\nThis cannot be undone."
+msgstr "Supprime définitivement toutes les séances enregistrées de cet appareil et, via la synchronisation, de vos autres appareils.\n\nIrréversible."
 
 msgid "Time"
 msgstr "Heure"
@@ -716,10 +716,10 @@ msgid_plural "{n} days · best was {0}"
 msgstr[0] "{n} jour · record : {0}"
 msgstr[1] "{n} jours · record : {0}"
 
-msgid "{n} day — new record"
-msgid_plural "{n} days — new record"
-msgstr[0] "{n} jour — nouveau record"
-msgstr[1] "{n} jours — nouveau record"
+msgid "{n} day: new record"
+msgid_plural "{n} days: new record"
+msgstr[0] "{n} jour : nouveau record"
+msgstr[1] "{n} jours : nouveau record"
 
 msgid "{n} session to your {0}th"
 msgid_plural "{n} sessions to your {0}th"
@@ -790,8 +790,8 @@ msgstr "Modifier le motif"
 msgid "Duplicate label"
 msgstr "Étiquette en double"
 
-msgid "'{}' has the same name as '{}' — it was created independently on another device."
-msgstr "'{}' porte le même nom que '{}' — elle a été créée indépendamment sur un autre appareil."
+msgid "'{}' has the same name as '{}'. It was created independently on another device."
+msgstr "'{}' porte le même nom que '{}'. Elle a été créée indépendamment sur un autre appareil."
 
 msgid "Merging moves {n} session and deletes the duplicate."
 msgid_plural "Merging moves {n} sessions and deletes the duplicate."
@@ -835,14 +835,14 @@ msgstr "Toutes les étiquettes"
 msgid "Couldn't start playback"
 msgstr "Impossible de démarrer la lecture"
 
-msgid "Couldn't save session — storage error"
-msgstr "Impossible d'enregistrer la séance — erreur de stockage"
+msgid "Couldn't save session: storage error"
+msgstr "Impossible d'enregistrer la séance : erreur de stockage"
 
-msgid "Couldn't save session — storage unavailable"
-msgstr "Impossible d'enregistrer la séance — stockage indisponible"
+msgid "Couldn't save session: storage unavailable"
+msgstr "Impossible d'enregistrer la séance : stockage indisponible"
 
-msgid "Wait for sync — some bell sounds are missing"
-msgstr "Attendez la synchro — sons de cloche manquants"
+msgid "Wait for sync: some bell sounds are missing"
+msgstr "Attendez la synchro : sons de cloche manquants"
 
 msgid "File is larger than 10 MB"
 msgstr "Le fichier dépasse 10 Mo"

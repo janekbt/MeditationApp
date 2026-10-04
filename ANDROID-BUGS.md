@@ -161,7 +161,7 @@ meditate-core with both shells calling them.
   read an empty file and lose a pick or widget tap (very rare).
   `MeditateFilePickerActivity.kt`, `MeditateWidgetProvider.kt`,
   `MeditateGuided.kt`. Fix: write `.tmp` then rename, as `widget.rs` does.
-- [ ] **Long dashes in 11 user-visible msgids** (`main.slint:59, 61, 62, 63,
+- [x] **Long dashes in 11 user-visible msgids** (`main.slint:59, 61, 62, 63,
   76, 91, 149, 7766, 7846, 8458`, plus `lib.rs:10632`) and in most .po
   translations (de has none). Tests in `app.rs:1168-1198` assert three of
   them.
