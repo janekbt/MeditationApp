@@ -1729,6 +1729,35 @@ mod tests {
     }
 
     #[test]
+    fn every_bridge_calls_java_through_jni_call() {
+        // A bridge that attached on its own propagated Java errors
+        // with `?` before its exception cleanup, leaving the exception
+        // pending for the next JNI call, and leaked local refs on the
+        // never-detached UI thread. `jni_call::with_env` does both.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let helper = std::fs::read_to_string(root.join("src/jni_call.rs")).unwrap();
+        assert!(helper.contains("env.with_local_frame(LOCAL_FRAME_CAPACITY"));
+        assert!(helper.contains("let _ = env.exception_clear();"));
+        for entry in std::fs::read_dir(root.join("src")).unwrap() {
+            let path = entry.unwrap().path();
+            if path.file_name().unwrap() == "jni_call.rs" {
+                continue;
+            }
+            let src = std::fs::read_to_string(&path).unwrap();
+            assert!(
+                !src.contains(concat!("vm.attach", "_current_thread()")),
+                "{} attaches on its own",
+                path.display()
+            );
+        }
+        // Failures go to the diagnostics log; stderr is discarded on Android.
+        let service = std::fs::read_to_string(root.join("src/service.rs")).unwrap();
+        assert!(!service.contains("eprintln!"));
+        let guided = std::fs::read_to_string(root.join("src/guided.rs")).unwrap();
+        assert!(!guided.contains("let _ = invoke_player_noarg"));
+    }
+
+    #[test]
     fn swiping_the_app_away_silences_it() {
         // The service stopped, but the guided track (a process-wide
         // player) played on with nothing left to stop it.

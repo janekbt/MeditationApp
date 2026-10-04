@@ -32,13 +32,12 @@
 #![cfg(target_os = "android")]
 
 use android_activity::AndroidApp;
-use jni::objects::{JClass, JObject};
-use jni::JavaVM;
+use jni::objects::JClass;
 
 const SERVICE_CLASS_DOTTED: &str = "io.github.janekbt.Meditate.MeditateSessionService";
 
 /// Start the foreground service. Called when AppState transitions
-/// Idle → Active. Errors land in logcat rather than propagating —
+/// Idle → Active. Errors land in the diagnostics log rather than propagating —
 /// failing to start the service still leaves the UI usable, just
 /// without screen-off survival; we don't want a JNI hiccup to brick
 /// the Start button.
@@ -46,10 +45,7 @@ pub fn start(app: &AndroidApp) {
     // A "Meditation complete" left from the last session is stale now.
     clear_complete(app);
     if let Err(e) = invoke(app, "start") {
-        // eprintln! forwards to logcat via stderr — no log facade
-        // wired up in this crate yet (Phase 8's polish pass will
-        // hook android_logger or similar).
-        eprintln!("MeditateSessionService.start failed: {e}");
+        meditate_core::log("service", &format!("start FAILED: {e:?}"));
     }
 }
 
@@ -58,7 +54,7 @@ pub fn start(app: &AndroidApp) {
 /// as `start`.
 pub fn stop(app: &AndroidApp) {
     if let Err(e) = invoke(app, "stop") {
-        eprintln!("MeditateSessionService.stop failed: {e}");
+        meditate_core::log("service", &format!("stop FAILED: {e:?}"));
     }
 }
 
@@ -66,14 +62,14 @@ pub fn stop(app: &AndroidApp) {
 /// formatted session length for its body. Same swallow-error policy.
 pub fn notify_complete(app: &AndroidApp, duration: &str) {
     if let Err(e) = invoke_with_text(app, "notifyComplete", duration) {
-        eprintln!("MeditateSessionService.notifyComplete failed: {e}");
+        meditate_core::log("service", &format!("notifyComplete FAILED: {e:?}"));
     }
 }
 
 /// Withdraw a "Meditation complete" notification, if one is showing.
 pub fn clear_complete(app: &AndroidApp) {
     if let Err(e) = invoke(app, "clearComplete") {
-        eprintln!("MeditateSessionService.clearComplete failed: {e}");
+        meditate_core::log("service", &format!("clearComplete FAILED: {e:?}"));
     }
 }
 
@@ -91,64 +87,45 @@ fn invoke_with_text(app: &AndroidApp, method: &str, text: &str) -> Result<(), jn
 }
 
 fn call(app: &AndroidApp, method: &str, text: Option<&str>) -> Result<(), jni::errors::Error> {
-    // SAFETY: `app.vm_as_ptr()` is the JavaVM pointer android-activity
-    // received at process start; it stays valid for the process
-    // lifetime. JavaVM::from_raw expects a raw `*mut sys::JavaVM`,
-    // which is the C-level type the cast yields here.
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
-    let mut env = vm.attach_current_thread()?;
+    crate::jni_call::with_env(app, |env, activity| {
+        // Activity → app classloader → service Class. Going through
+        // `loadClass` (dotted name) instead of `find_class`
+        // (slash-separated name) is what makes the lookup hit the app
+        // classloader; `find_class` would use the thread's classloader,
+        // which is the system one on a native-attached thread.
+        let classloader = env
+            .call_method(activity, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])?
+            .l()?;
+        let class_name = env.new_string(SERVICE_CLASS_DOTTED)?;
+        let class_obj = env
+            .call_method(
+                &classloader,
+                "loadClass",
+                "(Ljava/lang/String;)Ljava/lang/Class;",
+                &[(&class_name).into()],
+            )?
+            .l()?;
+        let class: JClass = class_obj.into();
 
-    let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
-
-    // Activity → app classloader → service Class. Going through
-    // `loadClass` (dotted name) instead of `find_class`
-    // (slash-separated name) is what makes the lookup hit the app
-    // classloader; `find_class` would use the thread's classloader,
-    // which is the system one on a native-attached thread.
-    let classloader = env
-        .call_method(&activity, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])?
-        .l()?;
-    let class_name = env.new_string(SERVICE_CLASS_DOTTED)?;
-    let class_obj = env
-        .call_method(
-            &classloader,
-            "loadClass",
-            "(Ljava/lang/String;)Ljava/lang/Class;",
-            &[(&class_name).into()],
-        )?
-        .l()?;
-    let class: JClass = class_obj.into();
-
-    match text {
-        None => {
-            env.call_static_method(
-                class,
-                method,
-                "(Landroid/content/Context;)V",
-                &[(&activity).into()],
-            )?;
+        match text {
+            None => {
+                env.call_static_method(
+                    class,
+                    method,
+                    "(Landroid/content/Context;)V",
+                    &[activity.into()],
+                )?;
+            }
+            Some(text) => {
+                let text = env.new_string(text)?;
+                env.call_static_method(
+                    class,
+                    method,
+                    "(Landroid/content/Context;Ljava/lang/String;)V",
+                    &[activity.into(), (&text).into()],
+                )?;
+            }
         }
-        Some(text) => {
-            let text = env.new_string(text)?;
-            env.call_static_method(
-                class,
-                method,
-                "(Landroid/content/Context;Ljava/lang/String;)V",
-                &[(&activity).into(), (&text).into()],
-            )?;
-        }
-    }
-
-    // Defensive: if any earlier call somehow left a pending
-    // exception, clear it before this thread's next JNI cycle —
-    // otherwise the JVM aborts the process. The clean path through
-    // this fn won't leave one behind (call_method / call_static_method
-    // both return Err on Java exceptions and the `?` propagates),
-    // but explicit clearing keeps a future regression from being a
-    // process death.
-    if env.exception_check()? {
-        env.exception_clear()?;
-    }
-
-    Ok(())
+        Ok(())
+    })
 }

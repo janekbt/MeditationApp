@@ -19,7 +19,6 @@
 
 use android_activity::AndroidApp;
 use jni::objects::{JClass, JObject};
-use jni::JavaVM;
 use std::sync::OnceLock;
 
 const HAPTICS_CLASS_DOTTED: &str = "io.github.janekbt.Meditate.MeditateHaptics";
@@ -78,21 +77,16 @@ pub fn has_amplitude_control(app: &AndroidApp) -> bool {
 fn query_amp_control(
     app: &AndroidApp,
 ) -> Result<bool, jni::errors::Error> {
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
-    let mut env = vm.attach_current_thread()?;
-    let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
-    let class = resolve_class(&mut env, &activity)?;
-    let ret = env.call_static_method(
-        class,
-        "hasAmplitudeControl",
-        "(Landroid/content/Context;)Z",
-        &[(&activity).into()],
-    )?;
-    if env.exception_check()? {
-        env.exception_clear()?;
-        return Ok(true);
-    }
-    ret.z()
+    crate::jni_call::with_env(app, |env, activity| {
+        let class = resolve_class(env, activity)?;
+        let ret = env.call_static_method(
+            class,
+            "hasAmplitudeControl",
+            "(Landroid/content/Context;)Z",
+            &[activity.into()],
+        )?;
+        ret.z()
+    })
 }
 
 /// Stop any in-flight vibration (preview Stop / supersede).
@@ -128,64 +122,55 @@ fn invoke_waveform(
     app: &AndroidApp,
     segments: &[(f64, u32)],
 ) -> Result<(), jni::errors::Error> {
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
-    let mut env = vm.attach_current_thread()?;
-    let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
+    crate::jni_call::with_env(app, |env, activity| {
+        let timings: Vec<i64> = segments
+            .iter()
+            .map(|(_, ms)| i64::from((*ms).max(1)))
+            .collect();
+        let amplitudes: Vec<i32> = segments
+            .iter()
+            .map(|(a, _)| {
+                if *a <= 0.0 {
+                    0
+                } else {
+                    ((a * 255.0).round() as i32).clamp(1, 255)
+                }
+            })
+            .collect();
 
-    let timings: Vec<i64> = segments
-        .iter()
-        .map(|(_, ms)| i64::from((*ms).max(1)))
-        .collect();
-    let amplitudes: Vec<i32> = segments
-        .iter()
-        .map(|(a, _)| {
-            if *a <= 0.0 {
-                0
-            } else {
-                ((a * 255.0).round() as i32).clamp(1, 255)
-            }
-        })
-        .collect();
+        let t_arr = env.new_long_array(timings.len() as i32)?;
+        env.set_long_array_region(&t_arr, 0, &timings)?;
+        let a_arr = env.new_int_array(amplitudes.len() as i32)?;
+        env.set_int_array_region(&a_arr, 0, &amplitudes)?;
 
-    let t_arr = env.new_long_array(timings.len() as i32)?;
-    env.set_long_array_region(&t_arr, 0, &timings)?;
-    let a_arr = env.new_int_array(amplitudes.len() as i32)?;
-    env.set_int_array_region(&a_arr, 0, &amplitudes)?;
+        let class = resolve_class(env, activity)?;
+        env.call_static_method(
+            class,
+            "vibrateWaveform",
+            "(Landroid/content/Context;[J[I)V",
+            &[
+                activity.into(),
+                jni::objects::JValue::Object(&t_arr),
+                jni::objects::JValue::Object(&a_arr),
+            ],
+        )?;
 
-    let class = resolve_class(&mut env, &activity)?;
-    env.call_static_method(
-        class,
-        "vibrateWaveform",
-        "(Landroid/content/Context;[J[I)V",
-        &[
-            (&activity).into(),
-            jni::objects::JValue::Object(&t_arr),
-            jni::objects::JValue::Object(&a_arr),
-        ],
-    )?;
-
-    if env.exception_check()? {
-        env.exception_clear()?;
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 fn invoke_no_arg(
     app: &AndroidApp,
     method: &str,
 ) -> Result<(), jni::errors::Error> {
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
-    let mut env = vm.attach_current_thread()?;
-    let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
-    let class = resolve_class(&mut env, &activity)?;
-    env.call_static_method(
-        class,
-        method,
-        "(Landroid/content/Context;)V",
-        &[(&activity).into()],
-    )?;
-    if env.exception_check()? {
-        env.exception_clear()?;
-    }
-    Ok(())
+    crate::jni_call::with_env(app, |env, activity| {
+        let class = resolve_class(env, activity)?;
+        env.call_static_method(
+            class,
+            method,
+            "(Landroid/content/Context;)V",
+            &[activity.into()],
+        )?;
+        Ok(())
+    })
 }

@@ -9,7 +9,6 @@
 
 use android_activity::AndroidApp;
 use jni::objects::{JClass, JObject, JString};
-use jni::JavaVM;
 
 const ABOUT_CLASS_DOTTED: &str =
     "io.github.janekbt.Meditate.MeditateAbout";
@@ -110,97 +109,73 @@ fn resolve_class<'a>(
 fn invoke_locale_tag(
     app: &AndroidApp,
 ) -> Result<String, jni::errors::Error> {
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
-    let mut env = vm.attach_current_thread()?;
-    let activity =
-        unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
-    let class = resolve_class(&mut env, &activity, ABOUT_CLASS_DOTTED)?;
-    let result = env
-        .call_static_method(
-            class,
-            "localeTag",
-            "()Ljava/lang/String;",
-            &[],
-        )?
-        .l()?;
-    if env.exception_check()? {
-        env.exception_clear()?;
-        return Ok("en".into());
-    }
-    let jstr = JString::from(result);
-    let s: String = env.get_string(&jstr)?.into();
-    Ok(s)
+    crate::jni_call::with_env(app, |env, activity| {
+        let class = resolve_class(env, activity, ABOUT_CLASS_DOTTED)?;
+        let result = env
+            .call_static_method(
+                class,
+                "localeTag",
+                "()Ljava/lang/String;",
+                &[],
+            )?
+            .l()?;
+        let jstr = JString::from(result);
+        let s: String = env.get_string(&jstr)?.into();
+        Ok(s)
+    })
 }
 
 fn invoke_version_name(
     app: &AndroidApp,
 ) -> Result<String, jni::errors::Error> {
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
-    let mut env = vm.attach_current_thread()?;
-    let activity =
-        unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
-    let class = resolve_class(&mut env, &activity, ABOUT_CLASS_DOTTED)?;
-    let result = env
-        .call_static_method(
-            class,
-            "versionName",
-            "(Landroid/content/Context;)Ljava/lang/String;",
-            &[(&activity).into()],
-        )?
-        .l()?;
-    if env.exception_check()? {
-        env.exception_clear()?;
-        return Ok("?".into());
-    }
-    let jstr = JString::from(result);
-    let s: String = env.get_string(&jstr)?.into();
-    Ok(s)
+    crate::jni_call::with_env(app, |env, activity| {
+        let class = resolve_class(env, activity, ABOUT_CLASS_DOTTED)?;
+        let result = env
+            .call_static_method(
+                class,
+                "versionName",
+                "(Landroid/content/Context;)Ljava/lang/String;",
+                &[activity.into()],
+            )?
+            .l()?;
+        let jstr = JString::from(result);
+        let s: String = env.get_string(&jstr)?.into();
+        Ok(s)
+    })
 }
 
 fn invoke_no_arg_string(
     app: &AndroidApp,
     method: &str,
 ) -> Result<String, jni::errors::Error> {
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
-    let mut env = vm.attach_current_thread()?;
-    let activity =
-        unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
-    let class = resolve_class(&mut env, &activity, ABOUT_CLASS_DOTTED)?;
-    let result = env
-        .call_static_method(class, method, "()Ljava/lang/String;", &[])?
-        .l()?;
-    if env.exception_check()? {
-        env.exception_clear()?;
-        return Ok(String::new());
-    }
-    let jstr = JString::from(result);
-    let s: String = env.get_string(&jstr)?.into();
-    Ok(s)
+    crate::jni_call::with_env(app, |env, activity| {
+        let class = resolve_class(env, activity, ABOUT_CLASS_DOTTED)?;
+        let result = env
+            .call_static_method(class, method, "()Ljava/lang/String;", &[])?
+            .l()?;
+        let jstr = JString::from(result);
+        let s: String = env.get_string(&jstr)?.into();
+        Ok(s)
+    })
 }
 
 fn invoke_time_format(
     app: &AndroidApp,
 ) -> Result<String, jni::errors::Error> {
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
-    let mut env = vm.attach_current_thread()?;
-    let activity =
-        unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
-    let class = resolve_class(&mut env, &activity, ABOUT_CLASS_DOTTED)?;
-    let result = env
-        .call_static_method(
-            class,
-            "timeFormat",
-            "(Landroid/content/Context;)Ljava/lang/String;",
-            &[(&activity).into()],
-        )?
-        .l()?;
-    if env.exception_check()? {
-        env.exception_clear()?;
-        return Ok("24".into());
-    }
-    let jstr = JString::from(result);
-    let s: String = env.get_string(&jstr)?.into();
-    Ok(s)
+    crate::jni_call::with_env(app, |env, activity| {
+        let class = resolve_class(env, activity, ABOUT_CLASS_DOTTED)?;
+        let result = env
+            .call_static_method(
+                class,
+                "timeFormat",
+                "(Landroid/content/Context;)Ljava/lang/String;",
+                &[activity.into()],
+            )?
+            .l()?;
+        let jstr = JString::from(result);
+        let s: String = env.get_string(&jstr)?.into();
+        Ok(s)
+    })
 }
 
 fn invoke_one_string(
@@ -208,22 +183,17 @@ fn invoke_one_string(
     method: &str,
     a: &str,
 ) -> Result<(), jni::errors::Error> {
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
-    let mut env = vm.attach_current_thread()?;
-    let activity =
-        unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
-    let ja = env.new_string(a)?;
-    let class = resolve_class(&mut env, &activity, ABOUT_CLASS_DOTTED)?;
-    env.call_static_method(
-        class,
-        method,
-        "(Landroid/content/Context;Ljava/lang/String;)V",
-        &[(&activity).into(), (&ja).into()],
-    )?;
-    if env.exception_check()? {
-        env.exception_clear()?;
-    }
-    Ok(())
+    crate::jni_call::with_env(app, |env, activity| {
+        let ja = env.new_string(a)?;
+        let class = resolve_class(env, activity, ABOUT_CLASS_DOTTED)?;
+        env.call_static_method(
+            class,
+            method,
+            "(Landroid/content/Context;Ljava/lang/String;)V",
+            &[activity.into(), (&ja).into()],
+        )?;
+        Ok(())
+    })
 }
 
 fn invoke_two_strings(
@@ -232,21 +202,16 @@ fn invoke_two_strings(
     a: &str,
     b: &str,
 ) -> Result<(), jni::errors::Error> {
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
-    let mut env = vm.attach_current_thread()?;
-    let activity =
-        unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
-    let ja = env.new_string(a)?;
-    let jb = env.new_string(b)?;
-    let class = resolve_class(&mut env, &activity, ABOUT_CLASS_DOTTED)?;
-    env.call_static_method(
-        class,
-        method,
-        "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)V",
-        &[(&activity).into(), (&ja).into(), (&jb).into()],
-    )?;
-    if env.exception_check()? {
-        env.exception_clear()?;
-    }
-    Ok(())
+    crate::jni_call::with_env(app, |env, activity| {
+        let ja = env.new_string(a)?;
+        let jb = env.new_string(b)?;
+        let class = resolve_class(env, activity, ABOUT_CLASS_DOTTED)?;
+        env.call_static_method(
+            class,
+            method,
+            "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)V",
+            &[activity.into(), (&ja).into(), (&jb).into()],
+        )?;
+        Ok(())
+    })
 }

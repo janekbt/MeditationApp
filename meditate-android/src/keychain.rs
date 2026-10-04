@@ -14,7 +14,6 @@
 
 use android_activity::AndroidApp;
 use jni::objects::{JClass, JObject, JString};
-use jni::JavaVM;
 
 const KEYCHAIN_CLASS_DOTTED: &str =
     "io.github.janekbt.Meditate.MeditateKeychain";
@@ -98,32 +97,26 @@ fn invoke_store(
     username: &str,
     password: &str,
 ) -> Result<bool, jni::errors::Error> {
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
-    let mut env = vm.attach_current_thread()?;
-    let activity =
-        unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
-    let jurl = env.new_string(url)?;
-    let juser = env.new_string(username)?;
-    let jpw = env.new_string(password)?;
-    let class = resolve_class(&mut env, &activity, KEYCHAIN_CLASS_DOTTED)?;
-    let result = env
-        .call_static_method(
-            class,
-            "storePassword",
-            "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Z",
-            &[
-                (&activity).into(),
-                (&jurl).into(),
-                (&juser).into(),
-                (&jpw).into(),
-            ],
-        )?
-        .z()?;
-    if env.exception_check()? {
-        env.exception_clear()?;
-        return Ok(false);
-    }
-    Ok(result)
+    crate::jni_call::with_env(app, |env, activity| {
+        let jurl = env.new_string(url)?;
+        let juser = env.new_string(username)?;
+        let jpw = env.new_string(password)?;
+        let class = resolve_class(env, activity, KEYCHAIN_CLASS_DOTTED)?;
+        let result = env
+            .call_static_method(
+                class,
+                "storePassword",
+                "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Z",
+                &[
+                    activity.into(),
+                    (&jurl).into(),
+                    (&juser).into(),
+                    (&jpw).into(),
+                ],
+            )?
+            .z()?;
+        Ok(result)
+    })
 }
 
 fn invoke_read(
@@ -131,27 +124,21 @@ fn invoke_read(
     url: &str,
     username: &str,
 ) -> Result<String, jni::errors::Error> {
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
-    let mut env = vm.attach_current_thread()?;
-    let activity =
-        unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
-    let jurl = env.new_string(url)?;
-    let juser = env.new_string(username)?;
-    let class = resolve_class(&mut env, &activity, KEYCHAIN_CLASS_DOTTED)?;
-    let result = env
-        .call_static_method(
-            class,
-            "readPassword",
-            "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
-            &[(&activity).into(), (&jurl).into(), (&juser).into()],
-        )?
-        .l()?;
-    if env.exception_check()? {
-        env.exception_clear()?;
-        return Ok(String::new());
-    }
-    let jstr = JString::from(result);
-    let s: String = env.get_string(&jstr)?.into();
-    Ok(s)
+    crate::jni_call::with_env(app, |env, activity| {
+        let jurl = env.new_string(url)?;
+        let juser = env.new_string(username)?;
+        let class = resolve_class(env, activity, KEYCHAIN_CLASS_DOTTED)?;
+        let result = env
+            .call_static_method(
+                class,
+                "readPassword",
+                "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
+                &[activity.into(), (&jurl).into(), (&juser).into()],
+            )?
+            .l()?;
+        let jstr = JString::from(result);
+        let s: String = env.get_string(&jstr)?.into();
+        Ok(s)
+    })
 }
 

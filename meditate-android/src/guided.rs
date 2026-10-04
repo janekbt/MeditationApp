@@ -14,7 +14,6 @@
 
 use android_activity::AndroidApp;
 use jni::objects::{JClass, JObject};
-use jni::JavaVM;
 
 const PICKER_CLASS_DOTTED: &str =
     "io.github.janekbt.Meditate.MeditateGuidedPicker";
@@ -202,23 +201,18 @@ fn invoke_open_export(
     src_path: &str,
     suggested: &str,
 ) -> Result<(), jni::errors::Error> {
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
-    let mut env = vm.attach_current_thread()?;
-    let activity =
-        unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
-    let jsrc = env.new_string(src_path)?;
-    let jname = env.new_string(suggested)?;
-    let class = resolve_class(&mut env, &activity, PICKER_CLASS_DOTTED)?;
-    env.call_static_method(
-        class,
-        "openExport",
-        "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)V",
-        &[(&activity).into(), (&jsrc).into(), (&jname).into()],
-    )?;
-    if env.exception_check()? {
-        env.exception_clear()?;
-    }
-    Ok(())
+    crate::jni_call::with_env(app, |env, activity| {
+        let jsrc = env.new_string(src_path)?;
+        let jname = env.new_string(suggested)?;
+        let class = resolve_class(env, activity, PICKER_CLASS_DOTTED)?;
+        env.call_static_method(
+            class,
+            "openExport",
+            "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)V",
+            &[activity.into(), (&jsrc).into(), (&jname).into()],
+        )?;
+        Ok(())
+    })
 }
 
 fn invoke_open(
@@ -226,35 +220,30 @@ fn invoke_open(
     target: &str,
     mime_types: &[&str],
 ) -> Result<(), jni::errors::Error> {
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
-    let mut env = vm.attach_current_thread()?;
-    let activity =
-        unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
-    let jtarget = env.new_string(target)?;
-    let jmimes = env.new_object_array(
-        i32::try_from(mime_types.len()).unwrap_or(0),
-        "java/lang/String",
-        JObject::null(),
-    )?;
-    for (i, m) in mime_types.iter().enumerate() {
-        let jm = env.new_string(m)?;
-        env.set_object_array_element(
-            &jmimes,
-            i32::try_from(i).unwrap_or(0),
-            jm,
+    crate::jni_call::with_env(app, |env, activity| {
+        let jtarget = env.new_string(target)?;
+        let jmimes = env.new_object_array(
+            i32::try_from(mime_types.len()).unwrap_or(0),
+            "java/lang/String",
+            JObject::null(),
         )?;
-    }
-    let class = resolve_class(&mut env, &activity, PICKER_CLASS_DOTTED)?;
-    env.call_static_method(
-        class,
-        "openFor",
-        "(Landroid/content/Context;Ljava/lang/String;[Ljava/lang/String;)V",
-        &[(&activity).into(), (&jtarget).into(), (&jmimes).into()],
-    )?;
-    if env.exception_check()? {
-        env.exception_clear()?;
-    }
-    Ok(())
+        for (i, m) in mime_types.iter().enumerate() {
+            let jm = env.new_string(m)?;
+            env.set_object_array_element(
+                &jmimes,
+                i32::try_from(i).unwrap_or(0),
+                jm,
+            )?;
+        }
+        let class = resolve_class(env, activity, PICKER_CLASS_DOTTED)?;
+        env.call_static_method(
+            class,
+            "openFor",
+            "(Landroid/content/Context;Ljava/lang/String;[Ljava/lang/String;)V",
+            &[activity.into(), (&jtarget).into(), (&jmimes).into()],
+        )?;
+        Ok(())
+    })
 }
 
 // ── Guided audio playback (MeditateGuided) ──────────────────────────
@@ -279,13 +268,19 @@ pub fn play(app: &AndroidApp, path: &str) -> bool {
 /// Pause / resume / stop the guided track in step with the
 /// session's pause/resume/stop. `stop` releases the player.
 pub fn pause(app: &AndroidApp) {
-    let _ = invoke_player_noarg(app, "pauseAudio");
+    if let Err(e) = invoke_player_noarg(app, "pauseAudio") {
+        meditate_core::log("guided", &format!("pauseAudio FAILED: {e:?}"));
+    }
 }
 pub fn resume(app: &AndroidApp) {
-    let _ = invoke_player_noarg(app, "resumeAudio");
+    if let Err(e) = invoke_player_noarg(app, "resumeAudio") {
+        meditate_core::log("guided", &format!("resumeAudio FAILED: {e:?}"));
+    }
 }
 pub fn stop(app: &AndroidApp) {
-    let _ = invoke_player_noarg(app, "stopAudio");
+    if let Err(e) = invoke_player_noarg(app, "stopAudio") {
+        meditate_core::log("guided", &format!("stopAudio FAILED: {e:?}"));
+    }
 }
 
 /// Take the natural-end flag the player wrote on
@@ -422,70 +417,54 @@ fn invoke_import(
     dest: &str,
     duration_secs: u32,
 ) -> Result<(), jni::errors::Error> {
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
-    let mut env = vm.attach_current_thread()?;
-    let activity =
-        unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
-    let jsrc = env.new_string(src)?;
-    let jdest = env.new_string(dest)?;
-    let class = resolve_class(&mut env, &activity, IMPORT_CLASS_DOTTED)?;
-    env.call_static_method(
-        class,
-        "startImport",
-        "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;J)V",
-        &[
-            (&activity).into(),
-            (&jsrc).into(),
-            (&jdest).into(),
-            jni::objects::JValue::Long(i64::from(duration_secs)),
-        ],
-    )?;
-    if env.exception_check()? {
-        env.exception_clear()?;
-    }
-    Ok(())
+    crate::jni_call::with_env(app, |env, activity| {
+        let jsrc = env.new_string(src)?;
+        let jdest = env.new_string(dest)?;
+        let class = resolve_class(env, activity, IMPORT_CLASS_DOTTED)?;
+        env.call_static_method(
+            class,
+            "startImport",
+            "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;J)V",
+            &[
+                activity.into(),
+                (&jsrc).into(),
+                (&jdest).into(),
+                jni::objects::JValue::Long(i64::from(duration_secs)),
+            ],
+        )?;
+        Ok(())
+    })
 }
 
 fn invoke_play(
     app: &AndroidApp,
     path: &str,
 ) -> Result<bool, jni::errors::Error> {
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
-    let mut env = vm.attach_current_thread()?;
-    let activity =
-        unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
-    let jpath = env.new_string(path)?;
-    let class = resolve_class(&mut env, &activity, PLAYER_CLASS_DOTTED)?;
-    let started = env.call_static_method(
-        class,
-        "startAudio",
-        "(Landroid/content/Context;Ljava/lang/String;)Z",
-        &[(&activity).into(), (&jpath).into()],
-    )?;
-    if env.exception_check()? {
-        env.exception_clear()?;
-        return Ok(false);
-    }
-    started.z()
+    crate::jni_call::with_env(app, |env, activity| {
+        let jpath = env.new_string(path)?;
+        let class = resolve_class(env, activity, PLAYER_CLASS_DOTTED)?;
+        let started = env.call_static_method(
+            class,
+            "startAudio",
+            "(Landroid/content/Context;Ljava/lang/String;)Z",
+            &[activity.into(), (&jpath).into()],
+        )?;
+        started.z()
+    })
 }
 
 fn invoke_player_noarg(
     app: &AndroidApp,
     method: &str,
 ) -> Result<(), jni::errors::Error> {
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
-    let mut env = vm.attach_current_thread()?;
-    let activity =
-        unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
-    let class = resolve_class(&mut env, &activity, PLAYER_CLASS_DOTTED)?;
-    env.call_static_method(
-        class,
-        method,
-        "(Landroid/content/Context;)V",
-        &[(&activity).into()],
-    )?;
-    if env.exception_check()? {
-        env.exception_clear()?;
-    }
-    Ok(())
+    crate::jni_call::with_env(app, |env, activity| {
+        let class = resolve_class(env, activity, PLAYER_CLASS_DOTTED)?;
+        env.call_static_method(
+            class,
+            method,
+            "(Landroid/content/Context;)V",
+            &[activity.into()],
+        )?;
+        Ok(())
+    })
 }

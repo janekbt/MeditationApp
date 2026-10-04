@@ -9,7 +9,6 @@
 
 use android_activity::AndroidApp;
 use jni::objects::{JClass, JObject, JString};
-use jni::JavaVM;
 
 const INSETS_CLASS_DOTTED: &str =
     "io.github.janekbt.Meditate.MeditateInsets";
@@ -64,24 +63,18 @@ fn resolve_class<'a>(
 fn invoke_get_insets(
     app: &AndroidApp,
 ) -> Result<String, jni::errors::Error> {
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
-    let mut env = vm.attach_current_thread()?;
-    let activity =
-        unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
-    let class = resolve_class(&mut env, &activity, INSETS_CLASS_DOTTED)?;
-    let result = env
-        .call_static_method(
-            class,
-            "getInsets",
-            "(Landroid/app/Activity;)Ljava/lang/String;",
-            &[(&activity).into()],
-        )?
-        .l()?;
-    if env.exception_check()? {
-        env.exception_clear()?;
-        return Ok(String::new());
-    }
-    let jstr = JString::from(result);
-    let s: String = env.get_string(&jstr)?.into();
-    Ok(s)
+    crate::jni_call::with_env(app, |env, activity| {
+        let class = resolve_class(env, activity, INSETS_CLASS_DOTTED)?;
+        let result = env
+            .call_static_method(
+                class,
+                "getInsets",
+                "(Landroid/app/Activity;)Ljava/lang/String;",
+                &[activity.into()],
+            )?
+            .l()?;
+        let jstr = JString::from(result);
+        let s: String = env.get_string(&jstr)?.into();
+        Ok(s)
+    })
 }

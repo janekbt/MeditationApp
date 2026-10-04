@@ -12,7 +12,6 @@
 
 use android_activity::AndroidApp;
 use jni::objects::{JClass, JObject, JValue};
-use jni::JavaVM;
 
 const SCREEN_CLASS_DOTTED: &str =
     "io.github.janekbt.Meditate.MeditateScreen";
@@ -59,21 +58,16 @@ fn invoke_set_keep_awake(
     app: &AndroidApp,
     on: bool,
 ) -> Result<(), jni::errors::Error> {
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
-    let mut env = vm.attach_current_thread()?;
-    let activity =
-        unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
-    let class = resolve_class(&mut env, &activity, SCREEN_CLASS_DOTTED)?;
-    // NativeActivity IS an android.app.Activity, so it doubles as
-    // both the receiver context and the Activity arg.
-    env.call_static_method(
-        class,
-        "setKeepAwake",
-        "(Landroid/app/Activity;Z)V",
-        &[(&activity).into(), JValue::Bool(u8::from(on))],
-    )?;
-    if env.exception_check()? {
-        env.exception_clear()?;
-    }
-    Ok(())
+    crate::jni_call::with_env(app, |env, activity| {
+        let class = resolve_class(env, activity, SCREEN_CLASS_DOTTED)?;
+        // NativeActivity IS an android.app.Activity, so it doubles as
+        // both the receiver context and the Activity arg.
+        env.call_static_method(
+            class,
+            "setKeepAwake",
+            "(Landroid/app/Activity;Z)V",
+            &[activity.into(), JValue::Bool(u8::from(on))],
+        )?;
+        Ok(())
+    })
 }

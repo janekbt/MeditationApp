@@ -66,7 +66,7 @@ meditate-core with both shells calling them.
 - [ ] **Interval bells are deleted on one tap.** `ui/main.slint:5962` →
   `lib.rs:8801-8826`. GTK asks "Delete Bell?" (`meditate-gtk/src/bells.rs:304`).
   Fix: confirm dialog or Undo snackbar.
-- [ ] **Java exceptions from failed JNI calls are never cleared.** In every
+- [x] **Java exceptions from failed JNI calls are never cleared.** In every
   bridge the `?` after `call_static_method` returns before the
   `exception_check`/`exception_clear` block (`src/service.rs:124-151`, same
   in audio, haptics, guided, screen, widget, keychain, insets, about). The UI
@@ -148,10 +148,10 @@ meditate-core with both shells calling them.
   `lib.rs:6273-6311`; bell-sound delete does (`lib.rs:7636-7643`).
 - [ ] **Cancelled export leaves `export-transient.csv` with all notes.**
   `lib.rs:168`, `MeditateFilePickerActivity.kt:99-102`.
-- [ ] **Service and guided JNI failures are invisible.** `src/service.rs:48-77`
+- [x] **Service and guided JNI failures are invisible.** `src/service.rs:48-77`
   uses `eprintln!` (stderr is discarded on Android); `src/guided.rs:281-289`
   uses `let _ =`. Fix: `meditate_core::log`.
-- [ ] **Every bridge call leaks a few JNI local refs** on the never-detached
+- [x] **Every bridge call leaks a few JNI local refs** on the never-detached
   UI thread (`resolve_class` copies, e.g. `guided.rs:150-170`). Fix:
   `with_local_frame`.
 - [ ] **Kotlin drop files are not written atomically**, so a 200 ms tick can

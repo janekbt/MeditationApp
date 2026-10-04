@@ -27,8 +27,6 @@
 use android_activity::AndroidApp;
 #[cfg(target_os = "android")]
 use jni::objects::{JClass, JObject};
-#[cfg(target_os = "android")]
-use jni::JavaVM;
 
 #[cfg(target_os = "android")]
 const WIDGET_CLASS_DOTTED: &str = "io.github.janekbt.Meditate.MeditateWidget";
@@ -159,20 +157,16 @@ fn resolve_class<'a>(
 
 #[cfg(target_os = "android")]
 fn invoke_refresh(app: &AndroidApp) -> Result<(), jni::errors::Error> {
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
-    let mut env = vm.attach_current_thread()?;
-    let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
-    let class = resolve_class(&mut env, &activity)?;
-    env.call_static_method(
-        class,
-        "refresh",
-        "(Landroid/content/Context;)V",
-        &[(&activity).into()],
-    )?;
-    if env.exception_check()? {
-        env.exception_clear()?;
-    }
-    Ok(())
+    crate::jni_call::with_env(app, |env, activity| {
+        let class = resolve_class(env, activity)?;
+        env.call_static_method(
+            class,
+            "refresh",
+            "(Landroid/content/Context;)V",
+            &[activity.into()],
+        )?;
+        Ok(())
+    })
 }
 
 #[cfg(test)]

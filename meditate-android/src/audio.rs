@@ -19,7 +19,6 @@
 
 use android_activity::AndroidApp;
 use jni::objects::{JClass, JObject};
-use jni::JavaVM;
 
 const AUDIO_CLASS_DOTTED: &str = "io.github.janekbt.Meditate.MeditateAudio";
 
@@ -132,24 +131,18 @@ fn invoke_play(
     path: &str,
     gain: f32,
 ) -> Result<i64, jni::errors::Error> {
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
-    let mut env = vm.attach_current_thread()?;
-    let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
+    crate::jni_call::with_env(app, |env, activity| {
+        let jpath = env.new_string(path)?;
+        let class = resolve_class(env, activity)?;
+        let ret = env.call_static_method(
+            class,
+            "play",
+            "(Landroid/content/Context;Ljava/lang/String;F)J",
+            &[activity.into(), (&jpath).into(), gain.into()],
+        )?;
 
-    let jpath = env.new_string(path)?;
-    let class = resolve_class(&mut env, &activity)?;
-    let ret = env.call_static_method(
-        class,
-        "play",
-        "(Landroid/content/Context;Ljava/lang/String;F)J",
-        &[(&activity).into(), (&jpath).into(), gain.into()],
-    )?;
-
-    if env.exception_check()? {
-        env.exception_clear()?;
-        return Ok(0);
-    }
-    ret.j()
+        ret.j()
+    })
 }
 
 fn invoke_play_bell(
@@ -158,81 +151,63 @@ fn invoke_play_bell(
     path: &str,
     gain: f32,
 ) -> Result<(), jni::errors::Error> {
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
-    let mut env = vm.attach_current_thread()?;
-    let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
-
-    let jpath = env.new_string(path)?;
-    let class = resolve_class(&mut env, &activity)?;
-    env.call_static_method(
-        class,
-        "playBell",
-        "(Landroid/content/Context;ILjava/lang/String;F)V",
-        &[(&activity).into(), slot.into(), (&jpath).into(), gain.into()],
-    )?;
-    if env.exception_check()? {
-        env.exception_clear()?;
-    }
-    Ok(())
+    crate::jni_call::with_env(app, |env, activity| {
+        let jpath = env.new_string(path)?;
+        let class = resolve_class(env, activity)?;
+        env.call_static_method(
+            class,
+            "playBell",
+            "(Landroid/content/Context;ILjava/lang/String;F)V",
+            &[activity.into(), slot.into(), (&jpath).into(), gain.into()],
+        )?;
+        Ok(())
+    })
 }
 
 fn invoke_set_volume(app: &AndroidApp, gain: f32) -> Result<(), jni::errors::Error> {
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
-    let mut env = vm.attach_current_thread()?;
-    let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
-    let class = resolve_class(&mut env, &activity)?;
-    env.call_static_method(
-        class,
-        "setVolume",
-        "(Landroid/content/Context;F)V",
-        &[(&activity).into(), gain.into()],
-    )?;
-    if env.exception_check()? {
-        env.exception_clear()?;
-    }
-    Ok(())
+    crate::jni_call::with_env(app, |env, activity| {
+        let class = resolve_class(env, activity)?;
+        env.call_static_method(
+            class,
+            "setVolume",
+            "(Landroid/content/Context;F)V",
+            &[activity.into(), gain.into()],
+        )?;
+        Ok(())
+    })
 }
 
 fn invoke_alarm_range_db(app: &AndroidApp) -> Result<Vec<f32>, jni::errors::Error> {
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
-    let mut env = vm.attach_current_thread()?;
-    let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
-    let class = resolve_class(&mut env, &activity)?;
-    let ret = env
-        .call_static_method(
-            class,
-            "alarmRangeDb",
-            "(Landroid/content/Context;)[F",
-            &[(&activity).into()],
-        )?
-        .l()?;
-    if env.exception_check()? {
-        env.exception_clear()?;
-        return Ok(Vec::new());
-    }
-    let array = jni::objects::JFloatArray::from(ret);
-    let len = usize::try_from(env.get_array_length(&array)?).unwrap_or(0);
-    let mut steps = vec![0.0_f32; len];
-    env.get_float_array_region(&array, 0, &mut steps)?;
-    Ok(steps)
+    crate::jni_call::with_env(app, |env, activity| {
+        let class = resolve_class(env, activity)?;
+        let ret = env
+            .call_static_method(
+                class,
+                "alarmRangeDb",
+                "(Landroid/content/Context;)[F",
+                &[activity.into()],
+            )?
+            .l()?;
+        let array = jni::objects::JFloatArray::from(ret);
+        let len = usize::try_from(env.get_array_length(&array)?).unwrap_or(0);
+        let mut steps = vec![0.0_f32; len];
+        env.get_float_array_region(&array, 0, &mut steps)?;
+        Ok(steps)
+    })
 }
 
 fn invoke_no_arg(
     app: &AndroidApp,
     method: &str,
 ) -> Result<(), jni::errors::Error> {
-    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
-    let mut env = vm.attach_current_thread()?;
-    let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
-    let class = resolve_class(&mut env, &activity)?;
-    env.call_static_method(
-        class,
-        method,
-        "(Landroid/content/Context;)V",
-        &[(&activity).into()],
-    )?;
-    if env.exception_check()? {
-        env.exception_clear()?;
-    }
-    Ok(())
+    crate::jni_call::with_env(app, |env, activity| {
+        let class = resolve_class(env, activity)?;
+        env.call_static_method(
+            class,
+            method,
+            "(Landroid/content/Context;)V",
+            &[activity.into()],
+        )?;
+        Ok(())
+    })
 }
