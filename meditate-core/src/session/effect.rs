@@ -79,6 +79,14 @@ pub enum Effect {
     /// firing on the original session timeline; the Add button's
     /// label counts up via subsequent `UpdateOvertimeLabel`.
     EnterOvertime,
+    /// Guided: the planned length is reached, so the track stops now,
+    /// ahead of the end bell. Emitted first in the Running→Overtime
+    /// transition (tick crossing or `enter_overtime` from the track's
+    /// own end). The timer can reach the probed length a moment before
+    /// the audio ends (length rounded down at import, player start
+    /// latency), which would otherwise leave the tail playing under
+    /// the end bell.
+    StopGuidedAudio,
     /// Overtime tick: how much past the target the session has
     /// gone. Shell renders the Add button as
     /// `<localized prefix> <MM:SS> ?`.

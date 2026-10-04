@@ -353,6 +353,11 @@ fn dispatch_effects(effects: &[meditate_core::session::Effect]) {
             audio::stop(app);
             haptics::cancel(app);
         }
+        // Guided reached its planned length: stop the track before
+        // the end bell in the same batch (mirrors GTK).
+        if matches!(effect, Effect::StopGuidedAudio) {
+            guided::stop(app);
+        }
         let Some(route) = effect.fire_route() else { continue; };
         if route.signal_mode.includes_sound() {
             let path = bell_sound_path(route.sound_uuid);

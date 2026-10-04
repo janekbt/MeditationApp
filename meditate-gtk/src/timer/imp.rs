@@ -2870,14 +2870,8 @@ impl TimerView {
     /// the transition via Session.enter_overtime); the 1 Hz tick
     /// itself keeps running and now dispatches tick_overtime.
     fn transition_running_to_overtime(&self) {
-
-        // Guided mode: drop the playbin BEFORE play_end_bell so the
-        // end bell isn't competing with a few last frames of audio
-        // (gst playbin holds a small buffer ahead of the wall clock,
-        // so the file may still be sounding when the countdown hits
-        // zero). Drop runs set_state(Null) + removes the bus watch.
-        *self.guided_playback.borrow_mut() = None;
-
+        // The guided track already stopped on core's StopGuidedAudio,
+        // dispatched ahead of the end bell.
         if let Some(app) = self.get_app() {
             // End bell fires via Session's FireEndBell effect (emitted
             // alongside EnterOvertime in tick_running, and from
@@ -4094,6 +4088,14 @@ impl TimerView {
         for effect in effects {
             if matches!(effect, CoreSessionEffect::StopActiveSignals) {
                 self.stop_active_signals();
+            }
+            // Guided: drop the playbin before the end bell in the
+            // same batch, so the bell isn't competing with the last
+            // frames of audio (gst playbin buffers ahead of the wall
+            // clock). Drop runs set_state(Null) + removes the bus
+            // watch.
+            if matches!(effect, CoreSessionEffect::StopGuidedAudio) {
+                *self.guided_playback.borrow_mut() = None;
             }
             if let Some(route) = effect.fire_route() {
                 self.dispatch_fire_route(&mut app, &route);

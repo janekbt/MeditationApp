@@ -689,4 +689,23 @@ mod tests {
             assert!(!code.contains(step), "shell still runs the loop step {step} itself");
         }
     }
+
+    /// The guided track stops when core says so (`StopGuidedAudio`,
+    /// ahead of the end bell in the same batch), not in the overtime
+    /// ceremony that runs after the bell already fired.
+    #[test]
+    fn guided_track_stops_on_cores_signal() {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/timer/imp.rs"),
+        )
+        .unwrap();
+        let dispatch = src.find("fn dispatch_session_effects(").expect("dispatcher");
+        let dispatch = &src[dispatch..dispatch + src[dispatch..].find("\n    }\n").unwrap()];
+        let arm = dispatch.find("CoreSessionEffect::StopGuidedAudio").expect("dispatcher handles it");
+        assert!(dispatch[arm..].contains("guided_playback.borrow_mut() = None"), "and drops the track");
+
+        let ceremony = src.find("fn transition_running_to_overtime(").unwrap();
+        let ceremony = &src[ceremony..ceremony + src[ceremony..].find("\n    }\n").unwrap()];
+        assert!(!ceremony.contains("guided_playback"), "the ceremony no longer stops it (too late)");
+    }
 }

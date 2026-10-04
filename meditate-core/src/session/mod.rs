@@ -414,11 +414,7 @@ impl Session {
             return Vec::new();
         }
         self.phase = SessionPhase::Overtime;
-        let mut effects = vec![Effect::EnterOvertime];
-        if let Some(eff) = end_bell_effect(&self.settings) {
-            effects.push(eff);
-        }
-        effects
+        overtime_transition_effects(&self.settings)
     }
 
     /// Drive the session forward by one tick. Returns the effects
@@ -502,11 +498,7 @@ impl Session {
                 // Bells skip this tick — gtk's historical behaviour is
                 // "transition first, bells fire on the next tick."
                 self.phase = SessionPhase::Overtime;
-                let mut effects = vec![Effect::EnterOvertime];
-                if let Some(eff) = end_bell_effect(&self.settings) {
-                    effects.push(eff);
-                }
-                return effects;
+                return overtime_transition_effects(&self.settings);
             }
         }
 
@@ -832,6 +824,21 @@ fn starting_bell_effect(settings: &SessionSettings) -> Option<Effect> {
 }
 
 /// Mirror of `starting_bell_effect` for the end bell.
+/// Effects of the Running→Overtime transition, shared by the tick
+/// crossing and `enter_overtime`: a guided track stops first, then
+/// the shell's overtime ceremony, then the end bell.
+fn overtime_transition_effects(settings: &SessionSettings) -> Vec<Effect> {
+    let mut effects = Vec::new();
+    if matches!(settings.shape, SessionShape::Guided { .. }) {
+        effects.push(Effect::StopGuidedAudio);
+    }
+    effects.push(Effect::EnterOvertime);
+    if let Some(eff) = end_bell_effect(settings) {
+        effects.push(eff);
+    }
+    effects
+}
+
 fn end_bell_effect(settings: &SessionSettings) -> Option<Effect> {
     let cue = settings.end_bell.as_ref()?;
     let signal_mode = crate::bells::effective_signal_mode(
@@ -2280,5 +2287,96 @@ mod tests {
         assert_eq!(by_phase["HoldIn"], 40);
         assert_eq!(by_phase["Out"], 60);
         assert_eq!(by_phase["HoldOut"], 80);
+    }
+
+    // ── Guided audio stops when the session enters Overtime ─────────
+
+    fn guided_settings(duration_secs: u32, count_up_display: bool) -> SessionSettings {
+        SessionSettings {
+            shape: SessionShape::Guided { duration_secs, count_up_display },
+            end_bell: Some(cue_at(70.0)),
+            ..timer_countdown_settings(duration_secs)
+        }
+    }
+
+    fn position(effects: &[Effect], want: impl Fn(&Effect) -> bool) -> usize {
+        effects.iter().position(want).expect("effect present")
+    }
+
+    #[test]
+    fn guided_reaching_its_length_stops_the_track_before_the_end_bell() {
+        let t0 = Duration::from_secs(100);
+        let (mut s, _) = Session::start(guided_settings(60, false), t0);
+        let effects = s.tick(t0 + Duration::from_secs(60));
+        let stop = position(&effects, |e| matches!(e, Effect::StopGuidedAudio));
+        let bell = position(&effects, |e| matches!(e, Effect::FireEndBell { .. }));
+        assert!(stop < bell, "the track goes quiet before the end bell: {effects:?}");
+        assert!(effects.contains(&Effect::EnterOvertime));
+    }
+
+    #[test]
+    fn guided_track_ending_first_also_stops_it_before_the_end_bell() {
+        // The EOS path: the shell forces Overtime when the track ends.
+        let t0 = Duration::from_secs(100);
+        let (mut s, _) = Session::start(guided_settings(60, false), t0);
+        let _ = s.tick(t0 + Duration::from_secs(30));
+        let effects = s.enter_overtime();
+        assert_eq!(effects.first(), Some(&Effect::StopGuidedAudio), "{effects:?}");
+        assert!(effects.iter().any(|e| matches!(e, Effect::FireEndBell { .. })));
+    }
+
+    #[test]
+    fn guided_counting_up_still_stops_the_track_at_its_length() {
+        let t0 = Duration::from_secs(100);
+        let (mut s, _) = Session::start(guided_settings(60, true), t0);
+        let effects = s.tick(t0 + Duration::from_secs(60));
+        assert_eq!(effects.first(), Some(&Effect::StopGuidedAudio), "{effects:?}");
+    }
+
+    #[test]
+    fn guided_stops_the_track_only_once() {
+        let t0 = Duration::from_secs(100);
+        let (mut s, _) = Session::start(guided_settings(60, false), t0);
+        let _ = s.tick(t0 + Duration::from_secs(60));
+        let later = s.tick(t0 + Duration::from_secs(75));
+        assert!(!later.contains(&Effect::StopGuidedAudio));
+        assert!(s.enter_overtime().is_empty(), "already in Overtime");
+    }
+
+    #[test]
+    fn guided_running_ticks_leave_the_track_alone() {
+        let t0 = Duration::from_secs(100);
+        let (mut s, _) = Session::start(guided_settings(60, false), t0);
+        for secs in [1, 30, 59] {
+            assert!(!s.tick(t0 + Duration::from_secs(secs)).contains(&Effect::StopGuidedAudio));
+        }
+    }
+
+    #[test]
+    fn a_timer_entering_overtime_has_no_track_to_stop() {
+        let t0 = Duration::from_secs(100);
+        let mut settings = timer_countdown_settings(60);
+        settings.end_bell = Some(cue_at(70.0));
+        let (mut s, _) = Session::start(settings, t0);
+        let effects = s.tick(t0 + Duration::from_secs(60));
+        assert!(effects.contains(&Effect::EnterOvertime));
+        assert!(!effects.contains(&Effect::StopGuidedAudio));
+    }
+
+    #[test]
+    fn a_box_breath_end_has_no_track_to_stop() {
+        let t0 = Duration::from_secs(100);
+        let (mut s, _) = Session::start(box_breath_settings(Some(16)), t0);
+        let mut all = Vec::new();
+        for secs in 1..=16 {
+            all.extend(s.tick(t0 + Duration::from_secs(secs)));
+        }
+        assert!(all.iter().any(|e| matches!(e, Effect::EndBoxBreath { .. })));
+        assert!(!all.contains(&Effect::StopGuidedAudio));
+    }
+
+    #[test]
+    fn stopping_the_track_is_not_a_bell() {
+        assert!(Effect::StopGuidedAudio.fire_route().is_none());
     }
 }

@@ -73,7 +73,7 @@ not conclusive and a device check is needed.
 - [ ] **Only one bell plays at a time.** Each bell cuts the previous one;
   core's `FireChannel` is ignored. Android `lib.rs:316-320`,
   `MeditateAudio.kt`; GTK `timer/imp.rs:4109-4120`, `sound.rs:339-353`.
-- [ ] **Guided track keeps playing into Overtime** under the end bell.
+- [x] **Guided track keeps playing into Overtime** under the end bell.
   Android `lib.rs:245-283`; GTK `timer/imp.rs:2869-2876`.
 - [x] **Save and Discard don't stop a ringing bell or vibration.** Android
   `lib.rs:5341-5431, 8809-8822`; GTK `timer/imp.rs:2461, 2596`.

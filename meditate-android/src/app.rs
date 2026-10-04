@@ -972,6 +972,21 @@ mod tests {
         }
     }
 
+    /// The guided track stops on core's `StopGuidedAudio`, which
+    /// comes before the end bell when the session enters Overtime.
+    #[test]
+    fn guided_track_stops_on_cores_signal() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
+        let lib = std::fs::read_to_string(path).unwrap();
+        let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
+        let dispatch = code.find("fn dispatch_effects(").expect("dispatcher");
+        let dispatch = &code[dispatch..dispatch + code[dispatch..].find("\n}\n").unwrap()];
+        let arm = dispatch.find("Effect::StopGuidedAudio").expect("dispatcher handles it");
+        let fire = dispatch.find("fire_route()").unwrap();
+        assert!(arm < fire, "handled before the loop moves on to bells");
+        assert!(dispatch[arm..fire].contains("guided::stop(app)"), "and stops the track");
+    }
+
     #[test]
     fn the_shell_holds_an_ended_session_until_save_or_discard() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
