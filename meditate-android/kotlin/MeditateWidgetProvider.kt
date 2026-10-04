@@ -85,7 +85,7 @@ class MeditateWidgetProvider : AppWidgetProvider() {
             // star a preset); mkdirs is defensive.
             val dir = File(context.filesDir, "meditate")
             dir.mkdirs()
-            File(dir, "widget_launch").writeText(uuid)
+            MeditateDropFile.write(File(dir, "widget_launch"), uuid)
         } catch (e: Exception) {
             Log.w(TAG, "writeLaunchFile failed: $e")
         }

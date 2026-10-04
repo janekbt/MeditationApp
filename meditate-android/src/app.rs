@@ -1707,6 +1707,21 @@ mod tests {
     }
 
     #[test]
+    fn drop_files_the_tick_consumes_are_written_whole() {
+        // The tick reads and deletes these; a file created but not yet
+        // written read as empty and the pick or widget tap was lost.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let read = |f: &str| std::fs::read_to_string(root.join("kotlin").join(f)).unwrap();
+        let helper = read("MeditateDropFile.kt");
+        assert!(helper.contains("tmp.renameTo(file)"));
+        let picker = read("MeditateFilePickerActivity.kt");
+        assert_eq!(picker.matches("MeditateDropFile.write(").count(), 3, "pick, export result, csv pick");
+        assert!(!picker.contains(".writeText("));
+        assert!(read("MeditateWidgetProvider.kt").contains("MeditateDropFile.write(File(dir, \"widget_launch\"), uuid)"));
+        assert!(read("MeditateGuidedImport.kt").contains("MeditateDropFile.write(File(dir, \"guided_import_result\"), result)"));
+    }
+
+    #[test]
     fn a_cancelled_export_leaves_no_copy_of_the_log() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let kt = std::fs::read_to_string(root.join("kotlin/MeditateFilePickerActivity.kt")).unwrap();

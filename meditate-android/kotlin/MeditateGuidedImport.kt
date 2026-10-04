@@ -91,8 +91,7 @@ object MeditateGuidedImport {
             // outcome (cross-run contamination).
             if (!isCancelled()) {
                 runCatching {
-                    File(dir, "guided_import_result")
-                        .writeText(result)
+                    MeditateDropFile.write(File(dir, "guided_import_result"), result)
                 }
             }
         }.start()

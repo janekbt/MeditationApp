@@ -157,7 +157,7 @@ meditate-core with both shells calling them.
 - [x] **Every bridge call leaks a few JNI local refs** on the never-detached
   UI thread (`resolve_class` copies, e.g. `guided.rs:150-170`). Fix:
   `with_local_frame`.
-- [ ] **Kotlin drop files are not written atomically**, so a 200 ms tick can
+- [x] **Kotlin drop files are not written atomically**, so a 200 ms tick can
   read an empty file and lose a pick or widget tap (very rare).
   `MeditateFilePickerActivity.kt`, `MeditateWidgetProvider.kt`,
   `MeditateGuided.kt`. Fix: write `.tmp` then rename, as `widget.rs` does.

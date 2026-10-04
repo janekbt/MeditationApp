@@ -142,8 +142,10 @@ class MeditateFilePickerActivity : Activity() {
         // the file and found no audio stream (parsed by
         // meditate_core::sound::parse_pick).
         val marker = if (noAudio) MeditateGuidedImport.NO_AUDIO_TRACK else ""
-        File(File(filesDir, "meditate"), dropFile)
-            .writeText("${dest.absolutePath}\n$name\n$durSecs\n$marker")
+        MeditateDropFile.write(
+            File(File(filesDir, "meditate"), dropFile),
+            "${dest.absolutePath}\n$name\n$durSecs\n$marker",
+        )
     }
 
     // Export: copy the Rust-pre-written CSV (src_path extra) to
@@ -163,8 +165,7 @@ class MeditateFilePickerActivity : Activity() {
             Log.w(TAG, "export copy failed: $e")
             "err:" + (e.message ?: e.javaClass.simpleName)
         }
-        File(File(filesDir, "meditate"), "export_result")
-            .writeText(result)
+        MeditateDropFile.write(File(File(filesDir, "meditate"), "export_result"), result)
     }
 
     // Import: copy the chosen document into app storage and drop
@@ -184,7 +185,7 @@ class MeditateFilePickerActivity : Activity() {
             Log.w(TAG, "import copy failed: $e")
             "err:" + (e.message ?: e.javaClass.simpleName)
         }
-        File(dir, "csv_pick").writeText("$first\n$kind")
+        MeditateDropFile.write(File(dir, "csv_pick"), "$first\n$kind")
     }
 
     private fun queryDisplayName(uri: Uri): String? {
