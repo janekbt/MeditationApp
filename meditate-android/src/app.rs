@@ -1779,6 +1779,20 @@ mod tests {
     }
 
     #[test]
+    fn preset_save_failures_are_not_reported_as_success() {
+        // A failed override still said "Preset overridden" with Undo;
+        // a failed create used up the settings snapshot, so Create
+        // did nothing on retry.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let at = lib.find("update_preset_config FAILED").unwrap();
+        let next = &lib[at..at + 400];
+        assert!(next.contains("return;"));
+        let at = lib.find("insert_preset FAILED").unwrap();
+        assert!(lib[at..at + 200].contains("*pending_save_snapshot.borrow_mut() = Some((json, mode));"));
+    }
+
+    #[test]
     fn delete_all_says_how_it_went() {
         // A failed Delete All closed its dialog with the Log looking
         // unchanged and no word why; GTK toasts both outcomes.

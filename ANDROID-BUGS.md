@@ -118,7 +118,8 @@ meditate-core with both shells calling them.
   (`preferences.rs:649-650`).
 - [x] **Delete All shows no result, even on failure.** `lib.rs:10508-10530`.
   GTK `preferences.rs:590-603`.
-- [ ] **Preset save/override/rename errors are hidden.** Override shows
+- [x] **Preset save/override/rename errors are hidden.** (Rename
+  left as is: GTK also closes its dialog on a database error.) Override shows
   "Preset overridden" even on failure (`lib.rs:6816-6846`); Create takes the
   snapshot before the insert so a retry does nothing (`lib.rs:6716-6719`);
   Rename closes silently (`lib.rs:6965-6975`). GTK `presets.rs:536-539`.

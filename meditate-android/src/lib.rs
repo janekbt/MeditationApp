@@ -6799,14 +6799,15 @@ fn build_ui() -> MainWindow {
                         refresh_widget(&ui);
                     }
                     Err(e) => {
-                        // GTK surfaces a duplicate toast; the
-                        // generic-message snackbar isn't wired for
-                        // a no-Undo info message yet, so log (the
-                        // create dialog stays open for a retry).
+                        // The name was checked above, so this is a
+                        // database error. The dialog stays open for a
+                        // retry, which needs the settings snapshot
+                        // back: it was taken for this insert.
                         meditate_core::log(
                             "preset.save",
                             &format!("insert_preset FAILED: {e:?}"),
                         );
+                        *pending_save_snapshot.borrow_mut() = Some((json, mode));
                     }
                 }
             }
@@ -6880,6 +6881,10 @@ fn build_ui() -> MainWindow {
                             "preset.override",
                             &format!("update_preset_config FAILED: {e:?}"),
                         );
+                        // Nothing changed: no "Preset overridden",
+                        // and no Undo that would "restore" it.
+                        ui.set_override_preset_dialog_open(false);
+                        return;
                     }
                 }
                 ui.set_override_preset_dialog_open(false);
