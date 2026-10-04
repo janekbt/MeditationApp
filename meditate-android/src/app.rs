@@ -1482,6 +1482,67 @@ mod tests {
     }
 
     #[test]
+    fn interval_editor_numbers_are_typeable_and_jitter_is_explained() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        let component = |name: &str| {
+            let at = slint.find(&format!("component {name} inherits")).unwrap_or_else(|| panic!("{name}"));
+            let end = at + slint[at..].find("\n}\n").unwrap();
+            &slint[at..end]
+        };
+
+        // The readout between − and + is a numeric TextInput, like the
+        // Duration dialog's spinboxes: tap selects, Enter / blur commits
+        // clamped into min..max, and outside changes re-sync the text.
+        let stepper = component("StepperRow");
+        assert!(stepper.contains("in property <string> subtitle;"), "subtitle line");
+        assert!(stepper.contains("TextInput {"), "typeable readout");
+        assert!(stepper.contains("input-type: InputType.number;"), "numeric IME");
+        assert!(stepper.contains("public function commit()"), "flushable");
+        assert!(stepper.contains("self.select-all();"), "tap replaces the number");
+        assert!(stepper.contains("Math.max(root.min-value,"), "clamped to min");
+        assert!(stepper.contains("Math.min(root.max-value,"), "clamped to max");
+        assert!(stepper.contains("changed value =>"), "re-syncs on outside change");
+        // The buttons keep their natural size so the layout can measure
+        // them: fixed 36 px boxes let them spill over the number and
+        // push the row past the card. The row grows with a wrapped subtitle.
+        assert!(!stepper.contains("width: 36px;"), "no fixed button boxes");
+        assert!(stepper.contains("height: max(") && stepper.contains("row-layout.preferred-height)"));
+        assert!(stepper.contains("alignment: end;"), "stepper flush right");
+        assert_eq!(stepper.matches("root.commit-text();").count(), 4, "commit(), −, + and blur commit typed text");
+
+        let reveal = component("RevealStepper");
+        assert!(reveal.contains("in property <string> subtitle;"));
+        assert!(reveal.contains("subtitle: root.subtitle;"));
+        assert!(reveal.contains("public function commit()"));
+
+        // Jitter says what it does, under the title, like GTK's SpinRow.
+        let jitter = slint.find("RevealStepper {\n").unwrap();
+        let jitter = &slint[jitter..jitter + 400];
+        assert!(jitter.contains("label: @tr(\"Jitter\");"));
+        assert!(jitter.contains("subtitle: @tr(\"Random shift of each ring, in percent\");"));
+
+        // Save flushes typed-but-uncommitted numbers first — tapping a
+        // Material button does not blur the input.
+        let save = slint.find("root.interval-editor-save(); }").map(|_| ()).is_none();
+        assert!(save, "Save must not call the callback inline without flushing");
+        let save = slint.find("root.interval-editor-save();").unwrap();
+        let before = &slint[save - 200..save];
+        assert!(before.contains("minutes-stepper.commit();"));
+        assert!(before.contains("jitter-stepper.commit();"));
+
+        for lang in ["de", "es", "fr", "it", "nl", "pl", "pt_BR", "ru", "zh_CN"] {
+            let po = std::fs::read_to_string(root.join(format!("lang/{lang}/LC_MESSAGES/meditate-android.po"))).unwrap();
+            for id in ["Jitter", "Random shift of each ring, in percent"] {
+                let at = po.find(&format!("msgid \"{id}\"\nmsgstr \"")).unwrap_or_else(|| panic!("{lang}: {id}"));
+                let rest = &po[at..];
+                let line = rest.lines().nth(1).unwrap();
+                assert!(line != "msgstr \"\"", "{lang}: {id} translated");
+            }
+        }
+    }
+
+    #[test]
     fn the_shell_holds_an_ended_session_until_save_or_discard() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
         let lib = std::fs::read_to_string(path).unwrap();

@@ -403,8 +403,11 @@ msgstr "Campana a intervalli"
 msgid "Interval Bells"
 msgstr "Campane a intervalli"
 
-msgid "Jitter %"
-msgstr "Variazione %"
+msgid "Jitter"
+msgstr "Variazione"
+
+msgid "Random shift of each ring, in percent"
+msgstr "Spostamento casuale di ogni rintocco, in percentuale"
 
 msgid "Keep Screen Awake"
 msgstr "Mantieni lo schermo acceso"

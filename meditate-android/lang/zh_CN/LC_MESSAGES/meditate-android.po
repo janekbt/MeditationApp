@@ -403,8 +403,11 @@ msgstr "间隔铃"
 msgid "Interval Bells"
 msgstr "间隔铃"
 
-msgid "Jitter %"
-msgstr "随机幅度 %"
+msgid "Jitter"
+msgstr "随机幅度"
+
+msgid "Random shift of each ring, in percent"
+msgstr "每次响铃的随机偏移（百分比）"
 
 msgid "Keep Screen Awake"
 msgstr "保持屏幕常亮"

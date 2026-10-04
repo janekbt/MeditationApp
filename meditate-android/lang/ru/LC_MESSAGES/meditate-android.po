@@ -403,8 +403,11 @@ msgstr "Интервальный колокол"
 msgid "Interval Bells"
 msgstr "Интервальные колокола"
 
-msgid "Jitter %"
-msgstr "Разброс %"
+msgid "Jitter"
+msgstr "Разброс"
+
+msgid "Random shift of each ring, in percent"
+msgstr "Случайный сдвиг каждого удара, в процентах"
 
 msgid "Keep Screen Awake"
 msgstr "Не гасить экран"

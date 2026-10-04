@@ -403,8 +403,11 @@ msgstr "Sino de intervalo"
 msgid "Interval Bells"
 msgstr "Sinos de intervalo"
 
-msgid "Jitter %"
-msgstr "Variação %"
+msgid "Jitter"
+msgstr "Variação"
+
+msgid "Random shift of each ring, in percent"
+msgstr "Deslocamento aleatório de cada toque, em porcentagem"
 
 msgid "Keep Screen Awake"
 msgstr "Manter a tela ligada"

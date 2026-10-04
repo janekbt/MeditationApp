@@ -403,8 +403,11 @@ msgstr "Dzwonek interwałowy"
 msgid "Interval Bells"
 msgstr "Dzwonki interwałowe"
 
-msgid "Jitter %"
-msgstr "Losowość %"
+msgid "Jitter"
+msgstr "Losowość"
+
+msgid "Random shift of each ring, in percent"
+msgstr "Losowe przesunięcie każdego dzwonienia, w procentach"
 
 msgid "Keep Screen Awake"
 msgstr "Nie wygaszaj ekranu"

@@ -1098,99 +1098,154 @@ component RevealChooser inherits Rectangle {
     }
 }
 
-// GTK Adw.SpinRow analogue — title on the left, an inline
-// "−  value  +" stepper on the right, in a 56 px boxed-list row
-// (transparent base, surface-container-high hover for the touch
-// affordance). Used by the interval-bell editor's Minutes /
-// Jitter rows.
+// GTK Adw.SpinRow analogue: title (+ optional subtitle) on the
+// left, an inline "−  value  +" stepper on the right, in a boxed-list
+// row (at least 56 px, 72 px with a subtitle, growing as it
+// wraps). Used by the interval-bell editor's Minutes / Jitter rows.
+//
+// The value between − and + is a live TextInput, like the Duration
+// dialog's VerticalSpinBox: tapping it summons the numeric IME and
+// selects the number so typing replaces it. Typed text commits
+// (parse → clamp into min/max) on Enter or focus loss; − / + commit
+// pending text first. `commit()` is public so the editor's Save can
+// flush it — tapping a Material button does not blur the input.
 component StepperRow inherits Rectangle {
     in property <string> label;
+    in property <string> subtitle;
     in-out property <int> value;
     in property <int> min-value;
     in property <int> max-value;
 
-    height: 56px;
+    public function commit() {
+        root.commit-text();
+    }
+    function sync-text() {
+        input.text = "" + root.value;
+    }
+    function commit-text() {
+        if (input.text.is-float()) {
+            root.value = Math.max(root.min-value,
+                Math.min(root.max-value, Math.round(input.text.to-float())));
+        }
+        root.sync-text();
+    }
+    // The initial `text:` binding severs on the first user edit, so
+    // a value set from outside (the editor opening on another bell)
+    // must write the text back explicitly.
+    changed value => { root.sync-text(); }
+
+    height: max(root.subtitle == "" ? 56px : 72px, row-layout.preferred-height);
     background: transparent;
 
-    HorizontalLayout {
+    // The stepper keeps its natural width (the Material buttons are
+    // wider than a fixed box would allow) and sits flush right; the
+    // title column takes what is left and wraps.
+    row-layout := HorizontalLayout {
         padding-left: 16px;
         padding-right: 16px;
+        padding-top: 8px;
+        padding-bottom: 8px;
         spacing: 12px;
         alignment: stretch;
 
-        Text {
-            text: root.label;
-            font-size: 16px;
-            color: MaterialPalette.on-surface;
-            vertical-alignment: center;
-            horizontal-stretch: 1;
-        }
-        // VerticalLayout{alignment:center} so the 36 px stepper
-        // sits centred in the 56 px row instead of pinning to
-        // the top.
         VerticalLayout {
             alignment: center;
+            spacing: 2px;
+            horizontal-stretch: 1;
+
+            Text {
+                text: root.label;
+                font-size: 16px;
+                color: MaterialPalette.on-surface;
+                wrap: word-wrap;
+            }
+            if root.subtitle != "": Text {
+                text: root.subtitle;
+                font-size: 13px;
+                color: MaterialPalette.on-surface-variant;
+                wrap: word-wrap;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 0;
             HorizontalLayout {
                 spacing: 8px;
-                alignment: center;
+                alignment: end;
 
-                Rectangle {
-                    width: 36px;
-                    height: 36px;
-                    TonalButton {
-                        text: "−";
+                TonalButton {
+                    text: "−";
                     enabled: root.value > root.min-value;
                     clicked => {
+                        root.commit-text();
                         if (root.value > root.min-value) {
                             root.value -= 1;
                         }
                     }
                 }
-            }
-            Text {
-                text: root.value;
-                font-size: 18px;
-                width: 40px;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-                color: MaterialPalette.on-surface;
-            }
-            Rectangle {
-                width: 36px;
-                height: 36px;
+                Rectangle {
+                    width: 48px;
+                    border-radius: 8px;
+                    background: input.has-focus
+                        ? MaterialPalette.surface-container-highest
+                        : transparent;
+
+                    input := TextInput {
+                        text: root.value;
+                        input-type: InputType.number;
+                        font-size: 18px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        color: MaterialPalette.on-surface;
+                        accepted => { self.clear-focus(); }
+                        changed has-focus => {
+                            if (self.has-focus) {
+                                self.select-all();
+                            } else {
+                                root.commit-text();
+                            }
+                        }
+                    }
+                }
                 TonalButton {
                     text: "+";
                     enabled: root.value < root.max-value;
                     clicked => {
+                        root.commit-text();
                         if (root.value < root.max-value) {
                             root.value += 1;
                         }
                     }
                 }
             }
-            }
         }
     }
 }
 
 // StepperRow with the same boolean reveal+divider scaffold as
-// RevealChooser (single animated scalar, fixed 57 px clip, inner
-// column pinned at y=0). The interval-bell editor's Jitter row
-// only applies to the Interval kind; GTK toggles its `visible`,
-// but inside a BoxedList an `if`-gated child doesn't reactively
+// RevealChooser (single animated scalar, fixed clip, inner column
+// pinned at y=0). The interval-bell editor's Jitter row only
+// applies to the Interval kind; GTK toggles its `visible`, but
+// inside a BoxedList an `if`-gated child doesn't reactively
 // re-render, so it collapses via this reveal instead.
 component RevealStepper inherits Rectangle {
     in property <bool> shown;
     in property <string> label;
+    in property <string> subtitle;
     in-out property <int> value;
     in property <int> min-value;
     in property <int> max-value;
+
+    public function commit() {
+        stepper.commit();
+    }
 
     property <float> reveal: root.shown ? 1.0 : 0.0;
     animate reveal {
         duration: 250ms;
         easing: ease-in-out;
     }
+    property <length> full-height: 1px + stepper.height;
 
     background: transparent;
 
@@ -1199,19 +1254,20 @@ component RevealStepper inherits Rectangle {
 
         Rectangle {
             clip: true;
-            height: root.reveal * 57px;
+            height: root.reveal * root.full-height;
 
             VerticalLayout {
                 y: 0;
-                height: 57px;
+                height: root.full-height;
                 spacing: 0;
 
                 Rectangle {
                     height: 1px;
                     background: MaterialPalette.outline-variant;
                 }
-                StepperRow {
+                stepper := StepperRow {
                     label: root.label;
+                    subtitle: root.subtitle;
                     value <=> root.value;
                     min-value: root.min-value;
                     max-value: root.max-value;
@@ -5855,7 +5911,13 @@ export component MainWindow inherits Window {
                     alignment: center;
                     FilledButton {
                         text: @tr("Save");
-                        clicked => { root.interval-editor-save(); }
+                        clicked => {
+                            // Flush typed numbers first — tapping this
+                            // button does not blur the stepper inputs.
+                            minutes-stepper.commit();
+                            jitter-stepper.commit();
+                            root.interval-editor-save();
+                        }
                     }
                 }
             }
@@ -5881,7 +5943,7 @@ export component MainWindow inherits Window {
                     height: 1px;
                     background: MaterialPalette.outline-variant;
                 }
-                StepperRow {
+                minutes-stepper := StepperRow {
                     label: @tr("Minutes");
                     value <=> root.ie-minutes;
                     min-value: root.ie-minutes-min;
@@ -5889,9 +5951,10 @@ export component MainWindow inherits Window {
                 }
                 // Jitter applies only to the "Every N min" kind
                 // (index 0), mirroring GTK gating its visibility.
-                RevealStepper {
+                jitter-stepper := RevealStepper {
                     shown: root.ie-kind == 0;
-                    label: @tr("Jitter %");
+                    label: @tr("Jitter");
+                    subtitle: @tr("Random shift of each ring, in percent");
                     value <=> root.ie-jitter;
                     min-value: root.ie-jitter-min;
                     max-value: root.ie-jitter-max;

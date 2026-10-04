@@ -403,8 +403,11 @@ msgstr "Cloche d'intervalle"
 msgid "Interval Bells"
 msgstr "Cloches d'intervalle"
 
-msgid "Jitter %"
-msgstr "Variation %"
+msgid "Jitter"
+msgstr "Variation"
+
+msgid "Random shift of each ring, in percent"
+msgstr "Décalage aléatoire de chaque sonnerie, en pourcentage"
 
 msgid "Keep Screen Awake"
 msgstr "Garder l'écran allumé"

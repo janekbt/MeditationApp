@@ -295,8 +295,11 @@ msgstr "Intervallglocke"
 msgid "Interval Bells"
 msgstr "Intervallglocken"
 
-msgid "Jitter %"
-msgstr "Streuung %"
+msgid "Jitter"
+msgstr "Streuung"
+
+msgid "Random shift of each ring, in percent"
+msgstr "Zufällige Verschiebung jedes Läutens, in Prozent"
 
 msgid "Keep Screen Awake"
 msgstr "Bildschirm wachhalten"

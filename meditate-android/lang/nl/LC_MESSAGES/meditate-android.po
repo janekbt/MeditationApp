@@ -403,8 +403,11 @@ msgstr "Intervalbel"
 msgid "Interval Bells"
 msgstr "Intervalbellen"
 
-msgid "Jitter %"
-msgstr "Variatie %"
+msgid "Jitter"
+msgstr "Variatie"
+
+msgid "Random shift of each ring, in percent"
+msgstr "Willekeurige verschuiving van elk signaal, in procent"
 
 msgid "Keep Screen Awake"
 msgstr "Scherm aan houden"
