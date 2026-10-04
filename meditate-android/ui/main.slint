@@ -368,7 +368,7 @@ export struct ContribCol {
 // (rounded surface-container-highest with an active-indicator bar
 // under the input) while letting the user type multiple lines.
 component NoteField inherits Rectangle {
-    in property <string> label: "Note";
+    in property <string> label: @tr("Note");
     in-out property <string> text <=> input.text;
 
     // Starts at a single-line height; the inner TextInput's
@@ -1755,7 +1755,7 @@ export component MainWindow inherits Window {
 
     in property <string> remaining-text: "00:10";
     in property <string> duration-text: "00:10";
-    in property <string> action-label: "Start Session";
+    in property <string> action-label: @tr("Start Session");
     in property <bool> running-page: false;
     in property <bool> stop-visible: false;
     // Overtime (B-6c): when the countdown crosses zero the
@@ -1766,7 +1766,7 @@ export component MainWindow inherits Window {
     // the core `UpdateOvertimeLabel` effect. Mirrors GTK's
     // `transition_running_to_overtime`.
     in property <bool> overtime-active: false;
-    in property <string> overtime-add-label: "Add 00:00 ?";
+    in property <string> overtime-add-label: Tr.add-overtime("00:00");
     // Streak chip slot above the hero — matches `streak_label` in
     // `meditate-gtk/data/ui/timer_view.blp` (line 32). Empty
     // placeholder for now; phase 3 wires the real value from the
@@ -1823,7 +1823,7 @@ export component MainWindow inherits Window {
     // Dialog heading — the same dialog + worker machinery serves
     // both the guided import and the bell-sound import (BI); Rust
     // sets the heading per flow.
-    in property <string> guided-import-title: "Import Guided File";
+    in property <string> guided-import-title: @tr("Import Guided File");
     // Bell chooser's Import sound… row (BI).
     callback bell-import-tap();
     // Transcode progress 0.0–1.0, Rust-driven from the Kotlin
@@ -2355,7 +2355,7 @@ export component MainWindow inherits Window {
     in property <bool> interval-bells-page: false;
     // "N enabled" / "None enabled" — mirrors GTK's
     // `intervals_count_subtitle` on the Manage Bells row.
-    in property <string> interval-bells-summary: "None enabled";
+    in property <string> interval-bells-summary: @tr("None enabled");
     callback interval-bells-toggled(bool);
     callback manage-bells-tap();
     callback interval-bells-back();
@@ -2407,7 +2407,7 @@ export component MainWindow inherits Window {
     // working fields Rust seeds on open and reads on Save.
     in property <bool> vibration-editor-page: false;
     // "New Pattern" / "Edit Pattern" — set by Rust on open.
-    in property <string> ve-title: "New Pattern";
+    in property <string> ve-title: @tr("New Pattern");
     in-out property <string> ve-name: "";
     // Save gated on a non-empty, non-colliding name (Rust
     // re-validates via is_vibration_pattern_name_taken_from_db).
@@ -2562,7 +2562,7 @@ export component MainWindow inherits Window {
     // "Add Session" when opened via the Log Add button (create
     // mode). Mirrors GTK's `is_edit ? "Edit Session" : "Add
     // Session"` at `meditate-gtk/src/log/imp.rs:1012`.
-    in property <string> edit-session-title: "Edit Session";
+    in property <string> edit-session-title: @tr("Edit Session");
     // Log header "Add Session" button (create mode). Rust
     // clears `editing_session_id`, seeds the overlay with
     // defaults (empty note, 0h0m, start = now, label off), and
@@ -2753,7 +2753,7 @@ export component MainWindow inherits Window {
     // DAY; that mis-labelled the 3-Months (weekly) and Year
     // (monthly) views — a bug shared with the GTK shell,
     // fixed in both.
-    in property <string> stat-chart-unit: "MINUTES / DAY";
+    in property <string> stat-chart-unit: Tr.minutes-per-day();
     in-out property <int> stat-chart-period: 0;
     callback chart-period-changed(int);
 

@@ -1710,6 +1710,23 @@ mod tests {
     }
 
     #[test]
+    fn string_defaults_are_translated() {
+        // Defaults show until Rust sets the property; they were English.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        for line in slint.lines().filter(|l| l.contains("property <string>")) {
+            let Some(value) = line.split(':').nth(1) else { continue };
+            let value = value.trim();
+            assert!(
+                !(value.starts_with('"') && value[1..].starts_with(|c: char| c.is_ascii_alphabetic())),
+                "English default: {line}",
+            );
+        }
+        let xml = std::fs::read_to_string(root.join("android/app/src/main/res/values/strings.xml")).unwrap();
+        assert!(xml.contains("<string name=\"app_name\" translatable=\"false\">"));
+    }
+
+    #[test]
     fn user_visible_text_has_no_long_dash() {
         // House style: no long dash in anything the user reads.
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));

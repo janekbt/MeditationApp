@@ -165,7 +165,7 @@ meditate-core with both shells calling them.
   76, 91, 149, 7766, 7846, 8458`, plus `lib.rs:10632`) and in most .po
   translations (de has none). Tests in `app.rs:1168-1198` assert three of
   them.
-- [ ] **Small i18n leftovers.** English property defaults that flash before
+- [x] **Small i18n leftovers.** (The "−" glyph is left for the phone check.) English property defaults that flash before
   Rust sets them (`main.slint:355, 1683, 1694, 1748, 2276, 2323, 2478,
   2664`); `app_name` should be `translatable="false"`; check "−" (U+2212) on
   the steppers renders on the FP5 (`main.slint:476, 1235, 1631`).
