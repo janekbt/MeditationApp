@@ -1585,6 +1585,31 @@ mod tests {
     }
 
     #[test]
+    fn slide_in_pages_swallow_taps() {
+        // A background colour does not stop input in Slint: without a
+        // TouchArea a tap on a page's empty area lands on whatever it
+        // covers (the running screen let Setup's presets be changed).
+        // Every full-screen slide-in page catches taps behind its content.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        let pages: Vec<usize> = slint.match_indices("x: parent.width - root.").map(|(i, _)| i).collect();
+        assert!(pages.len() >= 13, "found {}", pages.len());
+        for at in pages {
+            let page = &slint[at..at + 600];
+            let name = page.lines().next().unwrap();
+            let content = ["VerticalLayout {", "Flickable {"]
+                .iter()
+                .filter_map(|c| page.find(c))
+                .min()
+                .unwrap_or_else(|| panic!("{name}: content"));
+            assert!(
+                page[..content].contains("TouchArea {"),
+                "{name}: needs a tap-catching TouchArea before its content"
+            );
+        }
+    }
+
+    #[test]
     fn the_shell_holds_an_ended_session_until_save_or_discard() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
         let lib = std::fs::read_to_string(path).unwrap();
