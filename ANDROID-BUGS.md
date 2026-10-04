@@ -105,11 +105,11 @@ meditate-core with both shells calling them.
 - [x] **Two guided deletes within 5 s leak the first file on disk.**
   `lib.rs:6327-6334` overwrites `pending_guided_delete` without
   `discard_pending_guided_delete` (`lib.rs:1336`). GTK `guided.rs:1165-1191`.
-- [ ] **Screens don't refresh when a sync pulled changes and then the push
+- [x] **Screens don't refresh when a sync pulled changes and then the push
   failed.** `lib.rs:249-283` raises `SYNC_PULLED_CHANGES` only on `Ok`, and a
   retry pulls nothing new. GTK refreshes after every drain
   (`application.rs:635-654`).
-- [ ] **Sync runs with no account set up and floods the diagnostics log.**
+- [x] **Sync runs with no account set up and floods the diagnostics log.**
   `lib.rs:209-217` has no `meditate_core::sync::should_attempt` check (GTK
   `application.rs:599-604`); the comment at `lib.rs:11321` is wrong.
 - [ ] **Failed CSV / Insight Timer copy gives no feedback.**

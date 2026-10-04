@@ -200,6 +200,19 @@ static SYNC_PULLED_CHANGES: std::sync::atomic::AtomicBool =
 static SYNC_UI_DIRTY: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+/// Whether a Nextcloud account is set up (core's `should_attempt`).
+/// When the DB is busy right now, say yes and let the worker find
+/// out on its own connection; never block or re-lock here.
+#[cfg(target_os = "android")]
+fn sync_configured() -> bool {
+    let Some(db_arc) = DATABASE.get() else { return false; };
+    let Ok(guard) = db_arc.try_lock() else { return true; };
+    match guard.as_ref() {
+        Some(db) => meditate_core::sync::should_attempt(db),
+        None => true,
+    }
+}
+
 /// Kick off one background sync (SY-4) — the Android analogue of
 /// GTK's `app.trigger_sync()`. If one is already running, it runs
 /// another pass when it finishes.
@@ -211,6 +224,13 @@ static SYNC_UI_DIRTY: std::sync::atomic::AtomicBool =
 fn trigger_sync(reason: &str) {
     use meditate_core::sync::coordinator::CoordinatorAction;
     use std::sync::atomic::Ordering;
+    // No account set up: nothing to do. Without this gate every
+    // resume and every edit spawned a worker that failed with
+    // "sync isn't set up yet" and filled the diagnostics log. Same
+    // gate as GTK's trigger_sync.
+    if !sync_configured() {
+        return;
+    }
     if SYNC_COORDINATOR.request() == CoordinatorAction::AlreadyRunning {
         meditate_core::log(
             "sync.trigger",
@@ -250,6 +270,16 @@ fn trigger_sync(reason: &str) {
             // recorded state reaches the indicator. Auth / quota /
             // data-lost errors are NOT retried; repeating those
             // can't help and data-lost needs the user.
+            // A pass applies what it pulled before it pushes, so a pass
+            // that failed (say, on the push) may still have changed the
+            // local data. Re-read the screens after any failed attempt
+            // too, as GTK does after every sync.
+            let mut maybe_changed = false;
+            let mut attempt = || {
+                let outcome = attempt();
+                maybe_changed |= outcome.as_ref().map_or(true, |stats| stats.brought_changes());
+                outcome
+            };
             let mut outcome = attempt();
             for backoff_secs in [5u64, 10] {
                 let retryable = matches!(
@@ -280,7 +310,7 @@ fn trigger_sync(reason: &str) {
                     &format!("failed: {e}"),
                 );
             }
-            if outcome.as_ref().is_ok_and(|stats| stats.brought_changes()) {
+            if maybe_changed {
                 SYNC_PULLED_CHANGES.store(true, Ordering::SeqCst);
             }
         });
@@ -11379,8 +11409,8 @@ fn android_main(android_app: slint::android::AndroidApp) {
     refresh_widget(&ui);
     MaterialWindowAdapter::get(&ui).set_disable_hover(true);
     // The launch sync (SY-4) comes from the first resume event, see
-    // the init listener above. The runner no-ops fast on an
-    // unconfigured account.
+    // the init listener above; trigger_sync skips it when no
+    // account is set up.
     ui.run().unwrap();
 }
 

@@ -884,6 +884,14 @@ mod tests {
         let drain = &drain[..drain.find("\n        });").unwrap()];
         assert!(drain.contains(".brought_changes()"), "core decides what counts as a change");
         assert!(drain.contains("SYNC_PULLED_CHANGES.store(true"), "flag it per pass, so the screens update as soon as it lands");
+        // A failed pass may have applied its pull before the push
+        // failed, and a retry then pulls nothing new.
+        assert!(drain.contains("maybe_changed |= outcome.as_ref().map_or(true, |stats| stats.brought_changes());"));
+        // No account, no worker (GTK's should_attempt gate).
+        assert!(trigger.contains("if !sync_configured() {"));
+        let configured = body_of("fn sync_configured(");
+        assert!(configured.contains("meditate_core::sync::should_attempt"));
+        assert!(configured.contains("try_lock()"), "callers may hold the DB lock");
 
         // One re-read list covering every synced surface.
         let refresh = body_of("fn refresh_after_pull(");
