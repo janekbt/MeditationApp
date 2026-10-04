@@ -2772,6 +2772,19 @@ export component MainWindow inherits Window {
     }
     // Every close path (Save, Cancel, back) lets go of a focused
     // number, or its cut/copy/paste popup floats over the next page.
+    // The log is oldest-first, so the Diagnostics page opens at the
+    // newest entry at the bottom.
+    function scroll-diag-to-end() {
+        diag-flick.viewport-y = min(0px, diag-flick.height - diag-flick.viewport-height);
+    }
+    changed diag-page => {
+        if (root.diag-page) {
+            root.scroll-diag-to-end();
+        }
+    }
+    changed diag-text => {
+        root.scroll-diag-to-end();
+    }
     changed interval-editor-page => {
         if (!root.interval-editor-page) {
             root.release-interval-editor-inputs();
@@ -7986,7 +7999,7 @@ export component MainWindow inherits Window {
                 border-radius: 12px;
                 clip: true;
 
-                Flickable {
+                diag-flick := Flickable {
                     viewport-height: diag-body.preferred-height + 24px;
                     diag-body := Text {
                         x: 12px;

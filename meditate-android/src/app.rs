@@ -1715,6 +1715,20 @@ mod tests {
     }
 
     #[test]
+    fn diagnostics_open_at_the_newest_entry() {
+        // The log is oldest-first; opening the page at the top showed
+        // weeks-old lines. Opening (or new text) scrolls to the end.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        assert!(slint.contains("diag-flick := Flickable {"));
+        assert!(slint.contains(
+            "diag-flick.viewport-y = min(0px, diag-flick.height - diag-flick.viewport-height);"
+        ));
+        assert!(slint.contains("changed diag-page => {"));
+        assert!(slint.contains("changed diag-text => {"));
+    }
+
+    #[test]
     fn diagnostics_tail_comes_from_core() {
         // Slicing the log at a raw byte offset panicked when the cut
         // landed inside a multi-byte character, and the app aborts on
