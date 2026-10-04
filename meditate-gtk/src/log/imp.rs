@@ -825,6 +825,9 @@ impl LogView {
             hours_spin.set_value((s.duration_secs / 3600) as f64);
             minutes_spin.set_value(((s.duration_secs % 3600) / 60) as f64);
         }
+        // Core keeps the exact seconds while the spins still show the
+        // session's own length, and a new session needs a duration.
+        let original_secs = session.and_then(|s| u32::try_from(s.duration_secs).ok());
 
         // ── Date row with calendar picker ──────────────────────────────
         let init_time = session.map_or_else(meditate_core::time::unix_now, |s| s.start_time);
@@ -1036,6 +1039,28 @@ impl LogView {
         header.pack_start(&cancel_btn);
         header.pack_end(&save_btn);
 
+        let update_save = clone!(
+            #[weak] save_btn,
+            #[weak] hours_spin,
+            #[weak] minutes_spin,
+            move || {
+                save_btn.set_sensitive(
+                    meditate_core::format::log_edit_duration_secs(
+                        original_secs,
+                        hours_spin.value() as i64,
+                        minutes_spin.value() as i64,
+                    )
+                    .is_some(),
+                );
+            }
+        );
+        update_save();
+        hours_spin.connect_value_notify(clone!(
+            #[strong] update_save,
+            move |_| update_save()
+        ));
+        minutes_spin.connect_value_notify(move |_| update_save());
+
         let toolbar_view = adw::ToolbarView::new();
         toolbar_view.add_top_bar(&header);
         toolbar_view.set_content(Some(&scrolled));
@@ -1103,8 +1128,13 @@ impl LogView {
             #[weak] note_buffer,
             move |_| {
                 let imp = obj.imp();
-                let duration = hours_spin.value() as i64 * 3600
-                    + minutes_spin.value() as i64 * 60;
+                let Some(duration) = meditate_core::format::log_edit_duration_secs(
+                    original_secs,
+                    hours_spin.value() as i64,
+                    minutes_spin.value() as i64,
+                ) else {
+                    return;
+                };
                 let cal_date = calendar.date();
                 let start_time = glib::DateTime::new(
                     &glib::TimeZone::local(),
@@ -1127,7 +1157,7 @@ impl LogView {
 
                 let data = SessionData {
                     start_time,
-                    duration_secs: duration.max(0),
+                    duration_secs: duration,
                     mode: original_mode,
                     label_id,
                     note,

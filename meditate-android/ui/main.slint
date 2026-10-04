@@ -2485,11 +2485,16 @@ export component MainWindow inherits Window {
     in-out property <string> edit-note-text: "";
     // Duration fields (L-4b) — Rust pre-fills both on card-tap
     // from the tapped session's `duration_secs`, reads them back
-    // on edit-save-tap and recomposes `secs = h*3600 + m*60`.
+    // on edit-save-tap; core keeps the exact seconds of an
+    // untouched duration (`log_edit_duration_secs`).
     // Ranges mirror GTK's adjustments at `log/imp.rs:778 / :784`
     // (Hours 0-23, Minutes 0-59).
     in-out property <int> edit-duration-hours: 0;
     in-out property <int> edit-duration-minutes: 0;
+    // Length of the session being edited, in seconds; 0 when adding.
+    // A new session needs a duration before it can be saved (the
+    // duration dialog itself never sets 0).
+    in property <int> edit-original-secs: 0;
     // Start-time fields (L-4c). Rust decomposes the tapped
     // session's `start_time` (unix seconds, local-tz interpreted)
     // into a `Date { year, month, day }` and a `Time { hour,
@@ -5086,6 +5091,9 @@ export component MainWindow inherits Window {
                     alignment: center;
                     FilledButton {
                         text: @tr("Save");
+                        enabled: root.edit-original-secs > 0
+                            || root.edit-duration-hours > 0
+                            || root.edit-duration-minutes > 0;
                         clicked => { root.edit-save-tap(); }
                     }
                 }

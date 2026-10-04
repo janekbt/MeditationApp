@@ -391,6 +391,22 @@ pub fn log_card_minutes(duration_secs: i64) -> u64 {
     mins.max(1)
 }
 
+/// Duration a Log edit saves, from the dialog's whole hours and
+/// minutes. `original_secs` is the edited session's length (`None`
+/// when adding one). The dialog can only show whole minutes, so while
+/// it still shows the session's own length, rounded down, the user
+/// didn't touch it and the exact seconds stay: a note-only edit must
+/// not turn 20m34s into 20m00s. `None` when there is nothing to save,
+/// a new session with no duration.
+pub fn log_edit_duration_secs(original_secs: Option<u32>, hours: i64, minutes: i64) -> Option<i64> {
+    let picked = hours.max(0) * 3600 + minutes.max(0) * 60;
+    let secs = match original_secs {
+        Some(orig) if picked == i64::from(orig / 60 * 60) => i64::from(orig),
+        _ => picked,
+    };
+    (secs > 0).then_some(secs)
+}
+
 /// Mini-stat value display: render zero as an en-dash (typographic
 /// "no data" marker), otherwise the integer as a string. Used by
 /// the Stats view's mini-stat tiles where an empty week shouldn't
@@ -827,6 +843,30 @@ mod tests {
         assert_eq!(session_count_key(1), SessionCountKey::One);
         assert_eq!(session_count_key(2), SessionCountKey::Many(2));
         assert_eq!(session_count_key(42), SessionCountKey::Many(42));
+    }
+
+    #[test]
+    fn log_edit_keeps_the_seconds_of_an_untouched_duration() {
+        assert_eq!(log_edit_duration_secs(Some(20 * 60 + 34), 0, 20), Some(1234));
+        assert_eq!(log_edit_duration_secs(Some(3600 + 5), 1, 0), Some(3605));
+    }
+
+    #[test]
+    fn log_edit_keeps_a_session_shorter_than_a_minute() {
+        assert_eq!(log_edit_duration_secs(Some(45), 0, 0), Some(45));
+    }
+
+    #[test]
+    fn log_edit_saves_a_changed_duration_in_whole_minutes() {
+        assert_eq!(log_edit_duration_secs(Some(20 * 60 + 34), 0, 25), Some(1500));
+        assert_eq!(log_edit_duration_secs(Some(20 * 60 + 34), 1, 20), Some(4800));
+    }
+
+    #[test]
+    fn log_edit_adds_only_a_session_with_a_duration() {
+        assert_eq!(log_edit_duration_secs(None, 0, 0), None);
+        assert_eq!(log_edit_duration_secs(None, 0, 10), Some(600));
+        assert_eq!(log_edit_duration_secs(Some(0), 0, 0), None);
     }
 
     #[test]

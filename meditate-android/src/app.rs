@@ -1729,6 +1729,20 @@ mod tests {
     }
 
     #[test]
+    fn log_edit_duration_comes_from_core() {
+        // A note-only edit turned 20m34s into 20m00s, and Add saved a
+        // 0-second session. Both go through core's duration rule.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        assert!(lib.contains("meditate_core::format::log_edit_duration_secs("));
+        assert!(!lib.contains("(hours * 3600 + mins * 60).max(0)"));
+        assert!(lib.contains("ui.set_edit_original_secs(0);"));
+        assert!(lib.contains("ui.set_edit_original_secs(session.duration_secs as i32);"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        assert!(slint.contains("enabled: root.edit-original-secs > 0"));
+    }
+
+    #[test]
     fn log_edit_saves_the_session_it_opened() {
         // Save looked the row up again in the paged feed; a sync in
         // between reset the feed to page 1 and an older row's edit

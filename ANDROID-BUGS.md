@@ -51,7 +51,7 @@ meditate-core with both shells calling them.
   `9908-9910`; add path `9896-9901`). GTK has the same pattern
   (`log/imp.rs:1131-1138`). Fix: clear the stale id; show save errors and
   keep the dialog open.
-- [ ] **Saving an edit rounds the duration down to whole minutes.** The
+- [x] **Saving an edit rounds the duration down to whole minutes.** The
   dialog is seeded with hours/minutes and Save always rebuilds
   `duration_secs` from them (`lib.rs:9719-9721`, `9808-9811`, `9864-9865`):
   a note-only edit of 20m34s stores 20m00s, a session under a minute stores

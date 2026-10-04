@@ -9663,6 +9663,7 @@ fn build_ui() -> MainWindow {
                 use chrono::{Datelike, Local, Timelike};
                 let Some(ui) = weak.upgrade() else { return; };
                 *editing_session.borrow_mut() = None;
+                ui.set_edit_original_secs(0);
                 ui.set_edit_session_title(ui.global::<Tr>().invoke_add_session_title());
                 ui.set_edit_note_text("".into());
                 ui.set_edit_duration_hours(0);
@@ -9715,6 +9716,7 @@ fn build_ui() -> MainWindow {
                 ui.set_edit_note_text(
                     session.notes.clone().unwrap_or_default().into(),
                 );
+                ui.set_edit_original_secs(session.duration_secs as i32);
                 let total = session.duration_secs as i64;
                 ui.set_edit_duration_hours((total / 3600) as i32);
                 ui.set_edit_duration_minutes(((total % 3600) / 60) as i32);
@@ -9807,15 +9809,20 @@ fn build_ui() -> MainWindow {
                 } else {
                     Some(new_note_raw)
                 };
-                // Duration: recompose from the two SpinRows.
-                // GTK clamps with `.max(0)` (`log/imp.rs:1093`);
-                // the SpinRow min-value guards already keep both
-                // factors non-negative, but mirror the clamp on
-                // the product to stay defensive against future
-                // signed-typed inputs.
-                let hours = ui.get_edit_duration_hours().max(0) as i64;
-                let mins = ui.get_edit_duration_minutes().max(0) as i64;
-                let duration_secs = (hours * 3600 + mins * 60).max(0);
+                // Duration through core: an untouched duration keeps
+                // its exact seconds, and a new session needs one (Save
+                // is disabled until then, so this only guards).
+                let original_secs = editing_session
+                    .borrow()
+                    .as_ref()
+                    .map(|(_, session)| session.duration_secs);
+                let Some(duration_secs) = meditate_core::format::log_edit_duration_secs(
+                    original_secs,
+                    i64::from(ui.get_edit_duration_hours()),
+                    i64::from(ui.get_edit_duration_minutes()),
+                ) else {
+                    return;
+                };
                 // Recompose start_time from the picker outputs through
                 // core, which never fails for a real date: a time that
                 // happens twice (DST fall-back) keeps the first one, a

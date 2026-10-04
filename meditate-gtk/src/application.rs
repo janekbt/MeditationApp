@@ -692,6 +692,17 @@ mod tests {
         assert!(log.contains("meditate_core::db::guided_file_names_from_db("));
     }
 
+    /// A note-only edit turned 20m34s into 20m00s, and Add saved a
+    /// 0-second session. Both go through core's duration rule.
+    #[test]
+    fn log_edit_duration_comes_from_core() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let log = std::fs::read_to_string(root.join("src/log/imp.rs")).unwrap();
+        assert_eq!(log.matches("meditate_core::format::log_edit_duration_secs(").count(), 2);
+        assert!(log.contains("save_btn.set_sensitive("));
+        assert!(!log.contains("hours_spin.value() as i64 * 3600"));
+    }
+
     /// The sync worker loop lives in core (`SyncCoordinator::drain`)
     /// so GTK and Android run the same choreography.
     #[test]
