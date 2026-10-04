@@ -1,0 +1,8 @@
+• Zmiana nazwy i usuwanie własnych dźwięków dzwonków
+• Powiadomienie „Medytacja zakończona”
+• Dzwonki interwałowe mają przełącznik, a minuty i losowość można wpisać
+• Karty historii pokazują nazwę medytacji z przewodnikiem
+• Każda zmiana jest synchronizowana, a ekrany odświeżają się po synchronizacji
+• Zakończona sesja czeka, aż ją zapiszesz lub odrzucisz
+• Aplikacja pyta przed odrzuceniem notatki
+• Wiele innych poprawek z dwóch pełnych przeglądów błędów

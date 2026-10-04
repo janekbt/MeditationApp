@@ -88,6 +88,20 @@
   </content_rating>
 
   <releases>
+    <release version="26.10.1" date="2026-10-04">
+      <description translate="yes">
+        <p>A large round of fixes, mostly for the Android app, and a few new touches.</p>
+        <ul>
+          <li>Log cards show the name of the guided meditation you listened to</li>
+          <li>Editing a session in the log keeps its exact length, down to the second</li>
+          <li>A session that started in the hour skipped by a daylight saving change keeps its real date</li>
+          <li>In Overtime the timer holds at the planned length, and a guided track stops before the end bell</li>
+          <li>Imported bell sounds are found on every synced device</li>
+          <li>Android: rename and delete your own bell sounds, a "Meditation complete" notification, and interval bells with an on/off switch and typeable minutes and jitter</li>
+          <li>Android: many fixes from two full bug reviews. Every change now syncs, a finished session is kept until you save or discard it, the screen-off timer stays awake for the whole session, and the remaining English texts are translated</li>
+        </ul>
+      </description>
+    </release>
     <release version="26.10.0" date="2026-10-03">
       <description translate="yes">
         <p>Every bell now has its own volume, plus fixes for issues reported by @voidplayer — thank you!</p>

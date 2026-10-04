@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: meditate\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-03 20:23+0200\n"
+"POT-Creation-Date: 2026-10-04 19:41+0200\n"
 "PO-Revision-Date: 2026-04-20 18:32+0200\n"
 "Last-Translator: Janek Teders\n"
 "Language-Team: Simplified Chinese\n"
@@ -42,7 +42,7 @@ msgstr "已覆盖“{name}”"
 msgid "Updated"
 msgstr "已更新"
 
-#: src/announcement.rs:39 src/guided.rs:1100
+#: src/announcement.rs:39 src/guided.rs:1106
 msgid "Deleted"
 msgstr "已删除"
 
@@ -85,7 +85,7 @@ msgstr "退出"
 msgid "Meditate"
 msgstr "Meditate"
 
-#: src/application.rs:324 data/io.github.janekbt.Meditate.metainfo.xml.in:171
+#: src/application.rs:324 data/io.github.janekbt.Meditate.metainfo.xml.in:185
 msgid ""
 "A new Box Breath timer mode, per-label stats, and an in-app diagnostics view "
 "for bug reporting — plus a handful of polish fixes."
@@ -93,7 +93,7 @@ msgstr ""
 "新增箱式呼吸计时模式、按标签统计，以及用于报告错误的应用内诊断视图，另有若干"
 "细节改进。"
 
-#: src/application.rs:325 data/io.github.janekbt.Meditate.metainfo.xml.in:173
+#: src/application.rs:325 data/io.github.janekbt.Meditate.metainfo.xml.in:187
 msgid ""
 "New Box Breath mode alongside Countdown and Stopwatch: pick a pattern "
 "(4-4-4-4, 4-7-8-0, 5-5-5-5) or dial in each phase, set a session length, and "
@@ -104,7 +104,7 @@ msgstr ""
 "或逐一设定各阶段，设置会话时长，运行时界面会随着你吸气、屏息、呼气、屏息，让"
 "一个圆点沿着强调色方框移动"
 
-#: src/application.rs:326 data/io.github.janekbt.Meditate.metainfo.xml.in:174
+#: src/application.rs:326 data/io.github.janekbt.Meditate.metainfo.xml.in:188
 msgid ""
 "Stats tab shows a \"By label\" breakdown below the streak / total / sessions "
 "row, so you can see how much meditation time you've spent under each label"
@@ -112,7 +112,7 @@ msgstr ""
 "统计页在连续天数 / 总计 / 会话一行下方显示“按标签”细分，让你了解在每个标签下"
 "冥想了多长时间"
 
-#: src/application.rs:327 data/io.github.janekbt.Meditate.metainfo.xml.in:175
+#: src/application.rs:327 data/io.github.janekbt.Meditate.metainfo.xml.in:189
 msgid ""
 "About dialog has a new Troubleshooting view with a rolling diagnostics log "
 "(startup, database open, import/export results, panics) — copy or save to "
@@ -121,7 +121,7 @@ msgstr ""
 "“关于”对话框新增故障排除视图，包含滚动诊断日志（启动、数据库打开、导入/导出结"
 "果、崩溃），可复制或保存后附加到错误报告中"
 
-#: src/application.rs:328 data/io.github.janekbt.Meditate.metainfo.xml.in:176
+#: src/application.rs:328 data/io.github.janekbt.Meditate.metainfo.xml.in:190
 msgid ""
 "Each timer mode remembers its own last-chosen label, so a Box Breath session "
 "no longer changes the default label for Countdown or Stopwatch"
@@ -129,13 +129,13 @@ msgstr ""
 "每种计时模式都会记住各自上次选择的标签，因此箱式呼吸会话不再改变倒计时或秒表"
 "的默认标签"
 
-#: src/application.rs:329 data/io.github.janekbt.Meditate.metainfo.xml.in:177
+#: src/application.rs:329 data/io.github.janekbt.Meditate.metainfo.xml.in:191
 msgid ""
 "Release notes shown in the About dialog now reflect the current version "
 "instead of staying pinned to the initial release"
 msgstr "“关于”对话框中的发布说明现在对应当前版本，不再固定显示首个版本的内容"
 
-#: src/application.rs:330 data/io.github.janekbt.Meditate.metainfo.xml.in:178
+#: src/application.rs:330 data/io.github.janekbt.Meditate.metainfo.xml.in:192
 msgid ""
 "Log-edit calendar picker shows the proper icon again; post-session note "
 "field no longer steals focus on phones and hides the Save / Discard buttons "
@@ -144,8 +144,8 @@ msgstr ""
 "记录编辑中的日历选择器重新显示正确图标；在手机上，会话后备注框不再抢占焦点，"
 "也不会让屏幕键盘遮住“保存 / 放弃”按钮"
 
-#: src/application.rs:404 src/guided.rs:1166 src/log/imp.rs:642
-#: src/presets.rs:704 src/timer/imp.rs:3640 src/vibrations.rs:476
+#: src/application.rs:404 src/guided.rs:1172 src/log/imp.rs:677
+#: src/presets.rs:704 src/timer/imp.rs:3643 src/vibrations.rs:476
 #: src/vibrations.rs:515
 msgid "Undo"
 msgstr "撤销"
@@ -179,7 +179,7 @@ msgstr "此铃声将不再在会话期间响起。"
 #: src/preferences.rs:583 src/presets.rs:445 src/presets.rs:507
 #: src/presets.rs:574 src/presets.rs:641 src/recovery_dialog.rs:42
 #: src/recovery_dialog.rs:103 src/sounds.rs:530 src/sounds.rs:913
-#: src/sounds.rs:979 src/timer/imp.rs:2611 src/timer/imp.rs:3772
+#: src/sounds.rs:979 src/timer/imp.rs:2611 src/timer/imp.rs:3775
 #: src/vibration_editor.rs:129 src/vibrations.rs:557 src/vibrations.rs:647
 msgid "Cancel"
 msgstr "取消"
@@ -241,7 +241,7 @@ msgstr "结束前"
 msgid "Kind"
 msgstr "类型"
 
-#: src/bells.rs:470 src/log/imp.rs:784 src/timer/imp.rs:3746
+#: src/bells.rs:470 src/log/imp.rs:819 src/timer/imp.rs:3749
 msgid "Minutes"
 msgstr "分钟"
 
@@ -490,101 +490,101 @@ msgstr "没有会话使用此标签。"
 msgid "Delete Label?"
 msgstr "删除标签？"
 
-#: src/log/imp.rs:309
+#: src/log/imp.rs:324
 msgid "All labels"
 msgstr "所有标签"
 
 #. Lowercase in source; the .log-unit CSS class renders it uppercase
 #. (HIG forbids all-caps in source text).
-#: src/log/imp.rs:394
+#: src/log/imp.rs:413
 msgid "min"
 msgstr "分钟"
 
-#: src/log/imp.rs:425
+#: src/log/imp.rs:460
 msgid "No note added"
 msgstr "无笔记"
 
-#: src/log/imp.rs:467
+#: src/log/imp.rs:502
 msgid "Delete Session"
 msgstr "删除会话"
 
-#: src/log/imp.rs:586
+#: src/log/imp.rs:621
 msgid "Today"
 msgstr "今天"
 
-#: src/log/imp.rs:587
+#: src/log/imp.rs:622
 msgid "Yesterday"
 msgstr "昨天"
 
-#: src/log/imp.rs:609 src/log/imp.rs:611
+#: src/log/imp.rs:644 src/log/imp.rs:646
 #, rust-format
 msgid "1 session"
 msgid_plural "{n} sessions"
 msgstr[0] "{n} 个会话"
 
-#: src/log/imp.rs:779 src/timer/imp.rs:3739
+#: src/log/imp.rs:814 src/timer/imp.rs:3742
 msgid "Hours"
 msgstr "小时"
 
-#: src/log/imp.rs:801
+#: src/log/imp.rs:839
 msgid "Date"
 msgstr "日期"
 
-#: src/log/imp.rs:818
+#: src/log/imp.rs:856
 msgid "Pick a Date"
 msgstr "选择日期"
 
-#: src/log/imp.rs:843
+#: src/log/imp.rs:881
 msgid "Hour"
 msgstr "时"
 
-#: src/log/imp.rs:848
+#: src/log/imp.rs:886
 msgid "Minute"
 msgstr "分"
 
-#: src/log/imp.rs:862 data/ui/timer_view.blp:363 data/ui/timer_view.blp:860
+#: src/log/imp.rs:900 data/ui/timer_view.blp:363 data/ui/timer_view.blp:860
 msgid "Selected"
 msgstr "已选择"
 
-#: src/log/imp.rs:877 data/ui/timer_view.blp:357 data/ui/timer_view.blp:854
+#: src/log/imp.rs:915 data/ui/timer_view.blp:357 data/ui/timer_view.blp:854
 #: data/ui/window.blp:107
 msgid "Label"
 msgstr "标签"
 
-#: src/log/imp.rs:878 data/ui/timer_view.blp:358 data/ui/timer_view.blp:855
+#: src/log/imp.rs:916 data/ui/timer_view.blp:358 data/ui/timer_view.blp:855
 msgid "Tag this session"
 msgstr "为此会话加标签"
 
-#: src/log/imp.rs:936 data/ui/timer_view.blp:830
+#: src/log/imp.rs:974 data/ui/timer_view.blp:830
 msgid "Note (optional)"
 msgstr "笔记（可选）"
 
-#: src/log/imp.rs:956 src/vibration_editor.rs:171 data/ui/timer_view.blp:339
+#: src/log/imp.rs:994 src/vibration_editor.rs:171 data/ui/timer_view.blp:339
 #: data/ui/timer_view.blp:479
 msgid "Duration"
 msgstr "时长"
 
-#: src/log/imp.rs:962
+#: src/log/imp.rs:1000
 msgid "Start time"
 msgstr "开始时间"
 
-#: src/log/imp.rs:991
+#: src/log/imp.rs:1029
 msgid "_Cancel"
 msgstr "取消(_C)"
 
-#: src/log/imp.rs:995 src/preferences.rs:333
+#: src/log/imp.rs:1033 src/preferences.rs:333
 msgid "_Save"
 msgstr "保存(_S)"
 
-#: src/log/imp.rs:995
+#: src/log/imp.rs:1033
 msgid "_Add"
 msgstr "添加(_A)"
 
-#: src/log/imp.rs:1014 src/log/imp.rs:1021
+#: src/log/imp.rs:1074 src/log/imp.rs:1081
 msgid "Edit Session"
 msgstr "编辑会话"
 
-#: src/log/imp.rs:1014 src/log/imp.rs:1021 data/ui/log_view.blp:18
+#: src/log/imp.rs:1074 src/log/imp.rs:1081 data/ui/log_view.blp:18
 #: data/ui/window.blp:117
 msgid "Add Session"
 msgstr "添加会话"
@@ -933,7 +933,7 @@ msgstr ""
 msgid "Wipe Local Data"
 msgstr "清除本地数据"
 
-#: src/sound.rs:242
+#: src/sound.rs:243
 msgid "Couldn't play bell sound"
 msgstr "无法播放铃声"
 
@@ -1226,11 +1226,11 @@ msgstr "您的笔记将会丢失。"
 msgid "Discard"
 msgstr "放弃"
 
-#: src/timer/imp.rs:2907
+#: src/timer/imp.rs:2901
 msgid "Finish"
 msgstr "完成"
 
-#: src/timer/imp.rs:2909
+#: src/timer/imp.rs:2903
 msgid "End at the planned duration"
 msgstr "在计划时长结束"
 
@@ -1256,48 +1256,48 @@ msgstr "没有已收藏的文件"
 msgid "Tap Open File then Import File, or star a file in Manage Files"
 msgstr "点按“打开文件”再点“导入文件”，或在“管理文件”中收藏文件"
 
-#: src/timer/imp.rs:3447 data/ui/timer_view.blp:252
+#: src/timer/imp.rs:3450 data/ui/timer_view.blp:252
 msgid "No file selected"
 msgstr "未选择文件"
 
-#: src/timer/imp.rs:3449 data/ui/timer_view.blp:253
+#: src/timer/imp.rs:3452 data/ui/timer_view.blp:253
 msgid "Tap Open File or pick from list below"
 msgstr "点按“打开文件”或从下方列表选择"
 
-#: src/timer/imp.rs:3457
+#: src/timer/imp.rs:3460
 msgid "Open New File"
 msgstr "打开新文件"
 
-#: src/timer/imp.rs:3459 data/ui/timer_view.blp:269
+#: src/timer/imp.rs:3462 data/ui/timer_view.blp:269
 msgid "Open File"
 msgstr "打开文件"
 
-#: src/timer/imp.rs:3614
+#: src/timer/imp.rs:3617
 msgid "Wait for sync — some bell sounds are missing"
 msgstr "请等待同步——部分铃声缺失"
 
-#: src/timer/imp.rs:3638
+#: src/timer/imp.rs:3641
 #, rust-format
 msgid "'{name}' applied"
 msgstr "已应用“{name}”"
 
-#: src/timer/imp.rs:3766
+#: src/timer/imp.rs:3769
 msgid "Custom Time"
 msgstr "自定义时间"
 
-#: src/timer/imp.rs:3767
+#: src/timer/imp.rs:3770
 msgid "Hours : Minutes"
 msgstr "小时 : 分钟"
 
-#: src/timer/imp.rs:3773
+#: src/timer/imp.rs:3776
 msgid "Set"
 msgstr "设置"
 
-#: src/timer/imp.rs:3828 src/timer/imp.rs:3855
+#: src/timer/imp.rs:3831 src/timer/imp.rs:3858
 msgid "(none — pick one)"
 msgstr "（无——请选择）"
 
-#: src/timer/imp.rs:3830 src/timer/imp.rs:3857
+#: src/timer/imp.rs:3833 src/timer/imp.rs:3860
 msgid "Off"
 msgstr "关闭"
 
@@ -1309,42 +1309,42 @@ msgstr "关闭"
 #. / "Hinzufügen {time} ?", Japanese "{time} を追加 ?", etc.). Core
 #. / returns the formatted MM:SS via `format_time`; the shell owns
 #. / word order via this gettext template.
-#: src/timer/imp.rs:4189
+#: src/timer/imp.rs:4200
 #, rust-format
 msgid "Add {time} ?"
 msgstr "加上 {time}？"
 
-#: src/timer/imp.rs:4199
+#: src/timer/imp.rs:4210
 msgid "None enabled"
 msgstr "未启用"
 
-#: src/timer/imp.rs:4200 src/timer/imp.rs:4201
+#: src/timer/imp.rs:4211 src/timer/imp.rs:4212
 #, rust-format
 msgid "1 enabled"
 msgid_plural "{n} enabled"
 msgstr[0] "已启用 {n} 个"
 
-#: src/timer/imp.rs:4225 data/ui/timer_view.blp:605
+#: src/timer/imp.rs:4236 data/ui/timer_view.blp:605
 msgid "Inhale"
 msgstr "吸气"
 
-#: src/timer/imp.rs:4226
+#: src/timer/imp.rs:4237
 msgid "Hold (full)"
 msgstr "屏息（吸气后）"
 
-#: src/timer/imp.rs:4227 data/ui/timer_view.blp:701
+#: src/timer/imp.rs:4238 data/ui/timer_view.blp:701
 msgid "Exhale"
 msgstr "呼气"
 
-#: src/timer/imp.rs:4228
+#: src/timer/imp.rs:4239
 msgid "Hold (empty)"
 msgstr "屏息（呼气后）"
 
-#: src/timer/imp.rs:4290
+#: src/timer/imp.rs:4301
 msgid "Decrease"
 msgstr "减少"
 
-#: src/timer/imp.rs:4301
+#: src/timer/imp.rs:4312
 msgid "Increase"
 msgstr "增加"
 
@@ -1791,52 +1791,102 @@ msgstr "janekbt"
 
 #: data/io.github.janekbt.Meditate.metainfo.xml.in:93
 msgid ""
+"A large round of fixes, mostly for the Android app, and a few new touches."
+msgstr "大量修复（主要针对 Android 应用），以及一些新功能。"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:95
+msgid "Log cards show the name of the guided meditation you listened to"
+msgstr "记录卡片显示你所听的引导冥想名称"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:96
+msgid "Editing a session in the log keeps its exact length, down to the second"
+msgstr "在记录中编辑会话时保留其精确时长，精确到秒"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:97
+msgid ""
+"A session that started in the hour skipped by a daylight saving change keeps "
+"its real date"
+msgstr "在夏令时调整跳过的那一小时内开始的会话会保留正确日期"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:98
+msgid ""
+"In Overtime the timer holds at the planned length, and a guided track stops "
+"before the end bell"
+msgstr "超出计划时间后，计时器停在计划时长，引导音轨会在结束铃之前停止"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:99
+msgid "Imported bell sounds are found on every synced device"
+msgstr "导入的铃声在每台已同步的设备上都能找到"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:100
+msgid ""
+"Android: rename and delete your own bell sounds, a \"Meditation complete\" "
+"notification, and interval bells with an on/off switch and typeable minutes "
+"and jitter"
+msgstr "Android：可重命名和删除自己的铃声，新增“冥想完成”通知，间隔铃新增开关，分钟数和随机幅度可直接输入"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:101
+msgid ""
+"Android: many fixes from two full bug reviews. Every change now syncs, a "
+"finished session is kept until you save or discard it, the screen-off timer "
+"stays awake for the whole session, and the remaining English texts are "
+"translated"
+msgstr "Android：两轮全面排查带来的大量修复。每项更改现在都会同步，结束的会话会保留直到你保存或放弃，屏幕关闭时计时器在整个会话中保持运行，剩余的英文文本也已翻译"
+
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:107
+msgid ""
 "Every bell now has its own volume, plus fixes for issues reported by "
 "@voidplayer — thank you!"
 msgstr "现在每个铃声都有独立的音量，另外修复了 @voidplayer 报告的问题——谢谢！"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:95
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:109
 msgid ""
 "Each bell has its own volume slider under its sound: starting, interval and "
 "end bells, and the Box Breath cues. On Android the level is absolute: it "
 "spans the phone's full alarm range and no longer depends on the system alarm "
 "volume"
-msgstr "每个铃声的声音下方都有独立的音量滑块：起始铃、间隔铃、结束铃，以及箱式呼吸的提示音。在 Android 上音量为绝对值：覆盖手机闹钟的完整范围，不再受系统闹钟音量影响"
+msgstr ""
+"每个铃声的声音下方都有独立的音量滑块：起始铃、间隔铃、结束铃，以及箱式呼吸的"
+"提示音。在 Android 上音量为绝对值：覆盖手机闹钟的完整范围，不再受系统闹钟音量"
+"影响"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:96
 #
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:110
 msgid "Starting and interval bells no longer ring during guided meditations"
 msgstr "引导冥想期间不再响起起始铃和间隔铃"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:97
 #
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:111
 msgid ""
 "Guided meditations and sounds can be imported from MP4 files. Files without "
 "an audio track show a clear message instead of failing silently"
-msgstr "可从 MP4 文件导入引导冥想和声音。没有音轨的文件会显示明确的提示，而不是静默失败"
+msgstr ""
+"可从 MP4 文件导入引导冥想和声音。没有音轨的文件会显示明确的提示，而不是静默失"
+"败"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:98
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:112
 msgid "Android: the starting bell now rings when preparation time is off"
 msgstr "Android：关闭准备时间时起始铃现在也会响起"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:99
 #
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:113
 msgid ""
 "The desktop app is fully translated in all nine languages, and counts use "
 "the correct plural form in every language"
-msgstr "桌面应用已完整翻译为全部九种语言，并且每种语言中的数量都使用正确的复数形式"
+msgstr ""
+"桌面应用已完整翻译为全部九种语言，并且每种语言中的数量都使用正确的复数形式"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:105
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:119
 msgid "Beta for testing."
 msgstr "测试版。"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:107
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:121
 msgid ""
 "Bell volume: a new slider in Preferences sets how loud bells ring, relative "
 "to the system volume."
 msgstr "铃声音量：偏好设置中的新滑块可设置铃声的响度，相对于系统音量。"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:108
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:122
 msgid ""
 "Guided meditations and sounds can be imported from MP4 files. Files without "
 "an audio track now show a clear message instead of failing silently."
@@ -1844,7 +1894,7 @@ msgstr ""
 "现在可以从 MP4 文件导入引导冥想和声音。没有音轨的文件现在会显示清晰的提示，而"
 "不是悄无声息地失败。"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:109
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:123
 msgid ""
 "The app is now fully translated in all nine languages, and counts like “21 "
 "days” are shown correctly in every language."
@@ -1852,9 +1902,9 @@ msgstr ""
 "应用现已在全部九种语言中完整翻译，像“21 天”这样的计数在每种语言中都能正确显"
 "示。"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:115
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:120
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:125
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:129
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:134
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:139
 msgid ""
 "Packaging only: the Android build now produces identical output on any "
 "machine, so F-Droid can verify it against this source. Nothing changes in "
@@ -1863,7 +1913,7 @@ msgstr ""
 "仅涉及打包：Android 构建现在在任何机器上都会产生相同的输出，F-Droid 因而可以"
 "依据此源代码进行验证。应用本身没有任何变化。"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:130
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:144
 msgid ""
 "Fixes for entering a session length by keyboard on Android, and a packaging "
 "change so F-Droid can verify the app against its source."
@@ -1871,26 +1921,26 @@ msgstr ""
 "修复了在 Android 上用键盘输入会话时长的问题，并调整了打包方式，使 F-Droid 可"
 "以依据源代码验证应用。"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:132
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:146
 msgid ""
 "Android: typing a duration and tapping Set now keeps what you typed, instead "
 "of falling back to the previous value"
 msgstr ""
 "Android：输入时长并点按“设置”后，现在会保留你输入的值，而不会退回到之前的值"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:133
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:147
 msgid ""
 "Android: tapping the hours or minutes selects the whole number, so the first "
 "keystroke replaces it"
 msgstr "Android：点按小时或分钟会选中整个数字，第一次按键即可将其替换"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:134
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:148
 msgid ""
 "Android: the dismiss button in the session editor is announced as \"Cancel\" "
 "by screen readers again"
 msgstr "Android：屏幕阅读器再次将会话编辑器中的关闭按钮朗读为“取消”"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:140
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:154
 msgid ""
 "Same as 26.8.0, with a packaging fix so F-Droid can rebuild and verify the "
 "Android app."
@@ -1898,19 +1948,19 @@ msgstr ""
 "与 26.8.0 相同，另修复了打包问题，使 F-Droid 可以重新构建并验证 Android 应"
 "用。"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:145
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:159
 msgid ""
 "A longer reach for daily goals, and a friendlier way to set a session length "
 "on Android."
 msgstr "每日目标的上限更高，并且在 Android 上设置会话时长的方式更友好。"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:147
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:161
 msgid ""
 "The daily goal can now be set to anything up to 24 hours, instead of "
 "stopping at 4"
 msgstr "每日目标现在最高可设为 24 小时，不再以 4 小时为上限"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:148
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:162
 msgid ""
 "Android: tap the hours or minutes in the time picker to type a duration, "
 "rather than only stepping it with the plus and minus buttons"
@@ -1918,19 +1968,19 @@ msgstr ""
 "Android：可点按时间选择器中的小时或分钟直接输入时长，而不必只用加减按钮逐步调"
 "整"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:149
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:163
 msgid ""
 "Android: the Save button in the session editor no longer runs off the edge "
 "of the screen in languages with longer words"
 msgstr "Android：在单词较长的语言中，会话编辑器中的“保存”按钮不再超出屏幕边缘"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:150
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:164
 msgid ""
 "Android builds are now reproducible, so the published APK can be verified "
 "against this source"
 msgstr "Android 构建现已可复现，因此发布的 APK 可以依据此源代码进行验证"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:156
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:170
 msgid ""
 "Nextcloud sync between all your devices, a guided-audio mode, daily goals, "
 "custom sounds and vibration patterns — and the first release of the Android "
@@ -1939,7 +1989,7 @@ msgstr ""
 "在你的所有设备间通过 Nextcloud 同步，新增引导音频模式、每日目标、自定义声音和"
 "振动模式，并首次发布 Android 配套应用。"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:158
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:172
 msgid ""
 "Sync sessions, labels, presets, bells, and preferences between your devices "
 "via your own Nextcloud server — offline-first, with automatic conflict "
@@ -1948,20 +1998,20 @@ msgstr ""
 "通过你自己的 Nextcloud 服务器在设备间同步会话、标签、预设、铃声和偏好设置——离"
 "线优先，并自动处理冲突和压缩远程存储"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:159
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:173
 msgid ""
 "New Guided mode: import your own guided-meditation audio; the end bell rings "
 "when the track finishes"
 msgstr "新增引导模式：导入你自己的引导冥想音频；音轨播放完毕时结束铃会响起"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:160
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:174
 msgid ""
 "Stats now track a daily goal: the progress ring resets each day and the "
 "heatmap stars days that cleared it"
 msgstr ""
 "统计现在跟踪每日目标：进度圆环每天重置，热力图会为达成目标的日子标上星号"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:161
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:175
 msgid ""
 "Interval, starting, and end bells are configurable per mode, with imported "
 "custom sounds and a visual vibration-pattern editor"
@@ -1969,7 +2019,7 @@ msgstr ""
 "间隔铃、起始铃和结束铃可按模式分别配置，支持导入自定义声音，并提供可视化振动"
 "模式编辑器"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:162
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:176
 msgid ""
 "Session log gains CSV export/import (duplicate-safe on re-import) and "
 "Insight Timer import"
@@ -1977,14 +2027,14 @@ msgstr ""
 "会话记录支持 CSV 导出/导入（重复导入不会产生重复项），并可从 Insight Timer 导"
 "入"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:163
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:177
 msgid ""
 "Duplicate labels created on two devices can be merged from a conflict "
 "prompt, moving all sessions onto the surviving label"
 msgstr ""
 "在两台设备上创建的重复标签可通过冲突提示合并，所有会话都会移到保留的标签下"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:164
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:178
 msgid ""
 "Android companion app (F-Droid): the same modes, log, stats, and sync, "
 "sharing the identical core — plus a home-screen widget for one-tap preset "
@@ -1993,7 +2043,7 @@ msgstr ""
 "Android 配套应用（F-Droid）：相同的模式、记录、统计和同步，共享同一核心——另有"
 "主屏幕小部件，可一键启动预设，支持全部十种语言"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:185
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:199
 msgid ""
 "Performance and polish pass, focused on Linux phones like the Librem 5. The "
 "app starts and switches views noticeably faster on lower-end ARM hardware, "
@@ -2002,7 +2052,7 @@ msgstr ""
 "一次性能与细节优化，重点面向 Librem 5 等 Linux 手机。在低端 ARM 硬件上，应用"
 "启动和切换视图明显更快，具有重要后果的操作按钮现在使用标准的红色样式。"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:187
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:201
 msgid ""
 "Cold start is roughly twice as fast on slow ARM phones; view switches, "
 "session start, and session end no longer stall the UI"
@@ -2010,7 +2060,7 @@ msgstr ""
 "在较慢的 ARM 手机上冷启动速度提升约一倍；切换视图、开始会话和结束会话时界面不"
 "再卡顿"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:188
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:202
 msgid ""
 "Haptic feedback on session end now fires correctly on devices with "
 "feedbackd, without the end-sound doubling up"
@@ -2018,21 +2068,21 @@ msgstr ""
 "在使用 feedbackd 的设备上，会话结束时的触感反馈现在能正确触发，结束音也不会重"
 "复播放"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:189
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:203
 msgid ""
 "Stop, Discard, and per-session delete buttons are styled as destructive "
 "(red) per the GNOME HIG"
 msgstr ""
 "“停止”“放弃”以及单个会话的删除按钮按照 GNOME HIG 采用破坏性操作（红色）样式"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:190
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:204
 msgid ""
 "Log view loads 15 sessions per page by default instead of 200, with Load "
 "more for older entries"
 msgstr ""
 "记录视图默认每页加载 15 个会话而非 200 个，可通过“加载更多”查看较早的条目"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:197
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:211
 msgid ""
 "Major polish release ahead of Flathub submission — every tab redesigned, new "
 "data features, and translations in nine languages."
@@ -2040,43 +2090,43 @@ msgstr ""
 "提交 Flathub 前的重大优化版本——所有标签页均已重新设计，新增数据功能，并提供九"
 "种语言的翻译。"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:199
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:213
 msgid "Timer, Stats, and Log tabs fully redesigned around the GNOME HIG"
 msgstr "计时、统计和记录标签页均按照 GNOME HIG 全面重新设计"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:200
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:214
 msgid ""
 "Stats now shows a weekly-goal ring, a 13-week contribution heatmap, and an "
 "insights panel"
 msgstr "统计页现在显示每周目标圆环、13 周贡献热力图和洞察面板"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:201
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:215
 msgid "Log is a date-grouped card feed with swipe-to-delete and undo"
 msgstr "记录改为按日期分组的卡片流，支持滑动删除和撤销"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:202
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:216
 msgid "CSV import and export, plus one-click migration from Insight Timer"
 msgstr "支持 CSV 导入和导出，并可一键从 Insight Timer 迁移"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:203
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:217
 msgid ""
 "Real CC0 recordings replace the three built-in end sounds, with Singing bowl "
 "as the new default"
 msgstr "三种内置结束音换成真实的 CC0 录音，并以颂钵作为新的默认声音"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:204
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:218
 msgid "Post-session note field is now multi-line"
 msgstr "会话后备注框现支持多行"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:205
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:219
 msgid "Weekly goal resets on the locale's first day of the week"
 msgstr "每周目标在所在地区的每周第一天重置"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:206
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:220
 msgid "New \"Vibrate on session end\" toggle for Linux phones"
 msgstr "为 Linux 手机新增“会话结束时振动”开关"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:207
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:221
 msgid ""
 "Full translation coverage across English, German, Spanish, French, Italian, "
 "Dutch, Polish, Brazilian Portuguese, Russian, and Simplified Chinese"
@@ -2084,13 +2134,13 @@ msgstr ""
 "完整支持英语、德语、西班牙语、法语、意大利语、荷兰语、波兰语、巴西葡萄牙语、"
 "俄语和简体中文"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:208
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:222
 msgid ""
 "Adaptive layout down to 360 px; HIG-compliant accent colours and "
 "accessibility"
 msgstr "自适应布局最窄支持 360 像素；强调色和无障碍功能符合 HIG"
 
-#: data/io.github.janekbt.Meditate.metainfo.xml.in:214
+#: data/io.github.janekbt.Meditate.metainfo.xml.in:228
 msgid "Initial release."
 msgstr "首个版本。"
 

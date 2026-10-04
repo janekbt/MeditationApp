@@ -1,0 +1,8 @@
+• Eigene Glockenklänge umbenennen und löschen
+• Eine Benachrichtigung „Meditation beendet“
+• Intervallglocken: Ein/Aus-Schalter, Minuten und Streuung eintippbar
+• Verlaufskarten zeigen den Namen der geführten Meditation
+• Jede Änderung wird synchronisiert, Ansichten aktualisieren sich danach
+• Eine beendete Sitzung bleibt erhalten, bis du sie speicherst oder verwirfst
+• Die App fragt nach, bevor eine Notiz verworfen wird
+• Viele weitere Fehlerbehebungen

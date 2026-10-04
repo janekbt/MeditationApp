@@ -46,8 +46,8 @@ android {
         // patch means a patch actually shipped that month).
         // versionCode is the same date flattened to yymmpp —
         // monotonic as long as patch < 100.
-        versionCode 261000
-        versionName '26.10.0'
+        versionCode 261001
+        versionName '26.10.1'
     }
     sourceSets {
         main {

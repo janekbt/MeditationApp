@@ -1,0 +1,8 @@
+• Renomeie e exclua seus próprios sons de sino
+• Uma notificação "Meditação concluída"
+• Os sinos de intervalo têm um interruptor, e minutos e variação podem ser digitados
+• Os cartões do histórico mostram o nome da meditação guiada
+• Cada alteração é sincronizada e as telas se atualizam após a sincronização
+• Uma sessão concluída é mantida até você salvá-la ou descartá-la
+• O app pergunta antes de descartar uma nota
+• Muitas outras correções de duas revisões completas

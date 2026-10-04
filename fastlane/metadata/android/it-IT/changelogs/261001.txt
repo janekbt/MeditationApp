@@ -1,0 +1,8 @@
+• Rinomina ed elimina i tuoi suoni di campana
+• Una notifica «Meditazione completata»
+• Le campane a intervalli hanno un interruttore, e minuti e variazione si possono digitare
+• Le schede del registro mostrano il nome della meditazione guidata
+• Ogni modifica viene sincronizzata e le schermate si aggiornano dopo la sincronizzazione
+• Una sessione terminata resta finché non la salvi o la scarti
+• L'app chiede conferma prima di scartare una nota
+• Molte altre correzioni

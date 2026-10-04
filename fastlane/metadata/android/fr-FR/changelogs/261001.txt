@@ -1,0 +1,8 @@
+• Renommez et supprimez vos propres sons de cloche
+• Une notification « Méditation terminée »
+• Cloches d'intervalle : interrupteur, minutes et variation à saisir
+• Les cartes de l'historique affichent le nom de la méditation guidée
+• Chaque modification est synchronisée, les écrans se mettent à jour ensuite
+• Une séance terminée est conservée jusqu'à ce que vous l'enregistriez ou l'abandonniez
+• L'app demande confirmation avant d'abandonner une note
+• Bien d'autres corrections

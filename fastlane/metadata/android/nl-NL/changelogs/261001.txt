@@ -1,0 +1,8 @@
+• Je eigen belgeluiden hernoemen en verwijderen
+• Een melding 'Meditatie voltooid'
+• Intervalbellen: aan/uit-schakelaar, minuten en variatie in te typen
+• Logkaarten tonen de naam van de begeleide meditatie
+• Elke wijziging wordt gesynchroniseerd en schermen vernieuwen na een synchronisatie
+• Een afgeronde sessie blijft bewaard tot je hem opslaat of verwijdert
+• De app vraagt het eerst voordat een notitie wordt weggegooid
+• Nog veel meer oplossingen

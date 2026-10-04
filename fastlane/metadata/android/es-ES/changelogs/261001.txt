@@ -1,0 +1,8 @@
+• Cambia el nombre de tus sonidos de campana o elimínalos
+• Una notificación «Meditación terminada»
+• Campanas de intervalo: interruptor, minutos y variación editables
+• Las tarjetas del historial muestran el nombre de la meditación guiada
+• Cada cambio se sincroniza y las pantallas se actualizan tras sincronizar
+• Una sesión terminada se conserva hasta que la guardas o la descartas
+• La app pregunta antes de descartar una nota
+• Muchas más correcciones

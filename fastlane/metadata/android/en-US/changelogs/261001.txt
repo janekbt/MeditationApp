@@ -1,0 +1,8 @@
+• Rename and delete your own bell sounds
+• A "Meditation complete" notification
+• Interval bells get an on/off switch and typeable minutes and jitter
+• Log cards show the guided meditation's name
+• Every change syncs, and screens refresh after a sync
+• A finished session is kept until you save or discard it
+• The app asks before discarding a note
+• Many more fixes from two full bug reviews
