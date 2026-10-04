@@ -893,7 +893,7 @@ mod tests {
             "populate_interval_bells(",
             "refresh_guided_files(",
             "refresh_guided_manage(",
-            "refresh_label_state(",
+            "refresh_after_label_change(",
             "set_label_active(",
             "refresh_filter_label_items(",
             "reset_log_feed(",
@@ -1726,6 +1726,37 @@ mod tests {
         let at = lib.find("if guided::take_focus_loss(app)").unwrap();
         let branch = &lib[at..at + 1500];
         assert!(branch.contains("guided_follows_pause(app, &"), "focus-loss branch pauses the player");
+    }
+
+    #[test]
+    fn label_changes_reach_the_done_and_edit_rows() {
+        // Deleting the label the Edit-Session (or Done) row showed left
+        // its id behind and Save failed on the missing row; Create from
+        // the edit dialog changed the Setup label; rename/delete moved
+        // the chooser's tick to the Setup label; a deleted filter label
+        // left the Log filtering on nothing.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let at = lib.find("fn refresh_after_label_change(").unwrap();
+        let helper = &lib[at..at + lib[at..].find("\n}\n").unwrap()];
+        assert!(helper.contains("ui.set_edit_label_enabled(false);"));
+        assert!(helper.contains("ui.set_done_label_active(false);"));
+        assert!(helper.contains("2 => picked(ui.get_edit_label_id()),"));
+        for handler in ["ui.on_rename_label_confirm(", "ui.on_delete_label_confirm("] {
+            let at = lib.find(handler).unwrap();
+            let body = &lib[at..at + lib[at..].find("\n        });").unwrap()];
+            assert!(body.contains("refresh_after_label_change(&ui, mode);"), "{handler}");
+            assert!(body.contains("refresh_filter_label_items(&ui);"), "{handler}");
+        }
+        let at = lib.find("ui.on_create_label_confirm(").unwrap();
+        let create = &lib[at..at + lib[at..].find("\n        });").unwrap()];
+        assert!(create.contains("ui.set_edit_label_id(id as i32);"));
+        let at = lib.find("fn refresh_filter_label_items(").unwrap();
+        let filter = &lib[at..at + lib[at..].find("\n}\n").unwrap()];
+        assert!(filter.contains("ui.set_filter_label_id(0);"));
+        let at = lib.find("fn refresh_after_pull(").unwrap();
+        let pull = &lib[at..at + lib[at..].find("\n}\n").unwrap()];
+        assert!(pull.contains("refresh_after_label_change(ui, mode);"));
     }
 
     #[test]

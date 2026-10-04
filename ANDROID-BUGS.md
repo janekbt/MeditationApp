@@ -44,7 +44,7 @@ meditate-core with both shells calling them.
   looks the original up in `loaded_log_sessions` and skips the write when it
   is gone (`lib.rs:9850-9877`). GTK captures the Session on open
   (`log/imp.rs:799-810`). Fix: store the Session in the edit state on open.
-- [ ] **Deleting the selected label while editing makes Save fail
+- [x] **Deleting the selected label while editing makes Save fail
   silently.** Label delete never clears `edit-label-id`/`done-label-id`
   (`lib.rs:9190-9200`); `update_session` then fails the foreign key, the
   error is only logged and the dialog closes (`lib.rs:9868-9874`,
@@ -82,10 +82,10 @@ meditate-core with both shells calling them.
   as a normal row, never rings, and can't be re-enabled.
   `IntervalBellRow` (`main.slint:272-276`) has no `enabled`; `lib.rs:4082-4108`
   ignores it. GTK `bells.rs:220-252` + core `bell_row_switch_state`.
-- [ ] **"Create new label" from the edit dialog sets the Setup label.**
+- [x] **"Create new label" from the edit dialog sets the Setup label.**
   `lib.rs:9077-9086` only handles chooser target 1; target 2 (Edit) falls
   into the Setup branch. Compare `on_label_picked` `lib.rs:9294-9303`.
-- [ ] **Label rename/delete leaves stale state.** The list is rebuilt with
+- [x] **Label rename/delete leaves stale state.** The list is rebuilt with
   the Setup selection (`lib.rs:9153-9156`, `9195-9198`, `2319-2327`), the
   edit/Done row keeps the old name, and deleting the label the Log filter
   uses leaves "No Matching Sessions" (`lib.rs:2849-2858`, `3193-3222`; to

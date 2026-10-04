@@ -2339,6 +2339,46 @@ fn refresh_label_state(ui: &MainWindow, mode: meditate_core::SessionMode) {
     refresh_setup_label_name(ui, mode);
 }
 
+/// After labels change under the chooser (create, rename, delete, or
+/// a sync): rebuild the list with the selection of the screen that
+/// opened it, and bring the Done and Edit-Session label rows up to
+/// date. A renamed label shows its new name; a deleted one turns the
+/// row off, so Save never writes an id that no longer exists.
+#[cfg(target_os = "android")]
+fn refresh_after_label_change(ui: &MainWindow, mode: meditate_core::SessionMode) {
+    refresh_setup_label_name(ui, mode);
+    let done_id = ui.get_done_label_id();
+    if done_id > 0 {
+        match lookup_label_name(i64::from(done_id)) {
+            Some(name) => ui.set_done_label_name(name.into()),
+            None => {
+                ui.set_done_label_id(0);
+                ui.set_done_label_name("".into());
+                ui.set_done_label_active(false);
+            }
+        }
+    }
+    let edit_id = ui.get_edit_label_id();
+    if edit_id > 0 {
+        match lookup_label_name(i64::from(edit_id)) {
+            Some(name) => ui.set_edit_label_name(name.into()),
+            None => {
+                ui.set_edit_label_id(0);
+                ui.set_edit_label_name("".into());
+                ui.set_edit_label_enabled(false);
+            }
+        }
+    }
+    let picked = |id: i32| (id > 0).then_some(i64::from(id));
+    let current_id = match ui.get_chooser_target() {
+        1 => picked(ui.get_done_label_id()),
+        2 => picked(ui.get_edit_label_id()),
+        _ if read_label_active_for_mode(mode) => resolved_label_for_mode(mode).map(|(_, id)| id),
+        _ => None,
+    };
+    refresh_chooser_items(ui, current_id);
+}
+
 /// Read the persisted Box-Breath phase pattern from the DB
 /// settings keys the GTK shell uses (`breathing_in` /
 /// `breathing_hold_in` / `breathing_out` / `breathing_hold_out`).
@@ -2849,7 +2889,7 @@ fn refresh_after_pull(
     refresh_guided_files(ui);
     refresh_guided_manage(ui);
     ui.set_label_active(read_label_active_for_mode(mode));
-    refresh_label_state(ui, mode);
+    refresh_after_label_change(ui, mode);
     refresh_filter_label_items(ui);
     reset_log_feed(ui, loaded, pending);
     refresh_stats(ui);
@@ -3227,6 +3267,13 @@ fn refresh_filter_label_items(ui: &MainWindow) {
         std::rc::Rc::new(slint::VecModel::from(items)).into(),
     );
     ui.set_filter_label_index(active_index);
+    // The filtered label is gone (deleted here or by a sync): fall
+    // back to "All labels" instead of filtering on nothing. The
+    // caller reloads the feed.
+    if active_id > 0 && active_index == 0 {
+        ui.set_filter_label_id(0);
+        sync_filter_has_active(ui);
+    }
 }
 
 /// Look up a label's current name by rowid — used to pre-fill
@@ -9073,6 +9120,7 @@ fn build_ui() -> MainWindow {
     //   1 = Done flow → adopt the new label as the Done pick,
     //       close. Mode setting unchanged (Save will persist via
     //       resolve_persist_action).
+    //   2 = Edit-Session flow → adopt it as the session's label.
     // Treating creation as selection mirrors GTK's
     // `labels.rs:125-134`.
     {
@@ -9084,16 +9132,25 @@ fn build_ui() -> MainWindow {
             {
                 let text = ui.get_create_label_text().to_string();
                 if let Some((id, uuid)) = create_label_in_db(&text) {
-                    if ui.get_chooser_target() == 1 {
-                        // Done flow
-                        ui.set_done_label_id(id as i32);
-                        ui.set_done_label_name(text.trim().into());
-                        ui.set_done_label_active(true);
-                    } else {
-                        // Setup flow
-                        let mode: meditate_core::SessionMode = current_mode.get().into();
-                        write_label_uuid_for_mode(mode, &uuid);
-                        refresh_label_state(&ui, mode);
+                    match ui.get_chooser_target() {
+                        1 => {
+                            // Done flow
+                            ui.set_done_label_id(id as i32);
+                            ui.set_done_label_name(text.trim().into());
+                            ui.set_done_label_active(true);
+                        }
+                        2 => {
+                            // Edit-Session flow
+                            ui.set_edit_label_id(id as i32);
+                            ui.set_edit_label_name(text.trim().into());
+                            ui.set_edit_label_enabled(true);
+                        }
+                        _ => {
+                            // Setup flow
+                            let mode: meditate_core::SessionMode = current_mode.get().into();
+                            write_label_uuid_for_mode(mode, &uuid);
+                            refresh_label_state(&ui, mode);
+                        }
                     }
                 }
             }
@@ -9162,7 +9219,8 @@ fn build_ui() -> MainWindow {
                 let text = ui.get_rename_label_text().to_string();
                 if rename_label_in_db(id, &text) {
                     let mode: meditate_core::SessionMode = current_mode.get().into();
-                    refresh_label_state(&ui, mode);
+                    refresh_after_label_change(&ui, mode);
+                    refresh_filter_label_items(&ui);
                 }
             }
             ui.set_rename_label_dialog_open(false);
@@ -9197,6 +9255,10 @@ fn build_ui() -> MainWindow {
     {
         let weak = ui.as_weak();
         let current_mode = current_mode.clone();
+        #[cfg(target_os = "android")]
+        let loaded_log_sessions = loaded_log_sessions.clone();
+        #[cfg(target_os = "android")]
+        let pending_deletes = pending_deletes.clone();
         ui.on_delete_label_confirm(move || {
             let Some(ui) = weak.upgrade() else { return; };
             #[cfg(target_os = "android")]
@@ -9204,7 +9266,12 @@ fn build_ui() -> MainWindow {
                 let id = ui.get_delete_label_id() as i64;
                 if delete_label_in_db(id) {
                     let mode: meditate_core::SessionMode = current_mode.get().into();
-                    refresh_label_state(&ui, mode);
+                    refresh_after_label_change(&ui, mode);
+                    let filtered = ui.get_filter_label_id();
+                    refresh_filter_label_items(&ui);
+                    if ui.get_filter_label_id() != filtered {
+                        reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
+                    }
                 }
             }
             ui.set_delete_label_dialog_open(false);
