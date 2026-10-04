@@ -1111,6 +1111,44 @@ component RevealChooser inherits Rectangle {
     }
 }
 
+// Play / Stop preview pill (bell + pattern choosers, the volume
+// row's Stop). Sized to the longer of the two labels plus side
+// padding, so translations like "Abspielen" fit and the pill keeps
+// its width when the label flips.
+component PreviewPill inherits Rectangle {
+    in property <bool> playing;
+    callback clicked;
+
+    width: max(60px, max(play-label.preferred-width, stop-label.preferred-width) + 24px);
+    height: 32px;
+    border-radius: 16px;
+    border-width: 1px;
+    border-color: MaterialPalette.outline;
+    background: touch.has-hover
+        ? MaterialPalette.secondary-container
+        : transparent;
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+    play-label := Text {
+        text: @tr("Play");
+        font-size: 13px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        color: MaterialPalette.on-surface;
+        visible: !root.playing;
+    }
+    stop-label := Text {
+        text: @tr("Stop");
+        font-size: 13px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        color: MaterialPalette.on-surface;
+        visible: root.playing;
+    }
+}
+
 // GTK Adw.SpinRow analogue: title (+ optional subtitle) on the
 // left, an inline "−  value  +" stepper on the right, in a boxed-list
 // row (at least 56 px, 72 px with a subtitle, growing as it
@@ -1444,25 +1482,9 @@ component RevealVolume inherits Rectangle {
                             horizontal-stretch: 1;
                         }
                         // Same pill as the bell chooser's Play/Stop.
-                        if root.previewing: Rectangle {
-                            width: 60px;
-                            height: 32px;
-                            border-radius: 16px;
-                            border-width: 1px;
-                            border-color: MaterialPalette.outline;
-                            background: stop-touch.has-hover
-                                ? MaterialPalette.secondary-container
-                                : transparent;
-                            stop-touch := TouchArea {
-                                clicked => { root.stop-tap(); }
-                            }
-                            Text {
-                                text: @tr("Stop");
-                                font-size: 13px;
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
-                                color: MaterialPalette.on-surface;
-                            }
+                        if root.previewing: PreviewPill {
+                            playing: true;
+                            clicked => { root.stop-tap(); }
                         }
                     }
                     VolumeSlider {
@@ -6231,29 +6253,9 @@ export component MainWindow inherits Window {
                             // keeps it exclusive).
                             VerticalLayout {
                                 alignment: center;
-                                Rectangle {
-                                    width: 60px;
-                                    height: 32px;
-                                    border-radius: 16px;
-                                    border-width: 1px;
-                                    border-color: MaterialPalette.outline;
-                                    background: bell-pill-touch.has-hover
-                                        ? MaterialPalette.secondary-container
-                                        : transparent;
-
-                                    bell-pill-touch := TouchArea {
-                                        clicked => {
-                                            root.bell-preview-toggle(item.uuid);
-                                        }
-                                    }
-                                    Text {
-                                        text: root.bell-preview-uuid == item.uuid
-                                            ? @tr("Stop") : @tr("Play");
-                                        font-size: 13px;
-                                        horizontal-alignment: center;
-                                        vertical-alignment: center;
-                                        color: MaterialPalette.on-surface;
-                                    }
+                                PreviewPill {
+                                    playing: root.bell-preview-uuid == item.uuid;
+                                    clicked => { root.bell-preview-toggle(item.uuid); }
                                 }
                             }
 
@@ -6457,29 +6459,9 @@ export component MainWindow inherits Window {
                             // (PreviewToggle keeps it exclusive).
                             VerticalLayout {
                                 alignment: center;
-                                Rectangle {
-                                    width: 60px;
-                                    height: 32px;
-                                    border-radius: 16px;
-                                    border-width: 1px;
-                                    border-color: MaterialPalette.outline;
-                                    background: pill-touch.has-hover
-                                        ? MaterialPalette.secondary-container
-                                        : transparent;
-
-                                    pill-touch := TouchArea {
-                                        clicked => {
-                                            root.pattern-preview-toggle(item.uuid);
-                                        }
-                                    }
-                                    Text {
-                                        text: root.pattern-preview-uuid == item.uuid
-                                            ? @tr("Stop") : @tr("Play");
-                                        font-size: 13px;
-                                        horizontal-alignment: center;
-                                        vertical-alignment: center;
-                                        color: MaterialPalette.on-surface;
-                                    }
+                                PreviewPill {
+                                    playing: root.pattern-preview-uuid == item.uuid;
+                                    clicked => { root.pattern-preview-toggle(item.uuid); }
                                 }
                             }
                         }

@@ -1715,6 +1715,20 @@ mod tests {
     }
 
     #[test]
+    fn preview_pills_fit_their_label() {
+        // A fixed 60 px pill squeezed longer translations ("Abspielen").
+        // One shared pill sizes to the longer of Play / Stop (+ side
+        // padding) so it fits and doesn't jump when the label flips.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        let at = slint.find("component PreviewPill inherits Rectangle {").expect("shared pill");
+        let pill = &slint[at..at + slint[at..].find("\n}\n").unwrap()];
+        assert!(pill.contains("width: max(60px, max(play-label.preferred-width, stop-label.preferred-width) + 24px);"));
+        assert!(!slint.contains("width: 60px;"), "no fixed-width pill left");
+        assert_eq!(slint.matches("PreviewPill {").count(), 3, "bell + pattern choosers, volume row");
+    }
+
+    #[test]
     fn the_shell_holds_an_ended_session_until_save_or_discard() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
         let lib = std::fs::read_to_string(path).unwrap();
