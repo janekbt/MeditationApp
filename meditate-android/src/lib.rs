@@ -551,22 +551,6 @@ fn overtime_add_time(
     })
 }
 
-/// The `duration_secs` core wants recorded for this end —
-/// `finish_overtime` carries the planned target, `add_overtime_
-/// and_finish` the full elapsed. Used so the saved row matches
-/// the user's Finish-vs-Add choice exactly (mirrors GTK reading
-/// the same EndSession effect).
-#[cfg(target_os = "android")]
-fn end_session_duration(
-    effects: &[meditate_core::session::Effect],
-) -> Option<u64> {
-    use meditate_core::session::Effect;
-    effects.iter().rev().find_map(|e| match e {
-        Effect::EndSession { duration_secs } => Some(*duration_secs),
-        _ => None,
-    })
-}
-
 /// Snapshot of an in-flight session that the persistence layer needs
 /// at end time. `unix_start` is captured at the Idle/Finished → Active
 /// transition (mirrors the GTK shell's `session_start_time` cell);
@@ -4575,17 +4559,12 @@ fn build_ui() -> MainWindow {
         ui.on_stop_tap(move || {
             let now = now_since_epoch();
             let mut s = state.borrow_mut();
-            // Capture elapsed BEFORE the mutation — once stop()
-            // advances to Finished the Box<Session> is dropped, so
-            // we can't ask it for elapsed afterwards.
-            let elapsed_secs = match &*s {
-                AppState::Active(session) => session.elapsed(now).as_secs() as i64,
-                _ => 0,
-            };
             let was_active = s.is_active();
-            let transition = std::mem::replace(&mut *s, AppState::idle()).stop();
+            let transition = std::mem::replace(&mut *s, AppState::idle()).stop(now);
             #[cfg(target_os = "android")]
             dispatch_effects(&transition.effects);
+            // Core's EndSession carries the duration to save.
+            let elapsed_secs = app::ended_duration_secs(&transition.effects).unwrap_or(0) as i64;
             *s = transition.state;
             let is_active = s.is_active();
             // Active → Finished: stash the (start, elapsed) pair
@@ -4653,20 +4632,14 @@ fn build_ui() -> MainWindow {
         ui.on_finish_tap(move || {
             let now = now_since_epoch();
             let mut s = state.borrow_mut();
-            let pre_elapsed = match &*s {
-                AppState::Active(session) => session.elapsed(now).as_secs() as i64,
-                _ => 0,
-            };
             let was_active = s.is_active();
             let transition =
                 std::mem::replace(&mut *s, AppState::idle()).finish_overtime();
             #[cfg(target_os = "android")]
             dispatch_effects(&transition.effects);
-            #[cfg(target_os = "android")]
-            let final_secs = end_session_duration(&transition.effects)
-                .map_or(pre_elapsed, |d| d as i64);
-            #[cfg(not(target_os = "android"))]
-            let final_secs = pre_elapsed;
+            // Core's EndSession: the planned length for Finish, the
+            // full elapsed for Add.
+            let final_secs = app::ended_duration_secs(&transition.effects).unwrap_or(0) as i64;
             *s = transition.state;
             let is_active = s.is_active();
             if was_active && !is_active {
@@ -4715,20 +4688,14 @@ fn build_ui() -> MainWindow {
         ui.on_add_tap(move || {
             let now = now_since_epoch();
             let mut s = state.borrow_mut();
-            let pre_elapsed = match &*s {
-                AppState::Active(session) => session.elapsed(now).as_secs() as i64,
-                _ => 0,
-            };
             let was_active = s.is_active();
             let transition =
                 std::mem::replace(&mut *s, AppState::idle()).add_overtime(now);
             #[cfg(target_os = "android")]
             dispatch_effects(&transition.effects);
-            #[cfg(target_os = "android")]
-            let final_secs = end_session_duration(&transition.effects)
-                .map_or(pre_elapsed, |d| d as i64);
-            #[cfg(not(target_os = "android"))]
-            let final_secs = pre_elapsed;
+            // Core's EndSession: the planned length for Finish, the
+            // full elapsed for Add.
+            let final_secs = app::ended_duration_secs(&transition.effects).unwrap_or(0) as i64;
             *s = transition.state;
             let is_active = s.is_active();
             if was_active && !is_active {
@@ -5397,13 +5364,11 @@ fn build_ui() -> MainWindow {
             // foreground service AND stashes the session for the
             // Done screen. tick on an inactive state is a no-op,
             // so the equality check is the cheap path.
-            #[cfg(target_os = "android")]
-            let elapsed_secs = match &*s {
-                AppState::Active(session) => session.elapsed(now).as_secs() as i64,
-                _ => 0,
-            };
             let was_active = s.is_active();
             let transition = std::mem::replace(&mut *s, AppState::idle()).tick(now);
+            // A Box Breath end carries its saved duration (EndBoxBreath).
+            #[cfg(target_os = "android")]
+            let elapsed_secs = app::ended_duration_secs(&transition.effects).unwrap_or(0) as i64;
             #[cfg(target_os = "android")]
             dispatch_effects(&transition.effects);
             // Overtime Add-button label tracks the running

@@ -77,7 +77,7 @@ not conclusive and a device check is needed.
   Android `lib.rs:245-283`; GTK `timer/imp.rs:2869-2876`.
 - [x] **Save and Discard don't stop a ringing bell or vibration.** Android
   `lib.rs:5341-5431, 8809-8822`; GTK `timer/imp.rs:2461, 2596`.
-- [ ] **Saved duration is computed in the shell** instead of
+- [x] **Saved duration is computed in the shell** instead of
   `Session::stop` / `EndBoxBreath.duration_secs`. Matches today, will
   drift. Android `app.rs:358-373`, `lib.rs:4417-4425, 5213-5239`; GTK
   `timer/imp.rs:2385-2387, 3040-3042`.

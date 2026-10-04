@@ -42,6 +42,19 @@ impl From<TimerMode> for meditate_core::SessionMode {
     }
 }
 
+/// The duration core says to save for the session that just ended:
+/// `EndSession` (Stop, Finish, Add) or `EndBoxBreath` (a Box Breath
+/// session reaching its cycle-aligned end). `None` when the effects
+/// end nothing.
+pub fn ended_duration_secs(effects: &[Effect]) -> Option<u64> {
+    effects.iter().rev().find_map(|e| match e {
+        Effect::EndSession { duration_secs } | Effect::EndBoxBreath { duration_secs } => {
+            Some(*duration_secs)
+        }
+        _ => None,
+    })
+}
+
 /// Player slot in `MeditateAudio.kt` for a bell on core's channel.
 /// The numbers are the Kotlin `CHANNEL_*` constants.
 pub fn bell_channel_slot(channel: meditate_core::session::FireChannel) -> i32 {
@@ -246,8 +259,8 @@ impl Transition {
         prepend(&mut t.effects, self.effects);
         t
     }
-    pub fn stop(self) -> Transition {
-        let mut t = self.state.stop();
+    pub fn stop(self, now: Duration) -> Transition {
+        let mut t = self.state.stop(now);
         prepend(&mut t.effects, self.effects);
         t
     }
@@ -378,20 +391,17 @@ impl AppState {
     /// decision happens later on the Done screen via `dismiss` (the
     /// Android shell stores the in-flight unix_start + elapsed in
     /// `lib.rs` cells; Finished is just a UI marker here).
-    pub fn stop(self) -> Transition {
+    pub fn stop(self, now: Duration) -> Transition {
         match self {
-            // The session is dropped here (persistence runs off
-            // the lib.rs pending_done cells, not core's
-            // EndSession), so we don't call core `Session::stop`
-            // — but Stop is still a user-driven boundary that
-            // must cut any in-flight bell / vibration, so we
-            // synthesize the one effect the dispatcher needs.
-            // Mirrors GTK's `stop_active_signals()`; the absence
-            // of `FireEndBell` here is exactly why Stop is silent
-            // while a natural countdown finish (which emits
-            // `FireEndBell` from `tick`) still rings.
-            Self::Active(_) => {
-                Transition::new(Self::Finished, vec![Effect::StopActiveSignals])
+            // Core's `Session::stop` emits `StopActiveSignals` (cut
+            // any in-flight bell / vibration) and `EndSession` with
+            // the duration to save — read via `ended_duration_secs`,
+            // like GTK. No `FireEndBell`: Stop is silent, while a
+            // natural countdown finish (FireEndBell from `tick`)
+            // still rings.
+            Self::Active(mut s) => {
+                let effects = s.stop(now);
+                Transition::new(Self::Finished, effects)
             }
             other => Transition::new(other, Vec::new()),
         }
@@ -1371,14 +1381,16 @@ mod tests {
 
     #[test]
     fn stop_from_idle_stays_idle() {
-        assert!(AppState::idle().stop().is_idle());
+        let t = AppState::idle().stop(Duration::from_secs(100));
+        assert!(t.is_idle());
+        assert!(t.effects.is_empty());
     }
 
     #[test]
     fn stop_from_running_advances_to_finished() {
         let s = AppState::idle()
             .toggle(timer_countdown(ten_minutes()), Duration::from_secs(100))
-            .stop();
+            .stop(Duration::from_secs(130));
         assert!(s.is_finished());
     }
 
@@ -1387,7 +1399,7 @@ mod tests {
         let s = AppState::idle()
             .toggle(timer_countdown(ten_minutes()), Duration::from_secs(100))
             .toggle(timer_countdown(ten_minutes()), Duration::from_secs(110))
-            .stop();
+            .stop(Duration::from_secs(120));
         assert!(s.is_finished());
     }
 
@@ -1396,7 +1408,99 @@ mod tests {
         // Stop button isn't reachable from Finished (Done screen has
         // Save / Discard instead), but defending against a stale
         // callback is cheap.
-        assert!(AppState::Finished.stop().is_finished());
+        let t = AppState::Finished.stop(Duration::from_secs(100));
+        assert!(t.is_finished());
+        assert!(t.effects.is_empty());
+    }
+
+    // ── The saved duration comes from core ──────────────────────
+
+    #[test]
+    fn stop_reports_cores_duration_and_silences_signals() {
+        let t = AppState::idle()
+            .toggle(timer_countdown(ten_minutes()), Duration::from_secs(100))
+            .stop(Duration::from_secs(190));
+        assert_eq!(t.effects.first(), Some(&Effect::StopActiveSignals));
+        assert_eq!(ended_duration_secs(&t.effects), Some(90));
+        assert!(
+            !t.effects.iter().any(|e| matches!(e, Effect::FireEndBell { .. })),
+            "Stop is silent",
+        );
+    }
+
+    #[test]
+    fn stop_leaves_paused_time_out() {
+        let shape = || timer_countdown(ten_minutes());
+        let t = AppState::idle()
+            .toggle(shape(), Duration::from_secs(100))
+            .toggle(shape(), Duration::from_secs(130)) // pause after 30 s
+            .toggle(shape(), Duration::from_secs(400)) // resume
+            .stop(Duration::from_secs(420));
+        assert_eq!(ended_duration_secs(&t.effects), Some(50));
+    }
+
+    #[test]
+    fn stop_in_overtime_counts_the_overtime() {
+        let t = AppState::idle()
+            .toggle(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100))
+            .tick(Duration::from_secs(160))
+            .tick(Duration::from_secs(175));
+        assert!(t.is_active(), "still in Overtime");
+        let t = t.stop(Duration::from_secs(180));
+        assert_eq!(ended_duration_secs(&t.effects), Some(80));
+    }
+
+    #[test]
+    fn a_box_breath_end_reports_cores_cycle_aligned_duration() {
+        let shape = SessionShape::BoxBreathCountdown {
+            pattern: meditate_core::breath::BreathPattern::box_breath(),
+            target_secs: 16,
+        };
+        let mut t = AppState::idle().toggle(shape, Duration::from_secs(100));
+        for secs in 101..=116 {
+            t = t.tick(Duration::from_secs(secs));
+            if t.is_finished() {
+                break;
+            }
+        }
+        assert!(t.is_finished());
+        assert_eq!(ended_duration_secs(&t.effects), Some(16));
+    }
+
+    #[test]
+    fn finish_and_add_report_cores_duration() {
+        let start = || {
+            AppState::idle()
+                .toggle(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100))
+                .tick(Duration::from_secs(160))
+        };
+        let finish = start().finish_overtime();
+        assert_eq!(ended_duration_secs(&finish.effects), Some(60), "Finish keeps the planned length");
+        let add = start().add_overtime(Duration::from_secs(190));
+        assert_eq!(ended_duration_secs(&add.effects), Some(90), "Add keeps the overtime");
+    }
+
+    #[test]
+    fn no_end_effect_means_no_duration() {
+        assert_eq!(ended_duration_secs(&[]), None);
+        assert_eq!(ended_duration_secs(&[Effect::StopActiveSignals]), None);
+    }
+
+    /// Every way a session ends takes its saved duration from core's
+    /// effect, not from the shell's own clock arithmetic.
+    #[test]
+    fn the_shell_saves_cores_duration_on_every_end() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
+        let lib = std::fs::read_to_string(path).unwrap();
+        let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
+        assert!(!code.contains("fn end_session_duration("), "one helper, in app.rs");
+        assert!(!code.contains("pre_elapsed"));
+        assert!(!code.contains("session.elapsed(now).as_secs() as i64"), "no shell-side duration");
+        assert_eq!(
+            code.matches("app::ended_duration_secs(&transition.effects)").count(),
+            4,
+            "Stop, Finish, Add and the natural end",
+        );
     }
 
     // ── dismiss ─────────────────────────────────────────────────
