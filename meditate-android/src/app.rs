@@ -1707,6 +1707,19 @@ mod tests {
     }
 
     #[test]
+    fn saving_a_pattern_keeps_the_choosers_tick() {
+        // After saving a pattern, the chooser ticked it although the
+        // bell still used its old pattern.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let at = lib.find("ui.on_vibration_editor_save(").unwrap();
+        let save = &lib[at..at + lib[at..].find("\n        });").unwrap()];
+        assert!(save.contains("populate_pattern_chooser(&ui, &ticked);"));
+        assert!(!save.contains("populate_pattern_chooser(&ui, &uuid);"));
+        assert!(save.contains("ui.set_ie_pattern_name(name.clone().into());"));
+    }
+
+    #[test]
     fn log_days_cards_and_headers_agree() {
         // Grouping used the stored date and cards the stored time,
         // but headers the start instant in today's zone: after a

@@ -1127,10 +1127,6 @@ component RevealChooser inherits Rectangle {
     }
 }
 
-// Play / Stop preview pill (bell + pattern choosers, the volume
-// row's Stop). Sized to the longer of the two labels plus side
-// padding, so translations like "Abspielen" fit and the pill keeps
-// its width when the label flips.
 // A centred modal question with Cancel and one confirming action,
 // over a dimmed backdrop. Tapping the backdrop cancels.
 component ConfirmDialog inherits Rectangle {
@@ -1190,6 +1186,10 @@ component ConfirmDialog inherits Rectangle {
     }
 }
 
+// Play / Stop preview pill (bell + pattern choosers, the volume
+// row's Stop). Sized to the longer of the two labels plus side
+// padding, so translations like "Abspielen" fit and the pill keeps
+// its width when the label flips.
 component PreviewPill inherits Rectangle {
     in property <bool> playing;
     callback clicked;

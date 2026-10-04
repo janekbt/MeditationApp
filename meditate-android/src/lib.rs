@@ -4268,6 +4268,17 @@ fn bell_sound_name_taken(name: &str, except_uuid: &str) -> bool {
     meditate_core::sound::name_collides_excluding(name, &library, except_uuid)
 }
 
+/// The uuid of the pattern-chooser row that is ticked now, or empty.
+#[cfg(target_os = "android")]
+fn ticked_pattern_uuid(ui: &MainWindow) -> String {
+    use slint::Model;
+    ui.get_pattern_chooser_items()
+        .iter()
+        .find(|item| item.selected)
+        .map(|item| item.uuid.to_string())
+        .unwrap_or_default()
+}
+
 /// Fill the pattern-chooser overlay from
 /// `list_vibration_patterns_from_db` (custom rows first, then
 /// the bundled set — the list helper already orders it), the
@@ -8497,9 +8508,17 @@ fn build_ui() -> MainWindow {
                     Some(uuid) => {
                         ve_stop_preview(&ui, &ve_preview_gen);
                         ui.set_vibration_editor_page(false);
-                        // Reselect the saved pattern in the chooser
-                        // (it stays open underneath).
-                        populate_pattern_chooser(&ui, &uuid);
+                        // Rebuild the chooser underneath with the tick
+                        // where it was: saving a pattern doesn't pick
+                        // it for the bell (GTK rebuilds with the
+                        // caller's current pattern too).
+                        let ticked = ticked_pattern_uuid(&ui);
+                        populate_pattern_chooser(&ui, &ticked);
+                        // A renamed pattern may be the one the
+                        // interval-bell editor shows.
+                        if ui.get_ie_pattern_uuid().as_str() == uuid {
+                            ui.set_ie_pattern_name(name.clone().into());
+                        }
                 // Bug-audit #12: a rename can affect the pattern a
                 // Setup bell row currently shows — re-read subtitles.
                 refresh_bell_rows(&ui);
