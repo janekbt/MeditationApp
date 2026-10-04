@@ -817,11 +817,11 @@ msgstr "Объединить"
 msgid "Keep both"
 msgstr "Оставить обе"
 
-msgid "{n} session · {0} min"
-msgid_plural "{n} sessions · {0} min"
-msgstr[0] "{n} сессия · {0} мин"
-msgstr[1] "{n} сессии · {0} мин"
-msgstr[2] "{n} сессий · {0} мин"
+msgid "{n} session · {0}"
+msgid_plural "{n} sessions · {0}"
+msgstr[0] "{n} сессия · {0}"
+msgstr[1] "{n} сессии · {0}"
+msgstr[2] "{n} сессий · {0}"
 
 msgid "Pause"
 msgstr "Пауза"
@@ -864,3 +864,15 @@ msgstr "Файл больше 10 МБ"
 
 msgid "Missing"
 msgstr "Отсутствует"
+
+msgid "Today"
+msgstr "Сегодня"
+
+msgid "Yesterday"
+msgstr "Вчера"
+
+msgid "{1}/{0}"
+msgstr "{0}.{1}"
+
+msgid "{1}/{0}/{2}"
+msgstr "{0}.{1}.{2}"

@@ -132,7 +132,12 @@ export global Tr {
     public pure function bell-at-n-min(n: int) -> string { return @tr("At {n} min" | "At {n} min" % n); }
     public pure function bell-n-min-before-end(n: int) -> string { return @tr("{n} min before end" | "{n} min before end" % n); }
     // Rust-set titles + log-feed strings
-    public pure function day-caption(n: int, mins: string) -> string { return @tr("{n} session · {0} min" | "{n} sessions · {0} min" % n, mins); }
+    public pure function day-caption(n: int, total: string) -> string { return @tr("{n} session · {0}" | "{n} sessions · {0}" % n, total); }
+    // Log day headers. Dates are numbers: {0} day, {1} month, {2} year.
+    public pure function today() -> string { return @tr("Today"); }
+    public pure function yesterday() -> string { return @tr("Yesterday"); }
+    public pure function day-month(day: string, month: string) -> string { return @tr("{1}/{0}", day, month); }
+    public pure function day-month-year(day: string, month: string, year: string) -> string { return @tr("{1}/{0}/{2}", day, month, year); }
     public pure function all-labels() -> string { return @tr("All labels"); }
     public pure function ve-new-pattern() -> string { return @tr("New Pattern"); }
     public pure function ve-edit-pattern() -> string { return @tr("Edit Pattern"); }

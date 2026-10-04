@@ -801,10 +801,10 @@ msgstr "Combinar"
 msgid "Keep both"
 msgstr "Conservar ambas"
 
-msgid "{n} session · {0} min"
-msgid_plural "{n} sessions · {0} min"
-msgstr[0] "{n} sesión · {0} min"
-msgstr[1] "{n} sesiones · {0} min"
+msgid "{n} session · {0}"
+msgid_plural "{n} sessions · {0}"
+msgstr[0] "{n} sesión · {0}"
+msgstr[1] "{n} sesiones · {0}"
 
 msgid "Pause"
 msgstr "Pausado"
@@ -846,3 +846,15 @@ msgstr "El archivo supera los 10 MB"
 
 msgid "Missing"
 msgstr "No encontrado"
+
+msgid "Today"
+msgstr "Hoy"
+
+msgid "Yesterday"
+msgstr "Ayer"
+
+msgid "{1}/{0}"
+msgstr "{0}/{1}"
+
+msgid "{1}/{0}/{2}"
+msgstr "{0}/{1}/{2}"

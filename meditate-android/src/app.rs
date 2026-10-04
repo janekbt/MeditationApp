@@ -55,6 +55,31 @@ pub fn ended_duration_secs(effects: &[Effect]) -> Option<u64> {
     })
 }
 
+/// A Log day section's header: core's Today / Yesterday, else the
+/// day as numbers (the shell renders them through a translatable
+/// pattern, e.g. "3.10." in German), with the year for an earlier
+/// year.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DayHeader {
+    Today,
+    Yesterday,
+    DayMonth { day: u32, month: u32 },
+    DayMonthYear { day: u32, month: u32, year: i32 },
+}
+
+pub fn day_header(unix_secs: i64, now_unix: i64) -> DayHeader {
+    use chrono::{Datelike, TimeZone};
+    use meditate_core::format::{date_group_kind, DateGroupKey};
+    let date = chrono::Local.timestamp_opt(unix_secs, 0).single().map(|t| t.date_naive());
+    let (day, month, year) = date.map_or((0, 0, 0), |d| (d.day(), d.month(), d.year()));
+    match date_group_kind(unix_secs, now_unix) {
+        DateGroupKey::Today => DayHeader::Today,
+        DateGroupKey::Yesterday => DayHeader::Yesterday,
+        DateGroupKey::SameYearOther => DayHeader::DayMonth { day, month },
+        DateGroupKey::EarlierYearOther => DayHeader::DayMonthYear { day, month, year },
+    }
+}
+
 /// Interval-bell editor kind chip index ↔ core kind. Chip order:
 /// Every N min, At N min, N min before end. An unknown index is
 /// core's default kind.
@@ -1329,6 +1354,71 @@ mod tests {
         let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
         assert!(slint.contains("min-value: root.ie-minutes-min;") && slint.contains("max-value: root.ie-minutes-max;"));
         assert!(slint.contains("min-value: root.ie-jitter-min;") && slint.contains("max-value: root.ie-jitter-max;"));
+    }
+
+    // ── Log day headers: Today / Yesterday / numbers ────────────
+
+    /// Unix time of local noon on the given date (noon keeps DST
+    /// shifts away from the day boundary).
+    fn local_noon(y: i32, m: u32, d: u32) -> i64 {
+        use chrono::TimeZone;
+        chrono::Local.with_ymd_and_hms(y, m, d, 12, 0, 0).single().unwrap().timestamp()
+    }
+
+    #[test]
+    fn a_session_today_is_headed_today() {
+        let now = local_noon(2026, 10, 4);
+        assert_eq!(day_header(now - 3600, now), DayHeader::Today);
+    }
+
+    #[test]
+    fn a_session_yesterday_is_headed_yesterday() {
+        let now = local_noon(2026, 10, 4);
+        assert_eq!(day_header(local_noon(2026, 10, 3), now), DayHeader::Yesterday);
+    }
+
+    #[test]
+    fn an_older_day_this_year_shows_day_and_month() {
+        let now = local_noon(2026, 10, 4);
+        assert_eq!(day_header(local_noon(2026, 3, 9), now), DayHeader::DayMonth { day: 9, month: 3 });
+    }
+
+    #[test]
+    fn a_day_in_an_earlier_year_also_shows_the_year() {
+        let now = local_noon(2026, 1, 5);
+        assert_eq!(
+            day_header(local_noon(2025, 12, 31), now),
+            DayHeader::DayMonthYear { day: 31, month: 12, year: 2025 },
+        );
+    }
+
+    #[test]
+    fn yesterday_across_new_year_is_still_yesterday() {
+        let now = local_noon(2026, 1, 1);
+        assert_eq!(day_header(local_noon(2025, 12, 31), now), DayHeader::Yesterday);
+    }
+
+    /// The Log's section header and total render through core: Today
+    /// / Yesterday / translatable number patterns, and the total as
+    /// "2h 5m" (core's HmKey) instead of "125 min".
+    #[test]
+    fn log_sections_render_through_core() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
+        assert!(!code.contains("fn format_date_group_display("), "no raw YYYY-MM-DD header");
+        let text = code.find("fn day_header_text(").expect("one header renderer");
+        let text = &code[text..text + code[text..].find("\n}\n").unwrap()];
+        for call in ["invoke_today()", "invoke_yesterday()", "invoke_day_month(", "invoke_day_month_year("] {
+            assert!(text.contains(call), "{call}");
+        }
+        assert!(code.contains("day_header_text(ui, app::day_header(sec.start_unix, now_unix))"));
+        assert!(code.contains("render_hm(meditate_core::format::hm_compact_key("), "total via core");
+        assert!(!code.contains("(sec.total_secs / 60).to_string()"));
+
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        assert!(slint.contains("@tr(\"{n} session · {0}\" | \"{n} sessions · {0}\" % n, total)"));
+        assert!(slint.contains("@tr(\"Today\")") && slint.contains("@tr(\"Yesterday\")"));
     }
 
     #[test]

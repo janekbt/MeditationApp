@@ -785,9 +785,9 @@ msgstr "合并"
 msgid "Keep both"
 msgstr "保留两者"
 
-msgid "{n} session · {0} min"
-msgid_plural "{n} sessions · {0} min"
-msgstr[0] "{n} 个会话 · {0} 分钟"
+msgid "{n} session · {0}"
+msgid_plural "{n} sessions · {0}"
+msgstr[0] "{n} 个会话 · {0}"
 
 msgid "Pause"
 msgstr "已暂停"
@@ -828,3 +828,15 @@ msgstr "文件大于 10 MB"
 
 msgid "Missing"
 msgstr "缺失"
+
+msgid "Today"
+msgstr "今天"
+
+msgid "Yesterday"
+msgstr "昨天"
+
+msgid "{1}/{0}"
+msgstr "{1}月{0}日"
+
+msgid "{1}/{0}/{2}"
+msgstr "{2}年{1}月{0}日"

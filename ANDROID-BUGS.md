@@ -109,7 +109,7 @@ not conclusive and a device check is needed.
   `timer/imp.rs:2924-2927`. Fix: core `display_secs` in Overtime.
 - [x] **Deleted sound shows a blank name instead of "Missing".** Android
   `lib.rs:3346-3357, 3384-3391, 3697-3700`; GTK `bells.rs:381-386`.
-- [ ] **Log day headers and totals are hand-formatted** ("2026-10-03",
+- [x] **Log day headers and totals are hand-formatted** ("2026-10-03",
   "125 min" vs "Today", "2h 5m"). Android `lib.rs:2656-2661, 2836-2839`;
   GTK `log/imp.rs:579-617`.
 - [x] **Manage Bells count ignores Stopwatch mode.** Android

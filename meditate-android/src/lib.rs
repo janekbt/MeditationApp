@@ -2635,7 +2635,7 @@ fn group_log_sessions(
         }
         sections.push(LogDaySectionData {
             date_key,
-            date_display: format_date_group_display(&s.start_iso),
+            start_unix: meditate_core::time::local_iso_to_unix(&s.start_iso),
             count: 1,
             total_secs: duration_secs_i64,
             items: vec![item],
@@ -2671,7 +2671,9 @@ struct LogCardItemData {
 #[cfg(target_os = "android")]
 struct LogDaySectionData {
     date_key: String,
-    date_display: String,
+    /// When the section's first session started; its header is
+    /// rendered from this (core's Today / Yesterday / date).
+    start_unix: i64,
     count: i64,
     total_secs: i64,
     items: Vec<LogCardItemData>,
@@ -2744,15 +2746,24 @@ fn format_time_of_day(start_iso: &str) -> String {
     app::render_time_of_day(key, &fmt)
 }
 
-/// Date-section header label for the Log feed. Today /
-/// Yesterday / weekday-or-full-date logic lives in core
-/// eventually; for L-1 we just show the YYYY-MM-DD prefix.
+/// Date-section header text for the Log feed: "Today" /
+/// "Yesterday", else the day as numbers through a translatable
+/// pattern. Mirrors GTK's date_group_display (core decides the kind).
 #[cfg(target_os = "android")]
-fn format_date_group_display(start_iso: &str) -> String {
-    start_iso
-        .get(..10)
-        .unwrap_or("")
-        .to_string()
+fn day_header_text(ui: &MainWindow, header: app::DayHeader) -> slint::SharedString {
+    let tr = ui.global::<Tr>();
+    match header {
+        app::DayHeader::Today => tr.invoke_today(),
+        app::DayHeader::Yesterday => tr.invoke_yesterday(),
+        app::DayHeader::DayMonth { day, month } => {
+            tr.invoke_day_month(day.to_string().into(), month.to_string().into())
+        }
+        app::DayHeader::DayMonthYear { day, month, year } => tr.invoke_day_month_year(
+            day.to_string().into(),
+            month.to_string().into(),
+            year.to_string().into(),
+        ),
+    }
 }
 
 /// Reload the Log feed from scratch: clears the shadow list,
@@ -2936,6 +2947,7 @@ fn push_log_sections_to_ui(
     ui: &MainWindow,
     sections: Vec<LogDaySectionData>,
 ) {
+    let now_unix = meditate_core::time::unix_now();
     let items: Vec<LogDaySection> = sections
         .into_iter()
         .map(|sec| {
@@ -2952,10 +2964,13 @@ fn push_log_sections_to_ui(
                 })
                 .collect();
             LogDaySection {
-                date_display: sec.date_display.into(),
+                date_display: day_header_text(ui, app::day_header(sec.start_unix, now_unix)),
                 caption: ui.global::<Tr>().invoke_day_caption(
                     sec.count as i32,
-                    (sec.total_secs / 60).to_string().into(),
+                    render_hm(meditate_core::format::hm_compact_key(Duration::from_secs(
+                        sec.total_secs.max(0) as u64,
+                    )))
+                    .into(),
                 ),
                 items: std::rc::Rc::new(slint::VecModel::from(cards)).into(),
             }
