@@ -152,6 +152,39 @@ static SESSION_SAVE_FAILED: std::sync::Mutex<Option<meditate_core::format::Sessi
 static PRESET_APPLY_FAILED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+/// Set when an export failed before the save dialog opened (temp CSV
+/// or the dialog launch); the tick loop shows "Export failed".
+#[cfg(target_os = "android")]
+static EXPORT_FAILED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Write the sessions CSV to a temp file and open the save dialog
+/// (CREATE_DOCUMENT), which copies it out and reports via
+/// `take_export_result`. `false` when either step failed.
+#[cfg(target_os = "android")]
+fn started_export() -> bool {
+    let Some(app) = android_app() else { return false; };
+    let Some(root) = app.internal_data_path() else { return false; };
+    let tmp = root.join("meditate").join("export-transient.csv");
+    let written = {
+        let Some(db_arc) = DATABASE.get() else { return false; };
+        let Ok(guard) = db_arc.lock() else { return false; };
+        let Some(db) = guard.as_ref() else { return false; };
+        meditate_core::data_io::export_csv(db, &tmp)
+    };
+    match written {
+        Ok(n) => {
+            meditate_core::log("data.export", &format!("wrote {n} sessions to temp"));
+            let today = meditate_core::time::today_local().format("%Y-%m-%d").to_string();
+            guided::open_export(app, &tmp.to_string_lossy(), &format!("meditate-sessions-{today}.csv"))
+        }
+        Err(e) => {
+            meditate_core::log("data.export", &format!("export_csv FAILED: {e:?}"));
+            false
+        }
+    }
+}
+
 /// Set by the sync worker when a pass brought in changes from
 /// another device; the tick loop consumes it and re-reads every
 /// screen (`refresh_after_pull`).
@@ -4942,6 +4975,9 @@ fn build_ui() -> MainWindow {
                 // started.
                 if GUIDED_START_FAILED.swap(false, std::sync::atomic::Ordering::SeqCst) {
                     pick_error = Some(ui.global::<Tr>().invoke_playback_failed());
+                }
+                if EXPORT_FAILED.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                    pick_error = Some(ui.global::<Tr>().invoke_export_failed());
                 }
                 if PRESET_APPLY_FAILED.swap(false, std::sync::atomic::Ordering::SeqCst) {
                     pick_error = Some(ui.global::<Tr>().invoke_preset_sync_pending());
@@ -10218,36 +10254,10 @@ fn build_ui() -> MainWindow {
             #[cfg(target_os = "android")]
             {
                 let Some(_ui) = weak.upgrade() else { return; };
-                let Some(app) = android_app() else { return; };
-                let Some(root) = app.internal_data_path() else {
-                    return;
-                };
-                let tmp = root.join("meditate").join("export-transient.csv");
-                let n = {
-                    let Some(db_arc) = DATABASE.get() else { return; };
-                    let Ok(guard) = db_arc.lock() else { return; };
-                    let Some(db) = guard.as_ref() else { return; };
-                    meditate_core::data_io::export_csv(db, &tmp)
-                };
-                match n {
-                    Ok(n) => {
-                        meditate_core::log(
-                            "data.export",
-                            &format!("wrote {n} sessions to temp"),
-                        );
-                        let today = meditate_core::time::today_local()
-                            .format("%Y-%m-%d")
-                            .to_string();
-                        guided::open_export(
-                            app,
-                            &tmp.to_string_lossy(),
-                            &format!("meditate-sessions-{today}.csv"),
-                        );
-                    }
-                    Err(e) => meditate_core::log(
-                        "data.export",
-                        &format!("export_csv FAILED: {e:?}"),
-                    ),
+                // The copy-out step reports its own result; a failure
+                // before the save dialog opens says so too.
+                if !started_export() {
+                    EXPORT_FAILED.store(true, std::sync::atomic::Ordering::SeqCst);
                 }
             }
             let _ = weak.clone();

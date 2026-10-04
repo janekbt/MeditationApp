@@ -1210,6 +1210,29 @@ mod tests {
         assert!(group.contains("enabled: root.enabled;"), "the switch greys out");
     }
 
+    /// Every export failure says "Export failed": writing the temp CSV
+    /// and opening the save dialog used to fail with only a log line
+    /// (the copy-out step already showed it).
+    #[test]
+    fn every_export_failure_says_so() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
+        let tap = code.find("ui.on_data_export_tap(").unwrap();
+        let tap = &code[tap..tap + code[tap..].find("\n        });").unwrap()];
+        assert!(tap.contains("if !started_export(") , "one outcome for the whole flow");
+        assert!(tap.contains("EXPORT_FAILED.store(true"), "a failure is flagged");
+        let started = code.find("fn started_export(").expect("helper");
+        let started = &code[started..started + code[started..].find("\n}\n").unwrap()];
+        assert!(started.contains("guided::open_export(") && started.contains("export_csv("));
+
+        let guided = std::fs::read_to_string(root.join("src/guided.rs")).unwrap();
+        assert!(guided.contains("pub fn open_export(app: &AndroidApp, src_path: &str, suggested: &str) -> bool"));
+
+        let shown = code.find("EXPORT_FAILED.swap(false").expect("the tick loop shows it");
+        assert!(code[shown..shown + 300].contains("invoke_export_failed()"));
+    }
+
     #[test]
     fn the_shell_holds_an_ended_session_until_save_or_discard() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");

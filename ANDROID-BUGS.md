@@ -100,7 +100,7 @@ not conclusive and a device check is needed.
   `timer/imp.rs:758-773`.
 - [x] **No 10 MB limit on bell import**; an oversized file is never
   uploaded by sync. Android `lib.rs:4703-4721`; GTK `sounds.rs:408-413`.
-- [ ] **Import/export errors lose their details; failed export shows
+- [x] **Import/export errors lose their details; failed export shows
   nothing.** Android `lib.rs:4928-4935, 9980-9984`; GTK
   `preferences.rs:535-541, 649-650`.
 - [x] **Overtime display shows 00:00** (or keeps counting for guided).

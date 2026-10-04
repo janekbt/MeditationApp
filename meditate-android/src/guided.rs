@@ -125,13 +125,15 @@ pub fn open_picker_for_csv(app: &AndroidApp, target: &str) {
 
 /// Launch the export CREATE_DOCUMENT flow (DP): the CSV is
 /// pre-written to `src_path`; the Activity copies it to the pick
-/// and reports via `take_export_result`.
-pub fn open_export(app: &AndroidApp, src_path: &str, suggested: &str) {
-    if let Err(e) = invoke_open_export(app, src_path, suggested) {
-        meditate_core::log(
-            "data.export",
-            &format!("open_export FAILED: {e:?}"),
-        );
+/// and reports via `take_export_result`. `false` when the dialog
+/// couldn't be launched.
+pub fn open_export(app: &AndroidApp, src_path: &str, suggested: &str) -> bool {
+    match invoke_open_export(app, src_path, suggested) {
+        Ok(()) => true,
+        Err(e) => {
+            meditate_core::log("data.export", &format!("open_export FAILED: {e:?}"));
+            false
+        }
     }
 }
 
