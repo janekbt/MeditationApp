@@ -708,4 +708,18 @@ mod tests {
         let ceremony = &src[ceremony..ceremony + src[ceremony..].find("\n    }\n").unwrap()];
         assert!(!ceremony.contains("guided_playback"), "the ceremony no longer stops it (too late)");
     }
+
+    /// The Overtime hero shows core's planned length (the file length
+    /// for guided), not the Timer setup's target.
+    #[test]
+    fn overtime_hero_reads_core() {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/timer/imp.rs"),
+        )
+        .unwrap();
+        let ceremony = src.find("fn transition_running_to_overtime(").unwrap();
+        let ceremony = &src[ceremony..ceremony + src[ceremony..].find("\n    }\n").unwrap()];
+        assert!(!ceremony.contains("countdown_target_secs"), "the Timer target is wrong for guided");
+        assert!(ceremony.contains("completion_duration_secs"));
+    }
 }

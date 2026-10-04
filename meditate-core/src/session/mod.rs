@@ -733,11 +733,11 @@ impl Session {
     /// - Running: floor elapsed if `stopwatch_display` is true,
     ///   else ceiling-remaining (countdown) or floor elapsed
     ///   (no target).
-    /// - Overtime: ceiling remaining clamps at 0 once past target;
-    ///   the gtk shell keeps the hero frozen at the planned
-    ///   duration via the same `target_secs` value, so callers
-    ///   that respect that freeze typically don't invoke this
-    ///   during Overtime.
+    /// - Overtime: frozen at the planned length
+    ///   (`completion_duration_secs` — the guided file's length,
+    ///   the Timer's target), whichever display mode, and also
+    ///   when a guided track ended early. Only the Add button
+    ///   counts the overtime.
     /// - Stopped: 0 (caller usually reads `final_duration_secs`
     ///   instead at that point).
     ///
@@ -751,7 +751,8 @@ impl Session {
         }
         match self.phase {
             SessionPhase::Prep | SessionPhase::Stopped | SessionPhase::Paused => 0,
-            SessionPhase::Running | SessionPhase::Overtime => {
+            SessionPhase::Overtime => self.completion_duration_secs(),
+            SessionPhase::Running => {
                 display_secs_for_running(&self.settings.shape, self.phase_clock.elapsed(now))
             }
         }
@@ -2378,5 +2379,48 @@ mod tests {
     #[test]
     fn stopping_the_track_is_not_a_bell() {
         assert!(Effect::StopGuidedAudio.fire_route().is_none());
+    }
+
+    // ── The hero freezes at the planned length in Overtime ──────────
+
+    #[test]
+    fn a_timer_in_overtime_shows_its_planned_length() {
+        let t0 = Duration::from_secs(100);
+        let (mut s, _) = Session::start(timer_countdown_settings(60), t0);
+        let _ = s.tick(t0 + Duration::from_secs(60));
+        assert_eq!(s.display_secs(t0 + Duration::from_secs(60)), 60);
+        assert_eq!(s.display_secs(t0 + Duration::from_secs(95)), 60, "frozen, not 00:00");
+    }
+
+    #[test]
+    fn guided_in_overtime_shows_the_file_length() {
+        let t0 = Duration::from_secs(100);
+        let (mut s, _) = Session::start(guided_settings(60, false), t0);
+        let _ = s.tick(t0 + Duration::from_secs(60));
+        assert_eq!(s.display_secs(t0 + Duration::from_secs(80)), 60);
+    }
+
+    #[test]
+    fn guided_counting_up_stops_counting_in_overtime() {
+        let t0 = Duration::from_secs(100);
+        let (mut s, _) = Session::start(guided_settings(60, true), t0);
+        let _ = s.tick(t0 + Duration::from_secs(60));
+        assert_eq!(s.display_secs(t0 + Duration::from_secs(80)), 60, "not 80");
+    }
+
+    #[test]
+    fn a_track_ending_early_still_shows_the_planned_length() {
+        let t0 = Duration::from_secs(100);
+        let (mut s, _) = Session::start(guided_settings(60, false), t0);
+        let _ = s.tick(t0 + Duration::from_secs(58));
+        let _ = s.enter_overtime();
+        assert_eq!(s.display_secs(t0 + Duration::from_secs(59)), 60, "not the 2 s left");
+    }
+
+    #[test]
+    fn running_display_is_unchanged() {
+        let t0 = Duration::from_secs(100);
+        let (s, _) = Session::start(timer_countdown_settings(60), t0);
+        assert_eq!(s.display_secs(t0 + Duration::from_secs(20)), 40);
     }
 }

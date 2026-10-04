@@ -103,7 +103,7 @@ not conclusive and a device check is needed.
 - [ ] **Import/export errors lose their details; failed export shows
   nothing.** Android `lib.rs:4928-4935, 9980-9984`; GTK
   `preferences.rs:535-541, 649-650`.
-- [ ] **Overtime display shows 00:00** (or keeps counting for guided).
+- [x] **Overtime display shows 00:00** (or keeps counting for guided).
   GTK freezes it at the planned length, but uses the Timer's target for
   guided instead of the file length. Android `app.rs:546-553`; GTK
   `timer/imp.rs:2924-2927`. Fix: core `display_secs` in Overtime.

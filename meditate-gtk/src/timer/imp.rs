@@ -2919,9 +2919,15 @@ impl TimerView {
         // the user chose that target, so the static reading is
         // their accomplishment. Only the Add button counts up,
         // surfacing how much extra time they've accumulated.
+        // Core knows the planned length — the guided file's, not the
+        // Timer setup's target.
+        let planned = self
+            .core_session
+            .borrow()
+            .as_ref()
+            .map_or(0, meditate_core::session::Session::completion_duration_secs);
         if let Some(label) = self.running_label.borrow().as_ref() {
-            let target = self.countdown_target_secs.get();
-            label.set_label(&format_time(Duration::from_secs(u64::from(target))));
+            label.set_label(&format_time(Duration::from_secs(planned)));
         }
     }
 

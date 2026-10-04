@@ -1341,6 +1341,22 @@ mod tests {
     }
 
     #[test]
+    fn hero_label_in_overtime_stays_at_the_planned_length() {
+        // Was 00:00: the countdown clamped at zero.
+        let s = AppState::idle()
+            .toggle(timer_countdown(Duration::from_secs(60)), Duration::from_secs(100))
+            .tick(Duration::from_secs(160));
+        assert_eq!(s.hero_label(Duration::ZERO, Duration::from_secs(190), false), "01:00");
+    }
+
+    #[test]
+    fn hero_label_in_guided_overtime_stops_counting_up() {
+        let shape = SessionShape::Guided { duration_secs: 60, count_up_display: true };
+        let s = AppState::idle().toggle(shape, Duration::from_secs(100)).tick(Duration::from_secs(160));
+        assert_eq!(s.hero_label(Duration::ZERO, Duration::from_secs(190), true), "01:00");
+    }
+
+    #[test]
     fn hero_label_running_stopwatch_counts_up() {
         // 50s into a TimerStopwatch session, hero shows "00:50".
         let shape = SessionShape::TimerStopwatch;
