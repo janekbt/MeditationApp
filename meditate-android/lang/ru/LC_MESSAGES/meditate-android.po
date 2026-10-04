@@ -855,3 +855,6 @@ msgstr "Не удалось сохранить сессию — ошибка х�
 
 msgid "Couldn't save session — storage unavailable"
 msgstr "Не удалось сохранить сессию — хранилище недоступно"
+
+msgid "Please wait until fully synced — not all bell sounds have arrived"
+msgstr "Дождитесь полной синхронизации — ещё не все звуки колоколов получены"

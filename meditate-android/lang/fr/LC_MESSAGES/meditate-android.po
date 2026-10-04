@@ -837,3 +837,6 @@ msgstr "Impossible d'enregistrer la séance — erreur de stockage"
 
 msgid "Couldn't save session — storage unavailable"
 msgstr "Impossible d'enregistrer la séance — stockage indisponible"
+
+msgid "Please wait until fully synced — not all bell sounds have arrived"
+msgstr ""

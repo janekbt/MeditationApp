@@ -1092,6 +1092,28 @@ mod tests {
         assert!(slint.contains("@tr(\"Couldn't save session — storage unavailable\")"));
     }
 
+    /// A preset that can't be applied (its bell sound or pattern hasn't
+    /// synced yet) says so instead of doing nothing — chip, widget and
+    /// Undo alike, as they all go through apply_preset_json. GTK shows
+    /// the same message.
+    #[test]
+    fn a_preset_that_cannot_apply_says_so() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
+
+        let outer = code.find("fn apply_preset_json(").unwrap();
+        let outer = &code[outer..outer + code[outer..].find("\n}\n").unwrap()];
+        assert!(outer.contains("apply_preset_config_json("), "one wrapper around the real apply");
+        assert!(outer.contains("PRESET_APPLY_FAILED.store(true"), "every failure is flagged");
+        assert_eq!(code.matches("apply_preset_config_json(").count(), 2, "only the wrapper calls it");
+
+        let shown = code.find("PRESET_APPLY_FAILED.swap(false").expect("the tick loop shows it");
+        assert!(code[shown..shown + 300].contains("invoke_preset_sync_pending()"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        assert!(slint.contains("@tr(\"Please wait until fully synced — not all bell sounds have arrived\")"));
+    }
+
     #[test]
     fn the_shell_holds_an_ended_session_until_save_or_discard() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");

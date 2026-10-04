@@ -837,3 +837,6 @@ msgstr "Sitzung konnte nicht gespeichert werden – Speicherfehler"
 
 msgid "Couldn't save session — storage unavailable"
 msgstr "Sitzung konnte nicht gespeichert werden – Speicher nicht verfügbar"
+
+msgid "Please wait until fully synced — not all bell sounds have arrived"
+msgstr ""

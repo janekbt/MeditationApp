@@ -837,3 +837,6 @@ msgstr "Kan sessie niet opslaan — opslagfout"
 
 msgid "Couldn't save session — storage unavailable"
 msgstr "Kan sessie niet opslaan — opslag niet beschikbaar"
+
+msgid "Please wait until fully synced — not all bell sounds have arrived"
+msgstr ""

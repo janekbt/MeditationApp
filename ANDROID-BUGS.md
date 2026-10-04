@@ -90,7 +90,7 @@ not conclusive and a device check is needed.
 - [ ] **End Bell row stays on and editable in Stopwatch mode.** Android
   never calls core `end_bell_row_state`. Android `main.slint:3067-3070,
   3337-3340, 3537-3540`, `lib.rs:3527`; GTK `timer/imp.rs:1999-2025`.
-- [ ] **Preset with a missing sound or pattern silently does nothing**
+- [x] **Preset with a missing sound or pattern silently does nothing**
   (also from the widget). GTK shows "Please wait until fully synced…".
   Android `lib.rs:1427-1437, 6171-6178`; GTK `timer/imp.rs:3609-3614`.
 - [x] **Failed session save shows no message.** Android `lib.rs:3195-3245`;

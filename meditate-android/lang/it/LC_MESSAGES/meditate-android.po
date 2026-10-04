@@ -837,3 +837,6 @@ msgstr "Impossibile salvare la sessione — errore di archiviazione"
 
 msgid "Couldn't save session — storage unavailable"
 msgstr "Impossibile salvare la sessione — archiviazione non disponibile"
+
+msgid "Please wait until fully synced — not all bell sounds have arrived"
+msgstr ""

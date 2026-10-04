@@ -145,6 +145,13 @@ static GUIDED_START_FAILED: std::sync::atomic::AtomicBool =
 static SESSION_SAVE_FAILED: std::sync::Mutex<Option<meditate_core::format::SessionSaveFailureKind>> =
     std::sync::Mutex::new(None);
 
+/// Set when a preset (chip, widget or Undo) couldn't be applied —
+/// typically a bell sound or pattern it uses hasn't synced yet; the
+/// tick loop shows GTK's "Please wait until fully synced" message.
+#[cfg(target_os = "android")]
+static PRESET_APPLY_FAILED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 /// Set by the sync worker when a pass brought in changes from
 /// another device; the tick loop consumes it and re-reads every
 /// screen (`refresh_after_pull`).
@@ -1447,10 +1454,24 @@ fn find_preset_by_uuid(uuid: &str) -> Option<meditate_core::db::Preset> {
 /// is shell-side reactive state (duration / stopwatch / BB
 /// pattern), persisted here like GTK's `set_countdown_target` /
 /// `set_breathing_duration_secs`. Returns `false` on parse or
-/// `ApplyError` (SyncPending is unreachable until the Phase-7
-/// sync loop — seeded presets reference bundled UUIDs).
+/// `ApplyError` (SyncPending: a bell sound / pattern the preset uses
+/// hasn't synced yet) — and then the snackbar says so, like GTK.
 #[cfg(target_os = "android")]
 fn apply_preset_json(
+    ui: &MainWindow,
+    json: &str,
+    mode: meditate_core::SessionMode,
+    timer_session_secs: &std::rc::Rc<std::cell::Cell<u32>>,
+) -> bool {
+    let applied = apply_preset_config_json(ui, json, mode, timer_session_secs);
+    if !applied {
+        PRESET_APPLY_FAILED.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+    applied
+}
+
+#[cfg(target_os = "android")]
+fn apply_preset_config_json(
     ui: &MainWindow,
     json: &str,
     mode: meditate_core::SessionMode,
@@ -4883,6 +4904,9 @@ fn build_ui() -> MainWindow {
                 // started.
                 if GUIDED_START_FAILED.swap(false, std::sync::atomic::Ordering::SeqCst) {
                     pick_error = Some(ui.global::<Tr>().invoke_playback_failed());
+                }
+                if PRESET_APPLY_FAILED.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                    pick_error = Some(ui.global::<Tr>().invoke_preset_sync_pending());
                 }
                 // A session couldn't be saved; it's kept on the Done
                 // screen.

@@ -855,3 +855,6 @@ msgstr "Nie można zapisać sesji — błąd pamięci"
 
 msgid "Couldn't save session — storage unavailable"
 msgstr "Nie można zapisać sesji — pamięć niedostępna"
+
+msgid "Please wait until fully synced — not all bell sounds have arrived"
+msgstr ""

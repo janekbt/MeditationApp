@@ -837,3 +837,6 @@ msgstr "No se pudo guardar la sesión — error de almacenamiento"
 
 msgid "Couldn't save session — storage unavailable"
 msgstr "No se pudo guardar la sesión — almacenamiento no disponible"
+
+msgid "Please wait until fully synced — not all bell sounds have arrived"
+msgstr ""

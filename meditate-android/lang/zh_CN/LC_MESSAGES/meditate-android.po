@@ -819,3 +819,6 @@ msgstr "无法保存会话——存储错误"
 
 msgid "Couldn't save session — storage unavailable"
 msgstr "无法保存会话——存储不可用"
+
+msgid "Please wait until fully synced — not all bell sounds have arrived"
+msgstr "请等待同步完成——部分铃声尚未同步到位"
