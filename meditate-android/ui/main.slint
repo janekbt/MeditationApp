@@ -62,6 +62,7 @@ export global Tr {
     public pure function save-failed-unavailable() -> string { return @tr("Couldn't save session — storage unavailable"); }
     public pure function preset-sync-pending() -> string { return @tr("Please wait until fully synced — not all bell sounds have arrived"); }
     public pure function file-too-large() -> string { return @tr("File is larger than 10 MB"); }
+    public pure function missing() -> string { return @tr("Missing"); }
     public pure function no-audio-track() -> string { return @tr("This file has no audio track"); }
     public pure function recovered-min(n: int) -> string { return @tr("Recovered {} min session", n); }
     // Test connection (core TestConnectionResult variants)

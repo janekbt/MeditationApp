@@ -3488,22 +3488,29 @@ fn write_global_setting(key: &str, value: &str) {
     }
 }
 
-/// Resolve a bell-sound uuid to its display name (empty string
-/// if the row is gone — a deleted custom sound that a setting
-/// still points at; the chooser re-pick fixes it).
+/// Display text for a resolved sound / pattern name: "Missing" when
+/// the row is gone (a deleted or not-yet-synced sound a setting still
+/// points at; a chooser re-pick fixes it). Mirrors GTK's bells.rs.
 #[cfg(target_os = "android")]
-fn bell_sound_name(uuid: &str) -> String {
-    let Some(db_arc) = DATABASE.get() else { return String::new(); };
-    let Ok(guard) = db_arc.lock() else { return String::new(); };
-    let Some(db) = guard.as_ref() else { return String::new(); };
-    db.list_bell_sounds()
-        .ok()
-        .and_then(|v| {
-            v.into_iter()
-                .find(|b| b.uuid == uuid)
-                .map(|b| b.name)
-        })
-        .unwrap_or_default()
+fn resolved_name_text(ui: &MainWindow, name: meditate_core::bells::ResolvedName) -> String {
+    use meditate_core::bells::ResolvedName;
+    match name {
+        ResolvedName::Resolved(n) => n,
+        ResolvedName::Missing => ui.global::<Tr>().invoke_missing().to_string(),
+    }
+}
+
+/// Resolve a bell-sound uuid to its display name ("Missing" if the
+/// row is gone).
+#[cfg(target_os = "android")]
+fn bell_sound_name(ui: &MainWindow, uuid: &str) -> String {
+    let name = {
+        let Some(db_arc) = DATABASE.get() else { return String::new(); };
+        let Ok(guard) = db_arc.lock() else { return String::new(); };
+        let Some(db) = guard.as_ref() else { return String::new(); };
+        meditate_core::bells::resolve_sound_name(db, uuid)
+    };
+    resolved_name_text(ui, name)
 }
 
 /// Resolve a bell-sound uuid to its file on this device through
@@ -3552,17 +3559,17 @@ fn local_guided_path(uuid: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Resolve a vibration-pattern uuid to its display name (empty
+/// Resolve a vibration-pattern uuid to its display name ("Missing"
 /// when the row is gone). Pattern sibling of `bell_sound_name`.
 #[cfg(target_os = "android")]
-fn pattern_name(uuid: &str) -> String {
-    let Some(db_arc) = DATABASE.get() else { return String::new(); };
-    let Ok(guard) = db_arc.lock() else { return String::new(); };
-    let Some(db) = guard.as_ref() else { return String::new(); };
-    match meditate_core::bells::resolve_pattern_name(db, uuid) {
-        meditate_core::bells::ResolvedName::Resolved(n) => n,
-        meditate_core::bells::ResolvedName::Missing => String::new(),
-    }
+fn pattern_name(ui: &MainWindow, uuid: &str) -> String {
+    let name = {
+        let Some(db_arc) = DATABASE.get() else { return String::new(); };
+        let Ok(guard) = db_arc.lock() else { return String::new(); };
+        let Some(db) = guard.as_ref() else { return String::new(); };
+        meditate_core::bells::resolve_pattern_name(db, uuid)
+    };
+    resolved_name_text(ui, name)
 }
 
 /// SignalMode db-string → CompactToggle index (0 Sound /
@@ -3697,8 +3704,8 @@ fn refresh_bell_rows(ui: &MainWindow) {
         meditate_core::settings_keys::end_bell_sound_key_for_mode(eb_mode),
         meditate_core::seeds::BUNDLED_BOWL_UUID,
     );
-    ui.set_starting_bell_sound_name(bell_sound_name(&ss).into());
-    ui.set_end_bell_sound_name(bell_sound_name(&es).into());
+    ui.set_starting_bell_sound_name(bell_sound_name(ui, &ss).into());
+    ui.set_end_bell_sound_name(bell_sound_name(ui, &es).into());
 
     // Signal Type + Pattern (B-2b). Defaults mirror core's
     // `read_signal_mode(.., SignalMode::Sound)` and the
@@ -3719,8 +3726,8 @@ fn refresh_bell_rows(ui: &MainWindow) {
         meditate_core::settings_keys::end_bell_pattern_key_for_mode(eb_mode),
         meditate_core::seeds::BUNDLED_PATTERN_PULSE_UUID,
     );
-    ui.set_starting_bell_pattern_name(pattern_name(&sp).into());
-    ui.set_end_bell_pattern_name(pattern_name(&ep).into());
+    ui.set_starting_bell_pattern_name(pattern_name(ui, &sp).into());
+    ui.set_end_bell_pattern_name(pattern_name(ui, &ep).into());
 
     // Volumes (issue #1); unset or unreadable is the middle.
     let volume = |key: &str| {
@@ -3847,10 +3854,7 @@ fn refresh_boxbreath_cues(ui: &MainWindow) {
     let Some(db_arc) = DATABASE.get() else { return; };
     let Ok(guard) = db_arc.lock() else { return; };
     let Some(db) = guard.as_ref() else { return; };
-    let name = |n: ResolvedName| match n {
-        ResolvedName::Resolved(s) => s,
-        ResolvedName::Missing => String::new(),
-    };
+    let name = |n: ResolvedName| resolved_name_text(ui, n);
     for p in [P::In, P::HoldIn, P::Out, P::HoldOut] {
         let Ok(Some(r)) = db.get_box_breath_phase(p) else { continue; };
         let si = signal_mode_index(r.signal_mode.as_db_str());
@@ -7327,7 +7331,7 @@ fn build_ui() -> MainWindow {
                         // committed when the editor's Save runs.
                         ui.set_ie_sound_uuid(uuid.clone());
                         ui.set_ie_sound_name(
-                            bell_sound_name(uuid.as_str()).into(),
+                            bell_sound_name(&ui, uuid.as_str()).into(),
                         );
                     }
                     1 => {
@@ -7478,7 +7482,7 @@ fn build_ui() -> MainWindow {
                         // pick is committed on the editor's Save.
                         ui.set_ie_pattern_uuid(uuid.clone());
                         ui.set_ie_pattern_name(
-                            pattern_name(uuid.as_str()).into(),
+                            pattern_name(&ui, uuid.as_str()).into(),
                         );
                     }
                     1 => {
@@ -8446,7 +8450,7 @@ fn build_ui() -> MainWindow {
                     meditate_core::seeds::BUNDLED_BOWL_UUID.into(),
                 );
                 ui.set_ie_sound_name(
-                    bell_sound_name(meditate_core::seeds::BUNDLED_BOWL_UUID)
+                    bell_sound_name(&ui, meditate_core::seeds::BUNDLED_BOWL_UUID)
                         .into(),
                 );
                 // B-2c: new bells default to Sound; the bundled
@@ -8457,7 +8461,7 @@ fn build_ui() -> MainWindow {
                     meditate_core::seeds::BUNDLED_PATTERN_PULSE_UUID.into(),
                 );
                 ui.set_ie_pattern_name(
-                    pattern_name(meditate_core::seeds::BUNDLED_PATTERN_PULSE_UUID)
+                    pattern_name(&ui, meditate_core::seeds::BUNDLED_PATTERN_PULSE_UUID)
                         .into(),
                 );
                 ui.set_ie_volume(
@@ -8495,14 +8499,14 @@ fn build_ui() -> MainWindow {
                 ui.set_ie_minutes(bell.minutes as i32);
                 ui.set_ie_jitter(bell.jitter_pct as i32);
                 let su = bell.sound_uuid.to_string();
-                ui.set_ie_sound_name(bell_sound_name(&su).into());
+                ui.set_ie_sound_name(bell_sound_name(&ui, &su).into());
                 ui.set_ie_sound_uuid(su.into());
                 // B-2c: load the bell's persisted Type + pattern.
                 ui.set_ie_signal_mode(signal_mode_index(
                     bell.signal_mode.as_db_str(),
                 ));
                 let pu = bell.vibration_pattern_uuid.to_string();
-                ui.set_ie_pattern_name(pattern_name(&pu).into());
+                ui.set_ie_pattern_name(pattern_name(&ui, &pu).into());
                 ui.set_ie_pattern_uuid(pu.into());
                 ui.set_ie_volume(bell.volume.percent().into());
                 *editing_ib.borrow_mut() = Some(bell);

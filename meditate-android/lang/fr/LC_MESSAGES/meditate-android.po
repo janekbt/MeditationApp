@@ -843,3 +843,6 @@ msgstr ""
 
 msgid "File is larger than 10 MB"
 msgstr "Le fichier dépasse 10 Mo"
+
+msgid "Missing"
+msgstr "Manquant"

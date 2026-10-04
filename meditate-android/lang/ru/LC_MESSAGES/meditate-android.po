@@ -861,3 +861,6 @@ msgstr "Дождитесь полной синхронизации — ещё н
 
 msgid "File is larger than 10 MB"
 msgstr "Файл больше 10 МБ"
+
+msgid "Missing"
+msgstr "Отсутствует"

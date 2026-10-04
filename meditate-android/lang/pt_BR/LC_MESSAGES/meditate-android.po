@@ -843,3 +843,6 @@ msgstr "Aguarde a sincronização completa — nem todos os sons de sino chegara
 
 msgid "File is larger than 10 MB"
 msgstr "O arquivo tem mais de 10 MB"
+
+msgid "Missing"
+msgstr "Ausente"

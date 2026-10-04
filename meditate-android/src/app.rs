@@ -1148,6 +1148,28 @@ mod tests {
         assert!(slint.contains("@tr(\"File is larger than 10 MB\")"));
     }
 
+    /// A sound or pattern whose row is gone shows "Missing" (core's
+    /// ResolvedName::Missing), like GTK, instead of a blank name —
+    /// on the bell rows, the interval editor and the box-breath cues.
+    #[test]
+    fn a_deleted_sound_or_pattern_shows_missing() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
+        let text = code.find("fn resolved_name_text(").expect("one mapping");
+        let text = &code[text..text + code[text..].find("\n}\n").unwrap()];
+        assert!(text.contains("ResolvedName::Missing => ui.global::<Tr>().invoke_missing()"));
+        assert!(!code.contains("ResolvedName::Missing => String::new()"), "no blank names left");
+        for f in ["fn bell_sound_name(", "fn pattern_name("] {
+            let body = code.find(f).unwrap();
+            let body = &code[body..body + code[body..].find("\n}\n").unwrap()];
+            assert!(body.contains("resolved_name_text(ui,"), "{f} goes through core's resolver");
+            assert!(!body.contains("unwrap_or_default()"), "{f}: no silent blank");
+        }
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        assert!(slint.contains("public pure function missing() -> string { return @tr(\"Missing\"); }"));
+    }
+
     #[test]
     fn the_shell_holds_an_ended_session_until_save_or_discard() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
