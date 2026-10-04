@@ -335,6 +335,15 @@ fn on_state_changed(
 /// This is why Stop is silent but a natural countdown finish
 /// rings: `stop` emits only `StopActiveSignals`, while `tick`
 /// emits `FireEndBell` at the zero-crossing.
+/// Silence a bell or vibration still going when the user leaves the
+/// Done screen (Save / Discard / back) — the same stop Stop and
+/// Finish trigger. Mirrors GTK's `stop_active_signals` in on_save /
+/// on_discard.
+#[cfg(target_os = "android")]
+fn stop_active_signals() {
+    dispatch_effects(&[meditate_core::session::Effect::StopActiveSignals]);
+}
+
 #[cfg(target_os = "android")]
 fn dispatch_effects(effects: &[meditate_core::session::Effect]) {
     use meditate_core::session::Effect;
@@ -5520,6 +5529,8 @@ fn build_ui() -> MainWindow {
         ui.on_save_tap(move || {
             let Some(ui) = weak.upgrade() else { return; };
             #[cfg(target_os = "android")]
+            stop_active_signals();
+            #[cfg(target_os = "android")]
             if let Some((unix_start, elapsed_secs)) = pending_done.take() {
                 let note = ui.get_note_text().to_string();
                 let note = if note.trim().is_empty() { None } else { Some(note) };
@@ -8981,6 +8992,7 @@ fn build_ui() -> MainWindow {
         ui.on_discard_tap(move || {
             #[cfg(target_os = "android")]
             {
+                stop_active_signals();
                 pending_done.set(None);
                 clear_session_in_progress_snapshot();
             }
@@ -10848,6 +10860,7 @@ fn build_ui() -> MainWindow {
                 // Back on Done discards, like the Discard button.
                 #[cfg(target_os = "android")]
                 {
+                    stop_active_signals();
                     pending_done.set(None);
                     clear_session_in_progress_snapshot();
                 }

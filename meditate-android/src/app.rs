@@ -952,6 +952,26 @@ mod tests {
         );
     }
 
+    /// Leaving the Done screen silences a bell or vibration that is
+    /// still going (mostly a Box Breath natural end), like GTK's
+    /// `stop_active_signals` in on_save / on_discard.
+    #[test]
+    fn leaving_the_done_screen_stops_ringing_signals() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
+        let lib = std::fs::read_to_string(path).unwrap();
+        let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
+
+        let helper = code.find("fn stop_active_signals()").expect("one stop helper");
+        let helper = &code[helper..helper + code[helper..].find("\n}\n").unwrap()];
+        assert!(helper.contains("Effect::StopActiveSignals"), "the same stop Stop/Finish use");
+
+        for exit in ["ui.on_save_tap(", "ui.on_discard_tap(", "if ui.get_done_page() {"] {
+            let at = code.find(exit).unwrap_or_else(|| panic!("missing {exit}"));
+            let body = &code[at..at + 1500];
+            assert!(body.contains("stop_active_signals();"), "{exit} must silence ringing signals");
+        }
+    }
+
     #[test]
     fn the_shell_holds_an_ended_session_until_save_or_discard() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
