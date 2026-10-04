@@ -10898,7 +10898,16 @@ fn android_main(android_app: slint::android::AndroidApp) {
         alarm_volume::set_range(audio::alarm_range_db(app));
         audio::recover_alarm_volume(app);
     }
-    slint::android::init(android_app).unwrap();
+    // Sync whenever the app comes to the foreground — Android reports
+    // a resume at launch too, so this is also the launch sync. Mirrors
+    // GTK syncing on every activation (`application.rs` activate).
+    slint::android::init_with_event_listener(android_app, |event| {
+        use slint::android::android_activity::{MainEvent, PollEvent};
+        if let PollEvent::Main(MainEvent::Resume { .. }) = event {
+            trigger_sync("app resume");
+        }
+    })
+    .unwrap();
     // Translation selection happens at the top of build_ui (via
     // the android_app() accessor set above) — it must precede
     // every Rust-composed string (preset subtitles, bell
@@ -10911,11 +10920,9 @@ fn android_main(android_app: slint::android::AndroidApp) {
     // come out in the user's language.
     refresh_widget(&ui);
     MaterialWindowAdapter::get(&ui).set_disable_hover(true);
-    // Launch sync (SY-4). The runner no-ops fast on an
-    // unconfigured account (one KV read on its own connection),
-    // so this is free until the user sets up Nextcloud. Mirrors
-    // GTK triggering a sync at startup.
-    trigger_sync("app launch");
+    // The launch sync (SY-4) comes from the first resume event, see
+    // the init listener above. The runner no-ops fast on an
+    // unconfigured account.
     ui.run().unwrap();
 }
 

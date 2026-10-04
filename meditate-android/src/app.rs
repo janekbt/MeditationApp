@@ -835,7 +835,7 @@ mod tests {
         assert_eq!(
             reasons,
             [
-                "app launch",            // pull what peers wrote while closed
+                "app resume",            // launch and every return to the app
                 "indicator tap (retry)", // retry after a failed sync
                 "local change",          // every synced write
                 "prefs save",            // new account; not a synced write
@@ -844,6 +844,23 @@ mod tests {
             ],
             "write paths must not trigger sync themselves",
         );
+    }
+
+    /// Coming back to the app pulls what other devices wrote in the
+    /// meantime, like GTK syncing on every activation. Android
+    /// reports a resume at launch too, so one trigger covers both.
+    #[test]
+    fn the_app_syncs_whenever_it_comes_to_the_foreground() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
+        let lib = std::fs::read_to_string(path).unwrap();
+        let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
+
+        assert!(!code.contains("slint::android::init(android_app)"), "init must listen to lifecycle events");
+        let init = code.find("slint::android::init_with_event_listener(").expect("listener init");
+        let listener = &code[init..init + 600];
+        let resume = listener.find("MainEvent::Resume").expect("reacts to resume");
+        assert!(listener[resume..].contains("trigger_sync(\"app resume\")"), "a resume starts a sync");
+        assert!(!code.contains("trigger_sync(\"app launch\")"), "launch is a resume; no second trigger");
     }
 
     #[test]

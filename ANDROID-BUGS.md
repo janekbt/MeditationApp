@@ -56,7 +56,7 @@ not conclusive and a device check is needed.
   peer. Core `set_setting` always emits. Fix in core (no-op when the
   value is unchanged) as part of the B2 fix, since write-triggered sync
   would turn such re-saves into extra syncs. GTK `timer/imp.rs:1720`.
-- [ ] **No sync when returning to the running app** (to confirm via
+- [x] **No sync when returning to the running app** (to confirm via
   `sync.trigger` in the diag log). GTK `application.rs:112`.
 - [x] **Views aren't refreshed after a sync pulls changes.** Log, Stats,
   presets, bell rows, guided list, widget. After "wipe local" the screens
