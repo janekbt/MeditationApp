@@ -55,6 +55,40 @@ pub fn ended_duration_secs(effects: &[Effect]) -> Option<u64> {
     })
 }
 
+/// Interval-bell editor kind chip index ↔ core kind. Chip order:
+/// Every N min, At N min, N min before end. An unknown index is
+/// core's default kind.
+pub fn bell_kind_index(kind: meditate_core::db::IntervalBellKind) -> i32 {
+    use meditate_core::db::IntervalBellKind as K;
+    match kind {
+        K::Interval => 0,
+        K::FixedFromStart => 1,
+        K::FixedFromEnd => 2,
+    }
+}
+
+pub fn bell_kind_from_index(index: i32) -> meditate_core::db::IntervalBellKind {
+    use meditate_core::db::IntervalBellKind as K;
+    match index {
+        0 => K::Interval,
+        1 => K::FixedFromStart,
+        2 => K::FixedFromEnd,
+        _ => meditate_core::bells::DEFAULT_NEW_BELL_KIND,
+    }
+}
+
+/// The editor's minutes, clamped to core's bell range.
+pub fn clamp_bell_minutes(value: i32) -> u32 {
+    use meditate_core::bells::{BELL_MINUTES_MAX, BELL_MINUTES_MIN};
+    u32::try_from(value).unwrap_or(0).clamp(BELL_MINUTES_MIN, BELL_MINUTES_MAX)
+}
+
+/// The editor's jitter %, clamped to core's range.
+pub fn clamp_bell_jitter(value: i32) -> u32 {
+    use meditate_core::bells::{BELL_JITTER_PCT_MAX, BELL_JITTER_PCT_MIN};
+    u32::try_from(value).unwrap_or(0).clamp(BELL_JITTER_PCT_MIN, BELL_JITTER_PCT_MAX)
+}
+
 /// Player slot in `MeditateAudio.kt` for a bell on core's channel.
 /// The numbers are the Kotlin `CHANNEL_*` constants.
 pub fn bell_channel_slot(channel: meditate_core::session::FireChannel) -> i32 {
@@ -1231,6 +1265,70 @@ mod tests {
 
         let shown = code.find("EXPORT_FAILED.swap(false").expect("the tick loop shows it");
         assert!(code[shown..shown + 300].contains("invoke_export_failed()"));
+    }
+
+    // ── Interval-bell editor takes core's defaults and limits ───
+
+    #[test]
+    fn bell_kind_index_round_trips() {
+        use meditate_core::db::IntervalBellKind as K;
+        for kind in [K::Interval, K::FixedFromStart, K::FixedFromEnd] {
+            assert_eq!(bell_kind_from_index(bell_kind_index(kind)), kind);
+        }
+        assert_eq!(bell_kind_index(K::Interval), 0, "the editor's chip order");
+        assert_eq!(bell_kind_index(K::FixedFromEnd), 2);
+    }
+
+    #[test]
+    fn an_unknown_kind_index_is_cores_default_kind() {
+        assert_eq!(bell_kind_from_index(-1), meditate_core::bells::DEFAULT_NEW_BELL_KIND);
+        assert_eq!(bell_kind_from_index(9), meditate_core::bells::DEFAULT_NEW_BELL_KIND);
+    }
+
+    #[test]
+    fn bell_minutes_clamp_to_cores_range() {
+        use meditate_core::bells::{BELL_MINUTES_MAX, BELL_MINUTES_MIN};
+        assert_eq!(clamp_bell_minutes(0), BELL_MINUTES_MIN);
+        assert_eq!(clamp_bell_minutes(-5), BELL_MINUTES_MIN);
+        assert_eq!(clamp_bell_minutes(30), 30);
+        assert_eq!(clamp_bell_minutes(10_000), BELL_MINUTES_MAX);
+    }
+
+    #[test]
+    fn bell_jitter_clamps_to_cores_range() {
+        use meditate_core::bells::{BELL_JITTER_PCT_MAX, BELL_JITTER_PCT_MIN};
+        assert_eq!(clamp_bell_jitter(-1), BELL_JITTER_PCT_MIN);
+        assert_eq!(clamp_bell_jitter(20), 20);
+        assert_eq!(clamp_bell_jitter(99), BELL_JITTER_PCT_MAX);
+    }
+
+    /// No defaults or limits are copied by hand: Rust fills the
+    /// editor from core's constants, the steppers' ranges included.
+    #[test]
+    fn the_interval_editor_takes_cores_values() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
+        let create = code.find("ui.on_create_interval_bell_tap(").unwrap();
+        let create = &code[create..create + 2000];
+        for want in [
+            "DEFAULT_NEW_BELL_KIND", "DEFAULT_NEW_BELL_MINUTES",
+            "DEFAULT_NEW_BELL_JITTER_PCT", "DEFAULT_NEW_BELL_SIGNAL_MODE",
+        ] {
+            assert!(create.contains(want), "new bell uses {want}");
+        }
+        for literal in ["set_ie_kind(0)", "set_ie_minutes(5)", "set_ie_jitter(0)", "set_ie_signal_mode(0)"] {
+            assert!(!create.contains(literal), "{literal} copies a core default");
+        }
+        assert!(!code.contains(".min(120)") && !code.contains(".min(50)"), "save clamps through core");
+        assert!(code.contains("app::clamp_bell_minutes(ui.get_ie_minutes())"));
+        assert!(code.contains("app::clamp_bell_jitter(ui.get_ie_jitter())"));
+        for setter in ["set_ie_minutes_min(", "set_ie_minutes_max(", "set_ie_jitter_min(", "set_ie_jitter_max("] {
+            assert!(code.contains(setter), "{setter} from core");
+        }
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        assert!(slint.contains("min-value: root.ie-minutes-min;") && slint.contains("max-value: root.ie-minutes-max;"));
+        assert!(slint.contains("min-value: root.ie-jitter-min;") && slint.contains("max-value: root.ie-jitter-max;"));
     }
 
     #[test]

@@ -3802,6 +3802,18 @@ fn refresh_bell_rows(ui: &MainWindow) {
     ));
     ui.set_prep_time_secs(secs as i32);
 
+    // Interval-bell editor ranges come from core (GTK's SpinRow
+    // adjustments use the same constants).
+    {
+        use meditate_core::bells::{
+            BELL_JITTER_PCT_MAX, BELL_JITTER_PCT_MIN, BELL_MINUTES_MAX, BELL_MINUTES_MIN,
+        };
+        ui.set_ie_minutes_min(BELL_MINUTES_MIN as i32);
+        ui.set_ie_minutes_max(BELL_MINUTES_MAX as i32);
+        ui.set_ie_jitter_min(BELL_JITTER_PCT_MIN as i32);
+        ui.set_ie_jitter_max(BELL_JITTER_PCT_MAX as i32);
+    }
+
     // Interval Bells enable (B-5c-1) + count subtitle (B-5c-2).
     ui.set_interval_bells_active(
         read_global_setting("interval_bells_active", "false") == "true",
@@ -8511,9 +8523,14 @@ fn build_ui() -> MainWindow {
                 let Some(ui) = weak.upgrade() else { return; };
                 // Create mode — no original to preserve.
                 editing_ib.borrow_mut().take();
-                ui.set_ie_kind(0);
-                ui.set_ie_minutes(5);
-                ui.set_ie_jitter(0);
+                // Core's new-bell defaults, as GTK uses.
+                use meditate_core::bells::{
+                    DEFAULT_NEW_BELL_JITTER_PCT, DEFAULT_NEW_BELL_KIND,
+                    DEFAULT_NEW_BELL_MINUTES, DEFAULT_NEW_BELL_SIGNAL_MODE,
+                };
+                ui.set_ie_kind(app::bell_kind_index(DEFAULT_NEW_BELL_KIND));
+                ui.set_ie_minutes(DEFAULT_NEW_BELL_MINUTES as i32);
+                ui.set_ie_jitter(DEFAULT_NEW_BELL_JITTER_PCT as i32);
                 ui.set_ie_sound_uuid(
                     meditate_core::seeds::BUNDLED_BOWL_UUID.into(),
                 );
@@ -8521,10 +8538,10 @@ fn build_ui() -> MainWindow {
                     bell_sound_name(&ui, meditate_core::seeds::BUNDLED_BOWL_UUID)
                         .into(),
                 );
-                // B-2c: new bells default to Sound; the bundled
-                // Pulse pattern stages the (initially inert)
+                // New bells default to core's signal mode; the
+                // bundled Pulse pattern stages the (initially inert)
                 // vibration choice, matching the insert default.
-                ui.set_ie_signal_mode(0);
+                ui.set_ie_signal_mode(signal_mode_to_chip_index(DEFAULT_NEW_BELL_SIGNAL_MODE));
                 ui.set_ie_pattern_uuid(
                     meditate_core::seeds::BUNDLED_PATTERN_PULSE_UUID.into(),
                 );
@@ -8547,7 +8564,6 @@ fn build_ui() -> MainWindow {
         ui.on_interval_bell_edit(move |uuid| {
             #[cfg(target_os = "android")]
             {
-                use meditate_core::db::IntervalBellKind;
                 let Some(ui) = weak.upgrade() else { return; };
                 let found = {
                     let Some(db_arc) = DATABASE.get() else { return; };
@@ -8559,11 +8575,7 @@ fn build_ui() -> MainWindow {
                         .find(|b| b.uuid == uuid.as_str())
                 };
                 let Some(bell) = found else { return; };
-                ui.set_ie_kind(match bell.kind {
-                    IntervalBellKind::Interval => 0,
-                    IntervalBellKind::FixedFromStart => 1,
-                    IntervalBellKind::FixedFromEnd => 2,
-                });
+                ui.set_ie_kind(app::bell_kind_index(bell.kind));
                 ui.set_ie_minutes(bell.minutes as i32);
                 ui.set_ie_jitter(bell.jitter_pct as i32);
                 let su = bell.sound_uuid.to_string();
@@ -8678,16 +8690,12 @@ fn build_ui() -> MainWindow {
             {
                 use meditate_core::db::IntervalBellKind;
                 let Some(ui) = weak.upgrade() else { return; };
-                let kind = match ui.get_ie_kind() {
-                    1 => IntervalBellKind::FixedFromStart,
-                    2 => IntervalBellKind::FixedFromEnd,
-                    _ => IntervalBellKind::Interval,
-                };
-                let minutes = (ui.get_ie_minutes().max(1) as u32).min(120);
+                let kind = app::bell_kind_from_index(ui.get_ie_kind());
+                let minutes = app::clamp_bell_minutes(ui.get_ie_minutes());
                 // Jitter is only meaningful for the Interval
                 // kind (mirrors GTK gating it on kind).
                 let jitter = if kind == IntervalBellKind::Interval {
-                    (ui.get_ie_jitter().max(0) as u32).min(50)
+                    app::clamp_bell_jitter(ui.get_ie_jitter())
                 } else {
                     0
                 };

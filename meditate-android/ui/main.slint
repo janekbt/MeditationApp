@@ -2166,8 +2166,14 @@ export component MainWindow inherits Window {
     // 0 = Every N min (Interval), 1 = At time from start
     // (FixedFromStart), 2 = Before end (FixedFromEnd).
     in-out property <int> ie-kind: 0;
-    in-out property <int> ie-minutes: 5;
-    in-out property <int> ie-jitter: 0;
+    // Filled from Rust when the editor opens (core's defaults), like
+    // the stepper ranges below (core's limits).
+    in-out property <int> ie-minutes;
+    in-out property <int> ie-jitter;
+    in property <int> ie-minutes-min;
+    in property <int> ie-minutes-max;
+    in property <int> ie-jitter-min;
+    in property <int> ie-jitter-max;
     in-out property <string> ie-sound-uuid: "";
     in property <string> ie-sound-name: "";
     // Signal Type for this interval bell (B-2c): 0 Sound /
@@ -5864,8 +5870,8 @@ export component MainWindow inherits Window {
                 StepperRow {
                     label: @tr("Minutes");
                     value <=> root.ie-minutes;
-                    min-value: 1;
-                    max-value: 120;
+                    min-value: root.ie-minutes-min;
+                    max-value: root.ie-minutes-max;
                 }
                 // Jitter applies only to the "Every N min" kind
                 // (index 0), mirroring GTK gating its visibility.
@@ -5873,8 +5879,8 @@ export component MainWindow inherits Window {
                     shown: root.ie-kind == 0;
                     label: @tr("Jitter %");
                     value <=> root.ie-jitter;
-                    min-value: 0;
-                    max-value: 50;
+                    min-value: root.ie-jitter-min;
+                    max-value: root.ie-jitter-max;
                 }
 
                 Rectangle {

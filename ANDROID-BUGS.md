@@ -114,7 +114,7 @@ not conclusive and a device check is needed.
   GTK `log/imp.rs:579-617`.
 - [x] **Manage Bells count ignores Stopwatch mode.** Android
   `lib.rs:3745-3753`; GTK `timer/imp.rs:3181, 4019-4022`.
-- [ ] **Interval-bell editor copies the core defaults and limits.** Matches
+- [x] **Interval-bell editor copies the core defaults and limits.** Matches
   today, will drift. Android `lib.rs:8205-8219, 8378-8382`.
 
 ## Not bugs, possible features
