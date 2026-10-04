@@ -1729,6 +1729,21 @@ mod tests {
     }
 
     #[test]
+    fn log_edit_saves_the_session_it_opened() {
+        // Save looked the row up again in the paged feed; a sync in
+        // between reset the feed to page 1 and an older row's edit
+        // was silently dropped. The row is captured on open.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        assert!(lib.contains("*editing_session.borrow_mut() = Some((id, session.clone()));"));
+        let at = lib.find("ui.on_edit_save_tap(").unwrap();
+        let save = &lib[at..at + lib[at..].find("ui.set_edit_session_page(false);").unwrap()];
+        assert!(save.contains("Some((id, mut session)) => {"));
+        assert!(!save.contains("loaded_log_sessions\n"), "no second lookup");
+        assert!(!save.contains(".find(|(id_, _)| *id_ == id)"));
+    }
+
+    #[test]
     fn every_bridge_calls_java_through_jni_call() {
         // A bridge that attached on its own propagated Java errors
         // with `?` before its exception cleanup, leaving the exception

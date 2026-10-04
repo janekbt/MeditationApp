@@ -39,7 +39,7 @@ meditate-core with both shells calling them.
   (Discard). GTK asks "Discard Session?" when the note is not empty
   (`timer/imp.rs:2595-2629`). Fix: confirm dialog when there is a note; Back
   should probably not discard at all.
-- [ ] **Editing an older session can be silently dropped after a sync.** A
+- [x] **Editing an older session can be silently dropped after a sync.** A
   background pull resets the Log to page 1 (`lib.rs:5137-5145`, `2840`); Save
   looks the original up in `loaded_log_sessions` and skips the write when it
   is gone (`lib.rs:9850-9877`). GTK captures the Session on open

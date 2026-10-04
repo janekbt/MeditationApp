@@ -4485,15 +4485,15 @@ fn build_ui() -> MainWindow {
     let guided_import_kind: Rc<Cell<u8>> = Rc::new(Cell::new(0));
 
     // Session being edited via the Log card → Edit-Session
-    // overlay (L-4). Holds the rowid between `card-tap`
-    // (populates the dialog) and `edit-save-tap` (reads the
-    // dialog's `edit-note-text`, builds a Session with that
-    // single field swapped, and writes it back). None whenever
-    // the overlay is hidden. Mirrors GTK's `session_id` capture
-    // inside `show_session_dialog` at
-    // `meditate-gtk/src/log/imp.rs:765`.
+    // overlay: rowid and row, captured by `card-tap` and written
+    // back with the dialog's fields by `edit-save-tap`. None in
+    // create mode and whenever the overlay is hidden. Mirrors GTK's
+    // session capture in `show_session_dialog`. Captured on open,
+    // not looked up again at Save: a background sync resets the
+    // paged Log feed, and an older row would no longer be in it.
     #[cfg(target_os = "android")]
-    let editing_session_id: Rc<Cell<Option<i64>>> = Rc::new(Cell::new(None));
+    let editing_session: Rc<RefCell<Option<(i64, meditate_core::db::Session)>>> =
+        Rc::new(RefCell::new(None));
 
     // Crash-recovery snapshot timer handle. Heartbeat is started
     // on the Idle/Finished → Active transition in `on_action_tap`
@@ -9648,7 +9648,7 @@ fn build_ui() -> MainWindow {
     }
 
     // Log "Add Session" button → open the Edit-Session overlay
-    // in create mode: clear `editing_session_id` (None ⇒ the
+    // in create mode: clear `editing_session` (None ⇒ the
     // Save handler inserts instead of updating), seed sensible
     // defaults (empty note, 0h0m, start = now, label off).
     // Mirrors GTK's `log_add_btn` → `show_session_dialog(None)`
@@ -9656,13 +9656,13 @@ fn build_ui() -> MainWindow {
     {
         let weak = ui.as_weak();
         #[cfg(target_os = "android")]
-        let editing_session_id = editing_session_id.clone();
+        let editing_session = editing_session.clone();
         ui.on_log_add_tap(move || {
             #[cfg(target_os = "android")]
             {
                 use chrono::{Datelike, Local, Timelike};
                 let Some(ui) = weak.upgrade() else { return; };
-                editing_session_id.set(None);
+                *editing_session.borrow_mut() = None;
                 ui.set_edit_session_title(ui.global::<Tr>().invoke_add_session_title());
                 ui.set_edit_note_text("".into());
                 ui.set_edit_duration_hours(0);
@@ -9697,7 +9697,7 @@ fn build_ui() -> MainWindow {
         #[cfg(target_os = "android")]
         let loaded_log_sessions = loaded_log_sessions.clone();
         #[cfg(target_os = "android")]
-        let editing_session_id = editing_session_id.clone();
+        let editing_session = editing_session.clone();
         ui.on_card_tap(move |rowid| {
             #[cfg(target_os = "android")]
             {
@@ -9710,7 +9710,7 @@ fn build_ui() -> MainWindow {
                     .find(|(id_, _)| *id_ == id)
                     .map(|(_, s)| s.clone());
                 let Some(session) = session else { return; };
-                editing_session_id.set(Some(id));
+                *editing_session.borrow_mut() = Some((id, session.clone()));
                 ui.set_edit_session_title(ui.global::<Tr>().invoke_edit_session_title());
                 ui.set_edit_note_text(
                     session.notes.clone().unwrap_or_default().into(),
@@ -9762,13 +9762,13 @@ fn build_ui() -> MainWindow {
     {
         let weak = ui.as_weak();
         #[cfg(target_os = "android")]
-        let editing_session_id = editing_session_id.clone();
+        let editing_session = editing_session.clone();
         ui.on_edit_cancel_tap(move || {
             #[cfg(target_os = "android")]
             {
                 let Some(ui) = weak.upgrade() else { return; };
                 hide_soft_keyboard();
-                editing_session_id.set(None);
+                *editing_session.borrow_mut() = None;
                 ui.set_edit_session_page(false);
             }
             let _ = weak.clone();
@@ -9788,7 +9788,7 @@ fn build_ui() -> MainWindow {
         #[cfg(target_os = "android")]
         let pending_deletes = pending_deletes.clone();
         #[cfg(target_os = "android")]
-        let editing_session_id = editing_session_id.clone();
+        let editing_session = editing_session.clone();
         ui.on_edit_save_tap(move || {
             #[cfg(target_os = "android")]
             {
@@ -9851,8 +9851,9 @@ fn build_ui() -> MainWindow {
                 if let Some(db_arc) = DATABASE.get() {
                     if let Ok(guard) = db_arc.lock() {
                         if let Some(db) = guard.as_ref() {
-                            match editing_session_id.get() {
-                                Some(id) => {
+                            let editing = editing_session.borrow_mut().take();
+                            match editing {
+                                Some((id, mut session)) => {
                                     // Edit: clone the live row,
                                     // swap the edited fields,
                                     // keep mode + guided-file ref
@@ -9861,28 +9862,18 @@ fn build_ui() -> MainWindow {
                                     // GTK's `original_mode` /
                                     // `original_guided_file_uuid`
                                     // preservation).
-                                    let original = loaded_log_sessions
-                                        .borrow()
-                                        .iter()
-                                        .find(|(id_, _)| *id_ == id)
-                                        .map(|(_, s)| s.clone());
-                                    if let Some(mut session) = original {
-                                        session.notes = new_note;
-                                        session.duration_secs =
-                                            duration_secs as u32;
-                                        session.start_iso =
-                                            meditate_core::time::unix_to_local_iso(
-                                                new_start_unix,
-                                            );
-                                        session.label_id = label_id;
-                                        if let Err(err) =
-                                            db.update_session(id, &session)
-                                        {
-                                            meditate_core::log(
-                                                "log.edit.save.failed",
-                                                &format!("rowid {id}: {err:?}"),
-                                            );
-                                        }
+                                    session.notes = new_note;
+                                    session.duration_secs = duration_secs as u32;
+                                    session.start_iso =
+                                        meditate_core::time::unix_to_local_iso(
+                                            new_start_unix,
+                                        );
+                                    session.label_id = label_id;
+                                    if let Err(err) = db.update_session(id, &session) {
+                                        meditate_core::log(
+                                            "log.edit.save.failed",
+                                            &format!("rowid {id}: {err:?}"),
+                                        );
                                     }
                                 }
                                 None => {
@@ -9915,7 +9906,7 @@ fn build_ui() -> MainWindow {
                         }
                     }
                 }
-                editing_session_id.set(None);
+                *editing_session.borrow_mut() = None;
                 ui.set_edit_session_page(false);
                 reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
             }
@@ -10976,7 +10967,7 @@ fn build_ui() -> MainWindow {
         #[cfg(target_os = "android")]
         let pending_done = pending_done.clone();
         #[cfg(target_os = "android")]
-        let editing_session_id = editing_session_id.clone();
+        let editing_session = editing_session.clone();
         // The system back gesture closes the chooser overlays
         // here, bypassing their in-app back-button handlers — so
         // it must silence any in-flight preview too, or the
@@ -11038,7 +11029,7 @@ fn build_ui() -> MainWindow {
             #[cfg(target_os = "android")]
             if ui.get_edit_session_page() {
                 hide_soft_keyboard();
-                editing_session_id.set(None);
+                *editing_session.borrow_mut() = None;
                 ui.set_edit_session_page(false);
                 return;
             }
