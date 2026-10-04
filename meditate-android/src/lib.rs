@@ -5426,129 +5426,87 @@ fn build_ui() -> MainWindow {
                                 None;
                             guided::clear_import_progress(app);
                             let kind = guided_import_kind_tick.get();
-                            if kind == 1 {
+                            let outcome = if kind == 1 {
                                 // Bell-sound import (BI): insert
                                 // into the chooser's category,
                                 // refresh the chooser (highlight
                                 // intact) + the Setup bell rows.
-                                match res.and_then(|()| {
+                                res.and_then(|()| {
                                     insert_bell_sound_import(
                                         &uuid,
                                         &name,
                                         &dest,
-                                        bell_chooser_category_tick
-                                            .get(),
+                                        bell_chooser_category_tick.get(),
                                     )
-                                }) {
-                                    Ok(()) => {
-                                        let cat = if bell_chooser_category_tick.get() == 1 {
-                                            meditate_core::db::BellSoundCategory::BoxBreath
-                                        } else {
-                                            meditate_core::db::BellSoundCategory::General
-                                        };
-                                        populate_bell_chooser(
-                                            &ui,
-                                            &bell_chooser_current_tick
-                                                .borrow(),
-                                            cat,
-                                        );
-                                        refresh_bell_rows(&ui);
-                                        ui.set_guided_import_progress(1.0);
-                                        ui.set_guided_import_busy(false);
-                                        ui.set_guided_import_dialog_open(false);
-                                    }
-                                    Err(e) => {
-                                        meditate_core::log(
-                                            "sound.import",
-                                            &format!("import failed: {e}"),
-                                        );
-                                        ui.set_guided_import_busy(false);
-                                    }
-                                }
-                                return;
-                            }
-                            match res.and_then(|()| {
-                                insert_guided_file(
-                                    &uuid, &name, &dest, secs,
-                                )
-                            }) {
-                                Ok(()) => {
-                                    *guided_sel.borrow_mut() =
-                                        Some(GuidedSel {
-                                            name: name.clone(),
-                                            path: dest,
-                                            duration_secs: secs,
-                                            uuid: Some(
-                                                uuid.clone(),
-                                            ),
-                                        });
+                                })
+                                .map(|()| {
+                                    let cat = if bell_chooser_category_tick.get() == 1 {
+                                        meditate_core::db::BellSoundCategory::BoxBreath
+                                    } else {
+                                        meditate_core::db::BellSoundCategory::General
+                                    };
+                                    populate_bell_chooser(
+                                        &ui,
+                                        &bell_chooser_current_tick.borrow(),
+                                        cat,
+                                    );
+                                    refresh_bell_rows(&ui);
+                                })
+                            } else {
+                                res.and_then(|()| {
+                                    insert_guided_file(&uuid, &name, &dest, secs)
+                                })
+                                .map(|()| {
+                                    *guided_sel.borrow_mut() = Some(GuidedSel {
+                                        name: name.clone(),
+                                        path: dest,
+                                        duration_secs: secs,
+                                        uuid: Some(uuid.clone()),
+                                    });
                                     // New import is auto-starred →
                                     // surfaces in both lists now
                                     // (Manage page may be open via
                                     // the Create row).
                                     refresh_guided_files(&ui);
                                     refresh_guided_manage(&ui);
-                                    ui.set_guided_name(
-                                        name.into(),
-                                    );
-                                    ui.set_guided_duration_secs(
-                                        secs as i32,
-                                    );
-                                    ui.set_guided_import_progress(
-                                        1.0,
-                                    );
-                                    ui.set_guided_import_busy(
-                                        false,
-                                    );
-                                    ui.set_guided_import_dialog_open(
-                                        false,
-                                    );
-                                }
+                                    ui.set_guided_name(name.into());
+                                    ui.set_guided_duration_secs(secs as i32);
+                                })
+                            };
+                            // Success or failure, the dialog closes,
+                            // as in GTK: its picked source is used up,
+                            // so a retry starts from a fresh pick.
+                            ui.set_guided_import_busy(false);
+                            ui.set_guided_import_dialog_open(false);
+                            match outcome {
+                                Ok(()) => ui.set_guided_import_progress(1.0),
                                 Err(e) => {
                                     meditate_core::log(
-                                        "guided",
-                                        &format!(
-                                            "import failed: {e}"
-                                        ),
-                                    );
-                                    ui.set_guided_import_busy(
-                                        false,
+                                        if kind == 1 { "sound.import" } else { "guided" },
+                                        &format!("import failed: {e}"),
                                     );
                                     // Surface the failure (the
-                                    // specific cause — e.g. the
-                                    // API-29 transcode floor —
-                                    // stays in Diagnostics).
-                                    // Standard raise discipline:
-                                    // commit + clear every pending
-                                    // undo discriminator first.
+                                    // specific cause, e.g. the
+                                    // API-29 transcode floor, stays
+                                    // in Diagnostics). Standard
+                                    // raise discipline: commit +
+                                    // clear every pending undo
+                                    // discriminator first.
                                     commit_pending_deletes(
                                         &ui,
                                         &loaded_log_sessions_tick,
                                         &pending_deletes_tick,
                                     );
-                                    recovery_uuid_tick
-                                        .borrow_mut()
-                                        .take();
-                                    pending_preset_undo_tick
-                                        .borrow_mut()
-                                        .take();
-                                    pending_preset_delete_tick
-                                        .borrow_mut()
-                                        .take();
-                                    pending_override_restore_tick
-                                        .borrow_mut()
-                                        .take();
+                                    recovery_uuid_tick.borrow_mut().take();
+                                    pending_preset_undo_tick.borrow_mut().take();
+                                    pending_preset_delete_tick.borrow_mut().take();
+                                    pending_override_restore_tick.borrow_mut().take();
                                     discard_pending_guided_delete(
                                         &pending_guided_delete_tick,
                                     );
-                                    ui.set_snackbar_text(
-                                        failure_text.unwrap_or_else(
-                                            || {
-                                                ui.global::<Tr>()
-                                                    .invoke_import_failed()
-                                            },
-                                        ),
-                                    );
+                                    ui.set_snackbar_text(failure_text.unwrap_or_else(|| {
+                                        ui.global::<Tr>().invoke_import_failed()
+                                    }));
                                     ui.set_snackbar_show_undo(false);
                                     ui.set_snackbar_visible(true);
                                     let weak_inner = ui.as_weak();
@@ -5556,12 +5514,8 @@ fn build_ui() -> MainWindow {
                                         slint::TimerMode::SingleShot,
                                         std::time::Duration::from_secs(4),
                                         move || {
-                                            if let Some(ui) =
-                                                weak_inner.upgrade()
-                                            {
-                                                ui.set_snackbar_visible(
-                                                    false,
-                                                );
+                                            if let Some(ui) = weak_inner.upgrade() {
+                                                ui.set_snackbar_visible(false);
                                             }
                                         },
                                     );

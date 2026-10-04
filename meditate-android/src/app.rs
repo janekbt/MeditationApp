@@ -1732,6 +1732,20 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_import_closes_its_dialog_and_says_so() {
+        // A failed bell import only logged; a failed guided import's
+        // message sat under the dialog backdrop. Either way the dialog
+        // stayed open with its source used up, so Import did nothing.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let at = lib.find("let outcome = if kind == 1 {").unwrap();
+        let rest = &lib[at..at + 6000];
+        let close = rest.find("ui.set_guided_import_dialog_open(false);\n                            match outcome {").unwrap();
+        assert!(rest[close..].contains("invoke_import_failed()"));
+        assert_eq!(lib.matches("ui.set_guided_import_dialog_open(false);\n                            match outcome").count(), 1);
+    }
+
+    #[test]
     fn a_second_guided_delete_finishes_the_first() {
         // Two deletes inside the Undo window overwrote the pending one,
         // and the first file stayed on disk with no library entry.

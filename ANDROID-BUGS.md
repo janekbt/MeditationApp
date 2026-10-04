@@ -93,7 +93,7 @@ meditate-core with both shells calling them.
 - [x] **Undo of a preset override after a mode switch shows the wrong
   mode's presets.** `lib.rs:9589` refreshes with the captured mode; delete
   Undo uses `core_mode` (`lib.rs:9546`).
-- [ ] **Import button stops working after a failed import; bell import
+- [x] **Import button stops working after a failed import; bell import
   failure is silent.** `guided_import_src` is taken before the import
   (`lib.rs:6085-6089`) and never restored; the bell failure branch only
   logs (`lib.rs:5401-5412`); the guided error snackbar sits under the dialog
