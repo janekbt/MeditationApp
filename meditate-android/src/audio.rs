@@ -48,8 +48,23 @@ pub fn play(app: &AndroidApp, path: &str, gain: f32) -> i64 {
     }
 }
 
-/// Stop + release any in-flight playback (preview Stop /
-/// supersede).
+/// Ring a session bell on its player slot (`app::bell_channel_slot`
+/// of core's `FireChannel`): it replaces only the previous bell on
+/// the same Starting / End slot, and interval bells stack, so bells
+/// no longer cut each other off. Failures are logged, never
+/// propagated.
+pub fn play_bell(app: &AndroidApp, slot: i32, path: &str, gain: f32) {
+    if path.is_empty() {
+        return;
+    }
+    if let Err(e) = invoke_play_bell(app, slot, path, gain) {
+        meditate_core::log(
+            "audio.play",
+            &format!("play_bell FAILED slot={slot} path={path}: {e:?}"),
+        );
+    }
+}
+
 /// Apply a new bell gain to the bell ringing right now, if any.
 pub fn set_volume(app: &AndroidApp, gain: f32) {
     if let Err(e) = invoke_set_volume(app, gain) {
@@ -85,6 +100,8 @@ pub fn recover_alarm_volume(app: &AndroidApp) {
     }
 }
 
+/// Stop + release everything playing: the preview and every session
+/// bell.
 pub fn stop(app: &AndroidApp) {
     if let Err(e) = invoke_no_arg(app, "stop") {
         meditate_core::log("audio.play", &format!("stop FAILED: {e:?}"));
@@ -133,6 +150,30 @@ fn invoke_play(
         return Ok(0);
     }
     ret.j()
+}
+
+fn invoke_play_bell(
+    app: &AndroidApp,
+    slot: i32,
+    path: &str,
+    gain: f32,
+) -> Result<(), jni::errors::Error> {
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) }?;
+    let mut env = vm.attach_current_thread()?;
+    let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
+
+    let jpath = env.new_string(path)?;
+    let class = resolve_class(&mut env, &activity)?;
+    env.call_static_method(
+        class,
+        "playBell",
+        "(Landroid/content/Context;ILjava/lang/String;F)V",
+        &[(&activity).into(), slot.into(), (&jpath).into(), gain.into()],
+    )?;
+    if env.exception_check()? {
+        env.exception_clear()?;
+    }
+    Ok(())
 }
 
 fn invoke_set_volume(app: &AndroidApp, gain: f32) -> Result<(), jni::errors::Error> {

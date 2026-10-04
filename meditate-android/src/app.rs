@@ -42,6 +42,17 @@ impl From<TimerMode> for meditate_core::SessionMode {
     }
 }
 
+/// Player slot in `MeditateAudio.kt` for a bell on core's channel.
+/// The numbers are the Kotlin `CHANNEL_*` constants.
+pub fn bell_channel_slot(channel: meditate_core::session::FireChannel) -> i32 {
+    use meditate_core::session::FireChannel;
+    match channel {
+        FireChannel::Starting => 0,
+        FireChannel::End => 1,
+        FireChannel::Interval => 2,
+    }
+}
+
 /// The guided library file a session's recovery snapshot records:
 /// the selected row's uuid for a Guided session, nothing for an
 /// Open-File pick (no library row) or any other mode (a leftover
@@ -985,6 +996,52 @@ mod tests {
         let fire = dispatch.find("fire_route()").unwrap();
         assert!(arm < fire, "handled before the loop moves on to bells");
         assert!(dispatch[arm..fire].contains("guided::stop(app)"), "and stops the track");
+    }
+
+    #[test]
+    fn each_bell_channel_has_its_own_player_slot() {
+        use meditate_core::session::FireChannel;
+        let slots = [
+            bell_channel_slot(FireChannel::Starting),
+            bell_channel_slot(FireChannel::End),
+            bell_channel_slot(FireChannel::Interval),
+        ];
+        assert_eq!(slots, [0, 1, 2]);
+    }
+
+    /// Bells no longer cut each other off: each rings on its core
+    /// channel's slot (Starting and End replace only themselves,
+    /// Interval stacks), like GTK's sound.rs; the alarm volume goes
+    /// back only once every slot is quiet.
+    #[test]
+    fn bells_ring_on_their_own_channels() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
+        let dispatch = code.find("fn dispatch_effects(").unwrap();
+        let dispatch = &code[dispatch..dispatch + code[dispatch..].find("\n}\n").unwrap()];
+        let sound = &dispatch[dispatch.find("route.signal_mode.includes_sound()").unwrap()..];
+        let sound = &sound[..sound.find("route.signal_mode.includes_vibration()").unwrap()];
+        assert!(!sound.contains("audio::stop("), "a bell must not stop the others");
+        assert!(sound.contains("audio::play_bell(app, app::bell_channel_slot(route.channel),"));
+
+        let kotlin = std::fs::read_to_string(root.join("kotlin/MeditateAudio.kt")).unwrap();
+        for (name, slot) in [("CHANNEL_STARTING", 0), ("CHANNEL_END", 1), ("CHANNEL_INTERVAL", 2)] {
+            assert!(kotlin.contains(&format!("const val {name} = {slot}")), "{name} must match bell_channel_slot");
+        }
+        assert!(kotlin.contains("fun playBell(context: Context, channel: Int, path: String, gain: Float)"));
+        assert!(kotlin.contains("private val intervals = mutableListOf<MediaPlayer>()"), "interval bells stack");
+        let preview = kotlin.find("fun play(context: Context, path: String, gain: Float): Long").unwrap();
+        let preview = &kotlin[preview..preview + kotlin[preview..].find("\n    }\n").unwrap()];
+        assert!(preview.contains("releasePreviewLocked()") && !preview.contains("releaseAllLocked"),
+            "a preview replaces only the preview");
+        let restore = kotlin.find("private fun restoreIfIdleLocked(").expect("restore only when all quiet");
+        assert!(kotlin[restore..restore + 200].contains("if (isIdleLocked())"));
+        let idle = kotlin.find("private fun isIdleLocked()").unwrap();
+        let idle = &kotlin[idle..idle + kotlin[idle..].find("\n\n").unwrap()];
+        for slot in ["preview == null", "starting == null", "end == null", "intervals.isEmpty()"] {
+            assert!(idle.contains(slot), "alarm volume must wait for {slot}");
+        }
     }
 
     #[test]

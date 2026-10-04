@@ -112,12 +112,16 @@ mod tests {
             assert!(call.trim_end().ends_with(", 0"), "no flags: {call}");
         }
         assert!(!kotlin.contains("FLAG_SHOW_UI") && !kotlin.contains("FLAG_PLAY_SOUND"));
-        // Raised right before playing; restored when the bell ends,
-        // fails or is stopped, and on the next start after a crash.
-        let play = &kotlin[kotlin.find("fun play(").unwrap()..];
-        assert!(play.find("raiseLocked(app)").unwrap() < play.find("mp.start()").unwrap());
+        // Raised right before playing; restored — once nothing else
+        // rings — when a bell ends, fails or won't start, when
+        // everything is stopped, and on the next start after a crash.
+        let start = &kotlin[kotlin.find("private fun startLocked(").unwrap()..];
+        assert!(start.find("raiseLocked(app)").unwrap() < start.find("mp.start()").unwrap());
         assert!(kotlin.contains("fun recoverAlarmVolume(context: Context)"));
-        assert_eq!(kotlin.matches("synchronized(lock) { releaseLocked(app) }").count(), 2);
-        assert!(kotlin.contains("synchronized(lock) { releaseLocked(context.applicationContext) }"));
+        assert_eq!(kotlin.matches("synchronized(lock) { finishedLocked(app, mp) }").count(), 2);
+        let finished = &kotlin[kotlin.find("private fun finishedLocked(").unwrap()..];
+        assert!(finished[..finished.find("\n    }\n").unwrap()].contains("restoreIfIdleLocked(app)"));
+        let stop = &kotlin[kotlin.find("fun stop(context: Context)").unwrap()..];
+        assert!(stop[..stop.find("\n    }\n").unwrap()].contains("restoreLocked(context.applicationContext)"));
     }
 }

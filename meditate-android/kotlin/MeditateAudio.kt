@@ -3,9 +3,11 @@
 // the same app-classloader -> loadClass -> call_static_method
 // path the foreground service and haptics bridge use.
 //
-// One MediaPlayer slot: a new `play` stops + releases the
-// previous one, so preview taps and the session-end cue never
-// stack (mirrors the GTK preview slot's mono behaviour). minSdk
+// Player slots mirror GTK's sound.rs: the preview (`play`, a new
+// tap replaces the last), and the session bells on core's
+// FireChannel (`playBell`): Starting and End each replace only
+// themselves, Interval stacks so bells that coincide (or a box-
+// breath cue over the last one's tail) all ring through. minSdk
 // is 26, so MediaPlayer + AudioAttributes are always available.
 //
 // USAGE_ALARM + CONTENT_TYPE_SONIFICATION: a meditation bell is
@@ -38,9 +40,18 @@ object MeditateAudio {
     // Guarded by `lock`; touched from the JNI thread (Rust) and
     // the MediaPlayer completion callback (main looper).
     private val lock = Any()
-    private var player: MediaPlayer? = null
+    private var preview: MediaPlayer? = null
+    private var starting: MediaPlayer? = null
+    private var end: MediaPlayer? = null
+    private val intervals = mutableListOf<MediaPlayer>()
     // True while the alarm stream is at its top step for a bell.
     private var raised = false
+
+    // meditate_core::session::FireChannel, as numbered by the Rust
+    // side's `bell_channel_slot`.
+    const val CHANNEL_STARTING = 0
+    const val CHANNEL_END = 1
+    const val CHANNEL_INTERVAL = 2
 
     private const val PREFS = "meditate_audio"
     // The user's alarm step while it's raised; survives a crash.
@@ -59,37 +70,74 @@ object MeditateAudio {
     fun play(context: Context, path: String, gain: Float): Long {
         val app = context.applicationContext
         synchronized(lock) {
-            // A new bell replaces the old one; the stream stays raised.
-            releasePlayerLocked()
-            val mp = MediaPlayer()
-            try {
-                mp.setAudioAttributes(attrs)
-                // The bell's own volume at the stream's top step
-                // (meditate_core::bell_volume::BellVolume::absolute_gain).
-                mp.setVolume(gain, gain)
-                mp.setDataSource(path)
-                mp.setOnCompletionListener {
-                    synchronized(lock) { releaseLocked(app) }
-                }
-                mp.setOnErrorListener { _, what, extra ->
-                    Log.w(TAG, "MediaPlayer error what=$what extra=$extra")
-                    synchronized(lock) { releaseLocked(app) }
-                    true
-                }
-                mp.prepare()
-                raiseLocked(app)
-                mp.start()
-                player = mp
-                // Valid after prepare(); -1 for unseekable/live
-                // streams (not the case for our bundled OGGs).
-                return mp.duration.toLong().coerceAtLeast(0L)
-            } catch (e: Exception) {
-                Log.w(TAG, "play failed path=$path: $e")
-                runCatching { mp.release() }
-                restoreLocked(app)
-                return 0L
+            // A new preview replaces the old one; the stream stays raised.
+            releasePreviewLocked()
+            val mp = startLocked(app, path, gain) ?: return 0L
+            preview = mp
+            // Valid after prepare(); -1 for unseekable/live
+            // streams (not the case for our bundled OGGs).
+            return mp.duration.toLong().coerceAtLeast(0L)
+        }
+    }
+
+    // A session bell on core's channel (CHANNEL_*). Starting and End
+    // replace their own previous bell only; Interval bells stack.
+    @JvmStatic
+    fun playBell(context: Context, channel: Int, path: String, gain: Float) {
+        val app = context.applicationContext
+        synchronized(lock) {
+            when (channel) {
+                CHANNEL_STARTING -> { releasePlayer(starting); starting = null }
+                CHANNEL_END -> { releasePlayer(end); end = null }
+            }
+            val mp = startLocked(app, path, gain) ?: return
+            when (channel) {
+                CHANNEL_STARTING -> starting = mp
+                CHANNEL_END -> end = mp
+                else -> intervals.add(mp)
             }
         }
+    }
+
+    // Prepare and start a player at `gain`; it forgets itself and
+    // releases when it ends. Null when the file won't play.
+    private fun startLocked(app: Context, path: String, gain: Float): MediaPlayer? {
+        val mp = MediaPlayer()
+        try {
+            mp.setAudioAttributes(attrs)
+            // The bell's own volume at the stream's top step
+            // (meditate_core::bell_volume::BellVolume::absolute_gain).
+            mp.setVolume(gain, gain)
+            mp.setDataSource(path)
+            mp.setOnCompletionListener {
+                synchronized(lock) { finishedLocked(app, mp) }
+            }
+            mp.setOnErrorListener { _, what, extra ->
+                Log.w(TAG, "MediaPlayer error what=$what extra=$extra")
+                synchronized(lock) { finishedLocked(app, mp) }
+                true
+            }
+            mp.prepare()
+            raiseLocked(app)
+            mp.start()
+            return mp
+        } catch (e: Exception) {
+            Log.w(TAG, "play failed path=$path: $e")
+            runCatching { mp.release() }
+            restoreIfIdleLocked(app)
+            return null
+        }
+    }
+
+    // One player ended on its own: drop it from its slot, and put the
+    // alarm volume back once nothing else is ringing.
+    private fun finishedLocked(app: Context, mp: MediaPlayer) {
+        if (preview === mp) preview = null
+        if (starting === mp) starting = null
+        if (end === mp) end = null
+        intervals.remove(mp)
+        releasePlayer(mp)
+        restoreIfIdleLocked(app)
     }
 
     // Live change while a volume slider is dragged: applies to the
@@ -97,7 +145,7 @@ object MeditateAudio {
     @JvmStatic
     fun setVolume(context: Context, gain: Float) {
         synchronized(lock) {
-            runCatching { player?.setVolume(gain, gain) }
+            runCatching { preview?.setVolume(gain, gain) }
         }
     }
 
@@ -127,26 +175,45 @@ object MeditateAudio {
     @JvmStatic
     fun recoverAlarmVolume(context: Context) {
         synchronized(lock) {
-            if (player == null) restoreSaved(context.applicationContext)
+            if (isIdleLocked()) restoreSaved(context.applicationContext)
         }
     }
 
+    // Stop everything: the preview and every session bell.
     @JvmStatic
     fun stop(context: Context) {
-        synchronized(lock) { releaseLocked(context.applicationContext) }
-    }
-
-    private fun releaseLocked(context: Context) {
-        releasePlayerLocked()
-        restoreLocked(context)
-    }
-
-    private fun releasePlayerLocked() {
-        player?.let { mp ->
-            runCatching { if (mp.isPlaying) mp.stop() }
-            runCatching { mp.release() }
+        synchronized(lock) {
+            releaseAllLocked()
+            restoreLocked(context.applicationContext)
         }
-        player = null
+    }
+
+    private fun releaseAllLocked() {
+        releasePreviewLocked()
+        releasePlayer(starting)
+        starting = null
+        releasePlayer(end)
+        end = null
+        intervals.forEach { releasePlayer(it) }
+        intervals.clear()
+    }
+
+    private fun releasePreviewLocked() {
+        releasePlayer(preview)
+        preview = null
+    }
+
+    private fun releasePlayer(mp: MediaPlayer?) {
+        mp ?: return
+        runCatching { if (mp.isPlaying) mp.stop() }
+        runCatching { mp.release() }
+    }
+
+    private fun isIdleLocked() =
+        preview == null && starting == null && end == null && intervals.isEmpty()
+
+    private fun restoreIfIdleLocked(context: Context) {
+        if (isIdleLocked()) restoreLocked(context)
     }
 
     private fun audioManager(context: Context) =

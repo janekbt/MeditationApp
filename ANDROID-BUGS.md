@@ -70,7 +70,7 @@ not conclusive and a device check is needed.
   Overtime and saves the full planned length on Finish. GTK shows
   "Couldn't start playback". Android `kotlin/MeditateGuided.kt:59-65`,
   `lib.rs:5154-5176`, `guided.rs:263`; GTK `timer/imp.rs:2140-2160`.
-- [ ] **Only one bell plays at a time.** Each bell cuts the previous one;
+- [x] **Only one bell plays at a time.** Each bell cuts the previous one;
   core's `FireChannel` is ignored. Android `lib.rs:316-320`,
   `MeditateAudio.kt`; GTK `timer/imp.rs:4109-4120`, `sound.rs:339-353`.
 - [x] **Guided track keeps playing into Overtime** under the end bell.

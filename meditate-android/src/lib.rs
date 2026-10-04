@@ -361,8 +361,9 @@ fn dispatch_effects(effects: &[meditate_core::session::Effect]) {
         let Some(route) = effect.fire_route() else { continue; };
         if route.signal_mode.includes_sound() {
             let path = bell_sound_path(route.sound_uuid);
-            audio::stop(app);
-            audio::play(app, &path, alarm_volume::gain(route.volume));
+            // Each bell rings on its core channel's own slot, so it
+            // doesn't cut off the others (GTK sound.rs).
+            audio::play_bell(app, app::bell_channel_slot(route.channel), &path, alarm_volume::gain(route.volume));
         }
         if route.signal_mode.includes_vibration() {
             if let Some(db_arc) = DATABASE.get() {
