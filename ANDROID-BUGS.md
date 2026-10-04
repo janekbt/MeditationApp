@@ -102,7 +102,7 @@ meditate-core with both shells calling them.
 - [ ] **"Import File" is enabled for a guided file already in the library**,
   making a duplicate. `main.slint:3324`, `lib.rs:5958-5987`; GTK enables it
   only for a new pick (`timer/imp.rs:3464-3468`).
-- [ ] **Two guided deletes within 5 s leak the first file on disk.**
+- [x] **Two guided deletes within 5 s leak the first file on disk.**
   `lib.rs:6327-6334` overwrites `pending_guided_delete` without
   `discard_pending_guided_delete` (`lib.rs:1336`). GTK `guided.rs:1165-1191`.
 - [ ] **Screens don't refresh when a sync pulled changes and then the push

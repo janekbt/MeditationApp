@@ -1732,6 +1732,16 @@ mod tests {
     }
 
     #[test]
+    fn a_second_guided_delete_finishes_the_first() {
+        // Two deletes inside the Undo window overwrote the pending one,
+        // and the first file stayed on disk with no library entry.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let at = lib.find("*pending_guided_delete.borrow_mut() = Some((").unwrap();
+        assert!(lib[at - 300..at].contains("discard_pending_guided_delete(&pending_guided_delete);"));
+    }
+
+    #[test]
     fn undoing_an_override_refreshes_the_visible_mode() {
         // After a mode switch, Undo refreshed the chips with the
         // override's mode, so Setup listed the other mode's presets.

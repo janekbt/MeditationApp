@@ -6382,6 +6382,9 @@ fn build_ui() -> MainWindow {
                 pending_preset_undo.borrow_mut().take();
                 pending_preset_delete.borrow_mut().take();
                 pending_override_restore.borrow_mut().take();
+                // A delete still waiting out its Undo is final now:
+                // remove its file, or it stays on disk for good.
+                discard_pending_guided_delete(&pending_guided_delete);
                 *pending_guided_delete.borrow_mut() = Some((
                     row.uuid.0.clone(),
                     row.name.clone(),
