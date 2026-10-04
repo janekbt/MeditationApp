@@ -99,7 +99,13 @@ class MeditateFilePickerActivity : Activity() {
             null
         }
         if (uri == null) {
-            finish() // cancelled / error → leave the row unset
+            // Cancelled / error → leave the row unset. A cancelled
+            // export also drops the CSV Rust wrote for it: it holds
+            // every session and note, and nothing will copy it now.
+            if (target == "export") {
+                intent.getStringExtra(EXTRA_SRC_PATH)?.let { runCatching { File(it).delete() } }
+            }
+            finish()
             return
         }
         // Copy off the main thread (large files would ANR).

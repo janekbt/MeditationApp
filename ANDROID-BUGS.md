@@ -149,7 +149,7 @@ meditate-core with both shells calling them.
   open (`presets.rs:578-581`).
 - [x] **Deleting a guided file doesn't stop its preview** (to confirm).
   `lib.rs:6273-6311`; bell-sound delete does (`lib.rs:7636-7643`).
-- [ ] **Cancelled export leaves `export-transient.csv` with all notes.**
+- [x] **Cancelled export leaves `export-transient.csv` with all notes.**
   `lib.rs:168`, `MeditateFilePickerActivity.kt:99-102`.
 - [x] **Service and guided JNI failures are invisible.** `src/service.rs:48-77`
   uses `eprintln!` (stderr is discarded on Android); `src/guided.rs:281-289`

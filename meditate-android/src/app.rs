@@ -1707,6 +1707,15 @@ mod tests {
     }
 
     #[test]
+    fn a_cancelled_export_leaves_no_copy_of_the_log() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let kt = std::fs::read_to_string(root.join("kotlin/MeditateFilePickerActivity.kt")).unwrap();
+        let at = kt.find("if (uri == null) {").unwrap();
+        let cancel = &kt[at..at + kt[at..].find("return\n").unwrap()];
+        assert!(cancel.contains("intent.getStringExtra(EXTRA_SRC_PATH)?.let { runCatching { File(it).delete() } }"));
+    }
+
+    #[test]
     fn deleting_a_guided_file_stops_its_preview() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
