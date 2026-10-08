@@ -803,6 +803,17 @@ mod tests {
     }
 
     #[test]
+    fn back_keeps_working_after_a_text_field() {
+        // A text field that let go of focus (confirmed, cleared, or its
+        // dialog closed) left nothing focused, so Back reached no
+        // handler and Android sent the app to the background.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        assert!(slint.contains("property <bool> text-focused: TextInputInterface.text-input-focused;"));
+        assert!(slint.contains("changed text-focused => {\n        if !self.text-focused {\n            root-focus.focus();"));
+    }
+
+    #[test]
     fn a_csv_pick_carries_its_path_and_kind() {
         assert_eq!(
             super::parse_csv_pick("/data/x.csv\ninsight"),

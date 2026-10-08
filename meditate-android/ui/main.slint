@@ -2917,6 +2917,15 @@ export component MainWindow inherits Window {
     // even after focus moves to a TextInput inside the Note field
     // on the Done screen.
     forward-focus: root-focus;
+    // A text field that lets go of focus (confirmed, cleared, or its
+    // dialog closed) leaves nothing focused; Back would then reach no
+    // handler and Android sends the app to the background.
+    property <bool> text-focused: TextInputInterface.text-input-focused;
+    changed text-focused => {
+        if !self.text-focused {
+            root-focus.focus();
+        }
+    }
 
     root-focus := FocusScope {
         width: 100%;
