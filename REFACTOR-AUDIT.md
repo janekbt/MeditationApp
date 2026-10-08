@@ -244,6 +244,7 @@ Planning only: nothing here has been changed yet. The audit ran on beta at a8a5d
 - **Bugs:** B3#17. GTK likely has it too: its Undo toast isn't dismissed on Start (imp.rs:3636-3667), which needs a device check. Also the clamp divergence.
 - **Risk:** low. GTK's `breathing_populating` guard must still prevent echo writes.
 - **Effort:** S + M
+- **Decision (2026-10-08):** step 1 does not refuse in core. Instead, a session start hides the preset Undo, so it can't be tapped during a session at all. Android needs one place for that on every start path (button, widget, starred preset), which R5's notice controller provides, so it is done with or right after R5. GTK can do it any time: dismiss `current_apply_toast` in its start path.
 
 ### R12 Sync runner into core; generic blob transfer in the orchestrator
 - **Evidence:**
@@ -342,8 +343,8 @@ Planning only: nothing here has been changed yet. The audit ran on beta at a8a5d
 ## 3. Suggested order of work
 
 1. **Enablers, all mechanical, no behaviour change:** R14(a) with_db → R14(b) ui.rs → R13 dead code. (R14(c) load_class moved to step 4.)
-2. **Core first, both apps gain:** R2 write_tx → R1 save_ended_session → R3 session from core → R11 step 1 (refuse apply during a session).
-3. **Android state owners, each needing a device run before the commit:** R4 previews → R5 notice → R6 Modal → R7(a) end path. R10 typed targets can go anywhere in this stage.
+2. **Core first, both apps gain:** R2 write_tx → R1 save_ended_session → R3 session from core. (R11 step 1 moved to step 3, after R5.)
+3. **Android state owners, each needing a device run before the commit:** R4 previews → R5 notice → R11 step 1 (a session start hides the preset Undo, both apps) → R6 Modal → R7(a) end path. R10 typed targets can go anywhere in this stage.
 4. **Kotlin and IPC:** R8 focus → R9 drop files, with R14(c) load_class in the same phone round.
 5. **Deeper moves:** R7(b) session record (after R1) → R11 step 2 → R12 sync runner → R14(d).
 6. **UI:** R15(b) → R15(a) → R15(d) → R15(c) → R16.
