@@ -251,7 +251,7 @@ Planning only: nothing here has been changed yet. The audit ran on beta at a8a5d
 - **Bugs:** B3#17. GTK likely has it too: its Undo toast isn't dismissed on Start (imp.rs:3636-3667), which needs a device check. Also the clamp divergence.
 - **Risk:** low. GTK's `breathing_populating` guard must still prevent echo writes.
 - **Effort:** S + M
-- **Status:** step 1 done (a session start hides the preset Undo, both apps). Step 2 waits for step 5 of the order of work.
+- **Status:** both steps done. Step 2 shrank: core `settings_keys` owns the six timing keys (`timer_session_secs_from_db`, `set_timer_session_secs`, `breathing_from_db` clamped, `set_breathing`) and both apps call them. `apply` writing the timing and `snapshot` reading it were left out: it would change GTK's apply flow and its echo guards for no visible gain.
 - **Decision (2026-10-08):** step 1 does not refuse in core. Instead, a session start hides the preset Undo, so it can't be tapped during a session at all. Android needs one place for that on every start path (button, widget, starred preset), which R5's notice controller provides, so it is done with or right after R5. GTK can do it any time: dismiss `current_apply_toast` in its start path.
 
 ### R12 Sync runner into core; generic blob transfer in the orchestrator

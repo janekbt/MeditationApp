@@ -196,6 +196,40 @@ pub fn keep_screen_awake_from_db(db: &Database, mode: SessionMode) -> bool {
     read_bool(db, keep_screen_awake_key_for_mode(mode), false)
 }
 
+/// Timer mode's countdown length, kept across launches and synced.
+pub fn timer_session_secs_from_db(db: &Database) -> u32 {
+    read_u32(db, "timer_session_secs", crate::session::TIMER_DEFAULT_SECS)
+}
+
+pub fn set_timer_session_secs(db: &Database, secs: u32) -> crate::db::Result<()> {
+    db.set_setting("timer_session_secs", &secs.to_string())
+}
+
+/// Box Breath's phase pattern and session length, clamped so a value
+/// out of range (from sync or an old version) still loads cleanly.
+pub fn breathing_from_db(db: &Database) -> (crate::breath::BreathPattern, u32) {
+    let pattern = crate::breath::BreathPattern::clamp_from_raw(
+        read_u32(db, "breathing_in", 4),
+        read_u32(db, "breathing_hold_in", 4),
+        read_u32(db, "breathing_out", 4),
+        read_u32(db, "breathing_hold_out", 4),
+    );
+    let secs = read_u32(db, "breathing_session_secs", crate::session::BREATHING_DEFAULT_SECS);
+    (pattern, crate::breath::clamp_session_secs(secs))
+}
+
+pub fn set_breathing(
+    db: &Database,
+    pattern: crate::breath::BreathPattern,
+    secs: u32,
+) -> crate::db::Result<()> {
+    db.set_setting("breathing_in", &pattern.in_secs.to_string())?;
+    db.set_setting("breathing_hold_in", &pattern.hold_in.to_string())?;
+    db.set_setting("breathing_out", &pattern.out_secs.to_string())?;
+    db.set_setting("breathing_hold_out", &pattern.hold_out.to_string())?;
+    db.set_setting("breathing_session_secs", &secs.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -361,6 +395,41 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         db.set_setting("k", "1234").unwrap();
         assert_eq!(read_u32(&db, "k", 0), 1234);
+    }
+
+    #[test]
+    fn session_timing_defaults_when_nothing_is_stored() {
+        let db = Database::open_in_memory().unwrap();
+        assert_eq!(timer_session_secs_from_db(&db), crate::session::TIMER_DEFAULT_SECS);
+        assert_eq!(
+            breathing_from_db(&db),
+            (crate::breath::BreathPattern::box_breath(), crate::session::BREATHING_DEFAULT_SECS),
+        );
+    }
+
+    #[test]
+    fn session_timing_round_trips_under_the_synced_keys() {
+        let db = Database::open_in_memory().unwrap();
+        set_timer_session_secs(&db, 1500).unwrap();
+        let p = crate::breath::BreathPattern::clamp_from_raw(5, 2, 7, 0);
+        set_breathing(&db, p, 900).unwrap();
+        assert_eq!(timer_session_secs_from_db(&db), 1500);
+        assert_eq!(breathing_from_db(&db), (p, 900));
+        // Peers on 26.10.1 read these exact keys.
+        for (k, v) in [("timer_session_secs", "1500"), ("breathing_in", "5"), ("breathing_hold_in", "2"),
+            ("breathing_out", "7"), ("breathing_hold_out", "0"), ("breathing_session_secs", "900")] {
+            assert_eq!(db.get_setting(k, "").unwrap(), v, "{k}");
+        }
+    }
+
+    #[test]
+    fn stored_breathing_values_out_of_range_are_clamped() {
+        let db = Database::open_in_memory().unwrap();
+        db.set_setting("breathing_session_secs", "5").unwrap();
+        db.set_setting("breathing_in", "99").unwrap();
+        let (p, secs) = breathing_from_db(&db);
+        assert_eq!(secs, crate::breath::SESSION_MIN_SECS);
+        assert_eq!(p, crate::breath::BreathPattern::clamp_from_raw(99, 4, 4, 4));
     }
 
     #[test]

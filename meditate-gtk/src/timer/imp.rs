@@ -3694,7 +3694,7 @@ impl TimerView {
         if self.timer_populating.get() { return; }
         if let Some(app) = self.get_app() {
             let _ = app.with_db_mut(|db| {
-                db.set_setting("timer_session_secs", &secs.to_string())
+                meditate_core::settings_keys::set_timer_session_secs(db.core(), secs)
             });
         }
     }
@@ -3707,12 +3707,9 @@ impl TimerView {
     fn load_timer_settings(&self) {
         let Some(app) = self.get_app() else { return; };
         let default = meditate_core::session::TIMER_DEFAULT_SECS;
-        let secs = app.with_db(|db| {
-            db.get_setting("timer_session_secs", &default.to_string())
-                .ok()
-                .and_then(|s| s.parse::<u32>().ok())
-                .unwrap_or(default)
-        }).unwrap_or(default);
+        let secs = app
+            .with_db(|db| meditate_core::settings_keys::timer_session_secs_from_db(db.core()))
+            .unwrap_or(default);
         self.timer_populating.set(true);
         self.set_countdown_target(secs);
         self.timer_populating.set(false);
@@ -4397,23 +4394,7 @@ impl TimerView {
         let Some(app) = self.get_app() else { return; };
         self.breathing_populating.set(true);
         let (p, secs) = app.with_db(|db| {
-            let read = |k: &str, default: u32| -> u32 {
-                db.get_setting(k, &default.to_string())
-                    .ok()
-                    .and_then(|s| s.parse::<u32>().ok())
-                    .unwrap_or(default)
-            };
-            let p = BreathPattern::clamp_from_raw(
-                read("breathing_in", 4),
-                read("breathing_hold_in", 4),
-                read("breathing_out", 4),
-                read("breathing_hold_out", 4),
-            );
-            let secs = clamp_session_secs(read(
-                "breathing_session_secs",
-                meditate_core::session::BREATHING_DEFAULT_SECS,
-            ));
-            (p, secs)
+            meditate_core::settings_keys::breathing_from_db(db.core())
         }).unwrap_or((
             BreathPattern::box_breath(),
             meditate_core::session::BREATHING_DEFAULT_SECS,
@@ -4435,11 +4416,7 @@ impl TimerView {
         let p = self.breathing_pattern.get();
         let secs = self.breathing_session_secs.get();
         app.with_db_mut(|db| {
-            let _ = db.set_setting("breathing_in", &p.in_secs.to_string());
-            let _ = db.set_setting("breathing_hold_in", &p.hold_in.to_string());
-            let _ = db.set_setting("breathing_out", &p.out_secs.to_string());
-            let _ = db.set_setting("breathing_hold_out", &p.hold_out.to_string());
-            let _ = db.set_setting("breathing_session_secs", &secs.to_string());
+            let _ = meditate_core::settings_keys::set_breathing(db.core(), p, secs);
         });
     }
 

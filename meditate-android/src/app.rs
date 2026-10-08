@@ -1333,7 +1333,7 @@ mod tests {
             "set_stopwatch_on(read_stopwatch_for_mode",
             "set_keep_awake_on(read_keep_awake_for_mode",
             "set_cues_mode(signal_mode_to_chip_index(read_signal_mode_for_mode",
-            "refresh_breathing_tiles(ui, read_breathing_pattern())",
+            "let (pattern, breathing_secs) = read_breathing();",
             "timer_session_secs.set(read_timer_session_secs())",
         ] {
             assert!(loader.contains(setter), "loader sets {setter}");

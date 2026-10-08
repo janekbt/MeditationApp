@@ -1379,13 +1379,15 @@ fn apply_preset_config_json(
             duration_secs,
             ..
         } => {
-            write_breathing_pattern(meditate_core::breath::BreathPattern::clamp_from_raw(
-                inhale_secs,
-                hold_full_secs,
-                exhale_secs,
-                hold_empty_secs,
-            ));
-            write_breathing_session_secs(duration_secs);
+            write_breathing(
+                meditate_core::breath::BreathPattern::clamp_from_raw(
+                    inhale_secs,
+                    hold_full_secs,
+                    exhale_secs,
+                    hold_empty_secs,
+                ),
+                duration_secs,
+            );
         }
     }
     load_setup_for_mode(ui, mode, timer_session_secs);
@@ -1407,14 +1409,14 @@ fn snapshot_setup_json(
     use meditate_core::preset_config::{snapshot, PresetTiming};
     let timing = match mode {
         meditate_core::SessionMode::BoxBreath => {
-            let p = read_breathing_pattern();
+            let (p, duration_secs) = read_breathing();
             PresetTiming::BoxBreath {
                 stopwatch: ui.get_stopwatch_on(),
                 inhale_secs: p.in_secs,
                 hold_full_secs: p.hold_in,
                 exhale_secs: p.out_secs,
                 hold_empty_secs: p.hold_out,
-                duration_secs: read_breathing_session_secs(),
+                duration_secs,
             }
         }
         _ => PresetTiming::Timer {
@@ -2134,77 +2136,34 @@ fn refresh_after_label_change(ui: &MainWindow, mode: meditate_core::SessionMode)
     refresh_chooser_items(ui, current_id);
 }
 
-/// Read the persisted Box-Breath phase pattern from the DB
-/// settings keys the GTK shell uses (`breathing_in` /
-/// `breathing_hold_in` / `breathing_out` / `breathing_hold_out`).
-/// Defaults to `BreathPattern::box_breath()` (4-4-4-4) when no
-/// row exists yet. Runs `clamp_from_raw` so a stored value that
-/// drifts out of the 1..=20 / 0..=20 ranges still produces a
-/// well-formed pattern.
-fn read_breathing_pattern() -> meditate_core::breath::BreathPattern {
-    use meditate_core::breath::BreathPattern;
-    let Some(db) = lock_db() else { return BreathPattern::box_breath(); };
-    let read = |k: &str, default: u32| -> u32 {
-        meditate_core::settings_keys::read_u32(&db, k, default)
-    };
-    BreathPattern::clamp_from_raw(
-        read("breathing_in", 4),
-        read("breathing_hold_in", 4),
-        read("breathing_out", 4),
-        read("breathing_hold_out", 4),
+/// Box Breath's pattern and session length (core clamps both and
+/// owns the synced keys). Defaults when the DB is unavailable.
+fn read_breathing() -> (meditate_core::breath::BreathPattern, u32) {
+    lock_db().map_or(
+        (
+            meditate_core::breath::BreathPattern::box_breath(),
+            meditate_core::session::BREATHING_DEFAULT_SECS,
+        ),
+        |db| meditate_core::settings_keys::breathing_from_db(&db),
     )
 }
 
-fn write_breathing_pattern(pattern: meditate_core::breath::BreathPattern) {
+fn write_breathing(pattern: meditate_core::breath::BreathPattern, secs: u32) {
     let Some(db) = lock_db() else { return; };
-    let _ = db.set_setting("breathing_in", &pattern.in_secs.to_string());
-    let _ = db.set_setting("breathing_hold_in", &pattern.hold_in.to_string());
-    let _ = db.set_setting("breathing_out", &pattern.out_secs.to_string());
-    let _ = db.set_setting("breathing_hold_out", &pattern.hold_out.to_string());
+    let _ = meditate_core::settings_keys::set_breathing(&db, pattern, secs);
 }
 
-/// Box-Breath session length in seconds. Persisted alongside the
-/// phase pattern so toggling between modes restores the
-/// per-mode last value (mirrors GTK's `breathing_session_secs`
-/// Cell + the `breathing_session_secs` settings key at
-/// `imp.rs:4256`). Defaults to `BREATHING_DEFAULT_SECS` = 5 min.
-fn read_breathing_session_secs() -> u32 {
-    let Some(db) = lock_db() else {
-        return meditate_core::session::BREATHING_DEFAULT_SECS;
-    };
-    meditate_core::settings_keys::read_u32(
-        &db,
-        "breathing_session_secs",
-        meditate_core::session::BREATHING_DEFAULT_SECS,
-    )
-}
-
-fn write_breathing_session_secs(secs: u32) {
-    let Some(db) = lock_db() else { return; };
-    let _ = db.set_setting("breathing_session_secs", &secs.to_string());
-}
-
-/// Persisted Timer-mode countdown length. Mirrors GTK's
-/// `timer_session_secs` settings key + `set_countdown_target` /
-/// `load_timer_settings` (`meditate-gtk/src/timer/imp.rs`):
-/// every duration commit writes it, startup restores it.
-/// Defaults to `TIMER_DEFAULT_SECS` = 10 min when missing.
-/// (Timer mode previously kept this in-memory only, so it reset
-/// on every app restart — the bug Janek hit.)
+/// Timer mode's countdown length; every duration commit writes it,
+/// startup restores it (GTK's `load_timer_settings`).
 fn read_timer_session_secs() -> u32 {
-    let Some(db) = lock_db() else {
-        return meditate_core::session::TIMER_DEFAULT_SECS;
-    };
-    meditate_core::settings_keys::read_u32(
-        &db,
-        "timer_session_secs",
-        meditate_core::session::TIMER_DEFAULT_SECS,
-    )
+    lock_db().map_or(meditate_core::session::TIMER_DEFAULT_SECS, |db| {
+        meditate_core::settings_keys::timer_session_secs_from_db(&db)
+    })
 }
 
 fn write_timer_session_secs(secs: u32) {
     let Some(db) = lock_db() else { return; };
-    let _ = db.set_setting("timer_session_secs", &secs.to_string());
+    let _ = meditate_core::settings_keys::set_timer_session_secs(&db, secs);
 }
 
 /// Update the Setup view's hours / minutes Slint properties from
@@ -2585,13 +2544,14 @@ fn load_setup_for_mode(
             .into(),
     );
     timer_session_secs.set(read_timer_session_secs());
+    let (pattern, breathing_secs) = read_breathing();
     // Guided's length comes from its file; the row falls back to the
     // Timer value so it isn't blank.
     push_session_length_to_ui(ui, match mode {
-        meditate_core::SessionMode::BoxBreath => read_breathing_session_secs(),
+        meditate_core::SessionMode::BoxBreath => breathing_secs,
         _ => timer_session_secs.get(),
     });
-    refresh_breathing_tiles(ui, read_breathing_pattern());
+    refresh_breathing_tiles(ui, pattern);
 }
 
 /// Re-read every screen that shows synced data. Runs after a sync
@@ -4978,7 +4938,7 @@ fn build_ui() -> MainWindow {
         ui.on_bb_adjust(move |index, delta| {
             {
                 let Some(ui) = weak.upgrade() else { return; };
-                let mut pattern = read_breathing_pattern();
+                let (mut pattern, secs) = read_breathing();
                 let min = meditate_core::breath::BreathPattern::phase_min_secs(
                     index.max(0) as u8,
                 );
@@ -4995,7 +4955,7 @@ fn build_ui() -> MainWindow {
                 ) as u32;
                 if new_val == *slot { return; }
                 *slot = new_val;
-                write_breathing_pattern(pattern);
+                write_breathing(pattern, secs);
                 refresh_breathing_tiles(&ui, pattern);
             }
         });
@@ -5976,9 +5936,7 @@ fn build_ui() -> MainWindow {
             let total_secs = (ui.get_setup_hours().max(0) as u32) * 3600
                 + (ui.get_setup_minutes().max(0) as u32) * 60;
             match current_mode.get() {
-                TimerMode::Breathing => {
-                    write_breathing_session_secs(total_secs);
-                }
+                TimerMode::Breathing => write_breathing(read_breathing().0, total_secs),
                 _ => {
                     timer_session_secs.set(total_secs);
                     write_timer_session_secs(total_secs);
