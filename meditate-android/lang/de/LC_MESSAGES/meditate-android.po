@@ -932,3 +932,9 @@ msgstr "Ältere Einträge werden nicht angezeigt. Teilen sendet dieselben Eintr�
 
 msgid "Meditate diagnostics log"
 msgstr "Meditate-Diagnoseprotokoll"
+
+msgid "Delete Pattern?"
+msgstr "Muster löschen?"
+
+msgid "Bells and Box Breath phases that reference this pattern will lose their vibration."
+msgstr "Glocken und Box-Atmung-Phasen, die dieses Muster verwenden, verlieren ihre Vibration."

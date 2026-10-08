@@ -932,3 +932,9 @@ msgstr "Oudere items worden niet getoond. Delen verstuurt dezelfde items."
 
 msgid "Meditate diagnostics log"
 msgstr "Meditate-diagnoselogboek"
+
+msgid "Delete Pattern?"
+msgstr "Patroon verwijderen?"
+
+msgid "Bells and Box Breath phases that reference this pattern will lose their vibration."
+msgstr "Bellen en fasen van Box-ademhaling die dit patroon gebruiken, verliezen hun trilling."

@@ -226,19 +226,13 @@ export struct LabelItem {
 // Mirrors GTK's `build_sound_row` selection list in
 // `meditate-gtk/src/sounds.rs` (preview Play/Stop is B-4 —
 // this slice is select-only).
-// One bell-sound chooser row: NameChoice plus whether it can be
-// deleted (custom imports only; bundled sounds stay, like GTK).
+// One bell-sound or pattern chooser row, and whether it can be
+// deleted (your own only; bundled ones stay, like GTK).
 export struct SoundChoice {
     uuid: string,
     name: string,
     selected: bool,
     deletable: bool,
-}
-
-export struct NameChoice {
-    uuid: string,
-    name: string,
-    selected: bool,
 }
 
 // One x-axis time label for the vibration editor chart. Rust
@@ -1794,6 +1788,7 @@ export enum Modal {
     bell-rename,
     bell-delete,
     interval-bell-delete,
+    pattern-delete,
     prep,
     recovery-wipe-confirm,
 }
@@ -2333,7 +2328,7 @@ export component MainWindow inherits Window {
     // `meditate_core::preview::PreviewToggle` + the B-2a waveform
     // JNI. Rust-filled from `list_vibration_patterns_from_db`.
     in property <bool> pattern-chooser-page: false;
-    in property <[NameChoice]> pattern-chooser-items: [];
+    in property <[SoundChoice]> pattern-chooser-items: [];
     in property <string> pattern-preview-uuid: "";
     callback pattern-chooser-pick(string);
     callback pattern-chooser-back();
@@ -2344,6 +2339,9 @@ export component MainWindow inherits Window {
     // immutable in core), exactly like GTK.
     callback pattern-create-tap();
     callback pattern-edit(string);
+    // Trash on a pattern you made → "Delete Pattern?" (Modal).
+    callback pattern-delete-tap(string);
+    callback pattern-delete-confirm();
 
     // Bell-sound chooser overlay (B-5a). Same slide-in shape as
     // the labels chooser; `bell-chooser-items` is Rust-filled
@@ -6174,6 +6172,7 @@ export component MainWindow inherits Window {
                 }
                 Text {
                     text: @tr("Interval Bell");
+                    wrap: word-wrap;
                     font-size: 18px;
                     color: MaterialPalette.on-surface;
                     vertical-alignment: center;
@@ -6628,6 +6627,16 @@ export component MainWindow inherits Window {
                                     clicked => { root.pattern-preview-toggle(item.uuid); }
                                 }
                             }
+                            // Delete on your own patterns only (GTK's delete_btn).
+                            VerticalLayout {
+                                alignment: center;
+                                horizontal-stretch: 0;
+                                if item.deletable : IconButton {
+                                    icon: @image-url("assets/delete.svg");
+                                    has_error: true;
+                                    clicked => { root.pattern-delete-tap(item.uuid); }
+                                }
+                            }
                         }
                     }
                 }
@@ -6673,6 +6682,7 @@ export component MainWindow inherits Window {
                 }
                 Text {
                     text: root.ve-title;
+                    wrap: word-wrap;
                     font-size: 18px;
                     color: MaterialPalette.on-surface;
                     vertical-alignment: center;
@@ -8462,6 +8472,14 @@ export component MainWindow inherits Window {
                 }
             }
         }
+    }
+
+    if root.modal == Modal.pattern-delete : ConfirmDialog {
+        title: @tr("Delete Pattern?");
+        body: @tr("Bells and Box Breath phases that reference this pattern will lose their vibration.");
+        confirm-text: @tr("Delete");
+        cancel => { root.modal = Modal.none; }
+        confirm => { root.pattern-delete-confirm(); }
     }
 
     if root.modal == Modal.discard : ConfirmDialog {

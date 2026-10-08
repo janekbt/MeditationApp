@@ -730,6 +730,8 @@ pub enum PendingUndo {
     /// A deleted guided file: uuid, name, file path, secs, starred.
     /// Its file is removed only on commit.
     GuidedDelete(String, String, String, u32, bool),
+    /// A deleted vibration pattern, re-inserted with its uuid on Undo.
+    PatternDelete(meditate_core::db::VibrationPattern),
 }
 
 /// The snackbar shows one notice at a time, so at most one Undo is
@@ -914,6 +916,51 @@ mod tests {
             assert!(!lib.contains(gone), "{gone}");
         }
         assert!(lib.contains("ChooserTarget::BoxBreathCue(phase) =>"));
+    }
+
+    #[test]
+    fn editor_titles_wrap_instead_of_pushing_save_away() {
+        // "Muster bearbeiten" pushed Save off the screen.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        for title in ["text: root.ve-title;", "text: @tr(\"Interval Bell\");"] {
+            let at = slint.find(title).unwrap();
+            assert!(slint[at..at + 300].contains("wrap: word-wrap;"), "{title}");
+        }
+    }
+
+    #[test]
+    fn own_patterns_can_be_deleted_with_undo() {
+        // The pattern chooser had no delete; GTK has one for patterns
+        // you made (bundled ones stay), behind a dialog, with Undo.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        assert!(slint.contains("in property <[SoundChoice]> pattern-chooser-items: [];"));
+        assert!(!slint.contains("NameChoice"));
+        let rows = slint.find("for item[idx] in root.pattern-chooser-items").unwrap();
+        let row = &slint[rows..rows + slint[rows..].find("} // Flickable (pc-scroll)").unwrap()];
+        assert!(row.contains("if item.deletable : IconButton {"));
+        // Empty on bundled rows, so it must not take width from the name.
+        assert!(row.contains("VerticalLayout {\n                                alignment: center;\n                                horizontal-stretch: 0;\n                                if item.deletable"));
+        assert!(row.contains("root.pattern-delete-tap(item.uuid);"));
+        let dialog = slint.find("if root.modal == Modal.pattern-delete : ConfirmDialog {").unwrap();
+        let dialog = &slint[dialog..dialog + 400];
+        assert!(dialog.contains("@tr(\"Delete Pattern?\")"));
+        assert!(dialog.contains("@tr(\"Bells and Box Breath phases that reference this pattern will lose their vibration.\")"));
+
+        assert!(lib.contains("deletable: !p.is_bundled,"));
+        let at = lib.find("ui.on_pattern_delete_confirm(").unwrap();
+        let confirm = &lib[at..at + lib[at..].find("\n        });").unwrap()];
+        assert!(confirm.contains("db.delete_vibration_pattern(&uuid)"));
+        assert!(confirm.contains("Some(app::PendingUndo::PatternDelete(pattern))"));
+        let at = lib.find("U::PatternDelete(p) => {").unwrap();
+        assert!(lib[at..at + 500].contains("db.insert_vibration_pattern_with_uuid("));
+
+        for lang in ["de", "es", "fr", "it", "nl", "pl", "pt_BR", "ru", "zh_CN"] {
+            let po = std::fs::read_to_string(root.join(format!("lang/{lang}/LC_MESSAGES/meditate-android.po"))).unwrap();
+            assert!(po.contains("msgid \"Delete Pattern?\""), "{lang}");
+        }
     }
 
     #[test]

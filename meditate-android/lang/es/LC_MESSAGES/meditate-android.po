@@ -932,3 +932,9 @@ msgstr "Las entradas más antiguas no se muestran. Compartir envía las mismas e
 
 msgid "Meditate diagnostics log"
 msgstr "Registro de diagnóstico de Meditate"
+
+msgid "Delete Pattern?"
+msgstr "¿Eliminar patrón?"
+
+msgid "Bells and Box Breath phases that reference this pattern will lose their vibration."
+msgstr "Las campanas y las fases de respiración cuadrada que usan este patrón perderán su vibración."

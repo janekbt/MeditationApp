@@ -3849,22 +3849,39 @@ fn ticked_pattern_uuid(ui: &MainWindow) -> String {
 /// preview is wired separately via `pattern-preview-toggle`.
 fn populate_pattern_chooser(ui: &MainWindow, current_uuid: &str) {
     let Some(db) = lock_db() else { return; };
-    let items: Vec<NameChoice> =
+    let items: Vec<SoundChoice> =
         meditate_core::db::list_vibration_patterns_from_db(&db)
             .unwrap_or_default()
             .into_iter()
             .map(|p| {
                 let u = p.uuid.to_string();
-                NameChoice {
+                SoundChoice {
                     selected: u == current_uuid,
                     uuid: u.into(),
                     name: p.name.into(),
+                    deletable: !p.is_bundled,
                 }
             })
             .collect();
     ui.set_pattern_chooser_items(
         std::rc::Rc::new(slint::VecModel::from(items)).into(),
     );
+}
+
+/// A pattern was deleted or restored: re-fill the open chooser (keeping
+/// its tick) and every row that names a pattern; a bell whose pattern
+/// is gone shows the fallback.
+fn refresh_after_pattern_change(ui: &MainWindow) {
+    use slint::Model;
+    let current = ui
+        .get_pattern_chooser_items()
+        .iter()
+        .find(|c| c.selected)
+        .map(|c| c.uuid.to_string())
+        .unwrap_or_default();
+    populate_pattern_chooser(ui, &current);
+    refresh_bell_rows(ui);
+    ui.set_ie_pattern_name(pattern_name(ui, ui.get_ie_pattern_uuid().as_str()).into());
 }
 
 /// A transient Guided-mode pick (Phase 6.5 MVP): the file the
@@ -6779,6 +6796,45 @@ fn build_ui() -> MainWindow {
             let _ = weak.clone();
         });
     }
+    // Delete a pattern you made (GTK's delete_btn → "Delete Pattern?"),
+    // with Undo like GTK's toast.
+    let pattern_delete_uuid: Rc<RefCell<Option<String>>> = Rc::default();
+    {
+        let weak = ui.as_weak();
+        let pattern_delete_uuid = pattern_delete_uuid.clone();
+        ui.on_pattern_delete_tap(move |uuid| {
+            if let Some(ui) = weak.upgrade() {
+                *pattern_delete_uuid.borrow_mut() = Some(uuid.to_string());
+                ui.set_modal(Modal::PatternDelete);
+            }
+        });
+    }
+    {
+        let weak = ui.as_weak();
+        ui.on_pattern_delete_confirm(move || {
+            let Some(ui) = weak.upgrade() else { return; };
+            close_modal(&ui, Modal::PatternDelete);
+            let Some(uuid) = pattern_delete_uuid.borrow_mut().take() else { return; };
+            // A preview of the pattern being deleted stops with it.
+            stop_all_previews(&ui);
+            let pattern = {
+                let Some(db) = lock_db() else { return; };
+                let Ok(Some(pattern)) = meditate_core::db::find_vibration_pattern_by_uuid_from_db(&db, &uuid) else { return; };
+                if let Err(e) = db.delete_vibration_pattern(&uuid) {
+                    meditate_core::log("pattern", &format!("delete FAILED: {e:?}"));
+                    return;
+                }
+                pattern
+            };
+            refresh_after_pattern_change(&ui);
+            show_notice(
+                &ui,
+                ui.global::<Tr>().invoke_deleted(pattern.name.clone().into()),
+                Some(app::PendingUndo::PatternDelete(pattern)),
+                5,
+            );
+        });
+    }
     {
         let weak = ui.as_weak();
         let ve_edit_uuid = ve_edit_uuid.clone();
@@ -8115,6 +8171,20 @@ fn build_ui() -> MainWindow {
                     }
                     refresh_guided_manage(&ui);
                     refresh_guided_files(&ui);
+                }
+                U::PatternDelete(p) => {
+                    {
+                        let Some(db) = lock_db() else { return; };
+                        let _ = db.insert_vibration_pattern_with_uuid(
+                            p.uuid.as_str(),
+                            &p.name,
+                            p.duration_ms,
+                            &p.intensities,
+                            p.chart_kind,
+                            p.is_bundled,
+                        );
+                    }
+                    refresh_after_pattern_change(&ui);
                 }
             }
         });

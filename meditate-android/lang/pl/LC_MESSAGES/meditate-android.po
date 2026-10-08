@@ -951,3 +951,9 @@ msgstr "Starsze wpisy nie są pokazywane. Udostępnij wysyła te same wpisy."
 
 msgid "Meditate diagnostics log"
 msgstr "Dziennik diagnostyczny Meditate"
+
+msgid "Delete Pattern?"
+msgstr "Usunąć wzór?"
+
+msgid "Bells and Box Breath phases that reference this pattern will lose their vibration."
+msgstr "Dzwonki i fazy oddechu pudełkowego korzystające z tego wzoru stracą wibrację."

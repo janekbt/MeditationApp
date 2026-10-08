@@ -913,3 +913,9 @@ msgstr "较早的条目未显示。分享会发送相同的条目。"
 
 msgid "Meditate diagnostics log"
 msgstr "Meditate 诊断日志"
+
+msgid "Delete Pattern?"
+msgstr "删除模式？"
+
+msgid "Bells and Box Breath phases that reference this pattern will lose their vibration."
+msgstr "引用此模式的铃声和箱式呼吸阶段将失去振动。"

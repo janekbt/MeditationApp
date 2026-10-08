@@ -951,3 +951,9 @@ msgstr "Старые записи не показаны. «Поделиться�
 
 msgid "Meditate diagnostics log"
 msgstr "Журнал диагностики Meditate"
+
+msgid "Delete Pattern?"
+msgstr "Удалить шаблон?"
+
+msgid "Bells and Box Breath phases that reference this pattern will lose their vibration."
+msgstr "Колокола и фазы квадратного дыхания, использующие этот шаблон, останутся без вибрации."
