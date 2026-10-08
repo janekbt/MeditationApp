@@ -141,6 +141,12 @@ export global Tr {
     public pure function bell-at-n-min(n: int) -> string { return @tr("At {n} min" | "At {n} min" % n); }
     public pure function bell-n-min-before-end(n: int) -> string { return @tr("{n} min before end" | "{n} min before end" % n); }
     // Rust-set titles + log-feed strings
+    // Units (GTK's msgids, so its translations carry over). The pair
+    // keeps both units, as the Edit Session row always showed them.
+    public pure function n-hours(n: int) -> string { return @tr("{n}h" | "{n}h" % n); }
+    public pure function n-mins(n: int) -> string { return @tr("{n}m" | "{n}m" % n); }
+    public pure function hm(h: int, m: int) -> string { return root.n-hours(h) + " " + root.n-mins(m); }
+    public pure function secs(value: string) -> string { return @tr("{}s", value); }
     public pure function day-caption(n: int, total: string) -> string { return @tr("{n} session · {0}" | "{n} sessions · {0}" % n, total); }
     // Log day headers. Dates are numbers: {0} day, {1} month, {2} year.
     public pure function today() -> string { return @tr("Today"); }
@@ -1778,7 +1784,7 @@ component PhaseTile inherits Rectangle {
                 }
             }
             Text {
-                text: root.seconds + "s";
+                text: Tr.secs(root.seconds);
                 font-size: 22px;
                 width: 44px;
                 horizontal-alignment: center;
@@ -3603,7 +3609,7 @@ export component MainWindow inherits Window {
                             title: @tr("Preparation Time");
                             subtitle: @tr("Silence before the starting bell");
                             body-title: @tr("Duration");
-                            body-subtitle: root.prep-time-secs + "s";
+                            body-subtitle: Tr.secs(root.prep-time-secs);
                             active <=> root.prep-time-active;
                             toggled(value) => { root.prep-time-toggled(value); }
                             body-tapped => { root.prep-time-tap(); }
@@ -4730,16 +4736,18 @@ export component MainWindow inherits Window {
                                 // spaced top + middle. Mirrors
                                 // GTK's `y_axis` box at
                                 // `stats/imp.rs:478`.
+                                // As wide as its longest label: a translated
+                                // "2 Std 10 Min" doesn't fit in 44 px.
                                 VerticalLayout {
-                                    width: 44px;
-                                    Text {
+                                    width: max(44px, ymax-text.preferred-width, ymid-text.preferred-width);
+                                    ymax-text := Text {
                                         text: root.stat-chart-ymax;
                                         font-size: 10px;
                                         color: MaterialPalette.on-surface-variant;
                                         horizontal-alignment: right;
                                     }
                                     Rectangle { vertical-stretch: 1; }
-                                    Text {
+                                    ymid-text := Text {
                                         text: root.stat-chart-ymid;
                                         font-size: 10px;
                                         color: MaterialPalette.on-surface-variant;
@@ -5027,8 +5035,7 @@ export component MainWindow inherits Window {
             BoxedList {
                 DurationRow {
                     label: @tr("Duration");
-                    value-text: root.edit-duration-hours + @tr("h ")
-                        + root.edit-duration-minutes + "m";
+                    value-text: Tr.hm(root.edit-duration-hours, root.edit-duration-minutes);
                     tapped => {
                         root.dialog-hours = root.edit-duration-hours;
                         root.dialog-minutes = root.edit-duration-minutes;
@@ -6933,8 +6940,7 @@ export component MainWindow inherits Window {
     // Mirrors GTK's `present_override_dialog`.
     if root.modal == Modal.override-preset : ConfirmDialog {
         title: @tr("Override Preset?");
-        body: @tr("Replace '") + root.override-preset-name
-            + @tr("' with the current settings?");
+        body: @tr("Replace '{}'s saved configuration with the current settings?", root.override-preset-name);
         confirm-text: @tr("Override");
         cancel => { root.modal = Modal.none; }
         confirm => { root.override-preset-confirm(); }
@@ -6962,8 +6968,7 @@ export component MainWindow inherits Window {
     // offered via the shared snackbar (re-insert with same uuid).
     if root.modal == Modal.delete-preset : ConfirmDialog {
         title: @tr("Delete Preset?");
-        body: "'" + root.delete-preset-name
-            + @tr("' will be removed from this device and any synced peers.");
+        body: @tr("'{}' will be removed from this device and any synced peers.", root.delete-preset-name);
         confirm-text: @tr("Delete");
         cancel => { root.modal = Modal.none; }
         confirm => { root.delete-preset-confirm(); }
@@ -7323,7 +7328,7 @@ export component MainWindow inherits Window {
             BoxedList {
                 DurationRow {
                     label: @tr("Daily goal");
-                    value-text: root.prefs-goal-mins + @tr(" min");
+                    value-text: Tr.n-mins(root.prefs-goal-mins);
                     tapped => {
                         root.goal-dialog-text = "" + root.prefs-goal-mins;
                         root.modal = Modal.goal;
@@ -7683,9 +7688,7 @@ export component MainWindow inherits Window {
                         Text {
                             width: parent.width;
                             height: parent.height;
-                            text: @tr("Converting… ")
-                                + round(root.guided-import-progress * 100)
-                                + "%";
+                            text: @tr("Converting… {}%", round(root.guided-import-progress * 100));
                             horizontal-alignment: center;
                             vertical-alignment: center;
                             font-size: 14px;
@@ -7705,9 +7708,7 @@ export component MainWindow inherits Window {
                                 y: 0;
                                 width: import-pill.width;
                                 height: import-pill.height;
-                                text: @tr("Converting… ")
-                                    + round(root.guided-import-progress * 100)
-                                    + "%";
+                                text: @tr("Converting… {}%", round(root.guided-import-progress * 100));
                                 horizontal-alignment: center;
                                 vertical-alignment: center;
                                 font-size: 14px;

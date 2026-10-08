@@ -349,6 +349,7 @@ Planning only: nothing here has been changed yet. The audit ran on beta at a8a5d
 - **Bugs:** B3#27, #28, #31, #26, and #29 in part. B3#11, #30 and #32 are translation or platform content and aren't covered.
 - **Risk:** msgid churn in every .po. Do it after R15(a), so the strings churn only once.
 - **Effort:** S (lint) to M (all fixes)
+- **Status:** first round done: units (#27), By label subtitle (#28), the split preset sentences (#31) and "Converting… {}%" are whole translated texts, and `ui_text_is_translated_whole` fails on any glued `@tr`. #29 (month and weekday names) and #26 (12-hour clock in Edit Session) are a later round.
 
 ## 3. Suggested order of work
 

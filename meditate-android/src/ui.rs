@@ -1514,17 +1514,16 @@ fn sync_ago_text(ui: &MainWindow, unix_ts: i64) -> String {
 }
 
 /// Android-side renderer for `meditate_core::format::HmKey`
-/// ("1h 4m" / "5m" / "–"). Mirrors GTK's `render_hm` at
-/// `meditate-gtk/src/format.rs:18` but inlines English — i18n
-/// isn't wired on Android yet (same deferral as the snackbar /
-/// sync-indicator text).
-fn render_hm(key: meditate_core::format::HmKey) -> String {
+/// ("1h 4m" / "5m" / "–"), through the translated `Tr` units.
+/// Mirrors GTK's `render_hm` at `meditate-gtk/src/format.rs:18`.
+fn render_hm(ui: &MainWindow, key: meditate_core::format::HmKey) -> String {
     use meditate_core::format::HmKey;
+    let tr = ui.global::<Tr>();
     match key {
         HmKey::Empty => "–".to_string(),
-        HmKey::MinsOnly(m) => format!("{m}m"),
-        HmKey::HoursOnly(h) => format!("{h}h"),
-        HmKey::HoursMins(h, m) => format!("{h}h {m}m"),
+        HmKey::MinsOnly(m) => tr.invoke_n_mins(m as i32).to_string(),
+        HmKey::HoursOnly(h) => tr.invoke_n_hours(h as i32).to_string(),
+        HmKey::HoursMins(h, m) => tr.invoke_hm(h as i32, m as i32).to_string(),
     }
 }
 
@@ -1549,7 +1548,7 @@ fn refresh_stats(ui: &MainWindow) {
         .into(),
     );
     ui.set_stat_total(
-        render_hm(meditate_core::format::hm_compact_key(
+        render_hm(ui, meditate_core::format::hm_compact_key(
             std::time::Duration::from_secs(total.max(0) as u64),
         ))
         .into(),
@@ -1573,10 +1572,10 @@ fn refresh_stats(ui: &MainWindow) {
 
     let mins_dur =
         |m: i64| std::time::Duration::from_secs((m.max(0) as u64) * 60);
-    let today_str = render_hm(meditate_core::format::hm_mins_key(
+    let today_str = render_hm(ui, meditate_core::format::hm_mins_key(
         mins_dur(g.today_mins),
     ));
-    let goal_str = render_hm(meditate_core::format::hm_mins_key(
+    let goal_str = render_hm(ui, meditate_core::format::hm_mins_key(
         mins_dur(g.goal_mins),
     ));
 
@@ -1593,7 +1592,7 @@ fn refresh_stats(ui: &MainWindow) {
             .invoke_goal_reached(today_str.clone().into())
             .to_string(),
         meditate_core::goal::GoalStatus::InProgress => {
-            let remaining = render_hm(meditate_core::format::hm_mins_key(
+            let remaining = render_hm(ui, meditate_core::format::hm_mins_key(
                 mins_dur(g.remaining_mins),
             ));
             ui.global::<Tr>()
@@ -1679,17 +1678,13 @@ fn refresh_stats(ui: &MainWindow) {
             .unwrap_or_default()
             .into_iter()
             .map(|(name, secs, n)| {
-                let dur = render_hm(meditate_core::format::hm_secs_key(
+                let dur = render_hm(ui, meditate_core::format::hm_secs_key(
                     std::time::Duration::from_secs(secs.max(0) as u64),
                 ));
-                let subtitle = if n == 1 {
-                    format!("{dur} · 1 session")
-                } else {
-                    format!("{dur} · {n} sessions")
-                };
+                let subtitle = ui.global::<Tr>().invoke_day_caption(n as i32, dur.into());
                 LabelTotalRow {
                     name: name.into(),
-                    subtitle: subtitle.into(),
+                    subtitle,
                 }
             })
             .collect();
@@ -1893,7 +1888,7 @@ fn refresh_chart(ui: &MainWindow) {
     };
 
     let hm = |secs: i64| {
-        render_hm(meditate_core::format::hm_secs_key(
+        render_hm(ui, meditate_core::format::hm_secs_key(
             std::time::Duration::from_secs(secs.max(0) as u64),
         ))
     };
@@ -1954,7 +1949,7 @@ fn render_insight(
     use meditate_core::insights::{HourBucket, InsightKey};
     let tr = ui.global::<Tr>();
     let hm = |secs: i64| {
-        render_hm(meditate_core::format::hm_secs_key(
+        render_hm(ui, meditate_core::format::hm_secs_key(
             std::time::Duration::from_secs(secs.max(0) as u64),
         ))
     };
@@ -2730,7 +2725,7 @@ fn push_log_sections_to_ui(
                 date_display: day_header_text(ui, app::day_header(sec.start_unix, now_unix)),
                 caption: ui.global::<Tr>().invoke_day_caption(
                     sec.count as i32,
-                    render_hm(meditate_core::format::hm_compact_key(Duration::from_secs(
+                    render_hm(ui, meditate_core::format::hm_compact_key(Duration::from_secs(
                         sec.total_secs.max(0) as u64,
                     )))
                     .into(),
@@ -6635,7 +6630,10 @@ fn build_ui() -> MainWindow {
             f64::from(ui.get_ve_duration_tenths().max(0)) / 10.0;
         let denom = (n - 1).max(1) as f64;
         let texts: Vec<String> = (0..n)
-            .map(|i| format!("{:.1}s", dur_s * i as f64 / denom))
+            .map(|i| {
+                let secs = format!("{:.1}", dur_s * i as f64 / denom);
+                ui.global::<Tr>().invoke_secs(secs.into()).to_string()
+            })
             .collect();
         let layouts: Vec<meditate_core::vibration::XLabelLayout> =
             (0..n)

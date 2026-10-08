@@ -254,12 +254,14 @@ Left out on purpose:
 ## C. Cosmetic
 
 ### 27. Untranslated units: "h", "m", "s"
+- **Fixed (2026-10-08):** R16: `Tr.n-hours`/`n-mins`/`hm` (GTK's `{n}h`/`{n}m`) and `Tr.secs`; the Stats axis column sizes to its labels.
 - **Where:**
   - `lib.rs:1782-1790` (`render_hm`), which feeds the Total tile, goal ring, chart axis, insights and Log day caption.
   - `main.slint:5202-5203` ("1 ч 30m"), `:1712` and `:3294` (`seconds + "s"`).
 - **Fix idea:** Plural Tr functions per unit. The GTK .po already has the translations.
 
 ### 28. The "By label" subtitle is English
+- **Fixed (2026-10-08):** R16: reuses `Tr.day-caption`.
 - **Where:** `lib.rs:1949-1953` (`"{dur} · {n} sessions"`).
 - **Fix idea:** Reuse `Tr.day-caption`.
 
@@ -272,6 +274,7 @@ Left out on purpose:
 - **Fix idea:** Add those msgids to every .po, and translate the names in `format_date`.
 
 ### 31. Split sentences around preset names, and mismatched quotes in Chinese
+- **Fixed (2026-10-08):** R16: one msgid each, GTK's sentences and translations; matching quotes in zh.
 - **Where:** `main.slint:7494-7495` (Delete Preset) and `:7382-7383` (Override). zh shows `'名称”`.
 - **Fix idea:** Use single msgids with `{}`.
 

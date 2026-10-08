@@ -193,15 +193,6 @@ msgstr "Volume"
 msgid "min"
 msgstr "min"
 
-msgid " min"
-msgstr " min"
-
-msgid "' will be removed from this device and any synced peers."
-msgstr "' wordt verwijderd van dit apparaat en alle gesynchroniseerde apparaten."
-
-msgid "' with the current settings?"
-msgstr "' met de huidige instellingen?"
-
 msgid "'{}' applied"
 msgstr "'{}' toegepast"
 
@@ -271,8 +262,8 @@ msgstr "Sluiten"
 msgid "Connection OK"
 msgstr "Verbinding in orde"
 
-msgid "Converting… "
-msgstr "Converteren… "
+msgid "Converting… {}%"
+msgstr "Converteren… {}%"
 
 msgid "Copy"
 msgstr "Kopiëren"
@@ -538,9 +529,6 @@ msgstr "Label hernoemen"
 msgid "Rename Preset"
 msgstr "Voorinstelling hernoemen"
 
-msgid "Replace '"
-msgstr "Vervang '"
-
 msgid "Report an issue"
 msgstr "Probleem melden"
 
@@ -660,9 +648,6 @@ msgstr "Lokale gegevens wissen"
 
 msgid "Wipe local data?"
 msgstr "Lokale gegevens wissen?"
-
-msgid "h "
-msgstr "u "
 
 msgid "{} average over last 7 days"
 msgstr "{} gemiddeld over de laatste 7 dagen"
@@ -938,3 +923,22 @@ msgstr "Patroon verwijderen?"
 
 msgid "Bells and Box Breath phases that reference this pattern will lose their vibration."
 msgstr "Bellen en fasen van Box-ademhaling die dit patroon gebruiken, verliezen hun trilling."
+
+msgid "{n}h"
+msgid_plural "{n}h"
+msgstr[0] "{n}u"
+msgstr[1] "{n}u"
+
+msgid "{n}m"
+msgid_plural "{n}m"
+msgstr[0] "{n}m"
+msgstr[1] "{n}m"
+
+msgid "{}s"
+msgstr "{} s"
+
+msgid "Replace '{}'s saved configuration with the current settings?"
+msgstr "De opgeslagen configuratie van '{}' vervangen door de huidige instellingen?"
+
+msgid "'{}' will be removed from this device and any synced peers."
+msgstr "'{}' wordt verwijderd van dit apparaat en alle gesynchroniseerde apparaten."

@@ -193,15 +193,6 @@ msgstr "Громкость"
 msgid "min"
 msgstr "мин"
 
-msgid " min"
-msgstr " мин"
-
-msgid "' will be removed from this device and any synced peers."
-msgstr "' будет удалён с этого устройства и со всех синхронизированных устройств."
-
-msgid "' with the current settings?"
-msgstr "' текущими настройками?"
-
 msgid "'{}' applied"
 msgstr "Применено: '{}'"
 
@@ -271,8 +262,8 @@ msgstr "Закрыть"
 msgid "Connection OK"
 msgstr "Соединение установлено"
 
-msgid "Converting… "
-msgstr "Преобразование… "
+msgid "Converting… {}%"
+msgstr "Преобразование… {}%"
 
 msgid "Copy"
 msgstr "Копировать"
@@ -538,9 +529,6 @@ msgstr "Переименовать метку"
 msgid "Rename Preset"
 msgstr "Переименовать пресет"
 
-msgid "Replace '"
-msgstr "Заменить '"
-
 msgid "Report an issue"
 msgstr "Сообщить о проблеме"
 
@@ -660,9 +648,6 @@ msgstr "Стереть локальные данные"
 
 msgid "Wipe local data?"
 msgstr "Стереть локальные данные?"
-
-msgid "h "
-msgstr "ч "
 
 msgid "{} average over last 7 days"
 msgstr "В среднем {} за последние 7 дней"
@@ -957,3 +942,24 @@ msgstr "Удалить шаблон?"
 
 msgid "Bells and Box Breath phases that reference this pattern will lose their vibration."
 msgstr "Колокола и фазы квадратного дыхания, использующие этот шаблон, останутся без вибрации."
+
+msgid "{n}h"
+msgid_plural "{n}h"
+msgstr[0] "{n} ч"
+msgstr[1] "{n} ч"
+msgstr[2] "{n} ч"
+
+msgid "{n}m"
+msgid_plural "{n}m"
+msgstr[0] "{n} мин"
+msgstr[1] "{n} мин"
+msgstr[2] "{n} мин"
+
+msgid "{}s"
+msgstr "{} с"
+
+msgid "Replace '{}'s saved configuration with the current settings?"
+msgstr "Заменить сохранённую конфигурацию '{}' текущими настройками?"
+
+msgid "'{}' will be removed from this device and any synced peers."
+msgstr "'{}' будет удалён с этого устройства и со всех синхронизированных устройств."

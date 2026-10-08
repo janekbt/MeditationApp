@@ -193,15 +193,6 @@ msgstr "音量"
 msgid "min"
 msgstr "分钟"
 
-msgid " min"
-msgstr " 分钟"
-
-msgid "' will be removed from this device and any synced peers."
-msgstr "”将从此设备及所有已同步设备中移除。"
-
-msgid "' with the current settings?"
-msgstr "”吗？将使用当前设置。"
-
 msgid "'{}' applied"
 msgstr "已应用“{}”"
 
@@ -271,8 +262,8 @@ msgstr "关闭"
 msgid "Connection OK"
 msgstr "连接正常"
 
-msgid "Converting… "
-msgstr "转换中… "
+msgid "Converting… {}%"
+msgstr "转换中… {}%"
 
 msgid "Copy"
 msgstr "复制"
@@ -538,9 +529,6 @@ msgstr "重命名标签"
 msgid "Rename Preset"
 msgstr "重命名预设"
 
-msgid "Replace '"
-msgstr "要替换“"
-
 msgid "Report an issue"
 msgstr "报告问题"
 
@@ -660,9 +648,6 @@ msgstr "清除本地数据"
 
 msgid "Wipe local data?"
 msgstr "清除本地数据？"
-
-msgid "h "
-msgstr "小时 "
 
 msgid "{} average over last 7 days"
 msgstr "最近 7 天平均 {}"
@@ -919,3 +904,20 @@ msgstr "删除模式？"
 
 msgid "Bells and Box Breath phases that reference this pattern will lose their vibration."
 msgstr "引用此模式的铃声和箱式呼吸阶段将失去振动。"
+
+msgid "{n}h"
+msgid_plural "{n}h"
+msgstr[0] "{n} 小时"
+
+msgid "{n}m"
+msgid_plural "{n}m"
+msgstr[0] "{n} 分钟"
+
+msgid "{}s"
+msgstr "{}秒"
+
+msgid "Replace '{}'s saved configuration with the current settings?"
+msgstr "用当前设置替换“{}”已保存的配置？"
+
+msgid "'{}' will be removed from this device and any synced peers."
+msgstr "“{}”将从此设备及所有同步的设备中移除。"

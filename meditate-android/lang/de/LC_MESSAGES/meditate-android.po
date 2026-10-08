@@ -7,15 +7,6 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
-msgid " min"
-msgstr " Min."
-
-msgid "' will be removed from this device and any synced peers."
-msgstr "' wird von diesem Gerät und allen synchronisierten Geräten entfernt."
-
-msgid "' with the current settings?"
-msgstr "' mit den aktuellen Einstellungen überschreiben?"
-
 msgid "'{}' applied"
 msgstr "„{}“ angewendet"
 
@@ -94,8 +85,8 @@ msgstr "Schließe eine Meditation ab, um hier Einblicke zu sehen"
 msgid "Connection OK"
 msgstr "Verbindung OK"
 
-msgid "Converting… "
-msgstr "Konvertiere… "
+msgid "Converting… {}%"
+msgstr "Konvertiere… {}%"
 
 msgid "Copy"
 msgstr "Kopieren"
@@ -493,9 +484,6 @@ msgstr "Label umbenennen"
 msgid "Rename Preset"
 msgstr "Voreinstellung umbenennen"
 
-msgid "Replace '"
-msgstr "'"
-
 msgid "Report an issue"
 msgstr "Fehler melden"
 
@@ -657,9 +645,6 @@ msgstr "Lokale Daten löschen"
 
 msgid "Wipe local data?"
 msgstr "Lokale Daten löschen?"
-
-msgid "h "
-msgstr "h "
 
 msgid "min"
 msgstr "Min."
@@ -938,3 +923,22 @@ msgstr "Muster löschen?"
 
 msgid "Bells and Box Breath phases that reference this pattern will lose their vibration."
 msgstr "Glocken und Box-Atmung-Phasen, die dieses Muster verwenden, verlieren ihre Vibration."
+
+msgid "{n}h"
+msgid_plural "{n}h"
+msgstr[0] "{n} Std"
+msgstr[1] "{n} Std"
+
+msgid "{n}m"
+msgid_plural "{n}m"
+msgstr[0] "{n} Min"
+msgstr[1] "{n} Min"
+
+msgid "{}s"
+msgstr "{} s"
+
+msgid "Replace '{}'s saved configuration with the current settings?"
+msgstr "Die gespeicherte Konfiguration von „{}“ mit den aktuellen Einstellungen überschreiben?"
+
+msgid "'{}' will be removed from this device and any synced peers."
+msgstr "„{}“ wird von diesem Gerät und allen synchronisierten Geräten entfernt."

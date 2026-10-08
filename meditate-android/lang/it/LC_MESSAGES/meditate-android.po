@@ -193,15 +193,6 @@ msgstr "Volume"
 msgid "min"
 msgstr "min"
 
-msgid " min"
-msgstr " min"
-
-msgid "' will be removed from this device and any synced peers."
-msgstr "' sarà rimosso da questo dispositivo e da tutti i dispositivi sincronizzati."
-
-msgid "' with the current settings?"
-msgstr "' con le impostazioni attuali?"
-
 msgid "'{}' applied"
 msgstr "'{}' applicato"
 
@@ -271,8 +262,8 @@ msgstr "Chiudi"
 msgid "Connection OK"
 msgstr "Connessione riuscita"
 
-msgid "Converting… "
-msgstr "Conversione… "
+msgid "Converting… {}%"
+msgstr "Conversione… {}%"
 
 msgid "Copy"
 msgstr "Copia"
@@ -538,9 +529,6 @@ msgstr "Rinomina etichetta"
 msgid "Rename Preset"
 msgstr "Rinomina preset"
 
-msgid "Replace '"
-msgstr "Sostituire '"
-
 msgid "Report an issue"
 msgstr "Segnala un problema"
 
@@ -660,9 +648,6 @@ msgstr "Cancella dati locali"
 
 msgid "Wipe local data?"
 msgstr "Cancellare i dati locali?"
-
-msgid "h "
-msgstr "h "
 
 msgid "{} average over last 7 days"
 msgstr "{} in media negli ultimi 7 giorni"
@@ -938,3 +923,22 @@ msgstr "Eliminare lo schema?"
 
 msgid "Bells and Box Breath phases that reference this pattern will lose their vibration."
 msgstr "Le campane e le fasi di respirazione quadrata che usano questo schema resteranno senza vibrazione."
+
+msgid "{n}h"
+msgid_plural "{n}h"
+msgstr[0] "{n} h"
+msgstr[1] "{n} h"
+
+msgid "{n}m"
+msgid_plural "{n}m"
+msgstr[0] "{n} min"
+msgstr[1] "{n} min"
+
+msgid "{}s"
+msgstr "{} s"
+
+msgid "Replace '{}'s saved configuration with the current settings?"
+msgstr "Sostituire la configurazione salvata di «{}» con le impostazioni attuali?"
+
+msgid "'{}' will be removed from this device and any synced peers."
+msgstr "«{}» verrà rimosso da questo dispositivo e da tutti i dispositivi sincronizzati."

@@ -909,6 +909,50 @@ mod tests {
         assert!(slint.contains("clicked => { root.release-vibration-editor-inputs(); }"), "a background tap releases");
     }
 
+    /// Units and sentences come from the translations: Rust wrote
+    /// English "1h 4m" and "3 sessions" (#27, #28), and a sentence
+    /// glued around a name couldn't be translated whole (#31).
+    #[test]
+    fn ui_text_is_translated_whole() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        // No sentence glued from translated pieces.
+        for (i, _) in slint.match_indices("@tr(") {
+            let mut depth = 0;
+            let end = slint[i..].char_indices().find_map(|(k, c)| {
+                match c { '(' => depth += 1, ')' => { depth -= 1; if depth == 0 { return Some(i + k + 1); } } _ => {} }
+                None
+            }).unwrap();
+            assert!(!slint[end..].trim_start().starts_with('+'), "glued after: {}", &slint[i..end]);
+            assert!(!slint[..i].trim_end().ends_with('+'), "glued before: {}", &slint[i..end]);
+        }
+        assert!(!slint.contains("+ \"s\"") && !slint.contains("+ \"m\""), "units come from Tr");
+
+        let at = lib.find("fn render_hm(").unwrap();
+        let hm = &lib[at..at + lib[at..].find("\n}\n").unwrap()];
+        assert!(hm.contains("invoke_n_hours(") && hm.contains("invoke_n_mins("));
+        assert!(!lib.contains("format!(\"{dur} · {n} sessions\")"), "By label uses the day caption");
+        assert!(!lib.contains("format!(\"{:.1}s\""), "chart seconds come from Tr");
+        // "2 Std 10 Min" was cut off in a fixed 44 px axis column.
+        assert!(slint.contains("width: max(44px, ymax-text.preferred-width, ymid-text.preferred-width);"));
+
+        let ids = [
+            "msgid \"{n}h\"\nmsgid_plural \"{n}h\"\nmsgstr[0] \"",
+            "msgid \"{n}m\"\nmsgid_plural \"{n}m\"\nmsgstr[0] \"",
+            "msgid \"{}s\"\nmsgstr \"",
+            "msgid \"Replace '{}'s saved configuration with the current settings?\"\nmsgstr \"",
+            "msgid \"'{}' will be removed from this device and any synced peers.\"\nmsgstr \"",
+        ];
+        for lang in ["de", "es", "fr", "it", "nl", "pl", "pt_BR", "ru", "zh_CN"] {
+            let po = std::fs::read_to_string(root.join(format!("lang/{lang}/LC_MESSAGES/meditate-android.po"))).unwrap();
+            for id in ids {
+                let at = po.find(id).unwrap_or_else(|| panic!("{lang}: {id}"));
+                assert!(!po[at + id.len()..].starts_with('"'), "{lang}: {id} translated");
+            }
+        }
+    }
+
     /// Page headers drifted (the editors' text Cancel pushed Save off
     /// screen in German, #23); one header keeps them alike. The sync
     /// icon had no label for TalkBack (#39).
@@ -1966,7 +2010,7 @@ mod tests {
             assert!(text.contains(call), "{call}");
         }
         assert!(code.contains("day_header_text(ui, app::day_header(sec.start_unix, now_unix))"));
-        assert!(code.contains("render_hm(meditate_core::format::hm_compact_key("), "total via core");
+        assert!(code.contains("render_hm(ui, meditate_core::format::hm_compact_key("), "total via core");
         assert!(!code.contains("(sec.total_secs / 60).to_string()"));
 
         let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
