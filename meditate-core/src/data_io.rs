@@ -109,6 +109,17 @@ fn csv_inject_guard(s: &str) -> String {
     }
 }
 
+/// Undo `csv_inject_guard` on import: drop the `'` it put before a
+/// formula character.
+/// ponytail: a note typed as `'=x` comes back as `=x`; guarding `'`
+/// itself on export would fix it, at the cost of a changed format.
+fn csv_unguard(s: &str) -> &str {
+    match s.strip_prefix('\'') {
+        Some(rest) if rest.starts_with(['=', '+', '-', '@', '\t']) => rest,
+        _ => s,
+    }
+}
+
 /// Write every session in the DB to `path` as CSV. Returns how many rows
 /// were written.
 pub fn export_csv(db: &Database, path: &Path) -> Result<usize, DataIoError> {
@@ -122,11 +133,9 @@ pub fn export_csv(db: &Database, path: &Path) -> Result<usize, DataIoError> {
     let mut wtr = csv::Writer::from_writer(file);
     wtr.write_record(["start_time_unix", "duration_secs", "mode", "label", "note"])?;
 
-    // list_sessions returns DESC start; reverse so the CSV is
-    // start-time ascending, matching what users expect when opening
-    // a backup file in chronological order.
+    // Start-time ascending, as a backup is read in chronological order.
     let mut sessions = crate::db::list_sessions_from_db(db)?;
-    sessions.reverse();
+    sessions.sort_by_key(|(_, s)| local_iso_to_unix(&s.start_iso));
     let mut n = 0usize;
     for (_id, s) in &sessions {
         let label = s
@@ -194,9 +203,10 @@ pub fn import_csv(db: &Database, path: &Path) -> Result<usize, DataIoError> {
         // preserves the row rather than discarding it on import.
         let mode = SessionMode::from_db_str(rec.get(2).map_or("", str::trim))
             .unwrap_or(SessionMode::Timer);
-        let label_txt = rec.get(3).map(|s| s.trim().to_string()).unwrap_or_default();
-        let note_txt = rec.get(4).map(|s| s.trim().to_string()).unwrap_or_default();
-        let note = if note_txt.is_empty() { None } else { Some(note_txt) };
+        let label_txt = rec.get(3).map(|s| csv_unguard(s).trim().to_string()).unwrap_or_default();
+        // Notes keep their whitespace; a blank one is stored as none.
+        let note_txt = rec.get(4).map(|s| csv_unguard(s).to_string()).unwrap_or_default();
+        let note = if note_txt.trim().is_empty() { None } else { Some(note_txt) };
 
         // Resolve labels to ids in a second pass once we know the full set.
         // Match case-insensitively so the CSV can't split one logical label
@@ -550,11 +560,9 @@ mod tests {
         let imported = import_csv(&db, tmp.path()).unwrap();
         assert_eq!(imported, originals.len());
 
-        // Pull the sessions back and compare. list_sessions returns them in
-        // descending start_iso order — reverse so we can index parallel to
-        // `originals` which is ascending.
-        let mut rows = crate::db::list_sessions_from_db(&db).unwrap();
-        rows.reverse();
+        // Pull the sessions back and compare: the export is ascending,
+        // so the re-inserted ids run parallel to `originals`.
+        let rows = crate::db::list_sessions_from_db(&db).unwrap();
         assert_eq!(rows.len(), originals.len());
 
         for (orig, (_id, got)) in originals.iter().zip(rows.iter()) {
@@ -627,6 +635,57 @@ mod tests {
             (1_700_000_000_i64, 601_u32, SessionMode::Timer, None, usize::MAX),
         ];
         assert_eq!(insert_sessions_with_labels(&db, &[], &rows).unwrap(), 2);
+    }
+
+    #[test]
+    fn guarded_cells_and_note_whitespace_survive_a_round_trip() {
+        // The export's formula guard `'` came back as part of the
+        // text, and import trimmed notes (#7).
+        let db = fresh_db();
+        let notes = ["- calm", "=x", "+y", "@z", "\tt", "  indented ", "plain"];
+        let rows: Vec<ImportedRow> = notes
+            .iter()
+            .enumerate()
+            .map(|(i, n)| (1_700_000_000 + i as i64 * 3600, 600, SessionMode::Timer,
+                Some((*n).to_string()), 0))
+            .collect();
+        insert_sessions_with_labels(&db, &["-Work".to_string()], &rows).unwrap();
+        let f = tempfile::NamedTempFile::new().unwrap();
+        export_csv(&db, f.path()).unwrap();
+
+        let fresh = fresh_db();
+        assert_eq!(import_csv(&fresh, f.path()).unwrap(), notes.len());
+        let mut got: Vec<String> = crate::db::list_sessions_from_db(&fresh)
+            .unwrap()
+            .into_iter()
+            .map(|(_, s)| s.notes.unwrap_or_default())
+            .collect();
+        got.sort();
+        let mut want: Vec<String> = notes.iter().map(|n| (*n).to_string()).collect();
+        want.sort();
+        assert_eq!(got, want);
+        let labels = crate::db::list_labels_from_db(&fresh).unwrap();
+        assert_eq!(labels.len(), 1, "one label, not a guarded copy");
+        assert_eq!(labels[0].name, "-Work");
+    }
+
+    #[test]
+    fn export_is_in_start_time_order() {
+        // Rows came out by id, reversed (#36).
+        let db = fresh_db();
+        let rows: Vec<ImportedRow> = [1_700_020_000_i64, 1_700_000_000, 1_700_010_000]
+            .iter()
+            .map(|t| (*t, 600, SessionMode::Timer, None, usize::MAX))
+            .collect();
+        insert_sessions_with_labels(&db, &[], &rows).unwrap();
+        let f = tempfile::NamedTempFile::new().unwrap();
+        export_csv(&db, f.path()).unwrap();
+        let starts: Vec<i64> = csv::Reader::from_path(f.path())
+            .unwrap()
+            .records()
+            .map(|r| r.unwrap()[0].parse().unwrap())
+            .collect();
+        assert_eq!(starts, [1_700_000_000, 1_700_010_000, 1_700_020_000]);
     }
 
     #[test]

@@ -17,7 +17,7 @@ Each batch touches one area and needs one test round. Mark a batch `[x]` when it
 |:---:|---|---|---|
 | [x] | A. Sync compaction | #3, corrupt manifest | data loss |
 | [x] | B. Log editing and labels | #4, #5, #6, #34 | data loss |
-| [ ] | C. CSV | #7, #36 | data loss |
+| [x] | C. CSV | #7, #36 | data loss |
 | [ ] | D. Locale | #29, #26, #25, #30 | visible every day in German |
 | [ ] | E. Stats | #18, #24, #35, #22 | wrong numbers |
 | [ ] | F. File import (Kotlin) | #21, #37, #38 | rare files and edge cases |
@@ -232,6 +232,7 @@ So these aren't proposed again:
 - A change-counter-driven view refresh: `LocalChanges` is per connection, so sync pulls never bump it.
 - A run token on every drop file: only imports needed one (done).
 - Number fields that commit on every keystroke: intermediate values go stale or clamp mid-typing.
+- A `guided_file_uuid` CSV column (#7): after a restore the uuid points at no file, and synced devices get their sessions by sync anyway.
 - Typed `BellSlot` through Slint: large, with no host safety net.
 - Moving the whole sync account Save/Test into core: the keychains are per app.
 - Moving the Log edit build into core: low value; reconsider when fixing #5/#6.
