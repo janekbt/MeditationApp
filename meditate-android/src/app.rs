@@ -702,8 +702,73 @@ pub fn parse_csv_pick(raw: &str) -> Option<Result<(String, String), String>> {
     Some(Ok((first.to_string(), kind)))
 }
 
+/// What the snackbar's Undo reverts.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PendingUndo {
+    /// Hidden Log cards; the rows wait in the feed's pending deletes.
+    LogDeletes,
+    /// A crash-recovered session's uuid.
+    Recovery(String),
+    /// The pre-apply snapshot and the mode it belongs to.
+    PresetApply(String, meditate_core::SessionMode),
+    /// A deleted preset: uuid, name, mode, starred, config JSON.
+    PresetDelete(String, String, meditate_core::SessionMode, bool, String),
+    /// An overridden preset: uuid, prior config JSON.
+    Override(String, String),
+    /// A deleted guided file: uuid, name, file path, secs, starred.
+    /// Its file is removed only on commit.
+    GuidedDelete(String, String, String, u32, bool),
+}
+
+/// The snackbar shows one notice at a time, so at most one Undo is
+/// pending.
+#[derive(Default)]
+pub struct Notice(Option<PendingUndo>);
+
+impl Notice {
+    /// Show a notice with `undo` (`None`: a plain message). Returns the
+    /// pending Undo it replaces, for the caller to commit; a further
+    /// Log delete joins the pending ones instead.
+    pub fn show(&mut self, undo: Option<PendingUndo>) -> Option<PendingUndo> {
+        if undo == Some(PendingUndo::LogDeletes) && self.0 == undo {
+            return None;
+        }
+        std::mem::replace(&mut self.0, undo)
+    }
+
+    /// Undo was tapped, or the notice timed out.
+    pub fn take(&mut self) -> Option<PendingUndo> {
+        self.0.take()
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::{Notice, PendingUndo};
+    use meditate_core::SessionMode;
+
+    fn apply() -> PendingUndo {
+        PendingUndo::PresetApply("{}".into(), SessionMode::Timer)
+    }
+
+    #[test]
+    fn a_new_notice_hands_back_the_one_it_replaces() {
+        let mut n = Notice::default();
+        assert_eq!(n.show(Some(PendingUndo::Recovery("u".into()))), None);
+        assert_eq!(n.show(Some(apply())), Some(PendingUndo::Recovery("u".into())));
+        assert_eq!(n.show(None), Some(apply()), "a plain message replaces it too");
+        assert_eq!(n.take(), None);
+    }
+
+    #[test]
+    fn another_log_delete_joins_the_pending_ones() {
+        let mut n = Notice::default();
+        n.show(Some(PendingUndo::LogDeletes));
+        assert_eq!(n.show(Some(PendingUndo::LogDeletes)), None);
+        assert_eq!(n.take(), Some(PendingUndo::LogDeletes));
+        assert_eq!(n.take(), None, "Undo and the timer take it once");
+    }
+
     #[test]
     fn a_csv_pick_carries_its_path_and_kind() {
         assert_eq!(
@@ -1045,12 +1110,10 @@ mod tests {
         let session_start = code.find("AppState::start_session(").expect("session start");
         assert!(first_play < session_start, "the track starts before the session");
         let gate = &code[first_play..session_start];
-        assert!(gate.contains("GUIDED_START_FAILED.store(true"), "a failure is flagged");
+        assert!(gate.contains("show_notice(&ui, ui.global::<Tr>().invoke_playback_failed(), None, 4);"), "a failure says so");
         assert!(gate.contains("return;"), "and nothing starts");
         assert_eq!(code.matches("guided::play(app, &sel.path)").count(), 1, "no second start after the session began");
 
-        let flag = code.find("GUIDED_START_FAILED.swap(false").expect("the tick loop shows it");
-        assert!(code[flag..flag + 300].contains("invoke_playback_failed()"));
         let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
         assert!(slint.contains("public pure function playback-failed() -> string { return @tr(\"Couldn't start playback\"); }"));
     }
@@ -1207,15 +1270,13 @@ mod tests {
         let err_arm = &after[err..];
         let err_arm = &err_arm[..err_arm.find("return;").expect("a failed save leaves the Done screen up") + 7];
         assert!(err_arm.contains("pending_done.set(Some((unix_start, elapsed_secs)))"), "the session is kept");
-        assert!(err_arm.contains("SESSION_SAVE_FAILED"), "and the failure is shown");
+        assert!(err_arm.contains("show_notice(&ui, text, None, 4);"), "and the failure is shown");
+        assert!(err_arm.contains("invoke_save_failed_storage()") && err_arm.contains("invoke_save_failed_unavailable()"));
         assert!(!err_arm.contains("clear_session_in_progress_snapshot"), "the snapshot survives");
         // Saving clears the snapshot in the same write (core).
         assert!(body.contains("insert_session_clearing_snapshot(&session)"), "cleared only once saved");
         assert!(!after[ok..err].contains("clear_session_in_progress_snapshot"), "no second clear");
 
-        let shown = code.find("SESSION_SAVE_FAILED.lock()").expect("the tick loop shows it");
-        let shown = &code[shown..shown + 700];
-        assert!(shown.contains("invoke_save_failed_storage()") && shown.contains("invoke_save_failed_unavailable()"));
         let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
         assert!(slint.contains("@tr(\"Couldn't save session: storage error\")"));
         assert!(slint.contains("@tr(\"Couldn't save session: storage unavailable\")"));
@@ -1234,11 +1295,9 @@ mod tests {
         let outer = code.find("fn apply_preset_json(").unwrap();
         let outer = &code[outer..outer + code[outer..].find("\n}\n").unwrap()];
         assert!(outer.contains("apply_preset_config_json("), "one wrapper around the real apply");
-        assert!(outer.contains("PRESET_APPLY_FAILED.store(true"), "every failure is flagged");
+        assert!(outer.contains("show_notice(ui, ui.global::<Tr>().invoke_preset_sync_pending(), None, 4);"), "every failure says so");
         assert_eq!(code.matches("apply_preset_config_json(").count(), 2, "only the wrapper calls it");
 
-        let shown = code.find("PRESET_APPLY_FAILED.swap(false").expect("the tick loop shows it");
-        assert!(code[shown..shown + 300].contains("invoke_preset_sync_pending()"));
         let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
         assert!(slint.contains("@tr(\"Wait for sync: some bell sounds are missing\")"));
     }
@@ -1374,16 +1433,13 @@ mod tests {
         let tap = code.find("ui.on_data_export_tap(").unwrap();
         let tap = &code[tap..tap + code[tap..].find("\n        });").unwrap()];
         assert!(tap.contains("if !started_export(") , "one outcome for the whole flow");
-        assert!(tap.contains("EXPORT_FAILED.store(true"), "a failure is flagged");
+        assert!(tap.contains("show_notice(&ui, ui.global::<Tr>().invoke_export_failed(), None, 4);"), "a failure says so");
         let started = code.find("fn started_export(").expect("helper");
         let started = &code[started..started + code[started..].find("\n}\n").unwrap()];
         assert!(started.contains("guided::open_export(") && started.contains("export_csv("));
 
         let guided = std::fs::read_to_string(root.join("src/guided.rs")).unwrap();
         assert!(guided.contains("pub fn open_export(app: &AndroidApp, src_path: &str, suggested: &str) -> bool"));
-
-        let shown = code.find("EXPORT_FAILED.swap(false").expect("the tick loop shows it");
-        assert!(code[shown..shown + 300].contains("invoke_export_failed()"));
     }
 
     // ── Interval-bell editor takes core's defaults and limits ───
@@ -1967,7 +2023,7 @@ mod tests {
         let body = &lib[at..at + lib[at..].find("\n        });").unwrap()];
         assert!(body.contains("invoke_deleted_all_n(n as i32)"));
         assert!(body.contains("invoke_delete_failed()"));
-        assert!(body.contains("ui.set_snackbar_visible(true);"));
+        assert!(body.contains("show_notice(&ui, text, None, 4);"));
     }
 
     #[test]
@@ -2017,8 +2073,10 @@ mod tests {
         // and the first file stayed on disk with no library entry.
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
-        let at = lib.find("*pending_guided_delete.borrow_mut() = Some((").unwrap();
-        assert!(lib[at - 300..at].contains("discard_pending_guided_delete(&pending_guided_delete);"));
+        // Any notice replacing it commits it (Notice::show), and a
+        // committed guided delete removes its file.
+        let at = lib.find("fn commit_undo(").unwrap();
+        assert!(lib[at..at + 600].contains("app::PendingUndo::GuidedDelete(_, _, path, _, _) => {\n            let _ = std::fs::remove_file(&path);"));
     }
 
     #[test]
@@ -2027,8 +2085,8 @@ mod tests {
         // override's mode, so Setup listed the other mode's presets.
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
-        let at = lib.find("pending_override_restore.borrow_mut().take()\n                {").unwrap();
-        let branch = &lib[at..at + lib[at..].find("return;\n                }").unwrap()];
+        let at = lib.find("U::Override(u, prior) => {").unwrap();
+        let branch = &lib[at..at + lib[at..].find("\n                }").unwrap()];
         assert!(branch.contains("refresh_preset_chips(&ui, core_mode);"));
     }
 

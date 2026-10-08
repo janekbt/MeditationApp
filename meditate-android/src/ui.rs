@@ -76,8 +76,7 @@ static RECOVERED_SESSION: OnceLock<std::sync::Mutex<Option<(String, u32)>>> =
 
 /// Parking slot for the Test-connection worker's outcome
 /// (SY-3): `(toast_copy, diag_detail)`. The worker thread can't
-/// touch Slint state (!Send) nor the snackbar discriminators
-/// (Rc), so it parks here and the tick loop polls + raises the
+/// touch Slint state (!Send), so it parks here and the tick loop polls + raises the
 /// toast — the same hand-off pattern as the guided-import
 /// drop-files, just in-process.
 static TEST_CONNECTION_RESULT: OnceLock<
@@ -90,29 +89,6 @@ static TEST_CONNECTION_RESULT: OnceLock<
 /// spinner.
 static SYNC_COORDINATOR: meditate_core::sync::coordinator::SyncCoordinator =
     meditate_core::sync::coordinator::SyncCoordinator::new();
-/// Set by the session-start handler when a guided track could not be
-/// played (no session starts); the tick loop shows "Couldn't start
-/// playback". The handler lacks the snackbar's undo slots, hence the
-/// hand-off.
-static GUIDED_START_FAILED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-
-/// Set by the Save handler when the session couldn't be written (the
-/// Done screen and recovery snapshot stay); the tick loop shows
-/// GTK's "Couldn't save session" message for the kind.
-static SESSION_SAVE_FAILED: std::sync::Mutex<Option<meditate_core::format::SessionSaveFailureKind>> =
-    std::sync::Mutex::new(None);
-
-/// Set when a preset (chip, widget or Undo) couldn't be applied —
-/// typically a bell sound or pattern it uses hasn't synced yet; the
-/// tick loop shows the "Wait for sync" message (as GTK).
-static PRESET_APPLY_FAILED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-
-/// Set when an export failed before the save dialog opened (temp CSV
-/// or the dialog launch); the tick loop shows "Export failed".
-static EXPORT_FAILED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
 
 /// Write the sessions CSV to a temp file and open the save dialog
 /// (CREATE_DOCUMENT), which copies it out and reports via
@@ -1201,30 +1177,9 @@ fn refresh_guided_manage(ui: &MainWindow) {
 /// A single-value slot shared between UI callbacks.
 type Slot<T> = std::rc::Rc<std::cell::RefCell<Option<T>>>;
 
-/// A deleted guided file kept for Undo: (uuid, name, file_path,
-/// duration_secs, is_starred).
-type DeletedGuidedFile = (String, String, String, u32, bool);
-
 /// A guided import between the name-dialog confirm and the
 /// worker's result: (uuid, name, dest, secs).
 type GuidedImportFinalize = (String, String, String, u32);
-
-/// A deleted preset kept for Undo: (uuid, name, mode, is_starred,
-/// config_json).
-type DeletedPreset = (String, String, meditate_core::SessionMode, bool, String);
-
-/// Discard a pending guided-delete Undo (single-slot snackbar
-/// was preempted by another action, or its window elapsed):
-/// take the slot and run the deferred on-disk `.ogg` cleanup
-/// that Undo would otherwise have spared. Mirrors GTK's
-/// toast-dismissed deferred `remove_file`.
-fn discard_pending_guided_delete(
-    slot: &Slot<DeletedGuidedFile>,
-) {
-    if let Some((_, _, path, _, _)) = slot.borrow_mut().take() {
-        let _ = std::fs::remove_file(&path);
-    }
-}
 
 /// Populate + open the Guided import name dialog from a picked
 /// source (path, display name, probed secs). Shared by the
@@ -1381,7 +1336,7 @@ fn apply_preset_json(
 ) -> bool {
     let applied = apply_preset_config_json(ui, json, mode, timer_session_secs);
     if !applied {
-        PRESET_APPLY_FAILED.store(true, std::sync::atomic::Ordering::SeqCst);
+        show_notice(ui, ui.global::<Tr>().invoke_preset_sync_pending(), None, 4);
     }
     applied
 }
@@ -2703,8 +2658,8 @@ fn extend_log_feed(
 /// remove the matching rows from `loaded_log_sessions`, hide
 /// the snackbar, and re-render. Mirrors GTK's
 /// `commit_all_pending` at
-/// `meditate-gtk/src/log/imp.rs:690`. Called from the 5 s
-/// `delete_timer` callback (auto-commit). No-ops gracefully if
+/// `meditate-gtk/src/log/imp.rs:690`. Called when the delete
+/// notice goes without Undo (`commit_undo`). No-ops gracefully if
 /// the DB lock can't be acquired — the rows stay queued and a
 /// later trash-tap can re-arm the timer.
 fn commit_pending_deletes(
@@ -4044,61 +3999,14 @@ fn build_ui() -> MainWindow {
     let guided_import_finalize: Slot<GuidedImportFinalize> =
         Rc::new(RefCell::new(None));
 
-    // Cumulative flat list of sessions loaded into the Log feed.
-    // The "Load more" button extends this; each page-load
-    // re-groups the whole list into `LogDaySection`s and pushes
-    // them to Slint. Mirrors GTK's `loaded_count` cell, just
-    // shaped as a Vec for direct iteration. Box::leak isn't
-    // strictly required (Rc<RefCell> would work) but keeping the
-    // pattern consistent with `bb_target_secs` etc.
-    let loaded_log_sessions: Rc<RefCell<Vec<(i64, meditate_core::db::Session)>>>
-        = Rc::new(RefCell::new(Vec::new()));
+    // The Log feed's rows, and its deletes waiting out their Undo.
+    let loaded_log_sessions = LOG_LOADED.with(Rc::clone);
+    let pending_deletes = LOG_PENDING_DELETES.with(Rc::clone);
 
-    // In-flight delete batch — the rows the user has tapped trash
-    // on but where the undo window hasn't yet expired. Mirrors
-    // GTK's `pending_deletes` at `meditate-gtk/src/log/imp.rs:49`.
-    // The 5-second timer below is the commit gate; until it fires
-    // (or the user taps Undo) the rows stay in the DB and the
-    // cards stay hidden from the rendered feed via the hidden-ids
-    // filter in `group_log_sessions`.
-    let pending_deletes: Rc<RefCell<Vec<(i64, meditate_core::db::Session)>>>
-        = Rc::new(RefCell::new(Vec::new()));
-
-    // 5-second auto-commit timer. Restarted on every trash-tap so
-    // a burst of deletes coalesces into a single snackbar — the
-    // GTK shell does the same coalescing via `dismiss()` +
-    // `add_toast()` swap. `Box::leak` to keep the handle alive
-    // across the whole window lifetime; we only ever call
-    // `start()` / `stop()` on it.
-    let delete_timer: &'static slint::Timer =
-        Box::leak(Box::new(slint::Timer::default()));
-
-    // Which action the currently-shown Snackbar's Undo button
-    // performs (L-6). The Snackbar surface is shared between the
-    // delete-undo flow (L-3) and the crash-recovery flow; the
-    // Undo handler branches on this. `Some(uuid)` ⇒ a recovery
-    // snackbar is up and Undo deletes that session by uuid;
-    // `None` ⇒ the delete-undo flow (restore pending deletes).
-    // A trash tap clears this back to None so a delete snackbar
-    // raised while a recovery one is visible behaves correctly.
     // Label-conflict dialog slot (LC): the (base_id, suffixed_id,
     // suffixed_uuid) the open dialog refers to.
     let label_conflict_slot: Rc<RefCell<Option<(i64, i64, String)>>> =
         Rc::new(RefCell::new(None));
-    let recovery_uuid: Rc<RefCell<Option<String>>> =
-        Rc::new(RefCell::new(None));
-
-    // Third discriminator for the shared single-slot snackbar
-    // (P-3): a pending preset-apply Undo. `Some((snapshot_json,
-    // mode))` ⇒ a "'X' applied" snackbar is up and Undo
-    // re-applies that pre-apply snapshot via `apply_preset_json`
-    // (mirrors GTK's apply-toast Undo calling
-    // `apply_config(&snapshot)`). The Undo handler checks this
-    // FIRST; raising a delete / recovery snackbar clears it so
-    // the newest flow owns the single slot's Undo.
-    let pending_preset_undo: Rc<
-        RefCell<Option<(String, meditate_core::SessionMode)>>,
-    > = Rc::new(RefCell::new(None));
 
     // P-4 Save flow: the snapshot captured when "Save Settings"
     // opened the chooser (GTK's `ChooserMode::Save { snapshot }`).
@@ -4112,31 +4020,10 @@ fn build_ui() -> MainWindow {
         Rc::new(RefCell::new(None));
 
     // P-5 Manage state. `rename_preset_uuid` / `delete_preset_uuid`
-    // pin which row the rename / delete dialog targets. The
-    // shared single-slot snackbar gains two more discriminators
-    // (same pattern as `pending_preset_undo`): a deleted preset
-    // to re-insert on Undo (full row, GTK's
-    // `insert_preset_with_uuid` resurrection), and an override's
-    // prior config_json to restore on Undo (the P-4 deferral,
-    // folded in here). The undo handler checks them in priority
-    // order; every snackbar raise clears the others (single slot).
+    // pin which row the rename / delete dialog targets.
     let rename_preset_uuid: Rc<RefCell<Option<String>>> =
         Rc::new(RefCell::new(None));
     let delete_preset_uuid: Rc<RefCell<Option<String>>> =
-        Rc::new(RefCell::new(None));
-    let pending_preset_delete: Slot<DeletedPreset> =
-        Rc::new(RefCell::new(None));
-    let pending_override_restore: Rc<
-        RefCell<Option<(String, String, meditate_core::SessionMode)>>,
-    > = Rc::new(RefCell::new(None));
-    // GM-F4 guided-file delete Undo discriminator: the deleted
-    // row's (uuid, name, file_path, duration_secs, is_starred).
-    // The DB row is removed immediately (it leaves the lists);
-    // the on-disk .ogg is deferred until the snackbar dismisses
-    // WITHOUT Undo (delete_timer callback), mirroring GTK's
-    // toast-dismissed deferred `remove_file`. Undo re-inserts
-    // the row (the file was never removed).
-    let pending_guided_delete: Slot<DeletedGuidedFile> =
         Rc::new(RefCell::new(None));
     // Create-from-Manage intent: set when the chooser's "Create
     // new guided file…" row opens the picker, so the landed pick
@@ -4307,8 +4194,7 @@ fn build_ui() -> MainWindow {
                         .is_some_and(|sel| sel.duration_secs > 0 && guided::play(app, &sel.path))
                 });
                 if !started {
-                    use std::sync::atomic::Ordering;
-                    GUIDED_START_FAILED.store(true, Ordering::SeqCst);
+                    show_notice(&ui, ui.global::<Tr>().invoke_playback_failed(), None, 4);
                     return;
                 }
             }
@@ -4588,17 +4474,6 @@ fn build_ui() -> MainWindow {
         let loaded_log_sessions_tick = loaded_log_sessions.clone();
         let pending_deletes_tick = pending_deletes.clone();
         let label_conflict_tick = label_conflict_slot.clone();
-        // SY-3 toast raise from the tick poll needs the shared
-        // single-slot snackbar context.
-        let recovery_uuid_tick = recovery_uuid.clone();
-        let pending_preset_undo_tick = pending_preset_undo.clone();
-        let pending_preset_delete_tick =
-            pending_preset_delete.clone();
-        let pending_override_restore_tick =
-            pending_override_restore.clone();
-        let pending_guided_delete_tick =
-            pending_guided_delete.clone();
-        let prefs_delete_timer: &'static slint::Timer = delete_timer;
         let mut local_watch = local_change_watch();
         timer.start(slint::TimerMode::Repeated, TICK, move || {
             // Warm-process widget deep-link (W-4). Polled here
@@ -4670,59 +4545,8 @@ fn build_ui() -> MainWindow {
                         None => {}
                     }
                 }
-                // A guided track couldn't be played, so no session
-                // started.
-                if GUIDED_START_FAILED.swap(false, std::sync::atomic::Ordering::SeqCst) {
-                    pick_error = Some(ui.global::<Tr>().invoke_playback_failed());
-                }
-                if EXPORT_FAILED.swap(false, std::sync::atomic::Ordering::SeqCst) {
-                    pick_error = Some(ui.global::<Tr>().invoke_export_failed());
-                }
-                if PRESET_APPLY_FAILED.swap(false, std::sync::atomic::Ordering::SeqCst) {
-                    pick_error = Some(ui.global::<Tr>().invoke_preset_sync_pending());
-                }
-                // A session couldn't be saved; it's kept on the Done
-                // screen.
-                if let Some(kind) = SESSION_SAVE_FAILED.lock().ok().and_then(|mut slot| slot.take()) {
-                    use meditate_core::format::SessionSaveFailureKind;
-                    let tr = ui.global::<Tr>();
-                    pick_error = Some(match kind {
-                        SessionSaveFailureKind::StorageError => tr.invoke_save_failed_storage(),
-                        SessionSaveFailureKind::DbUnopened => tr.invoke_save_failed_unavailable(),
-                    });
-                }
                 if let Some(text) = pick_error {
-                    // Bug-audit #2: see the handler raise sites.
-                    commit_pending_deletes(
-                        &ui,
-                        &loaded_log_sessions_tick,
-                        &pending_deletes_tick,
-                    );
-                    recovery_uuid_tick.borrow_mut().take();
-                    pending_preset_undo_tick.borrow_mut().take();
-                    pending_preset_delete_tick
-                        .borrow_mut()
-                        .take();
-                    pending_override_restore_tick
-                        .borrow_mut()
-                        .take();
-                    discard_pending_guided_delete(
-                        &pending_guided_delete_tick,
-                    );
-                    ui.set_snackbar_text(text);
-                    ui.set_snackbar_show_undo(false);
-                    ui.set_snackbar_visible(true);
-                    let weak_inner = ui.as_weak();
-                    prefs_delete_timer.start(
-                        slint::TimerMode::SingleShot,
-                        std::time::Duration::from_secs(4),
-                        move || {
-                            if let Some(ui) = weak_inner.upgrade()
-                            {
-                                ui.set_snackbar_visible(false);
-                            }
-                        },
-                    );
+                    show_notice(&ui, text, None, 4);
                 }
                 // A synced write landed since the last tick:
                 // push it (bursts collapse into one sync).
@@ -4776,37 +4600,7 @@ fn build_ui() -> MainWindow {
                         }
                     };
                     ui.set_prefs_test_busy(false);
-                    // Bug-audit #2: see the handler raise sites.
-                    commit_pending_deletes(
-                        &ui,
-                        &loaded_log_sessions_tick,
-                        &pending_deletes_tick,
-                    );
-                    recovery_uuid_tick.borrow_mut().take();
-                    pending_preset_undo_tick.borrow_mut().take();
-                    pending_preset_delete_tick
-                        .borrow_mut()
-                        .take();
-                    pending_override_restore_tick
-                        .borrow_mut()
-                        .take();
-                    discard_pending_guided_delete(
-                        &pending_guided_delete_tick,
-                    );
-                    ui.set_snackbar_text(toast);
-                    ui.set_snackbar_show_undo(false);
-                    ui.set_snackbar_visible(true);
-                    let weak_inner = ui.as_weak();
-                    prefs_delete_timer.start(
-                        slint::TimerMode::SingleShot,
-                        std::time::Duration::from_secs(4),
-                        move || {
-                            if let Some(ui) = weak_inner.upgrade()
-                            {
-                                ui.set_snackbar_visible(false);
-                            }
-                        },
-                    );
+                    show_notice(&ui, toast, None, 4);
                 }
                 // Export outcome (DP): toast success/failure.
                 if let Some(res) = android_app().and_then(guided::take_export_result) {
@@ -4825,32 +4619,7 @@ fn build_ui() -> MainWindow {
                                 .to_string()
                         }
                     };
-                    // Bug-audit #2: see the handler raise sites.
-                    commit_pending_deletes(
-                        &ui,
-                        &loaded_log_sessions_tick,
-                        &pending_deletes_tick,
-                    );
-                    recovery_uuid_tick.borrow_mut().take();
-                    pending_preset_undo_tick.borrow_mut().take();
-                    pending_preset_delete_tick.borrow_mut().take();
-                    pending_override_restore_tick.borrow_mut().take();
-                    discard_pending_guided_delete(
-                        &pending_guided_delete_tick,
-                    );
-                    ui.set_snackbar_text(text.into());
-                    ui.set_snackbar_show_undo(false);
-                    ui.set_snackbar_visible(true);
-                    let weak_inner = ui.as_weak();
-                    prefs_delete_timer.start(
-                        slint::TimerMode::SingleShot,
-                        std::time::Duration::from_secs(4),
-                        move || {
-                            if let Some(ui) = weak_inner.upgrade() {
-                                ui.set_snackbar_visible(false);
-                            }
-                        },
-                    );
+                    show_notice(&ui, text.into(), None, 4);
                 }
                 // CSV import landed (DP): parse + insert via core,
                 // toast the count, refresh the session surfaces.
@@ -4917,32 +4686,7 @@ fn build_ui() -> MainWindow {
                                 .to_string()
                         }
                     };
-                    // Bug-audit #2: see the handler raise sites.
-                    commit_pending_deletes(
-                        &ui,
-                        &loaded_log_sessions_tick,
-                        &pending_deletes_tick,
-                    );
-                    recovery_uuid_tick.borrow_mut().take();
-                    pending_preset_undo_tick.borrow_mut().take();
-                    pending_preset_delete_tick.borrow_mut().take();
-                    pending_override_restore_tick.borrow_mut().take();
-                    discard_pending_guided_delete(
-                        &pending_guided_delete_tick,
-                    );
-                    ui.set_snackbar_text(text.into());
-                    ui.set_snackbar_show_undo(false);
-                    ui.set_snackbar_visible(true);
-                    let weak_inner = ui.as_weak();
-                    prefs_delete_timer.start(
-                        slint::TimerMode::SingleShot,
-                        std::time::Duration::from_secs(4),
-                        move || {
-                            if let Some(ui) = weak_inner.upgrade() {
-                                ui.set_snackbar_visible(false);
-                            }
-                        },
-                    );
+                    show_notice(&ui, text.into(), None, 4);
                 }
                 // Guided import transcode finished (GM-F2): the
                 // Kotlin worker dropped a result file. On success
@@ -5045,40 +4789,9 @@ fn build_ui() -> MainWindow {
                                         if kind == 1 { "sound.import" } else { "guided" },
                                         &format!("import failed: {e}"),
                                     );
-                                    // Surface the failure (the
-                                    // specific cause, e.g. the
-                                    // API-29 transcode floor, stays
-                                    // in Diagnostics). Standard
-                                    // raise discipline: commit +
-                                    // clear every pending undo
-                                    // discriminator first.
-                                    commit_pending_deletes(
-                                        &ui,
-                                        &loaded_log_sessions_tick,
-                                        &pending_deletes_tick,
-                                    );
-                                    recovery_uuid_tick.borrow_mut().take();
-                                    pending_preset_undo_tick.borrow_mut().take();
-                                    pending_preset_delete_tick.borrow_mut().take();
-                                    pending_override_restore_tick.borrow_mut().take();
-                                    discard_pending_guided_delete(
-                                        &pending_guided_delete_tick,
-                                    );
-                                    ui.set_snackbar_text(failure_text.unwrap_or_else(|| {
+                                    show_notice(&ui, failure_text.unwrap_or_else(|| {
                                         ui.global::<Tr>().invoke_import_failed()
-                                    }));
-                                    ui.set_snackbar_show_undo(false);
-                                    ui.set_snackbar_visible(true);
-                                    let weak_inner = ui.as_weak();
-                                    prefs_delete_timer.start(
-                                        slint::TimerMode::SingleShot,
-                                        std::time::Duration::from_secs(4),
-                                        move || {
-                                            if let Some(ui) = weak_inner.upgrade() {
-                                                ui.set_snackbar_visible(false);
-                                            }
-                                        },
-                                    );
+                                    }), None, 4);
                                 }
                             }
                         }
@@ -5342,11 +5055,15 @@ fn build_ui() -> MainWindow {
                         // Keep everything: the Done screen stays up
                         // (Save again or Discard), and the held
                         // snapshot still recovers the session on the
-                        // next start. The tick loop says what failed.
+                        // next start.
                         pending_done.set(Some((unix_start, elapsed_secs)));
-                        if let Ok(mut slot) = SESSION_SAVE_FAILED.lock() {
-                            *slot = Some(kind);
-                        }
+                        use meditate_core::format::SessionSaveFailureKind;
+                        let tr = ui.global::<Tr>();
+                        let text = match kind {
+                            SessionSaveFailureKind::StorageError => tr.invoke_save_failed_storage(),
+                            SessionSaveFailureKind::DbUnopened => tr.invoke_save_failed_unavailable(),
+                        };
+                        show_notice(&ui, text, None, 4);
                         return;
                     }
                 }
@@ -5765,21 +5482,12 @@ fn build_ui() -> MainWindow {
     }
     // Delete → remove the DB row now (it leaves every list);
     // defer the on-disk .ogg removal until the snackbar dismisses
-    // WITHOUT Undo (delete_timer). Undo re-inserts the captured
+    // WITHOUT Undo (`commit_undo`). Undo re-inserts the captured
     // row (the file was never touched). Mirrors GTK's deferred
     // toast-dismissed `remove_file` + insert-with-uuid Undo.
     {
         let weak = ui.as_weak();
-        let loaded_log_sessions = loaded_log_sessions.clone();
-        let pending_deletes = pending_deletes.clone();
-        let pending_guided_delete = pending_guided_delete.clone();
-        let pending_preset_undo = pending_preset_undo.clone();
-        let pending_preset_delete = pending_preset_delete.clone();
-        let pending_override_restore =
-            pending_override_restore.clone();
-        let recovery_uuid = recovery_uuid.clone();
         let guided_sel = guided_sel.clone();
-        let delete_timer: &'static slint::Timer = delete_timer;
         ui.on_guided_manage_delete_tap(move |uuid| {
             if let Some(ui) = weak.upgrade() {
                 // Capture the full row so Undo can resurrect it
@@ -5827,47 +5535,17 @@ fn build_ui() -> MainWindow {
                 refresh_guided_manage(&ui);
                 refresh_guided_files(&ui);
 
-                // Shared single-slot snackbar → clear the other
-                // discriminators, stash ours.
-                // Bug-audit #2: this raise steals the shared
-                // delete_timer - commit any pending log-feed
-                // deletes first so they can't be starved (rows
-                // stayed hidden but undeleted and resurrected on
-                // the next feed reload).
-                commit_pending_deletes(&ui, &loaded_log_sessions, &pending_deletes);
-                recovery_uuid.borrow_mut().take();
-                pending_preset_undo.borrow_mut().take();
-                pending_preset_delete.borrow_mut().take();
-                pending_override_restore.borrow_mut().take();
-                // A delete still waiting out its Undo is final now:
-                // remove its file, or it stays on disk for good.
-                discard_pending_guided_delete(&pending_guided_delete);
-                *pending_guided_delete.borrow_mut() = Some((
-                    row.uuid.0.clone(),
-                    row.name.clone(),
-                    local_guided_path(row.uuid.as_str()),
-                    row.duration_secs,
-                    row.is_starred,
-                ));
-                ui.set_snackbar_text(
-                    ui.global::<Tr>()
-                        .invoke_deleted(row.name.clone().into()),
-                );
-                ui.set_snackbar_show_undo(true);
-                ui.set_snackbar_visible(true);
-                let weak_inner = ui.as_weak();
-                let pgd = pending_guided_delete.clone();
-                delete_timer.start(
-                    slint::TimerMode::SingleShot,
-                    std::time::Duration::from_secs(5),
-                    move || {
-                        // Dismissed without Undo → now do the
-                        // deferred on-disk cleanup.
-                        discard_pending_guided_delete(&pgd);
-                        if let Some(ui) = weak_inner.upgrade() {
-                            ui.set_snackbar_visible(false);
-                        }
-                    },
+                show_notice(
+                    &ui,
+                    ui.global::<Tr>().invoke_deleted(row.name.clone().into()),
+                    Some(app::PendingUndo::GuidedDelete(
+                        row.uuid.0.clone(),
+                        row.name.clone(),
+                        local_guided_path(row.uuid.as_str()),
+                        row.duration_secs,
+                        row.is_starred,
+                    )),
+                    5,
                 );
             }
         });
@@ -6003,25 +5681,13 @@ fn build_ui() -> MainWindow {
 
     // Preset row tap → apply (P-3). Mirrors GTK's
     // `on_preset_row_activated`: mode-guard, snapshot the
-    // pre-apply state, `apply_preset_json`, then raise the
-    // shared single-slot snackbar ("'X' applied" + Undo) exactly
-    // the way the delete / recovery flows use it — `delete_timer`
-    // restarted single-shot for auto-dismiss, `pending_preset_undo`
-    // discriminator routing the shared Undo handler. Undo
-    // re-applies the snapshot through the same `apply_preset_json`
+    // pre-apply state, `apply_preset_json`, then show "'X'
+    // applied" with Undo. Undo re-applies the snapshot through the same `apply_preset_json`
     // (GTK's Undo calls `apply_config(&snapshot)`).
     {
         let weak = ui.as_weak();
-        let loaded_log_sessions = loaded_log_sessions.clone();
-        let pending_deletes = pending_deletes.clone();
         let current_mode = current_mode.clone();
         let timer_session_secs = timer_session_secs.clone();
-        let pending_preset_undo = pending_preset_undo.clone();
-        let pending_preset_delete = pending_preset_delete.clone();
-        let pending_override_restore = pending_override_restore.clone();
-        let recovery_uuid = recovery_uuid.clone();
-        let delete_timer: &'static slint::Timer = delete_timer;
-        let pending_guided_delete = pending_guided_delete.clone();
         ui.on_preset_chip_tap(move |uuid| {
             {
                 let Some(ui) = weak.upgrade() else { return; };
@@ -6058,41 +5724,12 @@ fn build_ui() -> MainWindow {
                     &format!("applied uuid={uuid}"),
                 );
 
-                // Raise the shared snackbar with the preset-Undo
-                // discriminator (clears the recovery one — single
-                // slot, newest flow owns Undo). No snapshot ⇒ show
-                // the message without Undo wiring rather than skip.
-                // Bug-audit #2: this raise steals the shared
-                // delete_timer - commit any pending log-feed
-                // deletes first so they can't be starved (rows
-                // stayed hidden but undeleted and resurrected on
-                // the next feed reload).
-                commit_pending_deletes(&ui, &loaded_log_sessions, &pending_deletes);
-                recovery_uuid.borrow_mut().take();
-                pending_preset_delete.borrow_mut().take();
-                pending_override_restore.borrow_mut().take();
-                discard_pending_guided_delete(
-                    &pending_guided_delete,
-                );
-                *pending_preset_undo.borrow_mut() =
-                    snapshot.map(|j| (j, core_mode));
-                ui.set_snackbar_text(
-                    ui.global::<Tr>()
-                        .invoke_applied(preset.name.clone().into()),
-                );
-                ui.set_snackbar_show_undo(true);
-                ui.set_snackbar_visible(true);
-                let weak_inner = ui.as_weak();
-                let ppu = pending_preset_undo.clone();
-                delete_timer.start(
-                    slint::TimerMode::SingleShot,
-                    std::time::Duration::from_secs(5),
-                    move || {
-                        ppu.borrow_mut().take();
-                        if let Some(ui) = weak_inner.upgrade() {
-                            ui.set_snackbar_visible(false);
-                        }
-                    },
+                // No snapshot: the message without Undo.
+                show_notice(
+                    &ui,
+                    ui.global::<Tr>().invoke_applied(preset.name.clone().into()),
+                    snapshot.map(|j| app::PendingUndo::PresetApply(j, core_mode)),
+                    5,
                 );
             }
         });
@@ -6245,17 +5882,9 @@ fn build_ui() -> MainWindow {
     }
     {
         let weak = ui.as_weak();
-        let loaded_log_sessions = loaded_log_sessions.clone();
-        let pending_deletes = pending_deletes.clone();
         let current_mode = current_mode.clone();
         let pending_save_snapshot = pending_save_snapshot.clone();
         let pending_override_uuid = pending_override_uuid.clone();
-        let pending_override_restore = pending_override_restore.clone();
-        let pending_preset_undo = pending_preset_undo.clone();
-        let pending_preset_delete = pending_preset_delete.clone();
-        let recovery_uuid = recovery_uuid.clone();
-        let delete_timer: &'static slint::Timer = delete_timer;
-        let pending_guided_delete = pending_guided_delete.clone();
         ui.on_override_preset_confirm(move || {
             {
                 let Some(ui) = weak.upgrade() else { return; };
@@ -6295,38 +5924,11 @@ fn build_ui() -> MainWindow {
                 // subtitle on the widget too.
                 refresh_widget(&ui);
 
-                // Shared snackbar with Undo (restore prior cfg).
-                // Single slot → clear the other discriminators.
-                // Bug-audit #2: this raise steals the shared
-                // delete_timer - commit any pending log-feed
-                // deletes first so they can't be starved (rows
-                // stayed hidden but undeleted and resurrected on
-                // the next feed reload).
-                commit_pending_deletes(&ui, &loaded_log_sessions, &pending_deletes);
-                recovery_uuid.borrow_mut().take();
-                pending_preset_undo.borrow_mut().take();
-                pending_preset_delete.borrow_mut().take();
-                discard_pending_guided_delete(
-                    &pending_guided_delete,
-                );
-                *pending_override_restore.borrow_mut() =
-                    prior.map(|p| (uuid.clone(), p, core_mode));
-                ui.set_snackbar_text(
+                show_notice(
+                    &ui,
                     ui.global::<Tr>().invoke_preset_overridden(),
-                );
-                ui.set_snackbar_show_undo(true);
-                ui.set_snackbar_visible(true);
-                let weak_inner = ui.as_weak();
-                let por = pending_override_restore.clone();
-                delete_timer.start(
-                    slint::TimerMode::SingleShot,
-                    std::time::Duration::from_secs(5),
-                    move || {
-                        por.borrow_mut().take();
-                        if let Some(ui) = weak_inner.upgrade() {
-                            ui.set_snackbar_visible(false);
-                        }
-                    },
+                    prior.map(|p| app::PendingUndo::Override(uuid.clone(), p)),
+                    5,
                 );
             }
         });
@@ -6448,16 +6050,8 @@ fn build_ui() -> MainWindow {
     }
     {
         let weak = ui.as_weak();
-        let loaded_log_sessions = loaded_log_sessions.clone();
-        let pending_deletes = pending_deletes.clone();
         let current_mode = current_mode.clone();
         let delete_preset_uuid = delete_preset_uuid.clone();
-        let pending_preset_delete = pending_preset_delete.clone();
-        let pending_preset_undo = pending_preset_undo.clone();
-        let pending_override_restore = pending_override_restore.clone();
-        let recovery_uuid = recovery_uuid.clone();
-        let delete_timer: &'static slint::Timer = delete_timer;
-        let pending_guided_delete = pending_guided_delete.clone();
         ui.on_delete_preset_confirm(move || {
             {
                 let Some(ui) = weak.upgrade() else { return; };
@@ -6490,44 +6084,17 @@ fn build_ui() -> MainWindow {
                 // Deleting a starred preset drops its widget row.
                 refresh_widget(&ui);
 
-                // Shared snackbar + Undo (re-insert). Single slot
-                // → clear the other discriminators.
-                // Bug-audit #2: this raise steals the shared
-                // delete_timer - commit any pending log-feed
-                // deletes first so they can't be starved (rows
-                // stayed hidden but undeleted and resurrected on
-                // the next feed reload).
-                commit_pending_deletes(&ui, &loaded_log_sessions, &pending_deletes);
-                recovery_uuid.borrow_mut().take();
-                pending_preset_undo.borrow_mut().take();
-                pending_override_restore.borrow_mut().take();
-                discard_pending_guided_delete(
-                    &pending_guided_delete,
-                );
-                *pending_preset_delete.borrow_mut() = Some((
-                    row.uuid.to_string(),
-                    row.name.clone(),
-                    row.mode,
-                    row.is_starred,
-                    row.config_json.clone(),
-                ));
-                ui.set_snackbar_text(
-                    ui.global::<Tr>()
-                        .invoke_deleted(row.name.clone().into()),
-                );
-                ui.set_snackbar_show_undo(true);
-                ui.set_snackbar_visible(true);
-                let weak_inner = ui.as_weak();
-                let ppd = pending_preset_delete.clone();
-                delete_timer.start(
-                    slint::TimerMode::SingleShot,
-                    std::time::Duration::from_secs(5),
-                    move || {
-                        ppd.borrow_mut().take();
-                        if let Some(ui) = weak_inner.upgrade() {
-                            ui.set_snackbar_visible(false);
-                        }
-                    },
+                show_notice(
+                    &ui,
+                    ui.global::<Tr>().invoke_deleted(row.name.clone().into()),
+                    Some(app::PendingUndo::PresetDelete(
+                        row.uuid.to_string(),
+                        row.name.clone(),
+                        row.mode,
+                        row.is_starred,
+                        row.config_json.clone(),
+                    )),
+                    5,
                 );
             }
         });
@@ -8606,25 +8173,9 @@ fn build_ui() -> MainWindow {
         let weak = ui.as_weak();
         let loaded_log_sessions = loaded_log_sessions.clone();
         let pending_deletes = pending_deletes.clone();
-        let recovery_uuid = recovery_uuid.clone();
-        let pending_preset_undo = pending_preset_undo.clone();
-        let pending_preset_delete = pending_preset_delete.clone();
-        let pending_override_restore = pending_override_restore.clone();
-        let pending_guided_delete = pending_guided_delete.clone();
         ui.on_delete_tap(move |rowid| {
             {
                 let Some(ui) = weak.upgrade() else { return; };
-                // A trash tap replaces any in-flight recovery /
-                // preset snackbar with the delete one — clear every
-                // other discriminator so the shared Undo handler
-                // routes to the delete-restore branch (single slot).
-                recovery_uuid.borrow_mut().take();
-                pending_preset_undo.borrow_mut().take();
-                pending_preset_delete.borrow_mut().take();
-                pending_override_restore.borrow_mut().take();
-                discard_pending_guided_delete(
-                    &pending_guided_delete,
-                );
                 let id = rowid as i64;
                 // Move row from `loaded_log_sessions` view into
                 // `pending_deletes`. We don't actually remove
@@ -8644,128 +8195,69 @@ fn build_ui() -> MainWindow {
                 // renderer (`meditate-gtk/src/announcement.rs`),
                 // rendered through the Tr catalogue.
                 let count = pending_deletes.borrow().len();
-                ui.set_snackbar_text(
-                    ui.global::<Tr>()
-                        .invoke_n_sessions_deleted(count as i32),
+                show_notice(
+                    &ui,
+                    ui.global::<Tr>().invoke_n_sessions_deleted(count as i32),
+                    Some(app::PendingUndo::LogDeletes),
+                    5,
                 );
-                ui.set_snackbar_show_undo(true);
-                ui.set_snackbar_visible(true);
-
                 render_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
-
-                // (Re)arm the commit timer — restart on every
-                // tap so a burst of deletes coalesces into one
-                // 5-second window.
-                let weak_inner = ui.as_weak();
-                let loaded_inner = loaded_log_sessions.clone();
-                let pending_inner = pending_deletes.clone();
-                delete_timer.start(
-                    slint::TimerMode::SingleShot,
-                    std::time::Duration::from_secs(5),
-                    move || {
-                        let Some(ui) = weak_inner.upgrade() else { return; };
-                        commit_pending_deletes(&ui, &loaded_inner, &pending_inner);
-                    },
-                );
             }
         });
     }
 
-    // Undo button on the snackbar — restore every hidden card
-    // (clear `pending_deletes`), hide the snackbar, cancel the
-    // commit timer, re-render. Mirrors GTK's
-    // `new_toast.connect_button_clicked` block at
-    // `meditate-gtk/src/log/imp.rs:649`.
+    // Undo on the snackbar: revert the one pending Undo.
     {
         let weak = ui.as_weak();
         let loaded_log_sessions = loaded_log_sessions.clone();
         let pending_deletes = pending_deletes.clone();
-        let recovery_uuid = recovery_uuid.clone();
-        let pending_preset_undo = pending_preset_undo.clone();
-        let pending_preset_delete = pending_preset_delete.clone();
-        let pending_override_restore = pending_override_restore.clone();
-        let pending_guided_delete = pending_guided_delete.clone();
         let current_mode = current_mode.clone();
         let timer_session_secs = timer_session_secs.clone();
         ui.on_snackbar_undo_tap(move || {
-            {
-                let Some(ui) = weak.upgrade() else { return; };
-                delete_timer.stop();
-                let core_mode: meditate_core::SessionMode =
-                    current_mode.get().into();
-                // Preset-apply Undo branch (P-3) — checked FIRST
-                // (single slot; the preset snackbar, if up, owns
-                // Undo). Re-apply the pre-apply snapshot through
-                // the same path the forward apply used, exactly
-                // like GTK's Undo calling `apply_config(&snapshot)`.
-                if let Some((json, mode)) =
-                    pending_preset_undo.borrow_mut().take()
-                {
-                    // Bug-audit #5: the snapshot belongs to the
-                    // mode it was taken in. After a mode-chip
-                    // switch the Setup shows another mode; blindly
-                    // re-applying would push the snapshot mode's
-                    // stopwatch/duration/label into the visible
-                    // page (the forward path has this guard, the
-                    // Undo path didn't). Mirror it: skip + hide.
-                    if mode == core_mode {
-                        apply_preset_json(
-                            &ui,
-                            &json,
-                            mode,
-                            &timer_session_secs,
-                        );
-                    } else {
-                        meditate_core::log(
-                            "preset.undo",
-                            "skipped: mode switched since apply",
-                        );
-                    }
-                    ui.set_snackbar_visible(false);
-                    return;
+            let Some(ui) = weak.upgrade() else { return; };
+            NOTICE_TIMER.with(slint::Timer::stop);
+            ui.set_snackbar_visible(false);
+            let Some(undo) = NOTICE.with_borrow_mut(app::Notice::take) else { return; };
+            let core_mode: meditate_core::SessionMode = current_mode.get().into();
+            use app::PendingUndo as U;
+            match undo {
+                U::LogDeletes => {
+                    pending_deletes.borrow_mut().clear();
+                    render_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
                 }
-                // Preset-delete Undo (P-5): re-insert the captured
-                // row with its original uuid — GTK's
-                // insert_preset_with_uuid resurrection.
-                if let Some((u, name, mode, starred, json)) =
-                    pending_preset_delete.borrow_mut().take()
-                {
+                U::Recovery(uuid) => {
+                    // Deleting by uuid tombstones it for sync peers
+                    // too, like GTK's recovery toast Undo.
+                    if let Some(db) = lock_db() {
+                        if let Err(e) = db.delete_session_by_uuid(&uuid) {
+                            meditate_core::log(
+                                "session.recovery",
+                                &format!("undo delete failed uuid={uuid}: {e:?}"),
+                            );
+                        }
+                    }
+                    reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
+                }
+                U::PresetApply(json, mode) => {
+                    // The snapshot belongs to the mode it was taken in;
+                    // after a mode switch, re-applying it would push
+                    // that mode's values into the visible page.
+                    if mode == core_mode {
+                        apply_preset_json(&ui, &json, mode, &timer_session_secs);
+                    } else {
+                        meditate_core::log("preset.undo", "skipped: mode switched since apply");
+                    }
+                }
+                U::PresetDelete(u, name, mode, starred, json) => {
                     {
                         let Some(db) = lock_db() else { return; };
-                        let _ = db.insert_preset_with_uuid(
-                            &u, &name, mode, starred, &json,
-                        );
+                        let _ = db.insert_preset_with_uuid(&u, &name, mode, starred, &json);
                     }
                     populate_preset_chooser(&ui, core_mode);
                     refresh_preset_chips(&ui, core_mode);
-                    // Undone delete resurrects the widget row.
                     refresh_widget(&ui);
-                    ui.set_snackbar_visible(false);
-                    return;
                 }
-                // Guided-file delete Undo (GM-F4): re-insert the
-                // captured row with its original uuid. The .ogg
-                // was never removed (deferred to dismiss), so the
-                // file is intact. Mirrors GTK's insert-with-uuid.
-                if let Some((u, name, path, dur, starred)) =
-                    pending_guided_delete.borrow_mut().take()
-                {
-                    {
-                        let Some(db) = lock_db() else { return; };
-                        let _ = db.insert_guided_file_with_uuid(
-                            &u, &name, &path, dur, starred,
-                        );
-                    }
-                    refresh_guided_manage(&ui);
-                    refresh_guided_files(&ui);
-                    ui.set_snackbar_visible(false);
-                    return;
-                }
-                // Preset-override Undo (P-5 / P-4 deferral):
-                // restore the preset's prior config_json.
-                if let Some((u, prior, _)) =
-                    pending_override_restore.borrow_mut().take()
-                {
+                U::Override(u, prior) => {
                     {
                         let Some(db) = lock_db() else { return; };
                         let _ = db.update_preset_config(&u, &prior);
@@ -8773,49 +8265,18 @@ fn build_ui() -> MainWindow {
                     // The chips on screen are the current mode's; the
                     // override may belong to the mode switched away from.
                     refresh_preset_chips(&ui, core_mode);
-                    // Undone override reverts the widget subtitle.
                     refresh_widget(&ui);
-                    ui.set_snackbar_visible(false);
-                    return;
                 }
-                if let Some(uuid) = recovery_uuid.borrow_mut().take() {
-                    // Recovery-undo branch (L-6): the rescued
-                    // session row already exists; delete it by
-                    // uuid so the tombstoning `session_delete`
-                    // event propagates to sync peers too.
-                    // Mirrors GTK's recovery toast Undo at
-                    // `meditate-gtk/src/application.rs:408`.
-                    if let Some(db) = lock_db() {
-                        if let Err(e) =
-                            db.delete_session_by_uuid(&uuid)
-                        {
-                            meditate_core::log(
-                                "session.recovery",
-                                &format!(
-                                    "undo delete failed uuid={uuid}: {e:?}"
-                                ),
-                            );
-                        }
+                // The file was kept for Undo, so the row comes back whole.
+                U::GuidedDelete(u, name, path, secs, starred) => {
+                    {
+                        let Some(db) = lock_db() else { return; };
+                        let _ = db.insert_guided_file_with_uuid(&u, &name, &path, secs, starred);
                     }
-                    ui.set_snackbar_visible(false);
-                    reset_log_feed(
-                        &ui,
-                        &loaded_log_sessions,
-                        &pending_deletes,
-                    );
-                } else {
-                    // Delete-undo branch (L-3): restore every
-                    // hidden card, drop the pending batch.
-                    pending_deletes.borrow_mut().clear();
-                    ui.set_snackbar_visible(false);
-                    render_log_feed(
-                        &ui,
-                        &loaded_log_sessions,
-                        &pending_deletes,
-                    );
+                    refresh_guided_manage(&ui);
+                    refresh_guided_files(&ui);
                 }
             }
-            let _ = weak.clone();
         });
     }
 
@@ -9257,21 +8718,9 @@ fn build_ui() -> MainWindow {
     // ordering rationale as GTK (a future sync worker must never
     // read an account whose secret hasn't landed yet). Empty
     // password = PasswordAction::Keep (stored one untouched).
-    // `trigger_sync` lands with SY-4. Feedback goes through the
-    // shared snackbar in plain-toast mode (no Undo) — single
-    // slot, so the other discriminators are cleared like every
-    // raise site.
+    // `trigger_sync` lands with SY-4. Feedback is a plain notice.
     {
         let weak = ui.as_weak();
-        let loaded_log_sessions = loaded_log_sessions.clone();
-        let pending_deletes = pending_deletes.clone();
-        let recovery_uuid = recovery_uuid.clone();
-        let pending_preset_undo = pending_preset_undo.clone();
-        let pending_preset_delete = pending_preset_delete.clone();
-        let pending_override_restore =
-            pending_override_restore.clone();
-        let pending_guided_delete = pending_guided_delete.clone();
-        let delete_timer: &'static slint::Timer = delete_timer;
         ui.on_prefs_save_tap(move || {
             {
                 use meditate_core::sync::credentials::{
@@ -9369,34 +8818,7 @@ fn build_ui() -> MainWindow {
                         .to_string()
                 };
 
-                // Plain-toast raise (no Undo). Single slot: clear
-                // the other discriminators first.
-                // Bug-audit #2: this raise steals the shared
-                // delete_timer - commit any pending log-feed
-                // deletes first so they can't be starved (rows
-                // stayed hidden but undeleted and resurrected on
-                // the next feed reload).
-                commit_pending_deletes(&ui, &loaded_log_sessions, &pending_deletes);
-                recovery_uuid.borrow_mut().take();
-                pending_preset_undo.borrow_mut().take();
-                pending_preset_delete.borrow_mut().take();
-                pending_override_restore.borrow_mut().take();
-                discard_pending_guided_delete(
-                    &pending_guided_delete,
-                );
-                ui.set_snackbar_text(toast.into());
-                ui.set_snackbar_show_undo(false);
-                ui.set_snackbar_visible(true);
-                let weak_inner = ui.as_weak();
-                delete_timer.start(
-                    slint::TimerMode::SingleShot,
-                    std::time::Duration::from_secs(4),
-                    move || {
-                        if let Some(ui) = weak_inner.upgrade() {
-                            ui.set_snackbar_visible(false);
-                        }
-                    },
-                );
+                show_notice(&ui, toast.into(), None, 4);
             }
             let _ = weak.clone();
         });
@@ -9567,11 +8989,11 @@ fn build_ui() -> MainWindow {
         let weak = ui.as_weak();
         ui.on_data_export_tap(move || {
             {
-                let Some(_ui) = weak.upgrade() else { return; };
+                let Some(ui) = weak.upgrade() else { return; };
                 // The copy-out step reports its own result; a failure
                 // before the save dialog opens says so too.
                 if !started_export() {
-                    EXPORT_FAILED.store(true, std::sync::atomic::Ordering::SeqCst);
+                    show_notice(&ui, ui.global::<Tr>().invoke_export_failed(), None, 4);
                 }
             }
             let _ = weak.clone();
@@ -9602,23 +9024,11 @@ fn build_ui() -> MainWindow {
         let weak = ui.as_weak();
         let loaded_log_sessions = loaded_log_sessions.clone();
         let pending_deletes = pending_deletes.clone();
-        let recovery_uuid = recovery_uuid.clone();
-        let pending_preset_undo = pending_preset_undo.clone();
-        let pending_preset_delete = pending_preset_delete.clone();
-        let pending_override_restore = pending_override_restore.clone();
-        let pending_guided_delete = pending_guided_delete.clone();
-        let delete_timer: &'static slint::Timer = delete_timer;
         ui.on_delete_all_confirm(move || {
             {
                 let Some(ui) = weak.upgrade() else { return; };
-                // The result snackbar takes the shared slot: finish
-                // any pending undo first (the standard raise).
-                commit_pending_deletes(&ui, &loaded_log_sessions, &pending_deletes);
-                recovery_uuid.borrow_mut().take();
-                pending_preset_undo.borrow_mut().take();
-                pending_preset_delete.borrow_mut().take();
-                pending_override_restore.borrow_mut().take();
-                discard_pending_guided_delete(&pending_guided_delete);
+                // A pending Undo is final before everything goes.
+                finish_notice(&ui);
                 let n = {
                     let Some(db) = lock_db() else { return; };
                     db.delete_all_sessions()
@@ -9649,19 +9059,7 @@ fn build_ui() -> MainWindow {
                 );
                 refresh_stats(&ui);
                 refresh_widget(&ui);
-                ui.set_snackbar_text(text);
-                ui.set_snackbar_show_undo(false);
-                ui.set_snackbar_visible(true);
-                let weak_inner = ui.as_weak();
-                delete_timer.start(
-                    slint::TimerMode::SingleShot,
-                    std::time::Duration::from_secs(4),
-                    move || {
-                        if let Some(ui) = weak_inner.upgrade() {
-                            ui.set_snackbar_visible(false);
-                        }
-                    },
-                );
+                show_notice(&ui, text, None, 4);
             }
         });
     }
@@ -9807,15 +9205,6 @@ fn build_ui() -> MainWindow {
     // is persisted.
     {
         let weak = ui.as_weak();
-        let loaded_log_sessions = loaded_log_sessions.clone();
-        let pending_deletes = pending_deletes.clone();
-        let recovery_uuid = recovery_uuid.clone();
-        let pending_preset_undo = pending_preset_undo.clone();
-        let pending_preset_delete = pending_preset_delete.clone();
-        let pending_override_restore =
-            pending_override_restore.clone();
-        let pending_guided_delete = pending_guided_delete.clone();
-        let delete_timer: &'static slint::Timer = delete_timer;
         ui.on_prefs_test_tap(move || {
             {
                 use meditate_core::sync::credentials::{
@@ -9874,36 +9263,7 @@ fn build_ui() -> MainWindow {
                                 )
                             }
                         };
-                        // Bug-audit #2: this raise steals the shared
-                // delete_timer - commit any pending log-feed
-                // deletes first so they can't be starved (rows
-                // stayed hidden but undeleted and resurrected on
-                // the next feed reload).
-                commit_pending_deletes(&ui, &loaded_log_sessions, &pending_deletes);
-                recovery_uuid.borrow_mut().take();
-                        pending_preset_undo.borrow_mut().take();
-                        pending_preset_delete.borrow_mut().take();
-                        pending_override_restore
-                            .borrow_mut()
-                            .take();
-                        discard_pending_guided_delete(
-                            &pending_guided_delete,
-                        );
-                        ui.set_snackbar_text(copy);
-                        ui.set_snackbar_show_undo(false);
-                        ui.set_snackbar_visible(true);
-                        let weak_inner = ui.as_weak();
-                        delete_timer.start(
-                            slint::TimerMode::SingleShot,
-                            std::time::Duration::from_secs(4),
-                            move || {
-                                if let Some(ui) =
-                                    weak_inner.upgrade()
-                                {
-                                    ui.set_snackbar_visible(false);
-                                }
-                            },
-                        );
+                        show_notice(&ui, copy, None, 4);
                         return;
                     }
                 };
@@ -10256,39 +9616,11 @@ fn build_ui() -> MainWindow {
         let rescued = slot.lock().ok().and_then(|mut g| g.take());
         if let Some((uuid, secs)) = rescued {
             let minutes = secs / 60;
-            // Same wording as GTK's
-            // `Announcement::SessionRecovered` renderer at
-            // `meditate-gtk/src/announcement.rs:17`. i18n isn't
-            // wired on Android yet (see the delete-snackbar
-            // note); inline English until it is.
-            let text = ui
-                .global::<Tr>()
-                .invoke_recovered_min(minutes as i32)
-                .to_string();
-            *recovery_uuid.borrow_mut() = Some(uuid);
-            // Single slot: a recovery snackbar supersedes any
-            // in-flight preset Undo context.
-            commit_pending_deletes(&ui, &loaded_log_sessions, &pending_deletes);
-            pending_preset_undo.borrow_mut().take();
-            pending_preset_delete.borrow_mut().take();
-            pending_override_restore.borrow_mut().take();
-            discard_pending_guided_delete(&pending_guided_delete);
-            ui.set_snackbar_text(text.into());
-            ui.set_snackbar_show_undo(true);
-            ui.set_snackbar_visible(true);
-            let weak_inner = ui.as_weak();
-            delete_timer.start(
-                slint::TimerMode::SingleShot,
-                std::time::Duration::from_secs(8),
-                move || {
-                    let Some(ui) = weak_inner.upgrade() else { return; };
-                    // Timed out without Undo → keep the session,
-                    // just dismiss. (The recovery context is
-                    // cleared lazily by the next delete tap or
-                    // an Undo press; leaving it set is harmless
-                    // since the snackbar is hidden.)
-                    ui.set_snackbar_visible(false);
-                },
+            show_notice(
+                &ui,
+                ui.global::<Tr>().invoke_recovered_min(minutes as i32),
+                Some(app::PendingUndo::Recovery(uuid)),
+                8,
             );
         }
     }
@@ -10346,6 +9678,11 @@ fn android_main(android_app: slint::android::AndroidApp) {
             }
             PollEvent::Main(MainEvent::Pause) => {
                 APP_IN_FOREGROUND.store(false, std::sync::atomic::Ordering::Relaxed);
+                // Android may kill the app in the background: a pending
+                // Undo is final now, or a delete would never happen.
+                if let Some(ui) = NOTICE_WINDOW.with_borrow(slint::Weak::upgrade) {
+                    finish_notice(&ui);
+                }
             }
             _ => {}
         }
@@ -10407,6 +9744,76 @@ impl std::ops::Deref for DbGuard {
     fn deref(&self) -> &meditate_core::Database {
         self.0.as_ref().expect("lock_db only wraps an open database")
     }
+}
+
+/// Log rows, shared between `build_ui` and the notice commit.
+type LogRows = Rc<RefCell<Vec<(i64, meditate_core::db::Session)>>>;
+
+// The snackbar and its one pending Undo live here, so any handler can
+// show a notice and the one it replaces is always committed.
+thread_local! {
+    static NOTICE: RefCell<app::Notice> = RefCell::new(app::Notice::default());
+    /// Hides the snackbar, committing its Undo, when it times out.
+    static NOTICE_TIMER: slint::Timer = slint::Timer::default();
+    /// The window the notice shows on, for `finish_notice` on Pause.
+    static NOTICE_WINDOW: RefCell<slint::Weak<MainWindow>> = RefCell::default();
+    /// The Log feed's loaded rows.
+    static LOG_LOADED: LogRows = Rc::default();
+    /// Log rows deleted but still in their Undo window (hidden from
+    /// the feed, still in the database). Mirrors GTK's `pending_deletes`.
+    static LOG_PENDING_DELETES: LogRows = Rc::default();
+}
+
+/// Make an Undo that can no longer be taken final.
+fn commit_undo(ui: &MainWindow, undo: app::PendingUndo) {
+    match undo {
+        app::PendingUndo::LogDeletes => commit_pending_deletes(
+            ui,
+            &LOG_LOADED.with(Rc::clone),
+            &LOG_PENDING_DELETES.with(Rc::clone),
+        ),
+        // The file was kept for Undo; GTK removes it when its toast goes.
+        app::PendingUndo::GuidedDelete(_, _, path, _, _) => {
+            let _ = std::fs::remove_file(&path);
+        }
+        _ => {}
+    }
+}
+
+/// Show `text` in the snackbar for `secs`, with Undo when `undo` is
+/// set. The Undo it replaces is committed, and so is its own when it
+/// times out.
+fn show_notice(
+    ui: &MainWindow,
+    text: slint::SharedString,
+    undo: Option<app::PendingUndo>,
+    secs: u64,
+) {
+    let show_undo = undo.is_some();
+    if let Some(old) = NOTICE.with_borrow_mut(|n| n.show(undo)) {
+        commit_undo(ui, old);
+    }
+    ui.set_snackbar_text(text);
+    ui.set_snackbar_show_undo(show_undo);
+    ui.set_snackbar_visible(true);
+    let weak = ui.as_weak();
+    NOTICE_WINDOW.set(weak.clone());
+    NOTICE_TIMER.with(|t| {
+        t.start(slint::TimerMode::SingleShot, Duration::from_secs(secs), move || {
+            if let Some(ui) = weak.upgrade() {
+                finish_notice(&ui);
+            }
+        })
+    });
+}
+
+/// Commit the pending Undo and hide the snackbar.
+fn finish_notice(ui: &MainWindow) {
+    NOTICE_TIMER.with(slint::Timer::stop);
+    if let Some(undo) = NOTICE.with_borrow_mut(app::Notice::take) {
+        commit_undo(ui, undo);
+    }
+    ui.set_snackbar_visible(false);
 }
 
 // Preview state lives here, not in `build_ui`, so `stop_all_previews`
