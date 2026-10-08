@@ -886,6 +886,32 @@ mod tests {
         assert!(body("fn check_label_conflicts(").contains("if ui.get_modal() != Modal::None {\n        return;"));
     }
 
+    /// Confirm and name dialogs share one card (320 px, centred), so
+    /// widths and body alignment can't drift apart again. Only dialogs
+    /// with more than a field and two buttons are built by hand.
+    #[test]
+    fn simple_dialogs_share_one_card() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        let at = slint.find("component ConfirmDialog inherits Rectangle {").unwrap();
+        let card = &slint[at..at + slint[at..].find("\n}\n").unwrap()];
+        assert!(card.contains("width: min(320px, root.width - 32px);"));
+        assert!(card.contains("@children"), "name dialogs add their field");
+        assert!(card.contains("enabled: root.confirm-enabled;"), "a name dialog gates its button");
+        assert_eq!(card.matches("horizontal-alignment: center;").count(), 2, "title and body centred");
+        assert_eq!(slint.matches("min(340px").count(), 2, "only Recovery and the label conflict, for their button rows");
+
+        let by_hand: Vec<&str> = slint
+            .match_indices("if root.modal == Modal.")
+            .filter_map(|(i, _)| {
+                let line = &slint[i..i + slint[i..].find('\n').unwrap()];
+                line.ends_with(": Rectangle {").then(|| &line["if root.modal == Modal.".len()..line.find(" :").unwrap()])
+            })
+            .collect();
+        assert_eq!(by_hand, ["duration", "prep", "guided-import", "goal", "recovery", "label-conflict"]);
+        assert_eq!(slint.matches(": ConfirmDialog {").count(), 15);
+    }
+
     #[test]
     fn a_back_swipe_does_not_tap_a_backdrop() {
         // Android hands the app the whole back swipe (down, moves, up)
@@ -898,7 +924,7 @@ mod tests {
         let def = &slint[at..at + slint[at..].find("\n}\n").unwrap()];
         assert!(def.contains("abs(self.mouse-x - self.pressed-x) < 16px && abs(self.mouse-y - self.pressed-y) < 16px"));
         let scrims: Vec<_> = slint.match_indices("background: #00000080;").map(|(i, _)| i).collect();
-        assert_eq!(scrims.len(), 20);
+        assert_eq!(scrims.len(), 8, "ConfirmDialog holds the scrim of the simple dialogs");
         for at in scrims {
             let next = &slint[at..];
             let area = next.find("TouchArea {").unwrap_or(usize::MAX);
@@ -2200,18 +2226,18 @@ mod tests {
 
         // Dialogs, modal over the chooser (declared after it).
         let chooser = slint.find("// ── Bell-sound chooser (overlay").unwrap();
-        for d in ["if root.modal == Modal.bell-rename : Rectangle {", "if root.modal == Modal.bell-delete : Rectangle {"] {
+        for d in ["if root.modal == Modal.bell-rename : ConfirmDialog {", "if root.modal == Modal.bell-delete : ConfirmDialog {"] {
             assert!(slint.find(d).expect(d) > chooser, "{d}");
         }
-        let del = slint.find("if root.modal == Modal.bell-delete : Rectangle {").unwrap();
+        let del = slint.find("if root.modal == Modal.bell-delete : ConfirmDialog {").unwrap();
         let del = &slint[del..del + 2500];
         assert!(del.contains("@tr(\"Delete Sound?\")"));
         assert!(del.contains("@tr(\"Bells that reference this sound will lose their audio.\")"));
         assert!(del.contains("root.bell-delete-confirm();"));
-        let ren = slint.find("if root.modal == Modal.bell-rename : Rectangle {").unwrap();
+        let ren = slint.find("if root.modal == Modal.bell-rename : ConfirmDialog {").unwrap();
         let ren = &slint[ren..ren + 2500];
         assert!(ren.contains("@tr(\"Rename Sound\")"));
-        assert!(ren.contains("enabled: root.bell-rename-valid;"));
+        assert!(ren.contains("confirm-enabled: root.bell-rename-valid;"));
 
         // Rust: bundled rows are not deletable; rename validates with
         // core's collision check (excluding the row itself); both

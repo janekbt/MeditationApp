@@ -1140,6 +1140,7 @@ component ConfirmDialog inherits Rectangle {
     in property <string> title;
     in property <string> body;
     in property <string> confirm-text;
+    in property <bool> confirm-enabled: true;
     callback cancel();
     callback confirm();
 
@@ -1151,7 +1152,7 @@ component ConfirmDialog inherits Rectangle {
     Rectangle {
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
-        width: min(340px, root.width - 32px);
+        width: min(320px, root.width - 32px);
         height: card.preferred-height;
         background: MaterialPalette.surface-container-high;
         border-radius: 28px;
@@ -1169,9 +1170,12 @@ component ConfirmDialog inherits Rectangle {
                 color: MaterialPalette.on-surface;
                 wrap: word-wrap;
             }
-            Text {
+            // A name dialog's field, or Delete Sound's name.
+            @children
+            if root.body != "" : Text {
                 text: root.body;
                 font-size: 14px;
+                horizontal-alignment: center;
                 color: MaterialPalette.on-surface-variant;
                 wrap: word-wrap;
             }
@@ -1186,6 +1190,7 @@ component ConfirmDialog inherits Rectangle {
                 }
                 TextButton {
                     text: root.confirm-text;
+                    enabled: root.confirm-enabled;
                     clicked => { root.confirm(); }
                 }
             }
@@ -6896,54 +6901,16 @@ export component MainWindow inherits Window {
     // existing labels. The validation closure lives Rust-side and
     // writes back to `create-label-valid` on every keystroke via
     // the `create-label-changed` callback.
-    if root.modal == Modal.create-label : Rectangle {
-        background: #00000080;
-        ScrimArea {
-            tapped => { root.modal = Modal.none; }
-        }
-
-        Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
-            width: min(320px, root.width - 32px);
-            height: create-card-content.preferred-height;
-            background: MaterialPalette.surface-container-high;
-            border-radius: 28px;
-
-            TouchArea {}
-
-            create-card-content := VerticalLayout {
-                padding: 24px;
-                spacing: 16px;
-
-                Text {
-                    text: @tr("Create Label");
-                    font-size: 22px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface;
-                }
-
-                TextField {
-                    label: @tr("Label name");
-                    text <=> root.create-label-text;
-                    edited(text) => { root.create-label-changed(text); }
-                }
-
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: end;
-
-                    TextButton {
-                        text: @tr("Cancel");
-                        clicked => { root.modal = Modal.none; }
-                    }
-                    TextButton {
-                        text: @tr("Create");
-                        enabled: root.create-label-valid;
-                        clicked => { root.create-label-confirm(); }
-                    }
-                }
-            }
+    if root.modal == Modal.create-label : ConfirmDialog {
+        title: @tr("Create Label");
+        confirm-text: @tr("Create");
+        confirm-enabled: root.create-label-valid;
+        cancel => { root.modal = Modal.none; }
+        confirm => { root.create-label-confirm(); }
+        TextField {
+            label: @tr("Label name");
+            text <=> root.create-label-text;
+            edited(text) => { root.create-label-changed(text); }
         }
     }
 
@@ -6954,54 +6921,16 @@ export component MainWindow inherits Window {
     // enabled since the unchanged name is a valid Ok). Rust
     // tracks the row's id via `rename-label-id` so the live
     // validator can pass it as `except_id`.
-    if root.modal == Modal.rename-label : Rectangle {
-        background: #00000080;
-        ScrimArea {
-            tapped => { root.modal = Modal.none; }
-        }
-
-        Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
-            width: min(320px, root.width - 32px);
-            height: rename-card-content.preferred-height;
-            background: MaterialPalette.surface-container-high;
-            border-radius: 28px;
-
-            TouchArea {}
-
-            rename-card-content := VerticalLayout {
-                padding: 24px;
-                spacing: 16px;
-
-                Text {
-                    text: @tr("Rename Label");
-                    font-size: 22px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface;
-                }
-
-                TextField {
-                    label: @tr("Label name");
-                    text <=> root.rename-label-text;
-                    edited(text) => { root.rename-label-changed(text); }
-                }
-
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: end;
-
-                    TextButton {
-                        text: @tr("Cancel");
-                        clicked => { root.modal = Modal.none; }
-                    }
-                    TextButton {
-                        text: @tr("Rename");
-                        enabled: root.rename-label-valid;
-                        clicked => { root.rename-label-confirm(); }
-                    }
-                }
-            }
+    if root.modal == Modal.rename-label : ConfirmDialog {
+        title: @tr("Rename Label");
+        confirm-text: @tr("Rename");
+        confirm-enabled: root.rename-label-valid;
+        cancel => { root.modal = Modal.none; }
+        confirm => { root.rename-label-confirm(); }
+        TextField {
+            label: @tr("Label name");
+            text <=> root.rename-label-text;
+            edited(text) => { root.rename-label-changed(text); }
         }
     }
 
@@ -7012,62 +6941,12 @@ export component MainWindow inherits Window {
     // composes the body string from
     // `meditate_core::labels::delete_impact_key` before opening,
     // so the text correctly shows N/0 affected sessions.
-    if root.modal == Modal.delete-label : Rectangle {
-        background: #00000080;
-        ScrimArea {
-            tapped => { root.modal = Modal.none; }
-        }
-
-        Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
-            width: min(320px, root.width - 32px);
-            height: delete-card-content.preferred-height;
-            background: MaterialPalette.surface-container-high;
-            border-radius: 28px;
-
-            TouchArea {}
-
-            delete-card-content := VerticalLayout {
-                padding: 24px;
-                spacing: 16px;
-
-                Text {
-                    text: @tr("Delete Label?");
-                    font-size: 22px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface;
-                }
-
-                Text {
-                    text: root.delete-label-body;
-                    font-size: 14px;
-                    color: MaterialPalette.on-surface-variant;
-                    wrap: word-wrap;
-                    horizontal-alignment: left;
-                }
-
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: end;
-
-                    TextButton {
-                        text: @tr("Cancel");
-                        clicked => { root.modal = Modal.none; }
-                    }
-                    // No native "destructive" style on TextButton —
-                    // Material 3 has a `dangerButton` filled style
-                    // but it's not in our component set. Plain
-                    // TextButton keeps consistent with Cancel; the
-                    // dialog title + the X-icon trigger already
-                    // signal the destructive intent.
-                    TextButton {
-                        text: @tr("Delete");
-                        clicked => { root.delete-label-confirm(); }
-                    }
-                }
-            }
-        }
+    if root.modal == Modal.delete-label : ConfirmDialog {
+        title: @tr("Delete Label?");
+        body: root.delete-label-body;
+        confirm-text: @tr("Delete");
+        cancel => { root.modal = Modal.none; }
+        confirm => { root.delete-label-confirm(); }
     }
 
     // ── Create-preset dialog (modal, P-4) ───────────────────────
@@ -7076,223 +6955,57 @@ export component MainWindow inherits Window {
     // (non-empty + no case-insensitive collision). Declared after
     // every chooser (incl. the preset overlay) so it z-stacks on
     // top — declare-overlays-last rule.
-    if root.modal == Modal.create-preset : Rectangle {
-        background: #00000080;
-        ScrimArea {
-            tapped => { root.modal = Modal.none; }
-        }
-
-        Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
-            width: min(320px, root.width - 32px);
-            height: create-preset-card.preferred-height;
-            background: MaterialPalette.surface-container-high;
-            border-radius: 28px;
-
-            TouchArea {}
-
-            create-preset-card := VerticalLayout {
-                padding: 24px;
-                spacing: 16px;
-
-                Text {
-                    text: @tr("Create Preset");
-                    font-size: 22px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface;
-                }
-
-                TextField {
-                    label: @tr("Preset name");
-                    text <=> root.create-preset-text;
-                    edited(text) => { root.create-preset-changed(text); }
-                }
-
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: end;
-
-                    TextButton {
-                        text: @tr("Cancel");
-                        clicked => { root.modal = Modal.none; }
-                    }
-                    TextButton {
-                        text: @tr("Create");
-                        enabled: root.create-preset-valid;
-                        clicked => { root.create-preset-confirm(); }
-                    }
-                }
-            }
+    if root.modal == Modal.create-preset : ConfirmDialog {
+        title: @tr("Create Preset");
+        confirm-text: @tr("Create");
+        confirm-enabled: root.create-preset-valid;
+        cancel => { root.modal = Modal.none; }
+        confirm => { root.create-preset-confirm(); }
+        TextField {
+            label: @tr("Preset name");
+            text <=> root.create-preset-text;
+            edited(text) => { root.create-preset-changed(text); }
         }
     }
 
     // ── Override-preset confirm dialog (modal, P-4) ──────────────
     // Mirrors GTK's `present_override_dialog`.
-    if root.modal == Modal.override-preset : Rectangle {
-        background: #00000080;
-        ScrimArea {
-            tapped => { root.modal = Modal.none; }
-        }
-
-        Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
-            width: min(320px, root.width - 32px);
-            height: override-preset-card.preferred-height;
-            background: MaterialPalette.surface-container-high;
-            border-radius: 28px;
-
-            TouchArea {}
-
-            override-preset-card := VerticalLayout {
-                padding: 24px;
-                spacing: 16px;
-
-                Text {
-                    text: @tr("Override Preset?");
-                    font-size: 22px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface;
-                }
-                Text {
-                    text: @tr("Replace '") + root.override-preset-name
-                        + @tr("' with the current settings?");
-                    font-size: 14px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface-variant;
-                    wrap: word-wrap;
-                }
-
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: end;
-
-                    TextButton {
-                        text: @tr("Cancel");
-                        clicked => {
-                            root.modal = Modal.none;
-                        }
-                    }
-                    TextButton {
-                        text: @tr("Override");
-                        clicked => { root.override-preset-confirm(); }
-                    }
-                }
-            }
-        }
+    if root.modal == Modal.override-preset : ConfirmDialog {
+        title: @tr("Override Preset?");
+        body: @tr("Replace '") + root.override-preset-name
+            + @tr("' with the current settings?");
+        confirm-text: @tr("Override");
+        cancel => { root.modal = Modal.none; }
+        confirm => { root.override-preset-confirm(); }
     }
 
     // ── Rename-preset dialog (modal, P-5) ───────────────────────
     // Mirrors GTK's `present_rename_preset_dialog`: pre-filled
     // name, Cancel/Rename, Rename gated on Rust live validation
     // (own-uuid name exception so an unchanged name stays valid).
-    if root.modal == Modal.rename-preset : Rectangle {
-        background: #00000080;
-        ScrimArea {
-            tapped => { root.modal = Modal.none; }
-        }
-
-        Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
-            width: min(320px, root.width - 32px);
-            height: rename-preset-card.preferred-height;
-            background: MaterialPalette.surface-container-high;
-            border-radius: 28px;
-
-            TouchArea {}
-
-            rename-preset-card := VerticalLayout {
-                padding: 24px;
-                spacing: 16px;
-
-                Text {
-                    text: @tr("Rename Preset");
-                    font-size: 22px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface;
-                }
-
-                TextField {
-                    label: @tr("Preset name");
-                    text <=> root.rename-preset-text;
-                    edited(text) => { root.rename-preset-changed(text); }
-                }
-
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: end;
-
-                    TextButton {
-                        text: @tr("Cancel");
-                        clicked => { root.modal = Modal.none; }
-                    }
-                    TextButton {
-                        text: @tr("Rename");
-                        enabled: root.rename-preset-valid;
-                        clicked => { root.rename-preset-confirm(); }
-                    }
-                }
-            }
+    if root.modal == Modal.rename-preset : ConfirmDialog {
+        title: @tr("Rename Preset");
+        confirm-text: @tr("Rename");
+        confirm-enabled: root.rename-preset-valid;
+        cancel => { root.modal = Modal.none; }
+        confirm => { root.rename-preset-confirm(); }
+        TextField {
+            label: @tr("Preset name");
+            text <=> root.rename-preset-text;
+            edited(text) => { root.rename-preset-changed(text); }
         }
     }
 
     // ── Delete-preset confirm dialog (modal, P-5) ───────────────
     // Mirrors GTK's `present_delete_preset_dialog`; Undo is
     // offered via the shared snackbar (re-insert with same uuid).
-    if root.modal == Modal.delete-preset : Rectangle {
-        background: #00000080;
-        ScrimArea {
-            tapped => { root.modal = Modal.none; }
-        }
-
-        Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
-            width: min(320px, root.width - 32px);
-            height: delete-preset-card.preferred-height;
-            background: MaterialPalette.surface-container-high;
-            border-radius: 28px;
-
-            TouchArea {}
-
-            delete-preset-card := VerticalLayout {
-                padding: 24px;
-                spacing: 16px;
-
-                Text {
-                    text: @tr("Delete Preset?");
-                    font-size: 22px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface;
-                }
-                Text {
-                    text: "'" + root.delete-preset-name
-                        + @tr("' will be removed from this device and any synced peers.");
-                    font-size: 14px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface-variant;
-                    wrap: word-wrap;
-                }
-
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: end;
-
-                    TextButton {
-                        text: @tr("Cancel");
-                        clicked => {
-                            root.modal = Modal.none;
-                        }
-                    }
-                    TextButton {
-                        text: @tr("Delete");
-                        clicked => { root.delete-preset-confirm(); }
-                    }
-                }
-            }
-        }
+    if root.modal == Modal.delete-preset : ConfirmDialog {
+        title: @tr("Delete Preset?");
+        body: "'" + root.delete-preset-name
+            + @tr("' will be removed from this device and any synced peers.");
+        confirm-text: @tr("Delete");
+        cancel => { root.modal = Modal.none; }
+        confirm => { root.delete-preset-confirm(); }
     }
 
     // ── Preparation-time seconds dialog (modal, B-5b) ────────────
@@ -8097,115 +7810,31 @@ export component MainWindow inherits Window {
     // ── Bell-sound rename + delete dialogs (modal) ─────────────
     // Over the bell-sound chooser (declared after it). Mirror GTK's
     // sounds.rs present_rename_dialog / present_delete_dialog.
-    if root.modal == Modal.bell-rename : Rectangle {
-        background: #00000080;
-        ScrimArea {
-            tapped => { root.modal = Modal.none; }
-        }
-
-        Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
-            width: min(320px, root.width - 32px);
-            height: bell-rename-card.preferred-height;
-            background: MaterialPalette.surface-container-high;
-            border-radius: 28px;
-
-            TouchArea {}
-
-            bell-rename-card := VerticalLayout {
-                padding: 24px;
-                spacing: 16px;
-
-                Text {
-                    text: @tr("Rename Sound");
-                    font-size: 22px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface;
-                }
-
-                TextField {
-                    label: @tr("Name");
-                    text <=> root.bell-rename-text;
-                    edited(text) => { root.bell-rename-changed(text); }
-                }
-
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: end;
-
-                    TextButton {
-                        text: @tr("Cancel");
-                        clicked => {
-                            root.modal = Modal.none;
-                        }
-                    }
-                    TextButton {
-                        text: @tr("Rename");
-                        enabled: root.bell-rename-valid;
-                        clicked => { root.bell-rename-confirm(); }
-                    }
-                }
-            }
+    if root.modal == Modal.bell-rename : ConfirmDialog {
+        title: @tr("Rename Sound");
+        confirm-text: @tr("Rename");
+        confirm-enabled: root.bell-rename-valid;
+        cancel => { root.modal = Modal.none; }
+        confirm => { root.bell-rename-confirm(); }
+        TextField {
+            label: @tr("Name");
+            text <=> root.bell-rename-text;
+            edited(text) => { root.bell-rename-changed(text); }
         }
     }
 
-    if root.modal == Modal.bell-delete : Rectangle {
-        background: #00000080;
-        ScrimArea {
-            tapped => { root.modal = Modal.none; }
-        }
-
-        Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
-            width: min(340px, root.width - 32px);
-            height: bell-delete-card.preferred-height;
-            background: MaterialPalette.surface-container-high;
-            border-radius: 28px;
-
-            TouchArea {}
-
-            bell-delete-card := VerticalLayout {
-                padding: 24px;
-                spacing: 16px;
-
-                Text {
-                    text: @tr("Delete Sound?");
-                    font-size: 22px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface;
-                }
-                Text {
-                    text: root.bell-delete-name;
-                    font-size: 16px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface;
-                    wrap: word-wrap;
-                }
-                Text {
-                    text: @tr("Bells that reference this sound will lose their audio.");
-                    font-size: 14px;
-                    color: MaterialPalette.on-surface-variant;
-                    wrap: word-wrap;
-                }
-
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: end;
-
-                    TextButton {
-                        text: @tr("Cancel");
-                        clicked => {
-                            root.modal = Modal.none;
-                        }
-                    }
-                    TextButton {
-                        text: @tr("Delete");
-                        clicked => { root.bell-delete-confirm(); }
-                    }
-                }
-            }
+    if root.modal == Modal.bell-delete : ConfirmDialog {
+        title: @tr("Delete Sound?");
+        body: @tr("Bells that reference this sound will lose their audio.");
+        confirm-text: @tr("Delete");
+        cancel => { root.modal = Modal.none; }
+        confirm => { root.bell-delete-confirm(); }
+        Text {
+            text: root.bell-delete-name;
+            font-size: 16px;
+            horizontal-alignment: center;
+            color: MaterialPalette.on-surface;
+            wrap: word-wrap;
         }
     }
 
@@ -8241,56 +7870,16 @@ export component MainWindow inherits Window {
     // page. Live-validated (non-empty + no case-insensitive
     // collision EXCEPting this row's own uuid, so an unchanged
     // name stays valid). Mirrors GTK's `present_rename_dialog`.
-    if root.modal == Modal.guided-rename : Rectangle {
-        background: #00000080;
-        ScrimArea {
-            tapped => { root.modal = Modal.none; }
-        }
-
-        Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
-            width: min(320px, root.width - 32px);
-            height: guided-rename-card.preferred-height;
-            background: MaterialPalette.surface-container-high;
-            border-radius: 28px;
-
-            TouchArea {}
-
-            guided-rename-card := VerticalLayout {
-                padding: 24px;
-                spacing: 16px;
-
-                Text {
-                    text: @tr("Rename Guided File");
-                    font-size: 22px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface;
-                }
-
-                TextField {
-                    label: @tr("Track name");
-                    text <=> root.guided-rename-text;
-                    edited(text) => { root.guided-rename-changed(text); }
-                }
-
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: end;
-
-                    TextButton {
-                        text: @tr("Cancel");
-                        clicked => {
-                            root.modal = Modal.none;
-                        }
-                    }
-                    TextButton {
-                        text: @tr("Rename");
-                        enabled: root.guided-rename-valid;
-                        clicked => { root.guided-rename-confirm(); }
-                    }
-                }
-            }
+    if root.modal == Modal.guided-rename : ConfirmDialog {
+        title: @tr("Rename Guided File");
+        confirm-text: @tr("Rename");
+        confirm-enabled: root.guided-rename-valid;
+        cancel => { root.modal = Modal.none; }
+        confirm => { root.guided-rename-confirm(); }
+        TextField {
+            label: @tr("Track name");
+            text <=> root.guided-rename-text;
+            edited(text) => { root.guided-rename-changed(text); }
         }
     }
     // ── Daily-goal entry dialog (ST) ─────────────────────────────
@@ -8364,56 +7953,12 @@ export component MainWindow inherits Window {
     // ── Delete-all confirmation (DP) ─────────────────────────────
     // Mirrors GTK's danger-zone confirm: explicit, destructive,
     // no Undo (sessions emit tombstone events → peers converge).
-    if root.modal == Modal.delete-all : Rectangle {
-        background: #00000080;
-        ScrimArea {
-            tapped => { root.modal = Modal.none; }
-        }
-
-        Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
-            width: min(340px, root.width - 32px);
-            height: delete-all-card.preferred-height;
-            background: MaterialPalette.surface-container-high;
-            border-radius: 28px;
-
-            TouchArea {}
-
-            delete-all-card := VerticalLayout {
-                padding: 24px;
-                spacing: 16px;
-
-                Text {
-                    text: @tr("Delete all sessions?");
-                    font-size: 22px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface;
-                }
-                Text {
-                    text: @tr("This permanently removes every logged session from this device and, via sync, from your other devices.\n\nThis cannot be undone.");
-                    font-size: 14px;
-                    color: MaterialPalette.on-surface-variant;
-                    wrap: word-wrap;
-                }
-
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: end;
-
-                    TextButton {
-                        text: @tr("Cancel");
-                        clicked => {
-                            root.modal = Modal.none;
-                        }
-                    }
-                    TextButton {
-                        text: @tr("Delete All");
-                        clicked => { root.delete-all-confirm(); }
-                    }
-                }
-            }
-        }
+    if root.modal == Modal.delete-all : ConfirmDialog {
+        title: @tr("Delete all sessions?");
+        body: @tr("This permanently removes every logged session from this device and, via sync, from your other devices.\n\nThis cannot be undone.");
+        confirm-text: @tr("Delete All");
+        cancel => { root.modal = Modal.none; }
+        confirm => { root.delete-all-confirm(); }
     }
 
     // ── Remote-data-lost recovery dialogs (SY-5) ─────────────────
@@ -8480,58 +8025,12 @@ export component MainWindow inherits Window {
         }
     }
 
-    if root.modal == Modal.recovery-wipe-confirm : Rectangle {
-        background: #00000080;
-        ScrimArea {
-            tapped => { root.modal = Modal.none; }
-        }
-
-        Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
-            width: min(340px, root.width - 32px);
-            height: recovery-wipe-card.preferred-height;
-            background: MaterialPalette.surface-container-high;
-            border-radius: 28px;
-
-            TouchArea {}
-
-            recovery-wipe-card := VerticalLayout {
-                padding: 24px;
-                spacing: 16px;
-
-                Text {
-                    text: @tr("Wipe local data?");
-                    font-size: 22px;
-                    horizontal-alignment: center;
-                    color: MaterialPalette.on-surface;
-                }
-                Text {
-                    text: @tr("This permanently deletes every session, label, and event stored on this device. Your Nextcloud account, sync settings, and app preferences are kept.\n\nThis cannot be undone.");
-                    font-size: 14px;
-                    color: MaterialPalette.on-surface-variant;
-                    wrap: word-wrap;
-                }
-
-                HorizontalLayout {
-                    spacing: 8px;
-                    alignment: end;
-
-                    TextButton {
-                        text: @tr("Cancel");
-                        clicked => {
-                            root.modal = Modal.none;
-                        }
-                    }
-                    TextButton {
-                        text: @tr("Wipe Local Data");
-                        clicked => {
-                            root.recovery-wipe-confirm-tap();
-                        }
-                    }
-                }
-            }
-        }
+    if root.modal == Modal.recovery-wipe-confirm : ConfirmDialog {
+        title: @tr("Wipe local data?");
+        body: @tr("This permanently deletes every session, label, and event stored on this device. Your Nextcloud account, sync settings, and app preferences are kept.\n\nThis cannot be undone.");
+        confirm-text: @tr("Wipe Local Data");
+        cancel => { root.modal = Modal.none; }
+        confirm => { root.recovery-wipe-confirm-tap(); }
     }
 
     // ── Label-conflict dialog (LC) ───────────────────────────────
