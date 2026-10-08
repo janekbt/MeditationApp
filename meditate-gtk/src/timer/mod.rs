@@ -165,6 +165,17 @@ mod tests {
         assert_eq!(code.matches("self.build_starting_bell_cue(").count(), sessions);
     }
 
+    /// Start dismisses the "'X' applied" toast: its Undo would
+    /// re-apply the old settings under the running session.
+    #[test]
+    fn starting_a_session_dismisses_the_preset_undo() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/timer/imp.rs");
+        let source = std::fs::read_to_string(path).unwrap();
+        let at = source.find("    fn on_start(&self) {").unwrap();
+        let head = &source[at..at + 700];
+        assert!(head.contains("if let Some(toast) = self.current_apply_toast.replace(None) {\n            toast.dismiss();"));
+    }
+
     /// Everything `CoreSession::start` returns (the starting bell
     /// without prep) is dispatched at once; there is no second call
     /// to forget.

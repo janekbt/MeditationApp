@@ -4212,6 +4212,11 @@ fn build_ui() -> MainWindow {
                 {
                     // No preview plays into the session.
                     stop_all_previews(&ui);
+                    // An Undo of the applied preset would change the
+                    // running session's settings.
+                    if NOTICE.with_borrow_mut(app::Notice::session_started) {
+                        finish_notice(&ui);
+                    }
                     let settings = build_session_settings(
                         shape,
                         ui.get_stopwatch_on(),

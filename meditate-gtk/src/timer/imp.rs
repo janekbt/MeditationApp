@@ -2033,6 +2033,12 @@ impl TimerView {
         let mode = self.current_mode();
         // A Volume-row preview doesn't ring into the session.
         crate::sound::stop_preview();
+        // Nor can the preset Undo change its settings. Taken out of
+        // the cell first: `dismiss` fires `connect_dismissed`, which
+        // borrows it.
+        if let Some(toast) = self.current_apply_toast.replace(None) {
+            toast.dismiss();
+        }
 
         // Timer mode + Preparation Time on: enter Preparing, defer the
         // real cores + starting bell until the prep tick transitions.

@@ -740,6 +740,16 @@ impl Notice {
     pub fn take(&mut self) -> Option<PendingUndo> {
         self.0.take()
     }
+
+    /// A session started: a preset-apply Undo would change the running
+    /// session's settings, so it goes. True if one was pending.
+    pub fn session_started(&mut self) -> bool {
+        let applied = matches!(self.0, Some(PendingUndo::PresetApply(..)));
+        if applied {
+            self.0 = None;
+        }
+        applied
+    }
 }
 
 #[cfg(test)]
@@ -767,6 +777,29 @@ mod tests {
         assert_eq!(n.show(Some(PendingUndo::LogDeletes)), None);
         assert_eq!(n.take(), Some(PendingUndo::LogDeletes));
         assert_eq!(n.take(), None, "Undo and the timer take it once");
+    }
+
+    #[test]
+    fn a_session_start_drops_only_a_preset_apply_undo() {
+        let mut n = Notice::default();
+        n.show(Some(apply()));
+        assert!(n.session_started());
+        assert_eq!(n.take(), None);
+        n.show(Some(PendingUndo::LogDeletes));
+        assert!(!n.session_started());
+        assert_eq!(n.take(), Some(PendingUndo::LogDeletes));
+    }
+
+    #[test]
+    fn starting_a_session_hides_the_preset_undo() {
+        // Undo during a session re-applied the old settings under it.
+        // Every start (button, widget, starred preset) goes through
+        // the Start tap's start branch.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        let at = lib.find("// Idle/Finished → start.").unwrap();
+        let start = &lib[at..at + lib[at..].find("AppState::start_session(").unwrap()];
+        assert!(start.contains("if NOTICE.with_borrow_mut(app::Notice::session_started) {\n                        finish_notice(&ui);"));
     }
 
     #[test]
