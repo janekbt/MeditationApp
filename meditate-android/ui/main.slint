@@ -1750,7 +1750,34 @@ component BoxedList inherits Rectangle {
     }
 }
 
+/// The open dialog. Dialogs never stack, so one property holds it;
+/// Back and a session start close whichever it is.
+export enum Modal {
+    none,
+    guided-import,
+    guided-rename,
+    goal,
+    delete-all,
+    recovery,
+    label-conflict,
+    create-label,
+    rename-label,
+    delete-label,
+    duration,
+    discard,
+    create-preset,
+    override-preset,
+    rename-preset,
+    delete-preset,
+    bell-rename,
+    bell-delete,
+    interval-bell-delete,
+    prep,
+    recovery-wipe-confirm,
+}
+
 export component MainWindow inherits Window {
+    in-out property <Modal> modal;
     title: @tr("Meditate");
 
     in property <string> remaining-text: "00:10";
@@ -1812,7 +1839,6 @@ export component MainWindow inherits Window {
     // pick to Opus-in-Ogg and inserts a starred guided_files row.
     // Mirrors GTK's `import_picked_file`.
     callback guided-import-tap();
-    in-out property <bool> guided-import-dialog-open: false;
     in-out property <string> guided-import-text: "";
     in property <bool> guided-import-valid: false;
     // "Importing: <name> (m:ss)" body line (Rust-formatted).
@@ -1861,7 +1887,6 @@ export component MainWindow inherits Window {
     callback guided-manage-rename-tap(string, string);
     callback guided-manage-preview-tap(string);
     in property <string> guided-manage-preview-uuid: "";
-    in-out property <bool> guided-rename-dialog-open: false;
     in-out property <string> guided-rename-text: "";
     in property <bool> guided-rename-valid: false;
     callback guided-rename-changed(string);
@@ -1912,7 +1937,6 @@ export component MainWindow inherits Window {
     // Stop pill, so a long bell doesn't have to play out.
     in-out property <string> volume-previewing: "";
     callback bell-volume-stop-tap();
-    in-out property <bool> goal-dialog-open: false;
     // Free-typed minutes; Set gates on parseable + the goal
     // bounds. Bounds are seeded from Rust (core
     // DAILY_GOAL_MIN/MAX) so the limits live in meditate-core
@@ -1942,7 +1966,6 @@ export component MainWindow inherits Window {
     callback data-export-tap();
     callback data-import-tap();
     callback data-insight-tap();
-    in-out property <bool> delete-all-dialog-open: false;
     callback delete-all-confirm();
     in property <bool> diag-page: false;
     in property <string> diag-text: "";
@@ -1954,16 +1977,13 @@ export component MainWindow inherits Window {
     // recovery_dialog.rs: choice dialog (Push My Data / Wipe
     // Local / Cancel), with Wipe going through a second
     // irreversibility confirmation.
-    in-out property <bool> recovery-dialog-open: false;
     // Label-conflict dialog (LC): filled by Rust from
     // list_label_conflicts, one conflict at a time.
-    in-out property <bool> label-conflict-dialog-open: false;
     in property <string> conflict-base-name;
     in property <string> conflict-suffixed-name;
     in property <int> conflict-session-count;
     callback conflict-merge-tap();
     callback conflict-keep-tap();
-    in-out property <bool> recovery-wipe-confirm-open: false;
     callback recovery-push-tap();
     callback recovery-wipe-confirm-tap();
 
@@ -2025,7 +2045,6 @@ export component MainWindow inherits Window {
     // `meditate_core::validate` against `is_label_name_taken_from_db`)
     // and writes the result back to `create-label-valid` so the
     // Create button's `enabled` reflects the live validity.
-    in-out property <bool> create-label-dialog-open: false;
     in-out property <string> create-label-text: "";
     in property <bool> create-label-valid: false;
 
@@ -2035,7 +2054,6 @@ export component MainWindow inherits Window {
     // (e.g., to fix capitalisation) doesn't trip the collision
     // check. Mirrors `present_rename_label_dialog` in
     // `meditate-gtk/src/labels.rs`.
-    in-out property <bool> rename-label-dialog-open: false;
     in-out property <int> rename-label-id: 0;
     in-out property <string> rename-label-text: "";
     in property <bool> rename-label-valid: false;
@@ -2046,7 +2064,6 @@ export component MainWindow inherits Window {
     // `meditate_core::labels::delete_impact_key`, pushes it into
     // `delete-label-body` before opening the dialog. Mirrors
     // `present_delete_label_dialog` in `labels.rs:361`.
-    in-out property <bool> delete-label-dialog-open: false;
     in-out property <int> delete-label-id: 0;
     in property <string> delete-label-body: "";
 
@@ -2170,7 +2187,6 @@ export component MainWindow inherits Window {
     in property <length> bb-dot-x: 12px;
     in property <length> bb-dot-y: 208px;
 
-    in-out property <bool> duration-dialog-open: false;
     in-out property <int> dialog-hours: 0;
     in-out property <int> dialog-minutes: 10;
 
@@ -2197,7 +2213,6 @@ export component MainWindow inherits Window {
     callback discard-tap();
     // "Discard Session?" when the Done note isn't empty (GTK's
     // on_discard); Rust opens it from discard-tap.
-    in-out property <bool> discard-dialog-open: false;
     callback discard-confirm();
     callback mode-changed(int);
     callback keep-awake-toggled(bool);
@@ -2235,13 +2250,11 @@ export component MainWindow inherits Window {
     // Rust-driven live validation (non-empty + no case-
     // insensitive collision), mirroring GTK's
     // `present_create_preset_dialog`.
-    in-out property <bool> create-preset-dialog-open: false;
     in-out property <string> create-preset-text: "";
     in property <bool> create-preset-valid: false;
     callback create-preset-changed(string);
     callback create-preset-confirm();
     // Override-confirm dialog (modal).
-    in-out property <bool> override-preset-dialog-open: false;
     in property <string> override-preset-name: "";
     callback override-preset-confirm();
 
@@ -2253,12 +2266,10 @@ export component MainWindow inherits Window {
     callback preset-star-tap(string);
     callback preset-rename-tap(string, string);
     callback preset-delete-tap(string);
-    in-out property <bool> rename-preset-dialog-open: false;
     in-out property <string> rename-preset-text: "";
     in property <bool> rename-preset-valid: false;
     callback rename-preset-changed(string);
     callback rename-preset-confirm();
-    in-out property <bool> delete-preset-dialog-open: false;
     in property <string> delete-preset-name: "";
     callback delete-preset-confirm();
     callback label-active-toggled(bool);
@@ -2334,13 +2345,11 @@ export component MainWindow inherits Window {
     // sound chooser. Rename is live-validated like the guided one;
     // Delete asks first, since bells using the sound lose their audio.
     callback bell-rename-tap(string, string);
-    in-out property <bool> bell-rename-dialog-open: false;
     in-out property <string> bell-rename-text: "";
     in property <bool> bell-rename-valid: false;
     callback bell-rename-changed(string);
     callback bell-rename-confirm();
     callback bell-delete-tap(string, string);
-    in-out property <bool> bell-delete-dialog-open: false;
     in property <string> bell-delete-name: "";
     callback bell-delete-confirm();
 
@@ -2369,7 +2378,6 @@ export component MainWindow inherits Window {
     callback interval-bell-toggled(string, bool);
     // "Delete Bell?" before interval-bell-delete, like GTK's
     // confirm_and_delete. The row's trash button opens it.
-    in-out property <bool> interval-bell-delete-dialog-open: false;
     in-out property <string> interval-bell-delete-uuid: "";
     callback interval-bell-edit(string);
     callback create-interval-bell-tap();
@@ -2493,7 +2501,6 @@ export component MainWindow inherits Window {
     // value; Set commits it to `prep-time-secs` and fires the
     // persist callback (mirrors duration-dialog's dialog-hours
     // → setup-hours → duration-committed flow).
-    in-out property <bool> prep-dialog-open: false;
     in-out property <int> prep-dialog-secs: 30;
     callback prep-secs-committed();
 
@@ -5202,7 +5209,7 @@ export component MainWindow inherits Window {
             // VerticalSpinBoxes + Cancel/Set). On tap, Rust
             // seeds dialog-hours / dialog-minutes from the
             // current edit-duration-* and flips
-            // `duration-dialog-open`; the dialog's Set handler
+            // `modal` to the Duration dialog; its Set handler
             // branches on `edit-session-page` to write back to
             // edit-duration-* instead of setup-*.
             BoxedList {
@@ -5213,7 +5220,7 @@ export component MainWindow inherits Window {
                     tapped => {
                         root.dialog-hours = root.edit-duration-hours;
                         root.dialog-minutes = root.edit-duration-minutes;
-                        root.duration-dialog-open = true;
+                        root.modal = Modal.duration;
                     }
                 }
             }
@@ -5627,11 +5634,11 @@ export component MainWindow inherits Window {
     // Declared after the Edit-Session overlay AND the AppBar /
     // NavigationBar so its scrim covers all of them (Slint
     // renders later children above earlier ones).
-    if root.duration-dialog-open : Rectangle {
+    if root.modal == Modal.duration : Rectangle {
         // Scrim — taps outside the card cancel.
         background: #00000080;
         TouchArea {
-            clicked => { root.duration-dialog-open = false; }
+            clicked => { root.modal = Modal.none; }
         }
 
         // Card. Height tracks the inner layout's preferred-height
@@ -5694,7 +5701,7 @@ export component MainWindow inherits Window {
 
                     TextButton {
                         text: @tr("Cancel");
-                        clicked => { root.duration-dialog-open = false; }
+                        clicked => { root.modal = Modal.none; }
                     }
                     TextButton {
                         text: @tr("Set");
@@ -5719,7 +5726,7 @@ export component MainWindow inherits Window {
                                     root.duration-committed();
                                 }
                             }
-                            root.duration-dialog-open = false;
+                            root.modal = Modal.none;
                         }
                     }
                 }
@@ -6099,7 +6106,7 @@ export component MainWindow inherits Window {
                                     has-error: true;
                                     clicked => {
                                         root.interval-bell-delete-uuid = item.uuid;
-                                        root.interval-bell-delete-dialog-open = true;
+                                        root.modal = Modal.interval-bell-delete;
                                     }
                                 }
                             }
@@ -7128,10 +7135,10 @@ export component MainWindow inherits Window {
     // existing labels. The validation closure lives Rust-side and
     // writes back to `create-label-valid` on every keystroke via
     // the `create-label-changed` callback.
-    if root.create-label-dialog-open : Rectangle {
+    if root.modal == Modal.create-label : Rectangle {
         background: #00000080;
         TouchArea {
-            clicked => { root.create-label-dialog-open = false; }
+            clicked => { root.modal = Modal.none; }
         }
 
         Rectangle {
@@ -7167,7 +7174,7 @@ export component MainWindow inherits Window {
 
                     TextButton {
                         text: @tr("Cancel");
-                        clicked => { root.create-label-dialog-open = false; }
+                        clicked => { root.modal = Modal.none; }
                     }
                     TextButton {
                         text: @tr("Create");
@@ -7186,10 +7193,10 @@ export component MainWindow inherits Window {
     // enabled since the unchanged name is a valid Ok). Rust
     // tracks the row's id via `rename-label-id` so the live
     // validator can pass it as `except_id`.
-    if root.rename-label-dialog-open : Rectangle {
+    if root.modal == Modal.rename-label : Rectangle {
         background: #00000080;
         TouchArea {
-            clicked => { root.rename-label-dialog-open = false; }
+            clicked => { root.modal = Modal.none; }
         }
 
         Rectangle {
@@ -7225,7 +7232,7 @@ export component MainWindow inherits Window {
 
                     TextButton {
                         text: @tr("Cancel");
-                        clicked => { root.rename-label-dialog-open = false; }
+                        clicked => { root.modal = Modal.none; }
                     }
                     TextButton {
                         text: @tr("Rename");
@@ -7244,10 +7251,10 @@ export component MainWindow inherits Window {
     // composes the body string from
     // `meditate_core::labels::delete_impact_key` before opening,
     // so the text correctly shows N/0 affected sessions.
-    if root.delete-label-dialog-open : Rectangle {
+    if root.modal == Modal.delete-label : Rectangle {
         background: #00000080;
         TouchArea {
-            clicked => { root.delete-label-dialog-open = false; }
+            clicked => { root.modal = Modal.none; }
         }
 
         Rectangle {
@@ -7285,7 +7292,7 @@ export component MainWindow inherits Window {
 
                     TextButton {
                         text: @tr("Cancel");
-                        clicked => { root.delete-label-dialog-open = false; }
+                        clicked => { root.modal = Modal.none; }
                     }
                     // No native "destructive" style on TextButton —
                     // Material 3 has a `dangerButton` filled style
@@ -7308,10 +7315,10 @@ export component MainWindow inherits Window {
     // (non-empty + no case-insensitive collision). Declared after
     // every chooser (incl. the preset overlay) so it z-stacks on
     // top — declare-overlays-last rule.
-    if root.create-preset-dialog-open : Rectangle {
+    if root.modal == Modal.create-preset : Rectangle {
         background: #00000080;
         TouchArea {
-            clicked => { root.create-preset-dialog-open = false; }
+            clicked => { root.modal = Modal.none; }
         }
 
         Rectangle {
@@ -7347,7 +7354,7 @@ export component MainWindow inherits Window {
 
                     TextButton {
                         text: @tr("Cancel");
-                        clicked => { root.create-preset-dialog-open = false; }
+                        clicked => { root.modal = Modal.none; }
                     }
                     TextButton {
                         text: @tr("Create");
@@ -7361,10 +7368,10 @@ export component MainWindow inherits Window {
 
     // ── Override-preset confirm dialog (modal, P-4) ──────────────
     // Mirrors GTK's `present_override_dialog`.
-    if root.override-preset-dialog-open : Rectangle {
+    if root.modal == Modal.override-preset : Rectangle {
         background: #00000080;
         TouchArea {
-            clicked => { root.override-preset-dialog-open = false; }
+            clicked => { root.modal = Modal.none; }
         }
 
         Rectangle {
@@ -7403,7 +7410,7 @@ export component MainWindow inherits Window {
                     TextButton {
                         text: @tr("Cancel");
                         clicked => {
-                            root.override-preset-dialog-open = false;
+                            root.modal = Modal.none;
                         }
                     }
                     TextButton {
@@ -7419,10 +7426,10 @@ export component MainWindow inherits Window {
     // Mirrors GTK's `present_rename_preset_dialog`: pre-filled
     // name, Cancel/Rename, Rename gated on Rust live validation
     // (own-uuid name exception so an unchanged name stays valid).
-    if root.rename-preset-dialog-open : Rectangle {
+    if root.modal == Modal.rename-preset : Rectangle {
         background: #00000080;
         TouchArea {
-            clicked => { root.rename-preset-dialog-open = false; }
+            clicked => { root.modal = Modal.none; }
         }
 
         Rectangle {
@@ -7458,7 +7465,7 @@ export component MainWindow inherits Window {
 
                     TextButton {
                         text: @tr("Cancel");
-                        clicked => { root.rename-preset-dialog-open = false; }
+                        clicked => { root.modal = Modal.none; }
                     }
                     TextButton {
                         text: @tr("Rename");
@@ -7473,10 +7480,10 @@ export component MainWindow inherits Window {
     // ── Delete-preset confirm dialog (modal, P-5) ───────────────
     // Mirrors GTK's `present_delete_preset_dialog`; Undo is
     // offered via the shared snackbar (re-insert with same uuid).
-    if root.delete-preset-dialog-open : Rectangle {
+    if root.modal == Modal.delete-preset : Rectangle {
         background: #00000080;
         TouchArea {
-            clicked => { root.delete-preset-dialog-open = false; }
+            clicked => { root.modal = Modal.none; }
         }
 
         Rectangle {
@@ -7515,7 +7522,7 @@ export component MainWindow inherits Window {
                     TextButton {
                         text: @tr("Cancel");
                         clicked => {
-                            root.delete-preset-dialog-open = false;
+                            root.modal = Modal.none;
                         }
                     }
                     TextButton {
@@ -7534,10 +7541,10 @@ export component MainWindow inherits Window {
     // z-order rule. Range 5..300 (PREP_SECS_MIN..MAX);
     // VerticalSpinBox steps by 1 (GTK's SpinRow steps 5 — minor
     // Android deviation, acceptable for a transient picker).
-    if root.prep-dialog-open : Rectangle {
+    if root.modal == Modal.prep : Rectangle {
         background: #00000080;
         TouchArea {
-            clicked => { root.prep-dialog-open = false; }
+            clicked => { root.modal = Modal.none; }
         }
 
         Rectangle {
@@ -7582,7 +7589,7 @@ export component MainWindow inherits Window {
 
                     TextButton {
                         text: @tr("Cancel");
-                        clicked => { root.prep-dialog-open = false; }
+                        clicked => { root.modal = Modal.none; }
                     }
                     TextButton {
                         text: @tr("Set");
@@ -7592,7 +7599,7 @@ export component MainWindow inherits Window {
                             prep-spin.commit();
                             root.prep-time-secs = root.prep-dialog-secs;
                             root.prep-secs-committed();
-                            root.prep-dialog-open = false;
+                            root.modal = Modal.none;
                         }
                     }
                 }
@@ -7916,7 +7923,7 @@ export component MainWindow inherits Window {
                     value-text: root.prefs-goal-mins + @tr(" min");
                     tapped => {
                         root.goal-dialog-text = "" + root.prefs-goal-mins;
-                        root.goal-dialog-open = true;
+                        root.modal = Modal.goal;
                     }
                 }
             }
@@ -7972,7 +7979,7 @@ export component MainWindow inherits Window {
                 DurationRow {
                     label: @tr("Delete all sessions");
                     value-text: "";
-                    tapped => { root.delete-all-dialog-open = true; }
+                    tapped => { root.modal = Modal.delete-all; }
                 }
             }
 
@@ -8209,13 +8216,13 @@ export component MainWindow inherits Window {
     // (non-empty + no case-insensitive guided_files collision).
     // While the worker runs, the form freezes and Import becomes a
     // "Converting…" label; Cancel stays live (mirrors GTK).
-    if root.guided-import-dialog-open : Rectangle {
+    if root.modal == Modal.guided-import : Rectangle {
         background: #00000080;
         TouchArea {
             clicked => {
                 if (!root.guided-import-busy) {
                     root.guided-import-cancel();
-                    root.guided-import-dialog-open = false;
+                    root.modal = Modal.none;
                 }
             }
         }
@@ -8263,7 +8270,7 @@ export component MainWindow inherits Window {
                         text: @tr("Cancel");
                         clicked => {
                             root.guided-import-cancel();
-                            root.guided-import-dialog-open = false;
+                            root.modal = Modal.none;
                         }
                     }
                     if !root.guided-import-busy : TextButton {
@@ -8329,10 +8336,10 @@ export component MainWindow inherits Window {
     // ── Bell-sound rename + delete dialogs (modal) ─────────────
     // Over the bell-sound chooser (declared after it). Mirror GTK's
     // sounds.rs present_rename_dialog / present_delete_dialog.
-    if root.bell-rename-dialog-open : Rectangle {
+    if root.modal == Modal.bell-rename : Rectangle {
         background: #00000080;
         TouchArea {
-            clicked => { root.bell-rename-dialog-open = false; }
+            clicked => { root.modal = Modal.none; }
         }
 
         Rectangle {
@@ -8369,7 +8376,7 @@ export component MainWindow inherits Window {
                     TextButton {
                         text: @tr("Cancel");
                         clicked => {
-                            root.bell-rename-dialog-open = false;
+                            root.modal = Modal.none;
                         }
                     }
                     TextButton {
@@ -8382,10 +8389,10 @@ export component MainWindow inherits Window {
         }
     }
 
-    if root.bell-delete-dialog-open : Rectangle {
+    if root.modal == Modal.bell-delete : Rectangle {
         background: #00000080;
         TouchArea {
-            clicked => { root.bell-delete-dialog-open = false; }
+            clicked => { root.modal = Modal.none; }
         }
 
         Rectangle {
@@ -8429,7 +8436,7 @@ export component MainWindow inherits Window {
                     TextButton {
                         text: @tr("Cancel");
                         clicked => {
-                            root.bell-delete-dialog-open = false;
+                            root.modal = Modal.none;
                         }
                     }
                     TextButton {
@@ -8441,21 +8448,21 @@ export component MainWindow inherits Window {
         }
     }
 
-    if root.discard-dialog-open : ConfirmDialog {
+    if root.modal == Modal.discard : ConfirmDialog {
         title: @tr("Discard Session?");
         body: @tr("Your note will be lost.");
         confirm-text: @tr("Discard");
-        cancel => { root.discard-dialog-open = false; }
+        cancel => { root.modal = Modal.none; }
         confirm => { root.discard-confirm(); }
     }
 
-    if root.interval-bell-delete-dialog-open : ConfirmDialog {
+    if root.modal == Modal.interval-bell-delete : ConfirmDialog {
         title: @tr("Delete Bell?");
         body: @tr("This bell will no longer ring during sessions.");
         confirm-text: @tr("Delete");
-        cancel => { root.interval-bell-delete-dialog-open = false; }
+        cancel => { root.modal = Modal.none; }
         confirm => {
-            root.interval-bell-delete-dialog-open = false;
+            root.modal = Modal.none;
             root.interval-bell-delete(root.interval-bell-delete-uuid);
         }
     }
@@ -8465,10 +8472,10 @@ export component MainWindow inherits Window {
     // page. Live-validated (non-empty + no case-insensitive
     // collision EXCEPting this row's own uuid, so an unchanged
     // name stays valid). Mirrors GTK's `present_rename_dialog`.
-    if root.guided-rename-dialog-open : Rectangle {
+    if root.modal == Modal.guided-rename : Rectangle {
         background: #00000080;
         TouchArea {
-            clicked => { root.guided-rename-dialog-open = false; }
+            clicked => { root.modal = Modal.none; }
         }
 
         Rectangle {
@@ -8505,7 +8512,7 @@ export component MainWindow inherits Window {
                     TextButton {
                         text: @tr("Cancel");
                         clicked => {
-                            root.guided-rename-dialog-open = false;
+                            root.modal = Modal.none;
                         }
                     }
                     TextButton {
@@ -8521,10 +8528,10 @@ export component MainWindow inherits Window {
     // Free-typed minutes, validated against goal-min/max-mins
     // (seeded from core DAILY_GOAL_MIN/MAX). Declared with the
     // other dialogs so it tops the Preferences page.
-    if root.goal-dialog-open : Rectangle {
+    if root.modal == Modal.goal : Rectangle {
         background: #00000080;
         TouchArea {
-            clicked => { root.goal-dialog-open = false; }
+            clicked => { root.modal = Modal.none; }
         }
 
         Rectangle {
@@ -8566,7 +8573,7 @@ export component MainWindow inherits Window {
 
                     TextButton {
                         text: @tr("Cancel");
-                        clicked => { root.goal-dialog-open = false; }
+                        clicked => { root.modal = Modal.none; }
                     }
                     TextButton {
                         text: @tr("Set");
@@ -8577,7 +8584,7 @@ export component MainWindow inherits Window {
                             root.prefs-goal-mins = Math.round(
                                 root.goal-dialog-text.to-float());
                             root.goal-committed();
-                            root.goal-dialog-open = false;
+                            root.modal = Modal.none;
                         }
                     }
                 }
@@ -8588,10 +8595,10 @@ export component MainWindow inherits Window {
     // ── Delete-all confirmation (DP) ─────────────────────────────
     // Mirrors GTK's danger-zone confirm: explicit, destructive,
     // no Undo (sessions emit tombstone events → peers converge).
-    if root.delete-all-dialog-open : Rectangle {
+    if root.modal == Modal.delete-all : Rectangle {
         background: #00000080;
         TouchArea {
-            clicked => { root.delete-all-dialog-open = false; }
+            clicked => { root.modal = Modal.none; }
         }
 
         Rectangle {
@@ -8628,7 +8635,7 @@ export component MainWindow inherits Window {
                     TextButton {
                         text: @tr("Cancel");
                         clicked => {
-                            root.delete-all-dialog-open = false;
+                            root.modal = Modal.none;
                         }
                     }
                     TextButton {
@@ -8644,10 +8651,10 @@ export component MainWindow inherits Window {
     // Declared LAST → top the z-stack over everything including
     // Preferences (the indicator tap that opens them lives in the
     // AppBar). Copy mirrors GTK's recovery_dialog.rs verbatim.
-    if root.recovery-dialog-open : Rectangle {
+    if root.modal == Modal.recovery : Rectangle {
         background: #00000080;
         TouchArea {
-            clicked => { root.recovery-dialog-open = false; }
+            clicked => { root.modal = Modal.none; }
         }
 
         Rectangle {
@@ -8685,14 +8692,14 @@ export component MainWindow inherits Window {
                     TextButton {
                         text: @tr("Cancel");
                         clicked => {
-                            root.recovery-dialog-open = false;
+                            root.modal = Modal.none;
                         }
                     }
                     TextButton {
                         text: @tr("Wipe Local");
                         clicked => {
-                            root.recovery-dialog-open = false;
-                            root.recovery-wipe-confirm-open = true;
+                            root.modal = Modal.none;
+                            root.modal = Modal.recovery-wipe-confirm;
                         }
                     }
                     TextButton {
@@ -8704,10 +8711,10 @@ export component MainWindow inherits Window {
         }
     }
 
-    if root.recovery-wipe-confirm-open : Rectangle {
+    if root.modal == Modal.recovery-wipe-confirm : Rectangle {
         background: #00000080;
         TouchArea {
-            clicked => { root.recovery-wipe-confirm-open = false; }
+            clicked => { root.modal = Modal.none; }
         }
 
         Rectangle {
@@ -8744,7 +8751,7 @@ export component MainWindow inherits Window {
                     TextButton {
                         text: @tr("Cancel");
                         clicked => {
-                            root.recovery-wipe-confirm-open = false;
+                            root.modal = Modal.none;
                         }
                     }
                     TextButton {
@@ -8764,12 +8771,12 @@ export component MainWindow inherits Window {
     // the duplicate's sessions onto the original and deletes it —
     // evented, so every device converges. Keep-both dismisses the
     // prompt on this device; the label stays for manual renaming.
-    if root.label-conflict-dialog-open : Rectangle {
+    if root.modal == Modal.label-conflict : Rectangle {
         background: #00000080;
         // Scrim tap = decide later (no dismissal recorded); the
         // prompt returns after the next sync.
         TouchArea {
-            clicked => { root.label-conflict-dialog-open = false; }
+            clicked => { root.modal = Modal.none; }
         }
 
         Rectangle {

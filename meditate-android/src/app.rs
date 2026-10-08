@@ -814,6 +814,35 @@ mod tests {
     }
 
     #[test]
+    fn every_dialog_is_one_modal() {
+        // Dialogs were 20 booleans listed by hand in the Back chain and
+        // in close-all; a widget start left four of them open over the
+        // session. One `modal` property can't forget one.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        assert!(slint.contains("export enum Modal {"));
+        assert!(slint.contains("in-out property <Modal> modal;"));
+        assert!(!slint.contains("-dialog-open") && !slint.contains("recovery-wipe-confirm-open"));
+        assert!(!lib.contains("_dialog_open(") && !lib.contains("wipe_confirm_open("));
+
+        let body = |name: &str| {
+            let at = lib.find(name).unwrap();
+            lib[at..at + lib[at..].find("\n}\n").unwrap()].to_string()
+        };
+        // Back closes the open dialog before any page, and a session
+        // start closes it too, except a guided import still transcoding.
+        let back = &lib[lib.find("ui.on_back_pressed(").unwrap()..];
+        let first = back.find("if ").unwrap();
+        assert!(back[first..].starts_with("if ui.get_modal() != Modal::None {\n                dismiss_modal(&ui);"));
+        assert!(body("fn close_transient_overlays(").contains("dismiss_modal(ui);"));
+        let dismiss = body("fn dismiss_modal(");
+        assert!(dismiss.contains("if ui.get_guided_import_busy() {\n            return;"));
+        // A sync-raised conflict waits until no dialog is open.
+        assert!(body("fn check_label_conflicts(").contains("if ui.get_modal() != Modal::None {\n        return;"));
+    }
+
+    #[test]
     fn a_csv_pick_carries_its_path_and_kind() {
         assert_eq!(
             super::parse_csv_pick("/data/x.csv\ninsight"),
@@ -1941,15 +1970,15 @@ mod tests {
 
         // Dialogs, modal over the chooser (declared after it).
         let chooser = slint.find("// ── Bell-sound chooser (overlay").unwrap();
-        for d in ["if root.bell-rename-dialog-open : Rectangle {", "if root.bell-delete-dialog-open : Rectangle {"] {
+        for d in ["if root.modal == Modal.bell-rename : Rectangle {", "if root.modal == Modal.bell-delete : Rectangle {"] {
             assert!(slint.find(d).expect(d) > chooser, "{d}");
         }
-        let del = slint.find("if root.bell-delete-dialog-open : Rectangle {").unwrap();
+        let del = slint.find("if root.modal == Modal.bell-delete : Rectangle {").unwrap();
         let del = &slint[del..del + 2500];
         assert!(del.contains("@tr(\"Delete Sound?\")"));
         assert!(del.contains("@tr(\"Bells that reference this sound will lose their audio.\")"));
         assert!(del.contains("root.bell-delete-confirm();"));
-        let ren = slint.find("if root.bell-rename-dialog-open : Rectangle {").unwrap();
+        let ren = slint.find("if root.modal == Modal.bell-rename : Rectangle {").unwrap();
         let ren = &slint[ren..ren + 2500];
         assert!(ren.contains("@tr(\"Rename Sound\")"));
         assert!(ren.contains("enabled: root.bell-rename-valid;"));
@@ -2106,9 +2135,9 @@ mod tests {
         let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let at = lib.find("let outcome = if kind == 1 {").unwrap();
         let rest = &lib[at..at + 6000];
-        let close = rest.find("ui.set_guided_import_dialog_open(false);\n                            match outcome {").unwrap();
+        let close = rest.find("close_modal(&ui, Modal::GuidedImport);\n                            match outcome {").unwrap();
         assert!(rest[close..].contains("invoke_import_failed()"));
-        assert_eq!(lib.matches("ui.set_guided_import_dialog_open(false);\n                            match outcome").count(), 1);
+        assert_eq!(lib.matches("close_modal(&ui, Modal::GuidedImport);\n                            match outcome").count(), 1);
     }
 
     #[test]
@@ -2145,21 +2174,18 @@ mod tests {
         let at = lib.find("ui.on_discard_tap(").unwrap();
         let tap = &lib[at..at + lib[at..].find("\n        });").unwrap()];
         assert!(tap.contains("if !ui.get_note_text().is_empty() {"));
-        assert!(tap.contains("ui.set_discard_dialog_open(true);"));
+        assert!(tap.contains("ui.set_modal(Modal::Discard);"));
         let at = lib.find("ui.on_back_pressed(").unwrap();
         let back = &lib[at..];
         let done = back.find("if ui.get_done_page() {").unwrap();
         assert!(back[done..done + 200].contains("ui.invoke_discard_tap();"));
-        for dialog in ["discard", "interval_bell_delete", "bell_rename", "bell_delete"] {
-            assert!(back.contains(&format!("if ui.get_{dialog}_dialog_open() {{")), "{dialog}");
-        }
-        assert!(slint.contains("if root.discard-dialog-open : ConfirmDialog {"));
-        assert!(slint.contains("if root.interval-bell-delete-dialog-open : ConfirmDialog {"));
+        assert!(slint.contains("if root.modal == Modal.discard : ConfirmDialog {"));
+        assert!(slint.contains("if root.modal == Modal.interval-bell-delete : ConfirmDialog {"));
         assert!(!slint.contains("clicked => { root.interval-bell-delete(item.uuid); }"));
         // Declared after the Done screen and the bell list they cover.
-        let dialogs = slint.find("if root.discard-dialog-open : ConfirmDialog {").unwrap();
+        let dialogs = slint.find("if root.modal == Modal.discard : ConfirmDialog {").unwrap();
         assert!(slint.find("root.discard-tap();").unwrap() < dialogs);
-        assert!(slint.find("root.interval-bell-delete-dialog-open = true;").unwrap() < dialogs);
+        assert!(slint.find("root.modal = Modal.interval-bell-delete;").unwrap() < dialogs);
     }
 
     #[test]

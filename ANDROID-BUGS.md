@@ -17,6 +17,7 @@ Left out on purpose:
 ## A. Data loss
 
 ### 1. A guided preview that is still playing can end a widget-started Timer or Box Breath session, which then saves nothing
+- **Fixed (2026-10-08):** R4 (`stop_all_previews` on every start) and the overtime guard in core (5ee5ad7).
 - **Where:**
   - `meditate-android/src/lib.rs:1036` (`close_transient_overlays` clears the preview id but never calls `guided::stop`).
   - `lib.rs:5594-5617` (EOS and focus-loss are applied to any running session).
@@ -104,6 +105,7 @@ Left out on purpose:
 - **Confidence:** confirmed
 
 ### 8. Deleted Log cards come back if the app is killed within the undo window
+- **Fixed (2026-10-08):** R5: a pending Undo is made final when the app goes to the background.
 - **Where:** `lib.rs:9608-9637` (in-memory timer only). The `MainEvent::Pause` handler (`:11510`) doesn't flush `pending_deletes`.
 - **What happens:** Delete a card, then swipe the app away within 5 s. The session is back on the next launch.
 - **Fix idea:** Call `commit_pending_deletes` on Pause/Stop.
@@ -136,6 +138,7 @@ Left out on purpose:
 ## B. Wrong behaviour
 
 ### 12. Back sends the app to the background after a text field loses focus
+- **Fixed (2026-10-08):** dd704f2: focus returns to `root-focus` whenever no text field has it. Still open: a field that is only hidden (not closed) while focused loses one Back.
 - **Where:**
   - `main.slint:2919-2931`: Back is handled by `root-focus`.
   - Focus goes to None through `clear-focus()` (`:478,1253,1313,1334,1351`) or when a focused field is hidden or destroyed (the `if` dialogs, the Edit-Session note).
@@ -172,6 +175,7 @@ Left out on purpose:
 - **Confidence:** likely
 
 ### 16. Starting from the widget leaves bell dialogs open and bell or pattern previews playing
+- **Fixed (2026-10-08):** R4 (previews) and R6 (one `modal` property, closed by a session start).
 - **Where:** `lib.rs:1036-1073`.
   - `bell_rename_dialog_open`, `bell_delete_dialog_open` and `interval_bell_delete_dialog_open` are not closed. They are declared last, so they sit above Running.
   - Bell and pattern previews only have their ids cleared. The volume preview and the vibration-editor preview are not stopped.
@@ -180,6 +184,7 @@ Left out on purpose:
 - **Confidence:** confirmed (dialogs), likely (audio)
 
 ### 17. Preset-apply Undo still works after Start and changes the running session's label
+- **Fixed (2026-10-08):** R11 step 1: a session start drops the preset-apply Undo.
 - **Where:** `on_action_tap` (`lib.rs:4654-4846`) doesn't clear `pending_preset_undo` or hide the snackbar. The snackbar draws above Running (`main.slint:8155` vs `:4086`). The Undo branch (`:9680-9706`) only checks the mode.
 - **Repro:** Tap a preset chip with a different label → Start within 5 s → Undo → Stop. The Done screen shows the old label.
 - **Fix idea:** On the Idle→Active edge, clear the pending Undo slots and hide the snackbar.

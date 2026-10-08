@@ -876,6 +876,26 @@ fn refresh_widget(ui: &MainWindow) {
 /// A tap arriving mid-session is dropped (logged): silently
 /// pausing a running meditation because a stray widget tap
 /// landed would be worse than ignoring it.
+/// Close `modal` if it is the open dialog.
+fn close_modal(ui: &MainWindow, modal: Modal) {
+    if ui.get_modal() == modal {
+        ui.set_modal(Modal::None);
+    }
+}
+
+/// Close the open dialog, as Back and a session start do. A guided
+/// import that is transcoding stays (it shows its progress, even above
+/// Running); an idle one is cancelled like its Cancel button.
+fn dismiss_modal(ui: &MainWindow) {
+    if ui.get_modal() == Modal::GuidedImport {
+        if ui.get_guided_import_busy() {
+            return;
+        }
+        ui.invoke_guided_import_cancel();
+    }
+    ui.set_modal(Modal::None);
+}
+
 /// Close every overlay page + modal dialog (bug-audit #9): the
 /// Running view is the lowest overlay layer, so anything left
 /// open would cover a session started underneath it. Every
@@ -894,27 +914,7 @@ fn close_transient_overlays(ui: &MainWindow) {
     ui.set_labels_page(false);
     ui.set_edit_session_page(false);
     ui.set_filter_sheet_open(false);
-    ui.set_duration_dialog_open(false);
-    ui.set_prep_dialog_open(false);
-    ui.set_goal_dialog_open(false);
-    ui.set_delete_all_dialog_open(false);
-    ui.set_create_label_dialog_open(false);
-    ui.set_rename_label_dialog_open(false);
-    ui.set_delete_label_dialog_open(false);
-    ui.set_label_conflict_dialog_open(false);
-    ui.set_create_preset_dialog_open(false);
-    ui.set_rename_preset_dialog_open(false);
-    ui.set_delete_preset_dialog_open(false);
-    ui.set_override_preset_dialog_open(false);
-    ui.set_guided_rename_dialog_open(false);
-    ui.set_recovery_dialog_open(false);
-    ui.set_recovery_wipe_confirm_open(false);
-    // NOT closed: the guided-import dialog while busy (an active
-    // transcode should finish; it sits above Running and shows
-    // its progress) — only when idle.
-    if !ui.get_guided_import_busy() {
-        ui.set_guided_import_dialog_open(false);
-    }
+    dismiss_modal(ui);
 }
 
 fn try_widget_deep_link(
@@ -1282,7 +1282,7 @@ fn present_guided_import_dialog(
     );
     ui.set_guided_import_valid(v.is_savable());
     ui.set_guided_import_busy(false);
-    ui.set_guided_import_dialog_open(true);
+    ui.set_modal(Modal::GuidedImport);
 }
 
 /// Resolve a starred-list tap to a `GuidedSel` (carries the uuid
@@ -3005,7 +3005,7 @@ fn check_label_conflicts(
     ui: &MainWindow,
     slot: &Slot<(i64, i64, String)>,
 ) {
-    if ui.get_label_conflict_dialog_open() {
+    if ui.get_modal() != Modal::None {
         return;
     }
     let Some(db) = lock_db() else { return; };
@@ -3025,7 +3025,7 @@ fn check_label_conflicts(
     ui.set_conflict_base_name(c.base_name.into());
     ui.set_conflict_suffixed_name(c.suffixed_name.into());
     ui.set_conflict_session_count(c.suffixed_session_count as i32);
-    ui.set_label_conflict_dialog_open(true);
+    ui.set_modal(Modal::LabelConflict);
 }
 
 fn delete_label_impact_text(ui: &MainWindow, id: i64) -> String {
@@ -4452,7 +4452,7 @@ fn build_ui() -> MainWindow {
             let Some(ui) = weak.upgrade() else { return; };
             ui.set_dialog_hours(ui.get_setup_hours());
             ui.set_dialog_minutes(ui.get_setup_minutes());
-            ui.set_duration_dialog_open(true);
+            ui.set_modal(Modal::Duration);
         });
     }
 
@@ -4786,7 +4786,7 @@ fn build_ui() -> MainWindow {
                             // as in GTK: its picked source is used up,
                             // so a retry starts from a fresh pick.
                             ui.set_guided_import_busy(false);
-                            ui.set_guided_import_dialog_open(false);
+                            close_modal(&ui, Modal::GuidedImport);
                             match outcome {
                                 Ok(()) => ui.set_guided_import_progress(1.0),
                                 Err(e) => {
@@ -5607,7 +5607,7 @@ fn build_ui() -> MainWindow {
                     |n| guided_name_taken(n, &uuid),
                 );
                 ui.set_guided_rename_valid(v.is_savable());
-                ui.set_guided_rename_dialog_open(true);
+                ui.set_modal(Modal::GuidedRename);
             }
         });
     }
@@ -5676,7 +5676,7 @@ fn build_ui() -> MainWindow {
                     }
                     ui.set_guided_name(new_name.clone().into());
                 }
-                ui.set_guided_rename_dialog_open(false);
+                close_modal(&ui, Modal::GuidedRename);
                 refresh_guided_manage(&ui);
                 refresh_guided_files(&ui);
             }
@@ -5804,7 +5804,7 @@ fn build_ui() -> MainWindow {
             if let Some(ui) = weak.upgrade() {
                 ui.set_create_preset_text(slint::SharedString::new());
                 ui.set_create_preset_valid(false);
-                ui.set_create_preset_dialog_open(true);
+                ui.set_modal(Modal::CreatePreset);
             }
             let _ = weak.clone();
         });
@@ -5848,7 +5848,7 @@ fn build_ui() -> MainWindow {
                 };
                 match res {
                     Ok(_) => {
-                        ui.set_create_preset_dialog_open(false);
+                        close_modal(&ui, Modal::CreatePreset);
                         ui.set_preset_chooser_page(false);
                         refresh_preset_chips(&ui, mode);
                         // New preset is starred by default → it
@@ -5881,7 +5881,7 @@ fn build_ui() -> MainWindow {
                 *pending_override_uuid.borrow_mut() =
                     Some(uuid.to_string());
                 ui.set_override_preset_name(name.clone());
-                ui.set_override_preset_dialog_open(true);
+                ui.set_modal(Modal::OverridePreset);
             }
         });
     }
@@ -5918,11 +5918,11 @@ fn build_ui() -> MainWindow {
                         );
                         // Nothing changed: no "Preset overridden",
                         // and no Undo that would "restore" it.
-                        ui.set_override_preset_dialog_open(false);
+                        close_modal(&ui, Modal::OverridePreset);
                         return;
                     }
                 }
-                ui.set_override_preset_dialog_open(false);
+                close_modal(&ui, Modal::OverridePreset);
                 ui.set_preset_chooser_page(false);
                 refresh_preset_chips(&ui, core_mode);
                 // Overriding a starred preset rewrites its
@@ -5980,7 +5980,7 @@ fn build_ui() -> MainWindow {
                     |n| preset_name_taken(n, uuid.as_str()),
                 );
                 ui.set_rename_preset_valid(v.is_savable());
-                ui.set_rename_preset_dialog_open(true);
+                ui.set_modal(Modal::RenamePreset);
             }
         });
     }
@@ -6030,7 +6030,7 @@ fn build_ui() -> MainWindow {
                         );
                     }
                 }
-                ui.set_rename_preset_dialog_open(false);
+                close_modal(&ui, Modal::RenamePreset);
                 populate_preset_chooser(&ui, core_mode);
                 refresh_preset_chips(&ui, core_mode);
                 // Renaming a starred preset changes its widget
@@ -6049,7 +6049,7 @@ fn build_ui() -> MainWindow {
                 };
                 *delete_preset_uuid.borrow_mut() = Some(uuid.to_string());
                 ui.set_delete_preset_name(p.name.into());
-                ui.set_delete_preset_dialog_open(true);
+                ui.set_modal(Modal::DeletePreset);
             }
         });
     }
@@ -6081,7 +6081,7 @@ fn build_ui() -> MainWindow {
                         );
                     }
                 }
-                ui.set_delete_preset_dialog_open(false);
+                close_modal(&ui, Modal::DeletePreset);
                 // Manage Presets stays open (like GTK), so several
                 // presets can go in a row; the snackbar shows above it.
                 populate_preset_chooser(&ui, core_mode);
@@ -6472,7 +6472,7 @@ fn build_ui() -> MainWindow {
                 ui.set_bell_rename_text(name.clone());
                 let v = meditate_core::naming::validate(name.trim(), |n| bell_sound_name_taken(n, &uuid));
                 ui.set_bell_rename_valid(v.is_savable());
-                ui.set_bell_rename_dialog_open(true);
+                ui.set_modal(Modal::BellRename);
             }
         });
     }
@@ -6508,7 +6508,7 @@ fn build_ui() -> MainWindow {
                         return;
                     }
                 }
-                ui.set_bell_rename_dialog_open(false);
+                close_modal(&ui, Modal::BellRename);
                 repopulate_bell_chooser(&ui, bell_chooser_category.get(), &bell_chooser_current.borrow());
                 refresh_bell_rows(&ui);
                 ui.set_ie_sound_name(bell_sound_name(&ui, ui.get_ie_sound_uuid().as_str()).into());
@@ -6523,7 +6523,7 @@ fn build_ui() -> MainWindow {
             if let Some(ui) = weak.upgrade() {
                 *bell_edit_uuid.borrow_mut() = Some(uuid.to_string());
                 ui.set_bell_delete_name(name.clone());
-                ui.set_bell_delete_dialog_open(true);
+                ui.set_modal(Modal::BellDelete);
             }
         });
     }
@@ -6550,7 +6550,7 @@ fn build_ui() -> MainWindow {
                         return;
                     }
                 }
-                ui.set_bell_delete_dialog_open(false);
+                close_modal(&ui, Modal::BellDelete);
                 repopulate_bell_chooser(&ui, bell_chooser_category.get(), &bell_chooser_current.borrow());
                 refresh_bell_rows(&ui);
                 ui.set_ie_sound_name(bell_sound_name(&ui, ui.get_ie_sound_uuid().as_str()).into());
@@ -7436,7 +7436,7 @@ fn build_ui() -> MainWindow {
                 let Some(ui) = weak.upgrade() else { return; };
                 // Seed the working value from the committed one.
                 ui.set_prep_dialog_secs(ui.get_prep_time_secs());
-                ui.set_prep_dialog_open(true);
+                ui.set_modal(Modal::Prep);
             }
             let _ = weak.clone();
         });
@@ -7808,7 +7808,7 @@ fn build_ui() -> MainWindow {
             if let Some(ui) = weak.upgrade() {
                 ui.set_create_label_text("".into());
                 ui.set_create_label_valid(false);
-                ui.set_create_label_dialog_open(true);
+                ui.set_modal(Modal::CreateLabel);
             }
         });
     }
@@ -7865,7 +7865,7 @@ fn build_ui() -> MainWindow {
                     }
                 }
             }
-            ui.set_create_label_dialog_open(false);
+            close_modal(&ui, Modal::CreateLabel);
             ui.set_labels_page(false);
             let _ = current_mode.get();
         });
@@ -7886,7 +7886,7 @@ fn build_ui() -> MainWindow {
                 ui.set_rename_label_id(id);
                 ui.set_rename_label_text(current.into());
                 ui.set_rename_label_valid(true);
-                ui.set_rename_label_dialog_open(true);
+                ui.set_modal(Modal::RenameLabel);
             }
         });
     }
@@ -7927,7 +7927,7 @@ fn build_ui() -> MainWindow {
                     refresh_filter_label_items(&ui);
                 }
             }
-            ui.set_rename_label_dialog_open(false);
+            close_modal(&ui, Modal::RenameLabel);
             let _ = current_mode.get();
         });
     }
@@ -7942,7 +7942,7 @@ fn build_ui() -> MainWindow {
             {
                 ui.set_delete_label_id(id);
                 ui.set_delete_label_body(delete_label_impact_text(&ui, id as i64).into());
-                ui.set_delete_label_dialog_open(true);
+                ui.set_modal(Modal::DeleteLabel);
             }
         });
     }
@@ -7972,7 +7972,7 @@ fn build_ui() -> MainWindow {
                     }
                 }
             }
-            ui.set_delete_label_dialog_open(false);
+            close_modal(&ui, Modal::DeleteLabel);
             let _ = current_mode.get();
         });
     }
@@ -7990,7 +7990,7 @@ fn build_ui() -> MainWindow {
         let pending_deletes = pending_deletes.clone();
         ui.on_conflict_merge_tap(move || {
             let Some(ui) = weak.upgrade() else { return; };
-            ui.set_label_conflict_dialog_open(false);
+            close_modal(&ui, Modal::LabelConflict);
             let Some((base_id, suffixed_id, _)) =
                 slot.borrow_mut().take()
             else {
@@ -8020,7 +8020,7 @@ fn build_ui() -> MainWindow {
         let slot = label_conflict_slot.clone();
         ui.on_conflict_keep_tap(move || {
             let Some(ui) = weak.upgrade() else { return; };
-            ui.set_label_conflict_dialog_open(false);
+            close_modal(&ui, Modal::LabelConflict);
             let Some((_, _, uuid)) = slot.borrow_mut().take() else {
                 return;
             };
@@ -8109,7 +8109,7 @@ fn build_ui() -> MainWindow {
             if !ui.get_note_text().is_empty() {
                 // Silence the end bell while the question is up, as GTK does.
                 stop_active_signals();
-                ui.set_discard_dialog_open(true);
+                ui.set_modal(Modal::Discard);
                 return;
             }
             discard_now();
@@ -8117,7 +8117,7 @@ fn build_ui() -> MainWindow {
         let weak = ui.as_weak();
         ui.on_discard_confirm(move || {
             if let Some(ui) = weak.upgrade() {
-                ui.set_discard_dialog_open(false);
+                close_modal(&ui, Modal::Discard);
             }
             discard();
         });
@@ -8853,7 +8853,7 @@ fn build_ui() -> MainWindow {
                         &format!("prepare failed: {e:?}"),
                     ),
                 }
-                ui.set_recovery_dialog_open(false);
+                close_modal(&ui, Modal::Recovery);
                 refresh_sync_indicator(&ui);
             }
             let _ = weak.clone();
@@ -8903,7 +8903,7 @@ fn build_ui() -> MainWindow {
                         &format!("prepare failed: {e:?}"),
                     ),
                 }
-                ui.set_recovery_wipe_confirm_open(false);
+                close_modal(&ui, Modal::RecoveryWipeConfirm);
                 refresh_sync_indicator(&ui);
             }
         });
@@ -9056,7 +9056,7 @@ fn build_ui() -> MainWindow {
                         ui.global::<Tr>().invoke_delete_failed()
                     }
                 };
-                ui.set_delete_all_dialog_open(false);
+                close_modal(&ui, Modal::DeleteAll);
                 reset_log_feed(
                     &ui,
                     &loaded_log_sessions,
@@ -9324,7 +9324,7 @@ fn build_ui() -> MainWindow {
                         trigger_sync("indicator tap (retry)");
                     }
                     SyncIndicatorAction::OpenRecovery => {
-                        ui.set_recovery_dialog_open(true);
+                        ui.set_modal(Modal::Recovery);
                     }
                     SyncIndicatorAction::OpenPrefsData => {
                         ui.invoke_preferences_tap();
@@ -9431,51 +9431,13 @@ fn build_ui() -> MainWindow {
         // bell / vibration keeps playing after the page is gone.
         ui.on_back_pressed(move || {
             let Some(ui) = weak.upgrade() else { return; };
-            // Bug-audit #7: the Duration dialog + the three label
-            // dialogs had NO branch here — back used to close the
-            // page UNDERNEATH them (and the stranded Duration
-            // dialog could then mis-route its Set into the wrong
-            // context). Dialogs before pages, topmost first.
-            if ui.get_discard_dialog_open() {
-                ui.set_discard_dialog_open(false);
-                return;
-            }
-            if ui.get_interval_bell_delete_dialog_open() {
-                ui.set_interval_bell_delete_dialog_open(false);
-                return;
-            }
-            if ui.get_bell_rename_dialog_open() {
-                ui.set_bell_rename_dialog_open(false);
-                return;
-            }
-            if ui.get_bell_delete_dialog_open() {
-                ui.set_bell_delete_dialog_open(false);
-                return;
-            }
-            if ui.get_label_conflict_dialog_open() {
-                // Decide-later: no dismissal recorded, the prompt
-                // returns after the next sync.
-                ui.set_label_conflict_dialog_open(false);
-                return;
-            }
-            if ui.get_duration_dialog_open() {
-                ui.set_duration_dialog_open(false);
+            // A dialog is above every page; then pages, topmost first.
+            if ui.get_modal() != Modal::None {
+                dismiss_modal(&ui);
                 return;
             }
             if ui.get_filter_sheet_open() {
                 ui.set_filter_sheet_open(false);
-                return;
-            }
-            if ui.get_create_label_dialog_open() {
-                ui.set_create_label_dialog_open(false);
-                return;
-            }
-            if ui.get_rename_label_dialog_open() {
-                ui.set_rename_label_dialog_open(false);
-                return;
-            }
-            if ui.get_delete_label_dialog_open() {
-                ui.set_delete_label_dialog_open(false);
                 return;
             }
             // Bug-audit #8: the labels chooser is declared AFTER
@@ -9491,61 +9453,6 @@ fn build_ui() -> MainWindow {
                 hide_soft_keyboard();
                 *editing_session.borrow_mut() = None;
                 ui.set_edit_session_page(false);
-                return;
-            }
-            if ui.get_prep_dialog_open() {
-                ui.set_prep_dialog_open(false);
-                return;
-            }
-            // Preset modals first, then the preset chooser
-            // overlay (innermost-out, like the other layers).
-            if ui.get_rename_preset_dialog_open() {
-                ui.set_rename_preset_dialog_open(false);
-                return;
-            }
-            if ui.get_delete_preset_dialog_open() {
-                ui.set_delete_preset_dialog_open(false);
-                return;
-            }
-            if ui.get_create_preset_dialog_open() {
-                ui.set_create_preset_dialog_open(false);
-                return;
-            }
-            if ui.get_override_preset_dialog_open() {
-                ui.set_override_preset_dialog_open(false);
-                return;
-            }
-            // Recovery dialogs (SY-5) — topmost overlays.
-            if ui.get_recovery_wipe_confirm_open() {
-                ui.set_recovery_wipe_confirm_open(false);
-                return;
-            }
-            if ui.get_recovery_dialog_open() {
-                ui.set_recovery_dialog_open(false);
-                return;
-            }
-            // Guided import/rename dialogs + Preferences +
-            // Manage Files were missing from this chain (GM-F4 /
-            // SY-2 additions) — ordered top-of-z-stack first.
-            // Import dialog: back = Cancel, but NOT while a
-            // transcode is running (same gate as the scrim tap).
-            if ui.get_guided_import_dialog_open() {
-                if !ui.get_guided_import_busy() {
-                    ui.invoke_guided_import_cancel();
-                    ui.set_guided_import_dialog_open(false);
-                }
-                return;
-            }
-            if ui.get_guided_rename_dialog_open() {
-                ui.set_guided_rename_dialog_open(false);
-                return;
-            }
-            if ui.get_goal_dialog_open() {
-                ui.set_goal_dialog_open(false);
-                return;
-            }
-            if ui.get_delete_all_dialog_open() {
-                ui.set_delete_all_dialog_open(false);
                 return;
             }
             if ui.get_diag_page() {

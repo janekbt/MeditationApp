@@ -138,6 +138,7 @@ Planning only: nothing here has been changed yet. The audit ran on beta at a8a5d
 - **Tests:** pure tests that a new kind supersedes the old one, that `stop_all` reports the kind, and for the EOS routing (in app.rs).
 - **Risk:** S-M. Small behaviour change: one preview at a time across audio and haptics. GTK keeps a toggle per kind (gtk sounds.rs:32, vibrations.rs:179). It is harmless because the choosers are separate pages.
 - **Effort:** S-M
+- **Status:** done. Preview state is module-level and `stop_all_previews` stops all five kinds; the kind-tagged toggle and EOS routing were not needed for the bugs.
 
 ### R5 Android notice controller: one pending Undo instead of six slots and four toast flags
 - **Evidence:**
@@ -151,6 +152,7 @@ Planning only: nothing here has been changed yet. The audit ran on beta at a8a5d
 - **Tests:** a new notice commits the old one; Undo touches only its own kind; a session start drops a preset Undo. These replace several source-text tests.
 - **Risk:** M (delete and Undo timing; keep 5 s for deletes and 8 s for recovery). Needs a device run before the commit.
 - **Effort:** M
+- **Status:** done. `app::Notice` holds the one pending Undo; `show_notice` commits what it replaces; the four failure flags are gone; Pause makes the Undo final.
 
 ### R6 Android dialogs: one `Modal` enum and one ordered table for Back and close-all
 - **Evidence:**
@@ -172,6 +174,7 @@ Planning only: nothing here has been changed yet. The audit ran on beta at a8a5d
 - **Tests:** rewrite `discarding_a_note_and_deleting_a_bell_ask_first` (app.rs:2033); add pure Back-order tests and a test that close-all keeps a busy import.
 - **Risk:** M. Slint 1.16 supports enums in `if`, and dialogs stay where they are declared, so z-order is unchanged. Needs a device run.
 - **Effort:** M. Do it after R4 and R5.
+- **Status:** done. `enum Modal` and one `modal` property replace the 20 dialog booleans; Back and close-all call `dismiss_modal`. The `changed modal => focus` part became the general text-field focus fix (dd704f2). The label conflict only opens when no dialog is open; the recovery dialog opens only on a tap, so it needs no gate.
 
 ### R7 Android session lifecycle: one end path, then a session record
 - **Evidence:**
@@ -244,6 +247,7 @@ Planning only: nothing here has been changed yet. The audit ran on beta at a8a5d
 - **Bugs:** B3#17. GTK likely has it too: its Undo toast isn't dismissed on Start (imp.rs:3636-3667), which needs a device check. Also the clamp divergence.
 - **Risk:** low. GTK's `breathing_populating` guard must still prevent echo writes.
 - **Effort:** S + M
+- **Status:** step 1 done (a session start hides the preset Undo, both apps). Step 2 waits for step 5 of the order of work.
 - **Decision (2026-10-08):** step 1 does not refuse in core. Instead, a session start hides the preset Undo, so it can't be tapped during a session at all. Android needs one place for that on every start path (button, widget, starred preset), which R5's notice controller provides, so it is done with or right after R5. GTK can do it any time: dismiss `current_apply_toast` in its start path.
 
 ### R12 Sync runner into core; generic blob transfer in the orchestrator
