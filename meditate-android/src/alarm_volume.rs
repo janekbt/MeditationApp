@@ -67,7 +67,7 @@ mod tests {
     /// call passes the gain for that bell's own volume.
     #[test]
     fn every_bell_play_passes_its_own_volume() {
-        let lib = source("src/lib.rs");
+        let lib = source("src/ui.rs");
         let calls: Vec<&str> = lib
             .match_indices("audio::play(")
             .map(|(at, _)| lib[at..].split_once(';').unwrap().0)
@@ -82,7 +82,7 @@ mod tests {
 
     #[test]
     fn startup_measures_the_range_and_recovers_the_alarm_volume() {
-        let lib = source("src/lib.rs");
+        let lib = source("src/ui.rs");
         assert!(lib.contains("alarm_volume::set_range(audio::alarm_range_db(app))"));
         assert!(lib.contains("audio::recover_alarm_volume(app)"));
     }

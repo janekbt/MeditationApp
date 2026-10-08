@@ -21,7 +21,7 @@ split is structural, not a convention.
   to core's ISO 8601 strings.
 - **`meditate-android`** (`meditate-android/`) — parallel Slint +
   Material 3 shell consuming the same `meditate-core`. Rust UI
-  glue in `src/` (lib.rs hosts the handlers + tick loop), the
+  glue in `src/` (ui.rs hosts the handlers + tick loop), the
   declarative UI in `ui/main.slint` (vendored Material components
   in `material-1.0/`), platform verbs in Kotlin (`kotlin/`), and a
   hand-maintained Gradle project in `android/` (minSdk 26, target

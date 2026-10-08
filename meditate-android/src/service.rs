@@ -1,5 +1,5 @@
 //! JNI bridge to the Kotlin foreground service. Called from the
-//! AppState transition hooks in `lib.rs`: Idle → Active fires
+//! AppState transition hooks in `ui.rs`: Idle → Active fires
 //! `start(app)`, Active → Idle / Finished fires `stop(app)`.
 //!
 //! The Kotlin side lives at `kotlin/MeditateSessionService.kt`;

@@ -1,6 +1,6 @@
 // Pure Rust adapter sitting between meditate-core's Session state
 // machine and the Slint UI's properties / callbacks. Lifted out of
-// lib.rs so it's unit-testable without a Slint runtime.
+// ui.rs so it's unit-testable without a Slint runtime.
 //
 // Sits one level above `meditate_core::session::Session`: the
 // adapter exposes the four-state Idle/Active/Finished UI model the
@@ -358,7 +358,7 @@ impl Transition {
     }
     /// Done-screen Save / Discard — a pure UI transition with no
     /// core effects, so it returns the bare `AppState` (keeps the
-    /// `lib.rs` `*s = …dismiss();` sites unchanged).
+    /// `ui.rs` `*s = …dismiss();` sites unchanged).
     pub fn dismiss(self) -> AppState {
         self.state.dismiss()
     }
@@ -435,7 +435,7 @@ impl AppState {
                 // with no cues. The Android shell does NOT take
                 // this path to start — it calls `start_session`
                 // with DB-built settings so core has the real
-                // bell config (see lib.rs).
+                // bell config (see ui.rs).
                 Self::start_session(
                     SessionSettings {
                         shape,
@@ -467,7 +467,7 @@ impl AppState {
     /// double-tap or stale callback is cheap. The actual persistence
     /// decision happens later on the Done screen via `dismiss` (the
     /// Android shell stores the in-flight unix_start + elapsed in
-    /// `lib.rs` cells; Finished is just a UI marker here).
+    /// `ui.rs` cells; Finished is just a UI marker here).
     pub fn stop(self, now: Duration) -> Transition {
         match self {
             // Core's `Session::stop` emits `StopActiveSignals` (cut
@@ -486,7 +486,7 @@ impl AppState {
 
     /// Done-screen Save or Discard tap. Always returns to Idle. The
     /// Save vs Discard difference (write DB row or not) is handled
-    /// in `lib.rs` before this call; AppState itself only models the
+    /// in `ui.rs` before this call; AppState itself only models the
     /// UI screen transition.
     pub fn dismiss(self) -> Self {
         match self {
@@ -777,7 +777,7 @@ mod tests {
     /// Guided and Box Breath because the mode never reached core).
     #[test]
     fn every_session_takes_its_bells_from_core_with_its_mode() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui.rs");
         let source = std::fs::read_to_string(path).unwrap();
         for literal in ["bells: Vec::new()", "bells: vec![]", "starting_bell: None"] {
             assert!(!source.contains(literal), "found `{literal}`");
@@ -846,7 +846,7 @@ mod tests {
     /// the effects of the transition `start_session` returns.
     #[test]
     fn the_shell_dispatches_the_start_effects() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui.rs");
         let lib = std::fs::read_to_string(path).unwrap();
         assert_eq!(lib.matches("AppState::start_session(").count(), 1);
         let call = lib.find("AppState::start_session(").unwrap();
@@ -874,7 +874,7 @@ mod tests {
     /// rule (GTK uses it too); the shell only spawns the worker.
     #[test]
     fn sync_requests_go_through_the_core_coordinator() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui.rs");
         let lib = std::fs::read_to_string(path).unwrap();
         let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
         assert!(!code.contains("SYNC_IN_FLIGHT"), "the old drop-if-busy flag is gone");
@@ -909,7 +909,7 @@ mod tests {
     /// (`SyncStats::brought_changes`); the shell re-reads.
     #[test]
     fn screens_re_read_after_a_sync_brings_changes() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui.rs");
         let lib = std::fs::read_to_string(path).unwrap();
         let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
         let body_of = |sig: &str| {
@@ -972,7 +972,7 @@ mod tests {
     /// that aren't a synced write stay explicit.
     #[test]
     fn local_changes_start_a_sync_from_one_place() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui.rs");
         let lib = std::fs::read_to_string(path).unwrap();
         let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
 
@@ -1008,7 +1008,7 @@ mod tests {
     /// reports a resume at launch too, so one trigger covers both.
     #[test]
     fn the_app_syncs_whenever_it_comes_to_the_foreground() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui.rs");
         let lib = std::fs::read_to_string(path).unwrap();
         let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
 
@@ -1039,7 +1039,7 @@ mod tests {
         assert!(guided.contains("\"(Landroid/content/Context;Ljava/lang/String;)Z\""), "JNI reads the result");
         assert!(guided.contains("pub fn play(app: &AndroidApp, path: &str) -> bool"));
 
-        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
         let first_play = code.find("guided::play(app, &sel.path)").expect("session start plays the track");
         let session_start = code.find("AppState::start_session(").expect("session start");
@@ -1076,7 +1076,7 @@ mod tests {
     /// snapshot at start and records the file).
     #[test]
     fn the_recovery_snapshot_is_written_at_start_and_names_the_guided_file() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui.rs");
         let lib = std::fs::read_to_string(path).unwrap();
         let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
 
@@ -1102,7 +1102,7 @@ mod tests {
     /// `stop_active_signals` in on_save / on_discard.
     #[test]
     fn leaving_the_done_screen_stops_ringing_signals() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui.rs");
         let lib = std::fs::read_to_string(path).unwrap();
         let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
 
@@ -1124,7 +1124,7 @@ mod tests {
     /// comes before the end bell when the session enters Overtime.
     #[test]
     fn guided_track_stops_on_cores_signal() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui.rs");
         let lib = std::fs::read_to_string(path).unwrap();
         let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
         let dispatch = code.find("fn dispatch_effects(").expect("dispatcher");
@@ -1153,7 +1153,7 @@ mod tests {
     #[test]
     fn bells_ring_on_their_own_channels() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
         let dispatch = code.find("fn dispatch_effects(").unwrap();
         let dispatch = &code[dispatch..dispatch + code[dispatch..].find("\n}\n").unwrap()];
@@ -1188,7 +1188,7 @@ mod tests {
     #[test]
     fn a_failed_save_keeps_the_session_and_says_so() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
 
         let finalize = code.find("fn finalize_session(").unwrap();
@@ -1226,7 +1226,7 @@ mod tests {
     #[test]
     fn a_preset_that_cannot_apply_says_so() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
 
         let outer = code.find("fn apply_preset_json(").unwrap();
@@ -1270,7 +1270,7 @@ mod tests {
     /// (as on GTK), so a preset saved then pins the label.
     #[test]
     fn label_toggle_uses_cores_rule() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui.rs");
         let lib = std::fs::read_to_string(path).unwrap();
         let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
         let write = code.find("fn write_label_active_for_mode(").unwrap();
@@ -1285,7 +1285,7 @@ mod tests {
     #[test]
     fn an_oversized_bell_file_is_refused() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
         let pick = code.find("guided::take_pending_sound_pick(app)").unwrap();
         let arm = &code[pick..pick + code[pick..].find("Some(Err(e)) =>").unwrap()];
@@ -1305,7 +1305,7 @@ mod tests {
     #[test]
     fn a_deleted_sound_or_pattern_shows_missing() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
         let text = code.find("fn resolved_name_text(").expect("one mapping");
         let text = &code[text..text + code[text..].find("\n}\n").unwrap()];
@@ -1328,7 +1328,7 @@ mod tests {
     #[test]
     fn stopwatch_drives_the_end_bell_row_and_the_bell_count() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
         let body = |f: &str| {
             let at = code.find(f).unwrap_or_else(|| panic!("{f}"));
@@ -1367,7 +1367,7 @@ mod tests {
     #[test]
     fn every_export_failure_says_so() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
         let tap = code.find("ui.on_data_export_tap(").unwrap();
         let tap = &code[tap..tap + code[tap..].find("\n        });").unwrap()];
@@ -1424,7 +1424,7 @@ mod tests {
     #[test]
     fn the_interval_editor_takes_cores_values() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
         let create = code.find("ui.on_create_interval_bell_tap(").unwrap();
         let create = &code[create..create + 2000];
@@ -1496,7 +1496,7 @@ mod tests {
     #[test]
     fn log_sections_render_through_core() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
         assert!(!code.contains("fn format_date_group_display("), "no raw YYYY-MM-DD header");
         let text = code.find("fn day_header_text(").expect("one header renderer");
@@ -1684,7 +1684,7 @@ mod tests {
     fn log_cards_name_the_guided_file() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
-        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
 
         let item = slint.find("export struct LogCardItem {").unwrap();
         assert!(slint[item..item + 800].contains("guided-name: string,"));
@@ -1772,7 +1772,7 @@ mod tests {
     #[test]
     fn deleting_a_guided_file_stops_its_preview() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let at = lib.find("ui.on_guided_manage_delete_tap(").unwrap();
         let body = &lib[at..at + lib[at..].find("\n        });").unwrap()];
         assert!(body.contains("if ui.get_guided_manage_preview_uuid() == uuid {"));
@@ -1782,7 +1782,7 @@ mod tests {
     #[test]
     fn deleting_a_preset_keeps_manage_presets_open() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let at = lib.find("ui.on_delete_preset_confirm(").unwrap();
         let body = &lib[at..at + lib[at..].find("\n        });").unwrap()];
         assert!(!body.contains("ui.set_preset_chooser_page(false);"));
@@ -1796,7 +1796,7 @@ mod tests {
         // After saving a pattern, the chooser ticked it although the
         // bell still used its old pattern.
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let at = lib.find("ui.on_vibration_editor_save(").unwrap();
         let save = &lib[at..at + lib[at..].find("\n        });").unwrap()];
         assert!(save.contains("populate_pattern_chooser(&ui, &ticked);"));
@@ -1810,7 +1810,7 @@ mod tests {
         // but headers the start instant in today's zone: after a
         // time-zone change a 23:30 card sat under the next day.
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let at = lib.find("fn group_log_sessions(").unwrap();
         let group = &lib[at..at + lib[at..].find("\n}\n").unwrap()];
         assert!(group.contains("meditate_core::format::date_group_key(start_unix)"));
@@ -1824,7 +1824,7 @@ mod tests {
         // only on custom (non-bundled) rows, behind a confirmation.
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
-        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
 
         let choice = slint.find("export struct SoundChoice {").expect("row struct");
         assert!(slint[choice..choice + 300].contains("deletable: bool,"));
@@ -1882,7 +1882,7 @@ mod tests {
         // reached its end early and forced overtime. Both pause
         // paths (the Pause button and focus loss) share one helper.
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         assert!(lib.contains("fn guided_follows_pause(app: &slint::android::AndroidApp, state: &AppState)"));
         assert_eq!(lib.matches("guided_follows_pause(app, &").count(), 2);
         let at = lib.find("if guided::take_focus_loss(app)").unwrap();
@@ -1901,7 +1901,7 @@ mod tests {
         assert!(slint[at - 500..at].contains("width: 52px;\n                                    height: 32px;"), "fixed-size like the other switches");
         assert!(slint.contains("checked: item.enabled;"));
         assert!(slint.contains("enabled: item.sensitive;"));
-        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let at = lib.find("fn populate_interval_bells(").unwrap();
         let body = &lib[at..at + lib[at..].find("\n}\n").unwrap()];
         assert!(body.contains("meditate_core::bells::bell_row_switch_state("));
@@ -1922,7 +1922,7 @@ mod tests {
         for w in ["Streak", "Total", "Sessions"] {
             assert!(!slint.contains(&format!("caption: \"{w}\"")), "{w}");
         }
-        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         for literal in ["\"Breathe in\"", "\"Breathe out\"", "\"{} copy\"", "\"Meditate diagnostics log\"", "older entries truncated"] {
             assert!(!lib.contains(literal), "{literal}");
         }
@@ -1947,7 +1947,7 @@ mod tests {
         // a failed create used up the settings snapshot, so Create
         // did nothing on retry.
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let at = lib.find("update_preset_config FAILED").unwrap();
         let next = &lib[at..at + 400];
         assert!(next.contains("return;"));
@@ -1960,7 +1960,7 @@ mod tests {
         // A failed Delete All closed its dialog with the Log looking
         // unchanged and no word why; GTK toasts both outcomes.
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let at = lib.find("ui.on_delete_all_confirm(").unwrap();
         let body = &lib[at..at + lib[at..].find("\n        });").unwrap()];
         assert!(body.contains("invoke_deleted_all_n(n as i32)"));
@@ -1975,7 +1975,7 @@ mod tests {
         let at = kt.find("private fun copyInCsv(").unwrap();
         let body = &kt[at..at + kt[at..].find("\n    }\n").unwrap()];
         assert!(body.contains("\"err:\" + (e.message ?: e.javaClass.simpleName)"));
-        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         assert!(lib.contains("Err(e) => (Err(format!(\"copy FAILED: {e}\")), \"?\".into()),"));
     }
 
@@ -1986,7 +1986,7 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
         assert!(slint.contains("enabled: root.guided-name != \"\" && !root.guided-pick-in-library;"));
-        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         // Every place that changes the pick says whether it's a library row.
         assert_eq!(
             lib.matches("ui.set_guided_name(").count(),
@@ -2001,7 +2001,7 @@ mod tests {
         // message sat under the dialog backdrop. Either way the dialog
         // stayed open with its source used up, so Import did nothing.
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let at = lib.find("let outcome = if kind == 1 {").unwrap();
         let rest = &lib[at..at + 6000];
         let close = rest.find("ui.set_guided_import_dialog_open(false);\n                            match outcome {").unwrap();
@@ -2014,7 +2014,7 @@ mod tests {
         // Two deletes inside the Undo window overwrote the pending one,
         // and the first file stayed on disk with no library entry.
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let at = lib.find("*pending_guided_delete.borrow_mut() = Some((").unwrap();
         assert!(lib[at - 300..at].contains("discard_pending_guided_delete(&pending_guided_delete);"));
     }
@@ -2024,7 +2024,7 @@ mod tests {
         // After a mode switch, Undo refreshed the chips with the
         // override's mode, so Setup listed the other mode's presets.
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let at = lib.find("pending_override_restore.borrow_mut().take()\n                {").unwrap();
         let branch = &lib[at..at + lib[at..].find("return;\n                }").unwrap()];
         assert!(branch.contains("refresh_preset_chips(&ui, core_mode);"));
@@ -2036,7 +2036,7 @@ mod tests {
         // its note without a word; the trash icon deleted a bell on one
         // tap. Both ask first, like GTK.
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
         let at = lib.find("ui.on_discard_tap(").unwrap();
         let tap = &lib[at..at + lib[at..].find("\n        });").unwrap()];
@@ -2066,7 +2066,7 @@ mod tests {
         // the chooser's tick to the Setup label; a deleted filter label
         // left the Log filtering on nothing.
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let at = lib.find("fn refresh_after_label_change(").unwrap();
         let helper = &lib[at..at + lib[at..].find("\n}\n").unwrap()];
         assert!(helper.contains("ui.set_edit_label_enabled(false);"));
@@ -2094,7 +2094,7 @@ mod tests {
         // A note-only edit turned 20m34s into 20m00s, and Add saved a
         // 0-second session. Both go through core's duration rule.
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         assert!(lib.contains("meditate_core::format::log_edit_duration_secs("));
         assert!(!lib.contains("(hours * 3600 + mins * 60).max(0)"));
         assert!(lib.contains("ui.set_edit_original_secs(0);"));
@@ -2109,7 +2109,7 @@ mod tests {
         // between reset the feed to page 1 and an older row's edit
         // was silently dropped. The row is captured on open.
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         assert!(lib.contains("*editing_session.borrow_mut() = Some((id, session.clone()));"));
         let at = lib.find("ui.on_edit_save_tap(").unwrap();
         let save = &lib[at..at + lib[at..].find("ui.set_edit_session_page(false);").unwrap()];
@@ -2192,7 +2192,7 @@ mod tests {
         // landed inside a multi-byte character, and the app aborts on
         // panic. The tail now comes from core's char-safe helper.
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         assert!(lib.contains("meditate_core::diag::display_tail(&full, TAIL)"));
         assert!(!lib.contains("let cut = full.len() - TAIL;"));
     }
@@ -2213,7 +2213,7 @@ mod tests {
 
     #[test]
     fn the_shell_holds_an_ended_session_until_save_or_discard() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui.rs");
         let lib = std::fs::read_to_string(path).unwrap();
         let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
         // The hold helper itself clears when there is nothing to keep;
@@ -2264,7 +2264,7 @@ mod tests {
     /// heartbeat).
     #[test]
     fn snapshot_writers_build_the_snapshot_before_locking_the_db() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui.rs");
         let lib = std::fs::read_to_string(path).unwrap();
         for writer in ["fn write_session_in_progress_snapshot(", "fn hold_ended_session_snapshot("] {
             let start = lib.find(writer).unwrap_or_else(|| panic!("{writer} not found"));
@@ -2312,7 +2312,7 @@ mod tests {
     /// imports.
     #[test]
     fn local_times_are_converted_by_core() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui.rs");
         let lib = std::fs::read_to_string(path).unwrap();
         let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
         for own in ["with_ymd_and_hms(", "from_local_datetime("] {
@@ -2722,7 +2722,7 @@ mod tests {
     #[test]
     fn the_shell_posts_and_clears_the_completion_notice() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let lib = std::fs::read_to_string(root.join("src/lib.rs")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
         let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
         // Both natural ends: the tick crossing and the guided track's EOS.
         assert_eq!(code.matches("notify_if_complete(&t.state, &t.effects);").count()
@@ -2785,7 +2785,7 @@ mod tests {
     /// effect, not from the shell's own clock arithmetic.
     #[test]
     fn the_shell_saves_cores_duration_on_every_end() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui.rs");
         let lib = std::fs::read_to_string(path).unwrap();
         let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
         assert!(!code.contains("fn end_session_duration("), "one helper, in app.rs");
