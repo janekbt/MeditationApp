@@ -2,7 +2,7 @@
 //!
 //! Counterpart to `sync_roundtrip.rs`: these scenarios cross multiple
 //! crate modules through the public surface (DB CRUD + preset_config +
-//! CSV + the event-log-as-source-of-truth invariant) but never touch
+//! the event-log-as-source-of-truth invariant) but never touch
 //! the sync orchestrator or `FakeWebDav`. They cover the flows a user
 //! exercises on their phone before any peer is involved — and the
 //! recovery primitives that fire when something has gone wrong.
@@ -10,8 +10,6 @@
 //! Tests run on file-based databases under `tempfile::TempDir` so the
 //! close-reopen scenario is testing real on-disk persistence, not
 //! just the in-memory connection cache.
-
-use std::io::Cursor;
 
 use meditate_core::db::{
     list_labels_from_db, list_presets_for_mode_from_db, list_sessions_from_db,
@@ -34,105 +32,6 @@ fn open_test_db(
     let db = Database::open(&path).expect("open db");
     db.seed_all_non_audio().expect("seed");
     (db, path)
-}
-
-// ── Scenario 1: CSV export → wipe → import preserves every session ────────
-
-#[test]
-fn csv_export_then_wipe_then_import_preserves_every_session() {
-    // Janek's backup-and-restore path: the user exports their
-    // session history to a CSV, something destroys their local
-    // sessions table (uninstall, factory reset, bug), and an
-    // import restores everything. The format is 5 columns:
-    // start_iso, duration_secs, label_name, notes, mode. Label
-    // associations resolve by NAME (not UUID), so labels with the
-    // same name on both sides round-trip even if their internal
-    // rowids/UUIDs don't.
-    let tempdir = tempfile::tempdir().expect("tempdir");
-    let (db, _) = open_test_db(&tempdir, "csv");
-
-    let practice = db.insert_label("Practice").expect("label 1");
-    let evening = db.insert_label("Evening").expect("label 2");
-
-    // Five sessions, varied along every column the CSV format
-    // carries: labeled and unlabeled, with and without notes, Timer
-    // and BoxBreath modes, distinct durations.
-    let originals = [
-        ("2026-04-01T07:30:00", 600u32, Some(practice), None, SessionMode::Timer),
-        ("2026-04-02T08:15:00", 900, Some(practice), Some("focused"), SessionMode::Timer),
-        ("2026-04-03T20:00:00", 300, Some(evening), None, SessionMode::BoxBreath),
-        ("2026-04-04T20:30:00", 1200, Some(evening), Some("difficult night"), SessionMode::BoxBreath),
-        ("2026-04-05T07:00:00", 450, None, Some("travel sit"), SessionMode::Timer),
-    ];
-    for (start, dur, label, notes, mode) in originals {
-        db.insert_session(&Session {
-            start_iso: start.into(),
-            duration_secs: dur,
-            label_id: label,
-            notes: notes.map(str::to_string),
-            mode,
-            uuid: meditate_core::db::SessionUuid::new(""),
-            guided_file_uuid: None,
-        })
-        .expect("insert original");
-    }
-    assert_eq!(list_sessions_from_db(&db).unwrap().len(), 5);
-
-    // Export to bytes via the Write trait.
-    let mut csv_bytes = Vec::<u8>::new();
-    db.export_sessions_csv(&mut csv_bytes).expect("export");
-    assert!(!csv_bytes.is_empty(), "CSV must have content");
-
-    // Wipe — the "I lost my data" disaster the import is meant to
-    // recover from. Labels deliberately survive (the CSV's label
-    // column is by-name, so leaving labels intact is the realistic
-    // path; the import-side `find_or_create_label` handles the
-    // missing-label case too).
-    let wiped = db.delete_all_sessions().expect("wipe sessions");
-    assert_eq!(wiped, 5);
-    assert_eq!(list_sessions_from_db(&db).unwrap().len(), 0);
-
-    // Import back from the bytes we just exported.
-    let imported = db
-        .import_sessions_csv(Cursor::new(csv_bytes))
-        .expect("import");
-    assert_eq!(imported, 5, "every row must round-trip");
-
-    // Every field must match the originals — order is preserved
-    // because export sorts by rowid (insertion order) and import
-    // walks the CSV top-to-bottom.
-    let restored = list_sessions_from_db(&db).unwrap();
-    assert_eq!(restored.len(), 5);
-    for ((_id, s), (orig_start, orig_dur, orig_label, orig_notes, orig_mode))
-        in restored.iter().zip(originals.iter())
-    {
-        assert_eq!(s.start_iso, *orig_start);
-        assert_eq!(s.duration_secs, *orig_dur);
-        assert_eq!(s.mode, *orig_mode);
-        assert_eq!(s.notes.as_deref(), *orig_notes,
-            "notes round-trip for start_iso={}", s.start_iso);
-
-        // Label round-trips by NAME — the rowid may have changed
-        // (insertion-order ids on import path), so look up by name.
-        let expected_label_name = orig_label.map(|rowid| {
-            list_labels_from_db(&db)
-                .unwrap()
-                .into_iter()
-                .find(|l| l.id == rowid)
-                .map(|l| l.name)
-                .expect("original label still in DB")
-        });
-        let restored_label_name = s.label_id.map(|rowid| {
-            list_labels_from_db(&db)
-                .unwrap()
-                .into_iter()
-                .find(|l| l.id == rowid)
-                .map(|l| l.name)
-                .expect("restored label resolves")
-        });
-        assert_eq!(restored_label_name, expected_label_name,
-            "label name must round-trip for start_iso={}", s.start_iso);
-    }
 }
 
 // ── Scenario 2: cache is a pure function of the event log ─────────────────
@@ -379,14 +278,6 @@ fn preset_config_round_trips_through_db_and_drives_a_session() {
     let by_label = list_sessions_for_label_from_db(&db, label_rowid)
         .expect("by-label list");
     assert_eq!(by_label.len(), 1, "session attributed to label");
-    let label_counts = meditate_core::db::count_sessions_by_label_from_db(&db)
-        .expect("count by label");
-    let mindful_count = label_counts
-        .iter()
-        .find(|(name, _)| name.as_deref() == Some("Mindful"))
-        .map(|(_, c)| *c)
-        .unwrap_or(0);
-    assert_eq!(mindful_count, 1, "label aggregation reflects the new session");
 }
 
 // ── Scenario 4: SessionFilter shapes return correct subsets ───────────────

@@ -3,7 +3,6 @@
 //! buckets, label aggregates, longest session, etc.) and CSV
 //! import/export.
 
-use std::io::{Read, Write};
 
 use rusqlite::{params, OptionalExtension};
 
@@ -131,10 +130,7 @@ pub fn count_sessions_from_db(db: &Database) -> Result<i64> {
         .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))?)
 }
 pub fn get_best_streak_from_db(db: &Database) -> Result<u32> {
-    db.best_streak_filtered(None)
-}
-pub fn get_best_streak_for_label_from_db(db: &Database, label_id: i64) -> Result<u32> {
-    db.best_streak_filtered(Some(label_id))
+    db.best_streak()
 }
 /// Lower-median session duration in seconds, or `None` when the
 /// sessions table is empty. The `Option` distinguishes "no data
@@ -167,13 +163,7 @@ pub fn get_running_average_secs_from_db(db: &Database, today: chrono::NaiveDate,
     Ok(total as f64 / f64::from(days))
 }
 pub fn get_daily_totals_from_db(db: &Database) -> Result<Vec<(chrono::NaiveDate, i64)>> {
-    db.daily_totals_filtered(None)
-}
-pub fn get_daily_totals_for_label_from_db(
-    db: &Database,
-    label_id: i64,
-) -> Result<Vec<(chrono::NaiveDate, i64)>> {
-    db.daily_totals_filtered(Some(label_id))
+    db.daily_totals()
 }
 /// Same shape as `get_daily_totals`, but only days on or after
 /// `since`. Pushes the date filter into the SQL `WHERE` instead
@@ -211,10 +201,7 @@ pub fn get_daily_totals_since_from_db(
     Ok(totals)
 }
 pub fn get_streak_from_db(db: &Database, today: chrono::NaiveDate) -> Result<u32> {
-    db.streak_filtered(today, None)
-}
-pub fn get_streak_for_label_from_db(db: &Database, today: chrono::NaiveDate, label_id: i64) -> Result<u32> {
-    db.streak_filtered(today, Some(label_id))
+    db.streak(today)
 }
 /// The longest single session — `(id, Session)`, or None on empty DB.
 /// Tie-break is unspecified (whichever SQLite returns first); callers
@@ -348,23 +335,6 @@ pub fn total_seconds_from_db(db: &Database) -> Result<i64> {
         |row| row.get(0),
     )?)
 }
-pub fn total_minutes_from_db(db: &Database) -> Result<i64> {
-    Ok(total_seconds_from_db(db)? / 60)
-}
-/// Per-label session count. `None` represents unlabeled sessions.
-pub fn count_sessions_by_label_from_db(db: &Database) -> Result<Vec<(Option<String>, i64)>> {
-    let mut stmt = db.conn.prepare(
-        "SELECT l.name, COUNT(*)
-         FROM sessions s
-         LEFT JOIN labels l ON s.label_id = l.id
-         GROUP BY l.name
-         ORDER BY l.name",
-    )?;
-    let rows = stmt
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    Ok(rows)
-}
 /// Per-label `(name, total_secs, session_count)` ordered by total
 /// seconds DESC, ties broken by name NOCASE ASC. Excludes unlabeled
 /// sessions AND labels with zero sessions (INNER JOIN drops both).
@@ -381,24 +351,6 @@ pub fn label_totals_seconds_from_db(db: &Database) -> Result<Vec<(String, i64, i
     )?;
     let rows = stmt
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    Ok(rows)
-}
-/// Per-label total minutes. `None` represents unlabeled sessions.
-pub fn total_minutes_by_label_from_db(db: &Database) -> Result<Vec<(Option<String>, i64)>> {
-    let mut stmt = db.conn.prepare(
-        "SELECT l.name, SUM(s.duration_secs) / 60
-         FROM sessions s
-         LEFT JOIN labels l ON s.label_id = l.id
-         GROUP BY l.name
-         ORDER BY l.name",
-    )?;
-    let rows = stmt
-        .query_map([], |row| {
-            let name: Option<String> = row.get(0)?;
-            let mins: i64 = row.get(1)?;
-            Ok((name, mins))
-        })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(rows)
 }
@@ -717,8 +669,8 @@ impl Database {
 
 
 
-    fn best_streak_filtered(&self, label_filter: Option<i64>) -> Result<u32> {
-        let days = self.distinct_session_days_ascending(label_filter)?;
+    fn best_streak(&self) -> Result<u32> {
+        let days = self.distinct_session_days_ascending()?;
         if days.is_empty() {
             return Ok(0);
         }
@@ -738,112 +690,13 @@ impl Database {
         Ok(best)
     }
 
-    pub fn import_sessions_csv<R: Read>(&self, reader: R) -> Result<usize> {
-        let mut rdr = csv::Reader::from_reader(reader);
-        let mut count = 0;
-        for record in rdr.records() {
-            let record = record.map_err(|e| DbError::Decode(e.to_string()))?;
-            let start_iso = record
-                .get(0)
-                .ok_or_else(|| DbError::Decode("missing start_iso".to_string()))?
-                .to_string();
-            // Validate the timestamp before storing — `local_iso_to_unix`
-            // returns 0 on parse failure / out-of-range year. Without
-            // this gate a garbage row would persist; stats paths filter
-            // it back out silently via `parse_from_str(...).ok()`, so
-            // the row would vanish from totals while still counting
-            // toward `count_sessions` and `get_longest_session`.
-            if crate::time::local_iso_to_unix(&start_iso) == 0 {
-                return Err(DbError::Decode(format!(
-                    "bad start_iso: {start_iso:?}"
-                )));
-            }
-            let duration_secs: u32 = record
-                .get(1)
-                .unwrap_or("")
-                .parse()
-                .map_err(|_| DbError::Decode("bad duration_secs".to_string()))?;
-            let label = record
-                .get(2)
-                .map(str::to_string)
-                .filter(|s| !s.is_empty());
-            let notes = record
-                .get(3)
-                .map(str::to_string)
-                .filter(|s| !s.is_empty());
-            let mode_str = record.get(4).unwrap_or("timer");
-            let mode = SessionMode::from_db_str(mode_str)
-                .ok_or_else(|| DbError::Decode(format!("unknown mode: {mode_str}")))?;
-
-            let label_id = match label {
-                Some(name) => Some(self.find_or_create_label(&name)?),
-                None => None,
-            };
-
-            self.insert_session(&Session {
-                start_iso,
-                duration_secs,
-                label_id,
-                notes,
-                mode,
-                uuid: super::SessionUuid::new(""),
-                guided_file_uuid: None,
-            })?;
-            count += 1;
-        }
-        Ok(count)
-    }
-
-    pub fn export_sessions_csv<W: Write>(&self, writer: W) -> Result<()> {
-        let mut wtr = csv::Writer::from_writer(writer);
-        wtr.write_record(["start_iso", "duration_secs", "label", "notes", "mode"])
-            .map_err(|e| DbError::Decode(e.to_string()))?;
-
-        let mut stmt = self.conn.prepare(
-            "SELECT s.start_iso, s.duration_secs, l.name, s.notes, s.mode
-             FROM sessions s
-             LEFT JOIN labels l ON s.label_id = l.id
-             ORDER BY s.id",
-        )?;
-        let rows = stmt.query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, u32>(1)?,
-                row.get::<_, Option<String>>(2)?,
-                row.get::<_, Option<String>>(3)?,
-                row.get::<_, String>(4)?,
-            ))
-        })?;
-        for row in rows {
-            let (start, dur, label, notes, mode) = row?;
-            wtr.write_record([
-                &start,
-                &dur.to_string(),
-                label.as_deref().unwrap_or(""),
-                notes.as_deref().unwrap_or(""),
-                &mode,
-            ])
-            .map_err(|e| DbError::Decode(e.to_string()))?;
-        }
-        wtr.flush().map_err(|e| DbError::Decode(e.to_string()))?;
-        Ok(())
-    }
-
-
-
-
-
-
     /// Sum of `duration_secs` grouped by start date (`SUBSTR(start_iso,
     /// 1, 10)`). A session that began at 23:55 and ran 30 minutes
     /// attributes the full 30 minutes to the start date — none of it
     /// is split into the next day. Matches the `hour_buckets`
     /// attribution rule (see its doc comment) and the peer-app
     /// convention. Intended behaviour.
-    fn daily_totals_filtered(
-        &self,
-        label_filter: Option<i64>,
-    ) -> Result<Vec<(chrono::NaiveDate, i64)>> {
+    fn daily_totals(&self) -> Result<Vec<(chrono::NaiveDate, i64)>> {
         // `prepare_cached`: fires on every Stats / Insights / contrib
         // heatmap / streak refresh — among the hottest reads in the
         // crate. Caching the parse is free on the first call and
@@ -851,12 +704,11 @@ impl Database {
         let mut stmt = self.conn.prepare_cached(
             "SELECT SUBSTR(start_iso, 1, 10) AS day, SUM(duration_secs)
              FROM sessions
-             WHERE ?1 IS NULL OR label_id = ?1
              GROUP BY day
              ORDER BY day",
         )?;
         let totals = stmt
-            .query_map(params![label_filter], |row| {
+            .query_map([], |row| {
                 let day_str: String = row.get(0)?;
                 let total_secs: i64 = row.get(1)?;
                 Ok((day_str, total_secs))
@@ -872,20 +724,16 @@ impl Database {
         Ok(totals)
     }
 
-    fn distinct_session_days_ascending(
-        &self,
-        label_filter: Option<i64>,
-    ) -> Result<Vec<chrono::NaiveDate>> {
+    fn distinct_session_days_ascending(&self) -> Result<Vec<chrono::NaiveDate>> {
         // `prepare_cached`: streak refresh on every Setup view open
         // + every Stats tab open. Same hotness profile as
-        // `daily_totals_filtered` above.
+        // `daily_totals` above.
         let mut stmt = self.conn.prepare_cached(
             "SELECT DISTINCT SUBSTR(start_iso, 1, 10) FROM sessions
-             WHERE ?1 IS NULL OR label_id = ?1
              ORDER BY 1",
         )?;
         let days = stmt
-            .query_map(params![label_filter], |row| row.get::<_, String>(0))?
+            .query_map([], |row| row.get::<_, String>(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?
             .into_iter()
             .filter_map(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok())
@@ -895,12 +743,8 @@ impl Database {
 
 
 
-    fn streak_filtered(
-        &self,
-        today: chrono::NaiveDate,
-        label_filter: Option<i64>,
-    ) -> Result<u32> {
-        let days = self.distinct_session_days_ascending(label_filter)?;
+    fn streak(&self, today: chrono::NaiveDate) -> Result<u32> {
+        let days = self.distinct_session_days_ascending()?;
         let Some(&most_recent) = days.last() else {
             return Ok(0);
         };
@@ -2452,25 +2296,6 @@ mod tests {
         assert_eq!(total_seconds_from_db(&db).unwrap(), 600 + 1245 + 17);
     }
 
-    #[test]
-    fn total_minutes_agrees_with_total_seconds_div_60() {
-        // After refactoring total_minutes to delegate to total_seconds,
-        // the contract is: minutes = seconds / 60 (integer division).
-        let db = Database::open_in_memory().unwrap();
-        for &secs in &[59i64, 60, 61, 119, 120, 600, 1245] {
-            db.insert_session(&Session {
-                start_iso: format!("2026-04-27T10:{:02}:00Z", secs % 60),
-                duration_secs: secs as u32, label_id: None, notes: None,
-                mode: SessionMode::Timer,
-                uuid: crate::db::SessionUuid::new(""),
-                guided_file_uuid: None,
-            }).unwrap();
-        }
-        let secs = total_seconds_from_db(&db).unwrap();
-        let mins = total_minutes_from_db(&db).unwrap();
-        assert_eq!(mins, secs / 60);
-    }
-
     // ── query_sessions: rich filter for the log feed ──────────────────────────
 
     #[test]
@@ -3344,122 +3169,6 @@ mod tests {
         assert_eq!(rows, vec![(id, labeled)]);
     }
 
-    #[test]
-    fn total_minutes_sums_durations_across_sessions() {
-        let db = Database::open_in_memory().unwrap();
-        let session_with_dur = |dur_secs| Session {
-            start_iso: "2026-04-27T10:00:00Z".to_string(),
-            duration_secs: dur_secs,
-            label_id: None,
-            notes: None,
-            mode: SessionMode::Timer,
-            uuid: crate::db::SessionUuid::new(""),
-            guided_file_uuid: None,
-        };
-        db.insert_session(&session_with_dur(600)).unwrap(); // 10 min
-        db.insert_session(&session_with_dur(900)).unwrap(); // 15 min
-        assert_eq!(total_minutes_from_db(&db).unwrap(), 25);
-    }
-
-    #[test]
-    fn total_minutes_is_zero_for_empty_db() {
-        let db = Database::open_in_memory().unwrap();
-        assert_eq!(total_minutes_from_db(&db).unwrap(), 0);
-    }
-
-    #[test]
-    fn total_minutes_by_label_groups_per_label() {
-        let db = Database::open_in_memory().unwrap();
-        db.insert_label("Evening").unwrap();
-        db.insert_label("Morning").unwrap();
-        let evening = crate::db::find_label_by_name_from_db(&db, "Evening").unwrap();
-        let morning = crate::db::find_label_by_name_from_db(&db, "Morning").unwrap();
-        // Morning: 600 + 1200 = 1800s = 30m
-        db.insert_session(&Session {
-            duration_secs: 600,
-            label_id: morning,
-            ..session_on("2026-04-27")
-        })
-        .unwrap();
-        db.insert_session(&Session {
-            duration_secs: 1200,
-            label_id: morning,
-            ..session_on("2026-04-26")
-        })
-        .unwrap();
-        // Evening: 300s = 5m
-        db.insert_session(&Session {
-            duration_secs: 300,
-            label_id: evening,
-            ..session_on("2026-04-27")
-        })
-        .unwrap();
-        // SQLite default ORDER BY name puts ASCII "Evening" before "Morning".
-        assert_eq!(
-            total_minutes_by_label_from_db(&db).unwrap(),
-            vec![
-                (Some("Evening".to_string()), 5),
-                (Some("Morning".to_string()), 30),
-            ]
-        );
-    }
-
-    #[test]
-    fn total_minutes_by_label_includes_unlabeled_as_none() {
-        let db = Database::open_in_memory().unwrap();
-        db.insert_label("Morning").unwrap();
-        let morning = crate::db::find_label_by_name_from_db(&db, "Morning").unwrap();
-        db.insert_session(&Session {
-            duration_secs: 600,
-            label_id: morning,
-            ..session_on("2026-04-27")
-        })
-        .unwrap();
-        db.insert_session(&Session {
-            duration_secs: 300,
-            label_id: None,
-            ..session_on("2026-04-27")
-        })
-        .unwrap();
-        // SQLite ORDER BY ASC sorts NULL first.
-        assert_eq!(
-            total_minutes_by_label_from_db(&db).unwrap(),
-            vec![(None, 5), (Some("Morning".to_string()), 10)]
-        );
-    }
-
-    #[test]
-    fn total_minutes_by_label_is_empty_for_empty_db() {
-        let db = Database::open_in_memory().unwrap();
-        assert_eq!(total_minutes_by_label_from_db(&db).unwrap(), vec![]);
-    }
-
-    #[test]
-    fn count_sessions_by_label_groups_per_label() {
-        let db = Database::open_in_memory().unwrap();
-        db.insert_label("Morning").unwrap();
-        let morning = crate::db::find_label_by_name_from_db(&db, "Morning").unwrap();
-        db.insert_session(&Session {
-            label_id: morning,
-            ..session_on("2026-04-27")
-        })
-        .unwrap();
-        db.insert_session(&Session {
-            label_id: morning,
-            ..session_on("2026-04-26")
-        })
-        .unwrap();
-        db.insert_session(&Session {
-            label_id: None,
-            ..session_on("2026-04-25")
-        })
-        .unwrap();
-        assert_eq!(
-            count_sessions_by_label_from_db(&db).unwrap(),
-            vec![(None, 1), (Some("Morning".to_string()), 2)]
-        );
-    }
-
     fn date(y: i32, m: u32, d: u32) -> chrono::NaiveDate {
         chrono::NaiveDate::from_ymd_opt(y, m, d).unwrap()
     }
@@ -3547,45 +3256,6 @@ mod tests {
     }
 
     #[test]
-    fn streak_for_label_only_counts_sessions_with_that_label() {
-        let db = Database::open_in_memory().unwrap();
-        let today = date(2026, 4, 27);
-        db.insert_label("Morning").unwrap();
-        db.insert_label("Evening").unwrap();
-        let morning = crate::db::find_label_by_name_from_db(&db, "Morning").unwrap().unwrap();
-        let evening = crate::db::find_label_by_name_from_db(&db, "Evening").unwrap().unwrap();
-        // Today: Morning + Evening sessions.
-        db.insert_session(&Session {
-            label_id: Some(morning),
-            ..session_on("2026-04-27")
-        })
-        .unwrap();
-        db.insert_session(&Session {
-            label_id: Some(evening),
-            ..session_on("2026-04-27")
-        })
-        .unwrap();
-        // Yesterday: Morning only.
-        db.insert_session(&Session {
-            label_id: Some(morning),
-            ..session_on("2026-04-26")
-        })
-        .unwrap();
-        // 2 days ago: Evening only.
-        db.insert_session(&Session {
-            label_id: Some(evening),
-            ..session_on("2026-04-25")
-        })
-        .unwrap();
-        // Morning streak: today + yesterday = 2 (gap on day-2).
-        assert_eq!(get_streak_for_label_from_db(&db, today, morning).unwrap(), 2);
-        // Evening streak: today only (gap on yesterday).
-        assert_eq!(get_streak_for_label_from_db(&db, today, evening).unwrap(), 1);
-        // Overall streak (no filter): today + yesterday + day-2 = 3.
-        assert_eq!(get_streak_from_db(&db, today).unwrap(), 3);
-    }
-
-    #[test]
     fn streak_at_naive_date_min_does_not_panic() {
         // chrono's NaiveDate::MIN (year -262144) has no pred_opt;
         // the streak walk used to .expect() on it. Practically
@@ -3626,37 +3296,6 @@ mod tests {
         }
         assert_eq!(get_streak_from_db(&db, today).unwrap(), 3, "current streak");
         assert_eq!(get_best_streak_from_db(&db).unwrap(), 6, "best historical streak");
-    }
-
-    #[test]
-    fn best_streak_for_label_only_counts_sessions_with_that_label() {
-        let db = Database::open_in_memory().unwrap();
-        db.insert_label("Morning").unwrap();
-        db.insert_label("Evening").unwrap();
-        let morning = crate::db::find_label_by_name_from_db(&db, "Morning").unwrap().unwrap();
-        let evening = crate::db::find_label_by_name_from_db(&db, "Evening").unwrap().unwrap();
-        // Morning has a 3-day run.
-        for d in ["2026-04-25", "2026-04-26", "2026-04-27"] {
-            db.insert_session(&Session {
-                label_id: Some(morning),
-                ..session_on(d)
-            })
-            .unwrap();
-        }
-        // Evening has a 5-day run (longer overall, but for Morning it's irrelevant).
-        for d in [
-            "2026-04-01", "2026-04-02", "2026-04-03", "2026-04-04", "2026-04-05",
-        ] {
-            db.insert_session(&Session {
-                label_id: Some(evening),
-                ..session_on(d)
-            })
-            .unwrap();
-        }
-        assert_eq!(get_best_streak_for_label_from_db(&db, morning).unwrap(), 3);
-        assert_eq!(get_best_streak_for_label_from_db(&db, evening).unwrap(), 5);
-        // Overall best ignores label and finds the longest run anywhere.
-        assert_eq!(get_best_streak_from_db(&db).unwrap(), 5);
     }
 
     #[test]
@@ -3738,37 +3377,6 @@ mod tests {
         assert_eq!(
             get_daily_totals_since_from_db(&db, date(2026, 4, 26)).unwrap(),
             vec![(date(2026, 4, 26), 600)],
-        );
-    }
-
-    #[test]
-    fn daily_totals_for_label_filters_per_day() {
-        let db = Database::open_in_memory().unwrap();
-        db.insert_label("Morning").unwrap();
-        let morning = crate::db::find_label_by_name_from_db(&db, "Morning").unwrap().unwrap();
-        // Morning on Apr 26 (600s) and Apr 27 (1200s).
-        db.insert_session(&Session {
-            duration_secs: 600,
-            label_id: Some(morning),
-            ..session_on("2026-04-26")
-        })
-        .unwrap();
-        db.insert_session(&Session {
-            duration_secs: 1200,
-            label_id: Some(morning),
-            ..session_on("2026-04-27")
-        })
-        .unwrap();
-        // Unlabeled on Apr 27 — must NOT show up in Morning's totals.
-        db.insert_session(&Session {
-            duration_secs: 9999,
-            label_id: None,
-            ..session_on("2026-04-27")
-        })
-        .unwrap();
-        assert_eq!(
-            get_daily_totals_for_label_from_db(&db, morning).unwrap(),
-            vec![(date(2026, 4, 26), 600), (date(2026, 4, 27), 1200)]
         );
     }
 
@@ -3902,131 +3510,6 @@ mod tests {
             .unwrap();
         }
         assert_eq!(get_median_duration_secs_from_db(&db).unwrap(), Some(600));
-    }
-
-    #[test]
-    fn csv_round_trips_sessions_with_labels() {
-        let src = Database::open_in_memory().unwrap();
-        src.insert_label("Morning").unwrap();
-        let morning_id = crate::db::find_label_by_name_from_db(&src, "Morning").unwrap();
-        // Canonical naive-local ISO shape (no `Z`) — `unix_to_local_iso`
-        // never emits one, and `import_sessions_csv` now rejects them.
-        src.insert_session(&Session {
-            start_iso: "2026-04-27T10:00:00".to_string(),
-            duration_secs: 600,
-            label_id: morning_id,
-            notes: Some("clear, focused".to_string()), // comma forces CSV quoting
-            mode: SessionMode::Timer,
-            uuid: crate::db::SessionUuid::new(""),
-            guided_file_uuid: None,
-        })
-        .unwrap();
-        src.insert_session(&Session {
-            start_iso: "2026-04-27T19:00:00".to_string(),
-            duration_secs: 1200,
-            label_id: None,
-            notes: None,
-            mode: SessionMode::BoxBreath,
-            uuid: crate::db::SessionUuid::new(""),
-            guided_file_uuid: None,
-        })
-        .unwrap();
-
-        let mut buf = Vec::new();
-        src.export_sessions_csv(&mut buf).unwrap();
-
-        let dst = Database::open_in_memory().unwrap();
-        let imported = dst.import_sessions_csv(&buf[..]).unwrap();
-        assert_eq!(imported, 2);
-
-        // Label was created on import.
-        let dst_names: Vec<String> =
-            crate::db::list_labels_from_db(&dst).unwrap().into_iter().map(|l| l.name).collect();
-        assert_eq!(dst_names, vec!["Morning"]);
-        let dst_morning_id = crate::db::find_label_by_name_from_db(&dst, "Morning").unwrap();
-
-        // CSV import generates fresh v4 uuids on the destination DB
-        // (uuids aren't part of the CSV format). Verify each row carries
-        // one, then bind it into the expected struct so the full
-        // comparison below also covers the rest of the fields.
-        let sessions = list_sessions_from_db(&dst).unwrap();
-        assert_eq!(sessions.len(), 2);
-        assert!(looks_like_uuid_v4(sessions[0].1.uuid.as_str()));
-        assert!(looks_like_uuid_v4(sessions[1].1.uuid.as_str()));
-        assert_ne!(sessions[0].1.uuid, sessions[1].1.uuid);
-        assert_eq!(
-            sessions[0].1,
-            Session {
-                start_iso: "2026-04-27T10:00:00".to_string(),
-                duration_secs: 600,
-                label_id: dst_morning_id,
-                notes: Some("clear, focused".to_string()),
-                mode: SessionMode::Timer,
-                uuid: sessions[0].1.uuid.clone(),
-                guided_file_uuid: None,
-            }
-        );
-        assert_eq!(
-            sessions[1].1,
-            Session {
-                start_iso: "2026-04-27T19:00:00".to_string(),
-                duration_secs: 1200,
-                label_id: None,
-                notes: None,
-                mode: SessionMode::BoxBreath,
-                uuid: sessions[1].1.uuid.clone(),
-                guided_file_uuid: None,
-            }
-        );
-    }
-
-    #[test]
-    fn import_sessions_csv_rejects_unparseable_start_iso() {
-        // Without the validation gate, a row with `start_iso = "garbage"`
-        // would persist; `daily_totals_filtered` would then silently
-        // filter it out via `parse_from_str(...).ok()`, but
-        // `count_sessions` would still see it — invisible drift between
-        // stat surfaces.
-        let db = Database::open_in_memory().unwrap();
-        let csv = "start_iso,duration_secs,label,notes,mode\n\
-                   not-a-date,600,,,timer\n";
-        let err = db.import_sessions_csv(csv.as_bytes()).unwrap_err();
-        assert!(
-            matches!(&err, DbError::Decode(s) if s.contains("bad start_iso")),
-            "expected DbError::Decode(\"bad start_iso: …\"), got {err:?}",
-        );
-        assert_eq!(list_sessions_from_db(&db).unwrap().len(), 0,
-            "rejected row must not have landed in the DB");
-    }
-
-    #[test]
-    fn export_csv_writes_header_and_session_with_label_name() {
-        let db = Database::open_in_memory().unwrap();
-        db.insert_label("Morning").unwrap();
-        let label_id = crate::db::find_label_by_name_from_db(&db, "Morning").unwrap();
-        db.insert_session(&Session {
-            start_iso: "2026-04-27T10:00:00Z".to_string(),
-            duration_secs: 600,
-            label_id,
-            notes: Some("clear mind".to_string()),
-            mode: SessionMode::Timer,
-            uuid: crate::db::SessionUuid::new(""),
-            guided_file_uuid: None,
-        })
-        .unwrap();
-
-        let mut buf = Vec::new();
-        db.export_sessions_csv(&mut buf).unwrap();
-        let csv = String::from_utf8(buf).unwrap();
-
-        assert!(
-            csv.contains("start_iso,duration_secs,label,notes,mode"),
-            "missing header in:\n{csv}"
-        );
-        assert!(csv.contains("2026-04-27T10:00:00Z"));
-        assert!(csv.contains("Morning"));
-        assert!(csv.contains("clear mind"));
-        assert!(csv.contains("timer"));
     }
 
     // ── UUIDs on sessions and labels (Nextcloud-Sync phase A1) ───────────────

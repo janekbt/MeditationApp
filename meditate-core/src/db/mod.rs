@@ -69,20 +69,19 @@ pub use labels::{
     label_session_count_from_db, list_labels_from_db, Label,
 };
 pub use presets::{
-    count_presets_from_db, find_preset_by_uuid_from_db, is_preset_name_taken_from_db,
+    find_preset_by_uuid_from_db, is_preset_name_taken_from_db,
     list_presets_for_mode_from_db, list_presets_from_db, list_starred_presets_for_mode_from_db,
     Preset,
 };
 pub use session_in_progress::{FinalizedSession, SessionInProgress};
 pub use sessions::{
-    active_days_in_month_from_db, active_months_from_db, count_sessions_by_label_from_db,
-    count_sessions_from_db, get_best_streak_for_label_from_db, get_best_streak_from_db,
-    get_daily_totals_for_label_from_db, get_daily_totals_from_db, get_daily_totals_since_from_db,
+    active_days_in_month_from_db, active_months_from_db, count_sessions_from_db, get_best_streak_from_db,
+    get_daily_totals_from_db, get_daily_totals_since_from_db,
     get_longest_session_from_db, get_median_duration_secs_from_db,
-    get_running_average_secs_from_db, get_streak_for_label_from_db, get_streak_from_db,
+    get_running_average_secs_from_db, get_streak_from_db,
     hour_buckets_from_db, label_totals_seconds_from_db, list_sessions_for_label_from_db,
     list_sessions_from_db, month_total_secs_from_db, query_sessions_from_db,
-    total_minutes_by_label_from_db, total_minutes_from_db, total_secs_since_from_db,
+    total_secs_since_from_db,
     total_seconds_from_db, Session, SessionFilter, SessionMode,
 };
 pub use uuids::{

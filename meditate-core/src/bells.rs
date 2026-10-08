@@ -43,10 +43,6 @@ impl DisplayMode {
     pub fn is_stopwatch(self) -> bool {
         matches!(self, DisplayMode::Stopwatch)
     }
-
-    pub fn is_countdown(self) -> bool {
-        matches!(self, DisplayMode::Countdown)
-    }
 }
 
 /// What channels a bell or phase plays through. Mirrors the

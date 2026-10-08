@@ -255,6 +255,8 @@ Planning only: nothing here has been changed yet. The audit ran on beta at a8a5d
 - **Effort:** M
 
 ### R13 Core housekeeping: dead code and small duplicates
+**Status:** dead code removed, together with the then always-empty label filter on the streak and daily-total queries. The small duplicates below were left out on purpose; each note says where it goes instead.
+
 - **Dead code**, used by tests only or not at all:
   - the second CSV format `import/export_sessions_csv` (sessions.rs:741-834);
   - `total_minutes_from_db` and `total_minutes_by_label_from_db`;
@@ -264,10 +266,10 @@ Planning only: nothing here has been changed yet. The audit ran on beta at a8a5d
 
   The test at local_changes.rs:149 must switch to `insert_session`. About -250 to -400 lines including tests.
 - **Small duplicates:**
-  - `hm_mins_key` and `hm_secs_key` fold into one; `hm_compact_key` stays.
-  - One `session_payload()` helper for the three session `json!` copies (sessions.rs:527, 590, 704).
-  - `insights::input_from_db` and `goal::from_db` replace the copies in GTK stats/imp.rs:153-165, 285-302 and Android lib.rs:1827-1836, 1876-1913, about -40.
-  - The Log day caption becomes the sum of the cards' `log_card_minutes`, which fixes B3#35 in both apps. One rounding rule alone would not fix it: two 10m40s cards show 11 + 11 = 22, while a rounded sum says 21.
+  - `hm_mins_key` and `hm_secs_key` fold into one; `hm_compact_key` stays. *Left out: about 12 lines, and the two behave differently at 0.*
+  - One `session_payload()` helper for the three session `json!` copies (sessions.rs:527, 590, 704). *Left out: it touches what goes over the wire for about 20 lines. Do it the next time the session payload changes.*
+  - `insights::input_from_db` and `goal::from_db` replace the copies in GTK stats/imp.rs:153-165, 285-302 and Android lib.rs:1827-1836, 1876-1913, about -40. *Left out: it changes both apps' Stats and needs a phone round. Do it with the Stats bug fixes (ANDROID-BUGS.md #18, #24, #35).*
+  - The Log day caption becomes the sum of the cards' `log_card_minutes`, which fixes B3#35 in both apps. One rounding rule alone would not fix it: two 10m40s cards show 11 + 11 = 22, while a rounded sum says 21. *Left out: a bug fix, not a cleanup. Noted at ANDROID-BUGS.md #35.*
 - **Risk:** low.
 - **Effort:** S
 
@@ -283,6 +285,7 @@ Planning only: nothing here has been changed yet. The audit ran on beta at a8a5d
   - It removes most of the 674 cfg gates and the host-only `let _ =` silencers, about -750 lines of noise.
   - Cargo.toml, main.rs and build.rs stay untouched. Source tests change their path from src/lib.rs to src/ui.rs.
   - Cost: lib.rs code is then type-checked only by the Android build, which is already almost true today.
+- **Status:** (a) and (b) done. (c) deferred: no bug behind it, and every bridge needs a phone check, so it rides along with R8/R9 (step 4), which touch the bridges and need a phone round anyway.
 - **(c) `jni_call::load_class`:**
   - Evidence: `resolve_class` is copied 8 times (audio.rs:110, screen.rs:32, guided.rs:169, widget.rs:139, haptics.rs:102, insets.rs:38, keychain.rs:69, about.rs:84), plus the `(Context)V` wrappers.
   - Change: add it to the existing jni_call.rs.
@@ -330,10 +333,10 @@ Planning only: nothing here has been changed yet. The audit ran on beta at a8a5d
 
 ## 3. Suggested order of work
 
-1. **Enablers, all mechanical, no behaviour change:** R14(a) with_db → R14(b) ui.rs → R14(c) load_class → R13 dead code.
+1. **Enablers, all mechanical, no behaviour change:** R14(a) with_db → R14(b) ui.rs → R13 dead code. (R14(c) load_class moved to step 4.)
 2. **Core first, both apps gain:** R2 write_tx → R1 save_ended_session → R3 session from core → R11 step 1 (refuse apply during a session).
 3. **Android state owners, each needing a device run before the commit:** R4 previews → R5 notice → R6 Modal → R7(a) end path. R10 typed targets can go anywhere in this stage.
-4. **Kotlin and IPC:** R8 focus → R9 drop files.
+4. **Kotlin and IPC:** R8 focus → R9 drop files, with R14(c) load_class in the same phone round.
 5. **Deeper moves:** R7(b) session record (after R1) → R11 step 2 → R12 sync runner → R14(d).
 6. **UI:** R15(b) → R15(a) → R15(d) → R15(c) → R16.
 
@@ -341,7 +344,7 @@ Planning only: nothing here has been changed yet. The audit ran on beta at a8a5d
 - After step 2: #2, #10, #20, #17, and the core half of #1.
 - After step 3: #1, #16, #12, #8, #4 and #33.
 - After step 4: #14, #15, #19 and #9.
-- After R13: #35.
+- #35 is not part of R13 after all; it is fixed as a bug (see its entry).
 - After step 6: #13, #23, #26, #27, #28 and #31.
 
 **Coverage:** the refactors cover 21 of the 39 open items, and #29 and #37 in part. The rest are standalone logic, content or platform bugs, which are better fixed directly:

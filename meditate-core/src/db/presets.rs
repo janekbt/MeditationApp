@@ -155,11 +155,6 @@ pub fn find_preset_by_uuid_from_db(db: &Database, uuid_str: &str) -> Result<Opti
     ).optional()?;
     Ok(row)
 }
-pub fn count_presets_from_db(db: &Database) -> Result<i64> {
-    Ok(db
-        .conn
-        .query_row("SELECT COUNT(*) FROM presets", [], |row| row.get(0))?)
-}
 impl Database {
     /// Create a preset under a freshly-minted v4 UUID. Convenience
     /// over `insert_preset_with_uuid` for the user-creates-from-Setup
@@ -485,7 +480,7 @@ mod tests {
             "u-1", "Different Name", SessionMode::BoxBreath, true, r#"{"x":1}"#,
         ).unwrap();
         assert_eq!(r1, r2, "second insert returns existing rowid");
-        assert_eq!(count_presets_from_db(&db).unwrap(), 1);
+        assert_eq!(list_presets_from_db(&db).unwrap().len(), 1);
         // Original values stand — second insert is a pure no-op.
         let p = &list_presets_from_db(&db).unwrap()[0];
         assert_eq!(p.name, "Sitting");
@@ -507,7 +502,7 @@ mod tests {
             matches!(r, Err(DbError::DuplicatePreset(ref n)) if n == "sitting"),
             "expected DuplicatePreset, got {r:?}",
         );
-        assert_eq!(count_presets_from_db(&db).unwrap(), 1, "row count unchanged");
+        assert_eq!(list_presets_from_db(&db).unwrap().len(), 1, "row count unchanged");
     }
 
     #[test]

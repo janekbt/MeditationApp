@@ -144,10 +144,6 @@ mod tests {
             db.update_session(id, &s).unwrap();
         });
         check("bulk insert", &|db| { db.bulk_insert_sessions(&[session("2026-10-02T07:00:00")]).unwrap(); });
-        check("csv import", &|db| {
-            let csv = "start_iso,duration_secs,label,notes,mode\n2026-10-03T07:00:00,300,,,timer\n";
-            db.import_sessions_csv(csv.as_bytes()).unwrap();
-        });
         check("delete session", &|db| db.delete_session(id).unwrap());
         check("delete all sessions", &|db| { db.delete_all_sessions().unwrap(); });
 

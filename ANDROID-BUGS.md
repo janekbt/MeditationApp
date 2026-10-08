@@ -280,7 +280,8 @@ Left out on purpose:
 ### 35. The Log day caption total disagrees with the card minutes
 - **Where:** `meditate-core/src/format.rs:389` rounds; the caption (`hm_compact_key`) floors.
 - **What happens:** Two 10m40s cards show "11 min" each, but the caption says "21m".
-- **Fix idea:** One rounding rule in core.
+- **Fix idea:** A core `log_day_caption` that sums the cards' `log_card_minutes`. One rounding rule alone does not fix it: 11 + 11 = 22, while the rounded sum of 21m20s is 21. GTK has the same bug (log/imp.rs:641-650 floors, cards round at 404), so fix both apps.
+- **Do with it:** the other Stats fixes (#18, #24) are a good moment to also move the duplicated Stats inputs into core (`insights::input_from_db`, `goal::from_db`), see REFACTOR-AUDIT.md R13.
 
 ### 36. CSV export isn't in chronological order
 - **Where:** `meditate-core/src/data_io.rs:127-130`: rows are by id, reversed, despite the comment.
