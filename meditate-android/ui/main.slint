@@ -1129,6 +1129,19 @@ component RevealChooser inherits Rectangle {
 
 // A centred modal question with Cancel and one confirming action,
 // over a dimmed backdrop. Tapping the backdrop cancels.
+// A dialog backdrop: a tap outside the card closes it. Android hands the
+// app the whole back swipe (down, moves, up) before the Back key, and a
+// TouchArea clicks on any release inside it, so only a press that stayed
+// put counts; otherwise one swipe closed the dialog and the page under it.
+component ScrimArea inherits TouchArea {
+    callback tapped();
+    clicked => {
+        if abs(self.mouse-x - self.pressed-x) < 16px && abs(self.mouse-y - self.pressed-y) < 16px {
+            root.tapped();
+        }
+    }
+}
+
 component ConfirmDialog inherits Rectangle {
     in property <string> title;
     in property <string> body;
@@ -1137,8 +1150,8 @@ component ConfirmDialog inherits Rectangle {
     callback confirm();
 
     background: #00000080;
-    TouchArea {
-        clicked => { root.cancel(); }
+    ScrimArea {
+        tapped => { root.cancel(); }
     }
 
     Rectangle {
@@ -5561,8 +5574,8 @@ export component MainWindow inherits Window {
     Rectangle {
         visible: root.filter-sheet-open;
         background: #00000080;
-        TouchArea {
-            clicked => { root.filter-sheet-open = false; }
+        ScrimArea {
+            tapped => { root.filter-sheet-open = false; }
         }
 
         Rectangle {
@@ -5637,8 +5650,8 @@ export component MainWindow inherits Window {
     if root.modal == Modal.duration : Rectangle {
         // Scrim — taps outside the card cancel.
         background: #00000080;
-        TouchArea {
-            clicked => { root.modal = Modal.none; }
+        ScrimArea {
+            tapped => { root.modal = Modal.none; }
         }
 
         // Card. Height tracks the inner layout's preferred-height
@@ -7137,8 +7150,8 @@ export component MainWindow inherits Window {
     // the `create-label-changed` callback.
     if root.modal == Modal.create-label : Rectangle {
         background: #00000080;
-        TouchArea {
-            clicked => { root.modal = Modal.none; }
+        ScrimArea {
+            tapped => { root.modal = Modal.none; }
         }
 
         Rectangle {
@@ -7195,8 +7208,8 @@ export component MainWindow inherits Window {
     // validator can pass it as `except_id`.
     if root.modal == Modal.rename-label : Rectangle {
         background: #00000080;
-        TouchArea {
-            clicked => { root.modal = Modal.none; }
+        ScrimArea {
+            tapped => { root.modal = Modal.none; }
         }
 
         Rectangle {
@@ -7253,8 +7266,8 @@ export component MainWindow inherits Window {
     // so the text correctly shows N/0 affected sessions.
     if root.modal == Modal.delete-label : Rectangle {
         background: #00000080;
-        TouchArea {
-            clicked => { root.modal = Modal.none; }
+        ScrimArea {
+            tapped => { root.modal = Modal.none; }
         }
 
         Rectangle {
@@ -7317,8 +7330,8 @@ export component MainWindow inherits Window {
     // top — declare-overlays-last rule.
     if root.modal == Modal.create-preset : Rectangle {
         background: #00000080;
-        TouchArea {
-            clicked => { root.modal = Modal.none; }
+        ScrimArea {
+            tapped => { root.modal = Modal.none; }
         }
 
         Rectangle {
@@ -7370,8 +7383,8 @@ export component MainWindow inherits Window {
     // Mirrors GTK's `present_override_dialog`.
     if root.modal == Modal.override-preset : Rectangle {
         background: #00000080;
-        TouchArea {
-            clicked => { root.modal = Modal.none; }
+        ScrimArea {
+            tapped => { root.modal = Modal.none; }
         }
 
         Rectangle {
@@ -7428,8 +7441,8 @@ export component MainWindow inherits Window {
     // (own-uuid name exception so an unchanged name stays valid).
     if root.modal == Modal.rename-preset : Rectangle {
         background: #00000080;
-        TouchArea {
-            clicked => { root.modal = Modal.none; }
+        ScrimArea {
+            tapped => { root.modal = Modal.none; }
         }
 
         Rectangle {
@@ -7482,8 +7495,8 @@ export component MainWindow inherits Window {
     // offered via the shared snackbar (re-insert with same uuid).
     if root.modal == Modal.delete-preset : Rectangle {
         background: #00000080;
-        TouchArea {
-            clicked => { root.modal = Modal.none; }
+        ScrimArea {
+            tapped => { root.modal = Modal.none; }
         }
 
         Rectangle {
@@ -7543,8 +7556,8 @@ export component MainWindow inherits Window {
     // Android deviation, acceptable for a transient picker).
     if root.modal == Modal.prep : Rectangle {
         background: #00000080;
-        TouchArea {
-            clicked => { root.modal = Modal.none; }
+        ScrimArea {
+            tapped => { root.modal = Modal.none; }
         }
 
         Rectangle {
@@ -8218,8 +8231,8 @@ export component MainWindow inherits Window {
     // "Converting…" label; Cancel stays live (mirrors GTK).
     if root.modal == Modal.guided-import : Rectangle {
         background: #00000080;
-        TouchArea {
-            clicked => {
+        ScrimArea {
+            tapped => {
                 if (!root.guided-import-busy) {
                     root.guided-import-cancel();
                     root.modal = Modal.none;
@@ -8338,8 +8351,8 @@ export component MainWindow inherits Window {
     // sounds.rs present_rename_dialog / present_delete_dialog.
     if root.modal == Modal.bell-rename : Rectangle {
         background: #00000080;
-        TouchArea {
-            clicked => { root.modal = Modal.none; }
+        ScrimArea {
+            tapped => { root.modal = Modal.none; }
         }
 
         Rectangle {
@@ -8391,8 +8404,8 @@ export component MainWindow inherits Window {
 
     if root.modal == Modal.bell-delete : Rectangle {
         background: #00000080;
-        TouchArea {
-            clicked => { root.modal = Modal.none; }
+        ScrimArea {
+            tapped => { root.modal = Modal.none; }
         }
 
         Rectangle {
@@ -8474,8 +8487,8 @@ export component MainWindow inherits Window {
     // name stays valid). Mirrors GTK's `present_rename_dialog`.
     if root.modal == Modal.guided-rename : Rectangle {
         background: #00000080;
-        TouchArea {
-            clicked => { root.modal = Modal.none; }
+        ScrimArea {
+            tapped => { root.modal = Modal.none; }
         }
 
         Rectangle {
@@ -8530,8 +8543,8 @@ export component MainWindow inherits Window {
     // other dialogs so it tops the Preferences page.
     if root.modal == Modal.goal : Rectangle {
         background: #00000080;
-        TouchArea {
-            clicked => { root.modal = Modal.none; }
+        ScrimArea {
+            tapped => { root.modal = Modal.none; }
         }
 
         Rectangle {
@@ -8597,8 +8610,8 @@ export component MainWindow inherits Window {
     // no Undo (sessions emit tombstone events → peers converge).
     if root.modal == Modal.delete-all : Rectangle {
         background: #00000080;
-        TouchArea {
-            clicked => { root.modal = Modal.none; }
+        ScrimArea {
+            tapped => { root.modal = Modal.none; }
         }
 
         Rectangle {
@@ -8653,8 +8666,8 @@ export component MainWindow inherits Window {
     // AppBar). Copy mirrors GTK's recovery_dialog.rs verbatim.
     if root.modal == Modal.recovery : Rectangle {
         background: #00000080;
-        TouchArea {
-            clicked => { root.modal = Modal.none; }
+        ScrimArea {
+            tapped => { root.modal = Modal.none; }
         }
 
         Rectangle {
@@ -8713,8 +8726,8 @@ export component MainWindow inherits Window {
 
     if root.modal == Modal.recovery-wipe-confirm : Rectangle {
         background: #00000080;
-        TouchArea {
-            clicked => { root.modal = Modal.none; }
+        ScrimArea {
+            tapped => { root.modal = Modal.none; }
         }
 
         Rectangle {
@@ -8775,8 +8788,8 @@ export component MainWindow inherits Window {
         background: #00000080;
         // Scrim tap = decide later (no dismissal recorded); the
         // prompt returns after the next sync.
-        TouchArea {
-            clicked => { root.modal = Modal.none; }
+        ScrimArea {
+            tapped => { root.modal = Modal.none; }
         }
 
         Rectangle {

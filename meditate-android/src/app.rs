@@ -843,6 +843,26 @@ mod tests {
     }
 
     #[test]
+    fn a_back_swipe_does_not_tap_a_backdrop() {
+        // Android hands the app the whole back swipe (down, moves, up)
+        // before the Back key, and a TouchArea clicks on any release
+        // inside it: the backdrop closed the dialog, then Back closed
+        // the page under it. A backdrop only counts a tap that stayed put.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        let at = slint.find("component ScrimArea inherits TouchArea {").unwrap();
+        let def = &slint[at..at + slint[at..].find("\n}\n").unwrap()];
+        assert!(def.contains("abs(self.mouse-x - self.pressed-x) < 16px && abs(self.mouse-y - self.pressed-y) < 16px"));
+        let scrims: Vec<_> = slint.match_indices("background: #00000080;").map(|(i, _)| i).collect();
+        assert_eq!(scrims.len(), 20);
+        for at in scrims {
+            let next = &slint[at..];
+            let area = next.find("TouchArea {").unwrap_or(usize::MAX);
+            assert!(next.find("ScrimArea {").unwrap() < area, "{}", &next[..120]);
+        }
+    }
+
+    #[test]
     fn a_csv_pick_carries_its_path_and_kind() {
         assert_eq!(
             super::parse_csv_pick("/data/x.csv\ninsight"),
