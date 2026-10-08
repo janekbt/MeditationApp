@@ -957,6 +957,43 @@ mod tests {
         assert!(menu.contains("changed items => {\n        root.update_text(root.current_index);"));
     }
 
+    /// Month and weekday names were English in US order (#29), the
+    /// week always began on Monday (#25), Edit Session ignored the
+    /// 12-hour clock (#26), and the pickers were English (#30).
+    #[test]
+    fn dates_follow_the_phone_locale() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        let kt = std::fs::read_to_string(root.join("kotlin/MeditateAbout.kt")).unwrap();
+        for chrono_name in ["format(\"%a", "format(\"%b", "format(\"%B", "d.format(format.as_str())"] {
+            assert!(!lib.contains(chrono_name), "{chrono_name} is English");
+        }
+        assert!(lib.matches("locale_date(").count() >= 7, "every date name goes through the locale");
+        assert!(kt.contains("getBestDateTimePattern(") && kt.contains("firstDayOfWeek"));
+        assert!(!lib.contains("date_math::locale_week_start_dow()"), "the Linux lookup is Monday on Android");
+        assert!(slint.contains("use_24_hour_format: root.clock-24h;"));
+        assert!(slint.contains("root.render-time(root.edit-start-time.hour, root.edit-start-time.minute)"));
+        assert!(lib.contains("ui.on_render_time("));
+
+        let mut ids: Vec<String> = ["Select time", "Ok", "Hour", "Minute", "Enter date", "{} Hours or minutes of {}"]
+            .iter()
+            .map(|m| format!("msgid \"{m}\"\nmsgstr \""))
+            .collect();
+        for day in ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] {
+            ids.push(format!("msgctxt \"One-letter abbrev for {day}\"\nmsgid \""));
+        }
+        for lang in ["de", "es", "fr", "it", "nl", "pl", "pt_BR", "ru", "zh_CN"] {
+            let po = std::fs::read_to_string(root.join(format!("lang/{lang}/LC_MESSAGES/meditate-android.po"))).unwrap();
+            for id in &ids {
+                let at = po.find(id.as_str()).unwrap_or_else(|| panic!("{lang}: {id}"));
+                let rest = &po[at + id.len()..];
+                let msgstr = &rest[rest.find("msgstr \"").unwrap() + 8..];
+                assert!(!msgstr.starts_with('"'), "{lang}: {id} translated");
+            }
+        }
+    }
+
     /// Units and sentences come from the translations: Rust wrote
     /// English "1h 4m" and "3 sessions" (#27, #28), and a sentence
     /// glued around a name couldn't be translated whole (#31).

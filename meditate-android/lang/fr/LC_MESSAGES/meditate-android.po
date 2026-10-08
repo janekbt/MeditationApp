@@ -942,3 +942,51 @@ msgstr "Remplacer la configuration enregistrée de '{}' par les réglages actuel
 
 msgid "'{}' will be removed from this device and any synced peers."
 msgstr "'{}' sera supprimé de cet appareil et de tous les appareils synchronisés."
+
+# Material date and time pickers
+
+msgid "Select time"
+msgstr "Choisir l'heure"
+
+msgid "Ok"
+msgstr "OK"
+
+msgid "Hour"
+msgstr "Heure"
+
+msgid "Minute"
+msgstr "Minute"
+
+msgid "Enter date"
+msgstr "Saisir la date"
+
+msgid "{} Hours or minutes of {}"
+msgstr "{} heures ou minutes sur {}"
+
+msgctxt "One-letter abbrev for Sunday"
+msgid "S"
+msgstr "D"
+
+msgctxt "One-letter abbrev for Monday"
+msgid "M"
+msgstr "L"
+
+msgctxt "One-letter abbrev for Tuesday"
+msgid "T"
+msgstr "M"
+
+msgctxt "One-letter abbrev for Wednesday"
+msgid "W"
+msgstr "M"
+
+msgctxt "One-letter abbrev for Thursday"
+msgid "T"
+msgstr "J"
+
+msgctxt "One-letter abbrev for Friday"
+msgid "F"
+msgstr "V"
+
+msgctxt "One-letter abbrev for Saturday"
+msgid "S"
+msgstr "S"

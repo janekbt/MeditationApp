@@ -1649,7 +1649,7 @@ fn refresh_stats(ui: &MainWindow) {
     let keys = meditate_core::insights::compute(
         &input,
         meditate_core::time::unix_now(),
-        meditate_core::date_math::locale_week_start_dow(),
+        week_start_dow(),
     );
     let rows: Vec<InsightRow> = keys
         .into_iter()
@@ -1705,7 +1705,7 @@ fn refresh_stats(ui: &MainWindow) {
 
         let core_cells = meditate_core::contrib::build_grid(
             today,
-            meditate_core::date_math::locale_week_start_dow(),
+            week_start_dow(),
             &totals,
             goal_mins,
         );
@@ -1730,14 +1730,14 @@ fn refresh_stats(ui: &MainWindow) {
         let month_abbr = |iso: &str| {
             chrono::NaiveDate::parse_from_str(iso, "%Y-%m-%d")
                 .ok()
-                .map(|d| d.format("%b").to_string())
+                .map(|d| locale_date(d, "MMM", "%b"))
                 .unwrap_or_default()
         };
         let range = match core_cells.first() {
             Some(first) => format!(
                 "{} – {}",
                 month_abbr(&first.date_iso),
-                today.format("%b"),
+                locale_date(today, "MMM", "%b"),
             ),
             None => String::new(),
         };
@@ -1770,8 +1770,7 @@ fn chart_period_from_index(i: i32) -> meditate_core::date_math::ChartPeriod {
 /// Sparse x-axis caption for chart bar `i`. Mirrors GTK's
 /// `x_label_text` at `meditate-gtk/src/stats/imp.rs:742`: the
 /// `x_label_kind` decision lives in core, the locale-aware
-/// rendering is shell-side. Android uses chrono's English
-/// `%a` / `%b` (i18n shell-deferred, as elsewhere).
+/// rendering is shell-side, in the phone's locale.
 fn chart_x_label(
     date_str: &str,
     i: usize,
@@ -1783,15 +1782,13 @@ fn chart_x_label(
     match x_label_kind(i, days, months) {
         XLabelKind::Empty => String::new(),
         XLabelKind::Weekday => parse()
-            .map(|d| d.format("%a").to_string())
+            .map(|d| locale_date(d, "EEE", "%a"))
             .unwrap_or_default(),
         XLabelKind::MonthShortDay => parse()
-            .map(|d| d.format("%b %-d").to_string())
+            .map(|d| locale_date(d, "MMMd", "%b %-d"))
             .unwrap_or_default(),
         XLabelKind::MonthLetter => parse()
-            .and_then(|d| {
-                d.format("%b").to_string().chars().next().map(|c| c.to_string())
-            })
+            .map(|d| locale_date(d, "MMMMM", "%b").chars().take(1).collect())
             .unwrap_or_default(),
     }
 }
@@ -2024,7 +2021,7 @@ fn render_insight(
             let when = chrono::Local
                 .timestamp_opt(*start_unix, 0)
                 .single()
-                .map(|d| d.format("%b %-d").to_string());
+                .map(|d| locale_date(d.date_naive(), "MMMd", "%b %-d"));
             let body = match when {
                 Some(d) => tr
                     .invoke_ins_longest_body(
@@ -2450,6 +2447,21 @@ fn truncate_note_for_card(note: &str) -> String {
 /// Mutex not OnceLock so an activity recreate refreshes it).
 static CLOCK_FORMAT: std::sync::Mutex<Option<app::ClockFormat>> =
     std::sync::Mutex::new(None);
+
+/// Locale first weekday (1 = Mon … 7 = Sun), cached like CLOCK_FORMAT.
+static WEEK_START: std::sync::Mutex<Option<i32>> = std::sync::Mutex::new(None);
+
+fn week_start_dow() -> i32 {
+    WEEK_START.lock().ok().and_then(|g| *g).unwrap_or(1)
+}
+
+/// `d` written the phone's way for an ICU skeleton; chrono's English
+/// `fallback` if Android can't say.
+fn locale_date(d: chrono::NaiveDate, skeleton: &str, fallback: &str) -> String {
+    android_app()
+        .and_then(|app| about::format_date(app, skeleton, d))
+        .unwrap_or_else(|| d.format(fallback).to_string())
+}
 
 /// Locale digit-grouping separator, cached like CLOCK_FORMAT.
 static GROUPING_SEPARATOR: std::sync::Mutex<Option<String>> =
@@ -3226,9 +3238,15 @@ fn wire_date_picker_adapter(ui: &MainWindow) {
             .unwrap_or(0)
     });
 
+    // Material asks in chrono formats; its two are mapped to skeletons.
     adapter.on_format_date(|format, day, month, year| {
+        let skeleton = match format.as_str() {
+            "%B %Y" => "yMMMM",
+            "%a, %b %d" => "EEEMMMd",
+            _ => "yMMMd",
+        };
         NaiveDate::from_ymd_opt(year, month as u32, day as u32)
-            .map(|d| d.format(format.as_str()).to_string())
+            .map(|d| locale_date(d, skeleton, format.as_str()))
             .unwrap_or_default()
             .into()
     });
@@ -3883,7 +3901,23 @@ fn build_ui() -> MainWindow {
         if let Ok(mut g) = GROUPING_SEPARATOR.lock() {
             *g = Some(about::grouping_separator(app));
         }
+        if let Ok(mut g) = WEEK_START.lock() {
+            *g = Some(meditate_core::date_math::week_start_from_sunday_one(
+                about::first_day_of_week(app),
+            ));
+        }
+        ui.set_clock_24h(app::ClockFormat::parse(&raw) == app::ClockFormat::H24);
     }
+    // The Edit Session time row reads like the Log's times.
+    ui.on_render_time(|hour, minute| {
+        let fmt = CLOCK_FORMAT
+            .lock()
+            .ok()
+            .and_then(|g| g.clone())
+            .unwrap_or(app::ClockFormat::H24);
+        let key = meditate_core::format::TimeOfDayKey { hour: hour as u8, minute: minute as u8 };
+        app::render_time_of_day(key, &fmt).into()
+    });
     if let Some(app) = android_app() {
         // Try the exact regional bundle first (pt-BR → pt_BR,
         // zh-CN → zh_CN), then the bare language (de-DE → de).

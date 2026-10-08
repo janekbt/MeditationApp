@@ -921,3 +921,51 @@ msgstr "用当前设置替换“{}”已保存的配置？"
 
 msgid "'{}' will be removed from this device and any synced peers."
 msgstr "“{}”将从此设备及所有同步的设备中移除。"
+
+# Material date and time pickers
+
+msgid "Select time"
+msgstr "选择时间"
+
+msgid "Ok"
+msgstr "确定"
+
+msgid "Hour"
+msgstr "小时"
+
+msgid "Minute"
+msgstr "分钟"
+
+msgid "Enter date"
+msgstr "输入日期"
+
+msgid "{} Hours or minutes of {}"
+msgstr "{} 小时或分钟，共 {}"
+
+msgctxt "One-letter abbrev for Sunday"
+msgid "S"
+msgstr "日"
+
+msgctxt "One-letter abbrev for Monday"
+msgid "M"
+msgstr "一"
+
+msgctxt "One-letter abbrev for Tuesday"
+msgid "T"
+msgstr "二"
+
+msgctxt "One-letter abbrev for Wednesday"
+msgid "W"
+msgstr "三"
+
+msgctxt "One-letter abbrev for Thursday"
+msgid "T"
+msgstr "四"
+
+msgctxt "One-letter abbrev for Friday"
+msgid "F"
+msgstr "五"
+
+msgctxt "One-letter abbrev for Saturday"
+msgid "S"
+msgstr "六"

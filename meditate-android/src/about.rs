@@ -56,6 +56,47 @@ pub fn grouping_separator(app: &AndroidApp) -> String {
         .unwrap_or_default()
 }
 
+/// `date` written the locale's way for an ICU skeleton ("MMMd" →
+/// "Oct 9" / "9. Okt."); None on a JNI hiccup.
+pub fn format_date(app: &AndroidApp, skeleton: &str, date: chrono::NaiveDate) -> Option<String> {
+    use chrono::Datelike;
+    let res = crate::jni_call::with_env(app, |env, activity| {
+        let js = env.new_string(skeleton)?;
+        let class = crate::jni_call::load_class(env, activity, ABOUT_CLASS_DOTTED)?;
+        let result = env
+            .call_static_method(
+                class,
+                "formatDate",
+                "(Ljava/lang/String;III)Ljava/lang/String;",
+                &[(&js).into(), date.year().into(), (date.month() as i32).into(), (date.day() as i32).into()],
+            )?
+            .l()?;
+        let s: String = env.get_string(&JString::from(result))?.into();
+        Ok(s)
+    });
+    match res {
+        Ok(s) if !s.is_empty() => Some(s),
+        Ok(_) => None,
+        Err(e) => {
+            meditate_core::log("about", &format!("format_date FAILED: {e:?}"));
+            None
+        }
+    }
+}
+
+/// The locale's first weekday as java.util.Calendar numbers it
+/// (1 = Sunday); 0 on a JNI hiccup.
+pub fn first_day_of_week(app: &AndroidApp) -> i32 {
+    crate::jni_call::with_env(app, |env, activity| {
+        let class = crate::jni_call::load_class(env, activity, ABOUT_CLASS_DOTTED)?;
+        env.call_static_method(class, "firstDayOfWeek", "()I", &[])?.i()
+    })
+    .unwrap_or_else(|e| {
+        meditate_core::log("about", &format!("first_day_of_week FAILED: {e:?}"));
+        0
+    })
+}
+
 /// Copy `text` to the system clipboard under `label`.
 pub fn copy_text(app: &AndroidApp, label: &str, text: &str) {
     if let Err(e) = invoke_two_strings(app, "copyText", label, text) {

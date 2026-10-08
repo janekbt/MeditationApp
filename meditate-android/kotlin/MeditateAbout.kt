@@ -64,6 +64,32 @@ object MeditateAbout {
         ""
     }
 
+    /// `year-month-day` written the locale's way for an ICU
+    /// skeleton ("MMMd" → "Oct 9" / "9. Okt."); "" on failure, so
+    /// Rust falls back to English.
+    @JvmStatic
+    fun formatDate(skeleton: String, year: Int, month: Int, day: Int): String = try {
+        val locale = java.util.Locale.getDefault()
+        val pattern = android.text.format.DateFormat.getBestDateTimePattern(locale, skeleton)
+        val cal = java.util.Calendar.getInstance().apply {
+            clear()
+            set(year, month - 1, day)
+        }
+        java.text.SimpleDateFormat(pattern, locale).format(cal.time)
+    } catch (e: Exception) {
+        Log.w(TAG, "formatDate failed: $e")
+        ""
+    }
+
+    /// The locale's first weekday, 1 = Sunday … 7 = Saturday.
+    @JvmStatic
+    fun firstDayOfWeek(): Int = try {
+        java.util.Calendar.getInstance().firstDayOfWeek
+    } catch (e: Exception) {
+        Log.w(TAG, "firstDayOfWeek failed: $e")
+        0
+    }
+
     @JvmStatic
     fun copyText(context: Context, label: String, text: String) {
         try {

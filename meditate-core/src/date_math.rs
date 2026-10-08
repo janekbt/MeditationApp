@@ -57,13 +57,18 @@ pub fn locale_week_start_dow() -> i32 {
         if ptr.is_null() {
             return 1;
         }
-        let byte = *ptr as u8;
-        // 1 = Sun … 7 = Sat (POSIX)  →  1 = Mon … 7 = Sun (1=Mon).
-        match byte {
-            1 => 7,         // Sunday → 7 in 1=Mon convention
-            2..=7 => i32::from(byte - 1),
-            _ => 1,         // Unset / empty — default to Monday
-        }
+        week_start_from_sunday_one(i32::from(*ptr as u8))
+    }
+}
+
+/// A first weekday numbered 1 = Sun … 7 = Sat (POSIX, and Android's
+/// `java.util.Calendar`) in this module's 1 = Mon … 7 = Sun; anything
+/// else (unset) is Monday.
+pub fn week_start_from_sunday_one(n: i32) -> i32 {
+    match n {
+        1 => 7,
+        2..=7 => n - 1,
+        _ => 1,
     }
 }
 
@@ -317,6 +322,16 @@ mod tests {
         let t = chart_y_axis_ticks(&[60, 3600, 1200]);
         assert_eq!(t.max, 3600);
         assert_eq!(t.mid, 1800);
+    }
+
+    #[test]
+    fn sunday_first_weekday_numbers_map_to_monday_first() {
+        // POSIX and java.util.Calendar both number 1 = Sunday.
+        assert_eq!(week_start_from_sunday_one(1), 7);
+        assert_eq!(week_start_from_sunday_one(2), 1);
+        assert_eq!(week_start_from_sunday_one(7), 6);
+        assert_eq!(week_start_from_sunday_one(0), 1, "unset → Monday");
+        assert_eq!(week_start_from_sunday_one(9), 1);
     }
 
     #[test]

@@ -2683,6 +2683,9 @@ export component MainWindow inherits Window {
     // always overwrites before user-visible).
     in-out property <Date> edit-start-date: { year: 2026, month: 1, day: 1 };
     in-out property <Time> edit-start-time: { hour: 0, minute: 0 };
+    // The phone's clock convention, for the time row and its picker.
+    in property <bool> clock-24h: true;
+    pure callback render-time(hour: int, minute: int) -> string;
     // Label fields (L-4d). `edit-label-enabled` is the AdwExpander
     // master switch — when off, Save writes `label_id = None` and
     // the selected row is hidden. `edit-label-id` carries the rowid
@@ -5069,9 +5072,7 @@ export component MainWindow inherits Window {
                 }
                 DurationRow {
                     label: @tr("Time");
-                    value-text:
-                        (root.edit-start-time.hour < 10 ? "0" : "") + root.edit-start-time.hour + ":"
-                        + (root.edit-start-time.minute < 10 ? "0" : "") + root.edit-start-time.minute;
+                    value-text: root.render-time(root.edit-start-time.hour, root.edit-start-time.minute);
                     tapped => {
                         edit-note.release();
                         time-popup.show();
@@ -5162,7 +5163,7 @@ export component MainWindow inherits Window {
         width: root.width;
         height: root.height;
         title: @tr("Select session time");
-        use_24_hour_format: true;
+        use_24_hour_format: root.clock-24h;
         time: root.edit-start-time;
         ok => {
             root.edit-start-time = time-popup.get_current_time();

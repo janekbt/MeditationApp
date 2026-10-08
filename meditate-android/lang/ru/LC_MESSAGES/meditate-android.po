@@ -963,3 +963,51 @@ msgstr "Заменить сохранённую конфигурацию '{}' т
 
 msgid "'{}' will be removed from this device and any synced peers."
 msgstr "'{}' будет удалён с этого устройства и со всех синхронизированных устройств."
+
+# Material date and time pickers
+
+msgid "Select time"
+msgstr "Выберите время"
+
+msgid "Ok"
+msgstr "ОК"
+
+msgid "Hour"
+msgstr "Час"
+
+msgid "Minute"
+msgstr "Минута"
+
+msgid "Enter date"
+msgstr "Введите дату"
+
+msgid "{} Hours or minutes of {}"
+msgstr "{} часов или минут из {}"
+
+msgctxt "One-letter abbrev for Sunday"
+msgid "S"
+msgstr "В"
+
+msgctxt "One-letter abbrev for Monday"
+msgid "M"
+msgstr "П"
+
+msgctxt "One-letter abbrev for Tuesday"
+msgid "T"
+msgstr "В"
+
+msgctxt "One-letter abbrev for Wednesday"
+msgid "W"
+msgstr "С"
+
+msgctxt "One-letter abbrev for Thursday"
+msgid "T"
+msgstr "Ч"
+
+msgctxt "One-letter abbrev for Friday"
+msgid "F"
+msgstr "П"
+
+msgctxt "One-letter abbrev for Saturday"
+msgid "S"
+msgstr "С"
