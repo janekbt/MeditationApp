@@ -122,6 +122,7 @@ Planning only: nothing here has been changed yet. The audit ran on beta at a8a5d
   - About 6 existing tests drive Timer through `enter_overtime` (mod.rs:1843, 2018-2062) and must switch to `tick`.
 - **Risk:** low.
 - **Effort:** S-M
+- **Status:** 2 and 3 done. `enter_overtime` ignores non-Guided sessions. Android refuses a guided file with a 0 s length at Start with the existing "Couldn't start playback" message; GTK already refused it, and its own check stays. Step 1 (`settings_from_db`) is deferred: no current bug, and it changes how both apps start every session type, so it needs a full test round of all modes (prep, bells, interval bells, Box Breath cues, Guided) on the phone and the desktop. Do it together with other work on session start.
 
 ### R4 Android preview owner: one owner for all five preview kinds
 - **Evidence:** five separate mechanisms, none of which stops the others:

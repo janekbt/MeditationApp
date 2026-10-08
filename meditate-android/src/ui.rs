@@ -4297,15 +4297,16 @@ fn build_ui() -> MainWindow {
                 });
             }
             let was_active = s.is_active();
-            // Guided: start the track first. An unplayable file starts
-            // no session — mirrors GTK's audio-first start and its
-            // "Couldn't start playback" toast.
+            // Guided: start the track first. An unplayable file, or one
+            // whose length couldn't be read (0 s, the session would end
+            // at once), starts no session — mirrors GTK's audio-first
+            // start and its "Couldn't start playback" toast.
             if !was_active && current_mode.get() == TimerMode::Guided {
                 let started = android_app().is_some_and(|app| {
                     guided_sel
                         .borrow()
                         .as_ref()
-                        .is_some_and(|sel| guided::play(app, &sel.path))
+                        .is_some_and(|sel| sel.duration_secs > 0 && guided::play(app, &sel.path))
                 });
                 if !started {
                     use std::sync::atomic::Ordering;

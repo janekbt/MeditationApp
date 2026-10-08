@@ -408,9 +408,12 @@ impl Session {
     /// ends slightly before the probed duration. Returns a single
     /// `EnterOvertime` effect on the transition; idempotent — no-op
     /// (empty Vec) from any other phase, so callers can dispatch
-    /// unconditionally.
+    /// unconditionally. Only a Guided session follows its audio: a
+    /// preview ending under a Timer or Box Breath session is ignored.
     pub fn enter_overtime(&mut self) -> Vec<Effect> {
-        if self.phase != SessionPhase::Running {
+        if self.phase != SessionPhase::Running
+            || !matches!(self.settings.shape, SessionShape::Guided { .. })
+        {
             return Vec::new();
         }
         self.phase = SessionPhase::Overtime;
@@ -1840,7 +1843,7 @@ mod tests {
             timer_countdown_settings(600),
             Duration::from_secs(0),
         );
-        let _ = s.enter_overtime();
+        let _ = s.tick(Duration::from_secs(600));
         let _ = s.finish_overtime();
         assert_eq!(
             s.final_duration_secs(),
@@ -1871,7 +1874,7 @@ mod tests {
         let _ = s.pause(Duration::from_secs(5));
         assert_eq!(ui_state(Some(&s)), UiState::Paused);
         s.resume(Duration::from_secs(10));
-        let _ = s.enter_overtime();
+        let _ = s.tick(Duration::from_secs(700));
         assert_eq!(ui_state(Some(&s)), UiState::Overtime);
         let _ = s.finish_overtime();
         assert_eq!(ui_state(Some(&s)), UiState::Done);
@@ -2020,12 +2023,28 @@ mod tests {
     #[test]
     fn enter_overtime_from_running_transitions_and_emits_effect() {
         let mut s = Session::start_running(
-            timer_countdown_settings(600),
+            guided_settings(600, false),
             Duration::from_secs(100),
         );
         let effects = s.enter_overtime();
-        assert_eq!(effects, vec![Effect::EnterOvertime]);
+        assert!(effects.contains(&Effect::EnterOvertime), "{effects:?}");
         assert_eq!(s.phase(), SessionPhase::Overtime);
+    }
+
+    /// A guided preview's audio can end while a Timer or Box Breath
+    /// session runs (started from the widget). Its end must not move
+    /// that session into Overtime.
+    #[test]
+    fn only_a_guided_session_enters_overtime_from_outside() {
+        for settings in [
+            timer_countdown_settings(600),
+            timer_stopwatch_settings(),
+            box_breath_settings(Some(600)),
+        ] {
+            let mut s = Session::start_running(settings, Duration::from_secs(100));
+            assert!(s.enter_overtime().is_empty());
+            assert_eq!(s.phase(), SessionPhase::Running);
+        }
     }
 
     #[test]
