@@ -124,6 +124,12 @@ pub struct SessionFilter {
     pub offset: Option<u32>,
 }
 
+/// A note of only whitespace is no note. Every local write of a
+/// session note goes through this, so Save, the Log and import agree.
+pub(super) fn note_or_none(notes: &Option<String>) -> Option<&str> {
+    notes.as_deref().filter(|n| !n.trim().is_empty())
+}
+
 pub fn count_sessions_from_db(db: &Database) -> Result<i64> {
     Ok(db
         .conn
@@ -463,7 +469,7 @@ impl Database {
                 session.start_iso,
                 session.duration_secs,
                 session.label_id,
-                session.notes,
+                note_or_none(&session.notes),
                 session.mode.as_db_str(),
                 session_uuid,
                 session.guided_file_uuid,
@@ -482,7 +488,7 @@ impl Database {
             "start_iso": session.start_iso,
             "duration_secs": session.duration_secs,
             "label_uuid": label_uuid,
-            "notes": session.notes,
+            "notes": note_or_none(&session.notes),
             "mode": session.mode.as_db_str(),
             "guided_file_uuid": session.guided_file_uuid,
         }).to_string();
@@ -528,7 +534,7 @@ impl Database {
                     s.start_iso,
                     s.duration_secs,
                     s.label_id,
-                    s.notes,
+                    note_or_none(&s.notes),
                     s.mode.as_db_str(),
                     uuid,
                     s.guided_file_uuid,
@@ -546,7 +552,7 @@ impl Database {
                 "start_iso": s.start_iso,
                 "duration_secs": s.duration_secs,
                 "label_uuid": label_uuid,
-                "notes": s.notes,
+                "notes": note_or_none(&s.notes),
                 "mode": s.mode.as_db_str(),
                 "guided_file_uuid": s.guided_file_uuid,
             }).to_string();
@@ -643,7 +649,7 @@ impl Database {
                 session.start_iso,
                 session.duration_secs,
                 session.label_id,
-                session.notes,
+                note_or_none(&session.notes),
                 session.mode.as_db_str(),
                 session.guided_file_uuid,
                 id,
@@ -658,7 +664,7 @@ impl Database {
             "start_iso": session.start_iso,
             "duration_secs": session.duration_secs,
             "label_uuid": label_uuid,
-            "notes": session.notes,
+            "notes": note_or_none(&session.notes),
             "mode": session.mode.as_db_str(),
             "guided_file_uuid": session.guided_file_uuid,
         }).to_string();
@@ -3600,5 +3606,34 @@ mod tests {
         assert_ne!(rows[0].1.uuid, bogus, "DB must override caller's uuid");
         assert_ne!(rows[1].1.uuid, bogus, "DB must override caller's uuid");
         assert_ne!(rows[0].1.uuid, rows[1].1.uuid);
+    }
+    /// Every way a note is written (Log add, Log edit, import) saves
+    /// a note of only whitespace as no note, like Save does.
+    #[test]
+    fn a_whitespace_only_note_is_stored_as_no_note_on_every_write() {
+        let db = Database::open_in_memory().unwrap();
+        let with_note = |start: &str, note: &str| Session {
+            start_iso: start.into(),
+            duration_secs: 60,
+            label_id: None,
+            notes: Some(note.into()),
+            mode: SessionMode::Timer,
+            uuid: super::super::SessionUuid::new(""),
+            guided_file_uuid: None,
+        };
+        db.insert_session(&with_note("2026-10-01T08:00:00", "  ")).unwrap();
+        db.bulk_insert_sessions(&[with_note("2026-10-02T08:00:00", "\t\n")]).unwrap();
+        let kept = db.insert_session(&with_note("2026-10-03T08:00:00", " typed ")).unwrap();
+        db.update_session(kept, &with_note("2026-10-03T08:00:00", "   ")).unwrap();
+        let notes: Vec<Option<String>> = list_sessions_from_db(&db)
+            .unwrap()
+            .into_iter()
+            .map(|(_, s)| s.notes)
+            .collect();
+        assert_eq!(notes, vec![None, None, None]);
+        // Text with content is stored exactly as typed.
+        db.update_session(kept, &with_note("2026-10-03T08:00:00", " typed ")).unwrap();
+        let (_, s) = list_sessions_from_db(&db).unwrap().into_iter().find(|(i, _)| *i == kept).unwrap();
+        assert_eq!(s.notes.as_deref(), Some(" typed "));
     }
 }

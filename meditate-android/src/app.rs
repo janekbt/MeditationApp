@@ -1209,7 +1209,9 @@ mod tests {
         assert!(err_arm.contains("pending_done.set(Some((unix_start, elapsed_secs)))"), "the session is kept");
         assert!(err_arm.contains("SESSION_SAVE_FAILED"), "and the failure is shown");
         assert!(!err_arm.contains("clear_session_in_progress_snapshot"), "the snapshot survives");
-        assert!(after[ok..err].contains("clear_session_in_progress_snapshot();"), "cleared only once saved");
+        // Saving clears the snapshot in the same write (core).
+        assert!(body.contains("insert_session_clearing_snapshot(&session)"), "cleared only once saved");
+        assert!(!after[ok..err].contains("clear_session_in_progress_snapshot"), "no second clear");
 
         let shown = code.find("SESSION_SAVE_FAILED.lock()").expect("the tick loop shows it");
         let shown = &code[shown..shown + 700];
@@ -2234,9 +2236,10 @@ mod tests {
             );
         }
 
-        // Only the Done-screen exits clear it (Back on Done goes
-        // through the Discard path).
-        let exits = ["ui.on_save_tap(", "let discard = Rc::new(move || {"];
+        // Only Discard clears it here (Back on Done goes through the
+        // Discard path); Save clears it inside its insert, see
+        // `a_failed_save_keeps_the_session_and_says_so`.
+        let exits = ["let discard = Rc::new(move || {"];
         let clears: Vec<usize> = code
             .match_indices("clear_session_in_progress_snapshot();")
             .map(|(i, _)| i)

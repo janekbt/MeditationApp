@@ -3223,8 +3223,8 @@ fn finalize_session(
         // None. Mirrors GTK's `guided_selected_uuid` at save.
         guided_uuid.map(meditate_core::db::GuidedFileUuid::new),
     );
-    match db.insert_session(&session) {
-        Ok(rowid) => {
+    match db.insert_session_clearing_snapshot(&session) {
+        Ok((rowid, _)) => {
             meditate_core::log(
                 "session.insert",
                 &format!("ok rowid={rowid} duration_secs={elapsed_secs} start_unix={unix_start}"),
@@ -5280,8 +5280,8 @@ fn build_ui() -> MainWindow {
             let Some(ui) = weak.upgrade() else { return; };
             stop_active_signals();
             if let Some((unix_start, elapsed_secs)) = pending_done.take() {
-                let note = ui.get_note_text().to_string();
-                let note = if note.trim().is_empty() { None } else { Some(note) };
+                // Core saves a whitespace-only note as no note.
+                let note = Some(ui.get_note_text().to_string());
                 let mode: meditate_core::SessionMode = current_mode.get().into();
                 // The Done expander's per-session pick drives both
                 // the session row's label_id AND the persist-back
@@ -5336,12 +5336,9 @@ fn build_ui() -> MainWindow {
                     unix_start, elapsed_secs, note, mode, picked,
                     guided_uuid,
                 ) {
-                    Ok(()) => {
-                        // Saved: the held snapshot has done its job
-                        // (after the insert, so a kill in between
-                        // can't lose the session).
-                        clear_session_in_progress_snapshot();
-                    }
+                    // Saved: the insert cleared the held snapshot in
+                    // the same write.
+                    Ok(()) => {}
                     Err(kind) => {
                         // Keep everything: the Done screen stays up
                         // (Save again or Discard), and the held

@@ -30,7 +30,7 @@ pub struct FinalizedSession {
 /// this on session start + on a ~60s tick cadence + on state
 /// transitions (pause/resume/mode-specific changes), then clears it
 /// on normal completion inside the same transaction that records
-/// the session. A crash between two writes preserves the latest
+/// the session (`insert_session_clearing_snapshot`). A crash between two writes preserves the latest
 /// snapshot; the next launch finalises from that.
 ///
 /// `start_iso` is when the session began (already-formatted local
@@ -122,9 +122,8 @@ impl Database {
     }
 
     /// Drop the in-flight session row. Idempotent — a no-op when the
-    /// row is absent. Called on normal completion (clearing the
-    /// snapshot in the same transaction that records the session)
-    /// and as the second step of `finalize_session_in_progress`.
+    /// row is absent. Called when a session is discarded; Save clears
+    /// it through `insert_session_clearing_snapshot` instead.
     pub fn clear_session_in_progress(&self) -> Result<()> {
         self.conn.execute(
             "DELETE FROM session_in_progress WHERE id = 1",
@@ -147,6 +146,26 @@ impl Database {
             return self.clear_session_in_progress();
         }
         self.set_session_in_progress(snapshot)
+    }
+
+    /// Save an ended session and drop its recovery snapshot in one
+    /// transaction, so a kill or a failed insert can neither lose the
+    /// session nor leave the snapshot to be recovered a second time.
+    /// Only the snapshot of this session (same `start_iso`) goes: one
+    /// started meanwhile keeps its own. A note that is only whitespace
+    /// is saved as no note. Returns the new rowid and the row as
+    /// stored.
+    pub fn insert_session_clearing_snapshot(&self, session: &Session) -> Result<(i64, Session)> {
+        let notes = super::sessions::note_or_none(&session.notes).map(str::to_owned);
+        let session = Session { notes, ..session.clone() };
+        let tx = self.conn.unchecked_transaction()?;
+        let (rowid, uuid) = self.insert_session_tx_less(&tx, &session)?;
+        self.conn.execute(
+            "DELETE FROM session_in_progress WHERE id = 1 AND start_iso = ?1",
+            [&session.start_iso],
+        )?;
+        tx.commit()?;
+        Ok((rowid, Session { uuid: super::SessionUuid::new(uuid), ..session }))
     }
 
     /// Atomic crash-recovery primitive. Reads the in-flight snapshot;
@@ -588,5 +607,65 @@ mod tests {
             "ON DELETE SET NULL must blank the dangling reference");
         assert_eq!(got.accumulated_secs, 60,
             "the rest of the row stays intact");
+    }
+
+    fn ended(start_iso: &str, notes: Option<&str>, label_id: Option<i64>) -> Session {
+        Session {
+            start_iso: start_iso.into(),
+            duration_secs: 600,
+            label_id,
+            notes: notes.map(str::to_string),
+            mode: SessionMode::Timer,
+            uuid: super::super::SessionUuid::new(""),
+            guided_file_uuid: None,
+        }
+    }
+
+    #[test]
+    fn saving_a_session_clears_its_snapshot_in_the_same_write() {
+        let db = Database::open_in_memory().unwrap();
+        db.hold_ended_session(&sample(600)).unwrap();
+        db.insert_session_clearing_snapshot(&ended("2026-05-13T10:00:00", None, None))
+            .unwrap();
+        assert_eq!(db.get_session_in_progress().unwrap(), None);
+        assert_eq!(crate::db::list_sessions_from_db(&db).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn saving_leaves_the_snapshot_of_a_newer_session_alone() {
+        // Save runs in the background on GTK; a session started right
+        // after has already written its own snapshot.
+        let db = Database::open_in_memory().unwrap();
+        let newer = SessionInProgress { start_iso: "2026-05-13T11:00:00".into(), ..sample(5) };
+        db.set_session_in_progress(&newer).unwrap();
+        db.insert_session_clearing_snapshot(&ended("2026-05-13T10:00:00", None, None))
+            .unwrap();
+        assert_eq!(db.get_session_in_progress().unwrap(), Some(newer));
+    }
+
+    #[test]
+    fn a_failed_save_keeps_the_snapshot_for_recovery() {
+        let db = Database::open_in_memory().unwrap();
+        db.hold_ended_session(&sample(600)).unwrap();
+        // A label that doesn't exist fails the foreign key.
+        let r = db.insert_session_clearing_snapshot(&ended("2026-05-13T10:00:00", None, Some(9999)));
+        assert!(r.is_err());
+        assert_eq!(db.get_session_in_progress().unwrap(), Some(sample(600)));
+        assert!(crate::db::list_sessions_from_db(&db).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_note_of_only_whitespace_is_saved_as_no_note() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_session_clearing_snapshot(&ended("2026-05-13T10:00:00", Some(" \n\t"), None))
+            .unwrap();
+        db.insert_session_clearing_snapshot(&ended("2026-05-13T12:00:00", Some(" kept as typed "), None))
+            .unwrap();
+        let notes: Vec<Option<String>> = crate::db::list_sessions_from_db(&db)
+            .unwrap()
+            .into_iter()
+            .map(|(_, s)| s.notes)
+            .collect();
+        assert_eq!(notes, vec![None, Some(" kept as typed ".to_string())]);
     }
 }

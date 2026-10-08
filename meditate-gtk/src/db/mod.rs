@@ -744,6 +744,14 @@ impl Database {
         Ok(session_from_core(id, &core))
     }
 
+    /// Save a just-ended session and drop its recovery snapshot in
+    /// one write (see core's `insert_session_clearing_snapshot`).
+    pub fn save_ended_session(&self, data: &SessionData) -> Result<Session> {
+        let core = session_data_to_core(data);
+        let (id, stored) = self.inner.insert_session_clearing_snapshot(&core).map_err(map_core_err)?;
+        Ok(session_from_core(id, &stored))
+    }
+
     /// Insert many sessions inside a single core-side transaction.
     /// Atomic on error: a constraint violation rolls back the whole
     /// batch (see core's `bulk_insert_sessions` tests).

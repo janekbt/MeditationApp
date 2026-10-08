@@ -2465,15 +2465,15 @@ impl TimerView {
         let start_time = self.session_start_time.get();
 
         if elapsed == 0 {
-            self.reset_mode(mode);
+            self.reset_mode(mode, true);
             return;
         }
 
+        // Core saves a whitespace-only note as no note.
         let note = {
             let buffer = self.note_view.buffer();
             let (start, end) = buffer.bounds();
-            let t = buffer.text(&start, &end, false);
-            if t.is_empty() { None } else { Some(t.to_string()) }
+            Some(buffer.text(&start, &end, false).to_string())
         };
         // Per-session pick is stored on `done_selected_label_id`,
         // mirrored from Setup at show_done and mutable on the Done
@@ -2536,7 +2536,7 @@ impl TimerView {
         if let Some(app) = self.get_app() {
             glib::MainContext::default().spawn_local(async move {
                 let result = app
-                    .with_db_blocking_mut(move |db| db.create_session(&data))
+                    .with_db_blocking_mut(move |db| db.save_ended_session(&data))
                     .await;
                 let session = match result {
                     Some(Ok(s)) => s,
@@ -2589,7 +2589,9 @@ impl TimerView {
             });
         }
 
-        self.reset_mode(mode);
+        // The save above drops the snapshot in the same write; if it
+        // fails, the snapshot recovers the session on the next start.
+        self.reset_mode(mode, false);
     }
 
     fn on_discard(&self) {
@@ -2616,7 +2618,7 @@ impl TimerView {
             let mode = self.current_mode();
             dialog.connect_response(None, move |_, id| {
                 if id == "discard" {
-                    obj.imp().reset_mode(mode);
+                    obj.imp().reset_mode(mode, true);
                 }
             });
 
@@ -2626,12 +2628,13 @@ impl TimerView {
                 dialog.present(Some(&win));
             }
         } else {
-            self.reset_mode(self.current_mode());
+            self.reset_mode(self.current_mode(), true);
         }
     }
 
     /// Reset a single mode back to Idle and update the UI if it's currently shown.
-    fn reset_mode(&self, mode: TimerMode) {
+    /// `clear_snapshot` is false only for Save, whose insert clears it.
+    fn reset_mode(&self, mode: TimerMode, clear_snapshot: bool) {
         // Session is the sole owner of session timing state; drop
         // it once, regardless of mode. The gst playbin is the only
         // mode-specific gtk-side artefact left that still needs
@@ -2652,14 +2655,13 @@ impl TimerView {
         // duration, so the next refresh sees `ui_state == Idle`.
         self.session_start_time.set(0);
 
-        // Drop the crash-recovery snapshot + cancel its 60 s
-        // heartbeat. Every path that ends a session — save, discard,
-        // stop-from-pause, abandonment by mode switch — funnels
-        // through here, so this single pair covers all of them.
-        // set_session_in_progress / finalize on the next launch
-        // will see no row and skip the toast.
+        // Cancel the 60 s snapshot heartbeat and drop the crash-
+        // recovery snapshot. Every path that ends a session funnels
+        // through here; Save leaves the drop to its own insert.
         self.cancel_snapshot_tick();
-        self.clear_in_progress_snapshot();
+        if clear_snapshot {
+            self.clear_in_progress_snapshot();
+        }
 
         // Only update the visible UI if this mode is the one currently shown.
         if mode == self.current_mode() {
