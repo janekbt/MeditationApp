@@ -2128,6 +2128,30 @@ mod tests {
         }
     }
 
+    /// A preview that played to its end kept its focus request, which
+    /// later paused the next guided session (#15). Resume played over
+    /// other apps without focus, and a notification beep paused the
+    /// whole session (#14).
+    #[test]
+    fn the_guided_player_owns_its_audio_focus() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let kotlin = std::fs::read_to_string(root.join("kotlin/MeditateGuided.kt")).unwrap();
+        let body = |name: &str| {
+            let at = kotlin.find(&format!("fun {name}(")).expect(name);
+            kotlin[at..at + kotlin[at..].find("\n    }\n").unwrap()].to_string()
+        };
+        assert!(body("releaseLocked").contains("abandonFocus(context)"), "every release drops focus");
+        assert_eq!(kotlin.matches("abandonFocus(context)").count(), 1, "one release path");
+        let resume = body("resumeAudio");
+        let ask = resume.find("requestFocus(context)").expect("resume asks for focus");
+        assert!(ask < resume.find("mp.start()").unwrap(), "before it plays");
+        assert!(resume.contains("markFocusLoss(context)"), "a denied resume pauses the session");
+        let focus = body("requestFocus");
+        let duck = focus.find("AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK ->").expect("a beep ducks");
+        assert!(focus[duck..].contains("setVolume("), "instead of pausing");
+        assert!(focus.contains("AUDIOFOCUS_GAIN ->"), "and the volume comes back");
+    }
+
     #[test]
     fn guided_audio_pauses_with_the_timer_on_focus_loss() {
         // A call paused the timer but the guided track played on,

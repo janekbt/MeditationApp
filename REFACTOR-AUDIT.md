@@ -205,6 +205,7 @@ Planning only: nothing here has been changed yet. The audit ran on beta at a8a5d
 - **Bugs:** B3#14, B3#15.
 - **Risk:** low. No gradle change. Device check only: play a preview to its end, then a guided session, then a notification sound.
 - **Effort:** S
+- **Status:** done. The request is reused, so resume needs no second abandon. A notification ducks the guide to 20% instead of pausing it (the system does not auto-duck speech).
 
 ### R9 Drop-file helper and the missing failure paths
 - **Evidence:**

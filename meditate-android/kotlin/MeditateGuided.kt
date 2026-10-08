@@ -36,7 +36,7 @@ object MeditateGuided {
     @JvmStatic
     fun startAudio(context: Context, path: String): Boolean {
         synchronized(lock) {
-            releaseLocked()
+            releaseLocked(context)
             clearEos(context)
             requestFocus(context)
             val mp = MediaPlayer()
@@ -45,12 +45,12 @@ object MeditateGuided {
                 mp.setDataSource(path)
                 mp.setOnCompletionListener {
                     markEos(context)
-                    synchronized(lock) { releaseLocked() }
+                    synchronized(lock) { releaseLocked(context) }
                 }
                 mp.setOnErrorListener { _, what, extra ->
                     Log.w(TAG, "MediaPlayer error what=$what extra=$extra")
                     markEos(context)
-                    synchronized(lock) { releaseLocked() }
+                    synchronized(lock) { releaseLocked(context) }
                     true
                 }
                 mp.prepare()
@@ -60,7 +60,7 @@ object MeditateGuided {
             } catch (e: Exception) {
                 Log.w(TAG, "startAudio failed path=$path: $e")
                 runCatching { mp.release() }
-                abandonFocus(context)
+                releaseLocked(context)
                 // Report it: the caller then starts no session, like
                 // GTK's "Couldn't start playback".
                 return false
@@ -78,15 +78,17 @@ object MeditateGuided {
     @JvmStatic
     fun resumeAudio(context: Context) {
         synchronized(lock) {
-            runCatching { player?.let { if (!it.isPlaying) it.start() } }
+            val mp = player ?: return
+            // Denied (a call, another media app): the session pauses again.
+            if (!requestFocus(context)) return markFocusLoss(context)
+            runCatching { mp.setVolume(1f, 1f); if (!mp.isPlaying) mp.start() }
         }
     }
 
     @JvmStatic
     fun stopAudio(context: Context) {
         synchronized(lock) {
-            abandonFocus(context)
-            releaseLocked()
+            releaseLocked(context)
         }
     }
 
@@ -97,23 +99,29 @@ object MeditateGuided {
     // (which also pauses this player), so timer and audio stay in
     // step. No auto-resume — after a call the user resumes
     // deliberately, matching a meditation's flow.
-    private fun requestFocus(context: Context) {
+    // A short sound (notification, navigation) only ducks the guide.
+    private fun requestFocus(context: Context): Boolean {
         val am = context.getSystemService(Context.AUDIO_SERVICE)
-            as? AudioManager ?: return
-        val req = AudioFocusRequest
+            as? AudioManager ?: return true
+        val req = focusRequest ?: AudioFocusRequest
             .Builder(AudioManager.AUDIOFOCUS_GAIN)
             .setAudioAttributes(attrs)
             .setOnAudioFocusChangeListener { change ->
                 when (change) {
                     AudioManager.AUDIOFOCUS_LOSS,
                     AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
-                    AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK,
                     -> markFocusLoss(context)
+                    AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> setVolume(0.2f)
+                    AudioManager.AUDIOFOCUS_GAIN -> setVolume(1f)
                 }
             }
             .build()
         focusRequest = req
-        am.requestAudioFocus(req)
+        return am.requestAudioFocus(req) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+    }
+
+    private fun setVolume(v: Float) {
+        synchronized(lock) { runCatching { player?.setVolume(v, v) } }
     }
 
     private fun abandonFocus(context: Context) {
@@ -135,7 +143,8 @@ object MeditateGuided {
         }
     }
 
-    private fun releaseLocked() {
+    private fun releaseLocked(context: Context) {
+        abandonFocus(context)
         player?.let { mp ->
             runCatching { if (mp.isPlaying) mp.stop() }
             runCatching { mp.release() }

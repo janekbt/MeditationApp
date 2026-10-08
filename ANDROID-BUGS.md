@@ -156,6 +156,7 @@ Left out on purpose:
 - **Confidence:** confirmed
 
 ### 14. Guided audio focus: Resume plays without focus, and a ducking notification pauses the session
+- **Fixed (2026-10-08):** R8: Resume requests focus and pauses again if denied; a ducking sound lowers the volume to 20%.
 - **Where:** `kotlin/MeditateGuided.kt`: `resumeAudio` (`:388-393`) never re-requests focus; `:416-422` treats `LOSS_TRANSIENT_CAN_DUCK` as a full loss.
 - **What happens:**
   - After another media app takes focus, Resume plays over that app, and later calls no longer pause the session.
@@ -167,6 +168,7 @@ Left out on purpose:
 - **Confidence:** likely (Android focus semantics; confirmed in code)
 
 ### 15. A preview that plays to its end leaks its focus request, and the next guided session pauses itself
+- **Fixed (2026-10-08):** R8: releasing the player always abandons focus.
 - **Where:**
   - `MeditateGuided.kt:347-359`: `startAudio` never abandons the previous request; the completion and error listeners never abandon theirs.
   - The EOS tick clears the preview id (`lib.rs:5594`), so Back no longer calls `guided::stop`.
