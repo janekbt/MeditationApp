@@ -909,6 +909,54 @@ mod tests {
         assert!(slint.contains("clicked => { root.release-vibration-editor-inputs(); }"), "a background tap releases");
     }
 
+    /// A write that failed closed its page or dialog as if it had
+    /// saved, and Undo dropped its error (#4): every one now says so,
+    /// and the pages stay open with what was typed.
+    #[test]
+    fn failed_writes_are_reported() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        let body = |sig: &str| {
+            let at = lib.find(sig).unwrap_or_else(|| panic!("{sig}"));
+            &lib[at..at + lib[at..].find("\n        });\n").unwrap()]
+        };
+        let save = body("ui.on_edit_save_tap(");
+        assert!(save.contains("show_notice(&ui, session_save_failed_text(&ui, kind), None, 4);"), "edit save reports");
+        assert!(!save.contains("editing_session.borrow_mut().take()"), "the edit survives a failure");
+        let bell = body("ui.on_interval_editor_save(");
+        assert!(bell.contains("write_ok("), "interval bell save reports");
+        assert!(bell.contains("let original = editing_ib.borrow().clone();"), "the bell edit survives a failure");
+        for sig in ["ui.on_create_label_confirm(", "ui.on_rename_label_confirm(", "ui.on_delete_label_confirm("] {
+            assert!(body(sig).contains("show_notice("), "{sig} reports");
+        }
+        let undo = body("ui.on_snackbar_undo_tap(");
+        assert_eq!(undo.matches("write_ok(").count(), 5, "every Undo write reports");
+        assert!(!undo.contains("let _ = db."));
+    }
+
+    /// Editing a session of 24 h or more cut it to 23 h (#5); a
+    /// label renamed or deleted from the chooser left stale cards,
+    /// the open editor's dead label failed its Save (#6), and the
+    /// Log filter kept the old name (#34).
+    #[test]
+    fn log_edits_keep_long_sessions_and_follow_label_changes() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        assert!(slint.contains("max-value: root.edit-session-page ? max(23, root.edit-duration-hours) : 23;"));
+        let body = |sig: &str| {
+            let at = lib.find(sig).unwrap();
+            &lib[at..at + lib[at..].find("\n        });\n").unwrap()]
+        };
+        let rename = body("ui.on_rename_label_confirm(");
+        assert!(rename.contains("reset_log_feed(") && rename.contains("ui.set_edit_label_name("));
+        let delete = body("ui.on_delete_label_confirm(");
+        assert!(delete.contains("reset_log_feed(") && !delete.contains("if ui.get_filter_label_id() != filtered"));
+        assert!(delete.contains("ui.set_edit_label_enabled(false);") && delete.contains("ui.set_done_label_active(false);"));
+        let menu = std::fs::read_to_string(root.join("material-1.0/ui/components/drop_down_menu.slint")).unwrap();
+        assert!(menu.contains("changed items => {\n        root.update_text(root.current_index);"));
+    }
+
     /// Units and sentences come from the translations: Rust wrote
     /// English "1h 4m" and "3 sessions" (#27, #28), and a sentence
     /// glued around a name couldn't be translated whole (#31).
@@ -1717,8 +1765,10 @@ mod tests {
         let err_arm = &after[err..];
         let err_arm = &err_arm[..err_arm.find("return;").expect("a failed save leaves the Done screen up") + 7];
         assert!(err_arm.contains("pending_done.set(Some((unix_start, elapsed_secs)))"), "the session is kept");
-        assert!(err_arm.contains("show_notice(&ui, text, None, 4);"), "and the failure is shown");
-        assert!(err_arm.contains("invoke_save_failed_storage()") && err_arm.contains("invoke_save_failed_unavailable()"));
+        assert!(err_arm.contains("show_notice(&ui, session_save_failed_text(&ui, kind), None, 4);"), "and the failure is shown");
+        let text = &code[code.find("fn session_save_failed_text(").unwrap()..];
+        let text = &text[..text.find("\n}\n").unwrap()];
+        assert!(text.contains("invoke_save_failed_storage()") && text.contains("invoke_save_failed_unavailable()"));
         assert!(!err_arm.contains("clear_session_in_progress_snapshot"), "the snapshot survives");
         // Saving clears the snapshot in the same write (core).
         assert!(body.contains("insert_session_clearing_snapshot(&session)"), "cleared only once saved");

@@ -695,6 +695,18 @@ mod tests {
         assert!(!log.contains("hours_spin.value() as i64 * 3600"));
     }
 
+    /// A failed write closed the dialog as if saved (#4), and the
+    /// Hours spin's 23 cap cut a 25 h session on any edit (#5).
+    #[test]
+    fn log_edit_keeps_failed_saves_and_long_sessions() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let log = std::fs::read_to_string(root.join("src/log/imp.rs")).unwrap();
+        assert!(log.contains("toast_overlay.add_toast(adw::Toast::new(&gettext(\"Couldn't save session — storage error\")));"));
+        assert!(log.contains("toast_overlay.add_toast(adw::Toast::new(&gettext(\"Couldn't save session — storage unavailable\")));"));
+        assert!(!log.contains("app.with_db_mut(|db| db.update_session(id, &data));"));
+        assert!(!log.contains("Adjustment::new(0.0, 0.0, 23.0, 1.0, 5.0, 0.0)"));
+    }
+
     /// The sync worker loop lives in core (`SyncCoordinator::drain`)
     /// so GTK and Android run the same choreography.
     #[test]

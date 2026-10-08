@@ -16,7 +16,7 @@ Each batch touches one area and needs one test round. Mark a batch `[x]` when it
 | Done | Batch | Bugs | Why this place |
 |:---:|---|---|---|
 | [x] | A. Sync compaction | #3, corrupt manifest | data loss |
-| [ ] | B. Log editing and labels | #4, #5, #6, #34 | data loss |
+| [x] | B. Log editing and labels | #4, #5, #6, #34 | data loss |
 | [ ] | C. CSV | #7, #36 | data loss |
 | [ ] | D. Locale | #29, #26, #25, #30 | visible every day in German |
 | [ ] | E. Stats | #18, #24, #35, #22 | wrong numbers |

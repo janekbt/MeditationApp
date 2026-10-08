@@ -4896,13 +4896,7 @@ fn build_ui() -> MainWindow {
                         // snapshot still recovers the session on the
                         // next start.
                         pending_done.set(Some((unix_start, elapsed_secs)));
-                        use meditate_core::format::SessionSaveFailureKind;
-                        let tr = ui.global::<Tr>();
-                        let text = match kind {
-                            SessionSaveFailureKind::StorageError => tr.invoke_save_failed_storage(),
-                            SessionSaveFailureKind::DbUnopened => tr.invoke_save_failed_unavailable(),
-                        };
-                        show_notice(&ui, text, None, 4);
+                        show_notice(&ui, session_save_failed_text(&ui, kind), None, 4);
                         return;
                     }
                 }
@@ -7517,9 +7511,9 @@ fn build_ui() -> MainWindow {
                 let volume = meditate_core::bell_volume::BellVolume::from_percent(
                     ui.get_ie_volume().into(),
                 );
-                let original = editing_ib.borrow_mut().take();
-                if let Some(db) = lock_db() {
-                    let res = match original {
+                let original = editing_ib.borrow().clone();
+                let res = lock_db().map(|db| {
+                    match original {
                         Some(mut bell) => {
                             // Edit: preserve uuid /
                             // created_iso / enabled; swap
@@ -7556,14 +7550,13 @@ fn build_ui() -> MainWindow {
                                 _ => Ok(()),
                             })
                         }
-                    };
-                    if let Err(e) = res {
-                        meditate_core::log(
-                            "interval_bell.save.failed",
-                            &format!("{e:?}"),
-                        );
                     }
+                });
+                // Failed: the editor stays open with its values.
+                if !write_ok(&ui, "interval_bell.save", res) {
+                    return;
                 }
+                editing_ib.borrow_mut().take();
                 stop_volume_preview(&ui);
                 ui.set_interval_editor_page(false);
                 populate_interval_bells(&ui);
@@ -7695,6 +7688,8 @@ fn build_ui() -> MainWindow {
                             refresh_label_state(&ui, mode);
                         }
                     }
+                } else {
+                    show_notice(&ui, ui.global::<Tr>().invoke_save_failed(), None, 4);
                 }
             }
             close_modal(&ui, Modal::CreateLabel);
@@ -7748,6 +7743,8 @@ fn build_ui() -> MainWindow {
     {
         let weak = ui.as_weak();
         let current_mode = current_mode.clone();
+        let loaded_log_sessions = loaded_log_sessions.clone();
+        let pending_deletes = pending_deletes.clone();
         ui.on_rename_label_confirm(move || {
             let Some(ui) = weak.upgrade() else { return; };
             {
@@ -7757,6 +7754,16 @@ fn build_ui() -> MainWindow {
                     let mode: meditate_core::SessionMode = current_mode.get().into();
                     refresh_after_label_change(&ui, mode);
                     refresh_filter_label_items(&ui);
+                    // The open editors show the name, the cards too.
+                    if ui.get_edit_label_id() as i64 == id {
+                        ui.set_edit_label_name(text.trim().into());
+                    }
+                    if ui.get_done_label_id() as i64 == id {
+                        ui.set_done_label_name(text.trim().into());
+                    }
+                    reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
+                } else {
+                    show_notice(&ui, ui.global::<Tr>().invoke_save_failed(), None, 4);
                 }
             }
             close_modal(&ui, Modal::RenameLabel);
@@ -7797,11 +7804,22 @@ fn build_ui() -> MainWindow {
                 if delete_label_in_db(id) {
                     let mode: meditate_core::SessionMode = current_mode.get().into();
                     refresh_after_label_change(&ui, mode);
-                    let filtered = ui.get_filter_label_id();
                     refresh_filter_label_items(&ui);
-                    if ui.get_filter_label_id() != filtered {
-                        reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
+                    // An open editor holding the label would fail its
+                    // Save on the dead id; sessions lose it like the DB.
+                    if ui.get_edit_label_id() as i64 == id {
+                        ui.set_edit_label_enabled(false);
+                        ui.set_edit_label_id(0);
+                        ui.set_edit_label_name("".into());
                     }
+                    if ui.get_done_label_id() as i64 == id {
+                        ui.set_done_label_active(false);
+                        ui.set_done_label_id(0);
+                        ui.set_done_label_name("".into());
+                    }
+                    reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
+                } else {
+                    show_notice(&ui, ui.global::<Tr>().invoke_delete_failed(), None, 4);
                 }
             }
             close_modal(&ui, Modal::DeleteLabel);
@@ -8053,14 +8071,7 @@ fn build_ui() -> MainWindow {
                 U::Recovery(uuid) => {
                     // Deleting by uuid tombstones it for sync peers
                     // too, like GTK's recovery toast Undo.
-                    if let Some(db) = lock_db() {
-                        if let Err(e) = db.delete_session_by_uuid(&uuid) {
-                            meditate_core::log(
-                                "session.recovery",
-                                &format!("undo delete failed uuid={uuid}: {e:?}"),
-                            );
-                        }
-                    }
+                    write_ok(&ui, "session.recovery.undo", lock_db().map(|db| db.delete_session_by_uuid(&uuid)));
                     reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
                 }
                 U::PresetApply(json, mode) => {
@@ -8074,19 +8085,13 @@ fn build_ui() -> MainWindow {
                     }
                 }
                 U::PresetDelete(u, name, mode, starred, json) => {
-                    {
-                        let Some(db) = lock_db() else { return; };
-                        let _ = db.insert_preset_with_uuid(&u, &name, mode, starred, &json);
-                    }
+                    write_ok(&ui, "preset.undo", lock_db().map(|db| db.insert_preset_with_uuid(&u, &name, mode, starred, &json)));
                     populate_preset_chooser(&ui, core_mode);
                     refresh_preset_chips(&ui, core_mode);
                     refresh_widget(&ui);
                 }
                 U::Override(u, prior) => {
-                    {
-                        let Some(db) = lock_db() else { return; };
-                        let _ = db.update_preset_config(&u, &prior);
-                    }
+                    write_ok(&ui, "preset.override.undo", lock_db().map(|db| db.update_preset_config(&u, &prior)));
                     // The chips on screen are the current mode's; the
                     // override may belong to the mode switched away from.
                     refresh_preset_chips(&ui, core_mode);
@@ -8094,25 +8099,21 @@ fn build_ui() -> MainWindow {
                 }
                 // The file was kept for Undo, so the row comes back whole.
                 U::GuidedDelete(u, name, path, secs, starred) => {
-                    {
-                        let Some(db) = lock_db() else { return; };
-                        let _ = db.insert_guided_file_with_uuid(&u, &name, &path, secs, starred);
-                    }
+                    write_ok(&ui, "guided.undo", lock_db().map(|db| db.insert_guided_file_with_uuid(&u, &name, &path, secs, starred)));
                     refresh_guided_manage(&ui);
                     refresh_guided_files(&ui);
                 }
                 U::PatternDelete(p) => {
-                    {
-                        let Some(db) = lock_db() else { return; };
-                        let _ = db.insert_vibration_pattern_with_uuid(
+                    write_ok(&ui, "pattern.undo", lock_db().map(|db| {
+                        db.insert_vibration_pattern_with_uuid(
                             p.uuid.as_str(),
                             &p.name,
                             p.duration_ms,
                             &p.intensities,
                             p.chart_kind,
                             p.is_bundled,
-                        );
-                    }
+                        )
+                    }));
                     refresh_after_pattern_change(&ui);
                 }
             }
@@ -8315,8 +8316,8 @@ fn build_ui() -> MainWindow {
                     None
                 };
 
-                if let Some(db) = lock_db() {
-                    let editing = editing_session.borrow_mut().take();
+                let editing = editing_session.borrow().clone();
+                let res = lock_db().map(|db| {
                     match editing {
                         Some((id, mut session)) => {
                             // Edit: clone the live row,
@@ -8334,12 +8335,7 @@ fn build_ui() -> MainWindow {
                                     new_start_unix,
                                 );
                             session.label_id = label_id;
-                            if let Err(err) = db.update_session(id, &session) {
-                                meditate_core::log(
-                                    "log.edit.save.failed",
-                                    &format!("rowid {id}: {err:?}"),
-                                );
-                            }
+                            db.update_session(id, &session)
                         }
                         None => {
                             // Create: a fresh manual
@@ -8358,16 +8354,23 @@ fn build_ui() -> MainWindow {
                                     meditate_core::SessionMode::Timer,
                                     None,
                                 );
-                            if let Err(err) =
-                                db.insert_session(&session)
-                            {
-                                meditate_core::log(
-                                    "log.add.save.failed",
-                                    &format!("{err:?}"),
-                                );
-                            }
+                            db.insert_session(&session).map(|_| ())
                         }
                     }
+                });
+                // Failed: the page stays open with the edits, like
+                // the Done screen's Save.
+                let failure = match res {
+                    Some(Ok(())) => None,
+                    Some(Err(err)) => {
+                        meditate_core::log("log.edit.save.failed", &format!("{err:?}"));
+                        Some(meditate_core::format::SessionSaveFailureKind::StorageError)
+                    }
+                    None => Some(meditate_core::format::SessionSaveFailureKind::DbUnopened),
+                };
+                if let Some(kind) = failure {
+                    show_notice(&ui, session_save_failed_text(&ui, kind), None, 4);
+                    return;
                 }
                 *editing_session.borrow_mut() = None;
                 ui.set_edit_session_page(false);
@@ -9531,6 +9534,31 @@ fn commit_undo(ui: &MainWindow, undo: app::PendingUndo) {
 /// Show `text` in the snackbar for `secs`, with Undo when `undo` is
 /// set. The Undo it replaces is committed, and so is its own when it
 /// times out.
+/// Did the write go through? A failed one is logged and shown, so a
+/// create, edit or Undo never just vanishes (#4).
+fn write_ok<T, E: std::fmt::Debug>(ui: &MainWindow, tag: &str, res: Option<Result<T, E>>) -> bool {
+    let err = match res {
+        Some(Ok(_)) => return true,
+        Some(Err(e)) => format!("{e:?}"),
+        None => "database unavailable".to_string(),
+    };
+    meditate_core::log(tag, &format!("FAILED: {err}"));
+    show_notice(ui, ui.global::<Tr>().invoke_save_failed(), None, 4);
+    false
+}
+
+fn session_save_failed_text(
+    ui: &MainWindow,
+    kind: meditate_core::format::SessionSaveFailureKind,
+) -> slint::SharedString {
+    use meditate_core::format::SessionSaveFailureKind;
+    let tr = ui.global::<Tr>();
+    match kind {
+        SessionSaveFailureKind::StorageError => tr.invoke_save_failed_storage(),
+        SessionSaveFailureKind::DbUnopened => tr.invoke_save_failed_unavailable(),
+    }
+}
+
 fn show_notice(
     ui: &MainWindow,
     text: slint::SharedString,

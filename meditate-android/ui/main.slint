@@ -5516,7 +5516,8 @@ export component MainWindow inherits Window {
                     hours-spin := VerticalSpinBox {
                         value <=> root.dialog-hours;
                         min-value: 0;
-                        max-value: 23;
+                        // An edited session keeps hours past 23 (#5).
+                        max-value: root.edit-session-page ? max(23, root.edit-duration-hours) : 23;
                     }
                     Text {
                         text: ":";

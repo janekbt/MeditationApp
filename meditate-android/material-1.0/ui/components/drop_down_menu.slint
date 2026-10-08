@@ -122,4 +122,9 @@ export component DropDownMenu {
     changed current_index => {
         root.update_text(root.current_index);
     }
+
+    // A renamed item keeps its index, so redraw on new items too.
+    changed items => {
+        root.update_text(root.current_index);
+    }
 }

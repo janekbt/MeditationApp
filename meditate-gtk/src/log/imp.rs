@@ -812,7 +812,15 @@ impl LogView {
         // ── Duration (hours + minutes as AdwSpinRows) ─────────────────
         let hours_spin = adw::SpinRow::builder()
             .title(gettext("Hours"))
-            .adjustment(&gtk::Adjustment::new(0.0, 0.0, 23.0, 1.0, 5.0, 0.0))
+            // An edited session keeps hours past 23 (#5).
+            .adjustment(&gtk::Adjustment::new(
+                0.0,
+                0.0,
+                session.map_or(23.0, |s| (s.duration_secs / 3600).max(23) as f64),
+                1.0,
+                5.0,
+                0.0,
+            ))
             .digits(0)
             .build();
         let minutes_spin = adw::SpinRow::builder()
@@ -1064,6 +1072,9 @@ impl LogView {
         let toolbar_view = adw::ToolbarView::new();
         toolbar_view.add_top_bar(&header);
         toolbar_view.set_content(Some(&scrolled));
+        // A failed save is shown in the dialog, which stays open.
+        let toast_overlay = adw::ToastOverlay::new();
+        toast_overlay.set_child(Some(&toolbar_view));
 
         // Wrap the dialog content in its own NavigationView so the
         // label chooser can push *inside* the dialog. Pushing onto the
@@ -1072,7 +1083,7 @@ impl LogView {
         let dialog_root_page = adw::NavigationPage::builder()
             .tag("session-dialog-root")
             .title(if is_edit { gettext("Edit Session") } else { gettext("Add Session") })
-            .child(&toolbar_view)
+            .child(&toast_overlay)
             .build();
         let dialog_nav_view = adw::NavigationView::new();
         dialog_nav_view.add(&dialog_root_page);
@@ -1126,6 +1137,7 @@ impl LogView {
             #[weak] calendar,
             #[weak] label_expander,
             #[weak] note_buffer,
+            #[weak] toast_overlay,
             move |_| {
                 let imp = obj.imp();
                 let Some(duration) = meditate_core::format::log_edit_duration_secs(
@@ -1165,10 +1177,23 @@ impl LogView {
                 };
 
                 if let Some(app) = imp.get_app() {
-                    if let Some(id) = session_id {
-                        app.with_db_mut(|db| db.update_session(id, &data));
+                    let saved = if let Some(id) = session_id {
+                        app.with_db_mut(|db| db.update_session(id, &data))
                     } else {
-                        app.with_db_mut(|db| db.create_session(&data));
+                        app.with_db_mut(|db| db.create_session(&data).map(|_| ()))
+                    };
+                    match saved {
+                        Some(Ok(())) => {}
+                        Some(Err(e)) => {
+                            meditate_core::log("log.edit.save.failed", &e.to_string());
+                            toast_overlay.add_toast(adw::Toast::new(&gettext("Couldn't save session — storage error")));
+                            return;
+                        }
+                        None => {
+                            meditate_core::log("log.edit.save.failed", "database unavailable");
+                            toast_overlay.add_toast(adw::Toast::new(&gettext("Couldn't save session — storage unavailable")));
+                            return;
+                        }
                     }
                     app.invalidate(crate::application::InvalidateScope::STATS);
                 }
