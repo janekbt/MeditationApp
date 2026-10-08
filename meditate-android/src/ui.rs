@@ -6,6 +6,7 @@
 use super::*;
 
 use app::{signal_mode_from_chip_index, signal_mode_to_chip_index, AppState, TimerMode};
+use meditate_core::preview::{PreviewAction, PreviewToggle};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::OnceLock;
@@ -901,19 +902,16 @@ fn refresh_widget(ui: &MainWindow) {
 /// landed would be worse than ignoring it.
 /// Close every overlay page + modal dialog (bug-audit #9): the
 /// Running view is the lowest overlay layer, so anything left
-/// open would cover a session started underneath it. Preview
-/// audio/haptics are cut by the session start's
-/// StopActiveSignals effect; preview icon state is reset here.
+/// open would cover a session started underneath it. Every
+/// preview stops too, so none plays into that session.
 fn close_transient_overlays(ui: &MainWindow) {
+    stop_all_previews(ui);
     ui.set_preferences_page(false);
     ui.set_diag_page(false);
     ui.set_guided_manage_page(false);
-    ui.set_guided_manage_preview_uuid(slint::SharedString::new());
     ui.set_preset_chooser_page(false);
     ui.set_bell_chooser_page(false);
-    ui.set_bell_preview_uuid(slint::SharedString::new());
     ui.set_pattern_chooser_page(false);
-    ui.set_pattern_preview_uuid(slint::SharedString::new());
     ui.set_vibration_editor_page(false);
     ui.set_interval_editor_page(false);
     ui.set_interval_bells_page(false);
@@ -4326,8 +4324,8 @@ fn build_ui() -> MainWindow {
                 // FireBell / FireStartingBell — mirrors GTK's
                 // build_timer_settings.
                 {
-                    // A Volume-row preview doesn't ring into the session.
-                    stop_volume_preview(&ui);
+                    // No preview plays into the session.
+                    stop_all_previews(&ui);
                     let settings = build_session_settings(
                         shape,
                         ui.get_stopwatch_on(),
@@ -6670,30 +6668,9 @@ fn build_ui() -> MainWindow {
     // scaling does not preserve the dots' aspect ratio).
     let ve_plot_size: Rc<Cell<(f32, f32)>> = Rc::new(Cell::new((0.0, 0.0)));
 
-    // Editor-preview generation guard: a finite waveform has no
-    // "done" signal, so a single-shot timer reverts `ve-previewing`
-    // after the pattern's duration — bumped on every toggle/close
-    // so a stale timer can't clear a newer preview.
-    let ve_preview_gen: Rc<Cell<u64>> = Rc::new(Cell::new(0));
-
     // Pattern-chooser routing (B-2b): 0 = Starting Bell,
     // 1 = End Bell (the interval-bell editor's pattern is B-2c).
     let pattern_chooser_target: Rc<Cell<u8>> = Rc::new(Cell::new(0));
-
-    // Pattern-preview arbiter (B-2b). `PreviewToggle` keeps a
-    // single pattern buzzing at a time: tapping the active row's
-    // pill stops it, tapping another switches. Shared with the
-    // chooser's back/pick handlers so leaving the overlay always
-    // cancels an in-flight preview.
-    let pattern_preview: Rc<RefCell<meditate_core::preview::PreviewToggle>> =
-        Rc::new(RefCell::new(meditate_core::preview::PreviewToggle::new()));
-
-    // Bell-sound preview arbiter (B-4) — same PreviewToggle
-    // protocol as the pattern preview, but routed through the
-    // audio MediaPlayer. Shared with the bell chooser's back /
-    // pick so leaving the overlay silences any preview.
-    let bell_preview: Rc<RefCell<meditate_core::preview::PreviewToggle>> =
-        Rc::new(RefCell::new(meditate_core::preview::PreviewToggle::new()));
 
     {
         ui.on_starting_bell_toggled(move |value| {
@@ -6859,16 +6836,11 @@ fn build_ui() -> MainWindow {
     {
         let weak = ui.as_weak();
         let bell_chooser_target = bell_chooser_target.clone();
-        let bell_preview = bell_preview.clone();
         ui.on_bell_chooser_pick(move |uuid| {
             {
                 let Some(ui) = weak.upgrade() else { return; };
                 // Leaving the overlay always silences a preview.
-                let _ = bell_preview.borrow_mut().stop();
-                if let Some(app) = android_app() {
-                    audio::stop(app);
-                }
-                ui.set_bell_preview_uuid(slint::SharedString::new());
+                stop_all_previews(&ui);
                 match bell_chooser_target.get() {
                     2 => {
                         // Interval-bell editor: just stage the
@@ -6988,13 +6960,12 @@ fn build_ui() -> MainWindow {
         let bell_edit_uuid = bell_edit_uuid.clone();
         let bell_chooser_category = bell_chooser_category.clone();
         let bell_chooser_current = bell_chooser_current.clone();
-        let bell_preview = bell_preview.clone();
         ui.on_bell_delete_confirm(move || {
             if let Some(ui) = weak.upgrade() {
                 let Some(uuid) = bell_edit_uuid.borrow_mut().take() else { return; };
                 // A preview of the sound being deleted stops with it.
                 if ui.get_bell_preview_uuid().as_str() == uuid {
-                    let _ = bell_preview.borrow_mut().stop();
+                    let _ = BELL_PREVIEW.with_borrow_mut(PreviewToggle::stop);
                     if let Some(app) = android_app() {
                         audio::stop(app);
                     }
@@ -7017,14 +6988,9 @@ fn build_ui() -> MainWindow {
     }
     {
         let weak = ui.as_weak();
-        let bell_preview = bell_preview.clone();
         ui.on_bell_chooser_back(move || {
             if let Some(ui) = weak.upgrade() {
-                let _ = bell_preview.borrow_mut().stop();
-                if let Some(app) = android_app() {
-                    audio::stop(app);
-                }
-                ui.set_bell_preview_uuid(slint::SharedString::new());
+                stop_all_previews(&ui);
                 ui.set_bell_chooser_page(false);
             }
             let _ = weak.clone();
@@ -7097,16 +7063,11 @@ fn build_ui() -> MainWindow {
     {
         let weak = ui.as_weak();
         let pattern_chooser_target = pattern_chooser_target.clone();
-        let pattern_preview = pattern_preview.clone();
         ui.on_pattern_chooser_pick(move |uuid| {
             {
                 let Some(ui) = weak.upgrade() else { return; };
                 // Leaving the overlay always silences a preview.
-                let _ = pattern_preview.borrow_mut().stop();
-                if let Some(app) = android_app() {
-                    haptics::cancel(app);
-                }
-                ui.set_pattern_preview_uuid(slint::SharedString::new());
+                stop_all_previews(&ui);
                 match pattern_chooser_target.get() {
                     2 => {
                         // Interval-bell editor: stage only; the
@@ -7154,15 +7115,10 @@ fn build_ui() -> MainWindow {
     }
     {
         let weak = ui.as_weak();
-        let pattern_preview = pattern_preview.clone();
         ui.on_pattern_chooser_back(move || {
             {
                 let Some(ui) = weak.upgrade() else { return; };
-                let _ = pattern_preview.borrow_mut().stop();
-                if let Some(app) = android_app() {
-                    haptics::cancel(app);
-                }
-                ui.set_pattern_preview_uuid(slint::SharedString::new());
+                stop_all_previews(&ui);
                 ui.set_pattern_chooser_page(false);
             }
             let _ = weak.clone();
@@ -7377,15 +7333,6 @@ fn build_ui() -> MainWindow {
             updated_iso: String::new(),
         }
     }
-    // Stop any in-flight editor preview (used by toggle-off,
-    // Cancel, Save and the back-dismiss chain).
-    fn ve_stop_preview(ui: &MainWindow, pgen: &Cell<u64>) {
-        pgen.set(pgen.get().wrapping_add(1));
-        if let Some(app) = android_app() {
-            haptics::cancel(app);
-        }
-        ui.set_ve_previewing(false);
-    }
     {
         let weak = ui.as_weak();
         let ve_edit_uuid = ve_edit_uuid.clone();
@@ -7479,12 +7426,11 @@ fn build_ui() -> MainWindow {
     }
     {
         let weak = ui.as_weak();
-        let ve_preview_gen = ve_preview_gen.clone();
         ui.on_vibration_editor_cancel(move || {
             if let Some(ui) = weak.upgrade() {
                 // Stop any preview, then close — the pattern
                 // chooser is still underneath (stays page=true).
-                ve_stop_preview(&ui, &ve_preview_gen);
+                ve_stop_preview(&ui);
                 ui.set_vibration_editor_page(false);
             }
             let _ = weak.clone();
@@ -7661,7 +7607,6 @@ fn build_ui() -> MainWindow {
         let weak = ui.as_weak();
         let ve_edit_uuid = ve_edit_uuid.clone();
         let ve_model = ve_model.clone();
-        let ve_preview_gen = ve_preview_gen.clone();
         ui.on_vibration_editor_save(move || {
             if let Some(ui) = weak.upgrade() {
                 use slint::Model;
@@ -7704,7 +7649,7 @@ fn build_ui() -> MainWindow {
                 };
                 match saved {
                     Some(uuid) => {
-                        ve_stop_preview(&ui, &ve_preview_gen);
+                        ve_stop_preview(&ui);
                         ui.set_vibration_editor_page(false);
                         // Rebuild the chooser underneath with the tick
                         // where it was: saving a pattern doesn't pick
@@ -7737,11 +7682,10 @@ fn build_ui() -> MainWindow {
         // the pattern's own duration (no "done" signal).
         let weak = ui.as_weak();
         let ve_model = ve_model.clone();
-        let ve_preview_gen = ve_preview_gen.clone();
         ui.on_vibration_editor_preview_toggle(move || {
             if let Some(ui) = weak.upgrade() {
                 if ui.get_ve_previewing() {
-                    ve_stop_preview(&ui, &ve_preview_gen);
+                    ve_stop_preview(&ui);
                     return;
                 }
                 let p = ve_transient_pattern(&ui, &ve_model);
@@ -7752,18 +7696,17 @@ fn build_ui() -> MainWindow {
                         meditate_core::vibration::build_master_envelope(&p);
                     haptics::vibrate_waveform(app, &env);
                 }
-                let g = ve_preview_gen.get().wrapping_add(1);
-                ve_preview_gen.set(g);
+                let g = VE_PREVIEW_GEN.get().wrapping_add(1);
+                VE_PREVIEW_GEN.set(g);
                 ui.set_ve_previewing(true);
                 if dur_ms > 0 {
                     let weak2 = weak.clone();
-                    let pg = ve_preview_gen.clone();
                     slint::Timer::single_shot(
                         std::time::Duration::from_millis(
                             dur_ms as u64,
                         ),
                         move || {
-                            if pg.get() == g {
+                            if VE_PREVIEW_GEN.get() == g {
                                 if let Some(ui) = weak2.upgrade() {
                                     ui.set_ve_previewing(false);
                                 }
@@ -7777,11 +7720,10 @@ fn build_ui() -> MainWindow {
     }
     {
         let weak = ui.as_weak();
-        let pattern_preview = pattern_preview.clone();
         ui.on_pattern_preview_toggle(move |uuid| {
             {
                 let Some(ui) = weak.upgrade() else { return; };
-                let action = pattern_preview.borrow_mut().request(uuid.as_str());
+                let action = PATTERN_PREVIEW.with_borrow_mut(|p| p.request(uuid.as_str()));
                 match action {
                     meditate_core::preview::PreviewAction::StopAndStart {
                         id,
@@ -7816,13 +7758,11 @@ fn build_ui() -> MainWindow {
                         // mirroring GTK's preview-timer logic.
                         if dur_ms > 0 {
                             let weak2 = weak.clone();
-                            let pp = pattern_preview.clone();
                             slint::Timer::single_shot(
                                 std::time::Duration::from_millis(dur_ms as u64),
                                 move || {
-                                    if pp
-                                        .borrow_mut()
-                                        .timer_should_revert(generation)
+                                    if PATTERN_PREVIEW
+                                        .with_borrow_mut(|p| p.timer_should_revert(generation))
                                     {
                                         if let Some(ui) = weak2.upgrade() {
                                             ui.set_pattern_preview_uuid(
@@ -7847,12 +7787,11 @@ fn build_ui() -> MainWindow {
     }
     {
         let weak = ui.as_weak();
-        let bell_preview = bell_preview.clone();
         let bell_chooser_target = bell_chooser_target.clone();
         ui.on_bell_preview_toggle(move |uuid| {
             {
                 let Some(ui) = weak.upgrade() else { return; };
-                let action = bell_preview.borrow_mut().request(uuid.as_str());
+                let action = BELL_PREVIEW.with_borrow_mut(|p| p.request(uuid.as_str()));
                 match action {
                     meditate_core::preview::PreviewAction::StopAndStart {
                         id,
@@ -7880,13 +7819,11 @@ fn build_ui() -> MainWindow {
                         // (generation guard).
                         if dur_ms > 0 {
                             let weak2 = weak.clone();
-                            let bp = bell_preview.clone();
                             slint::Timer::single_shot(
                                 std::time::Duration::from_millis(dur_ms as u64),
                                 move || {
-                                    if bp
-                                        .borrow_mut()
-                                        .timer_should_revert(generation)
+                                    if BELL_PREVIEW
+                                        .with_borrow_mut(|p| p.timer_should_revert(generation))
                                     {
                                         if let Some(ui) = weak2.upgrade() {
                                             ui.set_bell_preview_uuid(
@@ -10127,9 +10064,6 @@ fn build_ui() -> MainWindow {
         // here, bypassing their in-app back-button handlers — so
         // it must silence any in-flight preview too, or the
         // bell / vibration keeps playing after the page is gone.
-        let bell_preview = bell_preview.clone();
-        let pattern_preview = pattern_preview.clone();
-        let ve_preview_gen = ve_preview_gen.clone();
         ui.on_back_pressed(move || {
             let Some(ui) = weak.upgrade() else { return; };
             // Bug-audit #7: the Duration dialog + the three label
@@ -10266,11 +10200,7 @@ fn build_ui() -> MainWindow {
                 return;
             }
             if ui.get_bell_chooser_page() {
-                let _ = bell_preview.borrow_mut().stop();
-                if let Some(app) = android_app() {
-                    audio::stop(app);
-                }
-                ui.set_bell_preview_uuid(slint::SharedString::new());
+                stop_all_previews(&ui);
                 ui.set_bell_chooser_page(false);
                 return;
             }
@@ -10278,16 +10208,12 @@ fn build_ui() -> MainWindow {
             // (declared after it) — back closes the editor first,
             // returning to the chooser still underneath.
             if ui.get_vibration_editor_page() {
-                ve_stop_preview(&ui, &ve_preview_gen);
+                stop_all_previews(&ui);
                 ui.set_vibration_editor_page(false);
                 return;
             }
             if ui.get_pattern_chooser_page() {
-                let _ = pattern_preview.borrow_mut().stop();
-                if let Some(app) = android_app() {
-                    haptics::cancel(app);
-                }
-                ui.set_pattern_preview_uuid(slint::SharedString::new());
+                stop_all_previews(&ui);
                 ui.set_pattern_chooser_page(false);
                 return;
             }
@@ -10483,10 +10409,59 @@ impl std::ops::Deref for DbGuard {
     }
 }
 
+// Preview state lives here, not in `build_ui`, so `stop_all_previews`
+// reaches every kind from any path (widget start, Back, Start).
 thread_local! {
     /// Bell-volume preview generation: a finished preview only hides
     /// the Stop pill if no newer preview or Stop happened since.
     static VOLUME_PREVIEW_GEN: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// The bell chooser's preview: one sound at a time; tapping the
+    /// playing row stops it, another row switches.
+    static BELL_PREVIEW: RefCell<PreviewToggle> = RefCell::new(PreviewToggle::new());
+    /// The pattern chooser's preview, same protocol, on the haptics.
+    static PATTERN_PREVIEW: RefCell<PreviewToggle> = RefCell::new(PreviewToggle::new());
+    /// The vibration editor's preview generation: a finite waveform has
+    /// no "done" signal, so a timer reverts `ve-previewing` after its
+    /// length unless a newer preview or a stop bumped this since.
+    static VE_PREVIEW_GEN: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Stop the vibration editor's preview, if any.
+fn ve_stop_preview(ui: &MainWindow) {
+    VE_PREVIEW_GEN.set(VE_PREVIEW_GEN.get().wrapping_add(1));
+    if let Some(app) = android_app() {
+        haptics::cancel(app);
+    }
+    ui.set_ve_previewing(false);
+}
+
+/// Stop every preview that may be playing (bell, pattern, editor,
+/// Volume row, guided file) and reset its Play/Stop state. A session
+/// start and every page close call this, so no preview outlives its
+/// page or plays into a session.
+fn stop_all_previews(ui: &MainWindow) {
+    if BELL_PREVIEW.with_borrow_mut(PreviewToggle::stop) != PreviewAction::NoOp {
+        if let Some(app) = android_app() {
+            audio::stop(app);
+        }
+    }
+    ui.set_bell_preview_uuid(slint::SharedString::new());
+    if PATTERN_PREVIEW.with_borrow_mut(PreviewToggle::stop) != PreviewAction::NoOp {
+        if let Some(app) = android_app() {
+            haptics::cancel(app);
+        }
+    }
+    ui.set_pattern_preview_uuid(slint::SharedString::new());
+    if ui.get_ve_previewing() {
+        ve_stop_preview(ui);
+    }
+    stop_volume_preview(ui);
+    if !ui.get_guided_manage_preview_uuid().is_empty() {
+        if let Some(app) = android_app() {
+            guided::stop(app);
+        }
+        ui.set_guided_manage_preview_uuid(slint::SharedString::new());
+    }
 }
 
 /// Play `sound` at `volume` for the Volume row `slot`, showing its
