@@ -1,4 +1,4 @@
-# Open issues (2026-10-08)
+# Open issues (2026-10-09)
 
 One list for everything still open: the Android bugs (formerly ANDROID-BUGS.md) and the refactors left from the audit (formerly REFACTOR-AUDIT.md). Done items are removed; the git history has both old files (`git show 6e81927:ANDROID-BUGS.md`, `git show 6e81927:REFACTOR-AUDIT.md`). Bug numbers stay as they were, because commit messages refer to them. Line numbers in "Where" date from the audit and have moved since (`lib.rs` UI code is now in `ui.rs`).
 
@@ -9,18 +9,28 @@ One list for everything still open: the Android bugs (formerly ANDROID-BUGS.md) 
 - TDD, then a phone check before the commit.
 - Before the next release: run `build-aux/repro-probe.sh`.
 
-## Suggested order
+## Batches, in suggested order
 
-1. Data loss
-2. Dates and times in the user's language
-3. Stats and date logic
-4. Smaller behaviour bugs
-5. Layout and text
-6. Deferred refactors, only together with other work in the same area
+Each batch touches one area and needs one test round. Mark a batch `[x]` when it is committed.
+
+| Done | Batch | Bugs | Why this place |
+|:---:|---|---|---|
+| [ ] | A. Sync compaction | #3, corrupt manifest | data loss |
+| [ ] | B. Log editing and labels | #4, #5, #6, #34 | data loss |
+| [ ] | C. CSV | #7, #36 | data loss |
+| [ ] | D. Locale | #29, #26, #25, #30 | visible every day in German |
+| [ ] | E. Stats | #18, #24, #35, #22 | wrong numbers |
+| [ ] | F. File import (Kotlin) | #21, #37, #38 | rare files and edge cases |
+| [ ] | G. Bell file cleanup | bell audio left on disk | wasted storage |
+| [ ] | H. Layout and wording | #23 rest, #11, #32, GTK sync toast | cosmetic |
+
+The deferred refactors come last, each together with the batch named there.
 
 ---
 
-## 1. Data loss
+## A. Sync compaction
+
+Core sync only. Check: host tests with the fake WebDAV, then a two-device sync.
 
 ### #3 Sync compaction can delete another device's batch before anyone pulled it
 - **Where:** `meditate-core/src/sync/orchestrator.rs:521-617` (`maybe_compact_events`).
@@ -38,6 +48,10 @@ One list for everything still open: the Android bugs (formerly ANDROID-BUGS.md) 
 - **What happens:** A peer whose batches were swallowed earlier gets a false "remote data lost" dialog. If the user then wipes local data, that becomes data loss.
 - **Fix idea:** Abort compaction on a parse error, about +3 lines plus a FakeWebDav test.
 - **Confidence:** real but unlikely
+
+## B. Log editing and labels
+
+Edit Session, the Log and the label chooser; #4 and #5 in GTK too. Check: phone and desktop.
 
 ### #4 Edit/Add Session closes as if saved when the DB write fails
 - **Where:**
@@ -73,6 +87,14 @@ One list for everything still open: the Android bugs (formerly ANDROID-BUGS.md) 
 - **Fix idea:** Reload the feed after a label delete or rename. In `card_tap`, treat a label that can't be resolved as None.
 - **Confidence:** confirmed
 
+### #34 The Log filter dropdown keeps a renamed label's old name
+- **Where:** `lib.rs:3299-3302`. Material `drop_down_menu.slint:122` updates only on an index change.
+- **Fix idea:** Bounce the index, or refresh the dropdown when its items change.
+
+## C. CSV
+
+Export and import, core. Check: host tests, then one export and re-import.
+
 ### #7 CSV export and re-import corrupt notes and labels that start with `- = + @` or TAB, and drop the guided-file link
 - **Where:**
   - `meditate-core/src/data_io.rs:100-108` (the export guard adds `'`).
@@ -91,7 +113,9 @@ One list for everything still open: the Android bugs (formerly ANDROID-BUGS.md) 
 - **Where:** `meditate-core/src/data_io.rs:127-130`: rows are by id, reversed, despite the comment.
 - **Fix idea:** Sort by `start_iso` ascending.
 
-## 2. Dates and times in the user's language
+## D. Locale
+
+Month and weekday names, the 12-hour clock, the first day of the week, the picker text. Check: phone in German, and in English with a 12-hour clock.
 
 ### #29 Month and weekday names are English and in US order
 - **Where:** `lib.rs:2002,2009` (heatmap range), `:2057-2064` (chart axis), `:2303` (Longest-session insight). chrono has no locale support.
@@ -101,7 +125,19 @@ One list for everything still open: the Android bugs (formerly ANDROID-BUGS.md) 
 - **Where:** `main.slint:5233-5235` (hand-built "HH:MM") and `:5320` (`use_24_hour_format: true`). The Log uses the locale's AM/PM.
 - **Confidence:** likely (only matters on 12-hour locales)
 
-## 3. Stats and date logic
+### #25 The week always starts on Monday on Android
+- **Where:** `meditate-core/src/date_math.rs:51-61`: the locale lookup is `cfg(target_os = "linux")` only.
+- **What happens:** en-US phones get Monday-first heatmap rows and week-over-week. There is no effect for a German locale.
+- **Fix idea:** Have the shell pass the Android locale's first weekday.
+- **Confidence:** confirmed
+
+### #30 Date and time picker chrome is English
+- **Where:** the Material `date_picker.slint` / `time_picker.slint` strings ("Ok", "Hour", "Minute", "Enter date", the weekday letters with msgctxt) aren't in any .po. `on_format_date` (`lib.rs:3610`) uses chrono's English names.
+- **Fix idea:** Add those msgids to every .po, and translate the names in `format_date`.
+
+## E. Stats
+
+Stats page, the Log day caption and the streak line. Move the duplicated Stats inputs into core with it (`insights::input_from_db`, `goal::from_db`, about -40 lines). Check: phone and desktop.
 
 ### #18 A session dated in the future zeroes the streak and counts toward today's goal
 - **Where:** `meditate-core/src/db/sessions.rs:905-936` (`streak_filtered`), `:330` and `:155` (no upper bound). Edit/Add allows any date.
@@ -114,24 +150,20 @@ One list for everything still open: the Android bugs (formerly ANDROID-BUGS.md) 
 - **Fix idea:** Use 91 days, or chunk from the newest end.
 - **Confidence:** confirmed
 
-### #25 The week always starts on Monday on Android
-- **Where:** `meditate-core/src/date_math.rs:51-61`: the locale lookup is `cfg(target_os = "linux")` only.
-- **What happens:** en-US phones get Monday-first heatmap rows and week-over-week. There is no effect for a German locale.
-- **Fix idea:** Have the shell pass the Android locale's first weekday.
-- **Confidence:** confirmed
-
 ### #35 The Log day caption total disagrees with the card minutes
 - **Where:** `meditate-core/src/format.rs:389` rounds; the caption (`hm_compact_key`) floors.
 - **What happens:** Two 10m40s cards show "11 min" each, but the caption says "21m".
 - **Fix idea:** A core `log_day_caption` that sums the cards' `log_card_minutes`. One rounding rule alone does not fix it: 11 + 11 = 22, while the rounded sum of 21m20s is 21. GTK has the same bug (log/imp.rs:641-650 floors, cards round at 404), so fix both apps.
-- **Do with it:** the other Stats fixes (#18, #24) are a good moment to also move the duplicated Stats inputs into core (`insights::input_from_db`, `goal::from_db`), listed under step 3.
+- **Do with it:** the other Stats fixes (#18, #24) are a good moment to also move the duplicated Stats inputs into core (`insights::input_from_db`, `goal::from_db`), as this batch's intro says.
 
 ### #22 The streak line on the Timer screen is always empty
 - **Where:** `main.slint:1775,2977`. `set_streak_text` is never called (GTK shows the streak there).
 - **Fix idea:** Set it whenever stats refresh.
 - **Confidence:** confirmed
 
-## 4. Smaller behaviour bugs
+## F. File import (Kotlin)
+
+The picker and the transcoder. Check: phone, with an HE-AAC file.
 
 ### #21 Importing an HE-AAC file plays at half speed
 - **Where:**
@@ -141,10 +173,6 @@ One list for everything still open: the Android bugs (formerly ANDROID-BUGS.md) 
 - **Fix idea:** On a format change, rebuild the resampler from `decoder.outputFormat`, and downmix to stereo.
 - **Confidence:** likely
 
-### #34 The Log filter dropdown keeps a renamed label's old name
-- **Where:** `lib.rs:3299-3302`. Material `drop_down_menu.slint:122` updates only on an index change.
-- **Fix idea:** Bounce the index, or refresh the dropdown when its items change.
-
 ### #37 The app looks frozen while a picked file is copied
 - **Where:** `MeditateFilePickerActivity.kt:112-124`: the translucent activity eats every touch until the copy and probe finish.
 - **Fix idea:** Finish the activity at once and let the worker write the drop-file.
@@ -153,11 +181,17 @@ One list for everything still open: the Android bugs (formerly ANDROID-BUGS.md) 
 - **Where:** `MeditateGuidedImport.kt:131-184` (created before the `try/finally` at `:269`), and `probe()` in `MeditateFilePickerActivity.kt:221-249`.
 - **Fix idea:** Bring setup into the `try/finally`.
 
+## G. Bell file cleanup
+
+Both apps. Check: desktop and phone.
+
 ### Deleting a custom bell leaves its audio file on disk
 - **Where:** both apps: GTK `sounds.rs`, Android `ui.rs`, core `bell_sounds.rs`. Guided delete does remove its file; peer tombstones leak the same way.
 - **Fix idea:** Remove the file where the sounds dir is known.
 
-## 5. Layout and text
+## H. Layout and wording
+
+Slint layout and translation content. Check: phone in German and Russian, and the desktop's sync Test.
 
 ### #23 Layouts overflow at 360dp or with longer translations
 - **Recovery dialog** (`main.slint:8672-8693`): three text buttons, about 360px in English and 480px in German, in a card about 292px wide. "Push My Data" spills off the card.
@@ -176,23 +210,19 @@ One list for everything still open: the Android bugs (formerly ANDROID-BUGS.md) 
 - **Where:** `lang/de/.../meditate-android.po`, e.g. lines 176, 320, 323 vs 83, 110, 833.
 - **Fix idea:** Pick one term.
 
-### #30 Date and time picker chrome is English
-- **Where:** the Material `date_picker.slint` / `time_picker.slint` strings ("Ok", "Hour", "Minute", "Enter date", the weekday letters with msgctxt) aren't in any .po. `on_format_date` (`lib.rs:3610`) uses chrono's English names.
-- **Fix idea:** Add those msgids to every .po, and translate the names in `format_date`.
-
 ### GTK: the sync Test toast is English
 - **Where:** GTK `preferences.rs`, `credentials.rs`: the toast shows core's English `Display`.
 
-## 6. Deferred refactors
+## Deferred refactors
 
 Only together with other work in the same area; none has a bug behind it.
 
 - **R3 step 1, `settings_from_db(db, shape)`:** one core builder for the session settings instead of Android's `build_session_settings` and GTK's three copies (about -70 GTK, -30 Android). It changes how every session type starts, so it needs a full round of all modes on phone and desktop.
 - **R7(b), a session record:** `Active { session, PendingSession }` and `Finished(PendingSession)` instead of `session_start_unix`, `pending_done` and the `SESSION_GUIDED_FILE` static; leaving Finished emits `StopActiveSignals` in one place. About -30 lines, but it rewrites about 54 test chains.
-- **R12, sync runner into core:** core `run_attempt` with a password closure, `SyncError::is_transient_network()`, a typed error, one blob routine for sounds and guided files (remote paths byte-identical). About -150 in the apps, +100 in core, -90 in the orchestrator. Includes the narrow sync-account error enums that remove four `unreachable!` arms. Do it when sync needs work.
-- **R15(c), `SlidePage`:** one frame (slide, scroll area, tap catcher) for 13 pages. Several pages reach into their own Flickable by id (note release, Diagnostics scroll), so each needs rework and a retest.
-- **R15(d), merge `VerticalSpinBox` and `StepperRow`:** they share about 20 lines of commit logic; merging touches every number field's focus and keyboard handling for about -40 lines.
-- **R13 small duplicates:** fold `hm_mins_key` into `hm_secs_key` (they differ at 0); one `session_payload()` helper for the three session `json!` copies, next time the session payload changes.
+- **R12, sync runner into core** (with batch A if that grows into more sync work): core `run_attempt` with a password closure, `SyncError::is_transient_network()`, a typed error, one blob routine for sounds and guided files (remote paths byte-identical). About -150 in the apps, +100 in core, -90 in the orchestrator. Includes the narrow sync-account error enums that remove four `unreachable!` arms. Do it when sync needs work.
+- **R15(c), `SlidePage`** (with batch H if it touches the pages anyway): one frame (slide, scroll area, tap catcher) for 13 pages. Several pages reach into their own Flickable by id (note release, Diagnostics scroll), so each needs rework and a retest.
+- **R15(d), merge `VerticalSpinBox` and `StepperRow`** (with batch B, whose duration dialog uses `VerticalSpinBox`): they share about 20 lines of commit logic; merging touches every number field's focus and keyboard handling for about -40 lines.
+- **R13 small duplicates:** fold `hm_mins_key` into `hm_secs_key` (they differ at 0); one `session_payload()` helper for the three session `json!` copies, next time the session payload changes (batch C touches sessions but not the payload).
 - **R2b, all database writes off the UI thread:** one background writer per app (about 175 call sites, L). Only if the 1 s lock wait is noticeable in practice, or a feature needs long writes.
 
 ## Considered and rejected
