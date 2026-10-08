@@ -909,6 +909,31 @@ mod tests {
         assert!(slint.contains("clicked => { root.release-vibration-editor-inputs(); }"), "a background tap releases");
     }
 
+    /// A focused note kept its cursor (and keyboard) after Edit
+    /// Session or the Done screen closed. Closing lets go of it.
+    #[test]
+    fn closing_a_page_releases_its_note() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        let at = slint.find("component NoteField inherits Rectangle {").unwrap();
+        assert!(slint[at..at + 600].contains("public function release() {\n        input.clear-focus();"));
+        for (field, page) in [("edit-note := NoteField {", "edit-session-page"), ("done-note := NoteField {", "done-page")] {
+            assert!(slint.contains(field), "{field}");
+            let name = &field[..field.find(" :=").unwrap()];
+            let changed = slint.find(&format!("changed {page} => {{")).expect(page);
+            assert!(slint[changed..changed + 160].contains(&format!("{name}.release();")), "{page} releases {name}");
+            // A tap on empty space or another row doesn't take focus,
+            // so those let go of the note too.
+            let blank = format!("TouchArea {{\n                width: parent.viewport-width;\n                height: parent.viewport-height;\n                clicked => {{ {name}.release(); }}");
+            assert!(slint.contains(&blank), "{page}: a background tap releases {name}");
+        }
+        for tap in ["root.modal = Modal.duration;", "date-popup.show();", "time-popup.show();", "root.edit-label-row-tap();"] {
+            let at = slint.find(tap).expect(tap);
+            assert!(slint[at - 160..at].contains("edit-note.release();"), "{tap} releases the note");
+        }
+        assert!(slint.contains("body-tapped => {\n                        done-note.release();\n                        root.done-label-tap();"));
+    }
+
     /// Confirm and name dialogs share one card (320 px, centred), so
     /// widths and body alignment can't drift apart again. Only dialogs
     /// with more than a field and two buttons are built by hand.

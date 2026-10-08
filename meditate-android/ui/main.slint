@@ -365,6 +365,12 @@ component NoteField inherits Rectangle {
     in property <string> label: @tr("Note");
     in-out property <string> text <=> input.text;
 
+    // A hidden page keeps its focused field: the cursor and keyboard
+    // stay, so the page's close path lets go of it.
+    public function release() {
+        input.clear-focus();
+    }
+
     // Starts at a single-line height; the inner TextInput's
     // `preferred-height` grows with every wrapped line, and because
     // nothing in the layout caps the Rectangle, the box auto-expands
@@ -2926,6 +2932,16 @@ export component MainWindow inherits Window {
     // edit dialog here is the same kind of full-window
     // destination, so push-from-the-right keeps animation
     // direction consistent with the other overlays.
+    changed edit-session-page => {
+        if (!root.edit-session-page) {
+            edit-note.release();
+        }
+    }
+    changed done-page => {
+        if (!root.done-page) {
+            done-note.release();
+        }
+    }
     property <length> edit-session-offset: root.edit-session-page ? root.width : 0px;
     animate edit-session-offset { duration: 300ms; easing: ease-out; }
 
@@ -3770,6 +3786,14 @@ export component MainWindow inherits Window {
             // kicks in (no more centring then, which is desired).
             viewport-height: max(self.height, done-stack.preferred-height);
 
+            // A tap on empty space lets go of the note (a tap doesn't
+            // take focus). Behind the content, so rows keep their taps.
+            TouchArea {
+                width: parent.viewport-width;
+                height: parent.viewport-height;
+                clicked => { done-note.release(); }
+            }
+
             done-stack := VerticalLayout {
             width: 100%;
             height: parent.viewport-height;
@@ -3802,7 +3826,7 @@ export component MainWindow inherits Window {
                     color: MaterialPalette.on-surface-variant;
                     horizontal-alignment: left;
                 }
-                NoteField {
+                done-note := NoteField {
                     label: @tr("Note");
                     text <=> root.note-text;
                 }
@@ -3824,7 +3848,10 @@ export component MainWindow inherits Window {
                     body-subtitle: root.done-label-name;
                     active <=> root.done-label-active;
                     toggled(value) => { root.done-label-active-toggled(value); }
-                    body-tapped => { root.done-label-tap(); }
+                    body-tapped => {
+                        done-note.release();
+                        root.done-label-tap();
+                    }
                 }
             }
 
@@ -4899,7 +4926,15 @@ export component MainWindow inherits Window {
 
         Flickable {
             viewport-width: self.width;
-            viewport-height: es-scroll.preferred-height;
+            viewport-height: max(self.height, es-scroll.preferred-height);
+
+            // A tap on empty space lets go of the note (a tap doesn't
+            // take focus). Behind the content, so rows keep their taps.
+            TouchArea {
+                width: parent.viewport-width;
+                height: parent.viewport-height;
+                clicked => { edit-note.release(); }
+            }
 
             es-scroll := VerticalLayout {
             padding-top: root.status-bar-inset + 16px;
@@ -4983,6 +5018,7 @@ export component MainWindow inherits Window {
                     tapped => {
                         root.dialog-hours = root.edit-duration-hours;
                         root.dialog-minutes = root.edit-duration-minutes;
+                        edit-note.release();
                         root.modal = Modal.duration;
                     }
                 }
@@ -5001,7 +5037,10 @@ export component MainWindow inherits Window {
                     value-text: root.edit-start-date.year + "-"
                         + (root.edit-start-date.month < 10 ? "0" : "") + root.edit-start-date.month + "-"
                         + (root.edit-start-date.day < 10 ? "0" : "") + root.edit-start-date.day;
-                    tapped => { date-popup.show(); }
+                    tapped => {
+                        edit-note.release();
+                        date-popup.show();
+                    }
                 }
                 Rectangle {
                     height: 1px;
@@ -5012,7 +5051,10 @@ export component MainWindow inherits Window {
                     value-text:
                         (root.edit-start-time.hour < 10 ? "0" : "") + root.edit-start-time.hour + ":"
                         + (root.edit-start-time.minute < 10 ? "0" : "") + root.edit-start-time.minute;
-                    tapped => { time-popup.show(); }
+                    tapped => {
+                        edit-note.release();
+                        time-popup.show();
+                    }
                 }
             }
 
@@ -5041,7 +5083,10 @@ export component MainWindow inherits Window {
                     body-subtitle: root.edit-label-name;
                     active <=> root.edit-label-enabled;
                     toggled(value) => { root.edit-label-toggled(value); }
-                    body-tapped => { root.edit-label-row-tap(); }
+                    body-tapped => {
+                        edit-note.release();
+                        root.edit-label-row-tap();
+                    }
                 }
             }
 
@@ -5052,7 +5097,7 @@ export component MainWindow inherits Window {
             // TextInput; binding `text` directly to
             // `root.edit-note-text` keeps the editor's content in
             // sync with the Rust-side property both ways.
-            NoteField {
+            edit-note := NoteField {
                 label: @tr("Note (optional)");
                 text <=> root.edit-note-text;
             }
