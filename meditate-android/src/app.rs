@@ -909,6 +909,31 @@ mod tests {
         assert!(slint.contains("clicked => { root.release-vibration-editor-inputs(); }"), "a background tap releases");
     }
 
+    /// Page headers drifted (the editors' text Cancel pushed Save off
+    /// screen in German, #23); one header keeps them alike. The sync
+    /// icon had no label for TalkBack (#39).
+    #[test]
+    fn pages_share_one_header() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        let at = slint.find("component PageHeader inherits HorizontalLayout {").unwrap();
+        let header = &slint[at..at + slint[at..].find("\n}\n").unwrap()];
+        assert_eq!(slint.matches("icon: Icons.arrow-back;").count(), 1, "only inside PageHeader");
+        assert!(header.contains("icon: Icons.arrow-back;") && header.contains("icon: Icons.close;"));
+        assert!(header.contains("tooltip: @tr(\"Cancel\");"), "TalkBack still says Cancel");
+        // "Muster bearbeiten" pushed Save off the screen.
+        assert!(header.contains("wrap: word-wrap;") && header.contains("min-width: 0;"), "a long title can't push Save away");
+        for back in ["labels-back", "interval-bells-back", "bell-chooser-back", "pattern-chooser-back",
+            "preset-chooser-back", "guided-manage-back", "preferences-back", "diag-back"] {
+            assert!(slint.contains(&format!("back => {{ root.{back}(); }}")), "{back}");
+        }
+        for cancel in ["edit-cancel-tap", "interval-editor-cancel", "vibration-editor-cancel"] {
+            assert!(slint.contains(&format!("back => {{ root.{cancel}(); }}")), "{cancel}");
+        }
+        assert_eq!(slint.matches("PageHeader {").count(), 11);
+        assert!(slint.contains("accessible-label: root.sync-indicator-tooltip;"));
+    }
+
     /// Android hands the app the whole bottom-edge swipe (to the last
     /// app) as a touch. The bar's colour doesn't block input, so the
     /// log card behind it took the release as a tap and opened Edit.
@@ -1032,17 +1057,6 @@ mod tests {
             assert!(!lib.contains(gone), "{gone}");
         }
         assert!(lib.contains("ChooserTarget::BoxBreathCue(phase) =>"));
-    }
-
-    #[test]
-    fn editor_titles_wrap_instead_of_pushing_save_away() {
-        // "Muster bearbeiten" pushed Save off the screen.
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
-        for title in ["text: root.ve-title;", "text: @tr(\"Interval Bell\");"] {
-            let at = slint.find(title).unwrap();
-            assert!(slint[at..at + 300].contains("wrap: word-wrap;"), "{title}");
-        }
     }
 
     #[test]

@@ -226,6 +226,7 @@ Left out on purpose:
 - **Confidence:** confirmed
 
 ### 23. Layouts overflow at 360dp or with longer translations
+- **Partly fixed (2026-10-08):** R15(c): the editor headers use the shared `PageHeader` (X instead of Cancel, wrapping title). The Recovery buttons, `CompactToggle` and the Stats period buttons are still open.
 - **Recovery dialog** (`main.slint:8672-8693`): three text buttons, about 360px in English and 480px in German, in a card about 292px wide. "Push My Data" spills off the card.
 - **Interval-bell and vibration editor headers** (`:6143-6150`, `:6642-6649`): the title has no `min-width: 0` / elide, so Save is pushed off-screen in ru/de/es/fr.
 - **`CompactToggle`** (`:626-674`, used at `:6177`): segments can't shrink, so the third "Kind" option is clipped in fr/es/nl/it/pt_BR.
@@ -307,5 +308,6 @@ Left out on purpose:
 - **Fix idea:** Bring setup into the `try/finally`.
 
 ### 39. The sync status icon has no accessible label
+- **Fixed (2026-10-08):** with R15(c): `accessible-role: button` and `accessible-label: root.sync-indicator-tooltip`.
 - **Where:** `main.slint:5393-5399`. `sync-indicator-tooltip` is set but never read.
 - **Fix idea:** `accessible-role: button; accessible-label: root.sync-indicator-tooltip;`

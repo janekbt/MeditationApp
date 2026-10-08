@@ -1142,6 +1142,57 @@ component ScrimArea inherits TouchArea {
     }
 }
 
+// One page header. With no `action-text`: a back arrow and a centred
+// title (a spacer on the right balances the arrow). With one: the
+// full-screen-dialog shape, X to cancel and a filled action button.
+// The X, not a "Cancel" text button: "Abbrechen" + title + "Speichern"
+// pushed Save off a German screen. The title wraps rather than shove.
+component PageHeader inherits HorizontalLayout {
+    in property <string> title;
+    in property <string> action-text;
+    in property <bool> action-enabled: true;
+    callback back();
+    callback action();
+
+    spacing: 12px;
+    alignment: stretch;
+
+    VerticalLayout {
+        alignment: center;
+        if root.action-text == "" : IconButton {
+            icon: Icons.arrow-back;
+            clicked => { root.back(); }
+        }
+        if root.action-text != "" : IconButton {
+            icon: Icons.close;
+            // IconButton's accessible-label IS its tooltip.
+            tooltip: @tr("Cancel");
+            clicked => { root.back(); }
+        }
+    }
+    Text {
+        text: root.title;
+        wrap: word-wrap;
+        min-width: 0;
+        font-size: 18px;
+        color: MaterialPalette.on-surface;
+        vertical-alignment: center;
+        horizontal-stretch: 1;
+        horizontal-alignment: center;
+    }
+    if root.action-text == "" : Rectangle {
+        width: 40px;
+    }
+    if root.action-text != "" : VerticalLayout {
+        alignment: center;
+        FilledButton {
+            text: root.action-text;
+            enabled: root.action-enabled;
+            clicked => { root.action(); }
+        }
+    }
+}
+
 component ConfirmDialog inherits Rectangle {
     in property <string> title;
     in property <string> body;
@@ -4955,49 +5006,12 @@ export component MainWindow inherits Window {
             // IconButton for dismiss instead. Save stays a
             // FilledButton to match the `suggested-action` CSS
             // class on the GTK Save button.
-            HorizontalLayout {
-                spacing: 12px;
-                alignment: stretch;
-
-                VerticalLayout {
-                    alignment: center;
-                    IconButton {
-                        icon: Icons.close;
-                        // IconButton's accessible-label IS its tooltip;
-                        // without one TalkBack announces an unlabelled
-                        // button, where the old text button said "Cancel".
-                        tooltip: @tr("Cancel");
-                        clicked => { root.edit-cancel-tap(); }
-                    }
-                }
-                Text {
-                    text: root.edit-session-title;
-                    font-size: 18px;
-                    color: MaterialPalette.on-surface;
-                    vertical-alignment: center;
-                    horizontal-stretch: 1;
-                    horizontal-alignment: center;
-                    // Long locale titles must squeeze, not shove
-                    // Save off-screen: a Text's implicit
-                    // min-width is its content width, so without
-                    // this the stretch-1 title wins the layout
-                    // fight against the buttons. With the X
-                    // dismiss there's ~200dp of title room — no
-                    // current locale elides, this is a safety
-                    // net.
-                    min-width: 0;
-                    overflow: elide;
-                }
-                VerticalLayout {
-                    alignment: center;
-                    FilledButton {
-                        text: @tr("Save");
-                        enabled: root.edit-original-secs > 0
-                            || root.edit-duration-hours > 0
-                            || root.edit-duration-minutes > 0;
-                        clicked => { root.edit-save-tap(); }
-                    }
-                }
+            PageHeader {
+                title: root.edit-session-title;
+                action-text: @tr("Save");
+                action-enabled: root.edit-original-secs > 0 || root.edit-duration-hours > 0 || root.edit-duration-minutes > 0;
+                back => { root.edit-cancel-tap(); }
+                action => { root.edit-save-tap(); }
             }
 
             // Duration row (L-4b). Deviation from GTK's inline
@@ -5217,6 +5231,8 @@ export component MainWindow inherits Window {
                     Rectangle {
                         width: 40px;
                         height: 40px;
+                        accessible-role: button;
+                        accessible-label: root.sync-indicator-tooltip;
 
                         sync-touch := TouchArea {
                             clicked => { root.sync-indicator-tap(); }
@@ -5589,25 +5605,9 @@ export component MainWindow inherits Window {
             // equal-width spacer on the right balances the row
             // so the title actually centers in the page (rather
             // than sitting to the right of the back button).
-            HorizontalLayout {
-                spacing: 12px;
-                alignment: stretch;
-
-                IconButton {
-                    icon: Icons.arrow-back;
-                    clicked => { root.labels-back(); }
-                }
-                Text {
-                    text: @tr("Choose Label");
-                    font-size: 18px;
-                    color: MaterialPalette.on-surface;
-                    vertical-alignment: center;
-                    horizontal-stretch: 1;
-                    horizontal-alignment: center;
-                }
-                Rectangle {
-                    width: 40px;
-                }
+            PageHeader {
+                title: @tr("Choose Label");
+                back => { root.labels-back(); }
             }
 
             // Label list inside a BoxedList — same boxed look as
@@ -5786,25 +5786,9 @@ export component MainWindow inherits Window {
             spacing: 16px;
             alignment: start;
 
-            HorizontalLayout {
-                spacing: 12px;
-                alignment: stretch;
-
-                IconButton {
-                    icon: Icons.arrow-back;
-                    clicked => { root.interval-bells-back(); }
-                }
-                Text {
-                    text: @tr("Interval Bells");
-                    font-size: 18px;
-                    color: MaterialPalette.on-surface;
-                    vertical-alignment: center;
-                    horizontal-stretch: 1;
-                    horizontal-alignment: center;
-                }
-                Rectangle {
-                    width: 40px;
-                }
+            PageHeader {
+                title: @tr("Interval Bells");
+                back => { root.interval-bells-back(); }
             }
 
             BoxedList {
@@ -5958,38 +5942,16 @@ export component MainWindow inherits Window {
             spacing: 16px;
             alignment: start;
 
-            HorizontalLayout {
-                spacing: 12px;
-                alignment: stretch;
-
-                VerticalLayout {
-                    alignment: center;
-                    TextButton {
-                        text: @tr("Cancel");
-                        clicked => { root.interval-editor-cancel(); }
-                    }
-                }
-                Text {
-                    text: @tr("Interval Bell");
-                    wrap: word-wrap;
-                    font-size: 18px;
-                    color: MaterialPalette.on-surface;
-                    vertical-alignment: center;
-                    horizontal-stretch: 1;
-                    horizontal-alignment: center;
-                }
-                VerticalLayout {
-                    alignment: center;
-                    FilledButton {
-                        text: @tr("Save");
-                        clicked => {
-                            // Flush typed numbers first — tapping this
-                            // button does not blur the stepper inputs.
-                            minutes-stepper.commit();
-                            jitter-stepper.commit();
-                            root.interval-editor-save();
-                        }
-                    }
+            PageHeader {
+                title: @tr("Interval Bell");
+                action-text: @tr("Save");
+                back => { root.interval-editor-cancel(); }
+                action => {
+                    // Flush typed numbers first — tapping this
+                    // button does not blur the stepper inputs.
+                    minutes-stepper.commit();
+                    jitter-stepper.commit();
+                    root.interval-editor-save();
                 }
             }
 
@@ -6099,25 +6061,9 @@ export component MainWindow inherits Window {
             spacing: 16px;
             alignment: start;
 
-            HorizontalLayout {
-                spacing: 12px;
-                alignment: stretch;
-
-                IconButton {
-                    icon: Icons.arrow-back;
-                    clicked => { root.bell-chooser-back(); }
-                }
-                Text {
-                    text: @tr("Choose Bell Sound");
-                    font-size: 18px;
-                    color: MaterialPalette.on-surface;
-                    vertical-alignment: center;
-                    horizontal-stretch: 1;
-                    horizontal-alignment: center;
-                }
-                Rectangle {
-                    width: 40px;
-                }
+            PageHeader {
+                title: @tr("Choose Bell Sound");
+                back => { root.bell-chooser-back(); }
             }
 
             BoxedList {
@@ -6281,25 +6227,9 @@ export component MainWindow inherits Window {
             spacing: 16px;
             alignment: start;
 
-            HorizontalLayout {
-                spacing: 12px;
-                alignment: stretch;
-
-                IconButton {
-                    icon: Icons.arrow-back;
-                    clicked => { root.pattern-chooser-back(); }
-                }
-                Text {
-                    text: @tr("Choose Pattern");
-                    font-size: 18px;
-                    color: MaterialPalette.on-surface;
-                    vertical-alignment: center;
-                    horizontal-stretch: 1;
-                    horizontal-alignment: center;
-                }
-                Rectangle {
-                    width: 40px;
-                }
+            PageHeader {
+                title: @tr("Choose Pattern");
+                back => { root.pattern-chooser-back(); }
             }
 
             BoxedList {
@@ -6472,38 +6402,17 @@ export component MainWindow inherits Window {
             spacing: 16px;
             alignment: start;
 
-            HorizontalLayout {
-                spacing: 12px;
-                alignment: stretch;
-                VerticalLayout {
-                    alignment: center;
-                    TextButton {
-                        text: @tr("Cancel");
-                        clicked => { root.vibration-editor-cancel(); }
-                    }
-                }
-                Text {
-                    text: root.ve-title;
-                    wrap: word-wrap;
-                    font-size: 18px;
-                    color: MaterialPalette.on-surface;
-                    vertical-alignment: center;
-                    horizontal-stretch: 1;
-                    horizontal-alignment: center;
-                }
-                VerticalLayout {
-                    alignment: center;
-                    FilledButton {
-                        text: @tr("Save");
-                        enabled: root.ve-save-enabled;
-                        clicked => {
-                            // Flush typed numbers first — tapping this
-                            // button does not blur the stepper inputs.
-                            ve-duration-stepper.commit();
-                            ve-points-stepper.commit();
-                            root.vibration-editor-save();
-                        }
-                    }
+            PageHeader {
+                title: root.ve-title;
+                action-text: @tr("Save");
+                action-enabled: root.ve-save-enabled;
+                back => { root.vibration-editor-cancel(); }
+                action => {
+                    // Flush typed numbers first — tapping this
+                    // button does not blur the stepper inputs.
+                    ve-duration-stepper.commit();
+                    ve-points-stepper.commit();
+                    root.vibration-editor-save();
                 }
             }
 
@@ -6796,26 +6705,10 @@ export component MainWindow inherits Window {
             spacing: 16px;
             alignment: start;
 
-            HorizontalLayout {
-                spacing: 12px;
-                alignment: stretch;
-
-                IconButton {
-                    icon: Icons.arrow-back;
-                    clicked => { root.preset-chooser-back(); }
-                }
-                Text {
-                    text: root.preset-chooser-save-mode
+            PageHeader {
+                title: root.preset-chooser-save-mode
                         ? @tr("Save Preset") : @tr("Manage Presets");
-                    font-size: 18px;
-                    color: MaterialPalette.on-surface;
-                    vertical-alignment: center;
-                    horizontal-stretch: 1;
-                    horizontal-alignment: center;
-                }
-                Rectangle {
-                    width: 40px;
-                }
+                back => { root.preset-chooser-back(); }
             }
 
             BoxedList {
@@ -7177,25 +7070,9 @@ export component MainWindow inherits Window {
             spacing: 16px;
             alignment: start;
 
-            HorizontalLayout {
-                spacing: 12px;
-                alignment: stretch;
-
-                IconButton {
-                    icon: Icons.arrow-back;
-                    clicked => { root.guided-manage-back(); }
-                }
-                Text {
-                    text: @tr("Manage Files");
-                    font-size: 18px;
-                    color: MaterialPalette.on-surface;
-                    vertical-alignment: center;
-                    horizontal-stretch: 1;
-                    horizontal-alignment: center;
-                }
-                Rectangle {
-                    width: 40px;
-                }
+            PageHeader {
+                title: @tr("Manage Files");
+                back => { root.guided-manage-back(); }
             }
 
             BoxedList {
@@ -7354,25 +7231,9 @@ export component MainWindow inherits Window {
             spacing: 16px;
             alignment: start;
 
-            HorizontalLayout {
-                spacing: 12px;
-                alignment: stretch;
-
-                IconButton {
-                    icon: Icons.arrow-back;
-                    clicked => { root.preferences-back(); }
-                }
-                Text {
-                    text: @tr("Preferences");
-                    font-size: 18px;
-                    color: MaterialPalette.on-surface;
-                    vertical-alignment: center;
-                    horizontal-stretch: 1;
-                    horizontal-alignment: center;
-                }
-                Rectangle {
-                    width: 40px;
-                }
+            PageHeader {
+                title: @tr("Preferences");
+                back => { root.preferences-back(); }
             }
 
             // Scrollable body (DP regression fix): the page grew
@@ -7649,25 +7510,9 @@ export component MainWindow inherits Window {
             padding-right: 16px;
             spacing: 12px;
 
-            HorizontalLayout {
-                spacing: 12px;
-                alignment: stretch;
-
-                IconButton {
-                    icon: Icons.arrow-back;
-                    clicked => { root.diag-back(); }
-                }
-                Text {
-                    text: @tr("Diagnostics");
-                    font-size: 18px;
-                    color: MaterialPalette.on-surface;
-                    vertical-alignment: center;
-                    horizontal-stretch: 1;
-                    horizontal-alignment: center;
-                }
-                Rectangle {
-                    width: 40px;
-                }
+            PageHeader {
+                title: @tr("Diagnostics");
+                back => { root.diag-back(); }
             }
 
             Rectangle {
