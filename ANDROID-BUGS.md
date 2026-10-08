@@ -274,6 +274,7 @@ Left out on purpose:
 - **Fix idea:** Pick one term.
 
 ### 33. Leftover running-screen content for one tick
+- **Fixed (2026-10-08):** R7(a): every session end goes through `end_session`, which resets both.
 - **Where:** `bb_running_active` is reset only on a natural Box Breath end (`lib.rs:5693`). `overtime-add-label` is never reset.
 - **What happens:** The old breathing square, or the old "Add MM:SS", flashes for up to 200 ms on the next session.
 - **Fix idea:** Reset both on start.

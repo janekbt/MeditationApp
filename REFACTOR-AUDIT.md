@@ -193,6 +193,7 @@ Planning only: nothing here has been changed yet. The audit ran on beta at a8a5d
 - **Bugs:** B3#33; B1 "snapshot incomplete" and "Save/Discard don't silence the bell"; B2 "activity recreate". Class: one end path forgets a step.
 - **Risk:** M. Needs a device run.
 - **Effort:** (a) S, (b) M
+- **Status:** (a) done. `end_session` holds the end steps and the running-screen resets; Stop, Finish and Add are one `end_tap` with their core transition. (b) waits for R1's follow-up, as planned.
 
 ### R8 Kotlin guided player owns its audio focus
 - **Evidence (MeditateGuided.kt):**

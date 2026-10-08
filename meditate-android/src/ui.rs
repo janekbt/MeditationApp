@@ -2838,6 +2838,37 @@ fn write_session_in_progress_snapshot(
     }
 }
 
+/// A session just ended (Stop, Finish, Add or its natural end): keep it
+/// for the Done screen, hold its recovery snapshot with the final
+/// duration until Save or Discard (the heartbeat stops so it can't
+/// overwrite it; GTK keeps it until `reset_mode` too), show it on Done,
+/// and clear what the running screen showed so the next session starts
+/// clean.
+fn end_session(
+    ui: &MainWindow,
+    secs: i64,
+    mode: meditate_core::SessionMode,
+    session_start_unix: &Cell<Option<i64>>,
+    pending_done: &Cell<Option<(i64, i64)>>,
+    bb_target_secs: &Cell<Option<u32>>,
+    snapshot_timer: &slint::Timer,
+) {
+    if let Some(unix_start) = session_start_unix.take() {
+        pending_done.set(Some((unix_start, secs)));
+    }
+    snapshot_timer.stop();
+    hold_ended_session_snapshot(pending_done.get(), mode);
+    ui.set_elapsed_text(
+        meditate_core::format::format_time(Duration::from_secs(secs.max(0) as u64)).into(),
+    );
+    ui.set_note_text("".into());
+    // Mirrors GTK's `show_done` copying the Setup label.
+    mirror_setup_label_into_done(ui, mode);
+    bb_target_secs.set(None);
+    ui.set_bb_running_active(false);
+    ui.set_overtime_add_label(ui.global::<Tr>().invoke_add_overtime("00:00".into()));
+}
+
 /// A session just ended and the Done screen is up: keep it
 /// recoverable with its final duration until Save or Discard clears
 /// it (core `hold_ended_session`). `done` is the `pending_done`
@@ -4277,170 +4308,38 @@ fn build_ui() -> MainWindow {
         });
     }
 
-    {
+    // Stop, Finish and Add end the session the same way; only the
+    // core transition differs. Core's EndSession carries the duration
+    // to save: the elapsed time for Stop, the planned length for
+    // Finish, the full elapsed incl. overtime for Add.
+    let end_tap = |end: fn(AppState, Duration) -> app::Transition| {
         let weak = ui.as_weak();
         let state = state.clone();
         let current_mode = current_mode.clone();
         let session_start_unix = session_start_unix.clone();
         let pending_done = pending_done.clone();
-        let snapshot_timer_ref: &'static slint::Timer = snapshot_timer;
-        ui.on_stop_tap(move || {
+        let bb_target_secs = bb_target_secs.clone();
+        move || {
+            let Some(ui) = weak.upgrade() else { return; };
             let now = now_since_epoch();
             let mut s = state.borrow_mut();
             let was_active = s.is_active();
-            let transition = std::mem::replace(&mut *s, AppState::idle()).stop(now);
+            let transition = end(std::mem::replace(&mut *s, AppState::idle()), now);
             dispatch_effects(&transition.effects);
-            // Core's EndSession carries the duration to save.
-            let elapsed_secs = app::ended_duration_secs(&transition.effects).unwrap_or(0) as i64;
+            let secs = app::ended_duration_secs(&transition.effects).unwrap_or(0) as i64;
             *s = transition.state;
             let is_active = s.is_active();
-            // Active → Finished: stash the (start, elapsed) pair
-            // so the Save / Discard handler knows what to do, push
-            // the elapsed readout into the Done view, and mirror
-            // Setup's resolved label into the Done expander state.
-            // Mirrors `show_done`'s `done_selected_label_id.set(setup_selected_label_id())`
-            // call at `meditate-gtk/src/timer/imp.rs:2296`.
+            let mode = current_mode.get().into();
             if was_active && !is_active {
-                if let Some(unix_start) = session_start_unix.take() {
-                    pending_done.set(Some((unix_start, elapsed_secs)));
-                }
-                // Keep the session recoverable with its final
-                // duration until Done-screen Save / Discard clears
-                // it, so a kill on the Done screen doesn't lose it
-                // (GTK keeps it until `reset_mode` too). Cancel the
-                // heartbeat so it doesn't overwrite the final
-                // duration.
-                {
-                    snapshot_timer_ref.stop();
-                    hold_ended_session_snapshot(pending_done.get(), current_mode.get().into());
-                }
-                if let Some(ui) = weak.upgrade() {
-                    ui.set_elapsed_text(
-                        meditate_core::format::format_time(
-                            Duration::from_secs(elapsed_secs.max(0) as u64),
-                        )
-                        .into(),
-                    );
-                    ui.set_note_text("".into());
-                    mirror_setup_label_into_done(&ui, current_mode.get().into());
-                }
+                end_session(&ui, secs, mode, &session_start_unix, &pending_done, &bb_target_secs, snapshot_timer);
             }
-            on_state_changed(
-                was_active,
-                is_active,
-                current_mode.get().into(),
-            );
-            if let Some(ui) = weak.upgrade() {
-                refresh(&ui, &s, now);
-            }
-            let _ = current_mode.get();
-        });
-    }
-
-    // Overtime Finish / Add (B-6c). Both end the session from the
-    // Overtime phase and land on the Done screen — same
-    // post-processing as Stop (pending_done stash, snapshot
-    // teardown, elapsed readout, label mirror, service stop) but
-    // the recorded duration comes from core's EndSession effect:
-    // Finish = planned target, Add = full elapsed incl. overtime.
-    {
-        let weak = ui.as_weak();
-        let state = state.clone();
-        let current_mode = current_mode.clone();
-        let session_start_unix = session_start_unix.clone();
-        let pending_done = pending_done.clone();
-        let snapshot_timer_ref: &'static slint::Timer = snapshot_timer;
-        ui.on_finish_tap(move || {
-            let now = now_since_epoch();
-            let mut s = state.borrow_mut();
-            let was_active = s.is_active();
-            let transition =
-                std::mem::replace(&mut *s, AppState::idle()).finish_overtime();
-            dispatch_effects(&transition.effects);
-            // Core's EndSession: the planned length for Finish, the
-            // full elapsed for Add.
-            let final_secs = app::ended_duration_secs(&transition.effects).unwrap_or(0) as i64;
-            *s = transition.state;
-            let is_active = s.is_active();
-            if was_active && !is_active {
-                if let Some(unix_start) = session_start_unix.take() {
-                    pending_done.set(Some((unix_start, final_secs)));
-                }
-                {
-                    snapshot_timer_ref.stop();
-                    hold_ended_session_snapshot(pending_done.get(), current_mode.get().into());
-                }
-                if let Some(ui) = weak.upgrade() {
-                    ui.set_elapsed_text(
-                        meditate_core::format::format_time(
-                            Duration::from_secs(final_secs.max(0) as u64),
-                        )
-                        .into(),
-                    );
-                    ui.set_note_text("".into());
-                    mirror_setup_label_into_done(&ui, current_mode.get().into());
-                }
-            }
-            on_state_changed(
-                was_active,
-                is_active,
-                current_mode.get().into(),
-            );
-            if let Some(ui) = weak.upgrade() {
-                refresh(&ui, &s, now);
-            }
-            let _ = current_mode.get();
-        });
-    }
-    {
-        let weak = ui.as_weak();
-        let state = state.clone();
-        let current_mode = current_mode.clone();
-        let session_start_unix = session_start_unix.clone();
-        let pending_done = pending_done.clone();
-        let snapshot_timer_ref: &'static slint::Timer = snapshot_timer;
-        ui.on_add_tap(move || {
-            let now = now_since_epoch();
-            let mut s = state.borrow_mut();
-            let was_active = s.is_active();
-            let transition =
-                std::mem::replace(&mut *s, AppState::idle()).add_overtime(now);
-            dispatch_effects(&transition.effects);
-            // Core's EndSession: the planned length for Finish, the
-            // full elapsed for Add.
-            let final_secs = app::ended_duration_secs(&transition.effects).unwrap_or(0) as i64;
-            *s = transition.state;
-            let is_active = s.is_active();
-            if was_active && !is_active {
-                if let Some(unix_start) = session_start_unix.take() {
-                    pending_done.set(Some((unix_start, final_secs)));
-                }
-                {
-                    snapshot_timer_ref.stop();
-                    hold_ended_session_snapshot(pending_done.get(), current_mode.get().into());
-                }
-                if let Some(ui) = weak.upgrade() {
-                    ui.set_elapsed_text(
-                        meditate_core::format::format_time(
-                            Duration::from_secs(final_secs.max(0) as u64),
-                        )
-                        .into(),
-                    );
-                    ui.set_note_text("".into());
-                    mirror_setup_label_into_done(&ui, current_mode.get().into());
-                }
-            }
-            on_state_changed(
-                was_active,
-                is_active,
-                current_mode.get().into(),
-            );
-            if let Some(ui) = weak.upgrade() {
-                refresh(&ui, &s, now);
-            }
-            let _ = current_mode.get();
-        });
-    }
+            on_state_changed(was_active, is_active, mode);
+            refresh(&ui, &s, now);
+        }
+    };
+    ui.on_stop_tap(end_tap(AppState::stop));
+    ui.on_finish_tap(end_tap(|s, _| s.finish_overtime()));
+    ui.on_add_tap(end_tap(AppState::add_overtime));
 
     // Duration row tap: seed the dialog's edit-state copies from the
     // currently configured target, then open the dialog. The Slint
@@ -4886,23 +4785,16 @@ fn build_ui() -> MainWindow {
             *s = transition.state;
             let is_active = s.is_active();
             if was_active && !is_active {
-                if let Some(unix_start) = session_start_unix.take() {
-                    pending_done.set(Some((unix_start, elapsed_secs)));
-                }
-                bb_target_secs.set(None);
-                // Cancel heartbeat + hold the snapshot — see stop_tap.
-                snapshot_timer_ref.stop();
-                hold_ended_session_snapshot(pending_done.get(), current_mode.get().into());
                 if let Some(ui) = weak.upgrade() {
-                    ui.set_elapsed_text(
-                        meditate_core::format::format_time(
-                            Duration::from_secs(elapsed_secs.max(0) as u64),
-                        )
-                        .into(),
+                    end_session(
+                        &ui,
+                        elapsed_secs,
+                        current_mode.get().into(),
+                        &session_start_unix,
+                        &pending_done,
+                        &bb_target_secs,
+                        snapshot_timer_ref,
                     );
-                    ui.set_note_text("".into());
-                    mirror_setup_label_into_done(&ui, current_mode.get().into());
-                    ui.set_bb_running_active(false);
                 }
             }
             // While a Box-Breath session is running, push the

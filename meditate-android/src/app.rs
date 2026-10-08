@@ -863,6 +863,32 @@ mod tests {
     }
 
     #[test]
+    fn every_session_end_takes_one_path() {
+        // Stop, Finish, Add and the natural end were four copies of
+        // the end steps; only the tick's reset the Box Breath state,
+        // and none reset the overtime label, so the old square or
+        // "Add MM:SS" flashed on the next session.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
+        assert_eq!(code.matches("pending_done.set(Some((unix_start,").count(), 2, "end_session and the failed save");
+        assert_eq!(code.matches("end_session(").count(), 3, "the helper, the end taps and the tick");
+        let at = code.find("fn end_session(").unwrap();
+        let body = &code[at..at + code[at..].find("\n}\n").unwrap()];
+        for step in [
+            "hold_ended_session_snapshot(",
+            "bb_target_secs.set(None);",
+            "ui.set_bb_running_active(false);",
+            "ui.set_overtime_add_label(ui.global::<Tr>().invoke_add_overtime(\"00:00\".into()));",
+        ] {
+            assert!(body.contains(step), "{step}");
+        }
+        for tap in ["ui.on_stop_tap(end_tap(", "ui.on_finish_tap(end_tap(", "ui.on_add_tap(end_tap("] {
+            assert!(code.contains(tap), "{tap}");
+        }
+    }
+
+    #[test]
     fn a_csv_pick_carries_its_path_and_kind() {
         assert_eq!(
             super::parse_csv_pick("/data/x.csv\ninsight"),
@@ -2373,16 +2399,10 @@ mod tests {
         let code = format!("{}{}", &code[..helper], &code[helper_end..]);
         let code = code.as_str();
 
-        // Each end path stops the heartbeat and holds the snapshot.
-        let ends: Vec<usize> = code.match_indices("snapshot_timer_ref.stop();").map(|(i, _)| i).collect();
-        assert_eq!(ends.len(), 4, "Stop, Finish, Add and the natural end");
-        for end in ends {
-            let next = code[end..].lines().nth(1).unwrap().trim();
-            assert!(
-                next.starts_with("hold_ended_session_snapshot("),
-                "an end path must hold the snapshot, found {next:?}",
-            );
-        }
+        // Every end goes through end_session (see
+        // `every_session_end_takes_one_path`), which stops the heartbeat
+        // and then holds the snapshot.
+        assert!(lib.contains("    snapshot_timer.stop();\n    hold_ended_session_snapshot(pending_done.get(), mode);"));
 
         // Only Discard clears it here (Back on Done goes through the
         // Discard path); Save clears it inside its insert, see
@@ -2944,8 +2964,8 @@ mod tests {
         assert!(!code.contains("session.elapsed(now).as_secs() as i64"), "no shell-side duration");
         assert_eq!(
             code.matches("app::ended_duration_secs(&transition.effects)").count(),
-            4,
-            "Stop, Finish, Add and the natural end",
+            2,
+            "the end taps (Stop, Finish, Add) and the natural end",
         );
     }
 
