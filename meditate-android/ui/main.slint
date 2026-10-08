@@ -5313,6 +5313,11 @@ export component MainWindow inherits Window {
         // bar rather than a gap to the screen edge.
         background: MaterialPalette.surface-container;
 
+        // A colour doesn't block input: without this, a bottom-edge
+        // swipe (switch apps) reached the Log card behind the bar
+        // and its release opened Edit Session.
+        TouchArea {}
+
         NavigationBar {
             x: 0;
             y: 0;

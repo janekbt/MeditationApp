@@ -909,6 +909,18 @@ mod tests {
         assert!(slint.contains("clicked => { root.release-vibration-editor-inputs(); }"), "a background tap releases");
     }
 
+    /// Android hands the app the whole bottom-edge swipe (to the last
+    /// app) as a touch. The bar's colour doesn't block input, so the
+    /// log card behind it took the release as a tap and opened Edit.
+    #[test]
+    fn the_bottom_bar_swallows_touches() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        let bar = slint.find("height: root.nav-bar-height + root.bottom-bar-inset;").unwrap();
+        let nav = bar + slint[bar..].find("NavigationBar {").unwrap();
+        assert!(slint[bar..nav].contains("TouchArea {}"), "behind the NavigationBar, over the page");
+    }
+
     /// A focused note kept its cursor (and keyboard) after Edit
     /// Session or the Done screen closed. Closing lets go of it.
     #[test]
