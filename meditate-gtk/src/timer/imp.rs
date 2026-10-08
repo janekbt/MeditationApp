@@ -2433,6 +2433,8 @@ impl TimerView {
     }
 
     fn show_done(&self, elapsed_secs: u64) {
+        // Hold the final duration, not the last 60 s heartbeat's, for a kill on Done.
+        self.write_in_progress_snapshot(elapsed_secs.try_into().unwrap_or(u32::MAX));
         self.done_duration_label.set_label(&format_time(Duration::from_secs(elapsed_secs)));
         self.note_view.buffer().set_text("");
         // Mirror the Setup view's currently-active label into the
