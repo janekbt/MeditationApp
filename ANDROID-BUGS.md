@@ -151,6 +151,7 @@ Left out on purpose:
 - **Confidence:** confirmed in Slint's code path (not yet tried on the phone).
 
 ### 13. The vibration-pattern editor saves a stale typed number
+- **Fixed (2026-10-08):** R15(d): Save commits the Duration and Points steppers; every close path and a background tap release them.
 - **Where:** `main.slint:6652-6656` (Save doesn't commit the steppers at `:6697-6712`). The interval editor does commit them (`:6155-6160`).
 - **Repro:** Create pattern → type 50 into Duration → tap Save. It saves the old value. The keyboard or popup can also stay up after closing.
 - **Fix idea:** Name the steppers, `commit()` them before save, and release them on every close path.

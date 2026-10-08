@@ -886,6 +886,29 @@ mod tests {
         assert!(body("fn check_label_conflicts(").contains("if ui.get_modal() != Modal::None {\n        return;"));
     }
 
+    /// Tapping Save does not blur a number field, so the vibration
+    /// editor saved the value from before the typing (#13); and a
+    /// field left focused kept its keyboard or popup over the next
+    /// page. Same pattern as the interval editor.
+    #[test]
+    fn the_vibration_editor_commits_and_releases_its_numbers() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        assert!(slint.contains("ve-duration-stepper := StepperRow {"));
+        assert!(slint.contains("ve-points-stepper := StepperRow {"));
+        let save = slint.find("clicked => { root.vibration-editor-save(); }");
+        assert!(save.is_none(), "Save commits before it saves");
+        let at = slint.find("root.vibration-editor-save();").unwrap();
+        let before = &slint[at - 200..at];
+        assert!(before.contains("ve-duration-stepper.commit();") && before.contains("ve-points-stepper.commit();"));
+        let release = slint.find("function release-vibration-editor-inputs() {").expect("one release");
+        let release = &slint[release..release + 160];
+        assert!(release.contains("ve-duration-stepper.release();") && release.contains("ve-points-stepper.release();"));
+        let closed = slint.find("changed vibration-editor-page => {").expect("closing releases");
+        assert!(slint[closed..closed + 160].contains("root.release-vibration-editor-inputs();"));
+        assert!(slint.contains("clicked => { root.release-vibration-editor-inputs(); }"), "a background tap releases");
+    }
+
     /// Confirm and name dialogs share one card (320 px, centred), so
     /// widths and body alignment can't drift apart again. Only dialogs
     /// with more than a field and two buttons are built by hand.

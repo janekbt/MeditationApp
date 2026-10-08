@@ -2908,6 +2908,15 @@ export component MainWindow inherits Window {
             root.release-interval-editor-inputs();
         }
     }
+    function release-vibration-editor-inputs() {
+        ve-duration-stepper.release();
+        ve-points-stepper.release();
+    }
+    changed vibration-editor-page => {
+        if (!root.vibration-editor-page) {
+            root.release-vibration-editor-inputs();
+        }
+    }
     property <length> vibration-editor-offset: root.vibration-editor-page ? root.width : 0px;
     animate vibration-editor-offset { duration: 300ms; easing: ease-out; }
 
@@ -6399,8 +6408,11 @@ export component MainWindow inherits Window {
         background: MaterialPalette.surface;
 
         // Swallow taps on empty areas so they never reach the
-        // page underneath (a background colour does not block input).
-        TouchArea {}
+        // page underneath (a background colour does not block input),
+        // and let go of a typed number.
+        TouchArea {
+            clicked => { root.release-vibration-editor-inputs(); }
+        }
 
         VerticalLayout {
             padding-top: root.status-bar-inset + 16px;
@@ -6434,7 +6446,13 @@ export component MainWindow inherits Window {
                     FilledButton {
                         text: @tr("Save");
                         enabled: root.ve-save-enabled;
-                        clicked => { root.vibration-editor-save(); }
+                        clicked => {
+                            // Flush typed numbers first — tapping this
+                            // button does not blur the stepper inputs.
+                            ve-duration-stepper.commit();
+                            ve-points-stepper.commit();
+                            root.vibration-editor-save();
+                        }
                     }
                 }
             }
@@ -6476,7 +6494,7 @@ export component MainWindow inherits Window {
                 // Duration in tenths of a second (5..=100 ⇒
                 // 0.5..=10.0 s). Rust reacts to the change to
                 // recompute the Points cap (V-4 wiring).
-                StepperRow {
+                ve-duration-stepper := StepperRow {
                     label: @tr("Duration (0.1 s)");
                     value <=> root.ve-duration-tenths;
                     min-value: 5;
@@ -6486,7 +6504,7 @@ export component MainWindow inherits Window {
                     height: 1px;
                     background: MaterialPalette.outline-variant;
                 }
-                StepperRow {
+                ve-points-stepper := StepperRow {
                     label: @tr("Points");
                     value <=> root.ve-points;
                     min-value: 3;
