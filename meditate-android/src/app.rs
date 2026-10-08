@@ -176,6 +176,18 @@ pub fn signal_mode_to_chip_index(m: meditate_core::SignalMode) -> i32 {
     }
 }
 
+/// Who opened the bell-sound or pattern chooser, so a pick (and a
+/// sound preview's volume) goes back to that bell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ChooserTarget {
+    #[default]
+    StartingBell,
+    EndBell,
+    /// Staged into the interval-bell editor; saved with the bell.
+    IntervalEditor,
+    BoxBreathCue(meditate_core::db::BoxBreathPhaseId),
+}
+
 impl TimerMode {
     /// Map the Slint chip group's `current-index` (Timer=0,
     /// Guided=1, Breathing=2 — mirroring the .blp `Adw.Toggle`
@@ -886,6 +898,22 @@ mod tests {
         for tap in ["ui.on_stop_tap(end_tap(", "ui.on_finish_tap(end_tap(", "ui.on_add_tap(end_tap("] {
             assert!(code.contains(tap), "{tap}");
         }
+    }
+
+    #[test]
+    fn chooser_targets_are_typed() {
+        // The label chooser routed picks by 0/1/2 and the bell and
+        // pattern choosers by u8 codes 0-6; three more signal-mode
+        // mappings in ui.rs disagreed with app.rs on their fallback.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        assert!(slint.contains("export enum LabelTarget {"));
+        assert!(!slint.contains("chooser-target") && !lib.contains("chooser_target("));
+        for gone in ["fn signal_mode_index(", "fn signal_mode_db_str(", "fn signal_mode_from_index(", "chooser_target: Rc<Cell<u8>>"] {
+            assert!(!lib.contains(gone), "{gone}");
+        }
+        assert!(lib.contains("ChooserTarget::BoxBreathCue(phase) =>"));
     }
 
     #[test]
@@ -2247,7 +2275,7 @@ mod tests {
         let helper = &lib[at..at + lib[at..].find("\n}\n").unwrap()];
         assert!(helper.contains("ui.set_edit_label_enabled(false);"));
         assert!(helper.contains("ui.set_done_label_active(false);"));
-        assert!(helper.contains("2 => picked(ui.get_edit_label_id()),"));
+        assert!(helper.contains("LabelTarget::Edit => picked(ui.get_edit_label_id()),"));
         for handler in ["ui.on_rename_label_confirm(", "ui.on_delete_label_confirm("] {
             let at = lib.find(handler).unwrap();
             let body = &lib[at..at + lib[at..].find("\n        });").unwrap()];

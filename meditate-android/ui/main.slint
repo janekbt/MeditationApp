@@ -1763,6 +1763,15 @@ component BoxedList inherits Rectangle {
     }
 }
 
+/// Who opened the label chooser: Setup's label row (picks write the
+/// mode's setting), the Done screen (picks stay on Done until Save,
+/// via `resolve_persist_action`) or Edit Session.
+export enum LabelTarget {
+    setup,
+    done,
+    edit,
+}
+
 /// The open dialog. Dialogs never stack, so one property holds it;
 /// Back and a session start close whichever it is.
 export enum Modal {
@@ -2109,14 +2118,8 @@ export component MainWindow inherits Window {
     // `meditate-gtk/src/log/imp.rs:195`.
     in property <bool> log-has-more: false;
 
-    // Routing flag for the shared label chooser overlay:
-    //   0 = opened from the Setup expander row (existing flow —
-    //       picks write to the active mode's UUID setting).
-    //   1 = opened from the Done expander row (new flow — picks
-    //       update `done-label-id` / `done-label-name` only;
-    //       persistence to the mode setting happens on Save via
-    //       `resolve_persist_action`).
-    in-out property <int> chooser-target: 0;
+    // Who opened the shared label chooser, so a pick goes back there.
+    in-out property <LabelTarget> label-target;
 
     // Box Breath phase pattern (in / hold-in / out / hold-out, in
     // seconds). Mirrors `meditate-gtk/src/timer/imp.rs::breathing_pattern`
@@ -2628,7 +2631,7 @@ export component MainWindow inherits Window {
     callback edit-save-tap();
     // Tap on the "Selected" row inside the Edit-Session Label
     // group → open the labels chooser (`labels-page`). Rust sets
-    // `chooser-target = 2` before flipping `labels-page = true` so
+    // `label-target = edit` before flipping `labels-page = true` so
     // the existing `on_label_picked` handler routes the pick back
     // to `edit-label-*` instead of Setup or Done.
     callback edit-label-row-tap();
@@ -4062,7 +4065,7 @@ export component MainWindow inherits Window {
             // `done_label_enabled_row` (a sibling of the note +
             // button rows under the Done stack page). Master
             // toggle + inner Selected row are wired to the
-            // `done-label-*` properties; `chooser-target = 1`
+            // `done-label-*` properties; `label-target = done`
             // when this row's inner-row tap opens the chooser
             // so picks route back to the Done state rather than
             // the active mode's UUID setting.
@@ -5271,7 +5274,7 @@ export component MainWindow inherits Window {
             // GTK's `adw::ExpanderRow` with show_enable_switch +
             // inner "Selected" sub-row at `log/imp.rs:874`. Tap on
             // the chooser row pushes the existing labels-page
-            // overlay; Rust uses `chooser-target = 2` to route the
+            // overlay; Rust uses `label-target = edit` to route the
             // pick back to `edit-label-*`.
             // Reuses the proven `ExpanderRow` (same component the
             // Setup screen's Label expander uses) rather than a

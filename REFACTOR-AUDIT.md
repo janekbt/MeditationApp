@@ -236,6 +236,7 @@ Planning only: nothing here has been changed yet. The audit ran on beta at a8a5d
 - **Tests:** round-trip tests in app.rs.
 - **Risk:** low.
 - **Effort:** S
+- **Status:** done. The label bug was already fixed before this. `LabelTarget` is a Slint enum (setup, done, edit); `ChooserTarget` in app.rs (StartingBell, EndBell, IntervalEditor, BoxBreathCue(phase)) uses core's `BoxBreathPhaseId` instead of `BellSlot`, which has no interval-editor case; signal mode maps through app.rs's two functions only.
 
 ### R11 Preset timing: refuse to apply during a session, then persist the timing in core
 - **Evidence:**

@@ -5,7 +5,7 @@
 
 use super::*;
 
-use app::{signal_mode_from_chip_index, signal_mode_to_chip_index, AppState, TimerMode};
+use app::{signal_mode_from_chip_index, signal_mode_to_chip_index, AppState, ChooserTarget, TimerMode};
 use meditate_core::preview::{PreviewAction, PreviewToggle};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -2146,11 +2146,11 @@ fn refresh_after_label_change(ui: &MainWindow, mode: meditate_core::SessionMode)
         }
     }
     let picked = |id: i32| (id > 0).then_some(i64::from(id));
-    let current_id = match ui.get_chooser_target() {
-        1 => picked(ui.get_done_label_id()),
-        2 => picked(ui.get_edit_label_id()),
-        _ if read_label_active_for_mode(mode) => resolved_label_for_mode(mode).map(|(_, id)| id),
-        _ => None,
+    let current_id = match ui.get_label_target() {
+        LabelTarget::Done => picked(ui.get_done_label_id()),
+        LabelTarget::Edit => picked(ui.get_edit_label_id()),
+        LabelTarget::Setup if read_label_active_for_mode(mode) => resolved_label_for_mode(mode).map(|(_, id)| id),
+        LabelTarget::Setup => None,
     };
     refresh_chooser_items(ui, current_id);
 }
@@ -3385,42 +3385,6 @@ fn pattern_name(ui: &MainWindow, uuid: &str) -> String {
     resolved_name_text(ui, name)
 }
 
-/// SignalMode db-string → CompactToggle index (0 Sound /
-/// 1 Vibration / 2 Both — the GTK ToggleGroup order). Unknown
-/// values fall back to Sound, matching `read_signal_mode`'s
-/// default contract.
-fn signal_mode_index(db_str: &str) -> i32 {
-    use meditate_core::bells::SignalMode;
-    match SignalMode::from_db_str(db_str) {
-        Some(SignalMode::Vibration) => 1,
-        Some(SignalMode::Both) => 2,
-        _ => 0,
-    }
-}
-
-/// CompactToggle index → SignalMode db string. Inverse of
-/// `signal_mode_index`; out-of-range indices clamp to Sound.
-fn signal_mode_db_str(index: i32) -> &'static str {
-    use meditate_core::bells::SignalMode;
-    match index {
-        1 => SignalMode::Vibration.as_db_str(),
-        2 => SignalMode::Both.as_db_str(),
-        _ => SignalMode::Sound.as_db_str(),
-    }
-}
-
-/// CompactToggle index → `SignalMode`. The interval-bell editor
-/// stores the mode as the enum (DB column), not a settings
-/// string, so it needs the typed value rather than `*_db_str`.
-fn signal_mode_from_index(index: i32) -> meditate_core::bells::SignalMode {
-    use meditate_core::bells::SignalMode;
-    match index {
-        1 => SignalMode::Vibration,
-        2 => SignalMode::Both,
-        _ => SignalMode::Sound,
-    }
-}
-
 /// Feed the real system insets into the UI (P8). No-op while the
 /// window isn't attached (first frames) — the Slint defaults hold
 /// until the first resize/attach callback lands.
@@ -3531,16 +3495,15 @@ fn refresh_bell_rows(ui: &MainWindow) {
     ui.set_starting_bell_sound_name(bell_sound_name(ui, &ss).into());
     ui.set_end_bell_sound_name(bell_sound_name(ui, &es).into());
 
-    // Signal Type + Pattern (B-2b). Defaults mirror core's
-    // `read_signal_mode(.., SignalMode::Sound)` and the
+    // Signal Type + Pattern (B-2b): Sound by default, and the
     // `*_bell_pattern` → BUNDLED_PATTERN_PULSE_UUID fallback.
-    ui.set_starting_bell_signal_mode(signal_mode_index(&read_global_setting(
-        "starting_bell_signal_mode",
-        meditate_core::bells::SignalMode::Sound.as_db_str(),
-    )));
-    ui.set_end_bell_signal_mode(signal_mode_index(&read_global_setting(
+    let signal_mode = |key: &str| {
+        let sound = meditate_core::SignalMode::Sound;
+        lock_db().map_or(sound, |db| meditate_core::settings_keys::read_signal_mode(&db, key, sound))
+    };
+    ui.set_starting_bell_signal_mode(signal_mode_to_chip_index(signal_mode("starting_bell_signal_mode")));
+    ui.set_end_bell_signal_mode(signal_mode_to_chip_index(signal_mode(
         meditate_core::settings_keys::end_bell_signal_mode_key_for_mode(eb_mode),
-        meditate_core::bells::SignalMode::Sound.as_db_str(),
     )));
     let sp = read_global_setting(
         "starting_bell_pattern",
@@ -3679,7 +3642,7 @@ fn refresh_boxbreath_cues(ui: &MainWindow) {
     let name = |n: ResolvedName| resolved_name_text(ui, n);
     for p in [P::In, P::HoldIn, P::Out, P::HoldOut] {
         let Ok(Some(r)) = db.get_box_breath_phase(p) else { continue; };
-        let si = signal_mode_index(r.signal_mode.as_db_str());
+        let si = signal_mode_to_chip_index(r.signal_mode);
         let sn = name(meditate_core::bells::resolve_sound_name(
             &db,
             r.sound_uuid.as_ref(),
@@ -6077,7 +6040,7 @@ fn build_ui() -> MainWindow {
     }
 
     // Label inner-row tap (Setup) — load the labels list with the
-    // active mode's current selection marked, set chooser-target=0
+    // active mode's current selection marked, set label-target to setup
     // so picks route back to the mode setting, then open the
     // chooser. Mirrors GTK's `setup_label_chooser_row.activated`.
     {
@@ -6086,7 +6049,7 @@ fn build_ui() -> MainWindow {
         ui.on_label_tap(move || {
             {
                 let Some(ui) = weak.upgrade() else { return; };
-                ui.set_chooser_target(0);
+                ui.set_label_target(LabelTarget::Setup);
                 refresh_label_state(&ui, current_mode.get().into());
                 ui.set_labels_page(true);
             }
@@ -6096,10 +6059,8 @@ fn build_ui() -> MainWindow {
     // ── Bells group (B-5a) ──────────────────────────────────────
     // Starting / End bell enable + sound-pick wiring. Settings
     // are global (not per-mode). `bell_chooser_target` records
-    // which caller opened the chooser so the pick routes back
-    // correctly: 0 = Starting Bell, 1 = End Bell, 2 = the
-    // interval-bell editor (B-5c-2).
-    let bell_chooser_target: Rc<Cell<u8>> = Rc::new(Cell::new(0));
+    // which caller opened the chooser so the pick routes back.
+    let bell_chooser_target: Rc<Cell<ChooserTarget>> = Rc::default();
 
 
     // Interval-bell editor mode (B-5c-3): `Some(original)` when
@@ -6132,9 +6093,8 @@ fn build_ui() -> MainWindow {
     // scaling does not preserve the dots' aspect ratio).
     let ve_plot_size: Rc<Cell<(f32, f32)>> = Rc::new(Cell::new((0.0, 0.0)));
 
-    // Pattern-chooser routing (B-2b): 0 = Starting Bell,
-    // 1 = End Bell (the interval-bell editor's pattern is B-2c).
-    let pattern_chooser_target: Rc<Cell<u8>> = Rc::new(Cell::new(0));
+    // Pattern-chooser routing (B-2b), same targets.
+    let pattern_chooser_target: Rc<Cell<ChooserTarget>> = Rc::default();
 
     {
         ui.on_starting_bell_toggled(move |value| {
@@ -6170,7 +6130,7 @@ fn build_ui() -> MainWindow {
         ui.on_starting_bell_sound_tap(move || {
             {
                 let Some(ui) = weak.upgrade() else { return; };
-                bell_chooser_target.set(0);
+                bell_chooser_target.set(ChooserTarget::StartingBell);
                 let cur = read_global_setting(
                     "starting_bell_sound",
                     meditate_core::seeds::BUNDLED_BOWL_UUID,
@@ -6191,7 +6151,7 @@ fn build_ui() -> MainWindow {
         ui.on_end_bell_sound_tap(move || {
             {
                 let Some(ui) = weak.upgrade() else { return; };
-                bell_chooser_target.set(1);
+                bell_chooser_target.set(ChooserTarget::EndBell);
                 let cur = read_global_setting(
                     meditate_core::settings_keys::end_bell_sound_key_for_mode(setup_session_mode(&ui)),
                     meditate_core::seeds::BUNDLED_BOWL_UUID,
@@ -6218,11 +6178,9 @@ fn build_ui() -> MainWindow {
             let _ = v;
         });
     }
-    // Per-phase handlers. `tag` selects the core phase; the
-    // chooser-target ints (3=In 4=HoldIn 5=Out 6=HoldOut) match
-    // the `t @ 3..=6` arms in the pick handlers.
+    // Per-phase handlers. `tag` selects the core phase.
     macro_rules! bbc_phase_handlers {
-        ($tag:literal, $tgt:literal,
+        ($tag:literal,
          $on_tog:ident, $on_sm:ident, $on_snd:ident, $on_pat:ident) => {
             {
                 ui.$on_tog(move |v| {
@@ -6235,7 +6193,7 @@ fn build_ui() -> MainWindow {
                     write_bb_phase(
                         bb_phase($tag),
                         None,
-                        Some(signal_mode_from_index(i)),
+                        Some(signal_mode_from_chip_index(i)),
                         None,
                         None,
                     );
@@ -6250,7 +6208,7 @@ fn build_ui() -> MainWindow {
                 ui.$on_snd(move || {
                     {
                         let Some(ui) = weak.upgrade() else { return; };
-                        bell_chooser_target.set($tgt);
+                        bell_chooser_target.set(ChooserTarget::BoxBreathCue(bb_phase($tag)));
                         let (su, _) = bb_phase_uuids(bb_phase($tag));
                         bell_chooser_category.set(1);
                         *bell_chooser_current.borrow_mut() = su.clone();
@@ -6266,7 +6224,7 @@ fn build_ui() -> MainWindow {
                 ui.$on_pat(move || {
                     {
                         let Some(ui) = weak.upgrade() else { return; };
-                        pattern_chooser_target.set($tgt);
+                        pattern_chooser_target.set(ChooserTarget::BoxBreathCue(bb_phase($tag)));
                         let (_, pu) = bb_phase_uuids(bb_phase($tag));
                         populate_pattern_chooser(&ui, &pu);
                         ui.set_pattern_chooser_page(true);
@@ -6277,22 +6235,22 @@ fn build_ui() -> MainWindow {
         };
     }
     bbc_phase_handlers!(
-        "in", 3,
+        "in",
         on_bbc_in_toggled, on_bbc_in_signal_mode_changed,
         on_bbc_in_sound_tap, on_bbc_in_pattern_tap
     );
     bbc_phase_handlers!(
-        "holdin", 4,
+        "holdin",
         on_bbc_holdin_toggled, on_bbc_holdin_signal_mode_changed,
         on_bbc_holdin_sound_tap, on_bbc_holdin_pattern_tap
     );
     bbc_phase_handlers!(
-        "out", 5,
+        "out",
         on_bbc_out_toggled, on_bbc_out_signal_mode_changed,
         on_bbc_out_sound_tap, on_bbc_out_pattern_tap
     );
     bbc_phase_handlers!(
-        "holdout", 6,
+        "holdout",
         on_bbc_holdout_toggled, on_bbc_holdout_signal_mode_changed,
         on_bbc_holdout_sound_tap, on_bbc_holdout_pattern_tap
     );
@@ -6306,7 +6264,7 @@ fn build_ui() -> MainWindow {
                 // Leaving the overlay always silences a preview.
                 stop_all_previews(&ui);
                 match bell_chooser_target.get() {
-                    2 => {
+                    ChooserTarget::IntervalEditor => {
                         // Interval-bell editor: just stage the
                         // pick into the editor fields; it's
                         // committed when the editor's Save runs.
@@ -6315,21 +6273,15 @@ fn build_ui() -> MainWindow {
                             bell_sound_name(&ui, uuid.as_str()).into(),
                         );
                     }
-                    1 => {
+                    ChooserTarget::EndBell => {
                         write_global_setting(
                             meditate_core::settings_keys::end_bell_sound_key_for_mode(setup_session_mode(&ui)),
                             uuid.as_str(),
                         );
                         refresh_bell_rows(&ui);
                     }
-                    t @ 3..=6 => {
+                    ChooserTarget::BoxBreathCue(phase) => {
                         // Box-Breath phase sound (B-7).
-                        let phase = match t {
-                            3 => bb_phase("in"),
-                            4 => bb_phase("holdin"),
-                            5 => bb_phase("out"),
-                            _ => bb_phase("holdout"),
-                        };
                         write_bb_phase(
                             phase,
                             None,
@@ -6339,7 +6291,7 @@ fn build_ui() -> MainWindow {
                         );
                         refresh_bell_rows(&ui);
                     }
-                    _ => {
+                    ChooserTarget::StartingBell => {
                         write_global_setting(
                             "starting_bell_sound",
                             uuid.as_str(),
@@ -6471,7 +6423,7 @@ fn build_ui() -> MainWindow {
                 let Some(ui) = weak.upgrade() else { return; };
                 write_global_setting(
                     "starting_bell_signal_mode",
-                    signal_mode_db_str(idx),
+                    signal_mode_from_chip_index(idx).as_db_str(),
                 );
                 refresh_bell_rows(&ui);
             }
@@ -6484,7 +6436,7 @@ fn build_ui() -> MainWindow {
                 let Some(ui) = weak.upgrade() else { return; };
                 write_global_setting(
                     meditate_core::settings_keys::end_bell_signal_mode_key_for_mode(setup_session_mode(&ui)),
-                    signal_mode_db_str(idx),
+                    signal_mode_from_chip_index(idx).as_db_str(),
                 );
                 refresh_bell_rows(&ui);
             }
@@ -6496,7 +6448,7 @@ fn build_ui() -> MainWindow {
         ui.on_starting_bell_pattern_tap(move || {
             {
                 let Some(ui) = weak.upgrade() else { return; };
-                pattern_chooser_target.set(0);
+                pattern_chooser_target.set(ChooserTarget::StartingBell);
                 let cur = read_global_setting(
                     "starting_bell_pattern",
                     meditate_core::seeds::BUNDLED_PATTERN_PULSE_UUID,
@@ -6513,7 +6465,7 @@ fn build_ui() -> MainWindow {
         ui.on_end_bell_pattern_tap(move || {
             {
                 let Some(ui) = weak.upgrade() else { return; };
-                pattern_chooser_target.set(1);
+                pattern_chooser_target.set(ChooserTarget::EndBell);
                 let cur = read_global_setting(
                     meditate_core::settings_keys::end_bell_pattern_key_for_mode(setup_session_mode(&ui)),
                     meditate_core::seeds::BUNDLED_PATTERN_PULSE_UUID,
@@ -6533,7 +6485,7 @@ fn build_ui() -> MainWindow {
                 // Leaving the overlay always silences a preview.
                 stop_all_previews(&ui);
                 match pattern_chooser_target.get() {
-                    2 => {
+                    ChooserTarget::IntervalEditor => {
                         // Interval-bell editor: stage only; the
                         // pick is committed on the editor's Save.
                         ui.set_ie_pattern_uuid(uuid.clone());
@@ -6541,21 +6493,15 @@ fn build_ui() -> MainWindow {
                             pattern_name(&ui, uuid.as_str()).into(),
                         );
                     }
-                    1 => {
+                    ChooserTarget::EndBell => {
                         write_global_setting(
                             meditate_core::settings_keys::end_bell_pattern_key_for_mode(setup_session_mode(&ui)),
                             uuid.as_str(),
                         );
                         refresh_bell_rows(&ui);
                     }
-                    t @ 3..=6 => {
+                    ChooserTarget::BoxBreathCue(phase) => {
                         // Box-Breath phase pattern (B-7).
-                        let phase = match t {
-                            3 => bb_phase("in"),
-                            4 => bb_phase("holdin"),
-                            5 => bb_phase("out"),
-                            _ => bb_phase("holdout"),
-                        };
                         write_bb_phase(
                             phase,
                             None,
@@ -6565,7 +6511,7 @@ fn build_ui() -> MainWindow {
                         );
                         refresh_bell_rows(&ui);
                     }
-                    _ => {
+                    ChooserTarget::StartingBell => {
                         write_global_setting(
                             "starting_bell_pattern",
                             uuid.as_str(),
@@ -7470,9 +7416,7 @@ fn build_ui() -> MainWindow {
                 ui.set_ie_sound_name(bell_sound_name(&ui, &su).into());
                 ui.set_ie_sound_uuid(su.into());
                 // B-2c: load the bell's persisted Type + pattern.
-                ui.set_ie_signal_mode(signal_mode_index(
-                    bell.signal_mode.as_db_str(),
-                ));
+                ui.set_ie_signal_mode(signal_mode_to_chip_index(bell.signal_mode));
                 let pu = bell.vibration_pattern_uuid.to_string();
                 ui.set_ie_pattern_name(pattern_name(&ui, &pu).into());
                 ui.set_ie_pattern_uuid(pu.into());
@@ -7509,7 +7453,7 @@ fn build_ui() -> MainWindow {
         ui.on_interval_editor_sound_tap(move || {
             {
                 let Some(ui) = weak.upgrade() else { return; };
-                bell_chooser_target.set(2);
+                bell_chooser_target.set(ChooserTarget::IntervalEditor);
                 bell_chooser_category.set(0);
                 *bell_chooser_current.borrow_mut() =
                     ui.get_ie_sound_uuid().to_string();
@@ -7525,11 +7469,10 @@ fn build_ui() -> MainWindow {
         ui.on_interval_editor_pattern_tap(move || {
             {
                 let Some(ui) = weak.upgrade() else { return; };
-                // Target 2 = interval-bell editor: the pick is
-                // staged into the `ie_pattern_*` fields and only
-                // committed when the editor's Save runs (same
-                // contract as the sound chooser's target 2).
-                pattern_chooser_target.set(2);
+                // The pick is staged into the `ie_pattern_*` fields
+                // and only committed when the editor's Save runs
+                // (same contract as the sound chooser).
+                pattern_chooser_target.set(ChooserTarget::IntervalEditor);
                 populate_pattern_chooser(
                     &ui,
                     ui.get_ie_pattern_uuid().as_str(),
@@ -7572,7 +7515,7 @@ fn build_ui() -> MainWindow {
                 };
                 let sound = ui.get_ie_sound_uuid().to_string();
                 let signal_mode =
-                    signal_mode_from_index(ui.get_ie_signal_mode());
+                    signal_mode_from_chip_index(ui.get_ie_signal_mode());
                 let pattern = ui.get_ie_pattern_uuid().to_string();
                 let volume = meditate_core::bell_volume::BellVolume::from_percent(
                     ui.get_ie_volume().into(),
@@ -7660,7 +7603,7 @@ fn build_ui() -> MainWindow {
     }
 
     // Done inner-row tap — open the same label chooser, but with
-    // chooser-target=1 so picks update Done state rather than the
+    // label-target to done so picks update Done state rather than the
     // mode's UUID setting. The check-mark inside the chooser
     // reflects `done-label-id`. Mirrors GTK's
     // `done_label_chooser_row.connect_activated` at `imp.rs:598`.
@@ -7669,7 +7612,7 @@ fn build_ui() -> MainWindow {
         ui.on_done_label_tap(move || {
             {
                 let Some(ui) = weak.upgrade() else { return; };
-                ui.set_chooser_target(1);
+                ui.set_label_target(LabelTarget::Done);
                 let id = ui.get_done_label_id() as i64;
                 let current_id = if id > 0 { Some(id) } else { None };
                 refresh_chooser_items(&ui, current_id);
@@ -7719,12 +7662,12 @@ fn build_ui() -> MainWindow {
     }
 
     // Create button pressed — insert the new label, then route
-    // by `chooser-target`:
-    //   0 = Setup flow → persist UUID, refresh Setup state, close.
-    //   1 = Done flow → adopt the new label as the Done pick,
+    // by `label-target`:
+    //   setup → Setup flow → persist UUID, refresh Setup state, close.
+    //   done → adopt the new label as the Done pick,
     //       close. Mode setting unchanged (Save will persist via
     //       resolve_persist_action).
-    //   2 = Edit-Session flow → adopt it as the session's label.
+    //   edit → adopt it as the session's label.
     // Treating creation as selection mirrors GTK's
     // `labels.rs:125-134`.
     {
@@ -7735,20 +7678,20 @@ fn build_ui() -> MainWindow {
             {
                 let text = ui.get_create_label_text().to_string();
                 if let Some((id, uuid)) = create_label_in_db(&text) {
-                    match ui.get_chooser_target() {
-                        1 => {
+                    match ui.get_label_target() {
+                        LabelTarget::Done => {
                             // Done flow
                             ui.set_done_label_id(id as i32);
                             ui.set_done_label_name(text.trim().into());
                             ui.set_done_label_active(true);
                         }
-                        2 => {
+                        LabelTarget::Edit => {
                             // Edit-Session flow
                             ui.set_edit_label_id(id as i32);
                             ui.set_edit_label_name(text.trim().into());
                             ui.set_edit_label_enabled(true);
                         }
-                        _ => {
+                        LabelTarget::Setup => {
                             // Setup flow
                             let mode: meditate_core::SessionMode = current_mode.get().into();
                             write_label_uuid_for_mode(mode, &uuid);
@@ -7929,11 +7872,11 @@ fn build_ui() -> MainWindow {
         });
     }
 
-    // User picked a label row — route based on `chooser-target`:
-    //   0 = Setup flow → persist UUID to the active mode's setting,
+    // User picked a label row — route based on `label-target`:
+    //   setup → Setup flow → persist UUID to the active mode's setting,
     //       refresh the Setup ExpanderRow's subtitle. Mirrors GTK's
     //       Setup `on_selected` at `imp.rs:744-749`.
-    //   1 = Done flow → update Done state ONLY; persistence to the
+    //   done → update Done state ONLY; persistence to the
     //       mode setting happens on Save via `resolve_persist_action`.
     //       Mirrors GTK's Done `on_selected` at `imp.rs:608-612`.
     {
@@ -7942,8 +7885,8 @@ fn build_ui() -> MainWindow {
         ui.on_label_picked(move |id| {
             {
                 let Some(ui) = weak.upgrade() else { return; };
-                match ui.get_chooser_target() {
-                    1 => {
+                match ui.get_label_target() {
+                    LabelTarget::Done => {
                         // Done flow
                         if let Some(name) = lookup_label_name(id as i64) {
                             ui.set_done_label_id(id);
@@ -7951,7 +7894,7 @@ fn build_ui() -> MainWindow {
                             ui.set_done_label_active(true);
                         }
                     }
-                    2 => {
+                    LabelTarget::Edit => {
                         // Edit-Session flow (L-4d) — write back to
                         // edit-label-* so the overlay re-appears
                         // showing the new selection.
@@ -7961,7 +7904,7 @@ fn build_ui() -> MainWindow {
                             ui.set_edit_label_enabled(true);
                         }
                     }
-                    _ => {
+                    LabelTarget::Setup => {
                         // Setup flow (existing behavior)
                         let mode: meditate_core::SessionMode = current_mode.get().into();
                         if let Some(uuid) = lookup_label_uuid(id as i64) {
@@ -8437,7 +8380,7 @@ fn build_ui() -> MainWindow {
 
     // Tap on the "Selected" row inside the Edit-Session Label
     // group → push the labels chooser overlay with
-    // `chooser-target = 2` so `on_label_picked` writes the pick
+    // `label-target = edit` so `on_label_picked` writes the pick
     // back to `edit-label-*` rather than the Setup-mode label.
     // Mirrors GTK's chooser-row activation at `log/imp.rs:1031`.
     {
@@ -8445,7 +8388,7 @@ fn build_ui() -> MainWindow {
         ui.on_edit_label_row_tap(move || {
             {
                 let Some(ui) = weak.upgrade() else { return; };
-                ui.set_chooser_target(2);
+                ui.set_label_target(LabelTarget::Edit);
                 let current = ui.get_edit_label_id() as i64;
                 refresh_chooser_items(
                     &ui,
@@ -9706,15 +9649,16 @@ fn play_volume_preview(
 /// The volume of the bell the sound chooser is open for (targets as
 /// in `bell_chooser_target`: 0 starting, 1 end, 2 the bell editor,
 /// 3-6 the Box Breath cues).
-fn chooser_bell_volume(ui: &MainWindow, target: u8) -> meditate_core::bell_volume::BellVolume {
+fn chooser_bell_volume(ui: &MainWindow, target: ChooserTarget) -> meditate_core::bell_volume::BellVolume {
+    use meditate_core::db::BoxBreathPhaseId as P;
     let percent = match target {
-        0 => ui.get_starting_bell_volume(),
-        1 => ui.get_end_bell_volume(),
-        2 => ui.get_ie_volume(),
-        3 => ui.get_bbc_in_volume(),
-        4 => ui.get_bbc_holdin_volume(),
-        5 => ui.get_bbc_out_volume(),
-        _ => ui.get_bbc_holdout_volume(),
+        ChooserTarget::StartingBell => ui.get_starting_bell_volume(),
+        ChooserTarget::EndBell => ui.get_end_bell_volume(),
+        ChooserTarget::IntervalEditor => ui.get_ie_volume(),
+        ChooserTarget::BoxBreathCue(P::In) => ui.get_bbc_in_volume(),
+        ChooserTarget::BoxBreathCue(P::HoldIn) => ui.get_bbc_holdin_volume(),
+        ChooserTarget::BoxBreathCue(P::Out) => ui.get_bbc_out_volume(),
+        ChooserTarget::BoxBreathCue(P::HoldOut) => ui.get_bbc_holdout_volume(),
     };
     meditate_core::bell_volume::BellVolume::from_percent(percent.into())
 }
