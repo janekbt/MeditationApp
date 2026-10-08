@@ -169,10 +169,8 @@ fn started_export() -> bool {
     let Some(root) = app.internal_data_path() else { return false; };
     let tmp = root.join("meditate").join("export-transient.csv");
     let written = {
-        let Some(db_arc) = DATABASE.get() else { return false; };
-        let Ok(guard) = db_arc.lock() else { return false; };
-        let Some(db) = guard.as_ref() else { return false; };
-        meditate_core::data_io::export_csv(db, &tmp)
+        let Some(db) = lock_db() else { return false; };
+        meditate_core::data_io::export_csv(&db, &tmp)
     };
     match written {
         Ok(n) => {
@@ -327,9 +325,7 @@ fn trigger_sync(reason: &str) {
 /// without each write path having to remember it.
 #[cfg(target_os = "android")]
 fn local_change_watch() -> Option<meditate_core::db::LocalChangeWatch> {
-    let db_arc = DATABASE.get()?;
-    let guard = db_arc.lock().ok()?;
-    let db = guard.as_ref()?;
+    let db = lock_db()?;
     Some(meditate_core::db::LocalChangeWatch::new(db.local_changes()))
 }
 
@@ -471,21 +467,17 @@ fn dispatch_effects(effects: &[meditate_core::session::Effect]) {
             audio::play_bell(app, app::bell_channel_slot(route.channel), &path, alarm_volume::gain(route.volume));
         }
         if route.signal_mode.includes_vibration() {
-            if let Some(db_arc) = DATABASE.get() {
-                if let Ok(guard) = db_arc.lock() {
-                    if let Some(db) = guard.as_ref() {
-                        if let Ok(Some(p)) =
-                            meditate_core::db::find_vibration_pattern_by_uuid_from_db(
-                                db,
-                                route.vibration_pattern_uuid,
-                            )
-                        {
-                            let env =
-                                meditate_core::vibration::build_master_envelope(&p);
-                            haptics::cancel(app);
-                            haptics::vibrate_waveform(app, &env);
-                        }
-                    }
+            if let Some(db) = lock_db() {
+                if let Ok(Some(p)) =
+                    meditate_core::db::find_vibration_pattern_by_uuid_from_db(
+                        &db,
+                        route.vibration_pattern_uuid,
+                    )
+                {
+                    let env =
+                        meditate_core::vibration::build_master_envelope(&p);
+                    haptics::cancel(app);
+                    haptics::vibrate_waveform(app, &env);
                 }
             }
         }
@@ -521,13 +513,7 @@ fn build_session_settings(
     let display = bells::DisplayMode::from_stopwatch_flag(stopwatch_on);
     let target = shape.target_secs().map(u64::from);
 
-    let Some(db_arc) = DATABASE.get() else {
-        return SessionSettings { shape, ..Default::default() };
-    };
-    let Ok(guard) = db_arc.lock() else {
-        return SessionSettings { shape, ..Default::default() };
-    };
-    let Some(db) = guard.as_ref() else {
+    let Some(db) = lock_db() else {
         return SessionSettings { shape, ..Default::default() };
     };
 
@@ -539,17 +525,17 @@ fn build_session_settings(
     // earlier direct `preparation_time_active` read skipped the
     // starting-bell gate (the bug Janek hit).
     let prep_secs = if matches!(mode, meditate_core::SessionMode::Timer) {
-        meditate_core::format::prep_plan_from_db(db)
+        meditate_core::format::prep_plan_from_db(&db)
             .map(|d| d.as_secs() as u32)
     } else {
         None
     };
 
     let (session_bells, bell_rng_seed) =
-        bells::session_bells_from_db(db, target, display, mode);
+        bells::session_bells_from_db(&db, target, display, mode);
     let box_breath_cues =
         if matches!(mode, meditate_core::SessionMode::BoxBreath) {
-            Some(bells::box_breath_cues_from_db(db))
+            Some(bells::box_breath_cues_from_db(&db))
         } else {
             None
         };
@@ -559,9 +545,9 @@ fn build_session_settings(
         prep_secs,
         bells: session_bells,
         bell_rng_seed,
-        signal_mode_override: bells::signal_mode_override_from_db(db, mode),
-        starting_bell: bells::starting_bell_cue_from_db(db, mode),
-        end_bell: bells::end_bell_cue_from_db(db, display, mode),
+        signal_mode_override: bells::signal_mode_override_from_db(&db, mode),
+        starting_bell: bells::starting_bell_cue_from_db(&db, mode),
+        end_bell: bells::end_bell_cue_from_db(&db, display, mode),
         box_breath_cues,
     }
 }
@@ -669,10 +655,8 @@ fn overtime_add_time(
 // `read_*_from_db` with a fallback for missing rows".
 #[cfg(target_os = "android")]
 fn read_keep_awake_for_mode(mode: meditate_core::SessionMode) -> bool {
-    let Some(db_arc) = DATABASE.get() else { return false; };
-    let Ok(guard) = db_arc.lock() else { return false; };
-    let Some(db) = guard.as_ref() else { return false; };
-    meditate_core::settings_keys::keep_screen_awake_from_db(db, mode)
+    let Some(db) = lock_db() else { return false; };
+    meditate_core::settings_keys::keep_screen_awake_from_db(&db, mode)
 }
 
 /// Per-mode Stopwatch flag — flips `*Countdown` ↔ `*Stopwatch`
@@ -682,18 +666,14 @@ fn read_keep_awake_for_mode(mode: meditate_core::SessionMode) -> bool {
 /// "boxbreath_stopwatch_active"). Defaults to `false`.
 #[cfg(target_os = "android")]
 fn read_stopwatch_for_mode(mode: meditate_core::SessionMode) -> bool {
-    let Some(db_arc) = DATABASE.get() else { return false; };
-    let Ok(guard) = db_arc.lock() else { return false; };
-    let Some(db) = guard.as_ref() else { return false; };
+    let Some(db) = lock_db() else { return false; };
     let key = meditate_core::settings_keys::stopwatch_key_for_mode(mode);
-    meditate_core::settings_keys::read_bool(db, key, false)
+    meditate_core::settings_keys::read_bool(&db, key, false)
 }
 
 #[cfg(target_os = "android")]
 fn write_stopwatch_for_mode(mode: meditate_core::SessionMode, value: bool) {
-    let Some(db_arc) = DATABASE.get() else { return; };
-    let Ok(guard) = db_arc.lock() else { return; };
-    let Some(db) = guard.as_ref() else { return; };
+    let Some(db) = lock_db() else { return; };
     let key = meditate_core::settings_keys::stopwatch_key_for_mode(mode);
     if let Err(e) = db.set_setting(key, meditate_core::format_bool(value)) {
         meditate_core::log(
@@ -705,9 +685,7 @@ fn write_stopwatch_for_mode(mode: meditate_core::SessionMode, value: bool) {
 
 #[cfg(target_os = "android")]
 fn write_keep_awake_for_mode(mode: meditate_core::SessionMode, value: bool) {
-    let Some(db_arc) = DATABASE.get() else { return; };
-    let Ok(guard) = db_arc.lock() else { return; };
-    let Some(db) = guard.as_ref() else { return; };
+    let Some(db) = lock_db() else { return; };
     let key = meditate_core::settings_keys::keep_screen_awake_key_for_mode(mode);
     if let Err(e) = db.set_setting(key, meditate_core::format_bool(value)) {
         meditate_core::log(
@@ -719,12 +697,10 @@ fn write_keep_awake_for_mode(mode: meditate_core::SessionMode, value: bool) {
 
 #[cfg(target_os = "android")]
 fn read_signal_mode_for_mode(mode: meditate_core::SessionMode) -> meditate_core::SignalMode {
-    let Some(db_arc) = DATABASE.get() else { return meditate_core::SignalMode::Both; };
-    let Ok(guard) = db_arc.lock() else { return meditate_core::SignalMode::Both; };
-    let Some(db) = guard.as_ref() else { return meditate_core::SignalMode::Both; };
+    let Some(db) = lock_db() else { return meditate_core::SignalMode::Both; };
     let key = meditate_core::settings_keys::signal_mode_key_for_mode(mode);
     meditate_core::settings_keys::read_signal_mode(
-        db,
+        &db,
         key,
         meditate_core::SignalMode::Both,
     )
@@ -732,20 +708,16 @@ fn read_signal_mode_for_mode(mode: meditate_core::SessionMode) -> meditate_core:
 
 #[cfg(target_os = "android")]
 fn read_label_active_for_mode(mode: meditate_core::SessionMode) -> bool {
-    let Some(db_arc) = DATABASE.get() else { return false; };
-    let Ok(guard) = db_arc.lock() else { return false; };
-    let Some(db) = guard.as_ref() else { return false; };
-    meditate_core::labels::label_active_from_db(db, mode)
+    let Some(db) = lock_db() else { return false; };
+    meditate_core::labels::label_active_from_db(&db, mode)
 }
 
 #[cfg(target_os = "android")]
 fn write_label_active_for_mode(mode: meditate_core::SessionMode, value: bool) {
-    let Some(db_arc) = DATABASE.get() else { return; };
-    let Ok(guard) = db_arc.lock() else { return; };
-    let Some(db) = guard.as_ref() else { return; };
+    let Some(db) = lock_db() else { return; };
     // Core adopts the mode's default label the first time it's turned
     // on, like GTK.
-    if let Err(e) = meditate_core::labels::set_active_for_mode(db, mode, value) {
+    if let Err(e) = meditate_core::labels::set_active_for_mode(&db, mode, value) {
         meditate_core::log(
             "settings.label_active",
             &format!("write FAILED mode={mode:?} value={value} err={e:?}"),
@@ -761,10 +733,8 @@ fn write_label_active_for_mode(mode: meditate_core::SessionMode, value: bool) {
 fn resolved_label_for_mode(
     mode: meditate_core::SessionMode,
 ) -> Option<(String, i64)> {
-    let db_arc = DATABASE.get()?;
-    let guard = db_arc.lock().ok()?;
-    let db = guard.as_ref()?;
-    let label = meditate_core::labels::resolve_label_for_mode(db, mode)?;
+    let db = lock_db()?;
+    let label = meditate_core::labels::resolve_label_for_mode(&db, mode)?;
     Some((label.name, label.id))
 }
 
@@ -800,18 +770,16 @@ fn list_starred_presets_for_mode(
     if !presets_supported(mode) {
         return Vec::new();
     }
-    let Some(db_arc) = DATABASE.get() else { return Vec::new(); };
-    let Ok(guard) = db_arc.lock() else { return Vec::new(); };
-    let Some(db) = guard.as_ref() else { return Vec::new(); };
+    let Some(db) = lock_db() else { return Vec::new(); };
     // One labels roundtrip per rebuild → O(1) subtitle label
     // lookup, exactly like GTK's `label_names` map.
     let label_names: std::collections::HashMap<String, String> =
-        meditate_core::db::list_labels_from_db(db)
+        meditate_core::db::list_labels_from_db(&db)
             .unwrap_or_default()
             .into_iter()
             .map(|l| (l.uuid.to_string(), l.name))
             .collect();
-    meditate_core::db::list_starred_presets_for_mode_from_db(db, mode)
+    meditate_core::db::list_starred_presets_for_mode_from_db(&db, mode)
         .unwrap_or_default()
         .into_iter()
         .map(|p| PresetItem {
@@ -912,16 +880,14 @@ fn list_presets_for_mode(
     if !presets_supported(mode) {
         return Vec::new();
     }
-    let Some(db_arc) = DATABASE.get() else { return Vec::new(); };
-    let Ok(guard) = db_arc.lock() else { return Vec::new(); };
-    let Some(db) = guard.as_ref() else { return Vec::new(); };
+    let Some(db) = lock_db() else { return Vec::new(); };
     let label_names: std::collections::HashMap<String, String> =
-        meditate_core::db::list_labels_from_db(db)
+        meditate_core::db::list_labels_from_db(&db)
             .unwrap_or_default()
             .into_iter()
             .map(|l| (l.uuid.to_string(), l.name))
             .collect();
-    meditate_core::db::list_presets_for_mode_from_db(db, mode)
+    meditate_core::db::list_presets_for_mode_from_db(&db, mode)
         .unwrap_or_default()
         .into_iter()
         .map(|p| PresetItem {
@@ -963,11 +929,9 @@ const WIDGET_PRESET_MODES: [meditate_core::SessionMode; 2] = [
 /// starred — the widget then shows its empty state.
 #[cfg(target_os = "android")]
 fn widget_presets_snapshot(ui: &MainWindow) -> Vec<widget::WidgetPreset> {
-    let Some(db_arc) = DATABASE.get() else { return Vec::new(); };
-    let Ok(guard) = db_arc.lock() else { return Vec::new(); };
-    let Some(db) = guard.as_ref() else { return Vec::new(); };
+    let Some(db) = lock_db() else { return Vec::new(); };
     let label_names: std::collections::HashMap<String, String> =
-        meditate_core::db::list_labels_from_db(db)
+        meditate_core::db::list_labels_from_db(&db)
             .unwrap_or_default()
             .into_iter()
             .map(|l| (l.uuid.to_string(), l.name))
@@ -978,7 +942,7 @@ fn widget_presets_snapshot(ui: &MainWindow) -> Vec<widget::WidgetPreset> {
             continue;
         }
         let rows = meditate_core::db::list_starred_presets_for_mode_from_db(
-            db, mode,
+            &db, mode,
         )
         .unwrap_or_default();
         for p in rows {
@@ -1236,10 +1200,8 @@ fn audio_file_error_text(
 /// `is_preset_name_taken` call in `present_create_preset_dialog`.
 #[cfg(target_os = "android")]
 fn preset_name_taken(name: &str, except_uuid: &str) -> bool {
-    let Some(db_arc) = DATABASE.get() else { return false; };
-    let Ok(guard) = db_arc.lock() else { return false; };
-    let Some(db) = guard.as_ref() else { return false; };
-    meditate_core::db::is_preset_name_taken_from_db(db, name, except_uuid)
+    let Some(db) = lock_db() else { return false; };
+    meditate_core::db::is_preset_name_taken_from_db(&db, name, except_uuid)
         .unwrap_or(false)
 }
 
@@ -1250,11 +1212,9 @@ fn preset_name_taken(name: &str, except_uuid: &str) -> bool {
 /// `import_picked_file`.
 #[cfg(target_os = "android")]
 fn guided_name_taken(name: &str, except_uuid: &str) -> bool {
-    let Some(db_arc) = DATABASE.get() else { return false; };
-    let Ok(guard) = db_arc.lock() else { return false; };
-    let Some(db) = guard.as_ref() else { return false; };
+    let Some(db) = lock_db() else { return false; };
     meditate_core::db::is_guided_file_name_taken_from_db(
-        db, name, except_uuid,
+        &db, name, except_uuid,
     )
     .unwrap_or(false)
 }
@@ -1273,14 +1233,8 @@ fn insert_guided_file(
     secs: u32,
 ) -> Result<(), String> {
     let res = {
-        let Some(db_arc) = DATABASE.get() else {
+        let Some(db) = lock_db() else {
             return Err("db unavailable".into());
-        };
-        let Ok(guard) = db_arc.lock() else {
-            return Err("db lock poisoned".into());
-        };
-        let Some(db) = guard.as_ref() else {
-            return Err("db not open".into());
         };
         db.insert_guided_file_with_uuid(uuid, name, dest, secs, true)
     };
@@ -1301,10 +1255,8 @@ fn insert_guided_file(
 #[cfg(target_os = "android")]
 fn refresh_guided_files(ui: &MainWindow) {
     let items: Vec<GuidedFileItem> = {
-        let Some(db_arc) = DATABASE.get() else { return; };
-        let Ok(guard) = db_arc.lock() else { return; };
-        let Some(db) = guard.as_ref() else { return; };
-        meditate_core::db::list_guided_files_from_db(db)
+        let Some(db) = lock_db() else { return; };
+        meditate_core::db::list_guided_files_from_db(&db)
             .unwrap_or_default()
     }
     .into_iter()
@@ -1338,10 +1290,8 @@ fn guided_file_item(
 #[cfg(target_os = "android")]
 fn refresh_guided_manage(ui: &MainWindow) {
     let items: Vec<GuidedFileItem> = {
-        let Some(db_arc) = DATABASE.get() else { return; };
-        let Ok(guard) = db_arc.lock() else { return; };
-        let Some(db) = guard.as_ref() else { return; };
-        meditate_core::db::list_guided_files_from_db(db)
+        let Some(db) = lock_db() else { return; };
+        meditate_core::db::list_guided_files_from_db(&db)
             .unwrap_or_default()
     }
     .into_iter()
@@ -1408,14 +1358,8 @@ fn insert_bell_sound_import(
         meditate_core::db::BellSoundCategory::General
     };
     let res = {
-        let Some(db_arc) = DATABASE.get() else {
+        let Some(db) = lock_db() else {
             return Err("db unavailable".into());
-        };
-        let Ok(guard) = db_arc.lock() else {
-            return Err("db lock poisoned".into());
-        };
-        let Some(db) = guard.as_ref() else {
-            return Err("db not open".into());
         };
         db.insert_bell_sound_with_uuid(
             uuid,
@@ -1441,9 +1385,7 @@ fn insert_bell_sound_import(
 /// Mirrors GTK's `name_collides(trimmed, &library)` in sounds.rs.
 #[cfg(target_os = "android")]
 fn bell_name_taken(name: &str) -> bool {
-    let Some(db_arc) = DATABASE.get() else { return false; };
-    let Ok(guard) = db_arc.lock() else { return false; };
-    let Some(db) = guard.as_ref() else { return false; };
+    let Some(db) = lock_db() else { return false; };
     let library = db.list_bell_sounds().unwrap_or_default();
     meditate_core::sound::name_collides(name, &library)
 }
@@ -1507,11 +1449,9 @@ fn present_guided_import_dialog(
 /// the caller bails like GTK's row-activated handler.
 #[cfg(target_os = "android")]
 fn guided_file_by_uuid(uuid: &str) -> Option<GuidedSel> {
-    let db_arc = DATABASE.get()?;
-    let guard = db_arc.lock().ok()?;
-    let db = guard.as_ref()?;
+    let db = lock_db()?;
     let row = meditate_core::db::find_guided_file_by_uuid_from_db(
-        db, uuid,
+        &db, uuid,
     )
     .ok()
     .flatten()?;
@@ -1529,10 +1469,8 @@ fn guided_file_by_uuid(uuid: &str) -> Option<GuidedSel> {
 /// GTK's `on_preset_row_activated` match.
 #[cfg(target_os = "android")]
 fn find_preset_by_uuid(uuid: &str) -> Option<meditate_core::db::Preset> {
-    let db_arc = DATABASE.get()?;
-    let guard = db_arc.lock().ok()?;
-    let db = guard.as_ref()?;
-    meditate_core::db::find_preset_by_uuid_from_db(db, uuid)
+    let db = lock_db()?;
+    meditate_core::db::find_preset_by_uuid_from_db(&db, uuid)
         .ok()
         .flatten()
 }
@@ -1577,10 +1515,8 @@ fn apply_preset_config_json(
         return false;
     };
     let outcome = {
-        let Some(db_arc) = DATABASE.get() else { return false; };
-        let Ok(guard) = db_arc.lock() else { return false; };
-        let Some(db) = guard.as_ref() else { return false; };
-        apply(db, &cfg, mode)
+        let Some(db) = lock_db() else { return false; };
+        apply(&db, &cfg, mode)
     };
     let timing = match outcome {
         Ok(t) => t,
@@ -1670,10 +1606,8 @@ fn snapshot_setup_json(
             duration_secs: timer_session_secs,
         },
     };
-    let db_arc = DATABASE.get()?;
-    let guard = db_arc.lock().ok()?;
-    let db = guard.as_ref()?;
-    Some(snapshot(db, mode, timing).to_json())
+    let db = lock_db()?;
+    Some(snapshot(&db, mode, timing).to_json())
 }
 
 
@@ -1721,21 +1655,13 @@ fn refresh_setup_label_name(ui: &MainWindow, mode: meditate_core::SessionMode) {
 #[cfg(target_os = "android")]
 fn refresh_sync_indicator(ui: &MainWindow) {
     use meditate_core::sync::indicator::{state_from_db, SyncIndicatorState};
-    let Some(db_arc) = DATABASE.get() else {
-        ui.set_sync_indicator_state(0);
-        return;
-    };
-    let Ok(guard) = db_arc.lock() else {
-        ui.set_sync_indicator_state(0);
-        return;
-    };
-    let Some(db) = guard.as_ref() else {
+    let Some(db) = lock_db() else {
         ui.set_sync_indicator_state(0);
         return;
     };
     let syncing = SYNC_COORDINATOR.is_in_flight();
     let tr = ui.global::<Tr>();
-    let (state, tooltip) = match state_from_db(db, syncing) {
+    let (state, tooltip) = match state_from_db(&db, syncing) {
         SyncIndicatorState::Hidden => (0, String::new()),
         SyncIndicatorState::Syncing => {
             (1, tr.invoke_syncing().to_string())
@@ -1796,13 +1722,11 @@ fn render_hm(key: meditate_core::format::HmKey) -> String {
 /// `reload_mini_stats` at `meditate-gtk/src/stats/imp.rs:533`.
 #[cfg(target_os = "android")]
 fn refresh_stats(ui: &MainWindow) {
-    let Some(db_arc) = DATABASE.get() else { return; };
-    let Ok(guard) = db_arc.lock() else { return; };
-    let Some(db) = guard.as_ref() else { return; };
+    let Some(db) = lock_db() else { return; };
 
-    let streak = meditate_core::db::get_best_streak_from_db(db).unwrap_or(0);
-    let total = meditate_core::db::total_seconds_from_db(db).unwrap_or(0);
-    let count = meditate_core::db::count_sessions_from_db(db).unwrap_or(0);
+    let streak = meditate_core::db::get_best_streak_from_db(&db).unwrap_or(0);
+    let total = meditate_core::db::total_seconds_from_db(&db).unwrap_or(0);
+    let count = meditate_core::db::count_sessions_from_db(&db).unwrap_or(0);
 
     ui.set_stat_streak(
         if streak == 0 {
@@ -1830,9 +1754,9 @@ fn refresh_stats(ui: &MainWindow) {
     let today = meditate_core::time::today_local();
     // Daily goal: today's seconds only.
     let today_secs =
-        meditate_core::db::total_secs_since_from_db(db, today)
+        meditate_core::db::total_secs_since_from_db(&db, today)
             .unwrap_or(0);
-    let goal_mins = meditate_core::goal::daily_goal_mins_from_db(db);
+    let goal_mins = meditate_core::goal::daily_goal_mins_from_db(&db);
     let g = meditate_core::goal::compute(today_secs, goal_mins);
 
     let mins_dur =
@@ -1876,38 +1800,38 @@ fn refresh_stats(ui: &MainWindow) {
     let (ly, lm) = if tm == 1 { (ty - 1, 12) } else { (ty, tm - 1) };
     let fourteen_since = today - chrono::Duration::days(13);
     let daily_totals: Vec<(String, i64)> =
-        meditate_core::db::get_daily_totals_since_from_db(db, fourteen_since)
+        meditate_core::db::get_daily_totals_since_from_db(&db, fourteen_since)
             .unwrap_or_default()
             .into_iter()
             .map(|(d, secs)| (d.format("%Y-%m-%d").to_string(), secs))
             .collect();
     let input = meditate_core::insights::InsightInput {
-        current_streak: meditate_core::db::get_streak_from_db(db, today)
+        current_streak: meditate_core::db::get_streak_from_db(&db, today)
             .unwrap_or(0),
-        best_streak: meditate_core::db::get_best_streak_from_db(db)
+        best_streak: meditate_core::db::get_best_streak_from_db(&db)
             .unwrap_or(0),
         this_month_secs: meditate_core::db::month_total_secs_from_db(
-            db, ty, tm,
+            &db, ty, tm,
         )
         .unwrap_or(0),
         last_month_secs: meditate_core::db::month_total_secs_from_db(
-            db, ly, lm,
+            &db, ly, lm,
         )
         .unwrap_or(0),
         daily_totals,
-        longest: meditate_core::db::get_longest_session_from_db(db)
+        longest: meditate_core::db::get_longest_session_from_db(&db)
             .unwrap_or(None)
             .map(|(_rowid, s)| {
                 (s.duration_secs as i64, s.start_unix())
             }),
-        typical_secs: meditate_core::db::get_median_duration_secs_from_db(db)
+        typical_secs: meditate_core::db::get_median_duration_secs_from_db(&db)
             .unwrap_or(None)
             .unwrap_or(0) as i64,
         avg_secs_7d: meditate_core::db::get_running_average_secs_from_db(
-            db, today, 7,
+            &db, today, 7,
         )
         .unwrap_or(0.0) as i64,
-        hour_buckets: meditate_core::db::hour_buckets_from_db(db)
+        hour_buckets: meditate_core::db::hour_buckets_from_db(&db)
             .unwrap_or((0, 0, 0)),
         session_count: count,
     };
@@ -1939,7 +1863,7 @@ fn refresh_stats(ui: &MainWindow) {
     // mirroring GTK's `reload_label_totals` visibility logic
     // at `meditate-gtk/src/stats/imp.rs:553`.
     let label_rows: Vec<LabelTotalRow> =
-        meditate_core::db::label_totals_seconds_from_db(db)
+        meditate_core::db::label_totals_seconds_from_db(&db)
             .unwrap_or_default()
             .into_iter()
             .map(|(name, secs, n)| {
@@ -1967,7 +1891,7 @@ fn refresh_stats(ui: &MainWindow) {
     // `meditate-gtk/src/stats/imp.rs:191`.
     {
         let totals: std::collections::HashMap<chrono::NaiveDate, i64> =
-            meditate_core::db::get_daily_totals_from_db(db)
+            meditate_core::db::get_daily_totals_from_db(&db)
                 .unwrap_or_default()
                 .into_iter()
                 .collect();
@@ -2019,7 +1943,7 @@ fn refresh_stats(ui: &MainWindow) {
     // Chart (S-5a). Drop the DB guard first — `refresh_chart`
     // re-locks it itself, and holding two nested locks on the
     // same Mutex would deadlock.
-    drop(guard);
+    drop(db);
     refresh_chart(ui);
 }
 
@@ -2076,9 +2000,7 @@ fn chart_x_label(
 /// line variant is S-5b).
 #[cfg(target_os = "android")]
 fn refresh_chart(ui: &MainWindow) {
-    let Some(db_arc) = DATABASE.get() else { return; };
-    let Ok(guard) = db_arc.lock() else { return; };
-    let Some(db) = guard.as_ref() else { return; };
+    let Some(db) = lock_db() else { return; };
 
     let period = chart_period_from_index(ui.get_stat_chart_period());
     let days = period.days();
@@ -2086,7 +2008,7 @@ fn refresh_chart(ui: &MainWindow) {
     let since = today - chrono::Duration::days(i64::from(days) - 1);
 
     let sparse: std::collections::HashMap<String, i64> =
-        meditate_core::db::get_daily_totals_since_from_db(db, since)
+        meditate_core::db::get_daily_totals_since_from_db(&db, since)
             .unwrap_or_default()
             .into_iter()
             .map(|(d, secs)| (d.format("%Y-%m-%d").to_string(), secs))
@@ -2420,11 +2342,9 @@ fn refresh_after_label_change(ui: &MainWindow, mode: meditate_core::SessionMode)
 #[cfg(target_os = "android")]
 fn read_breathing_pattern() -> meditate_core::breath::BreathPattern {
     use meditate_core::breath::BreathPattern;
-    let Some(db_arc) = DATABASE.get() else { return BreathPattern::box_breath(); };
-    let Ok(guard) = db_arc.lock() else { return BreathPattern::box_breath(); };
-    let Some(db) = guard.as_ref() else { return BreathPattern::box_breath(); };
+    let Some(db) = lock_db() else { return BreathPattern::box_breath(); };
     let read = |k: &str, default: u32| -> u32 {
-        meditate_core::settings_keys::read_u32(db, k, default)
+        meditate_core::settings_keys::read_u32(&db, k, default)
     };
     BreathPattern::clamp_from_raw(
         read("breathing_in", 4),
@@ -2436,9 +2356,7 @@ fn read_breathing_pattern() -> meditate_core::breath::BreathPattern {
 
 #[cfg(target_os = "android")]
 fn write_breathing_pattern(pattern: meditate_core::breath::BreathPattern) {
-    let Some(db_arc) = DATABASE.get() else { return; };
-    let Ok(guard) = db_arc.lock() else { return; };
-    let Some(db) = guard.as_ref() else { return; };
+    let Some(db) = lock_db() else { return; };
     let _ = db.set_setting("breathing_in", &pattern.in_secs.to_string());
     let _ = db.set_setting("breathing_hold_in", &pattern.hold_in.to_string());
     let _ = db.set_setting("breathing_out", &pattern.out_secs.to_string());
@@ -2452,17 +2370,11 @@ fn write_breathing_pattern(pattern: meditate_core::breath::BreathPattern) {
 /// `imp.rs:4256`). Defaults to `BREATHING_DEFAULT_SECS` = 5 min.
 #[cfg(target_os = "android")]
 fn read_breathing_session_secs() -> u32 {
-    let Some(db_arc) = DATABASE.get() else {
-        return meditate_core::session::BREATHING_DEFAULT_SECS;
-    };
-    let Ok(guard) = db_arc.lock() else {
-        return meditate_core::session::BREATHING_DEFAULT_SECS;
-    };
-    let Some(db) = guard.as_ref() else {
+    let Some(db) = lock_db() else {
         return meditate_core::session::BREATHING_DEFAULT_SECS;
     };
     meditate_core::settings_keys::read_u32(
-        db,
+        &db,
         "breathing_session_secs",
         meditate_core::session::BREATHING_DEFAULT_SECS,
     )
@@ -2470,9 +2382,7 @@ fn read_breathing_session_secs() -> u32 {
 
 #[cfg(target_os = "android")]
 fn write_breathing_session_secs(secs: u32) {
-    let Some(db_arc) = DATABASE.get() else { return; };
-    let Ok(guard) = db_arc.lock() else { return; };
-    let Some(db) = guard.as_ref() else { return; };
+    let Some(db) = lock_db() else { return; };
     let _ = db.set_setting("breathing_session_secs", &secs.to_string());
 }
 
@@ -2485,17 +2395,11 @@ fn write_breathing_session_secs(secs: u32) {
 /// on every app restart — the bug Janek hit.)
 #[cfg(target_os = "android")]
 fn read_timer_session_secs() -> u32 {
-    let Some(db_arc) = DATABASE.get() else {
-        return meditate_core::session::TIMER_DEFAULT_SECS;
-    };
-    let Ok(guard) = db_arc.lock() else {
-        return meditate_core::session::TIMER_DEFAULT_SECS;
-    };
-    let Some(db) = guard.as_ref() else {
+    let Some(db) = lock_db() else {
         return meditate_core::session::TIMER_DEFAULT_SECS;
     };
     meditate_core::settings_keys::read_u32(
-        db,
+        &db,
         "timer_session_secs",
         meditate_core::session::TIMER_DEFAULT_SECS,
     )
@@ -2503,9 +2407,7 @@ fn read_timer_session_secs() -> u32 {
 
 #[cfg(target_os = "android")]
 fn write_timer_session_secs(secs: u32) {
-    let Some(db_arc) = DATABASE.get() else { return; };
-    let Ok(guard) = db_arc.lock() else { return; };
-    let Some(db) = guard.as_ref() else { return; };
+    let Some(db) = lock_db() else { return; };
     let _ = db.set_setting("timer_session_secs", &secs.to_string());
 }
 
@@ -2597,10 +2499,8 @@ fn refresh_breathing_tiles(ui: &MainWindow, pattern: meditate_core::breath::Brea
 /// caller wraps in a `slint::VecModel`.
 #[cfg(target_os = "android")]
 fn list_labels_with_selection(current_id: Option<i64>) -> Vec<(i64, String, bool)> {
-    let Some(db_arc) = DATABASE.get() else { return Vec::new(); };
-    let Ok(guard) = db_arc.lock() else { return Vec::new(); };
-    let Some(db) = guard.as_ref() else { return Vec::new(); };
-    meditate_core::db::list_labels_from_db(db)
+    let Some(db) = lock_db() else { return Vec::new(); };
+    meditate_core::db::list_labels_from_db(&db)
         .unwrap_or_default()
         .into_iter()
         .map(|l| (l.id, l.name, Some(l.id) == current_id))
@@ -2612,10 +2512,8 @@ fn list_labels_with_selection(current_id: Option<i64>) -> Vec<(i64, String, bool
 /// UUID setting key (`label_uuid_key_for_mode`).
 #[cfg(target_os = "android")]
 fn lookup_label_uuid(id: i64) -> Option<String> {
-    let db_arc = DATABASE.get()?;
-    let guard = db_arc.lock().ok()?;
-    let db = guard.as_ref()?;
-    meditate_core::db::list_labels_from_db(db)
+    let db = lock_db()?;
+    meditate_core::db::list_labels_from_db(&db)
         .ok()?
         .into_iter()
         .find(|l| l.id == id)
@@ -2624,10 +2522,8 @@ fn lookup_label_uuid(id: i64) -> Option<String> {
 
 #[cfg(target_os = "android")]
 fn write_label_uuid_for_mode(mode: meditate_core::SessionMode, uuid: &str) {
-    let Some(db_arc) = DATABASE.get() else { return; };
-    let Ok(guard) = db_arc.lock() else { return; };
-    let Some(db) = guard.as_ref() else { return; };
-    if let Err(e) = meditate_core::labels::persist_uuid_for_mode(db, mode, uuid) {
+    let Some(db) = lock_db() else { return; };
+    if let Err(e) = meditate_core::labels::persist_uuid_for_mode(&db, mode, uuid) {
         meditate_core::log(
             "settings.label_uuid",
             &format!("write FAILED mode={mode:?} uuid={uuid} err={e:?}"),
@@ -2643,11 +2539,9 @@ fn write_label_uuid_for_mode(mode: meditate_core::SessionMode, uuid: &str) {
 #[cfg(target_os = "android")]
 fn validate_label_name(name: &str) -> bool {
     let trimmed = name.trim();
-    let Some(db_arc) = DATABASE.get() else { return false; };
-    let Ok(guard) = db_arc.lock() else { return false; };
-    let Some(db) = guard.as_ref() else { return false; };
+    let Some(db) = lock_db() else { return false; };
     let validity = meditate_core::validate(trimmed, |n| {
-        meditate_core::db::is_label_name_taken_from_db(db, n, 0).unwrap_or(false)
+        meditate_core::db::is_label_name_taken_from_db(&db, n, 0).unwrap_or(false)
     });
     validity.is_savable()
 }
@@ -2666,16 +2560,14 @@ fn load_log_page(
     notes_only: bool,
     label_id: Option<i64>,
 ) -> (Vec<(i64, meditate_core::db::Session)>, bool) {
-    let Some(db_arc) = DATABASE.get() else { return (Vec::new(), false); };
-    let Ok(guard) = db_arc.lock() else { return (Vec::new(), false); };
-    let Some(db) = guard.as_ref() else { return (Vec::new(), false); };
+    let Some(db) = lock_db() else { return (Vec::new(), false); };
     let filter = meditate_core::db::SessionFilter {
         limit: Some(LOG_PAGE_SIZE),
         offset: Some(offset),
         only_with_notes: notes_only,
         label_id,
     };
-    let rows = meditate_core::db::query_sessions_from_db(db, &filter)
+    let rows = meditate_core::db::query_sessions_from_db(&db, &filter)
         .unwrap_or_default();
     let full = rows.len() == LOG_PAGE_SIZE as usize;
     (rows, full)
@@ -2758,10 +2650,8 @@ fn group_log_sessions(
 /// rows) and keeps the grouping fn free of DB access.
 #[cfg(target_os = "android")]
 fn load_label_name_map() -> std::collections::HashMap<i64, String> {
-    let Some(db_arc) = DATABASE.get() else { return Default::default(); };
-    let Ok(guard) = db_arc.lock() else { return Default::default(); };
-    let Some(db) = guard.as_ref() else { return Default::default(); };
-    meditate_core::db::list_labels_from_db(db)
+    let Some(db) = lock_db() else { return Default::default(); };
+    meditate_core::db::list_labels_from_db(&db)
         .unwrap_or_default()
         .into_iter()
         .map(|l| (l.id, l.name))
@@ -2772,10 +2662,8 @@ fn load_label_name_map() -> std::collections::HashMap<i64, String> {
 /// the label map. Core includes files deleted since (their last name).
 #[cfg(target_os = "android")]
 fn load_guided_file_names() -> std::collections::HashMap<String, String> {
-    let Some(db_arc) = DATABASE.get() else { return Default::default(); };
-    let Ok(guard) = db_arc.lock() else { return Default::default(); };
-    let Some(db) = guard.as_ref() else { return Default::default(); };
-    meditate_core::db::guided_file_names_from_db(db).unwrap_or_default()
+    let Some(db) = lock_db() else { return Default::default(); };
+    meditate_core::db::guided_file_names_from_db(&db).unwrap_or_default()
 }
 
 #[cfg(target_os = "android")]
@@ -2997,15 +2885,13 @@ fn commit_pending_deletes(
     // from the UI shadow without deleting them (they ghosted back
     // on the next feed reset). On failure the queue stays intact
     // for a later commit, exactly what this fn's contract says.
-    let Some(db_arc) = DATABASE.get() else { return; };
-    let Ok(guard) = db_arc.lock() else {
+    let Some(db) = lock_db() else {
         meditate_core::log(
             "log.delete.commit",
-            "db lock unavailable — batch stays queued",
+            "db unavailable — batch stays queued",
         );
         return;
     };
-    let Some(db) = guard.as_ref() else { return; };
     let drained: Vec<(i64, meditate_core::db::Session)> =
         std::mem::take(&mut *pending.borrow_mut());
     for (id, _) in &drained {
@@ -3016,7 +2902,7 @@ fn commit_pending_deletes(
             );
         }
     }
-    drop(guard);
+    drop(db);
     // Drop the now-deleted rows from the in-memory shadow so
     // pagination offsets stay consistent on the next "Load
     // more".
@@ -3159,9 +3045,7 @@ fn write_session_in_progress_snapshot(
 ) {
     // Build before locking: the label lookup takes the DB lock itself.
     let snapshot = session_in_progress_snapshot(unix_start, elapsed_secs, mode);
-    let Some(db_arc) = DATABASE.get() else { return; };
-    let Ok(guard) = db_arc.lock() else { return; };
-    let Some(db) = guard.as_ref() else { return; };
+    let Some(db) = lock_db() else { return; };
     if let Err(e) = db.set_session_in_progress(&snapshot) {
         meditate_core::log(
             "session.recovery",
@@ -3184,9 +3068,7 @@ fn hold_ended_session_snapshot(done: Option<(i64, i64)>, mode: meditate_core::Se
     let secs = u32::try_from(final_secs.max(0)).unwrap_or(u32::MAX);
     // Build before locking: the label lookup takes the DB lock itself.
     let snapshot = session_in_progress_snapshot(unix_start, secs, mode);
-    let Some(db_arc) = DATABASE.get() else { return; };
-    let Ok(guard) = db_arc.lock() else { return; };
-    let Some(db) = guard.as_ref() else { return; };
+    let Some(db) = lock_db() else { return; };
     if let Err(e) = db.hold_ended_session(&snapshot) {
         meditate_core::log(
             "session.recovery",
@@ -3226,9 +3108,7 @@ fn start_snapshot_heartbeat(
 /// pending_done flow (we ignore it and move on).
 #[cfg(target_os = "android")]
 fn clear_session_in_progress_snapshot() {
-    let Some(db_arc) = DATABASE.get() else { return; };
-    let Ok(guard) = db_arc.lock() else { return; };
-    let Some(db) = guard.as_ref() else { return; };
+    let Some(db) = lock_db() else { return; };
     if let Err(e) = db.clear_session_in_progress() {
         meditate_core::log(
             "session.recovery",
@@ -3245,11 +3125,9 @@ fn clear_session_in_progress_snapshot() {
 #[cfg(target_os = "android")]
 fn validate_rename_label_name(name: &str, except_id: i64) -> bool {
     let trimmed = name.trim();
-    let Some(db_arc) = DATABASE.get() else { return false; };
-    let Ok(guard) = db_arc.lock() else { return false; };
-    let Some(db) = guard.as_ref() else { return false; };
+    let Some(db) = lock_db() else { return false; };
     let validity = meditate_core::validate(trimmed, |n| {
-        meditate_core::db::is_label_name_taken_from_db(db, n, except_id).unwrap_or(false)
+        meditate_core::db::is_label_name_taken_from_db(&db, n, except_id).unwrap_or(false)
     });
     validity.is_savable()
 }
@@ -3261,10 +3139,8 @@ fn validate_rename_label_name(name: &str, except_id: i64) -> bool {
 /// `meditate-gtk/src/log/imp.rs:305`.
 #[cfg(target_os = "android")]
 fn all_labels_ordered() -> Vec<(i64, String)> {
-    let Some(db_arc) = DATABASE.get() else { return Vec::new(); };
-    let Ok(guard) = db_arc.lock() else { return Vec::new(); };
-    let Some(db) = guard.as_ref() else { return Vec::new(); };
-    meditate_core::db::list_labels_from_db(db)
+    let Some(db) = lock_db() else { return Vec::new(); };
+    meditate_core::db::list_labels_from_db(&db)
         .unwrap_or_default()
         .into_iter()
         .map(|l| (l.id, l.name))
@@ -3315,10 +3191,8 @@ fn refresh_filter_label_items(ui: &MainWindow) {
 /// (`labels.rs:204`).
 #[cfg(target_os = "android")]
 fn lookup_label_name(id: i64) -> Option<String> {
-    let db_arc = DATABASE.get()?;
-    let guard = db_arc.lock().ok()?;
-    let db = guard.as_ref()?;
-    meditate_core::db::list_labels_from_db(db)
+    let db = lock_db()?;
+    meditate_core::db::list_labels_from_db(&db)
         .ok()?
         .into_iter()
         .find(|l| l.id == id)
@@ -3332,10 +3206,8 @@ fn lookup_label_name(id: i64) -> Option<String> {
 /// `labels_for_toggle.first()` at `log/imp.rs:897`.
 #[cfg(target_os = "android")]
 fn first_label() -> Option<(i64, String)> {
-    let db_arc = DATABASE.get()?;
-    let guard = db_arc.lock().ok()?;
-    let db = guard.as_ref()?;
-    meditate_core::db::list_labels_from_db(db)
+    let db = lock_db()?;
+    meditate_core::db::list_labels_from_db(&db)
         .ok()?
         .into_iter()
         .next()
@@ -3361,9 +3233,7 @@ fn check_label_conflicts(
     if ui.get_label_conflict_dialog_open() {
         return;
     }
-    let Some(db_arc) = DATABASE.get() else { return; };
-    let Ok(guard) = db_arc.lock() else { return; };
-    let Some(db) = guard.as_ref() else { return; };
+    let Some(db) = lock_db() else { return; };
     let conflicts = match db.list_label_conflicts() {
         Ok(c) => c,
         Err(e) => {
@@ -3386,10 +3256,8 @@ fn check_label_conflicts(
 #[cfg(target_os = "android")]
 fn delete_label_impact_text(ui: &MainWindow, id: i64) -> String {
     use meditate_core::labels::DeleteImpactKey;
-    let Some(db_arc) = DATABASE.get() else { return String::new(); };
-    let Ok(guard) = db_arc.lock() else { return String::new(); };
-    let Some(db) = guard.as_ref() else { return String::new(); };
-    let count = meditate_core::db::label_session_count_from_db(db, id).unwrap_or(0);
+    let Some(db) = lock_db() else { return String::new(); };
+    let count = meditate_core::db::label_session_count_from_db(&db, id).unwrap_or(0);
     match meditate_core::labels::delete_impact_key(count) {
         DeleteImpactKey::InUse(n) => ui
             .global::<Tr>()
@@ -3403,9 +3271,7 @@ fn delete_label_impact_text(ui: &MainWindow, id: i64) -> String {
 
 #[cfg(target_os = "android")]
 fn delete_label_in_db(id: i64) -> bool {
-    let Some(db_arc) = DATABASE.get() else { return false; };
-    let Ok(guard) = db_arc.lock() else { return false; };
-    let Some(db) = guard.as_ref() else { return false; };
+    let Some(db) = lock_db() else { return false; };
     match db.delete_label(id) {
         Ok(()) => {
             meditate_core::log("labels.delete", &format!("ok id={id}"));
@@ -3427,9 +3293,7 @@ fn rename_label_in_db(id: i64, name: &str) -> bool {
     if trimmed.is_empty() {
         return false;
     }
-    let Some(db_arc) = DATABASE.get() else { return false; };
-    let Ok(guard) = db_arc.lock() else { return false; };
-    let Some(db) = guard.as_ref() else { return false; };
+    let Some(db) = lock_db() else { return false; };
     match db.update_label(id, trimmed) {
         Ok(()) => {
             meditate_core::log(
@@ -3459,9 +3323,7 @@ fn create_label_in_db(name: &str) -> Option<(i64, String)> {
     if trimmed.is_empty() {
         return None;
     }
-    let db_arc = DATABASE.get()?;
-    let Ok(guard) = db_arc.lock() else { return None; };
-    let db = guard.as_ref()?;
+    let db = lock_db()?;
     let id = match db.insert_label(trimmed) {
         Ok(id) => id,
         Err(e) => {
@@ -3476,7 +3338,7 @@ fn create_label_in_db(name: &str) -> Option<(i64, String)> {
             return None;
         }
     };
-    let uuid = meditate_core::db::list_labels_from_db(db)
+    let uuid = meditate_core::db::list_labels_from_db(&db)
         .ok()?
         .into_iter()
         .find(|l| l.id == id)
@@ -3493,9 +3355,7 @@ fn write_signal_mode_for_mode(
     mode: meditate_core::SessionMode,
     value: meditate_core::SignalMode,
 ) {
-    let Some(db_arc) = DATABASE.get() else { return; };
-    let Ok(guard) = db_arc.lock() else { return; };
-    let Some(db) = guard.as_ref() else { return; };
+    let Some(db) = lock_db() else { return; };
     let key = meditate_core::settings_keys::signal_mode_key_for_mode(mode);
     if let Err(e) = db.set_setting(key, value.as_db_str()) {
         meditate_core::log(
@@ -3529,10 +3389,8 @@ fn finalize_session(
         );
         Err(SessionSaveFailureKind::DbUnopened)
     };
-    let Some(db_arc) = DATABASE.get() else { return unopened("no database"); };
-    let Ok(guard) = db_arc.lock() else { return unopened("database lock poisoned"); };
-    let Some(db) = guard.as_ref() else {
-        return unopened("db not open (open failed at startup)");
+    let Some(db) = lock_db() else {
+        return unopened("db not open (open failed at startup) or lock poisoned");
     };
     let session = meditate_core::db::Session::from_unix(
         unix_start,
@@ -3646,21 +3504,15 @@ fn wire_date_picker_adapter(ui: &MainWindow) {
 /// shell's plain `db.get_setting` keys.
 #[cfg(target_os = "android")]
 fn read_global_setting(key: &str, default: &str) -> String {
-    let Some(db_arc) = DATABASE.get() else { return default.to_string(); };
-    let Ok(guard) = db_arc.lock() else { return default.to_string(); };
-    let Some(db) = guard.as_ref() else { return default.to_string(); };
+    let Some(db) = lock_db() else { return default.to_string(); };
     db.get_setting(key, default)
         .unwrap_or_else(|_| default.to_string())
 }
 
 #[cfg(target_os = "android")]
 fn write_global_setting(key: &str, value: &str) {
-    if let Some(db_arc) = DATABASE.get() {
-        if let Ok(guard) = db_arc.lock() {
-            if let Some(db) = guard.as_ref() {
-                let _ = db.set_setting(key, value);
-            }
-        }
+    if let Some(db) = lock_db() {
+        let _ = db.set_setting(key, value);
     }
 }
 
@@ -3681,10 +3533,8 @@ fn resolved_name_text(ui: &MainWindow, name: meditate_core::bells::ResolvedName)
 #[cfg(target_os = "android")]
 fn bell_sound_name(ui: &MainWindow, uuid: &str) -> String {
     let name = {
-        let Some(db_arc) = DATABASE.get() else { return String::new(); };
-        let Ok(guard) = db_arc.lock() else { return String::new(); };
-        let Some(db) = guard.as_ref() else { return String::new(); };
-        meditate_core::bells::resolve_sound_name(db, uuid)
+        let Some(db) = lock_db() else { return String::new(); };
+        meditate_core::bells::resolve_sound_name(&db, uuid)
     };
     resolved_name_text(ui, name)
 }
@@ -3699,9 +3549,7 @@ fn bell_sound_name(ui: &MainWindow, uuid: &str) -> String {
 fn bell_sound_path(uuid: &str) -> String {
     use meditate_core::audio_files::{bell_sound_file, BellSoundFile};
     let sound = {
-        let Some(db_arc) = DATABASE.get() else { return String::new(); };
-        let Ok(guard) = db_arc.lock() else { return String::new(); };
-        let Some(db) = guard.as_ref() else { return String::new(); };
+        let Some(db) = lock_db() else { return String::new(); };
         db.list_bell_sounds()
             .ok()
             .and_then(|v| v.into_iter().find(|b| b.uuid == uuid))
@@ -3740,10 +3588,8 @@ fn local_guided_path(uuid: &str) -> String {
 #[cfg(target_os = "android")]
 fn pattern_name(ui: &MainWindow, uuid: &str) -> String {
     let name = {
-        let Some(db_arc) = DATABASE.get() else { return String::new(); };
-        let Ok(guard) = db_arc.lock() else { return String::new(); };
-        let Some(db) = guard.as_ref() else { return String::new(); };
-        meditate_core::bells::resolve_pattern_name(db, uuid)
+        let Some(db) = lock_db() else { return String::new(); };
+        meditate_core::bells::resolve_pattern_name(&db, uuid)
     };
     resolved_name_text(ui, name)
 }
@@ -3860,11 +3706,9 @@ fn setup_session_mode(ui: &MainWindow) -> meditate_core::SessionMode {
 /// Core's End Bell row state for `mode` under its Stopwatch switch.
 #[cfg(target_os = "android")]
 fn end_bell_row(mode: meditate_core::SessionMode) -> Option<meditate_core::bells::EndBellRowState> {
-    let db_arc = DATABASE.get()?;
-    let guard = db_arc.lock().ok()?;
-    let db = guard.as_ref()?;
-    let display = meditate_core::bells::display_mode_from_db(db, mode);
-    Some(meditate_core::bells::end_bell_row_state(db, display, mode))
+    let db = lock_db()?;
+    let display = meditate_core::bells::display_mode_from_db(&db, mode);
+    Some(meditate_core::bells::end_bell_row_state(&db, display, mode))
 }
 
 /// Whether the End Bell row takes taps. While it's greyed (Stopwatch)
@@ -3961,14 +3805,10 @@ fn refresh_bell_rows(ui: &MainWindow) {
     ui.set_interval_bells_active(
         read_global_setting("interval_bells_active", "false") == "true",
     );
-    if let Some(db_arc) = DATABASE.get() {
-        if let Ok(guard) = db_arc.lock() {
-            if let Some(db) = guard.as_ref() {
-                ui.set_interval_bells_summary(
-                    interval_bells_summary(ui, db).into(),
-                );
-            }
-        }
+    if let Some(db) = lock_db() {
+        ui.set_interval_bells_summary(
+            interval_bells_summary(ui, &db).into(),
+        );
     }
 
     // Box Breath per-phase cues (B-7).
@@ -3997,9 +3837,7 @@ fn bb_phase_uuids(
 ) -> (String, String) {
     let bowl = meditate_core::seeds::BUNDLED_BOWL_UUID.to_string();
     let pulse = meditate_core::seeds::BUNDLED_PATTERN_PULSE_UUID.to_string();
-    let Some(db_arc) = DATABASE.get() else { return (bowl, pulse); };
-    let Ok(guard) = db_arc.lock() else { return (bowl, pulse); };
-    let Some(db) = guard.as_ref() else { return (bowl, pulse); };
+    let Some(db) = lock_db() else { return (bowl, pulse); };
     match db.get_box_breath_phase(phase) {
         Ok(Some(r)) => {
             (r.sound_uuid.to_string(), r.pattern_uuid.to_string())
@@ -4021,9 +3859,7 @@ fn write_bb_phase(
     sound_uuid: Option<&str>,
     pattern_uuid: Option<&str>,
 ) {
-    let Some(db_arc) = DATABASE.get() else { return; };
-    let Ok(guard) = db_arc.lock() else { return; };
-    let Some(db) = guard.as_ref() else { return; };
+    let Some(db) = lock_db() else { return; };
     let (ce, csm, csu, cpu, volume) = match db.get_box_breath_phase(phase) {
         Ok(Some(r)) => (
             r.enabled,
@@ -4060,19 +3896,17 @@ fn refresh_boxbreath_cues(ui: &MainWindow) {
     ui.set_boxbreath_cues_active(
         read_global_setting("boxbreath_cues_active", "false") == "true",
     );
-    let Some(db_arc) = DATABASE.get() else { return; };
-    let Ok(guard) = db_arc.lock() else { return; };
-    let Some(db) = guard.as_ref() else { return; };
+    let Some(db) = lock_db() else { return; };
     let name = |n: ResolvedName| resolved_name_text(ui, n);
     for p in [P::In, P::HoldIn, P::Out, P::HoldOut] {
         let Ok(Some(r)) = db.get_box_breath_phase(p) else { continue; };
         let si = signal_mode_index(r.signal_mode.as_db_str());
         let sn = name(meditate_core::bells::resolve_sound_name(
-            db,
+            &db,
             r.sound_uuid.as_ref(),
         ));
         let pn = name(meditate_core::bells::resolve_pattern_name(
-            db,
+            &db,
             r.pattern_uuid.as_ref(),
         ));
         match p {
@@ -4173,10 +4007,8 @@ fn render_bell_title(
 /// Mirrors GTK's `rebuild_list` over `db.list_interval_bells`.
 #[cfg(target_os = "android")]
 fn populate_interval_bells(ui: &MainWindow) {
-    let Some(db_arc) = DATABASE.get() else { return; };
-    let Ok(guard) = db_arc.lock() else { return; };
-    let Some(db) = guard.as_ref() else { return; };
-    let display = meditate_core::bells::display_mode_from_db(db, setup_session_mode(ui));
+    let Some(db) = lock_db() else { return; };
+    let display = meditate_core::bells::display_mode_from_db(&db, setup_session_mode(ui));
     let items: Vec<IntervalBellRow> = db
         .list_interval_bells()
         .unwrap_or_default()
@@ -4206,7 +4038,7 @@ fn populate_interval_bells(ui: &MainWindow) {
     ui.set_interval_bell_items(
         std::rc::Rc::new(slint::VecModel::from(items)).into(),
     );
-    ui.set_interval_bells_summary(interval_bells_summary(ui, db).into());
+    ui.set_interval_bells_summary(interval_bells_summary(ui, &db).into());
 }
 
 /// Fill the bell-chooser overlay with the sounds in `category`,
@@ -4222,9 +4054,7 @@ fn populate_bell_chooser(
     current_uuid: &str,
     category: meditate_core::db::BellSoundCategory,
 ) {
-    let Some(db_arc) = DATABASE.get() else { return; };
-    let Ok(guard) = db_arc.lock() else { return; };
-    let Some(db) = guard.as_ref() else { return; };
+    let Some(db) = lock_db() else { return; };
     let items: Vec<SoundChoice> = db
         .list_bell_sounds_for_category(category)
         .unwrap_or_default()
@@ -4261,9 +4091,7 @@ fn repopulate_bell_chooser(ui: &MainWindow, category: u8, current_uuid: &str) {
 /// case-insensitively; the row being renamed doesn't count.
 #[cfg(target_os = "android")]
 fn bell_sound_name_taken(name: &str, except_uuid: &str) -> bool {
-    let Some(db_arc) = DATABASE.get() else { return false; };
-    let Ok(guard) = db_arc.lock() else { return false; };
-    let Some(db) = guard.as_ref() else { return false; };
+    let Some(db) = lock_db() else { return false; };
     let library = db.list_bell_sounds().unwrap_or_default();
     meditate_core::sound::name_collides_excluding(name, &library, except_uuid)
 }
@@ -4286,11 +4114,9 @@ fn ticked_pattern_uuid(ui: &MainWindow) -> String {
 /// preview is wired separately via `pattern-preview-toggle`.
 #[cfg(target_os = "android")]
 fn populate_pattern_chooser(ui: &MainWindow, current_uuid: &str) {
-    let Some(db_arc) = DATABASE.get() else { return; };
-    let Ok(guard) = db_arc.lock() else { return; };
-    let Some(db) = guard.as_ref() else { return; };
+    let Some(db) = lock_db() else { return; };
     let items: Vec<NameChoice> =
-        meditate_core::db::list_vibration_patterns_from_db(db)
+        meditate_core::db::list_vibration_patterns_from_db(&db)
             .unwrap_or_default()
             .into_iter()
             .map(|p| {
@@ -5366,11 +5192,9 @@ fn build_ui() -> MainWindow {
                         Ok((path, kind)) => {
                             let p = std::path::PathBuf::from(&path);
                             let outcome = {
-                                let Some(db_arc) = DATABASE.get() else {
+                                let Some(db) = lock_db() else {
                                     return;
                                 };
-                                let Ok(guard) = db_arc.lock() else { return; };
-                                let Some(db) = guard.as_ref() else { return; };
                                 if kind == "insight" {
                                     meditate_core::data_io::parse_insighttimer_csv(
                                         &p,
@@ -5378,12 +5202,12 @@ fn build_ui() -> MainWindow {
                                     )
                                     .and_then(|(labels, rows)| {
                                         meditate_core::data_io::insert_sessions_with_labels(
-                                            db, &labels, &rows,
+                                            &db, &labels, &rows,
                                         )
                                     })
                                     .map_err(|e| format!("{e:?}"))
                                 } else {
-                                    meditate_core::data_io::import_csv(db, &p)
+                                    meditate_core::data_io::import_csv(&db, &p)
                                         .map_err(|e| format!("{e:?}"))
                                 }
                             };
@@ -5808,28 +5632,24 @@ fn build_ui() -> MainWindow {
                 };
                 // Apply the persist action — but read the labels
                 // list inside the same DB lock as the writes.
-                if let (Some(db_arc), Some(_)) = (DATABASE.get(), Some(())) {
-                    if let Ok(guard) = db_arc.lock() {
-                        if let Some(db) = guard.as_ref() {
-                            let labels = meditate_core::db::list_labels_from_db(db)
-                                .unwrap_or_default();
-                            match meditate_core::labels::resolve_persist_action(picked, &labels) {
-                                meditate_core::labels::PersistAction::SetUuidAndActivate { uuid } => {
-                                    let _ = meditate_core::labels::persist_uuid_for_mode(
-                                        db, mode, uuid.as_str(),
-                                    );
-                                    let _ = meditate_core::labels::persist_active_for_mode(
-                                        db, mode, true,
-                                    );
-                                }
-                                meditate_core::labels::PersistAction::Deactivate => {
-                                    let _ = meditate_core::labels::persist_active_for_mode(
-                                        db, mode, false,
-                                    );
-                                }
-                                meditate_core::labels::PersistAction::NoOp => {}
-                            }
+                if let Some(db) = lock_db() {
+                    let labels = meditate_core::db::list_labels_from_db(&db)
+                        .unwrap_or_default();
+                    match meditate_core::labels::resolve_persist_action(picked, &labels) {
+                        meditate_core::labels::PersistAction::SetUuidAndActivate { uuid } => {
+                            let _ = meditate_core::labels::persist_uuid_for_mode(
+                                &db, mode, uuid.as_str(),
+                            );
+                            let _ = meditate_core::labels::persist_active_for_mode(
+                                &db, mode, true,
+                            );
                         }
+                        meditate_core::labels::PersistAction::Deactivate => {
+                            let _ = meditate_core::labels::persist_active_for_mode(
+                                &db, mode, false,
+                            );
+                        }
+                        meditate_core::labels::PersistAction::NoOp => {}
                     }
                 }
                 // Per-file attribution: only a GUIDED session with a
@@ -6272,11 +6092,9 @@ fn build_ui() -> MainWindow {
             #[cfg(target_os = "android")]
             if let Some(ui) = weak.upgrade() {
                 let cur = {
-                    let Some(db_arc) = DATABASE.get() else { return; };
-                    let Ok(g) = db_arc.lock() else { return; };
-                    let Some(db) = g.as_ref() else { return; };
+                    let Some(db) = lock_db() else { return; };
                     meditate_core::db::find_guided_file_by_uuid_from_db(
-                        db, &uuid,
+                        &db, &uuid,
                     )
                     .ok()
                     .flatten()
@@ -6287,9 +6105,7 @@ fn build_ui() -> MainWindow {
                         !row.is_starred,
                     );
                 {
-                    let Some(db_arc) = DATABASE.get() else { return; };
-                    let Ok(g) = db_arc.lock() else { return; };
-                    let Some(db) = g.as_ref() else { return; };
+                    let Some(db) = lock_db() else { return; };
                     if let Err(e) =
                         db.set_guided_file_starred(&uuid, next)
                     {
@@ -6353,11 +6169,9 @@ fn build_ui() -> MainWindow {
                 // Capture the full row so Undo can resurrect it
                 // identically (GTK's insert_guided_file_with_uuid).
                 let row = {
-                    let Some(db_arc) = DATABASE.get() else { return; };
-                    let Ok(g) = db_arc.lock() else { return; };
-                    let Some(db) = g.as_ref() else { return; };
+                    let Some(db) = lock_db() else { return; };
                     meditate_core::db::find_guided_file_by_uuid_from_db(
-                        db, &uuid,
+                        &db, &uuid,
                     )
                     .ok()
                     .flatten()
@@ -6372,9 +6186,7 @@ fn build_ui() -> MainWindow {
                     ui.set_guided_manage_preview_uuid("".into());
                 }
                 {
-                    let Some(db_arc) = DATABASE.get() else { return; };
-                    let Ok(g) = db_arc.lock() else { return; };
-                    let Some(db) = g.as_ref() else { return; };
+                    let Some(db) = lock_db() else { return; };
                     if let Err(e) = db.delete_guided_file(&uuid) {
                         meditate_core::log(
                             "guided",
@@ -6462,11 +6274,9 @@ fn build_ui() -> MainWindow {
                     return;
                 }
                 let path = {
-                    let Some(db_arc) = DATABASE.get() else { return; };
-                    let Ok(g) = db_arc.lock() else { return; };
-                    let Some(db) = g.as_ref() else { return; };
+                    let Some(db) = lock_db() else { return; };
                     meditate_core::db::find_guided_file_by_uuid_from_db(
-                        db, &uuid,
+                        &db, &uuid,
                     )
                     .ok()
                     .flatten()
@@ -6553,9 +6363,7 @@ fn build_ui() -> MainWindow {
                     return;
                 }
                 {
-                    let Some(db_arc) = DATABASE.get() else { return; };
-                    let Ok(g) = db_arc.lock() else { return; };
-                    let Some(db) = g.as_ref() else { return; };
+                    let Some(db) = lock_db() else { return; };
                     if let Err(e) =
                         db.rename_guided_file(&uuid, &new_name)
                     {
@@ -6812,9 +6620,7 @@ fn build_ui() -> MainWindow {
                 let starred =
                     meditate_core::preset_config::default_starred_on_save();
                 let res = {
-                    let Some(db_arc) = DATABASE.get() else { return; };
-                    let Ok(guard) = db_arc.lock() else { return; };
-                    let Some(db) = guard.as_ref() else { return; };
+                    let Some(db) = lock_db() else { return; };
                     db.insert_preset(&name, mode, starred, &json)
                 };
                 match res {
@@ -6903,9 +6709,7 @@ fn build_ui() -> MainWindow {
                 let prior =
                     find_preset_by_uuid(&uuid).map(|p| p.config_json);
                 {
-                    let Some(db_arc) = DATABASE.get() else { return; };
-                    let Ok(guard) = db_arc.lock() else { return; };
-                    let Some(db) = guard.as_ref() else { return; };
+                    let Some(db) = lock_db() else { return; };
                     if let Err(e) = db.update_preset_config(&uuid, &json) {
                         meditate_core::log(
                             "preset.override",
@@ -6980,9 +6784,7 @@ fn build_ui() -> MainWindow {
                     !p.is_starred,
                 );
                 {
-                    let Some(db_arc) = DATABASE.get() else { return; };
-                    let Ok(guard) = db_arc.lock() else { return; };
-                    let Some(db) = guard.as_ref() else { return; };
+                    let Some(db) = lock_db() else { return; };
                     let _ = db.update_preset_starred(uuid.as_str(), next);
                 }
                 populate_preset_chooser(&ui, core_mode);
@@ -7057,9 +6859,7 @@ fn build_ui() -> MainWindow {
                     return;
                 }
                 {
-                    let Some(db_arc) = DATABASE.get() else { return; };
-                    let Ok(guard) = db_arc.lock() else { return; };
-                    let Some(db) = guard.as_ref() else { return; };
+                    let Some(db) = lock_db() else { return; };
                     if let Err(e) = db.update_preset_name(&uuid, &name) {
                         meditate_core::log(
                             "preset.rename",
@@ -7132,9 +6932,7 @@ fn build_ui() -> MainWindow {
                     return;
                 };
                 {
-                    let Some(db_arc) = DATABASE.get() else { return; };
-                    let Ok(guard) = db_arc.lock() else { return; };
-                    let Some(db) = guard.as_ref() else { return; };
+                    let Some(db) = lock_db() else { return; };
                     if let Err(e) = db.delete_preset(&uuid) {
                         meditate_core::log(
                             "preset.delete",
@@ -7678,9 +7476,7 @@ fn build_ui() -> MainWindow {
                     return;
                 }
                 {
-                    let Some(db_arc) = DATABASE.get() else { return; };
-                    let Ok(g) = db_arc.lock() else { return; };
-                    let Some(db) = g.as_ref() else { return; };
+                    let Some(db) = lock_db() else { return; };
                     if let Err(e) = db.rename_bell_sound(&uuid, &new_name) {
                         meditate_core::log("bell_sound", &format!("rename FAILED: {e:?}"));
                         return;
@@ -7731,9 +7527,7 @@ fn build_ui() -> MainWindow {
                     ui.set_bell_preview_uuid(slint::SharedString::new());
                 }
                 {
-                    let Some(db_arc) = DATABASE.get() else { return; };
-                    let Ok(g) = db_arc.lock() else { return; };
-                    let Some(db) = g.as_ref() else { return; };
+                    let Some(db) = lock_db() else { return; };
                     if let Err(e) = db.delete_bell_sound(&uuid) {
                         meditate_core::log("bell_sound", &format!("delete FAILED: {e:?}"));
                         return;
@@ -8100,16 +7894,12 @@ fn build_ui() -> MainWindow {
             ui.set_ve_save_enabled(false);
             return;
         }
-        let taken = DATABASE
-            .get()
-            .and_then(|a| a.lock().ok())
-            .and_then(|g| {
-                g.as_ref().and_then(|db| {
-                    meditate_core::db::is_vibration_pattern_name_taken_from_db(
-                        db, &name, except_uuid,
-                    )
-                    .ok()
-                })
+        let taken = lock_db()
+            .and_then(|db| {
+                meditate_core::db::is_vibration_pattern_name_taken_from_db(
+                    &db, &name, except_uuid,
+                )
+                .ok()
             })
             .unwrap_or(false);
         ui.set_ve_save_enabled(!taken);
@@ -8201,11 +7991,9 @@ fn build_ui() -> MainWindow {
             {
                 let Some(ui) = weak.upgrade() else { return; };
                 let found = {
-                    let Some(db_arc) = DATABASE.get() else { return; };
-                    let Ok(guard) = db_arc.lock() else { return; };
-                    let Some(db) = guard.as_ref() else { return; };
+                    let Some(db) = lock_db() else { return; };
                     meditate_core::db::find_vibration_pattern_by_uuid_from_db(
-                        db,
+                        &db,
                         uuid.as_str(),
                     )
                     .ok()
@@ -8488,9 +8276,7 @@ fn build_ui() -> MainWindow {
                 };
                 let edit = ve_edit_uuid.borrow().clone();
                 let saved: Option<String> = {
-                    let Some(db_arc) = DATABASE.get() else { return; };
-                    let Ok(guard) = db_arc.lock() else { return; };
-                    let Some(db) = guard.as_ref() else { return; };
+                    let Some(db) = lock_db() else { return; };
                     match &edit {
                         Some(uuid) => db
                             .update_vibration_pattern(
@@ -8608,20 +8394,16 @@ fn build_ui() -> MainWindow {
                             // Cancel the outgoing buzz before the
                             // new one so they don't overlap.
                             haptics::cancel(app);
-                            if let Some(db_arc) = DATABASE.get() {
-                                if let Ok(guard) = db_arc.lock() {
-                                    if let Some(db) = guard.as_ref() {
-                                        if let Ok(Some(p)) =
-                                            meditate_core::db::find_vibration_pattern_by_uuid_from_db(
-                                                db, &id,
-                                            )
-                                        {
-                                            dur_ms = p.duration_ms;
-                                            let env =
-                                                meditate_core::vibration::build_master_envelope(&p);
-                                            haptics::vibrate_waveform(app, &env);
-                                        }
-                                    }
+                            if let Some(db) = lock_db() {
+                                if let Ok(Some(p)) =
+                                    meditate_core::db::find_vibration_pattern_by_uuid_from_db(
+                                        &db, &id,
+                                    )
+                                {
+                                    dur_ms = p.duration_ms;
+                                    let env =
+                                        meditate_core::vibration::build_master_envelope(&p);
+                                    haptics::vibrate_waveform(app, &env);
                                 }
                             }
                         }
@@ -8802,9 +8584,7 @@ fn build_ui() -> MainWindow {
             {
                 let Some(ui) = weak.upgrade() else { return; };
                 {
-                    let Some(db_arc) = DATABASE.get() else { return; };
-                    let Ok(guard) = db_arc.lock() else { return; };
-                    let Some(db) = guard.as_ref() else { return; };
+                    let Some(db) = lock_db() else { return; };
                     if let Err(e) = db.set_interval_bell_enabled(uuid.as_str(), on) {
                         meditate_core::log(
                             "interval_bell.toggle",
@@ -8894,9 +8674,7 @@ fn build_ui() -> MainWindow {
             {
                 let Some(ui) = weak.upgrade() else { return; };
                 let found = {
-                    let Some(db_arc) = DATABASE.get() else { return; };
-                    let Ok(guard) = db_arc.lock() else { return; };
-                    let Some(db) = guard.as_ref() else { return; };
+                    let Some(db) = lock_db() else { return; };
                     db.list_interval_bells()
                         .unwrap_or_default()
                         .into_iter()
@@ -8929,18 +8707,14 @@ fn build_ui() -> MainWindow {
             #[cfg(target_os = "android")]
             {
                 let Some(ui) = weak.upgrade() else { return; };
-                if let Some(db_arc) = DATABASE.get() {
-                    if let Ok(guard) = db_arc.lock() {
-                        if let Some(db) = guard.as_ref() {
-                            if let Err(e) =
-                                db.delete_interval_bell(uuid.as_str())
-                            {
-                                meditate_core::log(
-                                    "interval_bell.delete.failed",
-                                    &format!("{uuid}: {e:?}"),
-                                );
-                            }
-                        }
+                if let Some(db) = lock_db() {
+                    if let Err(e) =
+                        db.delete_interval_bell(uuid.as_str())
+                    {
+                        meditate_core::log(
+                            "interval_bell.delete.failed",
+                            &format!("{uuid}: {e:?}"),
+                        );
                     }
                 }
                 populate_interval_bells(&ui);
@@ -9035,54 +8809,50 @@ fn build_ui() -> MainWindow {
                     ui.get_ie_volume().into(),
                 );
                 let original = editing_ib.borrow_mut().take();
-                if let Some(db_arc) = DATABASE.get() {
-                    if let Ok(guard) = db_arc.lock() {
-                        if let Some(db) = guard.as_ref() {
-                            let res = match original {
-                                Some(mut bell) => {
-                                    // Edit: preserve uuid /
-                                    // created_iso / enabled; swap
-                                    // every editable field incl.
-                                    // the B-2c Type + pattern.
-                                    bell.kind = kind;
-                                    bell.minutes = minutes;
-                                    bell.jitter_pct = jitter;
-                                    bell.sound_uuid = sound.clone().into();
-                                    bell.signal_mode = signal_mode;
-                                    bell.vibration_pattern_uuid =
-                                        pattern.clone().into();
-                                    bell.volume = volume;
-                                    db.update_interval_bell(&bell)
-                                }
-                                None => {
-                                    // Create with the chosen Type
-                                    // + pattern (B-2c); a new row
-                                    // starts at the default volume.
-                                    db.insert_interval_bell(
-                                        kind,
-                                        minutes,
-                                        jitter,
-                                        &sound,
-                                        &pattern,
-                                        signal_mode,
-                                    )
-                                    .and_then(|rowid| db.find_interval_bell_by_id(rowid))
-                                    .and_then(|bell| match bell {
-                                        Some(bell) if bell.volume != volume => db
-                                            .update_interval_bell(
-                                                &meditate_core::IntervalBell { volume, ..bell },
-                                            ),
-                                        _ => Ok(()),
-                                    })
-                                }
-                            };
-                            if let Err(e) = res {
-                                meditate_core::log(
-                                    "interval_bell.save.failed",
-                                    &format!("{e:?}"),
-                                );
-                            }
+                if let Some(db) = lock_db() {
+                    let res = match original {
+                        Some(mut bell) => {
+                            // Edit: preserve uuid /
+                            // created_iso / enabled; swap
+                            // every editable field incl.
+                            // the B-2c Type + pattern.
+                            bell.kind = kind;
+                            bell.minutes = minutes;
+                            bell.jitter_pct = jitter;
+                            bell.sound_uuid = sound.clone().into();
+                            bell.signal_mode = signal_mode;
+                            bell.vibration_pattern_uuid =
+                                pattern.clone().into();
+                            bell.volume = volume;
+                            db.update_interval_bell(&bell)
                         }
+                        None => {
+                            // Create with the chosen Type
+                            // + pattern (B-2c); a new row
+                            // starts at the default volume.
+                            db.insert_interval_bell(
+                                kind,
+                                minutes,
+                                jitter,
+                                &sound,
+                                &pattern,
+                                signal_mode,
+                            )
+                            .and_then(|rowid| db.find_interval_bell_by_id(rowid))
+                            .and_then(|bell| match bell {
+                                Some(bell) if bell.volume != volume => db
+                                    .update_interval_bell(
+                                        &meditate_core::IntervalBell { volume, ..bell },
+                                    ),
+                                _ => Ok(()),
+                            })
+                        }
+                    };
+                    if let Err(e) = res {
+                        meditate_core::log(
+                            "interval_bell.save.failed",
+                            &format!("{e:?}"),
+                        );
                     }
                 }
                 stop_volume_preview(&ui);
@@ -9370,9 +9140,7 @@ fn build_ui() -> MainWindow {
                 return;
             };
             {
-                let Some(db_arc) = DATABASE.get() else { return; };
-                let Ok(guard) = db_arc.lock() else { return; };
-                let Some(db) = guard.as_ref() else { return; };
+                let Some(db) = lock_db() else { return; };
                 if let Err(e) = db.merge_labels(suffixed_id, base_id)
                 {
                     meditate_core::log(
@@ -9401,9 +9169,7 @@ fn build_ui() -> MainWindow {
                 return;
             };
             {
-                let Some(db_arc) = DATABASE.get() else { return; };
-                let Ok(guard) = db_arc.lock() else { return; };
-                let Some(db) = guard.as_ref() else { return; };
+                let Some(db) = lock_db() else { return; };
                 if let Err(e) = db.dismiss_label_conflict(&uuid) {
                     meditate_core::log(
                         "label.conflict",
@@ -9709,9 +9475,7 @@ fn build_ui() -> MainWindow {
                     pending_preset_delete.borrow_mut().take()
                 {
                     {
-                        let Some(db_arc) = DATABASE.get() else { return; };
-                        let Ok(g) = db_arc.lock() else { return; };
-                        let Some(db) = g.as_ref() else { return; };
+                        let Some(db) = lock_db() else { return; };
                         let _ = db.insert_preset_with_uuid(
                             &u, &name, mode, starred, &json,
                         );
@@ -9731,9 +9495,7 @@ fn build_ui() -> MainWindow {
                     pending_guided_delete.borrow_mut().take()
                 {
                     {
-                        let Some(db_arc) = DATABASE.get() else { return; };
-                        let Ok(g) = db_arc.lock() else { return; };
-                        let Some(db) = g.as_ref() else { return; };
+                        let Some(db) = lock_db() else { return; };
                         let _ = db.insert_guided_file_with_uuid(
                             &u, &name, &path, dur, starred,
                         );
@@ -9749,9 +9511,7 @@ fn build_ui() -> MainWindow {
                     pending_override_restore.borrow_mut().take()
                 {
                     {
-                        let Some(db_arc) = DATABASE.get() else { return; };
-                        let Ok(g) = db_arc.lock() else { return; };
-                        let Some(db) = g.as_ref() else { return; };
+                        let Some(db) = lock_db() else { return; };
                         let _ = db.update_preset_config(&u, &prior);
                     }
                     // The chips on screen are the current mode's; the
@@ -9769,20 +9529,16 @@ fn build_ui() -> MainWindow {
                     // event propagates to sync peers too.
                     // Mirrors GTK's recovery toast Undo at
                     // `meditate-gtk/src/application.rs:408`.
-                    if let Some(db_arc) = DATABASE.get() {
-                        if let Ok(guard) = db_arc.lock() {
-                            if let Some(db) = guard.as_ref() {
-                                if let Err(e) =
-                                    db.delete_session_by_uuid(&uuid)
-                                {
-                                    meditate_core::log(
-                                        "session.recovery",
-                                        &format!(
-                                            "undo delete failed uuid={uuid}: {e:?}"
-                                        ),
-                                    );
-                                }
-                            }
+                    if let Some(db) = lock_db() {
+                        if let Err(e) =
+                            db.delete_session_by_uuid(&uuid)
+                        {
+                            meditate_core::log(
+                                "session.recovery",
+                                &format!(
+                                    "undo delete failed uuid={uuid}: {e:?}"
+                                ),
+                            );
                         }
                     }
                     ui.set_snackbar_visible(false);
@@ -10015,60 +9771,56 @@ fn build_ui() -> MainWindow {
                     None
                 };
 
-                if let Some(db_arc) = DATABASE.get() {
-                    if let Ok(guard) = db_arc.lock() {
-                        if let Some(db) = guard.as_ref() {
-                            let editing = editing_session.borrow_mut().take();
-                            match editing {
-                                Some((id, mut session)) => {
-                                    // Edit: clone the live row,
-                                    // swap the edited fields,
-                                    // keep mode + guided-file ref
-                                    // untouched (the overlay
-                                    // can't change them — matches
-                                    // GTK's `original_mode` /
-                                    // `original_guided_file_uuid`
-                                    // preservation).
-                                    session.notes = new_note;
-                                    session.duration_secs = duration_secs as u32;
-                                    session.start_iso =
-                                        meditate_core::time::unix_to_local_iso(
-                                            new_start_unix,
-                                        );
-                                    session.label_id = label_id;
-                                    if let Err(err) = db.update_session(id, &session) {
-                                        meditate_core::log(
-                                            "log.edit.save.failed",
-                                            &format!("rowid {id}: {err:?}"),
-                                        );
-                                    }
-                                }
-                                None => {
-                                    // Create: a fresh manual
-                                    // entry. GTK's add-dialog
-                                    // defaults the mode to Timer
-                                    // (`original_mode = session
-                                    // .map_or(Timer, ...)` at
-                                    // `log/imp.rs:771`) and never
-                                    // carries a guided-file ref.
-                                    let session =
-                                        meditate_core::db::Session::from_unix(
-                                            new_start_unix,
-                                            duration_secs,
-                                            label_id,
-                                            new_note,
-                                            meditate_core::SessionMode::Timer,
-                                            None,
-                                        );
-                                    if let Err(err) =
-                                        db.insert_session(&session)
-                                    {
-                                        meditate_core::log(
-                                            "log.add.save.failed",
-                                            &format!("{err:?}"),
-                                        );
-                                    }
-                                }
+                if let Some(db) = lock_db() {
+                    let editing = editing_session.borrow_mut().take();
+                    match editing {
+                        Some((id, mut session)) => {
+                            // Edit: clone the live row,
+                            // swap the edited fields,
+                            // keep mode + guided-file ref
+                            // untouched (the overlay
+                            // can't change them — matches
+                            // GTK's `original_mode` /
+                            // `original_guided_file_uuid`
+                            // preservation).
+                            session.notes = new_note;
+                            session.duration_secs = duration_secs as u32;
+                            session.start_iso =
+                                meditate_core::time::unix_to_local_iso(
+                                    new_start_unix,
+                                );
+                            session.label_id = label_id;
+                            if let Err(err) = db.update_session(id, &session) {
+                                meditate_core::log(
+                                    "log.edit.save.failed",
+                                    &format!("rowid {id}: {err:?}"),
+                                );
+                            }
+                        }
+                        None => {
+                            // Create: a fresh manual
+                            // entry. GTK's add-dialog
+                            // defaults the mode to Timer
+                            // (`original_mode = session
+                            // .map_or(Timer, ...)` at
+                            // `log/imp.rs:771`) and never
+                            // carries a guided-file ref.
+                            let session =
+                                meditate_core::db::Session::from_unix(
+                                    new_start_unix,
+                                    duration_secs,
+                                    label_id,
+                                    new_note,
+                                    meditate_core::SessionMode::Timer,
+                                    None,
+                                );
+                            if let Err(err) =
+                                db.insert_session(&session)
+                            {
+                                meditate_core::log(
+                                    "log.add.save.failed",
+                                    &format!("{err:?}"),
+                                );
                             }
                         }
                     }
@@ -10221,10 +9973,8 @@ fn build_ui() -> MainWindow {
             #[cfg(target_os = "android")]
             if let Some(ui) = weak.upgrade() {
                 let account = {
-                    let Some(db_arc) = DATABASE.get() else { return; };
-                    let Ok(guard) = db_arc.lock() else { return; };
-                    let Some(db) = guard.as_ref() else { return; };
-                    meditate_core::sync::settings::nextcloud_account_from_db(db)
+                    let Some(db) = lock_db() else { return; };
+                    meditate_core::sync::settings::nextcloud_account_from_db(&db)
                         .ok()
                         .flatten()
                 };
@@ -10244,10 +9994,8 @@ fn build_ui() -> MainWindow {
                 ui.set_prefs_password(slint::SharedString::new());
                 // Daily goal (ST) — seed the Stats group row.
                 let goal_mins = {
-                    let Some(db_arc) = DATABASE.get() else { return; };
-                    let Ok(guard) = db_arc.lock() else { return; };
-                    let Some(db) = guard.as_ref() else { return; };
-                    meditate_core::goal::daily_goal_mins_from_db(db)
+                    let Some(db) = lock_db() else { return; };
+                    meditate_core::goal::daily_goal_mins_from_db(&db)
                 };
                 ui.set_prefs_goal_mins(goal_mins as i32);
                 if let Some(app) = android_app() {
@@ -10369,26 +10117,14 @@ fn build_ui() -> MainWindow {
                         );
                     }
                     let account_result = {
-                        let Some(db_arc) = DATABASE.get() else {
-                            break 'save
-                                ui.global::<Tr>()
-                                    .invoke_db_unavailable()
-                                    .to_string();
-                        };
-                        let Ok(guard) = db_arc.lock() else {
-                            break 'save
-                                ui.global::<Tr>()
-                                    .invoke_db_unavailable()
-                                    .to_string();
-                        };
-                        let Some(db) = guard.as_ref() else {
+                        let Some(db) = lock_db() else {
                             break 'save
                                 ui.global::<Tr>()
                                     .invoke_db_unavailable()
                                     .to_string();
                         };
                         meditate_core::sync::settings::set_nextcloud_account(
-                            db,
+                            &db,
                             &plan.url,
                             &plan.username,
                         )
@@ -10454,10 +10190,8 @@ fn build_ui() -> MainWindow {
             {
                 let Some(ui) = weak.upgrade() else { return; };
                 let prep = {
-                    let Some(db_arc) = DATABASE.get() else { return; };
-                    let Ok(guard) = db_arc.lock() else { return; };
-                    let Some(db) = guard.as_ref() else { return; };
-                    meditate_core::sync::settings::prepare_push_local_recovery(db)
+                    let Some(db) = lock_db() else { return; };
+                    meditate_core::sync::settings::prepare_push_local_recovery(&db)
                 };
                 match prep {
                     Ok(()) => {
@@ -10500,10 +10234,8 @@ fn build_ui() -> MainWindow {
                 let core_mode: meditate_core::SessionMode =
                     current_mode.get().into();
                 let prep = {
-                    let Some(db_arc) = DATABASE.get() else { return; };
-                    let Ok(guard) = db_arc.lock() else { return; };
-                    let Some(db) = guard.as_ref() else { return; };
-                    meditate_core::sync::settings::prepare_wipe_local_recovery(db)
+                    let Some(db) = lock_db() else { return; };
+                    meditate_core::sync::settings::prepare_wipe_local_recovery(&db)
                 };
                 match prep {
                     Ok(()) => {
@@ -10569,13 +10301,11 @@ fn build_ui() -> MainWindow {
             let volume = meditate_core::bell_volume::BellVolume::from_percent(percent.into());
             let sound = match app::volume_slot(slot.as_str(), setup_session_mode(&ui)) {
                 Some(bell) => {
-                    let Some(db_arc) = DATABASE.get() else { return; };
-                    let Ok(guard) = db_arc.lock() else { return; };
-                    let Some(db) = guard.as_ref() else { return; };
-                    if let Err(e) = meditate_core::bell_volume::write(db, bell, volume) {
+                    let Some(db) = lock_db() else { return; };
+                    if let Err(e) = meditate_core::bell_volume::write(&db, bell, volume) {
                         meditate_core::log("bell_volume.write", &format!("failed: {e:?}"));
                     }
-                    meditate_core::bell_volume::sound_uuid(db, bell)
+                    meditate_core::bell_volume::sound_uuid(&db, bell)
                 }
                 // The bell editor: saved with the bell on Save.
                 None => ui.get_ie_sound_uuid().to_string(),
@@ -10601,12 +10331,10 @@ fn build_ui() -> MainWindow {
             if let Some(ui) = weak.upgrade() {
                 let mins = i64::from(ui.get_prefs_goal_mins());
                 {
-                    let Some(db_arc) = DATABASE.get() else { return; };
-                    let Ok(guard) = db_arc.lock() else { return; };
-                    let Some(db) = guard.as_ref() else { return; };
+                    let Some(db) = lock_db() else { return; };
                     if let Err(e) =
                         meditate_core::goal::write_daily_goal_mins(
-                            db, mins,
+                            &db, mins,
                         )
                     {
                         meditate_core::log(
@@ -10695,9 +10423,7 @@ fn build_ui() -> MainWindow {
                 pending_override_restore.borrow_mut().take();
                 discard_pending_guided_delete(&pending_guided_delete);
                 let n = {
-                    let Some(db_arc) = DATABASE.get() else { return; };
-                    let Ok(guard) = db_arc.lock() else { return; };
-                    let Some(db) = guard.as_ref() else { return; };
+                    let Some(db) = lock_db() else { return; };
                     db.delete_all_sessions()
                 };
                 // Say how it went, as GTK does: a failed delete
@@ -11049,11 +10775,9 @@ fn build_ui() -> MainWindow {
                 };
                 let Some(ui) = weak.upgrade() else { return; };
                 let state = {
-                    let Some(db_arc) = DATABASE.get() else { return; };
-                    let Ok(guard) = db_arc.lock() else { return; };
-                    let Some(db) = guard.as_ref() else { return; };
+                    let Some(db) = lock_db() else { return; };
                     state_from_db(
-                        db,
+                        &db,
                         SYNC_COORDINATOR.is_in_flight(),
                     )
                 };
@@ -11555,6 +11279,26 @@ fn android_main(android_app: slint::android::AndroidApp) {
 static DATABASE: std::sync::OnceLock<
     std::sync::Arc<std::sync::Mutex<Option<meditate_core::Database>>>,
 > = std::sync::OnceLock::new();
+
+/// The open database, locked until the returned guard drops. None
+/// when it failed to open or the lock is poisoned. Never call it
+/// while holding the guard: the Mutex isn't re-entrant.
+#[cfg(target_os = "android")]
+fn lock_db() -> Option<DbGuard> {
+    let guard = DATABASE.get()?.lock().ok()?;
+    guard.is_some().then_some(DbGuard(guard))
+}
+
+#[cfg(target_os = "android")]
+struct DbGuard(std::sync::MutexGuard<'static, Option<meditate_core::Database>>);
+
+#[cfg(target_os = "android")]
+impl std::ops::Deref for DbGuard {
+    type Target = meditate_core::Database;
+    fn deref(&self) -> &meditate_core::Database {
+        self.0.as_ref().expect("lock_db only wraps an open database")
+    }
+}
 
 thread_local! {
     /// Bell-volume preview generation: a finished preview only hides

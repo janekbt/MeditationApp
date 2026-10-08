@@ -782,8 +782,8 @@ mod tests {
         for literal in ["bells: Vec::new()", "bells: vec![]", "starting_bell: None"] {
             assert!(!source.contains(literal), "found `{literal}`");
         }
-        assert_eq!(source.matches("bells::session_bells_from_db(db, target, display, mode)").count(), 1);
-        assert_eq!(source.matches("bells::starting_bell_cue_from_db(db, mode)").count(), 1);
+        assert_eq!(source.matches("bells::session_bells_from_db(&db, target, display, mode)").count(), 1);
+        assert_eq!(source.matches("bells::starting_bell_cue_from_db(&db, mode)").count(), 1);
         assert_eq!(source.matches("session_bells_from_db(").count(), 1);
         assert_eq!(source.matches("starting_bell_cue_from_db(").count(), 1);
     }
@@ -1702,7 +1702,7 @@ mod tests {
         // Names come from core, deleted files included.
         let render = lib.find("fn render_log_feed(").unwrap();
         assert!(lib[render..render + 1200].contains("load_guided_file_names()"));
-        assert!(lib.contains("meditate_core::db::guided_file_names_from_db(db)"));
+        assert!(lib.contains("meditate_core::db::guided_file_names_from_db(&db)"));
         let group = lib.find("fn group_log_sessions(").unwrap();
         let group = &lib[group..group + 2500];
         assert!(group.contains("meditate_core::db::guided_file_name_for("));
@@ -2272,7 +2272,7 @@ mod tests {
             let build = body
                 .find("session_in_progress_snapshot(unix_start")
                 .unwrap_or_else(|| panic!("{writer} builds a snapshot"));
-            let lock = body.find("db_arc.lock()").unwrap_or_else(|| panic!("{writer} locks"));
+            let lock = body.find("lock_db()").unwrap_or_else(|| panic!("{writer} locks"));
             assert!(build < lock, "{writer} must build the snapshot before locking the DB");
         }
     }
