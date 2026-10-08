@@ -1366,50 +1366,29 @@ fn apply_preset_config_json(
             return false;
         }
     };
+    // apply() saved the rest; the timing is the app's to write. Then
+    // re-read everything (settings / bells / box-breath cues / label /
+    // cues override / keep-awake).
     match timing {
-        PresetTiming::Timer {
-            stopwatch,
-            duration_secs,
-        } => {
-            timer_session_secs.set(duration_secs);
-            write_timer_session_secs(duration_secs);
-            ui.set_stopwatch_on(stopwatch);
-            push_session_length_to_ui(ui, duration_secs);
-        }
+        PresetTiming::Timer { duration_secs, .. } => write_timer_session_secs(duration_secs),
         PresetTiming::BoxBreath {
-            stopwatch,
             inhale_secs,
             hold_full_secs,
             exhale_secs,
             hold_empty_secs,
             duration_secs,
+            ..
         } => {
-            let pat = meditate_core::breath::BreathPattern::clamp_from_raw(
+            write_breathing_pattern(meditate_core::breath::BreathPattern::clamp_from_raw(
                 inhale_secs,
                 hold_full_secs,
                 exhale_secs,
                 hold_empty_secs,
-            );
-            write_breathing_pattern(pat);
+            ));
             write_breathing_session_secs(duration_secs);
-            ui.set_stopwatch_on(stopwatch);
-            push_session_length_to_ui(ui, duration_secs);
-            refresh_breathing_tiles(ui, pat);
         }
     }
-    // Re-read everything apply() persisted (settings / bells /
-    // box-breath cues / label / cues override / keep-awake).
-    ui.set_keep_awake_on(read_keep_awake_for_mode(mode));
-    ui.set_cues_mode(signal_mode_to_chip_index(
-        read_signal_mode_for_mode(mode),
-    ));
-    ui.set_label_active(read_label_active_for_mode(mode));
-    ui.set_label_name(
-        resolved_label_for_mode(mode)
-            .map(|(name, _)| name)
-            .unwrap_or_default()
-            .into(),
-    );
+    load_setup_for_mode(ui, mode, timer_session_secs);
     refresh_bell_rows(ui);
     refresh_preset_chips(ui, mode);
     true
@@ -2588,6 +2567,33 @@ fn reset_log_feed(
     render_log_feed(ui, loaded, pending);
 }
 
+/// Load the Setup screen's per-mode values from the DB: on startup,
+/// on a mode switch, and after a sync pull (settings sync too).
+fn load_setup_for_mode(
+    ui: &MainWindow,
+    mode: meditate_core::SessionMode,
+    timer_session_secs: &Cell<u32>,
+) {
+    ui.set_keep_awake_on(read_keep_awake_for_mode(mode));
+    ui.set_cues_mode(signal_mode_to_chip_index(read_signal_mode_for_mode(mode)));
+    ui.set_stopwatch_on(read_stopwatch_for_mode(mode));
+    ui.set_label_active(read_label_active_for_mode(mode));
+    ui.set_label_name(
+        resolved_label_for_mode(mode)
+            .map(|(name, _)| name)
+            .unwrap_or_default()
+            .into(),
+    );
+    timer_session_secs.set(read_timer_session_secs());
+    // Guided's length comes from its file; the row falls back to the
+    // Timer value so it isn't blank.
+    push_session_length_to_ui(ui, match mode {
+        meditate_core::SessionMode::BoxBreath => read_breathing_session_secs(),
+        _ => timer_session_secs.get(),
+    });
+    refresh_breathing_tiles(ui, read_breathing_pattern());
+}
+
 /// Re-read every screen that shows synced data. Runs after a sync
 /// brought in changes from another device (and after Wipe Local
 /// empties the store), whichever page is open. The Android
@@ -2596,15 +2602,16 @@ fn reset_log_feed(
 fn refresh_after_pull(
     ui: &MainWindow,
     mode: meditate_core::SessionMode,
+    timer_session_secs: &Cell<u32>,
     loaded: &std::rc::Rc<std::cell::RefCell<Vec<(i64, meditate_core::db::Session)>>>,
     pending: &std::rc::Rc<std::cell::RefCell<Vec<(i64, meditate_core::db::Session)>>>,
 ) {
+    load_setup_for_mode(ui, mode, timer_session_secs);
     refresh_preset_chips(ui, mode);
     refresh_bell_rows(ui);
     populate_interval_bells(ui);
     refresh_guided_files(ui);
     refresh_guided_manage(ui);
-    ui.set_label_active(read_label_active_for_mode(mode));
     refresh_after_label_change(ui, mode);
     refresh_filter_label_items(ui);
     reset_log_feed(ui, loaded, pending);
@@ -4457,6 +4464,7 @@ fn build_ui() -> MainWindow {
                     refresh_after_pull(
                         &ui,
                         current_mode.get().into(),
+                        &timer_session_secs,
                         &loaded_log_sessions_tick,
                         &pending_deletes_tick,
                     );
@@ -5028,28 +5036,7 @@ fn build_ui() -> MainWindow {
                         g.as_ref().is_some_and(|s| s.uuid.is_some()),
                     );
                 }
-                ui.set_keep_awake_on(read_keep_awake_for_mode(core_mode));
-                ui.set_cues_mode(signal_mode_to_chip_index(
-                    read_signal_mode_for_mode(core_mode),
-                ));
-                ui.set_stopwatch_on(read_stopwatch_for_mode(core_mode));
-                ui.set_label_active(read_label_active_for_mode(core_mode));
-                ui.set_label_name(
-                    resolved_label_for_mode(core_mode)
-                        .map(|(name, _)| name)
-                        .unwrap_or_default()
-                        .into(),
-                );
-                // Swap the Duration row's displayed value to the
-                // mode's stored session length. Guided's length
-                // comes from the audio file (phase 5); for now
-                // it falls back to the Timer cell so the row
-                // isn't blank.
-                let new_secs = match new_mode {
-                    TimerMode::Breathing => read_breathing_session_secs(),
-                    _ => timer_session_secs.get(),
-                };
-                push_session_length_to_ui(&ui, new_secs);
+                load_setup_for_mode(&ui, core_mode, &timer_session_secs);
                 // Starred presets are per-mode (P-2).
                 refresh_preset_chips(&ui, core_mode);
                 // Guided starred-files list (GM-F3).
@@ -8017,19 +8004,7 @@ fn build_ui() -> MainWindow {
     // same properties via the `on_mode_changed` handler above.
     {
         let core_mode: meditate_core::SessionMode = current_mode.get().into();
-        ui.set_keep_awake_on(read_keep_awake_for_mode(core_mode));
-        ui.set_cues_mode(signal_mode_to_chip_index(
-            read_signal_mode_for_mode(core_mode),
-        ));
-        ui.set_stopwatch_on(read_stopwatch_for_mode(core_mode));
-        ui.set_label_active(read_label_active_for_mode(core_mode));
-        ui.set_label_name(
-            resolved_label_for_mode(core_mode)
-                .map(|(name, _)| name)
-                .unwrap_or_default()
-                .into(),
-        );
-        refresh_breathing_tiles(&ui, read_breathing_pattern());
+        load_setup_for_mode(&ui, core_mode, &timer_session_secs);
         reset_log_feed(&ui, &loaded_log_sessions, &pending_deletes);
         refresh_sync_indicator(&ui);
         refresh_stats(&ui);
@@ -8773,6 +8748,7 @@ fn build_ui() -> MainWindow {
     {
         let weak = ui.as_weak();
         let current_mode = current_mode.clone();
+        let timer_session_secs = timer_session_secs.clone();
         let loaded_log_sessions = loaded_log_sessions.clone();
         let pending_deletes = pending_deletes.clone();
         ui.on_recovery_wipe_confirm_tap(move || {
@@ -8796,6 +8772,7 @@ fn build_ui() -> MainWindow {
                         refresh_after_pull(
                             &ui,
                             core_mode,
+                            &timer_session_secs,
                             &loaded_log_sessions,
                             &pending_deletes,
                         );

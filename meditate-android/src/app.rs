@@ -1200,7 +1200,7 @@ mod tests {
             "refresh_guided_files(",
             "refresh_guided_manage(",
             "refresh_after_label_change(",
-            "set_label_active(",
+            "load_setup_for_mode(",
             "refresh_filter_label_items(",
             "reset_log_feed(",
             "refresh_stats(",
@@ -1317,6 +1317,32 @@ mod tests {
         let start = &confirm[confirm.find("if !guided::start_import(").expect("checks the start")..];
         assert!(start[..400].contains("set_guided_import_busy(false)"), "no endless spinner");
         assert!(start[..400].contains("invoke_import_failed()"), "and the user hears why");
+    }
+
+    /// Settings sync, so a pull must reload the per-mode Setup values
+    /// the same way a mode switch and startup do; it reloaded only the
+    /// label switch.
+    #[test]
+    fn setup_values_load_from_one_place() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(root.join("src/ui.rs")).unwrap();
+        let code = lib.split("#[cfg(test)]\nmod tests").next().unwrap();
+        let at = code.find("fn load_setup_for_mode(").expect("one loader");
+        let loader = &code[at..at + code[at..].find("\n}\n").unwrap()];
+        for setter in [
+            "set_stopwatch_on(read_stopwatch_for_mode",
+            "set_keep_awake_on(read_keep_awake_for_mode",
+            "set_cues_mode(signal_mode_to_chip_index(read_signal_mode_for_mode",
+            "refresh_breathing_tiles(ui, read_breathing_pattern())",
+            "timer_session_secs.set(read_timer_session_secs())",
+        ] {
+            assert!(loader.contains(setter), "loader sets {setter}");
+            assert_eq!(code.matches(setter).count(), 1, "{setter} only in the loader");
+        }
+        let at = code.find("fn refresh_after_pull(").unwrap();
+        let pull = &code[at..at + code[at..].find("\n}\n").unwrap()];
+        assert!(pull.contains("load_setup_for_mode(ui, mode, timer_session_secs)"), "a pull reloads Setup");
+        assert_eq!(code.matches("load_setup_for_mode(&ui, ").count(), 2, "mode switch and startup");
     }
 
     /// Every bridge loads its Kotlin class the same way.

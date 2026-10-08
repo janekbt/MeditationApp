@@ -193,7 +193,7 @@ Planning only: nothing here has been changed yet. The audit ran on beta at a8a5d
 - **Bugs:** B3#33; B1 "snapshot incomplete" and "Save/Discard don't silence the bell"; B2 "activity recreate". Class: one end path forgets a step.
 - **Risk:** M. Needs a device run.
 - **Effort:** (a) S, (b) M
-- **Status:** (a) done. `end_session` holds the end steps and the running-screen resets; Stop, Finish and Add are one `end_tap` with their core transition. (b) waits for R1's follow-up, as planned.
+- **Deferred (2026-10-08):** (b) fixes no open bug (every bug it lists is fixed) and rewrites about 54 test chains; do it only together with other work on the session state. Earlier status: (a) done. `end_session` holds the end steps and the running-screen resets; Stop, Finish and Add are one `end_tap` with their core transition. (b) waits for R1's follow-up, as planned.
 
 ### R8 Kotlin guided player owns its audio focus
 - **Evidence (MeditateGuided.kt):**
@@ -270,6 +270,7 @@ Planning only: nothing here has been changed yet. The audit ran on beta at a8a5d
 - **Tests:** move GTK's runner tests into core.
 - **Risk:** medium, because it is sync. No wire change.
 - **Effort:** M
+- **Deferred (2026-10-08):** no open bug, and sync is where a mistake costs the most. Do it when sync needs work anyway.
 
 ### R13 Core housekeeping: dead code and small duplicates
 **Status:** dead code removed, together with the then always-empty label filter on the streak and daily-total queries. The small duplicates below were left out on purpose; each note says where it goes instead.
@@ -302,7 +303,7 @@ Planning only: nothing here has been changed yet. The audit ran on beta at a8a5d
   - It removes most of the 674 cfg gates and the host-only `let _ =` silencers, about -750 lines of noise.
   - Cargo.toml, main.rs and build.rs stay untouched. Source tests change their path from src/lib.rs to src/ui.rs.
   - Cost: lib.rs code is then type-checked only by the Android build, which is already almost true today.
-- **Status:** all done; (c) shipped with R9 as `jni_call::load_class`. Earlier note: (a) and (b) done. (c) deferred: no bug behind it, and every bridge needs a phone check, so it rides along with R8/R9 (step 4), which touch the bridges and need a phone round anyway.
+- **Status:** all done. (d) `load_setup_for_mode` serves startup, mode switch, sync pull and preset apply (a fourth copy); a pull now reloads stopwatch, keep-awake, signal mode, length and tiles. (c) shipped with R9 as `jni_call::load_class`. Earlier note: (a) and (b) done. (c) deferred: no bug behind it, and every bridge needs a phone check, so it rides along with R8/R9 (step 4), which touch the bridges and need a phone round anyway.
 - **(c) `jni_call::load_class`:**
   - Evidence: `resolve_class` is copied 8 times (audio.rs:110, screen.rs:32, guided.rs:169, widget.rs:139, haptics.rs:102, insets.rs:38, keychain.rs:69, about.rs:84), plus the `(Context)V` wrappers.
   - Change: add it to the existing jni_call.rs.
