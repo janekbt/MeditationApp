@@ -2412,6 +2412,9 @@ mod tests {
         let pill = &slint[at..at + slint[at..].find("\n}\n").unwrap()];
         assert!(pill.contains("width: max(60px, max(play-label.preferred-width, stop-label.preferred-width) + 24px);"));
         assert!(!slint.contains("width: 60px;"), "no fixed-width pill left");
+        // The pattern rows' Edit button grows with its text too
+        // ("Bearbeiten" ran into the pill at a fixed 44px).
+        assert!(slint.contains("width: max(44px, ve-edit-text.preferred-width + 16px);"));
         assert_eq!(slint.matches("PreviewPill {").count(), 3, "bell + pattern choosers, volume row");
     }
 

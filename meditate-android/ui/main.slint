@@ -6598,14 +6598,14 @@ export component MainWindow inherits Window {
                             VerticalLayout {
                                 alignment: center;
                                 Rectangle {
-                                    width: 44px;
+                                    width: max(44px, ve-edit-text.preferred-width + 16px);
                                     height: 32px;
                                     ve-edit-touch := TouchArea {
                                         clicked => {
                                             root.pattern-edit(item.uuid);
                                         }
                                     }
-                                    Text {
+                                    ve-edit-text := Text {
                                         text: @tr("Edit");
                                         font-size: 13px;
                                         horizontal-alignment: center;
