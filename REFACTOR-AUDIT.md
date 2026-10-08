@@ -335,6 +335,7 @@ Planning only: nothing here has been changed yet. The audit ran on beta at a8a5d
 - **Bugs:** B3#13, B3#23, and B3#39 if the header carries accessible labels.
 - **Risk:** S-M. The UI can only be verified on the device.
 - **Effort:** (a) S-M, (b) S, (c) M, (d) S
+- **Status:** (b) done, without a component: every mode shows its own content first, so one Session and one Bells group sit below it, with mode-guarded rows (no Cues in Box Breath, no Duration in Guided, Starting and Interval Bells in Timer only). About -245 lines; Guided and Box Breath now get the same 20 px group gap as Timer.
 
 ### R16 i18n: no UI text formatted in Rust, no concatenated sentences
 - **Evidence:**

@@ -3143,259 +3143,6 @@ export component MainWindow inherits Window {
                 }
             }
 
-            // Timer body — Session group mirrors the GTK
-            // `session_group` (Adw.PreferencesGroup titled "Session"
-            // at `timer_view.blp` line 299). Phase-1 + this slice
-            // ship the Stopwatch and Duration rows; Cues, Label,
-            // and Keep-Screen-Awake land in their own slices.
-            // Visible in Timer mode only (Stopwatch / Duration are
-            // Timer-mode rows per the .blp visibility rules).
-            if root.setup-mode == 0 : VerticalLayout {
-                spacing: 8px;
-
-                Text {
-                    text: @tr("Session");
-                    font-size: 14px;
-                    font-weight: 700;
-                    color: MaterialPalette.primary;
-                    horizontal-alignment: left;
-                }
-
-                BoxedList {
-                    // Cues row sits FIRST — mirrors the GTK .blp
-                    // ordering (Cues → Stopwatch → Duration → Label →
-                    // Keep Awake). Visible in every mode in GTK; the
-                    // Session group is still Timer-gated here, so this
-                    // slice keeps it inside that gate.
-                    CuesRow {
-                        title: @tr("Cues");
-                        current-index <=> root.cues-mode;
-                        changed(idx) => { root.cues-changed(idx); }
-                    }
-
-                    // 1 px divider — mirrors GTK's `Adw.PreferencesGroup`
-                    // row separator. on-surface-variant has the right
-                    // mid-tone for a hairline that's visible without
-                    // shouting.
-                    Rectangle {
-                        height: 1px;
-                        background: MaterialPalette.outline-variant;
-                    }
-
-                    SwitchRow {
-                        title: @tr("Stopwatch Mode");
-                        subtitle: @tr("Count up from zero");
-                        checked <=> root.stopwatch-on;
-                        toggled(value) => { root.stopwatch-toggled(value); }
-                    }
-
-                    Rectangle {
-                        height: 1px;
-                        background: MaterialPalette.outline-variant;
-                    }
-
-                    DurationRow {
-                        value-text: root.duration-text;
-                        enabled: !root.stopwatch-on;
-                        tapped => { root.duration-tap(); }
-                    }
-
-                    Rectangle {
-                        height: 1px;
-                        background: MaterialPalette.outline-variant;
-                    }
-
-                    // Label expander — mirrors `setup_label_enabled_row`.
-                    // Master switch toggles per-mode label tagging;
-                    // when on, the inner Selected row shows the
-                    // resolved label name. Tap on the inner row will
-                    // push the label chooser screen in the next
-                    // phase-2 slice; for now it's a no-op stub.
-                    ExpanderRow {
-                        title: @tr("Label");
-                        subtitle: @tr("Tag this session");
-                        body-title: @tr("Selected");
-                        body-subtitle: root.label-name;
-                        active <=> root.label-active;
-                        toggled(value) => { root.label-active-toggled(value); }
-                        body-tapped => { root.label-tap(); }
-                    }
-
-                    Rectangle {
-                        height: 1px;
-                        background: MaterialPalette.outline-variant;
-                    }
-
-                    // Keep Screen Awake — mirrors GTK's
-                    // `keep_screen_awake_row`. GTK shows this row in
-                    // every mode; this slice keeps it inside the
-                    // Timer-only Session group along with Stopwatch
-                    // and Duration. Restructuring lands when the
-                    // Box Breath / Guided bodies do.
-                    SwitchRow {
-                        title: @tr("Keep Screen Awake");
-                        subtitle: @tr("Prevent display sleep during a session");
-                        checked <=> root.keep-awake-on;
-                        toggled(value) => { root.keep-awake-toggled(value); }
-                    }
-                }
-            }
-
-            // Bells group (B-5a) — Starting Bell + End Bell.
-            // Mirrors GTK's `bells_group`
-            // (`timer_view.blp:401`). Timer-gated for now, same
-            // as the Session group above (the full mode
-            // restructure is deferred — see the Session-group
-            // note). Each row is an `ExpanderRow`: enable
-            // switch ↔ the global `*_bell_active` setting; the
-            // body row is the "Bell Sound" picker (subtitle =
-            // resolved sound name) → bell-chooser overlay. Type
-            // (Sound/Vibration/Both) + Pattern come next.
-            if root.setup-mode == 0 : VerticalLayout {
-                spacing: 8px;
-
-                Text {
-                    text: @tr("Bells");
-                    font-size: 14px;
-                    font-weight: 700;
-                    color: MaterialPalette.primary;
-                    horizontal-alignment: left;
-                }
-
-                BoxedList {
-                    // Starting Bell — an ExpanderGroup so its
-                    // body can hold the Bell Sound row AND the
-                    // nested Preparation Time expander, exactly
-                    // like GTK's `starting_bell_row` with the
-                    // `preparation_time_row` AdwExpanderRow
-                    // nested inside it (`timer_view.blp:413`).
-                    ExpanderGroup {
-                        title: @tr("Starting Bell");
-                        subtitle: @tr("Play a signal when the session begins");
-                        active <=> root.starting-bell-active;
-                        toggled(value) => { root.starting-bell-toggled(value); }
-
-                        CuesRow {
-                            title: @tr("Type");
-                            current-index <=> root.starting-bell-signal-mode;
-                            changed(idx) => { root.starting-bell-signal-mode-changed(idx); }
-                        }
-
-                        // Bell Sound — revealed when the mode
-                        // includes sound (Sound|Both); Pattern when
-                        // it includes vibration (Vibration|Both).
-                        // Mirrors GTK's `starting_bell_sound_revealer`
-                        // / `starting_bell_pattern_revealer`.
-                        RevealChooser {
-                            shown: root.starting-bell-signal-mode != 1;
-                            title: @tr("Bell Sound");
-                            subtitle: root.starting-bell-sound-name;
-                            tapped => { root.starting-bell-sound-tap(); }
-                        }
-                        RevealVolume {
-                            shown: root.starting-bell-signal-mode != 1;
-                            minimum: root.bell-volume-min;
-                            maximum: root.bell-volume-max;
-                            step: root.bell-volume-step;
-                            value <=> root.starting-bell-volume;
-                            previewing: root.volume-previewing == "start";
-                            value-changed(v) => { root.bell-volume-changed("start", v); }
-                            released(v) => { root.bell-volume-released("start", v); }
-                            stop-tap => { root.bell-volume-stop-tap(); }
-                        }
-                        RevealChooser {
-                            shown: root.starting-bell-signal-mode != 0;
-                            title: @tr("Pattern");
-                            subtitle: root.starting-bell-pattern-name;
-                            tapped => { root.starting-bell-pattern-tap(); }
-                        }
-
-                        Rectangle {
-                            height: 1px;
-                            background: MaterialPalette.outline-variant;
-                        }
-
-                        // Nested Preparation Time expander —
-                        // child of Starting Bell, mirroring GTK.
-                        ExpanderRow {
-                            title: @tr("Preparation Time");
-                            subtitle: @tr("Silence before the starting bell");
-                            body-title: @tr("Duration");
-                            body-subtitle: root.prep-time-secs + "s";
-                            active <=> root.prep-time-active;
-                            toggled(value) => { root.prep-time-toggled(value); }
-                            body-tapped => { root.prep-time-tap(); }
-                        }
-                    }
-
-                    Rectangle {
-                        height: 1px;
-                        background: MaterialPalette.outline-variant;
-                    }
-
-                    // Interval Bells — between Starting and End
-                    // Bell, mirroring GTK's group order
-                    // (`timer_view.blp:482`). Body row drills
-                    // into the library page.
-                    ExpanderRow {
-                        title: @tr("Interval Bells");
-                        subtitle: @tr("Ring during the session");
-                        body-title: @tr("Manage Bells");
-                        body-subtitle: root.interval-bells-summary;
-                        active <=> root.interval-bells-active;
-                        toggled(value) => { root.interval-bells-toggled(value); }
-                        body-tapped => { root.manage-bells-tap(); }
-                    }
-
-                    Rectangle {
-                        height: 1px;
-                        background: MaterialPalette.outline-variant;
-                    }
-
-                    // End Bell — an ExpanderGroup (was a single-
-                    // body ExpanderRow) so it can hold Type +
-                    // Sound + Pattern, mirroring GTK's `end_bell_
-                    // row` (`timer_view.blp:506`).
-                    ExpanderGroup {
-                        title: @tr("End Bell");
-                        subtitle: @tr("Play a signal when the session ends");
-                        active <=> root.end-bell-active;
-                        enabled: root.end-bell-sensitive;
-                        toggled(value) => { root.end-bell-toggled(value); }
-
-                        CuesRow {
-                            title: @tr("Type");
-                            current-index <=> root.end-bell-signal-mode;
-                            changed(idx) => { root.end-bell-signal-mode-changed(idx); }
-                        }
-
-                        RevealChooser {
-                            shown: root.end-bell-signal-mode != 1;
-                            title: @tr("Bell Sound");
-                            subtitle: root.end-bell-sound-name;
-                            tapped => { root.end-bell-sound-tap(); }
-                        }
-                        RevealVolume {
-                            shown: root.end-bell-signal-mode != 1;
-                            minimum: root.bell-volume-min;
-                            maximum: root.bell-volume-max;
-                            step: root.bell-volume-step;
-                            value <=> root.end-bell-volume;
-                            previewing: root.volume-previewing == "end";
-                            value-changed(v) => { root.bell-volume-changed("end", v); }
-                            released(v) => { root.bell-volume-released("end", v); }
-                            stop-tap => { root.bell-volume-stop-tap(); }
-                        }
-                        RevealChooser {
-                            shown: root.end-bell-signal-mode != 0;
-                            title: @tr("Pattern");
-                            subtitle: root.end-bell-pattern-name;
-                            tapped => { root.end-bell-pattern-tap(); }
-                        }
-                    }
-                }
-            }
-
             // Guided body (Phase 6.5 MVP) — mirrors GTK's
             // guided_section Current-Selection row. The whole row
             // is tap-to-open (acts as GTK's [Open File]); Import /
@@ -3546,132 +3293,10 @@ export component MainWindow inherits Window {
                     text: @tr("Manage Files");
                     clicked => { root.manage-guided-tap(); }
                 }
-                // Session group — mirrors GTK's shared
-                // `session_group` for Guided: Cues → Stopwatch →
-                // Label → Keep Awake. The Duration row is omitted
-                // (core `setup_visibility` ⇒ duration:false for
-                // Guided — the length comes from the file, not a
-                // stepper). All rows reuse the per-mode shared
-                // props/callbacks; mode-switch reloads them for
-                // Guided and the callbacks write per current_mode.
-                Text {
-                    text: @tr("Session");
-                    font-size: 14px;
-                    font-weight: 700;
-                    color: MaterialPalette.primary;
-                    horizontal-alignment: left;
-                }
-                BoxedList {
-                    CuesRow {
-                        title: @tr("Cues");
-                        current-index <=> root.cues-mode;
-                        changed(idx) => { root.cues-changed(idx); }
-                    }
-
-                    Rectangle {
-                        height: 1px;
-                        background: MaterialPalette.outline-variant;
-                    }
-
-                    SwitchRow {
-                        title: @tr("Stopwatch Mode");
-                        subtitle: @tr("Count up from zero");
-                        checked <=> root.stopwatch-on;
-                        toggled(value) => {
-                            root.stopwatch-toggled(value);
-                        }
-                    }
-
-                    Rectangle {
-                        height: 1px;
-                        background: MaterialPalette.outline-variant;
-                    }
-
-                    ExpanderRow {
-                        title: @tr("Label");
-                        subtitle: @tr("Tag this session");
-                        body-title: @tr("Selected");
-                        body-subtitle: root.label-name;
-                        active <=> root.label-active;
-                        toggled(value) => {
-                            root.label-active-toggled(value);
-                        }
-                        body-tapped => { root.label-tap(); }
-                    }
-
-                    Rectangle {
-                        height: 1px;
-                        background: MaterialPalette.outline-variant;
-                    }
-
-                    SwitchRow {
-                        title: @tr("Keep Screen Awake");
-                        subtitle: @tr("Prevent display sleep during a session");
-                        checked <=> root.keep-awake-on;
-                        toggled(value) => {
-                            root.keep-awake-toggled(value);
-                        }
-                    }
-                }
-                // Bells group — Guided shows ONLY the End Bell
-                // (core `setup_visibility` makes Starting +
-                // Interval Bells Timer-only; End Bell has no
-                // visibility gate → every mode, GTK parity). Uses
-                // the global `end-bell-*` props/callbacks (not
-                // per-mode), so no extra Rust wiring.
-                Text {
-                    text: @tr("Bells");
-                    font-size: 14px;
-                    font-weight: 700;
-                    color: MaterialPalette.primary;
-                    horizontal-alignment: left;
-                }
-                BoxedList {
-                    ExpanderGroup {
-                        title: @tr("End Bell");
-                        subtitle: @tr("Play a signal when the session ends");
-                        active <=> root.end-bell-active;
-                        enabled: root.end-bell-sensitive;
-                        toggled(value) => { root.end-bell-toggled(value); }
-
-                        CuesRow {
-                            title: @tr("Type");
-                            current-index <=> root.end-bell-signal-mode;
-                            changed(idx) => { root.end-bell-signal-mode-changed(idx); }
-                        }
-
-                        RevealChooser {
-                            shown: root.end-bell-signal-mode != 1;
-                            title: @tr("Bell Sound");
-                            subtitle: root.end-bell-sound-name;
-                            tapped => { root.end-bell-sound-tap(); }
-                        }
-                        RevealVolume {
-                            shown: root.end-bell-signal-mode != 1;
-                            minimum: root.bell-volume-min;
-                            maximum: root.bell-volume-max;
-                            step: root.bell-volume-step;
-                            value <=> root.end-bell-volume;
-                            previewing: root.volume-previewing == "end";
-                            value-changed(v) => { root.bell-volume-changed("end", v); }
-                            released(v) => { root.bell-volume-released("end", v); }
-                            stop-tap => { root.bell-volume-stop-tap(); }
-                        }
-                        RevealChooser {
-                            shown: root.end-bell-signal-mode != 0;
-                            title: @tr("Pattern");
-                            subtitle: root.end-bell-pattern-name;
-                            tapped => { root.end-bell-pattern-tap(); }
-                        }
-                    }
-                }
             }
             // Box Breath body — Breath Phases heading + 2×2 phase
-            // tile grid + the shared Session group (Stopwatch, the
-            // shared Duration row drives both modes' session
-            // length, Label, Keep Awake). Mirrors GTK's
-            // `boxbreath_inputs` Box (`timer_view.blp:189-221`) +
-            // the shared `session_group` rows.
+            // tile grid. Mirrors GTK's `boxbreath_inputs` Box
+            // (`timer_view.blp:189-221`).
             if root.setup-mode == 2 : VerticalLayout {
                 spacing: 8px;
 
@@ -3734,6 +3359,16 @@ export component MainWindow inherits Window {
                         }
                     }
                 }
+            }
+
+            // Session group, shared by every mode — mirrors GTK's
+            // `session_group` (`timer_view.blp` line 299) and core
+            // `setup_visibility`: no Cues row in Box Breath (it has
+            // phase cues), no Duration row in Guided (the file sets
+            // the length). The rows' props are per-mode; mode switch
+            // reloads them.
+            VerticalLayout {
+                spacing: 8px;
 
                 Text {
                     text: @tr("Session");
@@ -3744,13 +3379,22 @@ export component MainWindow inherits Window {
                 }
 
                 BoxedList {
-                    // Stopwatch — mirrors GTK's
-                    // `stopwatch_mode_row.set_visible(true)`
-                    // unconditional call in `on_mode_switched`
-                    // (the .blp comment claiming it's Timer-only
-                    // is stale). Flips
-                    // `BoxBreathCountdown` ↔ `BoxBreathStopwatch`
-                    // at session start.
+                    // Cues row sits FIRST — mirrors the GTK .blp
+                    // ordering (Cues → Stopwatch → Duration → Label →
+                    // Keep Awake).
+                    if root.setup-mode != 2 : CuesRow {
+                        title: @tr("Cues");
+                        current-index <=> root.cues-mode;
+                        changed(idx) => { root.cues-changed(idx); }
+                    }
+
+                    // 1 px divider — mirrors GTK's `Adw.PreferencesGroup`
+                    // row separator. Each hidden row hides its divider.
+                    if root.setup-mode != 2 : Rectangle {
+                        height: 1px;
+                        background: MaterialPalette.outline-variant;
+                    }
+
                     SwitchRow {
                         title: @tr("Stopwatch Mode");
                         subtitle: @tr("Count up from zero");
@@ -3763,25 +3407,20 @@ export component MainWindow inherits Window {
                         background: MaterialPalette.outline-variant;
                     }
 
-                    DurationRow {
+                    if root.setup-mode != 1 : DurationRow {
                         value-text: root.duration-text;
                         enabled: !root.stopwatch-on;
                         tapped => { root.duration-tap(); }
                     }
 
-                    Rectangle {
+                    if root.setup-mode != 1 : Rectangle {
                         height: 1px;
                         background: MaterialPalette.outline-variant;
                     }
 
-                    // Label expander — same component as the
-                    // Timer body's row, wired to the same
-                    // `label-*` properties + `label-tap`
-                    // callback. Per-mode persistence happens
-                    // Rust-side via the active mode chip, so the
-                    // master toggle on Box Breath writes
-                    // `label_active_breathing` and selects
-                    // through the seeded "Box-Breathing" default.
+                    // Label expander — mirrors `setup_label_enabled_row`.
+                    // Master switch toggles per-mode label tagging;
+                    // the inner Selected row opens the label chooser.
                     ExpanderRow {
                         title: @tr("Label");
                         subtitle: @tr("Tag this session");
@@ -3797,29 +3436,25 @@ export component MainWindow inherits Window {
                         background: MaterialPalette.outline-variant;
                     }
 
-                    // Keep Screen Awake — was missing from the
-                    // Box Breath Session group (Timer + Guided
-                    // had it). Per-mode shared prop/callback;
-                    // mode-switch reloads it for Box Breath and
-                    // the toggle writes the boxbreath_* key. Now
-                    // actually applied (FLAG_KEEP_SCREEN_ON) for
-                    // a running session in any mode.
+                    // Keep Screen Awake — mirrors GTK's
+                    // `keep_screen_awake_row`, in every mode.
                     SwitchRow {
                         title: @tr("Keep Screen Awake");
                         subtitle: @tr("Prevent display sleep during a session");
                         checked <=> root.keep-awake-on;
-                        toggled(value) => {
-                            root.keep-awake-toggled(value);
-                        }
+                        toggled(value) => { root.keep-awake-toggled(value); }
                     }
                 }
+            }
 
-                // Bells group — like Guided, Box Breath shows
-                // ONLY the End Bell (Starting + Interval Bells are
-                // Timer-only per core `setup_visibility`; End Bell
-                // has no visibility gate → every mode, GTK
-                // parity). Global `end-bell-*` props/callbacks,
-                // no extra Rust wiring.
+            // Bells group, shared by every mode — mirrors GTK's
+            // `bells_group` (`timer_view.blp:401`). Starting and
+            // Interval Bells are Timer-only (core `setup_visibility`);
+            // End Bell shows in every mode. The bell props are global,
+            // not per-mode.
+            VerticalLayout {
+                spacing: 8px;
+
                 Text {
                     text: @tr("Bells");
                     font-size: 14px;
@@ -3827,7 +3462,101 @@ export component MainWindow inherits Window {
                     color: MaterialPalette.primary;
                     horizontal-alignment: left;
                 }
+
                 BoxedList {
+                    // Starting Bell — an ExpanderGroup so its
+                    // body can hold the Bell Sound row AND the
+                    // nested Preparation Time expander, exactly
+                    // like GTK's `starting_bell_row` with the
+                    // `preparation_time_row` AdwExpanderRow
+                    // nested inside it (`timer_view.blp:413`).
+                    if root.setup-mode == 0 : ExpanderGroup {
+                        title: @tr("Starting Bell");
+                        subtitle: @tr("Play a signal when the session begins");
+                        active <=> root.starting-bell-active;
+                        toggled(value) => { root.starting-bell-toggled(value); }
+
+                        CuesRow {
+                            title: @tr("Type");
+                            current-index <=> root.starting-bell-signal-mode;
+                            changed(idx) => { root.starting-bell-signal-mode-changed(idx); }
+                        }
+
+                        // Bell Sound — revealed when the mode
+                        // includes sound (Sound|Both); Pattern when
+                        // it includes vibration (Vibration|Both).
+                        // Mirrors GTK's `starting_bell_sound_revealer`
+                        // / `starting_bell_pattern_revealer`.
+                        RevealChooser {
+                            shown: root.starting-bell-signal-mode != 1;
+                            title: @tr("Bell Sound");
+                            subtitle: root.starting-bell-sound-name;
+                            tapped => { root.starting-bell-sound-tap(); }
+                        }
+                        RevealVolume {
+                            shown: root.starting-bell-signal-mode != 1;
+                            minimum: root.bell-volume-min;
+                            maximum: root.bell-volume-max;
+                            step: root.bell-volume-step;
+                            value <=> root.starting-bell-volume;
+                            previewing: root.volume-previewing == "start";
+                            value-changed(v) => { root.bell-volume-changed("start", v); }
+                            released(v) => { root.bell-volume-released("start", v); }
+                            stop-tap => { root.bell-volume-stop-tap(); }
+                        }
+                        RevealChooser {
+                            shown: root.starting-bell-signal-mode != 0;
+                            title: @tr("Pattern");
+                            subtitle: root.starting-bell-pattern-name;
+                            tapped => { root.starting-bell-pattern-tap(); }
+                        }
+
+                        Rectangle {
+                            height: 1px;
+                            background: MaterialPalette.outline-variant;
+                        }
+
+                        // Nested Preparation Time expander —
+                        // child of Starting Bell, mirroring GTK.
+                        ExpanderRow {
+                            title: @tr("Preparation Time");
+                            subtitle: @tr("Silence before the starting bell");
+                            body-title: @tr("Duration");
+                            body-subtitle: root.prep-time-secs + "s";
+                            active <=> root.prep-time-active;
+                            toggled(value) => { root.prep-time-toggled(value); }
+                            body-tapped => { root.prep-time-tap(); }
+                        }
+                    }
+
+                    if root.setup-mode == 0 : Rectangle {
+                        height: 1px;
+                        background: MaterialPalette.outline-variant;
+                    }
+
+                    // Interval Bells — between Starting and End
+                    // Bell, mirroring GTK's group order
+                    // (`timer_view.blp:482`). Body row drills
+                    // into the library page.
+                    if root.setup-mode == 0 : ExpanderRow {
+                        title: @tr("Interval Bells");
+                        subtitle: @tr("Ring during the session");
+                        body-title: @tr("Manage Bells");
+                        body-subtitle: root.interval-bells-summary;
+                        active <=> root.interval-bells-active;
+                        toggled(value) => { root.interval-bells-toggled(value); }
+                        body-tapped => { root.manage-bells-tap(); }
+                    }
+
+                    if root.setup-mode == 0 : Rectangle {
+                        height: 1px;
+                        background: MaterialPalette.outline-variant;
+                    }
+
+                    // End Bell — an ExpanderGroup (was a single-
+                    // body ExpanderRow) so it can hold Type +
+                    // Sound + Pattern, mirroring GTK's `end_bell_
+                    // row` (`timer_view.blp:506`).
                     ExpanderGroup {
                         title: @tr("End Bell");
                         subtitle: @tr("Play a signal when the session ends");
@@ -3866,6 +3595,12 @@ export component MainWindow inherits Window {
                         }
                     }
                 }
+            }
+
+            // Box Breath cues — Box Breath only, after the shared
+            // Session and Bells groups.
+            if root.setup-mode == 2 : VerticalLayout {
+                spacing: 8px;
 
                 // Box Breath cues (B-7) — mirrors GTK's
                 // `boxbreath_phase_section` PreferencesGroup

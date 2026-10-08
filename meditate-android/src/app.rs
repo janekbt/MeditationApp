@@ -827,6 +827,36 @@ mod tests {
         assert!(slint.contains("changed text-focused => {\n        if !self.text-focused {\n            root-focus.focus();"));
     }
 
+    /// The Session and Bells rows exist once for all three modes, so
+    /// a fix to one can no longer miss the other two (they drifted
+    /// before, 01d8b61). Mode-only rows say which mode shows them.
+    #[test]
+    fn setup_rows_are_shared_by_every_mode() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
+        for once in [
+            "text: @tr(\"Session\");",
+            "text: @tr(\"Bells\");",
+            "@tr(\"Stopwatch Mode\")",
+            "@tr(\"Keep Screen Awake\")",
+            "active <=> root.label-active;",
+            "value-text: root.duration-text;",
+            "current-index <=> root.cues-mode;",
+            "active <=> root.end-bell-active;",
+        ] {
+            assert_eq!(slint.matches(once).count(), 1, "{once} once for all modes");
+        }
+        let guarded = |row: &str, guard: &str| {
+            let at = slint.find(row).expect(row);
+            let before = &slint[..at];
+            let open = before.rfind(" : ").unwrap();
+            assert!(before[..open].ends_with(guard), "{row} is shown {guard}");
+        };
+        guarded("CuesRow {\n                        title: @tr(\"Cues\");", "if root.setup-mode != 2");
+        guarded("DurationRow {\n                        value-text: root.duration-text;", "if root.setup-mode != 1");
+        guarded("ExpanderGroup {\n                        title: @tr(\"Starting Bell\");", "if root.setup-mode == 0");
+    }
+
     #[test]
     fn every_dialog_is_one_modal() {
         // Dialogs were 20 booleans listed by hand in the Back chain and
@@ -1688,7 +1718,7 @@ mod tests {
         assert!(guard < eb.find("write_global_setting(").unwrap(), "before the write");
 
         let slint = std::fs::read_to_string(root.join("ui/main.slint")).unwrap();
-        assert_eq!(slint.matches("enabled: root.end-bell-sensitive;").count(), 3, "all three End Bell rows");
+        assert_eq!(slint.matches("enabled: root.end-bell-sensitive;").count(), 1, "the one End Bell row, shared by all modes");
         let group = slint.find("component ExpanderGroup").unwrap();
         let group = &slint[group..group + 3500];
         assert!(group.contains("in property <bool> enabled: true;"));
