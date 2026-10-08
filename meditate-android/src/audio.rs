@@ -18,7 +18,6 @@
 #![cfg(target_os = "android")]
 
 use android_activity::AndroidApp;
-use jni::objects::{JClass, JObject};
 
 const AUDIO_CLASS_DOTTED: &str = "io.github.janekbt.Meditate.MeditateAudio";
 
@@ -107,25 +106,6 @@ pub fn stop(app: &AndroidApp) {
     }
 }
 
-fn resolve_class<'a>(
-    env: &mut jni::JNIEnv<'a>,
-    activity: &JObject,
-) -> Result<JClass<'a>, jni::errors::Error> {
-    let classloader = env
-        .call_method(activity, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])?
-        .l()?;
-    let class_name = env.new_string(AUDIO_CLASS_DOTTED)?;
-    let class_obj = env
-        .call_method(
-            &classloader,
-            "loadClass",
-            "(Ljava/lang/String;)Ljava/lang/Class;",
-            &[(&class_name).into()],
-        )?
-        .l()?;
-    Ok(class_obj.into())
-}
-
 fn invoke_play(
     app: &AndroidApp,
     path: &str,
@@ -133,7 +113,7 @@ fn invoke_play(
 ) -> Result<i64, jni::errors::Error> {
     crate::jni_call::with_env(app, |env, activity| {
         let jpath = env.new_string(path)?;
-        let class = resolve_class(env, activity)?;
+        let class = crate::jni_call::load_class(env, activity, AUDIO_CLASS_DOTTED)?;
         let ret = env.call_static_method(
             class,
             "play",
@@ -153,7 +133,7 @@ fn invoke_play_bell(
 ) -> Result<(), jni::errors::Error> {
     crate::jni_call::with_env(app, |env, activity| {
         let jpath = env.new_string(path)?;
-        let class = resolve_class(env, activity)?;
+        let class = crate::jni_call::load_class(env, activity, AUDIO_CLASS_DOTTED)?;
         env.call_static_method(
             class,
             "playBell",
@@ -166,7 +146,7 @@ fn invoke_play_bell(
 
 fn invoke_set_volume(app: &AndroidApp, gain: f32) -> Result<(), jni::errors::Error> {
     crate::jni_call::with_env(app, |env, activity| {
-        let class = resolve_class(env, activity)?;
+        let class = crate::jni_call::load_class(env, activity, AUDIO_CLASS_DOTTED)?;
         env.call_static_method(
             class,
             "setVolume",
@@ -179,7 +159,7 @@ fn invoke_set_volume(app: &AndroidApp, gain: f32) -> Result<(), jni::errors::Err
 
 fn invoke_alarm_range_db(app: &AndroidApp) -> Result<Vec<f32>, jni::errors::Error> {
     crate::jni_call::with_env(app, |env, activity| {
-        let class = resolve_class(env, activity)?;
+        let class = crate::jni_call::load_class(env, activity, AUDIO_CLASS_DOTTED)?;
         let ret = env
             .call_static_method(
                 class,
@@ -201,7 +181,7 @@ fn invoke_no_arg(
     method: &str,
 ) -> Result<(), jni::errors::Error> {
     crate::jni_call::with_env(app, |env, activity| {
-        let class = resolve_class(env, activity)?;
+        let class = crate::jni_call::load_class(env, activity, AUDIO_CLASS_DOTTED)?;
         env.call_static_method(
             class,
             method,

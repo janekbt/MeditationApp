@@ -1279,6 +1279,59 @@ mod tests {
         assert!(!code.contains("trigger_sync(\"app launch\")"), "launch is a resume; no second trigger");
     }
 
+    /// Every drop file is read and removed by one helper, a failed
+    /// audio-pick copy reports `err:` like the CSV path (#19), each
+    /// import owns its cancel/result/progress files (#9), and an
+    /// import that never started stops the spinner.
+    #[test]
+    fn drop_files_take_one_path_and_report_failures() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let read = |p: &str| std::fs::read_to_string(root.join(p)).unwrap();
+        let body = |src: &str, sig: &str| {
+            let at = src.find(sig).expect(sig);
+            src[at..at + src[at..].find("\n}\n").unwrap()].to_string()
+        };
+        let guided = read("src/guided.rs");
+        let widget = read("src/widget.rs");
+        for (src, name) in [(&guided, "guided.rs"), (&widget, "widget.rs")] {
+            assert!(!src.contains("remove_file(&path)"), "{name} reads drop files only through drop_file::take");
+        }
+        assert!(read("src/drop_file.rs").contains("pub fn take(app: &AndroidApp, name: &str) -> Option<String>"));
+
+        let picker = read("kotlin/MeditateFilePickerActivity.kt");
+        let at = picker.find("private fun copyAndProbe(").unwrap();
+        let copy = &picker[at..at + picker[at..].find("\n    }\n").unwrap()];
+        assert!(copy.contains("\"err:\""), "a failed guided or bell copy says so");
+        assert!(copy.contains("dest.delete()"), "and leaves no partial copy");
+
+        let import = read("kotlin/MeditateGuidedImport.kt");
+        for name in ["guided_import_cancel", "guided_import_result", "guided_import_progress"] {
+            assert!(!import.contains(&format!("\"{name}\"")), "{name} carries the import's id");
+        }
+        assert!(!guided.contains("fn clear_import_"), "per-import names need no clearing");
+        let lib = read("src/ui.rs");
+        assert!(!lib.contains("clear_import_"));
+
+        assert!(guided.contains("-> bool {\n    match invoke_import("), "start_import reports a failure");
+        let confirm = body(&lib, "ui.on_guided_import_confirm(");
+        let start = &confirm[confirm.find("if !guided::start_import(").expect("checks the start")..];
+        assert!(start[..400].contains("set_guided_import_busy(false)"), "no endless spinner");
+        assert!(start[..400].contains("invoke_import_failed()"), "and the user hears why");
+    }
+
+    /// Every bridge loads its Kotlin class the same way.
+    #[test]
+    fn one_class_loader_for_all_bridges() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        for entry in std::fs::read_dir(root.join("src")).unwrap() {
+            let path = entry.unwrap().path();
+            let src = std::fs::read_to_string(&path).unwrap();
+            assert!(!src.contains(concat!("fn resolve", "_class")), "{} loads classes itself", path.display());
+        }
+        let jni = std::fs::read_to_string(root.join("src/jni_call.rs")).unwrap();
+        assert!(jni.contains("pub fn load_class<'a>("));
+    }
+
     /// A guided session starts only if its track starts: the player
     /// reports failure instead of faking the track's end, the shell
     /// starts the track before the session (like GTK), and a failure
@@ -2006,10 +2059,10 @@ mod tests {
         let helper = read("MeditateDropFile.kt");
         assert!(helper.contains("tmp.renameTo(file)"));
         let picker = read("MeditateFilePickerActivity.kt");
-        assert_eq!(picker.matches("MeditateDropFile.write(").count(), 3, "pick, export result, csv pick");
+        assert_eq!(picker.matches("MeditateDropFile.write(").count(), 4, "pick, failed pick, export result, csv pick");
         assert!(!picker.contains(".writeText("));
         assert!(read("MeditateWidgetProvider.kt").contains("MeditateDropFile.write(File(dir, \"widget_launch\"), uuid)"));
-        assert!(read("MeditateGuidedImport.kt").contains("MeditateDropFile.write(File(dir, \"guided_import_result\"), result)"));
+        assert!(read("MeditateGuidedImport.kt").contains("MeditateDropFile.write(File(dir, \"guided_import_result.$run\"), result)"));
     }
 
     #[test]

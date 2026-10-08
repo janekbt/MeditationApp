@@ -18,7 +18,6 @@
 #![cfg(target_os = "android")]
 
 use android_activity::AndroidApp;
-use jni::objects::{JClass, JObject};
 use std::sync::OnceLock;
 
 const HAPTICS_CLASS_DOTTED: &str = "io.github.janekbt.Meditate.MeditateHaptics";
@@ -78,7 +77,7 @@ fn query_amp_control(
     app: &AndroidApp,
 ) -> Result<bool, jni::errors::Error> {
     crate::jni_call::with_env(app, |env, activity| {
-        let class = resolve_class(env, activity)?;
+        let class = crate::jni_call::load_class(env, activity, HAPTICS_CLASS_DOTTED)?;
         let ret = env.call_static_method(
             class,
             "hasAmplitudeControl",
@@ -97,25 +96,6 @@ pub fn cancel(app: &AndroidApp) {
             &format!("cancel FAILED: {e:?}"),
         );
     }
-}
-
-fn resolve_class<'a>(
-    env: &mut jni::JNIEnv<'a>,
-    activity: &JObject,
-) -> Result<JClass<'a>, jni::errors::Error> {
-    let classloader = env
-        .call_method(activity, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])?
-        .l()?;
-    let class_name = env.new_string(HAPTICS_CLASS_DOTTED)?;
-    let class_obj = env
-        .call_method(
-            &classloader,
-            "loadClass",
-            "(Ljava/lang/String;)Ljava/lang/Class;",
-            &[(&class_name).into()],
-        )?
-        .l()?;
-    Ok(class_obj.into())
 }
 
 fn invoke_waveform(
@@ -143,7 +123,7 @@ fn invoke_waveform(
         let a_arr = env.new_int_array(amplitudes.len() as i32)?;
         env.set_int_array_region(&a_arr, 0, &amplitudes)?;
 
-        let class = resolve_class(env, activity)?;
+        let class = crate::jni_call::load_class(env, activity, HAPTICS_CLASS_DOTTED)?;
         env.call_static_method(
             class,
             "vibrateWaveform",
@@ -164,7 +144,7 @@ fn invoke_no_arg(
     method: &str,
 ) -> Result<(), jni::errors::Error> {
     crate::jni_call::with_env(app, |env, activity| {
-        let class = resolve_class(env, activity)?;
+        let class = crate::jni_call::load_class(env, activity, HAPTICS_CLASS_DOTTED)?;
         env.call_static_method(
             class,
             method,

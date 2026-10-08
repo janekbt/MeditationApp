@@ -4590,12 +4590,12 @@ fn build_ui() -> MainWindow {
                 {
                     if let Some(app) = android_app() {
                         let result =
-                            guided::take_import_result(app);
+                            guided::take_import_result(app, &uuid);
                         if result.is_none() {
                             // Still transcoding — feed the
                             // Converting… button's fill.
                             if let Some(pct) =
-                                guided::take_import_progress(app)
+                                guided::import_progress(app, &uuid)
                             {
                                 ui.set_guided_import_progress(
                                     f32::from(pct) / 100.0,
@@ -4611,7 +4611,6 @@ fn build_ui() -> MainWindow {
                                 res.map_err(|e| format!("{e:?}"));
                             *guided_import_finalize.borrow_mut() =
                                 None;
-                            guided::clear_import_progress(app);
                             let kind = guided_import_kind_tick.get();
                             let outcome = if kind == 1 {
                                 // Bell-sound import (BI): insert
@@ -5225,22 +5224,21 @@ fn build_ui() -> MainWindow {
                     .join(format!("{uuid}.ogg"));
                 let dest_str =
                     dest.to_string_lossy().to_string();
+                ui.set_guided_import_progress(0.0);
+                if !guided::start_import(app, &src, &dest_str, secs) {
+                    // Keep the dialog usable: the user can retry or cancel.
+                    *guided_import_src.borrow_mut() = Some((src, secs));
+                    ui.set_guided_import_busy(false);
+                    show_notice(&ui, ui.global::<Tr>().invoke_import_failed(), None, 4);
+                    return;
+                }
                 *guided_import_finalize.borrow_mut() = Some((
                     uuid,
                     name,
-                    dest_str.clone(),
+                    dest_str,
                     secs,
                 ));
-                // Wipe any stale drop-files from a prior failed /
-                // cancelled run so they can't be read as this
-                // import's outcome.
-                guided::clear_import_result(app);
-                guided::clear_import_cancel(app);
-                ui.set_guided_import_progress(0.0);
                 ui.set_guided_import_busy(true);
-                guided::start_import(
-                    app, &src, &dest_str, secs,
-                );
             }
             let _ = weak.clone();
         });
@@ -5259,13 +5257,13 @@ fn build_ui() -> MainWindow {
         let guided_import_src = guided_import_src.clone();
         ui.on_guided_import_cancel(move || {
             if let Some(app) = android_app() {
-                guided::request_import_cancel(app);
-                // Tell the tick poll to ignore whatever the
-                // worker writes, and drop any stray drop-files.
-                *guided_import_finalize.borrow_mut() = None;
+                // Tell the worker to stop and the tick poll to stop
+                // waiting; a result it wrote just before is dropped.
+                if let Some((uuid, ..)) = guided_import_finalize.borrow_mut().take() {
+                    guided::request_import_cancel(app, &uuid);
+                    let _ = guided::take_import_result(app, &uuid);
+                }
                 *guided_import_src.borrow_mut() = None;
-                guided::clear_import_result(app);
-                guided::clear_import_progress(app);
                 if let Some(ui) = weak.upgrade() {
                     ui.set_guided_import_busy(false);
                     ui.set_guided_import_progress(0.0);

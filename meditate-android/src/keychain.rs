@@ -13,7 +13,7 @@
 #![cfg(target_os = "android")]
 
 use android_activity::AndroidApp;
-use jni::objects::{JClass, JObject, JString};
+use jni::objects::JString;
 
 const KEYCHAIN_CLASS_DOTTED: &str =
     "io.github.janekbt.Meditate.MeditateKeychain";
@@ -66,31 +66,6 @@ pub fn read_password(
 // one lands; the Rust bridge stays consumer-driven (dead-code-
 // warning-free) per the no-suppression rule.
 
-fn resolve_class<'a>(
-    env: &mut jni::JNIEnv<'a>,
-    activity: &JObject,
-    dotted: &str,
-) -> Result<JClass<'a>, jni::errors::Error> {
-    let classloader = env
-        .call_method(
-            activity,
-            "getClassLoader",
-            "()Ljava/lang/ClassLoader;",
-            &[],
-        )?
-        .l()?;
-    let class_name = env.new_string(dotted)?;
-    let class_obj = env
-        .call_method(
-            &classloader,
-            "loadClass",
-            "(Ljava/lang/String;)Ljava/lang/Class;",
-            &[(&class_name).into()],
-        )?
-        .l()?;
-    Ok(class_obj.into())
-}
-
 fn invoke_store(
     app: &AndroidApp,
     url: &str,
@@ -101,7 +76,7 @@ fn invoke_store(
         let jurl = env.new_string(url)?;
         let juser = env.new_string(username)?;
         let jpw = env.new_string(password)?;
-        let class = resolve_class(env, activity, KEYCHAIN_CLASS_DOTTED)?;
+        let class = crate::jni_call::load_class(env, activity, KEYCHAIN_CLASS_DOTTED)?;
         let result = env
             .call_static_method(
                 class,
@@ -127,7 +102,7 @@ fn invoke_read(
     crate::jni_call::with_env(app, |env, activity| {
         let jurl = env.new_string(url)?;
         let juser = env.new_string(username)?;
-        let class = resolve_class(env, activity, KEYCHAIN_CLASS_DOTTED)?;
+        let class = crate::jni_call::load_class(env, activity, KEYCHAIN_CLASS_DOTTED)?;
         let result = env
             .call_static_method(
                 class,

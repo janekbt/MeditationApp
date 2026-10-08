@@ -8,7 +8,7 @@
 #![cfg(target_os = "android")]
 
 use android_activity::AndroidApp;
-use jni::objects::{JClass, JObject, JString};
+use jni::objects::JString;
 
 const INSETS_CLASS_DOTTED: &str =
     "io.github.janekbt.Meditate.MeditateInsets";
@@ -35,36 +35,11 @@ pub fn get_insets(app: &AndroidApp) -> Option<(f32, f32)> {
     }
 }
 
-fn resolve_class<'a>(
-    env: &mut jni::JNIEnv<'a>,
-    activity: &JObject,
-    dotted: &str,
-) -> Result<JClass<'a>, jni::errors::Error> {
-    let classloader = env
-        .call_method(
-            activity,
-            "getClassLoader",
-            "()Ljava/lang/ClassLoader;",
-            &[],
-        )?
-        .l()?;
-    let class_name = env.new_string(dotted)?;
-    let class_obj = env
-        .call_method(
-            &classloader,
-            "loadClass",
-            "(Ljava/lang/String;)Ljava/lang/Class;",
-            &[(&class_name).into()],
-        )?
-        .l()?;
-    Ok(class_obj.into())
-}
-
 fn invoke_get_insets(
     app: &AndroidApp,
 ) -> Result<String, jni::errors::Error> {
     crate::jni_call::with_env(app, |env, activity| {
-        let class = resolve_class(env, activity, INSETS_CLASS_DOTTED)?;
+        let class = crate::jni_call::load_class(env, activity, INSETS_CLASS_DOTTED)?;
         let result = env
             .call_static_method(
                 class,

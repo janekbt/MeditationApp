@@ -8,7 +8,7 @@
 #![cfg(target_os = "android")]
 
 use android_activity::AndroidApp;
-use jni::objects::{JClass, JObject, JString};
+use jni::objects::JString;
 
 const ABOUT_CLASS_DOTTED: &str =
     "io.github.janekbt.Meditate.MeditateAbout";
@@ -81,36 +81,11 @@ pub fn open_url(app: &AndroidApp, url: &str) {
     }
 }
 
-fn resolve_class<'a>(
-    env: &mut jni::JNIEnv<'a>,
-    activity: &JObject,
-    dotted: &str,
-) -> Result<JClass<'a>, jni::errors::Error> {
-    let classloader = env
-        .call_method(
-            activity,
-            "getClassLoader",
-            "()Ljava/lang/ClassLoader;",
-            &[],
-        )?
-        .l()?;
-    let class_name = env.new_string(dotted)?;
-    let class_obj = env
-        .call_method(
-            &classloader,
-            "loadClass",
-            "(Ljava/lang/String;)Ljava/lang/Class;",
-            &[(&class_name).into()],
-        )?
-        .l()?;
-    Ok(class_obj.into())
-}
-
 fn invoke_locale_tag(
     app: &AndroidApp,
 ) -> Result<String, jni::errors::Error> {
     crate::jni_call::with_env(app, |env, activity| {
-        let class = resolve_class(env, activity, ABOUT_CLASS_DOTTED)?;
+        let class = crate::jni_call::load_class(env, activity, ABOUT_CLASS_DOTTED)?;
         let result = env
             .call_static_method(
                 class,
@@ -129,7 +104,7 @@ fn invoke_version_name(
     app: &AndroidApp,
 ) -> Result<String, jni::errors::Error> {
     crate::jni_call::with_env(app, |env, activity| {
-        let class = resolve_class(env, activity, ABOUT_CLASS_DOTTED)?;
+        let class = crate::jni_call::load_class(env, activity, ABOUT_CLASS_DOTTED)?;
         let result = env
             .call_static_method(
                 class,
@@ -149,7 +124,7 @@ fn invoke_no_arg_string(
     method: &str,
 ) -> Result<String, jni::errors::Error> {
     crate::jni_call::with_env(app, |env, activity| {
-        let class = resolve_class(env, activity, ABOUT_CLASS_DOTTED)?;
+        let class = crate::jni_call::load_class(env, activity, ABOUT_CLASS_DOTTED)?;
         let result = env
             .call_static_method(class, method, "()Ljava/lang/String;", &[])?
             .l()?;
@@ -163,7 +138,7 @@ fn invoke_time_format(
     app: &AndroidApp,
 ) -> Result<String, jni::errors::Error> {
     crate::jni_call::with_env(app, |env, activity| {
-        let class = resolve_class(env, activity, ABOUT_CLASS_DOTTED)?;
+        let class = crate::jni_call::load_class(env, activity, ABOUT_CLASS_DOTTED)?;
         let result = env
             .call_static_method(
                 class,
@@ -185,7 +160,7 @@ fn invoke_one_string(
 ) -> Result<(), jni::errors::Error> {
     crate::jni_call::with_env(app, |env, activity| {
         let ja = env.new_string(a)?;
-        let class = resolve_class(env, activity, ABOUT_CLASS_DOTTED)?;
+        let class = crate::jni_call::load_class(env, activity, ABOUT_CLASS_DOTTED)?;
         env.call_static_method(
             class,
             method,
@@ -205,7 +180,7 @@ fn invoke_two_strings(
     crate::jni_call::with_env(app, |env, activity| {
         let ja = env.new_string(a)?;
         let jb = env.new_string(b)?;
-        let class = resolve_class(env, activity, ABOUT_CLASS_DOTTED)?;
+        let class = crate::jni_call::load_class(env, activity, ABOUT_CLASS_DOTTED)?;
         env.call_static_method(
             class,
             method,

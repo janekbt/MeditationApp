@@ -11,7 +11,7 @@
 #![cfg(target_os = "android")]
 
 use android_activity::AndroidApp;
-use jni::objects::{JClass, JObject, JValue};
+use jni::objects::JValue;
 
 const SCREEN_CLASS_DOTTED: &str =
     "io.github.janekbt.Meditate.MeditateScreen";
@@ -29,37 +29,12 @@ pub fn set_keep_awake(app: &AndroidApp, on: bool) {
     }
 }
 
-fn resolve_class<'a>(
-    env: &mut jni::JNIEnv<'a>,
-    activity: &JObject,
-    dotted: &str,
-) -> Result<JClass<'a>, jni::errors::Error> {
-    let classloader = env
-        .call_method(
-            activity,
-            "getClassLoader",
-            "()Ljava/lang/ClassLoader;",
-            &[],
-        )?
-        .l()?;
-    let class_name = env.new_string(dotted)?;
-    let class_obj = env
-        .call_method(
-            &classloader,
-            "loadClass",
-            "(Ljava/lang/String;)Ljava/lang/Class;",
-            &[(&class_name).into()],
-        )?
-        .l()?;
-    Ok(class_obj.into())
-}
-
 fn invoke_set_keep_awake(
     app: &AndroidApp,
     on: bool,
 ) -> Result<(), jni::errors::Error> {
     crate::jni_call::with_env(app, |env, activity| {
-        let class = resolve_class(env, activity, SCREEN_CLASS_DOTTED)?;
+        let class = crate::jni_call::load_class(env, activity, SCREEN_CLASS_DOTTED)?;
         // NativeActivity IS an android.app.Activity, so it doubles as
         // both the receiver context and the Activity arg.
         env.call_static_method(

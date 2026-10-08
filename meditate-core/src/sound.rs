@@ -109,8 +109,12 @@ pub struct PickedFile {
 /// `NO_AUDIO_TRACK_CODE` when the probe opened the file and found no
 /// audio stream. `None` when the path line is missing or blank. Only
 /// the exact marker rejects — a failed probe writes nothing there and
-/// must not block a possibly playable file.
+/// must not block a possibly playable file. `err:<msg>` means the
+/// copy into app storage failed.
 pub fn parse_pick(raw: &str) -> Option<Result<PickedFile, AudioFileError>> {
+    if let Some(msg) = raw.trim().strip_prefix("err:") {
+        return Some(Err(AudioFileError::Other(msg.to_string())));
+    }
     let mut lines = raw.lines().map(str::trim);
     let path = lines.next().filter(|p| !p.is_empty())?.to_string();
     let display_name = lines.next().unwrap_or("").to_string();
@@ -640,6 +644,14 @@ mod tests {
         assert_eq!(parse_pick("/p/t.mp3\nA\nabc").unwrap().unwrap().duration_secs, 0);
         assert_eq!(parse_pick("/p/t.mp3\nA").unwrap().unwrap().duration_secs, 0);
         assert_eq!(parse_pick("/p/t.mp3").unwrap().unwrap().display_name, "");
+    }
+
+    #[test]
+    fn a_failed_pick_copy_is_an_error() {
+        assert_eq!(
+            parse_pick("err:ENOSPC (No space left on device)"),
+            Some(Err(AudioFileError::Other("ENOSPC (No space left on device)".into()))),
+        );
     }
 
     #[test]

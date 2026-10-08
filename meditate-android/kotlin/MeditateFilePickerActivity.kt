@@ -4,7 +4,8 @@
 // Activity owns the request/result, copies the chosen file into
 // app storage, probes its duration, and writes the drop-file
 // `<filesDir>/meditate/guided_pick` (3 lines: path / name /
-// duration_secs) that src/guided.rs::take_pending_pick reads on
+// duration_secs, or `err:<msg>` when the copy failed) that
+// src/guided.rs::take_pending_pick reads on
 // the next tick. The copy runs off the main thread (a guided
 // meditation can be tens of MB → ANR if copied on the UI
 // thread); the Activity stays invisible until it finishes.
@@ -131,10 +132,18 @@ class MeditateFilePickerActivity : Activity() {
         val dir = File(File(filesDir, "meditate"), subdir)
         dir.mkdirs()
         val dest = File(dir, "transient" + extOf(name))
-        contentResolver.openInputStream(uri)?.use { input ->
-            dest.outputStream().use { out -> input.copyTo(out) }
-        } ?: run {
-            Log.w(TAG, "openInputStream returned null")
+        try {
+            contentResolver.openInputStream(uri)?.use { input ->
+                dest.outputStream().use { out -> input.copyTo(out) }
+            } ?: throw IllegalStateException("openInputStream null")
+        } catch (e: Exception) {
+            // Offline cloud file, full storage: say so, like the CSV path.
+            Log.w(TAG, "audio copy failed: $e")
+            dest.delete()
+            MeditateDropFile.write(
+                File(File(filesDir, "meditate"), dropFile),
+                "err:" + (e.message ?: e.javaClass.simpleName),
+            )
             return
         }
         val (durSecs, noAudio) = probe(dest)

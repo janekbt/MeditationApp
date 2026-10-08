@@ -112,6 +112,7 @@ Left out on purpose:
 - **Confidence:** likely
 
 ### 9. Cancelling an import and quickly re-importing can adopt the old worker's result
+- **Fixed (2026-10-08):** R9: the cancel flag, result and progress files carry the import's uuid.
 - **Where:** `kotlin/MeditateGuidedImport.kt:70-72,92-96,111-114`; `lib.rs:6188`.
 - **What happens:**
   - The new run clears the cancel flag while the old WAV/OGG passthrough copy is still running.
@@ -199,6 +200,7 @@ Left out on purpose:
 - **Confidence:** confirmed
 
 ### 19. A guided or bell "Open File" whose copy fails gives no feedback
+- **Fixed (2026-10-08):** R9: the picker deletes the partial copy and writes `err:`, which shows "Import failed".
 - **Where:** `kotlin/MeditateFilePickerActivity.kt:111-146`: a null stream or an exception writes no drop-file and leaves a partial `transient.*`. The CSV path already writes `err:`.
 - **Repro:** Pick a Drive audio file while offline, or with storage full. Nothing happens.
 - **Fix idea:** Delete `dest`, write an `err:` marker, and map it to the existing `import_failed` toast.

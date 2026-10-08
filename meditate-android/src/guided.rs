@@ -13,7 +13,7 @@
 #![cfg(target_os = "android")]
 
 use android_activity::AndroidApp;
-use jni::objects::{JClass, JObject};
+use jni::objects::JObject;
 
 const PICKER_CLASS_DOTTED: &str =
     "io.github.janekbt.Meditate.MeditateGuidedPicker";
@@ -21,12 +21,14 @@ const PLAYER_CLASS_DOTTED: &str =
     "io.github.janekbt.Meditate.MeditateGuided";
 const IMPORT_CLASS_DOTTED: &str =
     "io.github.janekbt.Meditate.MeditateGuidedImport";
-/// Touched by `MeditateGuidedImport` when the background transcode
+// The import files carry the import's uuid (`<name>.<uuid>`, the
+// dest's file stem), so a cancelled worker that is still copying can
+// never read the next import's cancel flag or write its result.
+/// Written by `MeditateGuidedImport` when the background transcode
 /// finishes: "ok" or "err:<message>". Single-consumption.
 const IMPORT_RESULT_FILENAME: &str = "guided_import_result";
-/// Continuously rewritten by `MeditateGuidedImport` with the
-/// transcode percent (0–99). Polled every tick (NOT consumed —
-/// it's overwritten in place); removed at finalize.
+/// Rewritten by `MeditateGuidedImport` with the transcode percent
+/// (0–99). Polled every tick, not consumed; the worker removes it.
 const IMPORT_PROGRESS_FILENAME: &str = "guided_import_progress";
 /// Written by Rust when the user taps Cancel mid-transcode; the
 /// Kotlin worker polls it each loop and aborts (deleting the
@@ -103,12 +105,7 @@ pub type PickResult = Result<
 >;
 
 fn take_pick_file(app: &AndroidApp, filename: &str) -> Option<PickResult> {
-    let data_root = app.internal_data_path()?;
-    let path = data_root.join("meditate").join(filename);
-    let raw = std::fs::read_to_string(&path).ok()?;
-    // Remove first so a parse failure can't loop every tick.
-    let _ = std::fs::remove_file(&path);
-    meditate_core::sound::parse_pick(&raw)
+    meditate_core::sound::parse_pick(&crate::drop_file::take(app, filename)?)
 }
 
 /// CSV-import picker route (DP): target "import-meditate" or
@@ -140,10 +137,7 @@ pub fn open_export(app: &AndroidApp, src_path: &str, suggested: &str) -> bool {
 pub fn take_export_result(
     app: &AndroidApp,
 ) -> Option<Result<(), String>> {
-    let data_root = app.internal_data_path()?;
-    let path = data_root.join("meditate").join(EXPORT_RESULT_FILENAME);
-    let raw = std::fs::read_to_string(&path).ok()?;
-    let _ = std::fs::remove_file(&path);
+    let raw = crate::drop_file::take(app, EXPORT_RESULT_FILENAME)?;
     let trimmed = raw.trim();
     if trimmed == "ok" {
         Some(Ok(()))
@@ -159,36 +153,7 @@ pub fn take_export_result(
 /// "meditate" | "insight", or `Err(message)` when the copy into app
 /// storage failed (see `app::parse_csv_pick`). Single consumption.
 pub fn take_csv_pick(app: &AndroidApp) -> Option<Result<(String, String), String>> {
-    let data_root = app.internal_data_path()?;
-    let path = data_root.join("meditate").join(CSV_PICK_FILENAME);
-    let raw = std::fs::read_to_string(&path).ok()?;
-    let _ = std::fs::remove_file(&path);
-    crate::app::parse_csv_pick(&raw)
-}
-
-fn resolve_class<'a>(
-    env: &mut jni::JNIEnv<'a>,
-    activity: &JObject,
-    dotted: &str,
-) -> Result<JClass<'a>, jni::errors::Error> {
-    let classloader = env
-        .call_method(
-            activity,
-            "getClassLoader",
-            "()Ljava/lang/ClassLoader;",
-            &[],
-        )?
-        .l()?;
-    let class_name = env.new_string(dotted)?;
-    let class_obj = env
-        .call_method(
-            &classloader,
-            "loadClass",
-            "(Ljava/lang/String;)Ljava/lang/Class;",
-            &[(&class_name).into()],
-        )?
-        .l()?;
-    Ok(class_obj.into())
+    crate::app::parse_csv_pick(&crate::drop_file::take(app, CSV_PICK_FILENAME)?)
 }
 
 fn invoke_open_export(
@@ -199,7 +164,7 @@ fn invoke_open_export(
     crate::jni_call::with_env(app, |env, activity| {
         let jsrc = env.new_string(src_path)?;
         let jname = env.new_string(suggested)?;
-        let class = resolve_class(env, activity, PICKER_CLASS_DOTTED)?;
+        let class = crate::jni_call::load_class(env, activity, PICKER_CLASS_DOTTED)?;
         env.call_static_method(
             class,
             "openExport",
@@ -230,7 +195,7 @@ fn invoke_open(
                 jm,
             )?;
         }
-        let class = resolve_class(env, activity, PICKER_CLASS_DOTTED)?;
+        let class = crate::jni_call::load_class(env, activity, PICKER_CLASS_DOTTED)?;
         env.call_static_method(
             class,
             "openFor",
@@ -286,123 +251,67 @@ pub fn stop(app: &AndroidApp) {
 /// another media app takes focus). The tick loop routes a `true`
 /// through the normal pause transition.
 pub fn take_focus_loss(app: &AndroidApp) -> bool {
-    let Some(data_root) = app.internal_data_path() else {
-        return false;
-    };
-    let path = data_root.join("meditate").join(FOCUS_LOSS_FILENAME);
-    if std::fs::metadata(&path).is_ok() {
-        let _ = std::fs::remove_file(&path);
-        true
-    } else {
-        false
-    }
+    crate::drop_file::take(app, FOCUS_LOSS_FILENAME).is_some()
 }
 
 pub fn take_eos(app: &AndroidApp) -> bool {
-    let Some(data_root) = app.internal_data_path() else {
-        return false;
-    };
-    let path = data_root.join("meditate").join(EOS_FILENAME);
-    if std::fs::metadata(&path).is_ok() {
-        let _ = std::fs::remove_file(&path);
-        true
-    } else {
-        false
-    }
+    crate::drop_file::take(app, EOS_FILENAME).is_some()
 }
 
 // ── Guided import transcode (MeditateGuidedImport) ──────────────────
 
 /// Kick off the background transcode (or wav/ogg passthrough copy)
-/// of `src` → `dest` (`<data>/meditate/guided/<uuid>.ogg`). Fire-
-/// and-forget: the result lands in the `guided_import_result`
-/// drop-file; poll `take_import_result`. Mirrors GTK's
-/// `spawn_blocking(do_import_io)`.
+/// of `src` → `dest` (`<data>/meditate/guided/<uuid>.ogg`). The
+/// result lands in the `guided_import_result.<uuid>` drop-file; poll
+/// `take_import_result`. `false` when the worker never started.
+/// Mirrors GTK's `spawn_blocking(do_import_io)`.
 pub fn start_import(
     app: &AndroidApp,
     src: &str,
     dest: &str,
     duration_secs: u32,
-) {
-    if let Err(e) = invoke_import(app, src, dest, duration_secs) {
-        meditate_core::log(
-            "guided",
-            &format!("start_import FAILED: {e:?}"),
-        );
+) -> bool {
+    match invoke_import(app, src, dest, duration_secs) {
+        Ok(()) => true,
+        Err(e) => {
+            meditate_core::log("guided", &format!("start_import FAILED: {e:?}"));
+            false
+        }
     }
 }
 
-/// Current transcode percent (0–99) the worker is rewriting, or
-/// `None` if no progress file exists yet. Not consumed — the file
-/// is overwritten in place by the worker and removed at finalize.
-pub fn take_import_progress(app: &AndroidApp) -> Option<u8> {
-    let data_root = app.internal_data_path()?;
-    let path = data_root
+/// Current transcode percent (0–99) of import `uuid`, or `None` if
+/// no progress file exists yet. Not consumed: the worker rewrites it
+/// in place and removes it when done.
+pub fn import_progress(app: &AndroidApp, uuid: &str) -> Option<u8> {
+    let path = app
+        .internal_data_path()?
         .join("meditate")
-        .join(IMPORT_PROGRESS_FILENAME);
+        .join(format!("{IMPORT_PROGRESS_FILENAME}.{uuid}"));
     let raw = std::fs::read_to_string(&path).ok()?;
     raw.trim().parse::<u8>().ok().map(|p| p.min(100))
 }
 
-/// Remove the progress drop-file once the import has been
-/// finalized (success or failure) so a stale value can't bleed
-/// into the next import's button fill.
-pub fn clear_import_progress(app: &AndroidApp) {
+/// Signal the worker of import `uuid` to abort. The Kotlin loop
+/// polls this file every iteration and, on seeing it, deletes the
+/// partial dest and exits without writing "ok". Mirrors GTK's
+/// `cancel.store(true)`.
+pub fn request_import_cancel(app: &AndroidApp, uuid: &str) {
     if let Some(data_root) = app.internal_data_path() {
         let path = data_root
             .join("meditate")
-            .join(IMPORT_PROGRESS_FILENAME);
-        let _ = std::fs::remove_file(&path);
-    }
-}
-
-/// Signal the running transcode worker to abort. The Kotlin
-/// loop polls this file every iteration and, on seeing it,
-/// deletes the partial dest and exits without writing "ok".
-/// Mirrors GTK's `cancel.store(true)`.
-pub fn request_import_cancel(app: &AndroidApp) {
-    if let Some(data_root) = app.internal_data_path() {
-        let path = data_root
-            .join("meditate")
-            .join(IMPORT_CANCEL_FILENAME);
+            .join(format!("{IMPORT_CANCEL_FILENAME}.{uuid}"));
         let _ = std::fs::write(&path, b"1");
     }
 }
 
-/// Remove the cancel flag before a fresh import so a prior
-/// cancellation can't abort the new run instantly.
-pub fn clear_import_cancel(app: &AndroidApp) {
-    if let Some(data_root) = app.internal_data_path() {
-        let path = data_root
-            .join("meditate")
-            .join(IMPORT_CANCEL_FILENAME);
-        let _ = std::fs::remove_file(&path);
-    }
-}
-
-/// Discard any pending transcode result without acting on it —
-/// used by Cancel so a worker that finished a hair before the
-/// abort lands doesn't leave an "ok" that the next poll adopts.
-pub fn clear_import_result(app: &AndroidApp) {
-    if let Some(data_root) = app.internal_data_path() {
-        let path = data_root
-            .join("meditate")
-            .join(IMPORT_RESULT_FILENAME);
-        let _ = std::fs::remove_file(&path);
-    }
-}
-
-/// Take the transcode outcome and delete the drop-file (single
-/// consumption). `None` while the worker is still running /
-/// nothing pending.
+/// Take the outcome of import `uuid` (single consumption). `None`
+/// while the worker is still running.
 pub fn take_import_result(
     app: &AndroidApp,
+    uuid: &str,
 ) -> Option<Result<(), meditate_core::sound::AudioFileError>> {
-    let data_root = app.internal_data_path()?;
-    let path =
-        data_root.join("meditate").join(IMPORT_RESULT_FILENAME);
-    let raw = std::fs::read_to_string(&path).ok()?;
-    let _ = std::fs::remove_file(&path);
+    let raw = crate::drop_file::take(app, &format!("{IMPORT_RESULT_FILENAME}.{uuid}"))?;
     Some(meditate_core::sound::parse_import_result(&raw))
 }
 
@@ -415,7 +324,7 @@ fn invoke_import(
     crate::jni_call::with_env(app, |env, activity| {
         let jsrc = env.new_string(src)?;
         let jdest = env.new_string(dest)?;
-        let class = resolve_class(env, activity, IMPORT_CLASS_DOTTED)?;
+        let class = crate::jni_call::load_class(env, activity, IMPORT_CLASS_DOTTED)?;
         env.call_static_method(
             class,
             "startImport",
@@ -437,7 +346,7 @@ fn invoke_play(
 ) -> Result<bool, jni::errors::Error> {
     crate::jni_call::with_env(app, |env, activity| {
         let jpath = env.new_string(path)?;
-        let class = resolve_class(env, activity, PLAYER_CLASS_DOTTED)?;
+        let class = crate::jni_call::load_class(env, activity, PLAYER_CLASS_DOTTED)?;
         let started = env.call_static_method(
             class,
             "startAudio",
@@ -453,7 +362,7 @@ fn invoke_player_noarg(
     method: &str,
 ) -> Result<(), jni::errors::Error> {
     crate::jni_call::with_env(app, |env, activity| {
-        let class = resolve_class(env, activity, PLAYER_CLASS_DOTTED)?;
+        let class = crate::jni_call::load_class(env, activity, PLAYER_CLASS_DOTTED)?;
         env.call_static_method(
             class,
             method,

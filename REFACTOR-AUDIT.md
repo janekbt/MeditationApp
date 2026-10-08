@@ -224,6 +224,7 @@ Planning only: nothing here has been changed yet. The audit ran on beta at a8a5d
 - **Tests:** an `err` for each kind; a stale import uuid is ignored.
 - **Risk:** S. Drop files are transient IPC, so no migration.
 - **Effort:** S
+- **Status:** done. `drop_file::take` serves all seven readers. A failed start keeps the import dialog open with "Import failed", like a failed import. The worker removes its own progress and cancel files, so no clear helpers remain.
 
 ### R10 Typed targets in the Android Rust code
 - **Evidence:**
@@ -301,7 +302,7 @@ Planning only: nothing here has been changed yet. The audit ran on beta at a8a5d
   - It removes most of the 674 cfg gates and the host-only `let _ =` silencers, about -750 lines of noise.
   - Cargo.toml, main.rs and build.rs stay untouched. Source tests change their path from src/lib.rs to src/ui.rs.
   - Cost: lib.rs code is then type-checked only by the Android build, which is already almost true today.
-- **Status:** (a) and (b) done. (c) deferred: no bug behind it, and every bridge needs a phone check, so it rides along with R8/R9 (step 4), which touch the bridges and need a phone round anyway.
+- **Status:** all done; (c) shipped with R9 as `jni_call::load_class`. Earlier note: (a) and (b) done. (c) deferred: no bug behind it, and every bridge needs a phone check, so it rides along with R8/R9 (step 4), which touch the bridges and need a phone round anyway.
 - **(c) `jni_call::load_class`:**
   - Evidence: `resolve_class` is copied 8 times (audio.rs:110, screen.rs:32, guided.rs:169, widget.rs:139, haptics.rs:102, insets.rs:38, keychain.rs:69, about.rs:84), plus the `(Context)V` wrappers.
   - Change: add it to the existing jni_call.rs.

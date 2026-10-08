@@ -2,6 +2,8 @@ pub mod app;
 #[cfg(target_os = "android")]
 mod haptics;
 #[cfg(target_os = "android")]
+mod drop_file;
+#[cfg(target_os = "android")]
 mod jni_call;
 #[cfg(target_os = "android")]
 mod service;

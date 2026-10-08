@@ -12,7 +12,7 @@
 // Runs on a background Thread (a long guide is tens of MB and the
 // decode/encode loop is CPU-bound — never on the UI thread).
 // Result is handed back to Rust via the drop-file
-// `<filesDir>/meditate/guided_import_result` ("ok" | "err:<msg>"),
+// `<filesDir>/meditate/guided_import_result.<uuid>` ("ok" | "err:<msg>"),
 // polled by src/guided.rs::take_import_result on the next tick.
 
 package io.github.janekbt.Meditate
@@ -51,7 +51,11 @@ object MeditateGuidedImport {
     ) {
         Thread {
             val dir = File(context.filesDir, "meditate")
-            val progressFile = File(dir, "guided_import_progress")
+            // Every file of this run carries its uuid (dest's stem), so
+            // a cancelled run still copying never sees the next run's
+            // cancel flag or hands it its result.
+            val run = File(dest).nameWithoutExtension
+            val progressFile = File(dir, "guided_import_progress.$run")
             // 0 % at the start; the Rust tick poll reads this and
             // fills the Converting… button. Throttled to whole-
             // percent changes so we're not hammering the FS.
@@ -64,11 +68,9 @@ object MeditateGuidedImport {
                 }
             }
             runCatching { progressFile.writeText("0") }
-            // Cancel flag: Rust writes guided_import_cancel on the
-            // Cancel tap; the transcode loop polls this and aborts.
-            // Clear any stale flag from a prior run first.
-            val cancelFile = File(dir, "guided_import_cancel")
-            runCatching { cancelFile.delete() }
+            // Cancel flag: Rust writes it on the Cancel tap; the
+            // transcode loop polls it and aborts.
+            val cancelFile = File(dir, "guided_import_cancel.$run")
             val isCancelled: () -> Boolean = { cancelFile.exists() }
             val result = try {
                 doImport(
@@ -85,13 +87,14 @@ object MeditateGuidedImport {
                 runCatching { File(dest).delete() }
                 "err:" + (e.message ?: e.javaClass.simpleName)
             }
-            // A cancelled run writes NO result: Rust already
-            // dropped the finalize slot, and a late "err:cancelled"
-            // would otherwise be consumed as the *next* import's
-            // outcome (cross-run contamination).
-            if (!isCancelled()) {
+            // A cancelled run writes NO result: Rust already dropped
+            // its finalize slot, so nobody would ever read it.
+            val cancelled = isCancelled()
+            runCatching { progressFile.delete() }
+            runCatching { cancelFile.delete() }
+            if (!cancelled) {
                 runCatching {
-                    MeditateDropFile.write(File(dir, "guided_import_result"), result)
+                    MeditateDropFile.write(File(dir, "guided_import_result.$run"), result)
                 }
             }
         }.start()

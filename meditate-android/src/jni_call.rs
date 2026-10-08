@@ -23,7 +23,7 @@
 #![cfg(target_os = "android")]
 
 use android_activity::AndroidApp;
-use jni::objects::JObject;
+use jni::objects::{JClass, JObject};
 use jni::{JNIEnv, JavaVM};
 
 /// Room for the handful of refs one bridge call makes (class loader,
@@ -49,4 +49,27 @@ pub fn with_env<T>(
         let _ = env.exception_clear();
     }
     result
+}
+
+/// Load an app class (dotted name) through the activity's class
+/// loader. `FindClass` on a native-attached thread only sees system
+/// classes, so the app's Kotlin helpers need this route.
+pub fn load_class<'a>(
+    env: &mut JNIEnv<'a>,
+    activity: &JObject,
+    dotted: &str,
+) -> Result<JClass<'a>, jni::errors::Error> {
+    let loader = env
+        .call_method(activity, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])?
+        .l()?;
+    let name = env.new_string(dotted)?;
+    let class = env
+        .call_method(
+            &loader,
+            "loadClass",
+            "(Ljava/lang/String;)Ljava/lang/Class;",
+            &[(&name).into()],
+        )?
+        .l()?;
+    Ok(class.into())
 }

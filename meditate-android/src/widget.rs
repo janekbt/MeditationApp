@@ -25,8 +25,6 @@
 
 #[cfg(target_os = "android")]
 use android_activity::AndroidApp;
-#[cfg(target_os = "android")]
-use jni::objects::{JClass, JObject};
 
 #[cfg(target_os = "android")]
 const WIDGET_CLASS_DOTTED: &str = "io.github.janekbt.Meditate.MeditateWidget";
@@ -121,12 +119,7 @@ const LAUNCH_FILENAME: &str = "widget_launch";
 /// the common case is "no file": a failed open is one syscall.
 #[cfg(target_os = "android")]
 pub fn take_pending_launch(app: &AndroidApp) -> Option<String> {
-    let data_root = app.internal_data_path()?;
-    let path = data_root.join("meditate").join(LAUNCH_FILENAME);
-    let uuid = std::fs::read_to_string(&path).ok()?;
-    // Remove first so a parse/lock failure downstream still can't
-    // make the same tap loop on every tick.
-    let _ = std::fs::remove_file(&path);
+    let uuid = crate::drop_file::take(app, LAUNCH_FILENAME)?;
     let trimmed = uuid.trim();
     if trimmed.is_empty() {
         None
@@ -136,29 +129,9 @@ pub fn take_pending_launch(app: &AndroidApp) -> Option<String> {
 }
 
 #[cfg(target_os = "android")]
-fn resolve_class<'a>(
-    env: &mut jni::JNIEnv<'a>,
-    activity: &JObject,
-) -> Result<JClass<'a>, jni::errors::Error> {
-    let classloader = env
-        .call_method(activity, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])?
-        .l()?;
-    let class_name = env.new_string(WIDGET_CLASS_DOTTED)?;
-    let class_obj = env
-        .call_method(
-            &classloader,
-            "loadClass",
-            "(Ljava/lang/String;)Ljava/lang/Class;",
-            &[(&class_name).into()],
-        )?
-        .l()?;
-    Ok(class_obj.into())
-}
-
-#[cfg(target_os = "android")]
 fn invoke_refresh(app: &AndroidApp) -> Result<(), jni::errors::Error> {
     crate::jni_call::with_env(app, |env, activity| {
-        let class = resolve_class(env, activity)?;
+        let class = crate::jni_call::load_class(env, activity, WIDGET_CLASS_DOTTED)?;
         env.call_static_method(
             class,
             "refresh",
