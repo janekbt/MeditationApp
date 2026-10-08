@@ -27,6 +27,12 @@
 
 use rusqlite::Connection;
 use std::path::Path;
+use std::time::Duration;
+
+/// How long an app write waits for another connection's write lock.
+const APP_BUSY_TIMEOUT: Duration = Duration::from_secs(1);
+/// The sync worker runs off the UI thread and can afford to wait.
+pub const SYNC_BUSY_TIMEOUT: Duration = Duration::from_secs(8);
 
 mod bell_sounds;
 mod box_breath_phases;
@@ -213,16 +219,14 @@ impl Database {
                 .open(path);
         }
         let conn = Connection::open(path)?;
-        // Wait up to 8s when another writer holds the lock instead of
-        // failing instantly with SQLITE_BUSY. Main thread holds one
-        // connection under Arc<Mutex<…>>; the sync worker opens its
-        // own connection via this same path. WAL allows concurrent
-        // reader + one writer, but two writers (e.g. a main-thread
-        // set_setting landing during the sync worker's replay_events
-        // transaction) still need this back-off to coexist. rusqlite
-        // happens to default to 5s today; we pin the value explicitly
-        // so a future version bump can't silently change the contract.
-        conn.busy_timeout(std::time::Duration::from_secs(8))?;
+        // Wait up to 1s when another writer holds the lock instead of
+        // failing instantly with SQLITE_BUSY. The apps write on their
+        // UI thread, so the wait is a freeze: 1s covers a normal sync
+        // write (milliseconds) and caps the rare long one (a first
+        // full pull). The sync worker raises its own connection to
+        // SYNC_BUSY_TIMEOUT. Pinned rather than rusqlite's default so
+        // a version bump can't silently change it.
+        conn.busy_timeout(APP_BUSY_TIMEOUT)?;
         // For on-disk databases, enable WAL with synchronous=NORMAL.
         // The default (rollback journal + synchronous=FULL) does a
         // full fsync on every commit — autocommit UPDATEs become
@@ -241,7 +245,18 @@ impl Database {
         Self::init(conn)
     }
 
-    fn init(conn: Connection) -> Result<Self> {
+    /// Change how long a write waits for another connection's lock.
+    /// The sync worker calls it with [`SYNC_BUSY_TIMEOUT`].
+    pub fn set_busy_timeout(&self, timeout: Duration) -> Result<()> {
+        Ok(self.conn.busy_timeout(timeout)?)
+    }
+
+    fn init(mut conn: Connection) -> Result<Self> {
+        // Writers take the lock when their transaction begins, so they
+        // wait out busy_timeout. A deferred transaction that reads
+        // first fails at once (SQLITE_BUSY) when another connection
+        // writes in between. Every transaction here writes.
+        conn.set_transaction_behavior(rusqlite::TransactionBehavior::Immediate);
         // Refuse to open a DB whose user_version exceeds what this
         // build knows how to read — a downgrade from a future build
         // could otherwise drop forward-only data silently. A fresh
@@ -696,16 +711,45 @@ mod tests {
     fn open_sets_busy_timeout_on_file_backed_connection() {
         // Without a busy_timeout, a main-thread `set_setting` racing
         // the sync worker's `replay_events` transaction returns
-        // SQLITE_BUSY instantly. We explicitly set 8s rather than
-        // relying on rusqlite's current 5s default — the value is
-        // part of our runtime contract, not an inherited accident.
+        // SQLITE_BUSY instantly. The values are part of the runtime
+        // contract, not rusqlite's inherited default.
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("busy.db");
         let db = Database::open(&path).unwrap();
-        let timeout_ms: i64 = db.conn
-            .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
-            .unwrap();
-        assert_eq!(timeout_ms, 8000,
-            "Database::open must explicitly set busy_timeout to 8s");
+        let timeout_ms = |db: &Database| -> i64 {
+            db.conn.query_row("PRAGMA busy_timeout", [], |row| row.get(0)).unwrap()
+        };
+        assert_eq!(timeout_ms(&db), 1000, "Database::open sets the app's 1s");
+        db.set_busy_timeout(SYNC_BUSY_TIMEOUT).unwrap();
+        assert_eq!(timeout_ms(&db), 8000, "the sync worker raises its own");
+    }
+
+    /// A write that reads first must wait for a sync write on another
+    /// connection, not fail: a deferred transaction's read goes stale
+    /// when the other writer commits, and SQLite then refuses the
+    /// upgrade at once (SQLITE_BUSY_SNAPSHOT), whatever busy_timeout
+    /// says. Transactions start IMMEDIATE so they wait for the lock
+    /// up front instead.
+    #[test]
+    fn an_edit_waits_for_a_write_on_another_connection() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("two.db");
+        let app = Database::open(&path).unwrap();
+        let id = app.insert_label("Old").unwrap();
+        let (started, wait) = std::sync::mpsc::channel();
+        let sync_path = path.clone();
+        let sync = std::thread::spawn(move || {
+            let worker = Database::open(&sync_path).unwrap();
+            worker.conn.execute_batch(
+                "BEGIN IMMEDIATE;
+                 INSERT INTO sync_state (key, value) VALUES ('busy-test', '1');",
+            ).unwrap();
+            started.send(()).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            worker.conn.execute_batch("COMMIT;").unwrap();
+        });
+        wait.recv().unwrap();
+        app.update_label(id, "New").expect("the edit waits instead of failing");
+        sync.join().unwrap();
     }
 }

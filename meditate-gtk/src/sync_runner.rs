@@ -107,6 +107,8 @@ impl From<meditate_core::SyncError> for SyncRunnerError {
 /// (the GTK shell) sees them on its next read.
 pub fn run_sync_attempt(db_path: &Path) -> Result<SyncStats, SyncRunnerError> {
     let db = CoreDb::open(db_path).map_err(SyncRunnerError::OpenDb)?;
+    // Off the UI thread: wait out an app write rather than fail.
+    db.set_busy_timeout(meditate_core::db::SYNC_BUSY_TIMEOUT)?;
 
     // Account configuration is read here (not by callers) so a single
     // function handles the full attempt — no half-runs.

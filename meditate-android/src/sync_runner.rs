@@ -100,6 +100,8 @@ pub fn run_sync_attempt(
     guided_dir: std::path::PathBuf,
 ) -> Result<SyncStats, SyncRunnerError> {
     let db = CoreDb::open(db_path).map_err(SyncRunnerError::OpenDb)?;
+    // Off the UI thread: wait out an app write rather than fail.
+    db.set_busy_timeout(meditate_core::db::SYNC_BUSY_TIMEOUT)?;
 
     let url = db.get_sync_state(KEY_URL, "")?;
     let username = db.get_sync_state(KEY_USERNAME, "")?;

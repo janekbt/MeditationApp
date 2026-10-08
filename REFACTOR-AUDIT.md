@@ -94,6 +94,13 @@ Planning only: nothing here has been changed yet. The audit ran on beta at a8a5d
 - **Tests:** a two-connection test. B holds a write for 200 ms, and A's update must succeed.
 - **Risk:** low. Trade-off: on GTK `with_db_mut` and on Android, writes run on the UI thread, so a write that fails at once today can block up to 8 s during a long sync replay.
 - **Effort:** S
+- **Status:** done, smaller than planned. rusqlite's `Connection::set_transaction_behavior(Immediate)` in `Database::init` covers all 38 sites with one line, so there is no `write_tx()`. To keep the UI-thread wait short, the app's connections wait 1 s for the lock (was 8 s for everyone), and the sync workers raise their own connection to 8 s (`SYNC_BUSY_TIMEOUT`).
+
+### R2b All database writes off the UI thread (later, only if needed)
+- **Why:** both apps write on their UI thread: 65 `with_db_mut` sites in GTK (only the finished-session save uses `with_db_blocking_mut`) and all 111 `lock_db()` sites on Android. Writes are milliseconds, so this is normally invisible. But a write that has to wait for sync's lock freezes the UI for that time. After R2 that freeze is capped at 1 s, and only during a long sync write (first full pull, wipe-and-pull recovery). In that case the save then fails with the existing error.
+- **Change:** one background writer per app that owns its write connection and takes writes from a queue, with results handed back to the UI loop (GTK: `with_db_blocking_mut` everywhere; Android: a writer thread plus `slint::invoke_from_event_loop`). Each save gets an in-between state (pending, then done or failed).
+- **Size:** about 175 call sites across both apps; L. A project of its own.
+- **When:** only if the 1 s cap is noticeable in practice, or when a feature needs long writes. Not before.
 
 ### R3 Core builds the session: `settings_from_db(db, shape)`, a guided-only EOS, and a start refusal
 - **Evidence:**
