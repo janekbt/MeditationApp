@@ -400,11 +400,13 @@ impl Database {
         tx.execute("DELETE FROM events", [])?;
         tx.execute("DELETE FROM sessions", [])?;
         tx.execute("DELETE FROM labels", [])?;
-        tx.execute("DELETE FROM bell_sounds", [])?;
+        // Bundled sounds and patterns are seeded once per install;
+        // deleting them here would leave the app without them for good.
+        tx.execute("DELETE FROM bell_sounds WHERE is_bundled = 0", [])?;
         tx.execute("DELETE FROM interval_bells", [])?;
         tx.execute("DELETE FROM presets", [])?;
         tx.execute("DELETE FROM guided_files", [])?;
-        tx.execute("DELETE FROM vibration_patterns", [])?;
+        tx.execute("DELETE FROM vibration_patterns WHERE is_bundled = 0", [])?;
         tx.execute("DELETE FROM box_breath_phases", [])?;
         for phase in BoxBreathPhaseId::all() {
             tx.execute(
@@ -555,18 +557,26 @@ impl Database {
     /// `(EntityKind, target_id)` — a session edited five times in
     /// the same batch recomputes once.
     fn apply_event_record_only(&self, event: &Event) -> Result<Option<EntityKind>> {
+        // A clock this far out would overflow a few writes later and
+        // block every local save; skip without recording it.
+        if !(0..=i64::MAX / 2).contains(&event.lamport_ts) {
+            crate::diag::log(
+                "apply_event.rejected",
+                &format!("kind={} lamport_ts={} (out of range)", event.kind, event.lamport_ts),
+            );
+            return Ok(None);
+        }
+
         // Record first — the recompute query reads from events, so the
         // freshly-arrived event needs to be visible.
         let (_, was_new) = self.append_event_returning_newness(event)?;
 
-        // Lamport's observation rule: when we accept a fresh event from
-        // a peer, advance our local clock to `max(local, remote) + 1`
-        // so any event we author next strictly orders after the one we
-        // just observed. We skip this for our own device's events
-        // (re-applying our own event must not bump the clock — that
-        // would break the idempotency the user-facing API depends on)
-        // and for duplicates (we already observed this one).
-        if was_new && event.device_id != self.device_id()? {
+        // Lamport's observation rule: when we accept a fresh event,
+        // advance our local clock to `max(local, remote) + 1` so any
+        // event we author next strictly orders after it. That includes
+        // our own events coming back after Wipe Local or a DB restore.
+        // Duplicates don't bump (we already observed them).
+        if was_new {
             self.observe_remote_lamport(event.lamport_ts)?;
         }
 
@@ -1041,7 +1051,7 @@ mod tests {
     // ── wipe_local_event_log — "wipe local" recovery primitive ─────────
 
     #[test]
-    fn wipe_local_event_log_clears_every_event_sourced_table() {
+    fn wipe_local_event_log_clears_user_content_but_keeps_bundled_rows() {
         // The "wipe local to match remote" recovery deletes every
         // user-content table whose source-of-truth is the event log,
         // plus both dedup trackers. After the wipe, the local DB
@@ -1063,6 +1073,8 @@ mod tests {
         db.insert_preset("Sitting", SessionMode::Timer, true, r#"{}"#).unwrap();
         db.insert_guided_file_with_uuid("gf-1", "Track", "/p/t.ogg", 300, false).unwrap();
         db.insert_vibration_pattern("Custom Pulse", 200, &[1.0, 0.0], ChartKind::Bar, false).unwrap();
+        db.insert_bell_sound("Bundled", "/p/b.wav", true, "audio/wav", BellSoundCategory::General).unwrap();
+        db.insert_vibration_pattern("Bundled Pulse", 200, &[1.0, 0.0], ChartKind::Bar, true).unwrap();
         db.set_box_breath_phase(BoxBreathPhaseId::In, false, SignalMode::Sound, "x", "y", crate::bell_volume::BellVolume::default()).unwrap();
         db.record_known_remote_file("a").unwrap();
         db.record_known_remote_sound("bs-1").unwrap();
@@ -1088,14 +1100,17 @@ mod tests {
             "sessions table must be empty");
         assert!(db.list_interval_bells().unwrap().is_empty(),
             "interval_bells table must be empty");
-        assert!(db.list_bell_sounds().unwrap().is_empty(),
-            "bell_sounds table must be empty");
+        // Bundled rows ship with the app and are seeded only once, so
+        // the wipe keeps them; only the user's own ones go.
+        let sounds: Vec<_> = db.list_bell_sounds().unwrap().into_iter().map(|b| b.name).collect();
+        assert_eq!(sounds, ["Bundled"]);
         assert!(crate::db::list_presets_from_db(&db).unwrap().is_empty(),
             "presets table must be empty");
         assert!(crate::db::list_guided_files_from_db(&db).unwrap().is_empty(),
             "guided_files table must be empty");
-        assert!(crate::db::list_vibration_patterns_from_db(&db).unwrap().is_empty(),
-            "vibration_patterns table must be empty");
+        let patterns: Vec<_> = crate::db::list_vibration_patterns_from_db(&db).unwrap()
+            .into_iter().map(|p| p.name).collect();
+        assert_eq!(patterns, ["Bundled Pulse"]);
         assert!(db.known_remote_file_uuids().unwrap().is_empty(),
             "file dedup tracker must be empty");
         assert!(db.known_remote_sound_uuids().unwrap().is_empty(),
@@ -1540,24 +1555,43 @@ mod tests {
     }
 
     #[test]
-    fn apply_event_does_not_advance_local_lamport_for_our_own_device_events() {
-        // Re-applying an event we authored locally (idempotency retry,
-        // or pulling our own event back from remote storage) must not
-        // shift the clock. Otherwise a "harmless retry" would silently
-        // mutate clock state and break ordering invariants.
+    fn pulling_back_our_own_lost_events_advances_the_clock_past_them() {
+        // After Wipe Local (clock reset to 0) or an old DB backup, the
+        // pull brings back events this device authored at a higher
+        // lamport. The next local edit must still order after them,
+        // or it loses to our own stale edit on every device.
         let db = Database::open_in_memory().unwrap();
         let our_device_id = db.device_id().unwrap();
-        db.bump_lamport_clock().unwrap();
-        db.bump_lamport_clock().unwrap();
-        let before = db.lamport_clock().unwrap();
-        // Author an event "from us" with a very high lamport value.
         let our_event = synth_session_insert(
             SESSION_X, 999, &our_device_id,
             "_", 1, None, None, SessionMode::Timer,
         );
         db.apply_event(&our_event).unwrap();
-        assert_eq!(db.lamport_clock().unwrap(), before,
-            "apply_event with our own device_id must not bump the clock");
+        assert!(db.lamport_clock().unwrap() > 999,
+            "a newly seen event of ours must advance the clock past it");
+        let after_first = db.lamport_clock().unwrap();
+        db.apply_event(&our_event).unwrap();
+        assert_eq!(db.lamport_clock().unwrap(), after_first,
+            "re-applying the same event must not bump again");
+    }
+
+    #[test]
+    fn a_remote_event_with_an_absurd_lamport_is_skipped_not_recorded() {
+        // One corrupt or hostile batch must not push the clock to the
+        // edge of i64: a few writes later it would overflow and every
+        // local save would fail on every device that pulled it.
+        let db = Database::open_in_memory().unwrap();
+        let before = db.lamport_clock().unwrap();
+        let event = synth_session_insert(
+            SESSION_X, 9_223_372_036_854_775_800, DEVICE_A,
+            "_", 1, None, None, SessionMode::Timer,
+        );
+        db.apply_event(&event).unwrap();
+        assert_eq!(db.lamport_clock().unwrap(), before);
+        assert!(!db.known_event_uuids().unwrap().contains(&event.event_uuid));
+        for _ in 0..10 {
+            db.bump_lamport_clock().unwrap();
+        }
     }
 
     #[test]

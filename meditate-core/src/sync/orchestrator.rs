@@ -283,7 +283,7 @@ impl<'a, W: WebDav> Sync<'a, W> {
                 // listing means even the consolidated file is gone,
                 // and a surviving manifest must NOT paper over that.
                 let compacted = !listing_uuids.is_empty()
-                    && self.manifest_vouches_for_any(&known_files);
+                    && self.manifest_vouches_for_any(&known_files)?;
                 if !compacted {
                     return Err(SyncError::RemoteDataLost);
                 }
@@ -493,7 +493,17 @@ impl<'a, W: WebDav> Sync<'a, W> {
     pub fn sync_with_progress<F>(&self, progress: F) -> SyncResult<SyncStats>
     where F: FnMut(usize, usize),
     {
-        let pull_stats = self.pull()?;
+        let pull_stats = match self.pull() {
+            Ok(stats) => stats,
+            // A batch this build can't apply (a newer peer's value, a
+            // local write error) must not keep our own sessions from
+            // uploading. Events are append-only, so pushing is safe.
+            Err(e @ (SyncError::Db(_) | SyncError::InvalidEvent(_))) => {
+                self.push_with_progress(progress)?;
+                return Err(e);
+            }
+            Err(e) => return Err(e),
+        };
         let push_stats = self.push_with_progress(progress)?;
         // Housekeeping, never fatal: a failed compaction just leaves
         // extra batch files for the next sync to retry, while failing
@@ -624,26 +634,24 @@ impl<'a, W: WebDav> Sync<'a, W> {
     }
 
     /// Does the remote compaction manifest claim at least one of the
-    /// batch_uuids this device knows? Any manifest problem (missing,
-    /// unreadable, corrupt) answers `false` — the caller then falls
-    /// back to the conservative `RemoteDataLost` path.
+    /// batch_uuids this device knows? A missing or corrupt manifest
+    /// answers `false`, so the caller falls back to `RemoteDataLost`.
+    /// Any other read error is a plain sync error: a network blip must
+    /// not raise the dialog whose Wipe Local deletes local data.
     fn manifest_vouches_for_any(
         &self,
         known_files: &std::collections::HashSet<String>,
-    ) -> bool {
+    ) -> SyncResult<bool> {
         let bytes = match self
             .webdav
             .get(&self.manifest_path(), MAX_EVENT_BUNDLE_BYTES)
         {
             Ok(b) => b,
-            Err(_) => return false,
+            Err(WebDavError::NotFound) => return Ok(false),
+            Err(e) => return Err(e.into()),
         };
-        match serde_json::from_slice::<CompactionManifest>(&bytes) {
-            Ok(m) => {
-                m.swallowed.iter().any(|u| known_files.contains(u))
-            }
-            Err(_) => false,
-        }
+        Ok(serde_json::from_slice::<CompactionManifest>(&bytes)
+            .is_ok_and(|m| m.swallowed.iter().any(|u| known_files.contains(u))))
     }
 
     fn ensure_events_dir_exists(&self) -> SyncResult<()> {
@@ -685,9 +693,8 @@ impl<'a, W: WebDav> Sync<'a, W> {
     /// `<sounds_dir>/<uuid>.<ext>`.
     ///
     /// Bundled rows are skipped — their audio lives in each device's
-    /// binary via GResource. Files already in the known set are
-    /// skipped (we either pulled them in a prior round or pushed
-    /// them ourselves). NotFound on GET is treated as transient
+    /// binary via GResource. Files already on disk are skipped.
+    /// NotFound on GET is treated as transient
     /// (peer probably pushed the event but their file PUT slipped
     /// past) and skipped; the next pull will retry.
     /// A delete pulled from a peer takes this device's copy of the
@@ -695,6 +702,10 @@ impl<'a, W: WebDav> Sync<'a, W> {
     /// Only pulled events: a local guided delete keeps its file for Undo.
     fn remove_files_of_pulled_deletes(&self, events: &[Event]) -> SyncResult<()> {
         for e in events {
+            // The replay skipped these; a `../` target must not become a path.
+            if !crate::db::target_id_is_well_formed_for(&e.kind, &e.target_id) {
+                continue;
+            }
             match e.kind.as_str() {
                 "bell_sound_delete"
                     if !self.db.list_bell_sounds()?.iter().any(|b| b.uuid.as_str() == e.target_id) =>
@@ -713,11 +724,13 @@ impl<'a, W: WebDav> Sync<'a, W> {
     }
 
     fn pull_custom_sound_files(&self) -> SyncResult<usize> {
-        let known = self.db.known_remote_sound_uuids()?;
+        // Not filtered by the known set: a file deleted locally comes
+        // back when a peer restores its row; `local.exists()` below
+        // keeps this from downloading anything twice.
         let bells = self.db.list_bell_sounds()?;
         let pending: Vec<crate::db::BellSound> = bells
             .into_iter()
-            .filter(|b| !b.is_bundled && !known.contains(b.uuid.as_str()))
+            .filter(|b| !b.is_bundled)
             .collect();
         if pending.is_empty() {
             return Ok(0);
@@ -755,32 +768,7 @@ impl<'a, W: WebDav> Sync<'a, W> {
             if bytes.len() as u64 > MAX_CUSTOM_BELL_BYTES {
                 continue;
             }
-            // Write the file, fsync it, THEN mark it as known.
-            // Critical ordering: if record_known_remote_sound commits
-            // before the file's bytes are durable, a power loss
-            // leaves a zero-byte file marked as "already pulled" and
-            // every subsequent sync skips it — silent broken bell.
-            // The explicit File::create → write_all → sync_all dance
-            // replaces `fs::write`'s "create + write + close" because
-            // close alone does not flush the kernel page cache to
-            // disk. Errors are surfaced as InvalidEvent so the
-            // pull aborts and retries on the next sync (the row is
-            // still missing from known_remote_sounds).
-            {
-                use std::io::Write;
-                let mut file = std::fs::File::create(&local).map_err(|e| {
-                    SyncError::InvalidEvent(
-                        format!("can't create sound file {local:?}: {e}"))
-                })?;
-                file.write_all(&bytes).map_err(|e| {
-                    SyncError::InvalidEvent(
-                        format!("can't write sound file {local:?}: {e}"))
-                })?;
-                file.sync_all().map_err(|e| {
-                    SyncError::InvalidEvent(
-                        format!("can't fsync sound file {local:?}: {e}"))
-                })?;
-            }
+            write_whole_file(&local, &bytes)?;
             self.db.record_known_remote_sound(bell.uuid.as_str())?;
             pulled += 1;
         }
@@ -873,17 +861,11 @@ impl<'a, W: WebDav> Sync<'a, W> {
     /// anything bigger than `MAX_CUSTOM_GUIDED_BYTES`, writes the
     /// bytes to `<guided_dir>/<uuid>.ogg`.
     ///
-    /// Files already in the known set are skipped (we either pulled
-    /// them in a prior round or pushed them ourselves). NotFound on
-    /// GET is transient — peer probably pushed the event but their
+    /// Files already on disk are skipped. NotFound on GET is transient — peer probably pushed the event but their
     /// file PUT slipped past; the next pull retries.
     fn pull_custom_guided_files(&self) -> SyncResult<usize> {
-        let known = self.db.known_remote_guided_file_uuids()?;
-        let files = crate::db::list_guided_files_from_db(self.db)?;
-        let pending: Vec<crate::db::GuidedFile> = files
-            .into_iter()
-            .filter(|f| !known.contains(f.uuid.as_str()))
-            .collect();
+        // Not filtered by the known set, as for sounds.
+        let pending = crate::db::list_guided_files_from_db(self.db)?;
         if pending.is_empty() {
             return Ok(0);
         }
@@ -909,25 +891,7 @@ impl<'a, W: WebDav> Sync<'a, W> {
             if bytes.len() as u64 > MAX_CUSTOM_GUIDED_BYTES {
                 continue;
             }
-            // Same fsync ordering as the bell-sound pull: bytes
-            // durable on disk before record_known_remote_guided_file
-            // commits, so a power loss can't leave a zero-byte file
-            // marked as already-pulled.
-            {
-                use std::io::Write;
-                let mut f = std::fs::File::create(&local).map_err(|e| {
-                    SyncError::InvalidEvent(
-                        format!("can't create guided file {local:?}: {e}"))
-                })?;
-                f.write_all(&bytes).map_err(|e| {
-                    SyncError::InvalidEvent(
-                        format!("can't write guided file {local:?}: {e}"))
-                })?;
-                f.sync_all().map_err(|e| {
-                    SyncError::InvalidEvent(
-                        format!("can't fsync guided file {local:?}: {e}"))
-                })?;
-            }
+            write_whole_file(&local, &bytes)?;
             self.db.record_known_remote_guided_file(file.uuid.as_str())?;
             pulled += 1;
         }
@@ -1065,6 +1029,28 @@ fn parse_batch_uuid_from_filename(name: &str) -> Option<String> {
     let parts: Vec<&str> = stem.split("__").collect();
     if parts.len() != 2 { return None; }
     Some(parts[1].to_string())
+}
+
+/// Write a pulled audio file under its real name only once all its
+/// bytes are on disk: write `<name>.part`, fsync, rename. A full disk,
+/// a kill or a power cut then leaves at most a `.part`, never a cut-off
+/// file that the next push would upload over the good server copy.
+/// Errors surface as InvalidEvent so the pull retries next sync.
+fn write_whole_file(local: &std::path::Path, bytes: &[u8]) -> SyncResult<()> {
+    use std::io::Write;
+    let mut part = local.as_os_str().to_owned();
+    part.push(".part");
+    let part = std::path::PathBuf::from(part);
+    let result = (|| {
+        let mut file = std::fs::File::create(&part)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        std::fs::rename(&part, local)
+    })();
+    result.map_err(|e| {
+        let _ = std::fs::remove_file(&part);
+        SyncError::InvalidEvent(format!("can't write {local:?}: {e}"))
+    })
 }
 
 #[cfg(test)]
@@ -2143,10 +2129,9 @@ mod tests {
     }
 
     #[test]
-    fn pull_skips_already_known_sound_files() {
-        // After a successful pull marks a file known, the next pull
-        // round shouldn't re-GET it. Simulates the steady-state sync
-        // loop where most pulls do no file work.
+    fn pull_skips_a_sound_file_already_on_disk() {
+        // The steady-state sync loop: a file this device already has
+        // is not fetched again.
         let (db_src, fs) = setup();
         let tmp_src = tempfile::tempdir().unwrap();
         let uuid = seed_custom_bell_sound(&db_src, tmp_src.path(), "Custom", b"AUDIO", "wav");
@@ -2155,16 +2140,13 @@ mod tests {
 
         let db_peer = Database::open_in_memory().unwrap();
         let tmp_peer = tempfile::tempdir().unwrap();
-        Sync::new(&db_peer, &fs, "Meditate", tmp_peer.path().to_path_buf(), tmp_peer.path().to_path_buf())
-            .pull().unwrap();
-        // Delete the local file to prove the second pull skips the
-        // GET (if it didn't, the file would be re-created).
-        std::fs::remove_file(tmp_peer.path().join(format!("{uuid}.wav"))).unwrap();
-        Sync::new(&db_peer, &fs, "Meditate", tmp_peer.path().to_path_buf(), tmp_peer.path().to_path_buf())
-            .pull().unwrap();
+        let sync_peer = Sync::new(&db_peer, &fs, "Meditate", tmp_peer.path().to_path_buf(), tmp_peer.path().to_path_buf());
+        sync_peer.pull().unwrap();
+        // Change the remote copy: a second GET would overwrite ours.
+        fs.put(&format!("/Meditate/sounds/{uuid}.wav"), b"CHANGED").unwrap();
+        sync_peer.pull().unwrap();
 
-        // File NOT re-pulled — known set already covered it.
-        assert!(!tmp_peer.path().join(format!("{uuid}.wav")).exists());
+        assert_eq!(std::fs::read(tmp_peer.path().join(format!("{uuid}.wav"))).unwrap(), b"AUDIO");
     }
 
     #[test]
@@ -2577,5 +2559,141 @@ mod tests {
             b"not json", "a corrupt manifest must not be overwritten");
         assert_eq!(events_listing(&fs).len(), COMPACT_THRESHOLD + 1,
             "no batch may be uploaded or deleted");
+    }
+
+    /// Device A with one custom bell and one guided file, synced; then a
+    /// fresh device B synced once. Returns B's pieces and both file paths.
+    fn b_with_pulled_bell_and_guide(
+        fs: &FakeWebDav,
+    ) -> (Database, tempfile::TempDir, tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
+        let db_a = Database::open_in_memory().unwrap();
+        let (a_sounds, a_guided) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let bell = seed_custom_bell_sound(&db_a, a_sounds.path(), "Mine", b"AUDIO", "wav");
+        let guided = uuid::Uuid::new_v4().to_string();
+        db_a.insert_guided_file_with_uuid(&guided, "Guide", "/elsewhere/g.ogg", 60, false).unwrap();
+        std::fs::write(a_guided.path().join(format!("{guided}.ogg")), b"OGG").unwrap();
+        Sync::new(&db_a, fs, "Meditate", a_sounds.path().to_path_buf(), a_guided.path().to_path_buf())
+            .sync().unwrap();
+
+        let db_b = Database::open_in_memory().unwrap();
+        let (b_sounds, b_guided) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let b_bell = b_sounds.path().join(format!("{bell}.wav"));
+        let b_guide = b_guided.path().join(format!("{guided}.ogg"));
+        (db_b, b_sounds, b_guided, b_bell, b_guide)
+    }
+
+    #[test]
+    fn a_leftover_part_file_does_not_stop_a_full_download() {
+        // An interrupted download must never sit under the real name,
+        // or the next push uploads the cut-off file over the good one.
+        let (_, fs) = setup();
+        let (db_b, b_sounds, b_guided, b_bell, b_guide) = b_with_pulled_bell_and_guide(&fs);
+        let part = |p: &std::path::Path| {
+            let mut s = p.as_os_str().to_owned();
+            s.push(".part");
+            std::path::PathBuf::from(s)
+        };
+        std::fs::write(part(&b_bell), b"AU").unwrap();
+        std::fs::write(part(&b_guide), b"O").unwrap();
+
+        Sync::new(&db_b, &fs, "Meditate", b_sounds.path().to_path_buf(), b_guided.path().to_path_buf())
+            .sync().unwrap();
+
+        assert_eq!(std::fs::read(&b_bell).unwrap(), b"AUDIO");
+        assert_eq!(std::fs::read(&b_guide).unwrap(), b"OGG");
+        assert!(!part(&b_bell).exists() && !part(&b_guide).exists());
+    }
+
+    #[test]
+    fn a_known_file_missing_on_disk_is_downloaded_again() {
+        // A delete removes the local audio; if a peer then brings the
+        // row back, the audio must come back too.
+        let (_, fs) = setup();
+        let (db_b, b_sounds, b_guided, b_bell, b_guide) = b_with_pulled_bell_and_guide(&fs);
+        let sync_b = Sync::new(&db_b, &fs, "Meditate", b_sounds.path().to_path_buf(), b_guided.path().to_path_buf());
+        sync_b.sync().unwrap();
+        std::fs::remove_file(&b_bell).unwrap();
+        std::fs::remove_file(&b_guide).unwrap();
+
+        sync_b.sync().unwrap();
+
+        assert!(b_bell.exists() && b_guide.exists());
+    }
+
+    #[test]
+    fn a_pulled_guided_delete_cannot_reach_outside_the_guided_dir() {
+        let (db, fs) = setup();
+        let root = tempfile::tempdir().unwrap();
+        let guided_dir = root.path().join("guided");
+        std::fs::create_dir_all(&guided_dir).unwrap();
+        std::fs::create_dir_all(root.path().join("outside")).unwrap();
+        let victim = root.path().join("outside/talk.ogg");
+        std::fs::write(&victim, b"KEEP").unwrap();
+        let evil = Event {
+            event_uuid: uuid::Uuid::new_v4().to_string(),
+            lamport_ts: 1,
+            device_id: "peer".into(),
+            kind: "guided_file_delete".into(),
+            target_id: "../outside/talk".into(),
+            payload: "{}".into(),
+        };
+        fs.put("/Meditate/events/00000000000001__evil.json", &serde_json::to_vec(&[evil]).unwrap()).unwrap();
+
+        Sync::new(&db, &fs, "Meditate", root.path().join("sounds"), guided_dir).pull().unwrap();
+
+        assert!(victim.exists(), "a pulled delete must not escape the guided dir");
+    }
+
+    #[test]
+    fn a_failed_manifest_read_is_a_sync_error_not_remote_data_lost() {
+        // A timeout on compacted.json said "not vouched", which raised
+        // the remote-data-lost dialog and its destructive Wipe Local.
+        struct ManifestGetFails<'a>(&'a FakeWebDav);
+        impl WebDav for ManifestGetFails<'_> {
+            fn list_collection(&self, p: &str) -> WebDavResult<Vec<String>> { self.0.list_collection(p) }
+            fn get(&self, p: &str, max_bytes: u64) -> WebDavResult<Vec<u8>> {
+                if p.ends_with("compacted.json") {
+                    return Err(WebDavError::Network("timed out".into()));
+                }
+                self.0.get(p, max_bytes)
+            }
+            fn put(&self, p: &str, b: &[u8]) -> WebDavResult<()> { self.0.put(p, b) }
+            fn mkcol(&self, p: &str) -> WebDavResult<()> { self.0.mkcol(p) }
+            fn delete(&self, p: &str) -> WebDavResult<()> { self.0.delete(p) }
+            fn move_to(&self, from: &str, to: &str) -> WebDavResult<()> { self.0.move_to(from, to) }
+        }
+        let (db_a, fs) = setup();
+        push_n_batches(&db_a, &fs, COMPACT_THRESHOLD + 1);
+        let db_b = Database::open_in_memory().unwrap();
+        Sync::new(&db_b, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new())
+            .pull().unwrap();
+        Sync::new(&db_a, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new())
+            .sync().unwrap();
+        assert_eq!(events_listing(&fs).len(), 1, "compaction ran");
+
+        let flaky = ManifestGetFails(&fs);
+        let err = Sync::new(&db_b, &flaky, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new())
+            .pull().unwrap_err();
+
+        assert_matches!(err, SyncError::WebDav(WebDavError::Network(_)));
+    }
+
+    #[test]
+    fn a_pull_the_database_rejects_still_lets_local_sessions_upload() {
+        // A newer peer can send a value this build's schema rejects
+        // (version skew). This device's own sessions must still upload.
+        let (db_a, fs) = setup();
+        insert_session(&db_a, "2026-10-09T07:00:00", 600);
+        let (_, mut ev) = db_a.pending_events().unwrap().remove(0);
+        ev.payload = ev.payload.replace("\"timer\"", "\"a_future_mode\"");
+        fs.put("/Meditate/events/00000000000001__peer.json", &serde_json::to_vec(&[ev]).unwrap()).unwrap();
+
+        let db_b = Database::open_in_memory().unwrap();
+        insert_session(&db_b, "2026-10-09T08:00:00", 600);
+        let err = Sync::new(&db_b, &fs, "Meditate", std::path::PathBuf::new(), std::path::PathBuf::new())
+            .sync().unwrap_err();
+
+        assert_matches!(err, SyncError::Db(_));
+        assert!(db_b.pending_events().unwrap().is_empty(), "B's own session still uploads");
     }
 }

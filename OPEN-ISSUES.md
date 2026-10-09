@@ -15,7 +15,7 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 
 | Done | Batch | Items | Why this place |
 |:---:|---|---|---|
-| [ ] | A. Sync data safety | #40, #66, #69, #43, #88, #68, #90, #94 | data loss across devices |
+| [x] | A. Sync data safety | #40, #66, #69, #43, #88, #68, #90, #94 | data loss across devices |
 | [ ] | B. GTK session safety | #135, #129, #128, #67, #131, #134 | GTK loses or ends sessions |
 | [ ] | C. Presets and bell settings | #111, #125, #112, #71, #102, #48, #82, #133 | settings that change silently on other modes or devices |
 | [ ] | D. Backups and import | #41, #105, #49, #109, #110, #62 | backups that double or will not restore |
@@ -693,7 +693,7 @@ From three fresh-eyes audits on 2026-10-09 (code reading plus small GTK, GStream
 
 Only together with other work in the same area; none has a bug behind it.
 
-- **R12, sync runner into core**: core `run_attempt` with a password closure, `SyncError::is_transient_network()`, a typed error, one blob routine for sounds and guided files (remote paths byte-identical). About -150 in the apps, +100 in core, -90 in the orchestrator. Includes the narrow sync-account error enums that remove four `unreachable!` arms. Do it when sync needs work.
+- **R12, sync runner into core**: core `run_attempt` with a password closure, `SyncError::is_transient_network()`, a typed error, one blob routine for sounds and guided files (remote paths byte-identical). About -150 in the apps, +100 in core, -90 in the orchestrator. Includes the narrow sync-account error enums that remove four `unreachable!` arms. Re-evaluate when batch F starts: most of F (#42, #70, #89, #96, #137) lives in the runners.
 
 ## Considered and rejected
 
