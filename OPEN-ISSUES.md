@@ -20,7 +20,7 @@ Each batch touches one area and needs one test round. Mark a batch `[x]` when it
 | [x] | C. CSV | #7, #36 | data loss |
 | [x] | D. Locale | #29, #26, #25, #30 | visible every day in German |
 | [x] | E. Stats | #18, #24, #35, #22 | wrong numbers |
-| [ ] | F. File import (Kotlin) | #21, #37, #38 | rare files and edge cases |
+| [x] | F. File import (Kotlin) | #21, #37, #38 | rare files and edge cases |
 | [ ] | G. Bell file cleanup | bell audio left on disk | wasted storage |
 | [ ] | H. Layout and wording | #23 rest, #11, #32, GTK sync toast | cosmetic |
 
@@ -232,6 +232,7 @@ So these aren't proposed again:
 - A change-counter-driven view refresh: `LocalChanges` is per connection, so sync pulls never bump it.
 - A run token on every drop file: only imports needed one (done).
 - Number fields that commit on every keystroke: intermediate values go stale or clamp mid-typing.
+- Closing the file picker before its copy ends (#37): the read grant on the picked file can end with that screen, so every pick path would need the file opened first; a local copy takes about a second.
 - A `guided_file_uuid` CSV column (#7): after a restore the uuid points at no file, and synced devices get their sessions by sync anyway.
 - Typed `BellSlot` through Slint: large, with no host safety net.
 - Moving the whole sync account Save/Test into core: the keychains are per app.

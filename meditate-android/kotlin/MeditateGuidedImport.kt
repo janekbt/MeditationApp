@@ -131,145 +131,150 @@ object MeditateGuidedImport {
         onProgress: (Int) -> Unit,
         isCancelled: () -> Boolean,
     ) {
-        val extractor = MediaExtractor()
-        extractor.setDataSource(src)
-        var track = -1
-        var inFormat: MediaFormat? = null
-        for (i in 0 until extractor.trackCount) {
-            val f = extractor.getTrackFormat(i)
-            if (f.getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true) {
-                track = i
-                inFormat = f
-                break
-            }
-        }
-        if (track < 0 || inFormat == null) {
-            extractor.release()
-            throw IllegalStateException(NO_AUDIO_TRACK)
-        }
-        extractor.selectTrack(track)
-
-        val srcRate = inFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
-        val channels = inFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
-            .coerceIn(1, 2) // Opus encoder: mono or stereo
-
-        // Progress denominator: prefer Rust's accurate frame-walked
-        // duration (it survives headerless VBR mp3, unlike the
-        // container's KEY_DURATION estimate); fall back to the
-        // track header only if the probe came back 0.
-        val totalUs = if (durationSecs > 0) {
-            durationSecs * 1_000_000L
-        } else if (inFormat.containsKey(MediaFormat.KEY_DURATION)) {
-            inFormat.getLong(MediaFormat.KEY_DURATION)
-        } else {
-            0L
-        }
-
-        val decoder = MediaCodec.createDecoderByType(
-            inFormat.getString(MediaFormat.KEY_MIME)!!,
-        )
-        decoder.configure(inFormat, null, null, 0)
-        decoder.start()
-
-        val encFormat = MediaFormat.createAudioFormat(
-            MediaFormat.MIMETYPE_AUDIO_OPUS, OPUS_RATE, channels,
-        ).apply {
-            setInteger(MediaFormat.KEY_BIT_RATE, 48_000 * channels)
-        }
-        val encoder = MediaCodec.createEncoderByType(
-            MediaFormat.MIMETYPE_AUDIO_OPUS,
-        )
-        encoder.configure(
-            encFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE,
-        )
-        encoder.start()
-
-        val muxer = MediaMuxer(dest, MediaMuxer.OutputFormat.MUXER_OUTPUT_OGG)
-        var muxTrack = -1
+        // Every handle is released in the finally, also when setup fails.
+        var extractorRef: MediaExtractor? = null
+        var decoderRef: MediaCodec? = null
+        var encoderRef: MediaCodec? = null
+        var muxerRef: MediaMuxer? = null
         var muxerStarted = false
-
-        // Per-channel linear resampler state (srcRate → OPUS_RATE).
-        val resampler = Resampler(srcRate, OPUS_RATE, channels)
-
-        val info = MediaCodec.BufferInfo()
-        var extractorDone = false
-        var decoderDone = false
-        var encoderDone = false
-        val timeoutUs = 10_000L
-        var ptsUs = 0L
-        val bytesPerFrame = 2 * channels
-
-        // Pull every currently-available encoder output → muxer.
-        // Must be called often enough that the encoder's input
-        // buffers don't all stay checked out (a classic
-        // dequeueInputBuffer-forever deadlock). Handles the
-        // codec-config skip + lazy muxer start on format-change.
-        fun drainEncoder() {
-            while (true) {
-                val encOut =
-                    encoder.dequeueOutputBuffer(info, 0)
-                if (encOut == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                    if (!muxerStarted) {
-                        muxTrack =
-                            muxer.addTrack(encoder.outputFormat)
-                        muxer.start()
-                        muxerStarted = true
-                    }
-                    continue
-                }
-                if (encOut < 0) break // TRY_AGAIN / no output yet
-                if (info.flags and
-                    MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0
-                ) {
-                    info.size = 0 // CSD folds into the track format
-                }
-                if (info.size > 0 && muxerStarted) {
-                    val outBuf = encoder.getOutputBuffer(encOut)!!
-                    outBuf.position(info.offset)
-                    outBuf.limit(info.offset + info.size)
-                    muxer.writeSampleData(muxTrack, outBuf, info)
-                }
-                if (info.flags and
-                    MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
-                ) {
-                    encoderDone = true
-                }
-                encoder.releaseOutputBuffer(encOut, false)
-                if (encoderDone) break
-            }
-        }
-
-        // Feed a resampled PCM chunk into the encoder, splitting it
-        // across as many input buffers as needed — an Opus input
-        // buffer is far smaller than a resampled decode chunk, so
-        // a single put() overflows (the BufferOverflowException
-        // bug). Drain interleaved so input buffers free up.
-        fun feedEncoder(pcm: ByteBuffer) {
-            while (pcm.hasRemaining()) {
-                val eInIx =
-                    encoder.dequeueInputBuffer(timeoutUs)
-                if (eInIx < 0) {
-                    drainEncoder()
-                    continue
-                }
-                val eBuf = encoder.getInputBuffer(eInIx)!!
-                eBuf.clear()
-                val n = minOf(pcm.remaining(), eBuf.remaining())
-                val slice = pcm.slice()
-                slice.limit(n)
-                eBuf.put(slice)
-                pcm.position(pcm.position() + n)
-                encoder.queueInputBuffer(eInIx, 0, n, ptsUs, 0)
-                ptsUs += if (bytesPerFrame > 0) {
-                    (n / bytesPerFrame) * 1_000_000L / OPUS_RATE
-                } else {
-                    0L
-                }
-                drainEncoder()
-            }
-        }
-
         try {
+            val extractor = MediaExtractor().also { extractorRef = it }
+            extractor.setDataSource(src)
+            var track = -1
+            var inFormat: MediaFormat? = null
+            for (i in 0 until extractor.trackCount) {
+                val f = extractor.getTrackFormat(i)
+                if (f.getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true) {
+                    track = i
+                    inFormat = f
+                    break
+                }
+            }
+            if (track < 0 || inFormat == null) {
+                throw IllegalStateException(NO_AUDIO_TRACK)
+            }
+            extractor.selectTrack(track)
+
+            val srcRate = inFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+            val srcChannels = inFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+            val channels = srcChannels.coerceIn(1, 2) // Opus encoder: mono or stereo
+
+            // Progress denominator: prefer Rust's accurate frame-walked
+            // duration (it survives headerless VBR mp3, unlike the
+            // container's KEY_DURATION estimate); fall back to the
+            // track header only if the probe came back 0.
+            val totalUs = if (durationSecs > 0) {
+                durationSecs * 1_000_000L
+            } else if (inFormat.containsKey(MediaFormat.KEY_DURATION)) {
+                inFormat.getLong(MediaFormat.KEY_DURATION)
+            } else {
+                0L
+            }
+
+            val decoder = MediaCodec.createDecoderByType(
+                inFormat.getString(MediaFormat.KEY_MIME)!!,
+            ).also { decoderRef = it }
+            decoder.configure(inFormat, null, null, 0)
+            decoder.start()
+
+            val encFormat = MediaFormat.createAudioFormat(
+                MediaFormat.MIMETYPE_AUDIO_OPUS, OPUS_RATE, channels,
+            ).apply {
+                setInteger(MediaFormat.KEY_BIT_RATE, 48_000 * channels)
+            }
+            val encoder = MediaCodec.createEncoderByType(
+                MediaFormat.MIMETYPE_AUDIO_OPUS,
+            ).also { encoderRef = it }
+            encoder.configure(
+                encFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE,
+            )
+            encoder.start()
+
+            val muxer = MediaMuxer(dest, MediaMuxer.OutputFormat.MUXER_OUTPUT_OGG)
+                .also { muxerRef = it }
+            var muxTrack = -1
+
+            // Per-channel linear resampler state (srcRate → OPUS_RATE).
+            var resampler = Resampler(srcRate, OPUS_RATE, srcChannels, channels)
+
+            val info = MediaCodec.BufferInfo()
+            var extractorDone = false
+            var decoderDone = false
+            var encoderDone = false
+            val timeoutUs = 10_000L
+            var ptsUs = 0L
+            val bytesPerFrame = 2 * channels
+
+            // Pull every currently-available encoder output → muxer.
+            // Must be called often enough that the encoder's input
+            // buffers don't all stay checked out (a classic
+            // dequeueInputBuffer-forever deadlock). Handles the
+            // codec-config skip + lazy muxer start on format-change.
+            fun drainEncoder() {
+                while (true) {
+                    val encOut =
+                        encoder.dequeueOutputBuffer(info, 0)
+                    if (encOut == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                        if (!muxerStarted) {
+                            muxTrack =
+                                muxer.addTrack(encoder.outputFormat)
+                            muxer.start()
+                            muxerStarted = true
+                        }
+                        continue
+                    }
+                    if (encOut < 0) break // TRY_AGAIN / no output yet
+                    if (info.flags and
+                        MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0
+                    ) {
+                        info.size = 0 // CSD folds into the track format
+                    }
+                    if (info.size > 0 && muxerStarted) {
+                        val outBuf = encoder.getOutputBuffer(encOut)!!
+                        outBuf.position(info.offset)
+                        outBuf.limit(info.offset + info.size)
+                        muxer.writeSampleData(muxTrack, outBuf, info)
+                    }
+                    if (info.flags and
+                        MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
+                    ) {
+                        encoderDone = true
+                    }
+                    encoder.releaseOutputBuffer(encOut, false)
+                    if (encoderDone) break
+                }
+            }
+
+            // Feed a resampled PCM chunk into the encoder, splitting it
+            // across as many input buffers as needed — an Opus input
+            // buffer is far smaller than a resampled decode chunk, so
+            // a single put() overflows (the BufferOverflowException
+            // bug). Drain interleaved so input buffers free up.
+            fun feedEncoder(pcm: ByteBuffer) {
+                while (pcm.hasRemaining()) {
+                    val eInIx =
+                        encoder.dequeueInputBuffer(timeoutUs)
+                    if (eInIx < 0) {
+                        drainEncoder()
+                        continue
+                    }
+                    val eBuf = encoder.getInputBuffer(eInIx)!!
+                    eBuf.clear()
+                    val n = minOf(pcm.remaining(), eBuf.remaining())
+                    val slice = pcm.slice()
+                    slice.limit(n)
+                    eBuf.put(slice)
+                    pcm.position(pcm.position() + n)
+                    encoder.queueInputBuffer(eInIx, 0, n, ptsUs, 0)
+                    ptsUs += if (bytesPerFrame > 0) {
+                        (n / bytesPerFrame) * 1_000_000L / OPUS_RATE
+                    } else {
+                        0L
+                    }
+                    drainEncoder()
+                }
+            }
+
             while (!encoderDone) {
                 // Cancel check (cheap file stat) — bail promptly
                 // when Rust flags the Cancel tap. startImport's
@@ -300,6 +305,15 @@ object MeditateGuidedImport {
                 // 2. Drain decoder PCM → resample → encoder.
                 if (!decoderDone) {
                     val outIx = decoder.dequeueOutputBuffer(info, timeoutUs)
+                    if (outIx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                        // HE-AAC decodes at twice the header's rate,
+                        // often in stereo: resample what really comes.
+                        val f = decoder.outputFormat
+                        resampler = Resampler(
+                            f.getInteger(MediaFormat.KEY_SAMPLE_RATE), OPUS_RATE,
+                            f.getInteger(MediaFormat.KEY_CHANNEL_COUNT), channels,
+                        )
+                    }
                     if (outIx >= 0) {
                         val pcm = decoder.getOutputBuffer(outIx)!!
                         pcm.position(info.offset)
@@ -342,13 +356,13 @@ object MeditateGuidedImport {
                 }
             }
         } finally {
-            runCatching { if (muxerStarted) muxer.stop() }
-            runCatching { muxer.release() }
-            runCatching { decoder.stop() }
-            runCatching { decoder.release() }
-            runCatching { encoder.stop() }
-            runCatching { encoder.release() }
-            runCatching { extractor.release() }
+            runCatching { if (muxerStarted) muxerRef?.stop() }
+            runCatching { muxerRef?.release() }
+            runCatching { decoderRef?.stop() }
+            runCatching { decoderRef?.release() }
+            runCatching { encoderRef?.stop() }
+            runCatching { encoderRef?.release() }
+            runCatching { extractorRef?.release() }
         }
     }
 
@@ -369,11 +383,28 @@ object MeditateGuidedImport {
     private class Resampler(
         inRate: Int,
         private val outRate: Int,
-        private val channels: Int,
+        private val inChannels: Int,
+        private val outChannels: Int,
     ) {
+        private val channels = outChannels
         private val step = inRate.toDouble() / outRate.toDouble()
-        private val passthrough = inRate == outRate
+        private val passthrough = inRate == outRate && inChannels == outChannels
         private val prev = ShortArray(channels)
+
+        // One input frame as `outChannels`: mono is duplicated, more
+        // channels than the encoder takes are averaged (keeps a 5.1
+        // centre voice, which dropping channels would lose).
+        private fun mix(ins: java.nio.ShortBuffer, at: Int, dst: ShortArray) {
+            when {
+                inChannels == outChannels -> for (c in 0 until outChannels) dst[c] = ins.get(at + c)
+                inChannels == 1 -> dst.fill(ins.get(at))
+                else -> {
+                    var sum = 0
+                    for (c in 0 until inChannels) sum += ins.get(at + c)
+                    dst.fill((sum / inChannels).toShort())
+                }
+            }
+        }
         private var havePrev = false
         private var phase = 0.0 // output position within [prev,cur)
 
@@ -391,7 +422,7 @@ object MeditateGuidedImport {
                 return out
             }
             val ins = pcm.asShortBuffer()
-            val inFrames = ins.remaining() / channels
+            val inFrames = ins.remaining() / inChannels
             if (inFrames == 0) return null
 
             var outLen = 0
@@ -406,13 +437,11 @@ object MeditateGuidedImport {
             val cur = ShortArray(channels)
             val emit = ShortArray(channels)
             if (!havePrev) {
-                for (c in 0 until channels) prev[c] = ins.get(c)
+                mix(ins, 0, prev)
                 havePrev = true
             }
             for (f in 0 until inFrames) {
-                for (c in 0 until channels) {
-                    cur[c] = ins.get(f * channels + c)
-                }
+                mix(ins, f * inChannels, cur)
                 while (phase < 1.0) {
                     for (c in 0 until channels) {
                         val a = prev[c].toDouble()

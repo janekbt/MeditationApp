@@ -1029,6 +1029,29 @@ mod tests {
         }
     }
 
+    /// HE-AAC imported at half speed: the decoder's real rate and
+    /// channels arrive as a format change that was ignored (#21).
+    /// A failed setup leaked the codecs and extractor (#38).
+    #[test]
+    fn the_importer_follows_the_decoder_and_releases_on_failure() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let kt = std::fs::read_to_string(root.join("kotlin/MeditateGuidedImport.kt")).unwrap();
+        let pick = std::fs::read_to_string(root.join("kotlin/MeditateFilePickerActivity.kt")).unwrap();
+        let drain = kt.find("val outIx = decoder.dequeueOutputBuffer(info, timeoutUs)").unwrap();
+        let after = &kt[drain..drain + 600];
+        assert!(after.contains("MediaCodec.INFO_OUTPUT_FORMAT_CHANGED"), "the decoder's format change is read");
+        assert!(after.contains("decoder.outputFormat"));
+        assert!(kt.contains("private class Resampler(\n        inRate: Int,\n        private val outRate: Int,\n        private val inChannels: Int,\n        private val outChannels: Int,"));
+        let fun = kt.find("private fun transcodeToOpusOgg(").unwrap();
+        let body = &kt[fun..];
+        let try_at = body.find("try {").unwrap();
+        for setup in ["MediaCodec.createDecoderByType(", "MediaCodec.createEncoderByType(", "MediaMuxer(dest", "extractor.setDataSource(src)"] {
+            assert!(body.find(setup).unwrap() > try_at, "{setup} sits inside the try");
+        }
+        let probe = &pick[pick.find("private fun probe(").unwrap()..];
+        assert!(probe[..probe.find("\n    }\n").unwrap()].contains("finally { ex.release() }"));
+    }
+
     /// Units and sentences come from the translations: Rust wrote
     /// English "1h 4m" and "3 sessions" (#27, #28), and a sentence
     /// glued around a name couldn't be translated whole (#31).

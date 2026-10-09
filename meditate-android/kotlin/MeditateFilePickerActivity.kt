@@ -228,8 +228,8 @@ class MeditateFilePickerActivity : Activity() {
     // track (a failed probe reports false — never block a file
     // the probe merely couldn't read).
     private fun probe(f: File): Pair<Long, Boolean> {
+        val ex = MediaExtractor()
         return try {
-            val ex = MediaExtractor()
             ex.setDataSource(f.absolutePath)
             var bestUs = 0L
             var sawAudio = false
@@ -255,13 +255,12 @@ class MeditateFilePickerActivity : Activity() {
                 bestUs = maxOf(bestUs, lastUs)
                 break
             }
-            ex.release()
             val secs = if (bestUs > 0) (bestUs + 999_999) / 1_000_000 else 0L
             Pair(secs, !sawAudio)
         } catch (e: Exception) {
             Log.w(TAG, "duration probe failed: $e")
             Pair(0L, false)
-        }
+        } finally { ex.release() }
     }
 
     companion object {
